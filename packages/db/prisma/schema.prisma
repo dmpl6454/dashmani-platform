@@ -1,0 +1,209 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============ AUTH & RBAC ============
+
+model User {
+  id             String   @id @default(uuid())
+  name           String
+  email          String   @unique
+  passwordHash   String   @map("password_hash")
+  phone          String?
+  profileImageUrl String? @map("profile_image_url")
+  status         UserStatus @default(ONBOARDING)
+  orgUnitId      String?  @map("org_unit_id")
+  deletedAt      DateTime? @map("deleted_at")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  orgUnit        OrgUnit?  @relation(fields: [orgUnitId], references: [id])
+  roles          UserRole[]
+  attendanceRecords Attendance[]
+  leaveRequests  LeaveRequest[] @relation("LeaveRequester")
+  leaveApprovals LeaveRequest[] @relation("LeaveApprover")
+  auditLogs      AuditLog[]
+  refreshTokens  RefreshToken[]
+
+  @@map("users")
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  ONBOARDING
+}
+
+model Role {
+  id           String   @id @default(uuid())
+  name         String   @unique
+  description  String?
+  isSystemRole Boolean  @default(false) @map("is_system_role")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  users        UserRole[]
+  permissions  RolePermission[]
+
+  @@map("roles")
+}
+
+model UserRole {
+  userId String @map("user_id")
+  roleId String @map("role_id")
+
+  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role   Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([userId, roleId])
+  @@map("user_roles")
+}
+
+model RolePermission {
+  id       String @id @default(uuid())
+  roleId   String @map("role_id")
+  resource String
+  action   String
+  scope    String
+
+  role     Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, resource, action, scope])
+  @@map("role_permissions")
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  token     String   @unique
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user      User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("refresh_tokens")
+}
+
+// ============ ORGANIZATION ============
+
+model OrgUnit {
+  id        String      @id @default(uuid())
+  name      String
+  type      OrgUnitType
+  parentId  String?     @map("parent_id")
+  leadId    String?     @map("lead_id")
+  createdAt DateTime    @default(now()) @map("created_at")
+  updatedAt DateTime    @updatedAt @map("updated_at")
+
+  parent    OrgUnit?  @relation("OrgHierarchy", fields: [parentId], references: [id])
+  children  OrgUnit[] @relation("OrgHierarchy")
+  members   User[]
+
+  @@map("org_units")
+}
+
+enum OrgUnitType {
+  DEPARTMENT
+  TEAM
+  SUB_TEAM
+}
+
+// ============ ATTENDANCE ============
+
+model Attendance {
+  id            String           @id @default(uuid())
+  employeeId    String           @map("employee_id")
+  date          DateTime         @db.Date
+  checkIn       DateTime?        @map("check_in")
+  checkOut      DateTime?        @map("check_out")
+  status        AttendanceStatus @default(PRESENT)
+  overtimeHours Float            @default(0) @map("overtime_hours")
+  ipAddress     String?          @map("ip_address")
+  createdAt     DateTime         @default(now()) @map("created_at")
+  updatedAt     DateTime         @updatedAt @map("updated_at")
+
+  employee      User @relation(fields: [employeeId], references: [id])
+
+  @@unique([employeeId, date])
+  @@index([employeeId, date])
+  @@map("attendance")
+}
+
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+  LATE
+  HALF_DAY
+  LEAVE
+}
+
+model LeaveRequest {
+  id          String      @id @default(uuid())
+  employeeId  String      @map("employee_id")
+  startDate   DateTime    @map("start_date") @db.Date
+  endDate     DateTime    @map("end_date") @db.Date
+  type        LeaveType
+  reason      String
+  status      LeaveStatus @default(PENDING)
+  approvedBy  String?     @map("approved_by")
+  approvedAt  DateTime?   @map("approved_at")
+  createdAt   DateTime    @default(now()) @map("created_at")
+  updatedAt   DateTime    @updatedAt @map("updated_at")
+
+  employee    User @relation("LeaveRequester", fields: [employeeId], references: [id])
+  approver    User? @relation("LeaveApprover", fields: [approvedBy], references: [id])
+
+  @@map("leave_requests")
+}
+
+enum LeaveType {
+  CASUAL
+  SICK
+  EARNED
+  UNPAID
+}
+
+enum LeaveStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+// ============ SETTINGS ============
+
+model Setting {
+  id        String   @id @default(uuid())
+  namespace String
+  key       String
+  value     Json
+  updatedBy String?  @map("updated_by")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([namespace, key])
+  @@map("settings")
+}
+
+// ============ AUDIT ============
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  userId     String   @map("user_id")
+  action     String
+  resource   String
+  resourceId String?  @map("resource_id")
+  before     Json?
+  after      Json?
+  ipAddress  String?  @map("ip_address")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  user       User @relation(fields: [userId], references: [id])
+
+  @@index([userId, createdAt])
+  @@index([resource, resourceId])
+  @@map("audit_logs")
+}

@@ -13,6 +13,6 @@ export const updateEmployeeSchema = z.object({
   name: z.string().min(2).max(100).optional(),
   phone: z.string().optional(),
   orgUnitId: z.string().uuid().nullable().optional(),
-  status: z.enum(["active", "inactive", "onboarding"]).optional(),
+  status: z.enum(["ACTIVE", "INACTIVE", "ONBOARDING"]).optional(),
   roleIds: z.array(z.string().uuid()).min(1).optional(),
 });

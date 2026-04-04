@@ -40,7 +40,7 @@ export async function createTestUser(overrides: { name?: string; email?: string;
 export function generateToken(userId: string, email: string, roles: string[] = []) {
   return jwt.sign(
     { userId, email, roles, type: "employee" },
-    process.env.JWT_SECRET || "test-secret",
+    process.env.JWT_SECRET || "dev-secret",
     { expiresIn: "15m" }
   );
 }

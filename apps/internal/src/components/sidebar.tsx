@@ -3,7 +3,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@dashmani/ui";
 import {
-  LayoutDashboard, Users, Building2, Clock, Shield, Settings, CheckSquare, Globe, BarChart3, Briefcase, FolderOpen,
+  LayoutDashboard, Users, Building2, Clock, Shield, Settings, CheckSquare, Globe, BarChart3, Briefcase, FolderOpen, FileEdit,
 } from "lucide-react";
 
 const navItems = [
@@ -11,6 +11,7 @@ const navItems = [
   { href: "/employees", label: "Employees", icon: Users },
   { href: "/teams", label: "Teams", icon: Building2 },
   { href: "/tasks", label: "Tasks", icon: CheckSquare },
+  { href: "/content", label: "Content", icon: FileEdit },
   { href: "/accounts", label: "Accounts", icon: Globe },
   { href: "/workload", label: "Workload", icon: BarChart3 },
   { href: "/clients", label: "Clients", icon: Briefcase },

@@ -2,11 +2,12 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@dashmani/ui";
-import { LayoutDashboard, FolderOpen, CheckSquare, FileText } from "lucide-react";
+import { LayoutDashboard, FolderOpen, CheckSquare, FileText, FileEdit } from "lucide-react";
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/projects", label: "Projects", icon: FolderOpen },
+  { href: "/content", label: "Content", icon: FileEdit },
   { href: "/approvals", label: "Approvals", icon: CheckSquare },
   { href: "/files", label: "Files", icon: FileText },
 ];

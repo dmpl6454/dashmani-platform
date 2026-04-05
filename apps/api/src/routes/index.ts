@@ -10,6 +10,7 @@ import accountRoutes from "./account.routes";
 import clientRoutes from "./client.routes";
 import projectRoutes from "./project.routes";
 import contentRoutes from "./content.routes";
+import analyticsRoutes from "./analytics.routes";
 
 const router = Router();
 
@@ -24,5 +25,6 @@ router.use(accountRoutes);
 router.use(clientRoutes);
 router.use(projectRoutes);
 router.use(contentRoutes);
+router.use(analyticsRoutes);
 
 export default router;

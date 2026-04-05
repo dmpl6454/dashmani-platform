@@ -165,12 +165,15 @@ export async function getTaskAnalytics(params?: { projectId?: string }) {
         ...projectFilter,
         assigneeId: { not: null },
       },
-      orderBy: { _count: { _all: "desc" } },
-      take: 10,
     }),
   ]);
 
-  const assigneeIds = topAssigneesRaw
+  // Sort by count desc and take top 10 in JS (Prisma groupBy orderBy _all not supported in all versions)
+  const sortedAssigneesRaw = [...topAssigneesRaw]
+    .sort((a: any, b: any) => b._count._all - a._count._all)
+    .slice(0, 10);
+
+  const assigneeIds = sortedAssigneesRaw
     .map((a: any) => a.assigneeId)
     .filter(Boolean) as string[];
 
@@ -211,7 +214,7 @@ export async function getTaskAnalytics(params?: { projectId?: string }) {
   const doneCount = byStatus.find((s) => s.status === "DONE")?.count || 0;
   const completionRate = totalTasks > 0 ? Math.round((doneCount / totalTasks) * 100) : 0;
 
-  const topAssignees = topAssigneesRaw.map((a: any) => ({
+  const topAssignees = sortedAssigneesRaw.map((a: any) => ({
     assigneeId: a.assigneeId as string,
     assigneeName: assigneeNames[a.assigneeId] || "Unknown",
     total: a._count._all as number,

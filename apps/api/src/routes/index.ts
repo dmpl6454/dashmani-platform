@@ -11,6 +11,9 @@ import clientRoutes from "./client.routes";
 import projectRoutes from "./project.routes";
 import contentRoutes from "./content.routes";
 import analyticsRoutes from "./analytics.routes";
+import hrAuthRoutes from "./hr-auth.routes";
+import hrRoutes from "./hr.routes";
+import adminReportsRoutes from "./admin-reports.routes";
 
 const router = Router();
 
@@ -26,5 +29,8 @@ router.use(clientRoutes);
 router.use(projectRoutes);
 router.use(contentRoutes);
 router.use(analyticsRoutes);
+router.use(hrAuthRoutes);
+router.use(hrRoutes);
+router.use(adminReportsRoutes);
 
 export default router;

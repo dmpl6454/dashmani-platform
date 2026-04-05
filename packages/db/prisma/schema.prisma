@@ -37,6 +37,9 @@ model User {
   uploadedFiles      ProjectFile[] @relation("FileUploader")
   approvalRequests   Approval[]    @relation("ApprovalRequester")
   contentPosts       ContentPost[] @relation("ContentCreator")
+  otpTokens          OtpToken[]
+  dailyReports       DailyReport[]
+  notifications      Notification[]
 
   @@map("users")
 }
@@ -247,6 +250,8 @@ model SocialAccount {
   tasks           Task[]
   projectAccounts    ProjectAccount[]
   contentPosts    ContentPost[]
+  reportLinks          ReportLink[]
+  growthSnapshots      AccountGrowthSnapshot[]
 
   @@unique([handle, platformId])
   @@map("social_accounts")
@@ -510,4 +515,114 @@ enum ContentStatus {
   PUBLISHED
   FAILED
   REJECTED
+}
+
+// ============ HR PORTAL ============
+
+model OtpToken {
+  id        String     @id @default(uuid())
+  userId    String     @map("user_id")
+  otp       String
+  channel   OtpChannel
+  target    String
+  expiresAt DateTime   @map("expires_at")
+  verified  Boolean    @default(false)
+  createdAt DateTime   @default(now()) @map("created_at")
+
+  user      User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, otp])
+  @@index([expiresAt])
+  @@map("otp_tokens")
+}
+
+enum OtpChannel {
+  EMAIL
+  SMS
+  WHATSAPP
+}
+
+model DailyReport {
+  id            String   @id @default(uuid())
+  employeeId    String   @map("employee_id")
+  date          DateTime @db.Date
+  notes         String?  @db.Text
+  latitude      Float?
+  longitude     Float?
+  submittedFrom String?  @map("submitted_from")
+  submittedAt   DateTime @default(now()) @map("submitted_at")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  employee      User         @relation(fields: [employeeId], references: [id])
+  links         ReportLink[]
+
+  @@unique([employeeId, date])
+  @@index([employeeId, date])
+  @@map("daily_reports")
+}
+
+model ReportLink {
+  id           String   @id @default(uuid())
+  reportId     String   @map("report_id")
+  accountId    String   @map("account_id")
+  url          String
+  platform     String
+  description  String?
+  mediaUrl     String?  @map("media_url")
+  likes        Int?
+  comments     Int?
+  shares       Int?
+  views        Int?
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  report       DailyReport   @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  account      SocialAccount @relation(fields: [accountId], references: [id])
+
+  @@index([reportId])
+  @@index([accountId])
+  @@map("report_links")
+}
+
+model AccountGrowthSnapshot {
+  id             String   @id @default(uuid())
+  accountId      String   @map("account_id")
+  date           DateTime @db.Date
+  followerCount  Int      @map("follower_count")
+  followingCount Int?     @map("following_count")
+  postCount      Int?     @map("post_count")
+  engagementRate Float?   @map("engagement_rate")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  account        SocialAccount @relation(fields: [accountId], references: [id])
+
+  @@unique([accountId, date])
+  @@index([accountId, date])
+  @@map("account_growth_snapshots")
+}
+
+model Notification {
+  id        String           @id @default(uuid())
+  userId    String           @map("user_id")
+  type      NotificationType
+  title     String
+  message   String
+  read      Boolean          @default(false)
+  metadata  Json?
+  createdAt DateTime         @default(now()) @map("created_at")
+
+  user      User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, read])
+  @@index([createdAt])
+  @@map("notifications")
+}
+
+enum NotificationType {
+  REPORT_REMINDER
+  REPORT_SUBMITTED
+  REPORT_MISSED
+  GROWTH_MILESTONE
+  ACCOUNT_ASSIGNED
+  GENERAL
 }

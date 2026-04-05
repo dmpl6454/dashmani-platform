@@ -2,7 +2,7 @@ export interface JwtPayload {
   userId: string;
   email: string;
   roles: string[];
-  type: "employee" | "client";
+  type: "employee" | "client" | "hr";
 }
 
 export interface LoginRequest {

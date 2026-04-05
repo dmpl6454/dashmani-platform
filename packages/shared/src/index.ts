@@ -14,6 +14,10 @@ export * from "./types/analytics";
 export * from "./constants/permissions";
 export * from "./constants/roles";
 
+// HR Types & Validators
+export * from "./types/hr";
+export * from "./validators/hr";
+
 // Validators
 export * as authValidators from "./validators/auth";
 export * as employeeValidators from "./validators/employee";

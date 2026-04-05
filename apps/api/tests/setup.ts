@@ -7,8 +7,8 @@ beforeEach(async () => {
   await prisma.$executeRawUnsafe(`
     TRUNCATE TABLE content_posts, approvals, project_files, project_tasks, project_accounts, projects,
       client_refresh_tokens, clients,
-      task_comments, tasks, account_assignments, social_accounts, platforms,
-      audit_logs, attendance, leave_requests, refresh_tokens,
+      task_comments, tasks, report_links, daily_reports, account_growth_snapshots, account_assignments, social_accounts, platforms,
+      otp_tokens, audit_logs, attendance, leave_requests, refresh_tokens,
       user_roles, role_permissions, users, roles, org_units, settings
     CASCADE
   `);

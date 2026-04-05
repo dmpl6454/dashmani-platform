@@ -1,0 +1,252 @@
+import { prisma } from "@dashmani/db";
+import { AppError } from "../middleware/error-handler";
+import type { ReportLinkInput, DailyReportResponse, AdminReportFilters } from "@dashmani/shared";
+
+function formatReport(report: any): DailyReportResponse {
+  return {
+    id: report.id,
+    employeeId: report.employeeId,
+    employeeName: report.employee?.name ?? "",
+    date: report.date instanceof Date
+      ? report.date.toISOString().split("T")[0]
+      : String(report.date),
+    notes: report.notes,
+    latitude: report.latitude,
+    longitude: report.longitude,
+    submittedFrom: report.submittedFrom,
+    submittedAt: report.submittedAt instanceof Date
+      ? report.submittedAt.toISOString()
+      : String(report.submittedAt),
+    links: (report.links ?? []).map((link: any) => ({
+      id: link.id,
+      accountId: link.accountId,
+      accountName: link.account?.displayName ?? "",
+      platform: link.account?.platform?.name ?? link.platform ?? "",
+      platformSlug: link.account?.platform?.slug ?? "",
+      url: link.url,
+      description: link.description,
+      mediaUrl: link.mediaUrl,
+      likes: link.likes,
+      comments: link.comments,
+      shares: link.shares,
+      views: link.views,
+    })),
+  };
+}
+
+const reportInclude = {
+  employee: { select: { id: true, name: true, email: true } },
+  links: {
+    include: {
+      account: {
+        include: { platform: true },
+      },
+    },
+  },
+};
+
+export async function getAssignedAccounts(employeeId: string) {
+  const assignments = await prisma.accountAssignment.findMany({
+    where: { employeeId, unassignedAt: null },
+    include: {
+      account: {
+        include: { platform: true },
+      },
+    },
+  });
+
+  return assignments.map((a) => ({
+    id: a.account.id,
+    handle: a.account.handle,
+    displayName: a.account.displayName,
+    platform: a.account.platform.name,
+    platformSlug: a.account.platform.slug,
+    profileUrl: a.account.profileUrl,
+    followerCount: a.account.followerCount,
+    clientName: a.account.clientName,
+  }));
+}
+
+export async function submitDailyReport(
+  employeeId: string,
+  date: string,
+  links: ReportLinkInput[],
+  notes?: string,
+  latitude?: number,
+  longitude?: number,
+) {
+  if (!links || links.length === 0) {
+    throw new AppError(400, "VALIDATION_ERROR", "At least one link is required");
+  }
+
+  const reportDate = new Date(date);
+
+  // Upsert: find existing report for this employee+date or create new
+  const existing = await prisma.dailyReport.findUnique({
+    where: { employeeId_date: { employeeId, date: reportDate } },
+  });
+
+  let report;
+
+  if (existing) {
+    // Delete old links and recreate
+    await prisma.reportLink.deleteMany({ where: { reportId: existing.id } });
+
+    report = await prisma.dailyReport.update({
+      where: { id: existing.id },
+      data: {
+        notes,
+        latitude,
+        longitude,
+        submittedAt: new Date(),
+        links: {
+          create: links.map((l) => ({
+            accountId: l.accountId,
+            url: l.url,
+            platform: l.platform,
+            description: l.description,
+            mediaUrl: l.mediaUrl,
+            likes: l.likes,
+            comments: l.comments,
+            shares: l.shares,
+            views: l.views,
+          })),
+        },
+      },
+      include: reportInclude,
+    });
+  } else {
+    report = await prisma.dailyReport.create({
+      data: {
+        employeeId,
+        date: reportDate,
+        notes,
+        latitude,
+        longitude,
+        links: {
+          create: links.map((l) => ({
+            accountId: l.accountId,
+            url: l.url,
+            platform: l.platform,
+            description: l.description,
+            mediaUrl: l.mediaUrl,
+            likes: l.likes,
+            comments: l.comments,
+            shares: l.shares,
+            views: l.views,
+          })),
+        },
+      },
+      include: reportInclude,
+    });
+  }
+
+  return formatReport(report);
+}
+
+export async function getMyReports(employeeId: string, startDate?: string, endDate?: string) {
+  const where: any = { employeeId };
+
+  if (startDate || endDate) {
+    where.date = {};
+    if (startDate) where.date.gte = new Date(startDate);
+    if (endDate) where.date.lte = new Date(endDate);
+  }
+
+  const reports = await prisma.dailyReport.findMany({
+    where,
+    include: reportInclude,
+    orderBy: { date: "desc" },
+    take: 30,
+  });
+
+  return reports.map(formatReport);
+}
+
+export async function getTodayReport(employeeId: string) {
+  // Use YYYY-MM-DD string to construct a UTC midnight date — same approach as submitDailyReport
+  const todayStr = new Date().toISOString().split("T")[0];
+  const today = new Date(todayStr);
+
+  const report = await prisma.dailyReport.findUnique({
+    where: { employeeId_date: { employeeId, date: today } },
+    include: reportInclude,
+  });
+
+  return report ? formatReport(report) : null;
+}
+
+export async function getReportById(reportId: string) {
+  const report = await prisma.dailyReport.findUnique({
+    where: { id: reportId },
+    include: reportInclude,
+  });
+
+  if (!report) {
+    throw new AppError(404, "NOT_FOUND", "Report not found");
+  }
+
+  return formatReport(report);
+}
+
+export async function getAllReports(filters: AdminReportFilters) {
+  const where: any = {};
+
+  if (filters.employeeId) where.employeeId = filters.employeeId;
+
+  if (filters.startDate || filters.endDate) {
+    where.date = {};
+    if (filters.startDate) where.date.gte = new Date(filters.startDate);
+    if (filters.endDate) where.date.lte = new Date(filters.endDate);
+  }
+
+  if (filters.accountId) {
+    where.links = { some: { accountId: filters.accountId } };
+  }
+
+  const reports = await prisma.dailyReport.findMany({
+    where,
+    include: reportInclude,
+    orderBy: { date: "desc" },
+  });
+
+  return reports.map(formatReport);
+}
+
+export async function getReportSummary(startDate?: string, endDate?: string) {
+  const where: any = {};
+
+  if (startDate || endDate) {
+    where.date = {};
+    if (startDate) where.date.gte = new Date(startDate);
+    if (endDate) where.date.lte = new Date(endDate);
+  }
+
+  const reports = await prisma.dailyReport.findMany({
+    where,
+    include: {
+      employee: { select: { id: true, name: true } },
+      links: true,
+    },
+  });
+
+  // Group by employee
+  const summaryMap = new Map<string, { employeeId: string; employeeName: string; reportCount: number; totalLinks: number }>();
+
+  for (const report of reports) {
+    const key = report.employeeId;
+    if (!summaryMap.has(key)) {
+      summaryMap.set(key, {
+        employeeId: report.employeeId,
+        employeeName: report.employee.name,
+        reportCount: 0,
+        totalLinks: 0,
+      });
+    }
+    const entry = summaryMap.get(key)!;
+    entry.reportCount += 1;
+    entry.totalLinks += report.links.length;
+  }
+
+  return Array.from(summaryMap.values());
+}

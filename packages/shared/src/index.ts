@@ -8,6 +8,7 @@ export * from "./types/task";
 export * from "./types/account";
 export * from "./types/client";
 export * from "./types/content";
+export * from "./types/analytics";
 
 // Constants
 export * from "./constants/permissions";

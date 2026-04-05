@@ -3,7 +3,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { useContentCalendar } from "@/lib/hooks/use-content";
 import { useProjects } from "@/lib/hooks/use-projects";
-import { Button, Badge, Card, CardContent } from "@dashmani/ui";
+import { Button, Card, CardContent } from "@dashmani/ui";
 
 const STATUS_LABELS: Record<string, string> = {
   DRAFT: "Draft",

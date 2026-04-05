@@ -5,6 +5,10 @@ import roleRoutes from "./role.routes";
 import employeeRoutes from "./employee.routes";
 import teamRoutes from "./team.routes";
 import attendanceRoutes from "./attendance.routes";
+import taskRoutes from "./task.routes";
+import accountRoutes from "./account.routes";
+import clientRoutes from "./client.routes";
+import projectRoutes from "./project.routes";
 
 const router = Router();
 
@@ -14,5 +18,9 @@ router.use(roleRoutes);
 router.use(employeeRoutes);
 router.use(teamRoutes);
 router.use(attendanceRoutes);
+router.use(taskRoutes);
+router.use(accountRoutes);
+router.use(clientRoutes);
+router.use(projectRoutes);
 
 export default router;

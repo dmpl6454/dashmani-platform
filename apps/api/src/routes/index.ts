@@ -14,6 +14,7 @@ import analyticsRoutes from "./analytics.routes";
 import hrAuthRoutes from "./hr-auth.routes";
 import hrRoutes from "./hr.routes";
 import adminReportsRoutes from "./admin-reports.routes";
+import notificationRoutes from "./notification.routes";
 
 const router = Router();
 
@@ -32,5 +33,6 @@ router.use(analyticsRoutes);
 router.use(hrAuthRoutes);
 router.use(hrRoutes);
 router.use(adminReportsRoutes);
+router.use(notificationRoutes);
 
 export default router;

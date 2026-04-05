@@ -9,6 +9,7 @@ import {
   getReportSummary,
 } from "../services/daily-report.service";
 import { recordGrowthSnapshot } from "../services/account-growth.service";
+import { getLeaderboard } from "../services/leaderboard.service";
 import { success } from "../utils/response";
 
 const router = Router();
@@ -40,6 +41,22 @@ router.get(
       const { startDate, endDate } = req.query as { startDate?: string; endDate?: string };
       const summary = await getReportSummary(startDate, endDate);
       return success(res, summary);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// GET /admin/reports/leaderboard — MUST be before /:reportId
+router.get(
+  "/admin/reports/leaderboard",
+  authenticate,
+  requirePermission("reports", "view"),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { startDate, endDate } = req.query as { startDate?: string; endDate?: string };
+      const leaderboard = await getLeaderboard(startDate, endDate);
+      return success(res, leaderboard);
     } catch (err) {
       next(err);
     }

@@ -2,14 +2,17 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@dashmani/ui";
-import { LayoutDashboard, FileText, TrendingUp, Clock, LogOut } from "lucide-react";
+import { LayoutDashboard, FileText, TrendingUp, Clock, LogOut, Trophy, Users } from "lucide-react";
 import { useHrAuth } from "@/lib/auth";
+import { NotificationBell } from "./notification-bell";
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/report", label: "Submit Report", icon: FileText },
   { href: "/growth", label: "Account Growth", icon: TrendingUp },
   { href: "/history", label: "Report History", icon: Clock },
+  { href: "/leaderboard", label: "Leaderboard", icon: Trophy },
+  { href: "/team", label: "My Team", icon: Users },
 ];
 
 export function HrSidebar() {
@@ -18,9 +21,12 @@ export function HrSidebar() {
 
   return (
     <aside className="w-64 bg-blue-900 min-h-screen text-white flex flex-col">
-      <div className="p-6 border-b border-white/10">
-        <h1 className="text-xl font-bold">Digital Sukoon</h1>
-        <p className="text-xs text-white/60 mt-1">Employee Portal</p>
+      <div className="p-6 border-b border-white/10 flex items-start justify-between">
+        <div>
+          <h1 className="text-xl font-bold">Digital Sukoon</h1>
+          <p className="text-xs text-white/60 mt-1">Employee Portal</p>
+        </div>
+        <NotificationBell />
       </div>
       <nav className="flex-1 p-4 space-y-1">
         {navItems.map((item) => {

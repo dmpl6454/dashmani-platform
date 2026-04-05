@@ -12,6 +12,7 @@ import {
   getGrowthForEmployee,
   getAccountGrowth,
 } from "../services/account-growth.service";
+import { getLeaderboard, getTeamDashboard } from "../services/leaderboard.service";
 import { success } from "../utils/response";
 
 const router = Router();
@@ -87,6 +88,27 @@ router.get("/hr/growth/:accountId", authenticateHr, async (req: Request, res: Re
     const days = req.query.days ? parseInt(req.query.days as string) : 30;
     const growth = await getAccountGrowth(req.params.accountId, days);
     return success(res, growth);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /hr/leaderboard — performance leaderboard
+router.get("/hr/leaderboard", authenticateHr, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { startDate, endDate } = req.query as { startDate?: string; endDate?: string };
+    const leaderboard = await getLeaderboard(startDate, endDate);
+    return success(res, leaderboard);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /hr/team — team dashboard for current user
+router.get("/hr/team", authenticateHr, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const dashboard = await getTeamDashboard(req.user!.userId);
+    return success(res, dashboard);
   } catch (err) {
     next(err);
   }

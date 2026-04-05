@@ -37,9 +37,15 @@ export default function ReportsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-bold">Reports</h2>
+          <h2 className="text-2xl font-bold">Employee Daily Reports</h2>
           <p className="text-muted-foreground">Employee daily link submission reports</p>
         </div>
+        <Link
+          href="/reports/leaderboard"
+          className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-yellow-50 border border-yellow-300 text-yellow-800 text-sm font-medium hover:bg-yellow-100 transition-colors"
+        >
+          🏆 Leaderboard
+        </Link>
       </div>
 
       {/* Stat Cards */}

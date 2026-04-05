@@ -19,7 +19,7 @@ export default function ClientDashboard() {
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <StatCard title="Active Projects" value={dashboard?.projects?.length || 0} icon={<FolderOpen className="h-5 w-5" />} />
-        <StatCard title="Pending Approvals" value={dashboard?.pendingApprovals?.length || 0} icon={<CheckSquare className="h-5 w-5" />} trend={dashboard?.pendingApprovals?.length > 0 ? "Needs attention" : ""} />
+        <StatCard title="Pending Approvals" value={dashboard?.pendingApprovals?.length || 0} icon={<CheckSquare className="h-5 w-5" />} />
         <StatCard title="Status" value={dashboard?.client?.status || "--"} icon={<Clock className="h-5 w-5" />} />
       </div>
 

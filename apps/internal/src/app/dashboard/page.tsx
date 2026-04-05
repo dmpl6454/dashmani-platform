@@ -1,10 +1,22 @@
 "use client";
 import { useAuth } from "@/lib/auth";
+import { useOverviewStats } from "@/lib/hooks/use-analytics";
 import { StatCard } from "@dashmani/ui";
-import { Users, Building2, Clock, CheckCircle } from "lucide-react";
+import {
+  Users,
+  Building2,
+  Clock,
+  CheckCircle,
+  FolderOpen,
+  FileCheck,
+  Send,
+  CalendarClock,
+} from "lucide-react";
 
 export default function DashboardPage() {
   const { user } = useAuth();
+  const { data, isLoading } = useOverviewStats();
+  const stats = (data as any)?.data;
 
   return (
     <div className="space-y-6">
@@ -16,25 +28,46 @@ export default function DashboardPage() {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard
           title="Total Employees"
-          value="--"
+          value={isLoading ? "--" : stats?.totalEmployees ?? 0}
           icon={<Users className="h-8 w-8" />}
-          change={{ value: 0, label: "this month" }}
         />
         <StatCard
           title="Active Teams"
-          value="--"
+          value={isLoading ? "--" : stats?.activeTeams ?? 0}
           icon={<Building2 className="h-8 w-8" />}
         />
         <StatCard
           title="Present Today"
-          value="--"
+          value={isLoading ? "--" : stats?.presentToday ?? 0}
           icon={<Clock className="h-8 w-8" />}
         />
         <StatCard
           title="Tasks Completed"
-          value="--"
+          value={isLoading ? "--" : stats?.tasksCompletedThisMonth ?? 0}
           icon={<CheckCircle className="h-8 w-8" />}
-          change={{ value: 0, label: "this week" }}
+        />
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <StatCard
+          title="Active Projects"
+          value={isLoading ? "--" : stats?.activeProjects ?? 0}
+          icon={<FolderOpen className="h-8 w-8" />}
+        />
+        <StatCard
+          title="Pending Approvals"
+          value={isLoading ? "--" : stats?.pendingApprovals ?? 0}
+          icon={<FileCheck className="h-8 w-8" />}
+        />
+        <StatCard
+          title="Content Published"
+          value={isLoading ? "--" : stats?.contentPublishedThisMonth ?? 0}
+          icon={<Send className="h-8 w-8" />}
+        />
+        <StatCard
+          title="Content Scheduled"
+          value={isLoading ? "--" : stats?.contentScheduledUpcoming ?? 0}
+          icon={<CalendarClock className="h-8 w-8" />}
         />
       </div>
     </div>

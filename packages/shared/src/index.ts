@@ -7,6 +7,7 @@ export * from "./types/attendance";
 export * from "./types/task";
 export * from "./types/account";
 export * from "./types/client";
+export * from "./types/content";
 
 // Constants
 export * from "./constants/permissions";
@@ -19,3 +20,4 @@ export * as attendanceValidators from "./validators/attendance";
 export * as taskValidators from "./validators/task";
 export * as accountValidators from "./validators/account";
 export * as clientValidators from "./validators/client";
+export * as contentValidators from "./validators/content";

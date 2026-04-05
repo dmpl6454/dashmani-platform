@@ -4,10 +4,11 @@ import { authenticateClient } from "../middleware/client-auth";
 import { requirePermission } from "../middleware/rbac";
 import { validate } from "../middleware/validate";
 import { auditLog } from "../middleware/audit-log";
-import { clientValidators } from "@dashmani/shared";
+import { clientValidators, contentValidators } from "@dashmani/shared";
 import * as clientAuthService from "../services/client-auth.service";
 import * as projectService from "../services/project.service";
 import * as approvalService from "../services/approval.service";
+import * as contentService from "../services/content.service";
 import { success } from "../utils/response";
 import { parsePagination } from "../utils/pagination";
 
@@ -89,6 +90,59 @@ router.put("/client/approvals/:id/respond", authenticateClient, validate(clientV
   try {
     const approval = await approvalService.respondToApproval(req.params.id, req.body.status, req.body.clientNote);
     return success(res, approval);
+  } catch (err) { next(err); }
+});
+
+// ===== CLIENT CONTENT ENDPOINTS =====
+
+router.get("/client/content", authenticateClient, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const clientId = (req as any).client.id;
+    const pagination = parsePagination(req.query as any);
+    const result = await contentService.listContentPosts({
+      ...pagination,
+      clientId,
+      projectId: req.query.projectId as string,
+      status: req.query.status as string,
+      search: req.query.search as string,
+    });
+    return success(res, result.items, result.meta);
+  } catch (err) { next(err); }
+});
+
+router.get("/client/content/calendar", authenticateClient, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const clientId = (req as any).client.id;
+    const year = Number(req.query.year);
+    const month = Number(req.query.month);
+    if (!year || !month || month < 1 || month > 12) {
+      return success(res, null, undefined, 400);
+    }
+    const data = await contentService.getCalendarData({
+      year,
+      month,
+      clientId,
+      projectId: req.query.projectId as string,
+    });
+    return success(res, data);
+  } catch (err) { next(err); }
+});
+
+router.get("/client/content/:id", authenticateClient, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const post = await contentService.getContentPostById(req.params.id);
+    if ((post.project as any).client.id !== (req as any).client.id) {
+      return success(res, null, undefined, 403);
+    }
+    return success(res, post);
+  } catch (err) { next(err); }
+});
+
+router.put("/client/content/:id/respond", authenticateClient, validate(contentValidators.respondContentApprovalSchema), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const clientId = (req as any).client.id;
+    const post = await contentService.respondToContentApproval(req.params.id, clientId, req.body.status);
+    return success(res, post);
   } catch (err) { next(err); }
 });
 

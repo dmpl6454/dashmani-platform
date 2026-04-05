@@ -9,6 +9,7 @@ import taskRoutes from "./task.routes";
 import accountRoutes from "./account.routes";
 import clientRoutes from "./client.routes";
 import projectRoutes from "./project.routes";
+import contentRoutes from "./content.routes";
 
 const router = Router();
 
@@ -22,5 +23,6 @@ router.use(taskRoutes);
 router.use(accountRoutes);
 router.use(clientRoutes);
 router.use(projectRoutes);
+router.use(contentRoutes);
 
 export default router;

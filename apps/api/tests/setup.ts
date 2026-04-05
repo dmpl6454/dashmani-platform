@@ -5,7 +5,7 @@ beforeEach(async () => {
   // Use raw SQL to truncate all tables, avoiding FK ordering issues
   // from async audit log writes that may land between transaction steps
   await prisma.$executeRawUnsafe(`
-    TRUNCATE TABLE approvals, project_files, project_tasks, project_accounts, projects,
+    TRUNCATE TABLE content_posts, approvals, project_files, project_tasks, project_accounts, projects,
       client_refresh_tokens, clients,
       task_comments, tasks, account_assignments, social_accounts, platforms,
       audit_logs, attendance, leave_requests, refresh_tokens,

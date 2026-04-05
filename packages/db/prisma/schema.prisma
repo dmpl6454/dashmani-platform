@@ -36,6 +36,7 @@ model User {
   taskComments       TaskComment[]       @relation("CommentAuthor")
   uploadedFiles      ProjectFile[] @relation("FileUploader")
   approvalRequests   Approval[]    @relation("ApprovalRequester")
+  contentPosts       ContentPost[] @relation("ContentCreator")
 
   @@map("users")
 }
@@ -245,6 +246,7 @@ model SocialAccount {
   assignments     AccountAssignment[]
   tasks           Task[]
   projectAccounts    ProjectAccount[]
+  contentPosts    ContentPost[]
 
   @@unique([handle, platformId])
   @@map("social_accounts")
@@ -391,6 +393,7 @@ model Project {
   tasks       ProjectTask[]
   files       ProjectFile[]
   approvals   Approval[]
+  contentPosts ContentPost[]
 
   @@index([clientId])
   @@map("projects")
@@ -470,4 +473,41 @@ enum ApprovalStatus {
   APPROVED
   REJECTED
   REVISION_REQUESTED
+}
+
+// ============ CONTENT ============
+
+model ContentPost {
+  id            String        @id @default(uuid())
+  title         String
+  caption       String?       @db.Text
+  mediaUrls     String[]      @map("media_urls")
+  projectId     String        @map("project_id")
+  accountId     String?       @map("account_id")
+  status        ContentStatus @default(DRAFT)
+  scheduledAt   DateTime?     @map("scheduled_at")
+  publishedAt   DateTime?     @map("published_at")
+  createdById   String        @map("created_by_id")
+  createdAt     DateTime      @default(now()) @map("created_at")
+  updatedAt     DateTime      @updatedAt @map("updated_at")
+
+  project       Project       @relation(fields: [projectId], references: [id])
+  account       SocialAccount? @relation(fields: [accountId], references: [id])
+  createdBy     User          @relation("ContentCreator", fields: [createdById], references: [id])
+
+  @@index([projectId])
+  @@index([accountId])
+  @@index([status])
+  @@index([scheduledAt])
+  @@map("content_posts")
+}
+
+enum ContentStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  SCHEDULED
+  PUBLISHED
+  FAILED
+  REJECTED
 }

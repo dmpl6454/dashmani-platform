@@ -28,7 +28,7 @@ export function EmployeeForm({ employee, roles }: EmployeeFormProps) {
     setError("");
     try {
       if (isEdit) {
-        const { password, email, ...updateData } = form;
+        const updateData = { name: form.name, phone: form.phone, roleIds: form.roleIds };
         await apiFetch(`/employees/${employee.id}`, {
           method: "PUT",
           body: JSON.stringify(updateData),

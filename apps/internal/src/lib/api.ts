@@ -46,6 +46,6 @@ async function tryRefresh(): Promise<boolean> {
       localStorage.setItem("refreshToken", data.data.refreshToken);
       return true;
     }
-  } catch {}
+  } catch { /* refresh failed */ }
   return false;
 }

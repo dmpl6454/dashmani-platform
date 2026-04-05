@@ -29,6 +29,13 @@ model User {
   leaveApprovals LeaveRequest[] @relation("LeaveApprover")
   auditLogs      AuditLog[]
   refreshTokens  RefreshToken[]
+  assignedAccounts   AccountAssignment[] @relation("AccountAssignee")
+  accountAssignments AccountAssignment[] @relation("AccountAssigner")
+  assignedTasks      Task[]              @relation("TaskAssignee")
+  createdTasks       Task[]              @relation("TaskCreator")
+  taskComments       TaskComment[]       @relation("CommentAuthor")
+  uploadedFiles      ProjectFile[] @relation("FileUploader")
+  approvalRequests   Approval[]    @relation("ApprovalRequester")
 
   @@map("users")
 }
@@ -206,4 +213,261 @@ model AuditLog {
   @@index([userId, createdAt])
   @@index([resource, resourceId])
   @@map("audit_logs")
+}
+
+// ============ PLATFORMS & SOCIAL ACCOUNTS ============
+
+model Platform {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  slug      String   @unique
+  iconUrl   String?  @map("icon_url")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  accounts  SocialAccount[]
+
+  @@map("platforms")
+}
+
+model SocialAccount {
+  id              String        @id @default(uuid())
+  handle          String
+  displayName     String        @map("display_name")
+  platformId      String        @map("platform_id")
+  clientName      String?       @map("client_name")
+  status          AccountStatus @default(ACTIVE)
+  profileUrl      String?       @map("profile_url")
+  followerCount   Int           @default(0) @map("follower_count")
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+
+  platform        Platform @relation(fields: [platformId], references: [id])
+  assignments     AccountAssignment[]
+  tasks           Task[]
+  projectAccounts    ProjectAccount[]
+
+  @@unique([handle, platformId])
+  @@map("social_accounts")
+}
+
+enum AccountStatus {
+  ACTIVE
+  PAUSED
+  ARCHIVED
+}
+
+model AccountAssignment {
+  id           String   @id @default(uuid())
+  accountId    String   @map("account_id")
+  employeeId   String   @map("employee_id")
+  assignedBy   String   @map("assigned_by")
+  assignedAt   DateTime @default(now()) @map("assigned_at")
+  unassignedAt DateTime? @map("unassigned_at")
+  reason       String?
+
+  account      SocialAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  employee     User          @relation("AccountAssignee", fields: [employeeId], references: [id])
+  assigner     User          @relation("AccountAssigner", fields: [assignedBy], references: [id])
+
+  @@index([accountId])
+  @@index([employeeId])
+  @@map("account_assignments")
+}
+
+// ============ TASKS ============
+
+model Task {
+  id            String       @id @default(uuid())
+  title         String
+  description   String?
+  status        TaskStatus   @default(TODO)
+  priority      TaskPriority @default(MEDIUM)
+  assigneeId    String?      @map("assignee_id")
+  createdById   String       @map("created_by_id")
+  accountId     String?      @map("account_id")
+  dueDate       DateTime?    @map("due_date")
+  completedAt   DateTime?    @map("completed_at")
+  dependsOnId   String?      @map("depends_on_id")
+  createdAt     DateTime     @default(now()) @map("created_at")
+  updatedAt     DateTime     @updatedAt @map("updated_at")
+
+  assignee      User?          @relation("TaskAssignee", fields: [assigneeId], references: [id])
+  createdBy     User           @relation("TaskCreator", fields: [createdById], references: [id])
+  account       SocialAccount? @relation(fields: [accountId], references: [id])
+  dependsOn     Task?          @relation("TaskDependency", fields: [dependsOnId], references: [id])
+  dependedOnBy  Task[]         @relation("TaskDependency")
+  comments      TaskComment[]
+  projectTasks       ProjectTask[]
+
+  @@index([assigneeId])
+  @@index([status])
+  @@index([accountId])
+  @@map("tasks")
+}
+
+enum TaskStatus {
+  TODO
+  IN_PROGRESS
+  IN_REVIEW
+  DONE
+  CANCELLED
+}
+
+enum TaskPriority {
+  CRITICAL
+  HIGH
+  MEDIUM
+  LOW
+}
+
+model TaskComment {
+  id        String   @id @default(uuid())
+  taskId    String   @map("task_id")
+  authorId  String   @map("author_id")
+  body      String
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  task      Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  author    User @relation("CommentAuthor", fields: [authorId], references: [id])
+
+  @@index([taskId])
+  @@map("task_comments")
+}
+
+// ============ CLIENTS ============
+
+model Client {
+  id             String       @id @default(uuid())
+  companyName    String       @map("company_name")
+  contactName    String       @map("contact_name")
+  email          String       @unique
+  passwordHash   String       @map("password_hash")
+  phone          String?
+  logoUrl        String?      @map("logo_url")
+  status         ClientStatus @default(ACTIVE)
+  createdAt      DateTime     @default(now()) @map("created_at")
+  updatedAt      DateTime     @updatedAt @map("updated_at")
+
+  projects       Project[]
+  refreshTokens  ClientRefreshToken[]
+
+  @@map("clients")
+}
+
+enum ClientStatus {
+  ACTIVE
+  INACTIVE
+  ONBOARDING
+}
+
+model ClientRefreshToken {
+  id        String   @id @default(uuid())
+  clientId  String   @map("client_id")
+  token     String   @unique
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  client    Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@map("client_refresh_tokens")
+}
+
+// ============ PROJECTS ============
+
+model Project {
+  id          String        @id @default(uuid())
+  name        String
+  description String?
+  clientId    String        @map("client_id")
+  status      ProjectStatus @default(ACTIVE)
+  startDate   DateTime?     @map("start_date") @db.Date
+  endDate     DateTime?     @map("end_date") @db.Date
+  createdAt   DateTime      @default(now()) @map("created_at")
+  updatedAt   DateTime      @updatedAt @map("updated_at")
+
+  client      Client     @relation(fields: [clientId], references: [id])
+  accounts    ProjectAccount[]
+  tasks       ProjectTask[]
+  files       ProjectFile[]
+  approvals   Approval[]
+
+  @@index([clientId])
+  @@map("projects")
+}
+
+enum ProjectStatus {
+  ACTIVE
+  PAUSED
+  COMPLETED
+  ARCHIVED
+}
+
+model ProjectAccount {
+  id        String @id @default(uuid())
+  projectId String @map("project_id")
+  accountId String @map("account_id")
+
+  project   Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  account   SocialAccount @relation(fields: [accountId], references: [id])
+
+  @@unique([projectId, accountId])
+  @@map("project_accounts")
+}
+
+model ProjectTask {
+  id        String @id @default(uuid())
+  projectId String @map("project_id")
+  taskId    String @map("task_id")
+
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  task      Task    @relation(fields: [taskId], references: [id])
+
+  @@unique([projectId, taskId])
+  @@map("project_tasks")
+}
+
+model ProjectFile {
+  id          String   @id @default(uuid())
+  projectId   String   @map("project_id")
+  name        String
+  url         String
+  size        Int      @default(0)
+  mimeType    String?  @map("mime_type")
+  uploadedById String  @map("uploaded_by_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  project     Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  uploadedBy  User    @relation("FileUploader", fields: [uploadedById], references: [id])
+
+  @@index([projectId])
+  @@map("project_files")
+}
+
+model Approval {
+  id          String         @id @default(uuid())
+  projectId   String         @map("project_id")
+  title       String
+  description String?
+  fileUrl     String?        @map("file_url")
+  status      ApprovalStatus @default(PENDING)
+  requestedById String       @map("requested_by_id")
+  respondedAt DateTime?      @map("responded_at")
+  clientNote  String?        @map("client_note")
+  createdAt   DateTime       @default(now()) @map("created_at")
+  updatedAt   DateTime       @updatedAt @map("updated_at")
+
+  project     Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  requestedBy User    @relation("ApprovalRequester", fields: [requestedById], references: [id])
+
+  @@index([projectId])
+  @@index([status])
+  @@map("approvals")
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  REVISION_REQUESTED
 }

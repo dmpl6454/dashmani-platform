@@ -127,6 +127,42 @@ async function main() {
   }
 
   console.log("Seed completed successfully");
+
+  // Seed platforms
+  const platforms = [
+    { name: "Instagram", slug: "instagram" },
+    { name: "Facebook", slug: "facebook" },
+    { name: "YouTube", slug: "youtube" },
+    { name: "Twitter/X", slug: "twitter" },
+    { name: "LinkedIn", slug: "linkedin" },
+    { name: "Snapchat", slug: "snapchat" },
+    { name: "Pinterest", slug: "pinterest" },
+    { name: "Telegram", slug: "telegram" },
+  ];
+
+  for (const p of platforms) {
+    await prisma.platform.upsert({
+      where: { slug: p.slug },
+      update: {},
+      create: p,
+    });
+  }
+  console.log("Seeded 8 platforms");
+
+  // Seed demo client
+  const clientPasswordHash = await hash("Client@123456", 12);
+  await prisma.client.upsert({
+    where: { email: "demo@clientcompany.com" },
+    update: {},
+    create: {
+      companyName: "Demo Client Co.",
+      contactName: "Rahul Sharma",
+      email: "demo@clientcompany.com",
+      passwordHash: clientPasswordHash,
+      status: "ACTIVE",
+    },
+  });
+  console.log("Seeded demo client");
 }
 
 main()

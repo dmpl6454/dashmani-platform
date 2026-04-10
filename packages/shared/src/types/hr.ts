@@ -9,6 +9,50 @@ export interface OtpVerifyPayload {
   otp: string;
 }
 
+// Self-Registration
+export interface RegisterEmployeeRequest {
+  name: string;
+  email: string;
+  phone?: string;
+  password: string;
+}
+
+// Password Login
+export interface PasswordLoginRequest {
+  identifier: string; // email or phone
+  password: string;
+}
+
+// Employee Profile
+export interface EmployeeProfileData {
+  designation?: string | null;
+  salary?: number | null;
+  bankAccountHolderName?: string | null;
+  bankAccountNumber?: string | null;
+  bankName?: string | null;
+  bankBranch?: string | null;
+  ifscCode?: string | null;
+  mailingAddress?: string | null;
+  aadhaarNumber?: string | null;
+  panNumber?: string | null;
+  familyContact1Name?: string | null;
+  familyContact1Phone?: string | null;
+  familyContact1Relation?: string | null;
+  familyContact2Name?: string | null;
+  familyContact2Phone?: string | null;
+  familyContact2Relation?: string | null;
+}
+
+export interface EmployeeProfileResponse extends EmployeeProfileData {
+  id: string;
+  userId: string;
+  name: string;
+  email: string;
+  phone?: string | null;
+  profileImageUrl?: string | null;
+  status: string;
+}
+
 // Report Link
 export interface ReportLinkInput {
   accountId: string;

@@ -1,0 +1,3 @@
+-- AlterEnum
+ALTER TYPE "LeaveType" ADD VALUE 'WFH';
+ALTER TYPE "LeaveType" ADD VALUE 'COMP_OFF';

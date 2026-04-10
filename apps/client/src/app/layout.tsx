@@ -1,11 +1,10 @@
 "use client";
 import { useState, useEffect } from "react";
 import { useRouter, usePathname } from "next/navigation";
-import "@dashmani/ui/src/globals.css";
+import "./globals.css";
 import { AuthContext } from "@/lib/auth";
 import { apiFetch } from "@/lib/api";
-import { ClientSidebar } from "@/components/client-sidebar";
-import { ClientHeader } from "@/components/client-header";
+import { TopNav } from "@/components/top-nav";
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -54,12 +53,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           {isLoginPage ? (
             children
           ) : (
-            <div className="flex min-h-screen">
-              <ClientSidebar />
-              <div className="flex-1 flex flex-col">
-                <ClientHeader />
-                <main className="flex-1 p-6 bg-gray-50">{children}</main>
-              </div>
+            <div className="min-h-screen" style={{ background: "linear-gradient(165deg, #FDF6E3 0%, #F7ECD5 40%, #EFE2C4 100%)" }}>
+              <TopNav />
+              <main className="max-w-[1440px] mx-auto px-4 md:px-8 py-6">{children}</main>
             </div>
           )}
         </AuthContext.Provider>

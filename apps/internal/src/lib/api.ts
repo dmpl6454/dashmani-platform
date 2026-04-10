@@ -1,4 +1,6 @@
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/v1";
+/** Base URL without /v1 — used for static file URLs like /uploads/ */
+export const API_BASE = API_URL.replace(/\/v1\/?$/, "");
 
 export async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
   const token = typeof window !== "undefined" ? localStorage.getItem("accessToken") : null;
@@ -25,6 +27,35 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}): Prom
       window.location.href = "/login";
     }
     throw new Error(data.error?.message || "API error");
+  }
+
+  return data;
+}
+
+export async function apiUpload<T>(path: string, formData: FormData): Promise<T> {
+  const token = typeof window !== "undefined" ? localStorage.getItem("accessToken") : null;
+
+  const res = await fetch(`${API_URL}${path}`, {
+    method: "POST",
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: formData,
+  });
+
+  const data = await res.json();
+
+  if (!data.success) {
+    if (res.status === 401 && typeof window !== "undefined") {
+      const refreshed = await tryRefresh();
+      if (refreshed) {
+        return apiUpload(path, formData);
+      }
+      localStorage.removeItem("accessToken");
+      localStorage.removeItem("refreshToken");
+      window.location.href = "/login";
+    }
+    throw new Error(data.error?.message || "Upload failed");
   }
 
   return data;

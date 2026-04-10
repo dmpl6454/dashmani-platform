@@ -3,7 +3,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { useContentCalendar } from "@/lib/hooks/use-content";
 import { useProjects } from "@/lib/hooks/use-projects";
-import { Button, Card, CardContent } from "@dashmani/ui";
+import { Button } from "@dashmani/ui";
 
 const STATUS_LABELS: Record<string, string> = {
   DRAFT: "Draft",
@@ -16,13 +16,13 @@ const STATUS_LABELS: Record<string, string> = {
 };
 
 const STATUS_DOT_COLOR: Record<string, string> = {
-  DRAFT: "bg-gray-400",
-  PENDING_APPROVAL: "bg-yellow-400",
-  APPROVED: "bg-green-400",
-  SCHEDULED: "bg-blue-400",
-  PUBLISHED: "bg-emerald-500",
-  FAILED: "bg-red-500",
-  REJECTED: "bg-red-400",
+  DRAFT: "bg-[#B0B0B0]",
+  PENDING_APPROVAL: "bg-[#F5D547]",
+  APPROVED: "bg-[#6BCB77]",
+  SCHEDULED: "bg-[#3498DB]",
+  PUBLISHED: "bg-[#6BCB77]",
+  FAILED: "bg-[#E74C3C]",
+  REJECTED: "bg-[#E74C3C]",
 };
 
 const MONTH_NAMES = [
@@ -42,38 +42,22 @@ export default function ContentCalendarPage() {
   const projects = (projectsData as any)?.data || [];
 
   function prevMonth() {
-    if (month === 1) {
-      setMonth(12);
-      setYear(year - 1);
-    } else {
-      setMonth(month - 1);
-    }
+    if (month === 1) { setMonth(12); setYear(year - 1); } else { setMonth(month - 1); }
   }
 
   function nextMonth() {
-    if (month === 12) {
-      setMonth(1);
-      setYear(year + 1);
-    } else {
-      setMonth(month + 1);
-    }
+    if (month === 12) { setMonth(1); setYear(year + 1); } else { setMonth(month + 1); }
   }
 
-  // Build calendar grid
   const firstDay = new Date(year, month - 1, 1).getDay();
   const daysInMonth = new Date(year, month, 0).getDate();
   const weeks: (number | null)[][] = [];
   let currentWeek: (number | null)[] = [];
 
-  for (let i = 0; i < firstDay; i++) {
-    currentWeek.push(null);
-  }
+  for (let i = 0; i < firstDay; i++) currentWeek.push(null);
   for (let day = 1; day <= daysInMonth; day++) {
     currentWeek.push(day);
-    if (currentWeek.length === 7) {
-      weeks.push(currentWeek);
-      currentWeek = [];
-    }
+    if (currentWeek.length === 7) { weeks.push(currentWeek); currentWeek = []; }
   }
   if (currentWeek.length > 0) {
     while (currentWeek.length < 7) currentWeek.push(null);
@@ -87,33 +71,33 @@ export default function ContentCalendarPage() {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6 crx-animate-fade">
       <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-bold">Content Calendar</h2>
+        <h1 className="font-serif text-4xl font-light text-[#1A1A1A]">Content Calendar</h1>
         <div className="flex items-center gap-2">
           <Link href="/content">
-            <Button variant="outline">List View</Button>
+            <Button variant="outline" className="border border-[#E8E0D0] rounded-full text-[#1A1A1A] hover:bg-[rgba(255,248,225,0.5)]">List View</Button>
           </Link>
           <Link href="/content/new">
-            <Button>+ New Content</Button>
+            <Button className="bg-[#1A1A1A] text-white rounded-full hover:bg-[#2B2B2B]">+ New Content</Button>
           </Link>
         </div>
       </div>
 
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-4 crx-animate-slide crx-delay-1">
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={prevMonth}>
+          <Button variant="outline" size="sm" onClick={prevMonth} className="border border-[#E8E0D0] rounded-full text-[#1A1A1A] hover:bg-[rgba(255,248,225,0.5)]">
             &larr;
           </Button>
-          <span className="text-lg font-semibold min-w-[180px] text-center">
+          <span className="text-lg font-semibold font-serif min-w-[180px] text-center text-[#1A1A1A]">
             {MONTH_NAMES[month - 1]} {year}
           </span>
-          <Button variant="outline" size="sm" onClick={nextMonth}>
+          <Button variant="outline" size="sm" onClick={nextMonth} className="border border-[#E8E0D0] rounded-full text-[#1A1A1A] hover:bg-[rgba(255,248,225,0.5)]">
             &rarr;
           </Button>
         </div>
         <select
-          className="h-10 rounded-md border border-border bg-white px-3 py-2 text-sm"
+          className="h-10 rounded-lg border border-[#E8E0D0] bg-white px-3 py-2 text-sm focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547] outline-none"
           value={projectId}
           onChange={(e) => setProjectId(e.target.value)}
         >
@@ -125,75 +109,63 @@ export default function ContentCalendarPage() {
       </div>
 
       {isLoading ? (
-        <div className="text-center text-muted-foreground py-8">Loading calendar...</div>
+        <div className="text-center text-[#7A7A7A] py-8">Loading calendar...</div>
       ) : (
-        <Card>
-          <CardContent className="p-0">
-            <div className="grid grid-cols-7 border-b">
-              {DAY_NAMES.map((d) => (
-                <div key={d} className="p-2 text-center text-sm font-medium text-muted-foreground border-r last:border-r-0">
-                  {d}
-                </div>
-              ))}
-            </div>
-            {weeks.map((week, wi) => (
-              <div key={wi} className="grid grid-cols-7 border-b last:border-b-0">
-                {week.map((day, di) => {
-                  const posts = day ? getPostsForDay(day) : [];
-                  const isToday =
-                    day === today.getDate() &&
-                    month === today.getMonth() + 1 &&
-                    year === today.getFullYear();
-                  return (
-                    <div
-                      key={di}
-                      className={`min-h-[100px] p-1.5 border-r last:border-r-0 ${
-                        day ? "bg-white" : "bg-gray-50"
-                      }`}
-                    >
-                      {day && (
-                        <>
-                          <div
-                            className={`text-xs font-medium mb-1 ${
-                              isToday
-                                ? "bg-brand-blue text-white w-6 h-6 rounded-full flex items-center justify-center"
-                                : "text-muted-foreground"
-                            }`}
-                          >
-                            {day}
-                          </div>
-                          <div className="space-y-0.5">
-                            {posts.slice(0, 3).map((post: any) => (
-                              <Link
-                                key={post.id}
-                                href={`/content/${post.id}`}
-                                className="block"
-                              >
-                                <div className="flex items-center gap-1 px-1 py-0.5 rounded text-xs hover:bg-gray-100 truncate">
-                                  <span
-                                    className={`w-2 h-2 rounded-full flex-shrink-0 ${
-                                      STATUS_DOT_COLOR[post.status] || "bg-gray-400"
-                                    }`}
-                                  />
-                                  <span className="truncate">{post.title}</span>
-                                </div>
-                              </Link>
-                            ))}
-                            {posts.length > 3 && (
-                              <div className="text-xs text-muted-foreground px-1">
-                                +{posts.length - 3} more
-                              </div>
-                            )}
-                          </div>
-                        </>
-                      )}
-                    </div>
-                  );
-                })}
+        <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0] overflow-hidden crx-animate-slide crx-delay-2">
+          <div className="grid grid-cols-7 border-b border-[#F0EAD8]">
+            {DAY_NAMES.map((d) => (
+              <div key={d} className="p-2 text-center text-[#7A7A7A] text-xs font-medium border-r border-[#F0EAD8] last:border-r-0">
+                {d}
               </div>
             ))}
-          </CardContent>
-        </Card>
+          </div>
+          {weeks.map((week, wi) => (
+            <div key={wi} className="grid grid-cols-7 border-b border-[#F0EAD8] last:border-b-0">
+              {week.map((day, di) => {
+                const posts = day ? getPostsForDay(day) : [];
+                const isToday =
+                  day === today.getDate() &&
+                  month === today.getMonth() + 1 &&
+                  year === today.getFullYear();
+                return (
+                  <div
+                    key={di}
+                    className={`min-h-[100px] p-1.5 border-r border-[#F0EAD8] last:border-r-0 ${
+                      day ? "bg-white" : "bg-[rgba(255,248,225,0.3)]"
+                    }`}
+                  >
+                    {day && (
+                      <>
+                        <div
+                          className={`text-xs font-medium mb-1 ${
+                            isToday
+                              ? "bg-[#F5D547] text-[#1A1A1A] w-6 h-6 rounded-full flex items-center justify-center font-bold"
+                              : "text-[#7A7A7A]"
+                          }`}
+                        >
+                          {day}
+                        </div>
+                        <div className="space-y-0.5">
+                          {posts.slice(0, 3).map((post: any) => (
+                            <Link key={post.id} href={`/content/${post.id}`} className="block">
+                              <div className="flex items-center gap-1 px-1 py-0.5 rounded text-xs hover:bg-[rgba(255,248,225,0.5)] truncate transition-colors">
+                                <span className={`w-2 h-2 rounded-full flex-shrink-0 ${STATUS_DOT_COLOR[post.status] || "bg-[#B0B0B0]"}`} />
+                                <span className="truncate text-[#1A1A1A]">{post.title}</span>
+                              </div>
+                            </Link>
+                          ))}
+                          {posts.length > 3 && (
+                            <div className="text-xs text-[#B0B0B0] px-1">+{posts.length - 3} more</div>
+                          )}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+        </div>
       )}
 
       {/* Legend */}
@@ -201,7 +173,7 @@ export default function ContentCalendarPage() {
         {Object.entries(STATUS_DOT_COLOR).map(([status, color]) => (
           <div key={status} className="flex items-center gap-1.5">
             <span className={`w-2.5 h-2.5 rounded-full ${color}`} />
-            <span className="text-muted-foreground">{STATUS_LABELS[status]}</span>
+            <span className="text-[#7A7A7A]">{STATUS_LABELS[status]}</span>
           </div>
         ))}
       </div>

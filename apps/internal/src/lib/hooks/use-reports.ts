@@ -18,6 +18,14 @@ export function useAdminReports(filters?: {
   });
 }
 
+export function useEmployeePerformance(employeeId?: string) {
+  return useSWR(
+    employeeId ? `/admin/employees/${employeeId}/performance` : null,
+    (url) => apiFetch(url),
+    { refreshInterval: 60000 },
+  );
+}
+
 export function useReportSummary(startDate?: string, endDate?: string) {
   const params = new URLSearchParams();
   if (startDate) params.set("startDate", startDate);

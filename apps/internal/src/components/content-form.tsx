@@ -62,9 +62,9 @@ export function ContentForm({ content }: ContentFormProps) {
   }
 
   return (
-    <Card>
+    <Card className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-[#E8E0D0]">
       <CardHeader>
-        <CardTitle>{isEdit ? "Edit Content Post" : "Create New Content Post"}</CardTitle>
+        <CardTitle className="font-serif text-[#1A1A1A]">{isEdit ? "Edit Content Post" : "Create New Content Post"}</CardTitle>
       </CardHeader>
       <CardContent>
         <form onSubmit={handleSubmit} className="space-y-4 max-w-lg">
@@ -74,20 +74,21 @@ export function ContentForm({ content }: ContentFormProps) {
             value={form.title}
             onChange={(e) => setForm({ ...form, title: e.target.value })}
             required
+            className="border border-[#E8E0D0] rounded-lg focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547]"
           />
           <div className="space-y-1">
-            <label className="text-sm font-medium">Caption</label>
+            <label className="text-sm font-medium text-[#1A1A1A]">Caption</label>
             <textarea
-              className="flex w-full rounded-md border border-border bg-white px-3 py-2 text-sm min-h-[100px]"
+              className="flex w-full rounded-lg border border-[#E8E0D0] bg-white px-3 py-2 text-sm min-h-[100px] focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547] outline-none"
               value={form.caption}
               onChange={(e) => setForm({ ...form, caption: e.target.value })}
               placeholder="Write the post caption/body..."
             />
           </div>
           <div className="space-y-1">
-            <label className="text-sm font-medium">Project *</label>
+            <label className="text-sm font-medium text-[#1A1A1A]">Project *</label>
             <select
-              className="flex h-10 w-full rounded-md border border-border bg-white px-3 py-2 text-sm"
+              className="flex h-10 w-full rounded-lg border border-[#E8E0D0] bg-white px-3 py-2 text-sm focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547] outline-none"
               value={form.projectId}
               onChange={(e) => setForm({ ...form, projectId: e.target.value })}
               required
@@ -101,9 +102,9 @@ export function ContentForm({ content }: ContentFormProps) {
             </select>
           </div>
           <div className="space-y-1">
-            <label className="text-sm font-medium">Social Account</label>
+            <label className="text-sm font-medium text-[#1A1A1A]">Social Account</label>
             <select
-              className="flex h-10 w-full rounded-md border border-border bg-white px-3 py-2 text-sm"
+              className="flex h-10 w-full rounded-lg border border-[#E8E0D0] bg-white px-3 py-2 text-sm focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547] outline-none"
               value={form.accountId}
               onChange={(e) => setForm({ ...form, accountId: e.target.value })}
             >
@@ -120,21 +121,22 @@ export function ContentForm({ content }: ContentFormProps) {
             type="datetime-local"
             value={form.scheduledAt}
             onChange={(e) => setForm({ ...form, scheduledAt: e.target.value })}
+            className="border border-[#E8E0D0] rounded-lg focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547]"
           />
           <div className="space-y-1">
-            <label className="text-sm font-medium">Media URLs (one per line)</label>
+            <label className="text-sm font-medium text-[#1A1A1A]">Media URLs (one per line)</label>
             <textarea
-              className="flex w-full rounded-md border border-border bg-white px-3 py-2 text-sm min-h-[80px]"
+              className="flex w-full rounded-lg border border-[#E8E0D0] bg-white px-3 py-2 text-sm min-h-[80px] focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547] outline-none"
               value={form.mediaUrls}
               onChange={(e) => setForm({ ...form, mediaUrls: e.target.value })}
               placeholder={"https://example.com/image1.jpg\nhttps://example.com/image2.jpg"}
             />
           </div>
           <div className="flex gap-3">
-            <Button type="submit" disabled={loading}>
+            <Button type="submit" disabled={loading} className="bg-[#1A1A1A] text-white rounded-full hover:bg-[#2B2B2B]">
               {loading ? "Saving..." : isEdit ? "Update Content" : "Create Content"}
             </Button>
-            <Button type="button" variant="outline" onClick={() => router.back()}>
+            <Button type="button" variant="outline" onClick={() => router.back()} className="border border-[#E8E0D0] rounded-full text-[#1A1A1A] hover:bg-[#FEFCF7]">
               Cancel
             </Button>
           </div>

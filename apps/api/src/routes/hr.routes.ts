@@ -1,7 +1,7 @@
 import { Router, Request, Response, NextFunction } from "express";
 import { authenticateHr } from "../middleware/hr-auth";
 import { validate } from "../middleware/validate";
-import { submitDailyReportSchema } from "@dashmani/shared";
+import { submitDailyReportSchema, updateProfileSchema } from "@dashmani/shared";
 import {
   getAssignedAccounts,
   submitDailyReport,
@@ -13,9 +13,39 @@ import {
   getAccountGrowth,
 } from "../services/account-growth.service";
 import { getLeaderboard, getTeamDashboard } from "../services/leaderboard.service";
+import { getProfile, updateProfile } from "../services/employee-profile.service";
 import { success } from "../utils/response";
 
 const router = Router();
+
+// ===== Profile =====
+
+// GET /hr/profile — get own profile
+router.get("/hr/profile", authenticateHr, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const profile = await getProfile(req.user!.userId);
+    return success(res, profile);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// PUT /hr/profile — update own profile (bank details, ID proofs, family contacts)
+router.put(
+  "/hr/profile",
+  authenticateHr,
+  validate(updateProfileSchema),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const profile = await updateProfile(req.user!.userId, req.body);
+      return success(res, profile);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// ===== Accounts =====
 
 // GET /hr/accounts — assigned accounts for authenticated HR user
 router.get("/hr/accounts", authenticateHr, async (req: Request, res: Response, next: NextFunction) => {
@@ -26,6 +56,8 @@ router.get("/hr/accounts", authenticateHr, async (req: Request, res: Response, n
     next(err);
   }
 });
+
+// ===== Reports =====
 
 // GET /hr/reports/today
 router.get("/hr/reports/today", authenticateHr, async (req: Request, res: Response, next: NextFunction) => {
@@ -71,6 +103,8 @@ router.post(
   },
 );
 
+// ===== Growth =====
+
 // GET /hr/growth — all assigned accounts growth
 router.get("/hr/growth", authenticateHr, async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -92,6 +126,8 @@ router.get("/hr/growth/:accountId", authenticateHr, async (req: Request, res: Re
     next(err);
   }
 });
+
+// ===== Leaderboard & Team =====
 
 // GET /hr/leaderboard — performance leaderboard
 router.get("/hr/leaderboard", authenticateHr, async (req: Request, res: Response, next: NextFunction) => {

@@ -2,7 +2,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useClients } from "@/lib/hooks/use-clients";
-import { Button, Input, Badge, Card, CardContent } from "@dashmani/ui";
+import { Button, Input } from "@dashmani/ui";
 import { Plus, Search, Building2 } from "lucide-react";
 
 export default function ClientsPage() {
@@ -10,37 +10,45 @@ export default function ClientsPage() {
   const { data, isLoading } = useClients({ search });
   const clients = (data as any)?.data || [];
 
+  const statusBadge: Record<string, string> = {
+    ACTIVE: "bg-[rgba(107,203,119,0.12)] text-[#6BCB77]",
+    INACTIVE: "bg-[rgba(0,0,0,0.06)] text-[#7A7A7A]",
+    PAUSED: "bg-[#FFF3C4] text-[#1A1A1A]",
+  };
+
   return (
-    <div className="space-y-4">
+    <div className="space-y-6 crx-animate-fade">
       <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-bold">Clients</h2>
-        <Link href="/clients/new"><Button><Plus className="h-4 w-4 mr-2" /> New Client</Button></Link>
+        <h1 className="font-serif text-4xl font-light text-[#1A1A1A]">Clients</h1>
+        <Link href="/clients/new"><Button className="bg-[#1A1A1A] text-white rounded-full hover:bg-[#2B2B2B]"><Plus className="h-4 w-4 mr-2" /> New Client</Button></Link>
       </div>
-      <div className="relative max-w-sm">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-        <Input placeholder="Search clients..." className="pl-10" value={search} onChange={(e) => setSearch(e.target.value)} />
+      <div className="relative max-w-sm crx-animate-slide crx-delay-1">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[#B0B0B0]" />
+        <Input placeholder="Search clients..." className="pl-10 border border-[#E8E0D0] rounded-lg focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547]" value={search} onChange={(e) => setSearch(e.target.value)} />
       </div>
       {isLoading ? (
-        <p className="text-muted-foreground">Loading...</p>
+        <p className="text-[#7A7A7A]">Loading...</p>
       ) : (
         <div className="grid gap-3">
-          {clients.map((c: any) => (
+          {clients.map((c: any, i: number) => (
             <Link key={c.id} href={`/clients/${c.id}`}>
-              <Card className="hover:shadow-md transition-shadow cursor-pointer">
-                <CardContent className="p-4 flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <Building2 className="h-5 w-5 text-brand-blue" />
-                    <div>
-                      <p className="font-medium">{c.companyName}</p>
-                      <p className="text-xs text-muted-foreground">{c.contactName} · {c.email}</p>
-                    </div>
+              <div className={`bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0] p-4 flex items-center justify-between transition-all hover:shadow-[0_4px_24px_rgba(0,0,0,0.07)] cursor-pointer crx-animate-slide crx-delay-${Math.min(i + 2, 6)}`}>
+                <div className="flex items-center gap-3">
+                  <div className="h-10 w-10 rounded-xl bg-[#FFF3C4] flex items-center justify-center">
+                    <Building2 className="h-5 w-5 text-[#1A1A1A]" />
                   </div>
-                  <div className="flex items-center gap-3">
-                    <span className="text-xs text-muted-foreground">{c._count?.projects || 0} projects</span>
-                    <Badge variant={c.status === "ACTIVE" ? "default" : "secondary"}>{c.status}</Badge>
+                  <div>
+                    <p className="font-medium text-[#1A1A1A]">{c.companyName}</p>
+                    <p className="text-xs text-[#7A7A7A]">{c.contactName} · {c.email}</p>
                   </div>
-                </CardContent>
-              </Card>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="text-xs text-[#B0B0B0]">{c._count?.projects || 0} projects</span>
+                  <span className={`rounded-full px-3 py-1 text-xs font-medium ${statusBadge[c.status] || "bg-[rgba(0,0,0,0.06)] text-[#7A7A7A]"}`}>
+                    {c.status}
+                  </span>
+                </div>
+              </div>
             </Link>
           ))}
         </div>

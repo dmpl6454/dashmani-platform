@@ -2,11 +2,12 @@ import { prisma } from "@dashmani/db";
 import { AppError } from "../middleware/error-handler";
 import type { ReportLinkInput, DailyReportResponse, AdminReportFilters } from "@dashmani/shared";
 
-function formatReport(report: any): DailyReportResponse {
+function formatReport(report: any) {
   return {
     id: report.id,
     employeeId: report.employeeId,
     employeeName: report.employee?.name ?? "",
+    employee: report.employee ? { id: report.employee.id, name: report.employee.name, email: report.employee.email } : null,
     date: report.date instanceof Date
       ? report.date.toISOString().split("T")[0]
       : String(report.date),
@@ -67,6 +68,8 @@ export async function getAssignedAccounts(employeeId: string) {
   }));
 }
 
+const MAX_LINKS_PER_DAY = 500;
+
 export async function submitDailyReport(
   employeeId: string,
   date: string,
@@ -79,7 +82,54 @@ export async function submitDailyReport(
     throw new AppError(400, "VALIDATION_ERROR", "At least one link is required");
   }
 
+  if (links.length > MAX_LINKS_PER_DAY) {
+    throw new AppError(400, "VALIDATION_ERROR", `Maximum ${MAX_LINKS_PER_DAY} links per day allowed`);
+  }
+
+  // Check for duplicate URLs within the submission
+  const urlSet = new Set<string>();
+  const duplicatesInSubmission: string[] = [];
+  for (const link of links) {
+    const normalizedUrl = link.url.trim().toLowerCase();
+    if (urlSet.has(normalizedUrl)) {
+      duplicatesInSubmission.push(link.url);
+    }
+    urlSet.add(normalizedUrl);
+  }
+
+  if (duplicatesInSubmission.length > 0) {
+    throw new AppError(
+      400,
+      "DUPLICATE_LINKS",
+      `Duplicate links found in submission: ${duplicatesInSubmission.slice(0, 5).join(", ")}${duplicatesInSubmission.length > 5 ? ` and ${duplicatesInSubmission.length - 5} more` : ""}`,
+    );
+  }
+
+  // Check for duplicate URLs across ALL this employee's previous reports (global duplicate detection)
+  const existingLinks = await prisma.reportLink.findMany({
+    where: {
+      url: { in: links.map((l) => l.url.trim()) },
+      report: { employeeId },
+    },
+    select: { url: true, report: { select: { date: true } } },
+  });
+
   const reportDate = new Date(date);
+
+  // Filter out links from today's own report (allow re-submission/update for today)
+  const trueDuplicates = existingLinks.filter((el) => {
+    const elDate = new Date(el.report.date);
+    return elDate.toISOString().split("T")[0] !== reportDate.toISOString().split("T")[0];
+  });
+
+  if (trueDuplicates.length > 0) {
+    const dupUrls = [...new Set(trueDuplicates.map((d) => d.url))];
+    throw new AppError(
+      400,
+      "DUPLICATE_LINKS",
+      `These links were already submitted previously: ${dupUrls.slice(0, 5).join(", ")}${dupUrls.length > 5 ? ` and ${dupUrls.length - 5} more` : ""}`,
+    );
+  }
 
   // Upsert: find existing report for this employee+date or create new
   const existing = await prisma.dailyReport.findUnique({
@@ -102,7 +152,7 @@ export async function submitDailyReport(
         links: {
           create: links.map((l) => ({
             accountId: l.accountId,
-            url: l.url,
+            url: l.url.trim(),
             platform: l.platform,
             description: l.description,
             mediaUrl: l.mediaUrl,
@@ -126,7 +176,7 @@ export async function submitDailyReport(
         links: {
           create: links.map((l) => ({
             accountId: l.accountId,
-            url: l.url,
+            url: l.url.trim(),
             platform: l.platform,
             description: l.description,
             mediaUrl: l.mediaUrl,
@@ -225,20 +275,24 @@ export async function getReportSummary(startDate?: string, endDate?: string) {
   const reports = await prisma.dailyReport.findMany({
     where,
     include: {
-      employee: { select: { id: true, name: true } },
+      employee: { select: { id: true, name: true, email: true } },
       links: true,
     },
   });
 
   // Group by employee
-  const summaryMap = new Map<string, { employeeId: string; employeeName: string; reportCount: number; totalLinks: number }>();
+  const summaryMap = new Map<string, { id: string; name: string; email: string; reportCount: number; totalLinks: number }>();
+
+  let totalReports = 0;
+  let totalLinks = 0;
 
   for (const report of reports) {
     const key = report.employeeId;
     if (!summaryMap.has(key)) {
       summaryMap.set(key, {
-        employeeId: report.employeeId,
-        employeeName: report.employee.name,
+        id: report.employeeId,
+        name: report.employee.name,
+        email: (report.employee as any).email ?? "",
         reportCount: 0,
         totalLinks: 0,
       });
@@ -246,7 +300,14 @@ export async function getReportSummary(startDate?: string, endDate?: string) {
     const entry = summaryMap.get(key)!;
     entry.reportCount += 1;
     entry.totalLinks += report.links.length;
+    totalReports += 1;
+    totalLinks += report.links.length;
   }
 
-  return Array.from(summaryMap.values());
+  return {
+    employeesReporting: summaryMap.size,
+    totalReports,
+    totalLinks,
+    employees: Array.from(summaryMap.values()),
+  };
 }

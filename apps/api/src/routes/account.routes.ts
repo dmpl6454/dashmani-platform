@@ -5,6 +5,7 @@ import { validate } from "../middleware/validate";
 import { auditLog } from "../middleware/audit-log";
 import { accountValidators } from "@dashmani/shared";
 import * as accountService from "../services/account.service";
+import { syncAllFollowerCounts, syncSingleAccountFollowers } from "../services/follower-sync.service";
 import { success } from "../utils/response";
 import { parsePagination } from "../utils/pagination";
 
@@ -62,6 +63,25 @@ router.delete("/accounts/:id/assign/:employeeId", authenticate, requirePermissio
   try {
     await accountService.unassignEmployee(req.params.id, req.params.employeeId);
     return success(res, { message: "Employee unassigned" });
+  } catch (err) { next(err); }
+});
+
+// POST /accounts/sync-followers — trigger sync for all Instagram + YouTube accounts
+router.post("/accounts/sync-followers", authenticate, requirePermission("accounts", "edit"), async (_req: Request, res: Response, next: NextFunction) => {
+  try {
+    // Run in background, return immediately
+    syncAllFollowerCounts()
+      .then((results) => console.log("[follower-sync] Completed:", results))
+      .catch((err) => console.error("[follower-sync] Error:", err));
+    return success(res, { message: "Follower sync started in background. Instagram & YouTube accounts will be updated." });
+  } catch (err) { next(err); }
+});
+
+// POST /accounts/:id/sync-followers — sync a single account
+router.post("/accounts/:id/sync-followers", authenticate, requirePermission("accounts", "view"), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const result = await syncSingleAccountFollowers(req.params.id);
+    return success(res, result);
   } catch (err) { next(err); }
 });
 

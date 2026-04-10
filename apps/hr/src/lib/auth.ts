@@ -11,12 +11,14 @@ export interface HrUser {
 interface HrAuthContextType {
   user: HrUser | null;
   isLoading: boolean;
+  login: (accessToken: string, refreshToken: string, user: HrUser) => void;
   logout: () => void;
 }
 
 export const HrAuthContext = createContext<HrAuthContextType>({
   user: null,
   isLoading: true,
+  login: () => {},
   logout: () => {},
 });
 

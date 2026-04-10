@@ -11,7 +11,7 @@ export default function NewEmployeePage() {
   }, []);
 
   return (
-    <div className="max-w-2xl">
+    <div className="max-w-2xl crx-animate-fade">
       <EmployeeForm roles={roles} />
     </div>
   );

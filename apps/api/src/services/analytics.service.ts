@@ -25,6 +25,7 @@ export async function getOverviewStats() {
     tasksCompletedThisMonth,
     activeProjects,
     pendingApprovals,
+    pendingEmployees,
     contentPublishedThisMonth,
     contentScheduledUpcoming,
   ] = await Promise.all([
@@ -52,6 +53,9 @@ export async function getOverviewStats() {
     prisma.approval.count({
       where: { status: "PENDING" },
     }),
+    prisma.user.count({
+      where: { status: "ONBOARDING", deletedAt: null },
+    }),
     safeContentCount({
       status: "PUBLISHED",
       publishedAtGte: monthStart,
@@ -69,6 +73,7 @@ export async function getOverviewStats() {
     tasksCompletedThisMonth,
     activeProjects,
     pendingApprovals,
+    pendingEmployees,
     contentPublishedThisMonth,
     contentScheduledUpcoming,
   };
@@ -95,7 +100,7 @@ async function safeContentCount(params: {
   }
 }
 
-async function safeContentGroupBy(field: string): Promise<{ [key: string]: string; _count: number }[]> {
+async function safeContentGroupBy(field: string): Promise<any[]> {
   try {
     const result = await (prisma as any).contentPost.groupBy({
       by: [field],

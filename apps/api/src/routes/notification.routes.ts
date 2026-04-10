@@ -14,6 +14,67 @@ import {
 
 const router = Router();
 
+// ===== Admin Notification Endpoints =====
+
+// GET /admin/notifications — get notifications for authenticated admin user
+router.get(
+  "/admin/notifications",
+  authenticate,
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const unreadOnly = req.query.unreadOnly === "true";
+      const notifications = await getUserNotifications(req.user!.userId, unreadOnly);
+      return success(res, notifications);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// GET /admin/notifications/count — unread count for admin
+router.get(
+  "/admin/notifications/count",
+  authenticate,
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const count = await getUnreadCount(req.user!.userId);
+      return success(res, { count });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// PUT /admin/notifications/read-all — mark all as read for admin
+router.put(
+  "/admin/notifications/read-all",
+  authenticate,
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const result = await markAllAsRead(req.user!.userId);
+      return success(res, result);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// PUT /admin/notifications/:id/read — mark single as read for admin
+router.put(
+  "/admin/notifications/:id/read",
+  authenticate,
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const result = await markAsRead(req.params.id, req.user!.userId);
+      return success(res, result);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// ===== HR Notification Endpoints =====
+
 // GET /hr/notifications — get notifications for authenticated HR user
 router.get(
   "/hr/notifications",

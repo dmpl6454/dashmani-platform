@@ -1,22 +1,40 @@
 "use client";
 import { useState } from "react";
 import Link from "next/link";
-import { Card, CardHeader, CardTitle, CardContent, Badge, StatCard, Input } from "@dashmani/ui";
-import { Users, FileText, Link2, Calendar } from "lucide-react";
+import { Input } from "@dashmani/ui";
+import { Users, FileText, Link2, Calendar, Filter, X, TrendingUp, Trophy } from "lucide-react";
 import { useAdminReports, useReportSummary } from "@/lib/hooks/use-reports";
 import { useEmployees } from "@/lib/hooks/use-employees";
+import { LinkPreviewCard } from "@/components/link-preview-card";
 
 const PLATFORM_COLORS: Record<string, string> = {
   instagram: "bg-pink-100 text-pink-700",
   twitter: "bg-sky-100 text-sky-700",
-  linkedin: "bg-blue-100 text-blue-700",
-  facebook: "bg-indigo-100 text-indigo-700",
+  linkedin: "bg-[#FFF3C4] text-[#1A1A1A]",
+  facebook: "bg-[#FFF3C4] text-[#1A1A1A]",
   youtube: "bg-red-100 text-red-700",
-  tiktok: "bg-slate-100 text-slate-700",
+  tiktok: "bg-[#F0E4C4] text-[#1A1A1A]",
 };
 
 function platformBadgeClass(platform: string) {
-  return PLATFORM_COLORS[platform?.toLowerCase()] ?? "bg-gray-100 text-gray-700";
+  return PLATFORM_COLORS[platform?.toLowerCase()] ?? "bg-[#FFF3C4] text-[#1A1A1A]";
+}
+
+const AVATAR_GRADIENTS = [
+  "linear-gradient(135deg, #667eea, #764ba2)",
+  "linear-gradient(135deg, #f093fb, #f5576c)",
+  "linear-gradient(135deg, #4facfe, #00f2fe)",
+  "linear-gradient(135deg, #43e97b, #38f9d7)",
+  "linear-gradient(135deg, #fa709a, #fee140)",
+  "linear-gradient(135deg, #a18cd1, #fbc2eb)",
+];
+
+function getAvatarGradient(name: string) {
+  let hash = 0;
+  for (let i = 0; i < (name || "").length; i++) {
+    hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  return AVATAR_GRADIENTS[Math.abs(hash) % AVATAR_GRADIENTS.length];
 }
 
 export default function ReportsPage() {
@@ -33,76 +51,107 @@ export default function ReportsPage() {
   const reports = (reportsData as any)?.data ?? [];
   const employees = (employeesData as any)?.data ?? [];
 
+  const hasFilters = startDate || endDate || employeeId;
+
+  const statCards = [
+    { title: "Employees Reporting", value: summary?.employeesReporting ?? 0, icon: Users, iconColor: "text-blue-600", bgColor: "bg-blue-50 shadow-[0_2px_8px_rgba(59,130,246,0.12)]", sub: "submitted reports" },
+    { title: "Total Reports", value: summary?.totalReports ?? 0, icon: FileText, iconColor: "text-purple-600", bgColor: "bg-purple-50 shadow-[0_2px_8px_rgba(147,51,234,0.12)]", sub: "in this period" },
+    { title: "Total Links", value: summary?.totalLinks ?? 0, icon: Link2, iconColor: "text-emerald-600", bgColor: "bg-emerald-50 shadow-[0_2px_8px_rgba(16,185,129,0.12)]", sub: "submitted" },
+    { title: "Today", value: today, icon: Calendar, iconColor: "text-amber-600", bgColor: "bg-amber-50 shadow-[0_2px_8px_rgba(245,158,11,0.12)]", sub: "current date" },
+  ];
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 crx-animate-fade">
+      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-bold">Employee Daily Reports</h2>
-          <p className="text-muted-foreground">Employee daily link submission reports</p>
+          <h1 className="font-serif text-4xl font-light text-[#1A1A1A]">Daily Reports</h1>
+          <p className="text-sm text-[#7A7A7A] mt-1">Employee daily link submission reports</p>
         </div>
         <Link
           href="/reports/leaderboard"
-          className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-yellow-50 border border-yellow-300 text-yellow-800 text-sm font-medium hover:bg-yellow-100 transition-colors"
+          className="inline-flex items-center gap-2 bg-[#F5D547] text-[#1A1A1A] rounded-full px-5 py-2.5 text-sm font-medium shadow-[0_4px_16px_rgba(245,213,71,0.35)] hover:shadow-[0_6px_24px_rgba(245,213,71,0.45)] hover:-translate-y-0.5 transition-all"
         >
-          🏆 Leaderboard
+          <Trophy className="h-4 w-4" />
+          Leaderboard
         </Link>
       </div>
 
       {/* Stat Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard
-          title="Employees Reporting"
-          value={summaryLoading ? "--" : summary?.employeesReporting ?? 0}
-          icon={<Users className="h-8 w-8" />}
-        />
-        <StatCard
-          title="Total Reports"
-          value={summaryLoading ? "--" : summary?.totalReports ?? 0}
-          icon={<FileText className="h-8 w-8" />}
-        />
-        <StatCard
-          title="Total Links Submitted"
-          value={summaryLoading ? "--" : summary?.totalLinks ?? 0}
-          icon={<Link2 className="h-8 w-8" />}
-        />
-        <StatCard
-          title="Today's Date"
-          value={today}
-          icon={<Calendar className="h-8 w-8" />}
-        />
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        {statCards.map((card, i) => {
+          const Icon = card.icon;
+          return (
+            <div
+              key={card.title}
+              className={`bg-white rounded-2xl p-5 border border-[#E8E0D0] transition-all duration-300 hover:shadow-[0_8px_32px_rgba(0,0,0,0.06)] hover:-translate-y-0.5 crx-animate-slide crx-delay-${i + 1}`}
+            >
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-xs text-[#7A7A7A] font-medium">{card.title}</span>
+                <div className={`h-10 w-10 rounded-xl ${card.bgColor} flex items-center justify-center`}>
+                  <Icon className={`h-5 w-5 ${card.iconColor}`} />
+                </div>
+              </div>
+              <p className={`font-light font-serif text-[#1A1A1A] leading-tight ${typeof card.value === "number" ? "text-[40px]" : "text-xl"}`}>
+                {summaryLoading ? "\u2014" : card.value}
+              </p>
+              <p className="text-xs text-[#B0B0B0] mt-1">{card.sub}</p>
+            </div>
+          );
+        })}
       </div>
 
       {/* Filters */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Filters</CardTitle>
-        </CardHeader>
-        <CardContent>
+      <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0] crx-animate-slide crx-delay-5">
+        <div className="px-6 py-4 border-b border-[#F0EAD8] flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="h-8 w-8 rounded-lg bg-[#FFF8E1] flex items-center justify-center">
+              <Filter className="h-4 w-4 text-[#B0B0B0]" />
+            </div>
+            <h3 className="font-serif text-[#1A1A1A] font-medium">Filters</h3>
+          </div>
+          {hasFilters && (
+            <button
+              onClick={() => { setStartDate(""); setEndDate(""); setEmployeeId(""); }}
+              className="flex items-center gap-1.5 text-xs font-medium text-[#7A7A7A] hover:text-[#E74C3C] bg-[#FFF8E1] hover:bg-red-50 px-3 py-1.5 rounded-full transition-all border border-[#F0EAD8] hover:border-red-200"
+            >
+              <X className="h-3 w-3" />
+              Clear all
+            </button>
+          )}
+        </div>
+        <div className="p-6">
           <div className="flex flex-wrap gap-4 items-end">
-            <div className="flex flex-col gap-1">
-              <label className="text-sm font-medium text-muted-foreground">Start Date</label>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-medium text-[#7A7A7A] flex items-center gap-1">
+                <Calendar className="h-3 w-3" /> Start Date
+              </label>
               <Input
                 type="date"
                 value={startDate}
                 onChange={(e) => setStartDate(e.target.value)}
-                className="w-44"
+                className="w-44 border border-[#E8E0D0] rounded-xl bg-[#FEFCF8] focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547] h-10"
               />
             </div>
-            <div className="flex flex-col gap-1">
-              <label className="text-sm font-medium text-muted-foreground">End Date</label>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-medium text-[#7A7A7A] flex items-center gap-1">
+                <Calendar className="h-3 w-3" /> End Date
+              </label>
               <Input
                 type="date"
                 value={endDate}
                 onChange={(e) => setEndDate(e.target.value)}
-                className="w-44"
+                className="w-44 border border-[#E8E0D0] rounded-xl bg-[#FEFCF8] focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547] h-10"
               />
             </div>
-            <div className="flex flex-col gap-1">
-              <label className="text-sm font-medium text-muted-foreground">Employee</label>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-medium text-[#7A7A7A] flex items-center gap-1">
+                <Users className="h-3 w-3" /> Employee
+              </label>
               <select
                 value={employeeId}
                 onChange={(e) => setEmployeeId(e.target.value)}
-                className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring w-52"
+                className="h-10 rounded-xl border border-[#E8E0D0] bg-[#FEFCF8] px-3 py-1 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547] w-52"
               >
                 <option value="">All Employees</option>
                 {employees.map((emp: any) => (
@@ -112,52 +161,76 @@ export default function ReportsPage() {
                 ))}
               </select>
             </div>
-            {(startDate || endDate || employeeId) && (
-              <button
-                onClick={() => { setStartDate(""); setEndDate(""); setEmployeeId(""); }}
-                className="text-sm text-blue-600 hover:underline self-end pb-1"
-              >
-                Clear filters
-              </button>
-            )}
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </div>
 
       {/* Summary Table */}
       {!employeeId && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Employee Summary</CardTitle>
-          </CardHeader>
-          <CardContent>
+        <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0] crx-animate-slide crx-delay-6">
+          <div className="px-6 py-4 border-b border-[#F0EAD8] flex items-center gap-2">
+            <div className="h-8 w-8 rounded-lg bg-[#FFF8E1] flex items-center justify-center">
+              <TrendingUp className="h-4 w-4 text-[#B0B0B0]" />
+            </div>
+            <h3 className="font-serif text-[#1A1A1A] font-medium">Employee Summary</h3>
+            {!summaryLoading && (summary?.employees ?? []).length > 0 && (
+              <span className="ml-auto text-xs text-[#B0B0B0]">
+                {(summary?.employees ?? []).length} employee{(summary?.employees ?? []).length !== 1 ? "s" : ""}
+              </span>
+            )}
+          </div>
+          <div className="p-6">
             {summaryLoading ? (
-              <p className="text-sm text-muted-foreground">Loading summary...</p>
+              <div className="flex items-center justify-center gap-2 py-4 text-sm text-[#7A7A7A]">
+                <svg className="animate-spin h-4 w-4 text-[#F5D547]" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                Loading summary...
+              </div>
             ) : (summary?.employees ?? []).length === 0 ? (
-              <p className="text-sm text-muted-foreground">No report data found.</p>
+              <div className="flex flex-col items-center gap-2 py-6 text-sm text-[#7A7A7A]">
+                <FileText className="h-8 w-8 text-[#E8E0D0]" />
+                <span>No report data found.</span>
+              </div>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
-                    <tr className="border-b text-muted-foreground">
-                      <th className="text-left py-2 pr-4 font-medium">Employee</th>
-                      <th className="text-left py-2 pr-4 font-medium">Email</th>
-                      <th className="text-right py-2 pr-4 font-medium">Reports</th>
-                      <th className="text-right py-2 pr-4 font-medium">Total Links</th>
-                      <th className="text-left py-2 font-medium"></th>
+                    <tr className="border-b border-[#F0EAD8]">
+                      <th className="text-left py-2 pr-4 text-[#7A7A7A] text-xs font-medium">Employee</th>
+                      <th className="text-left py-2 pr-4 text-[#7A7A7A] text-xs font-medium">Email</th>
+                      <th className="text-right py-2 pr-4 text-[#7A7A7A] text-xs font-medium">Reports</th>
+                      <th className="text-right py-2 pr-4 text-[#7A7A7A] text-xs font-medium">Total Links</th>
+                      <th className="text-left py-2 text-[#7A7A7A] text-xs font-medium"></th>
                     </tr>
                   </thead>
                   <tbody>
                     {(summary?.employees ?? []).map((emp: any) => (
-                      <tr key={emp.id} className="border-b last:border-0 hover:bg-muted/30">
-                        <td className="py-2 pr-4 font-medium">{emp.name}</td>
-                        <td className="py-2 pr-4 text-muted-foreground">{emp.email}</td>
-                        <td className="py-2 pr-4 text-right">{emp.reportCount}</td>
-                        <td className="py-2 pr-4 text-right">{emp.totalLinks}</td>
-                        <td className="py-2">
+                      <tr key={emp.id} className="border-b border-[#F0EAD8] last:border-0 hover:bg-[rgba(255,248,225,0.5)] transition-colors group">
+                        <td className="py-3 pr-4">
+                          <div className="flex items-center gap-3">
+                            <div
+                              className="h-8 w-8 rounded-full flex items-center justify-center text-white text-xs font-semibold shrink-0 ring-2 ring-white shadow-sm"
+                              style={{ background: getAvatarGradient(emp.name) }}
+                            >
+                              {emp.name?.[0]?.toUpperCase()}
+                            </div>
+                            <span className="font-medium text-[#1A1A1A] group-hover:text-[#F5D547] transition-colors">{emp.name}</span>
+                          </div>
+                        </td>
+                        <td className="py-3 pr-4 text-[#7A7A7A]">{emp.email}</td>
+                        <td className="py-3 pr-4 text-right">
+                          <span className="inline-flex items-center justify-center min-w-[28px] h-6 rounded-full bg-purple-50 text-purple-700 text-xs font-semibold px-2">
+                            {emp.reportCount}
+                          </span>
+                        </td>
+                        <td className="py-3 pr-4 text-right">
+                          <span className="inline-flex items-center justify-center min-w-[28px] h-6 rounded-full bg-emerald-50 text-emerald-700 text-xs font-semibold px-2">
+                            {emp.totalLinks}
+                          </span>
+                        </td>
+                        <td className="py-3">
                           <Link
                             href={`/reports/${emp.id}`}
-                            className="text-blue-600 hover:underline text-xs"
+                            className="text-[#1A1A1A] hover:text-[#F5D547] text-xs font-medium transition-colors"
                           >
                             View Details
                           </Link>
@@ -168,71 +241,76 @@ export default function ReportsPage() {
                 </table>
               </div>
             )}
-          </CardContent>
-        </Card>
+          </div>
+        </div>
       )}
 
       {/* Recent Reports */}
       <div>
-        <h3 className="text-lg font-semibold mb-4">
-          {employeeId ? "Filtered Reports" : "Recent Reports"}
-        </h3>
+        <div className="flex items-center gap-2 mb-4">
+          <div className="h-8 w-8 rounded-lg bg-[#FFF8E1] flex items-center justify-center">
+            <FileText className="h-4 w-4 text-[#B0B0B0]" />
+          </div>
+          <h3 className="text-lg font-semibold font-serif text-[#1A1A1A]">
+            {employeeId ? "Filtered Reports" : "Recent Reports"}
+          </h3>
+          {!reportsLoading && reports.length > 0 && (
+            <span className="text-xs text-[#B0B0B0] ml-auto">
+              {reports.length} report{reports.length !== 1 ? "s" : ""}
+            </span>
+          )}
+        </div>
         {reportsLoading ? (
-          <p className="text-sm text-muted-foreground">Loading reports...</p>
+          <div className="flex items-center justify-center gap-2 py-8 text-sm text-[#7A7A7A]">
+            <svg className="animate-spin h-4 w-4 text-[#F5D547]" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+            Loading reports...
+          </div>
         ) : reports.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No reports found.</p>
+          <div className="flex flex-col items-center gap-2 py-10 text-sm text-[#7A7A7A] bg-white rounded-2xl border border-[#E8E0D0]">
+            <FileText className="h-10 w-10 text-[#E8E0D0]" />
+            <span>No reports found.</span>
+          </div>
         ) : (
           <div className="space-y-4">
-            {reports.map((report: any) => (
-              <Card key={report.id}>
-                <CardContent className="pt-4">
-                  <div className="flex items-start justify-between mb-3">
-                    <div>
-                      <p className="font-semibold">{report.employee?.name ?? "Unknown"}</p>
-                      <p className="text-xs text-muted-foreground">{report.employee?.email}</p>
+            {reports.map((report: any, idx: number) => (
+              <div key={report.id} className={`bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0] transition-all duration-300 hover:shadow-[0_8px_32px_rgba(0,0,0,0.07)] crx-animate-slide crx-delay-${Math.min(idx + 1, 6)}`}>
+                <div className="p-5">
+                  {/* Employee info header */}
+                  <div className="flex items-start justify-between mb-4">
+                    <div className="flex items-center gap-3">
+                      <div
+                        className="h-10 w-10 rounded-full flex items-center justify-center text-white text-sm font-semibold shrink-0 ring-2 ring-white shadow-sm"
+                        style={{ background: getAvatarGradient(report.employee?.name || "") }}
+                      >
+                        {report.employee?.name?.[0]?.toUpperCase()}
+                      </div>
+                      <div>
+                        <p className="font-semibold text-[#1A1A1A]">{report.employee?.name ?? "Unknown"}</p>
+                        <p className="text-xs text-[#7A7A7A]">{report.employee?.email}</p>
+                      </div>
                     </div>
                     <div className="flex items-center gap-2">
-                      <Badge variant="secondary">
+                      <span className="rounded-full px-3 py-1 text-xs font-medium bg-[#FFF8E1] text-[#1A1A1A] border border-[#F0EAD8]">
                         {new Date(report.date ?? report.createdAt).toLocaleDateString()}
-                      </Badge>
-                      <span className="text-xs text-muted-foreground">
-                        {report.links?.length ?? 0} link{(report.links?.length ?? 0) !== 1 ? "s" : ""}
+                      </span>
+                      <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium bg-emerald-50 text-emerald-700">
+                        <Link2 className="h-3 w-3" />
+                        {report.links?.length ?? 0}
                       </span>
                     </div>
                   </div>
 
                   {report.notes && (
-                    <p className="text-sm text-muted-foreground mb-3 italic">{report.notes}</p>
+                    <p className="text-sm text-[#7A7A7A] mb-4 italic pl-[52px]">{report.notes}</p>
                   )}
 
-                  <div className="space-y-2">
-                    {(report.links ?? []).map((link: any, idx: number) => (
-                      <div
-                        key={link.id ?? idx}
-                        className="flex items-center gap-3 p-2 rounded-md bg-muted/40"
-                      >
-                        <span
-                          className={`text-xs font-medium px-2 py-0.5 rounded-full ${platformBadgeClass(link.platform)}`}
-                        >
-                          {link.platform ?? "—"}
-                        </span>
-                        <span className="text-sm font-medium shrink-0">{link.accountName ?? link.account?.name}</span>
-                        {link.description && (
-                          <span className="text-xs text-muted-foreground truncate flex-1">{link.description}</span>
-                        )}
-                        <a
-                          href={link.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-blue-600 hover:underline text-xs shrink-0 ml-auto"
-                        >
-                          Open ↗
-                        </a>
-                      </div>
+                  <div className="space-y-2 pl-[52px]">
+                    {(report.links ?? []).map((link: any, i: number) => (
+                      <LinkPreviewCard key={link.id ?? i} link={link} />
                     ))}
                   </div>
-                </CardContent>
-              </Card>
+                </div>
+              </div>
             ))}
           </div>
         )}

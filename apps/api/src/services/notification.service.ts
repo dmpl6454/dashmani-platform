@@ -2,14 +2,45 @@ import { prisma } from "@dashmani/db";
 
 export async function createNotification(
   userId: string,
-  type: "REPORT_REMINDER" | "REPORT_SUBMITTED" | "REPORT_MISSED" | "GROWTH_MILESTONE" | "ACCOUNT_ASSIGNED" | "GENERAL",
+  type: string,
   title: string,
   message: string,
   metadata?: any
 ) {
   return prisma.notification.create({
-    data: { userId, type, title, message, metadata },
+    data: { userId, type: type as any, title, message, metadata },
   });
+}
+
+// Create a notification for ALL admin users (Super Admin role)
+export async function notifyAdmins(
+  type: string,
+  title: string,
+  message: string,
+  metadata?: any
+) {
+  const admins = await prisma.user.findMany({
+    where: {
+      status: "ACTIVE",
+      deletedAt: null,
+      roles: { some: { role: { name: { in: ["Super Admin", "Admin", "super-admin", "admin"] } } } },
+    },
+    select: { id: true },
+  });
+
+  if (admins.length === 0) return [];
+
+  await prisma.notification.createMany({
+    data: admins.map((admin) => ({
+      userId: admin.id,
+      type: type as any,
+      title,
+      message,
+      metadata: metadata ?? undefined,
+    })),
+  });
+
+  return admins.map((a) => a.id);
 }
 
 export async function getUserNotifications(userId: string, unreadOnly: boolean = false) {

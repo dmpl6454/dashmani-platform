@@ -47,14 +47,17 @@ function ReportCard({ report }: { report: any }) {
   const submittedAt = report.submittedAt || report.createdAt;
 
   return (
-    <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+    <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-[#E8E0D0] overflow-hidden">
       <button
         onClick={() => setExpanded((v) => !v)}
-        className="w-full text-left p-5 flex items-center justify-between hover:bg-gray-50 transition-colors"
+        className="w-full text-left p-5 flex items-center justify-between hover:bg-[#FEFCF7] transition-colors"
       >
         <div className="flex items-center gap-4">
+          <div className="h-10 w-10 rounded-xl bg-[#FFF3C4] flex items-center justify-center text-sm font-bold text-[#1A1A1A]">
+            {links.length}
+          </div>
           <div>
-            <p className="font-semibold text-gray-900">
+            <p className="font-semibold text-[#1A1A1A]">
               {new Date(report.date).toLocaleDateString("en-IN", {
                 weekday: "short",
                 year: "numeric",
@@ -62,7 +65,7 @@ function ReportCard({ report }: { report: any }) {
                 day: "numeric",
               })}
             </p>
-            <p className="text-xs text-gray-400 mt-0.5">
+            <p className="text-xs text-[#B0B0B0] mt-0.5">
               {links.length} link{links.length !== 1 ? "s" : ""}
               {submittedAt && (
                 <> &middot; Submitted {new Date(submittedAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}</>
@@ -71,39 +74,32 @@ function ReportCard({ report }: { report: any }) {
           </div>
         </div>
         {expanded ? (
-          <ChevronUp className="h-4 w-4 text-gray-400" />
+          <ChevronUp className="h-4 w-4 text-[#B0B0B0]" />
         ) : (
-          <ChevronDown className="h-4 w-4 text-gray-400" />
+          <ChevronDown className="h-4 w-4 text-[#B0B0B0]" />
         )}
       </button>
 
       {expanded && (
-        <div className="border-t border-gray-100 p-5 space-y-3">
+        <div className="border-t border-[#E8E0D0] p-5 space-y-3">
           {links.length === 0 ? (
-            <p className="text-sm text-gray-400">No links in this report.</p>
+            <p className="text-sm text-[#B0B0B0]">No links in this report.</p>
           ) : (
             links.map((link: any, i: number) => (
-              <div key={i} className="flex items-start gap-3 p-3 bg-gray-50 rounded-lg">
+              <div key={i} className="flex items-start gap-3 p-3 bg-[#FEFCF7] rounded-xl border border-[#E8E0D0]">
                 <div className="flex-shrink-0 mt-0.5">
-                  <span
-                    className={`inline-block px-2 py-0.5 rounded text-xs text-white font-medium ${getPlatformColor(link.account?.platform)}`}
-                  >
+                  <span className={`inline-block px-2.5 py-0.5 rounded-full text-xs text-white font-medium ${getPlatformColor(link.account?.platform)}`}>
                     {link.account?.platform || "—"}
                   </span>
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-gray-800">{link.account?.handle || link.account?.name || "—"}</p>
-                  <a
-                    href={link.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-xs text-blue-500 hover:underline flex items-center gap-1 mt-0.5 truncate"
-                  >
+                  <p className="text-sm font-medium text-[#1A1A1A]">{link.account?.handle || link.account?.name || "—"}</p>
+                  <a href={link.url} target="_blank" rel="noopener noreferrer" className="text-xs text-[#7A7A7A] hover:text-[#1A1A1A] flex items-center gap-1 mt-0.5 truncate">
                     {link.url}
                     <ExternalLink className="h-3 w-3 flex-shrink-0" />
                   </a>
                   {link.engagement && Object.values(link.engagement).some(Boolean) && (
-                    <div className="flex gap-3 mt-1.5 text-xs text-gray-500">
+                    <div className="flex gap-3 mt-1.5 text-xs text-[#7A7A7A]">
                       {link.engagement.likes != null && <span>{link.engagement.likes} likes</span>}
                       {link.engagement.comments != null && <span>{link.engagement.comments} comments</span>}
                       {link.engagement.shares != null && <span>{link.engagement.shares} shares</span>}
@@ -116,9 +112,9 @@ function ReportCard({ report }: { report: any }) {
           )}
 
           {report.notes && (
-            <div className="mt-3 p-3 bg-yellow-50 border border-yellow-100 rounded-lg">
-              <p className="text-xs font-medium text-gray-600">Notes</p>
-              <p className="text-sm text-gray-700 mt-1">{report.notes}</p>
+            <div className="mt-3 p-3 bg-[#FFF3C4]/50 border border-[#FAE89E] rounded-xl">
+              <p className="text-xs font-medium text-[#7A7A7A]">Notes</p>
+              <p className="text-sm text-[#1A1A1A] mt-1">{report.notes}</p>
             </div>
           )}
         </div>
@@ -131,25 +127,24 @@ export default function HistoryPage() {
   const [range, setRange] = useState<RangeKey>("7d");
   const { startDate, endDate } = getDateRange(range);
   const { data, isLoading } = useMyReports(startDate, endDate);
-
   const reports = data?.data || [];
 
   return (
     <div className="max-w-3xl mx-auto space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Report History</h1>
-          <p className="text-gray-500 mt-1">View your past daily reports</p>
+          <h1 className="text-4xl font-light text-[#1A1A1A] font-serif">Report History</h1>
+          <p className="text-[#7A7A7A] mt-1">View your past daily reports</p>
         </div>
         <div className="flex gap-2">
           {RANGE_OPTIONS.map((opt) => (
             <button
               key={opt.key}
               onClick={() => setRange(opt.key)}
-              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+              className={`px-4 py-2 rounded-full text-sm font-medium transition-all ${
                 range === opt.key
-                  ? "bg-blue-600 text-white"
-                  : "bg-white border border-gray-300 text-gray-600 hover:border-blue-400"
+                  ? "bg-[#1A1A1A] text-white shadow-md"
+                  : "bg-white border border-[#E8E0D0] text-[#7A7A7A] hover:border-[#F5D547]"
               }`}
             >
               {opt.label}
@@ -160,11 +155,11 @@ export default function HistoryPage() {
 
       {isLoading ? (
         <div className="flex items-center justify-center h-48">
-          <p className="text-gray-400">Loading reports...</p>
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#F5D547]" />
         </div>
       ) : reports.length === 0 ? (
-        <div className="bg-white rounded-xl border border-gray-100 p-12 text-center">
-          <p className="text-gray-400">No reports found for this period.</p>
+        <div className="bg-white rounded-2xl border border-[#E8E0D0] p-12 text-center shadow-[0_2px_16px_rgba(0,0,0,0.06)]">
+          <p className="text-[#B0B0B0]">No reports found for this period.</p>
         </div>
       ) : (
         <div className="space-y-3">

@@ -1,0 +1,448 @@
+"use client";
+
+import { useState } from "react";
+import { apiFetch } from "@/lib/api";
+import useSWR from "swr";
+import {
+  Sparkles, Briefcase, FileText, ScrollText, Receipt, MessageSquare,
+  Loader2, Copy, Check, ExternalLink,
+} from "lucide-react";
+
+const inputClass = "w-full border border-[#E8E0D0] bg-white rounded-lg px-4 py-2.5 text-sm text-[#1A1A1A] placeholder:text-[#B0B0B0] focus:outline-none focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547] transition-colors";
+
+type Tab = "vacancy" | "offer" | "appointment" | "contract" | "salary" | "assist";
+
+const tabs: { id: Tab; label: string; icon: any; desc: string }[] = [
+  { id: "vacancy", label: "Job Vacancy", icon: Briefcase, desc: "AI-generate job descriptions" },
+  { id: "offer", label: "Offer Letter", icon: FileText, desc: "Generate offer letters" },
+  { id: "appointment", label: "Appointment Letter", icon: ScrollText, desc: "Generate appointment letters" },
+  { id: "contract", label: "Employment Contract", icon: ScrollText, desc: "Generate contracts" },
+  { id: "salary", label: "Salary Slip", icon: Receipt, desc: "View & print salary slips" },
+  { id: "assist", label: "AI Chat", icon: MessageSquare, desc: "Ask anything HR-related" },
+];
+
+export default function AIAssistantPage() {
+  const [activeTab, setActiveTab] = useState<Tab>("vacancy");
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<any>(null);
+  const [copied, setCopied] = useState(false);
+
+  const { data: employeesData } = useSWR("/admin/employees", (url: string) => apiFetch<any>(url));
+  const employees = employeesData?.data || [];
+
+  function copyText(text: string) {
+    navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
+
+  function openHtmlWindow(html: string, title: string) {
+    const w = window.open("", "_blank");
+    if (w) { w.document.write(html); w.document.title = title; w.document.close(); }
+  }
+
+  return (
+    <div className="space-y-6 crx-animate-fade">
+      <div className="flex items-center gap-3">
+        <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-[#F5D547] to-[#E8B830] flex items-center justify-center">
+          <Sparkles size={20} className="text-[#1A1A1A]" />
+        </div>
+        <div>
+          <h1 className="font-serif text-4xl font-light text-[#1A1A1A]">AI Assistant</h1>
+          <p className="text-sm text-[#7A7A7A]">Powered by Claude AI — Generate documents, job postings, and more</p>
+        </div>
+      </div>
+
+      {/* Tabs */}
+      <div className="flex gap-2 flex-wrap">
+        {tabs.map((tab) => (
+          <button key={tab.id} onClick={() => { setActiveTab(tab.id); setResult(null); }}
+            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium transition-all ${activeTab === tab.id ? "bg-[#1A1A1A] text-white shadow-lg" : "bg-white text-[#7A7A7A] border border-[#E8E0D0] hover:border-[#F5D547]"}`}>
+            <tab.icon size={16} />{tab.label}
+          </button>
+        ))}
+      </div>
+
+      <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-[#E8E0D0] p-6">
+        {activeTab === "vacancy" && <VacancyGenerator loading={loading} setLoading={setLoading} result={result} setResult={setResult} copyText={copyText} copied={copied} />}
+        {activeTab === "offer" && <OfferLetterGenerator employees={employees} loading={loading} setLoading={setLoading} result={result} setResult={setResult} openHtml={openHtmlWindow} />}
+        {activeTab === "appointment" && <AppointmentGenerator employees={employees} loading={loading} setLoading={setLoading} result={result} setResult={setResult} openHtml={openHtmlWindow} />}
+        {activeTab === "contract" && <ContractGenerator employees={employees} loading={loading} setLoading={setLoading} result={result} setResult={setResult} openHtml={openHtmlWindow} />}
+        {activeTab === "salary" && <SalarySlipViewer />}
+        {activeTab === "assist" && <AIChat loading={loading} setLoading={setLoading} employees={employees} />}
+      </div>
+    </div>
+  );
+}
+
+// ===== Vacancy Generator =====
+function VacancyGenerator({ loading, setLoading, result, setResult, copyText, copied }: any) {
+  const [form, setForm] = useState({ title: "", department: "", type: "FULL_TIME", experience: "", salary: "", location: "", notes: "" });
+
+  async function generate() {
+    if (!form.title) return alert("Job title is required");
+    setLoading(true);
+    setResult(null);
+    try {
+      const res = await apiFetch<any>("/admin/ai/generate-job", { method: "POST", body: JSON.stringify(form) });
+      setResult(res.data);
+    } catch (e: any) { alert(e.message); }
+    finally { setLoading(false); }
+  }
+
+  async function postJob() {
+    if (!result) return;
+    try {
+      await apiFetch("/admin/jobs", { method: "POST", body: JSON.stringify({
+        title: form.title, department: form.department, location: form.location,
+        type: form.type, experience: form.experience, salary: form.salary,
+        description: result.description, requirements: result.requirements,
+        responsibilities: result.responsibilities, benefits: result.benefits, status: "ACTIVE",
+      })});
+      alert("Job posted successfully!");
+    } catch (e: any) { alert(e.message); }
+  }
+
+  return (
+    <div className="space-y-5">
+      <div>
+        <h2 className="text-lg font-semibold text-[#1A1A1A] mb-1">Generate Job Vacancy</h2>
+        <p className="text-sm text-[#7A7A7A]">AI will create a complete job description with requirements, responsibilities, and benefits</p>
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <input type="text" placeholder="Job Title *" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} className={inputClass} />
+        <input type="text" placeholder="Department" value={form.department} onChange={(e) => setForm({ ...form, department: e.target.value })} className={inputClass} />
+        <select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })} className={inputClass}>
+          <option value="FULL_TIME">Full Time</option>
+          <option value="PART_TIME">Part Time</option>
+          <option value="CONTRACT">Contract</option>
+          <option value="INTERNSHIP">Internship</option>
+          <option value="FREELANCE">Freelance</option>
+        </select>
+        <input type="text" placeholder="Experience (e.g., 2-4 years)" value={form.experience} onChange={(e) => setForm({ ...form, experience: e.target.value })} className={inputClass} />
+        <input type="text" placeholder="Salary (e.g., 3-5 LPA)" value={form.salary} onChange={(e) => setForm({ ...form, salary: e.target.value })} className={inputClass} />
+        <input type="text" placeholder="Location" value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} className={inputClass} />
+      </div>
+      <textarea placeholder="Additional notes or specific requirements..." value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} rows={2} className={inputClass + " resize-none"} />
+      <button onClick={generate} disabled={loading} className="bg-[#1A1A1A] text-white py-2.5 px-6 rounded-full font-semibold hover:bg-[#2B2B2B] disabled:opacity-50 flex items-center gap-2">
+        {loading ? <><Loader2 size={16} className="animate-spin" />Generating...</> : <><Sparkles size={16} />Generate with AI</>}
+      </button>
+
+      {result && (
+        <div className="space-y-4 border-t border-[#F0EAD8] pt-5">
+          <div className="flex items-center justify-between">
+            <h3 className="font-semibold text-[#1A1A1A]">Generated Job Description</h3>
+            <div className="flex gap-2">
+              <button onClick={() => copyText(`${result.description}\n\nRequirements:\n${result.requirements}\n\nResponsibilities:\n${result.responsibilities}\n\nBenefits:\n${result.benefits}`)}
+                className="flex items-center gap-1 text-xs text-[#7A7A7A] hover:text-[#1A1A1A] border border-[#E8E0D0] rounded-full px-3 py-1.5">
+                {copied ? <Check size={12} /> : <Copy size={12} />}{copied ? "Copied" : "Copy All"}
+              </button>
+              <button onClick={postJob} className="flex items-center gap-1 text-xs font-medium bg-green-50 text-green-700 rounded-full px-4 py-1.5 hover:bg-green-100">
+                <Briefcase size={12} />Post Job Now
+              </button>
+            </div>
+          </div>
+          {[
+            { label: "Description", value: result.description },
+            { label: "Requirements", value: result.requirements },
+            { label: "Responsibilities", value: result.responsibilities },
+            { label: "Benefits", value: result.benefits },
+          ].map((section) => (
+            <div key={section.label}>
+              <p className="text-xs font-medium text-[#7A7A7A] mb-1">{section.label}</p>
+              <div className="bg-[#FEFCF7] rounded-xl p-4 text-sm text-[#555] whitespace-pre-line">{section.value}</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ===== Employee Select Component =====
+function EmployeeSelect({ employees, value, onChange }: { employees: any[]; value: string; onChange: (v: string) => void }) {
+  return (
+    <select value={value} onChange={(e) => onChange(e.target.value)} className={inputClass}>
+      <option value="">Select Employee *</option>
+      {employees.map((emp: any) => (
+        <option key={emp.id} value={emp.id}>{emp.name} — {emp.profile?.designation || "No designation"}</option>
+      ))}
+    </select>
+  );
+}
+
+// ===== Offer Letter Generator =====
+function OfferLetterGenerator({ employees, loading, setLoading, result, setResult, openHtml }: any) {
+  const [form, setForm] = useState({ employeeId: "", designation: "", department: "", salary: "", joiningDate: "", probationMonths: "3", location: "", specialTerms: "" });
+
+  async function generate() {
+    if (!form.employeeId || !form.designation || !form.salary || !form.joiningDate) return alert("Fill required fields");
+    setLoading(true);
+    setResult(null);
+    try {
+      const res = await apiFetch<any>("/admin/ai/generate-offer-letter", {
+        method: "POST", body: JSON.stringify({ ...form, salary: parseFloat(form.salary), probationMonths: parseInt(form.probationMonths) }),
+      });
+      setResult(res.data);
+    } catch (e: any) { alert(e.message); }
+    finally { setLoading(false); }
+  }
+
+  return (
+    <div className="space-y-5">
+      <div>
+        <h2 className="text-lg font-semibold text-[#1A1A1A] mb-1">Generate Offer Letter</h2>
+        <p className="text-sm text-[#7A7A7A]">AI will create a professional offer letter ready for printing</p>
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <EmployeeSelect employees={employees} value={form.employeeId} onChange={(v) => setForm({ ...form, employeeId: v })} />
+        <input type="text" placeholder="Designation *" value={form.designation} onChange={(e) => setForm({ ...form, designation: e.target.value })} className={inputClass} />
+        <input type="text" placeholder="Department" value={form.department} onChange={(e) => setForm({ ...form, department: e.target.value })} className={inputClass} />
+        <input type="number" placeholder="Monthly CTC (INR) *" value={form.salary} onChange={(e) => setForm({ ...form, salary: e.target.value })} className={inputClass} />
+        <input type="date" placeholder="Joining Date *" value={form.joiningDate} onChange={(e) => setForm({ ...form, joiningDate: e.target.value })} className={inputClass} />
+        <input type="number" placeholder="Probation (months)" value={form.probationMonths} onChange={(e) => setForm({ ...form, probationMonths: e.target.value })} className={inputClass} />
+        <input type="text" placeholder="Location" value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} className={inputClass} />
+      </div>
+      <textarea placeholder="Special terms or conditions..." value={form.specialTerms} onChange={(e) => setForm({ ...form, specialTerms: e.target.value })} rows={2} className={inputClass + " resize-none"} />
+      <button onClick={generate} disabled={loading} className="bg-[#1A1A1A] text-white py-2.5 px-6 rounded-full font-semibold hover:bg-[#2B2B2B] disabled:opacity-50 flex items-center gap-2">
+        {loading ? <><Loader2 size={16} className="animate-spin" />Generating...</> : <><Sparkles size={16} />Generate Offer Letter</>}
+      </button>
+      {result?.html && (
+        <div className="border-t border-[#F0EAD8] pt-5">
+          <div className="flex items-center justify-between mb-3">
+            <p className="font-semibold text-[#1A1A1A]">Offer Letter for {result.employeeName}</p>
+            <button onClick={() => openHtml(result.html, `Offer Letter - ${result.employeeName}`)}
+              className="flex items-center gap-1 bg-[#1A1A1A] text-white rounded-full px-4 py-2 text-sm font-medium hover:bg-[#2B2B2B]">
+              <ExternalLink size={14} />Open & Print
+            </button>
+          </div>
+          <div className="border border-[#E8E0D0] rounded-xl overflow-hidden h-[400px]">
+            <iframe srcDoc={result.html} className="w-full h-full" title="Offer Letter Preview" />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ===== Appointment Letter Generator =====
+function AppointmentGenerator({ employees, loading, setLoading, result, setResult, openHtml }: any) {
+  const [form, setForm] = useState({ employeeId: "", designation: "", department: "", salary: "", joiningDate: "", probationMonths: "3", noticePeriod: "30", location: "", specialClauses: "" });
+
+  async function generate() {
+    if (!form.employeeId || !form.designation || !form.salary || !form.joiningDate) return alert("Fill required fields");
+    setLoading(true);
+    setResult(null);
+    try {
+      const res = await apiFetch<any>("/admin/ai/generate-appointment-letter", {
+        method: "POST", body: JSON.stringify({ ...form, salary: parseFloat(form.salary), probationMonths: parseInt(form.probationMonths), noticePeriod: parseInt(form.noticePeriod) }),
+      });
+      setResult(res.data);
+    } catch (e: any) { alert(e.message); }
+    finally { setLoading(false); }
+  }
+
+  return (
+    <div className="space-y-5">
+      <div>
+        <h2 className="text-lg font-semibold text-[#1A1A1A] mb-1">Generate Appointment Letter</h2>
+        <p className="text-sm text-[#7A7A7A]">AI will create a comprehensive appointment letter with all legal clauses</p>
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <EmployeeSelect employees={employees} value={form.employeeId} onChange={(v) => setForm({ ...form, employeeId: v })} />
+        <input type="text" placeholder="Designation *" value={form.designation} onChange={(e) => setForm({ ...form, designation: e.target.value })} className={inputClass} />
+        <input type="text" placeholder="Department" value={form.department} onChange={(e) => setForm({ ...form, department: e.target.value })} className={inputClass} />
+        <input type="number" placeholder="Monthly CTC (INR) *" value={form.salary} onChange={(e) => setForm({ ...form, salary: e.target.value })} className={inputClass} />
+        <input type="date" placeholder="Joining Date *" value={form.joiningDate} onChange={(e) => setForm({ ...form, joiningDate: e.target.value })} className={inputClass} />
+        <input type="number" placeholder="Probation (months)" value={form.probationMonths} onChange={(e) => setForm({ ...form, probationMonths: e.target.value })} className={inputClass} />
+        <input type="number" placeholder="Notice Period (days)" value={form.noticePeriod} onChange={(e) => setForm({ ...form, noticePeriod: e.target.value })} className={inputClass} />
+        <input type="text" placeholder="Location" value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} className={inputClass} />
+      </div>
+      <textarea placeholder="Special clauses or conditions..." value={form.specialClauses} onChange={(e) => setForm({ ...form, specialClauses: e.target.value })} rows={2} className={inputClass + " resize-none"} />
+      <button onClick={generate} disabled={loading} className="bg-[#1A1A1A] text-white py-2.5 px-6 rounded-full font-semibold hover:bg-[#2B2B2B] disabled:opacity-50 flex items-center gap-2">
+        {loading ? <><Loader2 size={16} className="animate-spin" />Generating...</> : <><Sparkles size={16} />Generate Appointment Letter</>}
+      </button>
+      {result?.html && (
+        <div className="border-t border-[#F0EAD8] pt-5">
+          <div className="flex items-center justify-between mb-3">
+            <p className="font-semibold text-[#1A1A1A]">Appointment Letter for {result.employeeName}</p>
+            <button onClick={() => openHtml(result.html, `Appointment Letter - ${result.employeeName}`)}
+              className="flex items-center gap-1 bg-[#1A1A1A] text-white rounded-full px-4 py-2 text-sm font-medium hover:bg-[#2B2B2B]">
+              <ExternalLink size={14} />Open & Print
+            </button>
+          </div>
+          <div className="border border-[#E8E0D0] rounded-xl overflow-hidden h-[400px]">
+            <iframe srcDoc={result.html} className="w-full h-full" title="Appointment Letter Preview" />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ===== Contract Generator =====
+function ContractGenerator({ employees, loading, setLoading, result, setResult, openHtml }: any) {
+  const [form, setForm] = useState({ employeeId: "", designation: "", department: "", salary: "", contractDate: "", probationMonths: "3", noticePeriod: "30", specialClauses: "" });
+
+  async function generate() {
+    if (!form.employeeId || !form.designation || !form.salary || !form.contractDate) return alert("Fill required fields");
+    setLoading(true);
+    setResult(null);
+    try {
+      const res = await apiFetch<any>("/admin/ai/generate-contract", {
+        method: "POST", body: JSON.stringify({ ...form, salary: parseFloat(form.salary), probationMonths: parseInt(form.probationMonths), noticePeriod: parseInt(form.noticePeriod) }),
+      });
+      setResult(res.data);
+    } catch (e: any) { alert(e.message); }
+    finally { setLoading(false); }
+  }
+
+  return (
+    <div className="space-y-5">
+      <div>
+        <h2 className="text-lg font-semibold text-[#1A1A1A] mb-1">Generate Employment Contract</h2>
+        <p className="text-sm text-[#7A7A7A]">AI will create a legally sound employment contract with all standard clauses</p>
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <EmployeeSelect employees={employees} value={form.employeeId} onChange={(v) => setForm({ ...form, employeeId: v })} />
+        <input type="text" placeholder="Designation *" value={form.designation} onChange={(e) => setForm({ ...form, designation: e.target.value })} className={inputClass} />
+        <input type="text" placeholder="Department" value={form.department} onChange={(e) => setForm({ ...form, department: e.target.value })} className={inputClass} />
+        <input type="number" placeholder="Monthly CTC (INR) *" value={form.salary} onChange={(e) => setForm({ ...form, salary: e.target.value })} className={inputClass} />
+        <input type="date" placeholder="Contract Date *" value={form.contractDate} onChange={(e) => setForm({ ...form, contractDate: e.target.value })} className={inputClass} />
+        <input type="number" placeholder="Probation (months)" value={form.probationMonths} onChange={(e) => setForm({ ...form, probationMonths: e.target.value })} className={inputClass} />
+        <input type="number" placeholder="Notice Period (days)" value={form.noticePeriod} onChange={(e) => setForm({ ...form, noticePeriod: e.target.value })} className={inputClass} />
+      </div>
+      <textarea placeholder="Special clauses..." value={form.specialClauses} onChange={(e) => setForm({ ...form, specialClauses: e.target.value })} rows={2} className={inputClass + " resize-none"} />
+      <button onClick={generate} disabled={loading} className="bg-[#1A1A1A] text-white py-2.5 px-6 rounded-full font-semibold hover:bg-[#2B2B2B] disabled:opacity-50 flex items-center gap-2">
+        {loading ? <><Loader2 size={16} className="animate-spin" />Generating...</> : <><Sparkles size={16} />Generate Contract</>}
+      </button>
+      {result?.html && (
+        <div className="border-t border-[#F0EAD8] pt-5">
+          <div className="flex items-center justify-between mb-3">
+            <p className="font-semibold text-[#1A1A1A]">Employment Contract for {result.employeeName}</p>
+            <button onClick={() => openHtml(result.html, `Contract - ${result.employeeName}`)}
+              className="flex items-center gap-1 bg-[#1A1A1A] text-white rounded-full px-4 py-2 text-sm font-medium hover:bg-[#2B2B2B]">
+              <ExternalLink size={14} />Open & Print
+            </button>
+          </div>
+          <div className="border border-[#E8E0D0] rounded-xl overflow-hidden h-[400px]">
+            <iframe srcDoc={result.html} className="w-full h-full" title="Contract Preview" />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ===== Salary Slip Viewer =====
+function SalarySlipViewer() {
+  const [month, setMonth] = useState(new Date().getMonth() + 1);
+  const [year, setYear] = useState(new Date().getFullYear());
+  const { data } = useSWR(`/admin/salary-slips?month=${month}&year=${year}`, (url: string) => apiFetch<any>(url));
+  const slips = data?.data || [];
+  const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/v1";
+
+  return (
+    <div className="space-y-5">
+      <div>
+        <h2 className="text-lg font-semibold text-[#1A1A1A] mb-1">Salary Slips</h2>
+        <p className="text-sm text-[#7A7A7A]">View and print professional salary slips for any month</p>
+      </div>
+      <div className="flex gap-4 items-center">
+        <select value={month} onChange={(e) => setMonth(parseInt(e.target.value))} className={inputClass + " !w-auto"}>
+          {["January","February","March","April","May","June","July","August","September","October","November","December"].map((m, i) => (
+            <option key={i} value={i + 1}>{m}</option>
+          ))}
+        </select>
+        <select value={year} onChange={(e) => setYear(parseInt(e.target.value))} className={inputClass + " !w-auto"}>
+          {[2024, 2025, 2026, 2027].map((y) => <option key={y} value={y}>{y}</option>)}
+        </select>
+      </div>
+      {slips.length === 0 ? (
+        <p className="text-sm text-[#7A7A7A]">No salary slips for this period. Generate them from the Salary Slips page first.</p>
+      ) : (
+        <div className="divide-y divide-[#F0EAD8]">
+          {slips.map((slip: any) => (
+            <div key={slip.id} className="flex items-center justify-between py-3">
+              <div>
+                <p className="font-medium text-[#1A1A1A]">{slip.employee?.name}</p>
+                <p className="text-xs text-[#7A7A7A]">Net: {new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(slip.netSalary)} · {slip.status}</p>
+              </div>
+              <a href={`${API_URL}/admin/ai/salary-slip/${slip.id}/html`} target="_blank" rel="noopener noreferrer"
+                className="flex items-center gap-1 bg-[#1A1A1A] text-white rounded-full px-4 py-1.5 text-xs font-medium hover:bg-[#2B2B2B]">
+                <Receipt size={12} />View & Print
+              </a>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ===== AI Chat =====
+function AIChat({ loading, setLoading, employees }: any) {
+  const [messages, setMessages] = useState<{ role: string; content: string }[]>([]);
+  const [input, setInput] = useState("");
+  const [employeeId, setEmployeeId] = useState("");
+
+  async function send() {
+    if (!input.trim()) return;
+    const userMsg = input;
+    setInput("");
+    setMessages((prev) => [...prev, { role: "user", content: userMsg }]);
+    setLoading(true);
+    try {
+      const res = await apiFetch<any>("/admin/ai/assist", {
+        method: "POST", body: JSON.stringify({ task: userMsg, employeeId: employeeId || undefined }),
+      });
+      setMessages((prev) => [...prev, { role: "assistant", content: res.data.response }]);
+    } catch (e: any) {
+      setMessages((prev) => [...prev, { role: "assistant", content: `Error: ${e.message}` }]);
+    }
+    finally { setLoading(false); }
+  }
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h2 className="text-lg font-semibold text-[#1A1A1A] mb-1">AI Chat Assistant</h2>
+        <p className="text-sm text-[#7A7A7A]">Ask anything — HR policies, email drafts, performance feedback, warning letters, etc.</p>
+      </div>
+      <div className="flex gap-3 items-center">
+        <EmployeeSelect employees={employees} value={employeeId} onChange={setEmployeeId} />
+        <span className="text-xs text-[#B0B0B0] whitespace-nowrap">(optional context)</span>
+      </div>
+      <div className="border border-[#E8E0D0] rounded-xl h-[350px] overflow-y-auto p-4 bg-[#FEFCF7] space-y-3">
+        {messages.length === 0 && (
+          <div className="text-center text-[#B0B0B0] py-10">
+            <Sparkles size={24} className="mx-auto mb-2 opacity-30" />
+            <p className="text-sm">Ask me anything HR-related</p>
+            <div className="flex flex-wrap gap-2 justify-center mt-4">
+              {["Draft a warning letter", "Write a promotion announcement email", "Suggest interview questions for a designer", "Draft work-from-home policy"].map((s) => (
+                <button key={s} onClick={() => setInput(s)} className="text-xs bg-white border border-[#E8E0D0] rounded-full px-3 py-1.5 text-[#7A7A7A] hover:border-[#F5D547]">{s}</button>
+              ))}
+            </div>
+          </div>
+        )}
+        {messages.map((msg, i) => (
+          <div key={i} className={`${msg.role === "user" ? "text-right" : ""}`}>
+            <div className={`inline-block max-w-[80%] rounded-xl px-4 py-2.5 text-sm ${msg.role === "user" ? "bg-[#1A1A1A] text-white" : "bg-white border border-[#E8E0D0] text-[#555]"}`}>
+              <div className="whitespace-pre-wrap">{msg.content}</div>
+            </div>
+          </div>
+        ))}
+        {loading && (
+          <div className="flex items-center gap-2 text-[#7A7A7A] text-sm"><Loader2 size={14} className="animate-spin" />Thinking...</div>
+        )}
+      </div>
+      <div className="flex gap-3">
+        <input type="text" value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => e.key === "Enter" && !loading && send()}
+          placeholder="Type your question..." className={inputClass} />
+        <button onClick={send} disabled={loading || !input.trim()} className="bg-[#1A1A1A] text-white py-2.5 px-6 rounded-full font-semibold hover:bg-[#2B2B2B] disabled:opacity-50 whitespace-nowrap">
+          Send
+        </button>
+      </div>
+    </div>
+  );
+}

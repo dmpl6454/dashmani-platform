@@ -1,5 +1,5 @@
 "use client";
-import { HrSidebar } from "@/components/hr-sidebar";
+import { TopNav } from "@/components/top-nav";
 import { useHrAuth } from "@/lib/auth";
 
 export default function LeaderboardLayout({ children }: { children: React.ReactNode }) {
@@ -7,8 +7,8 @@ export default function LeaderboardLayout({ children }: { children: React.ReactN
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
-        <p className="text-gray-500">Loading...</p>
+      <div className="flex items-center justify-center min-h-screen" style={{ background: "var(--crx-bg-gradient)" }}>
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#F5D547]" />
       </div>
     );
   }
@@ -16,9 +16,11 @@ export default function LeaderboardLayout({ children }: { children: React.ReactN
   if (!user) return null;
 
   return (
-    <div className="flex min-h-screen">
-      <HrSidebar />
-      <main className="flex-1 bg-gray-50 p-6">{children}</main>
+    <div className="min-h-screen" style={{ background: "var(--crx-bg-gradient)" }}>
+      <TopNav />
+      <main className="max-w-[1440px] mx-auto px-4 md:px-8 py-6">
+        {children}
+      </main>
     </div>
   );
 }

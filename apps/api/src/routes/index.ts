@@ -15,6 +15,9 @@ import hrAuthRoutes from "./hr-auth.routes";
 import hrRoutes from "./hr.routes";
 import adminReportsRoutes from "./admin-reports.routes";
 import notificationRoutes from "./notification.routes";
+import adminFeaturesRoutes from "./admin-features.routes";
+import hrFeaturesRoutes from "./hr-features.routes";
+import publicJobsRoutes from "./public-jobs.routes";
 
 const router = Router();
 
@@ -34,5 +37,8 @@ router.use(hrAuthRoutes);
 router.use(hrRoutes);
 router.use(adminReportsRoutes);
 router.use(notificationRoutes);
+router.use(adminFeaturesRoutes);
+router.use(hrFeaturesRoutes);
+router.use(publicJobsRoutes);
 
 export default router;

@@ -40,6 +40,22 @@ model User {
   otpTokens          OtpToken[]
   dailyReports       DailyReport[]
   notifications      Notification[]
+  profile            EmployeeProfile?
+  salarySlips        SalarySlip[]      @relation("SalarySlipEmployee")
+  documents          EmployeeDocument[] @relation("DocumentEmployee")
+  profilePicRequests ProfilePictureRequest[] @relation("ProfilePicEmployee")
+  offerLetters       OfferLetter[]     @relation("OfferLetterEmployee")
+  contracts          EmploymentContract[] @relation("ContractEmployee")
+  extraWorkHours     ExtraWorkHour[]     @relation("ExtraWorkEmployee")
+  incentives         Incentive[]         @relation("IncentiveEmployee")
+  reviewsReceived    PerformanceReview[] @relation("ReviewEmployee")
+  reviewsGiven       PerformanceReview[] @relation("ReviewReviewer")
+  bugReports         BugReport[]         @relation("BugReporter")
+  expenseClaims      ExpenseClaim[]      @relation("ExpenseEmployee")
+  presentations      Presentation[]      @relation("PresentationEmployee")
+  assignedDevices    AssignedDevice[]    @relation("DeviceEmployee")
+  dailyPOAs          DailyPOA[]          @relation("POAEmployee")
+  complaints         Complaint[]         @relation("ComplaintEmployee")
 
   @@map("users")
 }
@@ -177,6 +193,8 @@ enum LeaveType {
   SICK
   EARNED
   UNPAID
+  WFH
+  COMP_OFF
 }
 
 enum LeaveStatus {
@@ -517,6 +535,39 @@ enum ContentStatus {
   REJECTED
 }
 
+// ============ EMPLOYEE PROFILE ============
+
+model EmployeeProfile {
+  id                     String   @id @default(uuid())
+  userId                 String   @unique @map("user_id")
+  designation            String?
+  jobDescription         String?  @map("job_description") @db.Text
+  salary                 Float?
+  bankAccountHolderName  String?  @map("bank_account_holder_name")
+  bankAccountNumber      String?  @map("bank_account_number")
+  bankName               String?  @map("bank_name")
+  bankBranch             String?  @map("bank_branch")
+  ifscCode               String?  @map("ifsc_code")
+  mailingAddress         String?  @map("mailing_address") @db.Text
+  aadhaarNumber          String?  @map("aadhaar_number")
+  panNumber              String?  @map("pan_number")
+  familyContact1Name     String?  @map("family_contact1_name")
+  familyContact1Phone    String?  @map("family_contact1_phone")
+  familyContact1Relation String?  @map("family_contact1_relation")
+  familyContact2Name     String?  @map("family_contact2_name")
+  familyContact2Phone    String?  @map("family_contact2_phone")
+  familyContact2Relation String?  @map("family_contact2_relation")
+  joiningDate            DateTime? @map("joining_date") @db.Date
+  joiningDateApproved    Boolean   @default(false) @map("joining_date_approved")
+  sopAcceptedAt          DateTime? @map("sop_accepted_at")
+  createdAt              DateTime @default(now()) @map("created_at")
+  updatedAt              DateTime @updatedAt @map("updated_at")
+
+  user                   User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("employee_profiles")
+}
+
 // ============ HR PORTAL ============
 
 model OtpToken {
@@ -579,8 +630,10 @@ model ReportLink {
   report       DailyReport   @relation(fields: [reportId], references: [id], onDelete: Cascade)
   account      SocialAccount @relation(fields: [accountId], references: [id])
 
+  @@unique([reportId, url])
   @@index([reportId])
   @@index([accountId])
+  @@index([url])
   @@map("report_links")
 }
 
@@ -624,5 +677,516 @@ enum NotificationType {
   REPORT_MISSED
   GROWTH_MILESTONE
   ACCOUNT_ASSIGNED
+  LEAVE_REQUEST
+  LEAVE_APPROVED
+  LEAVE_REJECTED
+  SALARY_SLIP
+  DOCUMENT_UPLOADED
+  PROFILE_PICTURE
+  PERFORMANCE_REVIEW
+  BUG_REPORT_UPDATE
+  INCENTIVE_AWARDED
+  EXTRA_HOURS_APPROVED
   GENERAL
+}
+
+// ============ SALARY SLIPS ============
+
+model SalarySlip {
+  id              String          @id @default(uuid())
+  employeeId      String          @map("employee_id")
+  month           Int
+  year            Int
+  basicSalary     Float           @map("basic_salary")
+  hra             Float           @default(0)
+  conveyance      Float           @default(0)
+  medicalAllowance Float          @default(0) @map("medical_allowance")
+  specialAllowance Float          @default(0) @map("special_allowance")
+  otherEarnings   Float           @default(0) @map("other_earnings")
+  pf              Float           @default(0)
+  esi             Float           @default(0)
+  tax             Float           @default(0)
+  otherDeductions Float           @default(0) @map("other_deductions")
+  netSalary       Float           @map("net_salary")
+  status          SalarySlipStatus @default(DRAFT)
+  generatedBy     String?         @map("generated_by")
+  approvedBy      String?         @map("approved_by")
+  approvedAt      DateTime?       @map("approved_at")
+  remarks         String?
+  createdAt       DateTime        @default(now()) @map("created_at")
+  updatedAt       DateTime        @updatedAt @map("updated_at")
+
+  employee        User @relation("SalarySlipEmployee", fields: [employeeId], references: [id])
+
+  @@unique([employeeId, month, year])
+  @@index([employeeId])
+  @@index([status])
+  @@map("salary_slips")
+}
+
+enum SalarySlipStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+}
+
+// ============ EMPLOYEE DOCUMENTS ============
+
+model EmployeeDocument {
+  id            String         @id @default(uuid())
+  employeeId    String         @map("employee_id")
+  documentType  DocumentType   @map("document_type")
+  fileName      String         @map("file_name")
+  filePath      String         @map("file_path")
+  fileSize      Int            @map("file_size")
+  mimeType      String         @map("mime_type")
+  status        DocumentStatus @default(PENDING)
+  reviewedBy    String?        @map("reviewed_by")
+  reviewedAt    DateTime?      @map("reviewed_at")
+  reviewNotes   String?        @map("review_notes")
+  createdAt     DateTime       @default(now()) @map("created_at")
+  updatedAt     DateTime       @updatedAt @map("updated_at")
+
+  employee      User @relation("DocumentEmployee", fields: [employeeId], references: [id])
+
+  @@index([employeeId])
+  @@index([status])
+  @@map("employee_documents")
+}
+
+enum DocumentType {
+  AADHAAR
+  PAN
+  PASSPORT
+  DRIVING_LICENSE
+  VOTER_ID
+  BANK_PASSBOOK
+  EDUCATION_CERTIFICATE
+  EXPERIENCE_LETTER
+  OTHER
+}
+
+enum DocumentStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+// ============ PROFILE PICTURE REQUESTS ============
+
+model ProfilePictureRequest {
+  id            String                  @id @default(uuid())
+  employeeId    String                  @map("employee_id")
+  filePath      String                  @map("file_path")
+  status        ProfilePictureStatus    @default(PENDING)
+  approvedBy    String?                 @map("approved_by")
+  approvedAt    DateTime?               @map("approved_at")
+  createdAt     DateTime                @default(now()) @map("created_at")
+
+  employee      User @relation("ProfilePicEmployee", fields: [employeeId], references: [id])
+
+  @@index([employeeId])
+  @@index([status])
+  @@map("profile_picture_requests")
+}
+
+enum ProfilePictureStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+// ============ OFFER LETTERS ============
+
+model OfferLetter {
+  id              String   @id @default(uuid())
+  employeeId      String   @map("employee_id")
+  offerDate       DateTime @map("offer_date") @db.Date
+  joiningDate     DateTime @map("joining_date") @db.Date
+  designation     String
+  department      String?
+  salary          Float
+  probationMonths Int      @default(3) @map("probation_months")
+  location        String?
+  generatedBy     String   @map("generated_by")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  employee        User @relation("OfferLetterEmployee", fields: [employeeId], references: [id])
+
+  @@index([employeeId])
+  @@map("offer_letters")
+}
+
+// ============ EMPLOYMENT CONTRACTS ============
+
+model EmploymentContract {
+  id              String   @id @default(uuid())
+  employeeId      String   @map("employee_id")
+  contractDate    DateTime @map("contract_date") @db.Date
+  designation     String
+  department      String?
+  salary          Float
+  probationMonths Int      @default(3) @map("probation_months")
+  noticePeriod    Int      @default(30) @map("notice_period")
+  agreedAt        DateTime? @map("agreed_at")
+  agreedFromIp    String?  @map("agreed_from_ip")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  employee        User @relation("ContractEmployee", fields: [employeeId], references: [id])
+
+  @@index([employeeId])
+  @@map("employment_contracts")
+}
+
+// ============ HOLIDAYS ============
+
+model Holiday {
+  id          String      @id @default(uuid())
+  name        String
+  date        DateTime    @db.Date
+  type        HolidayType @default(PUBLIC)
+  description String?
+  createdAt   DateTime    @default(now()) @map("created_at")
+
+  @@unique([date])
+  @@index([date])
+  @@map("holidays")
+}
+
+enum HolidayType {
+  PUBLIC
+  RESTRICTED
+  COMPANY
+}
+
+// ============ EXTRA WORK HOURS & INCENTIVES ============
+
+model ExtraWorkHour {
+  id            String   @id @default(uuid())
+  employeeId    String   @map("employee_id")
+  date          DateTime @db.Date
+  hours         Float
+  description   String?  @db.Text
+  status        ApprovalState @default(PENDING)
+  approvedBy    String?  @map("approved_by")
+  approvedAt    DateTime? @map("approved_at")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  employee      User @relation("ExtraWorkEmployee", fields: [employeeId], references: [id])
+
+  @@index([employeeId])
+  @@index([status])
+  @@map("extra_work_hours")
+}
+
+model Incentive {
+  id            String        @id @default(uuid())
+  employeeId    String        @map("employee_id")
+  amount        Float
+  reason        String
+  month         Int?
+  year          Int?
+  awardedBy     String        @map("awarded_by")
+  createdAt     DateTime      @default(now()) @map("created_at")
+
+  employee      User @relation("IncentiveEmployee", fields: [employeeId], references: [id])
+
+  @@index([employeeId])
+  @@map("incentives")
+}
+
+enum ApprovalState {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+// ============ PERFORMANCE REVIEWS ============
+
+model PerformanceReview {
+  id            String   @id @default(uuid())
+  employeeId    String   @map("employee_id")
+  reviewerId    String   @map("reviewer_id")
+  period        String
+  rating        Int
+  strengths     String?  @db.Text
+  improvements  String?  @db.Text
+  comments      String?  @db.Text
+  goals         String?  @db.Text
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  employee      User @relation("ReviewEmployee", fields: [employeeId], references: [id])
+  reviewer      User @relation("ReviewReviewer", fields: [reviewerId], references: [id])
+
+  @@index([employeeId])
+  @@map("performance_reviews")
+}
+
+// ============ BUG REPORTS ============
+
+model BugReport {
+  id            String        @id @default(uuid())
+  reportedBy    String        @map("reported_by")
+  title         String
+  description   String        @db.Text
+  page          String?
+  severity      BugSeverity   @default(MEDIUM)
+  status        BugStatus     @default(OPEN)
+  screenshot    String?
+  resolution    String?       @db.Text
+  resolvedAt    DateTime?     @map("resolved_at")
+  createdAt     DateTime      @default(now()) @map("created_at")
+  updatedAt     DateTime      @updatedAt @map("updated_at")
+
+  reporter      User @relation("BugReporter", fields: [reportedBy], references: [id])
+
+  @@index([status])
+  @@index([reportedBy])
+  @@map("bug_reports")
+}
+
+enum BugSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum BugStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+  WONT_FIX
+}
+
+// ============ PRESENTATIONS ============
+
+model Presentation {
+  id            String   @id @default(uuid())
+  employeeId    String   @map("employee_id")
+  title         String
+  markdown      String   @db.Text
+  theme         String   @default("default")
+  htmlPath      String?  @map("html_path")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  employee      User @relation("PresentationEmployee", fields: [employeeId], references: [id])
+
+  @@index([employeeId])
+  @@map("presentations")
+}
+
+// ============ EXPENSE CLAIMS ============
+
+model ExpenseClaim {
+  id            String        @id @default(uuid())
+  employeeId    String        @map("employee_id")
+  title         String
+  amount        Float
+  category      String        @default("OTHER")
+  description   String?       @db.Text
+  receiptUrl    String?       @map("receipt_url")
+  status        ApprovalState @default(PENDING)
+  reviewedBy    String?       @map("reviewed_by")
+  reviewedAt    DateTime?     @map("reviewed_at")
+  reviewNotes   String?       @map("review_notes") @db.Text
+  createdAt     DateTime      @default(now()) @map("created_at")
+  updatedAt     DateTime      @updatedAt @map("updated_at")
+
+  employee      User @relation("ExpenseEmployee", fields: [employeeId], references: [id])
+
+  @@index([employeeId])
+  @@index([status])
+  @@map("expense_claims")
+}
+
+// ============ ASSIGNED DEVICES ============
+
+model AssignedDevice {
+  id            String       @id @default(uuid())
+  employeeId    String       @map("employee_id")
+  type          DeviceType
+  brand         String
+  model         String
+  serialNumber  String?      @map("serial_number")
+  assetTag      String?      @map("asset_tag")
+  condition     String       @default("Good")
+  notes         String?      @db.Text
+  assignedAt    DateTime     @default(now()) @map("assigned_at")
+  returnedAt    DateTime?    @map("returned_at")
+  createdAt     DateTime     @default(now()) @map("created_at")
+  updatedAt     DateTime     @updatedAt @map("updated_at")
+
+  employee      User @relation("DeviceEmployee", fields: [employeeId], references: [id])
+
+  @@index([employeeId])
+  @@map("assigned_devices")
+}
+
+enum DeviceType {
+  LAPTOP
+  PHONE
+  TABLET
+  MONITOR
+  KEYBOARD
+  MOUSE
+  HEADSET
+  OTHER
+}
+
+// ============ DAILY POA (Plan of Action) ============
+
+model DailyPOA {
+  id            String   @id @default(uuid())
+  employeeId    String   @map("employee_id")
+  date          DateTime @db.Date
+  tasks         String   @db.Text
+  achievements  String?  @db.Text
+  blockers      String?  @db.Text
+  tomorrowPlan  String?  @map("tomorrow_plan") @db.Text
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  employee      User @relation("POAEmployee", fields: [employeeId], references: [id])
+
+  @@unique([employeeId, date], name: "employeeId_date")
+  @@index([employeeId])
+  @@index([date])
+  @@map("daily_poas")
+}
+
+// ============ COMPLAINTS ============
+
+model Complaint {
+  id            String          @id @default(uuid())
+  employeeId    String          @map("employee_id")
+  subject       String
+  description   String          @db.Text
+  category      String          @default("GENERAL")
+  status        ComplaintStatus @default(OPEN)
+  adminResponse String?         @map("admin_response") @db.Text
+  resolvedAt    DateTime?       @map("resolved_at")
+  createdAt     DateTime        @default(now()) @map("created_at")
+  updatedAt     DateTime        @updatedAt @map("updated_at")
+
+  employee      User @relation("ComplaintEmployee", fields: [employeeId], references: [id])
+
+  @@index([employeeId])
+  @@index([status])
+  @@map("complaints")
+}
+
+enum ComplaintStatus {
+  OPEN
+  IN_REVIEW
+  RESOLVED
+  CLOSED
+}
+
+// ============ INTERNSHIP APPLICATIONS ============
+
+model InternshipApplication {
+  id              String             @id @default(uuid())
+  name            String
+  email           String
+  phone           String?
+  college         String?
+  course          String?
+  startDate       DateTime?          @map("start_date") @db.Date
+  duration        String             @default("6 months")
+  department      String?
+  skills          String?            @db.Text
+  portfolio       String?
+  linkedin        String?
+  coverLetter     String?            @map("cover_letter") @db.Text
+  resumeUrl       String?            @map("resume_url")
+  status          ApplicationStatus  @default(RECEIVED)
+  reviewNotes     String?            @map("review_notes") @db.Text
+  reviewedBy      String?            @map("reviewed_by")
+  createdAt       DateTime           @default(now()) @map("created_at")
+  updatedAt       DateTime           @updatedAt @map("updated_at")
+
+  @@index([status])
+  @@map("internship_applications")
+}
+
+// ============ JOB LISTINGS ============
+
+model JobListing {
+  id              String        @id @default(uuid())
+  title           String
+  department      String?
+  location        String?
+  type            JobType       @default(FULL_TIME)
+  experience      String?
+  salary          String?
+  description     String        @db.Text
+  requirements    String?       @db.Text
+  responsibilities String?      @db.Text
+  benefits        String?       @db.Text
+  status          JobListingStatus @default(ACTIVE)
+  createdBy       String        @map("created_by")
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+
+  applications    JobApplication[]
+
+  @@index([status])
+  @@map("job_listings")
+}
+
+model JobApplication {
+  id              String              @id @default(uuid())
+  jobId           String              @map("job_id")
+  applicantName   String              @map("applicant_name")
+  applicantEmail  String              @map("applicant_email")
+  applicantPhone  String?             @map("applicant_phone")
+  resumeUrl       String?             @map("resume_url")
+  coverLetter     String?             @map("cover_letter") @db.Text
+  experience      String?
+  currentCompany  String?             @map("current_company")
+  linkedinUrl     String?             @map("linkedin_url")
+  portfolioUrl    String?             @map("portfolio_url")
+  status          ApplicationStatus   @default(RECEIVED)
+  notes           String?             @db.Text
+  reviewedBy      String?             @map("reviewed_by")
+  createdAt       DateTime            @default(now()) @map("created_at")
+  updatedAt       DateTime            @updatedAt @map("updated_at")
+
+  job             JobListing @relation(fields: [jobId], references: [id])
+
+  @@index([jobId])
+  @@index([status])
+  @@map("job_applications")
+}
+
+enum JobType {
+  FULL_TIME
+  PART_TIME
+  CONTRACT
+  INTERNSHIP
+  FREELANCE
+}
+
+enum JobListingStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  CLOSED
+}
+
+enum ApplicationStatus {
+  RECEIVED
+  REVIEWING
+  SHORTLISTED
+  INTERVIEW
+  OFFERED
+  HIRED
+  ACCEPTED
+  REJECTED
 }

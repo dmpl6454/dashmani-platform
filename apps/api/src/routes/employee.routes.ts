@@ -30,6 +30,13 @@ router.get("/employees/:id", authenticate, requirePermission("employees", "view"
   } catch (err) { next(err); }
 });
 
+router.get("/employees/:id/accounts", authenticate, requirePermission("employees", "view"), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const accounts = await employeeService.getEmployeeAccounts(req.params.id);
+    return success(res, accounts);
+  } catch (err) { next(err); }
+});
+
 router.post("/employees", authenticate, requirePermission("employees", "create"), validate(employeeValidators.createEmployeeSchema), auditLog("employees", "create"), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const employee = await employeeService.createEmployee(req.body);

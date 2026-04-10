@@ -135,6 +135,19 @@ export async function updateEmployee(id: string, data: {
   });
 }
 
+export async function getEmployeeAccounts(employeeId: string) {
+  return prisma.accountAssignment.findMany({
+    where: { employeeId, unassignedAt: null },
+    include: {
+      account: {
+        include: { platform: { select: { id: true, name: true, slug: true, iconUrl: true } } },
+      },
+      assigner: { select: { id: true, name: true } },
+    },
+    orderBy: { assignedAt: "desc" },
+  });
+}
+
 export async function softDeleteEmployee(id: string) {
   const employee = await prisma.user.findFirst({ where: { id, deletedAt: null } });
   if (!employee) throw new AppError(404, "NOT_FOUND", "Employee not found");

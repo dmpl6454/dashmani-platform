@@ -10,8 +10,10 @@ export default function TeamPage() {
   if (isLoading) {
     return (
       <div className="space-y-6">
-        <h2 className="text-2xl font-bold">My Team</h2>
-        <p className="text-sm text-gray-500">Loading team data...</p>
+        <h2 className="text-4xl font-light text-[#1A1A1A] font-serif">My Team</h2>
+        <div className="flex items-center justify-center h-48">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#F5D547]" />
+        </div>
       </div>
     );
   }
@@ -19,8 +21,10 @@ export default function TeamPage() {
   if (!dashboard?.teamName) {
     return (
       <div className="space-y-6">
-        <h2 className="text-2xl font-bold">My Team</h2>
-        <p className="text-sm text-gray-500">You are not assigned to any team.</p>
+        <h2 className="text-4xl font-light text-[#1A1A1A] font-serif">My Team</h2>
+        <div className="bg-white rounded-2xl border border-[#E8E0D0] p-12 text-center shadow-[0_2px_16px_rgba(0,0,0,0.06)]">
+          <p className="text-[#B0B0B0]">You are not assigned to any team.</p>
+        </div>
       </div>
     );
   }
@@ -28,91 +32,98 @@ export default function TeamPage() {
   const members: any[] = dashboard.members ?? [];
 
   return (
-    <div className="space-y-6">
+    <div className="max-w-5xl mx-auto space-y-6">
       <div>
-        <h2 className="text-2xl font-bold">My Team</h2>
-        <p className="text-gray-500 text-sm mt-1">{dashboard.teamName}</p>
+        <h2 className="text-4xl font-light text-[#1A1A1A] font-serif">My Team</h2>
+        <p className="text-[#7A7A7A] text-sm mt-1">{dashboard.teamName}</p>
       </div>
 
       {/* Stat Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="rounded-lg border border-gray-200 bg-white p-5">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+        <div className="bg-white rounded-2xl border border-[#E8E0D0] p-5 shadow-[0_2px_16px_rgba(0,0,0,0.06)]">
           <div className="flex items-center gap-3">
-            <div className="rounded-full bg-blue-100 p-2">
-              <Users className="h-5 w-5 text-blue-600" />
+            <div className="h-10 w-10 rounded-xl bg-[#FFF3C4] flex items-center justify-center">
+              <Users className="h-5 w-5 text-[#1A1A1A]" />
             </div>
             <div>
-              <p className="text-sm text-gray-500">Team Name</p>
-              <p className="text-lg font-semibold text-gray-900">{dashboard.teamName}</p>
+              <p className="text-sm text-[#7A7A7A]">Team Name</p>
+              <p className="text-lg font-semibold text-[#1A1A1A]">{dashboard.teamName}</p>
             </div>
           </div>
         </div>
 
-        <div className="rounded-lg border border-gray-200 bg-white p-5">
+        <div className="bg-white rounded-2xl border border-[#E8E0D0] p-5 shadow-[0_2px_16px_rgba(0,0,0,0.06)]">
           <div className="flex items-center gap-3">
-            <div className="rounded-full bg-indigo-100 p-2">
-              <Users className="h-5 w-5 text-indigo-600" />
+            <div className="h-10 w-10 rounded-xl bg-[#FFF3C4] flex items-center justify-center">
+              <Users className="h-5 w-5 text-[#1A1A1A]" />
             </div>
             <div>
-              <p className="text-sm text-gray-500">Members</p>
-              <p className="text-lg font-semibold text-gray-900">{dashboard.memberCount}</p>
+              <p className="text-sm text-[#7A7A7A]">Members</p>
+              <p className="text-2xl font-light text-[#1A1A1A] font-serif">{dashboard.memberCount}</p>
             </div>
           </div>
         </div>
 
-        <div className="rounded-lg border border-gray-200 bg-white p-5">
+        <div className="bg-white rounded-2xl border border-[#E8E0D0] p-5 shadow-[0_2px_16px_rgba(0,0,0,0.06)]">
           <div className="flex items-center gap-3">
-            <div className={`rounded-full p-2 ${dashboard.submissionRate >= 70 ? "bg-green-100" : "bg-orange-100"}`}>
-              <CheckCircle2 className={`h-5 w-5 ${dashboard.submissionRate >= 70 ? "text-green-600" : "text-orange-600"}`} />
+            <div className={`h-10 w-10 rounded-xl flex items-center justify-center ${dashboard.submissionRate >= 70 ? "bg-green-50" : "bg-amber-50"}`}>
+              <CheckCircle2 className={`h-5 w-5 ${dashboard.submissionRate >= 70 ? "text-green-600" : "text-amber-600"}`} />
             </div>
             <div>
-              <p className="text-sm text-gray-500">Today's Submission Rate</p>
-              <p className="text-lg font-semibold text-gray-900">{dashboard.submissionRate}%</p>
+              <p className="text-sm text-[#7A7A7A]">Today&apos;s Submission Rate</p>
+              <p className="text-2xl font-light text-[#1A1A1A] font-serif">{dashboard.submissionRate}%</p>
             </div>
           </div>
         </div>
       </div>
 
       {/* Members Table */}
-      <div className="rounded-lg border border-gray-200 bg-white overflow-hidden">
-        <div className="px-5 py-4 border-b border-gray-100">
-          <h3 className="font-semibold text-gray-900">Team Members</h3>
+      <div className="bg-white rounded-2xl border border-[#E8E0D0] overflow-hidden shadow-[0_2px_16px_rgba(0,0,0,0.06)]">
+        <div className="px-6 py-4 border-b border-[#E8E0D0]">
+          <h3 className="font-semibold text-[#1A1A1A]">Team Members</h3>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-gray-100 bg-gray-50">
-                <th className="text-left py-3 px-5 font-medium text-gray-500">Name</th>
-                <th className="text-left py-3 px-4 font-medium text-gray-500">Email</th>
-                <th className="text-center py-3 px-4 font-medium text-gray-500">Today</th>
-                <th className="text-center py-3 px-4 font-medium text-gray-500">Weekly Reports</th>
-                <th className="text-center py-3 px-4 font-medium text-gray-500">Total Links</th>
+              <tr className="border-b border-[#E8E0D0] bg-[#FEFCF7]">
+                <th className="text-left py-3 px-6 font-medium text-[#7A7A7A]">Name</th>
+                <th className="text-left py-3 px-4 font-medium text-[#7A7A7A]">Email</th>
+                <th className="text-center py-3 px-4 font-medium text-[#7A7A7A]">Today</th>
+                <th className="text-center py-3 px-4 font-medium text-[#7A7A7A]">Weekly Reports</th>
+                <th className="text-center py-3 px-4 font-medium text-[#7A7A7A]">Total Links</th>
               </tr>
             </thead>
             <tbody>
               {members.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="py-8 text-center text-gray-400">
+                  <td colSpan={5} className="py-8 text-center text-[#B0B0B0]">
                     No team members found.
                   </td>
                 </tr>
               ) : (
                 members.map((member: any) => (
-                  <tr key={member.id} className="border-b border-gray-50 last:border-0 hover:bg-gray-50 transition-colors">
-                    <td className="py-3 px-5 font-medium text-gray-900">{member.name}</td>
-                    <td className="py-3 px-4 text-gray-500">{member.email}</td>
-                    <td className="py-3 px-4 text-center">
+                  <tr key={member.id} className="border-b border-[#E8E0D0]/50 last:border-0 hover:bg-[#FEFCF7] transition-colors">
+                    <td className="py-3.5 px-6">
+                      <div className="flex items-center gap-2.5">
+                        <div className="h-8 w-8 rounded-full bg-[#F5D547] flex items-center justify-center text-xs font-bold text-[#1A1A1A]">
+                          {member.name?.charAt(0)?.toUpperCase() || "?"}
+                        </div>
+                        <span className="font-medium text-[#1A1A1A]">{member.name}</span>
+                      </div>
+                    </td>
+                    <td className="py-3.5 px-4 text-[#7A7A7A]">{member.email}</td>
+                    <td className="py-3.5 px-4 text-center">
                       {member.submittedToday ? (
                         <CheckCircle2 className="h-5 w-5 text-green-500 mx-auto" />
                       ) : (
                         <XCircle className="h-5 w-5 text-red-400 mx-auto" />
                       )}
                     </td>
-                    <td className="py-3 px-4 text-center">
-                      <span className="font-medium">{member.weeklyReports}</span>
-                      <span className="text-gray-400">/7</span>
+                    <td className="py-3.5 px-4 text-center">
+                      <span className="font-medium text-[#1A1A1A]">{member.weeklyReports}</span>
+                      <span className="text-[#B0B0B0]">/7</span>
                     </td>
-                    <td className="py-3 px-4 text-center font-medium">{member.totalLinks}</td>
+                    <td className="py-3.5 px-4 text-center font-medium text-[#1A1A1A]">{member.totalLinks}</td>
                   </tr>
                 ))
               )}

@@ -10,6 +10,13 @@ import {
 } from "../services/daily-report.service";
 import { recordGrowthSnapshot } from "../services/account-growth.service";
 import { getLeaderboard } from "../services/leaderboard.service";
+import {
+  getPendingEmployees,
+  approveEmployee,
+  rejectEmployee,
+  adminUpdateProfile,
+} from "../services/employee-profile.service";
+import { getEmployeePerformance } from "../services/employee-performance.service";
 import { success } from "../utils/response";
 
 const router = Router();
@@ -78,6 +85,46 @@ router.get(
   },
 );
 
+// GET /admin/link-preview?url=... — fetch OG metadata for link preview
+router.get(
+  "/admin/link-preview",
+  authenticate,
+  async (req: Request, res: Response) => {
+    const url = req.query.url as string;
+    if (!url) return res.status(400).json({ success: false, error: { message: "url is required" } });
+
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 5000);
+
+      const response = await fetch(url, {
+        signal: controller.signal,
+        headers: {
+          "User-Agent": "Mozilla/5.0 (compatible; LinkPreview/1.0)",
+          "Accept": "text/html",
+        },
+        redirect: "follow",
+      });
+      clearTimeout(timeout);
+
+      const html = await response.text();
+      const slice = html.slice(0, 50000); // Only parse head section
+
+      const ogImage = slice.match(/<meta[^>]*property=["']og:image["'][^>]*content=["']([^"']+)["']/i)?.[1]
+        || slice.match(/<meta[^>]*content=["']([^"']+)["'][^>]*property=["']og:image["']/i)?.[1];
+      const ogTitle = slice.match(/<meta[^>]*property=["']og:title["'][^>]*content=["']([^"']+)["']/i)?.[1]
+        || slice.match(/<meta[^>]*content=["']([^"']+)["'][^>]*property=["']og:title["']/i)?.[1];
+      const ogDesc = slice.match(/<meta[^>]*property=["']og:description["'][^>]*content=["']([^"']+)["']/i)?.[1]
+        || slice.match(/<meta[^>]*content=["']([^"']+)["'][^>]*property=["']og:description["']/i)?.[1];
+
+      res.setHeader("Cache-Control", "public, max-age=86400");
+      return res.json({ success: true, data: { image: ogImage || null, title: ogTitle || null, description: ogDesc || null } });
+    } catch {
+      return res.json({ success: true, data: { image: null, title: null, description: null } });
+    }
+  },
+);
+
 // POST /admin/growth/record
 router.post(
   "/admin/growth/record",
@@ -94,6 +141,83 @@ router.post(
       }
       const snapshot = await recordGrowthSnapshot(accountId, data);
       return success(res, snapshot, undefined, 201);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// GET /admin/employees/:employeeId/performance — comprehensive performance data
+router.get(
+  "/admin/employees/:employeeId/performance",
+  authenticate,
+  requirePermission("reports", "view"),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const data = await getEmployeePerformance(req.params.employeeId);
+      return success(res, data);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// ===== Employee Approval =====
+
+// GET /admin/employees/pending — list pending employee registrations
+router.get(
+  "/admin/employees/pending",
+  authenticate,
+  requirePermission("employees", "edit"),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const employees = await getPendingEmployees();
+      return success(res, employees);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// PUT /admin/employees/:userId/approve — approve an employee
+router.put(
+  "/admin/employees/:userId/approve",
+  authenticate,
+  requirePermission("employees", "edit"),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const result = await approveEmployee(req.params.userId);
+      return success(res, result);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// PUT /admin/employees/:userId/reject — reject an employee
+router.put(
+  "/admin/employees/:userId/reject",
+  authenticate,
+  requirePermission("employees", "edit"),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const result = await rejectEmployee(req.params.userId);
+      return success(res, result);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// PUT /admin/employees/:userId/profile — admin update employee profile (designation, salary, etc.)
+router.put(
+  "/admin/employees/:userId/profile",
+  authenticate,
+  requirePermission("employees", "edit"),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const result = await adminUpdateProfile(req.params.userId, req.body);
+      return success(res, result);
     } catch (err) {
       next(err);
     }

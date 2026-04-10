@@ -53,6 +53,7 @@ export async function login(email: string, password: string) {
       name: user.name,
       email: user.email,
       roles: roleNames,
+      profileImageUrl: user.profileImageUrl,
     },
   };
 }

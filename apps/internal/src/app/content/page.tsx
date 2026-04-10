@@ -3,7 +3,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { useContentPosts } from "@/lib/hooks/use-content";
 import { useProjects } from "@/lib/hooks/use-projects";
-import { Button, Input, Badge, Card, CardContent } from "@dashmani/ui";
+import { Button, Input } from "@dashmani/ui";
 
 const STATUS_OPTIONS = ["", "DRAFT", "PENDING_APPROVAL", "APPROVED", "SCHEDULED", "PUBLISHED", "FAILED", "REJECTED"];
 const STATUS_LABELS: Record<string, string> = {
@@ -15,14 +15,14 @@ const STATUS_LABELS: Record<string, string> = {
   FAILED: "Failed",
   REJECTED: "Rejected",
 };
-const STATUS_COLOR: Record<string, "default" | "secondary" | "warning" | "danger"> = {
-  DRAFT: "secondary",
-  PENDING_APPROVAL: "warning",
-  APPROVED: "default",
-  SCHEDULED: "default",
-  PUBLISHED: "default",
-  FAILED: "danger",
-  REJECTED: "danger",
+const STATUS_BADGE: Record<string, string> = {
+  DRAFT: "bg-[rgba(0,0,0,0.06)] text-[#7A7A7A]",
+  PENDING_APPROVAL: "bg-[#FFF3C4] text-[#1A1A1A]",
+  APPROVED: "bg-[rgba(107,203,119,0.12)] text-[#6BCB77]",
+  SCHEDULED: "bg-[rgba(52,152,219,0.12)] text-[#3498DB]",
+  PUBLISHED: "bg-[rgba(107,203,119,0.12)] text-[#6BCB77]",
+  FAILED: "bg-[rgba(231,76,60,0.1)] text-[#E74C3C]",
+  REJECTED: "bg-[rgba(231,76,60,0.1)] text-[#E74C3C]",
 };
 
 export default function ContentListPage() {
@@ -35,25 +35,25 @@ export default function ContentListPage() {
   const projects = (projectsData as any)?.data || [];
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6 crx-animate-fade">
       <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-bold">Content</h2>
+        <h1 className="font-serif text-4xl font-light text-[#1A1A1A]">Content</h1>
         <div className="flex items-center gap-2">
           <Link href="/content/calendar">
-            <Button variant="outline">Calendar View</Button>
+            <Button variant="outline" className="border border-[#E8E0D0] rounded-full text-[#1A1A1A] hover:bg-[rgba(255,248,225,0.5)]">Calendar View</Button>
           </Link>
           <Link href="/content/new">
-            <Button>+ New Content</Button>
+            <Button className="bg-[#1A1A1A] text-white rounded-full hover:bg-[#2B2B2B]">+ New Content</Button>
           </Link>
         </div>
       </div>
 
-      <div className="flex gap-3 items-center flex-wrap">
+      <div className="flex gap-3 items-center flex-wrap crx-animate-slide crx-delay-1">
         <div className="relative max-w-xs">
-          <Input placeholder="Search content..." value={search} onChange={(e) => setSearch(e.target.value)} />
+          <Input placeholder="Search content..." value={search} onChange={(e) => setSearch(e.target.value)} className="border border-[#E8E0D0] rounded-lg focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547]" />
         </div>
         <select
-          className="h-10 rounded-md border border-border bg-white px-3 py-2 text-sm"
+          className="h-10 rounded-lg border border-[#E8E0D0] bg-white px-3 py-2 text-sm focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547] outline-none"
           value={status}
           onChange={(e) => setStatus(e.target.value)}
         >
@@ -63,7 +63,7 @@ export default function ContentListPage() {
           ))}
         </select>
         <select
-          className="h-10 rounded-md border border-border bg-white px-3 py-2 text-sm"
+          className="h-10 rounded-lg border border-[#E8E0D0] bg-white px-3 py-2 text-sm focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547] outline-none"
           value={projectId}
           onChange={(e) => setProjectId(e.target.value)}
         >
@@ -75,50 +75,48 @@ export default function ContentListPage() {
       </div>
 
       {isLoading ? (
-        <div className="text-center text-muted-foreground py-8">Loading content...</div>
+        <div className="text-center text-[#7A7A7A] py-8">Loading content...</div>
       ) : posts.length === 0 ? (
-        <Card>
-          <CardContent className="py-8 text-center text-muted-foreground">
-            No content posts found.
-          </CardContent>
-        </Card>
+        <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0] py-8 text-center text-[#7A7A7A]">
+          No content posts found.
+        </div>
       ) : (
-        <div className="bg-white border rounded-lg overflow-x-auto">
+        <div className="bg-white border border-[#E8E0D0] rounded-2xl overflow-x-auto shadow-[0_2px_16px_rgba(0,0,0,0.05)] crx-animate-slide crx-delay-2">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b bg-gray-50">
-                <th className="text-left p-4 font-medium">Title</th>
-                <th className="text-left p-4 font-medium">Project</th>
-                <th className="text-left p-4 font-medium">Account</th>
-                <th className="text-left p-4 font-medium">Status</th>
-                <th className="text-left p-4 font-medium">Scheduled</th>
-                <th className="text-left p-4 font-medium">Created By</th>
+              <tr className="border-b border-[#F0EAD8]">
+                <th className="text-left p-4 text-[#7A7A7A] text-xs font-medium">Title</th>
+                <th className="text-left p-4 text-[#7A7A7A] text-xs font-medium">Project</th>
+                <th className="text-left p-4 text-[#7A7A7A] text-xs font-medium">Account</th>
+                <th className="text-left p-4 text-[#7A7A7A] text-xs font-medium">Status</th>
+                <th className="text-left p-4 text-[#7A7A7A] text-xs font-medium">Scheduled</th>
+                <th className="text-left p-4 text-[#7A7A7A] text-xs font-medium">Created By</th>
               </tr>
             </thead>
             <tbody>
               {posts.map((post: any) => (
-                <tr key={post.id} className="border-b hover:bg-gray-50">
+                <tr key={post.id} className="border-b border-[#F0EAD8] last:border-0 hover:bg-[rgba(255,248,225,0.5)] transition-colors">
                   <td className="p-4">
-                    <Link href={`/content/${post.id}`} className="text-brand-blue hover:underline font-medium">
+                    <Link href={`/content/${post.id}`} className="text-[#1A1A1A] hover:text-[#F5D547] font-medium">
                       {post.title}
                     </Link>
                     {post.mediaUrls?.length > 0 && (
-                      <span className="ml-2 text-xs text-muted-foreground">({post.mediaUrls.length} media)</span>
+                      <span className="ml-2 text-xs text-[#B0B0B0]">({post.mediaUrls.length} media)</span>
                     )}
                   </td>
-                  <td className="p-4 text-muted-foreground">{post.project?.name}</td>
-                  <td className="p-4 text-muted-foreground">
+                  <td className="p-4 text-[#7A7A7A]">{post.project?.name}</td>
+                  <td className="p-4 text-[#7A7A7A]">
                     {post.account ? `${post.account.platform?.name}: ${post.account.handle}` : "--"}
                   </td>
                   <td className="p-4">
-                    <Badge variant={STATUS_COLOR[post.status] || "secondary"}>
+                    <span className={`rounded-full px-3 py-1 text-xs font-medium ${STATUS_BADGE[post.status] || "bg-[rgba(0,0,0,0.06)] text-[#7A7A7A]"}`}>
                       {STATUS_LABELS[post.status] || post.status}
-                    </Badge>
+                    </span>
                   </td>
-                  <td className="p-4 text-muted-foreground">
+                  <td className="p-4 text-[#7A7A7A]">
                     {post.scheduledAt ? new Date(post.scheduledAt).toLocaleString() : "--"}
                   </td>
-                  <td className="p-4 text-muted-foreground">{post.createdBy?.name}</td>
+                  <td className="p-4 text-[#7A7A7A]">{post.createdBy?.name}</td>
                 </tr>
               ))}
             </tbody>

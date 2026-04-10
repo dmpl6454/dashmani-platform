@@ -1,15 +1,139 @@
 import { prisma } from "@dashmani/db";
 import crypto from "crypto";
+import bcrypt from "bcrypt";
 import { AppError } from "../middleware/error-handler";
 import { signAccessToken, signRefreshToken, verifyRefreshToken } from "../utils/jwt";
 import type { JwtPayload } from "@dashmani/shared";
+import { notifyAdmins } from "./notification.service";
 
 function generateOtp(): string {
   return Math.floor(100000 + Math.random() * 900000).toString();
 }
 
+// ===== Self-Registration =====
+
+export async function registerEmployee(data: {
+  name: string;
+  email: string;
+  phone?: string;
+  password: string;
+}) {
+  // Check if email already exists
+  const existing = await prisma.user.findFirst({
+    where: {
+      OR: [
+        { email: data.email },
+        ...(data.phone ? [{ phone: data.phone }] : []),
+      ],
+    },
+  });
+
+  if (existing) {
+    throw new AppError(409, "ALREADY_EXISTS", "An account with this email or phone already exists");
+  }
+
+  const passwordHash = await bcrypt.hash(data.password, 12);
+
+  const user = await prisma.user.create({
+    data: {
+      name: data.name,
+      email: data.email,
+      phone: data.phone || null,
+      passwordHash,
+      status: "ONBOARDING", // Requires admin approval
+    },
+  });
+
+  // Create empty profile
+  await prisma.employeeProfile.create({
+    data: { userId: user.id },
+  });
+
+  // Notify admins about new registration (fire and forget)
+  notifyAdmins(
+    "GENERAL",
+    "New Employee Registration",
+    `${data.name} (${data.email}) has registered and is awaiting approval`,
+    { userId: user.id, name: data.name, email: data.email }
+  ).catch((err) => console.error("Admin notification failed:", err));
+
+  return {
+    message: "Account created successfully. Please wait for admin approval before logging in.",
+    user: {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      status: user.status,
+    },
+  };
+}
+
+// ===== Password Login =====
+
+export async function loginWithPassword(identifier: string, password: string) {
+  const user = await prisma.user.findFirst({
+    where: {
+      deletedAt: null,
+      OR: [{ email: identifier }, { phone: identifier }],
+    },
+    include: { roles: { include: { role: true } } },
+  });
+
+  if (!user) {
+    throw new AppError(401, "INVALID_CREDENTIALS", "Invalid email/phone or password");
+  }
+
+  if (user.status === "ONBOARDING") {
+    throw new AppError(403, "PENDING_APPROVAL", "Your account is pending admin approval. Please wait.");
+  }
+
+  if (user.status === "INACTIVE") {
+    throw new AppError(403, "ACCOUNT_INACTIVE", "Your account has been deactivated. Contact admin.");
+  }
+
+  const isValid = await bcrypt.compare(password, user.passwordHash);
+  if (!isValid) {
+    throw new AppError(401, "INVALID_CREDENTIALS", "Invalid email/phone or password");
+  }
+
+  const roleNames = user.roles.map((ur) => ur.role.name);
+
+  const payload: JwtPayload = {
+    userId: user.id,
+    email: user.email,
+    roles: roleNames,
+    type: "hr",
+  };
+
+  const accessToken = signAccessToken(payload);
+  const refreshToken = signRefreshToken({ userId: user.id });
+
+  const hashedToken = crypto.createHash("sha256").update(refreshToken).digest("hex");
+  await prisma.refreshToken.create({
+    data: {
+      userId: user.id,
+      token: hashedToken,
+      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+    },
+  });
+
+  return {
+    accessToken,
+    refreshToken,
+    user: {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      phone: user.phone,
+      profileImageUrl: user.profileImageUrl,
+      roles: roleNames,
+    },
+  };
+}
+
+// ===== OTP Auth (kept for backward compatibility) =====
+
 export async function requestOtp(identifier: string, channel: "EMAIL" | "SMS" | "WHATSAPP") {
-  // Find user by email OR phone
   const user = await prisma.user.findFirst({
     where: {
       deletedAt: null,
@@ -26,9 +150,8 @@ export async function requestOtp(identifier: string, channel: "EMAIL" | "SMS" | 
   }
 
   const otp = generateOtp();
-  const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
-  // Invalidate any existing OTPs for this user
   await prisma.otpToken.updateMany({
     where: { userId: user.id, verified: false },
     data: { expiresAt: new Date(0) },
@@ -44,7 +167,6 @@ export async function requestOtp(identifier: string, channel: "EMAIL" | "SMS" | 
     },
   });
 
-  // TODO: production delivery via EMAIL/SMS/WHATSAPP
   console.log(`[HR-AUTH] OTP for ${identifier}: ${otp}`);
 
   return { message: `OTP sent via ${channel}` };
@@ -77,7 +199,6 @@ export async function verifyOtp(identifier: string, otp: string) {
     throw new AppError(401, "INVALID_OTP", "Invalid or expired OTP");
   }
 
-  // Mark OTP as verified
   await prisma.otpToken.update({
     where: { id: otpToken.id },
     data: { verified: true },

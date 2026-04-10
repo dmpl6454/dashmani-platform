@@ -9,6 +9,7 @@ export function HrAuthProvider({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
 
+  // Load user from localStorage on mount
   useEffect(() => {
     const token = localStorage.getItem("hrAccessToken");
     const storedUser = localStorage.getItem("hrUser");
@@ -22,11 +23,20 @@ export function HrAuthProvider({ children }: { children: ReactNode }) {
     setIsLoading(false);
   }, []);
 
+  // Redirect unauthenticated users to login
   useEffect(() => {
     if (!isLoading && !user && pathname !== "/login") {
       router.push("/login");
     }
   }, [isLoading, user, pathname, router]);
+
+  // Login: save tokens + user to localStorage AND update state
+  const login = useCallback((accessToken: string, refreshToken: string, userData: HrUser) => {
+    localStorage.setItem("hrAccessToken", accessToken);
+    localStorage.setItem("hrRefreshToken", refreshToken);
+    localStorage.setItem("hrUser", JSON.stringify(userData));
+    setUser(userData);
+  }, []);
 
   const logout = useCallback(() => {
     localStorage.removeItem("hrAccessToken");
@@ -37,7 +47,7 @@ export function HrAuthProvider({ children }: { children: ReactNode }) {
   }, [router]);
 
   return (
-    <HrAuthContext.Provider value={{ user, isLoading, logout }}>
+    <HrAuthContext.Provider value={{ user, isLoading, login, logout }}>
       {children}
     </HrAuthContext.Provider>
   );

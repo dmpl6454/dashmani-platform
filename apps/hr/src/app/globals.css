@@ -1,3 +1,131 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=Playfair+Display:wght@300;400;500;600;700&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 45 60% 94%;
+    --foreground: 0 0% 10%;
+    --muted: 40 50% 90%;
+    --muted-foreground: 0 0% 48%;
+    --border: 36 30% 85%;
+    --ring: 48 90% 62%;
+    --radius: 16px;
+
+    /* Crextio Design Tokens */
+    --crx-yellow: #F5D547;
+    --crx-yellow-light: #FFF3C4;
+    --crx-yellow-muted: #FAE89E;
+    --crx-yellow-soft: #FFF8E1;
+    --crx-yellow-hover: #E8C83A;
+    --crx-bg: #FDF6E3;
+    --crx-bg-mid: #F7ECD5;
+    --crx-bg-deep: #EFE2C4;
+    --crx-bg-gradient: linear-gradient(165deg, #FDF6E3 0%, #F7ECD5 40%, #EFE2C4 100%);
+    --crx-card: #FFFFFF;
+    --crx-card-hover: #FFFDF5;
+    --crx-card-dark: #2B2B2B;
+    --crx-text: #1A1A1A;
+    --crx-text-secondary: #7A7A7A;
+    --crx-text-muted: #B0B0B0;
+    --crx-dark: #1A1A1A;
+    --crx-border: #E8E0D0;
+    --crx-border-light: #F0EAD8;
+    --crx-green: #6BCB77;
+    --crx-green-bg: rgba(107, 203, 119, 0.12);
+    --crx-orange: #F5A623;
+    --crx-red: #E74C3C;
+    --crx-blue: #3498DB;
+    --crx-avatar-gradient: linear-gradient(135deg, #E8D5B7, #B8956A);
+    --crx-shadow: 0 2px 16px rgba(0, 0, 0, 0.05);
+    --crx-shadow-md: 0 4px 24px rgba(0, 0, 0, 0.07);
+    --crx-shadow-lg: 0 8px 40px rgba(0, 0, 0, 0.10);
+    --crx-hatch: repeating-linear-gradient(45deg, transparent, transparent 3px, rgba(0,0,0,0.07) 3px, rgba(0,0,0,0.07) 6px);
+  }
+
+  * {
+    border-color: #E8E0D0;
+    box-sizing: border-box;
+  }
+
+  body {
+    font-family: 'DM Sans', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    background: var(--crx-bg-gradient);
+    min-height: 100vh;
+    color: #1A1A1A;
+  }
+
+  .font-serif {
+    font-family: 'Playfair Display', Georgia, serif;
+  }
+}
+
+/* Crextio Animations */
+@keyframes crx-fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes crx-slideUp {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes crx-scaleIn {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes crx-fadeInUp {
+  from { opacity: 0; transform: translateY(24px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes crx-float1 {
+  0%, 100% { transform: translateY(0px) rotate(0deg); }
+  50% { transform: translateY(-12px) rotate(1deg); }
+}
+
+@keyframes crx-float2 {
+  0%, 100% { transform: translateY(0px) rotate(0deg); }
+  50% { transform: translateY(-8px) rotate(-1.5deg); }
+}
+
+@keyframes crx-float3 {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-15px); }
+}
+
+@keyframes crx-dotPulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
+@keyframes crx-fadeInLeft {
+  from { opacity: 0; transform: translateX(-24px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes crx-fadeInRight {
+  from { opacity: 0; transform: translateX(24px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes crx-slideDown {
+  from { opacity: 0; transform: translateY(-12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Utility classes */
+.crx-animate-fade { animation: crx-fadeIn 0.4s ease-out; }
+.crx-animate-slide { animation: crx-slideUp 0.5s ease-out both; }
+.crx-animate-scale { animation: crx-scaleIn 0.3s ease-out; }
+
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--crx-border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--crx-text-muted); }

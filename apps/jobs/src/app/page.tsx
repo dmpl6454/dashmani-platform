@@ -2,7 +2,7 @@
 import { useState, useEffect } from "react";
 import useSWR from "swr";
 import Link from "next/link";
-import { Search, MapPin, Briefcase, Clock, GraduationCap, ChevronRight, IndianRupee, Sparkles, ArrowRight, Building2, Users } from "lucide-react";
+import { Search, MapPin, Briefcase, Clock, GraduationCap, ChevronRight, IndianRupee, Sparkles, ArrowRight, Building2, Users, Send } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 
 function timeAgo(dateStr: string) {
@@ -27,11 +27,12 @@ export default function JobsPage() {
       {/* Hero */}
       <section className="relative text-center py-8 overflow-hidden">
         {/* Decorative background */}
-        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[600px] h-[600px] rounded-full bg-[#F5D547]/[0.07] blur-[100px] pointer-events-none" />
+        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[600px] h-[600px] rounded-full bg-[#5B4BF5]/[0.06] blur-[100px] pointer-events-none" />
         <div className="absolute top-20 right-0 w-[300px] h-[300px] rounded-full bg-[#F5D547]/[0.05] blur-[80px] pointer-events-none" />
+        <div className="absolute top-40 left-0 w-[250px] h-[250px] rounded-full bg-[#3023D0]/[0.04] blur-[80px] pointer-events-none" />
 
         <div className="relative">
-          <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-[#1A1A1A] text-white text-xs font-semibold mb-6 animate-scaleIn">
+          <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-gradient-to-r from-[#3023D0] to-[#5B4BF5] text-white text-xs font-semibold mb-6 animate-scaleIn shadow-[0_2px_12px_rgba(91,75,245,0.3)]">
             <Sparkles className="h-3.5 w-3.5 text-[#F5D547]" />
             We&apos;re Hiring
           </div>
@@ -47,9 +48,9 @@ export default function JobsPage() {
 
       {/* Internship Banner */}
       <Link href="/internship" className="group block max-w-3xl mx-auto animate-fadeInUp stagger-1">
-        <div className="relative rounded-2xl border border-[#E8E0D0] bg-gradient-to-r from-[#FFF8E1] via-white to-[#FFF3C4] p-5 flex items-center gap-4 hover:shadow-[0_8px_32px_rgba(245,213,71,0.15)] hover:border-[#F5D547]/40 transition-all duration-300">
-          <div className="shrink-0 h-12 w-12 rounded-xl bg-[#F5D547] flex items-center justify-center shadow-[0_4px_12px_rgba(245,213,71,0.3)]">
-            <GraduationCap className="h-6 w-6 text-[#1A1A1A]" />
+        <div className="relative rounded-2xl border border-[#E8E0D0] bg-gradient-to-r from-[#F0EEFF] via-white to-[#FFF3C4] p-5 flex items-center gap-4 hover:shadow-[0_8px_32px_rgba(91,75,245,0.12)] hover:border-[#5B4BF5]/30 transition-all duration-300">
+          <div className="shrink-0 h-12 w-12 rounded-xl bg-gradient-to-br from-[#5B4BF5] to-[#3023D0] flex items-center justify-center shadow-[0_4px_12px_rgba(91,75,245,0.3)]">
+            <GraduationCap className="h-6 w-6 text-white" />
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 mb-0.5">
@@ -58,7 +59,7 @@ export default function JobsPage() {
             </div>
             <p className="text-sm text-[#7A7A7A]">Gain real-world experience in social media, content & design</p>
           </div>
-          <ArrowRight className="h-5 w-5 text-[#B0B0B0] group-hover:text-[#F5D547] group-hover:translate-x-1 transition-all" />
+          <ArrowRight className="h-5 w-5 text-[#B0B0B0] group-hover:text-[#5B4BF5] group-hover:translate-x-1 transition-all" />
         </div>
       </Link>
 
@@ -71,7 +72,7 @@ export default function JobsPage() {
             placeholder="Search by role, department..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="w-full pl-12 pr-4 py-3.5 rounded-2xl border border-[#E8E0D0] bg-white/80 backdrop-blur-sm text-sm text-[#1A1A1A] placeholder:text-[#B0B0B0] focus:outline-none focus:ring-2 focus:ring-[#F5D547]/50 focus:border-[#F5D547] shadow-[0_2px_12px_rgba(0,0,0,0.04)] hover:shadow-[0_4px_20px_rgba(0,0,0,0.06)] transition-all"
+            className="w-full pl-12 pr-4 py-3.5 rounded-2xl border border-[#E8E0D0] bg-white/80 backdrop-blur-sm text-sm text-[#1A1A1A] placeholder:text-[#B0B0B0] focus:outline-none focus:ring-2 focus:ring-[#5B4BF5]/30 focus:border-[#5B4BF5]/50 shadow-[0_2px_12px_rgba(0,0,0,0.04)] hover:shadow-[0_4px_20px_rgba(91,75,245,0.08)] transition-all"
           />
         </div>
       </div>
@@ -97,9 +98,9 @@ export default function JobsPage() {
           </div>
           {jobs.map((job: any, i: number) => (
             <Link key={job.id} href={`/${job.id}`} className={`group block animate-fadeInUp stagger-${Math.min(i + 1, 6)}`}>
-              <div className="relative rounded-2xl border border-[#E8E0D0] bg-white p-6 hover:border-[#F5D547]/50 hover:shadow-[0_8px_32px_rgba(0,0,0,0.08)] transition-all duration-300 overflow-hidden">
+              <div className="relative rounded-2xl border border-[#E8E0D0] bg-white p-6 hover:border-[#5B4BF5]/30 hover:shadow-[0_8px_32px_rgba(91,75,245,0.08)] transition-all duration-300 overflow-hidden">
                 {/* Accent line */}
-                <div className="absolute top-0 left-0 w-1 h-full bg-gradient-to-b from-[#F5D547] to-[#F5D547]/20 rounded-l-2xl opacity-0 group-hover:opacity-100 transition-opacity" />
+                <div className="absolute top-0 left-0 w-1 h-full bg-gradient-to-b from-[#5B4BF5] to-[#F5D547] rounded-l-2xl opacity-0 group-hover:opacity-100 transition-opacity" />
 
                 <div className="flex items-start justify-between gap-4">
                   <div className="flex-1 min-w-0">
@@ -143,9 +144,22 @@ export default function JobsPage() {
                         <Clock className="h-3 w-3" />{job.experience}
                       </p>
                     )}
+
+                    {/* Apply Now button - responsive */}
+                    <div className="mt-4 flex items-center gap-3">
+                      <Link
+                        href={`/${job.id}?apply=true`}
+                        onClick={(e) => e.stopPropagation()}
+                        className="inline-flex items-center gap-2 px-5 py-2.5 rounded-full bg-gradient-to-r from-[#3023D0] to-[#5B4BF5] text-white text-sm font-semibold shadow-[0_2px_8px_rgba(91,75,245,0.25)] hover:shadow-[0_4px_16px_rgba(91,75,245,0.35)] hover:-translate-y-0.5 transition-all"
+                      >
+                        <Send className="h-3.5 w-3.5" />
+                        Apply Now
+                      </Link>
+                      <span className="text-xs text-[#B0B0B0] hidden sm:inline">or view details →</span>
+                    </div>
                   </div>
 
-                  <div className="shrink-0 h-10 w-10 rounded-xl bg-[#FEFCF7] border border-[#E8E0D0] flex items-center justify-center text-[#B0B0B0] group-hover:bg-[#F5D547] group-hover:text-[#1A1A1A] group-hover:border-[#F5D547] transition-all duration-300">
+                  <div className="shrink-0 hidden sm:flex h-10 w-10 rounded-xl bg-[#FEFCF7] border border-[#E8E0D0] items-center justify-center text-[#B0B0B0] group-hover:bg-[#5B4BF5] group-hover:text-white group-hover:border-[#5B4BF5] transition-all duration-300">
                     <ChevronRight className="h-5 w-5" />
                   </div>
                 </div>

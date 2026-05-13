@@ -113,7 +113,7 @@ export default function EmployeePerformancePage() {
         <div className="flex items-center gap-4">
           <div
             className="h-16 w-16 rounded-2xl flex items-center justify-center text-white text-2xl font-semibold"
-            style={{ background: "linear-gradient(135deg, #E8D5B7, #B8956A)" }}
+            style={{ background: "linear-gradient(135deg, #5B4BF5, #3023D0)" }}
           >
             {employee.name?.[0]?.toUpperCase()}
           </div>
@@ -327,7 +327,7 @@ export default function EmployeePerformancePage() {
                   <div className="flex items-center gap-3">
                     <div
                       className="h-9 w-9 rounded-full flex items-center justify-center text-white text-xs font-semibold"
-                      style={{ background: "linear-gradient(135deg, #E8D5B7, #B8956A)" }}
+                      style={{ background: "linear-gradient(135deg, #5B4BF5, #3023D0)" }}
                     >
                       {(acc.handle || acc.displayName)?.[0]?.toUpperCase()}
                     </div>

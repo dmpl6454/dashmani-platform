@@ -112,7 +112,7 @@ export default function ClientAnalyticsPage() {
                 <div key={project.projectId} className="border border-[#E8E0D0] rounded-2xl p-5 hover:shadow-[0_4px_24px_rgba(0,0,0,0.07)] transition-all">
                   <div className="flex items-center justify-between mb-4">
                     <div className="flex items-center gap-3">
-                      <div className="h-10 w-10 rounded-full flex items-center justify-center text-white text-sm font-medium" style={{ background: "linear-gradient(135deg, #E8D5B7, #B8956A)" }}>
+                      <div className="h-10 w-10 rounded-full flex items-center justify-center text-white text-sm font-medium" style={{ background: "linear-gradient(135deg, #5B4BF5, #3023D0)" }}>
                         {(project.projectName || "?").charAt(0).toUpperCase()}
                       </div>
                       <div>

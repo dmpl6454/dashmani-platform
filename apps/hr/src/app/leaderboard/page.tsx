@@ -46,7 +46,7 @@ export default function LeaderboardPage() {
                   )}
                 </div>
 
-                <div className="h-10 w-10 rounded-full flex items-center justify-center text-white font-bold text-sm shrink-0" style={{ background: "linear-gradient(135deg, #E8D5B7, #B8956A)" }}>
+                <div className="h-10 w-10 rounded-full flex items-center justify-center text-white font-bold text-sm shrink-0" style={{ background: "linear-gradient(135deg, #5B4BF5, #3023D0)" }}>
                   {entry.employee.name?.charAt(0)?.toUpperCase() || "?"}
                 </div>
 

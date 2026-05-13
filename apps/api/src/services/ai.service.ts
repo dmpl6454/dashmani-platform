@@ -365,6 +365,60 @@ Return ONLY the complete HTML document.`;
   return { html: await askClaude(system, prompt), employeeName: employee.name };
 }
 
+// ===== AI Presentation Generator =====
+
+export async function generateAIPresentation(input: {
+  topic: string;
+  type: "presentation" | "report";
+  slideCount?: number;
+  style?: string;
+  audience?: string;
+  additionalNotes?: string;
+}) {
+  const slides = input.slideCount || (input.type === "report" ? 8 : 10);
+
+  const system = `You are a professional presentation designer for ${COMPANY.name} (${COMPANY.legalName}), a full-service marketing and technology agency. Generate Marp-compatible markdown presentations.
+
+Rules:
+- Use --- to separate slides (with blank lines before and after)
+- First slide must have the marp frontmatter
+- Use clear, concise bullet points
+- Include data placeholders where relevant (e.g., "X%" or "₹X")
+- Use tables for comparisons and metrics
+- Make it visually structured with proper headings
+- Use emojis sparingly for visual appeal
+- Include a title slide and a closing/thank-you slide
+- For reports: include executive summary, key metrics, findings, and recommendations
+- For presentations: include agenda, key points, and call-to-action
+- Generate exactly ${slides} slides
+- Return ONLY the Marp markdown, no explanation`;
+
+  const typeLabel = input.type === "report" ? "Report" : "Presentation";
+
+  const prompt = `Generate a professional ${typeLabel} in Marp markdown format:
+
+Topic: ${input.topic}
+Type: ${typeLabel}
+Number of Slides: ${slides}
+Style/Tone: ${input.style || "Professional and clean"}
+Target Audience: ${input.audience || "Business stakeholders"}
+${input.additionalNotes ? `Additional Notes: ${input.additionalNotes}` : ""}
+
+Company: ${COMPANY.name}
+
+Generate the complete Marp markdown with frontmatter. Use theme: default with dark background for presentations (backgroundColor: #1a1a1a, color: #ffffff) and light background for reports (backgroundColor: #ffffff, color: #333333).`;
+
+  const markdown = await askClaude(system, prompt);
+
+  // Clean up any code block wrapping Claude might add
+  const cleaned = markdown
+    .replace(/^```(?:markdown|marp)?\n?/i, "")
+    .replace(/\n?```$/i, "")
+    .trim();
+
+  return { markdown: cleaned, title: `${input.topic} — ${typeLabel}`, slideCount: slides };
+}
+
 // ===== General AI Assistant =====
 
 export async function aiAssist(input: {

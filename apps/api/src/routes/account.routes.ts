@@ -52,6 +52,13 @@ router.put("/accounts/:id", authenticate, requirePermission("accounts", "edit"),
   } catch (err) { next(err); }
 });
 
+router.delete("/accounts/:id", authenticate, requirePermission("accounts", "delete"), auditLog("accounts", "delete"), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const result = await accountService.deleteAccount(req.params.id);
+    return success(res, result);
+  } catch (err) { next(err); }
+});
+
 router.post("/accounts/:id/assign", authenticate, requirePermission("accounts", "edit"), validate(accountValidators.assignAccountSchema), auditLog("accounts", "assign"), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const assignment = await accountService.assignEmployee(req.params.id, req.body.employeeId, req.user!.userId, req.body.reason);

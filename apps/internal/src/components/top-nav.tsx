@@ -113,7 +113,7 @@ export function TopNav() {
         <Link href="/dashboard" className="flex items-center gap-2.5 shrink-0">
           <img src="/logo.svg" alt="Digital Sukoon" className="h-9 w-9 rounded-full" />
           <div className="hidden sm:block">
-            <span className="text-base font-bold text-[#1A1A1A] tracking-wide uppercase" style={{ fontFamily: "'DM Sans', sans-serif", letterSpacing: "2px", fontSize: "14px" }}>Digital Sukoon</span>
+            <span className="text-base font-bold text-[#1A1A1A] tracking-wide uppercase" style={{ fontFamily: "'Instagram Sans', system-ui, sans-serif", letterSpacing: "2px", fontSize: "14px" }}>Digital Sukoon</span>
           </div>
         </Link>
 
@@ -127,8 +127,8 @@ export function TopNav() {
                 href={item.href}
                 className={`relative flex items-center gap-1.5 px-3.5 py-2 rounded-full text-[13px] font-medium transition-all duration-250 ${
                   isActive
-                    ? "bg-[#1A1A1A] text-white"
-                    : "text-[#7A7A7A] hover:bg-[#FFF8E1] hover:border-[#FAE89E]"
+                    ? "bg-gradient-to-r from-[#3023D0] to-[#5B4BF5] text-white shadow-[0_2px_8px_rgba(91,75,245,0.25)]"
+                    : "text-[#7A7A7A] hover:bg-[#F0EEFF]"
                 }`}
               >
                 <item.icon className="h-3.5 w-3.5" />
@@ -145,8 +145,8 @@ export function TopNav() {
               onClick={() => setMoreOpen((v) => !v)}
               className={`flex items-center gap-1.5 px-3.5 py-2 rounded-full text-[13px] font-medium transition-all ${
                 moreItems.some(i => pathname.startsWith(i.href))
-                  ? "bg-[#1A1A1A] text-white"
-                  : "text-[#7A7A7A] hover:bg-[#FFF8E1]"
+                  ? "bg-gradient-to-r from-[#3023D0] to-[#5B4BF5] text-white shadow-[0_2px_8px_rgba(91,75,245,0.25)]"
+                  : "text-[#7A7A7A] hover:bg-[#F0EEFF]"
               }`}
             >
               More
@@ -250,7 +250,7 @@ export function TopNav() {
               ) : null}
               <div
                 className="h-8 w-8 rounded-full flex items-center justify-center text-white font-semibold text-sm"
-                style={{ background: "linear-gradient(135deg, #E8D5B7, #B8956A)", display: user?.profileImageUrl ? "none" : undefined }}
+                style={{ background: "linear-gradient(135deg, #5B4BF5, #3023D0)", display: user?.profileImageUrl ? "none" : undefined }}
               >
                 {user?.name?.charAt(0)?.toUpperCase() || "A"}
               </div>

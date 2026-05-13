@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=Playfair+Display:wght@300;400;500;600;700&display=swap');
+/* Instagram Sans loaded via app-level @font-face declarations */
 
 @tailwind base;
 @tailwind components;
@@ -41,7 +41,11 @@
     --crx-red-bg: rgba(231, 76, 60, 0.10);
     --crx-blue: #3498DB;
     --crx-blue-bg: rgba(52, 152, 219, 0.12);
-    --crx-avatar-gradient: linear-gradient(135deg, #E8D5B7, #B8956A);
+    --crx-purple: #5B4BF5;
+    --crx-purple-deep: #3023D0;
+    --crx-purple-light: #F0EEFF;
+    --crx-purple-bg: rgba(91, 75, 245, 0.08);
+    --crx-avatar-gradient: linear-gradient(135deg, #5B4BF5, #3023D0);
     --crx-shadow: 0 2px 16px rgba(0, 0, 0, 0.05);
     --crx-shadow-md: 0 4px 24px rgba(0, 0, 0, 0.07);
     --crx-shadow-lg: 0 8px 40px rgba(0, 0, 0, 0.10);
@@ -60,9 +64,10 @@
     color: var(--crx-text);
   }
 
-  .font-serif {
-    font-family: 'Playfair Display', Georgia, serif;
-  }
+}
+
+@layer utilities {
+  .font-serif { font-family: 'Instagram Sans', system-ui, sans-serif !important; font-weight: 700 !important; }
 }
 
 /* Crextio Animations */

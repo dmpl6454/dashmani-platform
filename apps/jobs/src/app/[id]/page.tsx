@@ -1,14 +1,14 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import { apiFetch, apiUpload } from "@/lib/api";
 import Link from "next/link";
 import {
-  ArrowLeft, MapPin, Briefcase, Clock, IndianRupee, CheckCircle,
+  ArrowLeft, MapPin, Briefcase, Clock, IndianRupee, CheckCircle, Send, Loader2,
 } from "lucide-react";
 
-const inputClass = "w-full border border-[#E8E0D0] bg-white rounded-lg px-4 py-2.5 text-sm text-[#1A1A1A] placeholder:text-[#B0B0B0] focus:outline-none focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547] transition-colors";
+const inputClass = "w-full border border-[#E8E0D0] bg-white rounded-lg px-4 py-2.5 text-sm text-[#1A1A1A] placeholder:text-[#B0B0B0] focus:outline-none focus:ring-2 focus:ring-[#5B4BF5]/30 focus:border-[#5B4BF5]/50 transition-colors";
 
 const typeLabels: Record<string, string> = {
   FULL_TIME: "Full Time", PART_TIME: "Part Time", CONTRACT: "Contract",
@@ -23,13 +23,16 @@ interface Job {
 
 export default function JobDetailPage() {
   const { id } = useParams();
+  const searchParams = useSearchParams();
+  const applyDirect = searchParams.get("apply") === "true";
   const [job, setJob] = useState<Job | null>(null);
   const [loading, setLoading] = useState(true);
-  const [showForm, setShowForm] = useState(false);
+  const [showForm, setShowForm] = useState(applyDirect);
   const [submitted, setSubmitted] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
+  const formRef = useRef<HTMLDivElement>(null);
 
   const [form, setForm] = useState({
     applicantName: "", applicantEmail: "", applicantPhone: "",
@@ -43,6 +46,13 @@ export default function JobDetailPage() {
       .catch(() => {})
       .finally(() => setLoading(false));
   }, [id]);
+
+  // Auto-scroll to form when coming from "Apply Now" button
+  useEffect(() => {
+    if (applyDirect && !loading && job && formRef.current) {
+      setTimeout(() => formRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 300);
+    }
+  }, [applyDirect, loading, job]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -79,7 +89,7 @@ export default function JobDetailPage() {
       </Link>
 
       {/* Job Header */}
-      <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-[#E8E0D0] p-8">
+      <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-[#E8E0D0] p-5 sm:p-8">
         <h1 className="text-3xl font-serif font-light text-[#1A1A1A] mb-3">{job.title}</h1>
         <div className="flex flex-wrap gap-4 text-sm text-[#7A7A7A] mb-6">
           {job.department && <span className="flex items-center gap-1.5"><Briefcase className="h-4 w-4" /> {job.department}</span>}
@@ -89,12 +99,18 @@ export default function JobDetailPage() {
         </div>
         {job.experience && <p className="text-sm text-[#7A7A7A] mb-4">Experience Required: <strong>{job.experience}</strong></p>}
 
-        <button
-          onClick={() => setShowForm(true)}
-          className="bg-[#1A1A1A] text-white py-3 px-8 rounded-full font-semibold hover:bg-[#2B2B2B] transition-all"
-        >
-          Apply Now
-        </button>
+        {!submitted && (
+          <button
+            onClick={() => {
+              setShowForm(true);
+              setTimeout(() => formRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 100);
+            }}
+            className="w-full sm:w-auto inline-flex items-center justify-center gap-2 bg-gradient-to-r from-[#3023D0] to-[#5B4BF5] text-white py-3.5 px-8 rounded-full font-semibold shadow-[0_4px_16px_rgba(91,75,245,0.3)] hover:shadow-[0_6px_24px_rgba(91,75,245,0.4)] hover:-translate-y-0.5 transition-all text-base"
+          >
+            <Send className="h-4 w-4" />
+            Apply Now
+          </button>
+        )}
       </div>
 
       {/* Job Description Sections */}
@@ -107,7 +123,7 @@ export default function JobDetailPage() {
 
       {/* Application Form */}
       {showForm && !submitted && (
-        <div id="apply" className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-[#E8E0D0] p-8">
+        <div ref={formRef} id="apply" className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-[#E8E0D0] p-5 sm:p-8">
           <h2 className="text-2xl font-serif font-light text-[#1A1A1A] mb-6">Apply for {job.title}</h2>
 
           <form onSubmit={handleSubmit} className="space-y-5">
@@ -155,8 +171,12 @@ export default function JobDetailPage() {
 
             {error && <p className="text-sm text-red-600 bg-red-50 rounded-lg p-3">{error}</p>}
 
-            <button type="submit" disabled={submitting} className="bg-[#1A1A1A] text-white py-3 px-8 rounded-full font-semibold hover:bg-[#2B2B2B] disabled:opacity-50 transition-all">
-              {submitting ? "Submitting..." : "Submit Application"}
+            <button type="submit" disabled={submitting} className="w-full sm:w-auto inline-flex items-center justify-center gap-2 bg-[#1A1A1A] text-white py-3.5 px-8 rounded-full font-semibold hover:bg-[#2B2B2B] disabled:opacity-50 transition-all text-base">
+              {submitting ? (
+                <><Loader2 className="h-4 w-4 animate-spin" /> Submitting...</>
+              ) : (
+                <><Send className="h-4 w-4" /> Submit Application</>
+              )}
             </button>
           </form>
         </div>

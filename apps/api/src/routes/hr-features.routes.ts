@@ -13,6 +13,7 @@ import * as extraWorkService from "../services/extra-work.service";
 import * as incentiveService from "../services/incentive.service";
 import * as reviewService from "../services/performance-review.service";
 import * as bugReportService from "../services/bug-report.service";
+import * as aiService from "../services/ai.service";
 import * as attendanceService from "../services/attendance.service";
 import * as notificationService from "../services/notification.service";
 import { notifyHrByEmail, notifyAdminByEmail } from "../services/email.service";
@@ -555,6 +556,22 @@ router.post("/hr/presentations/:id/export", authenticateHr, async (req: Request,
     fs.rmSync(tmpDir, { recursive: true, force: true });
     res.setHeader("Content-Type", "text/html");
     return res.send(html);
+  } catch (err) { next(err); }
+});
+
+// ===== AI Presentation/Report Generator =====
+
+router.post("/hr/presentations/ai/generate", authenticateHr, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { topic, type, slideCount, style, audience, additionalNotes } = req.body;
+    if (!topic || !type) {
+      return res.status(400).json({ error: "Topic and type are required" });
+    }
+    if (!["presentation", "report"].includes(type)) {
+      return res.status(400).json({ error: "Type must be 'presentation' or 'report'" });
+    }
+    const result = await aiService.generateAIPresentation({ topic, type, slideCount, style, audience, additionalNotes });
+    return success(res, result);
   } catch (err) { next(err); }
 });
 

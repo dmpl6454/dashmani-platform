@@ -62,7 +62,7 @@ export default function ApprovalsPage() {
               <div className="p-5">
                 <div className="flex items-start justify-between">
                   <div className="flex items-start gap-3">
-                    <div className="h-10 w-10 rounded-full flex-shrink-0 flex items-center justify-center text-white text-sm font-medium" style={{ background: "linear-gradient(135deg, #E8D5B7, #B8956A)" }}>
+                    <div className="h-10 w-10 rounded-full flex-shrink-0 flex items-center justify-center text-white text-sm font-medium" style={{ background: "linear-gradient(135deg, #5B4BF5, #3023D0)" }}>
                       {(a.requestedBy?.name || "?").charAt(0).toUpperCase()}
                     </div>
                     <div>

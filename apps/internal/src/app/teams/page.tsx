@@ -116,7 +116,7 @@ export default function TeamsPage() {
                     {m.profileImageUrl ? (
                       <img src={m.profileImageUrl.startsWith("http") ? m.profileImageUrl : `${API_BASE}${m.profileImageUrl}`} alt="" className="h-7 w-7 rounded-full object-cover" />
                     ) : (
-                      <div className="h-7 w-7 rounded-full flex items-center justify-center text-white text-xs font-semibold" style={{ background: "linear-gradient(135deg, #E8D5B7, #B8956A)" }}>
+                      <div className="h-7 w-7 rounded-full flex items-center justify-center text-white text-xs font-semibold" style={{ background: "linear-gradient(135deg, #5B4BF5, #3023D0)" }}>
                         {m.name?.[0]?.toUpperCase()}
                       </div>
                     )}

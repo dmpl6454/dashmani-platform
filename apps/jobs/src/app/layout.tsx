@@ -78,28 +78,25 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <head>
         <link rel="canonical" href={SITE_URL} />
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
-        <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=Playfair+Display:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
         <script
           type="application/ld+json"
           dangerouslySetInnerHTML={{ __html: JSON.stringify([orgSchema, siteSchema]) }}
         />
       </head>
-      <body className="bg-[#FEFCF7] text-[#1A1A1A] antialiased" style={{ fontFamily: "'DM Sans', sans-serif" }}>
+      <body className="bg-[#FEFCF7] text-[#1A1A1A] antialiased" style={{ fontFamily: "'Instagram Sans', system-ui, sans-serif", fontWeight: 300 }}>
         {/* Header */}
         <header className="sticky top-0 z-50 border-b border-[#F0EAD8]/80 bg-[rgba(253,246,227,0.92)] backdrop-blur-xl">
           <div className="max-w-5xl mx-auto flex items-center justify-between px-6 py-4">
             <a href="/" className="flex items-center gap-3 group" aria-label="Digital Sukoon Careers - Home">
-              <img src="/logo.svg" alt="Digital Sukoon" className="h-10 w-10 rounded-full group-hover:shadow-[0_2px_8px_rgba(245,213,71,0.3)] transition-shadow" />
+              <img src="/logo.svg" alt="Digital Sukoon" className="h-10 w-10 rounded-full group-hover:shadow-[0_2px_12px_rgba(91,75,245,0.25)] transition-shadow" />
               <div>
                 <p className="text-sm font-bold tracking-widest uppercase" style={{ letterSpacing: "2px", fontSize: "13px" }}>Digital Sukoon</p>
                 <p className="text-[10px] text-[#7A7A7A] tracking-wider uppercase">Careers</p>
               </div>
             </a>
             <nav aria-label="Main navigation" className="flex items-center gap-5">
-              <a href="/" className="text-sm font-medium text-[#7A7A7A] hover:text-[#1A1A1A] transition-colors relative after:absolute after:bottom-[-4px] after:left-0 after:w-0 after:h-[2px] after:bg-[#F5D547] hover:after:w-full after:transition-all after:duration-300">Jobs</a>
-              <a href="/internship" className="text-sm font-medium text-white bg-[#1A1A1A] px-4 py-2 rounded-full hover:bg-[#2B2B2B] transition-all shadow-[0_2px_8px_rgba(245,213,71,0.3)] hover:shadow-[0_4px_16px_rgba(245,213,71,0.4)]">Internship</a>
+              <a href="/" className="text-sm font-medium text-[#7A7A7A] hover:text-[#1A1A1A] transition-colors relative after:absolute after:bottom-[-4px] after:left-0 after:w-0 after:h-[2px] after:bg-[#5B4BF5] hover:after:w-full after:transition-all after:duration-300">Jobs</a>
+              <a href="/internship" className="text-sm font-medium text-white bg-gradient-to-r from-[#3023D0] to-[#5B4BF5] px-4 py-2 rounded-full hover:shadow-[0_4px_16px_rgba(91,75,245,0.35)] transition-all">Internship</a>
             </nav>
           </div>
         </header>
@@ -115,9 +112,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <p className="text-sm text-[#B0B0B0] font-medium tracking-wide">Crafting digital experiences that matter.</p>
               <nav aria-label="Footer navigation" className="flex items-center gap-6 text-sm text-[#7A7A7A]">
                 <a href="/" className="hover:text-[#1A1A1A] transition-colors">All Jobs</a>
-                <span className="w-1 h-1 rounded-full bg-[#E8E0D0]" />
-                <a href="/internship" className="hover:text-[#1A1A1A] transition-colors">Internship</a>
-                <span className="w-1 h-1 rounded-full bg-[#E8E0D0]" />
+                <span className="w-1 h-1 rounded-full bg-[#5B4BF5]/30" />
+                <a href="/internship" className="hover:text-[#5B4BF5] transition-colors">Internship</a>
+                <span className="w-1 h-1 rounded-full bg-[#5B4BF5]/30" />
                 <a href="https://digitalsukoon.com" target="_blank" rel="noopener noreferrer" className="hover:text-[#1A1A1A] transition-colors">digitalsukoon.com</a>
               </nav>
               <p className="text-xs text-[#B0B0B0]">&copy; {new Date().getFullYear()} Dashmani Media Private Limited</p>

@@ -112,6 +112,38 @@ export async function updateAccount(id: string, data: {
   });
 }
 
+export async function deleteAccount(id: string) {
+  const account = await prisma.socialAccount.findUnique({
+    where: { id },
+    include: {
+      _count: {
+        select: { tasks: true, contentPosts: true, projectAccounts: true, reportLinks: true, growthSnapshots: true },
+      },
+    },
+  });
+  if (!account) throw new AppError(404, "NOT_FOUND", "Social account not found");
+
+  const refs = account._count;
+  const blocking = (refs.tasks || 0) + (refs.contentPosts || 0) + (refs.projectAccounts || 0) + (refs.reportLinks || 0) + (refs.growthSnapshots || 0);
+  if (blocking > 0) {
+    const parts: string[] = [];
+    if (refs.tasks) parts.push(`${refs.tasks} task${refs.tasks > 1 ? "s" : ""}`);
+    if (refs.contentPosts) parts.push(`${refs.contentPosts} content post${refs.contentPosts > 1 ? "s" : ""}`);
+    if (refs.projectAccounts) parts.push(`${refs.projectAccounts} project link${refs.projectAccounts > 1 ? "s" : ""}`);
+    if (refs.reportLinks) parts.push(`${refs.reportLinks} report link${refs.reportLinks > 1 ? "s" : ""}`);
+    if (refs.growthSnapshots) parts.push(`${refs.growthSnapshots} growth snapshot${refs.growthSnapshots > 1 ? "s" : ""}`);
+    throw new AppError(
+      409,
+      "HAS_REFERENCES",
+      `Cannot delete account — it has ${parts.join(", ")}. Archive it instead to keep the history.`,
+    );
+  }
+
+  // Assignments cascade automatically (onDelete: Cascade in schema)
+  await prisma.socialAccount.delete({ where: { id } });
+  return { id, deleted: true };
+}
+
 export async function assignEmployee(accountId: string, employeeId: string, assignedBy: string, reason?: string) {
   const account = await prisma.socialAccount.findUnique({ where: { id: accountId } });
   if (!account) throw new AppError(404, "NOT_FOUND", "Social account not found");

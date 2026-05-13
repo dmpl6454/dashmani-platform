@@ -39,7 +39,7 @@ export default function LoginPage() {
     }`;
 
   return (
-    <div className="min-h-screen flex overflow-hidden" style={{ background: "linear-gradient(165deg, #FDF6E3 0%, #F7ECD5 50%, #EFE2C4 100%)", fontFamily: "'DM Sans', sans-serif" }}>
+    <div className="min-h-screen flex overflow-hidden" style={{ background: "linear-gradient(165deg, #FDF6E3 0%, #F7ECD5 50%, #EFE2C4 100%)", fontFamily: "'Instagram Sans', system-ui, sans-serif" }}>
 
       {/* Animated Background Orbs */}
       <div className="fixed inset-0 pointer-events-none overflow-hidden">

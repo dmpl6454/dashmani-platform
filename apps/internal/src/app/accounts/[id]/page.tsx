@@ -4,6 +4,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useAccount } from "@/lib/hooks/use-accounts";
 import { Button } from "@dashmani/ui";
 import { apiFetch } from "@/lib/api";
+import { Pencil, Trash2 } from "lucide-react";
 
 export default function AccountDetailPage() {
   const { id } = useParams();
@@ -12,6 +13,8 @@ export default function AccountDetailPage() {
   const [employees, setEmployees] = useState<any[]>([]);
   const [selectedEmployee, setSelectedEmployee] = useState("");
   const [assigning, setAssigning] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     apiFetch("/employees?limit=100").then((res: any) => setEmployees(res.data || []));
@@ -53,6 +56,18 @@ export default function AccountDetailPage() {
     }
   }
 
+  async function handleDelete() {
+    setDeleting(true);
+    try {
+      await apiFetch(`/accounts/${id}`, { method: "DELETE" });
+      router.push("/accounts");
+    } catch (err: any) {
+      alert(err.message || "Failed to delete account");
+      setDeleting(false);
+      setShowDeleteConfirm(false);
+    }
+  }
+
   return (
     <div className="max-w-3xl space-y-6 crx-animate-fade">
       <div className="flex items-start justify-between">
@@ -64,7 +79,21 @@ export default function AccountDetailPage() {
             <span className="rounded-full px-3 py-1 text-xs font-medium bg-[#FFF3C4] text-[#1A1A1A]">{account.followerCount?.toLocaleString()} followers</span>
           </div>
         </div>
-        <Button variant="outline" onClick={() => router.push("/accounts")} className="border border-[#E8E0D0] rounded-full text-[#1A1A1A] hover:bg-[rgba(255,248,225,0.5)]">Back</Button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => router.push(`/accounts/${id}/edit`)}
+            className="flex items-center gap-1.5 border border-[#E8E0D0] rounded-full text-[#1A1A1A] hover:bg-[#F0EEFF] hover:border-[#5B4BF5]/30 hover:text-[#5B4BF5] px-4 py-2 text-sm font-medium transition-colors"
+          >
+            <Pencil className="h-4 w-4" /> Edit
+          </button>
+          <button
+            onClick={() => setShowDeleteConfirm(true)}
+            className="flex items-center gap-1.5 border border-[#E8E0D0] rounded-full text-[#1A1A1A] hover:bg-red-50 hover:border-red-200 hover:text-red-600 px-4 py-2 text-sm font-medium transition-colors"
+          >
+            <Trash2 className="h-4 w-4" /> Delete
+          </button>
+          <Button variant="outline" onClick={() => router.push("/accounts")} className="border border-[#E8E0D0] rounded-full text-[#1A1A1A] hover:bg-[rgba(255,248,225,0.5)]">Back</Button>
+        </div>
       </div>
 
       {account.clientName && (
@@ -84,7 +113,7 @@ export default function AccountDetailPage() {
               <div className="flex items-center gap-3">
                 <div
                   className="h-7 w-7 rounded-full flex items-center justify-center text-white text-xs font-semibold shrink-0"
-                  style={{ background: "linear-gradient(135deg, #E8D5B7, #B8956A)" }}
+                  style={{ background: "linear-gradient(135deg, #5B4BF5, #3023D0)" }}
                 >
                   {a.employee?.name?.[0]?.toUpperCase()}
                 </div>
@@ -116,6 +145,43 @@ export default function AccountDetailPage() {
           </div>
         </div>
       </div>
+
+      {/* Delete Confirmation Modal */}
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => !deleting && setShowDeleteConfirm(false)}>
+          <div className="bg-white rounded-2xl border border-[#E8E0D0] shadow-[0_8px_40px_rgba(0,0,0,0.12)] w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+            <div className="px-6 py-5">
+              <div className="flex items-start gap-4">
+                <div className="h-10 w-10 rounded-xl bg-red-50 flex items-center justify-center shrink-0">
+                  <Trash2 className="h-5 w-5 text-red-600" />
+                </div>
+                <div className="flex-1">
+                  <h3 className="font-medium text-[#1A1A1A]">Delete account?</h3>
+                  <p className="text-sm text-[#7A7A7A] mt-1">
+                    This will permanently delete <strong>{account.displayName}</strong> ({account.handle}). If the account has tasks, posts, or report links, you'll need to archive it instead.
+                  </p>
+                </div>
+              </div>
+            </div>
+            <div className="px-6 py-4 border-t border-[#F0EAD8] flex items-center justify-end gap-2">
+              <button
+                onClick={() => setShowDeleteConfirm(false)}
+                disabled={deleting}
+                className="px-4 py-2 text-sm text-[#7A7A7A] hover:text-[#1A1A1A] transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDelete}
+                disabled={deleting}
+                className="px-4 py-2 bg-red-600 text-white rounded-full text-sm font-medium hover:bg-red-700 disabled:opacity-50 transition-colors"
+              >
+                {deleting ? "Deleting..." : "Delete"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {pastAssignments.length > 0 && (
         <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0] crx-animate-slide crx-delay-3">

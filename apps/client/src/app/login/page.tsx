@@ -33,7 +33,7 @@ export default function ClientLoginPage() {
       className="min-h-screen flex items-center justify-center relative overflow-hidden"
       style={{
         background: "linear-gradient(165deg, #FDF6E3 0%, #F7ECD5 50%, #EFE2C4 100%)",
-        fontFamily: "'DM Sans', sans-serif",
+        fontFamily: "'Instagram Sans', system-ui, sans-serif",
       }}
     >
       {/* Background gradient orbs */}

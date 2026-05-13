@@ -50,7 +50,7 @@ export default function EmployeeReportsPage({ params }: { params: Promise<{ empl
           <div className="flex items-center gap-4">
             <div
               className="h-12 w-12 rounded-full flex items-center justify-center text-white text-lg font-semibold shrink-0"
-              style={{ background: "linear-gradient(135deg, #E8D5B7, #B8956A)" }}
+              style={{ background: "linear-gradient(135deg, #5B4BF5, #3023D0)" }}
             >
               {employee?.name?.[0]?.toUpperCase()}
             </div>

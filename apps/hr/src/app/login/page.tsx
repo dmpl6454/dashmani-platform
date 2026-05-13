@@ -87,7 +87,7 @@ export default function LoginPage() {
   const passwordStrength = password.length >= 10 ? 4 : password.length >= 7 ? 3 : password.length >= 4 ? 2 : password.length >= 1 ? 1 : 0;
 
   return (
-    <div className="min-h-screen flex overflow-hidden relative" style={{ background: "linear-gradient(165deg, #FDF6E3 0%, #F7ECD5 50%, #EFE2C4 100%)", fontFamily: "'DM Sans', sans-serif" }}>
+    <div className="min-h-screen flex overflow-hidden relative" style={{ background: "linear-gradient(165deg, #FDF6E3 0%, #F7ECD5 50%, #EFE2C4 100%)", fontFamily: "'Instagram Sans', system-ui, sans-serif" }}>
       {/* Animated Background Orbs */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         <div className="absolute -top-32 -left-32 w-96 h-96 rounded-full bg-[#F5D547]/10 blur-[100px]" style={{ animation: "crx-float1 8s ease-in-out infinite" }} />

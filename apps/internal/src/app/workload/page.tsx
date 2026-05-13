@@ -39,7 +39,7 @@ export default function WorkloadPage() {
                         <div className="flex items-center gap-2">
                           <div
                             className="h-7 w-7 rounded-full flex items-center justify-center text-white text-xs font-semibold shrink-0"
-                            style={{ background: "linear-gradient(135deg, #E8D5B7, #B8956A)" }}
+                            style={{ background: "linear-gradient(135deg, #5B4BF5, #3023D0)" }}
                           >
                             {emp.name?.[0]?.toUpperCase()}
                           </div>

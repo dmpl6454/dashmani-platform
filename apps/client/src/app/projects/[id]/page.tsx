@@ -55,7 +55,7 @@ export default function ProjectDetailPage() {
               <div className="space-y-2">
                 {project.accounts?.map((a: any) => (
                   <div key={a.id} className="flex items-center gap-3 text-sm p-4 border border-[#E8E0D0] rounded-2xl bg-[#FEFCF7]">
-                    <div className="h-9 w-9 rounded-full flex items-center justify-center text-white text-xs font-medium" style={{ background: "linear-gradient(135deg, #E8D5B7, #B8956A)" }}>
+                    <div className="h-9 w-9 rounded-full flex items-center justify-center text-white text-xs font-medium" style={{ background: "linear-gradient(135deg, #5B4BF5, #3023D0)" }}>
                       {(a.account?.platform?.name || "?").charAt(0).toUpperCase()}
                     </div>
                     <div>
@@ -85,7 +85,7 @@ export default function ProjectDetailPage() {
                       <p className="font-medium text-[#1A1A1A]">{t.task?.title}</p>
                       {t.task?.assignee && (
                         <div className="flex items-center gap-1.5 mt-1">
-                          <div className="h-5 w-5 rounded-full flex items-center justify-center text-white text-[8px] font-medium" style={{ background: "linear-gradient(135deg, #E8D5B7, #B8956A)" }}>
+                          <div className="h-5 w-5 rounded-full flex items-center justify-center text-white text-[8px] font-medium" style={{ background: "linear-gradient(135deg, #5B4BF5, #3023D0)" }}>
                             {(t.task.assignee.name || "?").charAt(0).toUpperCase()}
                           </div>
                           <span className="text-xs text-[#7A7A7A]">{t.task.assignee.name}</span>
@@ -114,7 +114,7 @@ export default function ProjectDetailPage() {
               {project.approvals?.map((a: any) => (
                 <div key={a.id} className="flex items-center justify-between p-4 border border-[#E8E0D0] rounded-2xl hover:shadow-[0_4px_24px_rgba(0,0,0,0.07)] transition-all">
                   <div className="flex items-center gap-3">
-                    <div className="h-9 w-9 rounded-full flex items-center justify-center text-white text-xs font-medium" style={{ background: "linear-gradient(135deg, #E8D5B7, #B8956A)" }}>
+                    <div className="h-9 w-9 rounded-full flex items-center justify-center text-white text-xs font-medium" style={{ background: "linear-gradient(135deg, #5B4BF5, #3023D0)" }}>
                       {(a.requestedBy?.name || "?").charAt(0).toUpperCase()}
                     </div>
                     <div>

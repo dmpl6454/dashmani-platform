@@ -1,16 +1,27 @@
+@font-face { font-family: 'Instagram Sans'; src: url('/fonts/InstagramSans-Light.woff2') format('woff2'), url('/fonts/InstagramSans-Light.woff') format('woff'); font-weight: 300; font-style: normal; font-display: swap; }
+@font-face { font-family: 'Instagram Sans'; src: url('/fonts/InstagramSans-Regular.woff2') format('woff2'), url('/fonts/InstagramSans-Regular.woff') format('woff'); font-weight: 400; font-style: normal; font-display: swap; }
+@font-face { font-family: 'Instagram Sans'; src: url('/fonts/InstagramSans-Medium.woff2') format('woff2'), url('/fonts/InstagramSans-Medium.woff') format('woff'); font-weight: 500; font-style: normal; font-display: swap; }
+@font-face { font-family: 'Instagram Sans'; src: url('/fonts/InstagramSans-Bold.woff2') format('woff2'), url('/fonts/InstagramSans-Bold.woff') format('woff'); font-weight: 700; font-style: normal; font-display: swap; }
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
   * { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+  body { font-family: 'Instagram Sans', system-ui, sans-serif; font-weight: 300; }
+}
+
+@layer utilities {
+  .font-serif { font-family: 'Instagram Sans', system-ui, sans-serif !important; font-weight: 700 !important; }
 }
 
 @layer utilities {
   .glass { background: rgba(255,255,255,0.7); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border: 1px solid rgba(255,255,255,0.3); }
   .glass-dark { background: rgba(26,26,26,0.85); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); }
-  .gradient-text { background: linear-gradient(135deg, #1A1A1A 0%, #F5D547 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
-  .gradient-text-warm { background: linear-gradient(135deg, #1A1A1A 30%, #B8960C 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+  .gradient-text { background: linear-gradient(135deg, #5B4BF5 0%, #F5D547 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+  .gradient-text-warm { background: linear-gradient(135deg, #3023D0 0%, #F5D547 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+  .gradient-text-purple { background: linear-gradient(135deg, #5B4BF5 0%, #3023D0 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
   .shine { position: relative; overflow: hidden; }
   .shine::after { content: ''; position: absolute; top: -50%; left: -50%; width: 200%; height: 200%; background: linear-gradient(to right, transparent 0%, rgba(245,213,71,0.08) 50%, transparent 100%); transform: rotate(30deg); animation: shine 4s ease-in-out infinite; }
 }

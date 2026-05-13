@@ -3,13 +3,15 @@
 import { useState } from "react";
 import { apiFetch, API_BASE } from "@/lib/api";
 import useSWR from "swr";
-import { FileCheck, Image, CalendarOff, Check, X, Clock } from "lucide-react";
+import { FileCheck, Image, CalendarOff, Check, X, Clock, History } from "lucide-react";
 
 
 type Tab = "documents" | "pictures" | "leave";
+type LeaveFilter = "PENDING" | "APPROVED" | "REJECTED";
 
 export default function ApprovalsPage() {
   const [activeTab, setActiveTab] = useState<Tab>("documents");
+  const [leaveFilter, setLeaveFilter] = useState<LeaveFilter>("PENDING");
 
   const { data: docsData, mutate: mutateDocs } = useSWR(
     "/admin/documents/pending",
@@ -19,13 +21,18 @@ export default function ApprovalsPage() {
     "/admin/profile-pictures/pending",
     (url: string) => apiFetch<any>(url)
   );
-  const { data: leaveData, mutate: mutateLeave } = useSWR(
+  const { data: pendingLeaveData, mutate: mutatePendingLeave } = useSWR(
     "/admin/leave-requests?status=PENDING",
+    (url: string) => apiFetch<any>(url)
+  );
+  const { data: leaveData, mutate: mutateLeave } = useSWR(
+    `/admin/leave-requests?status=${leaveFilter}`,
     (url: string) => apiFetch<any>(url)
   );
 
   const docs = docsData?.data || [];
   const pics = picsData?.data || [];
+  const pendingLeaves = pendingLeaveData?.data || [];
   const leaves = leaveData?.data || [];
 
   async function reviewDocument(id: string, status: "APPROVED" | "REJECTED") {
@@ -53,6 +60,7 @@ export default function ApprovalsPage() {
     try {
       await apiFetch(`/admin/leave-requests/${id}/${action}`, { method: "POST" });
       mutateLeave();
+      mutatePendingLeave();
     } catch (e: any) {
       alert(e.message || "Failed to review leave request");
     }
@@ -61,7 +69,7 @@ export default function ApprovalsPage() {
   const tabs: { key: Tab; label: string; icon: typeof FileCheck; count: number }[] = [
     { key: "documents", label: "Documents", icon: FileCheck, count: docs.length },
     { key: "pictures", label: "Profile Pictures", icon: Image, count: pics.length },
-    { key: "leave", label: "Leave Requests", icon: CalendarOff, count: leaves.length },
+    { key: "leave", label: "Leave Requests", icon: CalendarOff, count: pendingLeaves.length },
   ];
 
   return (
@@ -204,62 +212,113 @@ export default function ApprovalsPage() {
 
       {/* Leave Requests Tab */}
       {activeTab === "leave" && (
-        <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-[#E8E0D0]">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-[#F0EAD8]">
-                  <th className="text-left p-4 text-[#7A7A7A] text-xs font-medium">Employee</th>
-                  <th className="text-left p-4 text-[#7A7A7A] text-xs font-medium">Date Range</th>
-                  <th className="text-left p-4 text-[#7A7A7A] text-xs font-medium">Type</th>
-                  <th className="text-left p-4 text-[#7A7A7A] text-xs font-medium">Reason</th>
-                  <th className="text-left p-4 text-[#7A7A7A] text-xs font-medium">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {leaves.length === 0 ? (
-                  <tr>
-                    <td colSpan={5} className="p-8 text-center text-[#7A7A7A]">
-                      <Clock size={24} className="mx-auto mb-2 opacity-30" />
-                      No leave requests pending
-                    </td>
+        <div className="space-y-4">
+          {/* Status Filter Pills */}
+          <div className="flex items-center gap-2 p-1 bg-white rounded-xl border border-[#E8E0D0] w-fit">
+            {([
+              { key: "PENDING" as LeaveFilter, label: "Pending", icon: Clock, count: pendingLeaves.length as number | undefined },
+              { key: "APPROVED" as LeaveFilter, label: "Approved", icon: Check, count: undefined as number | undefined },
+              { key: "REJECTED" as LeaveFilter, label: "Rejected", icon: X, count: undefined as number | undefined },
+            ]).map((f) => {
+              const Icon = f.icon;
+              const isActive = leaveFilter === f.key;
+              return (
+                <button
+                  key={f.key}
+                  onClick={() => setLeaveFilter(f.key)}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-medium transition-all ${
+                    isActive
+                      ? "bg-gradient-to-r from-[#3023D0] to-[#5B4BF5] text-white shadow-[0_2px_8px_rgba(91,75,245,0.25)]"
+                      : "text-[#7A7A7A] hover:bg-[#F7ECD5] hover:text-[#1A1A1A]"
+                  }`}
+                >
+                  <Icon size={13} />
+                  {f.label}
+                  {f.count !== undefined && f.count > 0 && (
+                    <span className={`ml-1 text-[10px] font-semibold rounded-full px-1.5 py-0.5 ${isActive ? "bg-white/20" : "bg-[rgba(245,213,71,0.25)] text-[#B8960C]"}`}>
+                      {f.count}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-[#E8E0D0]">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-[#F0EAD8]">
+                    <th className="text-left p-4 text-[#7A7A7A] text-xs font-medium">Employee</th>
+                    <th className="text-left p-4 text-[#7A7A7A] text-xs font-medium">Date Range</th>
+                    <th className="text-left p-4 text-[#7A7A7A] text-xs font-medium">Type</th>
+                    <th className="text-left p-4 text-[#7A7A7A] text-xs font-medium">Reason</th>
+                    <th className="text-left p-4 text-[#7A7A7A] text-xs font-medium">
+                      {leaveFilter === "PENDING" ? "Actions" : "Status"}
+                    </th>
                   </tr>
-                ) : (
-                  leaves.map((leave: any) => (
-                    <tr key={leave.id} className="border-b border-[#F0EAD8] last:border-0 hover:bg-[rgba(255,248,225,0.5)] transition-colors">
-                      <td className="p-4 text-[#1A1A1A] font-medium">{leave.employeeName || leave.employee?.name || "—"}</td>
-                      <td className="p-4 text-[#1A1A1A]">
-                        {leave.startDate ? new Date(leave.startDate).toLocaleDateString() : "—"}
-                        {" — "}
-                        {leave.endDate ? new Date(leave.endDate).toLocaleDateString() : "—"}
-                      </td>
-                      <td className="p-4">
-                        <span className="rounded-full bg-[rgba(245,213,71,0.15)] text-[#B8960C] px-3 py-1 text-xs font-medium">
-                          {leave.leaveType || leave.type || "—"}
-                        </span>
-                      </td>
-                      <td className="p-4 text-[#7A7A7A] max-w-[200px] truncate">{leave.reason || "—"}</td>
-                      <td className="p-4">
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={() => reviewLeave(leave.id, "approve")}
-                            className="flex items-center gap-1 rounded-full bg-[rgba(107,203,119,0.12)] text-[#2E7D32] px-3 py-1.5 text-xs font-medium hover:bg-[rgba(107,203,119,0.25)] transition-colors"
-                          >
-                            <Check size={13} /> Approve
-                          </button>
-                          <button
-                            onClick={() => reviewLeave(leave.id, "reject")}
-                            className="flex items-center gap-1 rounded-full bg-[rgba(231,76,60,0.1)] text-[#E74C3C] px-3 py-1.5 text-xs font-medium hover:bg-[rgba(231,76,60,0.2)] transition-colors"
-                          >
-                            <X size={13} /> Reject
-                          </button>
-                        </div>
+                </thead>
+                <tbody>
+                  {leaves.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="p-8 text-center text-[#7A7A7A]">
+                        {leaveFilter === "PENDING" ? <Clock size={24} className="mx-auto mb-2 opacity-30" /> : <History size={24} className="mx-auto mb-2 opacity-30" />}
+                        No {leaveFilter.toLowerCase()} leave requests
                       </td>
                     </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
+                  ) : (
+                    leaves.map((leave: any) => (
+                      <tr key={leave.id} className="border-b border-[#F0EAD8] last:border-0 hover:bg-[rgba(255,248,225,0.5)] transition-colors">
+                        <td className="p-4 text-[#1A1A1A] font-medium">{leave.employeeName || leave.employee?.name || "—"}</td>
+                        <td className="p-4 text-[#1A1A1A]">
+                          {leave.startDate ? new Date(leave.startDate).toLocaleDateString() : "—"}
+                          {" — "}
+                          {leave.endDate ? new Date(leave.endDate).toLocaleDateString() : "—"}
+                        </td>
+                        <td className="p-4">
+                          <span className="rounded-full bg-[rgba(245,213,71,0.15)] text-[#B8960C] px-3 py-1 text-xs font-medium">
+                            {leave.leaveType || leave.type || "—"}
+                          </span>
+                        </td>
+                        <td className="p-4 text-[#7A7A7A] max-w-[200px] truncate">{leave.reason || "—"}</td>
+                        <td className="p-4">
+                          {leaveFilter === "PENDING" ? (
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={() => reviewLeave(leave.id, "approve")}
+                                className="flex items-center gap-1 rounded-full bg-[rgba(107,203,119,0.12)] text-[#2E7D32] px-3 py-1.5 text-xs font-medium hover:bg-[rgba(107,203,119,0.25)] transition-colors"
+                              >
+                                <Check size={13} /> Approve
+                              </button>
+                              <button
+                                onClick={() => reviewLeave(leave.id, "reject")}
+                                className="flex items-center gap-1 rounded-full bg-[rgba(231,76,60,0.1)] text-[#E74C3C] px-3 py-1.5 text-xs font-medium hover:bg-[rgba(231,76,60,0.2)] transition-colors"
+                              >
+                                <X size={13} /> Reject
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="flex flex-col gap-0.5">
+                              <span className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-medium w-fit ${
+                                leaveFilter === "APPROVED" ? "bg-[rgba(107,203,119,0.15)] text-[#2E7D32]" : "bg-[rgba(231,76,60,0.1)] text-[#E74C3C]"
+                              }`}>
+                                {leaveFilter === "APPROVED" ? <Check size={12} /> : <X size={12} />}
+                                {leaveFilter}
+                              </span>
+                              {leave.approvedAt && (
+                                <span className="text-[10px] text-[#B0B0B0] mt-1">
+                                  on {new Date(leave.approvedAt).toLocaleDateString()}
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       )}

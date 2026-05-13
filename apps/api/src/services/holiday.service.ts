@@ -62,12 +62,13 @@ export async function getCalendarData(year: number, month: number, employeeId?: 
     orderBy: { date: "asc" },
   });
 
-  // Fetch leave requests for the employee if provided
+  // Fetch APPROVED leave requests for the employee (only approved leaves show on calendar)
   let leaveRequests: any[] = [];
   if (employeeId) {
     leaveRequests = await prisma.leaveRequest.findMany({
       where: {
         employeeId,
+        status: "APPROVED",
         OR: [
           { startDate: { gte: startDate, lte: endDate } },
           { endDate: { gte: startDate, lte: endDate } },
@@ -78,29 +79,66 @@ export async function getCalendarData(year: number, month: number, employeeId?: 
     });
   }
 
-  // Calculate working days
-  const totalDays = endDate.getDate();
-  let weekends = 0;
-  for (let day = 1; day <= totalDays; day++) {
-    const date = new Date(year, month - 1, day);
-    const dayOfWeek = date.getDay();
-    if (dayOfWeek === 0 || dayOfWeek === 6) {
-      weekends++;
+  // Build a lookup map: date (YYYY-MM-DD) -> holiday
+  const holidayMap = new Map<string, { name: string; type?: string }>();
+  for (const h of holidays) {
+    const key = new Date(h.date).toISOString().split("T")[0];
+    holidayMap.set(key, { name: h.name, type: h.type });
+  }
+
+  // Build a lookup map: date (YYYY-MM-DD) -> leave type
+  const leaveMap = new Map<string, string>();
+  for (const lr of leaveRequests) {
+    const lStart = new Date(lr.startDate);
+    const lEnd = new Date(lr.endDate);
+    // Iterate each day in the leave range
+    for (let d = new Date(lStart); d <= lEnd; d.setDate(d.getDate() + 1)) {
+      const key = d.toISOString().split("T")[0];
+      leaveMap.set(key, lr.type);
     }
   }
 
-  // Count holidays that don't fall on weekends
+  // Build days array
+  const totalDays = endDate.getDate();
+  const days: Array<{
+    date: string;
+    isWeekend: boolean;
+    isHoliday: boolean;
+    holidayName?: string;
+    isLeave: boolean;
+    leaveType?: string;
+  }> = [];
+
+  let weekends = 0;
   let holidaysOnWeekdays = 0;
-  for (const holiday of holidays) {
-    const dayOfWeek = new Date(holiday.date).getDay();
-    if (dayOfWeek !== 0 && dayOfWeek !== 6) {
-      holidaysOnWeekdays++;
-    }
+
+  for (let day = 1; day <= totalDays; day++) {
+    const date = new Date(year, month - 1, day);
+    const dayOfWeek = date.getDay();
+    const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+    const dateKey = date.toISOString().split("T")[0];
+    const holiday = holidayMap.get(dateKey);
+    const leaveType = leaveMap.get(dateKey);
+
+    if (isWeekend) weekends++;
+    if (holiday && !isWeekend) holidaysOnWeekdays++;
+
+    days.push({
+      date: date.toISOString(),
+      isWeekend,
+      isHoliday: !!holiday,
+      holidayName: holiday?.name,
+      isLeave: !!leaveType,
+      leaveType,
+    });
   }
 
   const workingDays = totalDays - weekends - holidaysOnWeekdays;
 
   return {
+    year,
+    month,
+    days,
     holidays,
     leaveRequests,
     workingDays,

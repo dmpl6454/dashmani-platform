@@ -72,7 +72,7 @@ export default function ClientContentPage() {
               <div className={`crx-animate-slide crx-delay-${Math.min(idx + 3, 6)} bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0] hover:shadow-[0_4px_24px_rgba(0,0,0,0.07)] transition-all cursor-pointer p-5`}>
                 <div className="flex items-start justify-between">
                   <div className="flex items-start gap-3 flex-1">
-                    <div className="h-10 w-10 rounded-full flex-shrink-0 flex items-center justify-center text-white text-sm font-medium" style={{ background: "linear-gradient(135deg, #E8D5B7, #B8956A)" }}>
+                    <div className="h-10 w-10 rounded-full flex-shrink-0 flex items-center justify-center text-white text-sm font-medium" style={{ background: "linear-gradient(135deg, #5B4BF5, #3023D0)" }}>
                       {(post.title || "?").charAt(0).toUpperCase()}
                     </div>
                     <div className="flex-1">

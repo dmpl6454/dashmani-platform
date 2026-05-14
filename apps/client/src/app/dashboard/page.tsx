@@ -5,7 +5,7 @@ import { mutate } from "swr";
 import { Topstrip } from "@/components/portal-topstrip";
 import { Button, StatusBadge, Avatar, FormatPill, AspectThumb, Empty } from "@/components/portal-shared";
 import { Icon } from "@/components/portal-icons";
-import { fmt } from "@/lib/portal-store";
+import { fmt, Actions } from "@/lib/portal-store";
 import { apiFetch } from "@/lib/api";
 import { useClientApprovals, useClientProjects } from "@/lib/hooks/use-projects";
 import { useClientAnalytics } from "@/lib/hooks/use-analytics";
@@ -218,9 +218,12 @@ function DashApprovalRow({
     try {
       await apiFetch(`/client/content/${post.id}/respond`, {
         method: "PUT",
-        body: JSON.stringify({ action: "APPROVE" }),
+        body: JSON.stringify({ status: "APPROVED" }),
       });
       mutate("/client/approvals?limit=100");
+    } catch (err) {
+      console.error("Approve failed:", err);
+      Actions.toast({ kind: "danger", text: "Could not approve. Please try again." });
     } finally {
       setBusy(false);
     }
@@ -232,9 +235,12 @@ function DashApprovalRow({
     try {
       await apiFetch(`/client/content/${post.id}/respond`, {
         method: "PUT",
-        body: JSON.stringify({ action: "REVISE", note: "Please revise per upcoming notes." }),
+        body: JSON.stringify({ status: "REJECTED", clientNote: "Please revise per upcoming notes." }),
       });
       mutate("/client/approvals?limit=100");
+    } catch (err) {
+      console.error("Revise failed:", err);
+      Actions.toast({ kind: "danger", text: "Could not request revision. Please try again." });
     } finally {
       setBusy(false);
     }

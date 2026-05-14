@@ -1,5 +1,6 @@
 "use client";
 import { useState, useEffect } from "react";
+import Link from "next/link";
 import { useAuth } from "@/lib/auth";
 import { Eye, EyeOff, Mail, Lock, AlertTriangle } from "lucide-react";
 
@@ -140,6 +141,13 @@ export default function ClientLoginPage() {
                 "Sign In"
               )}
             </button>
+
+            <p className="text-sm text-[#B0B0B0] text-center pt-1">
+              Have an invite?{" "}
+              <Link href="/signup" className="text-[#7A7A7A] underline underline-offset-2 hover:text-[#1A1A1A] transition-colors">
+                Set up your account
+              </Link>
+            </p>
           </form>
         </div>
 

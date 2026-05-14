@@ -5,6 +5,7 @@ import { Topstrip } from "@/components/portal-topstrip";
 import { StatusBadge, FormatPill, AspectThumb, Empty, IconButton } from "@/components/portal-shared";
 import { Icon } from "@/components/portal-icons";
 import { fmt, sel, usePortalStore, type Post, type Project } from "@/lib/portal-store";
+import { ContentCalendar } from "@/components/content-calendar";
 
 type Filter = "all" | "pending" | "approved" | "scheduled" | "live" | "rejected";
 
@@ -15,6 +16,8 @@ export default function ContentPage() {
   const [view, setView] = useState<"list" | "calendar">("list");
   const [filter, setFilter] = useState<Filter>("all");
   const [projectFilter, setProjectFilter] = useState<string | null>(null);
+  const [calYear, setCalYear] = useState(() => new Date().getFullYear());
+  const [calMonth, setCalMonth] = useState(() => new Date().getMonth() + 1);
 
   const filtered = useMemo(() => {
     let list = posts.slice();
@@ -99,7 +102,13 @@ export default function ContentPage() {
             </div>
           </>
         ) : (
-          <CalendarView posts={filtered} onOpen={(id) => router.push(`/content/${id}`)} projects={projects} />
+          <ContentCalendar
+            year={calYear}
+            month={calMonth}
+            projectFilter={projectFilter}
+            onPostClick={(id) => router.push(`/content/${id}`)}
+            onMonthChange={(y, m) => { setCalYear(y); setCalMonth(m); }}
+          />
         )}
       </div>
     </>
@@ -121,89 +130,5 @@ function ContentRow({ post: p, project, divider, onOpen }: { post: Post; project
       <span className={`text-[12.5px] tabular-nums text-rowtight ${p.overdue ? "text-attention font-medium" : "text-ink-2"}`}>{fmt.date(p.scheduled)}</span>
       <div className="text-right"><StatusBadge status={p.status} className="!h-5 !text-[10.5px]" /></div>
     </div>
-  );
-}
-
-function CalendarView({ posts, onOpen, projects }: { posts: Post[]; onOpen: (id: string) => void; projects: Project[] }) {
-  const monday = useMemo(() => {
-    const today = new Date();
-    const day = today.getDay() || 7;
-    const m = new Date(today);
-    m.setDate(today.getDate() - (day - 1));
-    m.setHours(0, 0, 0, 0);
-    return m;
-  }, []);
-
-  const days = Array.from({ length: 7 }, (_, i) => {
-    const d = new Date(monday);
-    d.setDate(monday.getDate() + i);
-    return d;
-  });
-
-  const slots = days.map((d) => ({
-    date: d,
-    items: posts.filter((p) => p.scheduled && new Date(p.scheduled).toDateString() === d.toDateString()),
-  }));
-
-  return (
-    <div>
-      <div className="flex items-center justify-between mb-3">
-        <div className="text-[13px] text-ink-2">
-          Week of {fmt.shortDate(monday.toISOString())} — {fmt.shortDate(days[6].toISOString())}
-        </div>
-        <div className="flex items-center gap-1">
-          <IconButton size="sm" variant="default" icon={<Icon.ChevLeft size={16}/>} label="Previous week" />
-          <IconButton size="sm" variant="default" icon={<Icon.ChevRight size={16}/>} label="Next week" />
-        </div>
-      </div>
-      <div className="grid grid-cols-7 gap-2">
-        {slots.map((s, i) => {
-          const isToday = s.date.toDateString() === new Date().toDateString();
-          return (
-            <div key={i} className="bg-surface border border-border rounded-lg overflow-hidden min-h-[280px] flex flex-col">
-              <div className={`px-3 py-2 border-b border-rule flex items-center justify-between ${isToday ? "bg-action-soft" : "bg-muted/30"}`}>
-                <div>
-                  <div className="text-[10.5px] uppercase tracking-wider text-ink-3 font-medium">{s.date.toLocaleDateString("en", { weekday: "short" })}</div>
-                  <div className="text-[15px] font-semibold text-ink leading-none mt-0.5">{s.date.getDate()}</div>
-                </div>
-                <div className="text-[10.5px] text-ink-3">{s.items.length}</div>
-              </div>
-              <div className="p-2 space-y-1.5 flex-1">
-                {s.items.length === 0 ? (
-                  <button className="w-full h-full min-h-[100px] rounded-md border border-dashed border-border text-[11px] text-ink-4 hover:border-ink-3 hover:text-ink-3 hover:bg-muted/30 transition-colors">
-                    + schedule
-                  </button>
-                ) : s.items.map((p) => (
-                  <CalendarCard key={p.id} post={p} project={projects.find((pr) => pr.id === p.project) || null} onOpen={() => onOpen(p.id)} />
-                ))}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function CalendarCard({ post: p, onOpen }: { post: Post; project: Project | null; onOpen: () => void }) {
-  const kind = ({ ACTIVE: "success", PAUSED: "neutral", COMPLETED: "neutral", ARCHIVED: "neutral", DRAFT: "neutral", PENDING: "attention", APPROVED: "success", SCHEDULED: "neutral", PUBLISHED: "success", REJECTED: "danger", REVISION: "attention", FAILED: "danger" } as const)[p.status];
-  const edgeColor = ({
-    attention: "border-l-attention",
-    success: "border-l-success",
-    danger: "border-l-danger",
-    neutral: "border-l-neutral",
-  } as const)[kind];
-  return (
-    <button
-      onClick={onOpen}
-      className={`w-full text-left rounded-md border-l-2 ${edgeColor} bg-bg/70 border border-border p-2 hover:bg-muted/60 transition-colors`}
-    >
-      <div className="text-[10.5px] tabular-nums text-ink-3">{fmt.time(p.scheduled)}</div>
-      <div className="text-[12px] font-medium text-ink leading-tight line-clamp-2 mt-0.5">{p.title.split(" — ")[0]}</div>
-      <div className="mt-1.5 flex items-center justify-between gap-1">
-        <FormatPill format={p.format} aspect={p.aspect} className="!h-4 !text-[9.5px]" />
-        {p.status === "PENDING" && <span className="text-[9.5px] text-attention font-medium">needs you</span>}
-      </div>
-    </button>
   );
 }

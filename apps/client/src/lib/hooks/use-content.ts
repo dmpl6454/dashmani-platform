@@ -14,9 +14,10 @@ export function useClientContentPost(id: string) {
   return useSWR(id ? `/client/content/${id}` : null, (url) => apiFetch(url));
 }
 
-export function useClientContentCalendar(year: number, month: number) {
+export function useClientContentCalendar(year: number, month: number, projectId?: string) {
   const query = new URLSearchParams();
   query.set("year", String(year));
   query.set("month", String(month));
+  if (projectId) query.set("projectId", projectId);
   return useSWR(`/client/content/calendar?${query.toString()}`, (url) => apiFetch(url));
 }

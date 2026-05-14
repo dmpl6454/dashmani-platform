@@ -8,7 +8,7 @@ import { Icon } from "@/components/portal-icons";
 import { ReasonModal } from "@/components/reason-modal";
 import { IGFeedCard, IGProfileGrid, IGStory } from "@/components/ig-previews";
 import { Actions, fmt } from "@/lib/portal-store";
-import { useClientContentPost } from "@/lib/hooks/use-content";
+import { useClientContentPost, useClientPostComments } from "@/lib/hooks/use-content";
 import { useClientApprovals } from "@/lib/hooks/use-projects";
 import { apiFetch } from "@/lib/api";
 
@@ -19,6 +19,9 @@ export default function ContentDetailPage() {
 
   const { data: postRaw, isLoading: postLoading } = useClientContentPost(postId || "");
   const post = (postRaw as any)?.data;
+
+  const { data: commentsRaw } = useClientPostComments(postId || "");
+  const comments = (commentsRaw as any)?.data ?? post?.thread ?? post?.comments ?? [];
 
   const { data: approvalsRaw } = useClientApprovals();
   const pending = ((approvalsRaw as any)?.data ?? []) as any[];
@@ -243,19 +246,21 @@ export default function ContentDetailPage() {
           <div className="bg-surface border border-border rounded-lg">
             <div className="px-4 h-11 border-b border-rule flex items-center justify-between">
               <h3 className="text-[12px] uppercase tracking-wider font-medium text-ink-3">Discussion</h3>
-              <span className="text-[11px] text-ink-3">{(post.thread ?? post.comments ?? []).length}</span>
+              <span className="text-[11px] text-ink-3">{comments.length}</span>
             </div>
             <div className="px-4 py-3 space-y-3 max-h-[260px] overflow-y-auto">
-              {(post.thread ?? post.comments ?? []).length === 0 ? (
+              {comments.length === 0 ? (
                 <div className="text-[12px] text-ink-4 text-center py-4">No comments yet.</div>
-              ) : (post.thread ?? post.comments ?? []).map((t: any, i: number) => (
-                <div key={i} className="flex items-start gap-2.5">
-                  <Avatar initial={t.a ?? t.authorName?.[0] ?? "?"} size="xs" />
+              ) : comments.map((c: any, i: number) => (
+                <div key={c.id ?? i} className="flex items-start gap-2.5">
+                  <Avatar initial={c.author?.name?.[0] ?? c.a ?? "?"} size="xs" />
                   <div className="flex-1 min-w-0">
                     <div className="text-[11.5px] text-ink-3">
-                      <span className="font-medium text-ink-2">{t.who ?? t.authorName ?? t.a ?? "Agency"}</span> · {t.at ?? (t.createdAt ? new Date(t.createdAt).toLocaleDateString() : "")}
+                      <span className="font-medium text-ink-2">{c.author?.name ?? c.who ?? c.a ?? "Agency"}</span>
+                      {" · "}
+                      {c.createdAt ? new Date(c.createdAt).toLocaleDateString("en", { month: "short", day: "numeric" }) : c.at ?? ""}
                     </div>
-                    <div className="text-[13px] text-ink-2 text-rowtight">{t.t ?? t.body}</div>
+                    <div className="text-[13px] text-ink-2 text-rowtight">{c.body ?? c.t}</div>
                   </div>
                 </div>
               ))}
@@ -294,12 +299,26 @@ function DetailRow({ k, v }: { k: string; v: React.ReactNode }) {
 
 function ReplyBox({ postId }: { postId: string }) {
   const [val, setVal] = useState("");
-  const send = () => {
-    if (!val.trim()) return;
-    // TODO(7g): wire to real comments API
-    console.log("Reply to post", postId, val.trim());
-    setVal("");
+  const [sending, setSending] = useState(false);
+
+  const send = async () => {
+    if (!val.trim() || sending) return;
+    setSending(true);
+    try {
+      await apiFetch(`/client/content/${postId}/comments`, {
+        method: "POST",
+        body: JSON.stringify({ body: val.trim() }),
+      });
+      mutate(`/client/content/${postId}/comments`);
+      setVal("");
+    } catch (err) {
+      console.error("Failed to send reply:", err);
+      Actions.toast({ kind: "danger", text: "Could not send reply. Please try again." });
+    } finally {
+      setSending(false);
+    }
   };
+
   return (
     <div className="border-t border-rule p-2.5 flex items-end gap-2">
       <textarea
@@ -307,10 +326,11 @@ function ReplyBox({ postId }: { postId: string }) {
         onChange={(e) => setVal(e.target.value)}
         placeholder="Reply…"
         rows={1}
+        disabled={sending}
         onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(); } }}
-        className="flex-1 resize-none text-[13px] bg-bg/40 border border-border rounded-md px-2.5 py-1.5 outline-none focus:bg-surface min-h-[34px]"
+        className="flex-1 resize-none text-[13px] bg-bg/40 border border-border rounded-md px-2.5 py-1.5 outline-none focus:bg-surface min-h-[34px] disabled:opacity-50"
       />
-      <IconButton size="sm" variant="ink" icon={<Icon.Send size={15}/>} label="Send" onClick={send} disabled={!val.trim()} />
+      <IconButton size="sm" variant="ink" icon={<Icon.Send size={15}/>} label="Send" onClick={send} disabled={!val.trim() || sending} />
     </div>
   );
 }

@@ -20,3 +20,10 @@ export function useClientContentCalendar(year: number, month: number) {
   query.set("month", String(month));
   return useSWR(`/client/content/calendar?${query.toString()}`, (url) => apiFetch(url));
 }
+
+export function useClientPostComments(postId: string) {
+  return useSWR(
+    postId ? `/client/content/${postId}/comments` : null,
+    (url) => apiFetch(url)
+  );
+}

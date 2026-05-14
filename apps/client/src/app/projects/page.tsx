@@ -1,110 +1,149 @@
 "use client";
-import { useState } from "react";
-import Link from "next/link";
-import { useClientProjects } from "@/lib/hooks/use-projects";
-import { Search, FolderOpen, ArrowRight } from "lucide-react";
+import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { Topstrip } from "@/components/portal-topstrip";
+import { Button, StatusBadge, Avatar, Empty } from "@/components/portal-shared";
+import { Icon } from "@/components/portal-icons";
+import { sel, usePortalStore, type Project } from "@/lib/portal-store";
 
-const STATUS_STYLES: Record<string, { badge: string; accent: string }> = {
-  ACTIVE: {
-    badge: "bg-green-50 text-green-700 border border-green-200",
-    accent: "border-l-green-400",
-  },
-  PAUSED: {
-    badge: "bg-amber-50 text-amber-700 border border-amber-200",
-    accent: "border-l-amber-400",
-  },
-  COMPLETED: {
-    badge: "bg-blue-50 text-blue-700 border border-blue-200",
-    accent: "border-l-blue-400",
-  },
-  ARCHIVED: {
-    badge: "bg-gray-50 text-gray-500 border border-gray-200",
-    accent: "border-l-gray-300",
-  },
-};
-
-const DEFAULT_STYLE = {
-  badge: "bg-gray-50 text-gray-500 border border-gray-200",
-  accent: "border-l-gray-300",
-};
+type Filter = "all" | "active" | "attention" | "paused" | "done";
+type SortKey = "due" | "name" | "health";
 
 export default function ProjectsPage() {
-  const [search, setSearch] = useState("");
-  const { data, isLoading } = useClientProjects({ search });
-  const projects = (data as any)?.data || [];
+  const router = useRouter();
+  const projects = usePortalStore(sel.projects);
+  const posts = usePortalStore(sel.posts);
+  const [filter, setFilter] = useState<Filter>("active");
+  const [sortKey, setSortKey] = useState<SortKey>("due");
+
+  const filtered = useMemo(() => {
+    let list = projects.slice();
+    if (filter === "active") list = list.filter((p) => p.status === "ACTIVE");
+    else if (filter === "attention") list = list.filter((p) => p.attention || p.pending > 0);
+    else if (filter === "paused") list = list.filter((p) => p.status === "PAUSED");
+    else if (filter === "done") list = list.filter((p) => p.status === "COMPLETED" || p.status === "ARCHIVED");
+    list.sort((a, b) => {
+      if (sortKey === "name") return a.name.localeCompare(b.name);
+      if (sortKey === "health") return (b.health ?? -1) - (a.health ?? -1);
+      const ad = a.due ? new Date(a.due).valueOf() : Infinity;
+      const bd = b.due ? new Date(b.due).valueOf() : Infinity;
+      return ad - bd;
+    });
+    return list;
+  }, [projects, filter, sortKey]);
+
+  const counts: Record<Filter, number> = {
+    all: projects.length,
+    active: projects.filter((p) => p.status === "ACTIVE").length,
+    attention: projects.filter((p) => p.attention || p.pending > 0).length,
+    paused: projects.filter((p) => p.status === "PAUSED").length,
+    done: projects.filter((p) => p.status === "COMPLETED" || p.status === "ARCHIVED").length,
+  };
+
+  const chips: { id: Filter; label: string }[] = [
+    { id: "all", label: "All" },
+    { id: "active", label: "Active" },
+    { id: "attention", label: "Attention" },
+    { id: "paused", label: "Paused" },
+    { id: "done", label: "Done" },
+  ];
 
   return (
-    <div className="space-y-6 crx-animate-fade">
-      {/* Header */}
-      <div className="crx-animate-slide crx-delay-1 flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
-        <div>
-          <h2 className="font-serif text-4xl font-light text-[#1A1A1A]">Projects</h2>
-          <p className="text-[#7A7A7A] mt-1">
-            {isLoading
-              ? "Loading..."
-              : `${projects.length} project${projects.length !== 1 ? "s" : ""}`}
-          </p>
-        </div>
-      </div>
-
-      {/* Search */}
-      <div className="crx-animate-slide crx-delay-2 relative max-w-md">
-        <div className="crx-glass rounded-full border border-[#E8E0D0] flex items-center px-4 py-2.5 focus-within:border-[#F5D547] focus-within:shadow-[0_0_0_3px_rgba(245,213,71,0.12)] transition-all duration-300">
-          <Search className="h-4 w-4 text-[#B0B0B0] mr-3 flex-shrink-0" />
-          <input
-            placeholder="Search projects..."
-            className="w-full text-sm text-[#1A1A1A] placeholder:text-[#B0B0B0] bg-transparent outline-none"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
-        </div>
-      </div>
-
-      {/* Content */}
-      {isLoading ? (
-        <div className="flex items-center justify-center py-12">
-          <div className="h-8 w-8 border-2 border-[#E8E0D0] border-b-2 border-b-[#F5D547] rounded-full animate-spin" />
-        </div>
-      ) : projects.length === 0 ? (
-        <div className="crx-animate-slide crx-delay-3 bg-white rounded-2xl border border-[#E8E0D0] py-16 text-center">
-          <div className="h-12 w-12 rounded-xl bg-[#FFF3C4] flex items-center justify-center mx-auto mb-3">
-            <FolderOpen className="h-6 w-6 text-[#B8960C]" />
+    <>
+      <Topstrip
+        title="Projects"
+        sub={`${projects.length} projects`}
+        right={<Button variant="primary" size="sm" icon={<Icon.Plus size={15} sw={2.4}/>}>New brief</Button>}
+      />
+      <div className="px-6 py-5 max-w-[1200px] mx-auto w-full">
+        <div className="flex items-center gap-2 mb-4 flex-wrap">
+          {chips.map((f) => (
+            <button
+              key={f.id}
+              onClick={() => setFilter(f.id)}
+              className={`h-8 px-3 inline-flex items-center gap-1.5 rounded-md text-[13px] font-medium transition-colors ${filter === f.id ? "bg-ink text-bg" : "bg-surface border border-border text-ink-2 hover:bg-muted/60"}`}
+            >
+              {f.label}
+              <span className={`text-[11px] tabular-nums ${filter === f.id ? "text-bg/70" : "text-ink-4"}`}>{counts[f.id]}</span>
+              {f.id === "attention" && counts.attention > 0 && filter !== f.id && <span className="h-1.5 w-1.5 rounded-full bg-attention"/>}
+            </button>
+          ))}
+          <div className="flex-1"/>
+          <div className="text-[12px] text-ink-3 inline-flex items-center gap-2">
+            <span>Sort:</span>
+            <select
+              value={sortKey}
+              onChange={(e) => setSortKey(e.target.value as SortKey)}
+              className="h-7 pl-2 pr-7 bg-surface border border-border rounded text-[12px] text-ink appearance-none cursor-pointer"
+            >
+              <option value="due">Due date</option>
+              <option value="name">Name</option>
+              <option value="health">Health</option>
+            </select>
           </div>
-          <p className="text-[#7A7A7A] font-medium">No projects found</p>
-          <p className="text-sm text-[#B0B0B0] mt-1">Try adjusting your search</p>
         </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {projects.map((p: any, idx: number) => {
-            const style = STATUS_STYLES[p.status] || DEFAULT_STYLE;
-            return (
-              <Link key={p.id} href={`/projects/${p.id}`} className="group block">
-                <div
-                  className={`crx-animate-slide crx-delay-${Math.min(idx + 3, 6)} bg-white rounded-2xl border border-[#E8E0D0] border-l-[3px] ${style.accent} p-5 hover:border-[#F5D547]/50 hover:shadow-[0_8px_32px_rgba(0,0,0,0.06)] transition-all duration-300`}
-                >
-                  <div className="flex items-start justify-between mb-3">
-                    <div className="h-11 w-11 rounded-xl bg-[#FFF3C4] flex items-center justify-center">
-                      <FolderOpen className="h-5 w-5 text-[#B8960C]" />
-                    </div>
-                    <span
-                      className={`px-2.5 py-0.5 rounded-full text-[10px] font-semibold uppercase ${style.badge}`}
-                    >
-                      {p.status}
-                    </span>
-                  </div>
-                  <h3 className="font-semibold text-[#1A1A1A] text-base mb-1">{p.name}</h3>
-                  <p className="text-xs text-[#7A7A7A]">
-                    {p._count?.tasks || 0} tasks · {p._count?.files || 0} files · {p._count?.approvals || 0} approvals
-                  </p>
-                  <div className="flex items-center gap-1 mt-3 text-xs font-medium text-[#B0B0B0] group-hover:text-[#B8960C] transition-colors">
-                    View project <ArrowRight className="h-3 w-3" />
-                  </div>
-                </div>
-              </Link>
-            );
-          })}
+
+        <div className="bg-surface border border-border rounded-lg overflow-hidden">
+          <div className="grid grid-cols-[1fr_110px_100px_64px_72px_120px_28px] items-center gap-3 px-4 h-10 border-b border-rule bg-muted/30 text-[11px] uppercase tracking-wider font-medium text-ink-3">
+            <span>Project</span>
+            <span>Status</span>
+            <span>Owner</span>
+            <span className="text-right">Posts</span>
+            <span className="text-right">Approvals</span>
+            <span className="text-right">Health</span>
+            <span></span>
+          </div>
+          {filtered.length === 0 ? (
+            <Empty icon={<Icon.Folder size={20}/>} title="No projects match" hint="Try a different filter." cta={<Button size="sm" variant="ghost" onClick={() => setFilter("all")}>Clear filter</Button>} />
+          ) : filtered.map((p, i) => (
+            <ProjectRow
+              key={p.id}
+              project={p}
+              divider={i < filtered.length - 1}
+              onOpen={() => router.push(`/projects/${p.id}`)}
+              pending={posts.filter((post) => post.project === p.id && post.status === "PENDING").length}
+            />
+          ))}
         </div>
-      )}
+      </div>
+    </>
+  );
+}
+
+function ProjectRow({ project: p, divider, onOpen, pending }: { project: Project; divider: boolean; onOpen: () => void; pending: number }) {
+  const healthColor =
+    p.health == null ? "bg-neutral"
+    : p.health < 60 ? "bg-attention"
+    : p.health < 85 ? "bg-action-deep"
+    : "bg-success";
+  return (
+    <div
+      onClick={onOpen}
+      className={`grid grid-cols-[1fr_110px_100px_64px_72px_120px_28px] items-center gap-3 px-4 h-row hover:bg-muted/40 cursor-pointer transition-colors group ${divider ? "border-b border-rule" : ""}`}
+    >
+      <div className="min-w-0 flex items-center gap-2">
+        <div className="text-[13.5px] font-medium text-ink truncate">{p.name}</div>
+        {p.attention === "overdue" && <span className="text-[10.5px] px-1.5 h-5 inline-flex items-center bg-attention-bg text-attention rounded font-medium">overdue</span>}
+      </div>
+      <div><StatusBadge status={p.status} className="!h-5 !text-[10.5px]" /></div>
+      <div className="flex items-center gap-2 text-[12px] text-ink-2"><Avatar initial={p.owner} size="xs" /><span>{p.owner}</span></div>
+      <div className="text-right text-[12.5px] text-ink-2 tabular-nums text-rowtight">{p.tasks.done}/{p.tasks.total}</div>
+      <div className="text-right">
+        {pending > 0
+          ? <span className="text-attention font-medium text-[12.5px] inline-flex items-center gap-1"><span className="h-1.5 w-1.5 rounded-full bg-attention"/>{pending}</span>
+          : <span className="text-ink-4 text-[12.5px]">—</span>}
+      </div>
+      <div className="flex items-center gap-2">
+        {p.health != null ? (
+          <>
+            <div className="flex-1 h-1.5 rounded-full bg-muted overflow-hidden">
+              <div className={`h-full ${healthColor}`} style={{ width: `${p.health}%` }} />
+            </div>
+            <span className="text-[11.5px] tabular-nums text-ink-2 w-6 text-right">{p.health}</span>
+          </>
+        ) : <span className="text-ink-4 text-[12px] w-full text-right">—</span>}
+      </div>
+      <div className="text-ink-4 group-hover:text-ink-2"><Icon.ChevRight size={14}/></div>
     </div>
   );
 }

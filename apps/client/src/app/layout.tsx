@@ -4,7 +4,7 @@ import { useRouter, usePathname } from "next/navigation";
 import "./globals.css";
 import { AuthContext } from "@/lib/auth";
 import { apiFetch } from "@/lib/api";
-import { TopNav } from "@/components/top-nav";
+import { PortalShell } from "@/components/portal-shell";
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -50,14 +50,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <body>
         <AuthContext.Provider value={{ user, login, logout, isLoading }}>
-          {isLoginPage ? (
-            children
-          ) : (
-            <div className="min-h-screen" style={{ background: "linear-gradient(165deg, #FDF6E3 0%, #F7ECD5 40%, #EFE2C4 100%)" }}>
-              <TopNav />
-              <main className="max-w-[1440px] mx-auto px-4 md:px-8 py-6">{children}</main>
-            </div>
-          )}
+          {isLoginPage ? children : <PortalShell>{children}</PortalShell>}
         </AuthContext.Provider>
       </body>
     </html>

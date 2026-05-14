@@ -4,15 +4,21 @@ import { useRouter } from "next/navigation";
 import { Topstrip } from "@/components/portal-topstrip";
 import { StatusBadge, FormatPill, AspectThumb, Empty, IconButton } from "@/components/portal-shared";
 import { Icon } from "@/components/portal-icons";
-import { fmt, sel, usePortalStore, type Post, type Project } from "@/lib/portal-store";
+import { fmt } from "@/lib/portal-store";
+import { useClientContent } from "@/lib/hooks/use-content";
+import { useClientProjects } from "@/lib/hooks/use-projects";
 import { ContentCalendar } from "@/components/content-calendar";
 
 type Filter = "all" | "pending" | "approved" | "scheduled" | "live" | "rejected";
 
 export default function ContentPage() {
   const router = useRouter();
-  const posts = usePortalStore(sel.posts);
-  const projects = usePortalStore(sel.projects);
+  const { data: contentData, isLoading: contentLoading } = useClientContent();
+  const { data: projectsData } = useClientProjects();
+
+  const posts: any[] = (contentData as any)?.data ?? [];
+  const projects: any[] = (projectsData as any)?.data ?? [];
+
   const [view, setView] = useState<"list" | "calendar">("list");
   const [filter, setFilter] = useState<Filter>("all");
   const [projectFilter, setProjectFilter] = useState<string | null>(null);
@@ -21,23 +27,23 @@ export default function ContentPage() {
 
   const filtered = useMemo(() => {
     let list = posts.slice();
-    if (projectFilter) list = list.filter((p) => p.project === projectFilter);
-    if (filter === "pending") list = list.filter((p) => p.status === "PENDING");
+    if (projectFilter) list = list.filter((p) => (p.project?.id ?? p.project) === projectFilter);
+    if (filter === "pending") list = list.filter((p) => p.status === "PENDING_APPROVAL");
     else if (filter === "approved") list = list.filter((p) => p.status === "APPROVED" || p.status === "SCHEDULED");
     else if (filter === "scheduled") list = list.filter((p) => p.status === "SCHEDULED");
     else if (filter === "live") list = list.filter((p) => p.status === "PUBLISHED");
     else if (filter === "rejected") list = list.filter((p) => p.status === "REJECTED" || p.status === "REVISION");
     list.sort((a, b) => {
-      if (!a.scheduled) return 1;
-      if (!b.scheduled) return -1;
-      return new Date(a.scheduled).valueOf() - new Date(b.scheduled).valueOf();
+      if (!a.scheduledAt) return 1;
+      if (!b.scheduledAt) return -1;
+      return new Date(a.scheduledAt).valueOf() - new Date(b.scheduledAt).valueOf();
     });
     return list;
   }, [posts, projectFilter, filter]);
 
   const counts = {
     all: posts.length,
-    pending: posts.filter((p) => p.status === "PENDING").length,
+    pending: posts.filter((p) => p.status === "PENDING_APPROVAL").length,
     approved: posts.filter((p) => p.status === "APPROVED" || p.status === "SCHEDULED").length,
     live: posts.filter((p) => p.status === "PUBLISHED").length,
   };
@@ -57,6 +63,7 @@ export default function ContentPage() {
         sub={`${posts.length} posts across all projects`}
         projectFilter={projectFilter}
         onProjectFilter={setProjectFilter}
+        projects={projects}
         right={
           <div className="bg-muted rounded-md p-0.5 flex items-center gap-0.5">
             <button onClick={() => setView("list")} className={`h-7 px-2.5 text-[12.5px] font-medium rounded ${view === "list" ? "bg-surface text-ink shadow-sm" : "text-ink-3 hover:text-ink"}`}>List</button>
@@ -88,13 +95,21 @@ export default function ContentPage() {
                 <span>Scheduled</span>
                 <span className="text-right">Status</span>
               </div>
-              {filtered.length === 0 ? (
+              {contentLoading && [0, 1, 2, 3].map((i) => (
+                <div key={i} className="grid grid-cols-[40px_1fr_120px_140px_88px] items-center gap-3 px-4 h-row border-b border-rule last:border-b-0">
+                  <div className="h-7 w-7 bg-muted rounded animate-pulse"/>
+                  <div className="h-3.5 w-2/3 bg-muted rounded animate-pulse"/>
+                  <div className="h-3 w-16 bg-muted rounded animate-pulse"/>
+                  <div className="h-3 w-20 bg-muted rounded animate-pulse"/>
+                  <div className="h-5 w-14 bg-muted rounded animate-pulse ml-auto"/>
+                </div>
+              ))}
+              {!contentLoading && filtered.length === 0 ? (
                 <Empty icon={<Icon.Edit size={20}/>} title="No posts match" hint="Try a different filter." />
-              ) : filtered.map((p, i) => (
+              ) : !contentLoading && filtered.map((p, i) => (
                 <ContentRow
                   key={p.id}
                   post={p}
-                  project={projects.find((pr) => pr.id === p.project) || null}
                   divider={i < filtered.length - 1}
                   onOpen={() => router.push(`/content/${p.id}`)}
                 />
@@ -115,19 +130,21 @@ export default function ContentPage() {
   );
 }
 
-function ContentRow({ post: p, project, divider, onOpen }: { post: Post; project: Project | null; divider: boolean; onOpen: () => void }) {
+function ContentRow({ post: p, divider, onOpen }: { post: any; divider: boolean; onOpen: () => void }) {
+  const overdue = p.scheduledAt && new Date(p.scheduledAt) < new Date() && p.status === "PENDING_APPROVAL";
+  const projectName = p.project?.name ?? "—";
   return (
     <div
       onClick={onOpen}
       className={`grid grid-cols-[40px_1fr_120px_140px_88px] items-center gap-3 px-4 h-row hover:bg-muted/40 cursor-pointer transition-colors group ${divider ? "border-b border-rule" : ""}`}
     >
-      <AspectThumb aspect={p.aspect || "1:1"} format={p.format} />
+      <AspectThumb aspect={p.aspectRatio || "1:1"} format={p.format} />
       <div className="min-w-0 flex items-center gap-2">
         <span className="text-[13.5px] font-medium text-ink truncate">{p.title}</span>
-        <FormatPill format={p.format} aspect={p.aspect} />
+        <FormatPill format={p.format} aspect={p.aspectRatio} />
       </div>
-      <span className="text-[12.5px] text-ink-2 truncate text-rowtight">{project?.short || "—"}</span>
-      <span className={`text-[12.5px] tabular-nums text-rowtight ${p.overdue ? "text-attention font-medium" : "text-ink-2"}`}>{fmt.date(p.scheduled)}</span>
+      <span className="text-[12.5px] text-ink-2 truncate text-rowtight">{projectName}</span>
+      <span className={`text-[12.5px] tabular-nums text-rowtight ${overdue ? "text-attention font-medium" : "text-ink-2"}`}>{fmt.date(p.scheduledAt)}</span>
       <div className="text-right"><StatusBadge status={p.status} className="!h-5 !text-[10.5px]" /></div>
     </div>
   );

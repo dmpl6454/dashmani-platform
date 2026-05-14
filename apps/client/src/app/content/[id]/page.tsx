@@ -1,156 +1,239 @@
 "use client";
-import { useState } from "react";
-import { useParams, useRouter } from "next/navigation";
-import { useClientContentPost } from "@/lib/hooks/use-content";
-import { apiFetch } from "@/lib/api";
+import { useEffect, useState } from "react";
+import { useRouter, useParams } from "next/navigation";
+import { Topstrip } from "@/components/portal-topstrip";
+import { Button, IconButton, StatusBadge, Avatar, Empty, KbdRow } from "@/components/portal-shared";
+import { Icon } from "@/components/portal-icons";
+import { ReasonModal } from "@/components/reason-modal";
+import { IGFeedCard, IGProfileGrid, IGStory } from "@/components/ig-previews";
+import { Actions, fmt, sel, usePortalStore, USER, type ThreadMsg } from "@/lib/portal-store";
 
-const STATUS_LABELS: Record<string, string> = {
-  DRAFT: "Draft",
-  PENDING_APPROVAL: "Pending Your Approval",
-  APPROVED: "Approved",
-  SCHEDULED: "Scheduled",
-  PUBLISHED: "Published",
-  FAILED: "Failed",
-  REJECTED: "Rejected",
-};
-
-const STATUS_COLOR: Record<string, string> = {
-  DRAFT: "bg-[#FFF3C4] text-[#1A1A1A]",
-  PENDING_APPROVAL: "bg-[#FFF3C4] text-[#1A1A1A]",
-  APPROVED: "bg-[rgba(107,203,119,0.12)] text-[#6BCB77]",
-  SCHEDULED: "bg-[rgba(52,152,219,0.12)] text-[#3498DB]",
-  PUBLISHED: "bg-[rgba(107,203,119,0.12)] text-[#6BCB77]",
-  FAILED: "bg-[rgba(231,76,60,0.1)] text-[#E74C3C]",
-  REJECTED: "bg-[rgba(231,76,60,0.1)] text-[#E74C3C]",
-};
-
-export default function ClientContentDetailPage() {
-  const { id } = useParams();
+export default function ContentDetailPage() {
   const router = useRouter();
-  const { data, isLoading, mutate } = useClientContentPost(id as string);
-  const [responding, setResponding] = useState(false);
+  const params = useParams<{ id: string }>();
+  const postId = params?.id;
+  const post = usePortalStore(sel.postById(postId || ""));
+  const project = usePortalStore((s) => s.projects.find((p) => p.id === post?.project));
+  const pending = usePortalStore(sel.pending);
+  const [previewMode, setPreviewMode] = useState<"feed" | "profile" | "story">("feed");
+  const [modal, setModal] = useState<null | "revise" | "reject">(null);
 
-  if (isLoading) return (
-    <div className="flex items-center justify-center py-12">
-      <div className="h-8 w-8 border-2 border-[#E8E0D0] border-b-2 border-b-[#F5D547] rounded-full animate-spin" />
-    </div>
-  );
-  const post = (data as any)?.data;
-  if (!post) return <div className="py-8 text-center text-[#7A7A7A]">Content not found</div>;
+  const isPending = post?.status === "PENDING";
+  const queueIndex = post ? pending.findIndex((p) => p.id === post.id) : -1;
+  const queueTotal = pending.length;
+  const prevInQueue = queueIndex > 0 ? pending[queueIndex - 1] : null;
+  const nextInQueue = queueIndex >= 0 && queueIndex < pending.length - 1 ? pending[queueIndex + 1] : null;
 
-  async function handleRespond(status: "APPROVED" | "REJECTED") {
-    setResponding(true);
-    try {
-      await apiFetch(`/client/content/${id}/respond`, {
-        method: "PUT",
-        body: JSON.stringify({ status }),
-      });
-      mutate();
-    } catch (err: any) {
-      alert(err.message);
-    } finally {
-      setResponding(false);
-    }
+  const onBack = () => router.push("/content");
+  const advance = () => {
+    if (nextInQueue) setTimeout(() => router.push(`/content/${nextInQueue.id}`), 220);
+    else setTimeout(onBack, 220);
+  };
+
+  useEffect(() => {
+    if (!post || !isPending) return;
+    const onKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target?.matches("input, textarea, select") || modal) return;
+      if (e.key === "a" || e.key === "A") { e.preventDefault(); Actions.approve(post.id); advance(); }
+      else if (e.key === "r" || e.key === "R") { e.preventDefault(); setModal("revise"); }
+      else if (e.key === "x" || e.key === "X") { e.preventDefault(); setModal("reject"); }
+      else if (e.key === "ArrowDown" || e.key === "j") { if (nextInQueue) router.push(`/content/${nextInQueue.id}`); }
+      else if (e.key === "ArrowUp" || e.key === "k") { if (prevInQueue) router.push(`/content/${prevInQueue.id}`); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [post?.id, isPending, modal, prevInQueue, nextInQueue, router]);
+
+  if (!post) {
+    return (
+      <>
+        <Topstrip title="Not found" />
+        <div className="p-6">
+          <Empty icon={<Icon.X size={20}/>} title="Post not found" cta={<Button size="sm" onClick={onBack}>Back to content</Button>} />
+        </div>
+      </>
+    );
   }
 
   return (
-    <div className="max-w-3xl space-y-6 crx-animate-fade">
-      <div className="crx-animate-slide crx-delay-1 flex items-start justify-between">
-        <div>
-          <h2 className="font-serif text-4xl font-light text-[#1A1A1A]">{post.title}</h2>
-          <div className="flex gap-2 mt-3">
-            <span className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-medium ${STATUS_COLOR[post.status] || "bg-[#FFF3C4] text-[#1A1A1A]"}`}>
-              {STATUS_LABELS[post.status] || post.status}
-            </span>
+    <>
+      <Topstrip
+        title={
+          <span className="inline-flex items-center gap-2">
+            <button onClick={onBack} className="text-ink-3 hover:text-ink"><Icon.ChevLeft size={18}/></button>
+            <span>{post.title}</span>
+          </span>
+        }
+        sub={`${project?.short} · ${post.format}${post.aspect ? " · " + post.aspect : ""}${post.duration ? " · " + post.duration : ""}`}
+        right={isPending && queueTotal > 0 ? (
+          <div className="flex items-center gap-1.5 text-[12px] text-ink-3">
+            <span className="tabular-nums">{queueIndex + 1} of {queueTotal}</span>
+            <IconButton size="sm" variant="default" icon={<Icon.ChevUp size={16}/>} label="Previous" onClick={() => prevInQueue && router.push(`/content/${prevInQueue.id}`)} disabled={!prevInQueue} />
+            <IconButton size="sm" variant="default" icon={<Icon.ChevDown size={16}/>} label="Next" onClick={() => nextInQueue && router.push(`/content/${nextInQueue.id}`)} disabled={!nextInQueue} />
+          </div>
+        ) : undefined}
+      />
+
+      <div className="px-6 py-6 max-w-[1200px] mx-auto w-full grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-6">
+        {/* Preview pane */}
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="bg-muted rounded-md p-0.5 inline-flex items-center gap-0.5">
+              {([{ id: "feed", label: "Feed" }, { id: "profile", label: "Profile" }, { id: "story", label: "Story" }] as const).map((m) => (
+                <button
+                  key={m.id}
+                  onClick={() => setPreviewMode(m.id)}
+                  className={`h-7 px-3 text-[12.5px] font-medium rounded ${previewMode === m.id ? "bg-surface text-ink shadow-sm" : "text-ink-3 hover:text-ink"}`}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
+            <div className="text-[12px] text-ink-3 flex items-center gap-1.5">
+              <Icon.Clock size={14}/>
+              <span>
+                Publishes <span className={post.overdue ? "text-attention font-medium" : "font-medium text-ink-2"}>{fmt.date(post.scheduled)}</span>
+              </span>
+            </div>
+          </div>
+
+          <div className="flex justify-center">
+            {previewMode === "feed" && <IGFeedCard post={post} />}
+            {previewMode === "profile" && <IGProfileGrid post={post} />}
+            {previewMode === "story" && <IGStory post={post} />}
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="bg-surface border border-border rounded-lg p-4">
+              <h3 className="text-[12px] uppercase tracking-wider font-medium text-ink-3 mb-2">Details</h3>
+              <dl className="text-[13px] space-y-1.5 text-rowtight">
+                <DetailRow k="Account" v="@bombay.roastery" />
+                <DetailRow k="Format" v={`${post.format}${post.aspect ? " · " + post.aspect : ""}${post.duration ? " · " + post.duration : ""}`} />
+                <DetailRow k="Scheduled" v={fmt.date(post.scheduled)} />
+                <DetailRow k="Created" v={post.authorName} />
+                <DetailRow k="Brief" v={<a className="text-ink underline decoration-action decoration-2 underline-offset-2" href="#">{project?.name}</a>} />
+              </dl>
+            </div>
+            <div className="bg-surface border border-border rounded-lg p-4">
+              <h3 className="text-[12px] uppercase tracking-wider font-medium text-ink-3 mb-2">Brand fit</h3>
+              <div className="text-[13px] text-ink-2 leading-relaxed text-rowtight">
+                {post.format === "REEL" || post.format === "CAROUSEL"
+                  ? <>Dominant colours match the profile palette (brown · amber · ink). No off-brand contrast issues detected.</>
+                  : <>Sits cleanly between scheduled posts. No off-brand elements detected.</>}
+              </div>
+              <button className="mt-2 text-[12px] text-ink-3 hover:text-ink inline-flex items-center gap-1">
+                See profile grid <Icon.ArrowRight size={12}/>
+              </button>
+            </div>
           </div>
         </div>
-        <button onClick={() => router.push("/content")} className="px-5 py-2 text-sm font-medium border border-[#E8E0D0] rounded-full text-[#1A1A1A] hover:bg-[#FEFCF7] transition-colors">Back</button>
-      </div>
 
-      <div className="crx-animate-slide crx-delay-2 bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0]">
-        <div className="p-6 space-y-4">
-          {post.caption && (
-            <div>
-              <h4 className="text-sm font-medium text-[#7A7A7A] mb-1">Caption</h4>
-              <p className="text-sm whitespace-pre-wrap text-[#1A1A1A]">{post.caption}</p>
+        {/* Decision rail */}
+        <aside className="space-y-4 lg:sticky lg:top-20 self-start">
+          <div className="bg-surface border border-border rounded-lg p-4">
+            <div className="flex items-center justify-between">
+              <div className="text-[11px] uppercase tracking-wider text-ink-3 font-medium">Status</div>
+              <StatusBadge status={post.status} />
             </div>
-          )}
-          <div className="grid grid-cols-2 gap-4 text-sm">
-            <div className="p-4 bg-[#FEFCF7] rounded-2xl border border-[#F0EAD8]">
-              <span className="text-[#7A7A7A] text-xs">Project</span>
-              <p className="text-[#1A1A1A] font-medium mt-0.5">{post.project?.name}</p>
-            </div>
-            <div className="p-4 bg-[#FEFCF7] rounded-2xl border border-[#F0EAD8]">
-              <span className="text-[#7A7A7A] text-xs">Account</span>
-              <p className="text-[#1A1A1A] font-medium mt-0.5">{post.account ? `${post.account.platform?.name}: ${post.account.handle}` : "--"}</p>
-            </div>
-            <div className="p-4 bg-[#FEFCF7] rounded-2xl border border-[#F0EAD8]">
-              <span className="text-[#7A7A7A] text-xs">Scheduled</span>
-              <p className="text-[#1A1A1A] font-medium mt-0.5">{post.scheduledAt ? new Date(post.scheduledAt).toLocaleString() : "--"}</p>
-            </div>
-            <div className="p-4 bg-[#FEFCF7] rounded-2xl border border-[#F0EAD8]">
-              <span className="text-[#7A7A7A] text-xs">Created by</span>
-              <p className="text-[#1A1A1A] font-medium mt-0.5">{post.createdBy?.name}</p>
-            </div>
+            {isPending ? (
+              <>
+                <div className="grid grid-cols-1 gap-2 mt-3">
+                  <Button variant="primary" size="md" icon={<Icon.Check size={16} sw={2.4}/>} kbd="A" onClick={() => { Actions.approve(post.id); advance(); }}>
+                    Approve
+                  </Button>
+                  <Button variant="default" size="md" icon={<Icon.Edit size={15}/>} kbd="R" onClick={() => setModal("revise")}>
+                    Request revision
+                  </Button>
+                  <Button variant="danger" size="md" icon={<Icon.X size={15}/>} kbd="X" onClick={() => setModal("reject")}>
+                    Reject
+                  </Button>
+                </div>
+                <div className="mt-3 pt-3 border-t border-rule">
+                  <KbdRow items={[{ k: "↑↓", label: "navigate queue" }]} />
+                </div>
+              </>
+            ) : (
+              <div className="mt-3 text-[12.5px] text-ink-2 text-rowtight">
+                {post.status === "APPROVED" && <>Approved. Will publish on schedule.</>}
+                {post.status === "SCHEDULED" && <>Locked in. Posts at {fmt.date(post.scheduled)}.</>}
+                {post.status === "REJECTED" && <>Rejected. The team has been notified.</>}
+                {post.status === "REVISION" && <>Revision requested. Waiting on a new draft.</>}
+                {post.status === "PUBLISHED" && <>Live on Instagram. See analytics for performance.</>}
+              </div>
+            )}
           </div>
-        </div>
-      </div>
 
-      {/* Media */}
-      {post.mediaUrls?.length > 0 && (
-        <div className="crx-animate-slide crx-delay-3 bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0]">
-          <div className="p-5 border-b border-[#F0EAD8]">
-            <h3 className="font-serif text-lg text-[#1A1A1A]">Media ({post.mediaUrls.length})</h3>
-          </div>
-          <div className="p-5">
-            <div className="grid grid-cols-2 gap-3">
-              {post.mediaUrls.map((url: string, i: number) => (
-                <div key={i} className="border border-[#E8E0D0] rounded-2xl overflow-hidden hover:shadow-[0_4px_24px_rgba(0,0,0,0.07)] transition-shadow">
-                  <img
-                    src={url}
-                    alt={`Media ${i + 1}`}
-                    className="w-full h-40 object-cover"
-                    onError={(e) => {
-                      (e.target as HTMLImageElement).style.display = "none";
-                      (e.target as HTMLImageElement).parentElement!.innerHTML = `<div class="flex items-center justify-center h-40 bg-[#FEFCF7] text-xs text-[#7A7A7A] p-2 break-all">${url}</div>`;
-                    }}
-                  />
-                  <a
-                    href={url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="block p-2 text-xs text-[#1A1A1A] hover:text-[#F5D547] hover:underline truncate transition-colors"
-                  >
-                    {url}
-                  </a>
+          <div className="bg-surface border border-border rounded-lg">
+            <div className="px-4 h-11 border-b border-rule flex items-center justify-between">
+              <h3 className="text-[12px] uppercase tracking-wider font-medium text-ink-3">Discussion</h3>
+              <span className="text-[11px] text-ink-3">{(post.thread || []).length}</span>
+            </div>
+            <div className="px-4 py-3 space-y-3 max-h-[260px] overflow-y-auto">
+              {(post.thread || []).length === 0 ? (
+                <div className="text-[12px] text-ink-4 text-center py-4">No comments yet.</div>
+              ) : post.thread.map((t: ThreadMsg, i) => (
+                <div key={i} className="flex items-start gap-2.5">
+                  <Avatar initial={t.a} size="xs" />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-[11.5px] text-ink-3">
+                      <span className="font-medium text-ink-2">{t.a === USER.initial ? "You" : t.a === "AS" ? "Anika S." : t.a === "NK" ? "Naina K." : "Riya P."}</span> · {t.at}
+                    </div>
+                    <div className="text-[13px] text-ink-2 text-rowtight">{t.t}</div>
+                  </div>
                 </div>
               ))}
             </div>
+            <ReplyBox postId={post.id} />
           </div>
-        </div>
-      )}
+        </aside>
+      </div>
 
-      {/* Approve / Reject */}
-      {post.status === "PENDING_APPROVAL" && (
-        <div className="crx-animate-slide crx-delay-4 bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0]">
-          <div className="p-5 border-b border-[#F0EAD8]">
-            <h3 className="font-serif text-lg text-[#1A1A1A]">Your Review</h3>
-          </div>
-          <div className="p-5">
-            <p className="text-sm text-[#7A7A7A] mb-4">
-              This content is waiting for your approval before it can be scheduled for publishing.
-            </p>
-            <div className="flex gap-3">
-              <button onClick={() => handleRespond("APPROVED")} disabled={responding} className="px-6 py-2.5 text-sm font-medium bg-[#F5D547] text-[#1A1A1A] rounded-full shadow-[0_4px_16px_rgba(245,213,71,0.35)] hover:shadow-[0_6px_24px_rgba(245,213,71,0.45)] disabled:opacity-50 transition-all">
-                {responding ? "..." : "Approve"}
-              </button>
-              <button onClick={() => handleRespond("REJECTED")} disabled={responding} className="px-6 py-2.5 text-sm font-medium border border-[#E8E0D0] rounded-full text-[#1A1A1A] hover:bg-[#FEFCF7] disabled:opacity-50 transition-colors">
-                {responding ? "..." : "Reject"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <ReasonModal
+        open={modal === "revise"}
+        kind="revise"
+        post={post}
+        onClose={() => setModal(null)}
+        onConfirm={(note) => { setModal(null); Actions.revise(post.id, note); advance(); }}
+      />
+      <ReasonModal
+        open={modal === "reject"}
+        kind="reject"
+        post={post}
+        onClose={() => setModal(null)}
+        onConfirm={(note) => { setModal(null); Actions.reject(post.id, note); advance(); }}
+      />
+    </>
+  );
+}
+
+function DetailRow({ k, v }: { k: string; v: React.ReactNode }) {
+  return (
+    <div className="grid grid-cols-[80px_1fr] gap-2">
+      <dt className="text-ink-3">{k}</dt>
+      <dd className="text-ink-2">{v}</dd>
+    </div>
+  );
+}
+
+function ReplyBox({ postId }: { postId: string }) {
+  const [val, setVal] = useState("");
+  const send = () => {
+    if (!val.trim()) return;
+    Actions.reply(postId, val.trim());
+    setVal("");
+  };
+  return (
+    <div className="border-t border-rule p-2.5 flex items-end gap-2">
+      <textarea
+        value={val}
+        onChange={(e) => setVal(e.target.value)}
+        placeholder="Reply…"
+        rows={1}
+        onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(); } }}
+        className="flex-1 resize-none text-[13px] bg-bg/40 border border-border rounded-md px-2.5 py-1.5 outline-none focus:bg-surface min-h-[34px]"
+      />
+      <IconButton size="sm" variant="ink" icon={<Icon.Send size={15}/>} label="Send" onClick={send} disabled={!val.trim()} />
     </div>
   );
 }

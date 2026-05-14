@@ -1,164 +1,186 @@
 "use client";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useClientProject } from "@/lib/hooks/use-projects";
+import { Topstrip } from "@/components/portal-topstrip";
+import { Avatar, StatusBadge, Empty, Button } from "@/components/portal-shared";
+import { Icon } from "@/components/portal-icons";
+import type { StatusKey } from "@/lib/portal-store";
 
-const statusColor: Record<string, string> = {
-  TODO: "bg-[#FFF3C4] text-[#1A1A1A]",
-  IN_PROGRESS: "bg-[rgba(52,152,219,0.12)] text-[#3498DB]",
-  IN_REVIEW: "bg-[#FFF3C4] text-[#1A1A1A]",
-  DONE: "bg-[rgba(107,203,119,0.12)] text-[#6BCB77]",
-  CANCELLED: "bg-[rgba(231,76,60,0.1)] text-[#E74C3C]",
-  PENDING: "bg-[#FFF3C4] text-[#1A1A1A]",
-  APPROVED: "bg-[rgba(107,203,119,0.12)] text-[#6BCB77]",
-  REJECTED: "bg-[rgba(231,76,60,0.1)] text-[#E74C3C]",
-  REVISION_REQUESTED: "bg-[#FFF3C4] text-[#1A1A1A]",
-  ACTIVE: "bg-[rgba(107,203,119,0.12)] text-[#6BCB77]",
-  PAUSED: "bg-[#FFF3C4] text-[#1A1A1A]",
-  COMPLETED: "bg-[rgba(52,152,219,0.12)] text-[#3498DB]",
-  ARCHIVED: "bg-[#FFF3C4] text-[#1A1A1A]",
+// Remap legacy statuses → the 4-token system. Anything unknown lands on neutral DRAFT.
+const remapStatus = (raw: string | undefined): StatusKey => {
+  switch (raw) {
+    case "ACTIVE": return "ACTIVE";
+    case "PAUSED": return "PAUSED";
+    case "COMPLETED": return "COMPLETED";
+    case "ARCHIVED": return "ARCHIVED";
+    case "TODO":
+    case "IN_PROGRESS":
+    case "IN_REVIEW":
+      return "PENDING";
+    case "DONE":
+    case "APPROVED": return "APPROVED";
+    case "CANCELLED":
+    case "REJECTED": return "REJECTED";
+    case "PENDING":
+    case "REVISION_REQUESTED": return "PENDING";
+    default: return "DRAFT";
+  }
 };
 
 export default function ProjectDetailPage() {
   const { id } = useParams();
+  const router = useRouter();
   const { data, isLoading } = useClientProject(id as string);
   const project = (data as any)?.data;
 
-  if (isLoading) return (
-    <div className="flex items-center justify-center py-12">
-      <div className="h-8 w-8 border-2 border-[#E8E0D0] border-b-2 border-b-[#F5D547] rounded-full animate-spin" />
-    </div>
-  );
-  if (!project) return <div className="text-center py-8 text-[#7A7A7A]">Project not found.</div>;
+  if (isLoading) {
+    return (
+      <>
+        <Topstrip title="Project" />
+        <div className="p-6 flex-1 grid place-items-center">
+          <div className="h-8 w-8 border-2 border-border border-b-action rounded-full animate-spin" />
+        </div>
+      </>
+    );
+  }
+
+  if (!project) {
+    return (
+      <>
+        <Topstrip title="Project" />
+        <div className="p-6">
+          <Empty icon={<Icon.X size={20}/>} title="Project not found" cta={<Button size="sm" onClick={() => router.push("/projects")}>Back to projects</Button>} />
+        </div>
+      </>
+    );
+  }
 
   return (
-    <div className="space-y-8 crx-animate-fade">
-      <div className="crx-animate-slide crx-delay-1 flex items-center justify-between">
-        <div>
-          <h2 className="font-serif text-4xl font-light text-[#1A1A1A]">{project.name}</h2>
-          {project.description && (
-            <p className="text-[#7A7A7A] mt-2">{project.description}</p>
-          )}
-        </div>
-        <span className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-medium ${statusColor[project.status] || "bg-[#FFF3C4] text-[#1A1A1A]"}`}>{project.status}</span>
-      </div>
+    <>
+      <Topstrip
+        title={
+          <span className="inline-flex items-center gap-2">
+            <button onClick={() => router.push("/projects")} className="text-ink-3 hover:text-ink"><Icon.ChevLeft size={18}/></button>
+            <span>{project.name}</span>
+          </span>
+        }
+        sub={project.description || undefined}
+        right={<StatusBadge status={remapStatus(project.status)} />}
+      />
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* Social Accounts */}
-        <div className="crx-animate-slide crx-delay-2 bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0] hover:shadow-[0_4px_24px_rgba(0,0,0,0.07)] transition-shadow">
-          <div className="p-5 border-b border-[#F0EAD8]">
-            <h3 className="font-serif text-lg text-[#1A1A1A]">Social Accounts</h3>
+      <div className="px-6 py-5 max-w-[1200px] mx-auto w-full space-y-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* Social accounts */}
+          <div className="bg-surface border border-border rounded-lg">
+            <div className="px-4 h-11 border-b border-rule flex items-center justify-between">
+              <h3 className="text-[13px] font-semibold text-ink">Social accounts</h3>
+              <span className="text-[11px] text-ink-3">{project.accounts?.length ?? 0}</span>
+            </div>
+            <div className="p-3">
+              {!project.accounts?.length ? (
+                <p className="text-[12.5px] text-ink-3 px-1 py-2">No accounts linked.</p>
+              ) : (
+                <ul className="space-y-1">
+                  {project.accounts.map((a: any) => (
+                    <li key={a.id} className="flex items-center gap-2.5 px-2 py-1.5 rounded-md hover:bg-muted/40 transition-colors">
+                      <Avatar initial={(a.account?.platform?.name || "?").charAt(0).toUpperCase()} size="sm" />
+                      <div className="min-w-0">
+                        <div className="text-[13px] font-medium text-ink truncate">{a.account?.platform?.name}</div>
+                        <div className="text-[11px] text-ink-3 truncate">{a.account?.handle}</div>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
           </div>
-          <div className="p-5">
-            {project.accounts?.length === 0 ? (
-              <p className="text-sm text-[#7A7A7A]">No accounts linked.</p>
-            ) : (
-              <div className="space-y-2">
-                {project.accounts?.map((a: any) => (
-                  <div key={a.id} className="flex items-center gap-3 text-sm p-4 border border-[#E8E0D0] rounded-2xl bg-[#FEFCF7]">
-                    <div className="h-9 w-9 rounded-full flex items-center justify-center text-white text-xs font-medium" style={{ background: "linear-gradient(135deg, #5B4BF5, #3023D0)" }}>
-                      {(a.account?.platform?.name || "?").charAt(0).toUpperCase()}
-                    </div>
-                    <div>
-                      <span className="font-medium text-[#1A1A1A]">{a.account?.platform?.name}</span>
-                      <p className="text-xs text-[#7A7A7A]">{a.account?.handle}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
 
-        {/* Tasks */}
-        <div className="crx-animate-slide crx-delay-3 bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0] hover:shadow-[0_4px_24px_rgba(0,0,0,0.07)] transition-shadow">
-          <div className="p-5 border-b border-[#F0EAD8]">
-            <h3 className="font-serif text-lg text-[#1A1A1A]">Tasks</h3>
-          </div>
-          <div className="p-5">
-            {project.tasks?.length === 0 ? (
-              <p className="text-sm text-[#7A7A7A]">No tasks yet.</p>
-            ) : (
-              <div className="space-y-2">
-                {project.tasks?.map((t: any) => (
-                  <div key={t.id} className="flex items-center justify-between p-4 border border-[#E8E0D0] rounded-2xl text-sm hover:shadow-[0_4px_24px_rgba(0,0,0,0.07)] transition-all">
-                    <div>
-                      <p className="font-medium text-[#1A1A1A]">{t.task?.title}</p>
-                      {t.task?.assignee && (
-                        <div className="flex items-center gap-1.5 mt-1">
-                          <div className="h-5 w-5 rounded-full flex items-center justify-center text-white text-[8px] font-medium" style={{ background: "linear-gradient(135deg, #5B4BF5, #3023D0)" }}>
-                            {(t.task.assignee.name || "?").charAt(0).toUpperCase()}
-                          </div>
-                          <span className="text-xs text-[#7A7A7A]">{t.task.assignee.name}</span>
-                        </div>
-                      )}
+          {/* Tasks */}
+          <div className="bg-surface border border-border rounded-lg">
+            <div className="px-4 h-11 border-b border-rule flex items-center justify-between">
+              <h3 className="text-[13px] font-semibold text-ink">Tasks</h3>
+              <span className="text-[11px] text-ink-3">{project.tasks?.length ?? 0}</span>
+            </div>
+            <div>
+              {!project.tasks?.length ? (
+                <p className="text-[12.5px] text-ink-3 px-4 py-3">No tasks yet.</p>
+              ) : project.tasks.map((t: any, i: number) => (
+                <div
+                  key={t.id}
+                  className={`px-4 h-row flex items-center gap-3 hover:bg-muted/40 transition-colors ${i < project.tasks.length - 1 ? "border-b border-rule" : ""}`}
+                >
+                  <span className="flex-1 text-[13.5px] truncate text-rowtight">{t.task?.title}</span>
+                  {t.task?.assignee && (
+                    <div className="flex items-center gap-1.5">
+                      <Avatar initial={(t.task.assignee.name || "?").charAt(0).toUpperCase()} size="xs" />
+                      <span className="text-[11px] text-ink-3 truncate">{t.task.assignee.name}</span>
                     </div>
-                    <span className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-medium ${statusColor[t.task?.status] || "bg-[#FFF3C4] text-[#1A1A1A]"}`}>{t.task?.status?.replace("_", " ")}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* Approvals */}
-      <div className="crx-animate-slide crx-delay-4 bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0] hover:shadow-[0_4px_24px_rgba(0,0,0,0.07)] transition-shadow">
-        <div className="p-5 border-b border-[#F0EAD8]">
-          <h3 className="font-serif text-lg text-[#1A1A1A]">Approvals</h3>
-        </div>
-        <div className="p-5">
-          {project.approvals?.length === 0 ? (
-            <p className="text-sm text-[#7A7A7A]">No approvals yet.</p>
-          ) : (
-            <div className="space-y-3">
-              {project.approvals?.map((a: any) => (
-                <div key={a.id} className="flex items-center justify-between p-4 border border-[#E8E0D0] rounded-2xl hover:shadow-[0_4px_24px_rgba(0,0,0,0.07)] transition-all">
-                  <div className="flex items-center gap-3">
-                    <div className="h-9 w-9 rounded-full flex items-center justify-center text-white text-xs font-medium" style={{ background: "linear-gradient(135deg, #5B4BF5, #3023D0)" }}>
-                      {(a.requestedBy?.name || "?").charAt(0).toUpperCase()}
-                    </div>
-                    <div>
-                      <p className="font-medium text-sm text-[#1A1A1A]">{a.title}</p>
-                      {a.description && <p className="text-xs text-[#7A7A7A]">{a.description}</p>}
-                      <p className="text-xs text-[#B0B0B0] mt-0.5">By {a.requestedBy?.name}</p>
-                    </div>
-                  </div>
-                  <span className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-medium ${statusColor[a.status] || "bg-[#FFF3C4] text-[#1A1A1A]"}`}>{a.status?.replace("_", " ")}</span>
+                  )}
+                  <StatusBadge status={remapStatus(t.task?.status)} className="!h-5 !text-[10.5px]" />
                 </div>
               ))}
             </div>
-          )}
+          </div>
         </div>
-      </div>
 
-      {/* Files */}
-      <div className="crx-animate-slide crx-delay-5 bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0] hover:shadow-[0_4px_24px_rgba(0,0,0,0.07)] transition-shadow">
-        <div className="p-5 border-b border-[#F0EAD8]">
-          <h3 className="font-serif text-lg text-[#1A1A1A]">Files</h3>
+        {/* Approvals */}
+        <div className="bg-surface border border-border rounded-lg">
+          <div className="px-4 h-11 border-b border-rule flex items-center justify-between">
+            <h3 className="text-[13px] font-semibold text-ink">Approvals</h3>
+            <span className="text-[11px] text-ink-3">{project.approvals?.length ?? 0}</span>
+          </div>
+          <div>
+            {!project.approvals?.length ? (
+              <p className="text-[12.5px] text-ink-3 px-4 py-3">No approvals yet.</p>
+            ) : project.approvals.map((a: any, i: number) => (
+              <div
+                key={a.id}
+                className={`px-4 py-2.5 flex items-center gap-3 hover:bg-muted/40 transition-colors ${i < project.approvals.length - 1 ? "border-b border-rule" : ""}`}
+              >
+                <Avatar initial={(a.requestedBy?.name || "?").charAt(0).toUpperCase()} size="sm" />
+                <div className="flex-1 min-w-0">
+                  <div className="text-[13.5px] font-medium text-ink truncate">{a.title}</div>
+                  {a.description && <div className="text-[11.5px] text-ink-3 truncate text-rowtight">{a.description}</div>}
+                  <div className="text-[11px] text-ink-4 mt-0.5">By {a.requestedBy?.name}</div>
+                </div>
+                <StatusBadge status={remapStatus(a.status)} className="!h-5 !text-[10.5px]" />
+              </div>
+            ))}
+          </div>
         </div>
-        <div className="p-5">
-          {project.files?.length === 0 ? (
-            <p className="text-sm text-[#7A7A7A]">No files shared yet.</p>
-          ) : (
-            <div className="space-y-2">
-              {project.files?.map((f: any) => (
-                <a key={f.id} href={f.url} target="_blank" rel="noopener noreferrer" className="flex items-center justify-between p-4 border border-[#E8E0D0] rounded-2xl text-sm hover:shadow-[0_4px_24px_rgba(0,0,0,0.07)] transition-all">
-                  <div className="flex items-center gap-3">
-                    <div className="h-10 w-10 rounded-xl bg-[#FFF3C4] flex items-center justify-center">
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#1A1A1A" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /><line x1="16" y1="13" x2="8" y2="13" /><line x1="16" y1="17" x2="8" y2="17" /><polyline points="10 9 9 9 8 9" /></svg>
-                    </div>
-                    <div>
-                      <p className="font-medium text-[#1A1A1A]">{f.name}</p>
-                      <p className="text-xs text-[#7A7A7A]">Uploaded by {f.uploadedBy?.name} · {(f.size / 1024).toFixed(0)} KB</p>
-                    </div>
+
+        {/* Files */}
+        <div className="bg-surface border border-border rounded-lg">
+          <div className="px-4 h-11 border-b border-rule flex items-center justify-between">
+            <h3 className="text-[13px] font-semibold text-ink">Files</h3>
+            <span className="text-[11px] text-ink-3">{project.files?.length ?? 0}</span>
+          </div>
+          <div>
+            {!project.files?.length ? (
+              <p className="text-[12.5px] text-ink-3 px-4 py-3">No files shared yet.</p>
+            ) : project.files.map((f: any, i: number) => (
+              <a
+                key={f.id}
+                href={f.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={`px-4 py-2.5 flex items-center gap-3 hover:bg-muted/40 transition-colors ${i < project.files.length - 1 ? "border-b border-rule" : ""}`}
+              >
+                <div className="h-9 w-9 rounded-md bg-muted text-ink-3 grid place-items-center shrink-0">
+                  <Icon.File size={16} />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="text-[13.5px] font-medium text-ink truncate">{f.name}</div>
+                  <div className="text-[11.5px] text-ink-3 truncate">
+                    Uploaded by {f.uploadedBy?.name} · {(f.size / 1024).toFixed(0)} KB
                   </div>
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#B0B0B0" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>
-                </a>
-              ))}
-            </div>
-          )}
+                </div>
+                <Icon.ArrowRight size={14} className="text-ink-4" />
+              </a>
+            ))}
+          </div>
         </div>
       </div>
-    </div>
+    </>
   );
 }

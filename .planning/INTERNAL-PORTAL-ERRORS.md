@@ -12,7 +12,16 @@
 
 ## Open errors
 
-_(none — all known errors resolved as of 2026-05-15)_
+### ERR-I-017 — No broadcast announcement capability
+
+- **Linked to:** AUDIT Issue 17
+- **Severity:** P1
+- **Type:** Missing feature
+- **Location:** No endpoint, no service, no UI — feature entirely absent
+- **Symptom:** Admin/Super Admin has no mechanism to compose a message and send it simultaneously to every employee. Each employee should receive (a) an in-app `ANNOUNCEMENT` notification visible in their portal notification bell, and (b) an email at their registered address.
+- **What's actually happening:** The `NotificationType` enum has no `ANNOUNCEMENT` value. There is no `Announcement` model in the schema. `notification.service.ts` has `notifyAdmins()` (fans out to admins) but nothing analogous for employees. `email.service.ts` has no broadcast template or loop. The internal portal has no `/announcements` page or sidebar link.
+- **Fix:** See AUDIT Issue 17 — four-part implementation: schema addition → service → API route → frontend page.
+- **Status:** Open — planned Wave 9
 
 ---
 

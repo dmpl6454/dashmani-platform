@@ -41,6 +41,7 @@ model User {
   otpTokens          OtpToken[]
   dailyReports       DailyReport[]
   notifications      Notification[]
+  announcementsSent  Announcement[] @relation("AnnouncementsSent")
   profile            EmployeeProfile?
   salarySlips        SalarySlip[]      @relation("SalarySlipEmployee")
   documents          EmployeeDocument[] @relation("DocumentEmployee")
@@ -732,6 +733,23 @@ enum NotificationType {
   INCENTIVE_AWARDED
   EXTRA_HOURS_APPROVED
   GENERAL
+  ANNOUNCEMENT
+}
+
+// ============ ANNOUNCEMENTS ============
+
+model Announcement {
+  id             String   @id @default(uuid())
+  title          String
+  message        String   @db.Text
+  sentById       String   @map("sent_by_id")
+  recipientCount Int      @default(0) @map("recipient_count")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  sentBy         User     @relation("AnnouncementsSent", fields: [sentById], references: [id])
+
+  @@index([createdAt])
+  @@map("announcements")
 }
 
 // ============ SALARY SLIPS ============

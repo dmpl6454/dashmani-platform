@@ -506,3 +506,119 @@ export async function getClientAnalytics(clientId: string) {
     projects: projectItems,
   };
 }
+
+// ===== Client Content Analytics =====
+
+export async function getClientContentAnalytics(clientId: string) {
+  const now = new Date();
+  const weekStart = new Date(now);
+  weekStart.setDate(now.getDate() - now.getDay()); // start of this week (Sunday)
+  weekStart.setHours(0, 0, 0, 0);
+  const weekEnd = new Date(weekStart);
+  weekEnd.setDate(weekStart.getDate() + 7);
+
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+
+  const projectFilter = { project: { clientId } };
+
+  const [
+    totalPosts,
+    statusGroups,
+    formatGroups,
+    scheduledThisWeek,
+    liveThisWeek,
+    projects,
+    recentApproved,
+  ] = await Promise.all([
+    prisma.contentPost.count({ where: projectFilter }),
+
+    prisma.contentPost.groupBy({
+      by: ["status"],
+      _count: { _all: true },
+      where: projectFilter,
+    }),
+
+    prisma.contentPost.groupBy({
+      by: ["format"],
+      _count: { _all: true },
+      where: { ...projectFilter, format: { not: null } },
+    }),
+
+    prisma.contentPost.count({
+      where: {
+        ...projectFilter,
+        status: "SCHEDULED",
+        scheduledAt: { gte: weekStart, lt: weekEnd },
+      },
+    }),
+
+    prisma.contentPost.count({
+      where: {
+        ...projectFilter,
+        status: "PUBLISHED",
+        publishedAt: { gte: weekStart, lt: weekEnd },
+      },
+    }),
+
+    prisma.project.findMany({
+      where: { clientId },
+      select: {
+        id: true,
+        name: true,
+        healthScore: true,
+        contentPosts: {
+          select: { id: true, status: true },
+        },
+      },
+    }),
+
+    prisma.contentPost.findMany({
+      where: {
+        ...projectFilter,
+        status: "APPROVED",
+        updatedAt: { gte: thirtyDaysAgo },
+      },
+      select: { createdAt: true, updatedAt: true },
+      take: 100,
+    }),
+  ]);
+
+  const postsByStatus: Record<string, number> = {};
+  for (const r of statusGroups) {
+    postsByStatus[r.status] = r._count._all;
+  }
+
+  const postsByFormat: Record<string, number> = {};
+  for (const r of formatGroups) {
+    if (r.format) postsByFormat[r.format] = r._count._all;
+  }
+
+  // Approximation: time from post creation to approval (updatedAt is the last state change,
+  // not a dedicated approvedAt field — this is an approximation and may overcount if the post
+  // was edited after creation before being submitted for approval).
+  let approvalTurnaround = 0;
+  if (recentApproved.length > 0) {
+    const totalMs = recentApproved.reduce((sum, p) => {
+      return sum + (p.updatedAt.getTime() - p.createdAt.getTime());
+    }, 0);
+    approvalTurnaround = Math.round(totalMs / recentApproved.length / (1000 * 60 * 60));
+  }
+
+  const projectSummaries = projects.map((p) => ({
+    projectId: p.id,
+    name: p.name,
+    healthScore: p.healthScore,
+    postCount: p.contentPosts.length,
+    pendingCount: p.contentPosts.filter((c) => c.status === "PENDING_APPROVAL").length,
+  }));
+
+  return {
+    totalPosts,
+    postsByStatus,
+    postsByFormat,
+    approvalTurnaround,
+    scheduledThisWeek,
+    liveThisWeek,
+    projectSummaries,
+  };
+}

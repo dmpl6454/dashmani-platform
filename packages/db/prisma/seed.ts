@@ -124,6 +124,25 @@ async function main() {
       update: {},
       create: { userId: admin.id, roleId: superAdminRole.id },
     });
+
+    // Tabish — full access test account (internal portal, Super Admin)
+    const tabishHash = await hash("admin@123", 12);
+    const tabish = await prisma.user.upsert({
+      where: { email: "tabish@dashmani.com" },
+      update: { passwordHash: tabishHash, status: "ACTIVE" },
+      create: {
+        name: "Tabish Mukaddam",
+        email: "tabish@dashmani.com",
+        passwordHash: tabishHash,
+        status: "ACTIVE",
+      },
+    });
+
+    await prisma.userRole.upsert({
+      where: { userId_roleId: { userId: tabish.id, roleId: superAdminRole.id } },
+      update: {},
+      create: { userId: tabish.id, roleId: superAdminRole.id },
+    });
   }
 
   console.log("Seed completed successfully");
@@ -163,6 +182,21 @@ async function main() {
     },
   });
   console.log("Seeded demo client");
+
+  // Tabish — full access test account (client portal)
+  const tabishClientHash = await hash("admin@123", 12);
+  await prisma.client.upsert({
+    where: { email: "tabish@dashmani.com" },
+    update: { passwordHash: tabishClientHash, status: "ACTIVE" },
+    create: {
+      companyName: "Dashmani",
+      contactName: "Tabish Mukaddam",
+      email: "tabish@dashmani.com",
+      passwordHash: tabishClientHash,
+      status: "ACTIVE",
+    },
+  });
+  console.log("Seeded Tabish test account (client portal)");
 }
 
 main()

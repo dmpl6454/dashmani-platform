@@ -34,6 +34,7 @@ model User {
   assignedTasks      Task[]              @relation("TaskAssignee")
   createdTasks       Task[]              @relation("TaskCreator")
   taskComments       TaskComment[]       @relation("CommentAuthor")
+  postComments       PostComment[]       @relation("PostCommentAuthor")
   uploadedFiles      ProjectFile[] @relation("FileUploader")
   approvalRequests   Approval[]    @relation("ApprovalRequester")
   contentPosts       ContentPost[] @relation("ContentCreator")
@@ -386,6 +387,17 @@ enum ClientStatus {
   ONBOARDING
 }
 
+model ClientInvite {
+  id        String    @id @default(uuid())
+  email     String    @unique
+  token     String    @unique @default(uuid())
+  expiresAt DateTime  @map("expires_at")
+  usedAt    DateTime? @map("used_at")
+  createdAt DateTime  @default(now())
+
+  @@map("client_invites")
+}
+
 model ClientRefreshToken {
   id        String   @id @default(uuid())
   clientId  String   @map("client_id")
@@ -406,6 +418,7 @@ model Project {
   description String?
   clientId    String        @map("client_id")
   status      ProjectStatus @default(ACTIVE)
+  healthScore Int?          @map("health_score")
   startDate   DateTime?     @map("start_date") @db.Date
   endDate     DateTime?     @map("end_date") @db.Date
   createdAt   DateTime      @default(now()) @map("created_at")
@@ -508,6 +521,9 @@ model ContentPost {
   projectId     String        @map("project_id")
   accountId     String?       @map("account_id")
   status        ContentStatus @default(DRAFT)
+  format        String?
+  aspectRatio   String?       @map("aspect_ratio")
+  hashtags      String[]      @default([])
   scheduledAt   DateTime?     @map("scheduled_at")
   publishedAt   DateTime?     @map("published_at")
   createdById   String        @map("created_by_id")
@@ -517,6 +533,7 @@ model ContentPost {
   project       Project       @relation(fields: [projectId], references: [id])
   account       SocialAccount? @relation(fields: [accountId], references: [id])
   createdBy     User          @relation("ContentCreator", fields: [createdById], references: [id])
+  comments      PostComment[]
 
   @@index([projectId])
   @@index([accountId])
@@ -533,6 +550,19 @@ enum ContentStatus {
   PUBLISHED
   FAILED
   REJECTED
+}
+
+model PostComment {
+  id        String      @id @default(uuid())
+  postId    String      @map("post_id")
+  authorId  String      @map("author_id")
+  body      String      @db.Text
+  createdAt DateTime    @default(now())
+
+  post      ContentPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  author    User        @relation("PostCommentAuthor", fields: [authorId], references: [id])
+
+  @@map("post_comments")
 }
 
 // ============ EMPLOYEE PROFILE ============

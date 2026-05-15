@@ -113,7 +113,7 @@ All schema changes go through `packages/db/prisma/schema.prisma`. Run `db:genera
 
 ## Client Portal (`apps/client`) — Implementation Status
 
-All 9 phases of `.planning/client-portal-plan.md` are fully implemented and verified.
+All 9 implementation phases + 5-wave audit remediation complete. See `.planning/CLIENT-PORTAL-AUDIT.md` for the full issue register and resolution commit log.
 
 ### What's implemented
 
@@ -129,6 +129,8 @@ All 9 phases of `.planning/client-portal-plan.md` are fully implemented and veri
 - `GET/POST /v1/client/content/:id/comments` — discussion thread
 - `GET /v1/client/files` — aggregated file browser across projects
 - `GET /v1/client/analytics` — client-scoped analytics (calls `getClientContentAnalytics`)
+- `POST /v1/client/content/brief` — create a draft ContentPost ("brief") from the client
+- `GET /v1/client/approvals` — **LEGACY / admin-only**, not used by client portal
 
 **Frontend pages** (all use real SWR hooks, no mock store data):
 - `/signup` — invite token flow, matches login card style
@@ -137,17 +139,24 @@ All 9 phases of `.planning/client-portal-plan.md` are fully implemented and veri
 - `/projects/[id]` — project detail via SWR
 - `/content` — list + calendar toggle; calendar uses `ContentCalendar` component
 - `/content/[id]` — post detail, IG previews, real comments, approve/revise/reject wired to API
-- `/approvals` — split-view inbox, all actions wired to API + SWR mutate
+- `/approvals` — split-view inbox wired to `ContentPost?status=PENDING_APPROVAL`, all actions via API
 - `/analytics` — recharts PieChart + BarChart + project table
 - `/files` — file browser with project filter, `formatBytes`, download links
 
-**Shared components** (`apps/client/src/components/portal-shared.tsx`):
-- `Skeleton` — `animate-pulse bg-muted rounded` wrapper
-- `PageError` — uses `Empty` with alert icon
+**Shared components** (`apps/client/src/components/`):
+- `portal-shared.tsx`: `Skeleton`, `PageError`, `Modal`, `Button`, `Avatar`, etc.
+- `command-palette.tsx`: Cmd/Ctrl+K global search — pages + projects, ↑↓/↵/Esc
+- `new-brief-modal.tsx`: project picker + title + description + optional reference URL
+- `content-calendar.tsx`: month grid with `FormatPill` stacks, prev/next navigation
 
 **Loading states**: `loading.tsx` exists in all 8 route folders.
 
+### API envelope convention
+`apiFetch<T>()` returns `Promise<ApiEnvelope<T>>` — the full `{success, data, meta?}` envelope. Hooks under `lib/hooks/` unwrap `.data` in their fetcher. Pages consume hook return values directly — no `?.data` reads in page code.
+
 ### Key design notes
 - `portal-store` (`lib/portal-store.ts`) is still imported for `Actions` (toast) and `fmt` (date formatting) helpers only — it no longer drives page data.
+- Approvals page and sidebar badge both use `useClientPendingApprovals` (shared SWR key = `PENDING_APPROVALS_KEY`). Badge is hidden until the hook resolves to avoid a flash from 0 → real count.
 - `addPostComment` resolves `clientId → client.email → User.id` to satisfy the `PostComment.authorId → User` FK.
 - `GET /v1/client/analytics` calls `analyticsService.getClientContentAnalytics(clientId)` (not `getClientAnalytics`).
+- `createClientBrief` resolves `createdById` via fallback: recent post creator → recent task creator → any active user in the project's org.

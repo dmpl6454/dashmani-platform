@@ -1,52 +1,70 @@
 "use client";
 import Link from "next/link";
-import { Badge } from "@dashmani/ui";
 
-const priorityColor: Record<string, "danger" | "warning" | "default" | "secondary"> = {
-  CRITICAL: "danger",
-  HIGH: "warning",
-  MEDIUM: "default",
-  LOW: "secondary",
+const PRIORITY_BADGE: Record<string, string> = {
+  CRITICAL: "bg-danger-bg text-danger border-danger/20",
+  HIGH:     "bg-attention-bg text-attention border-attention/20",
+  MEDIUM:   "bg-action-soft text-ink border-ink/15",
+  LOW:      "bg-neutral-bg text-neutral border-neutral/20",
 };
 
-interface TaskCardProps {
-  task: any;
+function avatarBg(name: string) {
+  const colors = ["#EDEDFD","#EEF4ED","#FDF0EC","#FFF3C4"];
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = name.charCodeAt(i) + ((h << 5) - h);
+  return colors[Math.abs(h) % colors.length];
+}
+function avatarText(name: string) {
+  const colors = ["#5D5FEF","#4A7C52","#E07A5F","#C05826"];
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = name.charCodeAt(i) + ((h << 5) - h);
+  return colors[Math.abs(h) % colors.length];
 }
 
-export function TaskCard({ task }: TaskCardProps) {
+export function TaskCard({ task }: { task: any }) {
   return (
     <Link href={`/tasks/${task.id}`}>
-      <div className="bg-white border border-[#E8E0D0] rounded-2xl p-3 shadow-[0_2px_16px_rgba(0,0,0,0.06)] hover:shadow-md transition-shadow cursor-pointer">
-        <div className="flex items-start justify-between gap-2">
-          <h4 className="text-sm font-medium line-clamp-2 text-[#1A1A1A]">{task.title}</h4>
-          <Badge variant={priorityColor[task.priority]} className="shrink-0 text-[10px]">
-            {task.priority}
-          </Badge>
-        </div>
-        {task.account && (
-          <p className="text-xs text-[#7A7A7A] mt-1">
-            {task.account.platform?.name}: {task.account.handle}
-          </p>
-        )}
-        <div className="flex items-center justify-between mt-2">
-          {task.assignee ? (
-            <div className="flex items-center gap-1.5">
-              <span className="h-5 w-5 rounded-full bg-[#F5D547] text-[#1A1A1A] font-bold text-[10px] flex items-center justify-center">{task.assignee.name?.[0]}</span>
-              <span className="text-xs text-[#7A7A7A]">{task.assignee.name}</span>
-            </div>
-          ) : (
-            <span className="text-xs text-orange-500">Unassigned</span>
-          )}
-          {task.dueDate && (
-            <span className="text-xs text-[#B0B0B0]">
-              {new Date(task.dueDate).toLocaleDateString()}
+      <div className="v3-card-sm p-3 v3-card-lift cursor-pointer">
+        <div className="flex items-start justify-between gap-2 mb-2">
+          <h4 className="text-sm font-semibold text-ink line-clamp-2 leading-snug">{task.title}</h4>
+          {task.priority && (
+            <span className={`text-[10px] font-bold rounded-full px-2 py-0.5 border shrink-0 ${PRIORITY_BADGE[task.priority] || PRIORITY_BADGE.LOW}`}>
+              {task.priority}
             </span>
           )}
         </div>
+
+        {task.account && (
+          <p className="text-[11px] text-ink-4 mb-2">
+            {task.account.platform?.name}: {task.account.handle}
+          </p>
+        )}
+
+        <div className="flex items-center justify-between">
+          {task.assignee ? (
+            <div className="flex items-center gap-1.5">
+              <div
+                className="h-5 w-5 rounded-full border border-ink/20 flex items-center justify-center text-[9px] font-bold shrink-0"
+                style={{ background: avatarBg(task.assignee.name || ""), color: avatarText(task.assignee.name || "") }}
+              >
+                {(task.assignee.name || "?").charAt(0).toUpperCase()}
+              </div>
+              <span className="text-[11px] text-ink-3">{task.assignee.name}</span>
+            </div>
+          ) : (
+            <span className="text-[11px] text-attention font-medium">Unassigned</span>
+          )}
+          {task.dueDate && (
+            <span className="text-[10px] text-ink-4">
+              {new Date(task.dueDate).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}
+            </span>
+          )}
+        </div>
+
         {task._count?.comments > 0 && (
-          <span className="text-xs text-[#B0B0B0] mt-1 block">
+          <p className="text-[10px] text-ink-4 mt-1.5">
             {task._count.comments} comment{task._count.comments > 1 ? "s" : ""}
-          </span>
+          </p>
         )}
       </div>
     </Link>

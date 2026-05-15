@@ -3,105 +3,155 @@ import { useState } from "react";
 import Link from "next/link";
 import { useTasks } from "@/lib/hooks/use-tasks";
 import { TaskCard } from "@/components/task-card";
-import { Button, Input } from "@dashmani/ui";
+import { Plus, Search, LayoutGrid, List } from "lucide-react";
 
 const STATUS_COLUMNS = ["TODO", "IN_PROGRESS", "IN_REVIEW", "DONE"];
 const STATUS_LABELS: Record<string, string> = {
-  TODO: "To Do",
+  TODO:        "To Do",
   IN_PROGRESS: "In Progress",
-  IN_REVIEW: "In Review",
-  DONE: "Done",
+  IN_REVIEW:   "In Review",
+  DONE:        "Done",
 };
-
+const STATUS_BADGE: Record<string, string> = {
+  TODO:        "bg-neutral-bg text-neutral",
+  IN_PROGRESS: "bg-indigo-soft text-indigo",
+  IN_REVIEW:   "bg-attention-bg text-attention",
+  DONE:        "bg-success-bg text-success",
+};
 const PRIORITY_BADGE: Record<string, string> = {
-  CRITICAL: "bg-[rgba(231,76,60,0.1)] text-[#E74C3C]",
-  HIGH: "bg-[rgba(245,166,35,0.12)] text-[#F5A623]",
-  MEDIUM: "bg-[#FFF3C4] text-[#1A1A1A]",
-  LOW: "bg-[rgba(0,0,0,0.06)] text-[#7A7A7A]",
+  CRITICAL: "bg-danger-bg text-danger border-danger/20",
+  HIGH:     "bg-attention-bg text-attention border-attention/20",
+  MEDIUM:   "bg-action-soft text-ink border-ink/15",
+  LOW:      "bg-neutral-bg text-neutral border-neutral/20",
+};
+const COLUMN_ACCENT: Record<string, string> = {
+  TODO:        "border-t-ink-4",
+  IN_PROGRESS: "border-t-indigo",
+  IN_REVIEW:   "border-t-attention",
+  DONE:        "border-t-success",
 };
 
 export default function TasksPage() {
   const [search, setSearch] = useState("");
-  const [view, setView] = useState<"kanban" | "list">("kanban");
+  const [view,   setView]   = useState<"kanban" | "list">("kanban");
   const { data, isLoading } = useTasks({ search });
   const tasks = (data as any)?.data || [];
 
   return (
-    <div className="space-y-6 crx-animate-fade">
+    <div className="space-y-5 pop-in">
+      {/* Header */}
       <div className="flex items-center justify-between">
-        <h1 className="font-serif text-4xl font-light text-[#1A1A1A]">Tasks</h1>
+        <div>
+          <h1 className="font-display text-3xl font-semibold text-ink">Tasks</h1>
+          {!isLoading && <p className="text-sm text-ink-4 mt-0.5">{tasks.length} task{tasks.length !== 1 ? "s" : ""}</p>}
+        </div>
         <div className="flex items-center gap-2">
-          <div className="flex border border-[#E8E0D0] rounded-full overflow-hidden">
+          {/* View toggle */}
+          <div className="flex border-2 border-ink/12 rounded-xl overflow-hidden">
             <button
-              className={`p-2 transition-colors ${view === "kanban" ? "bg-[#1A1A1A] text-white" : "text-[#7A7A7A] hover:bg-[rgba(255,248,225,0.5)]"}`}
+              className={`p-2 transition-colors ${view === "kanban" ? "bg-ink text-white" : "text-ink-4 hover:bg-muted"}`}
               onClick={() => setView("kanban")}
+              title="Kanban"
             >
-              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" /><rect x="14" y="3" width="7" height="7" /><rect x="3" y="14" width="7" height="7" /><rect x="14" y="14" width="7" height="7" /></svg>
+              <LayoutGrid className="h-4 w-4" />
             </button>
             <button
-              className={`p-2 transition-colors ${view === "list" ? "bg-[#1A1A1A] text-white" : "text-[#7A7A7A] hover:bg-[rgba(255,248,225,0.5)]"}`}
+              className={`p-2 transition-colors ${view === "list" ? "bg-ink text-white" : "text-ink-4 hover:bg-muted"}`}
               onClick={() => setView("list")}
+              title="List"
             >
-              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><line x1="8" y1="6" x2="21" y2="6" /><line x1="8" y1="12" x2="21" y2="12" /><line x1="8" y1="18" x2="21" y2="18" /><line x1="3" y1="6" x2="3.01" y2="6" /><line x1="3" y1="12" x2="3.01" y2="12" /><line x1="3" y1="18" x2="3.01" y2="18" /></svg>
+              <List className="h-4 w-4" />
             </button>
           </div>
           <Link href="/tasks/new">
-            <Button className="bg-[#1A1A1A] text-white rounded-full hover:bg-[#2B2B2B]">+ New Task</Button>
+            <button className="h-9 px-4 rounded-full bg-ink text-white text-sm font-bold btn-3d hover:bg-ink-2 transition-colors flex items-center gap-1.5">
+              <Plus className="h-4 w-4" /> New Task
+            </button>
           </Link>
         </div>
       </div>
 
-      <div className="relative max-w-sm crx-animate-slide crx-delay-1">
-        <Input placeholder="Search tasks..." value={search} onChange={(e) => setSearch(e.target.value)} className="border border-[#E8E0D0] rounded-lg focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547]" />
+      {/* Search */}
+      <div className="relative max-w-sm fade-up d2">
+        <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-ink-4" />
+        <input
+          placeholder="Search tasks…"
+          className="w-full pl-10 pr-4 h-10 bg-surface border-2 border-ink/15 rounded-xl text-sm text-ink placeholder:text-ink-4 focus:outline-none focus:border-indigo transition-colors"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
       </div>
 
       {isLoading ? (
-        <div className="text-center text-[#7A7A7A] py-8">Loading tasks...</div>
+        <div className="py-14 flex items-center justify-center">
+          <div className="h-6 w-6 rounded-full border-[3px] border-ink/10 border-t-indigo" style={{ animation: "spin 0.7s linear infinite" }} />
+        </div>
       ) : view === "kanban" ? (
-        <div className="grid grid-cols-4 gap-4 crx-animate-slide crx-delay-2">
+        /* ── Kanban ── */
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 fade-up d3">
           {STATUS_COLUMNS.map((status) => {
             const columnTasks = tasks.filter((t: any) => t.status === status);
             return (
-              <div key={status} className="bg-[rgba(255,248,225,0.5)] rounded-2xl p-3 border border-[#E8E0D0]">
+              <div key={status} className={`v3-card-sm p-3 border-t-4 ${COLUMN_ACCENT[status]}`}>
                 <div className="flex items-center justify-between mb-3">
-                  <h3 className="text-sm font-semibold text-[#1A1A1A]">{STATUS_LABELS[status]}</h3>
-                  <span className="rounded-full px-3 py-1 text-xs font-medium bg-[#FFF3C4] text-[#1A1A1A]">{columnTasks.length}</span>
+                  <h3 className="text-xs font-bold text-ink uppercase tracking-wider">{STATUS_LABELS[status]}</h3>
+                  <span className="text-xs font-bold text-ink-4 bg-muted px-2 py-0.5 rounded-full">{columnTasks.length}</span>
                 </div>
                 <div className="space-y-2">
                   {columnTasks.map((task: any) => (
                     <TaskCard key={task.id} task={task} />
                   ))}
+                  {columnTasks.length === 0 && (
+                    <p className="text-xs text-ink-4 text-center py-4 italic">No tasks</p>
+                  )}
                 </div>
               </div>
             );
           })}
         </div>
       ) : (
-        <div className="bg-white border border-[#E8E0D0] rounded-2xl overflow-x-auto shadow-[0_2px_16px_rgba(0,0,0,0.05)] crx-animate-slide crx-delay-2">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-[#F0EAD8]">
-                <th className="text-left p-4 text-[#7A7A7A] text-xs font-medium">Title</th>
-                <th className="text-left p-4 text-[#7A7A7A] text-xs font-medium">Status</th>
-                <th className="text-left p-4 text-[#7A7A7A] text-xs font-medium">Priority</th>
-                <th className="text-left p-4 text-[#7A7A7A] text-xs font-medium">Assignee</th>
-                <th className="text-left p-4 text-[#7A7A7A] text-xs font-medium">Due Date</th>
-              </tr>
-            </thead>
-            <tbody>
-              {tasks.map((task: any) => (
-                <tr key={task.id} className="border-b border-[#F0EAD8] last:border-0 hover:bg-[rgba(255,248,225,0.5)] transition-colors">
-                  <td className="p-4">
-                    <Link href={`/tasks/${task.id}`} className="text-[#1A1A1A] hover:text-[#F5D547] font-medium">{task.title}</Link>
-                  </td>
-                  <td className="p-4"><span className="rounded-full px-3 py-1 text-xs font-medium bg-[#FFF3C4] text-[#1A1A1A]">{STATUS_LABELS[task.status] || task.status}</span></td>
-                  <td className="p-4"><span className={`rounded-full px-3 py-1 text-xs font-medium ${PRIORITY_BADGE[task.priority] || "bg-[rgba(0,0,0,0.06)] text-[#7A7A7A]"}`}>{task.priority}</span></td>
-                  <td className="p-4 text-[#7A7A7A]">{task.assignee?.name || "Unassigned"}</td>
-                  <td className="p-4 text-[#7A7A7A]">{task.dueDate ? new Date(task.dueDate).toLocaleDateString() : "\u2014"}</td>
+        /* ── List ── */
+        <div className="v3-card overflow-hidden fade-up d3">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b-2 border-ink/8 bg-muted/40">
+                  <th className="text-left px-5 py-3 text-[10px] font-bold text-ink-4 uppercase tracking-wider">Title</th>
+                  <th className="text-left px-5 py-3 text-[10px] font-bold text-ink-4 uppercase tracking-wider">Status</th>
+                  <th className="text-left px-5 py-3 text-[10px] font-bold text-ink-4 uppercase tracking-wider">Priority</th>
+                  <th className="text-left px-5 py-3 text-[10px] font-bold text-ink-4 uppercase tracking-wider hidden md:table-cell">Assignee</th>
+                  <th className="text-left px-5 py-3 text-[10px] font-bold text-ink-4 uppercase tracking-wider hidden lg:table-cell">Due</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-rule">
+                {tasks.length === 0 ? (
+                  <tr><td colSpan={5} className="py-14 text-center text-ink-4 text-sm">No tasks found</td></tr>
+                ) : tasks.map((task: any, i: number) => (
+                  <tr key={task.id} className="v3-row" style={{ animationDelay: `${i * 0.02}s` }}>
+                    <td className="px-5 py-3">
+                      <Link href={`/tasks/${task.id}`} className="font-semibold text-ink hover:text-indigo transition-colors">
+                        {task.title}
+                      </Link>
+                    </td>
+                    <td className="px-5 py-3">
+                      <span className={`rounded-full px-3 py-1 text-xs font-semibold ${STATUS_BADGE[task.status] || "bg-neutral-bg text-neutral"}`}>
+                        {STATUS_LABELS[task.status] || task.status}
+                      </span>
+                    </td>
+                    <td className="px-5 py-3">
+                      <span className={`rounded-full px-3 py-1 text-xs font-semibold border ${PRIORITY_BADGE[task.priority] || "bg-neutral-bg text-neutral border-neutral/20"}`}>
+                        {task.priority}
+                      </span>
+                    </td>
+                    <td className="px-5 py-3 text-ink-3 hidden md:table-cell">{task.assignee?.name || "Unassigned"}</td>
+                    <td className="px-5 py-3 text-ink-3 hidden lg:table-cell">
+                      {task.dueDate ? new Date(task.dueDate).toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
     </div>

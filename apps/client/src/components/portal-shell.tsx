@@ -2,6 +2,7 @@
 import type { ReactNode } from "react";
 import { PortalRail } from "./portal-rail";
 import { ToastStack } from "./portal-shared";
+import { CommandPalette } from "./command-palette";
 
 export function PortalShell({ children }: { children: ReactNode }) {
   return (
@@ -11,6 +12,7 @@ export function PortalShell({ children }: { children: ReactNode }) {
         {children}
       </main>
       <ToastStack />
+      <CommandPalette />
     </div>
   );
 }

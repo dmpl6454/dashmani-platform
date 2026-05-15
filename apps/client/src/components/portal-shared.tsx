@@ -3,9 +3,7 @@ import { forwardRef, useEffect, type ButtonHTMLAttributes, type ReactNode } from
 import { Icon } from "./portal-icons";
 import { STATUS, STATUS_STYLE, sel, usePortalStore, type StatusKey } from "@/lib/portal-store";
 
-/* — Button — primary uses brand yellow ONLY for action.
-   Variants: primary, default, ghost, danger, subtle, ink.
-   Sizes: sm, md. */
+/* ── Button ── */
 type ButtonVariant = "primary" | "default" | "ghost" | "danger" | "subtle" | "ink";
 type ButtonSize = "sm" | "md";
 
@@ -21,30 +19,30 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
   { variant = "default", size = "md", icon, iconRight, kbd, children, className = "", ...rest },
   ref
 ) {
-  const base = "inline-flex items-center justify-center gap-1.5 font-medium select-none transition-colors focus-visible:shadow-focus focus-visible:border-ink disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap";
+  const base = "inline-flex items-center justify-center gap-1.5 font-semibold select-none disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap border-2 rounded-xl";
   const sizes: Record<ButtonSize, string> = {
-    sm: "h-8 px-2.5 text-[13px] rounded",
-    md: "h-9 px-3.5 text-sm rounded-md",
+    sm: "h-8 px-3.5 text-[13px]",
+    md: "h-10 px-5 text-[14px]",
   };
   const variants: Record<ButtonVariant, string> = {
-    primary: "bg-action text-ink border border-ink/10 hover:bg-action-deep",
-    default: "bg-surface text-ink border border-border hover:bg-muted/60",
-    ghost:   "bg-transparent text-ink-2 hover:bg-muted/60 border border-transparent",
-    danger:  "bg-surface text-danger border border-border hover:bg-danger-bg",
-    subtle:  "bg-muted text-ink border border-transparent hover:bg-muted/80",
-    ink:     "bg-ink text-bg border border-ink hover:bg-ink-2",
+    primary: "bg-indigo  text-white  border-ink btn-3d",
+    default: "bg-surface text-ink    border-ink btn-3d",
+    ghost:   "bg-transparent text-ink-2 border-transparent hover:bg-muted/80 transition-colors",
+    danger:  "bg-danger-bg text-danger border-danger btn-3d",
+    subtle:  "bg-muted text-ink border-transparent hover:bg-muted/80 transition-colors",
+    ink:     "bg-ink text-white border-ink btn-3d",
   };
   return (
     <button ref={ref} className={`${base} ${sizes[size]} ${variants[variant]} ${className}`} {...rest}>
-      {icon}
+      {icon && <span className="shrink-0">{icon}</span>}
       <span>{children}</span>
-      {iconRight}
-      {kbd && <kbd className="ml-1">{kbd}</kbd>}
+      {iconRight && <span className="shrink-0">{iconRight}</span>}
+      {kbd && <kbd className="ml-0.5">{kbd}</kbd>}
     </button>
   );
 });
 
-/* — IconButton — */
+/* ── IconButton ── */
 interface IconButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   icon: ReactNode;
   label: string;
@@ -52,92 +50,95 @@ interface IconButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: "ghost" | "default" | "ink";
 }
 
-export function IconButton({ icon, label, size = "md", variant = "ghost", className = "", children, ...rest }: IconButtonProps) {
-  const dims = size === "sm" ? "h-7 w-7" : "h-9 w-9";
+export function IconButton({ icon, label, size = "md", variant = "ghost", className = "", ...rest }: IconButtonProps) {
+  const dims = { sm: "h-8 w-8 rounded-lg", md: "h-10 w-10 rounded-xl" }[size] || "h-10 w-10 rounded-xl";
   const variants = {
-    ghost: "text-ink-2 hover:bg-muted/60 hover:text-ink",
-    default: "bg-surface text-ink border border-border hover:bg-muted/60",
-    ink: "bg-ink text-bg",
+    ghost:   "text-ink-2 hover:bg-muted/80 hover:text-ink transition-colors",
+    default: "bg-surface border-2 border-ink rounded-xl btn-3d text-ink",
+    ink:     "bg-ink text-white border-2 border-ink rounded-xl btn-3d",
   };
   return (
-    <button aria-label={label} className={`${dims} ${variants[variant]} relative inline-flex items-center justify-center rounded transition-colors ${className}`} {...rest}>
+    <button aria-label={label} title={label} className={`${dims} ${variants[variant] || variants.ghost} inline-flex items-center justify-center shrink-0 ${className}`} {...rest}>
       {icon}
-      {children}
     </button>
   );
 }
 
-/* — StatusBadge — pill on opaque surfaces. */
+/* ── StatusBadge ── */
 export function StatusBadge({ status, withDot = true, className = "" }: { status: StatusKey; withDot?: boolean; className?: string }) {
   const s = STATUS[status] || STATUS.DRAFT;
-  const style = STATUS_STYLE[s.kind];
+  const st = STATUS_STYLE[s.kind];
   return (
-    <span className={`inline-flex items-center gap-1.5 h-6 px-2 rounded text-xs font-medium ${style.bg} ${style.text} ${className}`}>
-      {withDot && <span className={`h-1.5 w-1.5 rounded-full ${style.dot}`} />}
+    <span className={`inline-flex items-center gap-1.5 h-6 px-2.5 rounded-full text-[11.5px] font-semibold ${st.bg} ${st.text} border border-current/15 ${className}`}>
+      {withDot && <span className={`h-1.5 w-1.5 rounded-full ${st.dot} shrink-0`} />}
       {s.label}
     </span>
   );
 }
 
-/* — Avatar — monogram on cream, ink border. Never gradient. */
+/* ── Avatar ── */
 type AvatarSize = "xs" | "sm" | "md" | "lg";
 export function Avatar({ initial = "?", size = "md", className = "" }: { initial?: string; size?: AvatarSize; className?: string }) {
   const dims: Record<AvatarSize, string> = {
-    xs: "h-5 w-5 text-[10px]",
-    sm: "h-6 w-6 text-[11px]",
-    md: "h-8 w-8 text-[13px]",
-    lg: "h-10 w-10 text-base",
+    xs: "h-5 w-5 text-[9px] border",
+    sm: "h-7 w-7 text-[11px] border-2",
+    md: "h-9 w-9 text-[13px] border-2",
+    lg: "h-11 w-11 text-[15px] border-2",
   };
   return (
-    <span className={`${dims[size]} inline-flex items-center justify-center rounded-full bg-muted text-ink-2 border border-border font-medium shrink-0 ${className}`}>
+    <span className={`${dims[size]} inline-flex items-center justify-center rounded-full bg-muted text-ink-2 border-ink/20 font-bold shrink-0 ${className}`}>
       {initial}
     </span>
   );
 }
 
-/* — Format pill — */
+/* ── FormatPill ── */
 export function FormatPill({ format, aspect, className = "" }: { format: string; aspect?: string | null; className?: string }) {
   const icons: Record<string, ReactNode> = {
-    REEL: <Icon.Reel size={11} sw={2}/>,
-    CAROUSEL: <Icon.Carousel size={11} sw={2}/>,
-    STORY: <Icon.Story size={11} sw={2}/>,
-    POST: <Icon.Image size={11} sw={2}/>,
-    DOC: <Icon.File size={11} sw={2}/>,
+    REEL:     <Icon.Reel     size={9} sw={2} />,
+    CAROUSEL: <Icon.Carousel size={9} sw={2} />,
+    STORY:    <Icon.Story    size={9} sw={2} />,
+    POST:     <Icon.Image    size={9} sw={2} />,
+    DOC:      <Icon.File     size={9} sw={2} />,
   };
   return (
-    <span className={`inline-flex items-center gap-1 h-5 px-1.5 rounded bg-muted text-ink-3 text-[10.5px] font-medium uppercase tracking-wider ${className}`}>
-      {icons[format] || null} {format}{aspect ? <span className="text-ink-4 normal-case tracking-normal">·{aspect}</span> : null}
+    <span className={`inline-flex items-center gap-1 h-5 px-2 rounded-full bg-muted/80 text-ink-3 text-[9.5px] font-bold uppercase tracking-wider border border-ink/8 ${className}`}>
+      {icons[format] || null}
+      {format}
+      {aspect && <span className="text-ink-4 normal-case tracking-normal font-medium">·{aspect}</span>}
     </span>
   );
 }
 
-/* — Platform-aspect thumbnail — */
+/* ── AspectThumb ── */
 export function AspectThumb({ aspect = "1:1", format = "POST", size = "row", className = "" }: { aspect?: string | null; format?: string; size?: "row" | "tile" | "lg"; className?: string }) {
   const heights: Record<string, number> = { row: 36, tile: 64, lg: 96 };
   const h = heights[size] || 36;
   const [aw, ah] = (aspect || "1:1").split(":").map(Number);
   const w = h * (aw / (ah || 1));
   return (
-    <div className={`ig-hatch rounded-sm relative border border-border/60 shrink-0 ${className}`} style={{ width: w, height: h }}>
-      {format === "REEL" && <span className="absolute bottom-0.5 right-0.5 text-[9px] font-medium text-ink-3 bg-bg/80 px-1 rounded-sm">9:16</span>}
+    <div className={`ig-hatch rounded-md relative border border-ink/15 shrink-0 ${className}`} style={{ width: w, height: h }}>
+      {format === "REEL" && (
+        <span className="absolute bottom-0.5 right-0.5 text-[8px] font-bold text-ink-3 bg-bg/90 px-1 rounded-sm leading-tight">9:16</span>
+      )}
     </div>
   );
 }
 
-/* — Toast stack — */
+/* ── Toast stack ── */
 export function ToastStack() {
   const toasts = usePortalStore(sel.toasts);
   return (
-    <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[60] flex flex-col items-center gap-2 pointer-events-none">
+    <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[80] flex flex-col items-center gap-2 pointer-events-none">
       {toasts.map((t) => {
         const tone: Record<string, string> = {
-          success: "bg-success-bg text-success border-success/30",
+          success:   "bg-success-bg  text-success  border-success/30",
           attention: "bg-attention-bg text-attention border-attention/30",
-          danger: "bg-danger-bg text-danger border-danger/30",
-          neutral: "bg-surface text-ink border-border",
+          danger:    "bg-danger-bg   text-danger   border-danger/30",
+          neutral:   "bg-surface     text-ink       border-ink/20",
         };
         return (
-          <div key={t.id} className={`toast-in pointer-events-auto shadow-pop rounded-md border px-3.5 py-2 text-sm font-medium ${tone[t.kind] || tone.neutral}`}>
+          <div key={t.id} className={`toast-pop pointer-events-auto v3-card-sm border px-4 py-2.5 text-[13px] font-semibold min-w-[200px] text-center ${tone[t.kind] || tone.neutral}`}>
             {t.text}
           </div>
         );
@@ -146,7 +147,7 @@ export function ToastStack() {
   );
 }
 
-/* — Modal — */
+/* ── Modal ── */
 export function Modal({ open, onClose, title, children, footer, size = "md" }: { open: boolean; onClose: () => void; title?: ReactNode; children: ReactNode; footer?: ReactNode; size?: "sm" | "md" | "lg" | "xl" }) {
   useEffect(() => {
     if (!open) return;
@@ -157,53 +158,55 @@ export function Modal({ open, onClose, title, children, footer, size = "md" }: {
   if (!open) return null;
   const widths = { sm: "max-w-sm", md: "max-w-md", lg: "max-w-lg", xl: "max-w-2xl" };
   return (
-    <div className="fixed inset-0 z-[70] bg-ink/30 grid place-items-center p-4" onClick={onClose}>
-      <div className={`bg-surface w-full ${widths[size]} rounded-lg shadow-pop border border-border overflow-hidden`} onClick={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 z-[70] bg-ink/20 grid place-items-center p-4 pop-in" onClick={onClose}>
+      <div className={`v3-card w-full ${widths[size] || widths.md} overflow-hidden`} onClick={(e) => e.stopPropagation()}>
         {title && (
-          <div className="px-4 py-3 border-b border-rule flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-ink">{title}</h2>
-            <IconButton size="sm" icon={<Icon.Close size={16}/>} label="Close" onClick={onClose} />
+          <div className="px-5 py-4 flex items-center justify-between gap-3" style={{ borderBottom: "2px solid rgba(26,26,26,0.08)" }}>
+            <h2 className="text-[15px] font-bold text-ink">{title}</h2>
+            <IconButton size="sm" icon={<Icon.Close size={16} />} label="Close" onClick={onClose} />
           </div>
         )}
-        <div className="p-4">{children}</div>
-        {footer && <div className="px-4 py-3 border-t border-rule bg-muted/30 flex items-center justify-end gap-2">{footer}</div>}
+        <div className="p-5">{children}</div>
+        {footer && (
+          <div className="px-5 py-3 flex items-center justify-end gap-2" style={{ borderTop: "2px solid rgba(26,26,26,0.08)", background: "rgba(243,238,216,0.3)" }}>
+            {footer}
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
-/* — Empty state — */
+/* ── Empty state ── */
 export function Empty({ icon, title, hint, cta }: { icon?: ReactNode; title: string; hint?: string; cta?: ReactNode }) {
   return (
-    <div className="text-center py-10 px-6">
-      {icon && <div className="h-10 w-10 mx-auto rounded-md bg-muted text-ink-3 grid place-items-center mb-3">{icon}</div>}
-      <div className="text-sm font-medium text-ink">{title}</div>
-      {hint && <div className="text-xs text-ink-3 mt-0.5">{hint}</div>}
-      {cta && <div className="mt-3">{cta}</div>}
+    <div className="text-center py-14 px-6">
+      {icon && (
+        <div className="h-12 w-12 mx-auto rounded-2xl bg-indigo-soft border border-indigo/20 text-indigo grid place-items-center mb-4">
+          {icon}
+        </div>
+      )}
+      <div className="font-semibold text-[14px] text-ink">{title}</div>
+      {hint && <div className="text-[12.5px] text-ink-3 mt-1 font-medium">{hint}</div>}
+      {cta && <div className="mt-4">{cta}</div>}
     </div>
   );
 }
 
-/* — Skeleton — */
+/* ── Skeleton ── */
 export function Skeleton({ className = "" }: { className?: string }) {
-  return <div className={`animate-pulse bg-muted rounded ${className}`} />;
+  return <div className={`animate-pulse bg-muted rounded-xl ${className}`} />;
 }
 
-/* — PageError — */
+/* ── PageError ── */
 export function PageError({ message = "Something went wrong" }: { message?: string }) {
-  return (
-    <Empty
-      icon={<Icon.Close size={20} />}
-      title="Could not load"
-      hint={message}
-    />
-  );
+  return <Empty icon={<Icon.Close size={20} />} title="Could not load" hint={message} />;
 }
 
-/* — Keyboard-hint row — */
+/* ── KbdRow ── */
 export function KbdRow({ items }: { items: { k: string; label: string }[] }) {
   return (
-    <div className="flex items-center gap-3 text-[11px] text-ink-3">
+    <div className="flex items-center gap-3 text-[11px] text-ink-3 font-medium">
       {items.map((it, i) => (
         <span key={i} className="inline-flex items-center gap-1.5">
           <kbd>{it.k}</kbd>

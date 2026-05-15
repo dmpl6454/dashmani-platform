@@ -1,8 +1,7 @@
 "use client";
 import type { ReactNode } from "react";
 import { Icon } from "./portal-icons";
-import { IconButton } from "./portal-shared";
-import { sel, usePortalStore } from "@/lib/portal-store";
+import { useCommandPalette } from "./command-palette";
 
 interface TopstripProps {
   title: ReactNode;
@@ -14,8 +13,8 @@ interface TopstripProps {
 }
 
 export function Topstrip({ title, sub, projectFilter, onProjectFilter, right, projects: projectsProp }: TopstripProps) {
-  const storeProjects = usePortalStore(sel.projects);
-  const projects = projectsProp ?? storeProjects;
+  const projects = projectsProp ?? [];
+  const palette = useCommandPalette();
   return (
     <header className="sticky top-0 z-30 bg-bg/95 backdrop-blur-[2px] border-b border-rule">
       <div className="h-14 px-6 flex items-center gap-3">
@@ -39,15 +38,14 @@ export function Topstrip({ title, sub, projectFilter, onProjectFilter, right, pr
           </div>
         )}
 
-        <button className="h-9 pl-2.5 pr-3 inline-flex items-center gap-2 rounded-md bg-surface border border-border text-ink-3 hover:bg-muted/40">
+        <button
+          onClick={() => palette.open()}
+          className="h-9 pl-2.5 pr-3 inline-flex items-center gap-2 rounded-md bg-surface border border-border text-ink-3 hover:bg-muted/40"
+        >
           <Icon.Search size={15}/>
           <span className="text-[13px]">Search</span>
           <kbd className="ml-1">⌘K</kbd>
         </button>
-
-        <IconButton variant="default" icon={<Icon.Bell size={18}/>} label="Notifications">
-          <span className="absolute h-1.5 w-1.5 rounded-full bg-attention top-1.5 right-1.5" />
-        </IconButton>
 
         {right}
       </div>

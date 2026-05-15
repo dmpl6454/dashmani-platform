@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { Icon } from "./portal-icons";
 import { Avatar } from "./portal-shared";
-import { sel, usePortalStore, USER } from "@/lib/portal-store";
+import { useClientPendingApprovals } from "@/lib/hooks/use-content";
 import { useAuth } from "@/lib/auth";
 
 const NAV = [
@@ -22,7 +22,9 @@ export function PortalRail() {
   const { user, logout } = useAuth();
   const [collapsed, setCollapsed] = useState(false);
   const [mounted, setMounted] = useState(false);
-  const pending = usePortalStore((s) => s.posts.filter((p) => p.status === "PENDING").length);
+  const { data: pendingApprovals } = useClientPendingApprovals();
+  const pending = pendingApprovals?.length ?? 0;
+  const pendingResolved = pendingApprovals !== undefined;
 
   useEffect(() => {
     setCollapsed(localStorage.getItem("ds.railCollapsed") === "1");
@@ -55,9 +57,9 @@ export function PortalRail() {
   }, [router]);
 
   const railWidth = collapsed ? "w-railc" : "w-rail";
-  const displayName = user?.name || USER.name;
-  const displayCompany = user?.companyName || USER.company;
-  const initial = (user?.name?.charAt(0) || USER.initial).toUpperCase();
+  const displayName = user?.name ?? "";
+  const displayCompany = user?.companyName ?? "";
+  const initial = (user?.name?.charAt(0) ?? "?").toUpperCase();
 
   return (
     <aside className={`${railWidth} shrink-0 border-r border-rule bg-bg flex flex-col transition-[width] duration-150`}>
@@ -77,7 +79,7 @@ export function PortalRail() {
         {NAV.map((n) => {
           const isActive = pathname?.startsWith(n.href) ?? false;
           const NavIcon = n.Icon;
-          const badgeCount = n.badge === "pending" ? pending : 0;
+          const badgeCount = n.badge === "pending" && pendingResolved ? pending : 0;
           return (
             <Link
               key={n.id}
@@ -113,20 +115,32 @@ export function PortalRail() {
         >
           {collapsed ? <Icon.ChevRight size={16}/> : <><Icon.ChevLeft size={16}/><span>Collapse</span></>}
         </button>
-        <button
-          onClick={logout}
-          className={`w-full flex items-center ${collapsed ? "justify-center" : "gap-2.5"} px-1.5 h-10 rounded-md hover:bg-muted/60 transition-colors text-left`}
-          title="Log out"
-        >
-          <Avatar initial={initial} size="sm" />
-          {!collapsed && (
-            <div className="flex-1 min-w-0 leading-tight">
-              <div className="text-[12.5px] font-medium text-ink truncate">{displayName}</div>
-              <div className="text-[10.5px] text-ink-3 truncate">{displayCompany}</div>
-            </div>
-          )}
-          {!collapsed && <Icon.Logout size={14} className="text-ink-3" />}
-        </button>
+        {user ? (
+          <button
+            onClick={logout}
+            className={`w-full flex items-center ${collapsed ? "justify-center" : "gap-2.5"} px-1.5 h-10 rounded-md hover:bg-muted/60 transition-colors text-left`}
+            title="Log out"
+          >
+            <Avatar initial={initial} size="sm" />
+            {!collapsed && (
+              <div className="flex-1 min-w-0 leading-tight">
+                <div className="text-[12.5px] font-medium text-ink truncate">{displayName}</div>
+                <div className="text-[10.5px] text-ink-3 truncate">{displayCompany}</div>
+              </div>
+            )}
+            {!collapsed && <Icon.Logout size={14} className="text-ink-3" />}
+          </button>
+        ) : (
+          <div className={`w-full flex items-center ${collapsed ? "justify-center" : "gap-2.5"} px-1.5 h-10`}>
+            <div className="h-7 w-7 rounded-full bg-muted animate-pulse shrink-0" />
+            {!collapsed && (
+              <div className="flex-1 min-w-0 space-y-1">
+                <div className="h-3 w-24 bg-muted rounded animate-pulse" />
+                <div className="h-2.5 w-16 bg-muted rounded animate-pulse" />
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </aside>
   );

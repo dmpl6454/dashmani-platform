@@ -3,13 +3,17 @@ import { useState } from "react";
 import Link from "next/link";
 import { useClients } from "@/lib/hooks/use-clients";
 import { Button, Input } from "@dashmani/ui";
-import { Plus, Search, Building2, Send, X, Check } from "lucide-react";
+import { Plus, Search, Building2, Send, X, Check, Trash2 } from "lucide-react";
 import { apiFetch } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
 
 export default function ClientsPage() {
   const [search, setSearch] = useState("");
-  const { data, isLoading } = useClients({ search });
+  const { data, isLoading, mutate } = useClients({ search });
   const clients = (data as any)?.data || [];
+  const { user: currentUser } = useAuth();
+  const callerRoles = (currentUser?.roles ?? []).map((r) => r.toLowerCase());
+  const isAdminOrSuperAdmin = callerRoles.includes("super admin") || callerRoles.includes("admin");
 
   const [inviteTarget, setInviteTarget] = useState<{ id: string; email: string; name: string } | null>(null);
   const [inviting, setInviting] = useState(false);
@@ -20,6 +24,14 @@ export default function ClientsPage() {
     INACTIVE: "bg-[rgba(0,0,0,0.06)] text-[#7A7A7A]",
     PAUSED: "bg-[#FFF3C4] text-[#1A1A1A]",
   };
+
+  async function handleDeleteClient(id: string, name: string) {
+    if (!confirm(`Delete client "${name}"? This cannot be undone.`)) return;
+    try {
+      await apiFetch(`/admin/clients/${id}`, { method: "DELETE" });
+      mutate();
+    } catch (err: any) { alert(err.message); }
+  }
 
   async function sendInvite() {
     if (!inviteTarget) return;
@@ -76,6 +88,15 @@ export default function ClientsPage() {
                     title="Invite to Client Portal"
                   >
                     <Send className="h-3 w-3" /> Invite
+                  </button>
+                )}
+                {isAdminOrSuperAdmin && (
+                  <button
+                    onClick={() => handleDeleteClient(c.id, c.companyName)}
+                    className="flex items-center gap-1.5 text-xs text-red-500 hover:text-red-700 border border-red-100 hover:border-red-200 rounded-lg px-2.5 py-1.5 transition-all"
+                    title="Delete Client"
+                  >
+                    <Trash2 className="h-3 w-3" /> Delete
                   </button>
                 )}
               </div>

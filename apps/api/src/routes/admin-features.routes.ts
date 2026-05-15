@@ -1181,6 +1181,71 @@ router.get("/admin/users/invite/:token", async (req: Request, res: Response, nex
   } catch (err) { next(err); }
 });
 
+// ===== User & Client Deletion (Super Admin / Admin only) =====
+
+function requireAdminRole(req: Request, res: Response, next: NextFunction) {
+  const roles: string[] = (req.user as any)?.roles ?? [];
+  const normalized = roles.map((r) => r.toLowerCase());
+  if (normalized.includes("super admin") || normalized.includes("admin")) return next();
+  return res.status(403).json({ success: false, error: { code: "FORBIDDEN", message: "Only admins can delete users" } });
+}
+
+// PUT /admin/users/:id/roles — replace a user's roles entirely (idempotent)
+router.put("/admin/users/:id/roles", authenticate, requireAdminRole, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { roleIds } = req.body as { roleIds: string[] };
+    if (!Array.isArray(roleIds)) return res.status(400).json({ success: false, error: { message: "roleIds must be an array" } });
+    const user = await prisma.user.findUnique({ where: { id: req.params.id }, select: { id: true } });
+    if (!user) return res.status(404).json({ success: false, error: { message: "User not found" } });
+
+    await prisma.$transaction([
+      prisma.userRole.deleteMany({ where: { userId: req.params.id } }),
+      ...(roleIds.length > 0
+        ? [prisma.userRole.createMany({ data: roleIds.map((roleId) => ({ userId: req.params.id, roleId })), skipDuplicates: true })]
+        : []),
+    ]);
+
+    const updated = await prisma.user.findUnique({
+      where: { id: req.params.id },
+      include: { roles: { include: { role: true } } },
+    });
+    return success(res, updated);
+  } catch (err) { next(err); }
+});
+
+// DELETE /admin/users/:id — soft-delete an internal employee/admin user
+router.delete("/admin/users/:id", authenticate, requireAdminRole, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const target = await prisma.user.findUnique({ where: { id: req.params.id }, select: { id: true, roles: { include: { role: true } } } });
+    if (!target) return res.status(404).json({ success: false, error: { message: "User not found" } });
+
+    // Prevent non-super-admins from deleting super admins
+    const callerRoles: string[] = ((req.user as any)?.roles ?? []).map((r: string) => r.toLowerCase());
+    const isSuperAdmin = callerRoles.includes("super admin");
+    const targetRoleNames = target.roles.map((ur) => ur.role.name.toLowerCase());
+    if (targetRoleNames.includes("super admin") && !isSuperAdmin) {
+      return res.status(403).json({ success: false, error: { message: "Only Super Admins can delete other Super Admins" } });
+    }
+    // Prevent self-deletion
+    if (target.id === (req.user as any)?.userId) {
+      return res.status(400).json({ success: false, error: { message: "You cannot delete your own account" } });
+    }
+
+    await prisma.user.update({ where: { id: req.params.id }, data: { deletedAt: new Date(), status: "INACTIVE" } });
+    return success(res, { message: "User deleted" });
+  } catch (err) { next(err); }
+});
+
+// DELETE /admin/clients/:id — delete a client account
+router.delete("/admin/clients/:id", authenticate, requireAdminRole, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const client = await prisma.client.findUnique({ where: { id: req.params.id }, select: { id: true } });
+    if (!client) return res.status(404).json({ success: false, error: { message: "Client not found" } });
+    await prisma.client.delete({ where: { id: req.params.id } });
+    return success(res, { message: "Client deleted" });
+  } catch (err) { next(err); }
+});
+
 // ===== Bulk Approval Actions =====
 
 // POST /admin/documents/bulk-review

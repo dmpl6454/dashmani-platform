@@ -5,19 +5,7 @@ import { useEmployees } from "@/lib/hooks/use-employees";
 import { Button, Input } from "@dashmani/ui";
 import { Plus, Search, BarChart3, Users } from "lucide-react";
 import { API_BASE } from "@/lib/api";
-
-const ROLE_COLORS: Record<string, string> = {
-  admin: "bg-purple-50 text-purple-700 border-purple-200",
-  manager: "bg-blue-50 text-blue-700 border-blue-200",
-  editor: "bg-amber-50 text-amber-700 border-amber-200",
-  designer: "bg-pink-50 text-pink-700 border-pink-200",
-  developer: "bg-emerald-50 text-emerald-700 border-emerald-200",
-};
-
-function getRoleColor(roleName: string) {
-  const key = roleName?.toLowerCase();
-  return ROLE_COLORS[key] ?? "bg-[#FFF8E1] text-[#1A1A1A] border-[#F0EAD8]";
-}
+import { getRoleColor } from "@/lib/role-colors";
 
 const STATUS_CONFIG: Record<string, { dot: string; badge: string; label: string }> = {
   ACTIVE: { dot: "bg-emerald-500", badge: "bg-emerald-50 text-emerald-700", label: "Active" },

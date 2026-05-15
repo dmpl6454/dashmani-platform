@@ -10,6 +10,7 @@ import {
   User, FileText, Clock, IndianRupee, Award, BarChart3, Briefcase, CreditCard,
   Users as UsersIcon, Plus, Check, X, Eye, MonitorSmartphone, ExternalLink, ListTodo, Laptop, Smartphone, Monitor, Headphones,
 } from "lucide-react";
+import { getRoleColor } from "@/lib/role-colors";
 
 const inputClass = "w-full border border-[#E8E0D0] bg-white rounded-lg px-4 py-2.5 text-sm text-[#1A1A1A] placeholder:text-[#B0B0B0] focus:outline-none focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547] transition-colors";
 
@@ -180,6 +181,13 @@ export default function EmployeeDetailPage() {
           <div>
             <h1 className="font-serif text-3xl font-light text-[#1A1A1A]">{employee.name}</h1>
             <p className="text-sm text-[#7A7A7A]">{employee.email} {profile?.designation ? `· ${profile.designation}` : ""}</p>
+            {employee.roles?.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mt-2">
+                {employee.roles.map((r: any) => (
+                  <span key={r.id} className={`rounded-full px-2.5 py-0.5 text-[11px] font-medium border ${getRoleColor(r.name)}`}>{r.name}</span>
+                ))}
+              </div>
+            )}
           </div>
         </div>
         <div className="flex gap-2">

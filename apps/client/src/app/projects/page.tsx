@@ -24,7 +24,7 @@ export default function ProjectsPage() {
     pendingByProject[ps.projectId] = ps.pendingCount;
   }
 
-  const [filter, setFilter] = useState<Filter>("active");
+  const [filter, setFilter] = useState<Filter>("all");
   const [sortKey, setSortKey] = useState<SortKey>("due");
   const [briefOpen, setBriefOpen] = useState(false);
 
@@ -130,7 +130,7 @@ export default function ProjectsPage() {
             </>
           )}
           {!isLoading && filtered.length === 0 ? (
-            <Empty icon={<Icon.Folder size={20}/>} title="No projects match" hint="Try a different filter." cta={<Button size="sm" variant="ghost" onClick={() => setFilter("all")}>Clear filter</Button>} />
+            <Empty icon={<Icon.Folder size={20}/>} title={projects.length === 0 ? "No projects yet" : "No projects match"} hint={projects.length === 0 ? "Your account has no projects assigned. Contact your account manager." : "Try a different filter."} cta={projects.length > 0 ? <Button size="sm" variant="ghost" onClick={() => setFilter("all")}>Show all</Button> : undefined} />
           ) : !isLoading && filtered.map((p, i) => (
             <ProjectRow
               key={p.id}

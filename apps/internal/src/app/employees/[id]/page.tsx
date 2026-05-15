@@ -11,6 +11,8 @@ import {
   Users as UsersIcon, Plus, Check, X, Eye, MonitorSmartphone, ExternalLink, ListTodo, Laptop, Smartphone, Monitor, Headphones,
 } from "lucide-react";
 import { getRoleColor } from "@/lib/role-colors";
+import { useAuth } from "@/lib/auth";
+import { useRouter } from "next/navigation";
 
 const inputClass = "w-full border border-[#E8E0D0] bg-white rounded-lg px-4 py-2.5 text-sm text-[#1A1A1A] placeholder:text-[#B0B0B0] focus:outline-none focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547] transition-colors";
 
@@ -20,6 +22,8 @@ function formatCurrency(n: number) {
 
 export default function EmployeeDetailPage() {
   const { id } = useParams();
+  const router = useRouter();
+  const { user: currentUser } = useAuth();
   const { data, isLoading } = useEmployee(id as string);
   const [roles, setRoles] = useState([]);
   const [activeTab, setActiveTab] = useState<"profile" | "accounts" | "documents" | "hours" | "incentives" | "reviews" | "tasks" | "devices">("profile");
@@ -153,6 +157,17 @@ export default function EmployeeDetailPage() {
     } catch (e: any) { alert(e.message); }
   }
 
+  const callerRoles = (currentUser?.roles ?? []).map((r) => r.toLowerCase());
+  const isAdminOrSuperAdmin = callerRoles.includes("super admin") || callerRoles.includes("admin");
+
+  async function handleDeleteEmployee() {
+    if (!confirm(`Are you sure you want to delete ${employee.name}? This action cannot be undone.`)) return;
+    try {
+      await apiFetch(`/admin/users/${id}`, { method: "DELETE" });
+      router.push("/employees");
+    } catch (e: any) { alert(e.message); }
+  }
+
   const tabs = [
     { key: "profile" as const, label: "Profile & Edit", icon: User },
     { key: "tasks" as const, label: "Tasks", icon: ListTodo, count: tasks.filter((t: any) => t.status !== "DONE").length },
@@ -197,6 +212,14 @@ export default function EmployeeDetailPage() {
           >
             <BarChart3 className="h-4 w-4" /> Performance
           </Link>
+          {isAdminOrSuperAdmin && (
+            <button
+              onClick={handleDeleteEmployee}
+              className="flex items-center gap-2 border border-red-200 text-red-600 py-2.5 px-5 rounded-full text-sm font-semibold hover:bg-red-50 transition-all"
+            >
+              <X className="h-4 w-4" /> Delete
+            </button>
+          )}
         </div>
       </div>
 
@@ -257,6 +280,11 @@ export default function EmployeeDetailPage() {
           <div className="max-w-2xl">
             <EmployeeForm employee={employee} roles={roles} />
           </div>
+
+          {/* Role Management — admin/super-admin only */}
+          {isAdminOrSuperAdmin && (
+            <RoleManager employeeId={id as string} allRoles={roles} currentRoles={employee.roles ?? []} />
+          )}
 
           {/* Job Description */}
           <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-[#E8E0D0] p-6">
@@ -715,6 +743,74 @@ function InfoField({ label, value }: { label: string; value?: string | null }) {
     <div>
       <p className="text-xs text-[#7A7A7A] mb-0.5">{label}</p>
       <p className="text-[#1A1A1A] bg-[#FEFCF7] rounded-lg px-3 py-2 border border-[#E8E0D0]">{value || "—"}</p>
+    </div>
+  );
+}
+
+function RoleManager({ employeeId, allRoles, currentRoles }: { employeeId: string; allRoles: any[]; currentRoles: any[] }) {
+  const [selected, setSelected] = useState<Set<string>>(new Set(currentRoles.map((r: any) => r.id)));
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  function toggle(roleId: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(roleId)) next.delete(roleId);
+      else next.add(roleId);
+      return next;
+    });
+    setSaved(false);
+  }
+
+  async function handleSave() {
+    setSaving(true);
+    try {
+      await apiFetch(`/admin/users/${employeeId}/roles`, {
+        method: "PUT",
+        body: JSON.stringify({ roleIds: Array.from(selected) }),
+      });
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
+    } catch (e: any) { alert(e.message); }
+    finally { setSaving(false); }
+  }
+
+  return (
+    <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-[#E8E0D0] p-6 max-w-2xl">
+      <div className="flex items-center gap-3 mb-4">
+        <UsersIcon className="h-5 w-5 text-[#7A7A7A]" />
+        <h3 className="text-lg font-semibold text-[#1A1A1A]">Role Assignment</h3>
+      </div>
+      <p className="text-xs text-[#7A7A7A] mb-4">Roles control what this employee can see and do across the portal.</p>
+      <div className="flex flex-wrap gap-2 mb-5">
+        {allRoles.map((role: any) => {
+          const active = selected.has(role.id);
+          return (
+            <button
+              key={role.id}
+              onClick={() => toggle(role.id)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border transition-all ${
+                active
+                  ? "bg-[#1A1A1A] text-white border-[#1A1A1A]"
+                  : "bg-white text-[#7A7A7A] border-[#E8E0D0] hover:border-[#B0B0B0]"
+              }`}
+            >
+              {active ? <Check size={11} /> : <Plus size={11} />}
+              {role.name}
+            </button>
+          );
+        })}
+      </div>
+      <div className="flex items-center gap-3">
+        <button
+          onClick={handleSave}
+          disabled={saving}
+          className="bg-[#1A1A1A] text-white py-2 px-5 rounded-full text-sm font-semibold hover:bg-[#2B2B2B] disabled:opacity-50 transition-all"
+        >
+          {saving ? "Saving..." : "Save Roles"}
+        </button>
+        {saved && <span className="text-xs text-emerald-600 font-medium flex items-center gap-1"><Check size={12} /> Roles updated</span>}
+      </div>
     </div>
   );
 }

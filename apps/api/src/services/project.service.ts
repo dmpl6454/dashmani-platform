@@ -86,6 +86,10 @@ export async function createProject(data: {
   const client = await prisma.client.findUnique({ where: { id: data.clientId } });
   if (!client) throw new AppError(404, "NOT_FOUND", "Client not found");
 
+  if (data.startDate && data.endDate && new Date(data.endDate) < new Date(data.startDate)) {
+    throw new AppError(400, "INVALID_DATES", "End date cannot be earlier than start date");
+  }
+
   return prisma.project.create({
     data: {
       name: data.name,
@@ -110,6 +114,12 @@ export async function updateProject(id: string, data: {
 }) {
   const project = await prisma.project.findUnique({ where: { id } });
   if (!project) throw new AppError(404, "NOT_FOUND", "Project not found");
+
+  const resolvedStart = data.startDate !== undefined ? (data.startDate ? new Date(data.startDate) : null) : project.startDate;
+  const resolvedEnd = data.endDate !== undefined ? (data.endDate ? new Date(data.endDate) : null) : project.endDate;
+  if (resolvedStart && resolvedEnd && resolvedEnd < resolvedStart) {
+    throw new AppError(400, "INVALID_DATES", "End date cannot be earlier than start date");
+  }
 
   const updateData: any = {};
   if (data.name !== undefined) updateData.name = data.name;

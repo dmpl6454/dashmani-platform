@@ -30,8 +30,7 @@ const remapStatus = (raw: string | undefined): StatusKey => {
 export default function ProjectDetailPage() {
   const { id } = useParams();
   const router = useRouter();
-  const { data, isLoading } = useClientProject(id as string);
-  const project = (data as any)?.data;
+  const { data: project, isLoading, error } = useClientProject(id as string);
 
   if (isLoading) {
     return (
@@ -39,6 +38,17 @@ export default function ProjectDetailPage() {
         <Topstrip title="Project" />
         <div className="p-6 flex-1 grid place-items-center">
           <div className="h-8 w-8 border-2 border-border border-b-action rounded-full animate-spin" />
+        </div>
+      </>
+    );
+  }
+
+  if (error && !isLoading) {
+    return (
+      <>
+        <Topstrip title="Project" />
+        <div className="p-6 flex-1 grid place-items-center">
+          <Empty icon={<Icon.X size={20}/>} title="Could not load project" hint="Please try refreshing." cta={<Button size="sm" onClick={() => router.push("/projects")}>Back to projects</Button>} />
         </div>
       </>
     );

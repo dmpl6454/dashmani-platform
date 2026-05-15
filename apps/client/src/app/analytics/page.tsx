@@ -71,7 +71,7 @@ export default function ClientAnalyticsPage() {
     );
   }
 
-  if (data && data.totalPosts === 0) {
+  if (data && (data.totalPosts ?? 0) === 0) {
     return (
       <>
         <Topstrip title="Analytics" />
@@ -216,7 +216,7 @@ export default function ClientAnalyticsPage() {
                 <span>Health</span>
               </div>
               {/* Rows */}
-              {projectSummaries.map((p) => (
+              {projectSummaries.map((p: { projectId: string; name: string; healthScore: number | null; postCount: number; pendingCount: number }) => (
                 <div
                   key={p.projectId}
                   className="grid grid-cols-[1fr_64px_72px_160px] gap-3 px-4 py-3 border-b border-rule last:border-b-0 items-center"

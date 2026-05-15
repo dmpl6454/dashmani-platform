@@ -2,28 +2,30 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Topstrip } from "@/components/portal-topstrip";
-import { StatusBadge, FormatPill, AspectThumb, Empty, IconButton } from "@/components/portal-shared";
+import { StatusBadge, FormatPill, AspectThumb, Empty, IconButton, PageError, Button } from "@/components/portal-shared";
 import { Icon } from "@/components/portal-icons";
 import { fmt } from "@/lib/portal-store";
 import { useClientContent } from "@/lib/hooks/use-content";
 import { useClientProjects } from "@/lib/hooks/use-projects";
 import { ContentCalendar } from "@/components/content-calendar";
+import { NewBriefModal } from "@/components/new-brief-modal";
 
 type Filter = "all" | "pending" | "approved" | "scheduled" | "live" | "rejected";
 
 export default function ContentPage() {
   const router = useRouter();
-  const { data: contentData, isLoading: contentLoading } = useClientContent();
+  const { data: contentData, isLoading: contentLoading, error: contentError } = useClientContent();
   const { data: projectsData } = useClientProjects();
 
-  const posts: any[] = (contentData as any)?.data ?? [];
-  const projects: any[] = (projectsData as any)?.data ?? [];
+  const posts: any[] = contentData?.items ?? [];
+  const projects: any[] = projectsData?.items ?? [];
 
   const [view, setView] = useState<"list" | "calendar">("list");
   const [filter, setFilter] = useState<Filter>("all");
   const [projectFilter, setProjectFilter] = useState<string | null>(null);
   const [calYear, setCalYear] = useState(() => new Date().getFullYear());
   const [calMonth, setCalMonth] = useState(() => new Date().getMonth() + 1);
+  const [briefOpen, setBriefOpen] = useState(false);
 
   const filtered = useMemo(() => {
     let list = posts.slice();
@@ -65,12 +67,16 @@ export default function ContentPage() {
         onProjectFilter={setProjectFilter}
         projects={projects}
         right={
-          <div className="bg-muted rounded-md p-0.5 flex items-center gap-0.5">
-            <button onClick={() => setView("list")} className={`h-7 px-2.5 text-[12.5px] font-medium rounded ${view === "list" ? "bg-surface text-ink shadow-sm" : "text-ink-3 hover:text-ink"}`}>List</button>
-            <button onClick={() => setView("calendar")} className={`h-7 px-2.5 text-[12.5px] font-medium rounded ${view === "calendar" ? "bg-surface text-ink shadow-sm" : "text-ink-3 hover:text-ink"}`}>Calendar</button>
+          <div className="flex items-center gap-2">
+            <div className="bg-muted rounded-md p-0.5 flex items-center gap-0.5">
+              <button onClick={() => setView("list")} className={`h-7 px-2.5 text-[12.5px] font-medium rounded ${view === "list" ? "bg-surface text-ink shadow-sm" : "text-ink-3 hover:text-ink"}`}>List</button>
+              <button onClick={() => setView("calendar")} className={`h-7 px-2.5 text-[12.5px] font-medium rounded ${view === "calendar" ? "bg-surface text-ink shadow-sm" : "text-ink-3 hover:text-ink"}`}>Calendar</button>
+            </div>
+            <Button variant="primary" size="sm" icon={<Icon.Plus size={15} sw={2.4}/>} onClick={() => setBriefOpen(true)}>New brief</Button>
           </div>
         }
       />
+      <NewBriefModal open={briefOpen} onClose={() => setBriefOpen(false)} defaultProjectId={projectFilter ?? undefined} />
       <div className="px-6 py-5 max-w-[1200px] mx-auto w-full">
         {view === "list" ? (
           <>
@@ -95,6 +101,11 @@ export default function ContentPage() {
                 <span>Scheduled</span>
                 <span className="text-right">Status</span>
               </div>
+              {contentError && !contentLoading && (
+                <div className="px-4 py-6">
+                  <PageError message="Could not load content. Please refresh." />
+                </div>
+              )}
               {contentLoading && [0, 1, 2, 3].map((i) => (
                 <div key={i} className="grid grid-cols-[40px_1fr_120px_140px_88px] items-center gap-3 px-4 h-row border-b border-rule last:border-b-0">
                   <div className="h-7 w-7 bg-muted rounded animate-pulse"/>

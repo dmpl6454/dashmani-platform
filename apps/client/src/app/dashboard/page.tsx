@@ -3,12 +3,14 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { mutate } from "swr";
 import { Topstrip } from "@/components/portal-topstrip";
-import { Button, StatusBadge, Avatar, FormatPill, AspectThumb, Empty } from "@/components/portal-shared";
+import { Button, StatusBadge, Avatar, FormatPill, AspectThumb, Empty, Skeleton, PageError } from "@/components/portal-shared";
 import { Icon } from "@/components/portal-icons";
 import { fmt, Actions } from "@/lib/portal-store";
 import { apiFetch } from "@/lib/api";
-import { useClientApprovals, useClientProjects } from "@/lib/hooks/use-projects";
+import { useClientProjects } from "@/lib/hooks/use-projects";
+import { useClientPendingApprovals, PENDING_APPROVALS_KEY } from "@/lib/hooks/use-content";
 import { useClientAnalytics } from "@/lib/hooks/use-analytics";
+import { NewBriefModal } from "@/components/new-brief-modal";
 
 // Minimal local types for API shapes
 interface ApiPost {
@@ -41,14 +43,16 @@ interface ClientAnalytics {
 
 export default function DashboardPage() {
   const router = useRouter();
+  const [briefOpen, setBriefOpen] = useState(false);
 
-  const { data: approvalsRaw } = useClientApprovals();
-  const { data: projectsRaw } = useClientProjects();
-  const { data: analyticsRaw } = useClientAnalytics();
+  const { data: approvalsData, isLoading: approvalsLoading, error: approvalsError } = useClientPendingApprovals();
+  const { data: projectsRaw, isLoading: projectsLoading } = useClientProjects();
+  const { data: analyticsData } = useClientAnalytics();
 
-  const pending: ApiPost[] = (approvalsRaw as any)?.data ?? [];
-  const projects: ApiProject[] = (projectsRaw as any)?.data ?? [];
-  const analyticsData: ClientAnalytics | null = (analyticsRaw as any)?.data ?? null;
+  const isLoading = approvalsLoading || projectsLoading;
+
+  const pending: ApiPost[] = (approvalsData ?? []) as ApiPost[];
+  const projects: ApiProject[] = (projectsRaw?.items ?? []) as ApiProject[];
 
   const now = new Date();
 
@@ -72,12 +76,43 @@ export default function DashboardPage() {
     return new Date(p.scheduled).toDateString() === now.toDateString();
   }).length;
 
+  if (isLoading) {
+    return (
+      <>
+        <Topstrip title="Home" />
+        <div className="px-6 py-6 max-w-[1200px] mx-auto w-full space-y-6">
+          <Skeleton className="h-8 w-48" />
+          <div className="grid grid-cols-4 gap-4">
+            {[...Array(4)].map((_, i) => <Skeleton key={i} className="h-20" />)}
+          </div>
+          <div className="grid grid-cols-1 lg:grid-cols-[1.4fr_1fr] gap-4">
+            <Skeleton className="h-64" />
+            <Skeleton className="h-64" />
+          </div>
+        </div>
+      </>
+    );
+  }
+
+  if (approvalsError) {
+    return (
+      <>
+        <Topstrip title="Home" />
+        <div className="p-6 flex-1 grid place-items-center">
+          <PageError message="Could not load dashboard data." />
+        </div>
+      </>
+    );
+  }
+
   return (
     <>
       <Topstrip
         title="Home"
         sub={new Date().toLocaleDateString("en", { weekday: "long", month: "short", day: "numeric" })}
+        right={<Button variant="primary" size="sm" icon={<Icon.Plus size={15} sw={2.4}/>} onClick={() => setBriefOpen(true)}>New brief</Button>}
       />
+      <NewBriefModal open={briefOpen} onClose={() => setBriefOpen(false)} />
       <div className="px-6 py-6 max-w-[1200px] mx-auto w-full">
         {/* ── Approvals queue — hero. Shown unconditionally; "All caught up" is the empty state. ── */}
         <section aria-labelledby="approvals-heading" className="mb-6">
@@ -220,7 +255,7 @@ function DashApprovalRow({
         method: "PUT",
         body: JSON.stringify({ status: "APPROVED" }),
       });
-      mutate("/client/approvals?limit=100");
+      mutate(PENDING_APPROVALS_KEY);
     } catch (err) {
       console.error("Approve failed:", err);
       Actions.toast({ kind: "danger", text: "Could not approve. Please try again." });
@@ -237,7 +272,7 @@ function DashApprovalRow({
         method: "PUT",
         body: JSON.stringify({ status: "REJECTED", clientNote: "Please revise per upcoming notes." }),
       });
-      mutate("/client/approvals?limit=100");
+      mutate(PENDING_APPROVALS_KEY);
     } catch (err) {
       console.error("Revise failed:", err);
       Actions.toast({ kind: "danger", text: "Could not request revision. Please try again." });

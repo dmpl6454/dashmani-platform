@@ -18,7 +18,9 @@ export interface ClientAnalytics {
 }
 
 export function useClientAnalytics() {
-  return useSWR<ClientAnalytics>("/client/analytics", (url) => apiFetch(url), {
-    refreshInterval: 60000,
-  });
+  return useSWR<ClientAnalytics>(
+    "/client/analytics",
+    async (url: string) => (await apiFetch<ClientAnalytics>(url)).data,
+    { refreshInterval: 60000 }
+  );
 }

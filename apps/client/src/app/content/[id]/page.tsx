@@ -1,25 +1,36 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useRouter, useParams } from "next/navigation";
+import { mutate } from "swr";
 import { Topstrip } from "@/components/portal-topstrip";
 import { Button, IconButton, StatusBadge, Avatar, Empty, KbdRow } from "@/components/portal-shared";
 import { Icon } from "@/components/portal-icons";
 import { ReasonModal } from "@/components/reason-modal";
 import { IGFeedCard, IGProfileGrid, IGStory } from "@/components/ig-previews";
-import { Actions, fmt, sel, usePortalStore, USER, type ThreadMsg } from "@/lib/portal-store";
+import { Actions, fmt } from "@/lib/portal-store";
+import { useClientContentPost, useClientPostComments, useClientPendingApprovals, PENDING_APPROVALS_KEY } from "@/lib/hooks/use-content";
+import { apiFetch } from "@/lib/api";
 
 export default function ContentDetailPage() {
   const router = useRouter();
   const params = useParams<{ id: string }>();
   const postId = params?.id;
-  const post = usePortalStore(sel.postById(postId || ""));
-  const project = usePortalStore((s) => s.projects.find((p) => p.id === post?.project));
-  const pending = usePortalStore(sel.pending);
+
+  const { data: post, isLoading: postLoading, error: postError } = useClientContentPost(postId || "");
+
+  const { data: commentsData } = useClientPostComments(postId || "");
+  const comments = commentsData ?? post?.thread ?? post?.comments ?? [];
+
+  const { data: pendingData } = useClientPendingApprovals();
+  const pending = pendingData ?? [];
+
+  const project = post?.project;
+
   const [previewMode, setPreviewMode] = useState<"feed" | "profile" | "story">("feed");
   const [modal, setModal] = useState<null | "revise" | "reject">(null);
 
-  const isPending = post?.status === "PENDING";
-  const queueIndex = post ? pending.findIndex((p) => p.id === post.id) : -1;
+  const isPending = post?.status === "PENDING_APPROVAL";
+  const queueIndex = post ? pending.findIndex((p: any) => p.id === post.id) : -1;
   const queueTotal = pending.length;
   const prevInQueue = queueIndex > 0 ? pending[queueIndex - 1] : null;
   const nextInQueue = queueIndex >= 0 && queueIndex < pending.length - 1 ? pending[queueIndex + 1] : null;
@@ -30,12 +41,57 @@ export default function ContentDetailPage() {
     else setTimeout(onBack, 220);
   };
 
+  async function handleApprove() {
+    try {
+      await apiFetch(`/client/content/${post.id}/respond`, {
+        method: "PUT",
+        body: JSON.stringify({ status: "APPROVED" }),
+      });
+      mutate(post?.id ? `/client/content/${post.id}` : null);
+      mutate(PENDING_APPROVALS_KEY);
+      advance();
+    } catch (err) {
+      console.error("Approve failed:", err);
+      Actions.toast({ kind: "danger", text: "Could not approve. Please try again." });
+    }
+  }
+
+  async function handleRevise(note: string) {
+    try {
+      await apiFetch(`/client/content/${post.id}/respond`, {
+        method: "PUT",
+        body: JSON.stringify({ status: "REJECTED", clientNote: note }),
+      });
+      mutate(post?.id ? `/client/content/${post.id}` : null);
+      mutate(PENDING_APPROVALS_KEY);
+      advance();
+    } catch (err) {
+      console.error("Revise failed:", err);
+      Actions.toast({ kind: "danger", text: "Could not request revision. Please try again." });
+    }
+  }
+
+  async function handleReject(note: string) {
+    try {
+      await apiFetch(`/client/content/${post.id}/respond`, {
+        method: "PUT",
+        body: JSON.stringify({ status: "REJECTED", clientNote: note }),
+      });
+      mutate(post?.id ? `/client/content/${post.id}` : null);
+      mutate(PENDING_APPROVALS_KEY);
+      advance();
+    } catch (err) {
+      console.error("Reject failed:", err);
+      Actions.toast({ kind: "danger", text: "Could not reject. Please try again." });
+    }
+  }
+
   useEffect(() => {
     if (!post || !isPending) return;
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
       if (target?.matches("input, textarea, select") || modal) return;
-      if (e.key === "a" || e.key === "A") { e.preventDefault(); Actions.approve(post.id); advance(); }
+      if (e.key === "a" || e.key === "A") { e.preventDefault(); handleApprove(); }
       else if (e.key === "r" || e.key === "R") { e.preventDefault(); setModal("revise"); }
       else if (e.key === "x" || e.key === "X") { e.preventDefault(); setModal("reject"); }
       else if (e.key === "ArrowDown" || e.key === "j") { if (nextInQueue) router.push(`/content/${nextInQueue.id}`); }
@@ -44,6 +100,38 @@ export default function ContentDetailPage() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [post?.id, isPending, modal, prevInQueue, nextInQueue, router]);
+
+  // Transform post for preview components that expect legacy field names
+  const previewPost = post ? {
+    ...post,
+    aspect: post.aspectRatio ?? post.aspect,
+    scheduled: post.scheduledAt ?? post.scheduled,
+  } : null;
+
+  // Map API status to StatusBadge-compatible key
+  const displayStatus = post?.status === "PENDING_APPROVAL" ? "PENDING" : post?.status;
+
+  if (postLoading) {
+    return (
+      <>
+        <Topstrip title="Content" />
+        <div className="p-6 flex-1 grid place-items-center">
+          <div className="h-8 w-8 border-2 border-border border-b-action rounded-full animate-spin" />
+        </div>
+      </>
+    );
+  }
+
+  if (postError && !postLoading) {
+    return (
+      <>
+        <Topstrip title="Content" />
+        <div className="p-6 flex-1 grid place-items-center">
+          <Empty icon={<Icon.X size={20}/>} title="Could not load post" hint="Please try refreshing." cta={<Button size="sm" onClick={onBack}>Back to content</Button>} />
+        </div>
+      </>
+    );
+  }
 
   if (!post) {
     return (
@@ -65,7 +153,7 @@ export default function ContentDetailPage() {
             <span>{post.title}</span>
           </span>
         }
-        sub={`${project?.short} · ${post.format}${post.aspect ? " · " + post.aspect : ""}${post.duration ? " · " + post.duration : ""}`}
+        sub={`${project?.name ?? project?.short ?? ""} · ${post.format}${post.aspectRatio ?? post.aspect ? " · " + (post.aspectRatio ?? post.aspect) : ""}${post.duration ? " · " + post.duration : ""}`}
         right={isPending && queueTotal > 0 ? (
           <div className="flex items-center gap-1.5 text-[12px] text-ink-3">
             <span className="tabular-nums">{queueIndex + 1} of {queueTotal}</span>
@@ -93,15 +181,15 @@ export default function ContentDetailPage() {
             <div className="text-[12px] text-ink-3 flex items-center gap-1.5">
               <Icon.Clock size={14}/>
               <span>
-                Publishes <span className={post.overdue ? "text-attention font-medium" : "font-medium text-ink-2"}>{fmt.date(post.scheduled)}</span>
+                Publishes <span className={post.overdue ? "text-attention font-medium" : "font-medium text-ink-2"}>{fmt.date(post.scheduledAt ?? post.scheduled)}</span>
               </span>
             </div>
           </div>
 
           <div className="flex justify-center">
-            {previewMode === "feed" && <IGFeedCard post={post} />}
-            {previewMode === "profile" && <IGProfileGrid post={post} />}
-            {previewMode === "story" && <IGStory post={post} />}
+            {previewMode === "feed" && previewPost && <IGFeedCard post={previewPost} />}
+            {previewMode === "profile" && previewPost && <IGProfileGrid post={previewPost} />}
+            {previewMode === "story" && previewPost && <IGStory post={previewPost} />}
           </div>
 
           <div className="grid grid-cols-2 gap-4">
@@ -109,8 +197,8 @@ export default function ContentDetailPage() {
               <h3 className="text-[12px] uppercase tracking-wider font-medium text-ink-3 mb-2">Details</h3>
               <dl className="text-[13px] space-y-1.5 text-rowtight">
                 <DetailRow k="Account" v="@bombay.roastery" />
-                <DetailRow k="Format" v={`${post.format}${post.aspect ? " · " + post.aspect : ""}${post.duration ? " · " + post.duration : ""}`} />
-                <DetailRow k="Scheduled" v={fmt.date(post.scheduled)} />
+                <DetailRow k="Format" v={`${post.format}${post.aspectRatio ?? post.aspect ? " · " + (post.aspectRatio ?? post.aspect) : ""}${post.duration ? " · " + post.duration : ""}`} />
+                <DetailRow k="Scheduled" v={fmt.date(post.scheduledAt ?? post.scheduled)} />
                 <DetailRow k="Created" v={post.authorName} />
                 <DetailRow k="Brief" v={<a className="text-ink underline decoration-action decoration-2 underline-offset-2" href="#">{project?.name}</a>} />
               </dl>
@@ -134,12 +222,12 @@ export default function ContentDetailPage() {
           <div className="bg-surface border border-border rounded-lg p-4">
             <div className="flex items-center justify-between">
               <div className="text-[11px] uppercase tracking-wider text-ink-3 font-medium">Status</div>
-              <StatusBadge status={post.status} />
+              <StatusBadge status={displayStatus as any} />
             </div>
             {isPending ? (
               <>
                 <div className="grid grid-cols-1 gap-2 mt-3">
-                  <Button variant="primary" size="md" icon={<Icon.Check size={16} sw={2.4}/>} kbd="A" onClick={() => { Actions.approve(post.id); advance(); }}>
+                  <Button variant="primary" size="md" icon={<Icon.Check size={16} sw={2.4}/>} kbd="A" onClick={handleApprove}>
                     Approve
                   </Button>
                   <Button variant="default" size="md" icon={<Icon.Edit size={15}/>} kbd="R" onClick={() => setModal("revise")}>
@@ -156,7 +244,7 @@ export default function ContentDetailPage() {
             ) : (
               <div className="mt-3 text-[12.5px] text-ink-2 text-rowtight">
                 {post.status === "APPROVED" && <>Approved. Will publish on schedule.</>}
-                {post.status === "SCHEDULED" && <>Locked in. Posts at {fmt.date(post.scheduled)}.</>}
+                {post.status === "SCHEDULED" && <>Locked in. Posts at {fmt.date(post.scheduledAt ?? post.scheduled)}.</>}
                 {post.status === "REJECTED" && <>Rejected. The team has been notified.</>}
                 {post.status === "REVISION" && <>Revision requested. Waiting on a new draft.</>}
                 {post.status === "PUBLISHED" && <>Live on Instagram. See analytics for performance.</>}
@@ -167,19 +255,21 @@ export default function ContentDetailPage() {
           <div className="bg-surface border border-border rounded-lg">
             <div className="px-4 h-11 border-b border-rule flex items-center justify-between">
               <h3 className="text-[12px] uppercase tracking-wider font-medium text-ink-3">Discussion</h3>
-              <span className="text-[11px] text-ink-3">{(post.thread || []).length}</span>
+              <span className="text-[11px] text-ink-3">{comments.length}</span>
             </div>
             <div className="px-4 py-3 space-y-3 max-h-[260px] overflow-y-auto">
-              {(post.thread || []).length === 0 ? (
+              {comments.length === 0 ? (
                 <div className="text-[12px] text-ink-4 text-center py-4">No comments yet.</div>
-              ) : post.thread.map((t: ThreadMsg, i) => (
-                <div key={i} className="flex items-start gap-2.5">
-                  <Avatar initial={t.a} size="xs" />
+              ) : comments.map((c: any, i: number) => (
+                <div key={c.id ?? i} className="flex items-start gap-2.5">
+                  <Avatar initial={c.author?.name?.[0] ?? c.a ?? "?"} size="xs" />
                   <div className="flex-1 min-w-0">
                     <div className="text-[11.5px] text-ink-3">
-                      <span className="font-medium text-ink-2">{t.a === USER.initial ? "You" : t.a === "AS" ? "Anika S." : t.a === "NK" ? "Naina K." : "Riya P."}</span> · {t.at}
+                      <span className="font-medium text-ink-2">{c.author?.name ?? c.who ?? c.a ?? "Agency"}</span>
+                      {" · "}
+                      {c.createdAt ? new Date(c.createdAt).toLocaleDateString("en", { month: "short", day: "numeric" }) : c.at ?? ""}
                     </div>
-                    <div className="text-[13px] text-ink-2 text-rowtight">{t.t}</div>
+                    <div className="text-[13px] text-ink-2 text-rowtight">{c.body ?? c.t}</div>
                   </div>
                 </div>
               ))}
@@ -194,14 +284,14 @@ export default function ContentDetailPage() {
         kind="revise"
         post={post}
         onClose={() => setModal(null)}
-        onConfirm={(note) => { setModal(null); Actions.revise(post.id, note); advance(); }}
+        onConfirm={(note) => { setModal(null); handleRevise(note); }}
       />
       <ReasonModal
         open={modal === "reject"}
         kind="reject"
         post={post}
         onClose={() => setModal(null)}
-        onConfirm={(note) => { setModal(null); Actions.reject(post.id, note); advance(); }}
+        onConfirm={(note) => { setModal(null); handleReject(note); }}
       />
     </>
   );
@@ -218,11 +308,26 @@ function DetailRow({ k, v }: { k: string; v: React.ReactNode }) {
 
 function ReplyBox({ postId }: { postId: string }) {
   const [val, setVal] = useState("");
-  const send = () => {
-    if (!val.trim()) return;
-    Actions.reply(postId, val.trim());
-    setVal("");
+  const [sending, setSending] = useState(false);
+
+  const send = async () => {
+    if (!val.trim() || sending) return;
+    setSending(true);
+    try {
+      await apiFetch(`/client/content/${postId}/comments`, {
+        method: "POST",
+        body: JSON.stringify({ body: val.trim() }),
+      });
+      mutate(`/client/content/${postId}/comments`);
+      setVal("");
+    } catch (err) {
+      console.error("Failed to send reply:", err);
+      Actions.toast({ kind: "danger", text: "Could not send reply. Please try again." });
+    } finally {
+      setSending(false);
+    }
   };
+
   return (
     <div className="border-t border-rule p-2.5 flex items-end gap-2">
       <textarea
@@ -230,10 +335,11 @@ function ReplyBox({ postId }: { postId: string }) {
         onChange={(e) => setVal(e.target.value)}
         placeholder="Reply…"
         rows={1}
+        disabled={sending}
         onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(); } }}
-        className="flex-1 resize-none text-[13px] bg-bg/40 border border-border rounded-md px-2.5 py-1.5 outline-none focus:bg-surface min-h-[34px]"
+        className="flex-1 resize-none text-[13px] bg-bg/40 border border-border rounded-md px-2.5 py-1.5 outline-none focus:bg-surface min-h-[34px] disabled:opacity-50"
       />
-      <IconButton size="sm" variant="ink" icon={<Icon.Send size={15}/>} label="Send" onClick={send} disabled={!val.trim()} />
+      <IconButton size="sm" variant="ink" icon={<Icon.Send size={15}/>} label="Send" onClick={send} disabled={!val.trim() || sending} />
     </div>
   );
 }

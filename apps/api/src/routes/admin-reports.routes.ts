@@ -147,6 +147,23 @@ router.post(
   },
 );
 
+// ===== Employee Approval =====
+
+// GET /admin/employees/pending — MUST be before /:employeeId/performance to avoid param shadowing
+router.get(
+  "/admin/employees/pending",
+  authenticate,
+  requirePermission("employees", "edit"),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const employees = await getPendingEmployees();
+      return success(res, employees);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
 // GET /admin/employees/:employeeId/performance — comprehensive performance data
 router.get(
   "/admin/employees/:employeeId/performance",
@@ -156,23 +173,6 @@ router.get(
     try {
       const data = await getEmployeePerformance(req.params.employeeId);
       return success(res, data);
-    } catch (err) {
-      next(err);
-    }
-  },
-);
-
-// ===== Employee Approval =====
-
-// GET /admin/employees/pending — list pending employee registrations
-router.get(
-  "/admin/employees/pending",
-  authenticate,
-  requirePermission("employees", "edit"),
-  async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const employees = await getPendingEmployees();
-      return success(res, employees);
     } catch (err) {
       next(err);
     }
@@ -217,6 +217,31 @@ router.put(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const result = await adminUpdateProfile(req.params.userId, req.body);
+      return success(res, result);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// PUT /admin/employees/:userId/profile-data — admin update employee submitted data (bank, ID, contacts)
+router.put(
+  "/admin/employees/:userId/profile-data",
+  authenticate,
+  requirePermission("employees", "edit"),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const allowed = [
+        "bankName", "bankAccountNumber", "bankAccountHolderName", "bankBranch", "ifscCode",
+        "panNumber", "aadhaarNumber", "mailingAddress",
+        "familyContact1Name", "familyContact1Phone", "familyContact1Relation",
+        "familyContact2Name", "familyContact2Phone", "familyContact2Relation",
+      ];
+      const data: Record<string, any> = {};
+      for (const key of allowed) {
+        if (req.body[key] !== undefined) data[key] = req.body[key];
+      }
+      const result = await adminUpdateProfile(req.params.userId, data);
       return success(res, result);
     } catch (err) {
       next(err);

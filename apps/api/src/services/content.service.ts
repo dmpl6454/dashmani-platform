@@ -213,6 +213,101 @@ export async function deleteContentPost(id: string) {
   await prisma.contentPost.delete({ where: { id } });
 }
 
+export async function getPostComments(postId: string, clientId: string) {
+  const post = await prisma.contentPost.findUnique({
+    where: { id: postId },
+    include: {
+      project: { select: { clientId: true } },
+      comments: {
+        include: { author: { select: { id: true, name: true, email: true } } },
+        orderBy: { createdAt: "asc" },
+      },
+    },
+  });
+  if (!post) throw new AppError(404, "NOT_FOUND", "Content post not found");
+  if (post.project.clientId !== clientId) throw new AppError(403, "FORBIDDEN", "Access denied");
+  return post.comments;
+}
+
+export async function addPostComment(postId: string, clientId: string, body: string) {
+  const post = await prisma.contentPost.findUnique({
+    where: { id: postId },
+    include: { project: { select: { clientId: true, client: { select: { email: true } } } } },
+  });
+  if (!post) throw new AppError(404, "NOT_FOUND", "Content post not found");
+  if (post.project.clientId !== clientId) throw new AppError(403, "FORBIDDEN", "Access denied");
+
+  // Find a User account matching the client's email (already fetched via include above)
+  const clientEmail = post.project.client?.email;
+  if (!clientEmail) throw new AppError(404, "NOT_FOUND", "Client not found");
+
+  const user = await prisma.user.findFirst({ where: { email: clientEmail } });
+  if (!user) throw new AppError(400, "NO_USER_ACCOUNT", "No linked user account found for this client");
+
+  return prisma.postComment.create({
+    data: { postId, authorId: user.id, body },
+    include: { author: { select: { id: true, name: true, email: true } } },
+  });
+}
+
+export async function createClientBrief(
+  clientId: string,
+  input: { projectId: string; title: string; description: string; referenceUrl?: string }
+) {
+  const project = await prisma.project.findUnique({
+    where: { id: input.projectId },
+    select: { id: true, clientId: true },
+  });
+  if (!project) throw new AppError(404, "NOT_FOUND", "Project not found");
+  if (project.clientId !== clientId) {
+    throw new AppError(403, "FORBIDDEN", "Project not accessible");
+  }
+
+  // Resolve an agency-side User to own this brief.
+  // Project has no ownerId column, so fall back through: latest post creator → latest task creator → any user.
+  const recentPost = await prisma.contentPost.findFirst({
+    where: { projectId: input.projectId },
+    orderBy: { createdAt: "desc" },
+    select: { createdById: true },
+  });
+  let createdById = recentPost?.createdById;
+
+  if (!createdById) {
+    const projectTask = await prisma.projectTask.findFirst({
+      where: { projectId: input.projectId },
+      orderBy: { id: "desc" },
+      select: { task: { select: { createdById: true } } },
+    });
+    createdById = projectTask?.task?.createdById ?? undefined;
+  }
+
+  if (!createdById) {
+    const anyUser = await prisma.user.findFirst({
+      where: { status: "ACTIVE" },
+      select: { id: true },
+    });
+    createdById = anyUser?.id;
+  }
+
+  if (!createdById) {
+    throw new AppError(500, "NO_OWNER", "No agency user available to own this brief");
+  }
+
+  const captionParts = [input.description];
+  if (input.referenceUrl) captionParts.push(`\n\nReference: ${input.referenceUrl}`);
+
+  return prisma.contentPost.create({
+    data: {
+      title: input.title,
+      caption: captionParts.join(""),
+      projectId: input.projectId,
+      status: "DRAFT",
+      createdById,
+    },
+    include: contentInclude,
+  });
+}
+
 export async function getCalendarData(params: {
   year: number;
   month: number;

@@ -6,6 +6,8 @@ import { AuthContext } from "@/lib/auth";
 import { apiFetch } from "@/lib/api";
 import { PortalShell } from "@/components/portal-shell";
 
+const publicRoutes = ["/login", "/signup"];
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -17,7 +19,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     const stored = localStorage.getItem("clientUser");
     if (token && stored) {
       setUser(JSON.parse(stored));
-    } else if (pathname !== "/login") {
+    } else if (!publicRoutes.includes(pathname)) {
       router.push("/login");
     }
     setIsLoading(false);
@@ -44,13 +46,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     router.push("/login");
   }
 
-  const isLoginPage = pathname === "/login";
+  const isPublicPage = publicRoutes.includes(pathname);
 
   return (
     <html lang="en">
       <body>
         <AuthContext.Provider value={{ user, login, logout, isLoading }}>
-          {isLoginPage ? children : <PortalShell>{children}</PortalShell>}
+          {isPublicPage ? children : <PortalShell>{children}</PortalShell>}
         </AuthContext.Provider>
       </body>
     </html>

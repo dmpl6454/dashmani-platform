@@ -2,6 +2,9 @@ import { Router, Request, Response, NextFunction } from "express";
 import { authenticate } from "../middleware/auth";
 import { requirePermission } from "../middleware/rbac";
 import { success } from "../utils/response";
+import { hashPassword } from "../utils/password";
+import { signAccessToken, signRefreshToken } from "../utils/jwt";
+import crypto from "crypto";
 import * as salaryService from "../services/salary-slip.service";
 import * as documentService from "../services/document.service";
 import * as profilePicService from "../services/profile-picture.service";
@@ -1038,6 +1041,252 @@ router.delete("/admin/internships/:id", authenticate, requirePermission("employe
   try {
     await prisma.internshipApplication.delete({ where: { id: req.params.id } });
     return success(res, { message: "Deleted" });
+  } catch (err) { next(err); }
+});
+
+// ===== Admin User Management =====
+
+// POST /admin/users/create — directly create a new internal admin user (Super Admin only)
+router.post("/admin/users/create", authenticate, requirePermission("employees", "create"), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { name, email, password, roleIds, designation, salary } = req.body;
+    if (!name || !email || !password) {
+      return res.status(400).json({ success: false, error: { code: "VALIDATION_ERROR", message: "name, email, and password are required" } });
+    }
+
+    const existing = await prisma.user.findUnique({ where: { email } });
+    if (existing) {
+      return res.status(409).json({ success: false, error: { code: "CONFLICT", message: "A user with this email already exists" } });
+    }
+
+    const passwordHash = await hashPassword(password);
+    const user = await prisma.user.create({
+      data: {
+        name,
+        email,
+        passwordHash,
+        status: "ACTIVE",
+      },
+    });
+
+    if (roleIds && Array.isArray(roleIds) && roleIds.length > 0) {
+      await prisma.userRole.createMany({
+        data: roleIds.map((roleId: string) => ({ userId: user.id, roleId })),
+        skipDuplicates: true,
+      });
+    }
+
+    if (designation || salary != null) {
+      await prisma.employeeProfile.upsert({
+        where: { userId: user.id },
+        update: { ...(designation ? { designation } : {}), ...(salary != null ? { salary } : {}) },
+        create: { userId: user.id, ...(designation ? { designation } : {}), ...(salary != null ? { salary } : {}) },
+      });
+    }
+
+    return success(res, { id: user.id, name: user.name, email: user.email, status: user.status }, undefined, 201);
+  } catch (err) { next(err); }
+});
+
+// POST /admin/users/invite — send invite email to a new admin
+router.post("/admin/users/invite", authenticate, requirePermission("employees", "create"), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { email, roleIds, designation } = req.body;
+    if (!email) {
+      return res.status(400).json({ success: false, error: { code: "VALIDATION_ERROR", message: "email is required" } });
+    }
+
+    const existing = await prisma.user.findUnique({ where: { email } });
+    if (existing) {
+      return res.status(409).json({ success: false, error: { code: "CONFLICT", message: "A user with this email already exists" } });
+    }
+
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    const invite = await prisma.adminInvite.upsert({
+      where: { email },
+      update: { token: crypto.randomUUID(), expiresAt, usedAt: null, roleIds: roleIds || [], designation: designation || null },
+      create: { email, roleIds: roleIds || [], designation: designation || null, expiresAt },
+    });
+
+    await notifyAdminByEmail(email, "Admin Portal Invite", `You've been invited to join the Digital Sukoon Management Portal. Complete your registration at: ${process.env.INTERNAL_APP_URL || "http://localhost:3000"}/admin-signup?token=${invite.token}`);
+
+    return success(res, { message: "Invite sent", email }, undefined, 201);
+  } catch (err) { next(err); }
+});
+
+// POST /admin/users/accept-invite — complete signup from invite token
+router.post("/admin/users/accept-invite", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { token, name, password } = req.body;
+    if (!token || !name || !password) {
+      return res.status(400).json({ success: false, error: { code: "VALIDATION_ERROR", message: "token, name, and password are required" } });
+    }
+
+    const invite = await prisma.adminInvite.findUnique({ where: { token } });
+    if (!invite || invite.usedAt || invite.expiresAt < new Date()) {
+      return res.status(400).json({ success: false, error: { code: "INVALID_TOKEN", message: "Invalid or expired invite link" } });
+    }
+
+    const existing = await prisma.user.findUnique({ where: { email: invite.email } });
+    if (existing) {
+      return res.status(409).json({ success: false, error: { code: "CONFLICT", message: "Account already exists for this email" } });
+    }
+
+    const passwordHash = await hashPassword(password);
+    const user = await prisma.user.create({
+      data: { name, email: invite.email, passwordHash, status: "ACTIVE" },
+    });
+
+    if (invite.roleIds.length > 0) {
+      await prisma.userRole.createMany({
+        data: invite.roleIds.map((roleId: string) => ({ userId: user.id, roleId })),
+        skipDuplicates: true,
+      });
+    }
+
+    if (invite.designation) {
+      await prisma.employeeProfile.create({ data: { userId: user.id, designation: invite.designation } });
+    }
+
+    await prisma.adminInvite.update({ where: { id: invite.id }, data: { usedAt: new Date() } });
+
+    const roleNames = invite.roleIds.length > 0
+      ? (await prisma.role.findMany({ where: { id: { in: invite.roleIds } } })).map((r) => r.name)
+      : [];
+
+    const payload = { userId: user.id, email: user.email, roles: roleNames, type: "employee" as const };
+    const accessToken = signAccessToken(payload);
+    const refreshToken = signRefreshToken({ userId: user.id });
+    const hashedToken = crypto.createHash("sha256").update(refreshToken).digest("hex");
+    await prisma.refreshToken.create({
+      data: { userId: user.id, token: hashedToken, expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) },
+    });
+
+    return success(res, {
+      accessToken,
+      refreshToken,
+      user: { id: user.id, name: user.name, email: user.email, roles: roleNames },
+    });
+  } catch (err) { next(err); }
+});
+
+// GET /admin/users/invite/:token — validate an invite token (public, for the signup page)
+router.get("/admin/users/invite/:token", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const invite = await prisma.adminInvite.findUnique({ where: { token: req.params.token } });
+    if (!invite || invite.usedAt || invite.expiresAt < new Date()) {
+      return res.status(400).json({ success: false, error: { code: "INVALID_TOKEN", message: "Invalid or expired invite link" } });
+    }
+    return success(res, { email: invite.email, valid: true });
+  } catch (err) { next(err); }
+});
+
+// ===== User & Client Deletion (Super Admin / Admin only) =====
+
+function requireAdminRole(req: Request, res: Response, next: NextFunction) {
+  const roles: string[] = (req.user as any)?.roles ?? [];
+  const normalized = roles.map((r) => r.toLowerCase());
+  if (normalized.includes("super admin") || normalized.includes("admin")) return next();
+  return res.status(403).json({ success: false, error: { code: "FORBIDDEN", message: "Only admins can delete users" } });
+}
+
+// PUT /admin/users/:id/roles — replace a user's roles entirely (idempotent)
+router.put("/admin/users/:id/roles", authenticate, requireAdminRole, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { roleIds } = req.body as { roleIds: string[] };
+    if (!Array.isArray(roleIds)) return res.status(400).json({ success: false, error: { message: "roleIds must be an array" } });
+    const user = await prisma.user.findUnique({ where: { id: req.params.id }, select: { id: true } });
+    if (!user) return res.status(404).json({ success: false, error: { message: "User not found" } });
+
+    await prisma.$transaction([
+      prisma.userRole.deleteMany({ where: { userId: req.params.id } }),
+      ...(roleIds.length > 0
+        ? [prisma.userRole.createMany({ data: roleIds.map((roleId) => ({ userId: req.params.id, roleId })), skipDuplicates: true })]
+        : []),
+    ]);
+
+    const updated = await prisma.user.findUnique({
+      where: { id: req.params.id },
+      include: { roles: { include: { role: true } } },
+    });
+    return success(res, updated);
+  } catch (err) { next(err); }
+});
+
+// DELETE /admin/users/:id — soft-delete an internal employee/admin user
+router.delete("/admin/users/:id", authenticate, requireAdminRole, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const target = await prisma.user.findUnique({ where: { id: req.params.id }, select: { id: true, roles: { include: { role: true } } } });
+    if (!target) return res.status(404).json({ success: false, error: { message: "User not found" } });
+
+    // Prevent non-super-admins from deleting super admins
+    const callerRoles: string[] = ((req.user as any)?.roles ?? []).map((r: string) => r.toLowerCase());
+    const isSuperAdmin = callerRoles.includes("super admin");
+    const targetRoleNames = target.roles.map((ur) => ur.role.name.toLowerCase());
+    if (targetRoleNames.includes("super admin") && !isSuperAdmin) {
+      return res.status(403).json({ success: false, error: { message: "Only Super Admins can delete other Super Admins" } });
+    }
+    // Prevent self-deletion
+    if (target.id === (req.user as any)?.userId) {
+      return res.status(400).json({ success: false, error: { message: "You cannot delete your own account" } });
+    }
+
+    await prisma.user.update({ where: { id: req.params.id }, data: { deletedAt: new Date(), status: "INACTIVE" } });
+    return success(res, { message: "User deleted" });
+  } catch (err) { next(err); }
+});
+
+// DELETE /admin/clients/:id — delete a client account
+router.delete("/admin/clients/:id", authenticate, requireAdminRole, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const client = await prisma.client.findUnique({ where: { id: req.params.id }, select: { id: true } });
+    if (!client) return res.status(404).json({ success: false, error: { message: "Client not found" } });
+    await prisma.client.delete({ where: { id: req.params.id } });
+    return success(res, { message: "Client deleted" });
+  } catch (err) { next(err); }
+});
+
+// ===== Bulk Approval Actions =====
+
+// POST /admin/documents/bulk-review
+router.post("/admin/documents/bulk-review", authenticate, requirePermission("employees", "edit"), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { ids, action, note } = req.body as { ids: string[]; action: "APPROVE" | "REJECT"; note?: string };
+    if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ success: false, error: { message: "ids must be a non-empty array" } });
+    if (action !== "APPROVE" && action !== "REJECT") return res.status(400).json({ success: false, error: { message: "action must be APPROVE or REJECT" } });
+    const status = action === "APPROVE" ? "APPROVED" : "REJECTED";
+    const userId = (req as any).user.userId;
+    const results = await Promise.allSettled(ids.map((id) => documentService.reviewDocument(id, userId, status, note)));
+    const succeeded = results.filter((r) => r.status === "fulfilled").length;
+    return success(res, { succeeded, failed: ids.length - succeeded });
+  } catch (err) { next(err); }
+});
+
+// POST /admin/profile-pictures/bulk-review
+router.post("/admin/profile-pictures/bulk-review", authenticate, requirePermission("employees", "edit"), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { ids, action } = req.body as { ids: string[]; action: "APPROVE" | "REJECT" };
+    if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ success: false, error: { message: "ids must be a non-empty array" } });
+    if (action !== "APPROVE" && action !== "REJECT") return res.status(400).json({ success: false, error: { message: "action must be APPROVE or REJECT" } });
+    const userId = (req as any).user.userId;
+    const fn = action === "APPROVE" ? profilePicService.approveProfilePicture : profilePicService.rejectProfilePicture;
+    const results = await Promise.allSettled(ids.map((id) => fn(id, userId)));
+    const succeeded = results.filter((r) => r.status === "fulfilled").length;
+    return success(res, { succeeded, failed: ids.length - succeeded });
+  } catch (err) { next(err); }
+});
+
+// POST /admin/leave-requests/bulk
+router.post("/admin/leave-requests/bulk", authenticate, requirePermission("employees", "edit"), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { ids, action } = req.body as { ids: string[]; action: "APPROVE" | "REJECT"; note?: string };
+    if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ success: false, error: { message: "ids must be a non-empty array" } });
+    if (action !== "APPROVE" && action !== "REJECT") return res.status(400).json({ success: false, error: { message: "action must be APPROVE or REJECT" } });
+    const userId = (req as any).user.userId;
+    const fn = action === "APPROVE" ? leaveService.approveLeaveRequest : leaveService.rejectLeaveRequest;
+    const results = await Promise.allSettled(ids.map((id) => fn(id, userId)));
+    const succeeded = results.filter((r) => r.status === "fulfilled").length;
+    return success(res, { succeeded, failed: ids.length - succeeded });
   } catch (err) { next(err); }
 });
 

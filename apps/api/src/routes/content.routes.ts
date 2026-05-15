@@ -143,4 +143,49 @@ router.delete(
   }
 );
 
+// GET /content/:id/comments — list comments on a post (admin view, no client scope)
+router.get(
+  "/content/:id/comments",
+  authenticate,
+  requirePermission("content", "view"),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { prisma } = await import("@dashmani/db");
+      const comments = await prisma.postComment.findMany({
+        where: { postId: req.params.id },
+        include: { author: { select: { id: true, name: true, email: true, profileImageUrl: true } } },
+        orderBy: { createdAt: "asc" },
+      });
+      return success(res, comments);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// POST /content/:id/comments — add a comment as the current admin user
+router.post(
+  "/content/:id/comments",
+  authenticate,
+  requirePermission("content", "edit"),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { prisma } = await import("@dashmani/db");
+      const { body } = req.body;
+      if (!body || typeof body !== "string" || !body.trim()) {
+        return res.status(400).json({ success: false, error: { message: "Comment body is required" } });
+      }
+      const post = await prisma.contentPost.findUnique({ where: { id: req.params.id }, select: { id: true } });
+      if (!post) return res.status(404).json({ success: false, error: { message: "Content post not found" } });
+      const comment = await prisma.postComment.create({
+        data: { postId: req.params.id, authorId: req.user!.userId, body: body.trim() },
+        include: { author: { select: { id: true, name: true, email: true, profileImageUrl: true } } },
+      });
+      return success(res, comment, undefined, 201);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
 export default router;

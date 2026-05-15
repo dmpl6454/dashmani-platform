@@ -12,16 +12,43 @@
 
 ## Open errors
 
+_(none — all known errors resolved as of 2026-05-15, commit 1e92b20)_
+
+---
+
+## Resolved errors (Wave 9, commit 1e92b20)
+
 ### ERR-I-017 — No broadcast announcement capability
 
 - **Linked to:** AUDIT Issue 17
 - **Severity:** P1
 - **Type:** Missing feature
-- **Location:** No endpoint, no service, no UI — feature entirely absent
-- **Symptom:** Admin/Super Admin has no mechanism to compose a message and send it simultaneously to every employee. Each employee should receive (a) an in-app `ANNOUNCEMENT` notification visible in their portal notification bell, and (b) an email at their registered address.
-- **What's actually happening:** The `NotificationType` enum has no `ANNOUNCEMENT` value. There is no `Announcement` model in the schema. `notification.service.ts` has `notifyAdmins()` (fans out to admins) but nothing analogous for employees. `email.service.ts` has no broadcast template or loop. The internal portal has no `/announcements` page or sidebar link.
-- **Fix:** See AUDIT Issue 17 — four-part implementation: schema addition → service → API route → frontend page.
-- **Status:** Open — planned Wave 9
+- **Fix:** Schema `ANNOUNCEMENT` enum + `Announcement` model. `broadcastAnnouncement()` service. `POST/GET /admin/announcements` routes. `/announcements` page + dashboard CTA banner + top-nav `Announce` pill.
+- **Status:** ✅ Resolved — commit 1e92b20
+
+---
+
+### ERR-I-018 — Notifications not expandable in internal admin portal
+
+- **Linked to:** AUDIT Issue 18
+- **Severity:** P1
+- **Type:** UX bug — missing interaction
+- **Location:** [apps/internal/src/components/top-nav.tsx](../apps/internal/src/components/top-nav.tsx)
+- **Symptom:** Clicking a notification only called `markAsRead`. Full message body was truncated and never accessible. Read notifications were entirely unclickable (`onClick` gated by `!n.read`).
+- **Fix:** Added `selectedNotif` state. Clicking any notification opens an inline detail panel (full title, full `whitespace-pre-wrap` message, formatted timestamp). Back chevron returns to list. Unread auto-marked read on open.
+- **Status:** ✅ Resolved — commit 1e92b20
+
+---
+
+### ERR-I-019 — Notifications not expandable in HR/employee portal
+
+- **Linked to:** AUDIT Issue 19
+- **Severity:** P1
+- **Type:** UX bug — missing interaction
+- **Location:** [apps/hr/src/components/notification-bell.tsx](../apps/hr/src/components/notification-bell.tsx)
+- **Symptom:** Same as ERR-I-018. `onClick` was `() => !notif.read && handleMarkRead(id)` — already-read notifications did nothing on click.
+- **Fix:** Rewrote with same `selectedNotif` detail-panel pattern. All notifications always clickable. Added `timeAgo()` helper consistent with internal portal.
+- **Status:** ✅ Resolved — commit 1e92b20
 
 ---
 

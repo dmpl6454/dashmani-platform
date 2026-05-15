@@ -1,8 +1,7 @@
 "use client";
-import { useState, useEffect, Suspense } from "react";
+import { useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { Eye, EyeOff, Lock, User, AlertTriangle, CheckCircle } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 
 function SignupForm() {
@@ -17,27 +16,16 @@ function SignupForm() {
   const [loading, setLoading] = useState(false);
   const [showPass, setShowPass] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
-  const [mounted, setMounted] = useState(false);
-  const [focusedField, setFocusedField] = useState<string | null>(null);
-
-  useEffect(() => { setMounted(true); }, []);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (password !== confirmPassword) {
-      setError("Passwords do not match");
-      return;
-    }
+    if (password !== confirmPassword) { setError("Passwords do not match."); return; }
     setLoading(true);
     setError("");
     try {
       const res: any = await apiFetch("/client/auth/register", {
         method: "POST",
-        body: JSON.stringify({
-          token,
-          password,
-          ...(contactName.trim() ? { contactName: contactName.trim() } : {}),
-        }),
+        body: JSON.stringify({ token, password, ...(contactName.trim() ? { contactName: contactName.trim() } : {}) }),
       });
       localStorage.setItem("clientAccessToken", res.data.accessToken);
       localStorage.setItem("clientRefreshToken", res.data.refreshToken);
@@ -50,86 +38,77 @@ function SignupForm() {
     }
   }
 
-  const cardStyle = { animation: mounted ? "crx-fadeInUp 0.5s ease-out 0.25s both" : "none" };
+  const EyeIcon = ({ show }: { show: boolean }) => show ? (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" /><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" /><line x1="1" y1="1" x2="23" y2="23" />
+    </svg>
+  ) : (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" />
+    </svg>
+  );
+
+  const inputClass = "w-full h-11 px-4 bg-bg rounded-xl text-[14px] text-ink font-medium placeholder:text-ink-4 outline-none transition-all";
+  const inputStyle = { border: "2px solid rgba(26,26,26,0.18)" };
+  const focusHandlers = {
+    onFocus: (e: React.FocusEvent<HTMLInputElement>) => { e.currentTarget.style.borderColor = "#5D5FEF"; e.currentTarget.style.boxShadow = "0 0 0 3px rgba(93,95,239,0.12)"; },
+    onBlur:  (e: React.FocusEvent<HTMLInputElement>) => { e.currentTarget.style.borderColor = "rgba(26,26,26,0.18)"; e.currentTarget.style.boxShadow = "none"; },
+  };
 
   return (
-    <div
-      className="min-h-screen flex items-center justify-center relative overflow-hidden"
-      style={{
-        background: "linear-gradient(165deg, #FDF6E3 0%, #F7ECD5 50%, #EFE2C4 100%)",
-        fontFamily: "'Instagram Sans', system-ui, sans-serif",
-      }}
-    >
-      {/* Background gradient orbs */}
-      <div className="absolute top-[-20%] left-[-10%] w-[500px] h-[500px] rounded-full opacity-30" style={{ background: "radial-gradient(circle, #F5D547 0%, transparent 70%)" }} />
-      <div className="absolute bottom-[-15%] right-[-5%] w-[400px] h-[400px] rounded-full opacity-20" style={{ background: "radial-gradient(circle, #E8D5B7 0%, transparent 70%)" }} />
-      <div className="absolute top-[40%] right-[20%] w-[250px] h-[250px] rounded-full opacity-15" style={{ background: "radial-gradient(circle, #F5D547 0%, transparent 70%)" }} />
+    <div className="min-h-screen bg-bg flex items-center justify-center px-4 py-16">
+      <div className="w-full max-w-[400px] fade-up d1">
 
-      <div className="relative z-10 w-full max-w-[420px] mx-4" style={{ animation: mounted ? "crx-fadeInUp 0.6s ease-out" : "none" }}>
-        {/* Brand header */}
-        <div className="text-center mb-8" style={{ animation: mounted ? "crx-fadeInUp 0.5s ease-out 0.1s both" : "none" }}>
-          <div className="flex items-center justify-center gap-2.5 mb-4">
-            <img src="/logo.svg" alt="Digital Sukoon" className="h-10 w-10 rounded-full shadow-[0_2px_12px_rgba(0,0,0,0.1)]" />
-            <span className="font-bold text-[#1A1A1A] uppercase tracking-[2px] text-sm">Digital Sukoon</span>
+        {/* Logo */}
+        <div className="text-center mb-8">
+          <div className="inline-flex h-12 w-12 rounded-2xl bg-ink text-white items-center justify-center font-display text-[20px] font-semibold mb-4 pop-in">
+            DS
           </div>
-          <h1 className="font-serif text-[36px] font-normal text-[#1A1A1A] leading-tight">
-            Set up your account
-          </h1>
-          <p className="text-sm text-[#7A7A7A] mt-1.5 tracking-wide uppercase text-[11px] font-medium">
-            Client Portal
-          </p>
+          <h1 className="font-display text-[32px] font-semibold text-ink leading-tight">Set up your account</h1>
+          <p className="text-[13px] text-ink-3 font-medium mt-1 uppercase tracking-widest">Client Portal</p>
         </div>
 
         {/* Card */}
-        <div className="crx-glass rounded-3xl p-7 sm:p-8" style={cardStyle}>
+        <div className="v3-card p-7 fade-up d2">
           {!token ? (
-            /* Invalid / missing token state */
             <div className="text-center space-y-4 py-4">
-              <div className="flex justify-center">
-                <AlertTriangle className="h-12 w-12 text-[#B0B0B0]" />
+              <div className="h-12 w-12 rounded-2xl bg-muted flex items-center justify-center mx-auto">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-ink-3">
+                  <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                  <line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" />
+                </svg>
               </div>
-              <h2 className="text-[#1A1A1A] font-semibold text-base">Invalid invite link</h2>
-              <p className="text-sm text-[#7A7A7A]">
+              <h2 className="text-ink font-bold text-[15px]">Invalid invite link</h2>
+              <p className="text-[13px] text-ink-3 font-medium">
                 This invite link is missing or invalid. Please ask your account manager for a new invite.
               </p>
-              <Link
-                href="/login"
-                className="inline-block mt-2 text-sm text-[#7A7A7A] underline underline-offset-2 hover:text-[#1A1A1A] transition-colors"
-              >
+              <Link href="/login" className="inline-block text-[13px] text-indigo font-semibold hover:underline">
                 Back to sign in
               </Link>
             </div>
           ) : (
-            /* Registration form */
-            <form onSubmit={handleSubmit} className="space-y-5">
-              {/* Contact name (optional) */}
+            <form onSubmit={handleSubmit} className="space-y-4">
+
+              {/* Name (optional) */}
               <div>
-                <label className="block text-xs text-[#7A7A7A] mb-1.5 font-medium">
-                  Your name <span className="text-[#B0B0B0]">(optional)</span>
+                <label className="block text-[12px] font-bold text-ink-3 uppercase tracking-wider mb-1.5">
+                  Your name <span className="text-ink-4 normal-case tracking-normal">(optional)</span>
                 </label>
-                <div className="relative">
-                  <User className={`absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 transition-colors duration-300 ${focusedField === "name" ? "text-[#F5D547]" : "text-[#B0B0B0]"}`} />
-                  <input
-                    type="text"
-                    value={contactName}
-                    onChange={(e) => setContactName(e.target.value)}
-                    placeholder="Jane Smith"
-                    onFocus={() => setFocusedField("name")}
-                    onBlur={() => setFocusedField(null)}
-                    className={`w-full pl-11 pr-4 py-3.5 rounded-xl text-sm outline-none transition-all duration-300 ${
-                      focusedField === "name"
-                        ? "bg-white border-[1.5px] border-[#F5D547] shadow-[0_0_0_3px_rgba(245,213,71,0.15)]"
-                        : "bg-white/60 border-[1.5px] border-[#E8E0D0]"
-                    } text-[#1A1A1A] placeholder:text-[#B0B0B0]`}
-                  />
-                </div>
+                <input
+                  type="text"
+                  value={contactName}
+                  onChange={(e) => setContactName(e.target.value)}
+                  placeholder="Jane Smith"
+                  className={inputClass}
+                  style={inputStyle}
+                  {...focusHandlers}
+                />
               </div>
 
               {/* Password */}
               <div>
-                <label className="block text-xs text-[#7A7A7A] mb-1.5 font-medium">Password</label>
+                <label className="block text-[12px] font-bold text-ink-3 uppercase tracking-wider mb-1.5">Password</label>
                 <div className="relative">
-                  <Lock className={`absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 transition-colors duration-300 ${focusedField === "password" ? "text-[#F5D547]" : "text-[#B0B0B0]"}`} />
                   <input
                     type={showPass ? "text" : "password"}
                     value={password}
@@ -137,50 +116,47 @@ function SignupForm() {
                     placeholder="Min. 8 characters"
                     required
                     minLength={8}
-                    onFocus={() => setFocusedField("password")}
-                    onBlur={() => setFocusedField(null)}
-                    className={`w-full pl-11 pr-12 py-3.5 rounded-xl text-sm outline-none transition-all duration-300 ${
-                      focusedField === "password"
-                        ? "bg-white border-[1.5px] border-[#F5D547] shadow-[0_0_0_3px_rgba(245,213,71,0.15)]"
-                        : "bg-white/60 border-[1.5px] border-[#E8E0D0]"
-                    } text-[#1A1A1A] placeholder:text-[#B0B0B0]`}
+                    className={`${inputClass} pr-11`}
+                    style={inputStyle}
+                    {...focusHandlers}
                   />
-                  <button type="button" onClick={() => setShowPass(!showPass)} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-[#B0B0B0] hover:text-[#F5D547] transition-colors">
-                    {showPass ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
+                  <button type="button" onClick={() => setShowPass(!showPass)}
+                    className="absolute right-3.5 top-1/2 -translate-y-1/2 text-ink-3 hover:text-ink transition-colors">
+                    <EyeIcon show={showPass} />
                   </button>
                 </div>
               </div>
 
               {/* Confirm password */}
               <div>
-                <label className="block text-xs text-[#7A7A7A] mb-1.5 font-medium">Confirm password</label>
+                <label className="block text-[12px] font-bold text-ink-3 uppercase tracking-wider mb-1.5">Confirm password</label>
                 <div className="relative">
-                  <Lock className={`absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 transition-colors duration-300 ${focusedField === "confirm" ? "text-[#F5D547]" : "text-[#B0B0B0]"}`} />
                   <input
                     type={showConfirm ? "text" : "password"}
                     value={confirmPassword}
                     onChange={(e) => setConfirmPassword(e.target.value)}
                     placeholder="Re-enter your password"
                     required
-                    onFocus={() => setFocusedField("confirm")}
-                    onBlur={() => setFocusedField(null)}
-                    className={`w-full pl-11 pr-12 py-3.5 rounded-xl text-sm outline-none transition-all duration-300 ${
-                      focusedField === "confirm"
-                        ? "bg-white border-[1.5px] border-[#F5D547] shadow-[0_0_0_3px_rgba(245,213,71,0.15)]"
-                        : "bg-white/60 border-[1.5px] border-[#E8E0D0]"
-                    } text-[#1A1A1A] placeholder:text-[#B0B0B0]`}
+                    className={`${inputClass} pr-11`}
+                    style={inputStyle}
+                    {...focusHandlers}
                   />
-                  <button type="button" onClick={() => setShowConfirm(!showConfirm)} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-[#B0B0B0] hover:text-[#F5D547] transition-colors">
-                    {showConfirm ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
+                  <button type="button" onClick={() => setShowConfirm(!showConfirm)}
+                    className="absolute right-3.5 top-1/2 -translate-y-1/2 text-ink-3 hover:text-ink transition-colors">
+                    <EyeIcon show={showConfirm} />
                   </button>
                 </div>
               </div>
 
               {/* Error */}
               {error && (
-                <div className="flex items-center gap-2 p-3 rounded-xl bg-red-50 border border-red-100">
-                  <AlertTriangle className="h-4 w-4 text-red-500 flex-shrink-0" />
-                  <p className="text-sm text-red-600">{error}</p>
+                <div className="flex items-center gap-2.5 px-4 py-3 rounded-xl bg-danger-bg" style={{ border: "1.5px solid rgba(184,55,40,0.2)" }}>
+                  <span className="text-danger shrink-0">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                      <circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
+                    </svg>
+                  </span>
+                  <span className="text-[13px] text-danger font-semibold">{error}</span>
                 </div>
               )}
 
@@ -188,32 +164,25 @@ function SignupForm() {
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full py-3.5 rounded-full bg-[#F5D547] text-[#1A1A1A] text-[15px] font-semibold shadow-[0_4px_16px_rgba(245,213,71,0.35)] hover:shadow-[0_6px_24px_rgba(245,213,71,0.45)] hover:-translate-y-0.5 disabled:opacity-50 disabled:hover:translate-y-0 transition-all duration-300"
+                className="w-full h-11 rounded-xl bg-ink text-white text-[14px] font-bold border-2 border-ink btn-3d transition-all disabled:opacity-50 mt-2"
               >
                 {loading ? (
                   <span className="flex items-center justify-center gap-2">
-                    <span className="h-4 w-4 border-2 border-[#1A1A1A]/20 border-t-[#1A1A1A] rounded-full animate-spin" />
-                    Creating account...
+                    <span className="h-4 w-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    Creating account…
                   </span>
-                ) : (
-                  "Create account"
-                )}
+                ) : "Create account"}
               </button>
 
-              <p className="text-sm text-[#B0B0B0] text-center pt-1">
+              <p className="text-[13px] text-ink-3 text-center font-medium pt-1">
                 Already have an account?{" "}
-                <Link href="/login" className="text-[#7A7A7A] underline underline-offset-2 hover:text-[#1A1A1A] transition-colors">
-                  Sign in
-                </Link>
+                <Link href="/login" className="text-indigo font-semibold hover:underline">Sign in</Link>
               </p>
             </form>
           )}
         </div>
 
-        {/* Footer */}
-        <p className="text-center text-xs text-[#B0B0B0] mt-6" style={{ animation: mounted ? "crx-fadeInUp 0.5s ease-out 0.4s both" : "none" }}>
-          Powered by Digital Sukoon
-        </p>
+        <p className="text-center text-[11.5px] text-ink-4 font-medium mt-6">Powered by Digital Sukoon</p>
       </div>
     </div>
   );

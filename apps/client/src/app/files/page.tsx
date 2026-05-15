@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { Topstrip } from "@/components/portal-topstrip";
-import { Empty, PageError, Skeleton } from "@/components/portal-shared";
+import { IconButton, Empty, PageError, Skeleton, Button } from "@/components/portal-shared";
 import { Icon } from "@/components/portal-icons";
 import { useClientFiles } from "@/lib/hooks/use-files";
 import { useClientProjects } from "@/lib/hooks/use-projects";
@@ -12,167 +12,247 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function fileType(name: string): string {
+  const ext = name.split(".").pop()?.toUpperCase() ?? "FILE";
+  if (["JPG","JPEG","PNG","GIF","WEBP","SVG"].includes(ext)) return "IMG";
+  if (["ZIP","RAR","TAR","GZ"].includes(ext)) return "ZIP";
+  if (ext === "PDF") return "PDF";
+  if (["DOC","DOCX"].includes(ext)) return "DOC";
+  if (["XLS","XLSX"].includes(ext)) return "XLS";
+  return ext.slice(0, 4);
+}
+
+const TYPE_COLORS: Record<string, string> = {
+  PDF: "bg-terra-soft text-terra border-terra/20",
+  ZIP: "bg-indigo-soft text-indigo border-indigo/20",
+  IMG: "bg-sage-soft text-sage border-sage/20",
+  DOC: "bg-action-soft text-ink-2 border-action/20",
+  XLS: "bg-success-bg text-success border-success/20",
+};
+
 export default function FilesPage() {
   const { data: projectsData } = useClientProjects();
-  const projects = projectsData?.items ?? [];
+  const projects: any[] = projectsData?.items ?? [];
 
-  const [search, setSearch] = useState("");
   const [projectId, setProjectId] = useState<string | undefined>(undefined);
+  const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState<string | undefined>(undefined);
+  const [viewMode, setViewMode] = useState<"list" | "grid">("list");
+  const [dragOver, setDragOver] = useState(false);
 
   useEffect(() => {
-    const t = setTimeout(() => {
-      setDebouncedSearch(search || undefined);
-    }, 300);
+    const t = setTimeout(() => setDebouncedSearch(search || undefined), 300);
     return () => clearTimeout(t);
   }, [search]);
 
-  const { data, error, isLoading } = useClientFiles(projectId, debouncedSearch);
+  const { data: files, error, isLoading } = useClientFiles(projectId, debouncedSearch);
+  const fileList: any[] = files ?? [];
+
+  const folders = [
+    { id: undefined, label: "All files", count: fileList.length },
+    ...projects.map((p) => ({
+      id: p.id,
+      label: p.name,
+      count: fileList.filter((f) => (f.project?.id ?? f.project) === p.id).length,
+    })),
+  ];
+
+  const displayed = projectId
+    ? fileList.filter((f) => (f.project?.id ?? f.project) === projectId)
+    : fileList;
+
+  const totalMB = displayed.reduce((s, f) => s + (f.size || 0), 0) / (1024 * 1024);
 
   return (
     <>
       <Topstrip
         title="Files"
-        sub={data ? `${data.length} files` : undefined}
+        sub={`${fileList.length} files across all projects`}
+        right={
+          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1 p-0.5 bg-muted rounded-xl" style={{ border: "2px solid rgba(26,26,26,0.1)" }}>
+              {(["list", "grid"] as const).map((v) => (
+                <button key={v} onClick={() => setViewMode(v)}
+                  className={`h-7 px-3 text-[12.5px] font-semibold rounded-lg transition-all
+                    ${viewMode === v ? "bg-surface text-ink shadow-hard-ink" : "text-ink-3 hover:text-ink"}`}>
+                  {v === "list" ? "List" : "Grid"}
+                </button>
+              ))}
+            </div>
+          </div>
+        }
       />
 
-      {/* Toolbar */}
-      <div className="px-6 py-3 border-b border-rule flex items-center gap-3">
-        {/* Search input */}
-        <div className="relative flex-1 max-w-xs">
-          <Icon.Search
-            size={14}
-            className="absolute left-2 top-1/2 -translate-y-1/2 text-ink-3 pointer-events-none"
-          />
-          <input
-            type="text"
-            placeholder="Search files..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="h-8 pl-8 pr-3 w-full bg-surface border border-border rounded text-sm text-ink placeholder:text-ink-4 focus:outline-none focus:ring-1 focus:ring-border"
-          />
-        </div>
-
-        <div className="flex-1" />
-
-        {/* Project filter */}
-        <div className="relative">
-          <select
-            value={projectId || ""}
-            onChange={(e) => setProjectId(e.target.value || undefined)}
-            className="h-8 pl-2 pr-7 bg-surface border border-border rounded text-[12px] text-ink appearance-none cursor-pointer focus:outline-none"
-          >
-            <option value="">All projects</option>
-            {projects.map((p: { id: string; name: string }) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
+      <div className="flex-1 flex min-h-0 overflow-hidden">
+        {/* ── Folder sidebar ── */}
+        <div className="w-52 shrink-0 flex flex-col overflow-y-auto py-4 px-2" style={{ borderRight: "2px solid rgba(26,26,26,0.08)" }}>
+          <div className="px-2 mb-2">
+            <span className="text-[10px] uppercase tracking-widest font-bold text-ink-3">Folders</span>
+          </div>
+          <nav className="space-y-0.5">
+            {folders.map((f, i) => (
+              <button
+                key={f.id ?? "all"}
+                onClick={() => setProjectId(f.id)}
+                className={`fade-up d${Math.min(i + 1, 8)} w-full flex items-center justify-between px-3 h-10 rounded-xl text-[13px] font-semibold transition-all
+                  ${projectId === f.id ? "nav-active" : "text-ink-3 hover:bg-muted/80 hover:text-ink"}`}
+              >
+                <span className="truncate">{f.label}</span>
+                <span className={`text-[10.5px] tabular-nums font-bold ${projectId === f.id ? "text-indigo/60" : "text-ink-4"}`}>
+                  {f.count}
+                </span>
+              </button>
             ))}
-          </select>
-          <Icon.ChevDown
-            size={12}
-            className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none text-ink-3"
-          />
-        </div>
-      </div>
+          </nav>
 
-      {/* Content */}
-      <div className="px-6 py-4">
-        {error ? (
-          <PageError message={error?.message} />
-        ) : (
-          <div className="bg-surface border border-border rounded-lg overflow-hidden">
-            {/* Table header */}
-            <div className="grid grid-cols-[auto_1fr_160px_80px_120px_40px] items-center gap-3 px-4 h-10 border-b border-rule bg-muted/30 text-[11px] uppercase tracking-wider font-medium text-ink-3">
-              <span className="w-7" />
-              <span>Name</span>
-              <span>Project</span>
-              <span>Size</span>
-              <span>Date</span>
-              <span />
+          {/* Storage indicator */}
+          <div className="mt-auto px-3 py-4">
+            <div className="v3-card-sm p-3 space-y-2">
+              <div className="text-[11px] uppercase tracking-wider font-bold text-ink-3">Storage</div>
+              <div className="h-2 bg-muted rounded-full overflow-hidden" style={{ border: "1px solid rgba(26,26,26,0.1)" }}>
+                <div className="h-full bg-indigo rounded-full" style={{ width: "34%" }} />
+              </div>
+              <div className="text-[11.5px] font-semibold text-ink-2">
+                {totalMB.toFixed(0)} MB <span className="text-ink-4 font-medium">used</span>
+              </div>
             </div>
+          </div>
+        </div>
 
-            {/* Loading skeletons */}
-            {isLoading && (
-              <>
-                {[0, 1, 2, 3].map((i) => (
+        {/* ── Main area ── */}
+        <div className="flex-1 overflow-y-auto px-6 py-5">
+          {/* Drop zone */}
+          <div
+            onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={(e) => { e.preventDefault(); setDragOver(false); }}
+            className={`mb-5 border-2 border-dashed rounded-2xl p-4 flex items-center justify-center gap-3 transition-all cursor-pointer
+              ${dragOver ? "bg-indigo-soft border-indigo" : "border-ink/15 hover:border-ink/30 hover:bg-muted/30"}`}
+          >
+            <Icon.Plus size={16} sw={2} className={dragOver ? "text-indigo" : "text-ink-3"} />
+            <span className={`text-[13px] font-semibold ${dragOver ? "text-indigo" : "text-ink-3"}`}>
+              Drop files here to upload
+            </span>
+          </div>
+
+          {/* Summary + search */}
+          <div className="flex items-center gap-3 mb-4">
+            <span className="text-[13px] font-bold text-ink">{displayed.length} file{displayed.length !== 1 ? "s" : ""}</span>
+            {totalMB > 0 && <span className="text-[12px] text-ink-3 font-medium">· {totalMB.toFixed(0)} MB total</span>}
+            <div className="flex-1" />
+            {/* Search */}
+            <div className="relative">
+              <Icon.Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-3 pointer-events-none" />
+              <input
+                type="text"
+                placeholder="Search files…"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="h-8 pl-8 pr-3 bg-surface rounded-xl text-[12.5px] text-ink placeholder:text-ink-4 outline-none font-medium"
+                style={{ border: "2px solid rgba(26,26,26,0.15)" }}
+              />
+            </div>
+          </div>
+
+          {error && <PageError message="Could not load files. Please refresh." />}
+
+          {!error && viewMode === "list" ? (
+            <div className="v3-card overflow-hidden fade-up d2">
+              <div
+                className="grid px-5 h-11 bg-muted/40 text-[11px] uppercase tracking-wider font-bold text-ink-3 items-center"
+                style={{ gridTemplateColumns: "36px 1fr 80px 80px 120px 48px", borderBottom: "2px solid rgba(26,26,26,0.07)" }}
+              >
+                <span></span><span>Name</span><span>Type</span><span className="text-right">Size</span><span>Uploaded</span><span></span>
+              </div>
+
+              {isLoading && [...Array(4)].map((_, i) => (
+                <div key={i} className="grid px-5 items-center h-row" style={{ gridTemplateColumns: "36px 1fr 80px 80px 120px 48px", borderBottom: "1px solid rgba(26,26,26,0.06)" }}>
+                  <Skeleton className="h-7 w-7" />
+                  <Skeleton className="h-3.5 w-2/3" />
+                  <Skeleton className="h-5 w-12" />
+                  <Skeleton className="h-3 w-12 ml-auto" />
+                  <Skeleton className="h-3 w-20" />
+                  <Skeleton className="h-6 w-6 ml-auto" />
+                </div>
+              ))}
+
+              {!isLoading && displayed.length === 0 && (
+                <Empty icon={<Icon.File size={20} />} title="No files yet" hint="Files uploaded to your projects appear here." />
+              )}
+
+              {!isLoading && displayed.map((file, i) => {
+                const type = fileType(file.name);
+                return (
                   <div
-                    key={i}
-                    className="grid grid-cols-[auto_1fr_160px_80px_120px_40px] items-center gap-3 px-4 h-[52px] border-b border-rule last:border-b-0"
+                    key={file.id}
+                    className="grid px-5 items-center h-row v3-row cursor-pointer group fade-up"
+                    style={{
+                      gridTemplateColumns: "36px 1fr 80px 80px 120px 48px",
+                      animationDelay: `${(i + 3) * 0.05}s`,
+                      ...(i < displayed.length - 1 ? { borderBottom: "1px solid rgba(26,26,26,0.06)" } : {}),
+                    }}
                   >
-                    <Skeleton className="w-7 h-7" />
-                    <Skeleton className="h-3.5 w-2/3" />
-                    <Skeleton className="h-5 w-24" />
-                    <Skeleton className="h-3 w-12" />
-                    <Skeleton className="h-3 w-20" />
-                    <Skeleton className="h-6 w-6 rounded-md" />
+                    <div className="h-7 w-7 rounded-lg bg-muted flex items-center justify-center text-ink-3" style={{ border: "1.5px solid rgba(26,26,26,0.1)" }}>
+                      <Icon.File size={14} sw={1.5} />
+                    </div>
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="text-[13.5px] font-semibold text-ink truncate">{file.name}</span>
+                    </div>
+                    <div>
+                      <span className={`text-[10.5px] font-bold px-2 h-5 inline-flex items-center rounded-full border ${TYPE_COLORS[type] ?? "bg-muted text-ink-3 border-ink/10"}`}>
+                        {type}
+                      </span>
+                    </div>
+                    <span className="text-right text-[12.5px] text-ink-2 font-semibold tabular-nums">{formatBytes(file.size ?? 0)}</span>
+                    <span className="text-[12px] text-ink-3 font-medium">
+                      {new Date(file.createdAt).toLocaleDateString("en", { month: "short", day: "numeric" })}
+                    </span>
+                    <div className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-end gap-1">
+                      <a href={file.url} target="_blank" rel="noopener noreferrer" download onClick={(e) => e.stopPropagation()}>
+                        <IconButton size="sm" variant="ghost" icon={<Icon.ChevDown size={14} />} label="Download" />
+                      </a>
+                    </div>
                   </div>
-                ))}
-              </>
-            )}
-
-            {/* File rows */}
-            {!isLoading && data && data.length > 0 &&
-              data.map((file, i) => (
-                <div
-                  key={file.id}
-                  className={`grid grid-cols-[auto_1fr_160px_80px_120px_40px] items-center gap-3 px-4 h-[52px] hover:bg-muted/40 transition-colors group ${i < data.length - 1 ? "border-b border-rule" : ""}`}
-                >
-                  {/* Icon */}
-                  <div className="w-7 h-7 rounded bg-muted flex items-center justify-center text-ink-3 shrink-0">
-                    <Icon.File size={15} sw={1.5} />
-                  </div>
-
-                  {/* Name */}
-                  <span className="text-[13.5px] font-medium text-ink truncate" title={file.name}>
-                    {file.name}
-                  </span>
-
-                  {/* Project */}
-                  <span className="inline-flex items-center h-5 px-2 rounded bg-muted text-ink-3 text-[11px] font-medium truncate max-w-[160px]">
-                    {file.project.name}
-                  </span>
-
-                  {/* Size */}
-                  <span className="text-[12.5px] text-ink-2 tabular-nums">
-                    {formatBytes(file.size)}
-                  </span>
-
-                  {/* Date */}
-                  <span className="text-[12.5px] text-ink-2">
-                    {new Date(file.createdAt).toLocaleDateString("en-US", {
-                      month: "short",
-                      day: "numeric",
-                      year: "numeric",
-                    })}
-                  </span>
-
-                  {/* Download */}
+                );
+              })}
+            </div>
+          ) : !error ? (
+            <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 fade-up d2">
+              {isLoading && [...Array(8)].map((_, i) => (
+                <Skeleton key={i} className="h-36 v3-card" />
+              ))}
+              {!isLoading && displayed.length === 0 && (
+                <div className="col-span-full">
+                  <Empty icon={<Icon.File size={20} />} title="No files yet" hint="Files uploaded to your projects appear here." />
+                </div>
+              )}
+              {!isLoading && displayed.map((file, i) => {
+                const type = fileType(file.name);
+                return (
                   <a
+                    key={file.id}
                     href={file.url}
                     target="_blank"
                     rel="noopener noreferrer"
-                    download
-                    onClick={(e) => e.stopPropagation()}
-                    className="h-7 w-7 inline-flex items-center justify-center rounded text-ink-3 hover:bg-muted hover:text-ink transition-colors"
-                    aria-label={`Download ${file.name}`}
+                    className="v3-card v3-card-lift p-4 cursor-pointer block"
+                    style={{ animationDelay: `${i * 0.04}s` }}
                   >
-                    <Icon.ArrowRight size={14} />
+                    <div className="h-9 w-9 rounded-xl bg-muted flex items-center justify-center text-ink-3 mb-3" style={{ border: "1.5px solid rgba(26,26,26,0.1)" }}>
+                      <Icon.File size={16} sw={1.5} />
+                    </div>
+                    <div className="text-[13px] font-bold text-ink leading-tight line-clamp-2 mb-2">{file.name}</div>
+                    <div className="flex items-center justify-between mt-auto">
+                      <span className={`text-[10px] font-bold px-2 h-5 inline-flex items-center rounded-full border ${TYPE_COLORS[type] ?? "bg-muted text-ink-3 border-ink/10"}`}>
+                        {type}
+                      </span>
+                      <span className="text-[11.5px] text-ink-3 font-semibold tabular-nums">{formatBytes(file.size ?? 0)}</span>
+                    </div>
                   </a>
-                </div>
-              ))
-            }
-
-            {/* Empty state */}
-            {!isLoading && !error && data && data.length === 0 && (
-              <Empty
-                icon={<Icon.File size={22} />}
-                title="No files yet"
-                hint="Files uploaded to your projects appear here."
-              />
-            )}
-          </div>
-        )}
+                );
+              })}
+            </div>
+          ) : null}
+        </div>
       </div>
     </>
   );

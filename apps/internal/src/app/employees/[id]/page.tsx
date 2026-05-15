@@ -24,7 +24,7 @@ export default function EmployeeDetailPage() {
   const [activeTab, setActiveTab] = useState<"profile" | "accounts" | "documents" | "hours" | "incentives" | "reviews" | "tasks" | "devices">("profile");
 
   // Fetch additional data
-  const { data: profileData } = useSWR(id ? `/admin/employees/${id}/profile-data` : null, (url: string) => apiFetch<any>(url).catch(() => null));
+  const { data: profileData, mutate: mutateProfile } = useSWR(id ? `/admin/employees/${id}/profile-data` : null, (url: string) => apiFetch<any>(url).catch(() => null));
   const { data: docsData } = useSWR(id ? `/admin/documents?employeeId=${id}` : null, (url: string) => apiFetch<any>(url).catch(() => ({ data: [] })));
   const { data: extraHoursData, mutate: mutateHours } = useSWR(id ? `/admin/extra-hours?employeeId=${id}` : null, (url: string) => apiFetch<any>(url).catch(() => ({ data: [] })));
   const { data: incentivesData, mutate: mutateIncentives } = useSWR(id ? `/admin/incentives?employeeId=${id}` : null, (url: string) => apiFetch<any>(url).catch(() => ({ data: [] })));
@@ -35,6 +35,9 @@ export default function EmployeeDetailPage() {
 
   const [jdForm, setJdForm] = useState("");
   const [savingJd, setSavingJd] = useState(false);
+  const [isEditingProfile, setIsEditingProfile] = useState(false);
+  const [profileEditForm, setProfileEditForm] = useState<Record<string, string>>({});
+  const [savingProfile, setSavingProfile] = useState(false);
   const [incentiveForm, setIncentiveForm] = useState({ amount: "", reason: "", month: "", year: "" });
   const [addingIncentive, setAddingIncentive] = useState(false);
   const [reviewForm, setReviewForm] = useState({ period: "", rating: "3", strengths: "", improvements: "", comments: "", goals: "" });
@@ -71,6 +74,41 @@ export default function EmployeeDetailPage() {
       });
     } catch (e: any) { alert(e.message); }
     finally { setSavingJd(false); }
+  }
+
+  function startEditProfile() {
+    const p = profileData?.data || {};
+    setProfileEditForm({
+      bankName: p.bankName || "",
+      bankAccountNumber: p.bankAccountNumber || "",
+      bankAccountHolderName: p.bankAccountHolderName || "",
+      bankBranch: p.bankBranch || "",
+      ifscCode: p.ifscCode || "",
+      aadhaarNumber: p.aadhaarNumber || "",
+      panNumber: p.panNumber || "",
+      mailingAddress: p.mailingAddress || "",
+      familyContact1Name: p.familyContact1Name || "",
+      familyContact1Phone: p.familyContact1Phone || "",
+      familyContact1Relation: p.familyContact1Relation || "",
+      familyContact2Name: p.familyContact2Name || "",
+      familyContact2Phone: p.familyContact2Phone || "",
+      familyContact2Relation: p.familyContact2Relation || "",
+    });
+    setIsEditingProfile(true);
+  }
+
+  async function saveProfileData(e: React.FormEvent) {
+    e.preventDefault();
+    setSavingProfile(true);
+    try {
+      await apiFetch(`/admin/employees/${id}/profile-data`, {
+        method: "PUT",
+        body: JSON.stringify(profileEditForm),
+      });
+      mutateProfile();
+      setIsEditingProfile(false);
+    } catch (e: any) { alert(e.message); }
+    finally { setSavingProfile(false); }
   }
 
   async function handleAddIncentive(e: React.FormEvent) {
@@ -232,27 +270,102 @@ export default function EmployeeDetailPage() {
             </div>
           </div>
 
-          {/* Employee Submitted Data (read-only view for admin) */}
+          {/* Employee Submitted Data — editable by admin */}
           {profile && (
             <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-[#E8E0D0] p-6 space-y-4">
-              <h3 className="text-lg font-semibold text-[#1A1A1A] flex items-center gap-2"><CreditCard className="h-5 w-5 text-[#7A7A7A]" /> Employee Submitted Data</h3>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 text-sm">
-                <InfoField label="Bank Name" value={profile.bankName} />
-                <InfoField label="Account Number" value={profile.bankAccountNumber} />
-                <InfoField label="IFSC Code" value={profile.ifscCode} />
-                <InfoField label="Account Holder" value={profile.bankAccountHolderName} />
-                <InfoField label="Bank Branch" value={profile.bankBranch} />
-                <InfoField label="Aadhaar" value={profile.aadhaarNumber} />
-                <InfoField label="PAN" value={profile.panNumber} />
-                <InfoField label="Mailing Address" value={profile.mailingAddress} />
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-semibold text-[#1A1A1A] flex items-center gap-2"><CreditCard className="h-5 w-5 text-[#7A7A7A]" /> Employee Submitted Data</h3>
+                {!isEditingProfile && (
+                  <button onClick={startEditProfile} className="flex items-center gap-1.5 text-xs text-[#7A7A7A] hover:text-[#1A1A1A] border border-[#F0EAD8] hover:border-[#E8D8B4] rounded-lg px-3 py-1.5 transition-all">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                    Edit
+                  </button>
+                )}
               </div>
-              {(profile.familyContact1Name || profile.familyContact2Name) && (
-                <>
-                  <h4 className="text-sm font-semibold text-[#1A1A1A] flex items-center gap-2 pt-2"><UsersIcon className="h-4 w-4 text-[#7A7A7A]" /> Emergency Contacts</h4>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
-                    {profile.familyContact1Name && <InfoField label="Contact 1" value={`${profile.familyContact1Name} (${profile.familyContact1Relation || "—"}) - ${profile.familyContact1Phone || "—"}`} />}
-                    {profile.familyContact2Name && <InfoField label="Contact 2" value={`${profile.familyContact2Name} (${profile.familyContact2Relation || "—"}) - ${profile.familyContact2Phone || "—"}`} />}
+
+              {isEditingProfile ? (
+                <form onSubmit={saveProfileData} className="space-y-4">
+                  <div>
+                    <p className="text-xs font-semibold text-[#7A7A7A] uppercase tracking-wider mb-3">Bank Details</p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                      {[
+                        { key: "bankName", label: "Bank Name" },
+                        { key: "bankAccountNumber", label: "Account Number" },
+                        { key: "bankAccountHolderName", label: "Account Holder" },
+                        { key: "bankBranch", label: "Branch" },
+                        { key: "ifscCode", label: "IFSC Code" },
+                      ].map(({ key, label }) => (
+                        <div key={key}>
+                          <label className="block text-xs text-[#7A7A7A] mb-1">{label}</label>
+                          <input className={inputClass} value={profileEditForm[key] || ""} onChange={(e) => setProfileEditForm({ ...profileEditForm, [key]: e.target.value })} placeholder={label} />
+                        </div>
+                      ))}
+                    </div>
                   </div>
+                  <div>
+                    <p className="text-xs font-semibold text-[#7A7A7A] uppercase tracking-wider mb-3">ID Documents</p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      {[{ key: "aadhaarNumber", label: "Aadhaar Number" }, { key: "panNumber", label: "PAN Number" }].map(({ key, label }) => (
+                        <div key={key}>
+                          <label className="block text-xs text-[#7A7A7A] mb-1">{label}</label>
+                          <input className={inputClass} value={profileEditForm[key] || ""} onChange={(e) => setProfileEditForm({ ...profileEditForm, [key]: e.target.value })} placeholder={label} />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-[#7A7A7A] mb-1">Mailing Address</label>
+                    <textarea rows={2} className={inputClass + " resize-none"} value={profileEditForm.mailingAddress || ""} onChange={(e) => setProfileEditForm({ ...profileEditForm, mailingAddress: e.target.value })} placeholder="Full mailing address" />
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold text-[#7A7A7A] uppercase tracking-wider mb-3">Emergency Contacts</p>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
+                      {[{ key: "familyContact1Name", label: "Contact 1 Name" }, { key: "familyContact1Relation", label: "Relation" }, { key: "familyContact1Phone", label: "Phone" }].map(({ key, label }) => (
+                        <div key={key}>
+                          <label className="block text-xs text-[#7A7A7A] mb-1">{label}</label>
+                          <input className={inputClass} value={profileEditForm[key] || ""} onChange={(e) => setProfileEditForm({ ...profileEditForm, [key]: e.target.value })} placeholder={label} />
+                        </div>
+                      ))}
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      {[{ key: "familyContact2Name", label: "Contact 2 Name" }, { key: "familyContact2Relation", label: "Relation" }, { key: "familyContact2Phone", label: "Phone" }].map(({ key, label }) => (
+                        <div key={key}>
+                          <label className="block text-xs text-[#7A7A7A] mb-1">{label}</label>
+                          <input className={inputClass} value={profileEditForm[key] || ""} onChange={(e) => setProfileEditForm({ ...profileEditForm, [key]: e.target.value })} placeholder={label} />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="flex gap-3 pt-2">
+                    <button type="submit" disabled={savingProfile} className="flex items-center gap-2 bg-[#1A1A1A] text-white py-2 px-5 rounded-full text-sm font-semibold hover:bg-[#2B2B2B] disabled:opacity-50 transition-all">
+                      <Check className="h-3.5 w-3.5" /> {savingProfile ? "Saving..." : "Save Changes"}
+                    </button>
+                    <button type="button" onClick={() => setIsEditingProfile(false)} className="flex items-center gap-2 border border-[#F0EAD8] text-[#7A7A7A] py-2 px-5 rounded-full text-sm hover:border-[#E8D8B4] transition-all">
+                      <X className="h-3.5 w-3.5" /> Cancel
+                    </button>
+                  </div>
+                </form>
+              ) : (
+                <>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 text-sm">
+                    <InfoField label="Bank Name" value={profile.bankName} />
+                    <InfoField label="Account Number" value={profile.bankAccountNumber} />
+                    <InfoField label="IFSC Code" value={profile.ifscCode} />
+                    <InfoField label="Account Holder" value={profile.bankAccountHolderName} />
+                    <InfoField label="Bank Branch" value={profile.bankBranch} />
+                    <InfoField label="Aadhaar" value={profile.aadhaarNumber} />
+                    <InfoField label="PAN" value={profile.panNumber} />
+                    <InfoField label="Mailing Address" value={profile.mailingAddress} />
+                  </div>
+                  {(profile.familyContact1Name || profile.familyContact2Name) && (
+                    <>
+                      <h4 className="text-sm font-semibold text-[#1A1A1A] flex items-center gap-2 pt-2"><UsersIcon className="h-4 w-4 text-[#7A7A7A]" /> Emergency Contacts</h4>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
+                        {profile.familyContact1Name && <InfoField label="Contact 1" value={`${profile.familyContact1Name} (${profile.familyContact1Relation || "—"}) - ${profile.familyContact1Phone || "—"}`} />}
+                        {profile.familyContact2Name && <InfoField label="Contact 2" value={`${profile.familyContact2Name} (${profile.familyContact2Relation || "—"}) - ${profile.familyContact2Phone || "—"}`} />}
+                      </div>
+                    </>
+                  )}
                 </>
               )}
             </div>
@@ -526,7 +639,7 @@ export default function EmployeeDetailPage() {
                 <div className="flex items-center justify-between mb-3">
                   <div>
                     <p className="font-semibold text-[#1A1A1A]">{review.period}</p>
-                    <p className="text-xs text-[#7A7A7A]">by {review.reviewer?.name} · {new Date(review.createdAt).toLocaleDateString()}</p>
+                    <p className="text-xs text-[#7A7A7A]">by {review.reviewer?.name ?? "Unknown Reviewer"} · {new Date(review.createdAt).toLocaleDateString()}</p>
                   </div>
                   <div className="flex items-center gap-1">
                     {[1,2,3,4,5].map(s => (

@@ -1,9 +1,10 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useTask } from "@/lib/hooks/use-tasks";
 import { Button, Input } from "@dashmani/ui";
 import { apiFetch } from "@/lib/api";
+import { useEmployees } from "@/lib/hooks/use-employees";
 
 const STATUS_LABELS: Record<string, string> = {
   TODO: "To Do", IN_PROGRESS: "In Progress", IN_REVIEW: "In Review", DONE: "Done", CANCELLED: "Cancelled",
@@ -24,6 +25,10 @@ export default function TaskDetailPage() {
   const { data, isLoading, mutate } = useTask(id as string);
   const [comment, setComment] = useState("");
   const [commenting, setCommenting] = useState(false);
+  const [reassigning, setReassigning] = useState(false);
+  const [reassignValue, setReassignValue] = useState("");
+  const { data: employeesData } = useEmployees({ status: "ACTIVE" });
+  const employees: any[] = (employeesData as any)?.data || [];
 
   if (isLoading) return <div className="flex items-center justify-center h-64"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#F5D547]" /></div>;
   const task = (data as any)?.data;
@@ -35,6 +40,20 @@ export default function TaskDetailPage() {
       mutate();
     } catch (err: any) {
       alert(err.message);
+    }
+  }
+
+  async function handleReassign(assigneeId: string) {
+    if (!assigneeId) return;
+    setReassigning(true);
+    try {
+      await apiFetch(`/tasks/${id}`, { method: "PUT", body: JSON.stringify({ assigneeId: assigneeId || null }) });
+      mutate();
+      setReassignValue("");
+    } catch (err: any) {
+      alert(err.message);
+    } finally {
+      setReassigning(false);
     }
   }
 
@@ -69,7 +88,21 @@ export default function TaskDetailPage() {
         <div className="p-6 space-y-4">
           {task.description && <p className="text-sm text-[#1A1A1A]">{task.description}</p>}
           <div className="grid grid-cols-2 gap-4 text-sm">
-            <div><span className="text-[#7A7A7A]">Assignee:</span> <span className="text-[#1A1A1A]">{task.assignee?.name || "Unassigned"}</span></div>
+            <div className="flex items-center gap-2">
+              <span className="text-[#7A7A7A]">Assignee:</span>
+              <select
+                value={reassignValue || task.assignee?.id || ""}
+                onChange={(e) => { setReassignValue(e.target.value); handleReassign(e.target.value); }}
+                disabled={reassigning}
+                className="border border-[#E8E0D0] bg-white rounded-lg px-2 py-1 text-sm text-[#1A1A1A] outline-none focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547] transition-colors disabled:opacity-60"
+              >
+                <option value="">Unassigned</option>
+                {employees.map((emp: any) => (
+                  <option key={emp.id} value={emp.id}>{emp.name}</option>
+                ))}
+              </select>
+              {reassigning && <span className="text-xs text-[#7A7A7A]">Saving...</span>}
+            </div>
             <div><span className="text-[#7A7A7A]">Created by:</span> <span className="text-[#1A1A1A]">{task.createdBy?.name}</span></div>
             {task.account && <div><span className="text-[#7A7A7A]">Account:</span> <span className="text-[#1A1A1A]">{task.account.platform?.name}: {task.account.handle}</span></div>}
             {task.dueDate && <div><span className="text-[#7A7A7A]">Due:</span> <span className="text-[#1A1A1A]">{new Date(task.dueDate).toLocaleDateString()}</span></div>}

@@ -8,8 +8,7 @@ import { Icon } from "@/components/portal-icons";
 import { ReasonModal } from "@/components/reason-modal";
 import { IGFeedCard, IGProfileGrid, IGStory } from "@/components/ig-previews";
 import { Actions, fmt } from "@/lib/portal-store";
-import { useClientContentPost, useClientPostComments } from "@/lib/hooks/use-content";
-import { useClientApprovals } from "@/lib/hooks/use-projects";
+import { useClientContentPost, useClientPostComments, useClientPendingApprovals, PENDING_APPROVALS_KEY } from "@/lib/hooks/use-content";
 import { apiFetch } from "@/lib/api";
 
 export default function ContentDetailPage() {
@@ -17,14 +16,13 @@ export default function ContentDetailPage() {
   const params = useParams<{ id: string }>();
   const postId = params?.id;
 
-  const { data: postRaw, isLoading: postLoading } = useClientContentPost(postId || "");
-  const post = (postRaw as any)?.data;
+  const { data: post, isLoading: postLoading, error: postError } = useClientContentPost(postId || "");
 
-  const { data: commentsRaw } = useClientPostComments(postId || "");
-  const comments = (commentsRaw as any)?.data ?? post?.thread ?? post?.comments ?? [];
+  const { data: commentsData } = useClientPostComments(postId || "");
+  const comments = commentsData ?? post?.thread ?? post?.comments ?? [];
 
-  const { data: approvalsRaw } = useClientApprovals();
-  const pending = ((approvalsRaw as any)?.data ?? []) as any[];
+  const { data: pendingData } = useClientPendingApprovals();
+  const pending = pendingData ?? [];
 
   const project = post?.project;
 
@@ -50,7 +48,7 @@ export default function ContentDetailPage() {
         body: JSON.stringify({ status: "APPROVED" }),
       });
       mutate(post?.id ? `/client/content/${post.id}` : null);
-      mutate("/client/approvals?limit=100");
+      mutate(PENDING_APPROVALS_KEY);
       advance();
     } catch (err) {
       console.error("Approve failed:", err);
@@ -65,7 +63,7 @@ export default function ContentDetailPage() {
         body: JSON.stringify({ status: "REJECTED", clientNote: note }),
       });
       mutate(post?.id ? `/client/content/${post.id}` : null);
-      mutate("/client/approvals?limit=100");
+      mutate(PENDING_APPROVALS_KEY);
       advance();
     } catch (err) {
       console.error("Revise failed:", err);
@@ -80,7 +78,7 @@ export default function ContentDetailPage() {
         body: JSON.stringify({ status: "REJECTED", clientNote: note }),
       });
       mutate(post?.id ? `/client/content/${post.id}` : null);
-      mutate("/client/approvals?limit=100");
+      mutate(PENDING_APPROVALS_KEY);
       advance();
     } catch (err) {
       console.error("Reject failed:", err);
@@ -119,6 +117,17 @@ export default function ContentDetailPage() {
         <Topstrip title="Content" />
         <div className="p-6 flex-1 grid place-items-center">
           <div className="h-8 w-8 border-2 border-border border-b-action rounded-full animate-spin" />
+        </div>
+      </>
+    );
+  }
+
+  if (postError && !postLoading) {
+    return (
+      <>
+        <Topstrip title="Content" />
+        <div className="p-6 flex-1 grid place-items-center">
+          <Empty icon={<Icon.X size={20}/>} title="Could not load post" hint="Please try refreshing." cta={<Button size="sm" onClick={onBack}>Back to content</Button>} />
         </div>
       </>
     );

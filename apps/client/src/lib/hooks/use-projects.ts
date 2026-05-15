@@ -1,21 +1,25 @@
 import useSWR from "swr";
 import { apiFetch } from "@/lib/api";
 
+export interface Pagination { cursor?: string; has_more?: boolean }
+
 export function useClientProjects(params?: { status?: string; search?: string }) {
   const query = new URLSearchParams();
   if (params?.status) query.set("status", params.status);
   if (params?.search) query.set("search", params.search);
   query.set("limit", "100");
-  return useSWR(`/client/projects?${query.toString()}`, (url) => apiFetch(url));
+  return useSWR<{ items: any[]; meta: Pagination | undefined }>(
+    `/client/projects?${query.toString()}`,
+    async (url: string) => {
+      const env = await apiFetch<any[]>(url);
+      return { items: env.data, meta: env.meta };
+    }
+  );
 }
 
 export function useClientProject(id: string) {
-  return useSWR(id ? `/client/projects/${id}` : null, (url) => apiFetch(url));
-}
-
-export function useClientApprovals(params?: { status?: string }) {
-  const query = new URLSearchParams();
-  if (params?.status) query.set("status", params.status);
-  query.set("limit", "100");
-  return useSWR(`/client/approvals?${query.toString()}`, (url) => apiFetch(url));
+  return useSWR<any>(
+    id ? `/client/projects/${id}` : null,
+    async (url: string) => (await apiFetch<any>(url)).data
+  );
 }

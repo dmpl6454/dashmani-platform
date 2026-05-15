@@ -2,10 +2,11 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Topstrip } from "@/components/portal-topstrip";
-import { Button, StatusBadge, Avatar, Empty } from "@/components/portal-shared";
+import { Button, StatusBadge, Avatar, Empty, PageError } from "@/components/portal-shared";
 import { Icon } from "@/components/portal-icons";
 import { useClientProjects } from "@/lib/hooks/use-projects";
 import { useClientAnalytics } from "@/lib/hooks/use-analytics";
+import { NewBriefModal } from "@/components/new-brief-modal";
 import type { StatusKey } from "@/lib/portal-store";
 
 type Filter = "all" | "active" | "attention" | "paused" | "done";
@@ -13,11 +14,10 @@ type SortKey = "due" | "name" | "health";
 
 export default function ProjectsPage() {
   const router = useRouter();
-  const { data: projectsRaw, isLoading } = useClientProjects();
-  const { data: analyticsRaw } = useClientAnalytics();
+  const { data: projectsRaw, isLoading, error: projectsError } = useClientProjects();
+  const { data: analyticsData } = useClientAnalytics();
 
-  const projects: any[] = (projectsRaw as any)?.data ?? [];
-  const analyticsData = (analyticsRaw as any)?.data;
+  const projects: any[] = projectsRaw?.items ?? [];
 
   const pendingByProject: Record<string, number> = {};
   for (const ps of analyticsData?.projectSummaries ?? []) {
@@ -26,6 +26,7 @@ export default function ProjectsPage() {
 
   const [filter, setFilter] = useState<Filter>("active");
   const [sortKey, setSortKey] = useState<SortKey>("due");
+  const [briefOpen, setBriefOpen] = useState(false);
 
   const isOverdue = (p: any) =>
     p.dueDate && new Date(p.dueDate) < new Date() && p.status === "ACTIVE";
@@ -68,8 +69,9 @@ export default function ProjectsPage() {
       <Topstrip
         title="Projects"
         sub={`${projects.length} projects`}
-        right={<Button variant="primary" size="sm" icon={<Icon.Plus size={15} sw={2.4}/>}>New brief</Button>}
+        right={<Button variant="primary" size="sm" icon={<Icon.Plus size={15} sw={2.4}/>} onClick={() => setBriefOpen(true)}>New brief</Button>}
       />
+      <NewBriefModal open={briefOpen} onClose={() => setBriefOpen(false)} />
       <div className="px-6 py-5 max-w-[1200px] mx-auto w-full">
         <div className="flex items-center gap-2 mb-4 flex-wrap">
           {chips.map((f) => (
@@ -108,6 +110,11 @@ export default function ProjectsPage() {
             <span className="text-right">Health</span>
             <span></span>
           </div>
+          {projectsError && !isLoading && (
+            <div className="px-4 py-6">
+              <PageError message="Could not load projects. Please refresh." />
+            </div>
+          )}
           {isLoading && (
             <>
               {[0,1,2,3].map(i => (

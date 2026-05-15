@@ -14,7 +14,7 @@ function formatBytes(bytes: number): string {
 
 export default function FilesPage() {
   const { data: projectsData } = useClientProjects();
-  const projects = (projectsData as any)?.data ?? [];
+  const projects = projectsData?.items ?? [];
 
   const [search, setSearch] = useState("");
   const [projectId, setProjectId] = useState<string | undefined>(undefined);

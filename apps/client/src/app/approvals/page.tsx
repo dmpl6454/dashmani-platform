@@ -3,21 +3,22 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { mutate } from "swr";
 import { Topstrip } from "@/components/portal-topstrip";
-import { Button, AspectThumb, FormatPill, Avatar, Empty, KbdRow, Modal } from "@/components/portal-shared";
+import { Button, AspectThumb, FormatPill, Avatar, Empty, KbdRow, Modal, PageError } from "@/components/portal-shared";
 import { Icon } from "@/components/portal-icons";
 import { ReasonModal } from "@/components/reason-modal";
 import { IGFeedCard } from "@/components/ig-previews";
 import { Actions, fmt } from "@/lib/portal-store";
-import { useClientApprovals, useClientProjects } from "@/lib/hooks/use-projects";
+import { useClientProjects } from "@/lib/hooks/use-projects";
+import { useClientPendingApprovals, PENDING_APPROVALS_KEY } from "@/lib/hooks/use-content";
 import { apiFetch } from "@/lib/api";
 
 export default function ApprovalsPage() {
   const router = useRouter();
-  const { data: approvalsRaw, isLoading } = useClientApprovals();
-  const pending: any[] = (approvalsRaw as any)?.data ?? [];
+  const { data: approvalsData, isLoading, error: approvalsError } = useClientPendingApprovals();
+  const pending: any[] = approvalsData ?? [];
 
-  const { data: projectsRaw } = useClientProjects();
-  const projects: any[] = (projectsRaw as any)?.data ?? [];
+  const { data: projectsData } = useClientProjects();
+  const projects: any[] = projectsData?.items ?? [];
 
   const [focusId, setFocusId] = useState<string | undefined>(pending[0]?.id);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -46,7 +47,7 @@ export default function ApprovalsPage() {
         method: "PUT",
         body: JSON.stringify({ status: "APPROVED" }),
       });
-      mutate("/client/approvals?limit=100");
+      mutate(PENDING_APPROVALS_KEY);
     } catch {
       Actions.toast({ kind: "danger", text: "Could not approve. Please try again." });
     }
@@ -58,7 +59,7 @@ export default function ApprovalsPage() {
         method: "PUT",
         body: JSON.stringify({ status: "REJECTED", clientNote: note }),
       });
-      mutate("/client/approvals?limit=100");
+      mutate(PENDING_APPROVALS_KEY);
     } catch {
       Actions.toast({ kind: "danger", text: "Could not request revision. Please try again." });
     }
@@ -70,7 +71,7 @@ export default function ApprovalsPage() {
         method: "PUT",
         body: JSON.stringify({ status: "REJECTED", clientNote: note }),
       });
-      mutate("/client/approvals?limit=100");
+      mutate(PENDING_APPROVALS_KEY);
     } catch {
       Actions.toast({ kind: "danger", text: "Could not reject. Please try again." });
     }
@@ -84,7 +85,7 @@ export default function ApprovalsPage() {
           body: JSON.stringify({ status: "APPROVED" }),
         })
       ));
-      mutate("/client/approvals?limit=100");
+      mutate(PENDING_APPROVALS_KEY);
       setSelectedIds(new Set());
       setModal(null);
     } catch {
@@ -100,7 +101,7 @@ export default function ApprovalsPage() {
           body: JSON.stringify({ status: "REJECTED", clientNote: note }),
         })
       ));
-      mutate("/client/approvals?limit=100");
+      mutate(PENDING_APPROVALS_KEY);
       setSelectedIds(new Set());
       setModal(null);
     } catch {
@@ -178,7 +179,11 @@ export default function ApprovalsPage() {
 
       <div className="flex-1 grid grid-cols-[340px_1fr] min-h-0">
         <div className="border-r border-rule bg-bg overflow-y-auto">
-          {isLoading ? (
+          {approvalsError && !isLoading ? (
+            <div className="p-4">
+              <PageError message="Could not load approvals." />
+            </div>
+          ) : isLoading ? (
             <div className="p-4 space-y-2">
               {[0,1,2,3].map(i => <div key={i} className="h-16 bg-muted rounded animate-pulse"/>)}
             </div>

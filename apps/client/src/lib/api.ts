@@ -1,6 +1,18 @@
+// API envelope contract:
+// `apiFetch<T>()` returns the full `{success, data, meta?}` envelope.
+// Hooks under `lib/hooks/` are responsible for unwrapping:
+//   - Non-paginated routes: hook returns `data` (the unwrapped T).
+//   - Paginated routes: hook returns `{ items: T[], meta }`.
+// Pages and components consume hook return values directly — no `?.data` reads.
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/v1";
 
-export async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
+export interface ApiEnvelope<T> {
+  success: true;
+  data: T;
+  meta?: { cursor?: string; has_more?: boolean };
+}
+
+export async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<ApiEnvelope<T>> {
   const token = typeof window !== "undefined" ? localStorage.getItem("clientAccessToken") : null;
 
   const res = await fetch(`${API_URL}${path}`, {
@@ -25,7 +37,7 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}): Prom
     throw new Error(data.error?.message || "API error");
   }
 
-  return data;
+  return data as ApiEnvelope<T>;
 }
 
 async function tryRefresh(): Promise<boolean> {

@@ -184,6 +184,22 @@ export function Empty({ icon, title, hint, cta }: { icon?: ReactNode; title: str
   );
 }
 
+/* — Skeleton — */
+export function Skeleton({ className = "" }: { className?: string }) {
+  return <div className={`animate-pulse bg-muted rounded ${className}`} />;
+}
+
+/* — PageError — */
+export function PageError({ message = "Something went wrong" }: { message?: string }) {
+  return (
+    <Empty
+      icon={<Icon.Close size={20} />}
+      title="Could not load"
+      hint={message}
+    />
+  );
+}
+
 /* — Keyboard-hint row — */
 export function KbdRow({ items }: { items: { k: string; label: string }[] }) {
   return (

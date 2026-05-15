@@ -54,6 +54,29 @@ docker-compose up -d
 
 Copy `.env.example` → `.env` before first run. The docker-compose credentials match the example file exactly.
 
+### Environment URL switching
+
+Each frontend app has an `apps/<app>/.env.local` file controlling `NEXT_PUBLIC_API_URL`.
+
+**Current state (local dev):** All `.env.local` files point to `http://localhost:4000/v1`.
+
+**Production URL:** `https://api.digitalsukoon.com/v1` — verified to exist but may have issues. Original `.env.local` files all had this value.
+
+**To revert all apps to production API:**
+```bash
+# Run from repo root
+for app in client internal hr jobs; do
+  echo "NEXT_PUBLIC_API_URL=https://api.digitalsukoon.com/v1" > "apps/$app/.env.local"
+done
+```
+
+**To set back to localhost (local dev):**
+```bash
+for app in client internal hr jobs; do
+  echo "NEXT_PUBLIC_API_URL=http://localhost:4000/v1" > "apps/$app/.env.local"
+done
+```
+
 ## Architecture
 
 ### API (`apps/api`)
@@ -87,3 +110,53 @@ All schema changes go through `packages/db/prisma/schema.prisma`. Run `db:genera
 - Shared Zod schemas in `packages/shared/src/validators/` are used on both API (input validation) and frontends (form validation) — don't duplicate validators in app code.
 - Cron jobs live in `apps/api/src/cron/` and are bootstrapped in `src/index.ts`.
 - Business logic belongs in `apps/api/src/services/`, not in route handlers.
+
+## Client Portal (`apps/client`) — Implementation Status
+
+All 9 implementation phases + 5-wave audit remediation complete. See `.planning/CLIENT-PORTAL-AUDIT.md` for the full issue register and resolution commit log.
+
+### What's implemented
+
+**DB Schema** (`packages/db/prisma/schema.prisma`):
+- `ContentPost` extended with `format`, `aspectRatio`, `hashtags`
+- `Project` extended with `healthScore`
+- `PostComment` model (linked to `ContentPost` + `User`)
+- `ClientInvite` model (invite-based signup flow)
+
+**API endpoints** (`apps/api/src/routes/client.routes.ts`):
+- `POST /v1/client/auth/invite-request` — admin creates invite (protected)
+- `POST /v1/client/auth/register` — public invite acceptance + account creation
+- `GET/POST /v1/client/content/:id/comments` — discussion thread
+- `GET /v1/client/files` — aggregated file browser across projects
+- `GET /v1/client/analytics` — client-scoped analytics (calls `getClientContentAnalytics`)
+- `POST /v1/client/content/brief` — create a draft ContentPost ("brief") from the client
+- `GET /v1/client/approvals` — **LEGACY / admin-only**, not used by client portal
+
+**Frontend pages** (all use real SWR hooks, no mock store data):
+- `/signup` — invite token flow, matches login card style
+- `/dashboard` — live approvals queue + analytics stats via SWR
+- `/projects` — project list with health bars via SWR
+- `/projects/[id]` — project detail via SWR
+- `/content` — list + calendar toggle; calendar uses `ContentCalendar` component
+- `/content/[id]` — post detail, IG previews, real comments, approve/revise/reject wired to API
+- `/approvals` — split-view inbox wired to `ContentPost?status=PENDING_APPROVAL`, all actions via API
+- `/analytics` — recharts PieChart + BarChart + project table
+- `/files` — file browser with project filter, `formatBytes`, download links
+
+**Shared components** (`apps/client/src/components/`):
+- `portal-shared.tsx`: `Skeleton`, `PageError`, `Modal`, `Button`, `Avatar`, etc.
+- `command-palette.tsx`: Cmd/Ctrl+K global search — pages + projects, ↑↓/↵/Esc
+- `new-brief-modal.tsx`: project picker + title + description + optional reference URL
+- `content-calendar.tsx`: month grid with `FormatPill` stacks, prev/next navigation
+
+**Loading states**: `loading.tsx` exists in all 8 route folders.
+
+### API envelope convention
+`apiFetch<T>()` returns `Promise<ApiEnvelope<T>>` — the full `{success, data, meta?}` envelope. Hooks under `lib/hooks/` unwrap `.data` in their fetcher. Pages consume hook return values directly — no `?.data` reads in page code.
+
+### Key design notes
+- `portal-store` (`lib/portal-store.ts`) is still imported for `Actions` (toast) and `fmt` (date formatting) helpers only — it no longer drives page data.
+- Approvals page and sidebar badge both use `useClientPendingApprovals` (shared SWR key = `PENDING_APPROVALS_KEY`). Badge is hidden until the hook resolves to avoid a flash from 0 → real count.
+- `addPostComment` resolves `clientId → client.email → User.id` to satisfy the `PostComment.authorId → User` FK.
+- `GET /v1/client/analytics` calls `analyticsService.getClientContentAnalytics(clientId)` (not `getClientAnalytics`).
+- `createClientBrief` resolves `createdById` via fallback: recent post creator → recent task creator → any active user in the project's org.

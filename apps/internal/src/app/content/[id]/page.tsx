@@ -5,6 +5,8 @@ import { useContentPost } from "@/lib/hooks/use-content";
 import { Button } from "@dashmani/ui";
 import { ContentForm } from "@/components/content-form";
 import { apiFetch } from "@/lib/api";
+import useSWR from "swr";
+import { Send } from "lucide-react";
 
 const STATUS_LABELS: Record<string, string> = {
   DRAFT: "Draft",
@@ -59,6 +61,13 @@ export default function ContentDetailPage() {
   const { data, isLoading, mutate } = useContentPost(id as string);
   const [isEditing, setIsEditing] = useState(false);
   const [transitioning, setTransitioning] = useState(false);
+  const [commentBody, setCommentBody] = useState("");
+  const [submittingComment, setSubmittingComment] = useState(false);
+  const { data: commentsData, mutate: mutateComments } = useSWR(
+    id ? `/content/${id}/comments` : null,
+    (url: string) => apiFetch<any>(url)
+  );
+  const comments: any[] = commentsData?.data || [];
 
   if (isLoading) return <div className="flex items-center justify-center h-64"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#F5D547]" /></div>;
   const post = (data as any)?.data;
@@ -86,6 +95,24 @@ export default function ContentDetailPage() {
       router.push("/content");
     } catch (err: any) {
       alert(err.message);
+    }
+  }
+
+  async function handleAddComment(e: React.FormEvent) {
+    e.preventDefault();
+    if (!commentBody.trim()) return;
+    setSubmittingComment(true);
+    try {
+      await apiFetch(`/content/${id}/comments`, {
+        method: "POST",
+        body: JSON.stringify({ body: commentBody.trim() }),
+      });
+      setCommentBody("");
+      mutateComments();
+    } catch (err: any) {
+      alert(err.message);
+    } finally {
+      setSubmittingComment(false);
     }
   }
 
@@ -200,6 +227,51 @@ export default function ContentDetailPage() {
           </div>
         </div>
       )}
+
+      {/* Comments */}
+      <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0]">
+        <div className="px-6 py-4 border-b border-[#F0EAD8]">
+          <h3 className="text-base font-serif text-[#1A1A1A] font-medium">Comments {comments.length > 0 && <span className="text-[#7A7A7A] font-sans text-sm font-normal">({comments.length})</span>}</h3>
+        </div>
+        <div className="p-6 space-y-4">
+          {comments.length === 0 ? (
+            <p className="text-sm text-[#B0B0B0] text-center py-4">No comments yet</p>
+          ) : (
+            <div className="space-y-4">
+              {comments.map((c: any) => (
+                <div key={c.id} className="flex gap-3">
+                  <div className="h-8 w-8 rounded-full bg-[#FFF3C4] flex items-center justify-center text-xs font-bold text-[#B8960C] shrink-0">
+                    {c.author?.name?.[0]?.toUpperCase() || "?"}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-baseline gap-2 mb-1">
+                      <span className="text-sm font-medium text-[#1A1A1A]">{c.author?.name || "Unknown"}</span>
+                      <span className="text-xs text-[#B0B0B0]">{new Date(c.createdAt).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</span>
+                    </div>
+                    <p className="text-sm text-[#3A3A3A] whitespace-pre-wrap">{c.body}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          <form onSubmit={handleAddComment} className="flex gap-3 pt-2 border-t border-[#F0EAD8]">
+            <textarea
+              value={commentBody}
+              onChange={(e) => setCommentBody(e.target.value)}
+              placeholder="Add a comment..."
+              rows={2}
+              className="flex-1 border border-[#E8E0D0] bg-white rounded-lg px-3 py-2 text-sm text-[#1A1A1A] placeholder:text-[#B0B0B0] focus:outline-none focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547] transition-colors resize-none"
+            />
+            <button
+              type="submit"
+              disabled={submittingComment || !commentBody.trim()}
+              className="self-end flex items-center gap-1.5 bg-[#1A1A1A] text-white py-2 px-4 rounded-full text-sm font-semibold hover:bg-[#2B2B2B] disabled:opacity-40 transition-all"
+            >
+              <Send size={14} /> {submittingComment ? "Posting..." : "Post"}
+            </button>
+          </form>
+        </div>
+      </div>
     </div>
   );
 }

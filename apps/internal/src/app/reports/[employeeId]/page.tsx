@@ -1,5 +1,4 @@
 "use client";
-import { use } from "react";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { useAdminReports } from "@/lib/hooks/use-reports";
@@ -22,8 +21,8 @@ function formatDate(dateStr: string) {
   }
 }
 
-export default function EmployeeReportsPage({ params }: { params: Promise<{ employeeId: string }> }) {
-  const { employeeId } = use(params);
+export default function EmployeeReportsPage({ params }: { params: { employeeId: string } }) {
+  const { employeeId } = params;
   const { data: employeeData, isLoading: empLoading } = useEmployee(employeeId);
   const { data: reportsData, isLoading: reportsLoading } = useAdminReports({ employeeId });
 

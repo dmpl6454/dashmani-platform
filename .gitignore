@@ -6,3 +6,8 @@ dist/
 *.log
 coverage/
 .DS_Store
+.worktrees/
+.claude/settings.local.json
+.claude/worktrees/
+*.tsbuildinfo
+nul

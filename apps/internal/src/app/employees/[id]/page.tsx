@@ -10,6 +10,9 @@ import {
   User, FileText, Clock, IndianRupee, Award, BarChart3, Briefcase, CreditCard,
   Users as UsersIcon, Plus, Check, X, Eye, MonitorSmartphone, ExternalLink, ListTodo, Laptop, Smartphone, Monitor, Headphones,
 } from "lucide-react";
+import { getRoleColor } from "@/lib/role-colors";
+import { useAuth } from "@/lib/auth";
+import { useRouter } from "next/navigation";
 
 const inputClass = "w-full border border-[#E8E0D0] bg-white rounded-lg px-4 py-2.5 text-sm text-[#1A1A1A] placeholder:text-[#B0B0B0] focus:outline-none focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547] transition-colors";
 
@@ -19,12 +22,14 @@ function formatCurrency(n: number) {
 
 export default function EmployeeDetailPage() {
   const { id } = useParams();
+  const router = useRouter();
+  const { user: currentUser } = useAuth();
   const { data, isLoading } = useEmployee(id as string);
   const [roles, setRoles] = useState([]);
   const [activeTab, setActiveTab] = useState<"profile" | "accounts" | "documents" | "hours" | "incentives" | "reviews" | "tasks" | "devices">("profile");
 
   // Fetch additional data
-  const { data: profileData } = useSWR(id ? `/admin/employees/${id}/profile-data` : null, (url: string) => apiFetch<any>(url).catch(() => null));
+  const { data: profileData, mutate: mutateProfile } = useSWR(id ? `/admin/employees/${id}/profile-data` : null, (url: string) => apiFetch<any>(url).catch(() => null));
   const { data: docsData } = useSWR(id ? `/admin/documents?employeeId=${id}` : null, (url: string) => apiFetch<any>(url).catch(() => ({ data: [] })));
   const { data: extraHoursData, mutate: mutateHours } = useSWR(id ? `/admin/extra-hours?employeeId=${id}` : null, (url: string) => apiFetch<any>(url).catch(() => ({ data: [] })));
   const { data: incentivesData, mutate: mutateIncentives } = useSWR(id ? `/admin/incentives?employeeId=${id}` : null, (url: string) => apiFetch<any>(url).catch(() => ({ data: [] })));
@@ -35,6 +40,9 @@ export default function EmployeeDetailPage() {
 
   const [jdForm, setJdForm] = useState("");
   const [savingJd, setSavingJd] = useState(false);
+  const [isEditingProfile, setIsEditingProfile] = useState(false);
+  const [profileEditForm, setProfileEditForm] = useState<Record<string, string>>({});
+  const [savingProfile, setSavingProfile] = useState(false);
   const [incentiveForm, setIncentiveForm] = useState({ amount: "", reason: "", month: "", year: "" });
   const [addingIncentive, setAddingIncentive] = useState(false);
   const [reviewForm, setReviewForm] = useState({ period: "", rating: "3", strengths: "", improvements: "", comments: "", goals: "" });
@@ -71,6 +79,41 @@ export default function EmployeeDetailPage() {
       });
     } catch (e: any) { alert(e.message); }
     finally { setSavingJd(false); }
+  }
+
+  function startEditProfile() {
+    const p = profileData?.data || {};
+    setProfileEditForm({
+      bankName: p.bankName || "",
+      bankAccountNumber: p.bankAccountNumber || "",
+      bankAccountHolderName: p.bankAccountHolderName || "",
+      bankBranch: p.bankBranch || "",
+      ifscCode: p.ifscCode || "",
+      aadhaarNumber: p.aadhaarNumber || "",
+      panNumber: p.panNumber || "",
+      mailingAddress: p.mailingAddress || "",
+      familyContact1Name: p.familyContact1Name || "",
+      familyContact1Phone: p.familyContact1Phone || "",
+      familyContact1Relation: p.familyContact1Relation || "",
+      familyContact2Name: p.familyContact2Name || "",
+      familyContact2Phone: p.familyContact2Phone || "",
+      familyContact2Relation: p.familyContact2Relation || "",
+    });
+    setIsEditingProfile(true);
+  }
+
+  async function saveProfileData(e: React.FormEvent) {
+    e.preventDefault();
+    setSavingProfile(true);
+    try {
+      await apiFetch(`/admin/employees/${id}/profile-data`, {
+        method: "PUT",
+        body: JSON.stringify(profileEditForm),
+      });
+      mutateProfile();
+      setIsEditingProfile(false);
+    } catch (e: any) { alert(e.message); }
+    finally { setSavingProfile(false); }
   }
 
   async function handleAddIncentive(e: React.FormEvent) {
@@ -114,6 +157,17 @@ export default function EmployeeDetailPage() {
     } catch (e: any) { alert(e.message); }
   }
 
+  const callerRoles = (currentUser?.roles ?? []).map((r) => r.toLowerCase());
+  const isAdminOrSuperAdmin = callerRoles.includes("super admin") || callerRoles.includes("admin");
+
+  async function handleDeleteEmployee() {
+    if (!confirm(`Are you sure you want to delete ${employee.name}? This action cannot be undone.`)) return;
+    try {
+      await apiFetch(`/admin/users/${id}`, { method: "DELETE" });
+      router.push("/employees");
+    } catch (e: any) { alert(e.message); }
+  }
+
   const tabs = [
     { key: "profile" as const, label: "Profile & Edit", icon: User },
     { key: "tasks" as const, label: "Tasks", icon: ListTodo, count: tasks.filter((t: any) => t.status !== "DONE").length },
@@ -142,6 +196,13 @@ export default function EmployeeDetailPage() {
           <div>
             <h1 className="font-serif text-3xl font-light text-[#1A1A1A]">{employee.name}</h1>
             <p className="text-sm text-[#7A7A7A]">{employee.email} {profile?.designation ? `· ${profile.designation}` : ""}</p>
+            {employee.roles?.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mt-2">
+                {employee.roles.map((r: any) => (
+                  <span key={r.id} className={`rounded-full px-2.5 py-0.5 text-[11px] font-medium border ${getRoleColor(r.name)}`}>{r.name}</span>
+                ))}
+              </div>
+            )}
           </div>
         </div>
         <div className="flex gap-2">
@@ -151,6 +212,14 @@ export default function EmployeeDetailPage() {
           >
             <BarChart3 className="h-4 w-4" /> Performance
           </Link>
+          {isAdminOrSuperAdmin && (
+            <button
+              onClick={handleDeleteEmployee}
+              className="flex items-center gap-2 border border-red-200 text-red-600 py-2.5 px-5 rounded-full text-sm font-semibold hover:bg-red-50 transition-all"
+            >
+              <X className="h-4 w-4" /> Delete
+            </button>
+          )}
         </div>
       </div>
 
@@ -212,6 +281,11 @@ export default function EmployeeDetailPage() {
             <EmployeeForm employee={employee} roles={roles} />
           </div>
 
+          {/* Role Management — admin/super-admin only */}
+          {isAdminOrSuperAdmin && (
+            <RoleManager employeeId={id as string} allRoles={roles} currentRoles={employee.roles ?? []} />
+          )}
+
           {/* Job Description */}
           <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-[#E8E0D0] p-6">
             <div className="flex items-center gap-3 mb-4">
@@ -232,27 +306,102 @@ export default function EmployeeDetailPage() {
             </div>
           </div>
 
-          {/* Employee Submitted Data (read-only view for admin) */}
+          {/* Employee Submitted Data — editable by admin */}
           {profile && (
             <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-[#E8E0D0] p-6 space-y-4">
-              <h3 className="text-lg font-semibold text-[#1A1A1A] flex items-center gap-2"><CreditCard className="h-5 w-5 text-[#7A7A7A]" /> Employee Submitted Data</h3>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 text-sm">
-                <InfoField label="Bank Name" value={profile.bankName} />
-                <InfoField label="Account Number" value={profile.bankAccountNumber} />
-                <InfoField label="IFSC Code" value={profile.ifscCode} />
-                <InfoField label="Account Holder" value={profile.bankAccountHolderName} />
-                <InfoField label="Bank Branch" value={profile.bankBranch} />
-                <InfoField label="Aadhaar" value={profile.aadhaarNumber} />
-                <InfoField label="PAN" value={profile.panNumber} />
-                <InfoField label="Mailing Address" value={profile.mailingAddress} />
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-semibold text-[#1A1A1A] flex items-center gap-2"><CreditCard className="h-5 w-5 text-[#7A7A7A]" /> Employee Submitted Data</h3>
+                {!isEditingProfile && (
+                  <button onClick={startEditProfile} className="flex items-center gap-1.5 text-xs text-[#7A7A7A] hover:text-[#1A1A1A] border border-[#F0EAD8] hover:border-[#E8D8B4] rounded-lg px-3 py-1.5 transition-all">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                    Edit
+                  </button>
+                )}
               </div>
-              {(profile.familyContact1Name || profile.familyContact2Name) && (
-                <>
-                  <h4 className="text-sm font-semibold text-[#1A1A1A] flex items-center gap-2 pt-2"><UsersIcon className="h-4 w-4 text-[#7A7A7A]" /> Emergency Contacts</h4>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
-                    {profile.familyContact1Name && <InfoField label="Contact 1" value={`${profile.familyContact1Name} (${profile.familyContact1Relation || "—"}) - ${profile.familyContact1Phone || "—"}`} />}
-                    {profile.familyContact2Name && <InfoField label="Contact 2" value={`${profile.familyContact2Name} (${profile.familyContact2Relation || "—"}) - ${profile.familyContact2Phone || "—"}`} />}
+
+              {isEditingProfile ? (
+                <form onSubmit={saveProfileData} className="space-y-4">
+                  <div>
+                    <p className="text-xs font-semibold text-[#7A7A7A] uppercase tracking-wider mb-3">Bank Details</p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                      {[
+                        { key: "bankName", label: "Bank Name" },
+                        { key: "bankAccountNumber", label: "Account Number" },
+                        { key: "bankAccountHolderName", label: "Account Holder" },
+                        { key: "bankBranch", label: "Branch" },
+                        { key: "ifscCode", label: "IFSC Code" },
+                      ].map(({ key, label }) => (
+                        <div key={key}>
+                          <label className="block text-xs text-[#7A7A7A] mb-1">{label}</label>
+                          <input className={inputClass} value={profileEditForm[key] || ""} onChange={(e) => setProfileEditForm({ ...profileEditForm, [key]: e.target.value })} placeholder={label} />
+                        </div>
+                      ))}
+                    </div>
                   </div>
+                  <div>
+                    <p className="text-xs font-semibold text-[#7A7A7A] uppercase tracking-wider mb-3">ID Documents</p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      {[{ key: "aadhaarNumber", label: "Aadhaar Number" }, { key: "panNumber", label: "PAN Number" }].map(({ key, label }) => (
+                        <div key={key}>
+                          <label className="block text-xs text-[#7A7A7A] mb-1">{label}</label>
+                          <input className={inputClass} value={profileEditForm[key] || ""} onChange={(e) => setProfileEditForm({ ...profileEditForm, [key]: e.target.value })} placeholder={label} />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-[#7A7A7A] mb-1">Mailing Address</label>
+                    <textarea rows={2} className={inputClass + " resize-none"} value={profileEditForm.mailingAddress || ""} onChange={(e) => setProfileEditForm({ ...profileEditForm, mailingAddress: e.target.value })} placeholder="Full mailing address" />
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold text-[#7A7A7A] uppercase tracking-wider mb-3">Emergency Contacts</p>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
+                      {[{ key: "familyContact1Name", label: "Contact 1 Name" }, { key: "familyContact1Relation", label: "Relation" }, { key: "familyContact1Phone", label: "Phone" }].map(({ key, label }) => (
+                        <div key={key}>
+                          <label className="block text-xs text-[#7A7A7A] mb-1">{label}</label>
+                          <input className={inputClass} value={profileEditForm[key] || ""} onChange={(e) => setProfileEditForm({ ...profileEditForm, [key]: e.target.value })} placeholder={label} />
+                        </div>
+                      ))}
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      {[{ key: "familyContact2Name", label: "Contact 2 Name" }, { key: "familyContact2Relation", label: "Relation" }, { key: "familyContact2Phone", label: "Phone" }].map(({ key, label }) => (
+                        <div key={key}>
+                          <label className="block text-xs text-[#7A7A7A] mb-1">{label}</label>
+                          <input className={inputClass} value={profileEditForm[key] || ""} onChange={(e) => setProfileEditForm({ ...profileEditForm, [key]: e.target.value })} placeholder={label} />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="flex gap-3 pt-2">
+                    <button type="submit" disabled={savingProfile} className="flex items-center gap-2 bg-[#1A1A1A] text-white py-2 px-5 rounded-full text-sm font-semibold hover:bg-[#2B2B2B] disabled:opacity-50 transition-all">
+                      <Check className="h-3.5 w-3.5" /> {savingProfile ? "Saving..." : "Save Changes"}
+                    </button>
+                    <button type="button" onClick={() => setIsEditingProfile(false)} className="flex items-center gap-2 border border-[#F0EAD8] text-[#7A7A7A] py-2 px-5 rounded-full text-sm hover:border-[#E8D8B4] transition-all">
+                      <X className="h-3.5 w-3.5" /> Cancel
+                    </button>
+                  </div>
+                </form>
+              ) : (
+                <>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 text-sm">
+                    <InfoField label="Bank Name" value={profile.bankName} />
+                    <InfoField label="Account Number" value={profile.bankAccountNumber} />
+                    <InfoField label="IFSC Code" value={profile.ifscCode} />
+                    <InfoField label="Account Holder" value={profile.bankAccountHolderName} />
+                    <InfoField label="Bank Branch" value={profile.bankBranch} />
+                    <InfoField label="Aadhaar" value={profile.aadhaarNumber} />
+                    <InfoField label="PAN" value={profile.panNumber} />
+                    <InfoField label="Mailing Address" value={profile.mailingAddress} />
+                  </div>
+                  {(profile.familyContact1Name || profile.familyContact2Name) && (
+                    <>
+                      <h4 className="text-sm font-semibold text-[#1A1A1A] flex items-center gap-2 pt-2"><UsersIcon className="h-4 w-4 text-[#7A7A7A]" /> Emergency Contacts</h4>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
+                        {profile.familyContact1Name && <InfoField label="Contact 1" value={`${profile.familyContact1Name} (${profile.familyContact1Relation || "—"}) - ${profile.familyContact1Phone || "—"}`} />}
+                        {profile.familyContact2Name && <InfoField label="Contact 2" value={`${profile.familyContact2Name} (${profile.familyContact2Relation || "—"}) - ${profile.familyContact2Phone || "—"}`} />}
+                      </div>
+                    </>
+                  )}
                 </>
               )}
             </div>
@@ -526,7 +675,7 @@ export default function EmployeeDetailPage() {
                 <div className="flex items-center justify-between mb-3">
                   <div>
                     <p className="font-semibold text-[#1A1A1A]">{review.period}</p>
-                    <p className="text-xs text-[#7A7A7A]">by {review.reviewer?.name} · {new Date(review.createdAt).toLocaleDateString()}</p>
+                    <p className="text-xs text-[#7A7A7A]">by {review.reviewer?.name ?? "Unknown Reviewer"} · {new Date(review.createdAt).toLocaleDateString()}</p>
                   </div>
                   <div className="flex items-center gap-1">
                     {[1,2,3,4,5].map(s => (
@@ -594,6 +743,74 @@ function InfoField({ label, value }: { label: string; value?: string | null }) {
     <div>
       <p className="text-xs text-[#7A7A7A] mb-0.5">{label}</p>
       <p className="text-[#1A1A1A] bg-[#FEFCF7] rounded-lg px-3 py-2 border border-[#E8E0D0]">{value || "—"}</p>
+    </div>
+  );
+}
+
+function RoleManager({ employeeId, allRoles, currentRoles }: { employeeId: string; allRoles: any[]; currentRoles: any[] }) {
+  const [selected, setSelected] = useState<Set<string>>(new Set(currentRoles.map((r: any) => r.id)));
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  function toggle(roleId: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(roleId)) next.delete(roleId);
+      else next.add(roleId);
+      return next;
+    });
+    setSaved(false);
+  }
+
+  async function handleSave() {
+    setSaving(true);
+    try {
+      await apiFetch(`/admin/users/${employeeId}/roles`, {
+        method: "PUT",
+        body: JSON.stringify({ roleIds: Array.from(selected) }),
+      });
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
+    } catch (e: any) { alert(e.message); }
+    finally { setSaving(false); }
+  }
+
+  return (
+    <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-[#E8E0D0] p-6 max-w-2xl">
+      <div className="flex items-center gap-3 mb-4">
+        <UsersIcon className="h-5 w-5 text-[#7A7A7A]" />
+        <h3 className="text-lg font-semibold text-[#1A1A1A]">Role Assignment</h3>
+      </div>
+      <p className="text-xs text-[#7A7A7A] mb-4">Roles control what this employee can see and do across the portal.</p>
+      <div className="flex flex-wrap gap-2 mb-5">
+        {allRoles.map((role: any) => {
+          const active = selected.has(role.id);
+          return (
+            <button
+              key={role.id}
+              onClick={() => toggle(role.id)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border transition-all ${
+                active
+                  ? "bg-[#1A1A1A] text-white border-[#1A1A1A]"
+                  : "bg-white text-[#7A7A7A] border-[#E8E0D0] hover:border-[#B0B0B0]"
+              }`}
+            >
+              {active ? <Check size={11} /> : <Plus size={11} />}
+              {role.name}
+            </button>
+          );
+        })}
+      </div>
+      <div className="flex items-center gap-3">
+        <button
+          onClick={handleSave}
+          disabled={saving}
+          className="bg-[#1A1A1A] text-white py-2 px-5 rounded-full text-sm font-semibold hover:bg-[#2B2B2B] disabled:opacity-50 transition-all"
+        >
+          {saving ? "Saving..." : "Save Roles"}
+        </button>
+        {saved && <span className="text-xs text-emerald-600 font-medium flex items-center gap-1"><Check size={12} /> Roles updated</span>}
+      </div>
     </div>
   );
 }

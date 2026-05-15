@@ -2,40 +2,56 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Topstrip } from "@/components/portal-topstrip";
-import { Button, StatusBadge, Avatar, Empty } from "@/components/portal-shared";
+import { Button, StatusBadge, Avatar, Empty, PageError } from "@/components/portal-shared";
 import { Icon } from "@/components/portal-icons";
-import { sel, usePortalStore, type Project } from "@/lib/portal-store";
+import { useClientProjects } from "@/lib/hooks/use-projects";
+import { useClientAnalytics } from "@/lib/hooks/use-analytics";
+import { NewBriefModal } from "@/components/new-brief-modal";
+import type { StatusKey } from "@/lib/portal-store";
 
 type Filter = "all" | "active" | "attention" | "paused" | "done";
 type SortKey = "due" | "name" | "health";
 
 export default function ProjectsPage() {
   const router = useRouter();
-  const projects = usePortalStore(sel.projects);
-  const posts = usePortalStore(sel.posts);
-  const [filter, setFilter] = useState<Filter>("active");
+  const { data: projectsRaw, isLoading, error: projectsError } = useClientProjects();
+  const { data: analyticsData } = useClientAnalytics();
+
+  const projects: any[] = projectsRaw?.items ?? [];
+
+  const pendingByProject: Record<string, number> = {};
+  for (const ps of analyticsData?.projectSummaries ?? []) {
+    pendingByProject[ps.projectId] = ps.pendingCount;
+  }
+
+  const [filter, setFilter] = useState<Filter>("all");
   const [sortKey, setSortKey] = useState<SortKey>("due");
+  const [briefOpen, setBriefOpen] = useState(false);
+
+  const isOverdue = (p: any) =>
+    p.dueDate && new Date(p.dueDate) < new Date() && p.status === "ACTIVE";
 
   const filtered = useMemo(() => {
     let list = projects.slice();
     if (filter === "active") list = list.filter((p) => p.status === "ACTIVE");
-    else if (filter === "attention") list = list.filter((p) => p.attention || p.pending > 0);
+    else if (filter === "attention") list = list.filter((p) => isOverdue(p) || (pendingByProject[p.id] ?? 0) > 0);
     else if (filter === "paused") list = list.filter((p) => p.status === "PAUSED");
     else if (filter === "done") list = list.filter((p) => p.status === "COMPLETED" || p.status === "ARCHIVED");
     list.sort((a, b) => {
       if (sortKey === "name") return a.name.localeCompare(b.name);
-      if (sortKey === "health") return (b.health ?? -1) - (a.health ?? -1);
-      const ad = a.due ? new Date(a.due).valueOf() : Infinity;
-      const bd = b.due ? new Date(b.due).valueOf() : Infinity;
+      if (sortKey === "health") return ((b.healthScore ?? -1) - (a.healthScore ?? -1));
+      const ad = a.dueDate ? new Date(a.dueDate).valueOf() : Infinity;
+      const bd = b.dueDate ? new Date(b.dueDate).valueOf() : Infinity;
       return ad - bd;
     });
     return list;
-  }, [projects, filter, sortKey]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projects, filter, sortKey, pendingByProject]);
 
   const counts: Record<Filter, number> = {
     all: projects.length,
     active: projects.filter((p) => p.status === "ACTIVE").length,
-    attention: projects.filter((p) => p.attention || p.pending > 0).length,
+    attention: projects.filter((p) => isOverdue(p) || (pendingByProject[p.id] ?? 0) > 0).length,
     paused: projects.filter((p) => p.status === "PAUSED").length,
     done: projects.filter((p) => p.status === "COMPLETED" || p.status === "ARCHIVED").length,
   };
@@ -53,8 +69,9 @@ export default function ProjectsPage() {
       <Topstrip
         title="Projects"
         sub={`${projects.length} projects`}
-        right={<Button variant="primary" size="sm" icon={<Icon.Plus size={15} sw={2.4}/>}>New brief</Button>}
+        right={<Button variant="primary" size="sm" icon={<Icon.Plus size={15} sw={2.4}/>} onClick={() => setBriefOpen(true)}>New brief</Button>}
       />
+      <NewBriefModal open={briefOpen} onClose={() => setBriefOpen(false)} />
       <div className="px-6 py-5 max-w-[1200px] mx-auto w-full">
         <div className="flex items-center gap-2 mb-4 flex-wrap">
           {chips.map((f) => (
@@ -93,15 +110,34 @@ export default function ProjectsPage() {
             <span className="text-right">Health</span>
             <span></span>
           </div>
-          {filtered.length === 0 ? (
-            <Empty icon={<Icon.Folder size={20}/>} title="No projects match" hint="Try a different filter." cta={<Button size="sm" variant="ghost" onClick={() => setFilter("all")}>Clear filter</Button>} />
-          ) : filtered.map((p, i) => (
+          {projectsError && !isLoading && (
+            <div className="px-4 py-6">
+              <PageError message="Could not load projects. Please refresh." />
+            </div>
+          )}
+          {isLoading && (
+            <>
+              {[0,1,2,3].map(i => (
+                <div key={i} className="grid grid-cols-[1fr_110px_100px_64px_72px_120px_28px] items-center gap-3 px-4 h-row border-b border-rule last:border-b-0">
+                  <div className="h-3.5 w-2/3 bg-muted rounded animate-pulse"/>
+                  <div className="h-5 w-16 bg-muted rounded animate-pulse"/>
+                  <div className="h-5 w-14 bg-muted rounded animate-pulse"/>
+                  <div className="h-3 w-8 bg-muted rounded animate-pulse ml-auto"/>
+                  <div className="h-3 w-8 bg-muted rounded animate-pulse ml-auto"/>
+                  <div className="h-1.5 w-full bg-muted rounded animate-pulse"/>
+                </div>
+              ))}
+            </>
+          )}
+          {!isLoading && filtered.length === 0 ? (
+            <Empty icon={<Icon.Folder size={20}/>} title={projects.length === 0 ? "No projects yet" : "No projects match"} hint={projects.length === 0 ? "Your account has no projects assigned. Contact your account manager." : "Try a different filter."} cta={projects.length > 0 ? <Button size="sm" variant="ghost" onClick={() => setFilter("all")}>Show all</Button> : undefined} />
+          ) : !isLoading && filtered.map((p, i) => (
             <ProjectRow
               key={p.id}
               project={p}
               divider={i < filtered.length - 1}
               onOpen={() => router.push(`/projects/${p.id}`)}
-              pending={posts.filter((post) => post.project === p.id && post.status === "PENDING").length}
+              pending={pendingByProject[p.id] ?? 0}
             />
           ))}
         </div>
@@ -110,11 +146,14 @@ export default function ProjectsPage() {
   );
 }
 
-function ProjectRow({ project: p, divider, onOpen, pending }: { project: Project; divider: boolean; onOpen: () => void; pending: number }) {
+function ProjectRow({ project: p, divider, onOpen, pending }: { project: any; divider: boolean; onOpen: () => void; pending: number }) {
+  const health = p.healthScore ?? null;
+  const overdue = p.dueDate && new Date(p.dueDate) < new Date() && p.status === "ACTIVE";
+  const owner: string = p.owner ?? p.ownerName ?? "—";
   const healthColor =
-    p.health == null ? "bg-neutral"
-    : p.health < 60 ? "bg-attention"
-    : p.health < 85 ? "bg-action-deep"
+    health == null ? "bg-neutral"
+    : health < 60 ? "bg-attention"
+    : health < 85 ? "bg-action-deep"
     : "bg-success";
   return (
     <div
@@ -123,23 +162,23 @@ function ProjectRow({ project: p, divider, onOpen, pending }: { project: Project
     >
       <div className="min-w-0 flex items-center gap-2">
         <div className="text-[13.5px] font-medium text-ink truncate">{p.name}</div>
-        {p.attention === "overdue" && <span className="text-[10.5px] px-1.5 h-5 inline-flex items-center bg-attention-bg text-attention rounded font-medium">overdue</span>}
+        {overdue && <span className="text-[10.5px] px-1.5 h-5 inline-flex items-center bg-attention-bg text-attention rounded font-medium">overdue</span>}
       </div>
-      <div><StatusBadge status={p.status} className="!h-5 !text-[10.5px]" /></div>
-      <div className="flex items-center gap-2 text-[12px] text-ink-2"><Avatar initial={p.owner} size="xs" /><span>{p.owner}</span></div>
-      <div className="text-right text-[12.5px] text-ink-2 tabular-nums text-rowtight">{p.tasks.done}/{p.tasks.total}</div>
+      <div><StatusBadge status={p.status as StatusKey} className="!h-5 !text-[10.5px]" /></div>
+      <div className="flex items-center gap-2 text-[12px] text-ink-2"><Avatar initial={owner !== "—" ? owner : undefined} size="xs" /><span>{owner}</span></div>
+      <div className="text-right text-[12.5px] text-ink-2 tabular-nums text-rowtight">—</div>
       <div className="text-right">
         {pending > 0
           ? <span className="text-attention font-medium text-[12.5px] inline-flex items-center gap-1"><span className="h-1.5 w-1.5 rounded-full bg-attention"/>{pending}</span>
           : <span className="text-ink-4 text-[12.5px]">—</span>}
       </div>
       <div className="flex items-center gap-2">
-        {p.health != null ? (
+        {health != null ? (
           <>
             <div className="flex-1 h-1.5 rounded-full bg-muted overflow-hidden">
-              <div className={`h-full ${healthColor}`} style={{ width: `${p.health}%` }} />
+              <div className={`h-full ${healthColor}`} style={{ width: `${health}%` }} />
             </div>
-            <span className="text-[11.5px] tabular-nums text-ink-2 w-6 text-right">{p.health}</span>
+            <span className="text-[11.5px] tabular-nums text-ink-2 w-6 text-right">{health}</span>
           </>
         ) : <span className="text-ink-4 text-[12px] w-full text-right">—</span>}
       </div>

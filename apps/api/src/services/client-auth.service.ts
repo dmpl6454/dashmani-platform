@@ -175,3 +175,81 @@ export async function updateClient(id: string, data: { companyName?: string; con
     },
   });
 }
+
+export async function createInvite(email: string): Promise<{ id: string; email: string; token: string; expiresAt: Date }> {
+  // Delete any existing unused invite for this email
+  await prisma.clientInvite.deleteMany({ where: { email, usedAt: null } });
+
+  const invite = await prisma.clientInvite.create({
+    data: {
+      email,
+      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days
+    },
+  });
+  return invite;
+}
+
+export async function acceptInvite(token: string, password: string, contactName?: string) {
+  const invite = await prisma.clientInvite.findUnique({ where: { token } });
+  if (!invite) throw new AppError(400, "INVALID_TOKEN", "Invalid invite token");
+  if (invite.usedAt) throw new AppError(400, "TOKEN_USED", "This invite has already been used");
+  if (invite.expiresAt < new Date()) throw new AppError(400, "TOKEN_EXPIRED", "This invite has expired");
+
+  const passwordHash = await hash(password, 12);
+
+  // Atomic: check-then-create-then-mark-used to prevent TOCTOU race condition
+  const client = await prisma.$transaction(async (tx) => {
+    const existing = await tx.client.findUnique({ where: { email: invite.email } });
+    if (existing) throw new AppError(409, "EMAIL_EXISTS", "An account with this email already exists");
+
+    const newClient = await tx.client.create({
+      data: {
+        email: invite.email,
+        companyName: invite.email.split("@")[1] || invite.email, // placeholder until updated
+        contactName: contactName || invite.email.split("@")[0],
+        passwordHash,
+        status: "ACTIVE",
+      },
+    });
+
+    // Mark invite as used
+    await tx.clientInvite.update({
+      where: { id: invite.id },
+      data: { usedAt: new Date() },
+    });
+
+    return newClient;
+  });
+
+  // Generate tokens (reuse same pattern as clientLogin)
+  const accessToken = jwt.sign(
+    { userId: client.id, email: client.email, roles: [], type: "client" as const },
+    JWT_SECRET,
+    { expiresIn: ACCESS_TOKEN_EXPIRY }
+  );
+  const refreshToken = jwt.sign(
+    { userId: client.id },
+    JWT_SECRET,
+    { expiresIn: REFRESH_TOKEN_EXPIRY }
+  );
+  const tokenHash = crypto.createHash("sha256").update(refreshToken).digest("hex");
+  await prisma.clientRefreshToken.create({
+    data: {
+      clientId: client.id,
+      token: tokenHash,
+      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+    },
+  });
+
+  return {
+    accessToken,
+    refreshToken,
+    user: {
+      id: client.id,
+      name: client.contactName,
+      companyName: client.companyName,
+      email: client.email,
+      roles: [],
+    },
+  };
+}

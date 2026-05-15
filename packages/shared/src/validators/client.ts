@@ -55,3 +55,20 @@ export const addProjectAccountSchema = z.object({
 export const addProjectTaskSchema = z.object({
   taskId: z.string().uuid("Invalid task ID"),
 });
+
+export const clientRegisterSchema = z.object({
+  token:    z.string().uuid("Invalid invite token"),
+  password: z.string().min(8, "Password must be at least 8 characters"),
+  contactName: z.string().min(2).max(200).optional(),
+});
+
+export const createInviteSchema = z.object({
+  email: z.string().email("Invalid email"),
+});
+
+export const createBriefSchema = z.object({
+  projectId:    z.string().uuid("Invalid project ID"),
+  title:        z.string().min(2, "Title must be at least 2 characters").max(200),
+  description:  z.string().min(2, "Description must be at least 2 characters").max(4000),
+  referenceUrl: z.string().url("Invalid URL").optional().or(z.literal("").transform(() => undefined)),
+});

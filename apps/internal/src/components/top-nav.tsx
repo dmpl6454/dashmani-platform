@@ -9,7 +9,7 @@ import {
   LayoutDashboard, Users, ClipboardList, FileText, Briefcase, FolderKanban,
   BarChart3, Clock, LogOut, Settings, Menu, X, Bell, MonitorSmartphone,
   Wallet, CheckSquare, Upload, FileSignature, Calendar, Bug, BriefcaseBusiness, Sparkles,
-  CheckCheck, BellOff, Laptop, UserPlus, GraduationCap, AlertCircle,
+  CheckCheck, BellOff, Laptop, UserPlus, GraduationCap, AlertCircle, Megaphone,
 } from "lucide-react";
 import { useState, useRef, useEffect } from "react";
 
@@ -27,6 +27,7 @@ const navItems = [
 ];
 
 const moreItems = [
+  { href: "/announcements", label: "Announcements", icon: Megaphone },
   { href: "/approvals", label: "Approvals", icon: CheckSquare },
   { href: "/salary-slips", label: "Salary Slips", icon: Wallet },
   { href: "/offer-letters", label: "Offer Letters", icon: FileSignature },
@@ -53,6 +54,7 @@ export function TopNav() {
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const [bellOpen, setBellOpen] = useState(false);
+  const [selectedNotif, setSelectedNotif] = useState<any>(null);
   const bellRef = useRef<HTMLDivElement>(null);
 
   // Notification data
@@ -77,12 +79,15 @@ export function TopNav() {
     } catch (e) { console.error(e); }
   }
 
-  async function markOneRead(id: string) {
-    try {
-      await apiFetch(`/admin/notifications/${id}/read`, { method: "PUT" });
-      mutateCount();
-      mutateNotifs();
-    } catch (e) { console.error(e); }
+  async function openNotif(n: any) {
+    setSelectedNotif(n);
+    if (!n.read) {
+      try {
+        await apiFetch(`/admin/notifications/${n.id}/read`, { method: "PUT" });
+        mutateCount();
+        mutateNotifs();
+      } catch (e) { console.error(e); }
+    }
   }
 
   // Close bell dropdown on outside click
@@ -90,6 +95,7 @@ export function TopNav() {
     function handleClick(e: MouseEvent) {
       if (bellRef.current && !bellRef.current.contains(e.target as Node)) {
         setBellOpen(false);
+        setSelectedNotif(null);
       }
     }
     if (bellOpen) document.addEventListener("mousedown", handleClick);
@@ -183,10 +189,19 @@ export function TopNav() {
 
         {/* Right Section */}
         <div className="flex items-center gap-2">
+          {/* Announce Button — visible to admins, always in nav */}
+          <Link
+            href="/announcements"
+            className="hidden sm:flex items-center gap-1.5 px-3.5 py-2 rounded-full bg-[#1A1A1A] text-white text-[13px] font-semibold hover:bg-[#2B2B2B] transition-all shadow-sm"
+          >
+            <Megaphone className="h-3.5 w-3.5 text-[#F5D547]" />
+            Announce
+          </Link>
+
           {/* Notification Bell */}
           <div className="relative" ref={bellRef}>
             <button
-              onClick={() => setBellOpen((v) => !v)}
+              onClick={() => { setBellOpen((v) => !v); setSelectedNotif(null); }}
               className="relative p-2 rounded-full text-[#7A7A7A] hover:bg-white/60 transition-all"
             >
               <Bell className="h-5 w-5" />
@@ -199,37 +214,61 @@ export function TopNav() {
 
             {bellOpen && (
               <div className="absolute right-0 top-12 z-50 w-80 bg-white rounded-2xl shadow-[0_8px_32px_rgba(0,0,0,0.14)] border border-[#E8E0D0] overflow-hidden">
-                <div className="flex items-center justify-between px-4 py-3 border-b border-[#F0EAD8] bg-[#FEFCF7]">
-                  <p className="text-sm font-semibold text-[#1A1A1A]">Notifications</p>
-                  {unreadCount > 0 && (
-                    <button onClick={markAllRead} className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 font-medium">
-                      <CheckCheck className="h-3.5 w-3.5" />Mark all read
-                    </button>
-                  )}
-                </div>
-                <div className="max-h-[400px] overflow-y-auto divide-y divide-[#F0EAD8]">
-                  {notifications.length === 0 ? (
-                    <div className="p-8 text-center text-[#B0B0B0]">
-                      <BellOff className="h-8 w-8 mx-auto mb-2 opacity-40" />
-                      <p className="text-sm">No notifications yet</p>
+                {selectedNotif ? (
+                  /* ── Detail view ── */
+                  <div>
+                    <div className="flex items-center gap-2 px-4 py-3 border-b border-[#F0EAD8] bg-[#FEFCF7]">
+                      <button
+                        onClick={() => setSelectedNotif(null)}
+                        className="flex items-center gap-1 text-xs text-[#7A7A7A] hover:text-[#1A1A1A] font-medium transition-colors"
+                      >
+                        <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7"/></svg>
+                        Back
+                      </button>
                     </div>
-                  ) : notifications.map((n: any) => (
-                    <div
-                      key={n.id}
-                      onClick={() => { if (!n.read) markOneRead(n.id); }}
-                      className={`px-4 py-3 cursor-pointer transition-colors hover:bg-[#FEFCF7] ${!n.read ? "bg-[rgba(245,213,71,0.06)]" : ""}`}
-                    >
-                      <div className="flex items-start gap-2">
-                        {!n.read && <span className="mt-1.5 h-2 w-2 rounded-full bg-red-500 shrink-0" />}
-                        <div className="flex-1 min-w-0">
-                          <p className={`text-sm ${!n.read ? "font-semibold text-[#1A1A1A]" : "text-[#7A7A7A]"}`}>{n.title}</p>
-                          <p className="text-xs text-[#7A7A7A] mt-0.5 line-clamp-2">{n.message}</p>
-                          <p className="text-[10px] text-[#B0B0B0] mt-1">{timeAgo(n.createdAt)}</p>
+                    <div className="p-4 space-y-3 max-h-[420px] overflow-y-auto">
+                      <p className="text-sm font-semibold text-[#1A1A1A] leading-snug">{selectedNotif.title}</p>
+                      <p className="text-xs text-[#B0B0B0]">{new Date(selectedNotif.createdAt).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}</p>
+                      <p className="text-sm text-[#555] leading-relaxed whitespace-pre-wrap">{selectedNotif.message}</p>
+                    </div>
+                  </div>
+                ) : (
+                  /* ── List view ── */
+                  <>
+                    <div className="flex items-center justify-between px-4 py-3 border-b border-[#F0EAD8] bg-[#FEFCF7]">
+                      <p className="text-sm font-semibold text-[#1A1A1A]">Notifications</p>
+                      {unreadCount > 0 && (
+                        <button onClick={markAllRead} className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 font-medium">
+                          <CheckCheck className="h-3.5 w-3.5" />Mark all read
+                        </button>
+                      )}
+                    </div>
+                    <div className="max-h-[400px] overflow-y-auto divide-y divide-[#F0EAD8]">
+                      {notifications.length === 0 ? (
+                        <div className="p-8 text-center text-[#B0B0B0]">
+                          <BellOff className="h-8 w-8 mx-auto mb-2 opacity-40" />
+                          <p className="text-sm">No notifications yet</p>
                         </div>
-                      </div>
+                      ) : notifications.map((n: any) => (
+                        <div
+                          key={n.id}
+                          onClick={() => openNotif(n)}
+                          className={`px-4 py-3 cursor-pointer transition-colors hover:bg-[#FEFCF7] ${!n.read ? "bg-[rgba(245,213,71,0.06)]" : ""}`}
+                        >
+                          <div className="flex items-start gap-2">
+                            {!n.read && <span className="mt-1.5 h-2 w-2 rounded-full bg-red-500 shrink-0" />}
+                            <div className={`flex-1 min-w-0 ${n.read ? "ml-4" : ""}`}>
+                              <p className={`text-sm ${!n.read ? "font-semibold text-[#1A1A1A]" : "text-[#7A7A7A]"}`}>{n.title}</p>
+                              <p className="text-xs text-[#7A7A7A] mt-0.5 line-clamp-2">{n.message}</p>
+                              <p className="text-[10px] text-[#B0B0B0] mt-1">{timeAgo(n.createdAt)}</p>
+                            </div>
+                            <svg className="h-3.5 w-3.5 text-[#D0C8BA] shrink-0 mt-1" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7"/></svg>
+                          </div>
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
+                  </>
+                )}
               </div>
             )}
           </div>

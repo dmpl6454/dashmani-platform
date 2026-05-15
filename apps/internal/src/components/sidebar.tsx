@@ -4,7 +4,7 @@ import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { cn } from "@dashmani/ui";
 import {
-  LayoutDashboard, Users, Building2, Clock, Shield, Settings, CheckSquare, Globe, BarChart3, Briefcase, FolderOpen, FileEdit, TrendingUp, FileText, UserPlus,
+  LayoutDashboard, Users, Building2, Clock, Shield, Settings, CheckSquare, Globe, BarChart3, Briefcase, FolderOpen, FileEdit, TrendingUp, FileText, UserPlus, Megaphone,
 } from "lucide-react";
 import { useOverviewStats } from "@/lib/hooks/use-analytics";
 
@@ -21,6 +21,7 @@ const navItems = [
   { href: "/projects", label: "Projects", icon: FolderOpen, badgeKey: null },
   { href: "/analytics", label: "Analytics", icon: TrendingUp, badgeKey: null },
   { href: "/reports", label: "Reports", icon: FileText, badgeKey: null },
+  { href: "/announcements", label: "Announcements", icon: Megaphone, badgeKey: null },
   { href: "/attendance", label: "Attendance", icon: Clock, badgeKey: null },
   { href: "/roles", label: "Roles", icon: Shield, badgeKey: null },
   { href: "/settings", label: "Settings", icon: Settings, badgeKey: null },

@@ -3,7 +3,7 @@
 **Scope:** Close all feature gaps in `apps/internal`, wire real API data end-to-end, add missing backend endpoints, and ensure every feature in the feature list works correctly — including correct integration with the client portal and future HR/Jobs portals.
 **Branch convention:** work off `main`; one PR per phase.
 **Current user:** `tabish@dashmani.com` — seeded as Super Admin with all permissions.
-**Status as of 2026-05-15:** All 10 original phases complete. Wave 8 (new bugs) also resolved.
+**Status as of 2026-05-15:** All 10 original phases complete. Wave 8 (new bugs) also resolved. Wave 9 (broadcast announcements) planned — see Phase 12.
 
 ---
 
@@ -515,17 +515,291 @@ These issues were discovered post-launch and resolved together.
 
 ---
 
+## Phase 12 — Broadcast Announcements (Wave 9, Issue 17)
+
+**Goal:** Admin/Super Admin can compose a title + message and broadcast it to every active employee simultaneously — each recipient gets an in-app `ANNOUNCEMENT` notification (visible in their portal bell) and an email at their registered address.
+
+---
+
+### 12a — Schema changes
+
+**File:** `packages/db/prisma/schema.prisma`
+
+1. Add `ANNOUNCEMENT` to the `NotificationType` enum (after `GENERAL`).
+2. Add a new `Announcement` model for broadcast history:
+
+```prisma
+model Announcement {
+  id             String   @id @default(uuid())
+  title          String
+  message        String   @db.Text
+  sentById       String
+  recipientCount Int      @default(0)
+  createdAt      DateTime @default(now())
+
+  sentBy         User     @relation("AnnouncementsSent", fields: [sentById], references: [id])
+
+  @@map("announcements")
+}
+```
+
+3. Add the back-relation on `User`:
+```prisma
+announcementsSent Announcement[] @relation("AnnouncementsSent")
+```
+
+Run `npm run db:generate` then `npm run db:push` after editing.
+
+---
+
+### 12b — Announcement service
+
+**New file:** `apps/api/src/services/announcement.service.ts`
+
+```typescript
+import { prisma } from "@dashmani/db";
+import { sendEmail } from "./email.service";
+import { announcementEmailHtml } from "./email.service";
+
+export async function broadcastAnnouncement(
+  sentById: string,
+  title: string,
+  message: string
+): Promise<{ recipientCount: number; announcementId: string }> {
+  // 1. Fetch all active employees (excludes deleted + inactive)
+  const employees = await prisma.user.findMany({
+    where: { status: "ACTIVE", deletedAt: null },
+    select: { id: true, name: true, email: true },
+  });
+
+  if (employees.length === 0) {
+    const record = await prisma.announcement.create({
+      data: { title, message, sentById, recipientCount: 0 },
+    });
+    return { recipientCount: 0, announcementId: record.id };
+  }
+
+  // 2. Fan out in-app notifications in one batch
+  await prisma.notification.createMany({
+    data: employees.map((emp) => ({
+      userId: emp.id,
+      type: "ANNOUNCEMENT" as const,
+      title,
+      message,
+    })),
+  });
+
+  // 3. Persist announcement record
+  const sender = await prisma.user.findUnique({
+    where: { id: sentById },
+    select: { name: true },
+  });
+  const record = await prisma.announcement.create({
+    data: { title, message, sentById, recipientCount: employees.length },
+  });
+
+  // 4. Fire-and-forget emails (non-blocking — log failures, never throw)
+  const senderName = sender?.name ?? "Admin";
+  const emailPromises = employees.map((emp) =>
+    sendEmail({
+      to: emp.email,
+      subject: `[Announcement] ${title}`,
+      html: announcementEmailHtml(senderName, title, message),
+    }).catch((err) => console.error(`✉ Announcement email failed for ${emp.email}:`, err))
+  );
+  Promise.allSettled(emailPromises); // fire-and-forget
+
+  return { recipientCount: employees.length, announcementId: record.id };
+}
+
+export async function getAnnouncements(page = 1, limit = 20) {
+  const skip = (page - 1) * limit;
+  const [items, total] = await Promise.all([
+    prisma.announcement.findMany({
+      skip,
+      take: limit,
+      orderBy: { createdAt: "desc" },
+      include: { sentBy: { select: { name: true } } },
+    }),
+    prisma.announcement.count(),
+  ]);
+  return { items, total, page, limit };
+}
+```
+
+---
+
+### 12c — Email template addition
+
+**File:** `apps/api/src/services/email.service.ts` — add exported function:
+
+```typescript
+export function announcementEmailHtml(senderName: string, title: string, message: string): string {
+  const portalUrl = process.env.INTERNAL_APP_URL || "https://portal.digitalsukoon.com";
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body { font-family: 'Segoe UI', Arial, sans-serif; margin: 0; padding: 0; background: #f5f5f5; }
+    .container { max-width: 600px; margin: 0 auto; background: #fff; border-radius: 8px; overflow: hidden; }
+    .header { background: linear-gradient(135deg, #1A1A1A, #333); color: #fff; padding: 24px 30px; }
+    .header h1 { margin: 0; font-size: 20px; font-weight: 600; }
+    .header p { margin: 6px 0 0; font-size: 13px; opacity: 0.7; }
+    .body { padding: 28px 30px; }
+    .badge { display: inline-block; background: #F5D547; color: #1A1A1A; padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 600; margin-bottom: 16px; }
+    .message-body { font-size: 15px; color: #333; line-height: 1.7; white-space: pre-wrap; }
+    .action-btn { display: inline-block; background: #F5D547; color: #1A1A1A; padding: 10px 24px; border-radius: 20px; font-size: 13px; font-weight: 600; text-decoration: none; margin-top: 24px; }
+    .footer { padding: 16px 30px; background: #f8f9fa; text-align: center; font-size: 11px; color: #999; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>${title}</h1>
+      <p>Announcement from ${senderName}</p>
+    </div>
+    <div class="body">
+      <span class="badge">Announcement</span>
+      <p class="message-body">${message.replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "<br>")}</p>
+      <a href="${portalUrl}" class="action-btn">Open Portal →</a>
+    </div>
+    <div class="footer">Dashmani Media Private Limited · Digital Sukoon</div>
+  </div>
+</body>
+</html>`;
+}
+```
+
+---
+
+### 12d — API routes
+
+**File:** `apps/api/src/routes/admin-features.routes.ts` — add two new routes:
+
+```typescript
+import { broadcastAnnouncement, getAnnouncements } from "../services/announcement.service";
+
+// POST /admin/announcements — broadcast to all active employees
+router.post(
+  "/admin/announcements",
+  authenticate,
+  requireAdminRole,  // existing inline middleware already in file
+  async (req, res, next) => {
+    try {
+      const { title, message } = req.body;
+      if (!title?.trim() || !message?.trim()) {
+        return error(res, "VALIDATION_ERROR", "title and message are required", 400);
+      }
+      if (title.length > 120) {
+        return error(res, "VALIDATION_ERROR", "title must be 120 characters or fewer", 400);
+      }
+      if (message.length > 2000) {
+        return error(res, "VALIDATION_ERROR", "message must be 2000 characters or fewer", 400);
+      }
+      const result = await broadcastAnnouncement(req.user!.userId, title.trim(), message.trim());
+      return success(res, result, 201);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// GET /admin/announcements — paginated announcement history
+router.get(
+  "/admin/announcements",
+  authenticate,
+  requireAdminRole,
+  async (req, res, next) => {
+    try {
+      const page = parseInt(String(req.query.page)) || 1;
+      const limit = parseInt(String(req.query.limit)) || 20;
+      const result = await getAnnouncements(page, limit);
+      return success(res, result);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+```
+
+---
+
+### 12e — SWR hook
+
+**New file:** `apps/internal/src/lib/hooks/use-announcements.ts`
+
+```typescript
+import useSWR from "swr";
+import { apiFetch } from "../api";
+
+export function useAnnouncements(page = 1) {
+  const { data, error, isLoading, mutate } = useSWR(
+    `/admin/announcements?page=${page}&limit=20`,
+    (url) => apiFetch(url)
+  );
+  return {
+    announcements: data?.data?.items ?? [],
+    total: data?.data?.total ?? 0,
+    isLoading,
+    isError: !!error,
+    mutate,
+  };
+}
+```
+
+---
+
+### 12f — Frontend page
+
+**New file:** `apps/internal/src/app/announcements/page.tsx`
+
+Layout:
+- Top bar: "Announcements" heading + "New Announcement" button (yellow, `requireAdminRole`-gated via caller role check).
+- `AnnouncementModal` (inline component or separate file):
+  - Title input (required, 120 char max with counter).
+  - Message textarea (required, 2000 char max with counter, 6 rows).
+  - Preview panel (collapsible) that renders the styled email HTML in an iframe or styled `div`.
+  - Confirm guard before submit: `"This will notify all active employees. Continue?"` (browser `confirm()` or a simple secondary button state).
+  - On submit → `POST /admin/announcements` → success toast: `"Announcement sent to ${n} employees"`.
+- History table below (from `useAnnouncements()`):
+  - Columns: Title | Sent by | Recipients | Date
+  - Skeleton loading via `isLoading`.
+  - Empty state: "No announcements sent yet."
+
+**New file:** `apps/internal/src/app/announcements/loading.tsx` — standard pulse skeleton.
+
+---
+
+### 12g — Sidebar navigation entry
+
+**File:** `apps/internal/src/components/sidebar.tsx`
+
+Add "Announcements" link (e.g., megaphone icon from `lucide-react`) in the appropriate section — between Reports and AI Assistant, or under a "Communications" group if one exists.
+
+---
+
+### Verification
+
+- Admin opens `/announcements` → sees empty history → clicks "New Announcement".
+- Fills title + message → clicks send → confirm dialog → POST succeeds → toast confirms "Sent to N employees".
+- New entry appears in history table with correct recipient count and timestamp.
+- Any active employee logs into their portal → notification bell shows unread `ANNOUNCEMENT` notification with the exact title + message.
+- Employee's email inbox receives a branded email with the announcement content and "Open Portal" button.
+- Non-admin user role: "New Announcement" button is hidden or disabled.
+
+---
+
 ## Execution Order
 
 ```
 Phase 1  → Phase 2  → Phase 3 → Phase 4 → Phase 5
 (backend)   (admin)    (profile)  (attend)   (tasks)
                ↓
-Phase 6  → Phase 7  → Phase 8 → Phase 9 → Phase 10 → Phase 11
-(forms)    (bulk)     (UI/UX)   (client)   (analytics)  (wave 8)
+Phase 6  → Phase 7  → Phase 8 → Phase 9 → Phase 10 → Phase 11 → Phase 12
+(forms)    (bulk)     (UI/UX)   (client)   (analytics)  (wave 8)   (announce)
 ```
 
-All phases complete as of 2026-05-15.
+All phases through 11 complete as of 2026-05-15. Phase 12 planned.
 
 ---
 
@@ -548,3 +822,7 @@ All phases complete as of 2026-05-15.
 | Tailwind config | `apps/internal/tailwind.config.ts` |
 | Shared UI | `packages/ui/` |
 | Client invite endpoint | `apps/api/src/routes/client.routes.ts` → `POST /v1/client/auth/invite-request` |
+| Announcement service | `apps/api/src/services/announcement.service.ts` |
+| Announcement routes | `apps/api/src/routes/admin-features.routes.ts` → `POST/GET /admin/announcements` |
+| Announcement SWR hook | `apps/internal/src/lib/hooks/use-announcements.ts` |
+| Announcements page | `apps/internal/src/app/announcements/page.tsx` |

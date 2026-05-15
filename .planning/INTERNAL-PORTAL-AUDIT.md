@@ -3,7 +3,7 @@
 **Date:** 2026-05-15 (last updated: 2026-05-15)
 **Branch:** `docs/design-critique`
 **Scope:** `apps/internal` + `apps/api` (internal/admin endpoints)
-**Status:** 4 new issues found and resolved — see Wave 8 below.
+**Status:** Wave 9 planned — broadcast announcement feature (Issue 17).
 
 > Companion file: [INTERNAL-PORTAL-ERRORS.md](./INTERNAL-PORTAL-ERRORS.md) — full error log.
 > Implementation plan: [internal-portal-plan.md](./internal-portal-plan.md) — phase-by-phase fix roadmap.
@@ -271,6 +271,106 @@ The internal admin portal is structurally mature — ~46 pages, real CRUD operat
 | 14 | No role assignment UI | Cannot change employee roles from the portal | P1 | ✅ Resolved — commit dad9b5f (PUT /admin/users/:id/roles + RoleManager component) |
 | 15 | Project end date allows invalid values | Can create a project where endDate < startDate | P2 | ✅ Resolved — commit dad9b5f (client-side + server-side validation) |
 | 16 | Client portal shows no projects by default | "active" default filter hides newly assigned projects | P2 | ✅ Resolved — commit dad9b5f (default changed to "all", improved empty state) |
+| 17 | No broadcast announcement capability | Admins cannot mass-message all employees from the portal | P1 | 🔲 Planned — Wave 9 |
+
+---
+
+## Issue 17 — No broadcast announcement to all employees (P1)
+
+**Symptom:** Admin/Super Admin has no way to send a message to all current (and future) employees simultaneously. Communication must go through individual DMs, email clients, or direct DB calls.
+
+**Root cause:**
+- No `POST /admin/announcements` endpoint exists.
+- No `Announcement` model in the schema.
+- No broadcast service function that fans out to all active employees.
+- No UI in the internal portal to compose and send an announcement.
+- The `NotificationType` enum in `schema.prisma` does not include `ANNOUNCEMENT`.
+
+**Fix — four-part implementation:**
+
+### Part A — Schema
+Add `ANNOUNCEMENT` to `NotificationType` enum and add an `Announcement` model to track sent broadcasts (for history + idempotency):
+
+```prisma
+// In NotificationType enum — add:
+ANNOUNCEMENT
+
+// New model:
+model Announcement {
+  id          String    @id @default(uuid())
+  title       String
+  message     String    @db.Text
+  sentById    String
+  recipientCount Int    @default(0)
+  createdAt   DateTime  @default(now())
+
+  sentBy      User      @relation(fields: [sentById], references: [id])
+
+  @@map("announcements")
+}
+```
+
+### Part B — API
+**New endpoint** — `apps/api/src/routes/admin-features.routes.ts`:
+```
+POST /v1/admin/announcements
+body: { title: string, message: string }
+auth: authenticate + requireAdminRole (Admin or Super Admin only)
+```
+
+**New service** — `apps/api/src/services/announcement.service.ts`:
+```typescript
+async function broadcastAnnouncement(sentById: string, title: string, message: string)
+```
+1. Query all active, non-deleted employees: `User.findMany({ where: { status: "ACTIVE", deletedAt: null } })`.
+2. `prisma.notification.createMany()` — one `ANNOUNCEMENT` notification per employee, with `{ title, message }`.
+3. Fire-and-forget email loop: `sendEmail({ to: user.email, ... })` for each employee using a new `announcementEmailHtml()` template in `email.service.ts`.
+4. Persist one `Announcement` row with `recipientCount`.
+5. Return `{ recipientCount, announcementId }`.
+
+**Optional GET endpoint** (announcement history):
+```
+GET /v1/admin/announcements   — paginated list of past announcements
+```
+
+### Part C — Frontend
+**New page** — `apps/internal/src/app/announcements/page.tsx`:
+- Header: "Announcements" with a "New Announcement" button.
+- History table: past broadcasts (title, sent by, recipient count, date) via `useAnnouncements()` SWR hook.
+- "New Announcement" → opens `AnnouncementModal` (same modal pattern used throughout).
+
+**`AnnouncementModal` component:**
+- Title field (required, max 120 chars).
+- Message textarea (required, max 2000 chars).
+- Character counter.
+- "Preview Email" toggle (renders a read-only preview of the email template).
+- "Send to All Employees" button → POST → success toast: "Announcement sent to N employees".
+- Guard: confirm dialog before send — "This will notify all X active employees. Continue?"
+
+**New SWR hook** — `apps/internal/src/lib/hooks/use-announcements.ts`:
+```typescript
+export function useAnnouncements() { ... }  // GET /admin/announcements
+```
+
+**Sidebar navigation** — add "Announcements" entry to `apps/internal/src/components/sidebar.tsx` (under the Communications section or between Reports and Notifications).
+
+**Loading state** — `apps/internal/src/app/announcements/loading.tsx`.
+
+### Part D — Email template
+Add `announcementEmailHtml(senderName, title, message, portalUrl)` to `apps/api/src/services/email.service.ts`.
+Design: branded header, announcement title as heading, full message body, "Open Portal" CTA button — matching existing brand colours (`#1A1A1A`, `#F5D547`).
+
+**Files to create/edit:**
+- `packages/db/prisma/schema.prisma` — `ANNOUNCEMENT` enum value + `Announcement` model
+- `apps/api/src/services/announcement.service.ts` — new file
+- `apps/api/src/services/email.service.ts` — add `announcementEmailHtml()`
+- `apps/api/src/routes/admin-features.routes.ts` — add `POST /admin/announcements`, `GET /admin/announcements`
+- `apps/internal/src/app/announcements/page.tsx` — new page
+- `apps/internal/src/app/announcements/loading.tsx` — new loading state
+- `apps/internal/src/lib/hooks/use-announcements.ts` — new SWR hook
+- `apps/internal/src/components/sidebar.tsx` — add navigation entry
+
+**Plan phase:** Wave 9
 
 ---
 
@@ -299,6 +399,11 @@ Read and fix all four sub-pages. ~half day.
 
 ### Wave 7 — UI polish & loading states (Issues 8, 9, 11)
 Role colours, loading.tsx files, null safety. ~half day.
+
+---
+
+### Wave 9 — Broadcast announcements (Issue 17)
+Schema: add `ANNOUNCEMENT` enum + `Announcement` model → `db push`. Service: `broadcastAnnouncement()` fans out `notification.createMany()` + per-employee emails. Route: `POST /admin/announcements` + `GET /admin/announcements`. Frontend: `/announcements` page + `AnnouncementModal` + sidebar entry + `loading.tsx`. ~half day.
 
 ---
 

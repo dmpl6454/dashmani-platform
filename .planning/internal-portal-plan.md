@@ -3,7 +3,7 @@
 **Scope:** Close all feature gaps in `apps/internal`, wire real API data end-to-end, add missing backend endpoints, and ensure every feature in the feature list works correctly — including correct integration with the client portal and future HR/Jobs portals.
 **Branch convention:** work off `main`; one PR per phase.
 **Current user:** `tabish@dashmani.com` — seeded as Super Admin with all permissions.
-**Status as of 2026-05-15:** All 10 original phases complete. Wave 8 (new bugs) also resolved. Wave 9 (broadcast announcements) planned — see Phase 12.
+**Status as of 2026-05-15:** All 10 original phases complete. Wave 8 (new bugs) resolved. Wave 9 (broadcast announcements + notification detail view) resolved — commit 1e92b20.
 
 ---
 
@@ -799,7 +799,28 @@ Phase 6  → Phase 7  → Phase 8 → Phase 9 → Phase 10 → Phase 11 → Phas
 (forms)    (bulk)     (UI/UX)   (client)   (analytics)  (wave 8)   (announce)
 ```
 
-All phases through 11 complete as of 2026-05-15. Phase 12 planned.
+All phases through 12 complete as of 2026-05-15. Phase 13 (notification detail view) also complete — see below.
+
+---
+
+## Phase 13 — Notification detail view (Wave 9, Issues 18–19, commit 1e92b20)
+
+**Goal:** Any notification in any portal can be clicked to read its full content, both when unread and after being read.
+
+**Root cause found:** Both the internal `top-nav.tsx` and the HR `notification-bell.tsx` had `onClick` gated by `!n.read`, making already-read notifications completely unclickable. Neither had any detail state — long messages were truncated at two lines with no expand affordance.
+
+**Fix applied — internal portal** (`apps/internal/src/components/top-nav.tsx`):
+- Added `selectedNotif: any | null` state alongside existing `bellOpen`.
+- Replaced per-notification `onClick` with a single `openNotif(n)` function that sets `selectedNotif` and conditionally calls `markAsRead`.
+- Bell dropdown now renders two views conditionally:
+  - **List view** (default): each row has a `>` chevron; all rows always clickable.
+  - **Detail view** (when `selectedNotif` set): full title, `whitespace-pre-wrap` message body, `en-IN` formatted timestamp; `← Back` button resets `selectedNotif`.
+- Outside-click handler and bell-button click both reset `selectedNotif`.
+
+**Fix applied — HR portal** (`apps/hr/src/components/notification-bell.tsx`):
+- Full rewrite with identical `selectedNotif` pattern.
+- Added `timeAgo()` helper (consistent with internal portal).
+- Added `BellOff` and `CheckCheck` icon imports for empty state and mark-all-read UX.
 
 ---
 

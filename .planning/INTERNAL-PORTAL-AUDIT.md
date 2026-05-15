@@ -3,7 +3,7 @@
 **Date:** 2026-05-15 (last updated: 2026-05-15)
 **Branch:** `docs/design-critique`
 **Scope:** `apps/internal` + `apps/api` (internal/admin endpoints)
-**Status:** Wave 9 planned — broadcast announcement feature (Issue 17).
+**Status:** Wave 9 complete — broadcast announcements (Issue 17) + notification detail view (Issues 18–19) — commit 1e92b20.
 
 > Companion file: [INTERNAL-PORTAL-ERRORS.md](./INTERNAL-PORTAL-ERRORS.md) — full error log.
 > Implementation plan: [internal-portal-plan.md](./internal-portal-plan.md) — phase-by-phase fix roadmap.
@@ -271,7 +271,9 @@ The internal admin portal is structurally mature — ~46 pages, real CRUD operat
 | 14 | No role assignment UI | Cannot change employee roles from the portal | P1 | ✅ Resolved — commit dad9b5f (PUT /admin/users/:id/roles + RoleManager component) |
 | 15 | Project end date allows invalid values | Can create a project where endDate < startDate | P2 | ✅ Resolved — commit dad9b5f (client-side + server-side validation) |
 | 16 | Client portal shows no projects by default | "active" default filter hides newly assigned projects | P2 | ✅ Resolved — commit dad9b5f (default changed to "all", improved empty state) |
-| 17 | No broadcast announcement capability | Admins cannot mass-message all employees from the portal | P1 | 🔲 Planned — Wave 9 |
+| 17 | No broadcast announcement capability | Admins cannot mass-message all employees from the portal | P1 | ✅ Resolved — commit 1e92b20 |
+| 18 | Notifications not expandable (internal portal) | Clicking a notification only marks it read; full message never visible | P1 | ✅ Resolved — commit 1e92b20 |
+| 19 | Notifications not expandable (HR/employee portal) | Same — clicking already-read notifications did nothing at all | P1 | ✅ Resolved — commit 1e92b20 |
 
 ---
 
@@ -370,7 +372,35 @@ Design: branded header, announcement title as heading, full message body, "Open 
 - `apps/internal/src/lib/hooks/use-announcements.ts` — new SWR hook
 - `apps/internal/src/components/sidebar.tsx` — add navigation entry
 
-**Plan phase:** Wave 9
+**Plan phase:** Wave 9 — ✅ Resolved commit 1e92b20
+
+---
+
+### ISSUE 18 — Notifications not expandable — internal portal (P1)
+
+**Symptom:** Clicking a notification in the admin portal bell only called `markAsRead`. The full message was never visible — truncated to two lines with no expand affordance. Already-read notifications had `onClick` gated by `!n.read`, making them completely unclickable.
+
+**Root cause:** The dropdown rendered a flat list where `onClick` was `() => { if (!n.read) markOneRead(n.id); }` — no detail state, no full-message view.
+
+**Fix:** Added `selectedNotif` state to `top-nav.tsx`. Clicking any notification (read or unread) sets `selectedNotif` and switches the dropdown to a detail panel showing full title, full `whitespace-pre-wrap` message, and formatted timestamp. Back chevron returns to list. Unread notifications auto-marked read on open. Chevron `>` affordance added to every list row.
+
+**Files:** [apps/internal/src/components/top-nav.tsx](../apps/internal/src/components/top-nav.tsx)
+
+**Plan phase:** Wave 9 — ✅ Resolved commit 1e92b20
+
+---
+
+### ISSUE 19 — Notifications not expandable — HR/employee portal (P1)
+
+**Symptom:** Same as Issue 18 but in `apps/hr`. `onClick` was `() => !notif.read && handleMarkRead(notif.id)` — clicking a read notification did nothing. No way to re-read a notification or see long messages.
+
+**Root cause:** `notification-bell.tsx` had no detail state or expand mechanism.
+
+**Fix:** Rewrote `notification-bell.tsx` with the same `selectedNotif` detail-panel pattern. All notifications always clickable. Added `BellOff` and `CheckCheck` imports. `timeAgo()` helper added (consistent with internal portal).
+
+**Files:** [apps/hr/src/components/notification-bell.tsx](../apps/hr/src/components/notification-bell.tsx)
+
+**Plan phase:** Wave 9 — ✅ Resolved commit 1e92b20
 
 ---
 
@@ -402,8 +432,13 @@ Role colours, loading.tsx files, null safety. ~half day.
 
 ---
 
-### Wave 9 — Broadcast announcements (Issue 17)
-Schema: add `ANNOUNCEMENT` enum + `Announcement` model → `db push`. Service: `broadcastAnnouncement()` fans out `notification.createMany()` + per-employee emails. Route: `POST /admin/announcements` + `GET /admin/announcements`. Frontend: `/announcements` page + `AnnouncementModal` + sidebar entry + `loading.tsx`. ~half day.
+### Wave 9 — Broadcast announcements + notification detail view (Issues 17–19, commit 1e92b20)
+
+1. **Issue 17:** Schema `ANNOUNCEMENT` enum + `Announcement` model. `broadcastAnnouncement()` service fans out `notification.createMany()` to all active employees and fires per-employee emails via `Promise.allSettled` (non-blocking). `POST /admin/announcements` + `GET /admin/announcements` behind `requireAdminRole`. `/announcements` page with history table + `AnnouncementModal`. Dashboard dark broadcast CTA banner with inline `QuickAnnounceModal` + last-sent preview. `Announce` nav pill in top-nav.
+
+2. **Issue 18 (internal portal):** `top-nav.tsx` — clicking any notification (read or unread) now opens an inline detail panel showing full title, full message, and formatted timestamp. Back chevron returns to list. Unread notifications auto-marked read on open. Chevron affordance on every list row.
+
+3. **Issue 19 (HR/employee portal):** `notification-bell.tsx` — same detail-view fix. Previously, clicking already-read notifications did nothing (`onClick` gated by `!notif.read`). Now all notifications are always clickable. Full `whitespace-pre-wrap` message body in detail panel.
 
 ---
 

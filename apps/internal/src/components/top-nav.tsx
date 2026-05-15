@@ -2,62 +2,45 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAuth } from "@/lib/auth";
-import { useOverviewStats } from "@/lib/hooks/use-analytics";
 import { apiFetch, API_BASE } from "@/lib/api";
 import useSWR from "swr";
 import {
-  LayoutDashboard, Users, ClipboardList, FileText, Briefcase, FolderKanban,
-  BarChart3, Clock, LogOut, Settings, Menu, X, Bell, MonitorSmartphone,
-  Wallet, CheckSquare, Upload, FileSignature, Calendar, Bug, BriefcaseBusiness, Sparkles,
-  CheckCheck, BellOff, Laptop, UserPlus, GraduationCap, AlertCircle, Megaphone,
+  Bell, LogOut, Settings, CheckCheck, BellOff, Megaphone, Search,
 } from "lucide-react";
 import { useState, useRef, useEffect } from "react";
 
-const navItems = [
-  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/employees", label: "People", icon: Users },
-  { href: "/teams", label: "Teams", icon: Users },
-  { href: "/tasks", label: "Tasks", icon: ClipboardList },
-  { href: "/content", label: "Content", icon: FileText },
-  { href: "/accounts", label: "Accounts", icon: MonitorSmartphone },
-  { href: "/clients", label: "Clients", icon: Briefcase },
-  { href: "/projects", label: "Projects", icon: FolderKanban },
-  { href: "/reports", label: "Reports", icon: BarChart3 },
-  { href: "/attendance", label: "Attendance", icon: Clock },
-];
-
-const moreItems = [
-  { href: "/announcements", label: "Announcements", icon: Megaphone },
-  { href: "/approvals", label: "Approvals", icon: CheckSquare },
-  { href: "/salary-slips", label: "Salary Slips", icon: Wallet },
-  { href: "/offer-letters", label: "Offer Letters", icon: FileSignature },
-  { href: "/holidays", label: "Holidays", icon: Calendar },
-  { href: "/jobs", label: "Job Listings", icon: BriefcaseBusiness },
-  { href: "/bug-reports", label: "Bug Reports", icon: Bug },
-  { href: "/ai-assistant", label: "AI Assistant", icon: Sparkles },
-  { href: "/accounts/import", label: "Import Accounts", icon: Upload },
-  { href: "/analytics", label: "Analytics", icon: BarChart3 },
-  { href: "/workload", label: "Workload", icon: ClipboardList },
-  { href: "/expenses", label: "Expenses", icon: Wallet },
-  { href: "/devices", label: "Devices", icon: Laptop },
-  { href: "/auto-teams", label: "Auto Teams", icon: UserPlus },
-  { href: "/internships", label: "Internships", icon: GraduationCap },
-  { href: "/complaints", label: "Complaints", icon: AlertCircle },
-];
+/* ── Avatar helper (monogram on cream, ink border) ── */
+function Avatar({ name, imageUrl, size = 7 }: { name?: string; imageUrl?: string; size?: number }) {
+  const initials = (name || "A").charAt(0).toUpperCase();
+  const sizeClass = `h-${size} w-${size}`;
+  if (imageUrl) {
+    return (
+      <img
+        src={imageUrl.startsWith("http") ? imageUrl : `${API_BASE}${imageUrl}`}
+        alt={name}
+        className={`${sizeClass} rounded-full object-cover border-2 border-ink`}
+      />
+    );
+  }
+  return (
+    <div
+      className={`${sizeClass} rounded-full border-2 border-ink bg-muted flex items-center justify-center text-sm font-bold text-ink shrink-0`}
+    >
+      {initials}
+    </div>
+  );
+}
 
 export function TopNav() {
   const pathname = usePathname();
   const { user, logout } = useAuth();
-  const { data: statsData } = useOverviewStats();
-  const pendingCount = (statsData as any)?.data?.pendingApprovalCount ?? 0;
-  const [mobileOpen, setMobileOpen] = useState(false);
-  const [userMenuOpen, setUserMenuOpen] = useState(false);
-  const [moreOpen, setMoreOpen] = useState(false);
-  const [bellOpen, setBellOpen] = useState(false);
+  const [userMenuOpen, setUserMenuOpen]   = useState(false);
+  const [bellOpen, setBellOpen]           = useState(false);
   const [selectedNotif, setSelectedNotif] = useState<any>(null);
-  const bellRef = useRef<HTMLDivElement>(null);
+  const bellRef    = useRef<HTMLDivElement>(null);
+  const userRef    = useRef<HTMLDivElement>(null);
 
-  // Notification data
+  /* ── Notification count (always polling) ── */
   const { data: countData, mutate: mutateCount } = useSWR(
     "/admin/notifications/count",
     (url: string) => apiFetch<any>(url),
@@ -65,6 +48,7 @@ export function TopNav() {
   );
   const unreadCount = countData?.data?.count ?? 0;
 
+  /* ── Notification list (only when panel open) ── */
   const { data: notifsData, mutate: mutateNotifs } = useSWR(
     bellOpen ? "/admin/notifications" : null,
     (url: string) => apiFetch<any>(url)
@@ -74,9 +58,8 @@ export function TopNav() {
   async function markAllRead() {
     try {
       await apiFetch("/admin/notifications/read-all", { method: "PUT" });
-      mutateCount();
-      mutateNotifs();
-    } catch (e) { console.error(e); }
+      mutateCount(); mutateNotifs();
+    } catch {}
   }
 
   async function openNotif(n: any) {
@@ -84,23 +67,24 @@ export function TopNav() {
     if (!n.read) {
       try {
         await apiFetch(`/admin/notifications/${n.id}/read`, { method: "PUT" });
-        mutateCount();
-        mutateNotifs();
-      } catch (e) { console.error(e); }
+        mutateCount(); mutateNotifs();
+      } catch {}
     }
   }
 
-  // Close bell dropdown on outside click
+  /* ── Outside-click handlers ── */
   useEffect(() => {
-    function handleClick(e: MouseEvent) {
+    function onDoc(e: MouseEvent) {
       if (bellRef.current && !bellRef.current.contains(e.target as Node)) {
-        setBellOpen(false);
-        setSelectedNotif(null);
+        setBellOpen(false); setSelectedNotif(null);
+      }
+      if (userRef.current && !userRef.current.contains(e.target as Node)) {
+        setUserMenuOpen(false);
       }
     }
-    if (bellOpen) document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
-  }, [bellOpen]);
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, []);
 
   function timeAgo(date: string) {
     const s = Math.floor((Date.now() - new Date(date).getTime()) / 1000);
@@ -110,255 +94,140 @@ export function TopNav() {
     return `${Math.floor(s / 86400)}d ago`;
   }
 
-  const allItems = [...navItems, ...moreItems];
+  /* ── Breadcrumb from pathname ── */
+  const crumb = pathname.split("/").filter(Boolean);
+  const pageLabel = crumb[0]
+    ? crumb[0].charAt(0).toUpperCase() + crumb[0].slice(1).replace(/-/g, " ")
+    : "Dashboard";
 
   return (
-    <nav className="sticky top-0 z-50 border-b border-[#F0EAD8] bg-[rgba(253,246,227,0.8)] backdrop-blur-xl">
-      <div className="max-w-[1440px] mx-auto flex items-center justify-between px-4 md:px-8 py-3">
-        {/* Logo */}
-        <Link href="/dashboard" className="flex items-center gap-2.5 shrink-0">
-          <img src="/logo.svg" alt="Digital Sukoon" className="h-9 w-9 rounded-full" />
-          <div className="hidden sm:block">
-            <span className="text-base font-bold text-[#1A1A1A] tracking-wide uppercase" style={{ fontFamily: "'Instagram Sans', system-ui, sans-serif", letterSpacing: "2px", fontSize: "14px" }}>Digital Sukoon</span>
-          </div>
+    <header className="sticky top-0 z-40 h-[57px] flex items-center justify-between px-5 border-b-2 border-ink/10 bg-bg/90 backdrop-blur-md shrink-0">
+
+      {/* Left — breadcrumb */}
+      <p className="text-sm font-semibold text-ink-3 select-none">{pageLabel}</p>
+
+      {/* Right — actions */}
+      <div className="flex items-center gap-1.5">
+
+        {/* Announce shortcut */}
+        <Link
+          href="/announcements"
+          className="hidden sm:flex items-center gap-1.5 h-8 px-3 rounded-xl border-2 border-ink text-ink text-xs font-bold btn-3d hover:bg-action transition-colors"
+        >
+          <Megaphone className="h-3.5 w-3.5" />
+          Announce
         </Link>
 
-        {/* Desktop Nav Pills */}
-        <div className="hidden xl:flex items-center gap-0.5 bg-white/50 rounded-full p-1 backdrop-blur-md">
-          {navItems.map((item) => {
-            const isActive = pathname.startsWith(item.href);
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={`relative flex items-center gap-1.5 px-3.5 py-2 rounded-full text-[13px] font-medium transition-all duration-250 ${
-                  isActive
-                    ? "bg-gradient-to-r from-[#3023D0] to-[#5B4BF5] text-white shadow-[0_2px_8px_rgba(91,75,245,0.25)]"
-                    : "text-[#7A7A7A] hover:bg-[#F0EEFF]"
-                }`}
-              >
-                <item.icon className="h-3.5 w-3.5" />
-                {item.label}
-                {item.href === "/approvals" && pendingCount > 0 && (
-                  <span className="absolute -top-1 -right-1 h-4 w-4 flex items-center justify-center rounded-full bg-[#F5D547] text-[#1A1A1A] text-[9px] font-bold">{pendingCount}</span>
-                )}
-              </Link>
-            );
-          })}
-          {/* More dropdown */}
-          <div className="relative">
-            <button
-              onClick={() => setMoreOpen((v) => !v)}
-              className={`flex items-center gap-1.5 px-3.5 py-2 rounded-full text-[13px] font-medium transition-all ${
-                moreItems.some(i => pathname.startsWith(i.href))
-                  ? "bg-gradient-to-r from-[#3023D0] to-[#5B4BF5] text-white shadow-[0_2px_8px_rgba(91,75,245,0.25)]"
-                  : "text-[#7A7A7A] hover:bg-[#F0EEFF]"
-              }`}
-            >
-              More
-              <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7"/></svg>
-              {pendingCount > 0 && (
-                <span className="absolute -top-1 -right-1 h-4 w-4 flex items-center justify-center rounded-full bg-[#F5D547] text-[#1A1A1A] text-[9px] font-bold">{pendingCount}</span>
-              )}
-            </button>
-            {moreOpen && (
-              <div className="absolute left-0 top-11 z-50 w-48 bg-white rounded-2xl shadow-[0_8px_32px_rgba(0,0,0,0.12)] border border-[#E8E0D0] overflow-hidden p-1.5">
-                {moreItems.map((item) => {
-                  const isActive = pathname.startsWith(item.href);
-                  return (
-                    <Link
-                      key={item.href}
-                      href={item.href}
-                      onClick={() => setMoreOpen(false)}
-                      className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
-                        isActive ? "bg-[#FFF3C4] text-[#1A1A1A] font-semibold" : "text-[#7A7A7A] hover:bg-[#FFF8E1]"
-                      }`}
-                    >
-                      <item.icon className="h-4 w-4" />
-                      {item.label}
-                      {item.href === "/approvals" && pendingCount > 0 && (
-                        <span className="ml-auto bg-[#F5D547] text-[#1A1A1A] text-[10px] font-bold px-1.5 py-0.5 rounded-full">{pendingCount}</span>
-                      )}
-                    </Link>
-                  );
-                })}
-              </div>
+        {/* Bell */}
+        <div className="relative" ref={bellRef}>
+          <button
+            onClick={() => { setBellOpen(v => !v); setSelectedNotif(null); }}
+            className="relative h-8 w-8 flex items-center justify-center rounded-xl border-2 border-ink/12 hover:bg-muted transition-colors btn-3d"
+          >
+            <Bell className="h-4 w-4 text-ink-3" />
+            {unreadCount > 0 && (
+              <span className="absolute -top-1 -right-1 h-4 min-w-[16px] flex items-center justify-center rounded-full bg-attention text-white text-[9px] font-bold px-1">
+                {unreadCount > 99 ? "99+" : unreadCount}
+              </span>
             )}
-          </div>
+          </button>
+
+          {bellOpen && (
+            <div className="absolute right-0 top-11 z-50 w-80 v3-card shadow-pop overflow-hidden">
+              {selectedNotif ? (
+                /* ── Detail view ── */
+                <>
+                  <div className="flex items-center gap-2 px-4 py-3 border-b-2 border-ink/10">
+                    <button
+                      onClick={() => setSelectedNotif(null)}
+                      className="flex items-center gap-1 text-xs text-ink-4 hover:text-ink font-medium transition-colors"
+                    >
+                      <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7"/></svg>
+                      Back
+                    </button>
+                  </div>
+                  <div className="p-4 space-y-3 max-h-96 overflow-y-auto">
+                    <p className="text-sm font-semibold text-ink leading-snug">{selectedNotif.title}</p>
+                    <p className="text-xs text-ink-4">{new Date(selectedNotif.createdAt).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}</p>
+                    <p className="text-sm text-ink-3 leading-relaxed whitespace-pre-wrap">{selectedNotif.message}</p>
+                  </div>
+                </>
+              ) : (
+                /* ── List view ── */
+                <>
+                  <div className="flex items-center justify-between px-4 py-3 border-b-2 border-ink/10">
+                    <p className="text-sm font-bold text-ink">Notifications</p>
+                    {unreadCount > 0 && (
+                      <button onClick={markAllRead} className="flex items-center gap-1 text-xs text-indigo hover:text-indigo-deep font-semibold transition-colors">
+                        <CheckCheck className="h-3.5 w-3.5" /> Mark all read
+                      </button>
+                    )}
+                  </div>
+                  <div className="max-h-96 overflow-y-auto divide-y divide-rule">
+                    {notifications.length === 0 ? (
+                      <div className="p-8 text-center">
+                        <BellOff className="h-8 w-8 mx-auto mb-2 text-ink-4 opacity-40" />
+                        <p className="text-sm text-ink-4">No notifications yet</p>
+                      </div>
+                    ) : notifications.map((n: any) => (
+                      <div
+                        key={n.id}
+                        onClick={() => openNotif(n)}
+                        className={`px-4 py-3 cursor-pointer transition-colors v3-row ${!n.read ? "bg-action-soft/30" : ""}`}
+                      >
+                        <div className="flex items-start gap-2">
+                          {!n.read && <span className="mt-1.5 h-2 w-2 rounded-full bg-attention shrink-0 dot-pulse" />}
+                          <div className={`flex-1 min-w-0 ${n.read ? "ml-4" : ""}`}>
+                            <p className={`text-sm ${!n.read ? "font-semibold text-ink" : "text-ink-3"}`}>{n.title}</p>
+                            <p className="text-xs text-ink-4 mt-0.5 line-clamp-2">{n.message}</p>
+                            <p className="text-[10px] text-ink-4 mt-1">{timeAgo(n.createdAt)}</p>
+                          </div>
+                          <svg className="h-3.5 w-3.5 text-border shrink-0 mt-1" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7"/></svg>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
         </div>
 
-        {/* Right Section */}
-        <div className="flex items-center gap-2">
-          {/* Announce Button — visible to admins, always in nav */}
-          <Link
-            href="/announcements"
-            className="hidden sm:flex items-center gap-1.5 px-3.5 py-2 rounded-full bg-[#1A1A1A] text-white text-[13px] font-semibold hover:bg-[#2B2B2B] transition-all shadow-sm"
-          >
-            <Megaphone className="h-3.5 w-3.5 text-[#F5D547]" />
-            Announce
-          </Link>
-
-          {/* Notification Bell */}
-          <div className="relative" ref={bellRef}>
-            <button
-              onClick={() => { setBellOpen((v) => !v); setSelectedNotif(null); }}
-              className="relative p-2 rounded-full text-[#7A7A7A] hover:bg-white/60 transition-all"
-            >
-              <Bell className="h-5 w-5" />
-              {unreadCount > 0 && (
-                <span className="absolute -top-0.5 -right-0.5 h-4.5 min-w-[18px] flex items-center justify-center rounded-full bg-red-500 text-white text-[10px] font-bold px-1 animate-pulse">
-                  {unreadCount > 99 ? "99+" : unreadCount}
-                </span>
-              )}
-            </button>
-
-            {bellOpen && (
-              <div className="absolute right-0 top-12 z-50 w-80 bg-white rounded-2xl shadow-[0_8px_32px_rgba(0,0,0,0.14)] border border-[#E8E0D0] overflow-hidden">
-                {selectedNotif ? (
-                  /* ── Detail view ── */
-                  <div>
-                    <div className="flex items-center gap-2 px-4 py-3 border-b border-[#F0EAD8] bg-[#FEFCF7]">
-                      <button
-                        onClick={() => setSelectedNotif(null)}
-                        className="flex items-center gap-1 text-xs text-[#7A7A7A] hover:text-[#1A1A1A] font-medium transition-colors"
-                      >
-                        <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7"/></svg>
-                        Back
-                      </button>
-                    </div>
-                    <div className="p-4 space-y-3 max-h-[420px] overflow-y-auto">
-                      <p className="text-sm font-semibold text-[#1A1A1A] leading-snug">{selectedNotif.title}</p>
-                      <p className="text-xs text-[#B0B0B0]">{new Date(selectedNotif.createdAt).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}</p>
-                      <p className="text-sm text-[#555] leading-relaxed whitespace-pre-wrap">{selectedNotif.message}</p>
-                    </div>
-                  </div>
-                ) : (
-                  /* ── List view ── */
-                  <>
-                    <div className="flex items-center justify-between px-4 py-3 border-b border-[#F0EAD8] bg-[#FEFCF7]">
-                      <p className="text-sm font-semibold text-[#1A1A1A]">Notifications</p>
-                      {unreadCount > 0 && (
-                        <button onClick={markAllRead} className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 font-medium">
-                          <CheckCheck className="h-3.5 w-3.5" />Mark all read
-                        </button>
-                      )}
-                    </div>
-                    <div className="max-h-[400px] overflow-y-auto divide-y divide-[#F0EAD8]">
-                      {notifications.length === 0 ? (
-                        <div className="p-8 text-center text-[#B0B0B0]">
-                          <BellOff className="h-8 w-8 mx-auto mb-2 opacity-40" />
-                          <p className="text-sm">No notifications yet</p>
-                        </div>
-                      ) : notifications.map((n: any) => (
-                        <div
-                          key={n.id}
-                          onClick={() => openNotif(n)}
-                          className={`px-4 py-3 cursor-pointer transition-colors hover:bg-[#FEFCF7] ${!n.read ? "bg-[rgba(245,213,71,0.06)]" : ""}`}
-                        >
-                          <div className="flex items-start gap-2">
-                            {!n.read && <span className="mt-1.5 h-2 w-2 rounded-full bg-red-500 shrink-0" />}
-                            <div className={`flex-1 min-w-0 ${n.read ? "ml-4" : ""}`}>
-                              <p className={`text-sm ${!n.read ? "font-semibold text-[#1A1A1A]" : "text-[#7A7A7A]"}`}>{n.title}</p>
-                              <p className="text-xs text-[#7A7A7A] mt-0.5 line-clamp-2">{n.message}</p>
-                              <p className="text-[10px] text-[#B0B0B0] mt-1">{timeAgo(n.createdAt)}</p>
-                            </div>
-                            <svg className="h-3.5 w-3.5 text-[#D0C8BA] shrink-0 mt-1" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7"/></svg>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* User Avatar + Menu */}
-          <div className="relative">
-            <button
-              onClick={() => setUserMenuOpen((v) => !v)}
-              className="flex items-center gap-2 p-1.5 rounded-full hover:bg-white/60 transition-all"
-            >
-              {user?.profileImageUrl ? (
-                <img
-                  src={user.profileImageUrl.startsWith("http") ? user.profileImageUrl : `${API_BASE}${user.profileImageUrl}`}
-                  alt=""
-                  className="h-8 w-8 rounded-full object-cover"
-                  onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; (e.target as HTMLImageElement).nextElementSibling && ((e.target as HTMLImageElement).nextElementSibling as HTMLElement).style.removeProperty("display"); }}
-                />
-              ) : null}
-              <div
-                className="h-8 w-8 rounded-full flex items-center justify-center text-white font-semibold text-sm"
-                style={{ background: "linear-gradient(135deg, #5B4BF5, #3023D0)", display: user?.profileImageUrl ? "none" : undefined }}
-              >
-                {user?.name?.charAt(0)?.toUpperCase() || "A"}
-              </div>
-              <span className="hidden md:block text-sm font-medium text-[#1A1A1A]">{user?.name?.split(" ")[0]}</span>
-            </button>
-
-            {userMenuOpen && (
-              <div className="absolute right-0 top-12 z-50 w-56 bg-white rounded-2xl shadow-[0_8px_32px_rgba(0,0,0,0.12)] border border-[#E8E0D0] overflow-hidden">
-                <div className="px-4 py-3 border-b border-[#F0EAD8] bg-[#FEFCF7]">
-                  <p className="text-sm font-semibold text-[#1A1A1A]">{user?.name}</p>
-                  <p className="text-xs text-[#7A7A7A] truncate">{user?.email}</p>
-                </div>
-                <div className="p-1.5">
-                  <Link
-                    href="/settings"
-                    onClick={() => setUserMenuOpen(false)}
-                    className="flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm text-[#1A1A1A] hover:bg-[#FFF8E1] transition-colors"
-                  >
-                    <Settings className="h-4 w-4 text-[#7A7A7A]" />
-                    Settings
-                  </Link>
-                  <button
-                    onClick={() => { setUserMenuOpen(false); logout(); }}
-                    className="flex items-center gap-2.5 w-full px-3 py-2 rounded-lg text-sm text-[#E74C3C] hover:bg-red-50 transition-colors"
-                  >
-                    <LogOut className="h-4 w-4" />
-                    Log out
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Mobile Hamburger */}
+        {/* User avatar + menu */}
+        <div className="relative" ref={userRef}>
           <button
-            onClick={() => setMobileOpen((v) => !v)}
-            className="xl:hidden p-2 rounded-lg hover:bg-white/60 transition-colors"
+            onClick={() => setUserMenuOpen(v => !v)}
+            className="flex items-center gap-2 h-8 pl-1 pr-2 rounded-xl border-2 border-ink/12 hover:bg-muted transition-colors btn-3d"
           >
-            {mobileOpen ? <X className="h-5 w-5 text-[#1A1A1A]" /> : <Menu className="h-5 w-5 text-[#1A1A1A]" />}
+            <Avatar name={user?.name ?? undefined} imageUrl={user?.profileImageUrl ?? undefined} size={6} />
+            <span className="hidden md:block text-xs font-semibold text-ink">{user?.name?.split(" ")[0]}</span>
           </button>
+
+          {userMenuOpen && (
+            <div className="absolute right-0 top-11 z-50 w-56 v3-card shadow-pop overflow-hidden">
+              <div className="px-4 py-3 border-b-2 border-ink/10 bg-muted/40">
+                <p className="text-sm font-bold text-ink">{user?.name}</p>
+                <p className="text-xs text-ink-4 truncate">{user?.email}</p>
+              </div>
+              <div className="p-1.5 space-y-0.5">
+                <Link
+                  href="/settings"
+                  onClick={() => setUserMenuOpen(false)}
+                  className="flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm text-ink v3-row"
+                >
+                  <Settings className="h-4 w-4 text-ink-4" /> Settings
+                </Link>
+                <button
+                  onClick={() => { setUserMenuOpen(false); logout(); }}
+                  className="flex items-center gap-2.5 w-full px-3 py-2 rounded-xl text-sm text-danger v3-row"
+                >
+                  <LogOut className="h-4 w-4" /> Log out
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
-
-      {/* Mobile Nav */}
-      {mobileOpen && (
-        <div className="xl:hidden border-t border-[#F0EAD8] bg-white/95 backdrop-blur-xl px-4 py-3 space-y-1 max-h-[70vh] overflow-y-auto">
-          {allItems.map((item) => {
-            const isActive = pathname.startsWith(item.href);
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                onClick={() => setMobileOpen(false)}
-                className={`flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm transition-all ${
-                  isActive
-                    ? "bg-[#1A1A1A] text-white font-semibold"
-                    : "text-[#7A7A7A] hover:bg-[#FFF8E1]"
-                }`}
-              >
-                <item.icon className="h-4 w-4" />
-                {item.label}
-                {item.href === "/approvals" && pendingCount > 0 && (
-                  <span className="ml-auto bg-[#F5D547] text-[#1A1A1A] text-[10px] font-bold px-1.5 py-0.5 rounded-full">{pendingCount}</span>
-                )}
-              </Link>
-            );
-          })}
-        </div>
-      )}
-    </nav>
+    </header>
   );
 }

@@ -79,11 +79,18 @@ export default function EmployeesPage() {
             </p>
           )}
         </div>
-        <Link href="/employees/new">
-          <Button className="bg-[#1A1A1A] text-white rounded-full hover:bg-[#2B2B2B] shadow-md hover:shadow-lg transition-all">
-            <Plus className="h-4 w-4 mr-2" /> Add Employee
-          </Button>
-        </Link>
+        <div className="flex gap-2">
+          <Link href="/employees/add-admin">
+            <Button variant="outline" className="rounded-full border-[#F0EAD8] text-[#7A7A7A] hover:border-[#E8D8B4] hover:text-[#1A1A1A] transition-all">
+              <Plus className="h-4 w-4 mr-2" /> Add Admin
+            </Button>
+          </Link>
+          <Link href="/employees/new">
+            <Button className="bg-[#1A1A1A] text-white rounded-full hover:bg-[#2B2B2B] shadow-md hover:shadow-lg transition-all">
+              <Plus className="h-4 w-4 mr-2" /> Add Employee
+            </Button>
+          </Link>
+        </div>
       </div>
 
       {/* Search + Filters */}

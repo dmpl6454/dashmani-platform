@@ -57,4 +57,54 @@ router.put("/attendance/leave/:id/approve", authenticate, requirePermission("att
   } catch (err) { next(err); }
 });
 
+// POST /attendance/manual — admin creates a manual attendance record
+router.post("/attendance/manual", authenticate, requirePermission("attendance", "edit"), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { userId, date, checkIn, checkOut, status, note } = req.body;
+    if (!userId || !date || !status) {
+      return res.status(400).json({ success: false, error: { code: "VALIDATION_ERROR", message: "userId, date, and status are required" } });
+    }
+    const { prisma } = await import("@dashmani/db");
+    const dayStart = new Date(date);
+    dayStart.setHours(0, 0, 0, 0);
+
+    const record = await prisma.attendance.upsert({
+      where: { employeeId_date: { employeeId: userId, date: dayStart } },
+      update: {
+        status,
+        ...(checkIn ? { checkIn: new Date(checkIn) } : {}),
+        ...(checkOut ? { checkOut: new Date(checkOut) } : {}),
+        ...(note !== undefined ? { note } : {}),
+      },
+      create: {
+        employeeId: userId,
+        date: dayStart,
+        status,
+        ...(checkIn ? { checkIn: new Date(checkIn) } : {}),
+        ...(checkOut ? { checkOut: new Date(checkOut) } : {}),
+        ...(note !== undefined ? { note } : {}),
+      },
+    });
+    return success(res, record, undefined, 201);
+  } catch (err) { next(err); }
+});
+
+// PUT /attendance/:id/override — admin overrides an existing attendance record
+router.put("/attendance/:id/override", authenticate, requirePermission("attendance", "edit"), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { checkIn, checkOut, status, note } = req.body;
+    const { prisma } = await import("@dashmani/db");
+    const record = await prisma.attendance.update({
+      where: { id: req.params.id },
+      data: {
+        ...(status ? { status } : {}),
+        ...(checkIn ? { checkIn: new Date(checkIn) } : {}),
+        ...(checkOut ? { checkOut: new Date(checkOut) } : {}),
+        ...(note !== undefined ? { note } : {}),
+      },
+    });
+    return success(res, record);
+  } catch (err) { next(err); }
+});
+
 export default router;

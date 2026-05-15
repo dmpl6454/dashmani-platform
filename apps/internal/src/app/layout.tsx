@@ -41,13 +41,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     router.push("/login");
   }, [router]);
 
-  const isLoginPage = pathname === "/login";
+  const publicRoutes = ["/login", "/admin-signup"];
+  const isPublicPage = publicRoutes.includes(pathname);
 
   if (isLoading) {
     return <html lang="en"><body><div className="flex items-center justify-center min-h-screen" style={{ background: "linear-gradient(165deg, #FDF6E3 0%, #F7ECD5 40%, #EFE2C4 100%)" }}><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#F5D547]" /></div></body></html>;
   }
 
-  if (!user && !isLoginPage) {
+  if (!user && !isPublicPage) {
     if (typeof window !== "undefined") router.push("/login");
     return null;
   }
@@ -56,7 +57,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <body>
         <AuthContext.Provider value={{ user, login, logout, isLoading }}>
-          {isLoginPage ? (
+          {isPublicPage ? (
             children
           ) : (
             <div className="min-h-screen" style={{ background: "linear-gradient(165deg, #FDF6E3 0%, #F7ECD5 40%, #EFE2C4 100%)" }}>

@@ -152,6 +152,7 @@ model Attendance {
   status        AttendanceStatus @default(PRESENT)
   overtimeHours Float            @default(0) @map("overtime_hours")
   ipAddress     String?          @map("ip_address")
+  note          String?
   createdAt     DateTime         @default(now()) @map("created_at")
   updatedAt     DateTime         @updatedAt @map("updated_at")
 
@@ -396,6 +397,19 @@ model ClientInvite {
   createdAt DateTime  @default(now())
 
   @@map("client_invites")
+}
+
+model AdminInvite {
+  id          String    @id @default(uuid())
+  email       String    @unique
+  token       String    @unique @default(uuid())
+  roleIds     String[]  @map("role_ids")
+  designation String?
+  expiresAt   DateTime  @map("expires_at")
+  usedAt      DateTime? @map("used_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  @@map("admin_invites")
 }
 
 model ClientRefreshToken {

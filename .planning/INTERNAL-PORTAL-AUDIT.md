@@ -1,9 +1,9 @@
 # Internal Admin Portal — End-to-End Audit & Remediation Plan
 
-**Date:** 2026-05-15
+**Date:** 2026-05-15 (last updated: 2026-05-15)
 **Branch:** `docs/design-critique`
 **Scope:** `apps/internal` + `apps/api` (internal/admin endpoints)
-**Status:** 11 open issues across route mounting, missing features, and UX gaps.
+**Status:** 4 new issues found and resolved — see Wave 8 below.
 
 > Companion file: [INTERNAL-PORTAL-ERRORS.md](./INTERNAL-PORTAL-ERRORS.md) — full error log.
 > Implementation plan: [internal-portal-plan.md](./internal-portal-plan.md) — phase-by-phase fix roadmap.
@@ -262,10 +262,15 @@ The internal admin portal is structurally mature — ~46 pages, real CRUD operat
 | 5 | No manual attendance entry | Can't correct missed check-ins | P2 | ✅ Resolved — commit f92e1a1 |
 | 6 | No task reassignment UI | Can't change task assignee from detail view | P2 | ✅ Resolved — commit f92e1a1 |
 | 7 | No client invite button | Must use API directly to invite clients | P1 | ✅ Resolved — commit f92e1a1 |
-| 8 | No role colour-coding | All roles look identical in employee list | P2 | Already implemented in employees/page.tsx (ROLE_COLORS map existed) |
-| 9 | No loading skeletons | Blank screens on slow connections | P2 | Open — loading.tsx files still needed |
+| 8 | No role colour-coding | All roles look identical in employee list | P2 | ✅ Resolved — commit 9ee3592 (role-colors.ts + employees/page.tsx + employees/[id]/page.tsx) |
+| 9 | No loading skeletons | Blank screens on slow connections | P2 | ✅ Resolved — 22 loading.tsx files created |
 | 10 | Analytics sub-pages unverified | May be placeholders or have envelope bugs | P1 | ✅ Verified fully wired — no fixes needed |
 | 11 | Null safety on reviewer name | Confusing "by · date" display when reviewer deleted | P3 | ✅ Resolved — commit f92e1a1 |
+| 12 | `reports/[employeeId]` crashes with runtime error | "An unsupported type was passed to use()" on page load | P0 | ✅ Resolved — commit dad9b5f (removed React.use() wrapper) |
+| 13 | No user deletion capability | Admins cannot remove employees or clients from the system | P1 | ✅ Resolved — commit dad9b5f (DELETE /admin/users/:id, DELETE /admin/clients/:id, role-gated UI) |
+| 14 | No role assignment UI | Cannot change employee roles from the portal | P1 | ✅ Resolved — commit dad9b5f (PUT /admin/users/:id/roles + RoleManager component) |
+| 15 | Project end date allows invalid values | Can create a project where endDate < startDate | P2 | ✅ Resolved — commit dad9b5f (client-side + server-side validation) |
+| 16 | Client portal shows no projects by default | "active" default filter hides newly assigned projects | P2 | ✅ Resolved — commit dad9b5f (default changed to "all", improved empty state) |
 
 ---
 
@@ -297,11 +302,21 @@ Role colours, loading.tsx files, null safety. ~half day.
 
 ---
 
+### Wave 8 — Bug fixes & new capabilities (Issues 12–16, commit dad9b5f)
+
+1. **Issue 12:** `reports/[employeeId]` crash — `React.use(params)` is not supported in this Next.js version; replaced with direct destructuring.
+2. **Issue 13:** User deletion — `DELETE /admin/users/:id` (soft-delete via `deletedAt` + `status=INACTIVE`) and `DELETE /admin/clients/:id`. Both require caller to have "Admin" or "Super Admin" role. Super Admin protection: non-super-admins cannot delete super admins. Self-deletion blocked.
+3. **Issue 14:** Role management — `PUT /admin/users/:id/roles` atomically replaces all roles (transaction: delete existing + createMany). `RoleManager` component in employee detail Profile tab shows toggle buttons for all system roles; visible only to admins/super-admins.
+4. **Issue 15:** Project date validation — enforced at both client (min attr + onSubmit check, clears endDate when startDate advances past it) and server (`createProject` + `updateProject`).
+5. **Issue 16:** Client portal projects — default filter changed from "active" to "all" so newly assigned projects are always visible regardless of status; empty state message now distinguishes "no projects at all" vs "no matching filter".
+
+---
+
 ## Decisions (open)
 
-1. **Admin invite vs direct create:** Recommend supporting both — direct create for internal staff, invite for collaborators who don't yet have accounts.
-2. **Attendance override scope:** Should any admin be able to override records, or only Super Admin? Recommend: any admin with `attendance:edit` permission.
-3. **Profile data edit scope:** Should admin be able to edit all submitted fields (bank, ID), or only contact/address? Recommend: all fields, with an audit trail (who changed what, when).
+1. **Admin invite vs direct create:** Resolved — both supported as of commit f92e1a1.
+2. **Attendance override scope:** Resolved — any user with `attendance:edit` permission.
+3. **Profile data edit scope:** Resolved — all fields editable, changes visible in audit log via existing `auditLog` middleware.
 
 ---
 

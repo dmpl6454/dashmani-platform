@@ -40,3 +40,7 @@ export const respondContentApprovalSchema = z.object({
   status: z.enum(["APPROVED", "REJECTED"]),
   clientNote: z.string().max(2000).optional(),
 });
+
+export const addPostCommentSchema = z.object({
+  body: z.string().min(1, "Comment body is required").max(5000),
+});

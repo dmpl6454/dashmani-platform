@@ -1181,4 +1181,48 @@ router.get("/admin/users/invite/:token", async (req: Request, res: Response, nex
   } catch (err) { next(err); }
 });
 
+// ===== Bulk Approval Actions =====
+
+// POST /admin/documents/bulk-review
+router.post("/admin/documents/bulk-review", authenticate, requirePermission("employees", "edit"), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { ids, action, note } = req.body as { ids: string[]; action: "APPROVE" | "REJECT"; note?: string };
+    if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ success: false, error: { message: "ids must be a non-empty array" } });
+    if (action !== "APPROVE" && action !== "REJECT") return res.status(400).json({ success: false, error: { message: "action must be APPROVE or REJECT" } });
+    const status = action === "APPROVE" ? "APPROVED" : "REJECTED";
+    const userId = (req as any).user.userId;
+    const results = await Promise.allSettled(ids.map((id) => documentService.reviewDocument(id, userId, status, note)));
+    const succeeded = results.filter((r) => r.status === "fulfilled").length;
+    return success(res, { succeeded, failed: ids.length - succeeded });
+  } catch (err) { next(err); }
+});
+
+// POST /admin/profile-pictures/bulk-review
+router.post("/admin/profile-pictures/bulk-review", authenticate, requirePermission("employees", "edit"), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { ids, action } = req.body as { ids: string[]; action: "APPROVE" | "REJECT" };
+    if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ success: false, error: { message: "ids must be a non-empty array" } });
+    if (action !== "APPROVE" && action !== "REJECT") return res.status(400).json({ success: false, error: { message: "action must be APPROVE or REJECT" } });
+    const userId = (req as any).user.userId;
+    const fn = action === "APPROVE" ? profilePicService.approveProfilePicture : profilePicService.rejectProfilePicture;
+    const results = await Promise.allSettled(ids.map((id) => fn(id, userId)));
+    const succeeded = results.filter((r) => r.status === "fulfilled").length;
+    return success(res, { succeeded, failed: ids.length - succeeded });
+  } catch (err) { next(err); }
+});
+
+// POST /admin/leave-requests/bulk
+router.post("/admin/leave-requests/bulk", authenticate, requirePermission("employees", "edit"), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { ids, action } = req.body as { ids: string[]; action: "APPROVE" | "REJECT"; note?: string };
+    if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ success: false, error: { message: "ids must be a non-empty array" } });
+    if (action !== "APPROVE" && action !== "REJECT") return res.status(400).json({ success: false, error: { message: "action must be APPROVE or REJECT" } });
+    const userId = (req as any).user.userId;
+    const fn = action === "APPROVE" ? leaveService.approveLeaveRequest : leaveService.rejectLeaveRequest;
+    const results = await Promise.allSettled(ids.map((id) => fn(id, userId)));
+    const succeeded = results.filter((r) => r.status === "fulfilled").length;
+    return success(res, { succeeded, failed: ids.length - succeeded });
+  } catch (err) { next(err); }
+});
+
 export default router;

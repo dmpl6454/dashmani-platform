@@ -3,7 +3,9 @@ import { apiFetch } from "@/lib/api";
 
 export function useOverviewStats() {
   return useSWR("/analytics/overview", (url) => apiFetch(url), {
-    refreshInterval: 30000,
+    refreshInterval: 120000,
+    revalidateOnFocus: false,
+    dedupingInterval: 60000,
   });
 }
 

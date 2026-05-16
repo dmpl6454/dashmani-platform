@@ -1,7 +1,8 @@
 import { z } from "zod";
+import { safeString } from "../utils/sanitize";
 
 export const createEmployeeSchema = z.object({
-  name: z.string().min(2, "Name must be at least 2 characters").max(100),
+  name: safeString.pipe(z.string().min(2, "Name must be at least 2 characters").max(100)),
   email: z.string().email("Invalid email format"),
   password: z.string().min(8, "Password must be at least 8 characters"),
   phone: z.string().optional(),
@@ -10,7 +11,7 @@ export const createEmployeeSchema = z.object({
 });
 
 export const updateEmployeeSchema = z.object({
-  name: z.string().min(2).max(100).optional(),
+  name: safeString.pipe(z.string().min(2).max(100)).optional(),
   phone: z.string().optional(),
   orgUnitId: z.string().uuid().nullable().optional(),
   status: z.enum(["ACTIVE", "INACTIVE", "ONBOARDING"]).optional(),

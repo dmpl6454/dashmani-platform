@@ -3,6 +3,8 @@ import { useState } from "react";
 import { apiFetch, API_BASE } from "@/lib/api";
 import useSWR from "swr";
 import { GraduationCap, ExternalLink, FileText, X } from "lucide-react";
+import { formatStatus } from "@dashmani/shared";
+import { usePageTitle } from "@/lib/hooks/use-page-title";
 
 const inputClass = "w-full border border-[#E8E0D0] bg-white rounded-lg px-4 py-2.5 text-sm text-[#1A1A1A] placeholder:text-[#B0B0B0] focus:outline-none focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547] transition-colors";
 
@@ -19,6 +21,7 @@ const statusColors: Record<string, string> = {
 };
 
 export default function InternshipsPage() {
+  usePageTitle("Internships");
   const [filter, setFilter] = useState("");
   const { data, mutate } = useSWR(`/admin/internships${filter ? `?status=${filter}` : ""}`, (url: string) => apiFetch<any>(url));
   const apps = data?.data || [];
@@ -118,7 +121,7 @@ export default function InternshipsPage() {
                   </td>
                   <td className="p-4 text-[#7A7A7A]">{app.college || "—"}{app.course ? ` · ${app.course}` : ""}</td>
                   <td className="p-4 text-[#7A7A7A]">{app.duration}</td>
-                  <td className="p-4"><span className={`px-2.5 py-1 rounded-full text-xs font-medium ${statusColors[app.status] || "bg-gray-100"}`}>{app.status}</span></td>
+                  <td className="p-4"><span className={`px-2.5 py-1 rounded-full text-xs font-medium ${statusColors[app.status] || "bg-gray-100"}`}>{formatStatus(app.status)}</span></td>
                   <td className="p-4 text-[#7A7A7A] text-xs">{new Date(app.createdAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}</td>
                 </tr>
               ))}

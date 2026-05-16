@@ -10,21 +10,41 @@ Follow these steps exactly on a fresh clone. All commands run from the **repo ro
 
 ### 1. Prerequisites
 
-Install these before anything else:
+These are the **only** system-level tools you need — everything else installs via `npm install`.
 
-| Tool | Version | Install |
-|------|---------|---------|
-| Node.js | 22.x LTS | https://nodejs.org or `brew install node` (macOS) |
-| npm | 10+ (bundled with Node) | — |
-| Docker Desktop | latest | https://www.docker.com/products/docker-desktop |
-| Git | any | https://git-scm.com |
+| Tool | Required version | macOS install | Windows install |
+|------|-----------------|---------------|-----------------|
+| **Node.js** | 22.x LTS | `brew install node` or https://nodejs.org | https://nodejs.org (LTS installer — check "Add to PATH") |
+| **npm** | 10.x or 11.x (bundled with Node) | comes with Node | comes with Node |
+| **Git** | any | `brew install git` or https://git-scm.com | https://git-scm.com (includes Git Bash) |
+| **Docker Desktop** | latest | https://www.docker.com/products/docker-desktop | https://www.docker.com/products/docker-desktop |
 
-On macOS you can install Node with Homebrew:
+**That's it.** No Python, Java, Ruby, Rust, or any other runtime is needed. All project tooling (TypeScript, Prisma, Turbo, tsx, ESLint, Vitest) installs automatically as npm packages.
+
+#### macOS — install everything in one go with Homebrew
+
+If you don't have Homebrew: `/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"`
+
 ```bash
-brew install node
+brew install node git
+# Then install Docker Desktop manually from https://www.docker.com/products/docker-desktop
 ```
 
-On Windows, download the Node.js installer from https://nodejs.org (LTS). Make sure "Add to PATH" is checked.
+#### Windows — install order matters
+
+1. Install **Git for Windows** from https://git-scm.com — this also gives you Git Bash (a proper bash shell)
+2. Install **Node.js LTS** from https://nodejs.org — tick "Add to PATH"
+3. Install **Docker Desktop** from https://www.docker.com/products/docker-desktop
+4. Restart your terminal after each install
+
+#### Verify everything is installed
+
+```bash
+node --version    # should print v22.x.x
+npm --version     # should print 10.x.x or 11.x.x
+git --version     # any version
+docker --version  # any recent version
+```
 
 ### 2. Clone the repo
 

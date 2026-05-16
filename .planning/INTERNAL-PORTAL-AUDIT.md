@@ -1,9 +1,9 @@
 # Internal Admin Portal — End-to-End Audit & Remediation Plan
 
-**Date:** 2026-05-15 (last updated: 2026-05-15)
+**Date:** 2026-05-15 (last updated: 2026-05-16)
 **Branch:** `docs/design-critique`
 **Scope:** `apps/internal` + `apps/api` (internal/admin endpoints)
-**Status:** 4 new issues found and resolved — see Wave 8 below.
+**Status:** Wave 9 complete — broadcast announcements (Issue 17) + notification detail view (Issues 18–19) — commit 1e92b20. UI/UX polish pass complete — design-spec parity (command palette, sidebar More grid, nav grouping). Issue 20 open — announcement emails not delivered (SMTP env vars missing + unawaited Promise).
 
 > Companion file: [INTERNAL-PORTAL-ERRORS.md](./INTERNAL-PORTAL-ERRORS.md) — full error log.
 > Implementation plan: [internal-portal-plan.md](./internal-portal-plan.md) — phase-by-phase fix roadmap.
@@ -271,6 +271,137 @@ The internal admin portal is structurally mature — ~46 pages, real CRUD operat
 | 14 | No role assignment UI | Cannot change employee roles from the portal | P1 | ✅ Resolved — commit dad9b5f (PUT /admin/users/:id/roles + RoleManager component) |
 | 15 | Project end date allows invalid values | Can create a project where endDate < startDate | P2 | ✅ Resolved — commit dad9b5f (client-side + server-side validation) |
 | 16 | Client portal shows no projects by default | "active" default filter hides newly assigned projects | P2 | ✅ Resolved — commit dad9b5f (default changed to "all", improved empty state) |
+| 17 | No broadcast announcement capability | Admins cannot mass-message all employees from the portal | P1 | ✅ Resolved — commit 1e92b20 |
+| 18 | Notifications not expandable (internal portal) | Clicking a notification only marks it read; full message never visible | P1 | ✅ Resolved — commit 1e92b20 |
+| 19 | Notifications not expandable (HR/employee portal) | Same — clicking already-read notifications did nothing at all | P1 | ✅ Resolved — commit 1e92b20 |
+| 20 | Announcement emails never delivered | SMTP env vars missing + unawaited Promise.allSettled in announcement.service.ts | P1 | ❌ Open — 2026-05-16 |
+
+---
+
+## Issue 17 — No broadcast announcement to all employees (P1)
+
+**Symptom:** Admin/Super Admin has no way to send a message to all current (and future) employees simultaneously. Communication must go through individual DMs, email clients, or direct DB calls.
+
+**Root cause:**
+- No `POST /admin/announcements` endpoint exists.
+- No `Announcement` model in the schema.
+- No broadcast service function that fans out to all active employees.
+- No UI in the internal portal to compose and send an announcement.
+- The `NotificationType` enum in `schema.prisma` does not include `ANNOUNCEMENT`.
+
+**Fix — four-part implementation:**
+
+### Part A — Schema
+Add `ANNOUNCEMENT` to `NotificationType` enum and add an `Announcement` model to track sent broadcasts (for history + idempotency):
+
+```prisma
+// In NotificationType enum — add:
+ANNOUNCEMENT
+
+// New model:
+model Announcement {
+  id          String    @id @default(uuid())
+  title       String
+  message     String    @db.Text
+  sentById    String
+  recipientCount Int    @default(0)
+  createdAt   DateTime  @default(now())
+
+  sentBy      User      @relation(fields: [sentById], references: [id])
+
+  @@map("announcements")
+}
+```
+
+### Part B — API
+**New endpoint** — `apps/api/src/routes/admin-features.routes.ts`:
+```
+POST /v1/admin/announcements
+body: { title: string, message: string }
+auth: authenticate + requireAdminRole (Admin or Super Admin only)
+```
+
+**New service** — `apps/api/src/services/announcement.service.ts`:
+```typescript
+async function broadcastAnnouncement(sentById: string, title: string, message: string)
+```
+1. Query all active, non-deleted employees: `User.findMany({ where: { status: "ACTIVE", deletedAt: null } })`.
+2. `prisma.notification.createMany()` — one `ANNOUNCEMENT` notification per employee, with `{ title, message }`.
+3. Fire-and-forget email loop: `sendEmail({ to: user.email, ... })` for each employee using a new `announcementEmailHtml()` template in `email.service.ts`.
+4. Persist one `Announcement` row with `recipientCount`.
+5. Return `{ recipientCount, announcementId }`.
+
+**Optional GET endpoint** (announcement history):
+```
+GET /v1/admin/announcements   — paginated list of past announcements
+```
+
+### Part C — Frontend
+**New page** — `apps/internal/src/app/announcements/page.tsx`:
+- Header: "Announcements" with a "New Announcement" button.
+- History table: past broadcasts (title, sent by, recipient count, date) via `useAnnouncements()` SWR hook.
+- "New Announcement" → opens `AnnouncementModal` (same modal pattern used throughout).
+
+**`AnnouncementModal` component:**
+- Title field (required, max 120 chars).
+- Message textarea (required, max 2000 chars).
+- Character counter.
+- "Preview Email" toggle (renders a read-only preview of the email template).
+- "Send to All Employees" button → POST → success toast: "Announcement sent to N employees".
+- Guard: confirm dialog before send — "This will notify all X active employees. Continue?"
+
+**New SWR hook** — `apps/internal/src/lib/hooks/use-announcements.ts`:
+```typescript
+export function useAnnouncements() { ... }  // GET /admin/announcements
+```
+
+**Sidebar navigation** — add "Announcements" entry to `apps/internal/src/components/sidebar.tsx` (under the Communications section or between Reports and Notifications).
+
+**Loading state** — `apps/internal/src/app/announcements/loading.tsx`.
+
+### Part D — Email template
+Add `announcementEmailHtml(senderName, title, message, portalUrl)` to `apps/api/src/services/email.service.ts`.
+Design: branded header, announcement title as heading, full message body, "Open Portal" CTA button — matching existing brand colours (`#1A1A1A`, `#F5D547`).
+
+**Files to create/edit:**
+- `packages/db/prisma/schema.prisma` — `ANNOUNCEMENT` enum value + `Announcement` model
+- `apps/api/src/services/announcement.service.ts` — new file
+- `apps/api/src/services/email.service.ts` — add `announcementEmailHtml()`
+- `apps/api/src/routes/admin-features.routes.ts` — add `POST /admin/announcements`, `GET /admin/announcements`
+- `apps/internal/src/app/announcements/page.tsx` — new page
+- `apps/internal/src/app/announcements/loading.tsx` — new loading state
+- `apps/internal/src/lib/hooks/use-announcements.ts` — new SWR hook
+- `apps/internal/src/components/sidebar.tsx` — add navigation entry
+
+**Plan phase:** Wave 9 — ✅ Resolved commit 1e92b20
+
+---
+
+### ISSUE 18 — Notifications not expandable — internal portal (P1)
+
+**Symptom:** Clicking a notification in the admin portal bell only called `markAsRead`. The full message was never visible — truncated to two lines with no expand affordance. Already-read notifications had `onClick` gated by `!n.read`, making them completely unclickable.
+
+**Root cause:** The dropdown rendered a flat list where `onClick` was `() => { if (!n.read) markOneRead(n.id); }` — no detail state, no full-message view.
+
+**Fix:** Added `selectedNotif` state to `top-nav.tsx`. Clicking any notification (read or unread) sets `selectedNotif` and switches the dropdown to a detail panel showing full title, full `whitespace-pre-wrap` message, and formatted timestamp. Back chevron returns to list. Unread notifications auto-marked read on open. Chevron `>` affordance added to every list row.
+
+**Files:** [apps/internal/src/components/top-nav.tsx](../apps/internal/src/components/top-nav.tsx)
+
+**Plan phase:** Wave 9 — ✅ Resolved commit 1e92b20
+
+---
+
+### ISSUE 19 — Notifications not expandable — HR/employee portal (P1)
+
+**Symptom:** Same as Issue 18 but in `apps/hr`. `onClick` was `() => !notif.read && handleMarkRead(notif.id)` — clicking a read notification did nothing. No way to re-read a notification or see long messages.
+
+**Root cause:** `notification-bell.tsx` had no detail state or expand mechanism.
+
+**Fix:** Rewrote `notification-bell.tsx` with the same `selectedNotif` detail-panel pattern. All notifications always clickable. Added `BellOff` and `CheckCheck` imports. `timeAgo()` helper added (consistent with internal portal).
+
+**Files:** [apps/hr/src/components/notification-bell.tsx](../apps/hr/src/components/notification-bell.tsx)
+
+**Plan phase:** Wave 9 — ✅ Resolved commit 1e92b20
 
 ---
 
@@ -302,6 +433,16 @@ Role colours, loading.tsx files, null safety. ~half day.
 
 ---
 
+### Wave 9 — Broadcast announcements + notification detail view (Issues 17–19, commit 1e92b20)
+
+1. **Issue 17:** Schema `ANNOUNCEMENT` enum + `Announcement` model. `broadcastAnnouncement()` service fans out `notification.createMany()` to all active employees and fires per-employee emails via `Promise.allSettled` (non-blocking). `POST /admin/announcements` + `GET /admin/announcements` behind `requireAdminRole`. `/announcements` page with history table + `AnnouncementModal`. Dashboard dark broadcast CTA banner with inline `QuickAnnounceModal` + last-sent preview. `Announce` nav pill in top-nav.
+
+2. **Issue 18 (internal portal):** `top-nav.tsx` — clicking any notification (read or unread) now opens an inline detail panel showing full title, full message, and formatted timestamp. Back chevron returns to list. Unread notifications auto-marked read on open. Chevron affordance on every list row.
+
+3. **Issue 19 (HR/employee portal):** `notification-bell.tsx` — same detail-view fix. Previously, clicking already-read notifications did nothing (`onClick` gated by `!notif.read`). Now all notifications are always clickable. Full `whitespace-pre-wrap` message body in detail panel.
+
+---
+
 ### Wave 8 — Bug fixes & new capabilities (Issues 12–16, commit dad9b5f)
 
 1. **Issue 12:** `reports/[employeeId]` crash — `React.use(params)` is not supported in this Next.js version; replaced with direct destructuring.
@@ -309,6 +450,40 @@ Role colours, loading.tsx files, null safety. ~half day.
 3. **Issue 14:** Role management — `PUT /admin/users/:id/roles` atomically replaces all roles (transaction: delete existing + createMany). `RoleManager` component in employee detail Profile tab shows toggle buttons for all system roles; visible only to admins/super-admins.
 4. **Issue 15:** Project date validation — enforced at both client (min attr + onSubmit check, clears endDate when startDate advances past it) and server (`createProject` + `updateProject`).
 5. **Issue 16:** Client portal projects — default filter changed from "active" to "all" so newly assigned projects are always visible regardless of status; empty state message now distinguishes "no projects at all" vs "no matching filter".
+
+---
+
+---
+
+### ISSUE 20 — Announcement emails never delivered (P1)
+
+**Symptom:** Admin broadcasts an announcement — employees receive the in-app bell notification correctly, but no email arrives.
+
+**Root causes (two, both must be fixed):**
+
+1. **Missing SMTP env vars (primary blocker):** `apps/api/.env` contains no `SMTP_USER`, `SMTP_PASS`, or `SMTP_HOST` entries. `sendEmail()` in `email.service.ts:26-28` guards against missing credentials and returns `null` with `console.warn("⚠ Email not configured...")` — no email is ever attempted. `.env.example` also omits these variables so the gap was never surfaced during setup.
+
+2. **Unawaited `Promise.allSettled` (secondary bug):** `announcement.service.ts:38` calls `Promise.allSettled(...)` without `await`. The function returns before email promises resolve — on a slow SMTP connection the fire-and-forget can be abandoned by Node before delivery completes. (In-app `notification.createMany` is awaited and works correctly.)
+
+**Fix:**
+1. Add SMTP credentials to `apps/api/.env` and `apps/api/.env.example`:
+   ```
+   SMTP_HOST=smtp.gmail.com
+   SMTP_PORT=587
+   SMTP_SECURE=false
+   SMTP_USER=<sender-gmail>
+   SMTP_PASS=<app-password>
+   INTERNAL_APP_URL=http://localhost:3000
+   ```
+2. In `apps/api/src/services/announcement.service.ts:38`, change `Promise.allSettled(...)` to `await Promise.allSettled(...)`.
+
+**Files:**
+- `apps/api/.env` — add SMTP vars
+- `.env.example` — document SMTP vars
+- [apps/api/src/services/announcement.service.ts:38](../apps/api/src/services/announcement.service.ts#L38) — add `await`
+- [apps/api/src/services/email.service.ts:26-28](../apps/api/src/services/email.service.ts#L26) — guard (correct, no change needed)
+
+**Plan phase:** Wave 10
 
 ---
 

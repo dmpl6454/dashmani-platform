@@ -19,6 +19,7 @@ import * as reviewService from "../services/performance-review.service";
 import * as bugReportService from "../services/bug-report.service";
 import * as jobListingService from "../services/job-listing.service";
 import * as aiService from "../services/ai.service";
+import * as announcementService from "../services/announcement.service";
 import { uploadExcel } from "../middleware/upload";
 import { prisma } from "@dashmani/db";
 import { notifyHrByEmail, notifyAdminByEmail, sendEmail } from "../services/email.service";
@@ -1287,6 +1288,40 @@ router.post("/admin/leave-requests/bulk", authenticate, requirePermission("emplo
     const results = await Promise.allSettled(ids.map((id) => fn(id, userId)));
     const succeeded = results.filter((r) => r.status === "fulfilled").length;
     return success(res, { succeeded, failed: ids.length - succeeded });
+  } catch (err) { next(err); }
+});
+
+// ===== Announcements =====
+
+// POST /admin/announcements — broadcast a message to all active employees
+router.post("/admin/announcements", authenticate, requireAdminRole, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { title, message } = req.body as { title?: string; message?: string };
+    if (!title?.trim() || !message?.trim()) {
+      return res.status(400).json({ success: false, error: { code: "VALIDATION_ERROR", message: "title and message are required" } });
+    }
+    if (title.trim().length > 120) {
+      return res.status(400).json({ success: false, error: { code: "VALIDATION_ERROR", message: "title must be 120 characters or fewer" } });
+    }
+    if (message.trim().length > 2000) {
+      return res.status(400).json({ success: false, error: { code: "VALIDATION_ERROR", message: "message must be 2000 characters or fewer" } });
+    }
+    const result = await announcementService.broadcastAnnouncement(
+      (req as any).user.userId,
+      title.trim(),
+      message.trim()
+    );
+    return success(res, result, undefined, 201);
+  } catch (err) { next(err); }
+});
+
+// GET /admin/announcements — paginated history of sent announcements
+router.get("/admin/announcements", authenticate, requireAdminRole, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const page = parseInt(String(req.query.page ?? "1")) || 1;
+    const limit = parseInt(String(req.query.limit ?? "20")) || 20;
+    const result = await announcementService.getAnnouncements(page, limit);
+    return success(res, result);
   } catch (err) { next(err); }
 });
 

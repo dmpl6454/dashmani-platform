@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { mutate } from "swr";
 import { Topstrip } from "@/components/portal-topstrip";
-import { Button, AspectThumb, FormatPill, Avatar, Empty, KbdRow, Modal, PageError } from "@/components/portal-shared";
+import { Button, AspectThumb, FormatPill, Avatar, Empty, KbdRow, Modal, PageError, IconButton } from "@/components/portal-shared";
 import { Icon } from "@/components/portal-icons";
 import { ReasonModal } from "@/components/reason-modal";
 import { IGFeedCard } from "@/components/ig-previews";
@@ -16,7 +16,6 @@ export default function ApprovalsPage() {
   const router = useRouter();
   const { data: approvalsData, isLoading, error: approvalsError } = useClientPendingApprovals();
   const pending: any[] = approvalsData ?? [];
-
   const { data: projectsData } = useClientProjects();
   const projects: any[] = projectsData?.items ?? [];
 
@@ -25,102 +24,62 @@ export default function ApprovalsPage() {
   const [modal, setModal] = useState<null | "revise" | "reject" | "bulk-confirm" | "bulk-revise">(null);
 
   useEffect(() => {
-    if (!pending.find((p) => p.id === focusId)) {
-      setFocusId(pending[0]?.id);
-    }
+    if (!pending.find((p) => p.id === focusId)) setFocusId(pending[0]?.id);
   }, [pending, focusId]);
 
   useEffect(() => {
     const valid = new Set(pending.map((p) => p.id));
     const next = new Set([...selectedIds].filter((id) => valid.has(id)));
     if (next.size !== selectedIds.size) setSelectedIds(next);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pending]);
 
   const focusPost = pending.find((p) => p.id === focusId) || null;
   const focusIndex = pending.findIndex((p) => p.id === focusId);
-  const focusProjectId = focusPost?.project?.id ?? focusPost?.project;
-  const focusProject = focusPost ? projects.find((pr) => pr.id === focusProjectId) || null : null;
+  const focusProject = focusPost ? projects.find((pr) => pr.id === (focusPost.project?.id ?? focusPost.project)) || null : null;
 
   async function handleApprove(id: string) {
     try {
-      await apiFetch(`/client/content/${id}/respond`, {
-        method: "PUT",
-        body: JSON.stringify({ status: "APPROVED" }),
-      });
+      await apiFetch(`/client/content/${id}/respond`, { method: "PUT", body: JSON.stringify({ status: "APPROVED" }) });
       mutate(PENDING_APPROVALS_KEY);
-    } catch {
-      Actions.toast({ kind: "danger", text: "Could not approve. Please try again." });
-    }
+      Actions.toast({ kind: "success", text: "Approved!" });
+    } catch { Actions.toast({ kind: "danger", text: "Could not approve. Please try again." }); }
   }
 
   async function handleRevise(id: string, note: string) {
     try {
-      await apiFetch(`/client/content/${id}/respond`, {
-        method: "PUT",
-        body: JSON.stringify({ status: "REJECTED", clientNote: note }),
-      });
+      await apiFetch(`/client/content/${id}/respond`, { method: "PUT", body: JSON.stringify({ status: "REJECTED", clientNote: note }) });
       mutate(PENDING_APPROVALS_KEY);
-    } catch {
-      Actions.toast({ kind: "danger", text: "Could not request revision. Please try again." });
-    }
-  }
-
-  async function handleReject(id: string, note: string) {
-    try {
-      await apiFetch(`/client/content/${id}/respond`, {
-        method: "PUT",
-        body: JSON.stringify({ status: "REJECTED", clientNote: note }),
-      });
-      mutate(PENDING_APPROVALS_KEY);
-    } catch {
-      Actions.toast({ kind: "danger", text: "Could not reject. Please try again." });
-    }
+      Actions.toast({ kind: "success", text: "Revision requested." });
+    } catch { Actions.toast({ kind: "danger", text: "Could not request revision." }); }
   }
 
   async function handleBulkApprove(ids: string[]) {
     try {
-      await Promise.all(ids.map(id =>
-        apiFetch(`/client/content/${id}/respond`, {
-          method: "PUT",
-          body: JSON.stringify({ status: "APPROVED" }),
-        })
-      ));
+      await Promise.all(ids.map(id => apiFetch(`/client/content/${id}/respond`, { method: "PUT", body: JSON.stringify({ status: "APPROVED" }) })));
       mutate(PENDING_APPROVALS_KEY);
       setSelectedIds(new Set());
       setModal(null);
-    } catch {
-      Actions.toast({ kind: "danger", text: "Bulk approve failed. Please try again." });
-    }
+      Actions.toast({ kind: "success", text: `Approved ${ids.length} items.` });
+    } catch { Actions.toast({ kind: "danger", text: "Bulk approve failed." }); }
   }
 
   async function handleBulkRevise(note: string) {
     try {
-      await Promise.all(selectedArray.map(p =>
-        apiFetch(`/client/content/${p.id}/respond`, {
-          method: "PUT",
-          body: JSON.stringify({ status: "REJECTED", clientNote: note }),
-        })
-      ));
+      await Promise.all(selectedArray.map(p => apiFetch(`/client/content/${p.id}/respond`, { method: "PUT", body: JSON.stringify({ status: "REJECTED", clientNote: note }) })));
       mutate(PENDING_APPROVALS_KEY);
       setSelectedIds(new Set());
       setModal(null);
-    } catch {
-      Actions.toast({ kind: "danger", text: "Bulk revision request failed. Please try again." });
-    }
+    } catch { Actions.toast({ kind: "danger", text: "Bulk revision failed." }); }
   }
 
   const move = (dir: number) => {
     if (!pending.length) return;
-    const next = Math.max(0, Math.min(pending.length - 1, (focusIndex < 0 ? 0 : focusIndex) + dir));
-    setFocusId(pending[next].id);
+    setFocusId(pending[Math.max(0, Math.min(pending.length - 1, (focusIndex < 0 ? 0 : focusIndex) + dir))].id);
   };
 
   const toggleSelect = (id: string) =>
-    setSelectedIds((s) => {
-      const n = new Set(s);
-      if (n.has(id)) n.delete(id); else n.add(id);
-      return n;
-    });
+    setSelectedIds((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -137,6 +96,7 @@ export default function ApprovalsPage() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusPost, focusIndex, pending, modal, router]);
 
   const selectedArray = pending.filter((p) => selectedIds.has(p.id));
@@ -147,64 +107,65 @@ export default function ApprovalsPage() {
     <>
       <Topstrip
         title="Approvals"
-        sub={`${pending.length} pending · keyboard-first`}
+        sub={pending.length > 0 ? `${pending.length} pending` : "Inbox zero"}
         right={
-          <div className="text-[11.5px] text-ink-3 flex items-center gap-2.5">
+          <div className="hidden md:flex items-center gap-2">
             <KbdRow items={[{ k: "A", label: "approve" }, { k: "R", label: "revise" }, { k: "X", label: "reject" }, { k: "↑↓", label: "move" }]} />
           </div>
         }
       />
 
+      {/* Bulk action bar */}
       {selectedArray.length > 0 && (
-        <div className="sticky top-14 z-20 bg-action-soft border-b border-action px-6 h-12 flex items-center gap-3">
-          <span className="text-[13px] font-medium text-ink">
+        <div
+          className="sticky top-16 z-20 px-6 h-12 flex items-center gap-3 slide-right"
+          style={{ background: "#EDEDFD", borderBottom: "2px solid rgba(93,95,239,0.25)" }}
+        >
+          <span className="text-[13px] font-bold text-indigo">
             {selectedArray.length} selected
-            {!bulkSafe && <span className="text-attention ml-2">· spans {selectedProjects.size} projects</span>}
+            {!bulkSafe && <span className="text-attention ml-2 font-medium"> · spans {selectedProjects.size} projects</span>}
           </span>
-          <div className="flex-1"/>
-          <Button variant="default" size="sm" onClick={() => setSelectedIds(new Set())}>Clear</Button>
+          <div className="flex-1" />
+          <Button variant="ghost" size="sm" onClick={() => setSelectedIds(new Set())}>Clear</Button>
           <Button variant="default" size="sm" onClick={() => setModal("bulk-revise")}>Request revision</Button>
-          <Button
-            variant="primary"
-            size="sm"
-            icon={<Icon.Check size={15} sw={2.4}/>}
+          <Button variant="primary" size="sm" icon={<Icon.Check size={13} sw={2.5} />}
             disabled={!bulkSafe}
             title={!bulkSafe ? "Selection spans multiple projects" : undefined}
-            onClick={() => setModal("bulk-confirm")}
-          >
+            onClick={() => setModal("bulk-confirm")}>
             Approve {selectedArray.length}
           </Button>
         </div>
       )}
 
-      <div className="flex-1 grid grid-cols-[340px_1fr] min-h-0">
-        <div className="border-r border-rule bg-bg overflow-y-auto">
+      {/* Split layout */}
+      <div className="flex-1 grid min-h-0" style={{ gridTemplateColumns: "320px 1fr" }}>
+
+        {/* List panel */}
+        <div className="overflow-y-auto bg-bg" style={{ borderRight: "2px solid rgba(26,26,26,0.08)" }}>
           {approvalsError && !isLoading ? (
-            <div className="p-4">
-              <PageError message="Could not load approvals." />
-            </div>
+            <div className="p-4"><PageError message="Could not load approvals." /></div>
           ) : isLoading ? (
             <div className="p-4 space-y-2">
-              {[0,1,2,3].map(i => <div key={i} className="h-16 bg-muted rounded animate-pulse"/>)}
+              {[0,1,2,3].map(i => <div key={i} className="h-16 bg-muted rounded-xl animate-pulse" />)}
             </div>
           ) : pending.length === 0 ? (
-            <Empty icon={<Icon.Check size={20}/>} title="Inbox zero" hint="Nothing waiting on you." />
+            <Empty icon={<Icon.Check size={20} />} title="Inbox zero" hint="Nothing waiting on you." />
           ) : (
             <ul>
               {pending.map((p, i) => {
-                const postProjectId = p.project?.id ?? p.project;
-                const matchingProject = projects.find((pr) => pr.id === postProjectId) || null;
+                const project = projects.find((pr) => pr.id === (p.project?.id ?? p.project)) || null;
                 return (
                   <ApprovalListRow
                     key={p.id}
                     post={p}
-                    project={matchingProject}
+                    project={project}
                     selected={selectedIds.has(p.id)}
                     focused={focusId === p.id}
                     onSelect={(e) => { e.stopPropagation(); toggleSelect(p.id); }}
                     onFocus={() => setFocusId(p.id)}
                     onOpen={() => router.push(`/content/${p.id}`)}
                     divider={i < pending.length - 1}
+                    delay={`d${Math.min(i + 1, 8)}`}
                   />
                 );
               })}
@@ -212,7 +173,8 @@ export default function ApprovalsPage() {
           )}
         </div>
 
-        <div className="overflow-y-auto bg-surface/30">
+        {/* Preview panel */}
+        <div className="overflow-y-auto" style={{ background: "rgba(243,238,216,0.3)" }}>
           {focusPost ? (
             <ApprovalPreview
               post={focusPost}
@@ -224,52 +186,37 @@ export default function ApprovalsPage() {
             />
           ) : (
             <div className="h-full grid place-items-center">
-              <Empty icon={<Icon.Check size={20}/>} title="You're caught up" hint="New drafts will appear here." />
+              <Empty icon={<Icon.Check size={24} />} title="All caught up" hint="New drafts will appear here." />
             </div>
           )}
         </div>
       </div>
 
-      <ReasonModal
-        open={modal === "revise"}
-        kind="revise"
-        post={focusPost}
-        onClose={() => setModal(null)}
-        onConfirm={(note) => { setModal(null); if (focusPost) handleRevise(focusPost.id, note); }}
-      />
-      <ReasonModal
-        open={modal === "reject"}
-        kind="reject"
-        post={focusPost}
-        onClose={() => setModal(null)}
-        onConfirm={(note) => { setModal(null); if (focusPost) handleReject(focusPost.id, note); }}
-      />
+      <ReasonModal open={modal === "revise"} kind="revise" post={focusPost} onClose={() => setModal(null)}
+        onConfirm={(note) => { setModal(null); if (focusPost) handleRevise(focusPost.id, note); }} />
+      <ReasonModal open={modal === "reject"} kind="reject" post={focusPost} onClose={() => setModal(null)}
+        onConfirm={(note) => { setModal(null); if (focusPost) handleRevise(focusPost.id, note); }} />
 
-      <Modal
-        open={modal === "bulk-confirm"}
-        onClose={() => setModal(null)}
-        title="Confirm bulk approval"
-        size="lg"
+      <Modal open={modal === "bulk-confirm"} onClose={() => setModal(null)} title="Confirm bulk approval" size="lg"
         footer={<>
           <Button variant="ghost" onClick={() => setModal(null)}>Cancel</Button>
-          <Button variant="primary" icon={<Icon.Check size={15} sw={2.4}/>} onClick={() => handleBulkApprove([...selectedIds])}>
+          <Button variant="primary" icon={<Icon.Check size={14} sw={2.5} />} onClick={() => handleBulkApprove([...selectedIds])}>
             Approve all {selectedArray.length}
           </Button>
-        </>}
-      >
-        <p className="text-[13px] text-ink-2 mb-3 text-rowtight">
-          You&apos;re approving <b>{selectedArray.length}</b> items in{" "}
-          <b>{projects.find((pr) => pr.id === (selectedArray[0]?.project?.id ?? selectedArray[0]?.project))?.name ?? projects.find((pr) => pr.id === (selectedArray[0]?.project?.id ?? selectedArray[0]?.project))?.short}</b>. They&apos;ll all go to scheduled.
+        </>}>
+        <p className="text-[13px] text-ink-2 font-medium mb-3">
+          Approving <b className="text-ink">{selectedArray.length}</b> items in{" "}
+          <b className="text-ink">{projects.find((pr) => pr.id === (selectedArray[0]?.project?.id ?? selectedArray[0]?.project))?.name ?? "—"}</b>. They&apos;ll all go to scheduled.
         </p>
-        <ul className="bg-bg border border-border rounded-md max-h-[260px] overflow-y-auto divide-y divide-rule">
+        <ul className="v3-card-sm max-h-[240px] overflow-y-auto divide-y" style={{ borderColor: "rgba(26,26,26,0.07)" }}>
           {selectedArray.map((p) => (
-            <li key={p.id} className="px-3 py-2 flex items-center gap-2.5 text-[13px]">
+            <li key={p.id} className="px-3 py-2.5 flex items-center gap-2.5 text-[13px]">
               <AspectThumb aspect={(p.aspectRatio ?? p.aspect) || "1:1"} format={p.format} />
               <div className="flex-1 min-w-0">
-                <div className="font-medium truncate">{p.title}</div>
-                <div className="text-[11.5px] text-ink-3">{fmt.date(p.scheduledAt ?? p.scheduled)}</div>
+                <div className="font-semibold truncate">{p.title}</div>
+                <div className="text-[11.5px] text-ink-3 font-medium">{fmt.date(p.scheduledAt ?? p.scheduled)}</div>
               </div>
-              <FormatPill format={p.format} aspect={(p.aspectRatio ?? p.aspect)}/>
+              <FormatPill format={p.format} aspect={p.aspectRatio ?? p.aspect} />
             </li>
           ))}
         </ul>
@@ -285,9 +232,9 @@ export default function ApprovalsPage() {
   );
 }
 
-function ApprovalListRow({ post, project, selected, focused, onSelect, onFocus, onOpen, divider }: {
+function ApprovalListRow({ post, project, selected, focused, onSelect, onFocus, onOpen, divider, delay }: {
   post: any; project: any | null; selected: boolean; focused: boolean;
-  onSelect: (e: React.MouseEvent) => void; onFocus: () => void; onOpen: () => void; divider: boolean;
+  onSelect: (e: React.MouseEvent) => void; onFocus: () => void; onOpen: () => void; divider: boolean; delay: string;
 }) {
   const overdue = post.overdue ?? (post.scheduledAt && new Date(post.scheduledAt) < new Date() && post.status === "PENDING_APPROVAL");
   const due = fmt.date(post.scheduledAt ?? post.scheduled);
@@ -295,23 +242,25 @@ function ApprovalListRow({ post, project, selected, focused, onSelect, onFocus, 
     <li
       onClick={onFocus}
       onDoubleClick={onOpen}
-      className={`group cursor-pointer transition-colors border-l-2 ${focused ? "bg-surface border-l-action" : selected ? "bg-action-soft/40 border-l-transparent" : "bg-bg border-l-transparent hover:bg-surface/50"} ${divider ? "border-b border-rule" : ""}`}
+      className={`cursor-pointer transition-all fade-up ${delay}
+        ${focused  ? "border-l-[3px] border-indigo bg-indigo-soft/60" : ""}
+        ${selected && !focused ? "border-l-[3px] border-action bg-action-soft/30" : ""}
+        ${!focused && !selected ? "border-l-[3px] border-transparent hover:bg-surface/70" : ""}`}
+      style={divider ? { borderBottom: "1px solid rgba(26,26,26,0.07)" } : {}}
     >
-      <div className="px-3 py-2.5 flex items-start gap-2.5">
-        <label className="pt-0.5" onClick={(e) => e.stopPropagation()}>
-          <input
-            type="checkbox"
-            checked={selected}
-            onChange={(e) => onSelect(e as unknown as React.MouseEvent)}
-            className="h-4 w-4 rounded border-border accent-ink cursor-pointer"
-          />
+      <div className="px-3 py-3 flex items-start gap-2.5">
+        <label className="pt-0.5 shrink-0" onClick={(e) => e.stopPropagation()}>
+          <input type="checkbox" checked={selected} onChange={(e) => onSelect(e as unknown as React.MouseEvent)}
+            className="h-4 w-4 rounded cursor-pointer accent-indigo" />
         </label>
         <AspectThumb aspect={(post.aspectRatio ?? post.aspect) || "1:1"} format={post.format} />
         <div className="flex-1 min-w-0">
-          <div className="text-[13px] font-medium truncate">{post.title}</div>
-          <div className="text-[11.5px] text-ink-3 truncate">{project?.name ?? project?.short} · by {post.authorName}</div>
-          <div className="text-[11px] mt-0.5 flex items-center gap-1.5">
-            <span className={overdue ? "text-attention font-medium" : "text-ink-3"}>{due}{overdue ? " · overdue" : ""}</span>
+          <div className="text-[13px] font-semibold truncate">{post.title}</div>
+          <div className="text-[11.5px] text-ink-3 truncate font-medium">{project?.name ?? project?.short} · {post.authorName}</div>
+          <div className="text-[11px] mt-0.5">
+            <span className={`font-semibold ${overdue ? "text-attention" : "text-ink-3"}`}>
+              {due}{overdue ? " · overdue" : ""}
+            </span>
           </div>
         </div>
       </div>
@@ -324,59 +273,52 @@ function ApprovalPreview({ post, project, onOpen, onApprove, onRevise, onReject 
   onApprove: () => void; onRevise: () => void; onReject: () => void;
 }) {
   const overdue = post.overdue ?? (post.scheduledAt && new Date(post.scheduledAt) < new Date() && post.status === "PENDING_APPROVAL");
-  const previewPost = {
-    ...post,
-    aspect: post.aspectRatio ?? post.aspect,
-    scheduled: post.scheduledAt ?? post.scheduled,
-  };
+  const previewPost = { ...post, aspect: post.aspectRatio ?? post.aspect, scheduled: post.scheduledAt ?? post.scheduled };
   return (
-    <div className="p-6 max-w-[820px] mx-auto">
-      <div className="flex items-start justify-between gap-3 mb-4">
+    <div className="p-6 max-w-[800px] mx-auto slide-right" key={post.id}>
+      <div className="flex items-start justify-between gap-3 mb-5">
         <div className="min-w-0">
-          <h2 className="text-[20px] font-semibold leading-tight truncate">{post.title}</h2>
-          <div className="text-[12.5px] text-ink-3 mt-1 flex items-center gap-2">
+          <h2 className="font-display text-[22px] font-semibold leading-tight truncate">{post.title}</h2>
+          <div className="text-[12.5px] text-ink-3 mt-1 flex items-center gap-2 font-medium flex-wrap">
             <span>{project?.name ?? project?.short}</span>
             <span>·</span>
-            <FormatPill format={post.format} aspect={post.aspectRatio ?? post.aspect}/>
-            {post.duration && <span className="tabular-nums">{post.duration}</span>}
+            <FormatPill format={post.format} aspect={post.aspectRatio ?? post.aspect} />
             <span>·</span>
-            <span>by {post.authorName}</span>
+            <span>{post.authorName}</span>
           </div>
         </div>
         <div className="flex items-center gap-2 shrink-0">
           {overdue && (
-            <span className="text-[11.5px] px-2 h-6 inline-flex items-center bg-attention-bg text-attention rounded font-medium">
-              overdue · {fmt.date(post.scheduledAt ?? post.scheduled)}
+            <span className="text-[11px] px-2.5 h-6 inline-flex items-center bg-attention-bg text-attention rounded-full font-bold border border-attention/20">
+              overdue
             </span>
           )}
-          <Button variant="ghost" size="sm" iconRight={<Icon.ArrowRight size={14}/>} onClick={onOpen}>Open</Button>
+          <Button variant="ghost" size="sm" iconRight={<Icon.ArrowRight size={13} />} onClick={onOpen}>Open full</Button>
         </div>
       </div>
 
-      <div className="grid grid-cols-[340px_1fr] gap-6 mb-4">
+      <div className="grid gap-5 mb-20" style={{ gridTemplateColumns: "320px 1fr" }}>
         <IGFeedCard post={previewPost} />
         <div className="space-y-4 min-w-0">
-          <div className="bg-surface border border-border rounded-lg p-4">
-            <h3 className="text-[11px] uppercase tracking-wider font-medium text-ink-3 mb-2">Caption</h3>
-            <p className="text-[13.5px] leading-relaxed text-ink-2 text-rowtight">{post.caption}</p>
-            {post.hashtags?.length > 0 && <p className="text-[12.5px] text-ink-3 mt-2 text-rowtight">{post.hashtags.join(" ")}</p>}
+          <div className="v3-card p-4">
+            <h3 className="text-[11px] uppercase tracking-wider font-bold text-ink-3 mb-2">Caption</h3>
+            <p className="text-[13.5px] leading-relaxed text-ink-2 font-medium">{post.caption}</p>
+            {post.hashtags?.length > 0 && <p className="text-[12.5px] text-ink-3 mt-2 font-medium">{post.hashtags.join(" ")}</p>}
           </div>
-          <div className="bg-surface border border-border rounded-lg">
-            <div className="px-4 h-11 border-b border-rule flex items-center justify-between">
-              <h3 className="text-[12px] uppercase tracking-wider font-medium text-ink-3">Discussion</h3>
-              <span className="text-[11px] text-ink-3">{(post.thread ?? post.comments ?? []).length}</span>
+          <div className="v3-card overflow-hidden">
+            <div className="px-4 h-10 flex items-center justify-between" style={{ borderBottom: "2px solid rgba(26,26,26,0.07)" }}>
+              <h3 className="text-[11px] uppercase tracking-wider font-bold text-ink-3">Discussion</h3>
+              <span className="text-[11px] text-ink-3 font-medium">{(post.thread ?? post.comments ?? []).length}</span>
             </div>
-            <div className="px-4 py-3 space-y-3 max-h-[180px] overflow-y-auto">
+            <div className="px-4 py-3 space-y-3 max-h-[160px] overflow-y-auto">
               {(post.thread ?? post.comments ?? []).length === 0 ? (
-                <div className="text-[12px] text-ink-4 text-center py-2">No comments yet.</div>
+                <div className="text-[12px] text-ink-4 text-center py-2 font-medium">No comments yet.</div>
               ) : (post.thread ?? post.comments ?? []).map((t: any, i: number) => (
-                <div key={i} className="flex items-start gap-2.5">
+                <div key={i} className="flex items-start gap-2">
                   <Avatar initial={t.a ?? t.authorName?.[0] ?? "?"} size="xs" />
                   <div className="flex-1 min-w-0">
-                    <div className="text-[11.5px] text-ink-3">
-                      <span className="font-medium text-ink-2">{t.a ?? t.authorName ?? "Agency"}</span> · {t.at ?? (t.createdAt ? new Date(t.createdAt).toLocaleDateString() : "")}
-                    </div>
-                    <div className="text-[13px] text-ink-2 text-rowtight">{t.t ?? t.body}</div>
+                    <div className="text-[11.5px] text-ink-3 font-semibold">{t.a ?? t.authorName ?? "Agency"} · {t.at ?? ""}</div>
+                    <div className="text-[13px] text-ink-2 font-medium">{t.t ?? t.body}</div>
                   </div>
                 </div>
               ))}
@@ -385,12 +327,16 @@ function ApprovalPreview({ post, project, onOpen, onApprove, onRevise, onReject 
         </div>
       </div>
 
-      <div className="sticky bottom-0 -mx-6 px-6 py-3 bg-bg/95 backdrop-blur border-t border-rule flex items-center gap-2">
-        <div className="text-[12px] text-ink-3 hidden md:block">Press A to approve, R to revise, X to reject.</div>
-        <div className="flex-1"/>
-        <Button variant="danger" size="md" icon={<Icon.X size={15}/>} kbd="X" onClick={onReject}>Reject</Button>
-        <Button variant="default" size="md" icon={<Icon.Edit size={15}/>} kbd="R" onClick={onRevise}>Request revision</Button>
-        <Button variant="primary" size="md" icon={<Icon.Check size={16} sw={2.4}/>} kbd="A" onClick={onApprove}>Approve</Button>
+      {/* Sticky decision bar */}
+      <div
+        className="fixed bottom-0 right-0 left-0 px-8 py-4 flex items-center gap-3"
+        style={{ background: "rgba(253,252,240,0.97)", borderTop: "2px solid rgba(26,26,26,0.08)", backdropFilter: "blur(6px)", zIndex: 20 }}
+      >
+        <div className="text-[12px] text-ink-3 font-medium hidden md:block">A to approve · R to revise · X to reject</div>
+        <div className="flex-1" />
+        <Button variant="danger"  size="md" icon={<Icon.X    size={14} />} kbd="X" onClick={onReject}>Reject</Button>
+        <Button variant="default" size="md" icon={<Icon.Edit size={14} />} kbd="R" onClick={onRevise}>Request revision</Button>
+        <Button variant="primary" size="md" icon={<Icon.Check size={15} sw={2.5} />} kbd="A" onClick={onApprove}>Approve</Button>
       </div>
     </div>
   );
@@ -403,28 +349,22 @@ function BulkReviseModal({ open, items, onClose, onConfirm }: {
   useEffect(() => { if (open) setNote(""); }, [open]);
   const canSubmit = note.trim().length >= 6;
   return (
-    <Modal
-      open={open}
-      onClose={onClose}
-      title={`Request revision · ${items.length} items`}
-      size="lg"
+    <Modal open={open} onClose={onClose} title={`Request revision · ${items.length} items`} size="lg"
       footer={<>
         <Button variant="ghost" onClick={onClose}>Cancel</Button>
         <Button variant="primary" disabled={!canSubmit} onClick={() => onConfirm(note.trim())}>
           Send to {items.length} items
         </Button>
-      </>}
-    >
-      <p className="text-[13px] text-ink-2 mb-3 text-rowtight">This note will be attached to every selected item.</p>
-      <textarea
-        value={note}
-        onChange={(e) => setNote(e.target.value)}
-        autoFocus
-        rows={4}
+      </>}>
+      <p className="text-[13px] text-ink-2 font-medium mb-3">This note will be attached to every selected item.</p>
+      <textarea value={note} onChange={(e) => setNote(e.target.value)} autoFocus rows={4}
         placeholder="What needs to change across all of these?"
-        className="w-full text-[13px] bg-bg/40 border border-border rounded-md px-3 py-2 outline-none focus:bg-surface focus:border-ink resize-none"
+        className="w-full text-[13px] bg-bg rounded-xl px-3.5 py-2.5 outline-none resize-none font-medium"
+        style={{ border: "2px solid rgba(26,26,26,0.2)" }}
       />
-      <div className="text-[11px] text-ink-3 mt-1">{note.length < 6 ? `Add at least ${6 - note.length} more.` : "Looks good."}</div>
+      <div className="text-[11.5px] text-ink-3 font-medium mt-1.5">
+        {!canSubmit ? `${6 - note.trim().length} more characters needed.` : "Looks good ✓"}
+      </div>
     </Modal>
   );
 }

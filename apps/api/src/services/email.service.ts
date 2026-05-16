@@ -80,6 +80,46 @@ function activityEmailHtml(title: string, details: { label: string; value: strin
 </html>`;
 }
 
+export function announcementEmailHtml(senderName: string, title: string, message: string): string {
+  const portalUrl = process.env.INTERNAL_APP_URL || "https://portal.digitalsukoon.com";
+  const safeMessage = message
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\n/g, "<br>");
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body { font-family: 'Segoe UI', Arial, sans-serif; margin: 0; padding: 0; background: #f5f5f5; }
+    .container { max-width: 600px; margin: 0 auto; background: #fff; border-radius: 8px; overflow: hidden; }
+    .header { background: linear-gradient(135deg, #1A1A1A, #333); color: #fff; padding: 24px 30px; }
+    .header h1 { margin: 0; font-size: 20px; font-weight: 600; }
+    .header p { margin: 6px 0 0; font-size: 13px; opacity: 0.7; }
+    .body { padding: 28px 30px; }
+    .badge { display: inline-block; background: #F5D547; color: #1A1A1A; padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 600; margin-bottom: 16px; }
+    .message-body { font-size: 15px; color: #333; line-height: 1.7; }
+    .action-btn { display: inline-block; background: #F5D547; color: #1A1A1A; padding: 10px 24px; border-radius: 20px; font-size: 13px; font-weight: 600; text-decoration: none; margin-top: 24px; }
+    .footer { padding: 16px 30px; background: #f8f9fa; text-align: center; font-size: 11px; color: #999; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>${title}</h1>
+      <p>Announcement from ${senderName}</p>
+    </div>
+    <div class="body">
+      <span class="badge">Announcement</span>
+      <p class="message-body">${safeMessage}</p>
+      <a href="${portalUrl}" class="action-btn">Open Portal →</a>
+    </div>
+    <div class="footer">Dashmani Media Private Limited · Digital Sukoon</div>
+  </div>
+</body>
+</html>`;
+}
+
 const HR_EMAIL = "hr@digitalsukoon.com";
 const ADMIN_EMAIL = "admin@digitalsukoon.com";
 const PORTAL_URL = process.env.INTERNAL_APP_URL || "https://portal.digitalsukoon.com";

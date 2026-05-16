@@ -2,53 +2,98 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useProjects } from "@/lib/hooks/use-projects";
-import { Button, Input } from "@dashmani/ui";
 import { Plus, Search, FolderOpen } from "lucide-react";
+
+const STATUS_CONFIG: Record<string, { badge: string; label: string }> = {
+  ACTIVE:    { badge: "bg-success-bg text-success border-success/20",     label: "Active" },
+  PAUSED:    { badge: "bg-attention-bg text-attention border-attention/20",label: "Paused" },
+  COMPLETED: { badge: "bg-indigo-soft text-indigo border-indigo/20",       label: "Completed" },
+  ARCHIVED:  { badge: "bg-neutral-bg text-neutral border-neutral/20",      label: "Archived" },
+};
 
 export default function ProjectsPage() {
   const [search, setSearch] = useState("");
   const { data, isLoading } = useProjects({ search });
   const projects = (data as any)?.data || [];
 
-  const statusBadge: Record<string, string> = {
-    ACTIVE: "bg-[rgba(107,203,119,0.12)] text-[#6BCB77]",
-    PAUSED: "bg-[#FFF3C4] text-[#1A1A1A]",
-    COMPLETED: "bg-[rgba(52,152,219,0.12)] text-[#3498DB]",
-    ARCHIVED: "bg-[rgba(0,0,0,0.06)] text-[#7A7A7A]",
-  };
-
   return (
-    <div className="space-y-6 crx-animate-fade">
+    <div className="space-y-5 pop-in">
+      {/* Header */}
       <div className="flex items-center justify-between">
-        <h1 className="font-serif text-4xl font-light text-[#1A1A1A]">Projects</h1>
-        <Link href="/projects/new"><Button className="bg-[#1A1A1A] text-white rounded-full hover:bg-[#2B2B2B]"><Plus className="h-4 w-4 mr-2" /> New Project</Button></Link>
-      </div>
-      <div className="relative max-w-sm crx-animate-slide crx-delay-1">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[#B0B0B0]" />
-        <Input placeholder="Search projects..." className="pl-10 border border-[#E8E0D0] rounded-lg focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547]" value={search} onChange={(e) => setSearch(e.target.value)} />
-      </div>
-      {isLoading ? <p className="text-[#7A7A7A]">Loading...</p> : (
-        <div className="grid gap-3">
-          {projects.map((p: any, i: number) => (
-            <Link key={p.id} href={`/projects/${p.id}`}>
-              <div className={`bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0] p-4 flex items-center justify-between transition-all hover:shadow-[0_4px_24px_rgba(0,0,0,0.07)] cursor-pointer crx-animate-slide crx-delay-${Math.min(i + 2, 6)}`}>
-                <div className="flex items-center gap-3">
-                  <div className="h-10 w-10 rounded-xl bg-[#FFF3C4] flex items-center justify-center">
-                    <FolderOpen className="h-5 w-5 text-[#1A1A1A]" />
-                  </div>
-                  <div>
-                    <p className="font-medium text-[#1A1A1A]">{p.name}</p>
-                    <p className="text-xs text-[#7A7A7A]">{p.client?.companyName} · {p._count?.tasks || 0} tasks</p>
-                  </div>
-                </div>
-                <span className={`rounded-full px-3 py-1 text-xs font-medium ${statusBadge[p.status] || "bg-[rgba(0,0,0,0.06)] text-[#7A7A7A]"}`}>
-                  {p.status}
-                </span>
-              </div>
-            </Link>
-          ))}
+        <div>
+          <h1 className="font-display text-3xl font-semibold text-ink">Projects</h1>
+          {!isLoading && (
+            <p className="text-sm text-ink-4 mt-0.5">{projects.length} project{projects.length !== 1 ? "s" : ""}</p>
+          )}
         </div>
-      )}
+        <Link href="/projects/new">
+          <button className="h-9 px-4 rounded-full bg-ink text-white text-sm font-bold btn-3d hover:bg-ink-2 transition-colors flex items-center gap-1.5">
+            <Plus className="h-4 w-4" /> New Project
+          </button>
+        </Link>
+      </div>
+
+      {/* Search */}
+      <div className="relative max-w-md fade-up d2">
+        <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-ink-4" />
+        <input
+          placeholder="Search projects…"
+          className="w-full pl-10 pr-4 h-10 bg-surface border-2 border-ink/15 rounded-xl text-sm text-ink placeholder:text-ink-4 focus:outline-none focus:border-indigo transition-colors"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
+      </div>
+
+      {/* Project table */}
+      <div className="v3-card overflow-hidden fade-up d3">
+        {isLoading ? (
+          <div className="py-14 flex items-center justify-center">
+            <div className="h-6 w-6 rounded-full border-[3px] border-ink/10 border-t-indigo" style={{ animation: "spin 0.7s linear infinite" }} />
+          </div>
+        ) : projects.length === 0 ? (
+          <div className="py-14 text-center text-ink-4">
+            <FolderOpen className="h-8 w-8 mx-auto mb-2 opacity-30" />
+            <p className="text-sm">No projects found</p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b-2 border-ink/8 bg-muted/40">
+                  <th className="text-left px-5 py-3 text-[10px] font-bold text-ink-4 uppercase tracking-wider">Project</th>
+                  <th className="text-left px-5 py-3 text-[10px] font-bold text-ink-4 uppercase tracking-wider hidden md:table-cell">Client</th>
+                  <th className="text-left px-5 py-3 text-[10px] font-bold text-ink-4 uppercase tracking-wider hidden lg:table-cell">Tasks</th>
+                  <th className="text-left px-5 py-3 text-[10px] font-bold text-ink-4 uppercase tracking-wider">Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-rule">
+                {projects.map((p: any, i: number) => {
+                  const cfg = STATUS_CONFIG[p.status] || STATUS_CONFIG.ARCHIVED;
+                  return (
+                    <tr key={p.id} className="v3-row" style={{ animationDelay: `${i * 0.03}s` }}>
+                      <td className="px-5 py-3">
+                        <Link href={`/projects/${p.id}`} className="flex items-center gap-3">
+                          <div className="h-8 w-8 rounded-xl border-2 border-ink/12 bg-action-soft flex items-center justify-center shrink-0">
+                            <FolderOpen className="h-4 w-4 text-ink-2" />
+                          </div>
+                          <span className="font-semibold text-ink hover:text-indigo transition-colors">{p.name}</span>
+                        </Link>
+                      </td>
+                      <td className="px-5 py-3 text-ink-3 hidden md:table-cell">{p.client?.companyName || "—"}</td>
+                      <td className="px-5 py-3 text-ink-3 hidden lg:table-cell">{p._count?.tasks || 0} tasks</td>
+                      <td className="px-5 py-3">
+                        <span className={`rounded-full px-3 py-1 text-xs font-semibold border ${cfg.badge}`}>
+                          {cfg.label}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

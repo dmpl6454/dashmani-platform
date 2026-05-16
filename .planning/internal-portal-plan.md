@@ -5,6 +5,8 @@
 **Current user:** `tabish@dashmani.com` — seeded as Super Admin with all permissions.
 **Status as of 2026-05-16:** All 10 original phases complete. Wave 8 (new bugs) resolved. Wave 9 (broadcast announcements + notification detail view) resolved — commit 1e92b20. UI/UX polish (design-spec parity) complete — branch docs/design-critique.
 
+> **v2 production test remediation:** 215 manual test cases were run against the live system. 30 new issues were identified for the internal portal (ERR-I-030 through ERR-I-049). See [INTERNAL-PORTAL-V2-PLAN.md](./INTERNAL-PORTAL-V2-PLAN.md) for the full remediation plan organized by fix wave (A=P0 security, B=P1 core, C=P2 UX, D=P3 polish).
+
 ---
 
 ## Audit Summary

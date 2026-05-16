@@ -3,12 +3,15 @@ import { useState, useEffect, useCallback } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { AuthContext } from "@/lib/auth";
 import { apiFetch } from "@/lib/api";
+import { Sidebar } from "@/components/sidebar";
 import { TopNav } from "@/components/top-nav";
+import { CommandPalette } from "@/components/command-palette";
 import "./globals.css";
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [cmdOpen, setCmdOpen] = useState(false);
   const pathname = usePathname();
   const router = useRouter();
 
@@ -19,6 +22,18 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       setUser(JSON.parse(storedUser));
     }
     setIsLoading(false);
+  }, []);
+
+  /* Global Ctrl+K / Cmd+K handler */
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        e.preventDefault();
+        setCmdOpen(v => !v);
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
   }, []);
 
   const login = useCallback(async (email: string, password: string) => {
@@ -45,7 +60,18 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   const isPublicPage = publicRoutes.includes(pathname);
 
   if (isLoading) {
-    return <html lang="en"><body><div className="flex items-center justify-center min-h-screen" style={{ background: "linear-gradient(165deg, #FDF6E3 0%, #F7ECD5 40%, #EFE2C4 100%)" }}><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#F5D547]" /></div></body></html>;
+    return (
+      <html lang="en">
+        <body>
+          <div className="flex items-center justify-center min-h-screen bg-bg">
+            <div
+              className="h-8 w-8 rounded-full border-[3px] border-ink/10 border-t-indigo"
+              style={{ animation: "spin 0.7s linear infinite" }}
+            />
+          </div>
+        </body>
+      </html>
+    );
   }
 
   if (!user && !isPublicPage) {
@@ -55,14 +81,28 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
   return (
     <html lang="en">
-      <body>
+      <body className="bg-bg">
         <AuthContext.Provider value={{ user, login, logout, isLoading }}>
           {isPublicPage ? (
             children
           ) : (
-            <div className="min-h-screen" style={{ background: "linear-gradient(165deg, #FDF6E3 0%, #F7ECD5 40%, #EFE2C4 100%)" }}>
-              <TopNav />
-              <main className="max-w-[1440px] mx-auto px-4 md:px-8 py-6">{children}</main>
+            <div className="flex min-h-screen bg-bg">
+              {/* Collapsible left rail */}
+              <Sidebar />
+
+              {/* Main column */}
+              <div className="flex flex-col flex-1 min-w-0">
+                {/* Thin topstrip */}
+                <TopNav onOpenSearch={() => setCmdOpen(true)} />
+
+                {/* Page content */}
+                <main className="flex-1 px-6 py-6 overflow-auto">
+                  {children}
+                </main>
+              </div>
+
+              {/* Global command palette */}
+              <CommandPalette open={cmdOpen} onClose={() => setCmdOpen(false)} />
             </div>
           )}
         </AuthContext.Provider>

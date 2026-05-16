@@ -54,6 +54,20 @@ docker-compose up -d
 
 Copy `.env.example` → `.env` before first run. The docker-compose credentials match the example file exactly.
 
+**Email (SMTP):** `apps/api/.env` must include SMTP vars for any email features (announcement broadcasts, invite emails, HR notifications) to work. Without them, `sendEmail()` silently no-ops with a console warning. This is a **one-time server config** — not per-user. All system emails send from a shared outbox (`hr@digitalsukoon.com`).
+
+| Var | Local dev | Production |
+|-----|-----------|------------|
+| `SMTP_HOST` | `smtp.gmail.com` | `smtp.gmail.com` |
+| `SMTP_PORT` | `587` | `587` |
+| `SMTP_SECURE` | `false` | `false` |
+| `SMTP_USER` | `hr@digitalsukoon.com` | `hr@digitalsukoon.com` |
+| `SMTP_PASS` | Gmail App Password | same |
+| `INTERNAL_APP_URL` | `http://localhost:3000` | `https://portal.digitalsukoon.com` |
+| `HR_APP_URL` | `http://localhost:3002` | `https://hr.digitalsukoon.com` |
+
+`INTERNAL_APP_URL` controls the "Open Portal →" link in emails — wrong value means broken links for recipients. The code falls back to `https://portal.digitalsukoon.com` if unset. See `.env.example` for the full template. Gmail App Password: Google Account → Security → App Passwords (requires 2FA).
+
 ### Environment URL switching
 
 Each frontend app has an `apps/<app>/.env.local` file controlling `NEXT_PUBLIC_API_URL`.

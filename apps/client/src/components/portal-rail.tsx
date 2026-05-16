@@ -8,12 +8,12 @@ import { useClientPendingApprovals } from "@/lib/hooks/use-content";
 import { useAuth } from "@/lib/auth";
 
 const NAV = [
-  { id: "dashboard", href: "/dashboard", label: "Home",      Icon: Icon.Dashboard,   key: "g d" },
-  { id: "projects",  href: "/projects",  label: "Projects",  Icon: Icon.Folder,      key: "g p" },
-  { id: "content",   href: "/content",   label: "Content",   Icon: Icon.Edit,        key: "g c" },
-  { id: "approvals", href: "/approvals", label: "Approvals", Icon: Icon.CheckBadge,  key: "g a", badge: "pending" as const },
-  { id: "analytics", href: "/analytics", label: "Analytics", Icon: Icon.Chart,       key: "g n" },
-  { id: "files",     href: "/files",     label: "Files",     Icon: Icon.File,        key: "g f" },
+  { id: "dashboard", href: "/dashboard", label: "Home",      Icon: Icon.Dashboard,  key: "g d" },
+  { id: "projects",  href: "/projects",  label: "Projects",  Icon: Icon.Folder,     key: "g p" },
+  { id: "content",   href: "/content",   label: "Content",   Icon: Icon.Edit,       key: "g c" },
+  { id: "approvals", href: "/approvals", label: "Approvals", Icon: Icon.CheckBadge, key: "g a", badge: "pending" as const },
+  { id: "analytics", href: "/analytics", label: "Analytics", Icon: Icon.Chart,      key: "g n" },
+  { id: "files",     href: "/files",     label: "Files",     Icon: Icon.File,       key: "g f" },
 ];
 
 export function PortalRail() {
@@ -34,7 +34,6 @@ export function PortalRail() {
     if (mounted) localStorage.setItem("ds.railCollapsed", collapsed ? "1" : "0");
   }, [collapsed, mounted]);
 
-  // Global goto shortcuts: g d, g p, g c, g a, g n, g f
   useEffect(() => {
     let primed = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -56,27 +55,34 @@ export function PortalRail() {
     return () => window.removeEventListener("keydown", onKey);
   }, [router]);
 
-  const railWidth = collapsed ? "w-railc" : "w-rail";
+  const initial = (user?.name?.charAt(0) ?? "?").toUpperCase();
   const displayName = user?.name ?? "";
   const displayCompany = user?.companyName ?? "";
-  const initial = (user?.name?.charAt(0) ?? "?").toUpperCase();
 
   return (
-    <aside className={`${railWidth} shrink-0 border-r border-rule bg-bg flex flex-col transition-[width] duration-150`}>
-      {/* logo */}
-      <div className={`flex items-center gap-2.5 px-3 ${collapsed ? "justify-center" : ""} h-14 border-b border-rule`}>
-        <div className="h-7 w-7 rounded-md bg-ink text-bg grid place-items-center font-bold text-[11px] tracking-wider shrink-0">DS</div>
+    <aside
+      className={`${collapsed ? "w-railc" : "w-rail"} shrink-0 flex flex-col bg-surface transition-[width] duration-200`}
+      style={{ borderRight: "2px solid rgba(26,26,26,0.09)" }}
+    >
+      {/* Logo */}
+      <div
+        className={`flex items-center ${collapsed ? "justify-center px-0" : "gap-3 px-4"} h-16`}
+        style={{ borderBottom: "2px solid rgba(26,26,26,0.07)" }}
+      >
+        <div className="h-8 w-8 rounded-xl bg-ink text-white grid place-items-center text-[11px] font-black tracking-widest shrink-0">
+          DS
+        </div>
         {!collapsed && (
-          <div className="leading-tight">
-            <div className="text-[13px] font-semibold text-ink">Digital Sukoon</div>
-            <div className="text-[10.5px] text-ink-3">Client</div>
+          <div className="flex-1 min-w-0 leading-tight">
+            <div className="text-[13.5px] font-bold text-ink">Digital Sukoon</div>
+            <div className="text-[11px] text-ink-3 font-medium">Client Portal</div>
           </div>
         )}
       </div>
 
-      {/* nav */}
-      <nav className="flex-1 px-2 py-3 space-y-0.5">
-        {NAV.map((n) => {
+      {/* Nav items */}
+      <nav className="flex-1 px-2 py-4 space-y-0.5 overflow-y-auto">
+        {NAV.map((n, i) => {
           const isActive = pathname?.startsWith(n.href) ?? false;
           const NavIcon = n.Icon;
           const badgeCount = n.badge === "pending" && pendingResolved ? pending : 0;
@@ -85,58 +91,62 @@ export function PortalRail() {
               key={n.id}
               href={n.href}
               title={collapsed ? n.label : undefined}
-              className={`relative w-full flex items-center ${collapsed ? "justify-center" : "gap-3"} px-2.5 h-9 rounded-md text-[13.5px] font-medium transition-colors ${isActive ? "bg-ink text-bg" : "text-ink-2 hover:bg-muted/60 hover:text-ink"}`}
+              className={`fade-up d${i + 1} w-full flex items-center ${collapsed ? "justify-center px-0" : "gap-3 px-3"} h-11 rounded-xl text-[13.5px] transition-all duration-150 relative
+                ${isActive ? "nav-active" : "text-ink-3 font-medium hover:bg-muted/80 hover:text-ink"}`}
             >
-              <NavIcon size={20} sw={isActive ? 2 : 1.5} />
+              <NavIcon size={18} sw={isActive ? 2.4 : 1.8} />
               {!collapsed && (
                 <>
                   <span className="flex-1 text-left">{n.label}</span>
                   {badgeCount > 0 && (
-                    <span className={`h-5 min-w-[20px] px-1.5 rounded-full text-[10.5px] font-semibold grid place-items-center ${isActive ? "bg-action text-ink" : "bg-attention text-bg"}`}>
+                    <span className={`h-5 min-w-[20px] px-1.5 rounded-full text-[10px] font-bold grid place-items-center tabular-nums
+                      ${isActive ? "bg-indigo/20 text-indigo" : "bg-attention-bg text-attention"}`}>
                       {badgeCount}
                     </span>
                   )}
                 </>
               )}
               {collapsed && badgeCount > 0 && (
-                <span className="absolute h-1.5 w-1.5 rounded-full bg-attention top-1.5 right-1.5" />
+                <span className="absolute top-2 right-2 h-2 w-2 rounded-full bg-attention dot-pulse" />
               )}
             </Link>
           );
         })}
       </nav>
 
-      {/* collapse toggle + user */}
-      <div className="border-t border-rule px-2 py-2 space-y-0.5">
+      {/* Footer: collapse toggle + user */}
+      <div className="px-2 py-3 space-y-0.5" style={{ borderTop: "2px solid rgba(26,26,26,0.07)" }}>
         <button
           onClick={() => setCollapsed((v) => !v)}
-          className={`w-full flex items-center ${collapsed ? "justify-center" : "gap-2"} px-2.5 h-8 rounded-md text-[12px] text-ink-3 hover:bg-muted/60 hover:text-ink transition-colors`}
-          title={collapsed ? "Expand" : "Collapse"}
+          title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          className={`w-full flex items-center ${collapsed ? "justify-center px-0" : "gap-2 px-3"} h-9 rounded-xl text-[12px] font-medium text-ink-3 hover:bg-muted/80 hover:text-ink transition-colors`}
         >
-          {collapsed ? <Icon.ChevRight size={16}/> : <><Icon.ChevLeft size={16}/><span>Collapse</span></>}
+          {collapsed
+            ? <Icon.ChevRight size={16} />
+            : <><Icon.ChevLeft size={16} /><span>Collapse</span></>
+          }
         </button>
         {user ? (
           <button
             onClick={logout}
-            className={`w-full flex items-center ${collapsed ? "justify-center" : "gap-2.5"} px-1.5 h-10 rounded-md hover:bg-muted/60 transition-colors text-left`}
             title="Log out"
+            className={`w-full flex items-center ${collapsed ? "justify-center px-0" : "gap-3 px-2"} h-12 rounded-xl hover:bg-muted/70 transition-colors text-left`}
           >
             <Avatar initial={initial} size="sm" />
             {!collapsed && (
               <div className="flex-1 min-w-0 leading-tight">
-                <div className="text-[12.5px] font-medium text-ink truncate">{displayName}</div>
-                <div className="text-[10.5px] text-ink-3 truncate">{displayCompany}</div>
+                <div className="text-[13px] font-bold text-ink truncate">{displayName}</div>
+                <div className="text-[11px] text-ink-3 font-medium truncate">{displayCompany}</div>
               </div>
             )}
-            {!collapsed && <Icon.Logout size={14} className="text-ink-3" />}
           </button>
         ) : (
-          <div className={`w-full flex items-center ${collapsed ? "justify-center" : "gap-2.5"} px-1.5 h-10`}>
+          <div className={`w-full flex items-center ${collapsed ? "justify-center px-0" : "gap-3 px-2"} h-12`}>
             <div className="h-7 w-7 rounded-full bg-muted animate-pulse shrink-0" />
             {!collapsed && (
-              <div className="flex-1 min-w-0 space-y-1">
-                <div className="h-3 w-24 bg-muted rounded animate-pulse" />
-                <div className="h-2.5 w-16 bg-muted rounded animate-pulse" />
+              <div className="flex-1 min-w-0 space-y-1.5">
+                <div className="h-3 w-24 bg-muted rounded-full animate-pulse" />
+                <div className="h-2.5 w-16 bg-muted rounded-full animate-pulse" />
               </div>
             )}
           </div>

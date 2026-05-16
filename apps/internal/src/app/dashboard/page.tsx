@@ -2,100 +2,267 @@
 import Link from "next/link";
 import { useAuth } from "@/lib/auth";
 import { useOverviewStats } from "@/lib/hooks/use-analytics";
+import { useAnnouncements } from "@/lib/hooks/use-announcements";
 import {
   Users, Building2, Clock, CheckCircle, FolderOpen, FileCheck, Send,
-  UserPlus, AlertTriangle, ArrowRight, Sun, Sunset, Moon,
+  UserPlus, ArrowRight, Megaphone, TrendingUp, BarChart3,
 } from "lucide-react";
+import { useState } from "react";
+import { apiFetch } from "@/lib/api";
 
-function getGreeting() {
-  const h = new Date().getHours();
-  if (h < 12) return { text: "Good Morning", Icon: Sun };
-  if (h < 17) return { text: "Good Afternoon", Icon: Sunset };
-  return { text: "Good Evening", Icon: Moon };
-}
-
-const statCards = [
-  { key: "totalEmployees", label: "Total Employees", icon: Users, color: "bg-blue-50 shadow-[0_2px_8px_rgba(59,130,246,0.12)]", iconColor: "text-blue-600", sub: "across all teams" },
-  { key: "activeTeams", label: "Active Teams", icon: Building2, color: "bg-purple-50 shadow-[0_2px_8px_rgba(147,51,234,0.12)]", iconColor: "text-purple-600", sub: "currently active" },
-  { key: "presentToday", label: "Present Today", icon: Clock, color: "bg-emerald-50 shadow-[0_2px_8px_rgba(16,185,129,0.12)]", iconColor: "text-emerald-600", sub: "checked in" },
-  { key: "tasksCompletedThisMonth", label: "Tasks Completed", icon: CheckCircle, color: "bg-green-50 shadow-[0_2px_8px_rgba(34,197,94,0.12)]", iconColor: "text-green-600", sub: "this month" },
-  { key: "activeProjects", label: "Active Projects", icon: FolderOpen, color: "bg-amber-50 shadow-[0_2px_8px_rgba(245,158,11,0.12)]", iconColor: "text-amber-600", sub: "in progress" },
-  { key: "pendingApprovals", label: "Pending Approvals", icon: FileCheck, color: "bg-orange-50 shadow-[0_2px_8px_rgba(249,115,22,0.12)]", iconColor: "text-orange-600", sub: "awaiting review" },
-  { key: "contentPublishedThisMonth", label: "Content Published", icon: Send, color: "bg-sky-50 shadow-[0_2px_8px_rgba(14,165,233,0.12)]", iconColor: "text-sky-600", sub: "this month" },
-  { key: "pendingEmployees", label: "Pending Employees", icon: UserPlus, color: "bg-pink-50 shadow-[0_2px_8px_rgba(236,72,153,0.12)]", iconColor: "text-pink-600", sub: "need approval" },
+const statStrip = [
+  { key: "totalEmployees",          label: "Employees",       icon: Users },
+  { key: "activeTeams",             label: "Teams",           icon: Building2 },
+  { key: "presentToday",            label: "Present",         icon: Clock },
+  { key: "tasksCompletedThisMonth", label: "Tasks Done",      icon: CheckCircle },
+  { key: "activeProjects",          label: "Projects",        icon: FolderOpen },
+  { key: "pendingApprovals",        label: "Pending",         icon: FileCheck },
+  { key: "contentPublishedThisMonth", label: "Published",     icon: Send },
+  { key: "pendingEmployees",        label: "New Joiners",     icon: UserPlus },
 ];
+
+function QuickAnnounceModal({ onClose }: { onClose: () => void }) {
+  const [title,   setTitle]   = useState("");
+  const [message, setMessage] = useState("");
+  const [sending, setSending] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [error,   setError]   = useState<string | null>(null);
+  const [done,    setDone]    = useState<number | null>(null);
+
+  const inputCls = "w-full border-2 border-ink/15 bg-surface rounded-xl px-4 py-2.5 text-sm text-ink placeholder:text-ink-4 transition-colors";
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!title.trim() || !message.trim()) return;
+    setConfirming(true);
+  }
+
+  async function doSend() {
+    setSending(true);
+    setError(null);
+    try {
+      const res = await apiFetch<any>("/admin/announcements", {
+        method: "POST",
+        body: JSON.stringify({ title: title.trim(), message: message.trim() }),
+      });
+      setDone(res?.data?.recipientCount ?? 0);
+    } catch (err: any) {
+      setError(err?.message || "Failed to send. Please try again.");
+      setConfirming(false);
+    } finally { setSending(false); }
+  }
+
+  if (done !== null) return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4">
+      <div className="v3-card shadow-pop p-8 text-center w-full max-w-sm">
+        <div className="h-14 w-14 rounded-xl border-2 border-ink bg-action flex items-center justify-center mx-auto mb-4">
+          <Megaphone className="h-7 w-7 text-ink" />
+        </div>
+        <p className="text-lg font-bold text-ink font-display">Announcement sent!</p>
+        <p className="text-sm text-ink-3 mt-1">Notified {done} employee{done !== 1 ? "s" : ""} via portal and email.</p>
+        <button onClick={onClose} className="mt-6 px-6 py-2.5 rounded-full bg-ink text-white text-sm font-bold btn-3d hover:bg-ink-2 transition-colors">
+          Done
+        </button>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4" onClick={onClose}>
+      <div className="v3-card shadow-pop w-full max-w-lg overflow-hidden pop-in" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-6 py-4 border-b-2 border-ink/10">
+          <h2 className="font-bold text-ink flex items-center gap-2">
+            <Megaphone size={18} className="text-action-deep" />
+            {confirming ? "Confirm broadcast" : "Broadcast Announcement"}
+          </h2>
+          <button onClick={onClose} className="h-7 w-7 flex items-center justify-center rounded-lg hover:bg-muted transition-colors text-ink-4 text-xl leading-none">×</button>
+        </div>
+
+        {confirming ? (
+          <div className="p-6 space-y-4">
+            <p className="text-sm text-ink-3">
+              This will email every active employee and add a notification to their portal. You can't undo this.
+            </p>
+            <div className="v3-card-inset p-4 space-y-2">
+              <p className="text-xs font-bold text-ink-4 uppercase tracking-wider">Preview</p>
+              <p className="text-sm font-semibold text-ink">{title}</p>
+              <p className="text-sm text-ink-3 whitespace-pre-wrap leading-relaxed">{message}</p>
+            </div>
+            {error && <p className="text-xs text-danger">{error}</p>}
+            <div className="flex items-center justify-end gap-3 pt-1">
+              <button type="button" onClick={() => setConfirming(false)} disabled={sending} className="px-5 py-2 rounded-full border-2 border-ink/15 text-sm text-ink-3 hover:bg-muted transition-colors disabled:opacity-50">
+                Back
+              </button>
+              <button type="button" onClick={doSend} disabled={sending} className="px-5 py-2.5 rounded-full bg-ink text-white text-sm font-bold btn-3d hover:bg-ink-2 transition-colors disabled:opacity-50 flex items-center gap-2">
+                <Megaphone size={15} />
+                {sending ? "Sending…" : "Yes, send to all"}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <form onSubmit={handleSubmit} className="p-6 space-y-4">
+            <div>
+              <div className="flex justify-between mb-1.5">
+                <label className="text-xs font-bold text-ink-4 uppercase tracking-wider">Title</label>
+                <span className="text-xs text-ink-4">{title.length}/120</span>
+              </div>
+              <input type="text" value={title} onChange={(e) => setTitle(e.target.value.slice(0, 120))} placeholder="e.g., Office closed on Monday" required className={inputCls} />
+            </div>
+            <div>
+              <div className="flex justify-between mb-1.5">
+                <label className="text-xs font-bold text-ink-4 uppercase tracking-wider">Message</label>
+                <span className="text-xs text-ink-4">{message.length}/2000</span>
+              </div>
+              <textarea value={message} onChange={(e) => setMessage(e.target.value.slice(0, 2000))} placeholder="Write your message here..." required rows={5} className={`${inputCls} resize-none`} />
+            </div>
+            <div className="flex items-center justify-end gap-3 pt-1">
+              <button type="button" onClick={onClose} className="px-5 py-2 rounded-full border-2 border-ink/15 text-sm text-ink-3 hover:bg-muted transition-colors">Cancel</button>
+              <button type="submit" disabled={!title.trim() || !message.trim()} className="px-5 py-2.5 rounded-full bg-ink text-white text-sm font-bold btn-3d hover:bg-ink-2 transition-colors disabled:opacity-50 flex items-center gap-2">
+                <Megaphone size={15} />
+                Review &amp; send
+              </button>
+            </div>
+          </form>
+        )}
+      </div>
+    </div>
+  );
+}
 
 export default function DashboardPage() {
   const { user } = useAuth();
   const { data, isLoading } = useOverviewStats();
+  const { announcements } = useAnnouncements();
   const stats = (data as any)?.data || {};
-  const greeting = getGreeting();
   const firstName = user?.name?.split(" ")[0] || "";
   const pendingEmployees = stats?.pendingEmployees ?? 0;
+  const [announceOpen, setAnnounceOpen] = useState(false);
+  const lastAnnouncement = announcements[0];
 
   return (
-    <div className="space-y-8 crx-animate-fade">
-      {/* Welcome */}
+    <div className="space-y-5 pop-in">
+      {announceOpen && <QuickAnnounceModal onClose={() => setAnnounceOpen(false)} />}
+
+      {/* Page header */}
       <div>
-        <div className="flex items-center gap-2 text-[#B0B0B0] text-sm mb-1">
-          <greeting.Icon className="h-4 w-4 text-[#F5D547]" />
-          <span>{greeting.text}</span>
-        </div>
-        <h1 className="font-serif text-4xl font-light text-[#1A1A1A]">
-          Welcome back, <span className="font-normal">{firstName}</span>
+        <p className="text-xs font-bold text-ink-4 uppercase tracking-widest mb-1">Management Portal</p>
+        <h1 className="font-display text-3xl font-semibold text-ink leading-tight">
+          Hello, {firstName} 👋
         </h1>
-        <p className="text-sm text-[#7A7A7A] mt-1">Here&apos;s your organization overview</p>
+        <p className="text-sm text-ink-3 mt-0.5">Here's your organisation overview</p>
       </div>
 
-      {/* Pending Alert */}
-      {!isLoading && pendingEmployees > 0 && (
-        <div className="crx-animate-slide crx-delay-1 relative overflow-hidden rounded-2xl bg-gradient-to-r from-[#FFF8E1] to-[#FFF3C4] border border-[#F5D547]/30 p-5">
-          <div className="absolute top-0 right-0 w-32 h-32 bg-[#F5D547]/10 rounded-full blur-[40px]" />
-          <div className="relative flex items-center justify-between">
+      {/* Stat strip */}
+      <div className="grid grid-cols-4 lg:grid-cols-8 gap-3 fade-up d2">
+        {statStrip.map(({ key, label, icon: Icon }, i) => {
+          const value = stats[key];
+          const isPending = key === "pendingApprovals" || key === "pendingEmployees";
+          return (
+            <div
+              key={key}
+              className="v3-card-sm p-3 flex flex-col gap-1 v3-card-lift"
+              style={{ animationDelay: `${i * 0.04}s` }}
+            >
+              <div className={`h-7 w-7 rounded-lg flex items-center justify-center ${isPending ? "bg-attention/10" : "bg-indigo-soft"}`}>
+                <Icon className={`h-3.5 w-3.5 ${isPending ? "text-attention" : "text-indigo"}`} />
+              </div>
+              <p className="font-display text-xl font-semibold text-ink leading-none">
+                {isLoading ? "—" : (value ?? 0)}
+              </p>
+              <p className="text-[10px] text-ink-4 font-medium leading-tight">{label}</p>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Bento grid */}
+      <div className="bento grid-cols-1 lg:grid-cols-3 fade-up d3">
+
+        {/* Broadcast CTA — full width */}
+        <div className="lg:col-span-3 v3-card p-5 flex items-center justify-between gap-4 flex-wrap bg-ink v3-card-lift" style={{ borderColor: "#1A1A1A" }}>
+          <div className="flex items-center gap-4">
+            <div className="h-11 w-11 rounded-xl bg-action flex items-center justify-center shrink-0">
+              <Megaphone className="h-5 w-5 text-ink" />
+            </div>
+            <div>
+              <p className="font-bold text-white text-base">Broadcast to All Employees</p>
+              <p className="text-xs text-white/50 mt-0.5">
+                {lastAnnouncement
+                  ? `Last: "${lastAnnouncement.title}" · ${new Date(lastAnnouncement.createdAt).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}`
+                  : "Send a message and email to every active employee instantly"}
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <Link href="/announcements" className="px-4 py-2 rounded-full border border-white/20 text-white/70 text-xs font-medium hover:bg-white/10 transition-colors">
+              View history
+            </Link>
+            <button
+              onClick={() => setAnnounceOpen(true)}
+              className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-action text-ink text-sm font-bold btn-3d hover:bg-action-deep transition-colors"
+            >
+              <Megaphone className="h-4 w-4" /> Send Announcement
+            </button>
+          </div>
+        </div>
+
+        {/* Pending employees alert */}
+        {!isLoading && pendingEmployees > 0 && (
+          <div className="lg:col-span-3 v3-card p-4 flex items-center justify-between gap-4 bg-attention/5 v3-card-lift">
             <div className="flex items-center gap-3">
-              <div className="h-10 w-10 rounded-xl bg-[#F5D547] flex items-center justify-center animate-pulse">
-                <AlertTriangle className="h-5 w-5 text-[#1A1A1A]" />
+              <div className="h-10 w-10 rounded-xl bg-attention/10 flex items-center justify-center">
+                <UserPlus className="h-5 w-5 text-attention" />
               </div>
               <div>
-                <p className="font-semibold text-[#1A1A1A]">
-                  {pendingEmployees} employee{pendingEmployees !== 1 ? "s" : ""} pending approval
+                <p className="font-bold text-ink">
+                  {pendingEmployees} employee{pendingEmployees !== 1 ? "s" : ""} awaiting approval
                 </p>
-                <p className="text-xs text-[#7A7A7A]">Review and approve new team members</p>
+                <p className="text-xs text-ink-4">Review and approve new team members</p>
               </div>
             </div>
             <Link
               href="/employees/pending"
-              className="flex items-center gap-1.5 px-4 py-2 rounded-full bg-[#1A1A1A] text-white text-sm font-semibold hover:bg-[#2B2B2B] transition-all duration-300 shadow-md"
+              className="flex items-center gap-1.5 px-4 py-2 rounded-full bg-ink text-white text-sm font-bold btn-3d hover:bg-ink-2 transition-colors"
             >
               Review <ArrowRight className="h-3.5 w-3.5" />
             </Link>
           </div>
-        </div>
-      )}
+        )}
 
-      {/* Stats Grid */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        {statCards.map((card, i) => {
-          const Icon = card.icon;
-          const value = stats[card.key];
-          return (
-            <div
-              key={card.key}
-              className={`crx-animate-slide crx-delay-${Math.min(i + 1, 6)} bg-white rounded-2xl border border-[#E8E0D0] p-5 hover:shadow-[0_8px_32px_rgba(0,0,0,0.06)] hover:-translate-y-0.5 transition-all duration-300`}
-            >
-              <div className="flex items-center justify-between mb-3">
-                <div className={`h-10 w-10 rounded-xl ${card.color} flex items-center justify-center`}>
-                  <Icon className={`h-5 w-5 ${card.iconColor}`} />
-                </div>
-              </div>
-              <p className="font-serif text-3xl font-light text-[#1A1A1A]">
-                {isLoading ? "\u2014" : (value ?? 0)}
-              </p>
-              <p className="text-xs text-[#7A7A7A] mt-0.5">{card.label}</p>
-              <p className="text-[10px] text-[#B0B0B0] mt-0.5">{card.sub}</p>
-            </div>
-          );
-        })}
+        {/* Quick nav cards */}
+        <Link href="/employees" className="v3-card-sm p-5 flex items-center gap-4 v3-card-lift group">
+          <div className="h-12 w-12 rounded-xl border-2 border-ink/12 bg-indigo-soft flex items-center justify-center">
+            <Users className="h-6 w-6 text-indigo" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="font-bold text-ink">{isLoading ? "—" : (stats.totalEmployees ?? 0)}</p>
+            <p className="text-xs text-ink-4">Total Employees</p>
+          </div>
+          <ArrowRight className="h-4 w-4 text-ink-4 opacity-0 group-hover:opacity-100 transition-opacity" />
+        </Link>
+
+        <Link href="/projects" className="v3-card-sm p-5 flex items-center gap-4 v3-card-lift group">
+          <div className="h-12 w-12 rounded-xl border-2 border-ink/12 bg-sage-soft flex items-center justify-center">
+            <FolderOpen className="h-6 w-6 text-sage" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="font-bold text-ink">{isLoading ? "—" : (stats.activeProjects ?? 0)}</p>
+            <p className="text-xs text-ink-4">Active Projects</p>
+          </div>
+          <ArrowRight className="h-4 w-4 text-ink-4 opacity-0 group-hover:opacity-100 transition-opacity" />
+        </Link>
+
+        <Link href="/analytics" className="v3-card-sm p-5 flex items-center gap-4 v3-card-lift group">
+          <div className="h-12 w-12 rounded-xl border-2 border-ink/12 bg-terra-soft flex items-center justify-center">
+            <TrendingUp className="h-6 w-6 text-terra" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="font-bold text-ink">{isLoading ? "—" : (stats.contentPublishedThisMonth ?? 0)}</p>
+            <p className="text-xs text-ink-4">Published This Month</p>
+          </div>
+          <ArrowRight className="h-4 w-4 text-ink-4 opacity-0 group-hover:opacity-100 transition-opacity" />
+        </Link>
+
       </div>
     </div>
   );

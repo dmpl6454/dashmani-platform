@@ -1,34 +1,39 @@
 "use client";
 import { useState, useRef, useEffect } from "react";
-import { Bell } from "lucide-react";
+import { Bell, BellOff, CheckCheck } from "lucide-react";
 import { useNotifications, useUnreadCount } from "@/lib/hooks/use-notifications";
 import { apiFetch } from "@/lib/api";
 
 export function NotificationBell() {
   const [open, setOpen] = useState(false);
+  const [selectedNotif, setSelectedNotif] = useState<any>(null);
   const ref = useRef<HTMLDivElement>(null);
   const { data: countData, mutate: mutateCount } = useUnreadCount();
   const { data: notifData, mutate: mutateNotifs } = useNotifications();
 
   const count = (countData as any)?.data?.count ?? 0;
-  const notifications: any[] = ((notifData as any)?.data ?? []).slice(0, 10);
+  const notifications: any[] = ((notifData as any)?.data ?? []).slice(0, 50);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
       if (ref.current && !ref.current.contains(e.target as Node)) {
         setOpen(false);
+        setSelectedNotif(null);
       }
     }
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  async function handleMarkRead(id: string) {
-    try {
-      await apiFetch(`/hr/notifications/${id}/read`, { method: "PUT" });
-      mutateNotifs();
-      mutateCount();
-    } catch { /* ignore */ }
+  async function openNotif(n: any) {
+    setSelectedNotif(n);
+    if (!n.read) {
+      try {
+        await apiFetch(`/hr/notifications/${n.id}/read`, { method: "PUT" });
+        mutateNotifs();
+        mutateCount();
+      } catch { /* ignore */ }
+    }
   }
 
   async function handleMarkAllRead() {
@@ -39,11 +44,19 @@ export function NotificationBell() {
     } catch { /* ignore */ }
   }
 
+  function timeAgo(date: string) {
+    const s = Math.floor((Date.now() - new Date(date).getTime()) / 1000);
+    if (s < 60) return "just now";
+    if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+    if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+    return `${Math.floor(s / 86400)}d ago`;
+  }
+
   return (
     <div ref={ref} className="relative">
       <button
-        onClick={() => setOpen((v) => !v)}
-        className="relative p-1.5 rounded-lg text-white/60 hover:bg-[#2B2B2B] hover:text-white transition-all"
+        onClick={() => { setOpen((v) => !v); setSelectedNotif(null); }}
+        className="relative p-1.5 rounded-lg text-[#7A7A7A] hover:bg-[#F5F5F5] hover:text-[#1A1A1A] transition-all"
         aria-label="Notifications"
       >
         <Bell className="h-5 w-5" />
@@ -55,47 +68,81 @@ export function NotificationBell() {
       </button>
 
       {open && (
-        <div className="absolute right-0 top-8 z-50 w-80 bg-white rounded-2xl shadow-[0_8px_32px_rgba(0,0,0,0.12)] border border-[#E8E0D0] overflow-hidden">
-          <div className="flex items-center justify-between px-4 py-3 border-b border-[#E8E0D0] bg-[#FEFCF7]">
-            <span className="text-sm font-semibold text-[#1A1A1A]">Notifications</span>
-            {count > 0 && (
-              <button
-                onClick={handleMarkAllRead}
-                className="text-xs text-[#7A7A7A] hover:text-[#1A1A1A] font-medium"
-              >
-                Mark all read
-              </button>
-            )}
-          </div>
-
-          <div className="max-h-80 overflow-y-auto divide-y divide-[#E8E0D0]">
-            {notifications.length === 0 ? (
-              <p className="py-8 text-center text-sm text-[#B0B0B0]">No notifications</p>
-            ) : (
-              notifications.map((notif: any) => (
-                <div
-                  key={notif.id}
-                  onClick={() => !notif.read && handleMarkRead(notif.id)}
-                  className={`px-4 py-3 cursor-pointer hover:bg-[#FEFCF7] transition-colors ${
-                    !notif.read ? "bg-[#FFF3C4]/30" : ""
-                  }`}
+        <div className="absolute right-0 top-10 z-50 w-80 bg-white rounded-2xl shadow-[0_8px_32px_rgba(0,0,0,0.12)] border border-[#E8E0D0] overflow-hidden">
+          {selectedNotif ? (
+            /* ── Detail view ── */
+            <div>
+              <div className="flex items-center gap-2 px-4 py-3 border-b border-[#E8E0D0] bg-[#FEFCF7]">
+                <button
+                  onClick={() => setSelectedNotif(null)}
+                  className="flex items-center gap-1 text-xs text-[#7A7A7A] hover:text-[#1A1A1A] font-medium transition-colors"
                 >
-                  <div className="flex items-start gap-2">
-                    {!notif.read && (
-                      <span className="mt-1.5 h-2 w-2 rounded-full bg-[#F5D547] shrink-0" />
-                    )}
-                    <div className={!notif.read ? "" : "ml-4"}>
-                      <p className="text-sm font-medium text-[#1A1A1A]">{notif.title}</p>
-                      <p className="text-xs text-[#7A7A7A] mt-0.5">{notif.message}</p>
-                      <p className="text-xs text-[#B0B0B0] mt-1">
-                        {new Date(notif.createdAt).toLocaleString()}
-                      </p>
-                    </div>
+                  <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+                  </svg>
+                  Back
+                </button>
+              </div>
+              <div className="p-4 space-y-3 max-h-[420px] overflow-y-auto">
+                <p className="text-sm font-semibold text-[#1A1A1A] leading-snug">{selectedNotif.title}</p>
+                <p className="text-xs text-[#B0B0B0]">
+                  {new Date(selectedNotif.createdAt).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}
+                </p>
+                <p className="text-sm text-[#555] leading-relaxed whitespace-pre-wrap">{selectedNotif.message}</p>
+              </div>
+            </div>
+          ) : (
+            /* ── List view ── */
+            <>
+              <div className="flex items-center justify-between px-4 py-3 border-b border-[#E8E0D0] bg-[#FEFCF7]">
+                <span className="text-sm font-semibold text-[#1A1A1A]">Notifications</span>
+                {count > 0 && (
+                  <button
+                    onClick={handleMarkAllRead}
+                    className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 font-medium"
+                  >
+                    <CheckCheck className="h-3.5 w-3.5" />
+                    Mark all read
+                  </button>
+                )}
+              </div>
+
+              <div className="max-h-[400px] overflow-y-auto divide-y divide-[#E8E0D0]">
+                {notifications.length === 0 ? (
+                  <div className="py-8 text-center text-[#B0B0B0]">
+                    <BellOff className="h-8 w-8 mx-auto mb-2 opacity-40" />
+                    <p className="text-sm">No notifications yet</p>
                   </div>
-                </div>
-              ))
-            )}
-          </div>
+                ) : (
+                  notifications.map((notif: any) => (
+                    <div
+                      key={notif.id}
+                      onClick={() => openNotif(notif)}
+                      className={`px-4 py-3 cursor-pointer hover:bg-[#FEFCF7] transition-colors ${
+                        !notif.read ? "bg-[#FFF3C4]/30" : ""
+                      }`}
+                    >
+                      <div className="flex items-start gap-2">
+                        {!notif.read && (
+                          <span className="mt-1.5 h-2 w-2 rounded-full bg-[#F5D547] shrink-0" />
+                        )}
+                        <div className={`flex-1 min-w-0 ${notif.read ? "ml-4" : ""}`}>
+                          <p className={`text-sm ${!notif.read ? "font-semibold text-[#1A1A1A]" : "text-[#7A7A7A]"}`}>
+                            {notif.title}
+                          </p>
+                          <p className="text-xs text-[#7A7A7A] mt-0.5 line-clamp-2">{notif.message}</p>
+                          <p className="text-xs text-[#B0B0B0] mt-1">{timeAgo(notif.createdAt)}</p>
+                        </div>
+                        <svg className="h-3.5 w-3.5 text-[#D0C8BA] shrink-0 mt-1" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                        </svg>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </>
+          )}
         </div>
       )}
     </div>

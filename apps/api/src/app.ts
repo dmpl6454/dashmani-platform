@@ -19,12 +19,17 @@ app.use(helmet({
   crossOriginResourcePolicy: { policy: "cross-origin" },
 }));
 
+const extraOrigins = process.env.EXTRA_CORS_ORIGINS
+  ? process.env.EXTRA_CORS_ORIGINS.split(",").map((o) => o.trim())
+  : [];
+
 app.use(cors({
   origin: [
     process.env.INTERNAL_APP_URL || "http://localhost:3000",
     process.env.CLIENT_APP_URL || "http://localhost:3001",
     process.env.HR_APP_URL || "http://localhost:3002",
     process.env.JOBS_APP_URL || "http://localhost:3003",
+    ...extraOrigins,
   ],
   credentials: true,
   methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],

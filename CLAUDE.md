@@ -154,6 +154,47 @@ This starts all five apps in parallel via Turborepo:
 
 ---
 
+## Production URLs
+
+| Service | URL |
+|---------|-----|
+| API | https://api.digitalsukoon.com/v1 |
+| Internal Portal | https://portal.digitalsukoon.com |
+| Client Portal | https://client.digitalsukoon.com |
+| HR Portal | https://hr.digitalsukoon.com |
+| Jobs Portal | https://jobs.digitalsukoon.com |
+
+Production runs on Linode VPS `172.105.53.101`. Connect with `ssh linode`.
+
+---
+
+## Deployment (CI/CD)
+
+Pushing to `main` automatically deploys to production via GitHub Actions (`.github/workflows/deploy.yml`).
+
+**Flow:** GitHub Actions SSHes into the Linode server and runs `scripts/deploy.sh`:
+1. `git fetch origin main && git reset --hard origin/main` (no merge conflicts ever)
+2. `npm install`
+3. `npx turbo build --concurrency=1` with `NODE_OPTIONS=--max-old-space-size=900` (sequential to manage 2GB RAM)
+4. `pm2 restart all && pm2 save`
+
+**Required GitHub secrets** at `github.com/dmpl6454/dashmani-platform/settings/secrets/actions`:
+
+| Secret | Value |
+|--------|-------|
+| `DEPLOY_HOST` | `172.105.53.101` |
+| `DEPLOY_USER` | `root` |
+| `DEPLOY_SSH_KEY` | Deploy private key (regenerate if lost) |
+
+**Database changes are NEVER run by CI/CD.** If you change `schema.prisma`, SSH in manually:
+```bash
+ssh linode
+cd /opt/dashmani-platform
+npm run db:generate && npm run db:push
+```
+
+---
+
 ## Environment Files Reference
 
 ### Which file does what

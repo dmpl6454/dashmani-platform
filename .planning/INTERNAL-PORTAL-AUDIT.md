@@ -1,9 +1,9 @@
 # Internal Admin Portal — End-to-End Audit & Remediation Plan
 
-**Date:** 2026-05-15 (last updated: 2026-05-15)
+**Date:** 2026-05-15 (last updated: 2026-05-16)
 **Branch:** `docs/design-critique`
 **Scope:** `apps/internal` + `apps/api` (internal/admin endpoints)
-**Status:** Wave 9 complete — broadcast announcements (Issue 17) + notification detail view (Issues 18–19) — commit 1e92b20.
+**Status:** Wave 9 complete — broadcast announcements (Issue 17) + notification detail view (Issues 18–19) — commit 1e92b20. UI/UX polish pass complete — design-spec parity (command palette, sidebar More grid, nav grouping).
 
 > Companion file: [INTERNAL-PORTAL-ERRORS.md](./INTERNAL-PORTAL-ERRORS.md) — full error log.
 > Implementation plan: [internal-portal-plan.md](./internal-portal-plan.md) — phase-by-phase fix roadmap.

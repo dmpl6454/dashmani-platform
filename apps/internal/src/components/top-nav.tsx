@@ -31,7 +31,7 @@ function Avatar({ name, imageUrl, size = 7 }: { name?: string; imageUrl?: string
   );
 }
 
-export function TopNav() {
+export function TopNav({ onOpenSearch }: { onOpenSearch?: () => void }) {
   const pathname = usePathname();
   const { user, logout } = useAuth();
   const [userMenuOpen, setUserMenuOpen]   = useState(false);
@@ -108,6 +108,16 @@ export function TopNav() {
 
       {/* Right — actions */}
       <div className="flex items-center gap-1.5">
+
+        {/* Search / ⌘K */}
+        <button
+          onClick={onOpenSearch}
+          className="hidden sm:flex items-center gap-2 h-8 pl-3 pr-2.5 rounded-xl border-2 border-ink/20 bg-surface text-ink-3 text-xs font-medium btn-3d hover:text-ink transition-colors"
+        >
+          <Search className="h-3.5 w-3.5" />
+          <span>Search</span>
+          <kbd className="ml-0.5">⌘K</kbd>
+        </button>
 
         {/* Announce shortcut */}
         <Link

@@ -5,11 +5,13 @@ import { AuthContext } from "@/lib/auth";
 import { apiFetch } from "@/lib/api";
 import { Sidebar } from "@/components/sidebar";
 import { TopNav } from "@/components/top-nav";
+import { CommandPalette } from "@/components/command-palette";
 import "./globals.css";
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [cmdOpen, setCmdOpen] = useState(false);
   const pathname = usePathname();
   const router = useRouter();
 
@@ -20,6 +22,18 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       setUser(JSON.parse(storedUser));
     }
     setIsLoading(false);
+  }, []);
+
+  /* Global Ctrl+K / Cmd+K handler */
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        e.preventDefault();
+        setCmdOpen(v => !v);
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
   }, []);
 
   const login = useCallback(async (email: string, password: string) => {
@@ -79,13 +93,16 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               {/* Main column */}
               <div className="flex flex-col flex-1 min-w-0">
                 {/* Thin topstrip */}
-                <TopNav />
+                <TopNav onOpenSearch={() => setCmdOpen(true)} />
 
                 {/* Page content */}
                 <main className="flex-1 px-6 py-6 overflow-auto">
                   {children}
                 </main>
               </div>
+
+              {/* Global command palette */}
+              <CommandPalette open={cmdOpen} onClose={() => setCmdOpen(false)} />
             </div>
           )}
         </AuthContext.Provider>

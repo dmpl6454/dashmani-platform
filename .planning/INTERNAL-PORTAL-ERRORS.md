@@ -12,7 +12,32 @@
 
 ## Open errors
 
-_(none — all known errors resolved as of 2026-05-15, commit 1e92b20)_
+### ERR-I-020 — Announcement emails never sent (SMTP not configured + unawaited Promise)
+
+- **Linked to:** AUDIT Issue 17 / internal-portal-plan.md Phase 12
+- **Severity:** P1
+- **Type:** Configuration gap + code bug
+- **Location:**
+  - `apps/api/.env` — missing `SMTP_USER` / `SMTP_PASS` / `SMTP_HOST` variables
+  - [apps/api/src/services/announcement.service.ts:38](../apps/api/src/services/announcement.service.ts#L38) — unawaited `Promise.allSettled`
+  - [apps/api/src/services/email.service.ts:26-28](../apps/api/src/services/email.service.ts#L26) — early-return guard when SMTP vars absent
+- **Symptom:** Admin sends a broadcast announcement — in-app notifications arrive correctly but no email is received by any employee.
+- **Root causes (two, both must be fixed):**
+  1. **Missing env vars (primary blocker):** `apps/api/.env` contains only `DATABASE_URL`, `REDIS_URL`, `JWT_SECRET`, `JWT_REFRESH_SECRET`, `NEXT_PUBLIC_API_URL`, and `PORT`. `SMTP_USER` and `SMTP_PASS` are absent. `sendEmail()` in `email.service.ts` checks for these at line 26 and returns `null` with a `console.warn` — no email is attempted. `.env.example` also lacks SMTP entries, so the gap was never surfaced during setup.
+  2. **Unawaited Promise (secondary):** `announcement.service.ts:38` calls `Promise.allSettled(...)` without `await`. The function returns `{ recipientCount, announcementId }` before any email promise resolves. Even once SMTP is configured, if the Node process is under pressure or the SMTP connection is slow, the fire-and-forget can be abandoned. (In-app notifications are unaffected because `notification.createMany` is correctly awaited.)
+- **Fix required:**
+  1. Add SMTP credentials to `apps/api/.env` (and to `.env.example` so future devs know to fill it in):
+     ```
+     SMTP_HOST=smtp.gmail.com
+     SMTP_PORT=587
+     SMTP_SECURE=false
+     SMTP_USER=<sender-gmail-address>
+     SMTP_PASS=<app-password>
+     INTERNAL_APP_URL=http://localhost:3000
+     ```
+  2. Change line 38 of `announcement.service.ts` from `Promise.allSettled(...)` to `await Promise.allSettled(...)` so email dispatch completes before the function returns.
+- **Verification:** After adding SMTP env vars and restarting the API, send a test announcement → confirm email arrives at `tabish@dashmani.com` within 60 seconds. Check API server log for `✉ Email sent to ...` confirmation line.
+- **Status:** Open — 2026-05-16
 
 ---
 

@@ -144,8 +144,16 @@
   to { transform: rotate(360deg); }
 }
 
-/* ── Animation classes ── */
-.pop-in      { animation: popIn       0.40s var(--spring)      both; }
+/* ── Animation classes ──
+   .pop-in is used as a route-level wrapper on most pages. The original
+   scale+translate spring made every page navigation feel "jittery" because
+   the whole content area popped on each route change. Soften to a quick
+   fade so navigation feels stable. */
+.pop-in      { animation: routeFade 0.22s var(--ease-out) both; }
+@keyframes routeFade {
+  0%   { opacity: 0; transform: translateY(4px); }
+  100% { opacity: 1; transform: none; }
+}
 .fade-up     { animation: fadeUp      0.34s var(--spring)      both; }
 .slide-right { animation: slideInRight 0.28s var(--spring-fast) both; }
 .slide-left  { animation: slideInLeft  0.24s var(--spring-fast) both; }
@@ -162,8 +170,29 @@
 .crx-delay-5 { animation-delay: 0.25s; animation-fill-mode: both; }
 .crx-delay-6 { animation-delay: 0.30s; animation-fill-mode: both; }
 
-/* ── Focus / selection ── */
-*:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(93,95,239,0.3) !important; border-radius: 8px; }
+/* ── Focus / selection ──
+   Scoped to form fields only — applying a focus ring globally caused every
+   button and nav link to flash a blue halo on click, which read as jitter
+   during navigation. Buttons/links rely on their own hover/active styles. */
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: none;
+  border-color: #5D5FEF !important;
+  box-shadow: 0 0 0 3px rgba(93,95,239,0.18) !important;
+}
+/* Keyboard-only focus ring for interactive non-form elements — accessible
+   without the click-flash. The :focus-visible spec excludes mouse clicks. */
+button:focus-visible,
+a:focus-visible,
+[role="button"]:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid rgba(93,95,239,0.55);
+  outline-offset: 2px;
+  border-radius: 8px;
+}
+/* Kill the default browser blue ring on form fields (Chrome/Edge). */
+input:focus, textarea:focus, select:focus { outline: none; }
 ::selection { background: #EDEDFD; color: #1A1A1A; }
 
 /* ── Custom scrollbar ── */

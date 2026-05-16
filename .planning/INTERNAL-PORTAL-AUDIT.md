@@ -3,7 +3,7 @@
 **Date:** 2026-05-15 (last updated: 2026-05-16)
 **Branch:** `docs/design-critique`
 **Scope:** `apps/internal` + `apps/api` (internal/admin endpoints)
-**Status:** Wave 9 complete — broadcast announcements (Issue 17) + notification detail view (Issues 18–19) — commit 1e92b20. UI/UX polish pass complete — design-spec parity (command palette, sidebar More grid, nav grouping).
+**Status:** Wave 9 complete — broadcast announcements (Issue 17) + notification detail view (Issues 18–19) — commit 1e92b20. UI/UX polish pass complete — design-spec parity (command palette, sidebar More grid, nav grouping). Issue 20 open — announcement emails not delivered (SMTP env vars missing + unawaited Promise).
 
 > Companion file: [INTERNAL-PORTAL-ERRORS.md](./INTERNAL-PORTAL-ERRORS.md) — full error log.
 > Implementation plan: [internal-portal-plan.md](./internal-portal-plan.md) — phase-by-phase fix roadmap.
@@ -274,6 +274,7 @@ The internal admin portal is structurally mature — ~46 pages, real CRUD operat
 | 17 | No broadcast announcement capability | Admins cannot mass-message all employees from the portal | P1 | ✅ Resolved — commit 1e92b20 |
 | 18 | Notifications not expandable (internal portal) | Clicking a notification only marks it read; full message never visible | P1 | ✅ Resolved — commit 1e92b20 |
 | 19 | Notifications not expandable (HR/employee portal) | Same — clicking already-read notifications did nothing at all | P1 | ✅ Resolved — commit 1e92b20 |
+| 20 | Announcement emails never delivered | SMTP env vars missing + unawaited Promise.allSettled in announcement.service.ts | P1 | ❌ Open — 2026-05-16 |
 
 ---
 
@@ -449,6 +450,40 @@ Role colours, loading.tsx files, null safety. ~half day.
 3. **Issue 14:** Role management — `PUT /admin/users/:id/roles` atomically replaces all roles (transaction: delete existing + createMany). `RoleManager` component in employee detail Profile tab shows toggle buttons for all system roles; visible only to admins/super-admins.
 4. **Issue 15:** Project date validation — enforced at both client (min attr + onSubmit check, clears endDate when startDate advances past it) and server (`createProject` + `updateProject`).
 5. **Issue 16:** Client portal projects — default filter changed from "active" to "all" so newly assigned projects are always visible regardless of status; empty state message now distinguishes "no projects at all" vs "no matching filter".
+
+---
+
+---
+
+### ISSUE 20 — Announcement emails never delivered (P1)
+
+**Symptom:** Admin broadcasts an announcement — employees receive the in-app bell notification correctly, but no email arrives.
+
+**Root causes (two, both must be fixed):**
+
+1. **Missing SMTP env vars (primary blocker):** `apps/api/.env` contains no `SMTP_USER`, `SMTP_PASS`, or `SMTP_HOST` entries. `sendEmail()` in `email.service.ts:26-28` guards against missing credentials and returns `null` with `console.warn("⚠ Email not configured...")` — no email is ever attempted. `.env.example` also omits these variables so the gap was never surfaced during setup.
+
+2. **Unawaited `Promise.allSettled` (secondary bug):** `announcement.service.ts:38` calls `Promise.allSettled(...)` without `await`. The function returns before email promises resolve — on a slow SMTP connection the fire-and-forget can be abandoned by Node before delivery completes. (In-app `notification.createMany` is awaited and works correctly.)
+
+**Fix:**
+1. Add SMTP credentials to `apps/api/.env` and `apps/api/.env.example`:
+   ```
+   SMTP_HOST=smtp.gmail.com
+   SMTP_PORT=587
+   SMTP_SECURE=false
+   SMTP_USER=<sender-gmail>
+   SMTP_PASS=<app-password>
+   INTERNAL_APP_URL=http://localhost:3000
+   ```
+2. In `apps/api/src/services/announcement.service.ts:38`, change `Promise.allSettled(...)` to `await Promise.allSettled(...)`.
+
+**Files:**
+- `apps/api/.env` — add SMTP vars
+- `.env.example` — document SMTP vars
+- [apps/api/src/services/announcement.service.ts:38](../apps/api/src/services/announcement.service.ts#L38) — add `await`
+- [apps/api/src/services/email.service.ts:26-28](../apps/api/src/services/email.service.ts#L26) — guard (correct, no change needed)
+
+**Plan phase:** Wave 10
 
 ---
 

@@ -25,14 +25,21 @@ function QuickAnnounceModal({ onClose }: { onClose: () => void }) {
   const [title,   setTitle]   = useState("");
   const [message, setMessage] = useState("");
   const [sending, setSending] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [error,   setError]   = useState<string | null>(null);
   const [done,    setDone]    = useState<number | null>(null);
 
-  const inputCls = "w-full border-2 border-ink/15 bg-surface rounded-xl px-4 py-2.5 text-sm text-ink placeholder:text-ink-4 focus:outline-none focus:border-indigo focus:ring-0 transition-colors";
+  const inputCls = "w-full border-2 border-ink/15 bg-surface rounded-xl px-4 py-2.5 text-sm text-ink placeholder:text-ink-4 transition-colors";
 
-  async function handleSend(e: React.FormEvent) {
+  function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!confirm("Send this announcement to all active employees?")) return;
+    if (!title.trim() || !message.trim()) return;
+    setConfirming(true);
+  }
+
+  async function doSend() {
     setSending(true);
+    setError(null);
     try {
       const res = await apiFetch<any>("/admin/announcements", {
         method: "POST",
@@ -40,7 +47,8 @@ function QuickAnnounceModal({ onClose }: { onClose: () => void }) {
       });
       setDone(res?.data?.recipientCount ?? 0);
     } catch (err: any) {
-      alert(err?.message || "Failed to send.");
+      setError(err?.message || "Failed to send. Please try again.");
+      setConfirming(false);
     } finally { setSending(false); }
   }
 
@@ -60,38 +68,62 @@ function QuickAnnounceModal({ onClose }: { onClose: () => void }) {
   );
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4">
-      <div className="v3-card shadow-pop w-full max-w-lg overflow-hidden">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4" onClick={onClose}>
+      <div className="v3-card shadow-pop w-full max-w-lg overflow-hidden pop-in" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-6 py-4 border-b-2 border-ink/10">
           <h2 className="font-bold text-ink flex items-center gap-2">
             <Megaphone size={18} className="text-action-deep" />
-            Broadcast Announcement
+            {confirming ? "Confirm broadcast" : "Broadcast Announcement"}
           </h2>
           <button onClick={onClose} className="h-7 w-7 flex items-center justify-center rounded-lg hover:bg-muted transition-colors text-ink-4 text-xl leading-none">×</button>
         </div>
-        <form onSubmit={handleSend} className="p-6 space-y-4">
-          <div>
-            <div className="flex justify-between mb-1.5">
-              <label className="text-xs font-bold text-ink-4 uppercase tracking-wider">Title</label>
-              <span className="text-xs text-ink-4">{title.length}/120</span>
+
+        {confirming ? (
+          <div className="p-6 space-y-4">
+            <p className="text-sm text-ink-3">
+              This will email every active employee and add a notification to their portal. You can't undo this.
+            </p>
+            <div className="v3-card-inset p-4 space-y-2">
+              <p className="text-xs font-bold text-ink-4 uppercase tracking-wider">Preview</p>
+              <p className="text-sm font-semibold text-ink">{title}</p>
+              <p className="text-sm text-ink-3 whitespace-pre-wrap leading-relaxed">{message}</p>
             </div>
-            <input type="text" value={title} onChange={(e) => setTitle(e.target.value.slice(0, 120))} placeholder="e.g., Office closed on Monday" required className={inputCls} />
-          </div>
-          <div>
-            <div className="flex justify-between mb-1.5">
-              <label className="text-xs font-bold text-ink-4 uppercase tracking-wider">Message</label>
-              <span className="text-xs text-ink-4">{message.length}/2000</span>
+            {error && <p className="text-xs text-danger">{error}</p>}
+            <div className="flex items-center justify-end gap-3 pt-1">
+              <button type="button" onClick={() => setConfirming(false)} disabled={sending} className="px-5 py-2 rounded-full border-2 border-ink/15 text-sm text-ink-3 hover:bg-muted transition-colors disabled:opacity-50">
+                Back
+              </button>
+              <button type="button" onClick={doSend} disabled={sending} className="px-5 py-2.5 rounded-full bg-ink text-white text-sm font-bold btn-3d hover:bg-ink-2 transition-colors disabled:opacity-50 flex items-center gap-2">
+                <Megaphone size={15} />
+                {sending ? "Sending…" : "Yes, send to all"}
+              </button>
             </div>
-            <textarea value={message} onChange={(e) => setMessage(e.target.value.slice(0, 2000))} placeholder="Write your message here..." required rows={5} className={`${inputCls} resize-none`} />
           </div>
-          <div className="flex items-center justify-end gap-3 pt-1">
-            <button type="button" onClick={onClose} className="px-5 py-2 rounded-full border-2 border-ink/15 text-sm text-ink-3 hover:bg-muted transition-colors">Cancel</button>
-            <button type="submit" disabled={sending} className="px-5 py-2.5 rounded-full bg-ink text-white text-sm font-bold btn-3d hover:bg-ink-2 transition-colors disabled:opacity-50 flex items-center gap-2">
-              <Megaphone size={15} />
-              {sending ? "Sending…" : "Send to All"}
-            </button>
-          </div>
-        </form>
+        ) : (
+          <form onSubmit={handleSubmit} className="p-6 space-y-4">
+            <div>
+              <div className="flex justify-between mb-1.5">
+                <label className="text-xs font-bold text-ink-4 uppercase tracking-wider">Title</label>
+                <span className="text-xs text-ink-4">{title.length}/120</span>
+              </div>
+              <input type="text" value={title} onChange={(e) => setTitle(e.target.value.slice(0, 120))} placeholder="e.g., Office closed on Monday" required className={inputCls} />
+            </div>
+            <div>
+              <div className="flex justify-between mb-1.5">
+                <label className="text-xs font-bold text-ink-4 uppercase tracking-wider">Message</label>
+                <span className="text-xs text-ink-4">{message.length}/2000</span>
+              </div>
+              <textarea value={message} onChange={(e) => setMessage(e.target.value.slice(0, 2000))} placeholder="Write your message here..." required rows={5} className={`${inputCls} resize-none`} />
+            </div>
+            <div className="flex items-center justify-end gap-3 pt-1">
+              <button type="button" onClick={onClose} className="px-5 py-2 rounded-full border-2 border-ink/15 text-sm text-ink-3 hover:bg-muted transition-colors">Cancel</button>
+              <button type="submit" disabled={!title.trim() || !message.trim()} className="px-5 py-2.5 rounded-full bg-ink text-white text-sm font-bold btn-3d hover:bg-ink-2 transition-colors disabled:opacity-50 flex items-center gap-2">
+                <Megaphone size={15} />
+                Review &amp; send
+              </button>
+            </div>
+          </form>
+        )}
       </div>
     </div>
   );
@@ -112,20 +144,12 @@ export default function DashboardPage() {
       {announceOpen && <QuickAnnounceModal onClose={() => setAnnounceOpen(false)} />}
 
       {/* Page header */}
-      <div className="flex items-end justify-between">
-        <div>
-          <p className="text-xs font-bold text-ink-4 uppercase tracking-widest mb-1">Management Portal</p>
-          <h1 className="font-display text-3xl font-semibold text-ink leading-tight">
-            Hello, {firstName} 👋
-          </h1>
-          <p className="text-sm text-ink-3 mt-0.5">Here's your organisation overview</p>
-        </div>
-        <button
-          onClick={() => setAnnounceOpen(true)}
-          className="hidden sm:flex items-center gap-2 px-4 py-2.5 rounded-full bg-ink text-white text-sm font-bold btn-3d hover:bg-ink-2 transition-colors"
-        >
-          <Megaphone className="h-4 w-4" /> Announce
-        </button>
+      <div>
+        <p className="text-xs font-bold text-ink-4 uppercase tracking-widest mb-1">Management Portal</p>
+        <h1 className="font-display text-3xl font-semibold text-ink leading-tight">
+          Hello, {firstName} 👋
+        </h1>
+        <p className="text-sm text-ink-3 mt-0.5">Here's your organisation overview</p>
       </div>
 
       {/* Stat strip */}

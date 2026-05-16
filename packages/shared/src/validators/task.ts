@@ -1,8 +1,9 @@
 import { z } from "zod";
+import { safeString } from "../utils/sanitize";
 
 export const createTaskSchema = z.object({
-  title: z.string().min(2, "Title must be at least 2 characters").max(200),
-  description: z.string().max(5000).optional(),
+  title: safeString.pipe(z.string().min(2, "Title must be at least 2 characters").max(200)),
+  description: safeString.pipe(z.string().max(5000)).optional(),
   priority: z.enum(["CRITICAL", "HIGH", "MEDIUM", "LOW"]).optional(),
   assigneeId: z.string().uuid().optional(),
   accountId: z.string().uuid().optional(),
@@ -11,8 +12,8 @@ export const createTaskSchema = z.object({
 });
 
 export const updateTaskSchema = z.object({
-  title: z.string().min(2).max(200).optional(),
-  description: z.string().max(5000).nullable().optional(),
+  title: safeString.pipe(z.string().min(2).max(200)).optional(),
+  description: safeString.pipe(z.string().max(5000)).nullable().optional(),
   priority: z.enum(["CRITICAL", "HIGH", "MEDIUM", "LOW"]).optional(),
   assigneeId: z.string().uuid().nullable().optional(),
   accountId: z.string().uuid().nullable().optional(),

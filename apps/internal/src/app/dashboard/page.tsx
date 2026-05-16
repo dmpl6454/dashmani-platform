@@ -8,6 +8,7 @@ import {
   UserPlus, ArrowRight, Megaphone, TrendingUp, BarChart3,
 } from "lucide-react";
 import { useState } from "react";
+import { usePageTitle } from "@/lib/hooks/use-page-title";
 import { apiFetch } from "@/lib/api";
 
 const statStrip = [
@@ -130,6 +131,7 @@ function QuickAnnounceModal({ onClose }: { onClose: () => void }) {
 }
 
 export default function DashboardPage() {
+  usePageTitle("Dashboard");
   const { user } = useAuth();
   const { data, isLoading } = useOverviewStats();
   const { announcements } = useAnnouncements();

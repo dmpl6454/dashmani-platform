@@ -1,8 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { apiFetch } from "@/lib/api";
 import useSWR from "swr";
+import DOMPurify from "dompurify";
+import { usePageTitle } from "@/lib/hooks/use-page-title";
 import {
   Sparkles, Briefcase, FileText, ScrollText, Receipt, MessageSquare,
   Loader2, Copy, Check, ExternalLink,
@@ -22,12 +24,13 @@ const tabs: { id: Tab; label: string; icon: any; desc: string }[] = [
 ];
 
 export default function AIAssistantPage() {
+  usePageTitle("AI Assistant");
   const [activeTab, setActiveTab] = useState<Tab>("vacancy");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<any>(null);
   const [copied, setCopied] = useState(false);
 
-  const { data: employeesData } = useSWR("/admin/employees", (url: string) => apiFetch<any>(url));
+  const { data: employeesData } = useSWR("/employees", (url: string) => apiFetch<any>(url));
   const employees = employeesData?.data || [];
 
   function copyText(text: string) {
@@ -37,8 +40,11 @@ export default function AIAssistantPage() {
   }
 
   function openHtmlWindow(html: string, title: string) {
-    const w = window.open("", "_blank");
-    if (w) { w.document.write(html); w.document.title = title; w.document.close(); }
+    const sanitized = DOMPurify.sanitize(html);
+    const blob = new Blob([sanitized], { type: "text/html" });
+    const url = URL.createObjectURL(blob);
+    const w = window.open(url, "_blank");
+    if (w) { w.document.title = title; }
   }
 
   return (
@@ -217,7 +223,7 @@ function OfferLetterGenerator({ employees, loading, setLoading, result, setResul
             </button>
           </div>
           <div className="border border-[#E8E0D0] rounded-xl overflow-hidden h-[400px]">
-            <iframe srcDoc={result.html} className="w-full h-full" title="Offer Letter Preview" />
+            <iframe srcDoc={DOMPurify.sanitize(result.html)} className="w-full h-full" title="Offer Letter Preview" sandbox="allow-same-origin" />
           </div>
         </div>
       )}
@@ -272,7 +278,7 @@ function AppointmentGenerator({ employees, loading, setLoading, result, setResul
             </button>
           </div>
           <div className="border border-[#E8E0D0] rounded-xl overflow-hidden h-[400px]">
-            <iframe srcDoc={result.html} className="w-full h-full" title="Appointment Letter Preview" />
+            <iframe srcDoc={DOMPurify.sanitize(result.html)} className="w-full h-full" title="Appointment Letter Preview" sandbox="allow-same-origin" />
           </div>
         </div>
       )}
@@ -326,7 +332,7 @@ function ContractGenerator({ employees, loading, setLoading, result, setResult, 
             </button>
           </div>
           <div className="border border-[#E8E0D0] rounded-xl overflow-hidden h-[400px]">
-            <iframe srcDoc={result.html} className="w-full h-full" title="Contract Preview" />
+            <iframe srcDoc={DOMPurify.sanitize(result.html)} className="w-full h-full" title="Contract Preview" sandbox="allow-same-origin" />
           </div>
         </div>
       )}
@@ -366,7 +372,7 @@ function SalarySlipViewer() {
             <div key={slip.id} className="flex items-center justify-between py-3">
               <div>
                 <p className="font-medium text-[#1A1A1A]">{slip.employee?.name}</p>
-                <p className="text-xs text-[#7A7A7A]">Net: {new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(slip.netSalary)} · {slip.status}</p>
+                <p className="text-xs text-[#7A7A7A]">Net: {new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(slip.netSalary)} · {slip.status?.split("_").map((w: string) => w.charAt(0) + w.slice(1).toLowerCase()).join(" ")}</p>
               </div>
               <a href={`${API_URL}/admin/ai/salary-slip/${slip.id}/html`} target="_blank" rel="noopener noreferrer"
                 className="flex items-center gap-1 bg-[#1A1A1A] text-white rounded-full px-4 py-1.5 text-xs font-medium hover:bg-[#2B2B2B]">
@@ -385,6 +391,11 @@ function AIChat({ loading, setLoading, employees }: any) {
   const [messages, setMessages] = useState<{ role: string; content: string }[]>([]);
   const [input, setInput] = useState("");
   const [employeeId, setEmployeeId] = useState("");
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
 
   async function send() {
     if (!input.trim()) return;
@@ -435,6 +446,7 @@ function AIChat({ loading, setLoading, employees }: any) {
         {loading && (
           <div className="flex items-center gap-2 text-[#7A7A7A] text-sm"><Loader2 size={14} className="animate-spin" />Thinking...</div>
         )}
+        <div ref={messagesEndRef} />
       </div>
       <div className="flex gap-3">
         <input type="text" value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => e.key === "Enter" && !loading && send()}

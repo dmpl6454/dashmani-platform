@@ -1,8 +1,9 @@
 import { prisma } from "@dashmani/db";
-import { comparePassword } from "../utils/password";
+import { comparePassword, hashPassword } from "../utils/password";
 import { signAccessToken, signRefreshToken, verifyRefreshToken } from "../utils/jwt";
 import { AppError } from "../middleware/error-handler";
 import type { JwtPayload } from "@dashmani/shared";
+import { sendEmail } from "./email.service";
 import crypto from "crypto";
 
 export async function login(email: string, password: string) {
@@ -106,4 +107,47 @@ export async function refresh(refreshToken: string) {
 
 export async function logout(userId: string) {
   await prisma.refreshToken.deleteMany({ where: { userId } });
+}
+
+export async function forgotPassword(email: string) {
+  const user = await prisma.user.findUnique({ where: { email, deletedAt: null } });
+  if (!user) return; // silent — don't reveal whether email exists
+
+  const token = crypto.randomBytes(32).toString("hex");
+  const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+
+  await prisma.otpToken.deleteMany({ where: { userId: user.id, channel: "EMAIL", target: "PASSWORD_RESET" } });
+  await prisma.otpToken.create({
+    data: { userId: user.id, otp: token, channel: "EMAIL", target: "PASSWORD_RESET", expiresAt },
+  });
+
+  const portalUrl = process.env.INTERNAL_APP_URL || "https://portal.digitalsukoon.com";
+  const resetLink = `${portalUrl}/reset-password?token=${token}`;
+
+  await sendEmail({
+    to: user.email,
+    subject: "Reset your password — Digital Sukoon Portal",
+    html: `
+      <div style="font-family:sans-serif;max-width:500px;margin:0 auto;padding:32px">
+        <h2 style="margin:0 0 8px">Reset your password</h2>
+        <p style="color:#555">Hi ${user.name},</p>
+        <p style="color:#555">Click the button below to reset your password. This link expires in 1 hour.</p>
+        <a href="${resetLink}" style="display:inline-block;margin:16px 0;padding:12px 24px;background:#1A1A1A;color:#fff;border-radius:8px;text-decoration:none;font-weight:600">Reset Password</a>
+        <p style="color:#999;font-size:12px">If you didn't request this, ignore this email.</p>
+      </div>
+    `,
+  });
+}
+
+export async function resetPassword(token: string, newPassword: string) {
+  const record = await prisma.otpToken.findFirst({
+    where: { otp: token, channel: "EMAIL", target: "PASSWORD_RESET", verified: false, expiresAt: { gt: new Date() } },
+  });
+
+  if (!record) throw new AppError(400, "INVALID_TOKEN", "Reset link is invalid or expired");
+
+  const passwordHash = await hashPassword(newPassword);
+  await prisma.user.update({ where: { id: record.userId }, data: { passwordHash } });
+  await prisma.otpToken.update({ where: { id: record.id }, data: { verified: true } });
+  await prisma.refreshToken.deleteMany({ where: { userId: record.userId } });
 }

@@ -4,6 +4,8 @@ import { useState } from "react";
 import { apiFetch } from "@/lib/api";
 import useSWR from "swr";
 import { FileText, Check, X, Search, Download } from "lucide-react";
+import { usePageTitle } from "@/lib/hooks/use-page-title";
+import { formatStatus } from "@dashmani/shared";
 
 const inputClass =
   "w-full border border-[#E8E0D0] bg-white rounded-lg px-4 py-2.5 text-sm text-[#1A1A1A] placeholder:text-[#B0B0B0] focus:outline-none focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547] transition-colors";
@@ -16,6 +18,7 @@ const statusBadge: Record<string, string> = {
 };
 
 export default function SalarySlipsPage() {
+  usePageTitle("Salary Slips");
   const now = new Date();
   const [month, setMonth] = useState(now.getMonth() + 1);
   const [year, setYear] = useState(now.getFullYear());
@@ -65,33 +68,14 @@ export default function SalarySlipsPage() {
     <div className="space-y-6 crx-animate-fade">
       <div className="flex items-center justify-between">
         <h1 className="font-serif text-4xl font-light text-[#1A1A1A]">Salary Slips</h1>
-        <div className="flex items-center gap-3">
-          <select
-            value={bulkMonth}
-            onChange={(e) => setBulkMonth(Number(e.target.value))}
-            className={inputClass + " !w-auto"}
-          >
-            {Array.from({ length: 12 }, (_, i) => (
-              <option key={i + 1} value={i + 1}>
-                {new Date(2024, i).toLocaleString("default", { month: "long" })}
-              </option>
-            ))}
-          </select>
-          <input
-            type="number"
-            value={bulkYear}
-            onChange={(e) => setBulkYear(Number(e.target.value))}
-            className={inputClass + " !w-24"}
-          />
-          <button
-            onClick={handleGenerateBulk}
-            disabled={generating}
-            className="bg-[#1A1A1A] text-white py-2.5 px-6 rounded-full font-semibold hover:bg-[#2B2B2B] transition-all disabled:opacity-50 flex items-center gap-2"
-          >
-            <Download size={16} />
-            {generating ? "Generating..." : "Generate for All Employees"}
-          </button>
-        </div>
+        <button
+          onClick={handleGenerateBulk}
+          disabled={generating}
+          className="bg-[#1A1A1A] text-white py-2.5 px-6 rounded-full font-semibold hover:bg-[#2B2B2B] transition-all disabled:opacity-50 flex items-center gap-2"
+        >
+          <Download size={16} />
+          {generating ? "Generating..." : `Generate for ${new Date(bulkYear, bulkMonth - 1).toLocaleString("default", { month: "long" })} ${bulkYear}`}
+        </button>
       </div>
 
       {/* Filter Bar */}
@@ -102,7 +86,7 @@ export default function SalarySlipsPage() {
             <select value={month} onChange={(e) => setMonth(Number(e.target.value))} className={inputClass}>
               {Array.from({ length: 12 }, (_, i) => (
                 <option key={i + 1} value={i + 1}>
-                  {new Date(2024, i).toLocaleString("default", { month: "long" })}
+                  {new Date(new Date().getFullYear(), i).toLocaleString("default", { month: "long" })}
                 </option>
               ))}
             </select>
@@ -173,13 +157,13 @@ export default function SalarySlipsPage() {
                   <tr key={slip.id} className="border-b border-[#F0EAD8] last:border-0 hover:bg-[rgba(255,248,225,0.5)] transition-colors">
                     <td className="p-4 text-[#1A1A1A] font-medium">{slip.employeeName || slip.employee?.name || "—"}</td>
                     <td className="p-4 text-[#1A1A1A]">
-                      {new Date(2024, (slip.month || 1) - 1).toLocaleString("default", { month: "short" })} {slip.year}
+                      {new Date(slip.year || new Date().getFullYear(), (slip.month || 1) - 1).toLocaleString("default", { month: "short" })} {slip.year}
                     </td>
                     <td className="p-4 text-[#1A1A1A]">{slip.basic != null ? `₹${Number(slip.basic).toLocaleString()}` : "—"}</td>
                     <td className="p-4 text-[#1A1A1A] font-semibold">{slip.netSalary != null ? `₹${Number(slip.netSalary).toLocaleString()}` : "—"}</td>
                     <td className="p-4">
                       <span className={`rounded-full px-3 py-1 text-xs font-medium ${statusBadge[slip.status] || statusBadge.DRAFT}`}>
-                        {slip.status?.replace("_", " ") || "DRAFT"}
+                        {formatStatus(slip.status || "DRAFT")}
                       </span>
                     </td>
                     <td className="p-4">

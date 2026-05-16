@@ -3,7 +3,7 @@
 **Date:** 2026-05-15 (last updated: 2026-05-16)
 **Branch:** `docs/design-critique`
 **Scope:** `apps/internal` + `apps/api` (internal/admin endpoints)
-**Status:** Wave 9 complete — broadcast announcements (Issue 17) + notification detail view (Issues 18–19) — commit 1e92b20. UI/UX polish pass complete — design-spec parity (command palette, sidebar More grid, nav grouping). Issue 20 open — announcement emails not delivered (SMTP env vars missing + unawaited Promise).
+**Status:** Wave 9 complete — broadcast announcements (Issue 17) + notification detail view (Issues 18–19) — commit 1e92b20. UI/UX polish pass complete — design-spec parity (command palette, sidebar More grid, nav grouping). Issue 20 open — announcement emails not delivered (SMTP env vars missing + unawaited Promise). **v2 audit (production test) in progress — see INTERNAL-PORTAL-V2-PLAN.md for all new issues (ERR-I-030 through ERR-I-049).**
 
 > Companion file: [INTERNAL-PORTAL-ERRORS.md](./INTERNAL-PORTAL-ERRORS.md) — full error log.
 > Implementation plan: [internal-portal-plan.md](./internal-portal-plan.md) — phase-by-phase fix roadmap.
@@ -275,6 +275,26 @@ The internal admin portal is structurally mature — ~46 pages, real CRUD operat
 | 18 | Notifications not expandable (internal portal) | Clicking a notification only marks it read; full message never visible | P1 | ✅ Resolved — commit 1e92b20 |
 | 19 | Notifications not expandable (HR/employee portal) | Same — clicking already-read notifications did nothing at all | P1 | ✅ Resolved — commit 1e92b20 |
 | 20 | Announcement emails never delivered | SMTP env vars missing + unawaited Promise.allSettled in announcement.service.ts | P1 | ❌ Open — 2026-05-16 |
+| 21 | AI preview XSS | dangerouslySetInnerHTML with unsanitized AI-generated HTML; open-in-new-tab also unsafe | P0 | ❌ Open — ERR-I-030 |
+| 22 | Default admin credentials in source | seed.ts hardcodes Admin@123456; confirmed working on prod | P0 | ❌ Open — ERR-I-031 |
+| 23 | Backend accepts `<script>` in Name field | No HTML sanitization on create routes; stored XSS vector | P0 | ❌ Open — ERR-I-032 |
+| 24 | Auth tokens in localStorage | JWT stored in localStorage; XSS can steal session | P0 | ❌ Open — ERR-I-033 |
+| 25 | Analytics 403 — analytics permission missing from seed | "analytics" resource not in Super Admin or Admin seed roles | P1 | ❌ Open — ERR-I-034 |
+| 26 | AI employee dropdown calls /admin/employees (404) | Correct path is /employees; all AI document tabs broken | P1 | ❌ Open — ERR-I-035 |
+| 27 | Forgot Password missing from login | No reset link, no API endpoint, no reset page | P1 | ❌ Open — ERR-I-036 |
+| 28 | Salary Slips API returns 500 | Prisma query error in salary-slip.service.ts | P1 | ❌ Open — ERR-I-037 |
+| 29 | Holidays API returns 500 | Prisma query error in holiday.service.ts | P1 | ❌ Open — ERR-I-038 |
+| 30 | Multiple admin/* endpoints 404 in production | Attendance, Approvals, Workload, Clients, Leaderboard — route mismatch or missing | P1 | ❌ Open — ERR-I-039 |
+| 31 | Refresh loop on session expiry | API client retries indefinitely instead of redirecting to login | P1 | ❌ Open — ERR-I-040 |
+| 32 | Login page fake stats panel | Hardcoded "24 Active / 8 Pending / 142 Tasks" etc. on right panel | P2 | ❌ Open — ERR-I-041 |
+| 33 | All page titles blank | All pages use "use client" — no metadata export possible; browser tab shows generic title | P2 | ❌ Open — ERR-I-042 |
+| 34 | Employee profile opens in edit mode | No read-only view; form shown immediately; should require explicit Edit action | P2 | ❌ Open — ERR-I-043 |
+| 35 | Workload Critical/High columns blank for 0 | Badges only render when count > 0; cells empty for zero values | P2 | ❌ Open — ERR-I-044 |
+| 36 | Salary slips duplicate month selector + 2024 hardcoded | Two month pickers visible simultaneously; month names use hardcoded 2024 year | P2 | ❌ Open — ERR-I-045 |
+| 37 | Add Employee form missing fields | Job Title, Department, Start Date, Manager missing; no placeholders or required markers | P2 | ❌ Open — ERR-I-046 |
+| 38 | Status labels show UPPER_SNAKE_CASE | FULL_TIME, IN_PROGRESS, PENDING_APPROVAL shown raw across multiple pages | P2 | ❌ Open — ERR-I-047 |
+| 39 | Employees list View button goes to wrong page | Links to /employees/:id/performance instead of /employees/:id | P2 | ❌ Open — ERR-I-048 |
+| 40 | Login email placeholder hardcoded to domain | you@digitalsukoon.com — should be generic | P3 | ❌ Open — ERR-I-049 |
 
 ---
 

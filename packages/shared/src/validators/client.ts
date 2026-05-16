@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { safeString } from "../utils/sanitize";
 
 export const clientLoginSchema = z.object({
   email: z.string().email("Invalid email"),
@@ -6,23 +7,23 @@ export const clientLoginSchema = z.object({
 });
 
 export const createClientSchema = z.object({
-  companyName: z.string().min(2, "Company name must be at least 2 characters").max(200),
-  contactName: z.string().min(2, "Contact name must be at least 2 characters").max(200),
+  companyName: safeString.pipe(z.string().min(2, "Company name must be at least 2 characters").max(200)),
+  contactName: safeString.pipe(z.string().min(2, "Contact name must be at least 2 characters").max(200)),
   email: z.string().email("Invalid email"),
   password: z.string().min(8, "Password must be at least 8 characters"),
   phone: z.string().max(20).optional(),
 });
 
 export const updateClientSchema = z.object({
-  companyName: z.string().min(2).max(200).optional(),
-  contactName: z.string().min(2).max(200).optional(),
+  companyName: safeString.pipe(z.string().min(2).max(200)).optional(),
+  contactName: safeString.pipe(z.string().min(2).max(200)).optional(),
   phone: z.string().max(20).nullable().optional(),
   status: z.enum(["ACTIVE", "INACTIVE", "ONBOARDING"]).optional(),
 });
 
 export const createProjectSchema = z.object({
-  name: z.string().min(2, "Project name must be at least 2 characters").max(200),
-  description: z.string().max(2000).optional(),
+  name: safeString.pipe(z.string().min(2, "Project name must be at least 2 characters").max(200)),
+  description: safeString.pipe(z.string().max(2000)).optional(),
   clientId: z.string().uuid("Invalid client ID"),
   startDate: z.string().date().optional(),
   endDate: z.string().date().optional(),
@@ -30,8 +31,8 @@ export const createProjectSchema = z.object({
 });
 
 export const updateProjectSchema = z.object({
-  name: z.string().min(2).max(200).optional(),
-  description: z.string().max(2000).nullable().optional(),
+  name: safeString.pipe(z.string().min(2).max(200)).optional(),
+  description: safeString.pipe(z.string().max(2000)).nullable().optional(),
   status: z.enum(["ACTIVE", "PAUSED", "COMPLETED", "ARCHIVED"]).optional(),
   startDate: z.string().date().nullable().optional(),
   endDate: z.string().date().nullable().optional(),

@@ -1,5 +1,6 @@
 "use client";
 import { useState } from "react";
+import { usePageTitle } from "@/lib/hooks/use-page-title";
 import Link from "next/link";
 import { useEmployees } from "@/lib/hooks/use-employees";
 import { Plus, Search, BarChart3, Users } from "lucide-react";
@@ -29,6 +30,7 @@ function avatarText(name: string) {
 }
 
 export default function EmployeesPage() {
+  usePageTitle("Employees");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("ALL");
   const { data, isLoading } = useEmployees({ search });
@@ -175,7 +177,7 @@ export default function EmployeesPage() {
                       </td>
                       <td className="px-5 py-3 text-center">
                         <Link
-                          href={`/employees/${emp.id}/performance`}
+                          href={`/employees/${emp.id}`}
                           className="inline-flex items-center gap-1 text-xs font-bold text-ink hover:text-indigo bg-muted hover:bg-indigo-soft px-3 py-1.5 rounded-full transition-colors"
                         >
                           <BarChart3 className="h-3 w-3" /> View

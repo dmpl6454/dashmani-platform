@@ -12,7 +12,7 @@ async function main() {
       permissions: [
         "employees", "teams", "tasks", "accounts", "reports",
         "attendance", "roles", "settings", "clients", "content",
-        "messages", "billing",
+        "messages", "billing", "analytics",
       ].flatMap((resource) =>
         ["view", "create", "edit", "delete", "approve", "export"].map((action) => ({
           resource, action, scope: "global",
@@ -25,7 +25,7 @@ async function main() {
       isSystemRole: true,
       permissions: [
         "employees", "teams", "tasks", "accounts", "reports",
-        "attendance", "clients", "content", "messages",
+        "attendance", "clients", "content", "messages", "analytics",
       ].flatMap((resource) =>
         ["view", "create", "edit", "delete", "approve", "export"].map((action) => ({
           resource, action, scope: "global",
@@ -107,7 +107,8 @@ async function main() {
 
   const superAdminRole = await prisma.role.findUnique({ where: { name: "Super Admin" } });
   if (superAdminRole) {
-    const passwordHash = await hash("Admin@123456", 12);
+    const adminPassword = process.env.SEED_ADMIN_PASSWORD ?? (() => { throw new Error("SEED_ADMIN_PASSWORD env var is required for seeding"); })();
+    const passwordHash = await hash(adminPassword, 12);
     const admin = await prisma.user.upsert({
       where: { email: "admin@digitalsukoon.com" },
       update: {},

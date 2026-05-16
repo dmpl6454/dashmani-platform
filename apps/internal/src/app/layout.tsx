@@ -56,7 +56,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     router.push("/login");
   }, [router]);
 
-  const publicRoutes = ["/login", "/admin-signup"];
+  const publicRoutes = ["/login", "/admin-signup", "/reset-password"];
   const isPublicPage = publicRoutes.includes(pathname);
 
   if (isLoading) {
@@ -81,6 +81,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
   return (
     <html lang="en">
+      <head><title>Dashmani Portal</title></head>
       <body className="bg-bg">
         <AuthContext.Provider value={{ user, login, logout, isLoading }}>
           {isPublicPage ? (

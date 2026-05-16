@@ -119,14 +119,18 @@ export function TopNav({ onOpenSearch }: { onOpenSearch?: () => void }) {
           <kbd className="ml-0.5">⌘K</kbd>
         </button>
 
-        {/* Announce shortcut */}
-        <Link
-          href="/announcements"
-          className="hidden sm:flex items-center gap-1.5 h-8 px-3 rounded-xl border-2 border-ink text-ink text-xs font-bold btn-3d hover:bg-action transition-colors"
-        >
-          <Megaphone className="h-3.5 w-3.5" />
-          Announce
-        </Link>
+        {/* Announcements history shortcut — distinct from the dashboard "Send announcement"
+            CTA. Hidden on the announcements page itself to avoid pointing at the current page. */}
+        {pathname !== "/announcements" && (
+          <Link
+            href="/announcements"
+            title="Announcements history"
+            className="hidden sm:flex items-center gap-1.5 h-8 px-3 rounded-xl border-2 border-ink/12 text-ink-3 text-xs font-semibold btn-3d hover:text-ink hover:bg-muted transition-colors"
+          >
+            <Megaphone className="h-3.5 w-3.5" />
+            History
+          </Link>
+        )}
 
         {/* Bell */}
         <div className="relative" ref={bellRef}>

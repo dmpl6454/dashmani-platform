@@ -35,7 +35,7 @@ export async function broadcastAnnouncement(
   const senderName = sender?.name ?? "Admin";
   const html = announcementEmailHtml(senderName, title, message);
 
-  Promise.allSettled(
+  await Promise.allSettled(
     employees.map((emp) =>
       sendEmail({
         to: emp.email,

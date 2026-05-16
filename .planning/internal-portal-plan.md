@@ -3,7 +3,7 @@
 **Scope:** Close all feature gaps in `apps/internal`, wire real API data end-to-end, add missing backend endpoints, and ensure every feature in the feature list works correctly — including correct integration with the client portal and future HR/Jobs portals.
 **Branch convention:** work off `main`; one PR per phase.
 **Current user:** `tabish@dashmani.com` — seeded as Super Admin with all permissions.
-**Status as of 2026-05-15:** All 10 original phases complete. Wave 8 (new bugs) resolved. Wave 9 (broadcast announcements + notification detail view) resolved — commit 1e92b20.
+**Status as of 2026-05-16:** All 10 original phases complete. Wave 8 (new bugs) resolved. Wave 9 (broadcast announcements + notification detail view) resolved — commit 1e92b20. UI/UX polish (design-spec parity) complete — branch docs/design-critique.
 
 ---
 
@@ -63,6 +63,27 @@
 | G14 | No "Add Admin" page in UI — super admins need a way to create other internal users directly (not via HR self-register flow) | M |
 | G15 | Task comments are wired on task detail but content post comments integration with internal portal needs verification | S |
 | G16 | Social accounts bulk import (`/accounts/import`) — needs verification that the file upload UI and API are fully wired | S |
+
+---
+
+## UI/UX Polish — Design-Spec Parity (2026-05-16)
+
+**Source:** Internal Portal v1.html prototype (claude.ai/design, exported bundle).  
+**Goal:** Close UI/UX gaps between the built portal and the design prototype without touching functionality.
+
+### Changes made
+
+| File | Change |
+|---|---|
+| `apps/internal/src/components/command-palette.tsx` (new) | Ctrl+K / Cmd+K search modal — all 26 pages/tools, ↑↓/Enter/Esc keyboard nav, grouped results (Pages vs Tools), Quick navigation empty state, keyboard hint footer |
+| `apps/internal/src/components/sidebar.tsx` | More section: flat expand → 3-col icon-above/label-below grid in cream `#F3EED8` inset panel with "All Features" header. Item count badge on toggle. `moreOpen` persisted to localStorage. Active item: indigo bg + white text. Primary nav items now carry group labels (People / Work / Business / Ops) rendered as section dividers. |
+| `apps/internal/src/components/top-nav.tsx` | Search button added (Search icon + `⌘K` kbd hint, `btn-3d` style) before Announce; accepts `onOpenSearch?: () => void` prop |
+| `apps/internal/src/app/layout.tsx` | Global `keydown` listener for Ctrl+K / Cmd+K; `CommandPalette` mounted at root; `cmdOpen` state; passes `onOpenSearch` to TopNav |
+
+### Design decisions
+- More grid uses `grid-cols-3` with `wordBreak: break-word` on labels — no truncation regardless of label length.
+- Collapsed rail: More button shows `LayoutGrid` icon with tooltip; clicking navigates to `/ai-assistant` (first More item) as per design.
+- Command palette Esc closes via both `keydown` on `window` (layout) and local `onKeyDown` inside the input.
 
 ---
 

@@ -3,6 +3,8 @@ import { useState } from "react";
 import { apiFetch } from "@/lib/api";
 import useSWR from "swr";
 import { AlertCircle, MessageSquare, Send, X } from "lucide-react";
+import { formatStatus } from "@dashmani/shared";
+import { usePageTitle } from "@/lib/hooks/use-page-title";
 
 const inputClass = "w-full border border-[#E8E0D0] bg-white rounded-lg px-4 py-2.5 text-sm text-[#1A1A1A] placeholder:text-[#B0B0B0] focus:outline-none focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547] transition-colors";
 
@@ -14,6 +16,7 @@ const statusColors: Record<string, string> = {
 };
 
 export default function AdminComplaintsPage() {
+  usePageTitle("Complaints");
   const [filter, setFilter] = useState("");
   const { data, mutate } = useSWR(`/admin/complaints${filter ? `?status=${filter}` : ""}`, (url: string) => apiFetch<any>(url));
   const complaints = data?.data || [];
@@ -56,7 +59,7 @@ export default function AdminComplaintsPage() {
       <div className="flex gap-2">
         {["", "OPEN", "IN_REVIEW", "RESOLVED", "CLOSED"].map((s) => (
           <button key={s} onClick={() => setFilter(s)} className={`px-4 py-2 rounded-full text-sm font-medium transition-all ${filter === s ? "bg-[#1A1A1A] text-white" : "bg-white text-[#7A7A7A] border border-[#E8E0D0] hover:bg-[#FFF8E1]"}`}>
-            {s || "All"}
+            {s ? formatStatus(s) : "All"}
           </button>
         ))}
       </div>
@@ -77,7 +80,7 @@ export default function AdminComplaintsPage() {
                     {c.employee?.name} ({c.employee?.email}) · {c.category} · {new Date(c.createdAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
                   </p>
                 </div>
-                <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${statusColors[c.status]}`}>{c.status.replace("_", " ")}</span>
+                <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${statusColors[c.status]}`}>{formatStatus(c.status)}</span>
               </div>
               <p className="text-sm text-[#555] whitespace-pre-wrap mb-3">{c.description}</p>
 

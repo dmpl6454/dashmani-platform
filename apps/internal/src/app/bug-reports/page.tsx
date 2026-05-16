@@ -4,6 +4,8 @@ import { useState } from "react";
 import { apiFetch } from "@/lib/api";
 import useSWR from "swr";
 import { Bug } from "lucide-react";
+import { formatStatus } from "@dashmani/shared";
+import { usePageTitle } from "@/lib/hooks/use-page-title";
 
 const severityColors: Record<string, string> = {
   LOW: "bg-blue-50 text-blue-700", MEDIUM: "bg-yellow-50 text-yellow-700",
@@ -16,6 +18,7 @@ const statusColors: Record<string, string> = {
 };
 
 export default function BugReportsPage() {
+  usePageTitle("Bug Reports");
   const [statusFilter, setStatusFilter] = useState("");
   const { data, mutate } = useSWR(
     `/admin/bug-reports${statusFilter ? `?status=${statusFilter}` : ""}`,
@@ -44,7 +47,7 @@ export default function BugReportsPage() {
           {["", "OPEN", "IN_PROGRESS", "RESOLVED", "CLOSED"].map((s) => (
             <button key={s} onClick={() => setStatusFilter(s)}
               className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${statusFilter === s ? "bg-[#1A1A1A] text-white" : "bg-white text-[#7A7A7A] border border-[#E8E0D0] hover:border-[#F5D547]"}`}
-            >{s || "All"}</button>
+            >{s ? formatStatus(s) : "All"}</button>
           ))}
         </div>
       </div>
@@ -61,8 +64,8 @@ export default function BugReportsPage() {
                 <div>
                   <div className="flex items-center gap-2 mb-1">
                     <h3 className="font-semibold text-[#1A1A1A]">{bug.title}</h3>
-                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${severityColors[bug.severity] || ""}`}>{bug.severity}</span>
-                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${statusColors[bug.status] || ""}`}>{bug.status}</span>
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${severityColors[bug.severity] || ""}`}>{formatStatus(bug.severity)}</span>
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${statusColors[bug.status] || ""}`}>{formatStatus(bug.status)}</span>
                   </div>
                   <p className="text-xs text-[#7A7A7A]">by {bug.reporter?.name} · {new Date(bug.createdAt).toLocaleDateString()} {bug.page ? `· Page: ${bug.page}` : ""}</p>
                 </div>

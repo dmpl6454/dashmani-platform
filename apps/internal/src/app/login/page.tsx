@@ -1,7 +1,8 @@
 "use client";
 import { useState } from "react";
 import { useAuth } from "@/lib/auth";
-import { Eye, EyeOff, Mail, Lock } from "lucide-react";
+import { apiFetch } from "@/lib/api";
+import { Eye, EyeOff, Mail, Lock, X } from "lucide-react";
 
 export default function LoginPage() {
   const { login } = useAuth();
@@ -11,6 +12,7 @@ export default function LoginPage() {
   const [loading,  setLoading]  = useState(false);
   const [showPass, setShowPass] = useState(false);
   const [shake,    setShake]    = useState(false);
+  const [forgotOpen, setForgotOpen] = useState(false);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -64,7 +66,7 @@ export default function LoginPage() {
                 input={
                   <input
                     type="email" value={email} onChange={(e) => setEmail(e.target.value)}
-                    placeholder="you@digitalsukoon.com" required
+                    placeholder="Enter your email address" required
                     className="flex-1 bg-transparent px-3 py-3 text-sm text-ink outline-none placeholder:text-ink-4"
                   />
                 }
@@ -101,8 +103,20 @@ export default function LoginPage() {
                   <><div className="h-4 w-4 rounded-full border-2 border-white/30 border-t-white" style={{ animation: "spin 0.7s linear infinite" }} /> Signing in…</>
                 ) : "Sign in to Portal"}
               </button>
+
+              <div className="text-center">
+                <button
+                  type="button"
+                  onClick={() => setForgotOpen(true)}
+                  className="text-xs text-ink-4 hover:text-indigo underline-offset-2 hover:underline transition-colors"
+                >
+                  Forgot your password?
+                </button>
+              </div>
             </form>
           </div>
+
+          {forgotOpen && <ForgotPasswordModal onClose={() => setForgotOpen(false)} />}
         </div>
 
         <p className="text-xs text-ink-4 text-center">© {new Date().getFullYear()} Digital Sukoon. All rights reserved.</p>
@@ -117,54 +131,24 @@ export default function LoginPage() {
         }} />
         <div className="absolute inset-0 bg-gradient-to-br from-ink via-ink-2 to-[#2a2028]" />
 
-        {/* Floating cards */}
-        <div className="relative w-full h-full p-12">
-
-          {/* Card 1 — Team overview */}
-          <div className="absolute top-[10%] left-[8%] v3-card bg-surface p-5 min-w-[240px] pop-in d1" style={{ borderColor: "#1A1A1A" }}>
-            <p className="text-xs font-bold text-ink-4 uppercase tracking-wider mb-3">Team Overview</p>
-            <div className="flex gap-4">
-              {[{ l: "Active", v: "24", col: "text-success" }, { l: "Pending", v: "8", col: "text-attention" }, { l: "Tasks", v: "142", col: "text-indigo" }].map((s) => (
-                <div key={s.l} className="text-center">
-                  <p className={`font-display text-2xl font-semibold ${s.col}`}>{s.v}</p>
-                  <p className="text-[10px] text-ink-4">{s.l}</p>
-                </div>
-              ))}
+        {/* Branding content */}
+        <div className="relative w-full h-full p-12 flex flex-col items-center justify-center">
+          {/* Central branding */}
+          <div className="text-center pop-in d1 z-10">
+            <div className="h-20 w-20 rounded-2xl border-4 border-white/20 bg-white/10 flex items-center justify-center mx-auto mb-6">
+              <img src="/logo.svg" alt="Digital Sukoon" className="h-12 w-12 rounded-xl" />
             </div>
+            <p className="font-bold text-white uppercase tracking-[3px] text-xs mb-2 opacity-60">Digital Sukoon</p>
+            <h2 className="font-display text-3xl font-semibold text-white leading-tight mb-3">Management Portal</h2>
+            <p className="text-white/50 text-sm max-w-[240px] mx-auto leading-relaxed">
+              A unified workspace for your team's operations, content, and growth.
+            </p>
           </div>
 
-          {/* Card 2 — Dark stat */}
-          <div className="absolute top-[18%] right-[8%] v3-card bg-surface p-5 min-w-[140px] pop-in d2" style={{ borderColor: "#1A1A1A" }}>
-            <p className="text-[10px] text-ink-4 mb-1">Projects Active</p>
-            <p className="font-display text-4xl font-semibold text-ink leading-none">36</p>
-            <p className="text-xs text-success mt-1 font-semibold">+18% this month</p>
-          </div>
-
-          {/* Card 3 — Content pipeline */}
-          <div className="absolute top-[47%] left-[6%] v3-card-sm p-4 min-w-[200px] pop-in d3">
-            <p className="text-sm font-bold text-ink">Content Pipeline</p>
-            <p className="text-xs text-ink-4 mt-0.5">12 posts scheduled</p>
-            <div className="mt-3 h-2 rounded-full bg-muted overflow-hidden">
-              <div className="h-full w-[65%] rounded-full bg-action" />
-            </div>
-          </div>
-
-          {/* Card 4 — Efficiency */}
-          <div className="absolute bottom-[18%] right-[12%] v3-card-sm p-5 text-center pop-in d4">
-            <svg width="72" height="72" viewBox="0 0 80 80" className="mx-auto">
-              <circle cx="40" cy="40" r="30" fill="none" stroke="#EDE7D2" strokeWidth="6" />
-              <circle cx="40" cy="40" r="30" fill="none" stroke="#F5D547" strokeWidth="6"
-                strokeDasharray={`${2 * Math.PI * 30 * 0.85} ${2 * Math.PI * 30 * 0.15}`}
-                strokeLinecap="round" transform="rotate(-90 40 40)" />
-            </svg>
-            <p className="font-display text-xl font-semibold text-ink -mt-12 mb-8">85%</p>
-            <p className="text-[10px] text-ink-4">Efficiency Score</p>
-          </div>
-
-          {/* Card 5 — Badge */}
-          <div className="absolute bottom-[28%] left-[20%] flex items-center gap-2 bg-action rounded-full px-5 py-2.5 border-2 border-ink btn-3d pop-in d5">
+          {/* Decorative pill */}
+          <div className="absolute bottom-[22%] left-1/2 -translate-x-1/2 flex items-center gap-2 bg-action rounded-full px-5 py-2.5 border-2 border-ink btn-3d pop-in d3">
             <div className="h-2 w-2 rounded-full bg-ink dot-pulse" />
-            <span className="text-sm font-bold text-ink">Management Portal</span>
+            <span className="text-sm font-bold text-ink">Secure &amp; Private</span>
           </div>
         </div>
       </div>
@@ -176,6 +160,62 @@ export default function LoginPage() {
           40%, 80% { transform: translateX(5px); }
         }
       `}</style>
+    </div>
+  );
+}
+
+function ForgotPasswordModal({ onClose }: { onClose: () => void }) {
+  const [email, setEmail] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [sent, setSent] = useState(false);
+  const [error, setError] = useState("");
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setLoading(true);
+    setError("");
+    try {
+      await apiFetch("/auth/forgot-password", {
+        method: "POST",
+        body: JSON.stringify({ email }),
+      });
+      setSent(true);
+    } catch (err: any) {
+      setError(err.message || "Something went wrong");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 backdrop-blur-sm">
+      <div className="v3-card bg-surface p-7 w-full max-w-sm mx-4 relative">
+        <button onClick={onClose} className="absolute top-4 right-4 text-ink-4 hover:text-ink" aria-label="Close">
+          <X className="h-4 w-4" />
+        </button>
+        <h2 className="font-display text-xl font-semibold text-ink mb-1">Forgot password?</h2>
+        {sent ? (
+          <p className="text-sm text-ink-3 mt-3">
+            If that email is registered, a reset link has been sent. Check your inbox.
+          </p>
+        ) : (
+          <form onSubmit={handleSubmit} className="space-y-4 mt-4">
+            <p className="text-sm text-ink-3">Enter your email and we'll send you a reset link.</p>
+            <input
+              type="email" value={email} onChange={(e) => setEmail(e.target.value)} required
+              placeholder="Enter your email address"
+              className="w-full px-4 py-3 border-2 border-ink/15 rounded-xl text-sm text-ink bg-bg placeholder:text-ink-4 focus:outline-none focus:border-indigo transition-colors"
+            />
+            {error && <p className="text-xs text-danger">{error}</p>}
+            <button
+              type="submit" disabled={loading}
+              className="w-full py-3 rounded-full bg-ink text-white text-sm font-bold hover:bg-ink-2 disabled:opacity-50 transition-all"
+            >
+              {loading ? "Sending…" : "Send Reset Link"}
+            </button>
+          </form>
+        )}
+      </div>
     </div>
   );
 }

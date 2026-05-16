@@ -34,4 +34,30 @@ router.post("/auth/logout", authenticate, async (req: Request, res: Response, ne
   }
 });
 
+router.post("/auth/forgot-password", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { email } = req.body;
+    if (!email || typeof email !== "string") {
+      return success(res, { message: "If that email exists, a reset link has been sent" });
+    }
+    await authService.forgotPassword(email.trim().toLowerCase());
+    return success(res, { message: "If that email exists, a reset link has been sent" });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post("/auth/reset-password", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { token, newPassword } = req.body;
+    if (!token || !newPassword || newPassword.length < 8) {
+      return next(new Error("Token and a password of at least 8 characters are required"));
+    }
+    await authService.resetPassword(token, newPassword);
+    return success(res, { message: "Password reset successfully" });
+  } catch (err) {
+    next(err);
+  }
+});
+
 export default router;

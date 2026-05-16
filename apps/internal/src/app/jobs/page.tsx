@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import { apiFetch, API_BASE } from "@/lib/api";
+import { usePageTitle } from "@/lib/hooks/use-page-title";
+import { formatStatus } from "@dashmani/shared";
 import useSWR from "swr";
 import {
   Briefcase, Plus, ChevronUp, Users, X, FileText, Linkedin,
@@ -33,6 +35,7 @@ const appStatusSteps = ["RECEIVED", "REVIEWING", "SHORTLISTED", "INTERVIEW", "OF
 type View = "jobs" | "applications";
 
 export default function JobsPage() {
+  usePageTitle("Job Listings");
   const [view, setView] = useState<View>("applications");
   const [showForm, setShowForm] = useState(false);
   const [editingJob, setEditingJob] = useState<any>(null);
@@ -55,7 +58,7 @@ export default function JobsPage() {
   const { data: allAppsData, mutate: mutateApps } = useSWR(
     `/admin/applications${appJobFilter ? `?jobId=${appJobFilter}` : ""}${appStatusFilter ? `${appJobFilter ? "&" : "?"}status=${appStatusFilter}` : ""}`,
     (url: string) => apiFetch<any>(url),
-    { refreshInterval: 30000 }
+    { revalidateOnFocus: false }
   );
   const allApps = allAppsData?.data || [];
   const newAppsCount = allApps.filter((a: any) => a.status === "RECEIVED").length;
@@ -241,7 +244,7 @@ export default function JobsPage() {
                       <p className="text-xs text-blue-600 mt-0.5">{app.job?.title || "Unknown"} {app.job?.department ? `· ${app.job.department}` : ""}</p>
                       {app.experience && <p className="text-xs text-[#999] mt-0.5">{app.experience} exp {app.currentCompany ? `at ${app.currentCompany}` : ""}</p>}
                     </div>
-                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium whitespace-nowrap ${appStatusColors[app.status] || ""}`}>{app.status}</span>
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium whitespace-nowrap ${appStatusColors[app.status] || ""}`}>{formatStatus(app.status)}</span>
                   </div>
                   <div className="flex items-center gap-2 mt-2">
                     {app.resumeUrl && <span className="text-[10px] text-blue-600 flex items-center gap-0.5"><FileText size={10} />CV</span>}
@@ -402,8 +405,8 @@ export default function JobsPage() {
                     <td className="p-4 font-medium text-[#1A1A1A]">{job.title}</td>
                     <td className="p-4 text-[#7A7A7A]">{job.department || "—"}</td>
                     <td className="p-4 text-[#7A7A7A]">{job.location || "—"}</td>
-                    <td className="p-4 text-[#7A7A7A]">{job.type.replace("_", " ")}</td>
-                    <td className="p-4"><span className={`px-2.5 py-1 rounded-full text-xs font-medium ${statusColors[job.status] || ""}`}>{job.status}</span></td>
+                    <td className="p-4 text-[#7A7A7A]">{formatStatus(job.type)}</td>
+                    <td className="p-4"><span className={`px-2.5 py-1 rounded-full text-xs font-medium ${statusColors[job.status] || ""}`}>{formatStatus(job.status)}</span></td>
                     <td className="p-4">
                       <button onClick={() => { setAppJobFilter(job.id); setView("applications"); }}
                         className="flex items-center gap-1 text-sm font-semibold text-blue-600 hover:text-blue-800">

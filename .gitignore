@@ -3,6 +3,8 @@ dist/
 .next/
 .turbo/
 .env
+.env.local
+.env.*.local
 *.log
 coverage/
 .DS_Store

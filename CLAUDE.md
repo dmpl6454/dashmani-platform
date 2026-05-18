@@ -479,13 +479,73 @@ The reset-password handler reads `{ token, newPassword }` from the body (NOT `pa
 
 ### Admin signup (internal portal)
 1. Existing admin POSTs `/v1/admin/users/invite` with `{ email, roleIds?, designation? }` (requires `employees.create` permission)
-2. Server creates `admin_invites` row, sends email containing `${INTERNAL_APP_URL}/admin-signup?token=<uuid>`
-3. New admin clicks link, frontend validates with `GET /v1/admin/users/invite/:token`
-4. New admin submits name + password → `POST /v1/admin/users/accept-invite` → user row created, tokens issued, marked `usedAt`
+2. Server creates `admin_invites` row, sends email containing the signup URL
+3. New admin clicks link → lands on **`https://portal.digitalsukoon.com/admin-signup?token=<uuid>`** (locally: `http://localhost:3000/admin-signup?token=<uuid>`)
+4. Frontend validates with `GET /v1/admin/users/invite/:token`
+5. New admin submits name + password → `POST /v1/admin/users/accept-invite` → user row created, tokens issued, marked `usedAt`
 
 ### Client signup (client portal)
 1. Existing admin POSTs `/v1/client/auth/invite-request` with `{ email }` (requires `clients.create` permission)
-2. Server creates `client_invites` row. Email send currently not wired (only response contains the token — admin must forward manually).
-3. Client visits `${CLIENT_APP_URL}/signup?token=<uuid>` and submits `POST /v1/client/auth/register` with `{ token, password, contactName }` → client row created, tokens issued
+2. Server creates `client_invites` row. Email send currently not wired — only the response contains the token, admin forwards manually.
+3. Client visits **`https://client.digitalsukoon.com/signup?token=<uuid>`** (locally: `http://localhost:3001/signup?token=<uuid>`) and submits `POST /v1/client/auth/register` with `{ token, password, contactName }` → client row created, tokens issued
 
-Both flows require their respective tables (`admin_invites`, `client_invites`) which were added to `schema.prisma`. If the DB schema doesn't match, the endpoint will 500 — run `db:push` after deploying schema changes.
+### Reset password
+Email link points to **`https://portal.digitalsukoon.com/reset-password?token=<uuid>`** (locally: `http://localhost:3000/reset-password?token=<uuid>`). Page submits `{ token, newPassword }` to `POST /v1/auth/reset-password`.
+
+Both signup flows require their tables (`admin_invites`, `client_invites`) which were added to `schema.prisma`. If the DB schema doesn't match, the endpoint will 500 — run `db:push` after deploying schema changes.
+
+---
+
+## Deploy cycle (steady state)
+
+The full GitHub→Linode pipeline is wired and self-sufficient as of 2026-05-18. Every push to `main` auto-deploys in ~3 min.
+
+### Normal flow (code-only changes)
+
+```bash
+# 1. Local edit + test
+git checkout -b feat/<name>
+# ...make changes...
+npm run dev   # verify locally
+# 2. Push
+git add . && git commit -m "..." && git push origin <branch>
+# 3. Open PR → merge to main
+# 4. Wait ~3 min — GitHub Actions runs scripts/deploy.sh on Linode:
+#    git fetch + reset --hard + npm install + db:generate + turbo build + pm2 restart all
+# 5. Verify
+curl https://api.digitalsukoon.com/v1/health   # {"success":true}
+```
+
+### Schema-changing flow (when `schema.prisma` changed)
+
+CI/CD never auto-runs `db:push` (intentional safety). After the deploy completes:
+
+```bash
+ssh linode
+cd /opt/dashmani-platform
+# Before running db:push, verify the diff is additive (no DROP COLUMN):
+sudo -u postgres psql -d dashmani_prod -c "\d <table_you_changed>"
+# Then sync:
+npm run db:push
+```
+
+### One-time setup (already done, do NOT redo)
+
+- Deploy SSH keypair `~/.ssh/dashmani_deploy` → public side in Linode `/root/.ssh/authorized_keys`
+- GitHub secrets `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_SSH_KEY` set on the repo
+- Linode's own `linode_ed25519` pubkey added as a GitHub Deploy Key (read-only) so `git fetch origin main` works from the server
+- `/root/.ssh/config` on Linode pins `IdentityFile /root/.ssh/linode_ed25519` for `Host github.com`
+- `/opt/dashmani-platform/.git` has `origin → git@github.com:dmpl6454/dashmani-platform.git`
+- All `public.*` tables owned by `dashmani` DB user (so Prisma can ALTER them)
+
+If you ever rotate any of those keys, the setup steps above are documented in `.planning/SAFE-DEPLOY-MIGRATION-PLAN.md`.
+
+### Things that will break a deploy (and how to fix)
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `bash: /opt/.../scripts/deploy.sh: No such file or directory` (exit 127) | Linode is on a commit that predates the script | Manual one-time `ssh linode && cd /opt/dashmani-platform && git fetch origin main && git reset --hard origin/main` |
+| Build fails with `Property 'X' does not exist on type 'PrismaClient'` | `db:generate` didn't run after schema change | `deploy.sh` now runs it automatically — if you removed that step, add it back |
+| Build fails with ESLint errors on production builds | All 4 `next.config.js` have `eslint: { ignoreDuringBuilds: true }` — don't remove it. Run `npm run lint` separately for code quality. |
+| API crash-loops on `@esbuild/linux-x64 could not be found` | `npm install` skipped optional deps | `ssh linode && cd /opt/dashmani-platform && npm install esbuild --force && pm2 restart api` |
+| `db:push` fails with `permission denied for table X` | Table is owned by `postgres` user, not `dashmani` | `ssh linode && sudo -u postgres psql -d dashmani_prod -c "ALTER TABLE X OWNER TO dashmani;"` |

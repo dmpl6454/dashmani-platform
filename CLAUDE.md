@@ -168,6 +168,18 @@ Production runs on Linode VPS `172.105.53.101`. Connect with `ssh linode`.
 
 ---
 
+## ⚠️ WARNING: Linode source code is NOT a source of truth
+
+The Linode server at `/opt/dashmani-platform` may contain **uncommitted, hand-edited code** that diverges from GitHub `main`. As of 2026-05-16 the server had 3 unpushed commits + ~106 file changes (a half-finished design migration that broke the Tailwind tokens and the UI).
+
+**Rules:**
+- **GitHub `main` is the only source of truth for code.** The deploy script does `git reset --hard origin/main`, which discards anything on the server that isn't in GitHub.
+- **Never `rsync` from server → local.** It will overwrite your working tree with the server's broken/diverged state. If you need to compare, clone to a separate folder.
+- **The production database, `.env` files, `uploads/`, and `.next/` build artifacts on the server are NOT in git** — they survive `git reset --hard` because they're untracked.
+- If you find yourself wanting to "sync from the server", stop and back up the data instead (see "Data preservation" section in `.planning/`).
+
+---
+
 ## Deployment (CI/CD)
 
 Pushing to `main` automatically deploys to production via GitHub Actions (`.github/workflows/deploy.yml`).
@@ -186,12 +198,28 @@ Pushing to `main` automatically deploys to production via GitHub Actions (`.gith
 | `DEPLOY_USER` | `root` |
 | `DEPLOY_SSH_KEY` | Deploy private key (regenerate if lost) |
 
-**Database changes are NEVER run by CI/CD.** If you change `schema.prisma`, SSH in manually:
+**Database changes are NEVER run by CI/CD.** If you change `schema.prisma`, SSH in manually after the deploy completes:
 ```bash
 ssh linode
 cd /opt/dashmani-platform
 npm run db:generate && npm run db:push
 ```
+
+> ⚠️ **Always diff before `db:push` on prod.** `prisma db push` will silently DROP columns the new schema doesn't define. Before running it, compare the prod table columns with `schema.prisma` to confirm the change is purely additive (CREATE TABLE / ADD COLUMN only).
+
+### Deploy cycle (steady state)
+
+1. Local branch → edit → `npm run dev` → test locally
+2. PR → review → merge to `main`
+3. GitHub Actions auto-deploys in ~3 min (`git reset --hard origin/main → npm install → turbo build → pm2 restart all`)
+4. Verify: `curl https://api.digitalsukoon.com/v1/health` returns `{"success":true}`
+5. **If `schema.prisma` changed:** SSH in and run `db:push` (with diff check above)
+
+### Auth token behavior after a deploy
+
+- **Access tokens** (4h, signed with `JWT_SECRET`): survive deploys as long as `JWT_SECRET` doesn't change.
+- **Refresh tokens** (7d, signed with `JWT_REFRESH_SECRET`): survive deploys as long as `JWT_REFRESH_SECRET` doesn't change. Each is also stored hashed in the DB.
+- **Refresh tokens include a `jti` (UUID nonce)** so two tokens issued in the same second for the same user don't collide on the `refresh_tokens.token` UNIQUE constraint. Don't remove the `jwtid` option in `signRefreshToken()` / `clientLogin` / `clientRefresh` / `acceptInvite`.
 
 ---
 
@@ -214,14 +242,16 @@ All three `.env` files (root, api, db) need the same `DATABASE_URL` and `JWT_SEC
 |----------|---------|-------|
 | `DATABASE_URL` | `postgresql://user:password@localhost:5432/dashmani` | Matches docker-compose defaults |
 | `REDIS_URL` | `redis://localhost:6379` | Matches docker-compose defaults |
-| `JWT_SECRET` | `change-me-in-production` | Change for production |
-| `JWT_REFRESH_SECRET` | `change-me-in-production-refresh` | Change for production |
+| `JWT_SECRET` | `change-me-in-production` | Change for production. Signs access tokens (4h) |
+| `JWT_REFRESH_SECRET` | `change-me-in-production-refresh` | **Required** — signs refresh tokens (7d). Falls back to insecure `"dev-refresh-secret"` if missing |
 | `SEED_ADMIN_PASSWORD` | `Admin@123456` | Password set for admin@digitalsukoon.com on seed |
 | `INTERNAL_APP_URL` | `http://localhost:3000` | Used in reset-password email links |
 | `HR_APP_URL` | `http://localhost:3002` | Used in HR notification emails |
 | `SMTP_HOST` | `smtp.gmail.com` | Optional — emails no-op if SMTP_PASS missing |
-| `SMTP_USER` | `hr@digitalsukoon.com` | Gmail sender address |
-| `SMTP_PASS` | *(blank)* | Gmail App Password — Google Account → Security → App Passwords |
+| `SMTP_PORT` | `587` | Standard submission port; pairs with `SMTP_SECURE=false` (STARTTLS) |
+| `SMTP_SECURE` | `false` | `false`=STARTTLS on 587, `true`=implicit TLS on 465. STARTTLS is the modern standard despite the name |
+| `SMTP_USER` | `hr@digitalsukoon.com` | Gmail sender address — must match the Google account the App Password was generated under |
+| `SMTP_PASS` | *(blank)* | Gmail **App Password** (16 chars, no spaces). Generate at Google Account → Security → 2-Step Verification → App passwords |
 
 ### Switching between local dev and production API
 
@@ -440,3 +470,22 @@ All phases (1–13) + Waves 7–9 + v2 production test remediation complete. See
 ### Forgot password flow
 `POST /v1/auth/forgot-password` → creates OtpToken (1 hour TTL) → sends email with link → `POST /v1/auth/reset-password` validates token, updates password, invalidates all sessions.
 Frontend: "Forgot password?" link on `/login` opens modal → `/reset-password?token=...` page handles the reset form.
+
+The reset-password handler reads `{ token, newPassword }` from the body (NOT `password` — that's a common mistake when testing with curl).
+
+---
+
+## Invite / Signup Flows
+
+### Admin signup (internal portal)
+1. Existing admin POSTs `/v1/admin/users/invite` with `{ email, roleIds?, designation? }` (requires `employees.create` permission)
+2. Server creates `admin_invites` row, sends email containing `${INTERNAL_APP_URL}/admin-signup?token=<uuid>`
+3. New admin clicks link, frontend validates with `GET /v1/admin/users/invite/:token`
+4. New admin submits name + password → `POST /v1/admin/users/accept-invite` → user row created, tokens issued, marked `usedAt`
+
+### Client signup (client portal)
+1. Existing admin POSTs `/v1/client/auth/invite-request` with `{ email }` (requires `clients.create` permission)
+2. Server creates `client_invites` row. Email send currently not wired (only response contains the token — admin must forward manually).
+3. Client visits `${CLIENT_APP_URL}/signup?token=<uuid>` and submits `POST /v1/client/auth/register` with `{ token, password, contactName }` → client row created, tokens issued
+
+Both flows require their respective tables (`admin_invites`, `client_invites`) which were added to `schema.prisma`. If the DB schema doesn't match, the endpoint will 500 — run `db:push` after deploying schema changes.

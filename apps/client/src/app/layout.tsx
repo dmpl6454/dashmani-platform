@@ -50,6 +50,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
   return (
     <html lang="en">
+      <head>
+        <title>Dashmani Client Portal</title>
+      </head>
       <body>
         <AuthContext.Provider value={{ user, login, logout, isLoading }}>
           {isPublicPage ? children : <PortalShell>{children}</PortalShell>}

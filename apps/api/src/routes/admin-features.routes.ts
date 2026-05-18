@@ -1109,7 +1109,12 @@ router.post("/admin/users/invite", authenticate, requirePermission("employees", 
       create: { email, roleIds: roleIds || [], designation: designation || null, expiresAt },
     });
 
-    await notifyAdminByEmail(email, "Admin Portal Invite", `You've been invited to join the Digital Sukoon Management Portal. Complete your registration at: ${process.env.INTERNAL_APP_URL || "http://localhost:3000"}/admin-signup?token=${invite.token}`);
+    const inviteUrl = `${process.env.INTERNAL_APP_URL || "http://localhost:3000"}/admin-signup?token=${invite.token}`;
+    await sendEmail({
+      to: email,
+      subject: "[Digital Sukoon] You've been invited to the Management Portal",
+      html: `<p>Hi,</p><p>You've been invited to join the Digital Sukoon Management Portal.</p><p>Complete your registration here: <a href="${inviteUrl}">${inviteUrl}</a></p><p>This link expires in 7 days.</p><p>— Digital Sukoon Admin</p>`,
+    });
 
     return success(res, { message: "Invite sent", email }, undefined, 201);
   } catch (err) { next(err); }

@@ -25,7 +25,7 @@ export async function clientLogin(email: string, password: string) {
   const refreshToken = jwt.sign(
     { userId: client.id },
     JWT_SECRET,
-    { expiresIn: REFRESH_TOKEN_EXPIRY }
+    { expiresIn: REFRESH_TOKEN_EXPIRY, jwtid: crypto.randomUUID() }
   );
 
   const tokenHash = crypto.createHash("sha256").update(refreshToken).digest("hex");
@@ -76,7 +76,7 @@ export async function clientRefresh(refreshToken: string) {
   const newRefreshToken = jwt.sign(
     { userId: client.id },
     JWT_SECRET,
-    { expiresIn: REFRESH_TOKEN_EXPIRY }
+    { expiresIn: REFRESH_TOKEN_EXPIRY, jwtid: crypto.randomUUID() }
   );
 
   const newTokenHash = crypto.createHash("sha256").update(newRefreshToken).digest("hex");
@@ -230,7 +230,7 @@ export async function acceptInvite(token: string, password: string, contactName?
   const refreshToken = jwt.sign(
     { userId: client.id },
     JWT_SECRET,
-    { expiresIn: REFRESH_TOKEN_EXPIRY }
+    { expiresIn: REFRESH_TOKEN_EXPIRY, jwtid: crypto.randomUUID() }
   );
   const tokenHash = crypto.createHash("sha256").update(refreshToken).digest("hex");
   await prisma.clientRefreshToken.create({

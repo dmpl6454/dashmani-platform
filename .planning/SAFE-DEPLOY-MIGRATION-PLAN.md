@@ -217,3 +217,36 @@ Once the first deploy succeeds, the normal cycle is:
 - Right before a peak-traffic window (lunch IST, mid-morning IST).
 - Friday evening (no one available to roll back over the weekend).
 - If you haven't tested locally — there's no staging environment yet.
+
+---
+
+## Postmortem: "Load failed" outage (2026-05-18)
+
+### Summary
+After the bootstrap deploy succeeded and admin/Tabish accounts were seeded, every login page across all 4 portals showed "Load failed" with no API request leaving the browser. API itself was healthy (`curl` to `/v1/auth/login` returned 200). Direct cause: `NEXT_PUBLIC_API_URL` got baked into the JS bundle as `http://localhost:4000/v1` — the browser tried to connect to localhost on the user's own machine.
+
+### Two stacked root causes
+1. **`apps/*/.env.local` was accidentally tracked in git** with the localhost value. Every `git reset --hard origin/main` in `deploy.sh` therefore overwrote the prod values back to localhost before the build picked up the wrong value. The "secret enemy" of every prior debugging attempt.
+2. **`NEXT_PUBLIC_*` is baked at build time, not read at runtime.** Restarting pm2 with the correct `.env.local` on disk did nothing — the JS bundle was already compiled with the wrong value. This isn't a bug, it's how Next.js works, but it surprises anyone used to runtime env vars.
+
+### Why the diagnostic sequence took multiple rounds
+- API curl worked → looked like a frontend bug.
+- Updating `.env.local` on the server didn't help → looked like the rewrite wasn't happening.
+- After a fresh deploy, browser still showed the same error → looked like the deploy didn't reach prod.
+
+Each "fix" appeared to fail because of the next layer's stale state. The actual sequence to confirm a fix is live now lives in CLAUDE.md as the 7-layer diagnostic checklist.
+
+### Fixes shipped
+- Commit `e982bf0`: `deploy.sh` writes prod URL to all four `.env.local` files before `turbo build`.
+- Commit `c88f8eb`: `.gitignore` now excludes `.env.local` + `.env.*.local`; the four tracked files were removed from git.
+- `SEED_ADMIN_PASSWORD` added to `/opt/dashmani-platform/packages/db/.env` so the seed can re-run cleanly via `cd packages/db && npx tsx prisma/seed.ts` (Turbo's strict env policy blocks the var when going through `npm run db:seed`).
+- CLAUDE.md gained: `.env.local` rewrite explanation, 7-layer diagnostic checklist, bootstrap/lockout recovery via seed, and two new rows in the "Things that will break a deploy" table.
+
+### Prevention going forward
+- Gitignore is now correct → `.env.local` can't get re-tracked accidentally.
+- `deploy.sh` write step → even if someone deletes `.env.local` on the server or provisions a fresh box, the file is recreated correctly.
+- 7-layer checklist in CLAUDE.md → next time a similar issue is reported, diagnosis follows a defined path instead of guessing.
+- New memory entries `feedback-next-public-baked-at-build` and `project-admin-bootstrap` capture the lesson for future LLM sessions.
+
+### Lingering note about browser cache
+Next.js sets `cache-control: public, max-age=31536000, immutable` on static chunks. Chunk filenames include content hashes, so a fresh build *should* invalidate cache automatically. But if a user's browser has chunks under those exact hashed filenames already cached (e.g., they had the old broken page open just before the fix shipped), they may keep using the cached versions. **Resolution:** hard refresh (`Cmd+Shift+R`) or incognito. **For mass cache bust:** purge Cloudflare cache from the dashboard.

@@ -4,8 +4,8 @@
   "private": true,
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "tsc",
-    "start": "node dist/index.js",
+    "build": "echo 'api runs via tsx at runtime; no compile step'",
+    "start": "tsx src/index.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },

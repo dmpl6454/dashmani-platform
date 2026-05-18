@@ -1,8 +1,8 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import useSWR from "swr";
 import Link from "next/link";
-import { Search, MapPin, Briefcase, Clock, GraduationCap, ChevronRight, IndianRupee, Sparkles, ArrowRight, Building2, Users, Send } from "lucide-react";
+import { Search, MapPin, Briefcase, Clock, GraduationCap, ChevronRight, IndianRupee, Sparkles, ArrowRight, Building2, Send } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 
 function timeAgo(dateStr: string) {

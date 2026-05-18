@@ -186,9 +186,19 @@ Pushing to `main` automatically deploys to production via GitHub Actions (`.gith
 
 **Flow:** GitHub Actions SSHes into the Linode server and runs `scripts/deploy.sh`:
 1. `git fetch origin main && git reset --hard origin/main` (no merge conflicts ever)
-2. `npm install`
-3. `npx turbo build --concurrency=1` with `NODE_OPTIONS=--max-old-space-size=900` (sequential to manage 2GB RAM)
-4. `pm2 restart all && pm2 save`
+2. Overwrites `apps/*/.env.local` with `NEXT_PUBLIC_API_URL=https://api.digitalsukoon.com/v1` (see "Why `.env.local` is overwritten" below)
+3. `npm install`
+4. `npm run db:generate` (Prisma client)
+5. `npx turbo build --concurrency=1` with `NODE_OPTIONS=--max-old-space-size=900` (sequential to manage 2GB RAM)
+6. `pm2 restart all && pm2 save`
+
+### Why `.env.local` is overwritten on every deploy
+
+`NEXT_PUBLIC_*` env vars in Next.js are **baked into the JavaScript bundle at build time**. If `apps/*/.env.local` contains `NEXT_PUBLIC_API_URL=http://localhost:4000/v1`, the built bundle ships `localhost:4000` to every browser — and the browser tries to connect to `localhost:4000` **on the user's own machine**, which doesn't exist. Symptom: a vague "Load failed" error on the login page with no API request ever leaving the browser.
+
+`.env.local` files are gitignored, so they don't come down with `git reset --hard`. The deploy script therefore overwrites them on every deploy — production is now self-healing even after a fresh server provision.
+
+**Do not** add `.env.local` to git. Do not change this rewrite step without thinking through what happens when someone copies a localhost-pointing `.env.local` to the server.
 
 **Required GitHub secrets** at `github.com/dmpl6454/dashmani-platform/settings/secrets/actions`:
 
@@ -232,9 +242,11 @@ npm run db:generate && npm run db:push
 | `.env` | Turbo, root scripts | Shared vars passed to all workspaces |
 | `apps/api/.env` | Express server at runtime | API secrets, SMTP, app URLs |
 | `packages/db/.env` | Prisma CLI (seed, push, studio) | `DATABASE_URL` + `SEED_ADMIN_PASSWORD` |
-| `apps/*/env.local` | Next.js build | `NEXT_PUBLIC_API_URL` per frontend |
+| `apps/*/.env.local` | Next.js build (baked into JS bundle) | `NEXT_PUBLIC_API_URL` per frontend. **Gitignored.** Locally: `http://localhost:4000/v1`. In prod: `https://api.digitalsukoon.com/v1` — written automatically by `scripts/deploy.sh` on every deploy. |
 
 All three `.env` files (root, api, db) need the same `DATABASE_URL` and `JWT_SECRET` values. The `.env.example` template works for all three.
+
+> ⚠️ **`NEXT_PUBLIC_*` vars are baked into the JS bundle at build time** — changing `.env.local` after the build does nothing until you rebuild. The browser sees whatever value was in `.env.local` when `next build` ran. This is why the deploy script overwrites `.env.local` *before* running the build.
 
 ### Key variables
 
@@ -494,6 +506,27 @@ Email link points to **`https://portal.digitalsukoon.com/reset-password?token=<u
 
 Both signup flows require their tables (`admin_invites`, `client_invites`) which were added to `schema.prisma`. If the DB schema doesn't match, the endpoint will 500 — run `db:push` after deploying schema changes.
 
+### Bootstrapping admin access (lockout recovery)
+
+The system is "locked" by design — only an existing admin can invite new admins. If no admin can log in, you escape via the seed:
+
+- **Hardcoded seed accounts** (in `packages/db/prisma/seed.ts`):
+  - `admin@digitalsukoon.com` — password from `SEED_ADMIN_PASSWORD` env var (default `Admin@123456`)
+  - `tabish@dashmani.com` — password `admin@123` (this is **reset on every seed run** because the `update` block sets `passwordHash` on existing rows)
+- Both accounts get the `Super Admin` role on every seed run. The seed is fully idempotent (`upsert` for every entity).
+
+**Re-run the seed on production** (use this any time you need to reset the admin password or restore lockout access):
+```bash
+ssh linode
+cd /opt/dashmani-platform/packages/db
+npx tsx prisma/seed.ts
+# Do NOT use `npm run db:seed` on prod — Turbo 2.x's strict env policy blocks
+# SEED_ADMIN_PASSWORD from passing through. The direct tsx invocation works
+# because @prisma/client auto-loads packages/db/.env on initialization.
+```
+
+After the seed, `tabish@dashmani.com / admin@123` will work via `POST /v1/auth/login`. To change either hardcoded credential, edit `packages/db/prisma/seed.ts` and redeploy.
+
 ---
 
 ## Deploy cycle (steady state)
@@ -549,3 +582,5 @@ If you ever rotate any of those keys, the setup steps above are documented in `.
 | Build fails with ESLint errors on production builds | All 4 `next.config.js` have `eslint: { ignoreDuringBuilds: true }` — don't remove it. Run `npm run lint` separately for code quality. |
 | API crash-loops on `@esbuild/linux-x64 could not be found` | `npm install` skipped optional deps | `ssh linode && cd /opt/dashmani-platform && npm install esbuild --force && pm2 restart api` |
 | `db:push` fails with `permission denied for table X` | Table is owned by `postgres` user, not `dashmani` | `ssh linode && sudo -u postgres psql -d dashmani_prod -c "ALTER TABLE X OWNER TO dashmani;"` |
+| Browser shows "Load failed" on login (no API request fires) | `NEXT_PUBLIC_API_URL` was baked as `localhost:4000` at build time | `deploy.sh` now overwrites `apps/*/.env.local` on every deploy — re-run a deploy. If the file got corrupted between deploys, `ssh linode && for app in client internal hr jobs; do echo "NEXT_PUBLIC_API_URL=https://api.digitalsukoon.com/v1" > /opt/dashmani-platform/apps/$app/.env.local; done && bash /opt/dashmani-platform/scripts/deploy.sh` |
+| Seed fails on prod with `SEED_ADMIN_PASSWORD env var is required` via `npm run db:seed` | Turbo 2.x strict env policy doesn't pass `SEED_ADMIN_PASSWORD` through | Run seed directly, bypassing Turbo: `ssh linode && cd /opt/dashmani-platform/packages/db && npx tsx prisma/seed.ts` (Prisma auto-loads `packages/db/.env` which now contains `SEED_ADMIN_PASSWORD`) |

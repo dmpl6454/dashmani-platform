@@ -2,7 +2,7 @@
 
 **Created:** 2026-05-16
 **Last updated:** 2026-05-18
-**Status:** Phase 1 ✅ done. Phase 2 ✅ done (GitHub is a clean strict superset of Linode — Option A is safe). Awaiting VPS snapshot + .env top-up on Linode, then ready to deploy.
+**Status:** ✅ **DEPLOY COMPLETE.** Linode running latest GitHub `main`. CI/CD pipeline fully wired and self-deploying. All target functionality (forgot-password, signup, etc.) verified live on production. All historical data preserved.
 
 ## Context
 

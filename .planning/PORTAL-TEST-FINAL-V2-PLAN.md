@@ -7,6 +7,46 @@
 
 ---
 
+## ⚠️ AUDIT — 2026-05-16 (post-implementation verification, internal + client portals)
+
+The plan below was authored before the bulk of the v2 remediation landed. A codebase verification pass against the fix families targeting **internal** and **client** portals shows most P0/P1 items are already shipped. Status legend: ✅ DONE · 🟡 PARTIAL · ❌ OPEN.
+
+### Internal portal
+| Fix family | TCs | Status | Evidence |
+|---|---|---|---|
+| F-AI-EMPLOYEE-DROPDOWN | TC-061/063/065/081/154/163 | ✅ DONE | `apps/internal/src/app/ai-assistant/page.tsx` calls `/employees` |
+| F-ANALYTICS-PERM | TC-080/153/165 | ✅ DONE | `packages/db/prisma/seed.ts` grants `analytics` to Admin |
+| F-PAGE-TITLES | TC-085/161 | ✅ DONE | `usePageTitle()` used across internal pages |
+| F-DATE-DRIFT | TC-117 | ✅ DONE | No hardcoded 2024 in salary slip utils |
+| F-STATUS-LABELS | TC-118/136/203/204/205/210/220 | ✅ DONE | `packages/shared/src/utils/status.ts` `formatStatus()` used widely |
+| F-AI-PREVIEW-SANDBOX | TC-112/113 | ✅ DONE | DOMPurify + `sandbox="allow-same-origin"` in AI assistant |
+| F-INPUT-SANITIZATION | TC-200 | ✅ DONE | `safeString` from `packages/shared/src/utils/sanitize.ts` used across validators |
+| F-FAKE-STATS (internal) | TC-155/172 | ✅ DONE | Internal login has no hardcoded stat panel |
+| F-LOGIN-COPY | TC-093/171 | ✅ DONE | Internal login placeholder is generic |
+| F-MISSING-ENDPOINT | TC-146/147/148/149/150/151/152 | ✅ DONE | All routes present: attendance, approvals, workload, admin/clients, leaderboard, holidays, salary-slips |
+| F-FORGOT-PASSWORD (internal) | TC-018 | ✅ DONE | `/auth/forgot-password` route + login link wired |
+| F-TOKEN-STORAGE | TC-110 | ❌ OPEN | `apps/internal/src/lib/api.ts` still uses `localStorage` for tokens — needs httpOnly cookie migration (cross-cutting, all 4 portals + API) |
+
+### Client portal
+| Fix family | TCs | Status | Evidence |
+|---|---|---|---|
+| F-CLIENT-FAKE-DATA | TC-193/197/198 | ✅ DONE | dashboard/projects/approvals all use SWR hooks against real API |
+| F-CLIENT-PROFESSIONAL-COPY | TC-088/128/195/196 | ✅ DONE | No internal sprint copy on analytics or files pages |
+| F-PAGE-TITLES (client) | TC-192 | ✅ DONE | `<title>Dashmani Client Portal</title>` added to `apps/client/src/app/layout.tsx` (this audit) |
+| F-FORGOT-PASSWORD (client) | TC-191 | ❌ OPEN | Client login (`apps/client/src/app/login/page.tsx`) still lacks a "Forgot password?" link. Backend `POST /v1/auth/forgot-password` exists but the reset email link points to `INTERNAL_APP_URL`. Client-scoped reset needs: (a) link on client login, (b) `/reset-password` page in client portal, (c) auth service to choose reset URL based on user role/portal |
+| F-BADGE-SPACING | TC-194 | 🟡 PARTIAL | Re-verify sidebar Approvals badge spacing visually; chip styling may need a margin |
+
+### Items still open (action register)
+1. **F-TOKEN-STORAGE (TC-110, P0)** — migrate auth tokens from `localStorage` to httpOnly secure cookies. Touches `apps/api/src/routes/auth.routes.ts`, all four portals' `lib/api.ts`, and the root layouts that read `localStorage` on mount. Single dedicated PR.
+2. **F-FORGOT-PASSWORD client (TC-191, P1)** — add `/forgot-password` modal/link to client login, create `/reset-password` page in client portal, and update `authService.forgotPassword` to choose the portal URL by user kind (or accept a `portal` hint in the request body).
+3. **F-BADGE-SPACING (TC-194, P3)** — visual verification + chip-style polish on the client sidebar Approvals badge.
+4. **Operational (TC-098/099/100/101)** — production data cleanup of Demo Job + Social Media Manager listing; not a code change.
+5. **Other portals (HR, Jobs)** — out of scope for this audit pass; see §2.2 and §2.4 below.
+
+The rest of the document is preserved as the original remediation plan. Treat the table above as ground truth for **internal + client** portals as of 2026-05-16.
+
+---
+
 ## 0. How this document is organized
 
 The Excel sheet bundles four portals' issues together with no portal column. This plan **segregates every test case** into:

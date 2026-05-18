@@ -1,4 +1,5 @@
 import jwt from "jsonwebtoken";
+import crypto from "crypto";
 import type { JwtPayload } from "@dashmani/shared";
 
 const JWT_SECRET = process.env.JWT_SECRET || "dev-secret";
@@ -9,7 +10,7 @@ export function signAccessToken(payload: JwtPayload): string {
 }
 
 export function signRefreshToken(payload: { userId: string }): string {
-  return jwt.sign(payload, JWT_REFRESH_SECRET, { expiresIn: "7d" });
+  return jwt.sign(payload, JWT_REFRESH_SECRET, { expiresIn: "7d", jwtid: crypto.randomUUID() });
 }
 
 export function verifyAccessToken(token: string): JwtPayload {

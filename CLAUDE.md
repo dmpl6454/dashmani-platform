@@ -196,7 +196,7 @@ Pushing to `main` automatically deploys to production via GitHub Actions (`.gith
 
 `NEXT_PUBLIC_*` env vars in Next.js are **baked into the JavaScript bundle at build time**. If `apps/*/.env.local` contains `NEXT_PUBLIC_API_URL=http://localhost:4000/v1`, the built bundle ships `localhost:4000` to every browser — and the browser tries to connect to `localhost:4000` **on the user's own machine**, which doesn't exist. Symptom: a vague "Load failed" error on the login page with no API request ever leaving the browser.
 
-`.env.local` files are gitignored, so they don't come down with `git reset --hard`. The deploy script therefore overwrites them on every deploy — production is now self-healing even after a fresh server provision.
+`.env.local` files are gitignored (as of 2026-05-18 — they were *accidentally tracked* before that, which is what caused the original outage). They don't come down with `git reset --hard`, so the deploy script overwrites them on every deploy with the production URL. Production is now self-healing even after a fresh server provision.
 
 **Do not** add `.env.local` to git. Do not change this rewrite step without thinking through what happens when someone copies a localhost-pointing `.env.local` to the server.
 

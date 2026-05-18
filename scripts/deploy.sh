@@ -12,6 +12,9 @@ git reset --hard origin/main
 echo "==> Installing dependencies"
 npm install --prefer-offline
 
+echo "==> Regenerating Prisma client (needed when schema.prisma changes)"
+npm run db:generate
+
 echo "==> Building apps (sequential to manage memory)"
 export NODE_OPTIONS="--max-old-space-size=900"
 npx turbo build --concurrency=1

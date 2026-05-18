@@ -549,6 +549,60 @@ git add . && git commit -m "..." && git push origin <branch>
 curl https://api.digitalsukoon.com/v1/health   # {"success":true}
 ```
 
+### Diagnosing a "Load failed" or other frontend-only outage
+
+If users report the UI is broken but the API works, walk through this layer-by-layer to find which layer is actually stale. Don't skip layers — each one can mask the other.
+
+**Layer 1 — API works at all?**
+```bash
+curl -s https://api.digitalsukoon.com/v1/health
+# → {"success":true,"data":{...}}
+```
+
+**Layer 2 — API works for the failing flow?** Hit the actual endpoint with the same `Origin` header a browser would send:
+```bash
+curl -sI -X OPTIONS https://api.digitalsukoon.com/v1/auth/login \
+  -H "Origin: https://portal.digitalsukoon.com" \
+  -H "Access-Control-Request-Method: POST"
+# Look for: access-control-allow-origin: https://portal.digitalsukoon.com
+```
+If CORS headers are missing, check `apps/api/src/index.ts` cors config and `EXTRA_CORS_ORIGINS` in prod `apps/api/.env`.
+
+**Layer 3 — Server has the latest commit?**
+```bash
+ssh linode "cd /opt/dashmani-platform && git rev-parse --short HEAD"
+# Compare to your latest pushed commit. If they differ, the deploy didn't reach the server.
+```
+
+**Layer 4 — `.env.local` on server is correct?**
+```bash
+ssh linode "for app in internal client hr jobs; do echo -n \"\$app: \"; cat /opt/dashmani-platform/apps/\$app/.env.local; done"
+# All four should print: NEXT_PUBLIC_API_URL=https://api.digitalsukoon.com/v1
+```
+
+**Layer 5 — The build on disk has the correct URL baked in?**
+```bash
+ssh linode "grep -roE 'https://api\\.digitalsukoon\\.com[^\\\"]*' /opt/dashmani-platform/apps/internal/.next/static/chunks/app/login/ | head -3"
+# Should return at least one match. (Note: leftover `localhost:4000` strings can
+# show up in built JS as DEAD fallback literals from `... || \"http://localhost:4000\"`
+# patterns — ignore those, look for the positive match of the prod URL.)
+```
+
+**Layer 6 — Cloudflare/CDN is serving the new chunks?**
+```bash
+curl -s "https://portal.digitalsukoon.com/login" | grep -oE '"/_next/static/chunks/app/login/[^"]+\.js"' | tr -d '"'
+# Take the first result and fetch it:
+curl -s "https://portal.digitalsukoon.com<chunk-path>" | grep -oE 'https://api\.digitalsukoon\.com[^"]*' | head -1
+# If empty → Cloudflare is caching the old chunk. Purge Cloudflare cache for that path.
+```
+
+**Layer 7 — User's browser is using the new chunks?**
+- If layers 1–6 all pass but the user still sees "Load failed", their browser has a stale cache or service worker.
+- Tell them: hard refresh (`Cmd+Shift+R` / `Ctrl+Shift+R`) or open in incognito.
+- For a definitive test, open DevTools → Network → reload → click the failing fetch → check the Request URL. If it shows `localhost:4000`, it's browser cache. If it shows `api.digitalsukoon.com` and still fails, look at the response (CORS, 5xx, etc.).
+
+The point of this checklist: **never assume the layer above worked just because the layer below did.** Most "the deploy didn't work" reports turn out to be browser cache after layers 1–6 pass cleanly.
+
 ### Schema-changing flow (when `schema.prisma` changed)
 
 CI/CD never auto-runs `db:push` (intentional safety). After the deploy completes:
@@ -583,4 +637,5 @@ If you ever rotate any of those keys, the setup steps above are documented in `.
 | API crash-loops on `@esbuild/linux-x64 could not be found` | `npm install` skipped optional deps | `ssh linode && cd /opt/dashmani-platform && npm install esbuild --force && pm2 restart api` |
 | `db:push` fails with `permission denied for table X` | Table is owned by `postgres` user, not `dashmani` | `ssh linode && sudo -u postgres psql -d dashmani_prod -c "ALTER TABLE X OWNER TO dashmani;"` |
 | Browser shows "Load failed" on login (no API request fires) | `NEXT_PUBLIC_API_URL` was baked as `localhost:4000` at build time | `deploy.sh` now overwrites `apps/*/.env.local` on every deploy — re-run a deploy. If the file got corrupted between deploys, `ssh linode && for app in client internal hr jobs; do echo "NEXT_PUBLIC_API_URL=https://api.digitalsukoon.com/v1" > /opt/dashmani-platform/apps/$app/.env.local; done && bash /opt/dashmani-platform/scripts/deploy.sh` |
+| "Load failed" persists in browser even though `curl` to the API works and the served JS chunk contains the correct prod URL | Browser is serving cached JS from before the fix. Next.js sets `cache-control: public, max-age=31536000, immutable` on chunks; old chunks may also be in a service worker or Cloudflare edge cache | First confirm the fix is live: `curl -s "https://portal.digitalsukoon.com/_next/static/chunks/app/login/page-*.js" \| grep -oE 'https?://api\.digitalsukoon\.com[^\"]*'` should return the prod URL. If yes: **hard refresh the browser** (`Cmd+Shift+R` / `Ctrl+Shift+R`) or open in an **incognito window** to bypass cache. To force every visitor's cache to invalidate, purge Cloudflare cache from the dashboard. Chunk filenames include content hashes so a fresh build *should* be picked up automatically — only a stuck cache prevents that. |
 | Seed fails on prod with `SEED_ADMIN_PASSWORD env var is required` via `npm run db:seed` | Turbo 2.x strict env policy doesn't pass `SEED_ADMIN_PASSWORD` through | Run seed directly, bypassing Turbo: `ssh linode && cd /opt/dashmani-platform/packages/db && npx tsx prisma/seed.ts` (Prisma auto-loads `packages/db/.env` which now contains `SEED_ADMIN_PASSWORD`) |

@@ -1,6 +1,7 @@
 "use client";
 import { useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useContentPosts } from "@/lib/hooks/use-content";
 import { useProjects } from "@/lib/hooks/use-projects";
 import { Plus, Search, FileEdit } from "lucide-react";
@@ -28,8 +29,9 @@ const STATUS_BADGE: Record<string, string> = {
 const selectCls = "h-10 rounded-xl border-2 border-ink/15 bg-surface px-3 py-2 text-sm text-ink focus:outline-none focus:border-indigo transition-colors";
 
 export default function ContentListPage() {
+  const searchParams = useSearchParams();
   const [search,    setSearch]    = useState("");
-  const [status,    setStatus]    = useState("");
+  const [status,    setStatus]    = useState(searchParams.get("status") || "");
   const [projectId, setProjectId] = useState("");
   const { data, isLoading }     = useContentPosts({ search, status, projectId });
   const { data: projectsData }  = useProjects();

@@ -64,12 +64,10 @@ router.get(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { employeeId } = req.params;
-      const thirtyDaysAgo = new Date();
-      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 29);
-      thirtyDaysAgo.setHours(0, 0, 0, 0);
-      const twelveWeeksAgo = new Date();
-      twelveWeeksAgo.setDate(twelveWeeksAgo.getDate() - 83);
-      twelveWeeksAgo.setHours(0, 0, 0, 0);
+      const now = new Date();
+      const todayUTC = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+      const thirtyDaysAgo = new Date(todayUTC.getTime() - 29 * 86400000);
+      const twelveWeeksAgo = new Date(todayUTC.getTime() - 83 * 86400000);
 
       const [allReports, recentLinks] = await Promise.all([
         prisma.dailyReport.findMany({
@@ -102,11 +100,9 @@ router.get(
         const d = new Date(r.date).toISOString().split("T")[0];
         dailyMap[d] = (dailyMap[d] || 0) + r._count.links;
       }
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
       const dailyTrend: { date: string; linkCount: number }[] = [];
       for (let i = 29; i >= 0; i--) {
-        const d = new Date(today.getTime() - i * 86400000).toISOString().split("T")[0];
+        const d = new Date(todayUTC.getTime() - i * 86400000).toISOString().split("T")[0];
         dailyTrend.push({ date: d, linkCount: dailyMap[d] || 0 });
       }
 
@@ -114,8 +110,7 @@ router.get(
       const weeklyMap: Record<string, number> = {};
       for (const r of allReports.filter((r) => new Date(r.date) >= twelveWeeksAgo)) {
         const d = new Date(r.date);
-        d.setHours(0, 0, 0, 0);
-        const dayOfWeek = d.getDay();
+        const dayOfWeek = d.getUTCDay();
         const weekStart = new Date(d.getTime() - dayOfWeek * 86400000).toISOString().split("T")[0];
         weeklyMap[weekStart] = (weeklyMap[weekStart] || 0) + r._count.links;
       }
@@ -153,11 +148,10 @@ router.get(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { startDate, endDate } = req.query as { startDate?: string; endDate?: string };
-      const now = new Date();
-      const end = endDate ? new Date(endDate) : now;
-      end.setHours(23, 59, 59, 999);
-      const start = startDate ? new Date(startDate) : new Date(now.getTime() - 29 * 86400000);
-      start.setHours(0, 0, 0, 0);
+      const nowL = new Date();
+      const todayL = new Date(Date.UTC(nowL.getUTCFullYear(), nowL.getUTCMonth(), nowL.getUTCDate()));
+      const end = endDate ? new Date(endDate) : todayL;
+      const start = startDate ? new Date(startDate) : new Date(todayL.getTime() - 29 * 86400000);
 
       const rangeMs = end.getTime() - start.getTime();
       const prevEnd = new Date(start.getTime() - 1);
@@ -175,7 +169,16 @@ router.get(
           orderBy: { date: "asc" },
         }),
         prisma.reportLink.count({ where: { report: { date: { gte: prevStart, lte: prevEnd } } } }),
-        prisma.user.findMany({ where: { status: "ACTIVE", deletedAt: null }, select: { id: true, name: true, orgUnitId: true } }),
+        prisma.user.findMany({
+          where: {
+            status: "ACTIVE",
+            deletedAt: null,
+            roles: {
+              some: { role: { name: { notIn: ["Super Admin", "Admin"] } } },
+            },
+          },
+          select: { id: true, name: true, orgUnitId: true },
+        }),
         prisma.orgUnit.findMany({ where: { type: "TEAM" }, select: { id: true, name: true, _count: { select: { members: true } } } }),
       ]);
 
@@ -198,7 +201,7 @@ router.get(
         employeeLinkMap[report.employeeId].reportCount += 1;
 
         for (const link of report.links) {
-          const p = link.platform || "Unknown";
+          const p = (link.platform || "Unknown").toLowerCase();
           platformMap[p] = (platformMap[p] || 0) + 1;
           if (report.employee.orgUnitId) {
             teamLinkMap[report.employee.orgUnitId] = (teamLinkMap[report.employee.orgUnitId] || 0) + 1;
@@ -218,7 +221,7 @@ router.get(
       const weeklyMap: Record<string, number> = {};
       for (const { date, linkCount } of dailyTrend) {
         const d = new Date(date);
-        const dayOfWeek = d.getDay();
+        const dayOfWeek = d.getUTCDay();
         const weekStart = new Date(d.getTime() - dayOfWeek * 86400000).toISOString().split("T")[0];
         weeklyMap[weekStart] = (weeklyMap[weekStart] || 0) + linkCount;
       }
@@ -229,7 +232,8 @@ router.get(
       // Growth rate
       const currentTotal = dailyTrend.reduce((s, d) => s + d.linkCount, 0);
       const growthRate = prevLinks > 0 ? Math.round(((currentTotal - prevLinks) / prevLinks) * 100) : null;
-      const avgLinksPerDay = dayCount > 0 ? Math.round((currentTotal / dayCount) * 10) / 10 : 0;
+      const activeDays = dailyTrend.filter((d) => d.reportCount > 0).length;
+      const avgLinksPerDay = activeDays > 0 ? Math.round((currentTotal / activeDays) * 10) / 10 : 0;
 
       // Platform breakdown
       const totalPlatformLinks = Object.values(platformMap).reduce((s, v) => s + v, 0);

@@ -1,6 +1,7 @@
 "use client";
 import { useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useProjects } from "@/lib/hooks/use-projects";
 import { Plus, Search, FolderOpen } from "lucide-react";
 
@@ -10,10 +11,14 @@ const STATUS_CONFIG: Record<string, { badge: string; label: string }> = {
   COMPLETED: { badge: "bg-indigo-soft text-indigo border-indigo/20",       label: "Completed" },
   ARCHIVED:  { badge: "bg-neutral-bg text-neutral border-neutral/20",      label: "Archived" },
 };
+const STATUS_OPTIONS = ["", "ACTIVE", "PAUSED", "COMPLETED", "ARCHIVED"];
 
 export default function ProjectsPage() {
+  const searchParams = useSearchParams();
+  const initialStatus = searchParams.get("status") || "ACTIVE";
   const [search, setSearch] = useState("");
-  const { data, isLoading } = useProjects({ search });
+  const [status, setStatus] = useState<string>(initialStatus);
+  const { data, isLoading } = useProjects({ search, status: status || undefined });
   const projects = (data as any)?.data || [];
 
   return (
@@ -33,15 +38,27 @@ export default function ProjectsPage() {
         </Link>
       </div>
 
-      {/* Search */}
-      <div className="relative max-w-md fade-up d2">
-        <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-ink-4" />
-        <input
-          placeholder="Search projects…"
-          className="w-full pl-10 pr-4 h-10 bg-surface border-2 border-ink/15 rounded-xl text-sm text-ink placeholder:text-ink-4 focus:outline-none focus:border-indigo transition-colors"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
+      {/* Search + status filter */}
+      <div className="flex gap-3 items-center flex-wrap fade-up d2">
+        <div className="relative max-w-md flex-1 min-w-[200px]">
+          <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-ink-4" />
+          <input
+            placeholder="Search projects…"
+            className="w-full pl-10 pr-4 h-10 bg-surface border-2 border-ink/15 rounded-xl text-sm text-ink placeholder:text-ink-4 focus:outline-none focus:border-indigo transition-colors"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </div>
+        <select
+          className="h-10 rounded-xl border-2 border-ink/15 bg-surface px-3 py-2 text-sm text-ink focus:outline-none focus:border-indigo transition-colors"
+          value={status}
+          onChange={(e) => setStatus(e.target.value)}
+        >
+          <option value="">All Statuses</option>
+          {STATUS_OPTIONS.filter(Boolean).map((s) => (
+            <option key={s} value={s}>{STATUS_CONFIG[s]?.label || s}</option>
+          ))}
+        </select>
       </div>
 
       {/* Project table */}

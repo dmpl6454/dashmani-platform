@@ -45,6 +45,7 @@ export async function registerEmployee(data: {
   }
 
   const passwordHash = await bcrypt.hash(data.password, 12);
+  const employeeRole = await prisma.role.findUnique({ where: { name: "Employee" } });
 
   const user = await prisma.user.create({
     data: {
@@ -53,6 +54,7 @@ export async function registerEmployee(data: {
       phone,
       passwordHash,
       status: "ONBOARDING", // Requires admin approval
+      ...(employeeRole ? { roles: { create: [{ roleId: employeeRole.id }] } } : {}),
     },
   });
 

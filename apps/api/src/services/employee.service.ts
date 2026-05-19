@@ -82,6 +82,7 @@ export async function createEmployee(data: {
   if (existing) throw new AppError(409, "CONFLICT", "Email already in use");
 
   const passwordHash = await hashPassword(data.password);
+  const roleIds = await resolveRoleIds(data.roleIds);
 
   const employee = await prisma.user.create({
     data: {
@@ -92,7 +93,7 @@ export async function createEmployee(data: {
       orgUnitId: data.orgUnitId,
       status: "ONBOARDING",
       roles: {
-        create: data.roleIds.map((roleId) => ({ roleId })),
+        create: roleIds.map((roleId) => ({ roleId })),
       },
     },
     include: {
@@ -102,6 +103,12 @@ export async function createEmployee(data: {
   });
 
   return employee;
+}
+
+async function resolveRoleIds(roleIds: string[]): Promise<string[]> {
+  if (roleIds.length > 0) return roleIds;
+  const employeeRole = await prisma.role.findUnique({ where: { name: "Employee" } });
+  return employeeRole ? [employeeRole.id] : [];
 }
 
 export async function updateEmployee(id: string, data: {

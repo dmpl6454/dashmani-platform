@@ -15,18 +15,20 @@ import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
 } from "recharts";
 
-const statStrip = [
-  { key: "totalEmployees",          label: "Active Employees", icon: Users },
-  { key: "activeTeams",             label: "Teams",            icon: Building2 },
-  { key: "presentToday",            label: "Present",          icon: Clock },
-  { key: "tasksCompletedThisMonth", label: "Tasks Done",       icon: CheckCircle },
-  { key: "activeProjects",          label: "Projects",         icon: FolderOpen },
-  { key: "pendingApprovals",        label: "Pending",          icon: FileCheck },
-  { key: "contentPublishedThisMonth", label: "Published",      icon: Send },
-  { key: "pendingEmployees",        label: "New Joiners",      icon: UserPlus },
-  { key: "linksToday",              label: "Links Today",      icon: Link2 },
-  { key: "linksThisMonth",          label: "Links / Month",    icon: Calendar },
-  { key: "submittedTodayCount",     label: "Submitted Today",  icon: BarChart2 },
+// Each card links to the page that is the source of truth for the count it shows,
+// so clicking "Pending: 5" lands on the page that actually displays those 5 items.
+const statStrip: { key: string; label: string; icon: any; href: string }[] = [
+  { key: "totalEmployees",          label: "Active Employees", icon: Users,        href: "/employees" },
+  { key: "activeTeams",             label: "Teams",            icon: Building2,    href: "/teams" },
+  { key: "presentToday",            label: "Present",          icon: Clock,        href: "/attendance" },
+  { key: "tasksCompletedThisMonth", label: "Tasks Done",       icon: CheckCircle,  href: "/tasks" },
+  { key: "activeProjects",          label: "Projects",         icon: FolderOpen,   href: "/projects?status=ACTIVE" },
+  { key: "pendingApprovals",        label: "Pending",          icon: FileCheck,    href: "/approvals" },
+  { key: "contentPublishedThisMonth", label: "Published",      icon: Send,         href: "/content?status=PUBLISHED" },
+  { key: "pendingEmployees",        label: "New Joiners",      icon: UserPlus,     href: "/employees/pending" },
+  { key: "linksToday",              label: "Links Today",      icon: Link2,        href: "/reports" },
+  { key: "linksThisMonth",          label: "Links / Month",    icon: Calendar,     href: "/reports/links" },
+  { key: "submittedTodayCount",     label: "Submitted Today",  icon: BarChart2,    href: "/reports" },
 ];
 
 function QuickAnnounceModal({ onClose }: { onClose: () => void }) {
@@ -164,11 +166,14 @@ export default function DashboardPage() {
   const today = new Date();
 
   // Links bento date range — default last 14 days
-  const [linkStart, setLinkStart] = useState(toISO(new Date(today.getTime() - 13 * 86400000)));
-  const [linkEnd, setLinkEnd] = useState(toISO(today));
+  const defaultStart = toISO(new Date(today.getTime() - 13 * 86400000));
+  const defaultEnd = toISO(today);
+  const [linkStart, setLinkStart] = useState(defaultStart);
+  const [linkEnd, setLinkEnd] = useState(defaultEnd);
   const [showDatePicker, setShowDatePicker] = useState(false);
 
-  const { data, isLoading } = useOverviewStats(linkStart, linkEnd);
+  const isCustomRange = linkStart !== defaultStart || linkEnd !== defaultEnd;
+  const { data, isLoading } = useOverviewStats(linkStart, linkEnd, isCustomRange);
   const stats = (data as any)?.data || {};
   const lastAnnouncement = announcements[0];
   const pendingEmployees = stats?.pendingEmployees ?? 0;
@@ -188,8 +193,7 @@ export default function DashboardPage() {
     setLinkEnd(toISO(today));
   }
 
-  const isDefault14d = linkStart === toISO(new Date(today.getTime() - 13 * 86400000)) && linkEnd === toISO(today);
-  const rangeLabel = isDefault14d
+  const rangeLabel = !isCustomRange
     ? "Last 14 days"
     : `${new Date(linkStart).toLocaleDateString("en-IN", { day: "numeric", month: "short" })} – ${new Date(linkEnd).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}`;
 
@@ -206,17 +210,29 @@ export default function DashboardPage() {
         <p className="text-sm text-ink-3 mt-0.5">Here's your organisation overview</p>
       </div>
 
-      {/* Stat strip — 11 cards (4 cols mobile → wrap) */}
+      {/* Stat strip — 11 cards (4 cols mobile → wrap). Each card links to the page
+          that is the source of truth for its count. */}
       <div className="grid grid-cols-4 lg:grid-cols-11 gap-3 fade-up d2">
-        {statStrip.map(({ key, label, icon: Icon }, i) => {
+        {statStrip.map(({ key, label, icon: Icon, href }, i) => {
           const value = stats[key];
           const isPending = key === "pendingApprovals" || key === "pendingEmployees";
           const isLinks = key === "linksToday" || key === "linksThisMonth" || key === "submittedTodayCount";
           let subtitle: string | null = null;
           if (key === "submittedTodayCount") subtitle = `${submissionRate}% rate`;
+          if (key === "pendingApprovals" && !isLoading) {
+            const docs = stats.pendingDocuments ?? 0;
+            const pics = stats.pendingProfilePictures ?? 0;
+            const leaves = stats.pendingLeaveRequests ?? 0;
+            const parts: string[] = [];
+            if (docs)   parts.push(`${docs} doc${docs !== 1 ? "s" : ""}`);
+            if (pics)   parts.push(`${pics} pic${pics !== 1 ? "s" : ""}`);
+            if (leaves) parts.push(`${leaves} leave`);
+            subtitle = parts.join(" · ") || null;
+          }
           return (
-            <div
+            <Link
               key={key}
+              href={href}
               className="v3-card-sm p-3 flex flex-col gap-1 v3-card-lift"
               style={{ animationDelay: `${i * 0.04}s` }}
             >
@@ -232,9 +248,9 @@ export default function DashboardPage() {
               </p>
               <p className="text-[10px] text-ink-4 font-medium leading-tight">{label}</p>
               {subtitle && !isLoading && (
-                <p className="text-[10px] text-terra font-semibold leading-tight">{subtitle}</p>
+                <p className={`text-[10px] font-semibold leading-tight ${isPending ? "text-attention" : "text-terra"}`}>{subtitle}</p>
               )}
-            </div>
+            </Link>
           );
         })}
       </div>
@@ -269,6 +285,64 @@ export default function DashboardPage() {
             </button>
           </div>
         </div>
+
+        {/* Quick nav cards */}
+        <Link href="/employees" className="v3-card-sm p-5 flex items-center gap-4 v3-card-lift group">
+          <div className="h-12 w-12 rounded-xl border-2 border-ink/12 bg-indigo-soft flex items-center justify-center">
+            <Users className="h-6 w-6 text-indigo" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="font-bold text-ink">{isLoading ? "—" : (stats.totalEmployees ?? 0)}</p>
+            <p className="text-xs text-ink-4">Active Employees</p>
+          </div>
+          <ArrowRight className="h-4 w-4 text-ink-4 opacity-0 group-hover:opacity-100 transition-opacity" />
+        </Link>
+
+        <Link href="/projects" className="v3-card-sm p-5 flex items-center gap-4 v3-card-lift group">
+          <div className="h-12 w-12 rounded-xl border-2 border-ink/12 bg-sage-soft flex items-center justify-center">
+            <FolderOpen className="h-6 w-6 text-sage" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="font-bold text-ink">{isLoading ? "—" : (stats.activeProjects ?? 0)}</p>
+            <p className="text-xs text-ink-4">Active Projects</p>
+          </div>
+          <ArrowRight className="h-4 w-4 text-ink-4 opacity-0 group-hover:opacity-100 transition-opacity" />
+        </Link>
+
+        <Link href="/analytics" className="v3-card-sm p-5 flex items-center gap-4 v3-card-lift group">
+          <div className="h-12 w-12 rounded-xl border-2 border-ink/12 bg-terra-soft flex items-center justify-center">
+            <TrendingUp className="h-6 w-6 text-terra" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="font-bold text-ink">{isLoading ? "—" : (stats.contentPublishedThisMonth ?? 0)}</p>
+            <p className="text-xs text-ink-4">Published This Month</p>
+          </div>
+          <ArrowRight className="h-4 w-4 text-ink-4 opacity-0 group-hover:opacity-100 transition-opacity" />
+        </Link>
+
+        {/* Accounts hub card */}
+        <Link href="/accounts" className="v3-card-sm p-5 flex items-center gap-4 v3-card-lift group">
+          <div className="h-12 w-12 rounded-xl border-2 border-ink/12 bg-indigo-soft flex items-center justify-center shrink-0">
+            <Globe className="h-6 w-6 text-indigo" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="font-bold text-ink">Manage Accounts</p>
+            <p className="text-xs text-ink-4">View, create & assign social accounts</p>
+          </div>
+          <ArrowRight className="h-4 w-4 text-ink-4 opacity-0 group-hover:opacity-100 transition-opacity" />
+        </Link>
+
+        {/* Assign Account shortcut */}
+        <Link href="/accounts?tab=by-employee" className="v3-card-sm p-5 flex items-center gap-4 v3-card-lift group">
+          <div className="h-12 w-12 rounded-xl border-2 border-ink/12 bg-sage-soft flex items-center justify-center shrink-0">
+            <Share2 className="h-6 w-6 text-sage" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="font-bold text-ink">Assign Account</p>
+            <p className="text-xs text-ink-4">Assign by employee — see who has what</p>
+          </div>
+          <ArrowRight className="h-4 w-4 text-ink-4 opacity-0 group-hover:opacity-100 transition-opacity" />
+        </Link>
 
         {/* Pending employees alert */}
         {!isLoading && pendingEmployees > 0 && (
@@ -335,7 +409,7 @@ export default function DashboardPage() {
               >
                 <CalendarDays className="h-3 w-3" /> Custom
               </button>
-              {!isDefault14d && (
+              {isCustomRange && (
                 <button
                   onClick={() => { applyQuickRange(14); setShowDatePicker(false); }}
                   className="h-7 w-7 flex items-center justify-center rounded-full bg-surface text-ink-4 hover:text-danger border-2 border-ink/12 hover:border-danger/30 transition-colors"
@@ -465,64 +539,6 @@ export default function DashboardPage() {
             </Link>
           </div>
         </div>
-
-        {/* Quick nav cards */}
-        <Link href="/employees" className="v3-card-sm p-5 flex items-center gap-4 v3-card-lift group">
-          <div className="h-12 w-12 rounded-xl border-2 border-ink/12 bg-indigo-soft flex items-center justify-center">
-            <Users className="h-6 w-6 text-indigo" />
-          </div>
-          <div className="flex-1 min-w-0">
-            <p className="font-bold text-ink">{isLoading ? "—" : (stats.totalEmployees ?? 0)}</p>
-            <p className="text-xs text-ink-4">Active Employees</p>
-          </div>
-          <ArrowRight className="h-4 w-4 text-ink-4 opacity-0 group-hover:opacity-100 transition-opacity" />
-        </Link>
-
-        <Link href="/projects" className="v3-card-sm p-5 flex items-center gap-4 v3-card-lift group">
-          <div className="h-12 w-12 rounded-xl border-2 border-ink/12 bg-sage-soft flex items-center justify-center">
-            <FolderOpen className="h-6 w-6 text-sage" />
-          </div>
-          <div className="flex-1 min-w-0">
-            <p className="font-bold text-ink">{isLoading ? "—" : (stats.activeProjects ?? 0)}</p>
-            <p className="text-xs text-ink-4">Active Projects</p>
-          </div>
-          <ArrowRight className="h-4 w-4 text-ink-4 opacity-0 group-hover:opacity-100 transition-opacity" />
-        </Link>
-
-        <Link href="/analytics" className="v3-card-sm p-5 flex items-center gap-4 v3-card-lift group">
-          <div className="h-12 w-12 rounded-xl border-2 border-ink/12 bg-terra-soft flex items-center justify-center">
-            <TrendingUp className="h-6 w-6 text-terra" />
-          </div>
-          <div className="flex-1 min-w-0">
-            <p className="font-bold text-ink">{isLoading ? "—" : (stats.contentPublishedThisMonth ?? 0)}</p>
-            <p className="text-xs text-ink-4">Published This Month</p>
-          </div>
-          <ArrowRight className="h-4 w-4 text-ink-4 opacity-0 group-hover:opacity-100 transition-opacity" />
-        </Link>
-
-        {/* Accounts hub card */}
-        <Link href="/accounts" className="v3-card-sm p-5 flex items-center gap-4 v3-card-lift group">
-          <div className="h-12 w-12 rounded-xl border-2 border-ink/12 bg-indigo-soft flex items-center justify-center shrink-0">
-            <Globe className="h-6 w-6 text-indigo" />
-          </div>
-          <div className="flex-1 min-w-0">
-            <p className="font-bold text-ink">Manage Accounts</p>
-            <p className="text-xs text-ink-4">View, create & assign social accounts</p>
-          </div>
-          <ArrowRight className="h-4 w-4 text-ink-4 opacity-0 group-hover:opacity-100 transition-opacity" />
-        </Link>
-
-        {/* Assign Account shortcut */}
-        <Link href="/accounts?tab=by-employee" className="v3-card-sm p-5 flex items-center gap-4 v3-card-lift group">
-          <div className="h-12 w-12 rounded-xl border-2 border-ink/12 bg-sage-soft flex items-center justify-center shrink-0">
-            <Share2 className="h-6 w-6 text-sage" />
-          </div>
-          <div className="flex-1 min-w-0">
-            <p className="font-bold text-ink">Assign Account</p>
-            <p className="text-xs text-ink-4">Assign by employee — see who has what</p>
-          </div>
-          <ArrowRight className="h-4 w-4 text-ink-4 opacity-0 group-hover:opacity-100 transition-opacity" />
-        </Link>
 
       </div>
     </div>

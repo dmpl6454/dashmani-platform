@@ -546,6 +546,22 @@ All phases (1–13) + Waves 7–9 + v2 production test remediation complete. See
 - **F-WORKLOAD-COLUMNS (P2):** Critical/High workload cells blank when value is 0 — needs `—` fallback.
 - **F-NAV-RESTRUCTURE (P2):** Internal sidebar "More" menu still buries key features.
 
+### Employee vs Admin distinction (analytics/reports)
+
+The `User` table holds everyone — employees, Team Leads, Admins, and Super Admins all share the same model. There is no `isEmployee` flag. The convention for "employee-facing" counts (Active Employees stat on dashboard, submission rates, non-submitters, attendance rates) is:
+
+```ts
+const employeeWhere = {
+  status: "ACTIVE" as const,
+  deletedAt: null,
+  roles: { some: { role: { name: { notIn: ["Super Admin", "Admin"] } } } },
+};
+```
+
+This is defined once at the top of `apps/api/src/services/analytics.service.ts` and reused across all three employee-count queries in that file, and in the `nonSubmitters` query in `apps/api/src/routes/admin-reports.routes.ts`.
+
+**Why `some: { notIn }` not `none: { in }`:** A user with both `Admin` + `Employee` roles passes this filter because they have at least one non-admin role — they are treated as an employee. Only a pure-admin (sole role = Super Admin or Admin, no employee-level role) is excluded. This is the correct semantic.
+
 ### Security notes
 - AI-generated HTML is sanitized with `DOMPurify` before render and before new-tab open (Blob URL)
 - All AI preview iframes use `sandbox="allow-same-origin"`

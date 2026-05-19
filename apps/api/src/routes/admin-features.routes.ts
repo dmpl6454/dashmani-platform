@@ -1166,9 +1166,14 @@ router.post("/admin/users/accept-invite", async (req: Request, res: Response, ne
       data: { name, email: invite.email, passwordHash, status: "ACTIVE" },
     });
 
-    if (invite.roleIds.length > 0) {
+    let assignedRoleIds: string[] = invite.roleIds ?? [];
+    if (assignedRoleIds.length === 0) {
+      const employeeRole = await prisma.role.findUnique({ where: { name: "Employee" } });
+      if (employeeRole) assignedRoleIds = [employeeRole.id];
+    }
+    if (assignedRoleIds.length > 0) {
       await prisma.userRole.createMany({
-        data: invite.roleIds.map((roleId: string) => ({ userId: user.id, roleId })),
+        data: assignedRoleIds.map((roleId: string) => ({ userId: user.id, roleId })),
         skipDuplicates: true,
       });
     }
@@ -1179,9 +1184,7 @@ router.post("/admin/users/accept-invite", async (req: Request, res: Response, ne
 
     await prisma.adminInvite.update({ where: { id: invite.id }, data: { usedAt: new Date() } });
 
-    const roleNames = invite.roleIds.length > 0
-      ? (await prisma.role.findMany({ where: { id: { in: invite.roleIds } } })).map((r) => r.name)
-      : [];
+    const roleNames = (await prisma.role.findMany({ where: { id: { in: assignedRoleIds } } })).map((r) => r.name);
 
     const payload = { userId: user.id, email: user.email, roles: roleNames, type: "employee" as const };
     const accessToken = signAccessToken(payload);

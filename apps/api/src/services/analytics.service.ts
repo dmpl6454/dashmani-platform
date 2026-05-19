@@ -1,23 +1,34 @@
 import { prisma } from "@dashmani/db";
 
-// ===== Helper: Get start of current month =====
-
+// ===== Date helpers =====
+// @db.Date columns are stored as UTC-midnight timestamps. Daily reports are
+// written with `new Date("YYYY-MM-DD")` which parses as UTC midnight, so all
+// boundary computations here must also be UTC midnight to match.
 function startOfMonth(): Date {
   const now = new Date();
-  return new Date(now.getFullYear(), now.getMonth(), 1);
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
 }
 
 function todayDate(): Date {
   const now = new Date();
-  return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
 }
 
 // ===== Overview Stats =====
 
+const employeeWhere = {
+  status: "ACTIVE" as const,
+  deletedAt: null,
+  roles: { some: { role: { name: { notIn: ["Super Admin", "Admin"] } } } },
+};
+
 export async function getOverviewStats(linkStartDate?: string, linkEndDate?: string) {
   const monthStart = startOfMonth();
   const today = todayDate();
-  const weekStart = new Date(today.getTime() - 6 * 24 * 60 * 60 * 1000);
+  // ISO week starts on Monday; getUTCDay() returns 0=Sun..6=Sat
+  const dayOfWeek = today.getUTCDay();
+  const daysToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+  const weekStart = new Date(today.getTime() - daysToMonday * 24 * 60 * 60 * 1000);
 
   // For links bento: use custom range if provided, otherwise last 14 days
   const rangeStart = linkStartDate ? new Date(linkStartDate) : new Date(today.getTime() - 13 * 24 * 60 * 60 * 1000);
@@ -34,7 +45,9 @@ export async function getOverviewStats(linkStartDate?: string, linkEndDate?: str
     presentToday,
     tasksCompletedThisMonth,
     activeProjects,
-    pendingApprovals,
+    pendingDocuments,
+    pendingProfilePictures,
+    pendingLeaveRequests,
     pendingEmployees,
     contentPublishedThisMonth,
     contentScheduledUpcoming,
@@ -46,12 +59,17 @@ export async function getOverviewStats(linkStartDate?: string, linkEndDate?: str
     submittedInRangeCount,
     trendReports,
   ] = await Promise.all([
-    prisma.user.count({ where: { status: "ACTIVE", deletedAt: null } }),
+    prisma.user.count({ where: employeeWhere }),
     prisma.orgUnit.count({ where: { type: "TEAM" } }),
     prisma.attendance.count({ where: { date: today, status: { in: ["PRESENT", "LATE", "HALF_DAY"] } } }),
     prisma.task.count({ where: { status: "DONE", completedAt: { gte: monthStart } } }),
     prisma.project.count({ where: { status: "ACTIVE" } }),
-    prisma.approval.count({ where: { status: "PENDING" } }),
+    // pendingApprovals = sum of the three queues that the /approvals page actually shows.
+    // The legacy `Approval` table (project deliverables) is not surfaced on any admin page,
+    // so counting it here caused dashboard total != approvals-page total.
+    prisma.employeeDocument.count({ where: { status: "PENDING" } }),
+    prisma.profilePictureRequest.count({ where: { status: "PENDING" } }),
+    prisma.leaveRequest.count({ where: { status: "PENDING" } }),
     prisma.user.count({ where: { status: "ONBOARDING", deletedAt: null } }),
     safeContentCount({ status: "PUBLISHED", publishedAtGte: monthStart }),
     safeContentCount({ status: "SCHEDULED", scheduledAtGte: new Date() }),
@@ -84,6 +102,7 @@ export async function getOverviewStats(linkStartDate?: string, linkEndDate?: str
     : 0;
 
   const isCustomRange = !!(linkStartDate || linkEndDate);
+  const pendingApprovals = pendingDocuments + pendingProfilePictures + pendingLeaveRequests;
 
   return {
     totalEmployees,
@@ -92,6 +111,9 @@ export async function getOverviewStats(linkStartDate?: string, linkEndDate?: str
     tasksCompletedThisMonth,
     activeProjects,
     pendingApprovals,
+    pendingDocuments,
+    pendingProfilePictures,
+    pendingLeaveRequests,
     pendingEmployees,
     contentPublishedThisMonth,
     contentScheduledUpcoming,
@@ -384,9 +406,7 @@ export async function getProjectAnalytics(projectId?: string) {
 
 export async function getAttendanceAnalytics(params?: { startDate?: string; endDate?: string }) {
   const today = todayDate();
-  const totalEmployees = await prisma.user.count({
-    where: { status: "ACTIVE", deletedAt: null },
-  });
+  const totalEmployees = await prisma.user.count({ where: employeeWhere });
 
   const todayRecords = await prisma.attendance.groupBy({
     by: ["status"],

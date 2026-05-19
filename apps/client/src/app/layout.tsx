@@ -6,7 +6,7 @@ import { AuthContext } from "@/lib/auth";
 import { apiFetch } from "@/lib/api";
 import { PortalShell } from "@/components/portal-shell";
 
-const publicRoutes = ["/login", "/signup"];
+const publicRoutes = ["/login", "/signup", "/reset-password"];
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();

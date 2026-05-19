@@ -1,4 +1,5 @@
 import { prisma } from "@dashmani/db";
+import { calcStreaks } from "../utils/streak";
 
 export async function getLeaderboard(startDate?: string, endDate?: string) {
   const where: any = {};
@@ -46,63 +47,9 @@ export async function getLeaderboard(startDate?: string, endDate?: string) {
     }
   }
 
-  // Calculate streaks
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
   const result = Array.from(employeeMap.values()).map(({ employee, reportDates, totalLinks, totalEngagement }) => {
     const totalReports = reportDates.length;
-
-    // Sort dates descending for streak calculation
-    const sortedDates = [...reportDates]
-      .map((d) => {
-        const dt = new Date(d);
-        dt.setHours(0, 0, 0, 0);
-        return dt.getTime();
-      })
-      .sort((a, b) => b - a);
-
-    const uniqueDates = Array.from(new Set(sortedDates));
-
-    // Current streak: count consecutive days backwards from today
-    let currentStreak = 0;
-    let cursor = today.getTime();
-    const DAY_MS = 86400000;
-    for (const ts of uniqueDates) {
-      if (ts === cursor || ts === cursor - DAY_MS) {
-        currentStreak++;
-        cursor = ts - DAY_MS;
-      } else if (ts < cursor - DAY_MS) {
-        break;
-      }
-    }
-
-    // Longest streak: count longest run of consecutive days
-    let longestStreak = 0;
-    let runLength = 0;
-    let prevTs: number | null = null;
-    for (const ts of uniqueDates.reverse()) {
-      if (prevTs === null || ts === prevTs + DAY_MS) {
-        runLength++;
-      } else if (ts > prevTs + DAY_MS) {
-        runLength = 1;
-      }
-      longestStreak = Math.max(longestStreak, runLength);
-      prevTs = ts;
-    }
-
-    // Days in range for avg calculation
-    let rangeDays = totalReports;
-    if (startDate && endDate) {
-      const start = new Date(startDate).getTime();
-      const end = new Date(endDate).getTime();
-      rangeDays = Math.max(1, Math.round((end - start) / DAY_MS) + 1);
-    } else if (uniqueDates.length > 1) {
-      const minTs = Math.min(...uniqueDates);
-      const maxTs = Math.max(...uniqueDates);
-      rangeDays = Math.max(1, Math.round((maxTs - minTs) / DAY_MS) + 1);
-    }
-
+    const { currentStreak, longestStreak } = calcStreaks(reportDates);
     const avgLinksPerDay = totalReports > 0 ? totalLinks / totalReports : 0;
 
     return {

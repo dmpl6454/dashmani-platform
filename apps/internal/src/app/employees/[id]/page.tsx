@@ -13,6 +13,7 @@ import {
 import { getRoleColor } from "@/lib/role-colors";
 import { useAuth } from "@/lib/auth";
 import { useRouter } from "next/navigation";
+import { formatStatus } from "@dashmani/shared";
 
 const inputClass = "w-full border border-[#E8E0D0] bg-white rounded-lg px-4 py-2.5 text-sm text-[#1A1A1A] placeholder:text-[#B0B0B0] focus:outline-none focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547] transition-colors";
 
@@ -236,7 +237,7 @@ export default function EmployeeDetailPage() {
               employee.status === "ACTIVE" ? "bg-green-50 text-green-700" :
               employee.status === "ONBOARDING" ? "bg-[#FFF3C4] text-[#1A1A1A]" :
               "bg-red-50 text-red-700"
-            }`}>{employee.status}</span>
+            }`}>{formatStatus(employee.status)}</span>
           </div>
           <div className="bg-white rounded-xl border border-[#E8E0D0] p-4">
             <p className="text-xs text-[#7A7A7A]">Total Incentives</p>
@@ -444,7 +445,7 @@ export default function EmployeeDetailPage() {
                         task.status === "DONE" ? "bg-green-50 text-green-700" :
                         task.status === "IN_PROGRESS" ? "bg-blue-50 text-blue-700" :
                         "bg-gray-100 text-gray-700"
-                      }`}>{task.status}</span>
+                      }`}>{formatStatus(task.status)}</span>
                     </td>
                     <td className="p-4 text-[#7A7A7A]">{task.dueDate ? new Date(task.dueDate).toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : "\u2014"}</td>
                     <td className="p-4 text-[#7A7A7A]">{task.account?.handle || task.account?.displayName || "\u2014"}</td>
@@ -522,7 +523,7 @@ export default function EmployeeDetailPage() {
                         doc.status === "APPROVED" ? "bg-green-50 text-green-700" :
                         doc.status === "REJECTED" ? "bg-red-50 text-red-700" :
                         "bg-yellow-50 text-yellow-700"
-                      }`}>{doc.status}</span>
+                      }`}>{formatStatus(doc.status)}</span>
                     </td>
                     <td className="p-4 text-[#7A7A7A]">{new Date(doc.createdAt).toLocaleDateString()}</td>
                     <td className="p-4">
@@ -572,7 +573,7 @@ export default function EmployeeDetailPage() {
                         eh.status === "APPROVED" ? "bg-green-50 text-green-700" :
                         eh.status === "REJECTED" ? "bg-red-50 text-red-700" :
                         "bg-yellow-50 text-yellow-700"
-                      }`}>{eh.status}</span>
+                      }`}>{formatStatus(eh.status)}</span>
                     </td>
                     <td className="p-4">
                       {eh.status === "PENDING" && (

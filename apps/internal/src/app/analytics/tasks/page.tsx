@@ -1,5 +1,6 @@
 "use client";
 import { useTaskAnalytics } from "@/lib/hooks/use-analytics";
+import { formatStatus } from "@dashmani/shared";
 
 function ProgressBar({ value, max, color }: { value: number; max: number; color: string }) {
   const percent = max > 0 ? Math.round((value / max) * 100) : 0;
@@ -76,7 +77,7 @@ export default function TaskAnalyticsPage() {
             <div className="space-y-3">
               {(tasks?.byStatus ?? []).map((s: any) => (
                 <div key={s.status} className="flex items-center gap-3">
-                  <span className="text-sm w-28 shrink-0 text-[#7A7A7A]">{s.status.replace("_", " ")}</span>
+                  <span className="text-sm w-28 shrink-0 text-[#7A7A7A]">{formatStatus(s.status)}</span>
                   <ProgressBar value={s.count} max={tasks?.totalTasks || 1} color={STATUS_COLORS[s.status] || "bg-[#B0B0B0]"} />
                   <span className="text-sm font-medium w-10 text-right text-[#1A1A1A]">{s.count}</span>
                 </div>
@@ -94,7 +95,7 @@ export default function TaskAnalyticsPage() {
               {(tasks?.byPriority ?? []).map((p: any) => (
                 <div key={p.priority} className="flex items-center gap-3">
                   <span className={`rounded-full px-3 py-1 text-xs font-medium w-20 text-center ${PRIORITY_BADGE[p.priority] || "bg-[rgba(0,0,0,0.06)] text-[#7A7A7A]"}`}>
-                    {p.priority}
+                    {formatStatus(p.priority)}
                   </span>
                   <ProgressBar value={p.count} max={tasks?.totalTasks || 1} color={PRIORITY_COLORS[p.priority] || "bg-[#B0B0B0]"} />
                   <span className="text-sm font-medium w-10 text-right text-[#1A1A1A]">{p.count}</span>

@@ -157,7 +157,7 @@ model Attendance {
   createdAt     DateTime         @default(now()) @map("created_at")
   updatedAt     DateTime         @updatedAt @map("updated_at")
 
-  employee      User @relation(fields: [employeeId], references: [id])
+  employee      User @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
   @@unique([employeeId, date])
   @@index([employeeId, date])
@@ -185,8 +185,8 @@ model LeaveRequest {
   createdAt   DateTime    @default(now()) @map("created_at")
   updatedAt   DateTime    @updatedAt @map("updated_at")
 
-  employee    User @relation("LeaveRequester", fields: [employeeId], references: [id])
-  approver    User? @relation("LeaveApprover", fields: [approvedBy], references: [id])
+  employee    User @relation("LeaveRequester", fields: [employeeId], references: [id], onDelete: Cascade)
+  approver    User? @relation("LeaveApprover", fields: [approvedBy], references: [id], onDelete: SetNull)
 
   @@map("leave_requests")
 }
@@ -294,8 +294,8 @@ model AccountAssignment {
   reason       String?
 
   account      SocialAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  employee     User          @relation("AccountAssignee", fields: [employeeId], references: [id])
-  assigner     User          @relation("AccountAssigner", fields: [assignedBy], references: [id])
+  employee     User          @relation("AccountAssignee", fields: [employeeId], references: [id], onDelete: Cascade)
+  assigner     User          @relation("AccountAssigner", fields: [assignedBy], references: [id], onDelete: Restrict)
 
   @@index([accountId])
   @@index([employeeId])
@@ -319,8 +319,8 @@ model Task {
   createdAt     DateTime     @default(now()) @map("created_at")
   updatedAt     DateTime     @updatedAt @map("updated_at")
 
-  assignee      User?          @relation("TaskAssignee", fields: [assigneeId], references: [id])
-  createdBy     User           @relation("TaskCreator", fields: [createdById], references: [id])
+  assignee      User?          @relation("TaskAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  createdBy     User           @relation("TaskCreator", fields: [createdById], references: [id], onDelete: Restrict)
   account       SocialAccount? @relation(fields: [accountId], references: [id])
   dependsOn     Task?          @relation("TaskDependency", fields: [dependsOnId], references: [id])
   dependedOnBy  Task[]         @relation("TaskDependency")
@@ -357,7 +357,7 @@ model TaskComment {
   updatedAt DateTime @updatedAt @map("updated_at")
 
   task      Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  author    User @relation("CommentAuthor", fields: [authorId], references: [id])
+  author    User @relation("CommentAuthor", fields: [authorId], references: [id], onDelete: Cascade)
 
   @@index([taskId])
   @@map("task_comments")
@@ -654,7 +654,7 @@ model DailyReport {
   createdAt     DateTime @default(now()) @map("created_at")
   updatedAt     DateTime @updatedAt @map("updated_at")
 
-  employee      User         @relation(fields: [employeeId], references: [id])
+  employee      User         @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   links         ReportLink[]
 
   @@unique([employeeId, date])
@@ -782,7 +782,7 @@ model SalarySlip {
   createdAt       DateTime        @default(now()) @map("created_at")
   updatedAt       DateTime        @updatedAt @map("updated_at")
 
-  employee        User @relation("SalarySlipEmployee", fields: [employeeId], references: [id])
+  employee        User @relation("SalarySlipEmployee", fields: [employeeId], references: [id], onDelete: Cascade)
 
   @@unique([employeeId, month, year])
   @@index([employeeId])
@@ -814,7 +814,7 @@ model EmployeeDocument {
   createdAt     DateTime       @default(now()) @map("created_at")
   updatedAt     DateTime       @updatedAt @map("updated_at")
 
-  employee      User @relation("DocumentEmployee", fields: [employeeId], references: [id])
+  employee      User @relation("DocumentEmployee", fields: [employeeId], references: [id], onDelete: Cascade)
 
   @@index([employeeId])
   @@index([status])
@@ -850,7 +850,7 @@ model ProfilePictureRequest {
   approvedAt    DateTime?               @map("approved_at")
   createdAt     DateTime                @default(now()) @map("created_at")
 
-  employee      User @relation("ProfilePicEmployee", fields: [employeeId], references: [id])
+  employee      User @relation("ProfilePicEmployee", fields: [employeeId], references: [id], onDelete: Cascade)
 
   @@index([employeeId])
   @@index([status])
@@ -878,7 +878,7 @@ model OfferLetter {
   generatedBy     String   @map("generated_by")
   createdAt       DateTime @default(now()) @map("created_at")
 
-  employee        User @relation("OfferLetterEmployee", fields: [employeeId], references: [id])
+  employee        User @relation("OfferLetterEmployee", fields: [employeeId], references: [id], onDelete: Cascade)
 
   @@index([employeeId])
   @@map("offer_letters")
@@ -899,7 +899,7 @@ model EmploymentContract {
   agreedFromIp    String?  @map("agreed_from_ip")
   createdAt       DateTime @default(now()) @map("created_at")
 
-  employee        User @relation("ContractEmployee", fields: [employeeId], references: [id])
+  employee        User @relation("ContractEmployee", fields: [employeeId], references: [id], onDelete: Cascade)
 
   @@index([employeeId])
   @@map("employment_contracts")
@@ -940,7 +940,7 @@ model ExtraWorkHour {
   createdAt     DateTime @default(now()) @map("created_at")
   updatedAt     DateTime @updatedAt @map("updated_at")
 
-  employee      User @relation("ExtraWorkEmployee", fields: [employeeId], references: [id])
+  employee      User @relation("ExtraWorkEmployee", fields: [employeeId], references: [id], onDelete: Cascade)
 
   @@index([employeeId])
   @@index([status])
@@ -957,7 +957,7 @@ model Incentive {
   awardedBy     String        @map("awarded_by")
   createdAt     DateTime      @default(now()) @map("created_at")
 
-  employee      User @relation("IncentiveEmployee", fields: [employeeId], references: [id])
+  employee      User @relation("IncentiveEmployee", fields: [employeeId], references: [id], onDelete: Cascade)
 
   @@index([employeeId])
   @@map("incentives")
@@ -984,8 +984,8 @@ model PerformanceReview {
   createdAt     DateTime @default(now()) @map("created_at")
   updatedAt     DateTime @updatedAt @map("updated_at")
 
-  employee      User @relation("ReviewEmployee", fields: [employeeId], references: [id])
-  reviewer      User @relation("ReviewReviewer", fields: [reviewerId], references: [id])
+  employee      User @relation("ReviewEmployee", fields: [employeeId], references: [id], onDelete: Cascade)
+  reviewer      User @relation("ReviewReviewer", fields: [reviewerId], references: [id], onDelete: Restrict)
 
   @@index([employeeId])
   @@map("performance_reviews")
@@ -1007,7 +1007,7 @@ model BugReport {
   createdAt     DateTime      @default(now()) @map("created_at")
   updatedAt     DateTime      @updatedAt @map("updated_at")
 
-  reporter      User @relation("BugReporter", fields: [reportedBy], references: [id])
+  reporter      User @relation("BugReporter", fields: [reportedBy], references: [id], onDelete: Cascade)
 
   @@index([status])
   @@index([reportedBy])
@@ -1041,7 +1041,7 @@ model Presentation {
   createdAt     DateTime @default(now()) @map("created_at")
   updatedAt     DateTime @updatedAt @map("updated_at")
 
-  employee      User @relation("PresentationEmployee", fields: [employeeId], references: [id])
+  employee      User @relation("PresentationEmployee", fields: [employeeId], references: [id], onDelete: Cascade)
 
   @@index([employeeId])
   @@map("presentations")
@@ -1064,7 +1064,7 @@ model ExpenseClaim {
   createdAt     DateTime      @default(now()) @map("created_at")
   updatedAt     DateTime      @updatedAt @map("updated_at")
 
-  employee      User @relation("ExpenseEmployee", fields: [employeeId], references: [id])
+  employee      User @relation("ExpenseEmployee", fields: [employeeId], references: [id], onDelete: Cascade)
 
   @@index([employeeId])
   @@index([status])
@@ -1088,7 +1088,7 @@ model AssignedDevice {
   createdAt     DateTime     @default(now()) @map("created_at")
   updatedAt     DateTime     @updatedAt @map("updated_at")
 
-  employee      User @relation("DeviceEmployee", fields: [employeeId], references: [id])
+  employee      User @relation("DeviceEmployee", fields: [employeeId], references: [id], onDelete: Cascade)
 
   @@index([employeeId])
   @@map("assigned_devices")
@@ -1118,7 +1118,7 @@ model DailyPOA {
   createdAt     DateTime @default(now()) @map("created_at")
   updatedAt     DateTime @updatedAt @map("updated_at")
 
-  employee      User @relation("POAEmployee", fields: [employeeId], references: [id])
+  employee      User @relation("POAEmployee", fields: [employeeId], references: [id], onDelete: Cascade)
 
   @@unique([employeeId, date], name: "employeeId_date")
   @@index([employeeId])
@@ -1140,7 +1140,7 @@ model Complaint {
   createdAt     DateTime        @default(now()) @map("created_at")
   updatedAt     DateTime        @updatedAt @map("updated_at")
 
-  employee      User @relation("ComplaintEmployee", fields: [employeeId], references: [id])
+  employee      User @relation("ComplaintEmployee", fields: [employeeId], references: [id], onDelete: Cascade)
 
   @@index([employeeId])
   @@index([status])

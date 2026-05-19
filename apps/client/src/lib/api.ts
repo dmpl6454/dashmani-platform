@@ -40,6 +40,21 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}): Prom
   return data as ApiEnvelope<T>;
 }
 
+/** Upload a file via multipart/form-data. Returns the unwrapped data on success. */
+export async function uploadFile<T>(path: string, formData: FormData): Promise<T> {
+  const token = typeof window !== "undefined" ? localStorage.getItem("clientAccessToken") : null;
+  const res = await fetch(`${API_URL}${path}`, {
+    method: "POST",
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body: formData,
+  });
+  const data = await res.json();
+  if (!data.success) {
+    throw new Error(data.error?.message || "Upload failed");
+  }
+  return data.data as T;
+}
+
 async function tryRefresh(): Promise<boolean> {
   const refreshToken = localStorage.getItem("clientRefreshToken");
   if (!refreshToken) return false;

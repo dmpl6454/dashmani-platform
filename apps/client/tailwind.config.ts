@@ -30,7 +30,7 @@ const config: Config = {
         success:   { DEFAULT: '#4A7C52', bg: '#EDF4EE' },
         danger:    { DEFAULT: '#B83728', bg: '#FDECEA' },
         indigo:    { DEFAULT: '#5D5FEF', soft: '#EDEDFD', deep: '#4547D4' },
-        sage:      { DEFAULT: '#8BA888', soft: '#EEF4ED' },
+        sage:      { DEFAULT: '#8BA888', soft: '#EEF4ED', deep: '#5F7C5C' },
         terra:     { DEFAULT: '#E07A5F', soft: '#FDF0EC' },
         // Legacy aliases so old code doesn't break
         background: '#FDFCF0',
@@ -41,6 +41,8 @@ const config: Config = {
         sans:    ['"Plus Jakarta Sans"', 'system-ui', 'sans-serif'],
         serif:   ['Fraunces', 'Georgia', 'serif'],
         display: ['Fraunces', 'Georgia', 'serif'],
+        instr:   ['"Instrument Serif"', 'Georgia', 'serif'],
+        mono:    ['"JetBrains Mono"', 'ui-monospace', 'monospace'],
       },
       borderRadius: {
         DEFAULT: '12px',

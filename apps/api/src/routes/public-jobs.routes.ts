@@ -21,7 +21,7 @@ router.get("/jobs", async (req: Request, res: Response, next: NextFunction) => {
 // GET /jobs/:id — get a single job listing (public)
 router.get("/jobs/:id", async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const job = await jobListingService.getJobListingById(req.params.id);
+    const job = await jobListingService.getPublicJobListingById(req.params.id);
     if (!job || job.status !== "ACTIVE") {
       return res.status(404).json({ success: false, error: { code: "NOT_FOUND", message: "Job not found" } });
     }

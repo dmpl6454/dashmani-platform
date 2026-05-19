@@ -14,9 +14,19 @@ function todayDate(): Date {
 
 // ===== Overview Stats =====
 
-export async function getOverviewStats() {
+export async function getOverviewStats(linkStartDate?: string, linkEndDate?: string) {
   const monthStart = startOfMonth();
   const today = todayDate();
+  const weekStart = new Date(today.getTime() - 6 * 24 * 60 * 60 * 1000);
+
+  // For links bento: use custom range if provided, otherwise last 14 days
+  const rangeStart = linkStartDate ? new Date(linkStartDate) : new Date(today.getTime() - 13 * 24 * 60 * 60 * 1000);
+  const rangeEnd = linkEndDate ? new Date(linkEndDate) : today;
+  // How many days in range (for trend array)
+  const rangeDays = Math.max(1, Math.round((rangeEnd.getTime() - rangeStart.getTime()) / 86400000) + 1);
+  // Cap at 60 days for trend display
+  const trendDays = Math.min(rangeDays, 60);
+  const trendStart = new Date(rangeEnd.getTime() - (trendDays - 1) * 86400000);
 
   const [
     totalEmployees,
@@ -28,43 +38,52 @@ export async function getOverviewStats() {
     pendingEmployees,
     contentPublishedThisMonth,
     contentScheduledUpcoming,
+    linksToday,
+    linksThisWeek,
+    linksThisMonth,
+    linksInRange,
+    submittedTodayCount,
+    submittedInRangeCount,
+    trendReports,
   ] = await Promise.all([
-    prisma.user.count({
-      where: { status: "ACTIVE", deletedAt: null },
-    }),
-    prisma.orgUnit.count({
-      where: { type: "TEAM" },
-    }),
-    prisma.attendance.count({
-      where: {
-        date: today,
-        status: { in: ["PRESENT", "LATE", "HALF_DAY"] },
-      },
-    }),
-    prisma.task.count({
-      where: {
-        status: "DONE",
-        completedAt: { gte: monthStart },
-      },
-    }),
-    prisma.project.count({
-      where: { status: "ACTIVE" },
-    }),
-    prisma.approval.count({
-      where: { status: "PENDING" },
-    }),
-    prisma.user.count({
-      where: { status: "ONBOARDING", deletedAt: null },
-    }),
-    safeContentCount({
-      status: "PUBLISHED",
-      publishedAtGte: monthStart,
-    }),
-    safeContentCount({
-      status: "SCHEDULED",
-      scheduledAtGte: new Date(),
+    prisma.user.count({ where: { status: "ACTIVE", deletedAt: null } }),
+    prisma.orgUnit.count({ where: { type: "TEAM" } }),
+    prisma.attendance.count({ where: { date: today, status: { in: ["PRESENT", "LATE", "HALF_DAY"] } } }),
+    prisma.task.count({ where: { status: "DONE", completedAt: { gte: monthStart } } }),
+    prisma.project.count({ where: { status: "ACTIVE" } }),
+    prisma.approval.count({ where: { status: "PENDING" } }),
+    prisma.user.count({ where: { status: "ONBOARDING", deletedAt: null } }),
+    safeContentCount({ status: "PUBLISHED", publishedAtGte: monthStart }),
+    safeContentCount({ status: "SCHEDULED", scheduledAtGte: new Date() }),
+    prisma.reportLink.count({ where: { report: { date: today } } }),
+    prisma.reportLink.count({ where: { report: { date: { gte: weekStart } } } }),
+    prisma.reportLink.count({ where: { report: { date: { gte: monthStart } } } }),
+    prisma.reportLink.count({ where: { report: { date: { gte: rangeStart, lte: rangeEnd } } } }),
+    prisma.dailyReport.count({ where: { date: today } }),
+    prisma.dailyReport.count({ where: { date: { gte: rangeStart, lte: rangeEnd } } }),
+    prisma.dailyReport.findMany({
+      where: { date: { gte: trendStart, lte: rangeEnd } },
+      select: { date: true, _count: { select: { links: true } } },
     }),
   ]);
+
+  // Build trend with zeroes for missing days
+  const trendMap: Record<string, number> = {};
+  for (const r of trendReports) {
+    const d = r.date instanceof Date ? r.date.toISOString().split("T")[0] : String(r.date);
+    trendMap[d] = (trendMap[d] || 0) + r._count.links;
+  }
+  const linksTrend: { date: string; count: number }[] = [];
+  for (let i = trendDays - 1; i >= 0; i--) {
+    const d = new Date(rangeEnd.getTime() - i * 86400000).toISOString().split("T")[0];
+    linksTrend.push({ date: d, count: trendMap[d] || 0 });
+  }
+
+  const submissionRateToday = totalEmployees > 0
+    ? Math.round((submittedTodayCount / totalEmployees) * 100)
+    : 0;
+
+  const isCustomRange = !!(linkStartDate || linkEndDate);
 
   return {
     totalEmployees,
@@ -76,6 +95,17 @@ export async function getOverviewStats() {
     pendingEmployees,
     contentPublishedThisMonth,
     contentScheduledUpcoming,
+    linksToday,
+    linksThisWeek,
+    linksThisMonth,
+    linksInRange: isCustomRange ? linksInRange : null,
+    submittedTodayCount,
+    submittedInRange: isCustomRange ? submittedInRangeCount : null,
+    submissionRateToday,
+    linksTrend,
+    rangeStart: rangeStart.toISOString().split("T")[0],
+    rangeEnd: rangeEnd.toISOString().split("T")[0],
+    isCustomRange,
   };
 }
 

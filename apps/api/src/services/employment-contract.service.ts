@@ -258,6 +258,17 @@ export async function listContracts(filters?: { employeeId?: string }) {
   return contracts;
 }
 
+export async function getContractById(id: string) {
+  const contract = await prisma.employmentContract.findUnique({
+    where: { id },
+    include: {
+      employee: { select: { name: true, email: true } },
+    },
+  });
+  if (!contract) throw new AppError(404, "CONTRACT_NOT_FOUND", "Contract not found");
+  return contract;
+}
+
 export async function getPendingContractForEmployee(employeeId: string) {
   const contract = await prisma.employmentContract.findFirst({
     where: {

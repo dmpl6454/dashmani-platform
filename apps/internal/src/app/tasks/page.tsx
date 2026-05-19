@@ -3,6 +3,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { useTasks } from "@/lib/hooks/use-tasks";
 import { TaskCard } from "@/components/task-card";
+import { formatStatus } from "@dashmani/shared";
 import { Plus, Search, LayoutGrid, List } from "lucide-react";
 
 const STATUS_COLUMNS = ["TODO", "IN_PROGRESS", "IN_REVIEW", "DONE"];
@@ -140,7 +141,7 @@ export default function TasksPage() {
                     </td>
                     <td className="px-5 py-3">
                       <span className={`rounded-full px-3 py-1 text-xs font-semibold border ${PRIORITY_BADGE[task.priority] || "bg-neutral-bg text-neutral border-neutral/20"}`}>
-                        {task.priority}
+                        {formatStatus(task.priority)}
                       </span>
                     </td>
                     <td className="px-5 py-3 text-ink-3 hidden md:table-cell">{task.assignee?.name || "Unassigned"}</td>

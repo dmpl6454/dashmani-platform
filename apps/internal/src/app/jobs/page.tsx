@@ -203,7 +203,7 @@ export default function JobsPage() {
           <div className="p-5 border-b border-[#F0EAD8]">
             <div className="flex items-center justify-between mb-4">
               <h3 className="font-semibold text-[#1A1A1A] text-lg">All Applications</h3>
-              <p className="text-xs text-[#7A7A7A]">{allApps.length} total · Auto-refreshes every 30s</p>
+              <p className="text-xs text-[#7A7A7A]">{allApps.length} total</p>
             </div>
             {/* Filters */}
             <div className="flex flex-wrap gap-3">

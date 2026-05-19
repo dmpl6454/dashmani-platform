@@ -389,6 +389,7 @@ Why this method exists: hero pages are the most visible surface, the most tempti
 - Use `formatStatus()` from `packages/shared/src/utils/status.ts` whenever displaying enum status values in the UI — converts `UPPER_SNAKE_CASE` to "Title Case".
 - Cron jobs live in `apps/api/src/cron/` and are bootstrapped in `src/index.ts`.
 - Business logic belongs in `apps/api/src/services/`, not in route handlers.
+- **Public API endpoints must never expose internal user UUIDs.** `GET /v1/jobs` and `GET /v1/jobs/:id` use `getActiveJobListings()` and `getPublicJobListingById()` in `job-listing.service.ts` — both use explicit Prisma `select` to strip `createdBy`/`createdById`. If you add new public endpoints, always use `select` rather than returning full model rows.
 
 ---
 
@@ -452,7 +453,7 @@ See [.planning/AUTH-LOCKOUT-FIXES.md](.planning/AUTH-LOCKOUT-FIXES.md) for the f
 
 ## Client Portal (`apps/client`) — Implementation Status
 
-All 9 implementation phases + 5-wave audit remediation complete. See `.planning/CLIENT-PORTAL-AUDIT.md` for the full issue register and resolution commit log.
+All 9 implementation phases + 5-wave audit remediation complete + TC-191 (forgot-password) verified implemented. See `.planning/CLIENT-PORTAL-AUDIT.md` for the full issue register. The `/login` page has a `forgotOpen` state that opens a `ForgotPasswordModal` calling `POST /client/auth/forgot-password`; `apps/client/src/app/reset-password/` page handles the token-based reset flow calling `POST /client/auth/reset-password`.
 
 ### What's implemented
 
@@ -504,7 +505,46 @@ All 9 implementation phases + 5-wave audit remediation complete. See `.planning/
 
 ## Internal Portal (`apps/internal`) — Implementation Status
 
-All phases (1–13) + Waves 7–9 + v2 production test remediation complete. See `.planning/INTERNAL-PORTAL-V2-PLAN.md` for the full issue register.
+All phases (1–13) + Waves 7–9 + v2 production test remediation complete. See `.planning/PORTAL-TEST-FINAL-V2-PLAN.md` for the full issue register (updated 2026-05-19).
+
+### What was fixed in the 2026-05-19 remediation pass
+
+**API service mismatches (admin-features.routes.ts):** 5 routes were calling service functions with wrong names or signatures — `listSalarySlips`, `generateBulkSalarySlips` (positional args), `getOfferLetters` (positional), `listContracts`, `listHolidays` — all fixed. `getContractById` was also added to `employment-contract.service.ts` (was missing but called from hr-features).
+
+**HR routes:** `creator:` → `createdBy:` in Task include; `content:` → `body:` in TaskComment create (both match Prisma schema).
+
+**XSS fix:** `content/[id]/page.tsx` — `innerHTML` with user-controlled URL replaced with safe DOM API (`createElement` + `textContent`).
+
+**Missing pages:** `/settings` (profile + change-password) and `/clients/[id]` (client detail + edit + delete + invite + projects) created.
+
+**formatStatus():** Applied across 10+ pages that were rendering raw `UPPER_SNAKE_CASE` enum values.
+
+**Jobs UUID leak (P0 security):** `GET /v1/jobs` and `GET /v1/jobs/:id` public endpoints no longer expose internal `createdBy`/`createdById` UUIDs — both use explicit `select` in the service.
+
+**Missing HR portal endpoints:** `/hr/profile` (GET+PUT), `/hr/reports/today`, `/hr/reports` (GET+POST), `/hr/accounts`, `/hr/leaderboard`, `/hr/team`, `/hr/notifications` (GET+count+mark-read+read-all) all added to `hr-features.routes.ts`.
+
+### What was added in the 2026-05-19 dashboard/reports/teams overhaul
+
+**Dashboard:** Extended to 11 stat cards (added Links Today, Links/Month, Submitted Today + submission rate). "Links Activity" bento section with recharts BarChart, customisable date-range (14d/30d/90d + custom picker). **Quick Assign Account** bento card — opens `QuickAssignModal`, employee-first flow to assign social accounts directly from dashboard without navigating to `/accounts`.
+
+**Employee reports (`/reports/[employeeId]`):** Full stats strip (Total Reports, Total Links, Current Streak, Avg Links/Day, Submission Rate), 30-day BarChart, platform breakdown, date-range filter on the reports list below.
+
+**Links analytics (`/reports/links`):** New page — daily AreaChart, weekly BarChart, growth rate vs prior period, platform breakdown, team ranks, top submitters, non-submitters.
+
+**Reports summary (`/reports`):** Added 3 columns (Avg/Day, Streak, Last Submitted). "Links Analytics" button in header.
+
+**Teams:** Bulk delete (checkboxes + action bar), move/remove member actions on each member row, inline duplicate-name 409 error.
+
+**Employees:** Active/Archived tab toggle — `includeDeleted` API param shows soft-deleted employees in Archived view.
+
+**Cascade deletes:** Prisma schema updated — all employee-owned data (Attendance, LeaveRequest, DailyReport, SalarySlip, EmploymentContract, OfferLetter, etc.) now has `onDelete: Cascade`; `AuditLog` intentionally kept `onDelete: Restrict` for compliance. ⚠️ **`db:push` required on Linode after deploy** — FK constraints only, no column drops.
+
+### Still open (known remaining issues)
+- **F-TOKEN-STORAGE (P0):** Auth tokens still in `localStorage` — httpOnly cookie migration is a large cross-cutting change.
+- **F-LEAVE-TZ-BUG (P0):** Leave start date shifts 1 day (IST→UTC). Fix: send `YYYY-MM-DD` string on wire instead of JS `Date`.
+- **F-PII-MASKING (P1):** Aadhaar/PAN/bank/IFSC shown as plain text in HR profile — needs masking after save.
+- **F-WORKLOAD-COLUMNS (P2):** Critical/High workload cells blank when value is 0 — needs `—` fallback.
+- **F-NAV-RESTRUCTURE (P2):** Internal sidebar "More" menu still buries key features.
 
 ### Security notes
 - AI-generated HTML is sanitized with `DOMPurify` before render and before new-tab open (Blob URL)

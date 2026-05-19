@@ -1,8 +1,12 @@
 import useSWR from "swr";
 import { apiFetch } from "@/lib/api";
 
-export function useOverviewStats() {
-  return useSWR("/analytics/overview", (url) => apiFetch(url), {
+export function useOverviewStats(startDate?: string, endDate?: string) {
+  const params = new URLSearchParams();
+  if (startDate) params.set("startDate", startDate);
+  if (endDate) params.set("endDate", endDate);
+  const query = params.toString() ? `?${params.toString()}` : "";
+  return useSWR(`/analytics/overview${query}`, (url) => apiFetch(url), {
     refreshInterval: 120000,
     revalidateOnFocus: false,
     dedupingInterval: 60000,

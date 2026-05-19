@@ -25,7 +25,7 @@ export function HrAuthProvider({ children }: { children: ReactNode }) {
 
   // Redirect unauthenticated users to login
   useEffect(() => {
-    if (!isLoading && !user && pathname !== "/login") {
+    if (!isLoading && !user && pathname !== "/login" && pathname !== "/reset-password") {
       router.push("/login");
     }
   }, [isLoading, user, pathname, router]);

@@ -3,6 +3,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { useClients } from "@/lib/hooks/use-clients";
 import { Button, Input } from "@dashmani/ui";
+import { formatStatus } from "@dashmani/shared";
 import { Plus, Search, Building2, Send, X, Check, Trash2 } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
@@ -79,7 +80,7 @@ export default function ClientsPage() {
               <div className="flex items-center gap-3 shrink-0 ml-3">
                 <span className="text-xs text-[#B0B0B0]">{c._count?.projects || 0} projects</span>
                 <span className={`rounded-full px-3 py-1 text-xs font-medium ${statusBadge[c.status] || "bg-[rgba(0,0,0,0.06)] text-[#7A7A7A]"}`}>
-                  {c.status}
+                  {formatStatus(c.status)}
                 </span>
                 {c.email && (
                   <button

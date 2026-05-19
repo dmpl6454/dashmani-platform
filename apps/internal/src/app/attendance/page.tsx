@@ -6,6 +6,7 @@ import { useEmployees } from "@/lib/hooks/use-employees";
 import { AttendanceClock } from "@/components/attendance-clock";
 import { apiFetch } from "@/lib/api";
 import { ChevronLeft, ChevronRight, Plus, X, Check, Pencil } from "lucide-react";
+import { formatStatus } from "@dashmani/shared";
 
 const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 
@@ -200,7 +201,7 @@ export default function AttendancePage() {
                     <td className="p-4 text-[#1A1A1A]">{r.checkOut ? new Date(r.checkOut).toLocaleTimeString() : "—"}</td>
                     <td className="p-4">
                       <span className={`rounded-full px-3 py-1 text-xs font-medium ${statusBadge[r.status] || "bg-[rgba(0,0,0,0.06)] text-[#7A7A7A]"}`}>
-                        {r.status}
+                        {formatStatus(r.status)}
                       </span>
                     </td>
                     <td className="p-4 text-[#1A1A1A]">{r.overtimeHours > 0 ? `${r.overtimeHours.toFixed(1)}h` : "—"}</td>

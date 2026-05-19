@@ -1,6 +1,7 @@
 "use client";
 import { useTaskAnalytics, useContentAnalytics, useAttendanceAnalytics } from "@/lib/hooks/use-analytics";
 import Link from "next/link";
+import { formatStatus } from "@dashmani/shared";
 
 function ProgressBar({ value, max, color }: { value: number; max: number; color: string }) {
   const percent = max > 0 ? Math.round((value / max) * 100) : 0;
@@ -73,7 +74,7 @@ export default function AnalyticsOverviewPage() {
                 {(tasks?.byStatus ?? []).map((s: any) => (
                   <StatusBar
                     key={s.status}
-                    label={s.status.replace("_", " ")}
+                    label={formatStatus(s.status)}
                     count={s.count}
                     total={tasks?.totalTasks || 1}
                     color={STATUS_COLORS[s.status] || "bg-[#B0B0B0]"}
@@ -109,7 +110,7 @@ export default function AnalyticsOverviewPage() {
                 {(content?.byStatus ?? []).map((s: any) => (
                   <StatusBar
                     key={s.status}
-                    label={s.status}
+                    label={formatStatus(s.status)}
                     count={s.count}
                     total={content?.totalPosts || 1}
                     color={STATUS_COLORS[s.status] || "bg-[#B0B0B0]"}

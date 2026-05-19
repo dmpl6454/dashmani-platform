@@ -1,6 +1,7 @@
 import { prisma } from "@dashmani/db";
 import { AppError } from "../middleware/error-handler";
 import type { ReportLinkInput, DailyReportResponse, AdminReportFilters } from "@dashmani/shared";
+import { calcStreaks } from "../utils/streak";
 
 function formatReport(report: any) {
   return {
@@ -278,10 +279,15 @@ export async function getReportSummary(startDate?: string, endDate?: string) {
       employee: { select: { id: true, name: true, email: true } },
       links: true,
     },
+    orderBy: { date: "asc" },
   });
 
   // Group by employee
-  const summaryMap = new Map<string, { id: string; name: string; email: string; reportCount: number; totalLinks: number }>();
+  const summaryMap = new Map<string, {
+    id: string; name: string; email: string;
+    reportCount: number; totalLinks: number;
+    reportDates: Date[]; lastSubmittedAt: Date | null;
+  }>();
 
   let totalReports = 0;
   let totalLinks = 0;
@@ -295,19 +301,38 @@ export async function getReportSummary(startDate?: string, endDate?: string) {
         email: (report.employee as any).email ?? "",
         reportCount: 0,
         totalLinks: 0,
+        reportDates: [],
+        lastSubmittedAt: null,
       });
     }
     const entry = summaryMap.get(key)!;
     entry.reportCount += 1;
     entry.totalLinks += report.links.length;
+    entry.reportDates.push(report.date);
+    if (!entry.lastSubmittedAt || report.date > entry.lastSubmittedAt) {
+      entry.lastSubmittedAt = report.date;
+    }
     totalReports += 1;
     totalLinks += report.links.length;
   }
+
+  const employees = Array.from(summaryMap.values()).map(({ reportDates, ...rest }) => {
+    const { currentStreak } = calcStreaks(reportDates);
+    const avgLinksPerDay = rest.reportCount > 0
+      ? Math.round((rest.totalLinks / rest.reportCount) * 10) / 10
+      : 0;
+    return {
+      ...rest,
+      avgLinksPerDay,
+      currentStreak,
+      lastSubmittedAt: rest.lastSubmittedAt?.toISOString() ?? null,
+    };
+  });
 
   return {
     employeesReporting: summaryMap.size,
     totalReports,
     totalLinks,
-    employees: Array.from(summaryMap.values()),
+    employees,
   };
 }

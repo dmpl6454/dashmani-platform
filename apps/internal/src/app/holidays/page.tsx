@@ -4,6 +4,8 @@ import { useState } from "react";
 import { apiFetch } from "@/lib/api";
 import useSWR from "swr";
 import { CalendarDays, Plus, Trash2, ChevronLeft, ChevronRight } from "lucide-react";
+import { formatStatus } from "@dashmani/shared";
+import { usePageTitle } from "@/lib/hooks/use-page-title";
 
 const inputClass =
   "w-full border border-[#E8E0D0] bg-white rounded-lg px-4 py-2.5 text-sm text-[#1A1A1A] placeholder:text-[#B0B0B0] focus:outline-none focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547] transition-colors";
@@ -15,6 +17,7 @@ const typeBadge: Record<string, string> = {
 };
 
 export default function HolidaysPage() {
+  usePageTitle("Holiday Calendar");
   const currentYear = new Date().getFullYear();
   const [year, setYear] = useState(currentYear);
   const [form, setForm] = useState({
@@ -182,7 +185,7 @@ export default function HolidaysPage() {
                     <td className="p-4 text-[#1A1A1A]">{h.name || "—"}</td>
                     <td className="p-4">
                       <span className={`rounded-full px-3 py-1 text-xs font-medium ${typeBadge[h.type] || typeBadge.PUBLIC}`}>
-                        {h.type}
+                        {formatStatus(h.type || "PUBLIC")}
                       </span>
                     </td>
                     <td className="p-4 text-[#7A7A7A] max-w-[250px] truncate">{h.description || "—"}</td>

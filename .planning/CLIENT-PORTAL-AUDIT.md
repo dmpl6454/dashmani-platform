@@ -1,18 +1,22 @@
 # Client Portal — End-to-End Audit & Remediation Plan
 
 **Date:** 2026-05-14  
-**Last updated:** 2026-05-15  
+**Last updated:** 2026-05-19 (session 4)  
 **Branch:** `docs/design-critique`
 **Scope:** `apps/client` + `apps/api` (client endpoints only)
-**Status:** All 12 issues resolved across Waves 0–5. See commit log for details.
+**Status:** All issues resolved across Waves 0–5 + 2026-05-19 verification pass. File upload implemented 2026-05-19 session 4.
 
 > Companion file: [CLIENT-PORTAL-ERRORS.md](./CLIENT-PORTAL-ERRORS.md) — all errors moved to Resolved section.
 
 ---
 
-## TL;DR (post-fix)
+## TL;DR (post-fix, updated 2026-05-19)
 
 All five waves landed. The portal is now functionally complete: data binding is correct, approvals are wired to the right model, the sidebar badge reads from the API, Ctrl+K opens a real command palette, "+ New Brief" is implemented end-to-end, the static notification bell is removed, and mock data no longer leaks into production paths.
+
+**2026-05-19 session 4:** File upload implemented end-to-end. `POST /v1/client/files` endpoint added to `apps/api/src/routes/client.routes.ts` (uses `uploadDocument` multer middleware, resolves `clientId → client.email → User.id` for `uploadedById`, calls `projectService.addFile()`). `DELETE /v1/client/files/:id` also added with client ownership check. Frontend: `uploadFile()` helper in `apps/client/src/lib/api.ts`; `apps/client/src/app/files/page.tsx` wired with drag-and-drop, click-to-upload, per-file delete, project picker (shown when "All files" view is active), and SWR `mutate()` on success. **Deployment note:** `uploads/` dir is auto-created by the API on startup (existing behaviour in `middleware/upload.ts`) — no `db:push` or manual setup needed on Linode.
+
+**2026-05-19 verification:** TC-191 (no forgot-password link) confirmed already implemented — `apps/client/src/app/login/page.tsx` has `forgotOpen` state + `ForgotPasswordModal` calling `POST /client/auth/forgot-password`. `apps/client/src/app/reset-password/page.tsx` handles the reset flow. The TC-191 entry in the audit table was stale. **One remaining item:** TC-194 badge spacing (chip rendering "Approvals 7") needs visual verification — not a blocker.
 
 ---
 
@@ -371,3 +375,33 @@ Auth flash fixed: rail renders animated skeleton until `useAuth().user` resolves
 - E2E test coverage (worth adding once Wave 1 lands).
 - Visual / design review (covered by the `docs/design-critique` branch's intent).
 - Internal employee, HR, and Jobs portals.
+
+---
+
+## Wave 6 — Auth hero redesign · 2026-05-18
+
+**Source:** Claude Design bundle `T8z1yi17hWOXdoz5sgn0Cg` → `project/Client Portal Auth.html`. Bundle delivered both Client Portal Auth and Internal Portal Auth — the internal page already matched the intent, only the client page was redesigned.
+
+**Scope:** `/login` and `/signup` in `apps/client` switched from the older "folio paper" aesthetic to the bolder "review room" design — yellow + indigo brutalist card with `5px 5px 0 #F5D547` shadow, big Fraunces + Instrument-Serif headline ("Less email. / More yes.") with a hand-drawn yellow arc underline, dashboard preview on the right (live counters, ripple-dot, rotating live-date), Approved stamp with rotating SVG textPath, marquee strip, How-it-works, stats strip, testimonial.
+
+**Real-wire preserved (per CLAUDE.md hero-page method):**
+- Login: `useAuth().login(email, password)` (unchanged); forgot-password modal still posts to `/client/auth/forgot-password`; token storage keys (`clientAccessToken`/`clientRefreshToken`/`clientUser`) unchanged.
+- Signup: still requires `?token=<uuid>`; renders `InvalidInvite` when missing; submits `POST /client/auth/register` with `{ token, password, contactName? }`.
+- Stripped: fake Google OAuth + magic-link buttons (no backend), fake "signup tab on login" (replaced with a `<Link href="/signup">` segmented button — keeps the visual but routes correctly).
+
+**Dynamic content:**
+- Dashboard preview counters are animated via `useCounter` (eased cubic).
+- Topstrip "today · DD MMM" uses `new Date()` in a `useEffect` (initialised to `null`) to avoid SSR hydration mismatch; refreshes every 60s so it survives midnight.
+- Approved stamp's SVG `textPath` uses live month/year via `toLocaleString` for ageing-grace.
+- All animations respect `prefers-reduced-motion`.
+
+**Files touched:**
+- `apps/client/src/app/login/page.tsx` — full rewrite
+- `apps/client/src/app/signup/page.tsx` — full rewrite (same aesthetic, no dashboard preview)
+- `apps/client/src/components/auth/shared.tsx` — extended with `v3-card-action`, `seg`, `stamp`, `ripple-dot`, `cream-mesh`, `arc-underline`, `float-a/b/c`, marquee keyframes
+- `apps/client/src/app/globals.css` — added `Instrument Serif` + `JetBrains Mono` to the Google Fonts `@import`
+- `apps/client/tailwind.config.ts` — added `instr` + `mono` `fontFamily` tokens
+
+**Verification:** `npx tsc --noEmit -p apps/client/tsconfig.json` clean. `npm run build -w @dashmani/client` builds all 13 routes; `/login` 8.22 kB / `/signup` 3.96 kB.
+
+The internal portal `/login` (`apps/internal/src/app/login/page.tsx`) already implements the matching design from the same bundle and was not modified.

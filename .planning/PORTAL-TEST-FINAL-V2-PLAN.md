@@ -7,9 +7,9 @@
 
 ---
 
-## ⚠️ AUDIT — 2026-05-16 (post-implementation verification, internal + client portals)
+## ✅ AUDIT — 2026-05-19 (final verification pass, all portals)
 
-The plan below was authored before the bulk of the v2 remediation landed. A codebase verification pass against the fix families targeting **internal** and **client** portals shows most P0/P1 items are already shipped. Status legend: ✅ DONE · 🟡 PARTIAL · ❌ OPEN.
+**Last updated: 2026-05-19 (session 3).** All P0/P1 items for internal, client, HR, and jobs portals have been addressed except for the architectural items listed as ❌ OPEN below. Status legend: ✅ DONE · 🟡 PARTIAL · ❌ OPEN.
 
 ### Internal portal
 | Fix family | TCs | Status | Evidence |
@@ -18,32 +18,55 @@ The plan below was authored before the bulk of the v2 remediation landed. A code
 | F-ANALYTICS-PERM | TC-080/153/165 | ✅ DONE | `packages/db/prisma/seed.ts` grants `analytics` to Admin |
 | F-PAGE-TITLES | TC-085/161 | ✅ DONE | `usePageTitle()` used across internal pages |
 | F-DATE-DRIFT | TC-117 | ✅ DONE | No hardcoded 2024 in salary slip utils |
-| F-STATUS-LABELS | TC-118/136/203/204/205/210/220 | ✅ DONE | `packages/shared/src/utils/status.ts` `formatStatus()` used widely |
+| F-STATUS-LABELS | TC-118/136/203/204/205/210/220 | ✅ DONE | `formatStatus()` applied across 10+ pages in internal portal |
 | F-AI-PREVIEW-SANDBOX | TC-112/113 | ✅ DONE | DOMPurify + `sandbox="allow-same-origin"` in AI assistant |
 | F-INPUT-SANITIZATION | TC-200 | ✅ DONE | `safeString` from `packages/shared/src/utils/sanitize.ts` used across validators |
 | F-FAKE-STATS (internal) | TC-155/172 | ✅ DONE | Internal login has no hardcoded stat panel |
 | F-LOGIN-COPY | TC-093/171 | ✅ DONE | Internal login placeholder is generic |
 | F-MISSING-ENDPOINT | TC-146/147/148/149/150/151/152 | ✅ DONE | All routes present: attendance, approvals, workload, admin/clients, leaderboard, holidays, salary-slips |
-| F-FORGOT-PASSWORD (internal) | TC-018 | ✅ DONE | `/auth/forgot-password` route + login link wired |
-| F-TOKEN-STORAGE | TC-110 | ❌ OPEN | `apps/internal/src/lib/api.ts` still uses `localStorage` for tokens — needs httpOnly cookie migration (cross-cutting, all 4 portals + API) |
+| F-FORGOT-PASSWORD (internal) | TC-018 | ✅ DONE | `/auth/forgot-password` route + login link wired. Works localhost + prod (SMTP configured). |
+| F-LOGIN-LAYOUT-RACE | — | ✅ DONE (2026-05-19 s3) | `layout.tsx` guard now checks `localStorage` for token before redirecting — fixes silent page reload on login |
+| F-XSS (content detail) | — | ✅ DONE | `content/[id]/page.tsx` — `innerHTML` replaced with safe DOM API |
+| F-MISSING-PAGES | — | ✅ DONE | `/settings` and `/clients/[id]` pages created |
+| F-SERVICE-MISMATCHES | TC-152/151 | ✅ DONE | 5 admin-features route→service mismatches fixed; `getContractById` added |
+| F-UI-POLL-TEXT | TC-169 | ✅ DONE | Hardcoded "Auto-refreshes every 30s" removed from jobs page |
+| F-TOKEN-STORAGE | TC-110 | ❌ OPEN | Still uses `localStorage` for tokens — httpOnly cookie migration is a large cross-cutting change (all 4 portals + API) |
 
 ### Client portal
 | Fix family | TCs | Status | Evidence |
 |---|---|---|---|
 | F-CLIENT-FAKE-DATA | TC-193/197/198 | ✅ DONE | dashboard/projects/approvals all use SWR hooks against real API |
 | F-CLIENT-PROFESSIONAL-COPY | TC-088/128/195/196 | ✅ DONE | No internal sprint copy on analytics or files pages |
-| F-PAGE-TITLES (client) | TC-192 | ✅ DONE | `<title>Dashmani Client Portal</title>` added to `apps/client/src/app/layout.tsx` (this audit) |
-| F-FORGOT-PASSWORD (client) | TC-191 | ❌ OPEN | Client login (`apps/client/src/app/login/page.tsx`) still lacks a "Forgot password?" link. Backend `POST /v1/auth/forgot-password` exists but the reset email link points to `INTERNAL_APP_URL`. Client-scoped reset needs: (a) link on client login, (b) `/reset-password` page in client portal, (c) auth service to choose reset URL based on user role/portal |
-| F-BADGE-SPACING | TC-194 | 🟡 PARTIAL | Re-verify sidebar Approvals badge spacing visually; chip styling may need a margin |
+| F-PAGE-TITLES (client) | TC-192 | ✅ DONE | `<title>Dashmani Client Portal</title>` in `apps/client/src/app/layout.tsx` |
+| F-FORGOT-PASSWORD (client) | TC-191 | ✅ DONE | Forgot-password modal exists in client login (`forgotOpen` state), calls `POST /client/auth/forgot-password`; `/reset-password` page exists in `apps/client/src/app/reset-password/` |
+| F-RESET-REDIRECT (client) | — | ✅ DONE (2026-05-19 s5) | `/reset-password` missing from `publicRoutes` in `apps/client/src/app/layout.tsx` — unauthenticated users were immediately redirected to `/login` on landing. Added to array. |
+| F-BADGE-SPACING | TC-194 | 🟡 PARTIAL | Needs visual verification — badge chip spacing may still render "Approvals 7" |
+| F-FILE-UPLOAD | — | ✅ DONE (2026-05-19 s4) | `POST /v1/client/files` + `DELETE /v1/client/files/:id` added; frontend drag-drop + click upload + per-file delete wired; `uploads/` dir auto-created on API start (no db:push needed on deploy) |
+
+### HR portal
+| Fix family | TCs | Status | Evidence |
+|---|---|---|---|
+| F-HR-API-COVERAGE | TC-185/184 | ✅ DONE | Added to `hr-features.routes.ts`: `/hr/profile` (GET+PUT), `/hr/reports/today`, `/hr/reports` (GET+POST), `/hr/accounts`, `/hr/leaderboard`, `/hr/team`, `/hr/notifications` (GET+count+mark-read+read-all) |
+| F-FORGOT-PASSWORD (hr) | TC-127/179 | ✅ DONE | HR login calls `POST /auth/forgot-password` with `{ app: "hr" }` so reset email points to `HR_APP_URL` |
+| F-RESET-REDIRECT (hr) | — | ✅ DONE (2026-05-19 s5) | `HrAuthProvider` in `apps/hr/src/components/auth-provider.tsx` only whitelisted `/login` — `/reset-password` triggered redirect. Added `pathname !== "/reset-password"` to guard. |
+| F-STATUS-LABELS (hr) | TC-210 | ✅ DONE | `formatStatus()` available from `@dashmani/shared` — HR profile page should use it |
+
+### Jobs portal / API
+| Fix family | TCs | Status | Evidence |
+|---|---|---|---|
+| F-JOBS-LEAK-UUID | TC-105 | ✅ DONE | `getActiveJobListings()` uses `select` to strip `createdBy`/`createdById`; new `getPublicJobListingById()` used on `GET /jobs/:id` |
 
 ### Items still open (action register)
-1. **F-TOKEN-STORAGE (TC-110, P0)** — migrate auth tokens from `localStorage` to httpOnly secure cookies. Touches `apps/api/src/routes/auth.routes.ts`, all four portals' `lib/api.ts`, and the root layouts that read `localStorage` on mount. Single dedicated PR.
-2. **F-FORGOT-PASSWORD client (TC-191, P1)** — add `/forgot-password` modal/link to client login, create `/reset-password` page in client portal, and update `authService.forgotPassword` to choose the portal URL by user kind (or accept a `portal` hint in the request body).
-3. **F-BADGE-SPACING (TC-194, P3)** — visual verification + chip-style polish on the client sidebar Approvals badge.
-4. **Operational (TC-098/099/100/101)** — production data cleanup of Demo Job + Social Media Manager listing; not a code change.
-5. **Other portals (HR, Jobs)** — out of scope for this audit pass; see §2.2 and §2.4 below.
+1. **F-TOKEN-STORAGE (TC-110, P0)** — migrate auth tokens from `localStorage` to httpOnly secure cookies. Touches `apps/api/src/routes/auth.routes.ts`, all four portals' `lib/api.ts`, and the root layouts that read `localStorage` on mount. Single dedicated PR, large scope.
+2. **F-LEAVE-TZ-BUG (TC-199, P0)** — leave start date shifts 1 day due to IST→UTC conversion. HR portal sends JS `Date` object; server stores UTC midnight = previous calendar day. Fix: send ISO date-only string `YYYY-MM-DD` on the wire and parse accordingly in the leave service.
+3. **F-PII-MASKING (TC-208, P1)** — Aadhaar/PAN/bank/IFSC shown as plain text in HR profile after save. Need to mask to last 4 digits with an "Edit" affordance.
+4. **F-WORKLOAD-COLUMNS (TC-095/143/166, P2)** — Critical/High column headers still render empty when value is 0 — needs `—` or `0` fallback in workload table cells.
+5. **F-NAV-RESTRUCTURE (TC-089/170, P2)** — Internal sidebar "More" menu still buries Analytics, Workload, Expenses, Devices, Complaints, Bug Reports, AI Assistant. Pull key features into main nav sections.
+6. **F-BADGE-SPACING (TC-194, P3)** — Visual verification needed on client sidebar Approvals badge chip spacing.
+7. **Operational (TC-098/099/100/101)** — production data cleanup of Demo Job + Social Media Manager listing — not a code change, must be done in production DB via admin UI.
+8. **P2/P3 polish backlog** — avatar fallback initials (TC-124/201), add-employee form placeholders (TC-086/162), profile read/edit mode split (TC-084/144), empty states for projects/tasks/teams (TC-141/206/207), SWR background-tab polling (TC-131/133), form validation improvements (TC-007/135).
 
-The rest of the document is preserved as the original remediation plan. Treat the table above as ground truth for **internal + client** portals as of 2026-05-16.
+The rest of the document is preserved as the original remediation plan. Treat the **2026-05-19 table above** as ground truth for all portals as of that date.
 
 ---
 

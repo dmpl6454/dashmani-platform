@@ -1,112 +1,303 @@
 "use client";
+import { useState } from "react";
 import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
-import { useAdminReports } from "@/lib/hooks/use-reports";
+import { ArrowLeft, Flame, Link2, BarChart2, Target, TrendingUp, CalendarDays, X } from "lucide-react";
+import { useAdminReports, useEmployeeReportStats } from "@/lib/hooks/use-reports";
 import { useEmployee } from "@/lib/hooks/use-employees";
 import { LinkPreviewCard } from "@/components/link-preview-card";
+import {
+  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
+} from "recharts";
 
 function formatTime(dateStr: string) {
-  try {
-    return new Date(dateStr).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  } catch {
-    return "";
-  }
+  try { return new Date(dateStr).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); }
+  catch { return ""; }
 }
 
 function formatDate(dateStr: string) {
-  try {
-    return new Date(dateStr).toLocaleDateString([], { weekday: "short", year: "numeric", month: "short", day: "numeric" });
-  } catch {
-    return dateStr;
-  }
+  try { return new Date(dateStr).toLocaleDateString([], { weekday: "short", year: "numeric", month: "short", day: "numeric" }); }
+  catch { return dateStr; }
+}
+
+function StatCard({ label, value, icon: Icon, sub, color = "indigo" }: {
+  label: string; value: string | number; icon: any; sub?: string; color?: "indigo" | "terra" | "sage" | "attention";
+}) {
+  const bg = { indigo: "bg-indigo-soft", terra: "bg-terra-soft", sage: "bg-sage-soft", attention: "bg-attention/10" }[color];
+  const fg = { indigo: "text-indigo", terra: "text-terra", sage: "text-sage", attention: "text-attention" }[color];
+  return (
+    <div className="v3-card-sm p-4 flex flex-col gap-1">
+      <div className={`h-8 w-8 rounded-lg flex items-center justify-center ${bg}`}>
+        <Icon className={`h-4 w-4 ${fg}`} />
+      </div>
+      <p className="font-display text-2xl font-semibold text-ink leading-none mt-1">{value}</p>
+      <p className="text-xs text-ink-4 font-medium">{label}</p>
+      {sub && <p className={`text-[10px] font-semibold ${fg}`}>{sub}</p>}
+    </div>
+  );
+}
+
+function ChartTooltip({ active, payload, label }: any) {
+  if (!active || !payload?.length) return null;
+  return (
+    <div className="bg-ink text-white text-xs rounded-lg px-3 py-2 shadow-lg">
+      <p className="font-semibold mb-0.5">{label}</p>
+      <p>{payload[0].value} link{payload[0].value !== 1 ? "s" : ""}</p>
+    </div>
+  );
+}
+
+const QUICK_RANGES = [
+  { label: "Last 7 days",  days: 7 },
+  { label: "Last 30 days", days: 30 },
+  { label: "Last 90 days", days: 90 },
+  { label: "This year",    days: 365 },
+];
+
+function toISODate(d: Date) {
+  return d.toISOString().slice(0, 10);
 }
 
 export default function EmployeeReportsPage({ params }: { params: { employeeId: string } }) {
   const { employeeId } = params;
+
+  const today = new Date();
+  const [startDate, setStartDate] = useState(toISODate(new Date(today.getTime() - 29 * 86400000)));
+  const [endDate, setEndDate] = useState(toISODate(today));
+
   const { data: employeeData, isLoading: empLoading } = useEmployee(employeeId);
-  const { data: reportsData, isLoading: reportsLoading } = useAdminReports({ employeeId });
+  const { data: reportsData, isLoading: reportsLoading } = useAdminReports({ employeeId, startDate, endDate });
+  const { data: statsData, isLoading: statsLoading } = useEmployeeReportStats(employeeId);
 
   const employee = (employeeData as any)?.data;
   const reports = (reportsData as any)?.data ?? [];
+  const s = (statsData as any)?.data;
+
+  const dailyTrend: { date: string; linkCount: number }[] = s?.dailyTrend ?? [];
+  const chartData = dailyTrend.map((d) => ({
+    date: new Date(d.date).toLocaleDateString("en-IN", { day: "numeric", month: "short" }),
+    links: d.linkCount,
+  }));
+
+  const platformBreakdown: { platform: string; count: number }[] = s?.platformBreakdown ?? [];
+
+  function applyQuickRange(days: number) {
+    setStartDate(toISODate(new Date(today.getTime() - (days - 1) * 86400000)));
+    setEndDate(toISODate(today));
+  }
+
+  function clearRange() {
+    setStartDate(toISODate(new Date(today.getTime() - 29 * 86400000)));
+    setEndDate(toISODate(today));
+  }
+
+  const hasCustomRange = startDate !== toISODate(new Date(today.getTime() - 29 * 86400000)) ||
+    endDate !== toISODate(today);
 
   return (
-    <div className="space-y-6 crx-animate-fade">
-      {/* Header */}
-      <div className="flex items-center gap-4">
-        <Link
-          href="/reports"
-          className="flex items-center gap-1 text-sm text-[#7A7A7A] hover:text-[#1A1A1A] transition-colors"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Back to Reports
-        </Link>
-      </div>
+    <div className="space-y-6 pop-in">
+      {/* Back link */}
+      <Link href="/reports" className="flex items-center gap-1 text-sm text-ink-4 hover:text-ink transition-colors">
+        <ArrowLeft className="h-4 w-4" /> Back to Reports
+      </Link>
 
+      {/* Employee header */}
       <div>
         {empLoading ? (
-          <div className="h-8 w-48 bg-[#F0E4C4] animate-pulse rounded-lg" />
+          <div className="h-8 w-48 bg-muted animate-pulse rounded-lg" />
         ) : (
           <div className="flex items-center gap-4">
-            <div
-              className="h-12 w-12 rounded-full flex items-center justify-center text-white text-lg font-semibold shrink-0"
-              style={{ background: "linear-gradient(135deg, #5B4BF5, #3023D0)" }}
-            >
-              {employee?.name?.[0]?.toUpperCase()}
+            <div className="h-12 w-12 rounded-full flex items-center justify-center text-white text-lg font-semibold shrink-0 bg-indigo">
+              {employee?.name?.[0]?.toUpperCase() ?? "?"}
             </div>
             <div>
-              <h1 className="font-serif text-4xl font-light text-[#1A1A1A]">{employee?.name ?? "Employee"}</h1>
-              <p className="text-[#7A7A7A]">{employee?.email}</p>
+              <h1 className="font-display text-2xl font-semibold text-ink">{employee?.name ?? "Employee"}</h1>
+              <p className="text-sm text-ink-4">{employee?.email}</p>
             </div>
           </div>
         )}
       </div>
 
-      {/* Reports List */}
-      {reportsLoading ? (
-        <p className="text-sm text-[#7A7A7A]">Loading reports...</p>
-      ) : reports.length === 0 ? (
-        <p className="text-sm text-[#7A7A7A]">No reports found for this employee.</p>
-      ) : (
-        <div className="space-y-4">
-          <p className="text-sm text-[#7A7A7A]">
-            {reports.length} report{reports.length !== 1 ? "s" : ""} found
+      {/* Date range filter */}
+      <div className="v3-card p-4 space-y-3">
+        <div className="flex items-center gap-2">
+          <CalendarDays className="h-4 w-4 text-indigo" />
+          <p className="text-sm font-semibold text-ink">Date Range</p>
+          {hasCustomRange && (
+            <button
+              onClick={clearRange}
+              className="ml-auto flex items-center gap-1 text-xs text-ink-4 hover:text-danger transition-colors"
+            >
+              <X className="h-3 w-3" /> Reset
+            </button>
+          )}
+        </div>
+
+        {/* Quick range pills */}
+        <div className="flex flex-wrap gap-2">
+          {QUICK_RANGES.map((r) => {
+            const rStart = toISODate(new Date(today.getTime() - (r.days - 1) * 86400000));
+            const isActive = startDate === rStart && endDate === toISODate(today);
+            return (
+              <button
+                key={r.label}
+                onClick={() => applyQuickRange(r.days)}
+                className={`h-7 px-3 rounded-full text-xs font-semibold transition-all border-2 ${
+                  isActive
+                    ? "bg-indigo text-white border-indigo"
+                    : "bg-surface text-ink-4 border-ink/12 hover:border-indigo/30 hover:text-indigo"
+                }`}
+              >
+                {r.label}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Custom date inputs */}
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="flex items-center gap-2">
+            <label className="text-xs text-ink-4 font-medium w-6">From</label>
+            <input
+              type="date"
+              value={startDate}
+              max={endDate}
+              onChange={(e) => setStartDate(e.target.value)}
+              className="h-9 rounded-xl border-2 border-ink/15 bg-surface text-sm px-3 focus:outline-none focus:border-indigo transition-colors"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="text-xs text-ink-4 font-medium w-6">To</label>
+            <input
+              type="date"
+              value={endDate}
+              min={startDate}
+              max={toISODate(today)}
+              onChange={(e) => setEndDate(e.target.value)}
+              className="h-9 rounded-xl border-2 border-ink/15 bg-surface text-sm px-3 focus:outline-none focus:border-indigo transition-colors"
+            />
+          </div>
+          <p className="text-xs text-ink-4">
+            Showing reports from{" "}
+            <span className="font-semibold text-ink">
+              {new Date(startDate).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
+            </span>{" "}
+            to{" "}
+            <span className="font-semibold text-ink">
+              {new Date(endDate).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
+            </span>
           </p>
-          {reports.map((report: any, idx: number) => {
+        </div>
+      </div>
+
+      {/* Stats strip — always based on all-time stats from employee-stats endpoint */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+        <StatCard label="Total Reports" value={statsLoading ? "—" : (s?.totalReports ?? 0)} icon={BarChart2} color="indigo" />
+        <StatCard label="Total Links" value={statsLoading ? "—" : (s?.totalLinks ?? 0)} icon={Link2} color="terra" />
+        <StatCard label="Current Streak" value={statsLoading ? "—" : (s?.currentStreak ?? 0)} icon={Flame} color="attention" sub={`Best: ${s?.longestStreak ?? 0} days`} />
+        <StatCard label="Avg Links/Day" value={statsLoading ? "—" : (s?.avgLinksPerDay ?? 0)} icon={TrendingUp} color="sage" />
+        <StatCard label="Submission Rate" value={statsLoading ? "—" : `${s?.submissionRate ?? 0}%`} icon={Target} color="indigo" />
+      </div>
+
+      {/* 30-day chart (all-time trend) */}
+      <div className="v3-card p-5 space-y-3">
+        <div className="flex items-center justify-between">
+          <p className="font-semibold text-ink">Links — Last 30 Days (all-time)</p>
+          {s?.bestChannel && (
+            <span className="text-xs text-ink-4">
+              Best channel: <span className="font-semibold text-terra">{s.bestChannel.platform}</span> ({s.bestChannel.count})
+            </span>
+          )}
+        </div>
+        <div className="h-48">
+          {statsLoading ? (
+            <div className="h-full flex items-center justify-center"><p className="text-xs text-ink-4">Loading chart…</p></div>
+          ) : chartData.length === 0 ? (
+            <div className="h-full flex items-center justify-center"><p className="text-xs text-ink-4">No data in the last 30 days</p></div>
+          ) : (
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={chartData} barSize={12} margin={{ top: 4, right: 4, left: -24, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.06)" vertical={false} />
+                <XAxis dataKey="date" tick={{ fontSize: 9, fill: "var(--color-ink-4, #888)" }} axisLine={false} tickLine={false} interval={4} />
+                <YAxis tick={{ fontSize: 9, fill: "var(--color-ink-4, #888)" }} axisLine={false} tickLine={false} allowDecimals={false} />
+                <Tooltip content={<ChartTooltip />} cursor={{ fill: "rgba(0,0,0,0.04)" }} />
+                <Bar dataKey="links" fill="var(--color-terra, #c97c3a)" radius={[3, 3, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+      </div>
+
+      {/* Platform breakdown */}
+      {platformBreakdown.length > 0 && (
+        <div className="v3-card p-5 space-y-3">
+          <div className="flex items-center justify-between">
+            <p className="font-semibold text-ink">Platform Breakdown (all-time)</p>
+            <div className="flex items-center gap-4 text-xs text-ink-4">
+              {s?.bestChannel && <span>Best: <span className="font-semibold text-sage">{s.bestChannel.platform}</span></span>}
+              {s?.worstChannel && <span>Least: <span className="font-semibold text-attention">{s.worstChannel.platform}</span></span>}
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {platformBreakdown.map((p: any) => (
+              <div key={p.platform} className="flex items-center gap-2 bg-muted/50 rounded-full px-3 py-1.5">
+                <span className="text-xs font-semibold text-ink">{p.platform}</span>
+                <span className="text-[10px] bg-ink/10 rounded-full px-2 py-0.5 font-bold text-ink-3">{p.count}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Reports list — filtered by date range */}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <p className="text-sm font-semibold text-ink">
+            Reports in selected range
+          </p>
+          {!reportsLoading && (
+            <span className="text-xs text-ink-4">
+              {reports.length} report{reports.length !== 1 ? "s" : ""}
+              {reports.length > 0 && ` · ${reports.reduce((s: number, r: any) => s + (r.links?.length ?? 0), 0)} links`}
+            </span>
+          )}
+        </div>
+
+        {reportsLoading ? (
+          <p className="text-sm text-ink-4">Loading reports...</p>
+        ) : reports.length === 0 ? (
+          <div className="v3-card p-8 text-center">
+            <p className="text-sm text-ink-4">No reports in this date range</p>
+            <p className="text-xs text-ink-4 mt-1">Try expanding the range using the date picker above</p>
+          </div>
+        ) : (
+          reports.map((report: any, idx: number) => {
             const linkCount = report.links?.length ?? 0;
             const reportDate = report.date ?? report.createdAt;
             const submittedAt = report.createdAt ?? report.date;
             return (
-              <div key={report.id} className={`bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0] transition-all hover:shadow-[0_4px_24px_rgba(0,0,0,0.07)] crx-animate-slide crx-delay-${Math.min(idx + 1, 6)}`}>
-                <div className="p-5">
-                  <div className="flex items-start justify-between mb-3">
-                    <div className="flex items-center gap-3">
-                      <span className="rounded-full px-3 py-1 text-xs font-medium bg-[#FFF3C4] text-[#1A1A1A]">{formatDate(reportDate)}</span>
-                      <span className="text-xs text-[#7A7A7A]">
-                        {linkCount} link{linkCount !== 1 ? "s" : ""}
-                      </span>
-                    </div>
-                    <span className="text-xs text-[#7A7A7A]">
-                      Submitted at {formatTime(submittedAt)}
-                    </span>
+              <div key={report.id} className="v3-card p-5 space-y-3">
+                <div className="flex items-start justify-between">
+                  <div className="flex items-center gap-3">
+                    <span className="rounded-full px-3 py-1 text-xs font-medium bg-indigo-soft text-indigo">{formatDate(reportDate)}</span>
+                    <span className="text-xs text-ink-4">{linkCount} link{linkCount !== 1 ? "s" : ""}</span>
                   </div>
+                  <span className="text-xs text-ink-4">Submitted {formatTime(submittedAt)}</span>
+                </div>
 
-                  {report.notes && (
-                    <p className="text-sm text-[#7A7A7A] mb-3 italic border-l-2 border-[#E8E0D0] pl-3">
-                      {report.notes}
-                    </p>
-                  )}
+                {report.notes && (
+                  <p className="text-sm text-ink-3 italic border-l-2 border-ink/10 pl-3">{report.notes}</p>
+                )}
 
-                  <div className="space-y-2">
-                    {(report.links ?? []).map((link: any, i: number) => (
-                      <LinkPreviewCard key={link.id ?? i} link={link} />
-                    ))}
-                  </div>
+                <div className="space-y-2">
+                  {(report.links ?? []).map((link: any, i: number) => (
+                    <LinkPreviewCard key={link.id ?? i} link={link} />
+                  ))}
                 </div>
               </div>
             );
-          })}
-        </div>
-      )}
+          })
+        )}
+      </div>
     </div>
   );
 }

@@ -1,10 +1,11 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Topstrip } from "@/components/portal-topstrip";
 import { IconButton, Empty, PageError, Skeleton, Button } from "@/components/portal-shared";
 import { Icon } from "@/components/portal-icons";
 import { useClientFiles } from "@/lib/hooks/use-files";
 import { useClientProjects } from "@/lib/hooks/use-projects";
+import { uploadFile } from "@/lib/api";
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -40,12 +41,18 @@ export default function FilesPage() {
   const [viewMode, setViewMode] = useState<"list" | "grid">("list");
   const [dragOver, setDragOver] = useState(false);
 
+  // Upload state
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [uploadProjectId, setUploadProjectId] = useState<string>("");
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   useEffect(() => {
     const t = setTimeout(() => setDebouncedSearch(search || undefined), 300);
     return () => clearTimeout(t);
   }, [search]);
 
-  const { data: files, error, isLoading } = useClientFiles(projectId, debouncedSearch);
+  const { data: files, error, isLoading, mutate } = useClientFiles(projectId, debouncedSearch);
   const fileList: any[] = files ?? [];
 
   const folders = [
@@ -62,6 +69,51 @@ export default function FilesPage() {
     : fileList;
 
   const totalMB = displayed.reduce((s, f) => s + (f.size || 0), 0) / (1024 * 1024);
+
+  // Derive the project to upload to: use the sidebar filter if set, otherwise the picker
+  const effectiveUploadProjectId = projectId ?? uploadProjectId;
+
+  async function handleUpload(fileList: FileList | null) {
+    if (!fileList || fileList.length === 0) return;
+    if (!effectiveUploadProjectId) {
+      setUploadError("Select a project folder before uploading.");
+      return;
+    }
+    setUploading(true);
+    setUploadError(null);
+    let failed = 0;
+    for (const file of Array.from(fileList)) {
+      try {
+        const fd = new FormData();
+        fd.append("file", file);
+        fd.append("projectId", effectiveUploadProjectId);
+        await uploadFile("/client/files", fd);
+      } catch (e: any) {
+        failed++;
+        setUploadError(e.message || "Upload failed");
+      }
+    }
+    setUploading(false);
+    if (failed === 0) setUploadError(null);
+    mutate(); // refresh file list
+  }
+
+  async function handleDelete(fileId: string) {
+    if (!confirm("Delete this file? This cannot be undone.")) return;
+    try {
+      const token = typeof window !== "undefined" ? localStorage.getItem("clientAccessToken") : null;
+      const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/v1";
+      const res = await fetch(`${API_URL}/client/files/${fileId}`, {
+        method: "DELETE",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error?.message || "Delete failed");
+      mutate();
+    } catch (e: any) {
+      alert(e.message || "Could not delete file.");
+    }
+  }
 
   return (
     <>
@@ -125,15 +177,51 @@ export default function FilesPage() {
           <div
             onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
             onDragLeave={() => setDragOver(false)}
-            onDrop={(e) => { e.preventDefault(); setDragOver(false); }}
-            className={`mb-5 border-2 border-dashed rounded-2xl p-4 flex items-center justify-center gap-3 transition-all cursor-pointer
-              ${dragOver ? "bg-indigo-soft border-indigo" : "border-ink/15 hover:border-ink/30 hover:bg-muted/30"}`}
+            onDrop={(e) => { e.preventDefault(); setDragOver(false); handleUpload(e.dataTransfer.files); }}
+            onClick={() => fileInputRef.current?.click()}
+            className={`mb-2 border-2 border-dashed rounded-2xl p-4 flex items-center justify-center gap-3 transition-all cursor-pointer
+              ${dragOver ? "bg-indigo-soft border-indigo" : uploading ? "bg-muted/40 border-ink/20" : "border-ink/15 hover:border-ink/30 hover:bg-muted/30"}`}
           >
-            <Icon.Plus size={16} sw={2} className={dragOver ? "text-indigo" : "text-ink-3"} />
-            <span className={`text-[13px] font-semibold ${dragOver ? "text-indigo" : "text-ink-3"}`}>
-              Drop files here to upload
-            </span>
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              className="hidden"
+              onChange={(e) => handleUpload(e.target.files)}
+            />
+            {uploading ? (
+              <span className="text-[13px] font-semibold text-ink-3 animate-pulse">Uploading…</span>
+            ) : (
+              <>
+                <Icon.Plus size={16} sw={2} className={dragOver ? "text-indigo" : "text-ink-3"} />
+                <span className={`text-[13px] font-semibold ${dragOver ? "text-indigo" : "text-ink-3"}`}>
+                  Drop files here or click to upload
+                </span>
+              </>
+            )}
           </div>
+
+          {/* Project picker — only shown when "All files" is active (no folder selected) */}
+          {!projectId && (
+            <div className="mb-4 flex items-center gap-2">
+              <span className="text-[12px] text-ink-3 font-medium shrink-0">Upload to:</span>
+              <select
+                value={uploadProjectId}
+                onChange={(e) => setUploadProjectId(e.target.value)}
+                className="h-8 px-2 bg-surface rounded-xl text-[12.5px] text-ink outline-none font-medium"
+                style={{ border: "2px solid rgba(26,26,26,0.15)" }}
+              >
+                <option value="">Select a project…</option>
+                {projects.map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {uploadError && (
+            <p className="mb-3 text-[12.5px] text-terra font-semibold">{uploadError}</p>
+          )}
 
           {/* Summary + search */}
           <div className="flex items-center gap-3 mb-4">
@@ -177,7 +265,7 @@ export default function FilesPage() {
               ))}
 
               {!isLoading && displayed.length === 0 && (
-                <Empty icon={<Icon.File size={20} />} title="No files yet" hint="Files uploaded to your projects appear here." />
+                <Empty icon={<Icon.File size={20} />} title="No files yet" hint="Drop files above to upload to a project." />
               )}
 
               {!isLoading && displayed.map((file, i) => {
@@ -211,6 +299,13 @@ export default function FilesPage() {
                       <a href={file.url} target="_blank" rel="noopener noreferrer" download onClick={(e) => e.stopPropagation()}>
                         <IconButton size="sm" variant="ghost" icon={<Icon.ChevDown size={14} />} label="Download" />
                       </a>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleDelete(file.id); }}
+                        className="h-7 w-7 flex items-center justify-center rounded-lg text-ink-4 hover:text-terra hover:bg-terra-soft transition-all"
+                        aria-label="Delete file"
+                      >
+                        <Icon.X size={13} sw={2} />
+                      </button>
                     </div>
                   </div>
                 );
@@ -223,31 +318,42 @@ export default function FilesPage() {
               ))}
               {!isLoading && displayed.length === 0 && (
                 <div className="col-span-full">
-                  <Empty icon={<Icon.File size={20} />} title="No files yet" hint="Files uploaded to your projects appear here." />
+                  <Empty icon={<Icon.File size={20} />} title="No files yet" hint="Drop files above to upload to a project." />
                 </div>
               )}
               {!isLoading && displayed.map((file, i) => {
                 const type = fileType(file.name);
                 return (
-                  <a
+                  <div
                     key={file.id}
-                    href={file.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="v3-card v3-card-lift p-4 cursor-pointer block"
+                    className="v3-card v3-card-lift p-4 cursor-pointer relative group"
                     style={{ animationDelay: `${i * 0.04}s` }}
                   >
-                    <div className="h-9 w-9 rounded-xl bg-muted flex items-center justify-center text-ink-3 mb-3" style={{ border: "1.5px solid rgba(26,26,26,0.1)" }}>
-                      <Icon.File size={16} sw={1.5} />
-                    </div>
-                    <div className="text-[13px] font-bold text-ink leading-tight line-clamp-2 mb-2">{file.name}</div>
-                    <div className="flex items-center justify-between mt-auto">
-                      <span className={`text-[10px] font-bold px-2 h-5 inline-flex items-center rounded-full border ${TYPE_COLORS[type] ?? "bg-muted text-ink-3 border-ink/10"}`}>
-                        {type}
-                      </span>
-                      <span className="text-[11.5px] text-ink-3 font-semibold tabular-nums">{formatBytes(file.size ?? 0)}</span>
-                    </div>
-                  </a>
+                    <a
+                      href={file.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="block"
+                    >
+                      <div className="h-9 w-9 rounded-xl bg-muted flex items-center justify-center text-ink-3 mb-3" style={{ border: "1.5px solid rgba(26,26,26,0.1)" }}>
+                        <Icon.File size={16} sw={1.5} />
+                      </div>
+                      <div className="text-[13px] font-bold text-ink leading-tight line-clamp-2 mb-2">{file.name}</div>
+                      <div className="flex items-center justify-between mt-auto">
+                        <span className={`text-[10px] font-bold px-2 h-5 inline-flex items-center rounded-full border ${TYPE_COLORS[type] ?? "bg-muted text-ink-3 border-ink/10"}`}>
+                          {type}
+                        </span>
+                        <span className="text-[11.5px] text-ink-3 font-semibold tabular-nums">{formatBytes(file.size ?? 0)}</span>
+                      </div>
+                    </a>
+                    <button
+                      onClick={() => handleDelete(file.id)}
+                      className="absolute top-2 right-2 h-6 w-6 flex items-center justify-center rounded-lg text-ink-4 hover:text-terra hover:bg-terra-soft transition-all opacity-0 group-hover:opacity-100"
+                      aria-label="Delete file"
+                    >
+                      <Icon.X size={12} sw={2} />
+                    </button>
+                  </div>
                 );
               })}
             </div>

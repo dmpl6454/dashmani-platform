@@ -18,6 +18,7 @@ router.get("/employees", authenticate, requirePermission("employees", "view"), a
       status: req.query.status as string,
       orgUnitId: req.query.orgUnitId as string,
       search: req.query.search as string,
+      includeDeleted: req.query.includeDeleted === "true",
     });
     return success(res, result.items, result.meta);
   } catch (err) { next(err); }

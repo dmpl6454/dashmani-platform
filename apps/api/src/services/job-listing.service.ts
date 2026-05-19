@@ -37,6 +37,22 @@ export async function getActiveJobListings() {
   return prisma.jobListing.findMany({
     where: { status: "ACTIVE" },
     orderBy: { createdAt: "desc" },
+    select: {
+      id: true,
+      title: true,
+      department: true,
+      location: true,
+      type: true,
+      experience: true,
+      salary: true,
+      description: true,
+      requirements: true,
+      responsibilities: true,
+      benefits: true,
+      status: true,
+      createdAt: true,
+      updatedAt: true,
+    },
   });
 }
 
@@ -44,6 +60,28 @@ export async function getJobListingById(id: string) {
   return prisma.jobListing.findUnique({
     where: { id },
     include: { _count: { select: { applications: true } } },
+  });
+}
+
+export async function getPublicJobListingById(id: string) {
+  return prisma.jobListing.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      title: true,
+      department: true,
+      location: true,
+      type: true,
+      experience: true,
+      salary: true,
+      description: true,
+      requirements: true,
+      responsibilities: true,
+      benefits: true,
+      status: true,
+      createdAt: true,
+      updatedAt: true,
+    },
   });
 }
 

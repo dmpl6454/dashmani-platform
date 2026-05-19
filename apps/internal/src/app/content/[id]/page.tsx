@@ -184,8 +184,12 @@ export default function ContentDetailPage() {
                     alt={`Media ${i + 1}`}
                     className="w-full h-40 object-cover"
                     onError={(e) => {
-                      (e.target as HTMLImageElement).style.display = "none";
-                      (e.target as HTMLImageElement).parentElement!.innerHTML = `<div class="flex items-center justify-center h-40 bg-[rgba(255,248,225,0.5)] text-xs text-[#7A7A7A] p-2 break-all">${url}</div>`;
+                      const img = e.target as HTMLImageElement;
+                      img.style.display = "none";
+                      const fallback = document.createElement("div");
+                      fallback.className = "flex items-center justify-center h-40 bg-[rgba(255,248,225,0.5)] text-xs text-[#7A7A7A] p-2 break-all";
+                      fallback.textContent = url;
+                      img.parentElement?.appendChild(fallback);
                     }}
                   />
                   <a

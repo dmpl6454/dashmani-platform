@@ -9,9 +9,12 @@ export async function listEmployees(params: {
   status?: string;
   orgUnitId?: string;
   search?: string;
+  includeDeleted?: boolean;
 }) {
-  const where: Prisma.UserWhereInput = { deletedAt: null };
-  if (params.status) where.status = params.status as any;
+  const where: Prisma.UserWhereInput = params.includeDeleted
+    ? { deletedAt: { not: null } }
+    : { deletedAt: null };
+  if (params.status && !params.includeDeleted) where.status = params.status as any;
   if (params.orgUnitId) where.orgUnitId = params.orgUnitId;
   if (params.search) {
     where.OR = [

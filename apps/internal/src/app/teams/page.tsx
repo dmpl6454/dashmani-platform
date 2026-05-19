@@ -3,7 +3,8 @@ import { useState } from "react";
 import useSWR from "swr";
 import { apiFetch, API_BASE } from "@/lib/api";
 import { useEmployees } from "@/lib/hooks/use-employees";
-import { Users, Plus, ChevronDown, ChevronRight, User, Trash2, Edit2, UserPlus } from "lucide-react";
+import { formatStatus } from "@dashmani/shared";
+import { Users, Plus, ChevronDown, ChevronRight, Trash2, UserPlus, CheckSquare, Square, UserMinus, ArrowRightLeft } from "lucide-react";
 import { Input } from "@dashmani/ui";
 
 export default function TeamsPage() {
@@ -16,13 +17,25 @@ export default function TeamsPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [form, setForm] = useState({ name: "", type: "TEAM" as string, parentId: "" });
   const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
   const [assignModal, setAssignModal] = useState<{ teamId: string; teamName: string } | null>(null);
   const [assignEmployeeId, setAssignEmployeeId] = useState("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  // member move modal: { memberId, memberName, currentTeamId }
+  const [moveModal, setMoveModal] = useState<{ memberId: string; memberName: string } | null>(null);
+  const [moveTargetTeamId, setMoveTargetTeamId] = useState("");
+
+  function flatUnits(units: any[]): any[] {
+    return units.flatMap((u: any) => [u, ...flatUnits(u.children ?? [])]);
+  }
+  const allUnits = flatUnits(teams);
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     setCreating(true);
+    setCreateError(null);
     try {
       await apiFetch("/teams", {
         method: "POST",
@@ -31,16 +44,33 @@ export default function TeamsPage() {
       setForm({ name: "", type: "TEAM", parentId: "" });
       setCreateOpen(false);
       mutate();
-    } catch (e: any) { alert(e.message); }
-    finally { setCreating(false); }
+    } catch (e: any) {
+      setCreateError(e.message || "Failed to create team");
+    } finally { setCreating(false); }
   }
 
   async function handleDelete(id: string) {
-    if (!confirm("Delete this team?")) return;
+    if (!confirm("Delete this team? Members will be unassigned.")) return;
     try {
       await apiFetch(`/teams/${id}`, { method: "DELETE" });
+      setSelected((prev) => { const next = new Set(prev); next.delete(id); return next; });
       mutate();
     } catch (e: any) { alert(e.message); }
+  }
+
+  async function handleBulkDelete() {
+    const ids = Array.from(selected);
+    if (!confirm(`Delete ${ids.length} team(s)? All members will be unassigned.`)) return;
+    setBulkDeleting(true);
+    try {
+      await apiFetch("/teams/bulk", {
+        method: "DELETE",
+        body: JSON.stringify({ ids }),
+      });
+      setSelected(new Set());
+      mutate();
+    } catch (e: any) { alert(e.message); }
+    finally { setBulkDeleting(false); }
   }
 
   async function handleAssign() {
@@ -56,29 +86,58 @@ export default function TeamsPage() {
     } catch (e: any) { alert(e.message); }
   }
 
-  function toggleExpand(id: string) {
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
-      return next;
-    });
+  async function handleRemoveMember(memberId: string) {
+    try {
+      await apiFetch(`/employees/${memberId}`, {
+        method: "PUT",
+        body: JSON.stringify({ orgUnitId: null }),
+      });
+      mutate();
+    } catch (e: any) { alert(e.message); }
   }
 
-  // Flatten all org units for parent select
-  function flatUnits(units: any[]): any[] {
-    return units.flatMap((u: any) => [u, ...flatUnits(u.children ?? [])]);
+  async function handleMoveMember() {
+    if (!moveModal) return;
+    try {
+      await apiFetch(`/employees/${moveModal.memberId}`, {
+        method: "PUT",
+        body: JSON.stringify({ orgUnitId: moveTargetTeamId || null }),
+      });
+      setMoveModal(null);
+      setMoveTargetTeamId("");
+      mutate();
+    } catch (e: any) { alert(e.message); }
   }
-  const allUnits = flatUnits(teams);
+
+  function toggleExpand(id: string) {
+    setExpanded((prev) => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
+  }
+
+  function toggleSelect(id: string) {
+    setSelected((prev) => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
+  }
 
   function renderTeam(team: any, depth = 0) {
     const isExpanded = expanded.has(team.id);
+    const isSelected = selected.has(team.id);
     const members = team.members ?? [];
     const children = team.children ?? [];
     const hasContent = members.length > 0 || children.length > 0;
 
     return (
       <div key={team.id} style={{ marginLeft: depth * 24 }}>
-        <div className="flex items-center gap-3 p-3 bg-white rounded-xl border border-[#E8E0D0] mb-2 hover:shadow-[0_2px_12px_rgba(0,0,0,0.06)] transition-all">
+        <div className={`flex items-center gap-3 p-3 rounded-xl border mb-2 transition-all hover:shadow-[0_2px_12px_rgba(0,0,0,0.06)] ${
+          isSelected ? "bg-indigo-soft border-indigo/30" : "bg-white border-[#E8E0D0]"
+        }`}>
+          {/* Checkbox */}
+          <button
+            onClick={() => toggleSelect(team.id)}
+            className="shrink-0 text-ink-4 hover:text-indigo transition-colors"
+            title={isSelected ? "Deselect" : "Select"}
+          >
+            {isSelected ? <CheckSquare className="h-4 w-4 text-indigo" /> : <Square className="h-4 w-4" />}
+          </button>
+
           <button onClick={() => toggleExpand(team.id)} className="shrink-0">
             {hasContent ? (isExpanded ? <ChevronDown className="h-4 w-4 text-[#7A7A7A]" /> : <ChevronRight className="h-4 w-4 text-[#7A7A7A]" />) : <div className="w-4" />}
           </button>
@@ -112,11 +171,11 @@ export default function TeamsPage() {
             {members.length > 0 && (
               <div className="space-y-1 mb-2">
                 {members.map((m: any) => (
-                  <div key={m.id} className="flex items-center gap-3 p-2 pl-4 rounded-lg bg-[rgba(255,248,225,0.5)]">
+                  <div key={m.id} className="flex items-center gap-3 p-2 pl-4 rounded-lg bg-[rgba(255,248,225,0.5)] group">
                     {m.profileImageUrl ? (
-                      <img src={m.profileImageUrl.startsWith("http") ? m.profileImageUrl : `${API_BASE}${m.profileImageUrl}`} alt="" className="h-7 w-7 rounded-full object-cover" />
+                      <img src={m.profileImageUrl.startsWith("http") ? m.profileImageUrl : `${API_BASE}${m.profileImageUrl}`} alt="" className="h-7 w-7 rounded-full object-cover shrink-0" />
                     ) : (
-                      <div className="h-7 w-7 rounded-full flex items-center justify-center text-white text-xs font-semibold" style={{ background: "linear-gradient(135deg, #5B4BF5, #3023D0)" }}>
+                      <div className="h-7 w-7 rounded-full flex items-center justify-center text-white text-xs font-semibold shrink-0" style={{ background: "linear-gradient(135deg, #5B4BF5, #3023D0)" }}>
                         {m.name?.[0]?.toUpperCase()}
                       </div>
                     )}
@@ -125,8 +184,25 @@ export default function TeamsPage() {
                       <p className="text-xs text-[#7A7A7A]">{m.email}</p>
                     </div>
                     <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${m.status === "ACTIVE" ? "bg-green-50 text-green-700" : "bg-[#FFF3C4] text-[#1A1A1A]"}`}>
-                      {m.status}
+                      {formatStatus(m.status)}
                     </span>
+                    {/* Member actions — visible on hover */}
+                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button
+                        onClick={() => { setMoveModal({ memberId: m.id, memberName: m.name }); setMoveTargetTeamId(""); }}
+                        className="p-1 rounded-md hover:bg-indigo-soft text-ink-4 hover:text-indigo transition-colors"
+                        title="Move to another team"
+                      >
+                        <ArrowRightLeft className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        onClick={() => handleRemoveMember(m.id)}
+                        className="p-1 rounded-md hover:bg-red-50 text-ink-4 hover:text-red-600 transition-colors"
+                        title="Remove from team"
+                      >
+                        <UserMinus className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -146,12 +222,35 @@ export default function TeamsPage() {
           <p className="text-[#7A7A7A] mt-1">Organization hierarchy and team management</p>
         </div>
         <button
-          onClick={() => setCreateOpen(!createOpen)}
+          onClick={() => { setCreateOpen(!createOpen); setCreateError(null); }}
           className="inline-flex items-center gap-2 bg-[#F5D547] text-[#1A1A1A] rounded-full px-5 py-2.5 text-sm font-medium shadow-[0_4px_16px_rgba(245,213,71,0.35)] hover:shadow-[0_6px_24px_rgba(245,213,71,0.45)] hover:-translate-y-0.5 transition-all"
         >
           <Plus className="h-4 w-4" /> Create Team
         </button>
       </div>
+
+      {/* Bulk action bar */}
+      {selected.size > 0 && (
+        <div className="v3-card p-3 flex items-center gap-3 bg-indigo-soft border-indigo/20">
+          <p className="text-sm font-semibold text-indigo flex-1">
+            {selected.size} team{selected.size !== 1 ? "s" : ""} selected
+          </p>
+          <button
+            onClick={() => setSelected(new Set())}
+            className="px-3 py-1.5 rounded-full text-xs font-medium text-ink-4 hover:text-ink border-2 border-ink/15 transition-colors"
+          >
+            Clear
+          </button>
+          <button
+            onClick={handleBulkDelete}
+            disabled={bulkDeleting}
+            className="flex items-center gap-1.5 px-4 py-1.5 rounded-full bg-danger text-white text-xs font-bold hover:bg-danger/90 transition-colors disabled:opacity-50"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            {bulkDeleting ? "Deleting…" : `Delete selected (${selected.size})`}
+          </button>
+        </div>
+      )}
 
       {/* Create Form */}
       {createOpen && (
@@ -160,7 +259,15 @@ export default function TeamsPage() {
           <form onSubmit={handleCreate} className="flex flex-wrap gap-4 items-end">
             <div className="flex flex-col gap-1">
               <label className="text-xs font-medium text-[#7A7A7A]">Name</label>
-              <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required className="w-52 border border-[#E8E0D0] rounded-lg" />
+              <Input
+                value={form.name}
+                onChange={(e) => { setForm({ ...form, name: e.target.value }); setCreateError(null); }}
+                required
+                className={`w-52 border rounded-lg ${createError ? "border-red-400 focus:ring-red-400" : "border-[#E8E0D0]"}`}
+              />
+              {createError && (
+                <p className="text-xs text-red-600 mt-0.5">{createError}</p>
+              )}
             </div>
             <div className="flex flex-col gap-1">
               <label className="text-xs font-medium text-[#7A7A7A]">Type</label>
@@ -217,6 +324,35 @@ export default function TeamsPage() {
           </div>
         )}
       </div>
+
+      {/* Move Member Modal */}
+      {moveModal && (
+        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50" onClick={() => setMoveModal(null)}>
+          <div className="bg-white rounded-2xl p-6 w-96 shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <h3 className="font-serif text-lg font-medium text-[#1A1A1A] mb-1">Move Member</h3>
+            <p className="text-sm text-[#7A7A7A] mb-4">Moving <span className="font-semibold text-[#1A1A1A]">{moveModal.memberName}</span> to a new team</p>
+            <select
+              value={moveTargetTeamId}
+              onChange={(e) => setMoveTargetTeamId(e.target.value)}
+              className="w-full h-10 rounded-lg border border-[#E8E0D0] bg-white px-3 text-sm mb-4"
+            >
+              <option value="">— Remove from all teams —</option>
+              {allUnits.map((u: any) => (
+                <option key={u.id} value={u.id}>{u.name} ({u.type})</option>
+              ))}
+            </select>
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => setMoveModal(null)} className="px-4 py-2 text-sm text-[#7A7A7A] hover:text-[#1A1A1A]">Cancel</button>
+              <button
+                onClick={handleMoveMember}
+                className="bg-[#1A1A1A] text-white px-5 py-2 rounded-full text-sm font-semibold hover:bg-[#2B2B2B]"
+              >
+                {moveTargetTeamId ? "Move" : "Remove from team"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Assign Member Modal */}
       {assignModal && (

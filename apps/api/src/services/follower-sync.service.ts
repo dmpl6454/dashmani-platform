@@ -49,7 +49,7 @@ async function fetchInstagramFollowers(username: string): Promise<number | null>
         return null;
       }
       if (!res.ok) return null;
-      const data = await res.json();
+      const data = await res.json() as any;
       return data?.data?.user?.edge_followed_by?.count ?? null;
     } catch {
       return null;

@@ -17,6 +17,9 @@ import * as aiService from "../services/ai.service";
 import * as attendanceService from "../services/attendance.service";
 import * as notificationService from "../services/notification.service";
 import { notifyHrByEmail, notifyAdminByEmail } from "../services/email.service";
+import * as profileService from "../services/employee-profile.service";
+import * as reportService from "../services/daily-report.service";
+import { getLeaderboard, getTeamDashboard } from "../services/leaderboard.service";
 import { prisma } from "@dashmani/db";
 import bcrypt from "bcrypt";
 
@@ -388,7 +391,7 @@ router.get("/hr/tasks", authenticateHr, async (req: Request, res: Response, next
     const tasks = await prisma.task.findMany({
       where: { assigneeId: req.user!.userId },
       include: {
-        creator: { select: { id: true, name: true } },
+        createdBy: { select: { id: true, name: true } },
         account: { select: { id: true, displayName: true, handle: true } },
         comments: {
           include: { author: { select: { id: true, name: true } } },
@@ -422,7 +425,7 @@ router.post("/hr/tasks/:id/comments", authenticateHr, async (req: Request, res: 
       return res.status(404).json({ error: "Task not found" });
     }
     const comment = await prisma.taskComment.create({
-      data: { taskId: req.params.id, authorId: req.user!.userId, content: req.body.content },
+      data: { taskId: req.params.id, authorId: req.user!.userId, body: req.body.content },
       include: { author: { select: { id: true, name: true } } },
     });
     return success(res, comment, undefined, 201);
@@ -726,6 +729,125 @@ router.get("/hr/sop-status", authenticateHr, async (req: Request, res: Response,
       select: { sopAcceptedAt: true },
     });
     return success(res, { accepted: !!profile?.sopAcceptedAt, acceptedAt: profile?.sopAcceptedAt });
+  } catch (err) { next(err); }
+});
+
+// ===== Profile =====
+
+// GET /hr/profile — get own profile
+router.get("/hr/profile", authenticateHr, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const profile = await profileService.getProfile(req.user!.userId);
+    return success(res, profile);
+  } catch (err) { next(err); }
+});
+
+// PUT /hr/profile — update own profile
+router.put("/hr/profile", authenticateHr, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const updated = await profileService.updateProfile(req.user!.userId, req.body);
+    return success(res, updated);
+  } catch (err) { next(err); }
+});
+
+// ===== Daily Reports (employee-scoped) =====
+
+// GET /hr/reports/today — get today's report for self
+router.get("/hr/reports/today", authenticateHr, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const report = await reportService.getTodayReport(req.user!.userId);
+    return success(res, report);
+  } catch (err) { next(err); }
+});
+
+// GET /hr/reports — get own report history
+router.get("/hr/reports", authenticateHr, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { startDate, endDate } = req.query as { startDate?: string; endDate?: string };
+    const reports = await reportService.getMyReports(req.user!.userId, startDate, endDate);
+    return success(res, reports);
+  } catch (err) { next(err); }
+});
+
+// POST /hr/reports — submit a daily report
+router.post("/hr/reports", authenticateHr, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { date, links, notes, latitude, longitude } = req.body;
+    const report = await reportService.submitDailyReport(
+      req.user!.userId,
+      date,
+      links,
+      notes,
+      latitude,
+      longitude,
+    );
+    return success(res, report, undefined, 201);
+  } catch (err) { next(err); }
+});
+
+// ===== Accounts =====
+
+// GET /hr/accounts — get social accounts assigned to self
+router.get("/hr/accounts", authenticateHr, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const accounts = await reportService.getAssignedAccounts(req.user!.userId);
+    return success(res, accounts);
+  } catch (err) { next(err); }
+});
+
+// ===== Leaderboard =====
+
+// GET /hr/leaderboard
+router.get("/hr/leaderboard", authenticateHr, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { startDate, endDate } = req.query as { startDate?: string; endDate?: string };
+    const leaderboard = await getLeaderboard(startDate, endDate);
+    return success(res, leaderboard);
+  } catch (err) { next(err); }
+});
+
+// ===== Team =====
+
+// GET /hr/team — get own team dashboard (team lead only)
+router.get("/hr/team", authenticateHr, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const dashboard = await getTeamDashboard(req.user!.userId);
+    return success(res, dashboard);
+  } catch (err) { next(err); }
+});
+
+// ===== Notifications =====
+
+// GET /hr/notifications — list own notifications
+router.get("/hr/notifications", authenticateHr, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const unreadOnly = req.query.unread === "true";
+    const notifications = await notificationService.getUserNotifications(req.user!.userId, unreadOnly);
+    return success(res, notifications);
+  } catch (err) { next(err); }
+});
+
+// GET /hr/notifications/count — unread count
+router.get("/hr/notifications/count", authenticateHr, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const count = await notificationService.getUnreadCount(req.user!.userId);
+    return success(res, { count });
+  } catch (err) { next(err); }
+});
+
+// PUT /hr/notifications/:id/read — mark one as read
+router.put("/hr/notifications/:id/read", authenticateHr, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    await notificationService.markAsRead(req.params.id, req.user!.userId);
+    return success(res, { ok: true });
+  } catch (err) { next(err); }
+});
+
+// PUT /hr/notifications/read-all — mark all as read
+router.put("/hr/notifications/read-all", authenticateHr, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    await notificationService.markAllAsRead(req.user!.userId);
+    return success(res, { ok: true });
   } catch (err) { next(err); }
 });
 

@@ -3,6 +3,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAccounts, usePlatforms } from "@/lib/hooks/use-accounts";
+import { formatStatus } from "@dashmani/shared";
 import { Button, Input } from "@dashmani/ui";
 import { Pencil, Trash2 } from "lucide-react";
 import { apiFetch } from "@/lib/api";
@@ -104,7 +105,7 @@ export default function AccountsPage() {
                     <td className="p-4 text-[#7A7A7A]">{acc.followerCount?.toLocaleString()}</td>
                     <td className="p-4">
                       <span className={`rounded-full px-3 py-1 text-xs font-medium ${statusBadge[acc.status] || "bg-[rgba(0,0,0,0.06)] text-[#7A7A7A]"}`}>
-                        {acc.status}
+                        {formatStatus(acc.status)}
                       </span>
                     </td>
                     <td className="p-4">

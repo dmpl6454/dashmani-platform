@@ -166,6 +166,18 @@ export async function forgotPassword(email: string, app: "internal" | "hr" = "in
   });
 }
 
+export async function changePassword(userId: string, currentPassword: string, newPassword: string) {
+  const user = await prisma.user.findUnique({ where: { id: userId, deletedAt: null } });
+  if (!user) throw new AppError(404, "NOT_FOUND", "User not found");
+
+  const valid = await comparePassword(currentPassword, user.passwordHash);
+  if (!valid) throw new AppError(401, "INVALID_CREDENTIALS", "Current password is incorrect");
+
+  const passwordHash = await hashPassword(newPassword);
+  await prisma.user.update({ where: { id: userId }, data: { passwordHash } });
+  await prisma.refreshToken.deleteMany({ where: { userId } });
+}
+
 export async function resetPassword(token: string, newPassword: string) {
   const record = await prisma.otpToken.findFirst({
     where: {

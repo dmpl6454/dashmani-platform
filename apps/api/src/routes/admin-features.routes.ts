@@ -55,11 +55,11 @@ router.post(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { month, year } = req.body;
-      const result = await salaryService.generateBulkSalarySlips({
+      const result = await salaryService.generateBulkSalarySlips(
         month,
         year,
-        generatedBy: (req as any).user.userId,
-      });
+        (req as any).user.userId,
+      );
       return success(res, result, undefined, 201);
     } catch (err) {
       next(err);
@@ -80,10 +80,10 @@ router.get(
         year?: string;
         status?: string;
       };
-      const result = await salaryService.getSalarySlips({
+      const result = await salaryService.listSalarySlips({
         employeeId,
-        month,
-        year,
+        month: month ? Number(month) : undefined,
+        year: year ? Number(year) : undefined,
         status,
       });
       return success(res, result);
@@ -273,7 +273,7 @@ router.get(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { employeeId } = req.query as { employeeId?: string };
-      const result = await offerLetterService.getOfferLetters({ employeeId });
+      const result = await offerLetterService.getOfferLetters(employeeId);
       return success(res, result);
     } catch (err) {
       next(err);
@@ -336,7 +336,7 @@ router.get(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { employeeId } = req.query as { employeeId?: string };
-      const result = await contractService.getContracts({ employeeId });
+      const result = await contractService.listContracts({ employeeId });
       return success(res, result);
     } catch (err) {
       next(err);
@@ -383,7 +383,7 @@ router.get(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { year } = req.query as { year?: string };
-      const result = await holidayService.getHolidays({ year });
+      const result = await holidayService.listHolidays(year ? Number(year) : undefined);
       return success(res, result);
     } catch (err) {
       next(err);

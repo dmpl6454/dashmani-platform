@@ -5,21 +5,28 @@ import { useOverviewStats } from "@/lib/hooks/use-analytics";
 import { useAnnouncements } from "@/lib/hooks/use-announcements";
 import {
   Users, Building2, Clock, CheckCircle, FolderOpen, FileCheck, Send,
-  UserPlus, ArrowRight, Megaphone, TrendingUp, BarChart3,
+  UserPlus, ArrowRight, Megaphone, TrendingUp, Link2, Calendar, BarChart2, CalendarDays, X,
+  Share2, ChevronDown,
 } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { usePageTitle } from "@/lib/hooks/use-page-title";
 import { apiFetch } from "@/lib/api";
+import {
+  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
+} from "recharts";
 
 const statStrip = [
-  { key: "totalEmployees",          label: "Employees",       icon: Users },
-  { key: "activeTeams",             label: "Teams",           icon: Building2 },
-  { key: "presentToday",            label: "Present",         icon: Clock },
-  { key: "tasksCompletedThisMonth", label: "Tasks Done",      icon: CheckCircle },
-  { key: "activeProjects",          label: "Projects",        icon: FolderOpen },
-  { key: "pendingApprovals",        label: "Pending",         icon: FileCheck },
-  { key: "contentPublishedThisMonth", label: "Published",     icon: Send },
-  { key: "pendingEmployees",        label: "New Joiners",     icon: UserPlus },
+  { key: "totalEmployees",          label: "Active Employees", icon: Users },
+  { key: "activeTeams",             label: "Teams",            icon: Building2 },
+  { key: "presentToday",            label: "Present",          icon: Clock },
+  { key: "tasksCompletedThisMonth", label: "Tasks Done",       icon: CheckCircle },
+  { key: "activeProjects",          label: "Projects",         icon: FolderOpen },
+  { key: "pendingApprovals",        label: "Pending",          icon: FileCheck },
+  { key: "contentPublishedThisMonth", label: "Published",      icon: Send },
+  { key: "pendingEmployees",        label: "New Joiners",      icon: UserPlus },
+  { key: "linksToday",              label: "Links Today",      icon: Link2 },
+  { key: "linksThisMonth",          label: "Links / Month",    icon: Calendar },
+  { key: "submittedTodayCount",     label: "Submitted Today",  icon: BarChart2 },
 ];
 
 function QuickAnnounceModal({ onClose }: { onClose: () => void }) {
@@ -130,20 +137,221 @@ function QuickAnnounceModal({ onClose }: { onClose: () => void }) {
   );
 }
 
+function CustomTooltip({ active, payload, label }: any) {
+  if (!active || !payload?.length) return null;
+  return (
+    <div className="bg-ink text-white text-xs rounded-lg px-3 py-2 shadow-lg">
+      <p className="font-semibold mb-0.5">{label}</p>
+      <p>{payload[0].value} link{payload[0].value !== 1 ? "s" : ""}</p>
+    </div>
+  );
+}
+
+function QuickAssignModal({ onClose }: { onClose: () => void }) {
+  const [employees, setEmployees] = useState<any[]>([]);
+  const [accounts, setAccounts] = useState<any[]>([]);
+  const [selectedEmployee, setSelectedEmployee] = useState("");
+  const [selectedAccount, setSelectedAccount] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [done, setDone] = useState<{ employeeName: string; accountHandle: string } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    apiFetch<any>("/employees?status=ACTIVE&limit=200").then((r) => setEmployees(r?.data ?? []));
+    apiFetch<any>("/accounts?limit=200").then((r) => setAccounts(r?.data ?? []));
+  }, []);
+
+  // Accounts already assigned to the selected employee (so we can mark them)
+  const assignedAccountIds = new Set<string>(
+    accounts
+      .filter((a: any) =>
+        a.assignments?.some((asn: any) => !asn.unassignedAt && asn.employee?.id === selectedEmployee)
+      )
+      .map((a: any) => a.id)
+  );
+
+  const selectedEmployeeName = employees.find((e: any) => e.id === selectedEmployee)?.name ?? "";
+  const selectedAccountData = accounts.find((a: any) => a.id === selectedAccount);
+
+  async function handleAssign() {
+    if (!selectedEmployee || !selectedAccount) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      await apiFetch(`/accounts/${selectedAccount}/assign`, {
+        method: "POST",
+        body: JSON.stringify({ employeeId: selectedEmployee }),
+      });
+      setDone({ employeeName: selectedEmployeeName, accountHandle: selectedAccountData?.handle ?? selectedAccount });
+    } catch (err: any) {
+      setError(err?.message || "Assignment failed. Please try again.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  const inputCls = "w-full border-2 border-ink/15 bg-surface rounded-xl px-4 py-2.5 text-sm text-ink transition-colors focus:outline-none focus:border-indigo";
+
+  if (done) return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4">
+      <div className="v3-card shadow-pop p-8 text-center w-full max-w-sm pop-in">
+        <div className="h-14 w-14 rounded-xl border-2 border-ink bg-sage flex items-center justify-center mx-auto mb-4">
+          <Share2 className="h-7 w-7 text-white" />
+        </div>
+        <p className="text-lg font-bold text-ink font-display">Account assigned!</p>
+        <p className="text-sm text-ink-3 mt-1">
+          <span className="font-semibold text-ink">{done.employeeName}</span> is now assigned to{" "}
+          <span className="font-semibold text-ink">@{done.accountHandle}</span>.
+        </p>
+        <div className="flex items-center justify-center gap-3 mt-6">
+          <button
+            onClick={() => { setDone(null); setSelectedEmployee(""); setSelectedAccount(""); }}
+            className="px-5 py-2 rounded-full border-2 border-ink/15 text-sm text-ink-3 hover:bg-muted transition-colors"
+          >
+            Assign another
+          </button>
+          <button onClick={onClose} className="px-6 py-2.5 rounded-full bg-ink text-white text-sm font-bold btn-3d hover:bg-ink-2 transition-colors">
+            Done
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4" onClick={onClose}>
+      <div className="v3-card shadow-pop w-full max-w-lg overflow-hidden pop-in" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-6 py-4 border-b-2 border-ink/10">
+          <h2 className="font-bold text-ink flex items-center gap-2">
+            <Share2 size={18} className="text-sage" />
+            Quick Assign Account
+          </h2>
+          <button onClick={onClose} className="h-7 w-7 flex items-center justify-center rounded-lg hover:bg-muted transition-colors text-ink-4 text-xl leading-none">×</button>
+        </div>
+        <div className="p-6 space-y-4">
+          <p className="text-xs text-ink-4">Pick an employee first, then choose which social account to assign them to.</p>
+
+          {/* Step 1 — Employee */}
+          <div>
+            <label className="text-xs font-bold text-ink-4 uppercase tracking-wider mb-1.5 block">1. Employee</label>
+            <div className="relative">
+              <select
+                value={selectedEmployee}
+                onChange={(e) => { setSelectedEmployee(e.target.value); setSelectedAccount(""); }}
+                className={`${inputCls} appearance-none pr-8`}
+              >
+                <option value="">Select employee…</option>
+                {employees.map((e: any) => (
+                  <option key={e.id} value={e.id}>{e.name} {e.designation ? `· ${e.designation}` : ""}</option>
+                ))}
+              </select>
+              <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-ink-4 pointer-events-none" />
+            </div>
+          </div>
+
+          {/* Step 2 — Account (only after employee selected) */}
+          {selectedEmployee && (
+            <div>
+              <label className="text-xs font-bold text-ink-4 uppercase tracking-wider mb-1.5 block">2. Social Account</label>
+              <div className="relative">
+                <select
+                  value={selectedAccount}
+                  onChange={(e) => setSelectedAccount(e.target.value)}
+                  className={`${inputCls} appearance-none pr-8`}
+                >
+                  <option value="">Select account…</option>
+                  {accounts.map((a: any) => {
+                    const alreadyAssigned = assignedAccountIds.has(a.id);
+                    return (
+                      <option key={a.id} value={a.id} disabled={alreadyAssigned}>
+                        {a.platform?.name ? `[${a.platform.name}] ` : ""}{a.handle}{a.displayName ? ` — ${a.displayName}` : ""}{alreadyAssigned ? " (already assigned)" : ""}
+                      </option>
+                    );
+                  })}
+                </select>
+                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-ink-4 pointer-events-none" />
+              </div>
+              {selectedAccount && (
+                <p className="text-xs text-ink-4 mt-1.5">
+                  {selectedAccountData?.platform?.name} · @{selectedAccountData?.handle}
+                  {selectedAccountData?.followerCount ? ` · ${selectedAccountData.followerCount.toLocaleString()} followers` : ""}
+                  {selectedAccountData?.clientName ? ` · Client: ${selectedAccountData.clientName}` : ""}
+                </p>
+              )}
+            </div>
+          )}
+
+          {error && <p className="text-xs text-danger">{error}</p>}
+
+          <div className="flex items-center justify-end gap-3 pt-1">
+            <button type="button" onClick={onClose} className="px-5 py-2 rounded-full border-2 border-ink/15 text-sm text-ink-3 hover:bg-muted transition-colors">Cancel</button>
+            <button
+              type="button"
+              onClick={handleAssign}
+              disabled={!selectedEmployee || !selectedAccount || submitting}
+              className="px-5 py-2.5 rounded-full bg-ink text-white text-sm font-bold btn-3d hover:bg-ink-2 transition-colors disabled:opacity-50 flex items-center gap-2"
+            >
+              <Share2 size={15} />
+              {submitting ? "Assigning…" : "Assign Account"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const LINK_QUICK_RANGES = [
+  { label: "14d",  days: 14 },
+  { label: "30d",  days: 30 },
+  { label: "90d",  days: 90 },
+];
+
+function toISO(d: Date) { return d.toISOString().slice(0, 10); }
+
 export default function DashboardPage() {
   usePageTitle("Dashboard");
   const { user } = useAuth();
-  const { data, isLoading } = useOverviewStats();
   const { announcements } = useAnnouncements();
-  const stats = (data as any)?.data || {};
   const firstName = user?.name?.split(" ")[0] || "";
-  const pendingEmployees = stats?.pendingEmployees ?? 0;
   const [announceOpen, setAnnounceOpen] = useState(false);
+  const [assignOpen, setAssignOpen] = useState(false);
+  const today = new Date();
+
+  // Links bento date range — default last 14 days
+  const [linkStart, setLinkStart] = useState(toISO(new Date(today.getTime() - 13 * 86400000)));
+  const [linkEnd, setLinkEnd] = useState(toISO(today));
+  const [showDatePicker, setShowDatePicker] = useState(false);
+
+  const { data, isLoading } = useOverviewStats(linkStart, linkEnd);
+  const stats = (data as any)?.data || {};
   const lastAnnouncement = announcements[0];
+  const pendingEmployees = stats?.pendingEmployees ?? 0;
+
+  const linksTrend: { date: string; count: number }[] = stats.linksTrend ?? [];
+  const trendData = linksTrend.map((d) => ({
+    date: new Date(d.date).toLocaleDateString("en-IN", { day: "numeric", month: "short" }),
+    links: d.count,
+  }));
+
+  const totalEmployees = stats.totalEmployees ?? 0;
+  const submittedToday = stats.submittedTodayCount ?? 0;
+  const submissionRate = stats.submissionRateToday ?? 0;
+
+  function applyQuickRange(days: number) {
+    setLinkStart(toISO(new Date(today.getTime() - (days - 1) * 86400000)));
+    setLinkEnd(toISO(today));
+  }
+
+  const isDefault14d = linkStart === toISO(new Date(today.getTime() - 13 * 86400000)) && linkEnd === toISO(today);
+  const rangeLabel = isDefault14d
+    ? "Last 14 days"
+    : `${new Date(linkStart).toLocaleDateString("en-IN", { day: "numeric", month: "short" })} – ${new Date(linkEnd).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}`;
 
   return (
     <div className="space-y-5 pop-in">
       {announceOpen && <QuickAnnounceModal onClose={() => setAnnounceOpen(false)} />}
+      {assignOpen && <QuickAssignModal onClose={() => setAssignOpen(false)} />}
 
       {/* Page header */}
       <div>
@@ -154,24 +362,34 @@ export default function DashboardPage() {
         <p className="text-sm text-ink-3 mt-0.5">Here's your organisation overview</p>
       </div>
 
-      {/* Stat strip */}
-      <div className="grid grid-cols-4 lg:grid-cols-8 gap-3 fade-up d2">
+      {/* Stat strip — 11 cards (4 cols mobile → wrap) */}
+      <div className="grid grid-cols-4 lg:grid-cols-11 gap-3 fade-up d2">
         {statStrip.map(({ key, label, icon: Icon }, i) => {
           const value = stats[key];
           const isPending = key === "pendingApprovals" || key === "pendingEmployees";
+          const isLinks = key === "linksToday" || key === "linksThisMonth" || key === "submittedTodayCount";
+          let subtitle: string | null = null;
+          if (key === "submittedTodayCount") subtitle = `${submissionRate}% rate`;
           return (
             <div
               key={key}
               className="v3-card-sm p-3 flex flex-col gap-1 v3-card-lift"
               style={{ animationDelay: `${i * 0.04}s` }}
             >
-              <div className={`h-7 w-7 rounded-lg flex items-center justify-center ${isPending ? "bg-attention/10" : "bg-indigo-soft"}`}>
-                <Icon className={`h-3.5 w-3.5 ${isPending ? "text-attention" : "text-indigo"}`} />
+              <div className={`h-7 w-7 rounded-lg flex items-center justify-center ${
+                isPending ? "bg-attention/10" : isLinks ? "bg-terra-soft" : "bg-indigo-soft"
+              }`}>
+                <Icon className={`h-3.5 w-3.5 ${
+                  isPending ? "text-attention" : isLinks ? "text-terra" : "text-indigo"
+                }`} />
               </div>
               <p className="font-display text-xl font-semibold text-ink leading-none">
                 {isLoading ? "—" : (value ?? 0)}
               </p>
               <p className="text-[10px] text-ink-4 font-medium leading-tight">{label}</p>
+              {subtitle && !isLoading && (
+                <p className="text-[10px] text-terra font-semibold leading-tight">{subtitle}</p>
+              )}
             </div>
           );
         })}
@@ -231,6 +449,179 @@ export default function DashboardPage() {
           </div>
         )}
 
+        {/* Links Activity bento — full width */}
+        <div className="lg:col-span-3 v3-card p-5 space-y-4 v3-card-lift">
+          <div className="flex items-center justify-between flex-wrap gap-3">
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 rounded-xl bg-terra-soft flex items-center justify-center">
+                <Link2 className="h-5 w-5 text-terra" />
+              </div>
+              <div>
+                <p className="font-bold text-ink">Links Activity</p>
+                <p className="text-xs text-ink-4">{rangeLabel}</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-3">
+              {/* Quick range pills */}
+              {LINK_QUICK_RANGES.map((r) => {
+                const rStart = toISO(new Date(today.getTime() - (r.days - 1) * 86400000));
+                const isActive = linkStart === rStart && linkEnd === toISO(today);
+                return (
+                  <button
+                    key={r.label}
+                    onClick={() => { applyQuickRange(r.days); setShowDatePicker(false); }}
+                    className={`h-7 px-3 rounded-full text-xs font-semibold transition-all border-2 ${
+                      isActive
+                        ? "bg-terra text-white border-terra"
+                        : "bg-surface text-ink-4 border-ink/12 hover:border-terra/30 hover:text-terra"
+                    }`}
+                  >
+                    {r.label}
+                  </button>
+                );
+              })}
+              {/* Custom date range toggle */}
+              <button
+                onClick={() => setShowDatePicker((v) => !v)}
+                className={`h-7 px-3 rounded-full text-xs font-semibold transition-all border-2 flex items-center gap-1.5 ${
+                  showDatePicker
+                    ? "bg-ink text-white border-ink"
+                    : "bg-surface text-ink-4 border-ink/12 hover:border-ink/25 hover:text-ink"
+                }`}
+              >
+                <CalendarDays className="h-3 w-3" /> Custom
+              </button>
+              {!isDefault14d && (
+                <button
+                  onClick={() => { applyQuickRange(14); setShowDatePicker(false); }}
+                  className="h-7 w-7 flex items-center justify-center rounded-full bg-surface text-ink-4 hover:text-danger border-2 border-ink/12 hover:border-danger/30 transition-colors"
+                  title="Reset range"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Custom date inputs — shown when toggled */}
+          {showDatePicker && (
+            <div className="flex items-center gap-3 flex-wrap p-3 bg-muted/50 rounded-xl">
+              <div className="flex items-center gap-2">
+                <label className="text-xs text-ink-4 font-medium">From</label>
+                <input
+                  type="date"
+                  value={linkStart}
+                  max={linkEnd}
+                  onChange={(e) => setLinkStart(e.target.value)}
+                  className="h-8 rounded-lg border-2 border-ink/15 bg-white text-xs px-2 focus:outline-none focus:border-indigo transition-colors"
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="text-xs text-ink-4 font-medium">To</label>
+                <input
+                  type="date"
+                  value={linkEnd}
+                  min={linkStart}
+                  max={toISO(today)}
+                  onChange={(e) => setLinkEnd(e.target.value)}
+                  className="h-8 rounded-lg border-2 border-ink/15 bg-white text-xs px-2 focus:outline-none focus:border-indigo transition-colors"
+                />
+              </div>
+              <button
+                onClick={() => setShowDatePicker(false)}
+                className="h-8 px-3 rounded-lg bg-ink text-white text-xs font-semibold hover:bg-ink-2 transition-colors"
+              >
+                Apply
+              </button>
+            </div>
+          )}
+
+          {/* Stat chips */}
+          <div className="flex items-center gap-4 text-center flex-wrap">
+            <div>
+              <p className="font-display text-lg font-semibold text-ink leading-none">{isLoading ? "—" : (stats.linksToday ?? 0)}</p>
+              <p className="text-[10px] text-ink-4 mt-0.5">Today</p>
+            </div>
+            <div className="w-px h-8 bg-ink/10" />
+            <div>
+              <p className="font-display text-lg font-semibold text-ink leading-none">{isLoading ? "—" : (stats.linksThisWeek ?? 0)}</p>
+              <p className="text-[10px] text-ink-4 mt-0.5">This Week</p>
+            </div>
+            <div className="w-px h-8 bg-ink/10" />
+            <div>
+              <p className="font-display text-lg font-semibold text-ink leading-none">{isLoading ? "—" : (stats.linksThisMonth ?? 0)}</p>
+              <p className="text-[10px] text-ink-4 mt-0.5">This Month</p>
+            </div>
+            {stats.isCustomRange && stats.linksInRange !== null && (
+              <>
+                <div className="w-px h-8 bg-ink/10" />
+                <div>
+                  <p className="font-display text-lg font-semibold text-terra leading-none">{isLoading ? "—" : stats.linksInRange}</p>
+                  <p className="text-[10px] text-terra mt-0.5">In Range</p>
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* Submission rate bar */}
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <p className="text-xs text-ink-4">
+                {isLoading ? "—" : submittedToday} / {isLoading ? "—" : totalEmployees} employees submitted today
+              </p>
+              <p className="text-xs font-semibold text-terra">{isLoading ? "—" : submissionRate}%</p>
+            </div>
+            <div className="h-1.5 rounded-full bg-ink/8 overflow-hidden">
+              <div
+                className="h-full rounded-full bg-terra transition-all duration-700"
+                style={{ width: `${submissionRate}%` }}
+              />
+            </div>
+          </div>
+
+          {/* 14-day bar chart */}
+          <div className="h-44">
+            {isLoading ? (
+              <div className="h-full flex items-center justify-center">
+                <p className="text-xs text-ink-4">Loading chart…</p>
+              </div>
+            ) : trendData.length === 0 ? (
+              <div className="h-full flex items-center justify-center">
+                <p className="text-xs text-ink-4">No link data yet</p>
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={trendData} barSize={18} margin={{ top: 4, right: 4, left: -24, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.06)" vertical={false} />
+                  <XAxis
+                    dataKey="date"
+                    tick={{ fontSize: 10, fill: "var(--color-ink-4, #888)" }}
+                    axisLine={false}
+                    tickLine={false}
+                  />
+                  <YAxis
+                    tick={{ fontSize: 10, fill: "var(--color-ink-4, #888)" }}
+                    axisLine={false}
+                    tickLine={false}
+                    allowDecimals={false}
+                  />
+                  <Tooltip content={<CustomTooltip />} cursor={{ fill: "rgba(0,0,0,0.04)" }} />
+                  <Bar dataKey="links" fill="var(--color-terra, #c97c3a)" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+
+          <div className="flex justify-end">
+            <Link
+              href="/reports"
+              className="flex items-center gap-1.5 text-xs font-semibold text-terra hover:underline"
+            >
+              View full reports <ArrowRight className="h-3.5 w-3.5" />
+            </Link>
+          </div>
+        </div>
+
         {/* Quick nav cards */}
         <Link href="/employees" className="v3-card-sm p-5 flex items-center gap-4 v3-card-lift group">
           <div className="h-12 w-12 rounded-xl border-2 border-ink/12 bg-indigo-soft flex items-center justify-center">
@@ -238,7 +629,7 @@ export default function DashboardPage() {
           </div>
           <div className="flex-1 min-w-0">
             <p className="font-bold text-ink">{isLoading ? "—" : (stats.totalEmployees ?? 0)}</p>
-            <p className="text-xs text-ink-4">Total Employees</p>
+            <p className="text-xs text-ink-4">Active Employees</p>
           </div>
           <ArrowRight className="h-4 w-4 text-ink-4 opacity-0 group-hover:opacity-100 transition-opacity" />
         </Link>
@@ -264,6 +655,21 @@ export default function DashboardPage() {
           </div>
           <ArrowRight className="h-4 w-4 text-ink-4 opacity-0 group-hover:opacity-100 transition-opacity" />
         </Link>
+
+        {/* Quick Assign Account card */}
+        <button
+          onClick={() => setAssignOpen(true)}
+          className="v3-card-sm p-5 flex items-center gap-4 v3-card-lift group text-left"
+        >
+          <div className="h-12 w-12 rounded-xl border-2 border-ink/12 bg-sage-soft flex items-center justify-center shrink-0">
+            <Share2 className="h-6 w-6 text-sage" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="font-bold text-ink">Assign Account</p>
+            <p className="text-xs text-ink-4">Assign a social account to an employee</p>
+          </div>
+          <ArrowRight className="h-4 w-4 text-ink-4 opacity-0 group-hover:opacity-100 transition-opacity" />
+        </button>
 
       </div>
     </div>

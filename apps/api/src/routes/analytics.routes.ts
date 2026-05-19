@@ -13,9 +13,12 @@ router.get(
   "/analytics/overview",
   authenticate,
   requirePermission("analytics", "view"),
-  async (_req: Request, res: Response, next: NextFunction) => {
+  async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const stats = await analyticsService.getOverviewStats();
+      const stats = await analyticsService.getOverviewStats(
+        req.query.startDate as string | undefined,
+        req.query.endDate as string | undefined,
+      );
       return success(res, stats);
     } catch (err) {
       next(err);

@@ -33,3 +33,19 @@ export function useReportSummary(startDate?: string, endDate?: string) {
   const query = params.toString() ? `?${params.toString()}` : "";
   return useSWR(`/admin/reports/summary${query}`, (url) => apiFetch(url));
 }
+
+export function useEmployeeReportStats(employeeId?: string) {
+  return useSWR(
+    employeeId ? `/admin/reports/employee-stats/${employeeId}` : null,
+    (url) => apiFetch(url),
+    { refreshInterval: 60000 },
+  );
+}
+
+export function useLinksAnalytics(startDate?: string, endDate?: string) {
+  const params = new URLSearchParams();
+  if (startDate) params.set("startDate", startDate);
+  if (endDate) params.set("endDate", endDate);
+  const query = params.toString() ? `?${params.toString()}` : "";
+  return useSWR(`/admin/reports/links-analytics${query}`, (url) => apiFetch(url));
+}

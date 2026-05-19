@@ -15,6 +15,7 @@ import { success } from "../utils/response";
 import { parsePagination } from "../utils/pagination";
 import { prisma } from "@dashmani/db";
 import { AppError } from "../middleware/error-handler";
+import { uploadDocument, toUploadUrl } from "../middleware/upload";
 
 const router = Router();
 
@@ -229,6 +230,67 @@ router.get("/client/files", authenticateClient, async (req: Request, res: Respon
       search: req.query.search as string | undefined,
     });
     return success(res, files);
+  } catch (err) { next(err); }
+});
+
+// POST /v1/client/files  — upload a file to a project
+router.post(
+  "/client/files",
+  authenticateClient,
+  uploadDocument.single("file"),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const clientId = (req as any).client.id;
+      const { projectId } = req.body;
+
+      if (!projectId || typeof projectId !== "string") {
+        throw new AppError(400, "VALIDATION_ERROR", "projectId is required");
+      }
+      if (!req.file) {
+        throw new AppError(400, "VALIDATION_ERROR", "No file provided");
+      }
+
+      // Verify the project belongs to this client
+      const project = await prisma.project.findUnique({
+        where: { id: projectId },
+        select: { clientId: true, client: { select: { email: true } } },
+      });
+      if (!project || project.clientId !== clientId) {
+        throw new AppError(403, "FORBIDDEN", "Access denied");
+      }
+
+      // Resolve the client's email to a User row (ProjectFile.uploadedById → User)
+      const clientEmail = project.client?.email;
+      if (!clientEmail) throw new AppError(404, "NOT_FOUND", "Client not found");
+      const user = await prisma.user.findFirst({ where: { email: clientEmail } });
+      if (!user) throw new AppError(400, "NO_USER_ACCOUNT", "No linked user account found for this client");
+
+      const url = toUploadUrl(req.file.path);
+      const file = await projectService.addFile(projectId, user.id, {
+        name: req.file.originalname,
+        url,
+        size: req.file.size,
+        mimeType: req.file.mimetype,
+      });
+
+      return success(res, file, undefined, 201);
+    } catch (err) { next(err); }
+  }
+);
+
+// DELETE /v1/client/files/:id
+router.delete("/client/files/:id", authenticateClient, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const clientId = (req as any).client.id;
+    const fileRecord = await prisma.projectFile.findUnique({
+      where: { id: req.params.id },
+      select: { project: { select: { clientId: true } } },
+    });
+    if (!fileRecord || fileRecord.project.clientId !== clientId) {
+      throw new AppError(403, "FORBIDDEN", "Access denied");
+    }
+    await projectService.deleteFile(req.params.id);
+    return success(res, { message: "File deleted" });
   } catch (err) { next(err); }
 });
 

@@ -35,6 +35,17 @@ router.put("/teams/:id", authenticate, requirePermission("teams", "edit"), audit
   } catch (err) { next(err); }
 });
 
+router.delete("/teams/bulk", authenticate, requirePermission("teams", "delete"), auditLog("teams", "bulk-delete"), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const ids: string[] = req.body.ids;
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return next(new Error("ids must be a non-empty array"));
+    }
+    await teamService.bulkDeleteOrgUnits(ids);
+    return success(res, { message: `${ids.length} org unit(s) deleted` });
+  } catch (err) { next(err); }
+});
+
 router.delete("/teams/:id", authenticate, requirePermission("teams", "delete"), auditLog("teams", "delete"), async (req: Request, res: Response, next: NextFunction) => {
   try {
     await teamService.deleteOrgUnit(req.params.id);

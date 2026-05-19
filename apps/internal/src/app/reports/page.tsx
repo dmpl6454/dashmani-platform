@@ -68,13 +68,22 @@ export default function ReportsPage() {
           <h1 className="font-serif text-4xl font-light text-[#1A1A1A]">Daily Reports</h1>
           <p className="text-sm text-[#7A7A7A] mt-1">Employee daily link submission reports</p>
         </div>
-        <Link
-          href="/reports/leaderboard"
-          className="inline-flex items-center gap-2 bg-[#F5D547] text-[#1A1A1A] rounded-full px-5 py-2.5 text-sm font-medium shadow-[0_4px_16px_rgba(245,213,71,0.35)] hover:shadow-[0_6px_24px_rgba(245,213,71,0.45)] hover:-translate-y-0.5 transition-all"
-        >
-          <Trophy className="h-4 w-4" />
-          Leaderboard
-        </Link>
+        <div className="flex items-center gap-2">
+          <Link
+            href="/reports/links"
+            className="inline-flex items-center gap-2 bg-white border border-[#E8E0D0] text-[#1A1A1A] rounded-full px-4 py-2 text-sm font-medium hover:shadow-[0_4px_12px_rgba(0,0,0,0.08)] hover:-translate-y-0.5 transition-all"
+          >
+            <TrendingUp className="h-4 w-4 text-emerald-600" />
+            Links Analytics
+          </Link>
+          <Link
+            href="/reports/leaderboard"
+            className="inline-flex items-center gap-2 bg-[#F5D547] text-[#1A1A1A] rounded-full px-5 py-2.5 text-sm font-medium shadow-[0_4px_16px_rgba(245,213,71,0.35)] hover:shadow-[0_6px_24px_rgba(245,213,71,0.45)] hover:-translate-y-0.5 transition-all"
+          >
+            <Trophy className="h-4 w-4" />
+            Leaderboard
+          </Link>
+        </div>
       </div>
 
       {/* Stat Cards */}
@@ -199,6 +208,9 @@ export default function ReportsPage() {
                       <th className="text-left py-2 pr-4 text-[#7A7A7A] text-xs font-medium">Email</th>
                       <th className="text-right py-2 pr-4 text-[#7A7A7A] text-xs font-medium">Reports</th>
                       <th className="text-right py-2 pr-4 text-[#7A7A7A] text-xs font-medium">Total Links</th>
+                      <th className="text-right py-2 pr-4 text-[#7A7A7A] text-xs font-medium">Avg/Day</th>
+                      <th className="text-right py-2 pr-4 text-[#7A7A7A] text-xs font-medium">Streak</th>
+                      <th className="text-left py-2 pr-4 text-[#7A7A7A] text-xs font-medium">Last Submitted</th>
                       <th className="text-left py-2 text-[#7A7A7A] text-xs font-medium"></th>
                     </tr>
                   </thead>
@@ -226,6 +238,19 @@ export default function ReportsPage() {
                           <span className="inline-flex items-center justify-center min-w-[28px] h-6 rounded-full bg-emerald-50 text-emerald-700 text-xs font-semibold px-2">
                             {emp.totalLinks}
                           </span>
+                        </td>
+                        <td className="py-3 pr-4 text-right">
+                          <span className="text-xs text-[#7A7A7A]">{emp.avgLinksPerDay ?? "—"}</span>
+                        </td>
+                        <td className="py-3 pr-4 text-right">
+                          <span className="inline-flex items-center gap-1 text-xs font-semibold text-orange-600">
+                            {emp.currentStreak ?? 0} 🔥
+                          </span>
+                        </td>
+                        <td className="py-3 pr-4 text-xs text-[#7A7A7A]">
+                          {emp.lastSubmittedAt
+                            ? new Date(emp.lastSubmittedAt).toLocaleDateString("en-IN", { day: "numeric", month: "short" })
+                            : "—"}
                         </td>
                         <td className="py-3">
                           <Link

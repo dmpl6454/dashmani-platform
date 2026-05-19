@@ -75,7 +75,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   }
 
   if (!user && !isPublicPage) {
-    if (typeof window !== "undefined") router.push("/login");
+    const hasToken = typeof window !== "undefined" && !!localStorage.getItem("accessToken");
+    if (!hasToken) router.push("/login");
     return null;
   }
 

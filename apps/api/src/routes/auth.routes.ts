@@ -48,6 +48,19 @@ router.post("/auth/forgot-password", async (req: Request, res: Response, next: N
   }
 });
 
+router.post("/auth/change-password", authenticate, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+    if (!currentPassword || !newPassword || newPassword.length < 8) {
+      return next(new Error("currentPassword and newPassword (min 8 chars) are required"));
+    }
+    await authService.changePassword(req.user!.userId, currentPassword, newPassword);
+    return success(res, { message: "Password changed successfully" });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.post("/auth/reset-password", async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { token, newPassword } = req.body;

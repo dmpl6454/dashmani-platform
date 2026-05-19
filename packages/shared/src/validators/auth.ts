@@ -1,7 +1,8 @@
 import { z } from "zod";
+import { normalizedEmail } from "../utils/sanitize";
 
 export const loginSchema = z.object({
-  email: z.string().email("Invalid email format"),
+  email: normalizedEmail,
   password: z.string().min(8, "Password must be at least 8 characters"),
 });
 

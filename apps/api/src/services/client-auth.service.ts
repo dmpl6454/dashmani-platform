@@ -9,7 +9,8 @@ const ACCESS_TOKEN_EXPIRY = "15m";
 const REFRESH_TOKEN_EXPIRY = "7d";
 
 export async function clientLogin(email: string, password: string) {
-  const client = await prisma.client.findUnique({ where: { email } });
+  const normalized = email.trim().toLowerCase();
+  const client = await prisma.client.findUnique({ where: { email: normalized } });
   if (!client) throw new AppError(401, "INVALID_CREDENTIALS", "Invalid email or password");
   if (client.status !== "ACTIVE") throw new AppError(403, "ACCOUNT_INACTIVE", "Account is not active");
 
@@ -95,6 +96,63 @@ export async function clientLogout(clientId: string) {
   await prisma.clientRefreshToken.deleteMany({ where: { clientId } });
 }
 
+export async function clientForgotPassword(email: string) {
+  const normalized = email.trim().toLowerCase();
+  const client = await prisma.client.findUnique({ where: { email: normalized } });
+  if (!client) return; // silent — don't reveal whether email exists
+
+  const token = crypto.randomBytes(32).toString("hex");
+  const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+
+  await prisma.otpToken.deleteMany({
+    where: { clientId: client.id, channel: "EMAIL", target: "PASSWORD_RESET" },
+  });
+  await prisma.otpToken.create({
+    data: { clientId: client.id, otp: token, channel: "EMAIL", target: "PASSWORD_RESET", expiresAt },
+  });
+
+  const portalUrl = process.env.CLIENT_APP_URL || "https://client.digitalsukoon.com";
+  const resetLink = `${portalUrl}/reset-password?token=${token}`;
+
+  // Lazy import to avoid circular deps; reuse the shared email transport.
+  const { sendEmail } = await import("./email.service");
+  await sendEmail({
+    to: client.email,
+    subject: "Reset your password — Digital Sukoon Client Portal",
+    html: `
+      <div style="font-family:sans-serif;max-width:500px;margin:0 auto;padding:32px">
+        <h2 style="margin:0 0 8px">Reset your password</h2>
+        <p style="color:#555">Hi ${client.contactName},</p>
+        <p style="color:#555">Click the button below to reset your client-portal password. This link expires in 1 hour.</p>
+        <a href="${resetLink}" style="display:inline-block;margin:16px 0;padding:12px 24px;background:#1A1A1A;color:#fff;border-radius:8px;text-decoration:none;font-weight:600">Reset Password</a>
+        <p style="color:#999;font-size:12px">If you didn't request this, ignore this email.</p>
+      </div>
+    `,
+  });
+}
+
+export async function clientResetPassword(token: string, newPassword: string) {
+  const record = await prisma.otpToken.findFirst({
+    where: {
+      otp: token,
+      channel: "EMAIL",
+      target: "PASSWORD_RESET",
+      verified: false,
+      clientId: { not: null },
+      expiresAt: { gt: new Date() },
+    },
+  });
+
+  if (!record || !record.clientId) {
+    throw new AppError(400, "INVALID_TOKEN", "Reset link is invalid or expired");
+  }
+
+  const passwordHash = await hash(newPassword, 12);
+  await prisma.client.update({ where: { id: record.clientId }, data: { passwordHash } });
+  await prisma.otpToken.update({ where: { id: record.id }, data: { verified: true } });
+  await prisma.clientRefreshToken.deleteMany({ where: { clientId: record.clientId } });
+}
+
 export async function createClient(data: {
   companyName: string;
   contactName: string;
@@ -102,7 +160,8 @@ export async function createClient(data: {
   password: string;
   phone?: string;
 }) {
-  const existing = await prisma.client.findUnique({ where: { email: data.email } });
+  const email = data.email.trim().toLowerCase();
+  const existing = await prisma.client.findUnique({ where: { email } });
   if (existing) throw new AppError(409, "EMAIL_EXISTS", "A client with this email already exists");
 
   const passwordHash = await hash(data.password, 12);
@@ -110,7 +169,7 @@ export async function createClient(data: {
     data: {
       companyName: data.companyName,
       contactName: data.contactName,
-      email: data.email,
+      email,
       passwordHash,
       phone: data.phone,
     },
@@ -177,12 +236,22 @@ export async function updateClient(id: string, data: { companyName?: string; con
 }
 
 export async function createInvite(email: string): Promise<{ id: string; email: string; token: string; expiresAt: Date }> {
+  const normalized = email.trim().toLowerCase();
+
+  // If an active client already exists for this email, don't issue a duplicate invite —
+  // that would set up the "registered but can't sign in" trap (admin thinks the user
+  // got an invite; user thinks they should reset their existing password).
+  const existingClient = await prisma.client.findUnique({ where: { email: normalized } });
+  if (existingClient) {
+    throw new AppError(409, "EMAIL_EXISTS", "A client account already exists for this email. Send them a password reset link instead.");
+  }
+
   // Delete any existing unused invite for this email
-  await prisma.clientInvite.deleteMany({ where: { email, usedAt: null } });
+  await prisma.clientInvite.deleteMany({ where: { email: normalized, usedAt: null } });
 
   const invite = await prisma.clientInvite.create({
     data: {
-      email,
+      email: normalized,
       expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days
     },
   });

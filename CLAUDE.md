@@ -365,6 +365,22 @@ All schema changes go through `packages/db/prisma/schema.prisma`. Run `db:genera
 
 ---
 
+## Portal hero / auth-page implementation method
+
+When the user asks to redo the **hero / sign-in / sign-up page** for any portal (internal, client, hr, jobs, etc.), follow this method — the *design* changes, the *method* does not:
+
+1. **Treat user-provided design files as prototypes, not literal code.** The user typically hands off an HTML/CSS/JS prototype (often as a `claude.ai/design` bundle — sometimes the response from `https://api.anthropic.com/v1/design/h/<hash>` is a gzipped tarball even when `WebFetch` reports it as "binary"; save the binary payload to `/tmp` and `tar -xzf` it). The tarball contains `<project>/project/*.html`, `<project>/chats/*.md`, and a `README.md` — read the README and the target HTML top-to-bottom, then **recreate the visuals in React/Tailwind inside the target Next.js app** — don't try to embed the prototype's React-via-CDN or Tailwind-via-CDN. Map design colors/fonts to the app's existing `tailwind.config.ts` tokens (`ink`, `indigo`, `sage`, `terra`, `action`, etc.) and only add new tokens (e.g. `sage.deep`) if the design needs a color the config doesn't have yet. If the design pulls in a new Google Font (e.g. `Instrument Serif` for italic display, `JetBrains Mono` for monospace), add it to both the `@import` line in `apps/<app>/src/app/globals.css` *and* a `fontFamily` token in `tailwind.config.ts` so it's available as a utility (`font-instr`, `font-mono-auth`, etc.).
+2. **Preserve real functionality. No mock auth.** The form must call the existing `useAuth().login(email, password)` (or `apiFetch("/client/auth/register", ...)` for invite signup), keep the existing token storage keys (`accessToken`/`refreshToken`/`user` for internal, `clientAccessToken`/`clientRefreshToken`/`clientUser` for client), and keep the existing forgot-password modal wired to `POST /auth/forgot-password`. Strip any prototype affordance that isn't backed by the API: fake OAuth/Google/Microsoft/SSO buttons, fake "signup" tabs on internal portal (signup is invite-only via `/admin-signup?token=`), magic-link buttons we don't ship, etc. Replace them with honest copy ("Access is invite-only — email an admin").
+3. **Keep route shape unchanged.** Internal portal sign-in stays at `/login`. Client portal: `/login` for sign-in, `/signup?token=<uuid>` for invite acceptance (the token-flow is required — render an "Invalid invite link" state when token is missing). Don't introduce new auth routes.
+4. **Extract shared field/styles to `src/components/auth/shared.tsx`** in each app when the design's auth components (input field, animations, paper card, aurora background) are reused across login and signup. Never `import` from one `page.tsx` into another `page.tsx` — that crosses Next.js route boundaries.
+5. **Page-scoped CSS via styled-jsx (`<style jsx global>`)** for animations/keyframes specific to the auth page (aurora drift, dot-grid, marquee, paper texture). Don't pollute `globals.css` with auth-only styles.
+6. **Dynamic content must be real, not gibberish.** If the design has a "live ops" panel or live data, either wire it to a real endpoint (with graceful fallback) or use clearly-labelled placeholder stats that age gracefully. The live clock should use `new Date()` in a `useEffect` (avoid SSR hydration mismatch — initialize state to `null` and set it in `useEffect`). Activity tickers can use a static seed list rotating on a timer.
+7. **Accessibility & motion:** keep `aria-live="polite"` on submit buttons, `aria-invalid` / `aria-describedby` on fields, and respect `prefers-reduced-motion` (kill aurora/float/dot-pulse animations under that media query).
+8. **Verify before declaring done:** `npx tsc --noEmit -p apps/<app>/tsconfig.json` AND `npm run build -w @dashmani/<app>` must both pass. The login page is what users hit first — a broken build here means everyone is locked out.
+9. **Production = localhost:** the auth page reads `NEXT_PUBLIC_API_URL` from `apps/<app>/.env.local` like the rest of the app — no special handling. Deploy script's `.env.local` overwrite (see deploy section) covers prod.
+
+Why this method exists: hero pages are the most visible surface, the most tempting place to put fake "wow" affordances, and the easiest place to accidentally regress real auth. The rule is: **design the surface, preserve the wire.**
+
 ## Key Conventions
 
 - API versioning prefix: `/v1/`
@@ -412,7 +428,25 @@ export default function MyPage() {
 3. Tokens stored in `localStorage` (`accessToken`, `refreshToken`, `user`)
 4. `apiFetch()` in `apps/*/src/lib/api.ts` attaches `Authorization: Bearer <token>` to every request
 5. On 401: `apiFetch` tries refresh once (guarded by `isRefreshing` flag), then redirects to `/login` on failure — no retry loop
-6. Forgot password: `POST /auth/forgot-password` → OtpToken in DB → email with `/reset-password?token=...` link → `POST /auth/reset-password`
+6. Forgot password (all three portals — internal, hr, client):
+   - Internal: `POST /v1/auth/forgot-password` → OtpToken with `userId` → email with `/reset-password?token=...` link → `POST /v1/auth/reset-password`. The HR portal calls the same endpoint with `{ app: "hr" }` so the email link points at `HR_APP_URL` instead of `INTERNAL_APP_URL`.
+   - Client: `POST /v1/client/auth/forgot-password` → OtpToken with `clientId` (added 2026-05-18, nullable userId + nullable clientId on `otp_tokens`) → email with `/reset-password?token=...` link → `POST /v1/client/auth/reset-password`.
+   - For non-ACTIVE users (ONBOARDING / INACTIVE), `forgotPassword` deliberately does NOT issue a reset link — it sends an explanation email instead. A reset wouldn't unlock login for those statuses; sending one anyway is how users get into the "I reset my password but still can't log in" loop. The HTTP response is still the opaque "if-exists" envelope.
+
+### Email-case lockouts — never re-introduce
+
+Postgres unique constraints on `email` are case-**sensitive**. If `User.email` is stored as `Foo@x.com` but the user types `foo@x.com`, `findUnique` returns `null` and they see `INVALID_CREDENTIALS` with no recovery path. To prevent this we **always normalize emails** (trim + lowercase) at every write/lookup boundary:
+
+- Validators in `packages/shared/src/validators/*` use the `normalizedEmail` Zod schema from [packages/shared/src/utils/sanitize.ts](packages/shared/src/utils/sanitize.ts). When in doubt, use `normalizedEmail` not `z.string().email()`.
+- Service-layer functions also call `.trim().toLowerCase()` defensively — don't trust upstream callers.
+- HR's `identifier` (email-or-phone) goes through `normalizeIdentifier()` which lowercases only when `@` is present.
+- One-time DB backfill: [packages/db/prisma/normalize-emails.ts](packages/db/prisma/normalize-emails.ts) lowercases existing mixed-case rows. Safe to re-run; reports collisions without writing if any rows would conflict.
+
+### HR self-register vs admin-invite collision — handled
+
+A user who self-registers at `POST /v1/hr/auth/register` is created with `status: "ONBOARDING"`. If an admin then invites the same email via `POST /v1/admin/users/invite`, the endpoint detects the existing pending row and **promotes it to ACTIVE** with the requested roles/designation rather than 409'ing. This closes the trap where a user was "registered" but admin had no way to unblock them through the invite flow.
+
+See [.planning/AUTH-LOCKOUT-FIXES.md](.planning/AUTH-LOCKOUT-FIXES.md) for the full lockout-trap matrix and how each one was closed.
 
 ---
 
@@ -639,3 +673,68 @@ If you ever rotate any of those keys, the setup steps above are documented in `.
 | Browser shows "Load failed" on login (no API request fires) | `NEXT_PUBLIC_API_URL` was baked as `localhost:4000` at build time | `deploy.sh` now overwrites `apps/*/.env.local` on every deploy — re-run a deploy. If the file got corrupted between deploys, `ssh linode && for app in client internal hr jobs; do echo "NEXT_PUBLIC_API_URL=https://api.digitalsukoon.com/v1" > /opt/dashmani-platform/apps/$app/.env.local; done && bash /opt/dashmani-platform/scripts/deploy.sh` |
 | "Load failed" persists in browser even though `curl` to the API works and the served JS chunk contains the correct prod URL | Browser is serving cached JS from before the fix. Next.js sets `cache-control: public, max-age=31536000, immutable` on chunks; old chunks may also be in a service worker or Cloudflare edge cache | First confirm the fix is live: `curl -s "https://portal.digitalsukoon.com/_next/static/chunks/app/login/page-*.js" \| grep -oE 'https?://api\.digitalsukoon\.com[^\"]*'` should return the prod URL. If yes: **hard refresh the browser** (`Cmd+Shift+R` / `Ctrl+Shift+R`) or open in an **incognito window** to bypass cache. To force every visitor's cache to invalidate, purge Cloudflare cache from the dashboard. Chunk filenames include content hashes so a fresh build *should* be picked up automatically — only a stuck cache prevents that. |
 | Seed fails on prod with `SEED_ADMIN_PASSWORD env var is required` via `npm run db:seed` | Turbo 2.x strict env policy doesn't pass `SEED_ADMIN_PASSWORD` through | Run seed directly, bypassing Turbo: `ssh linode && cd /opt/dashmani-platform/packages/db && npx tsx prisma/seed.ts` (Prisma auto-loads `packages/db/.env` which now contains `SEED_ADMIN_PASSWORD`) |
+
+---
+
+## Local dev troubleshooting
+
+### "Portal renders as unstyled HTML" or "Hero page lost its design"
+
+**Symptom:** You open `http://localhost:3000/login` (or `:3001`, `:3002`) and see giant unstyled text, default browser fonts, no layout — basically raw HTML with `<h1>` and form fields stacked vertically. Tailwind classes are present in the DOM (visible in DevTools) but none of them apply.
+
+**Root cause (95% of the time):** The Next.js dev server's `.next/` build cache went stale. The served HTML references a CSS chunk path like `/_next/static/css/app/layout.css?v=<timestamp>`, but that file doesn't exist on disk anymore — the dev server returns its 404 HTML page **with a `200 OK` status and `Content-Type: text/html`**, which the browser silently treats as an empty stylesheet. Result: HTML renders, no styles apply.
+
+**How to confirm it's this:**
+```bash
+# Replace 3002 with the broken port. Pull the login HTML, extract the CSS URL, fetch it:
+curl -s http://localhost:3002/login -o /tmp/p.html
+cssurl=$(grep -oE '/_next/static/css/[^"?]+\.css' /tmp/p.html | head -1)
+curl -s "http://localhost:3002${cssurl}" | head -c 200
+# If the response starts with `<!DOCTYPE html>` instead of CSS rules, that's the bug.
+# Healthy response starts with `/*` or `@charset` or a CSS selector.
+```
+
+Also check the response size: a real Tailwind dev CSS is ~50–150 KB. If `wc -c` on the response shows < 10 KB and it starts with `<!DOCTYPE`, it's the 404-HTML-as-CSS case.
+
+**Fix:** Nuke the broken app's `.next/` cache and restart only that dev server. Don't touch the others.
+```bash
+# 1. Find and kill the dev server for the broken port (example: HR on 3002)
+lsof -ti:3002 | xargs kill
+# 2. Delete the cache
+rm -rf apps/hr/.next
+# 3. Restart just that one (background so terminal stays usable)
+npm run dev -w @dashmani/hr &
+# 4. Wait for it to compile, then verify
+until curl -s -o /dev/null -w "%{http_code}" http://localhost:3002/login | grep -q "200\|307"; do sleep 1; done
+curl -s "http://localhost:3002/_next/static/css/app/layout.css" | wc -c
+# Should now print > 50000
+```
+
+**What NOT to do when you see this:**
+- ❌ Don't "fix" the page's `layout.tsx` or convert `"use client"` to a server component. The layout is fine — the cache is broken.
+- ❌ Don't rewrite the hero page assuming the design is wrong. The design is fine — the CSS isn't loading.
+- ❌ Don't `git stash` your in-progress hero-page work to "rule out local changes." The bug has nothing to do with your code. (Stashing untracked hero work and then making layout edits is how this gets *worse* — see the 2026-05-19 incident.)
+- ❌ Don't run `git checkout HEAD --` on layout files unless you've **first** verified via the curl test above that the CSS file is healthy. You'll discard real work.
+
+**Why it happens:** Next.js 14 dev mode lazy-compiles routes and writes CSS chunks to `.next/static/css/`. If the dev process is killed mid-compile, hot-reloaded across a `layout.tsx` change that re-derives the CSS hash, or the file is partially written and then orphaned, the served HTML can end up pointing at a stale chunk filename. The dev server's 404 handler returns its HTML error page at *any* unknown `/_next/static/*` path, so the browser sees `<link rel="stylesheet" href="/_next/static/css/app/layout.css?v=foo">` resolve to HTML and silently drops it.
+
+### Other common local-dev gotchas
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `npm run dev` fails immediately with `EADDRINUSE :::4000` (or `:3000`, `:3001`, etc.) | Previous dev servers still running from an earlier session | `lsof -ti:4000,3000,3001,3002,3003 \| xargs kill -9` then `npm run dev` again |
+| Internal portal stuck on loading spinner forever after a hard refresh | `apps/internal/src/app/layout.tsx` runs auth check in `useEffect` and renders a spinner during `isLoading`. If `localStorage.getItem("user")` throws or `JSON.parse` fails on a malformed value, `setIsLoading(false)` never runs | Open DevTools → Application → Local Storage → `localhost:3000` → delete the `user` key, then refresh. Long-term: wrap `JSON.parse(storedUser)` in try/catch |
+| Client portal home (`/`) shows the sidebar shell but no content for a flash before redirecting | Pre-existing behavior — `layout.tsx` renders `<PortalShell>` before the `useEffect` redirect to `/login` fires. It's an SSR/CSR boundary artifact, not a bug. The redirect happens within ~50ms. | Not a real bug. Don't try to "fix" it by moving auth logic out of layout — last attempt broke all three portals. |
+| Browser still shows the old broken UI after the fix is verified working via `curl` | Browser cache / hot-reload didn't kick in | Hard refresh: `Cmd+Shift+R` (macOS) / `Ctrl+Shift+R` (Windows). If that fails, open in an Incognito/Private window. |
+
+### The diagnostic order for "portal looks broken"
+
+Follow this in order. Don't skip steps. The most common bugs are at the top.
+
+1. **Is the dev server even running?** `lsof -ti:<port>` should return a PID. If empty, `npm run dev -w @dashmani/<app>`.
+2. **Is the CSS healthy?** Run the curl test from the "Portal renders as unstyled HTML" section above. If CSS returns HTML, nuke `.next/` and restart.
+3. **Is the API running?** `curl http://localhost:4000/v1/health`. If not, `npm run dev -w @dashmani/api`. Submitting login forms will fail silently with "Load failed" if the API is down.
+4. **Is the browser caching?** Hard refresh or open Incognito.
+5. **Only after 1–4 pass:** look at the actual page code. 90% of "broken UI" reports are layers 1–4, not layer 5.
+
+**The lesson from the 2026-05-19 incident:** Touching `layout.tsx`, stashing work, and "fixing" the page code in response to an unstyled-HTML symptom — without first running the curl test from step 2 — destroyed hours of hero-page work that had to be recovered from `git stash`. The actual bug was a stale `.next/` cache; the hero pages were never broken. **Always verify the CSS first.**

@@ -41,6 +41,28 @@ router.post("/client/auth/logout", authenticateClient, async (req: Request, res:
   } catch (err) { next(err); }
 });
 
+router.post("/client/auth/forgot-password", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { email } = req.body;
+    if (!email || typeof email !== "string") {
+      return success(res, { message: "If that email exists, a reset link has been sent" });
+    }
+    await clientAuthService.clientForgotPassword(email.trim().toLowerCase());
+    return success(res, { message: "If that email exists, a reset link has been sent" });
+  } catch (err) { next(err); }
+});
+
+router.post("/client/auth/reset-password", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { token, newPassword } = req.body;
+    if (!token || !newPassword || newPassword.length < 8) {
+      throw new AppError(400, "VALIDATION_ERROR", "Token and a password of at least 8 characters are required");
+    }
+    await clientAuthService.clientResetPassword(token, newPassword);
+    return success(res, { message: "Password reset successfully" });
+  } catch (err) { next(err); }
+});
+
 // ===== CLIENT PORTAL ENDPOINTS (client-authenticated) =====
 
 router.get("/client/dashboard", authenticateClient, async (req: Request, res: Response, next: NextFunction) => {

@@ -74,7 +74,8 @@ export async function createEmployee(data: {
   orgUnitId?: string;
   roleIds: string[];
 }) {
-  const existing = await prisma.user.findUnique({ where: { email: data.email } });
+  const email = data.email.trim().toLowerCase();
+  const existing = await prisma.user.findUnique({ where: { email } });
   if (existing) throw new AppError(409, "CONFLICT", "Email already in use");
 
   const passwordHash = await hashPassword(data.password);
@@ -82,7 +83,7 @@ export async function createEmployee(data: {
   const employee = await prisma.user.create({
     data: {
       name: data.name,
-      email: data.email,
+      email,
       passwordHash,
       phone: data.phone,
       orgUnitId: data.orgUnitId,

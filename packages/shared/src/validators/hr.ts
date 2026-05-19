@@ -1,24 +1,25 @@
 import { z } from "zod";
+import { normalizedEmail } from "../utils/sanitize";
 
 export const otpRequestSchema = z.object({
-  identifier: z.string().min(1, "Identifier (email or phone) is required"),
+  identifier: z.string().trim().min(1, "Identifier (email or phone) is required"),
   channel: z.enum(["EMAIL", "SMS", "WHATSAPP"]),
 });
 
 export const otpVerifySchema = z.object({
-  identifier: z.string().min(1, "Identifier is required"),
+  identifier: z.string().trim().min(1, "Identifier is required"),
   otp: z.string().length(6, "OTP must be 6 digits"),
 });
 
 export const registerEmployeeSchema = z.object({
   name: z.string().min(2, "Name must be at least 2 characters"),
-  email: z.string().email("Invalid email address"),
+  email: normalizedEmail,
   phone: z.string().min(10, "Phone must be at least 10 digits").optional(),
   password: z.string().min(6, "Password must be at least 6 characters"),
 });
 
 export const passwordLoginSchema = z.object({
-  identifier: z.string().min(1, "Email or phone is required"),
+  identifier: z.string().trim().min(1, "Email or phone is required"),
   password: z.string().min(1, "Password is required"),
 });
 

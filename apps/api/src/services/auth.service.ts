@@ -7,8 +7,9 @@ import { sendEmail } from "./email.service";
 import crypto from "crypto";
 
 export async function login(email: string, password: string) {
+  const normalizedEmailValue = email.trim().toLowerCase();
   const user = await prisma.user.findUnique({
-    where: { email, deletedAt: null },
+    where: { email: normalizedEmailValue, deletedAt: null },
     include: { roles: { include: { role: true } } },
   });
 
@@ -109,9 +110,33 @@ export async function logout(userId: string) {
   await prisma.refreshToken.deleteMany({ where: { userId } });
 }
 
-export async function forgotPassword(email: string) {
-  const user = await prisma.user.findUnique({ where: { email, deletedAt: null } });
+export async function forgotPassword(email: string, app: "internal" | "hr" = "internal") {
+  const normalizedEmailValue = email.trim().toLowerCase();
+  const user = await prisma.user.findUnique({ where: { email: normalizedEmailValue, deletedAt: null } });
   if (!user) return; // silent — don't reveal whether email exists
+
+  // If the account is in a state where a password reset won't actually unlock login,
+  // send an explanatory email instead of a reset link. Otherwise the user resets
+  // their password, still can't log in, and assumes the system is broken.
+  if (user.status !== "ACTIVE") {
+    const reason = user.status === "ONBOARDING"
+      ? "Your account is awaiting admin approval. A password reset won't unlock sign-in — an administrator needs to approve your account first."
+      : "Your account is not active. Please contact an administrator.";
+
+    await sendEmail({
+      to: user.email,
+      subject: "About your password reset request — Digital Sukoon Portal",
+      html: `
+        <div style="font-family:sans-serif;max-width:500px;margin:0 auto;padding:32px">
+          <h2 style="margin:0 0 8px">Account not yet active</h2>
+          <p style="color:#555">Hi ${user.name},</p>
+          <p style="color:#555">${reason}</p>
+          <p style="color:#999;font-size:12px">If you believe this is a mistake, email admin@digitalsukoon.com.</p>
+        </div>
+      `,
+    });
+    return;
+  }
 
   const token = crypto.randomBytes(32).toString("hex");
   const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
@@ -121,7 +146,9 @@ export async function forgotPassword(email: string) {
     data: { userId: user.id, otp: token, channel: "EMAIL", target: "PASSWORD_RESET", expiresAt },
   });
 
-  const portalUrl = process.env.INTERNAL_APP_URL || "https://portal.digitalsukoon.com";
+  const portalUrl = app === "hr"
+    ? (process.env.HR_APP_URL || "https://hr.digitalsukoon.com")
+    : (process.env.INTERNAL_APP_URL || "https://portal.digitalsukoon.com");
   const resetLink = `${portalUrl}/reset-password?token=${token}`;
 
   await sendEmail({
@@ -141,10 +168,19 @@ export async function forgotPassword(email: string) {
 
 export async function resetPassword(token: string, newPassword: string) {
   const record = await prisma.otpToken.findFirst({
-    where: { otp: token, channel: "EMAIL", target: "PASSWORD_RESET", verified: false, expiresAt: { gt: new Date() } },
+    where: {
+      otp: token,
+      channel: "EMAIL",
+      target: "PASSWORD_RESET",
+      verified: false,
+      userId: { not: null },
+      expiresAt: { gt: new Date() },
+    },
   });
 
-  if (!record) throw new AppError(400, "INVALID_TOKEN", "Reset link is invalid or expired");
+  if (!record || !record.userId) {
+    throw new AppError(400, "INVALID_TOKEN", "Reset link is invalid or expired");
+  }
 
   const passwordHash = await hashPassword(newPassword);
   await prisma.user.update({ where: { id: record.userId }, data: { passwordHash } });

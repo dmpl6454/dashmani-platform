@@ -1050,7 +1050,8 @@ router.delete("/admin/internships/:id", authenticate, requirePermission("employe
 // POST /admin/users/create — directly create a new internal admin user (Super Admin only)
 router.post("/admin/users/create", authenticate, requirePermission("employees", "create"), async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { name, email, password, roleIds, designation, salary } = req.body;
+    const { name, password, roleIds, designation, salary } = req.body;
+    const email = typeof req.body.email === "string" ? req.body.email.trim().toLowerCase() : req.body.email;
     if (!name || !email || !password) {
       return res.status(400).json({ success: false, error: { code: "VALIDATION_ERROR", message: "name, email, and password are required" } });
     }
@@ -1092,13 +1093,35 @@ router.post("/admin/users/create", authenticate, requirePermission("employees", 
 // POST /admin/users/invite — send invite email to a new admin
 router.post("/admin/users/invite", authenticate, requirePermission("employees", "create"), async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { email, roleIds, designation } = req.body;
+    const { roleIds, designation } = req.body;
+    const email = typeof req.body.email === "string" ? req.body.email.trim().toLowerCase() : req.body.email;
     if (!email) {
       return res.status(400).json({ success: false, error: { code: "VALIDATION_ERROR", message: "email is required" } });
     }
 
     const existing = await prisma.user.findUnique({ where: { email } });
     if (existing) {
+      // If a user already exists from HR self-registration (ONBOARDING), the admin's
+      // "invite" intent is really "approve + assign roles" — do that instead of 409,
+      // otherwise the user is locked out (registered but can't sign in, and admin can't
+      // re-invite them).
+      if (existing.status === "ONBOARDING" && !existing.deletedAt) {
+        if (Array.isArray(roleIds) && roleIds.length > 0) {
+          await prisma.userRole.createMany({
+            data: roleIds.map((roleId: string) => ({ userId: existing.id, roleId })),
+            skipDuplicates: true,
+          });
+        }
+        if (designation) {
+          await prisma.employeeProfile.upsert({
+            where: { userId: existing.id },
+            update: { designation },
+            create: { userId: existing.id, designation },
+          });
+        }
+        await prisma.user.update({ where: { id: existing.id }, data: { status: "ACTIVE" } });
+        return success(res, { message: "Existing pending account approved and activated", email, approvedExistingUserId: existing.id }, undefined, 200);
+      }
       return res.status(409).json({ success: false, error: { code: "CONFLICT", message: "A user with this email already exists" } });
     }
 

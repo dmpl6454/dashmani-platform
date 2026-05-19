@@ -22,6 +22,7 @@ export default function LoginPage() {
   const [successMsg, setSuccessMsg] = useState("");
   const [mounted, setMounted] = useState(false);
   const [focusedField, setFocusedField] = useState<string | null>(null);
+  const [forgotOpen, setForgotOpen] = useState(false);
 
   useEffect(() => { setMounted(true); }, []);
 
@@ -195,7 +196,7 @@ export default function LoginPage() {
                 <div>
                   <div className="flex justify-between items-center mb-1.5">
                     <label className="text-xs text-[#7A7A7A] font-medium">Password</label>
-                    <button type="button" className="text-[11px] text-[#F5D547] font-semibold underline underline-offset-2">Forgot password?</button>
+                    <button type="button" onClick={() => setForgotOpen(true)} className="text-[11px] text-[#F5D547] font-semibold underline underline-offset-2">Forgot password?</button>
                   </div>
                   <div className="relative">
                     <Lock className={`absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 transition-colors ${focusedField === "password" ? "text-[#F5D547]" : "text-[#B0B0B0]"}`} />
@@ -403,6 +404,79 @@ export default function LoginPage() {
             ))}
           </div>
         </div>
+      </div>
+
+      {forgotOpen && <ForgotPasswordModal onClose={() => setForgotOpen(false)} />}
+    </div>
+  );
+}
+
+function ForgotPasswordModal({ onClose }: { onClose: () => void }) {
+  const [email, setEmail] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [sent, setSent] = useState(false);
+  const [error, setError] = useState("");
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setLoading(true);
+    setError("");
+    try {
+      const res = await fetch(`${API_URL}/auth/forgot-password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, app: "hr" }),
+      });
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error?.message || "Something went wrong");
+      setSent(true);
+    } catch (err: any) {
+      setError(err.message || "Something went wrong");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4" onClick={onClose}>
+      <div
+        className="bg-white rounded-2xl p-7 w-full max-w-sm relative shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close"
+          className="absolute top-4 right-4 text-[#B0B0B0] hover:text-[#1A1A1A] text-lg leading-none"
+        >
+          ×
+        </button>
+        <h2 className="font-serif text-[22px] text-[#1A1A1A] mb-1">Forgot password?</h2>
+        {sent ? (
+          <p className="text-sm text-[#555] mt-3">
+            If that email is registered, a reset link has been sent. Check your inbox.
+          </p>
+        ) : (
+          <form onSubmit={handleSubmit} className="space-y-4 mt-3">
+            <p className="text-sm text-[#7A7A7A]">Enter your account email and we'll send a reset link.</p>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+              placeholder="you@digitalsukoon.com"
+              className="w-full px-4 py-3 border-[1.5px] border-[#E8E0D0] rounded-[10px] text-sm text-[#1A1A1A] bg-white/80 placeholder:text-[#B0B0B0] focus:outline-none focus:border-[#F5D547] focus:shadow-[0_0_0_3px_rgba(245,213,71,0.15)] transition-all"
+            />
+            {error && <p className="text-xs text-red-600 font-medium">{error}</p>}
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full py-3 rounded-full bg-[#F5D547] text-[#1A1A1A] text-sm font-semibold shadow-[0_4px_16px_rgba(245,213,71,0.35)] hover:shadow-[0_6px_24px_rgba(245,213,71,0.45)] disabled:opacity-50 transition-all"
+            >
+              {loading ? "Sending…" : "Send reset link"}
+            </button>
+          </form>
+        )}
       </div>
     </div>
   );

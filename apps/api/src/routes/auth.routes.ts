@@ -36,11 +36,12 @@ router.post("/auth/logout", authenticate, async (req: Request, res: Response, ne
 
 router.post("/auth/forgot-password", async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { email } = req.body;
+    const { email, app } = req.body;
     if (!email || typeof email !== "string") {
       return success(res, { message: "If that email exists, a reset link has been sent" });
     }
-    await authService.forgotPassword(email.trim().toLowerCase());
+    const appKey = app === "hr" ? "hr" : "internal";
+    await authService.forgotPassword(email.trim().toLowerCase(), appKey);
     return success(res, { message: "If that email exists, a reset link has been sent" });
   } catch (err) {
     next(err);

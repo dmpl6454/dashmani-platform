@@ -1,15 +1,15 @@
 import { z } from "zod";
-import { safeString } from "../utils/sanitize";
+import { safeString, normalizedEmail } from "../utils/sanitize";
 
 export const clientLoginSchema = z.object({
-  email: z.string().email("Invalid email"),
+  email: normalizedEmail,
   password: z.string().min(1, "Password is required"),
 });
 
 export const createClientSchema = z.object({
   companyName: safeString.pipe(z.string().min(2, "Company name must be at least 2 characters").max(200)),
   contactName: safeString.pipe(z.string().min(2, "Contact name must be at least 2 characters").max(200)),
-  email: z.string().email("Invalid email"),
+  email: normalizedEmail,
   password: z.string().min(8, "Password must be at least 8 characters"),
   phone: z.string().max(20).optional(),
 });
@@ -64,7 +64,7 @@ export const clientRegisterSchema = z.object({
 });
 
 export const createInviteSchema = z.object({
-  email: z.string().email("Invalid email"),
+  email: normalizedEmail,
 });
 
 export const createBriefSchema = z.object({

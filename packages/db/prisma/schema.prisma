@@ -379,6 +379,7 @@ model Client {
 
   projects       Project[]
   refreshTokens  ClientRefreshToken[]
+  otpTokens      OtpToken[]
 
   @@map("clients")
 }
@@ -617,7 +618,8 @@ model EmployeeProfile {
 
 model OtpToken {
   id        String     @id @default(uuid())
-  userId    String     @map("user_id")
+  userId    String?    @map("user_id")
+  clientId  String?    @map("client_id")
   otp       String
   channel   OtpChannel
   target    String
@@ -625,9 +627,11 @@ model OtpToken {
   verified  Boolean    @default(false)
   createdAt DateTime   @default(now()) @map("created_at")
 
-  user      User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user      User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  client    Client? @relation(fields: [clientId], references: [id], onDelete: Cascade)
 
   @@index([userId, otp])
+  @@index([clientId, otp])
   @@index([expiresAt])
   @@map("otp_tokens")
 }

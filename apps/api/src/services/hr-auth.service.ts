@@ -10,6 +10,15 @@ function generateOtp(): string {
   return Math.floor(100000 + Math.random() * 900000).toString();
 }
 
+/**
+ * Normalize an HR auth identifier. Emails get trimmed + lowercased; phone numbers
+ * are only trimmed. Detection is "contains @" — good enough for our format.
+ */
+function normalizeIdentifier(raw: string): string {
+  const trimmed = raw.trim();
+  return trimmed.includes("@") ? trimmed.toLowerCase() : trimmed;
+}
+
 // ===== Self-Registration =====
 
 export async function registerEmployee(data: {
@@ -18,12 +27,15 @@ export async function registerEmployee(data: {
   phone?: string;
   password: string;
 }) {
+  const email = data.email.trim().toLowerCase();
+  const phone = data.phone?.trim() || null;
+
   // Check if email already exists
   const existing = await prisma.user.findFirst({
     where: {
       OR: [
-        { email: data.email },
-        ...(data.phone ? [{ phone: data.phone }] : []),
+        { email },
+        ...(phone ? [{ phone }] : []),
       ],
     },
   });
@@ -37,8 +49,8 @@ export async function registerEmployee(data: {
   const user = await prisma.user.create({
     data: {
       name: data.name,
-      email: data.email,
-      phone: data.phone || null,
+      email,
+      phone,
       passwordHash,
       status: "ONBOARDING", // Requires admin approval
     },
@@ -53,8 +65,8 @@ export async function registerEmployee(data: {
   notifyAdmins(
     "GENERAL",
     "New Employee Registration",
-    `${data.name} (${data.email}) has registered and is awaiting approval`,
-    { userId: user.id, name: data.name, email: data.email }
+    `${data.name} (${email}) has registered and is awaiting approval`,
+    { userId: user.id, name: data.name, email }
   ).catch((err) => console.error("Admin notification failed:", err));
 
   return {
@@ -71,10 +83,11 @@ export async function registerEmployee(data: {
 // ===== Password Login =====
 
 export async function loginWithPassword(identifier: string, password: string) {
+  const normalized = normalizeIdentifier(identifier);
   const user = await prisma.user.findFirst({
     where: {
       deletedAt: null,
-      OR: [{ email: identifier }, { phone: identifier }],
+      OR: [{ email: normalized }, { phone: normalized }],
     },
     include: { roles: { include: { role: true } } },
   });
@@ -134,10 +147,11 @@ export async function loginWithPassword(identifier: string, password: string) {
 // ===== OTP Auth (kept for backward compatibility) =====
 
 export async function requestOtp(identifier: string, channel: "EMAIL" | "SMS" | "WHATSAPP") {
+  const normalized = normalizeIdentifier(identifier);
   const user = await prisma.user.findFirst({
     where: {
       deletedAt: null,
-      OR: [{ email: identifier }, { phone: identifier }],
+      OR: [{ email: normalized }, { phone: normalized }],
     },
   });
 
@@ -162,21 +176,22 @@ export async function requestOtp(identifier: string, channel: "EMAIL" | "SMS" | 
       userId: user.id,
       otp,
       channel,
-      target: identifier,
+      target: normalized,
       expiresAt,
     },
   });
 
-  console.log(`[HR-AUTH] OTP for ${identifier}: ${otp}`);
+  console.log(`[HR-AUTH] OTP for ${normalized}: ${otp}`);
 
   return { message: `OTP sent via ${channel}` };
 }
 
 export async function verifyOtp(identifier: string, otp: string) {
+  const normalized = normalizeIdentifier(identifier);
   const user = await prisma.user.findFirst({
     where: {
       deletedAt: null,
-      OR: [{ email: identifier }, { phone: identifier }],
+      OR: [{ email: normalized }, { phone: normalized }],
     },
     include: { roles: { include: { role: true } } },
   });

@@ -6,9 +6,9 @@ import { useAnnouncements } from "@/lib/hooks/use-announcements";
 import {
   Users, Building2, Clock, CheckCircle, FolderOpen, FileCheck, Send,
   UserPlus, ArrowRight, Megaphone, TrendingUp, Link2, Calendar, BarChart2, CalendarDays, X,
-  Share2, ChevronDown,
+  Share2, Globe,
 } from "lucide-react";
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { usePageTitle } from "@/lib/hooks/use-page-title";
 import { apiFetch } from "@/lib/api";
 import {
@@ -147,160 +147,6 @@ function CustomTooltip({ active, payload, label }: any) {
   );
 }
 
-function QuickAssignModal({ onClose }: { onClose: () => void }) {
-  const [employees, setEmployees] = useState<any[]>([]);
-  const [accounts, setAccounts] = useState<any[]>([]);
-  const [selectedEmployee, setSelectedEmployee] = useState("");
-  const [selectedAccount, setSelectedAccount] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const [done, setDone] = useState<{ employeeName: string; accountHandle: string } | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    apiFetch<any>("/employees?status=ACTIVE&limit=200").then((r) => setEmployees(r?.data ?? []));
-    apiFetch<any>("/accounts?limit=200").then((r) => setAccounts(r?.data ?? []));
-  }, []);
-
-  // Accounts already assigned to the selected employee (so we can mark them)
-  const assignedAccountIds = new Set<string>(
-    accounts
-      .filter((a: any) =>
-        a.assignments?.some((asn: any) => !asn.unassignedAt && asn.employee?.id === selectedEmployee)
-      )
-      .map((a: any) => a.id)
-  );
-
-  const selectedEmployeeName = employees.find((e: any) => e.id === selectedEmployee)?.name ?? "";
-  const selectedAccountData = accounts.find((a: any) => a.id === selectedAccount);
-
-  async function handleAssign() {
-    if (!selectedEmployee || !selectedAccount) return;
-    setSubmitting(true);
-    setError(null);
-    try {
-      await apiFetch(`/accounts/${selectedAccount}/assign`, {
-        method: "POST",
-        body: JSON.stringify({ employeeId: selectedEmployee }),
-      });
-      setDone({ employeeName: selectedEmployeeName, accountHandle: selectedAccountData?.handle ?? selectedAccount });
-    } catch (err: any) {
-      setError(err?.message || "Assignment failed. Please try again.");
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  const inputCls = "w-full border-2 border-ink/15 bg-surface rounded-xl px-4 py-2.5 text-sm text-ink transition-colors focus:outline-none focus:border-indigo";
-
-  if (done) return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4">
-      <div className="v3-card shadow-pop p-8 text-center w-full max-w-sm pop-in">
-        <div className="h-14 w-14 rounded-xl border-2 border-ink bg-sage flex items-center justify-center mx-auto mb-4">
-          <Share2 className="h-7 w-7 text-white" />
-        </div>
-        <p className="text-lg font-bold text-ink font-display">Account assigned!</p>
-        <p className="text-sm text-ink-3 mt-1">
-          <span className="font-semibold text-ink">{done.employeeName}</span> is now assigned to{" "}
-          <span className="font-semibold text-ink">@{done.accountHandle}</span>.
-        </p>
-        <div className="flex items-center justify-center gap-3 mt-6">
-          <button
-            onClick={() => { setDone(null); setSelectedEmployee(""); setSelectedAccount(""); }}
-            className="px-5 py-2 rounded-full border-2 border-ink/15 text-sm text-ink-3 hover:bg-muted transition-colors"
-          >
-            Assign another
-          </button>
-          <button onClick={onClose} className="px-6 py-2.5 rounded-full bg-ink text-white text-sm font-bold btn-3d hover:bg-ink-2 transition-colors">
-            Done
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4" onClick={onClose}>
-      <div className="v3-card shadow-pop w-full max-w-lg overflow-hidden pop-in" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-6 py-4 border-b-2 border-ink/10">
-          <h2 className="font-bold text-ink flex items-center gap-2">
-            <Share2 size={18} className="text-sage" />
-            Quick Assign Account
-          </h2>
-          <button onClick={onClose} className="h-7 w-7 flex items-center justify-center rounded-lg hover:bg-muted transition-colors text-ink-4 text-xl leading-none">×</button>
-        </div>
-        <div className="p-6 space-y-4">
-          <p className="text-xs text-ink-4">Pick an employee first, then choose which social account to assign them to.</p>
-
-          {/* Step 1 — Employee */}
-          <div>
-            <label className="text-xs font-bold text-ink-4 uppercase tracking-wider mb-1.5 block">1. Employee</label>
-            <div className="relative">
-              <select
-                value={selectedEmployee}
-                onChange={(e) => { setSelectedEmployee(e.target.value); setSelectedAccount(""); }}
-                className={`${inputCls} appearance-none pr-8`}
-              >
-                <option value="">Select employee…</option>
-                {employees.map((e: any) => (
-                  <option key={e.id} value={e.id}>{e.name} {e.designation ? `· ${e.designation}` : ""}</option>
-                ))}
-              </select>
-              <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-ink-4 pointer-events-none" />
-            </div>
-          </div>
-
-          {/* Step 2 — Account (only after employee selected) */}
-          {selectedEmployee && (
-            <div>
-              <label className="text-xs font-bold text-ink-4 uppercase tracking-wider mb-1.5 block">2. Social Account</label>
-              <div className="relative">
-                <select
-                  value={selectedAccount}
-                  onChange={(e) => setSelectedAccount(e.target.value)}
-                  className={`${inputCls} appearance-none pr-8`}
-                >
-                  <option value="">Select account…</option>
-                  {accounts.map((a: any) => {
-                    const alreadyAssigned = assignedAccountIds.has(a.id);
-                    return (
-                      <option key={a.id} value={a.id} disabled={alreadyAssigned}>
-                        {a.platform?.name ? `[${a.platform.name}] ` : ""}{a.handle}{a.displayName ? ` — ${a.displayName}` : ""}{alreadyAssigned ? " (already assigned)" : ""}
-                      </option>
-                    );
-                  })}
-                </select>
-                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-ink-4 pointer-events-none" />
-              </div>
-              {selectedAccount && (
-                <p className="text-xs text-ink-4 mt-1.5">
-                  {selectedAccountData?.platform?.name} · @{selectedAccountData?.handle}
-                  {selectedAccountData?.followerCount ? ` · ${selectedAccountData.followerCount.toLocaleString()} followers` : ""}
-                  {selectedAccountData?.clientName ? ` · Client: ${selectedAccountData.clientName}` : ""}
-                </p>
-              )}
-            </div>
-          )}
-
-          {error && <p className="text-xs text-danger">{error}</p>}
-
-          <div className="flex items-center justify-end gap-3 pt-1">
-            <button type="button" onClick={onClose} className="px-5 py-2 rounded-full border-2 border-ink/15 text-sm text-ink-3 hover:bg-muted transition-colors">Cancel</button>
-            <button
-              type="button"
-              onClick={handleAssign}
-              disabled={!selectedEmployee || !selectedAccount || submitting}
-              className="px-5 py-2.5 rounded-full bg-ink text-white text-sm font-bold btn-3d hover:bg-ink-2 transition-colors disabled:opacity-50 flex items-center gap-2"
-            >
-              <Share2 size={15} />
-              {submitting ? "Assigning…" : "Assign Account"}
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 const LINK_QUICK_RANGES = [
   { label: "14d",  days: 14 },
   { label: "30d",  days: 30 },
@@ -315,7 +161,6 @@ export default function DashboardPage() {
   const { announcements } = useAnnouncements();
   const firstName = user?.name?.split(" ")[0] || "";
   const [announceOpen, setAnnounceOpen] = useState(false);
-  const [assignOpen, setAssignOpen] = useState(false);
   const today = new Date();
 
   // Links bento date range — default last 14 days
@@ -351,7 +196,6 @@ export default function DashboardPage() {
   return (
     <div className="space-y-5 pop-in">
       {announceOpen && <QuickAnnounceModal onClose={() => setAnnounceOpen(false)} />}
-      {assignOpen && <QuickAssignModal onClose={() => setAssignOpen(false)} />}
 
       {/* Page header */}
       <div>
@@ -656,20 +500,29 @@ export default function DashboardPage() {
           <ArrowRight className="h-4 w-4 text-ink-4 opacity-0 group-hover:opacity-100 transition-opacity" />
         </Link>
 
-        {/* Quick Assign Account card */}
-        <button
-          onClick={() => setAssignOpen(true)}
-          className="v3-card-sm p-5 flex items-center gap-4 v3-card-lift group text-left"
-        >
+        {/* Accounts hub card */}
+        <Link href="/accounts" className="v3-card-sm p-5 flex items-center gap-4 v3-card-lift group">
+          <div className="h-12 w-12 rounded-xl border-2 border-ink/12 bg-indigo-soft flex items-center justify-center shrink-0">
+            <Globe className="h-6 w-6 text-indigo" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="font-bold text-ink">Manage Accounts</p>
+            <p className="text-xs text-ink-4">View, create & assign social accounts</p>
+          </div>
+          <ArrowRight className="h-4 w-4 text-ink-4 opacity-0 group-hover:opacity-100 transition-opacity" />
+        </Link>
+
+        {/* Assign Account shortcut */}
+        <Link href="/accounts?tab=by-employee" className="v3-card-sm p-5 flex items-center gap-4 v3-card-lift group">
           <div className="h-12 w-12 rounded-xl border-2 border-ink/12 bg-sage-soft flex items-center justify-center shrink-0">
             <Share2 className="h-6 w-6 text-sage" />
           </div>
           <div className="flex-1 min-w-0">
             <p className="font-bold text-ink">Assign Account</p>
-            <p className="text-xs text-ink-4">Assign a social account to an employee</p>
+            <p className="text-xs text-ink-4">Assign by employee — see who has what</p>
           </div>
           <ArrowRight className="h-4 w-4 text-ink-4 opacity-0 group-hover:opacity-100 transition-opacity" />
-        </button>
+        </Link>
 
       </div>
     </div>

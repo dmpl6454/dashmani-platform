@@ -410,7 +410,9 @@ function AccountsPageInner() {
   const { data: employeeData }            = useEmployees({ status: "ACTIVE", limit: 500 });
   const accounts  = (data as any)?.data ?? [];
   const platforms = (platformData as any)?.data ?? [];
-  const employees = (employeeData as any)?.data ?? [];
+  const employees = ((employeeData as any)?.data ?? []).slice().sort((a: any, b: any) =>
+    (a.name || "").localeCompare(b.name || "", undefined, { sensitivity: "base" })
+  );
 
   // Panels / modals
   const [createOpen, setCreateOpen]         = useState(false);

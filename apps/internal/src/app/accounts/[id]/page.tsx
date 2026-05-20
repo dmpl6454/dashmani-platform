@@ -19,7 +19,12 @@ export default function AccountDetailPage() {
   const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
-    apiFetch("/employees?status=ACTIVE&limit=500").then((res: any) => setEmployees(res.data || []));
+    apiFetch("/employees?status=ACTIVE&limit=500").then((res: any) => {
+      const list = (res.data || []).slice().sort((a: any, b: any) =>
+        (a.name || "").localeCompare(b.name || "", undefined, { sensitivity: "base" })
+      );
+      setEmployees(list);
+    });
   }, []);
 
   if (isLoading) return <div className="flex items-center justify-center h-64"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#F5D547]" /></div>;

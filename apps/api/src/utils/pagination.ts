@@ -4,7 +4,7 @@ export interface PaginationParams {
 }
 
 export function parsePagination(query: Record<string, unknown>): PaginationParams {
-  const limit = Math.min(Math.max(Number(query.limit) || 50, 1), 100);
+  const limit = Math.min(Math.max(Number(query.limit) || 50, 1), 500);
   const cursor = typeof query.cursor === "string" ? query.cursor : undefined;
   return { cursor, limit };
 }

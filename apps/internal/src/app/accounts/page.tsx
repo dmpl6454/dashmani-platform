@@ -176,18 +176,22 @@ function AccountPanel({
 function AssignModal({
   accounts,
   preselectedEmployeeId,
+  preselectedAccountId,
   employees,
   onClose,
   onDone,
 }: {
   accounts: any[];
   preselectedEmployeeId?: string;
+  preselectedAccountId?: string;
   employees: any[];
   onClose: () => void;
   onDone: () => void;
 }) {
   const [selectedEmployee, setSelectedEmployee] = useState(preselectedEmployeeId ?? "");
-  const [selectedAccount,  setSelectedAccount]  = useState("");
+  const [selectedAccount,  setSelectedAccount]  = useState(preselectedAccountId ?? "");
+  const [empSearch, setEmpSearch] = useState("");
+  const [empOpen, setEmpOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [done, setDone]   = useState<{ name: string; handle: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -200,6 +204,17 @@ function AssignModal({
 
   const selectedAccountData = accounts.find((a: any) => a.id === selectedAccount);
   const selectedEmployeeName = employees.find((e: any) => e.id === selectedEmployee)?.name ?? "";
+
+  const filteredEmployees = empSearch.trim()
+    ? employees.filter((e: any) => {
+        const q = empSearch.trim().toLowerCase();
+        return (
+          (e.name || "").toLowerCase().includes(q) ||
+          (e.email || "").toLowerCase().includes(q) ||
+          (e.designation || "").toLowerCase().includes(q)
+        );
+      })
+    : employees;
 
   const inputCls = "w-full border-2 border-ink/15 bg-surface rounded-xl px-4 py-2.5 text-sm text-ink transition-colors focus:outline-none focus:border-indigo appearance-none pr-8";
 
@@ -258,19 +273,43 @@ function AssignModal({
         </div>
         <div className="p-6 space-y-4">
           <div>
-            <label className="text-xs font-bold text-ink-4 uppercase tracking-wider mb-1.5 block">Employee</label>
+            <label className="text-xs font-bold text-ink-4 uppercase tracking-wider mb-1.5 block">
+              Employee <span className="text-ink-4 font-normal normal-case">({employees.length} available)</span>
+            </label>
             <div className="relative">
-              <select
-                value={selectedEmployee}
-                onChange={(e) => { setSelectedEmployee(e.target.value); setSelectedAccount(""); }}
-                className={inputCls}
-              >
-                <option value="">Select employee…</option>
-                {employees.map((e: any) => (
-                  <option key={e.id} value={e.id}>{e.name}{e.designation ? ` · ${e.designation}` : ""}</option>
-                ))}
-              </select>
-              <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-ink-4 pointer-events-none" />
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-ink-4 pointer-events-none" />
+                <input
+                  type="text"
+                  value={empOpen ? empSearch : (selectedEmployeeName || empSearch)}
+                  onChange={(e) => { setEmpSearch(e.target.value); setEmpOpen(true); if (selectedEmployee) setSelectedEmployee(""); }}
+                  onFocus={() => { setEmpOpen(true); setEmpSearch(""); }}
+                  onBlur={() => setTimeout(() => setEmpOpen(false), 150)}
+                  placeholder="Type a name to search…"
+                  className={`${inputCls} pl-9 pr-8`}
+                  autoComplete="off"
+                />
+                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-ink-4 pointer-events-none" />
+              </div>
+              {empOpen && (
+                <div className="absolute z-10 mt-1 w-full max-h-60 overflow-y-auto bg-white border-2 border-ink/15 rounded-xl shadow-lg">
+                  {filteredEmployees.length === 0 ? (
+                    <div className="px-4 py-3 text-sm text-ink-4">No employees match "{empSearch}"</div>
+                  ) : (
+                    filteredEmployees.map((e: any) => (
+                      <button
+                        key={e.id}
+                        type="button"
+                        onMouseDown={(ev) => { ev.preventDefault(); setSelectedEmployee(e.id); setSelectedAccount(""); setEmpSearch(""); setEmpOpen(false); }}
+                        className={`w-full text-left px-4 py-2 text-sm hover:bg-muted transition-colors flex items-center justify-between ${selectedEmployee === e.id ? "bg-indigo-soft" : ""}`}
+                      >
+                        <span className="text-ink">{e.name}</span>
+                        {e.designation && <span className="text-xs text-ink-4 ml-2">{e.designation}</span>}
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
             </div>
           </div>
 
@@ -368,7 +407,7 @@ function AccountsPageInner() {
 
   const { data, isLoading, mutate }       = useAccounts({ search, platformId: platformFilter });
   const { data: platformData }            = usePlatforms();
-  const { data: employeeData }            = useEmployees({ status: "ACTIVE" });
+  const { data: employeeData }            = useEmployees({ status: "ACTIVE", limit: 500 });
   const accounts  = (data as any)?.data ?? [];
   const platforms = (platformData as any)?.data ?? [];
   const employees = (employeeData as any)?.data ?? [];
@@ -380,10 +419,12 @@ function AccountsPageInner() {
   const [deleting, setDeleting]             = useState(false);
   const [assignOpen, setAssignOpen]         = useState(false);
   const [assignEmployeeId, setAssignEmployeeId] = useState<string | undefined>();
+  const [assignAccountId, setAssignAccountId]   = useState<string | undefined>();
 
-  // Open assign with preselected employee
-  function openAssign(employeeId?: string) {
-    setAssignEmployeeId(employeeId);
+  // Open assign with preselected employee or account
+  function openAssign(opts?: { employeeId?: string; accountId?: string }) {
+    setAssignEmployeeId(opts?.employeeId);
+    setAssignAccountId(opts?.accountId);
     setAssignOpen(true);
   }
 
@@ -432,7 +473,8 @@ function AccountsPageInner() {
           accounts={accounts}
           employees={employees}
           preselectedEmployeeId={assignEmployeeId}
-          onClose={() => { setAssignOpen(false); setAssignEmployeeId(undefined); }}
+          preselectedAccountId={assignAccountId}
+          onClose={() => { setAssignOpen(false); setAssignEmployeeId(undefined); setAssignAccountId(undefined); }}
           onDone={() => mutate()}
         />
       )}
@@ -453,7 +495,7 @@ function AccountsPageInner() {
         </div>
         <div className="flex items-center gap-2">
           <button
-            onClick={() => openAssign()}
+            onClick={() => openAssign({})}
             className="flex items-center gap-2 h-9 px-4 rounded-full border-2 border-ink/15 text-sm font-semibold text-ink-3 hover:border-sage/40 hover:text-sage transition-colors"
           >
             <Share2 className="h-3.5 w-3.5" /> Assign
@@ -578,10 +620,17 @@ function AccountsPageInner() {
                                   </button>
                                 </div>
                               ))}
+                              <button
+                                onClick={() => openAssign({ accountId: acc.id })}
+                                className="mt-1 text-[11px] text-ink-4 hover:text-sage flex items-center gap-1 transition-colors w-fit"
+                                title="Assign another employee to this account"
+                              >
+                                <Plus className="h-3 w-3" /> Add another
+                              </button>
                             </div>
                           ) : (
                             <button
-                              onClick={() => openAssign()}
+                              onClick={() => openAssign({ accountId: acc.id })}
                               className="text-xs text-ink-4 hover:text-sage flex items-center gap-1 transition-colors"
                             >
                               <Plus className="h-3 w-3" /> Assign
@@ -656,7 +705,7 @@ function AccountsPageInner() {
                       </div>
                     </div>
                     <button
-                      onClick={() => openAssign(emp.id)}
+                      onClick={() => openAssign({ employeeId: emp.id })}
                       className="flex items-center gap-1.5 h-8 px-3 rounded-full border-2 border-ink/12 text-xs font-semibold text-ink-4 hover:border-sage/40 hover:text-sage transition-colors shrink-0"
                     >
                       <Plus className="h-3 w-3" /> Assign

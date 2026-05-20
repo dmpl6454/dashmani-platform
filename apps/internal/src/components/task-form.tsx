@@ -25,8 +25,8 @@ export function TaskForm({ task }: TaskFormProps) {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    apiFetch("/employees?limit=100").then((res: any) => setEmployees(res.data || []));
-    apiFetch("/accounts?limit=100").then((res: any) => setAccounts(res.data || []));
+    apiFetch("/employees?status=ACTIVE&limit=500").then((res: any) => setEmployees(res.data || []));
+    apiFetch("/accounts?limit=500").then((res: any) => setAccounts(res.data || []));
   }, []);
 
   async function handleSubmit(e: React.FormEvent) {

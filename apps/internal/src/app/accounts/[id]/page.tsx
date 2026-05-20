@@ -4,7 +4,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useAccount } from "@/lib/hooks/use-accounts";
 import { Button } from "@dashmani/ui";
 import { apiFetch } from "@/lib/api";
-import { Pencil, Trash2 } from "lucide-react";
+import { Pencil, Trash2, Search } from "lucide-react";
 
 export default function AccountDetailPage() {
   const { id } = useParams();
@@ -12,12 +12,14 @@ export default function AccountDetailPage() {
   const { data, isLoading, mutate } = useAccount(id as string);
   const [employees, setEmployees] = useState<any[]>([]);
   const [selectedEmployee, setSelectedEmployee] = useState("");
+  const [empSearch, setEmpSearch] = useState("");
+  const [empOpen, setEmpOpen] = useState(false);
   const [assigning, setAssigning] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
-    apiFetch("/employees?limit=100").then((res: any) => setEmployees(res.data || []));
+    apiFetch("/employees?status=ACTIVE&limit=500").then((res: any) => setEmployees(res.data || []));
   }, []);
 
   if (isLoading) return <div className="flex items-center justify-center h-64"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#F5D547]" /></div>;
@@ -127,18 +129,43 @@ export default function AccountDetailPage() {
             </div>
           ))}
           <div className="flex gap-2 pt-2">
-            <select
-              className="flex-1 h-10 rounded-lg border border-[#E8E0D0] bg-white px-3 text-sm focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547] outline-none"
-              value={selectedEmployee}
-              onChange={(e) => setSelectedEmployee(e.target.value)}
-            >
-              <option value="">Select employee to assign</option>
-              {employees
-                .filter((emp: any) => !activeAssignments.some((a: any) => a.employee?.id === emp.id))
-                .map((emp: any) => (
-                  <option key={emp.id} value={emp.id}>{emp.name}</option>
-                ))}
-            </select>
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[#B0B0B0] pointer-events-none" />
+              <input
+                type="text"
+                value={empOpen ? empSearch : (employees.find((e: any) => e.id === selectedEmployee)?.name || empSearch)}
+                onChange={(e) => { setEmpSearch(e.target.value); setEmpOpen(true); if (selectedEmployee) setSelectedEmployee(""); }}
+                onFocus={() => { setEmpOpen(true); setEmpSearch(""); }}
+                onBlur={() => setTimeout(() => setEmpOpen(false), 150)}
+                placeholder={`Search ${employees.length} employees…`}
+                className="w-full h-10 rounded-lg border border-[#E8E0D0] bg-white pl-9 pr-3 text-sm focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547] outline-none"
+                autoComplete="off"
+              />
+              {empOpen && (() => {
+                const available = employees.filter((emp: any) => !activeAssignments.some((a: any) => a.employee?.id === emp.id));
+                const q = empSearch.trim().toLowerCase();
+                const filtered = q ? available.filter((e: any) => (e.name || "").toLowerCase().includes(q) || (e.email || "").toLowerCase().includes(q)) : available;
+                return (
+                  <div className="absolute z-10 mt-1 w-full max-h-60 overflow-y-auto bg-white border border-[#E8E0D0] rounded-lg shadow-lg">
+                    {filtered.length === 0 ? (
+                      <div className="px-4 py-3 text-sm text-[#7A7A7A]">{q ? `No employees match "${empSearch}"` : "All employees are already assigned"}</div>
+                    ) : (
+                      filtered.map((e: any) => (
+                        <button
+                          key={e.id}
+                          type="button"
+                          onMouseDown={(ev) => { ev.preventDefault(); setSelectedEmployee(e.id); setEmpSearch(""); setEmpOpen(false); }}
+                          className={`w-full text-left px-4 py-2 text-sm hover:bg-[rgba(255,248,225,0.5)] transition-colors flex items-center justify-between ${selectedEmployee === e.id ? "bg-[#FFF3C4]" : ""}`}
+                        >
+                          <span className="text-[#1A1A1A]">{e.name}</span>
+                          {e.email && <span className="text-xs text-[#B0B0B0] ml-2 truncate">{e.email}</span>}
+                        </button>
+                      ))
+                    )}
+                  </div>
+                );
+              })()}
+            </div>
             <Button onClick={handleAssign} disabled={!selectedEmployee || assigning} className="bg-[#1A1A1A] text-white rounded-full hover:bg-[#2B2B2B]">
               {assigning ? "..." : "Assign"}
             </Button>

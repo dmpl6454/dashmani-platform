@@ -31,7 +31,7 @@ export async function listEmployees(params: {
       roles: { include: { role: { select: { id: true, name: true } } } },
       orgUnit: { select: { id: true, name: true, type: true } },
     },
-    orderBy: { createdAt: "desc" },
+    orderBy: [{ name: "asc" }, { createdAt: "desc" }],
   });
 
   const hasMore = employees.length > params.limit;

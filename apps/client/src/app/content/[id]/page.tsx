@@ -158,7 +158,7 @@ export default function ContentDetailPage() {
                     ["Account", "@bombay.roastery"],
                     ["Format", `${post.format}${post.aspectRatio ?? post.aspect ? " · " + (post.aspectRatio ?? post.aspect) : ""}`],
                     ["Scheduled", fmt.date(post.scheduledAt ?? post.scheduled)],
-                    ["Created by", post.authorName],
+                    ["Created by", post.authorName ?? post.authorEmail ?? "—"],
                   ] as [string, string][]).map(([k, v]) => (
                     <div key={k} className="grid gap-2 text-[13px]" style={{ gridTemplateColumns: "80px 1fr" }}>
                       <dt className="text-ink-3 font-medium">{k}</dt>

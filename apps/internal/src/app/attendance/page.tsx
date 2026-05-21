@@ -6,7 +6,8 @@ import { useEmployees } from "@/lib/hooks/use-employees";
 import { AttendanceClock } from "@/components/attendance-clock";
 import { apiFetch } from "@/lib/api";
 import { ChevronLeft, ChevronRight, Plus, X, Check, Pencil } from "lucide-react";
-import { formatStatus } from "@dashmani/shared";
+import { formatStatus, formatDate } from "@dashmani/shared";
+import { usePageTitle } from "@/lib/hooks/use-page-title";
 
 const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 
@@ -34,6 +35,7 @@ type ManualEntry = {
 const EMPTY_ENTRY: ManualEntry = { userId: "", date: "", checkIn: "", checkOut: "", status: "PRESENT", note: "" };
 
 export default function AttendancePage() {
+  usePageTitle("Attendance");
   const now = new Date();
   const [viewYear, setViewYear] = useState(now.getFullYear());
   const [viewMonth, setViewMonth] = useState(now.getMonth());
@@ -195,7 +197,7 @@ export default function AttendancePage() {
               ) : (
                 records.map((r: any) => (
                   <tr key={r.id} className="border-b border-[#F0EAD8] last:border-0 hover:bg-[rgba(255,248,225,0.5)] transition-colors group">
-                    <td className="p-4 text-[#1A1A1A]">{new Date(r.date).toLocaleDateString()}</td>
+                    <td className="p-4 text-[#1A1A1A]">{formatDate(r.date)}</td>
                     {!employeeFilter && <td className="p-4 text-[#1A1A1A]">{r.employee?.name || "—"}</td>}
                     <td className="p-4 text-[#1A1A1A]">{r.checkIn ? new Date(r.checkIn).toLocaleTimeString() : "—"}</td>
                     <td className="p-4 text-[#1A1A1A]">{r.checkOut ? new Date(r.checkOut).toLocaleTimeString() : "—"}</td>

@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import useSWR from "swr";
 import { useAuth } from "@/lib/auth";
 import { apiFetch } from "@/lib/api";
 import {
@@ -35,6 +36,8 @@ function useCounter(target: number, duration = 1400, delay = 0) {
 
 export default function ClientLoginPage() {
   const { login } = useAuth();
+  const { data: statsEnv } = useSWR("/public/stats", (url) => apiFetch<any>(url));
+  const publicStats = (statsEnv as any)?.data ?? null;
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [emailBlurred, setEmailBlurred] = useState(false);
@@ -106,9 +109,9 @@ export default function ClientLoginPage() {
           </div>
         </Link>
         <nav className="hidden md:flex items-center gap-7 text-[12.5px] font-semibold text-ink-2">
-          <a href="https://digitalsukoon.com" className="hover:text-indigo transition-colors">Our work</a>
+          <a href="https://digitalsukoon.com/work" target="_blank" rel="noopener noreferrer" className="hover:text-indigo transition-colors">Our work</a>
           <a href="#how" className="hover:text-indigo transition-colors">How it works</a>
-          <a href="https://digitalsukoon.com" className="hover:text-indigo transition-colors">The studio</a>
+          <a href="https://digitalsukoon.com/studio" target="_blank" rel="noopener noreferrer" className="hover:text-indigo transition-colors">The studio</a>
           <a href="mailto:hello@digitalsukoon.com" className="hover:text-indigo transition-colors">Contact</a>
         </nav>
         <button
@@ -300,7 +303,7 @@ export default function ClientLoginPage() {
 
         {/* RIGHT: dashboard preview + stamp */}
         <aside className="hidden lg:block relative pt-4 pl-8 min-h-[700px]">
-          <RightStage />
+          <RightStage publicStats={publicStats} />
         </aside>
       </section>
 
@@ -422,9 +425,8 @@ export default function ClientLoginPage() {
             </p>
           </div>
           <div className="flex gap-6 text-[12px] font-bold text-ink-3">
-            <a href="#" className="hover:text-indigo">Terms</a>
-            <a href="#" className="hover:text-indigo">Privacy</a>
-            <a href="#" className="hover:text-indigo">Status</a>
+            <a href="https://digitalsukoon.com/terms" target="_blank" rel="noopener noreferrer" className="hover:text-indigo">Terms</a>
+            <a href="https://digitalsukoon.com/privacy" target="_blank" rel="noopener noreferrer" className="hover:text-indigo">Privacy</a>
             <a href="mailto:hello@digitalsukoon.com" className="hover:text-indigo">Contact</a>
           </div>
         </div>
@@ -450,7 +452,7 @@ function Mark({ size = 32 }: { size?: number }) {
 }
 
 /* ─────────── Right composition ─────────── */
-function RightStage() {
+function RightStage({ publicStats }: { publicStats: any }) {
   return (
     <div className="relative w-full h-full">
       <div
@@ -465,7 +467,7 @@ function RightStage() {
 
       <div className="relative auth-slide-right d3 z-10" style={{ transform: "rotate(1deg)" }}>
         <div className="float-a" style={{ ["--r" as any]: "1deg" }}>
-          <DashboardPreview />
+          <DashboardPreview publicStats={publicStats} />
         </div>
       </div>
 
@@ -533,10 +535,13 @@ const PENDING_ITEMS: PendingItem[] = [
   { who: "Northstar",     title: "Brand film · Director's cut",     meta: "68s · 4K",     due: "Due Friday", thumb: "linear-gradient(135deg,#8BA888,#5F7C5C)", over: false },
 ];
 
-function DashboardPreview() {
-  const proj  = useCounter(8,  1400, 700);
-  const sched = useCounter(14, 1500, 800);
-  const live  = useCounter(31, 1700, 900);
+function DashboardPreview({ publicStats }: { publicStats: any }) {
+  const projTarget  = publicStats?.activeProjects ?? 8;
+  const liveTarget  = publicStats?.postsPublishedThisMonth ?? 31;
+  const empTarget   = publicStats?.employeeCount ?? 14;
+  const proj  = useCounter(projTarget,  1400, 700);
+  const sched = useCounter(empTarget,   1500, 800);
+  const live  = useCounter(liveTarget,  1700, 900);
   const items = useCounter(4, 1100, 300);
 
   // Live "today" date in the topstrip
@@ -623,7 +628,7 @@ function DashboardPreview() {
       >
         {[
           { icon: Folder,    label: "Active projects", value: proj,  accent: "bg-indigo-soft text-indigo" },
-          { icon: Calendar,  label: "Scheduled posts", value: sched, accent: "bg-sage-soft text-sage" },
+          { icon: Calendar,  label: "Studio members",  value: sched, accent: "bg-sage-soft text-sage" },
           { icon: BarChart3, label: "Posts live · 7d", value: live,  accent: "bg-action-soft text-ink-2" },
         ].map((s, i) => {
           const Ic = s.icon;

@@ -9,7 +9,7 @@ import { apiFetch } from "@/lib/api";
 import { usePageTitle } from "@/lib/hooks/use-page-title";
 import {
   Globe, Plus, Search, Pencil, Trash2, X, Share2, ChevronDown,
-  Users, LayoutGrid, ExternalLink, UserMinus, Check,
+  Users, LayoutGrid, ExternalLink, UserMinus, Check, RefreshCw,
 } from "lucide-react";
 
 type Tab = "accounts" | "by-employee" | "platforms";
@@ -419,6 +419,19 @@ function AccountsPageInner() {
   const [editTarget, setEditTarget]         = useState<any | null>(null);
   const [deleteTarget, setDeleteTarget]     = useState<any | null>(null);
   const [deleting, setDeleting]             = useState(false);
+  const [syncing, setSyncing]               = useState(false);
+
+  async function handleSyncFollowers() {
+    setSyncing(true);
+    try {
+      await apiFetch("/accounts/sync-followers", { method: "POST" });
+      setTimeout(() => mutate(), 5000);
+    } catch (err: any) {
+      alert(err.message);
+    } finally {
+      setSyncing(false);
+    }
+  }
   const [assignOpen, setAssignOpen]         = useState(false);
   const [assignEmployeeId, setAssignEmployeeId] = useState<string | undefined>();
   const [assignAccountId, setAssignAccountId]   = useState<string | undefined>();
@@ -496,6 +509,14 @@ function AccountsPageInner() {
           <h1 className="font-display text-2xl font-semibold text-ink">Accounts</h1>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            onClick={handleSyncFollowers}
+            disabled={syncing}
+            className="flex items-center gap-2 h-9 px-4 rounded-full border-2 border-ink/15 text-sm font-semibold text-ink-3 hover:border-indigo/40 hover:text-indigo transition-colors disabled:opacity-50"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${syncing ? "animate-spin" : ""}`} />
+            {syncing ? "Syncing…" : "Sync Followers"}
+          </button>
           <button
             onClick={() => openAssign({})}
             className="flex items-center gap-2 h-9 px-4 rounded-full border-2 border-ink/15 text-sm font-semibold text-ink-3 hover:border-sage/40 hover:text-sage transition-colors"
@@ -575,15 +596,16 @@ function AccountsPageInner() {
                     <th className="text-left px-4 py-3 text-[11px] font-bold text-ink-4 uppercase tracking-wider">Client</th>
                     <th className="text-left px-4 py-3 text-[11px] font-bold text-ink-4 uppercase tracking-wider">Assigned To</th>
                     <th className="text-left px-4 py-3 text-[11px] font-bold text-ink-4 uppercase tracking-wider">Followers</th>
+                    <th className="text-left px-4 py-3 text-[11px] font-bold text-ink-4 uppercase tracking-wider hidden xl:table-cell">Last Synced</th>
                     <th className="text-left px-4 py-3 text-[11px] font-bold text-ink-4 uppercase tracking-wider">Status</th>
                     <th className="text-right px-4 py-3 text-[11px] font-bold text-ink-4 uppercase tracking-wider">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
                   {isLoading ? (
-                    <tr><td colSpan={7} className="px-4 py-8 text-center text-sm text-ink-4">Loading…</td></tr>
+                    <tr><td colSpan={8} className="px-4 py-8 text-center text-sm text-ink-4">Loading…</td></tr>
                   ) : accounts.length === 0 ? (
-                    <tr><td colSpan={7} className="px-4 py-8 text-center text-sm text-ink-4">No accounts found</td></tr>
+                    <tr><td colSpan={8} className="px-4 py-8 text-center text-sm text-ink-4">No accounts found</td></tr>
                   ) : (
                     accounts.map((acc: any) => (
                       <tr key={acc.id} className="border-b border-ink/8 last:border-0 hover:bg-muted/40 transition-colors group">
@@ -640,6 +662,17 @@ function AccountsPageInner() {
                           )}
                         </td>
                         <td className="px-4 py-3 text-sm text-ink-4">{acc.followerCount?.toLocaleString() ?? "—"}</td>
+                        <td className="px-4 py-3 text-sm text-ink-4 hidden xl:table-cell">
+                          {acc.lastSyncedAt
+                            ? (() => {
+                                const diff = Date.now() - new Date(acc.lastSyncedAt).getTime();
+                                const mins = Math.floor(diff / 60000);
+                                const hrs = Math.floor(mins / 60);
+                                const days = Math.floor(hrs / 24);
+                                return days > 0 ? `${days}d ago` : hrs > 0 ? `${hrs}h ago` : mins > 1 ? `${mins}m ago` : "Just now";
+                              })()
+                            : "Never"}
+                        </td>
                         <td className="px-4 py-3">
                           <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${STATUS_COLORS[acc.status] ?? "bg-muted text-ink-4"}`}>
                             {formatStatus(acc.status)}

@@ -1,10 +1,8 @@
 "use client";
 import { useState, useEffect } from "react";
 import { apiFetch } from "@/lib/api";
+import { Topstrip } from "@/components/portal-shell";
 import { ClipboardList, Save, ChevronLeft, ChevronRight, Check } from "lucide-react";
-
-const inputClass = "w-full border border-[#E8E0D0] bg-white rounded-lg px-4 py-2.5 text-sm text-[#1A1A1A] placeholder:text-[#B0B0B0] focus:outline-none focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547] transition-colors";
-const cardClass = "bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-[#E8E0D0] p-5";
 
 function formatDate(d: Date) {
   return d.toISOString().split("T")[0];
@@ -80,95 +78,158 @@ export default function PlanOfActionPage() {
 
   const isToday = formatDate(date) === formatDate(new Date());
 
-  return (
-    <div className="min-h-screen bg-[#FEFCF7] p-6 md:p-10 space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-4xl font-light text-[#1A1A1A] font-serif flex items-center gap-3">
-            <ClipboardList className="h-8 w-8 text-[#F5D547]" /> Plan of Action
-          </h1>
-          <p className="text-sm text-[#888] mt-1">Update your daily work plan and track progress</p>
-        </div>
-      </div>
+  const inputClass = "w-full h-10 px-3 text-[13px] font-medium rounded-xl bg-bg border-2 border-ink/10 focus:border-indigo outline-none transition-colors resize-none";
+  const textareaClass = "w-full px-3 py-2.5 text-[13px] font-medium rounded-xl bg-bg border-2 border-ink/10 focus:border-indigo outline-none transition-colors resize-none";
 
-      {/* Date Navigation */}
-      <div className="flex items-center gap-4">
-        <button onClick={() => changeDate(-1)} className="p-2 rounded-full hover:bg-white border border-[#E8E0D0] transition-colors">
-          <ChevronLeft className="h-4 w-4" />
-        </button>
-        <div className="text-center flex-1">
-          <p className="text-lg font-semibold text-[#1A1A1A]">{displayDate(date)}</p>
-          {isToday && <span className="text-xs bg-[#FFF3C4] text-[#B8960C] px-2.5 py-0.5 rounded-full font-medium">Today</span>}
+  return (
+    <>
+      <Topstrip title="Plan of Action" sub="Update your daily work plan and track progress" />
+      <div className="px-6 py-6 flex-1 overflow-y-auto max-w-[900px] space-y-5">
+
+        {/* Date Navigation */}
+        <div className="v3-card-sm flex items-center gap-4">
+          <button onClick={() => changeDate(-1)} className="p-1.5 rounded-lg hover:bg-muted transition-colors border border-ink/10">
+            <ChevronLeft className="h-4 w-4 text-ink" />
+          </button>
+          <div className="text-center flex-1">
+            <p className="text-[14px] font-semibold text-ink">{displayDate(date)}</p>
+            {isToday && (
+              <span className="inline-flex h-5 px-2.5 rounded-full text-[11px] font-semibold items-center bg-indigo-soft text-indigo border border-indigo/20 mt-1">
+                Today
+              </span>
+            )}
+          </div>
+          <button onClick={() => changeDate(1)} className="p-1.5 rounded-lg hover:bg-muted transition-colors border border-ink/10">
+            <ChevronRight className="h-4 w-4 text-ink" />
+          </button>
+          {!isToday && (
+            <button onClick={() => setDate(new Date())} className="text-[12px] text-indigo hover:underline font-semibold">
+              Go to Today
+            </button>
+          )}
         </div>
-        <button onClick={() => changeDate(1)} className="p-2 rounded-full hover:bg-white border border-[#E8E0D0] transition-colors">
-          <ChevronRight className="h-4 w-4" />
-        </button>
-        {!isToday && (
-          <button onClick={() => setDate(new Date())} className="text-xs text-blue-600 hover:text-blue-800 font-medium">Go to Today</button>
+
+        {saved && (
+          <div className="flex items-center gap-2 bg-success-bg border border-success/20 text-success px-4 py-3 rounded-xl text-[13px] font-medium">
+            <Check className="h-4 w-4" /> POA saved successfully!
+          </div>
+        )}
+
+        {/* POA Form */}
+        {loading ? (
+          <div className="v3-card flex justify-center py-12">
+            <div className="animate-spin rounded-full h-7 w-7 border-b-2 border-indigo" />
+          </div>
+        ) : (
+          <form onSubmit={handleSave} className="space-y-4">
+            <div className="v3-card">
+              <div className="px-5 h-12 flex items-center gap-2" style={{ borderBottom: "2px solid rgba(26,26,26,0.07)" }}>
+                <span className="text-[13px] font-semibold text-ink">Today's Tasks *</span>
+              </div>
+              <div className="p-5">
+                <p className="text-[11.5px] font-bold text-ink-3 mb-1.5 uppercase tracking-wider">What did you work on?</p>
+                <textarea
+                  value={tasks}
+                  onChange={(e) => setTasks(e.target.value)}
+                  rows={5}
+                  required
+                  placeholder="List your tasks and activities for the day..."
+                  className={textareaClass}
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="v3-card">
+                <div className="px-5 h-12 flex items-center" style={{ borderBottom: "2px solid rgba(26,26,26,0.07)" }}>
+                  <span className="text-[13px] font-semibold text-ink">Achievements</span>
+                </div>
+                <div className="p-5">
+                  <p className="text-[11.5px] font-bold text-ink-3 mb-1.5 uppercase tracking-wider">Completed / Won</p>
+                  <textarea
+                    value={achievements}
+                    onChange={(e) => setAchievements(e.target.value)}
+                    rows={3}
+                    placeholder="What was completed or achieved..."
+                    className={textareaClass}
+                  />
+                </div>
+              </div>
+              <div className="v3-card">
+                <div className="px-5 h-12 flex items-center" style={{ borderBottom: "2px solid rgba(26,26,26,0.07)" }}>
+                  <span className="text-[13px] font-semibold text-ink">Blockers</span>
+                </div>
+                <div className="p-5">
+                  <p className="text-[11.5px] font-bold text-ink-3 mb-1.5 uppercase tracking-wider">Issues / Blockers</p>
+                  <textarea
+                    value={blockers}
+                    onChange={(e) => setBlockers(e.target.value)}
+                    rows={3}
+                    placeholder="Any blockers or issues faced..."
+                    className={textareaClass}
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="v3-card">
+              <div className="px-5 h-12 flex items-center" style={{ borderBottom: "2px solid rgba(26,26,26,0.07)" }}>
+                <span className="text-[13px] font-semibold text-ink">Tomorrow's Plan</span>
+              </div>
+              <div className="p-5">
+                <p className="text-[11.5px] font-bold text-ink-3 mb-1.5 uppercase tracking-wider">What's next?</p>
+                <textarea
+                  value={tomorrowPlan}
+                  onChange={(e) => setTomorrowPlan(e.target.value)}
+                  rows={3}
+                  placeholder="What you plan to work on tomorrow..."
+                  className={textareaClass}
+                />
+              </div>
+            </div>
+
+            <div className="flex justify-end">
+              <button
+                type="submit"
+                disabled={saving || !tasks.trim()}
+                className="btn-3d inline-flex items-center gap-2 px-5 h-10 rounded-xl bg-ink text-white text-[13px] font-semibold border-2 border-ink disabled:opacity-50"
+              >
+                <Save className="h-4 w-4" /> {saving ? "Saving..." : "Save POA"}
+              </button>
+            </div>
+          </form>
+        )}
+
+        {/* History */}
+        {history.length > 0 && (
+          <div className="v3-card">
+            <div className="px-5 h-12 flex items-center" style={{ borderBottom: "2px solid rgba(26,26,26,0.07)" }}>
+              <span className="text-[13px] font-semibold text-ink">Recent Updates</span>
+            </div>
+            <div className="px-5 py-3 space-y-1">
+              {history.slice(0, 7).map((poa: any) => {
+                const poaDate = new Date(poa.date);
+                const isSelected = formatDate(poaDate) === formatDate(date);
+                return (
+                  <button
+                    key={poa.id}
+                    onClick={() => setDate(poaDate)}
+                    className={`v3-row w-full text-left px-4 py-3 rounded-xl transition-colors ${isSelected ? "bg-indigo-soft" : ""}`}
+                  >
+                    <div className="flex items-center justify-between mb-0.5">
+                      <p className="text-[13px] font-semibold text-ink">
+                        {poaDate.toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" })}
+                      </p>
+                      <Check className="h-3.5 w-3.5 text-success" />
+                    </div>
+                    <p className="text-[12px] text-ink-3 line-clamp-1">{poa.tasks}</p>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
         )}
       </div>
-
-      {saved && (
-        <div className="bg-green-50 border border-green-200 text-green-800 px-4 py-3 rounded-xl text-sm flex items-center gap-2">
-          <Check className="h-4 w-4" /> POA saved successfully!
-        </div>
-      )}
-
-      {/* POA Form */}
-      {loading ? (
-        <div className="flex justify-center py-12"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#F5D547]" /></div>
-      ) : (
-        <form onSubmit={handleSave} className="space-y-5">
-          <div className={cardClass}>
-            <label className="block text-sm font-semibold text-[#1A1A1A] mb-2">What did you work on today? *</label>
-            <textarea value={tasks} onChange={(e) => setTasks(e.target.value)} rows={5} required placeholder="List your tasks and activities for the day..." className={`${inputClass} resize-none`} />
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-            <div className={cardClass}>
-              <label className="block text-sm font-semibold text-[#1A1A1A] mb-2">Achievements / Completed</label>
-              <textarea value={achievements} onChange={(e) => setAchievements(e.target.value)} rows={3} placeholder="What was completed or achieved..." className={`${inputClass} resize-none`} />
-            </div>
-            <div className={cardClass}>
-              <label className="block text-sm font-semibold text-[#1A1A1A] mb-2">Blockers / Issues</label>
-              <textarea value={blockers} onChange={(e) => setBlockers(e.target.value)} rows={3} placeholder="Any blockers or issues faced..." className={`${inputClass} resize-none`} />
-            </div>
-          </div>
-
-          <div className={cardClass}>
-            <label className="block text-sm font-semibold text-[#1A1A1A] mb-2">Plan for Tomorrow</label>
-            <textarea value={tomorrowPlan} onChange={(e) => setTomorrowPlan(e.target.value)} rows={3} placeholder="What you plan to work on tomorrow..." className={`${inputClass} resize-none`} />
-          </div>
-
-          <div className="flex justify-end">
-            <button type="submit" disabled={saving || !tasks.trim()} className="flex items-center gap-2 bg-[#1A1A1A] text-white py-2.5 px-6 rounded-full text-sm font-semibold hover:bg-[#2B2B2B] disabled:opacity-50 transition-all">
-              <Save className="h-4 w-4" /> {saving ? "Saving..." : "Save POA"}
-            </button>
-          </div>
-        </form>
-      )}
-
-      {/* History */}
-      {history.length > 0 && (
-        <div className="space-y-3">
-          <h2 className="text-sm font-semibold text-[#7A7A7A] uppercase tracking-wider">Recent Updates</h2>
-          {history.slice(0, 7).map((poa: any) => {
-            const poaDate = new Date(poa.date);
-            const isSelected = formatDate(poaDate) === formatDate(date);
-            return (
-              <button key={poa.id} onClick={() => setDate(poaDate)} className={`w-full text-left ${cardClass} hover:border-[#F5D547] transition-colors ${isSelected ? "border-[#F5D547] bg-[#FEFCF7]" : ""}`}>
-                <div className="flex items-center justify-between mb-1">
-                  <p className="text-sm font-semibold text-[#1A1A1A]">
-                    {poaDate.toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" })}
-                  </p>
-                  <Check className="h-4 w-4 text-green-600" />
-                </div>
-                <p className="text-xs text-[#7A7A7A] line-clamp-2">{poa.tasks}</p>
-              </button>
-            );
-          })}
-        </div>
-      )}
-    </div>
+    </>
   );
 }

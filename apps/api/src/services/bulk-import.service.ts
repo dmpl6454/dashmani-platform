@@ -2,6 +2,7 @@ import { prisma } from "@dashmani/db";
 import { AppError } from "../middleware/error-handler";
 import * as XLSX from "xlsx";
 import fs from "fs";
+import { sanitizeAccountHandle } from "@dashmani/shared";
 
 interface AccountRow {
   handle: string;
@@ -44,7 +45,7 @@ export async function importAccountsFromExcel(filePath: string) {
     const row = rows[i];
     const rowNum = i + 2; // Excel rows start at 1, header is row 1
 
-    const handle = (row.handle || row.Handle || row.username || row.Username || "").toString().trim();
+    const handle = sanitizeAccountHandle((row.handle || row.Handle || row.username || row.Username || "").toString().trim());
     const displayName = (row.displayName || row.display_name || row.DisplayName || row.name || row.Name || handle).toString().trim();
     const platformStr = (row.platform || row.Platform || "").toString().trim().toLowerCase();
     const clientName = (row.clientName || row.client_name || row.ClientName || row.client || row.Client || "").toString().trim() || null;

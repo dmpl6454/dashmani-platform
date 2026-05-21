@@ -5,6 +5,7 @@ import { useTask } from "@/lib/hooks/use-tasks";
 import { Button, Input } from "@dashmani/ui";
 import { apiFetch } from "@/lib/api";
 import { useEmployees } from "@/lib/hooks/use-employees";
+import { usePageTitle } from "@/lib/hooks/use-page-title";
 
 const STATUS_LABELS: Record<string, string> = {
   TODO: "To Do", IN_PROGRESS: "In Progress", IN_REVIEW: "In Review", DONE: "Done", CANCELLED: "Cancelled",
@@ -20,6 +21,7 @@ const PRIORITY_BADGE: Record<string, string> = {
 };
 
 export default function TaskDetailPage() {
+  usePageTitle("Task Detail");
   const { id } = useParams();
   const router = useRouter();
   const { data, isLoading, mutate } = useTask(id as string);
@@ -87,7 +89,7 @@ export default function TaskDetailPage() {
       <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0] crx-animate-slide crx-delay-1">
         <div className="p-6 space-y-4">
           {task.description && <p className="text-sm text-[#1A1A1A]">{task.description}</p>}
-          <div className="grid grid-cols-2 gap-4 text-sm">
+          <div className="grid grid-cols-2 gap-4 text-sm [&>div]:min-w-0 [&>div]:overflow-visible">
             <div className="flex items-center gap-2">
               <span className="text-[#7A7A7A]">Assignee:</span>
               <select

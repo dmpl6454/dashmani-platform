@@ -42,7 +42,7 @@ export const updateProfileSchema = z.object({
 
 export const reportLinkSchema = z.object({
   accountId: z.string().uuid("Invalid account ID"),
-  url: z.string().url("Invalid URL"),
+  url: z.string().url("Invalid URL").optional().nullable(),
   platform: z.string().min(1, "Platform is required"),
   description: z.string().optional(),
   mediaUrl: z.string().url("Invalid media URL").optional(),
@@ -50,7 +50,12 @@ export const reportLinkSchema = z.object({
   comments: z.number().int().nonnegative().optional(),
   shares: z.number().int().nonnegative().optional(),
   views: z.number().int().nonnegative().optional(),
-});
+  isScheduled: z.boolean().optional().default(false),
+  scheduledFor: z.string().datetime().optional().nullable(),
+}).refine(
+  (data) => data.isScheduled || (data.url && data.url.length > 0),
+  { message: "URL is required for live posts", path: ["url"] }
+);
 
 export const submitDailyReportSchema = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be in YYYY-MM-DD format"),

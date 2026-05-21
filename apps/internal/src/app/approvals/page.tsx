@@ -4,12 +4,14 @@ import { useState } from "react";
 import { apiFetch, API_BASE } from "@/lib/api";
 import useSWR from "swr";
 import { FileCheck, Image, CalendarOff, Check, X, Clock, History, CheckSquare } from "lucide-react";
+import { useAuth } from "@/lib/auth";
 
 
 type Tab = "documents" | "pictures" | "leave";
 type LeaveFilter = "PENDING" | "APPROVED" | "REJECTED";
 
 export default function ApprovalsPage() {
+  const { user } = useAuth();
   const [activeTab, setActiveTab] = useState<Tab>("documents");
   const [leaveFilter, setLeaveFilter] = useState<LeaveFilter>("PENDING");
 
@@ -414,18 +416,24 @@ export default function ApprovalsPage() {
                         <td className="p-4">
                           {leaveFilter === "PENDING" ? (
                             <div className="flex items-center gap-2">
-                              <button
-                                onClick={() => reviewLeave(leave.id, "approve")}
-                                className="flex items-center gap-1 rounded-full bg-[rgba(107,203,119,0.12)] text-[#2E7D32] px-3 py-1.5 text-xs font-medium hover:bg-[rgba(107,203,119,0.25)] transition-colors"
-                              >
-                                <Check size={13} /> Approve
-                              </button>
-                              <button
-                                onClick={() => reviewLeave(leave.id, "reject")}
-                                className="flex items-center gap-1 rounded-full bg-[rgba(231,76,60,0.1)] text-[#E74C3C] px-3 py-1.5 text-xs font-medium hover:bg-[rgba(231,76,60,0.2)] transition-colors"
-                              >
-                                <X size={13} /> Reject
-                              </button>
+                              {leave.employeeId === user?.id ? (
+                                <span className="text-xs text-[#B0B0B0] italic">Self-approval not allowed</span>
+                              ) : (
+                                <>
+                                  <button
+                                    onClick={() => reviewLeave(leave.id, "approve")}
+                                    className="flex items-center gap-1 rounded-full bg-[rgba(107,203,119,0.12)] text-[#2E7D32] px-3 py-1.5 text-xs font-medium hover:bg-[rgba(107,203,119,0.25)] transition-colors"
+                                  >
+                                    <Check size={13} /> Approve
+                                  </button>
+                                  <button
+                                    onClick={() => reviewLeave(leave.id, "reject")}
+                                    className="flex items-center gap-1 rounded-full bg-[rgba(231,76,60,0.1)] text-[#E74C3C] px-3 py-1.5 text-xs font-medium hover:bg-[rgba(231,76,60,0.2)] transition-colors"
+                                  >
+                                    <X size={13} /> Reject
+                                  </button>
+                                </>
+                              )}
                             </div>
                           ) : (
                             <div className="flex flex-col gap-0.5">

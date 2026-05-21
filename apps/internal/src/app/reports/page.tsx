@@ -2,6 +2,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { Input } from "@dashmani/ui";
+import { formatDate } from "@dashmani/shared";
 import { Users, FileText, Link2, Calendar, Filter, X, TrendingUp, Trophy } from "lucide-react";
 import { useAdminReports, useReportSummary } from "@/lib/hooks/use-reports";
 import { useEmployees } from "@/lib/hooks/use-employees";
@@ -57,7 +58,7 @@ export default function ReportsPage() {
     { title: "Employees Reporting", value: summary?.employeesReporting ?? 0, icon: Users, iconColor: "text-blue-600", bgColor: "bg-blue-50 shadow-[0_2px_8px_rgba(59,130,246,0.12)]", sub: "submitted reports" },
     { title: "Total Reports", value: summary?.totalReports ?? 0, icon: FileText, iconColor: "text-purple-600", bgColor: "bg-purple-50 shadow-[0_2px_8px_rgba(147,51,234,0.12)]", sub: "in this period" },
     { title: "Total Links", value: summary?.totalLinks ?? 0, icon: Link2, iconColor: "text-emerald-600", bgColor: "bg-emerald-50 shadow-[0_2px_8px_rgba(16,185,129,0.12)]", sub: "submitted" },
-    { title: "Today", value: today, icon: Calendar, iconColor: "text-amber-600", bgColor: "bg-amber-50 shadow-[0_2px_8px_rgba(245,158,11,0.12)]", sub: "current date" },
+    { title: "Today", value: formatDate(today), icon: Calendar, iconColor: "text-amber-600", bgColor: "bg-amber-50 shadow-[0_2px_8px_rgba(245,158,11,0.12)]", sub: "current date" },
   ];
 
   return (
@@ -78,7 +79,7 @@ export default function ReportsPage() {
           </Link>
           <Link
             href="/reports/leaderboard"
-            className="inline-flex items-center gap-2 bg-[#F5D547] text-[#1A1A1A] rounded-full px-5 py-2.5 text-sm font-medium shadow-[0_4px_16px_rgba(245,213,71,0.35)] hover:shadow-[0_6px_24px_rgba(245,213,71,0.45)] hover:-translate-y-0.5 transition-all"
+            className="inline-flex items-center gap-2 bg-[#1A1A1A] text-white rounded-full px-5 py-2.5 text-sm font-medium shadow-[0_4px_16px_rgba(0,0,0,0.18)] hover:shadow-[0_6px_24px_rgba(0,0,0,0.22)] hover:-translate-y-0.5 transition-all"
           >
             <Trophy className="h-4 w-4" />
             Leaderboard

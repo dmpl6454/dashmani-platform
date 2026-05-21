@@ -95,9 +95,37 @@ export function TopNav({ onOpenSearch }: { onOpenSearch?: () => void }) {
   }
 
   /* ── Breadcrumb from pathname ── */
+  const ROUTE_LABELS: Record<string, string> = {
+    dashboard: "Dashboard",
+    employees: "Employees",
+    teams: "Team Structure",
+    tasks: "Tasks",
+    content: "Content",
+    accounts: "Accounts",
+    workload: "Workload Matrix",
+    clients: "Clients",
+    projects: "Projects",
+    attendance: "Attendance",
+    approvals: "Approvals",
+    analytics: "Analytics",
+    reports: "Daily Reports",
+    announcements: "Announcements",
+    "ai-assistant": "AI Assistant",
+    "salary-slips": "Salary Slips",
+    "offer-letters": "Offer Letters",
+    holidays: "Holiday Calendar",
+    jobs: "Job Listings",
+    expenses: "Expense Claims",
+    devices: "Assigned Devices",
+    "auto-teams": "Auto-Detected Teams",
+    internships: "Internships",
+    complaints: "Employee Complaints",
+    "bug-reports": "Bug Reports",
+    settings: "Settings",
+  };
   const crumb = pathname.split("/").filter(Boolean);
   const pageLabel = crumb[0]
-    ? crumb[0].charAt(0).toUpperCase() + crumb[0].slice(1).replace(/-/g, " ")
+    ? (ROUTE_LABELS[crumb[0]] ?? (crumb[0].charAt(0).toUpperCase() + crumb[0].slice(1).replace(/-/g, " ")))
     : "Dashboard";
 
   return (

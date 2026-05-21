@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import useSWR from "swr";
 import { Topstrip } from "@/components/portal-shell";
 import {
@@ -204,6 +204,8 @@ export default function PresentationsPage() {
   const [saving, setSaving] = useState(false);
   const [previewHtml, setPreviewHtml] = useState("");
   const [loading, setLoading] = useState(false);
+  const [liveHtml, setLiveHtml] = useState("");
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // AI Generation state
   const [showAiModal, setShowAiModal] = useState(false);
@@ -214,6 +216,21 @@ export default function PresentationsPage() {
   const [aiAudience, setAiAudience] = useState("");
   const [aiNotes, setAiNotes] = useState("");
   const [aiGenerating, setAiGenerating] = useState(false);
+
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(async () => {
+      try {
+        const { Marp } = await import("@marp-team/marp-core");
+        const marp = new Marp({ html: false });
+        const { html, css } = marp.render(markdown);
+        setLiveHtml(`<!DOCTYPE html><html><head><style>${css}</style></head><body>${html}</body></html>`);
+      } catch {
+        setLiveHtml("");
+      }
+    }, 400);
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+  }, [markdown]);
 
   function newPresentation(template?: string) {
     setCurrentId(null);
@@ -396,28 +413,24 @@ export default function PresentationsPage() {
             />
           </div>
 
-          {/* Help Panel */}
+          {/* Live Preview Panel */}
           <div className="v3-card overflow-hidden flex flex-col">
-            <div className="px-5 h-11 flex items-center" style={{ borderBottom: "2px solid rgba(26,26,26,0.07)" }}>
-              <span className="text-[13px] font-semibold text-ink">Marp Cheatsheet</span>
+            <div className="px-5 h-11 flex items-center justify-between" style={{ borderBottom: "2px solid rgba(26,26,26,0.07)" }}>
+              <span className="text-[13px] font-semibold text-ink">Live Preview</span>
+              <span className="text-[11px] text-ink-4 font-medium">{slideCount} slides</span>
             </div>
-            <div className="flex-1 p-4 space-y-4 overflow-y-auto">
-              {[
-                { title: "Slide Separator", content: <><code className="bg-muted px-2 py-0.5 rounded text-[11px] text-ink font-mono">---</code><p className="text-[12px] text-ink-3 mt-1">Three dashes on a new line = new slide</p></> },
-                { title: "Front Matter", content: <pre className="v3-card-inset p-3 text-[11px] font-mono text-ink-3 overflow-x-auto">{`---\nmarp: true\ntheme: default\npaginate: true\nbackgroundColor: #fff\ncolor: #333\n---`}</pre> },
-                { title: "Headings", content: <pre className="v3-card-inset p-3 text-[11px] font-mono text-ink-3">{`# Title (large)\n## Subtitle\n### Section`}</pre> },
-                { title: "Lists", content: <pre className="v3-card-inset p-3 text-[11px] font-mono text-ink-3">{`- Bullet point\n1. Numbered item\n  - Nested item`}</pre> },
-                { title: "Tables", content: <pre className="v3-card-inset p-3 text-[11px] font-mono text-ink-3">{`| Header | Header |\n|--------|--------|\n| Cell   | Cell   |`}</pre> },
-                { title: "Images", content: <pre className="v3-card-inset p-3 text-[11px] font-mono text-ink-3">{`![bg](url)        # background\n![bg left](url)   # split left\n![w:300](url)     # sized image`}</pre> },
-                { title: "Styling", content: <pre className="v3-card-inset p-3 text-[11px] font-mono text-ink-3">{`**bold** *italic* \`code\`\n> blockquote\n~~strikethrough~~`}</pre> },
-                { title: "Per-slide Directives", content: <pre className="v3-card-inset p-3 text-[11px] font-mono text-ink-3">{`<!-- _backgroundColor: black -->\n<!-- _color: white -->\n<!-- _class: lead -->`}</pre> },
-              ].map(({ title: t, content }) => (
-                <div key={t}>
-                  <p className="text-[12px] font-semibold text-ink mb-1.5">{t}</p>
-                  {content}
-                </div>
-              ))}
-            </div>
+            {liveHtml ? (
+              <iframe
+                srcDoc={liveHtml}
+                sandbox="allow-same-origin"
+                className="flex-1 w-full border-none bg-white"
+                title="Marp live preview"
+              />
+            ) : (
+              <div className="flex-1 flex items-center justify-center">
+                <p className="text-[12px] text-ink-4 font-medium">Start typing to see a live preview</p>
+              </div>
+            )}
           </div>
         </div>
       </div>

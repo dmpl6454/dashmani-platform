@@ -16,7 +16,20 @@ export default function WorkloadPage() {
       </div>
 
       {isLoading ? (
-        <div className="flex items-center justify-center h-64"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#F5D547]" /></div>
+        <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0] divide-y divide-[#F0EAD8]">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div key={i} className="flex items-center gap-4 p-4 animate-pulse">
+              <div className="h-7 w-7 rounded-full bg-[#F0EAD8] shrink-0" />
+              <div className="h-4 w-28 rounded bg-[#F0EAD8]" />
+              <div className="h-4 w-16 rounded bg-[#F0EAD8] ml-4" />
+              <div className="ml-auto flex gap-3">
+                <div className="h-4 w-8 rounded bg-[#F0EAD8]" />
+                <div className="h-4 w-8 rounded bg-[#F0EAD8]" />
+                <div className="h-4 w-8 rounded bg-[#F0EAD8]" />
+              </div>
+            </div>
+          ))}
+        </div>
       ) : (
         <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0] crx-animate-slide crx-delay-1">
           <div className="overflow-x-auto">

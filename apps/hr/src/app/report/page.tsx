@@ -1,10 +1,16 @@
 "use client";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, Trash2, AlertTriangle, FileText, Link2, MessageSquare, BarChart3, Send, Loader2, ChevronDown, Hash, Eye, Heart, Share2 } from "lucide-react";
+import {
+  Plus, Trash2, AlertTriangle, FileText, Link2, MessageSquare,
+  BarChart3, Send, Loader2, ChevronDown, Hash, Eye, Heart, Share2,
+  Clock, Zap, CheckCircle2, XCircle,
+} from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { useAssignedAccounts } from "@/lib/hooks/use-accounts";
 import { useTodayReport } from "@/lib/hooks/use-reports";
+
+// ─── Types ────────────────────────────────────────────────────────────────────
 
 interface LinkEntry {
   accountId: string;
@@ -15,118 +21,172 @@ interface LinkEntry {
   shares: string;
   views: string;
   mediaUrl: string;
+  isScheduled: boolean;
+  scheduledFor: string;
+  matchStatus?: "auto" | "manual" | "unmatched";
 }
+
+// ─── Constants ────────────────────────────────────────────────────────────────
 
 const MAX_LINKS = 500;
 const MAX_LINKS_PER_ACCOUNT = 100;
 
-const emptyLink = (): LinkEntry => ({
-  accountId: "",
-  url: "",
-  description: "",
-  likes: "",
-  comments: "",
-  shares: "",
-  views: "",
-  mediaUrl: "",
-});
+const PLATFORM_DOMAINS: Record<string, string[]> = {
+  instagram: ["instagram.com", "instagr.am"],
+  facebook: ["facebook.com", "fb.com", "fb.watch"],
+  youtube: ["youtube.com", "youtu.be"],
+  twitter: ["twitter.com", "x.com", "t.co"],
+  linkedin: ["linkedin.com", "lnkd.in"],
+  snapchat: ["snapchat.com", "snap.com"],
+};
 
 const PLATFORM_ACCENT: Record<string, string> = {
   instagram: "border-l-pink-400",
   twitter: "border-l-sky-400",
-  x: "border-l-gray-700",
   linkedin: "border-l-blue-600",
   facebook: "border-l-blue-500",
   youtube: "border-l-red-500",
-  google: "border-l-green-500",
   snapchat: "border-l-yellow-400",
 };
 
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function emptyLink(): LinkEntry {
+  return {
+    accountId: "", url: "", description: "", likes: "", comments: "",
+    shares: "", views: "", mediaUrl: "", isScheduled: false, scheduledFor: "",
+  };
+}
+
+function detectPlatformFromUrl(url: string): string | null {
+  try {
+    const host = new URL(url).hostname.replace(/^www\./, "");
+    for (const [slug, domains] of Object.entries(PLATFORM_DOMAINS)) {
+      if (domains.some((d) => host === d || host.endsWith("." + d))) return slug;
+    }
+  } catch { /* invalid url */ }
+  return null;
+}
+
 const inputClass = "w-full border border-[#E8E0D0] bg-white rounded-lg px-4 py-2.5 text-sm text-[#1A1A1A] placeholder:text-[#B0B0B0] focus:outline-none focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547] transition-all duration-200";
 const selectClass = "w-full border border-[#E8E0D0] bg-white rounded-lg px-4 py-2.5 text-sm text-[#1A1A1A] focus:outline-none focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547] transition-all duration-200 appearance-none";
+
+// ─── Metrics row (shared) ─────────────────────────────────────────────────────
+
+function MetricsRow({ link, onChange }: {
+  link: LinkEntry;
+  onChange: (field: keyof LinkEntry, val: string) => void;
+}) {
+  return (
+    <div className="flex items-center gap-2 pt-1">
+      <BarChart3 className="h-3.5 w-3.5 text-[#B0B0B0] flex-shrink-0" />
+      <span className="text-[10px] text-[#B0B0B0] uppercase tracking-wider font-medium flex-shrink-0">Metrics</span>
+      <div className="flex-1 grid grid-cols-2 sm:grid-cols-5 gap-2">
+        {(["likes", "comments", "shares", "views"] as const).map((field, fi) => {
+          const Icon = [Heart, MessageSquare, Share2, Eye][fi];
+          return (
+            <div key={field} className="relative">
+              <Icon className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3 w-3 text-[#B0B0B0]" />
+              <input type="number" min="0" value={link[field]}
+                onChange={(e) => onChange(field, e.target.value)}
+                placeholder={field.charAt(0).toUpperCase() + field.slice(1)}
+                className={inputClass + " !pl-8 !py-2 !text-xs"} />
+            </div>
+          );
+        })}
+        <input type="text" value={link.description}
+          onChange={(e) => onChange("description", e.target.value)}
+          placeholder="Description" className={inputClass + " !py-2 !text-xs"} />
+      </div>
+    </div>
+  );
+}
+
+// ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function ReportPage() {
   const router = useRouter();
   const { data: accountsData } = useAssignedAccounts();
   const { data: todayData } = useTodayReport();
 
-  const accounts = accountsData?.data || [];
-  const existing = todayData?.data;
+  const accounts = (accountsData as any)?.data || [];
+  const existing = (todayData as any)?.data;
 
   const [links, setLinks] = useState<LinkEntry[]>([emptyLink()]);
   const [notes, setNotes] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [duplicateWarning, setDuplicateWarning] = useState("");
-  const [accountLimitWarning, setAccountLimitWarning] = useState("");
-  const [bulkUrls, setBulkUrls] = useState("");
-  const [showBulkAdd, setShowBulkAdd] = useState(false);
-  const [defaultAccountId, setDefaultAccountId] = useState("");
   const [prefilled, setPrefilled] = useState(false);
 
+  // Smart Paste state
+  const [pasteText, setPasteText] = useState("");
+  const [showPaste, setShowPaste] = useState(false);
+  const [pasteResult, setPasteResult] = useState<{ matched: number; unmatched: number } | null>(null);
+  const [defaultAccountId, setDefaultAccountId] = useState("");
+
   const today = new Date().toISOString().split("T")[0];
-  const todayFormatted = new Date().toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+  const todayFormatted = new Date().toLocaleDateString("en-IN", {
+    weekday: "long", day: "numeric", month: "long", year: "numeric",
+  });
 
   useEffect(() => {
     if (existing && !prefilled) {
       setPrefilled(true);
       setNotes(existing.notes || "");
       if (existing.links?.length > 0) {
-        setLinks(
-          existing.links.map((l: any) => ({
-            accountId: l.accountId || "",
-            url: l.url || "",
-            description: l.description || "",
-            likes: l.likes?.toString() || "",
-            comments: l.comments?.toString() || "",
-            shares: l.shares?.toString() || "",
-            views: l.views?.toString() || "",
-            mediaUrl: l.mediaUrl || "",
-          }))
-        );
+        setLinks(existing.links.map((l: any) => ({
+          accountId: l.accountId || "",
+          url: l.url || "",
+          description: l.description || "",
+          likes: l.likes?.toString() || "",
+          comments: l.comments?.toString() || "",
+          shares: l.shares?.toString() || "",
+          views: l.views?.toString() || "",
+          mediaUrl: l.mediaUrl || "",
+          isScheduled: l.isScheduled || false,
+          scheduledFor: l.scheduledFor ? new Date(l.scheduledFor).toISOString().slice(0, 16) : "",
+          matchStatus: "manual" as const,
+        })));
       }
     }
   }, [existing, prefilled]);
 
-  useEffect(() => {
-    const urls = links.map((l) => l.url.trim().toLowerCase()).filter(Boolean);
+  // Duplicate URL detection
+  const duplicateUrls = (() => {
     const seen = new Set<string>();
     const dups: string[] = [];
-    for (const url of urls) {
-      if (seen.has(url)) dups.push(url);
-      seen.add(url);
+    for (const l of links) {
+      if (!l.url.trim() || l.isScheduled) continue;
+      const n = l.url.trim().toLowerCase();
+      if (seen.has(n)) dups.push(l.url);
+      seen.add(n);
     }
-    if (dups.length > 0) {
-      setDuplicateWarning(`Duplicate URLs detected: ${dups.slice(0, 3).join(", ")}`);
-    } else {
-      setDuplicateWarning("");
-    }
-  }, [links]);
+    return dups;
+  })();
 
-  // Per-account 100 links limit check
-  useEffect(() => {
-    const accountCounts = new Map<string, number>();
-    for (const link of links) {
-      if (link.accountId && link.url.trim()) {
-        accountCounts.set(link.accountId, (accountCounts.get(link.accountId) || 0) + 1);
+  // Per-account limit check
+  const overLimitAccounts = (() => {
+    const counts = new Map<string, number>();
+    for (const l of links) {
+      if (l.accountId && (l.url.trim() || l.isScheduled)) {
+        counts.set(l.accountId, (counts.get(l.accountId) || 0) + 1);
       }
     }
-    const overLimit: string[] = [];
-    for (const [accountId, count] of accountCounts) {
-      if (count > MAX_LINKS_PER_ACCOUNT) {
-        const acc = accounts.find((a: any) => a.id === accountId);
-        overLimit.push(`${acc?.handle || acc?.displayName || "Unknown"} (${count}/${MAX_LINKS_PER_ACCOUNT})`);
-      }
-    }
-    if (overLimit.length > 0) {
-      setAccountLimitWarning(`Account limit exceeded: ${overLimit.join(", ")} — max ${MAX_LINKS_PER_ACCOUNT} links per account`);
-    } else {
-      setAccountLimitWarning("");
-    }
-  }, [links, accounts]);
+    return [...counts.entries()]
+      .filter(([, c]) => c > MAX_LINKS_PER_ACCOUNT)
+      .map(([id, c]) => {
+        const acc = accounts.find((a: any) => a.id === id);
+        return `${acc?.handle || acc?.displayName || "Unknown"} (${c}/${MAX_LINKS_PER_ACCOUNT})`;
+      });
+  })();
+
+  // Unmatched links (pasted but no account assigned)
+  const unmatchedCount = links.filter(
+    (l) => l.matchStatus === "unmatched" && !l.accountId
+  ).length;
 
   function updateLink(i: number, field: keyof LinkEntry, value: string) {
-    setLinks((prev) => prev.map((l, idx) => (idx === i ? { ...l, [field]: value } : l)));
+    setLinks((prev) => prev.map((l, idx) => idx === i ? { ...l, [field]: value } : l));
   }
 
   function addLink() {
@@ -140,30 +200,75 @@ export default function ReportPage() {
 
   function getAccountPlatform(accountId: string): string {
     const acc = accounts.find((a: any) => a.id === accountId);
-    return (acc?.platform || "").toLowerCase();
+    return ((acc?.platformSlug || acc?.platform) || "").toLowerCase();
   }
+
+  // Smart paste: parse URLs, auto-match to accounts, append to list
+  function handleSmartPaste() {
+    const rawLines = pasteText.split("\n").map((l) => l.trim()).filter(Boolean);
+    const urls = rawLines.filter((l) => { try { new URL(l); return true; } catch { return false; } });
+    if (urls.length === 0) return;
+
+    let matched = 0;
+    let unmatched = 0;
+
+    const newLinks: LinkEntry[] = urls.map((url) => {
+      // 1. Try to auto-match by platform detected from URL
+      const platform = detectPlatformFromUrl(url);
+      const matchingAccounts = platform
+        ? accounts.filter((a: any) => (a.platformSlug || a.platform || "").toLowerCase() === platform)
+        : [];
+
+      let accountId = "";
+      let matchStatus: LinkEntry["matchStatus"] = "unmatched";
+
+      if (matchingAccounts.length === 1) {
+        accountId = matchingAccounts[0].id;
+        matchStatus = "auto";
+        matched++;
+      } else if (defaultAccountId) {
+        // 2. Fall back to the user-selected default account
+        accountId = defaultAccountId;
+        matchStatus = "manual";
+        matched++;
+      } else if (matchingAccounts.length > 1) {
+        // Multiple accounts on same platform — needs manual pick
+        matchStatus = "manual";
+        unmatched++;
+      } else {
+        unmatched++;
+      }
+
+      return { ...emptyLink(), url, accountId, matchStatus };
+    });
+
+    setLinks((prev) => {
+      const hasEmpty = prev.length === 1 && !prev[0].url.trim() && !prev[0].isScheduled;
+      return hasEmpty ? newLinks : [...prev, ...newLinks];
+    });
+
+    setPasteResult({ matched, unmatched });
+    setPasteText("");
+    setTimeout(() => { setPasteResult(null); setShowPaste(false); }, 2500);
+  }
+
+  const validLinks = links.filter((l) => l.isScheduled || l.url.trim());
+  const liveCount = validLinks.filter((l) => !l.isScheduled).length;
+  const scheduledCount = validLinks.filter((l) => l.isScheduled).length;
+  const canSubmit = validLinks.length > 0
+    && duplicateUrls.length === 0
+    && overLimitAccounts.length === 0
+    && unmatchedCount === 0;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
-    const validLinks = links.filter((l) => l.url.trim());
-    if (validLinks.length === 0) {
-      setError("At least one link is required");
-      return;
-    }
+    if (validLinks.length === 0) { setError("At least one link is required"); return; }
     const missingAccount = validLinks.find((l) => !l.accountId);
-    if (missingAccount) {
-      setError("Please select an account for every link before submitting");
-      return;
-    }
-    if (duplicateWarning) {
-      setError("Please remove duplicate links before submitting");
-      return;
-    }
-    if (accountLimitWarning) {
-      setError("Please reduce links to max 100 per account before submitting");
-      return;
-    }
+    if (missingAccount) { setError("Please select an account for every link before submitting"); return; }
+    if (duplicateUrls.length > 0) { setError("Please remove duplicate links before submitting"); return; }
+    if (overLimitAccounts.length > 0) { setError(`Account limit exceeded: ${overLimitAccounts.join(", ")}`); return; }
+
     setLoading(true);
     let geo: { latitude?: number; longitude?: number } = {};
     try {
@@ -171,7 +276,8 @@ export default function ReportPage() {
         navigator.geolocation.getCurrentPosition(res, rej, { timeout: 5000 })
       );
       geo = { latitude: pos.coords.latitude, longitude: pos.coords.longitude };
-    } catch { /* geo optional */ }
+    } catch { /* optional */ }
+
     try {
       await apiFetch("/hr/reports", {
         method: "POST",
@@ -181,14 +287,18 @@ export default function ReportPage() {
           ...geo,
           links: validLinks.map((l) => ({
             accountId: l.accountId,
-            url: l.url.trim(),
-            platform: accounts.find((a: any) => a.id === l.accountId)?.platform || "unknown",
+            url: l.url.trim() || null,
+            platform: (accounts.find((a: any) => a.id === l.accountId) as any)?.platformSlug
+              || (accounts.find((a: any) => a.id === l.accountId) as any)?.platform
+              || "unknown",
             description: l.description || undefined,
             mediaUrl: l.mediaUrl || undefined,
             likes: l.likes ? parseInt(l.likes) : undefined,
             comments: l.comments ? parseInt(l.comments) : undefined,
             shares: l.shares ? parseInt(l.shares) : undefined,
             views: l.views ? parseInt(l.views) : undefined,
+            isScheduled: l.isScheduled,
+            scheduledFor: l.scheduledFor ? new Date(l.scheduledFor).toISOString() : undefined,
           })),
         }),
       });
@@ -199,8 +309,6 @@ export default function ReportPage() {
       setLoading(false);
     }
   }
-
-  const validLinkCount = links.filter((l) => l.url.trim()).length;
 
   return (
     <div className="max-w-3xl mx-auto space-y-6 crx-animate-fade">
@@ -216,46 +324,69 @@ export default function ReportPage() {
           <p className="text-[#7A7A7A] text-sm">{todayFormatted}</p>
         </div>
         <div className="text-right space-y-1">
-          <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium ${
-            links.length >= MAX_LINKS ? "bg-red-50 text-red-600 border border-red-100" : "bg-[#FFF3C4] text-[#1A1A1A] border border-[#F5D547]/20"
-          }`}>
-            <Hash className="h-3.5 w-3.5" />
-            {validLinkCount} / {MAX_LINKS} links
-          </span>
+          <div className="flex items-center gap-2 justify-end flex-wrap">
+            {liveCount > 0 && (
+              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium bg-[#FFF3C4] text-[#1A1A1A] border border-[#F5D547]/20">
+                <Hash className="h-3.5 w-3.5" />
+                {liveCount} live
+              </span>
+            )}
+            {scheduledCount > 0 && (
+              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium bg-amber-50 text-amber-700 border border-amber-200">
+                <Clock className="h-3.5 w-3.5" />
+                {scheduledCount} scheduled
+              </span>
+            )}
+          </div>
           <p className="text-[10px] text-[#B0B0B0]">Max {MAX_LINKS_PER_ACCOUNT} per account</p>
         </div>
       </div>
 
       {/* Warnings */}
-      {duplicateWarning && (
+      {duplicateUrls.length > 0 && (
         <div className="bg-amber-50 border border-amber-200 rounded-xl p-3.5 flex items-start gap-2.5 crx-animate-scale">
           <AlertTriangle className="h-4 w-4 text-amber-600 mt-0.5 flex-shrink-0" />
-          <p className="text-sm text-amber-700">{duplicateWarning}</p>
+          <p className="text-sm text-amber-700">Duplicate URLs detected: {duplicateUrls.slice(0, 3).join(", ")}</p>
         </div>
       )}
-
-      {accountLimitWarning && (
+      {overLimitAccounts.length > 0 && (
         <div className="bg-red-50 border border-red-200 rounded-xl p-3.5 flex items-start gap-2.5 crx-animate-scale">
           <AlertTriangle className="h-4 w-4 text-red-600 mt-0.5 flex-shrink-0" />
-          <p className="text-sm text-red-600">{accountLimitWarning}</p>
+          <p className="text-sm text-red-600">Account limit exceeded: {overLimitAccounts.join(", ")} — max {MAX_LINKS_PER_ACCOUNT} per account</p>
+        </div>
+      )}
+      {unmatchedCount > 0 && (
+        <div className="bg-orange-50 border border-orange-200 rounded-xl p-3.5 flex items-start gap-2.5 crx-animate-scale">
+          <AlertTriangle className="h-4 w-4 text-orange-500 mt-0.5 flex-shrink-0" />
+          <p className="text-sm text-orange-700">{unmatchedCount} pasted link{unmatchedCount !== 1 ? "s" : ""} couldn&apos;t be matched — select an account for each one below</p>
         </div>
       )}
 
       <form onSubmit={handleSubmit} className="space-y-5">
-        {/* Quick Bulk Add */}
+
+        {/* ── Smart Paste Panel ─────────────────────────────────────────── */}
         <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.04)] border border-[#E8E0D0] p-4 hover:shadow-[0_4px_20px_rgba(0,0,0,0.06)] transition-shadow">
           <div className="flex items-center justify-between mb-2">
-            <button type="button" onClick={() => setShowBulkAdd((v) => !v)} className="text-sm font-medium text-[#1A1A1A] hover:text-[#B8960C] transition-colors flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => { setShowPaste((v) => !v); setPasteResult(null); }}
+              className="text-sm font-medium text-[#1A1A1A] hover:text-[#B8960C] transition-colors flex items-center gap-2"
+            >
               <div className="h-7 w-7 rounded-lg bg-[#FFF3C4] flex items-center justify-center">
-                <Plus className="h-3.5 w-3.5 text-[#B8960C]" />
+                <Zap className="h-3.5 w-3.5 text-[#B8960C]" />
               </div>
-              Quick Add Multiple Links
-              <ChevronDown className={`h-3.5 w-3.5 text-[#B0B0B0] transition-transform duration-200 ${showBulkAdd ? "rotate-180" : ""}`} />
+              Paste &amp; Auto-Sort Links
+              <ChevronDown className={`h-3.5 w-3.5 text-[#B0B0B0] transition-transform duration-200 ${showPaste ? "rotate-180" : ""}`} />
             </button>
+
             {accounts.length > 0 && (
               <div className="flex items-center gap-2">
-                <label className="text-xs text-[#7A7A7A]">Default Account:</label>
-                <select value={defaultAccountId} onChange={(e) => setDefaultAccountId(e.target.value)} className="border border-[#E8E0D0] bg-white rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-[#F5D547] transition-all">
+                <label className="text-xs text-[#7A7A7A]">Fallback account:</label>
+                <select
+                  value={defaultAccountId}
+                  onChange={(e) => setDefaultAccountId(e.target.value)}
+                  className="border border-[#E8E0D0] bg-white rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-[#F5D547] transition-all"
+                >
                   <option value="">None</option>
                   {accounts.map((acc: any) => (
                     <option key={acc.id} value={acc.id}>{acc.handle || acc.displayName} ({acc.platform})</option>
@@ -264,59 +395,138 @@ export default function ReportPage() {
               </div>
             )}
           </div>
-          {showBulkAdd && (
-            <div className="space-y-2 mt-3 pt-3 border-t border-[#F0EAD8]" style={{ animation: "crx-slideDown 0.2s ease-out" }}>
-              <textarea value={bulkUrls} onChange={(e) => setBulkUrls(e.target.value)} rows={3} placeholder="Paste URLs here, one per line..." className={inputClass + " resize-none text-xs"} />
-              <button type="button" onClick={() => {
-                const urls = bulkUrls.split("\n").map((u) => u.trim()).filter((u) => u.startsWith("http"));
-                if (urls.length === 0) return;
-                const newLinks = urls.map((url) => ({ ...emptyLink(), url, accountId: defaultAccountId }));
-                setLinks((prev) => {
-                  const hasEmpty = prev.length === 1 && !prev[0].url.trim();
-                  return hasEmpty ? newLinks : [...prev, ...newLinks];
-                });
-                setBulkUrls("");
-                setShowBulkAdd(false);
-              }} className="bg-[#1A1A1A] text-white py-2 px-5 rounded-full text-sm font-semibold hover:bg-[#2B2B2B] transition-all shadow-sm hover:shadow-md">
-                Add {bulkUrls.split("\n").filter((u) => u.trim().startsWith("http")).length} Links
-              </button>
+
+          {showPaste && (
+            <div className="space-y-3 mt-3 pt-3 border-t border-[#F0EAD8]" style={{ animation: "crx-slideDown 0.2s ease-out" }}>
+              <p className="text-xs text-[#7A7A7A]">
+                Paste all your proof links at once — one per line. We&apos;ll detect the platform from each URL and automatically assign it to your matching account.
+              </p>
+              <textarea
+                value={pasteText}
+                onChange={(e) => setPasteText(e.target.value)}
+                rows={4}
+                placeholder={"https://instagram.com/p/...\nhttps://facebook.com/...\nhttps://youtube.com/watch?v=..."}
+                className={inputClass + " resize-none text-xs font-mono"}
+                autoFocus
+              />
+
+              {/* Result feedback */}
+              {pasteResult && (
+                <div className="flex items-center gap-4 text-xs">
+                  <span className="flex items-center gap-1 text-green-600">
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                    {pasteResult.matched} auto-matched
+                  </span>
+                  {pasteResult.unmatched > 0 && (
+                    <span className="flex items-center gap-1 text-orange-600">
+                      <XCircle className="h-3.5 w-3.5" />
+                      {pasteResult.unmatched} need manual account selection
+                    </span>
+                  )}
+                </div>
+              )}
+
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={handleSmartPaste}
+                  disabled={(() => { try { const u = pasteText.split("\n").filter((l) => { try { new URL(l.trim()); return true; } catch { return false; } }); return u.length === 0; } catch { return true; } })()}
+                  className="bg-[#1A1A1A] text-white py-2 px-5 rounded-full text-sm font-semibold hover:bg-[#2B2B2B] disabled:opacity-40 transition-all shadow-sm hover:shadow-md flex items-center gap-2"
+                >
+                  <Zap className="h-3.5 w-3.5" />
+                  Add &amp; Auto-Sort
+                </button>
+                <span className="text-xs text-[#B0B0B0]">
+                  {(() => {
+                    const count = pasteText.split("\n").filter((l) => { try { new URL(l.trim()); return true; } catch { return false; } }).length;
+                    return count > 0 ? `${count} URL${count !== 1 ? "s" : ""} detected` : "Paste URLs above";
+                  })()}
+                </span>
+              </div>
             </div>
           )}
         </div>
 
-        {/* Section header for links */}
+        {/* ── Post Links section header ─────────────────────────────────── */}
         <div className="flex items-center gap-2">
           <Link2 className="h-4 w-4 text-[#B8960C]" />
           <h2 className="text-sm font-semibold text-[#1A1A1A]">Post Links</h2>
           <div className="flex-1 h-px bg-[#E8E0D0]" />
         </div>
 
-        {/* Link entries */}
+        {/* ── Individual link cards ─────────────────────────────────────── */}
         {links.map((link, i) => {
           const platform = getAccountPlatform(link.accountId);
           const accentClass = PLATFORM_ACCENT[platform] || "border-l-[#E8E0D0]";
+          const isUnmatched = link.matchStatus === "unmatched" && !link.accountId;
+
           return (
             <div
               key={i}
-              className={`bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.04)] border border-[#E8E0D0] border-l-[3px] ${accentClass} p-4 space-y-3 hover:shadow-[0_4px_20px_rgba(0,0,0,0.06)] transition-all duration-200`}
+              className={`bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.04)] border border-l-[3px] ${isUnmatched ? "border-orange-200 border-l-orange-400" : "border-[#E8E0D0] " + accentClass} p-4 space-y-3 hover:shadow-[0_4px_20px_rgba(0,0,0,0.06)] transition-all duration-200`}
               style={{ animation: "crx-slideUp 0.3s ease-out" }}
             >
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <span className="h-6 w-6 rounded-md bg-[#F7ECD5] flex items-center justify-center text-xs font-semibold text-[#7A7A7A]">{i + 1}</span>
                   <h3 className="font-medium text-[#1A1A1A] text-sm">Link #{i + 1}</h3>
-                  {platform && <span className="text-[10px] uppercase tracking-wider text-[#B0B0B0] font-medium">{platform}</span>}
+                  {link.matchStatus === "auto" && (
+                    <span className="text-[10px] text-green-600 font-medium flex items-center gap-0.5">
+                      <CheckCircle2 className="h-3 w-3" /> auto-matched
+                    </span>
+                  )}
+                  {isUnmatched && (
+                    <span className="text-[10px] text-orange-600 font-medium flex items-center gap-0.5">
+                      <XCircle className="h-3 w-3" /> needs account
+                    </span>
+                  )}
+                  {platform && !isUnmatched && (
+                    <span className="text-[10px] uppercase tracking-wider text-[#B0B0B0] font-medium">{platform}</span>
+                  )}
                 </div>
-                {links.length > 1 && (
-                  <button type="button" onClick={() => removeLink(i)} className="text-[#B0B0B0] hover:text-red-500 transition-colors p-1.5 rounded-lg hover:bg-red-50">
-                    <Trash2 className="h-4 w-4" />
+                <div className="flex items-center gap-1">
+                  {/* Scheduled toggle */}
+                  <button
+                    type="button"
+                    onClick={() => updateLink(i, "isScheduled", String(!link.isScheduled))}
+                    className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full border transition-all ${link.isScheduled ? "bg-amber-50 border-amber-200 text-amber-700" : "bg-[#F7ECD5] border-[#E8E0D0] text-[#7A7A7A] hover:border-amber-200"}`}
+                  >
+                    <Clock className="h-3 w-3" />
+                    {link.isScheduled ? "Scheduled" : "Scheduled?"}
                   </button>
-                )}
+                  {links.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => removeLink(i)}
+                      className="text-[#B0B0B0] hover:text-red-500 transition-colors p-1.5 rounded-lg hover:bg-red-50"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  )}
+                </div>
               </div>
+
+              {link.isScheduled && (
+                <input
+                  type="datetime-local"
+                  value={link.scheduledFor}
+                  onChange={(e) => updateLink(i, "scheduledFor", e.target.value)}
+                  className="border border-amber-200 bg-amber-50 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-amber-300 transition-all w-full sm:w-auto"
+                />
+              )}
+
               <div className="grid grid-cols-1 sm:grid-cols-[1fr_2fr] gap-3">
                 <div className="relative">
                   <label className="block text-xs font-medium text-[#7A7A7A] mb-1">Account</label>
-                  <select value={link.accountId} onChange={(e) => updateLink(i, "accountId", e.target.value)} className={selectClass}>
+                  <select
+                    value={link.accountId}
+                    onChange={(e) => {
+                      updateLink(i, "accountId", e.target.value);
+                      // clear unmatched flag once user picks manually
+                      if (link.matchStatus === "unmatched") updateLink(i, "matchStatus", "manual");
+                    }}
+                    className={selectClass + (isUnmatched ? " border-orange-300 focus:ring-orange-300" : "")}
+                  >
                     <option value="">Select account...</option>
                     {accounts.map((acc: any) => (
                       <option key={acc.id} value={acc.id}>{acc.handle || acc.displayName} ({acc.platform})</option>
@@ -324,37 +534,34 @@ export default function ReportPage() {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-[#7A7A7A] mb-1">URL *</label>
-                  <input type="url" value={link.url} onChange={(e) => updateLink(i, "url", e.target.value)} placeholder="https://instagram.com/p/..." required className={inputClass} />
+                  <label className="block text-xs font-medium text-[#7A7A7A] mb-1">
+                    URL {link.isScheduled ? "(optional — fill when live)" : "*"}
+                  </label>
+                  <input
+                    type="url"
+                    value={link.url}
+                    onChange={(e) => {
+                      updateLink(i, "url", e.target.value);
+                      // Auto-select account when URL gives a clear platform match and no account picked yet
+                      if (!link.accountId) {
+                        const p = detectPlatformFromUrl(e.target.value);
+                        if (p) {
+                          const matches = accounts.filter((a: any) => (a.platformSlug || a.platform || "").toLowerCase() === p);
+                          if (matches.length === 1) {
+                            updateLink(i, "accountId", matches[0].id);
+                            updateLink(i, "matchStatus", "auto");
+                          }
+                        }
+                      }
+                    }}
+                    placeholder="https://instagram.com/p/..."
+                    required={!link.isScheduled}
+                    className={inputClass}
+                  />
                 </div>
               </div>
 
-              {/* Engagement Metrics - compact row with icons */}
-              <div className="flex items-center gap-2 pt-1">
-                <BarChart3 className="h-3.5 w-3.5 text-[#B0B0B0] flex-shrink-0" />
-                <span className="text-[10px] text-[#B0B0B0] uppercase tracking-wider font-medium flex-shrink-0">Metrics</span>
-                <div className="flex-1 grid grid-cols-2 sm:grid-cols-5 gap-2">
-                  <div className="relative">
-                    <Heart className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3 w-3 text-[#B0B0B0]" />
-                    <input type="number" min="0" value={link.likes} onChange={(e) => updateLink(i, "likes", e.target.value)} placeholder="Likes" className={inputClass + " !pl-8 !py-2 !text-xs"} />
-                  </div>
-                  <div className="relative">
-                    <MessageSquare className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3 w-3 text-[#B0B0B0]" />
-                    <input type="number" min="0" value={link.comments} onChange={(e) => updateLink(i, "comments", e.target.value)} placeholder="Comments" className={inputClass + " !pl-8 !py-2 !text-xs"} />
-                  </div>
-                  <div className="relative">
-                    <Share2 className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3 w-3 text-[#B0B0B0]" />
-                    <input type="number" min="0" value={link.shares} onChange={(e) => updateLink(i, "shares", e.target.value)} placeholder="Shares" className={inputClass + " !pl-8 !py-2 !text-xs"} />
-                  </div>
-                  <div className="relative">
-                    <Eye className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3 w-3 text-[#B0B0B0]" />
-                    <input type="number" min="0" value={link.views} onChange={(e) => updateLink(i, "views", e.target.value)} placeholder="Views" className={inputClass + " !pl-8 !py-2 !text-xs"} />
-                  </div>
-                  <div>
-                    <input type="text" value={link.description} onChange={(e) => updateLink(i, "description", e.target.value)} placeholder="Description" className={inputClass + " !py-2 !text-xs"} />
-                  </div>
-                </div>
-              </div>
+              <MetricsRow link={link} onChange={(f, v) => updateLink(i, f, v)} />
             </div>
           );
         })}
@@ -372,13 +579,12 @@ export default function ReportPage() {
           </button>
         )}
 
-        {/* Notes section */}
+        {/* Notes */}
         <div className="flex items-center gap-2 pt-2">
           <MessageSquare className="h-4 w-4 text-[#B8960C]" />
           <h2 className="text-sm font-semibold text-[#1A1A1A]">Notes</h2>
           <div className="flex-1 h-px bg-[#E8E0D0]" />
         </div>
-
         <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.04)] border border-[#E8E0D0] p-5 hover:shadow-[0_4px_20px_rgba(0,0,0,0.06)] transition-shadow">
           <textarea
             value={notes}
@@ -389,7 +595,6 @@ export default function ReportPage() {
           />
         </div>
 
-        {/* Error */}
         {error && (
           <div className="bg-red-50 border border-red-200 rounded-xl p-3.5 flex items-start gap-2.5 crx-animate-scale">
             <AlertTriangle className="h-4 w-4 text-red-500 mt-0.5 flex-shrink-0" />
@@ -397,23 +602,16 @@ export default function ReportPage() {
           </div>
         )}
 
-        {/* Submit Section */}
         <div className="flex gap-3 pt-2">
           <button
             type="submit"
-            disabled={loading || !!duplicateWarning || !!accountLimitWarning}
+            disabled={loading || !canSubmit}
             className="flex-1 bg-[#1A1A1A] text-white py-3.5 rounded-full font-semibold hover:bg-[#2B2B2B] disabled:opacity-50 transition-all shadow-md hover:shadow-lg flex items-center justify-center gap-2 group relative overflow-hidden"
           >
             {loading ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                <span>Submitting...</span>
-              </>
+              <><Loader2 className="h-4 w-4 animate-spin" /><span>Submitting...</span></>
             ) : (
-              <>
-                <Send className="h-4 w-4 group-hover:translate-x-0.5 transition-transform" />
-                <span>{existing ? "Update Report" : "Submit Report"}</span>
-              </>
+              <><Send className="h-4 w-4 group-hover:translate-x-0.5 transition-transform" /><span>{existing ? "Update Report" : "Submit Report"}</span></>
             )}
             <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/[0.05] to-transparent translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-700" />
           </button>

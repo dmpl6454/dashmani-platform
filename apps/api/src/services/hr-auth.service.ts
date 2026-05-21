@@ -30,7 +30,6 @@ export async function registerEmployee(data: {
   const email = data.email.trim().toLowerCase();
   const phone = data.phone?.trim() || null;
 
-  // Check if email already exists
   const existing = await prisma.user.findFirst({
     where: {
       OR: [
@@ -40,7 +39,57 @@ export async function registerEmployee(data: {
     },
   });
 
+  // If an ONBOARDING row exists for this email, promote it to ACTIVE rather than
+  // throwing a conflict. This mirrors the admin-invite collision fix: a user who
+  // registered but was stuck in ONBOARDING can retry with a new password and be
+  // unblocked without admin intervention.
   if (existing) {
+    if (existing.status === "ONBOARDING") {
+      const passwordHash = await bcrypt.hash(data.password, 12);
+      const employeeRole = await prisma.role.findUnique({ where: { name: "Employee" } });
+
+      const updated = await prisma.user.update({
+        where: { id: existing.id },
+        data: {
+          name: data.name,
+          email,
+          phone,
+          passwordHash,
+          status: "ACTIVE",
+          ...(employeeRole ? {
+            roles: {
+              deleteMany: {},
+              create: [{ roleId: employeeRole.id }],
+            },
+          } : {}),
+        },
+      });
+
+      // Ensure a profile row exists
+      await prisma.employeeProfile.upsert({
+        where: { userId: existing.id },
+        create: { userId: existing.id },
+        update: {},
+      });
+
+      notifyAdmins(
+        "GENERAL",
+        "New Employee Registration",
+        `${data.name} (${email}) has created an account and is now active`,
+        { userId: updated.id, name: data.name, email }
+      ).catch((err) => console.error("Admin notification failed:", err));
+
+      return {
+        message: "Account created successfully. You can now log in.",
+        user: {
+          id: updated.id,
+          name: updated.name,
+          email: updated.email,
+          status: updated.status,
+        },
+      };
+    }
+
     throw new AppError(409, "ALREADY_EXISTS", "An account with this email or phone already exists");
   }
 
@@ -53,7 +102,7 @@ export async function registerEmployee(data: {
       email,
       phone,
       passwordHash,
-      status: "ONBOARDING", // Requires admin approval
+      status: "ACTIVE",
       ...(employeeRole ? { roles: { create: [{ roleId: employeeRole.id }] } } : {}),
     },
   });
@@ -67,12 +116,12 @@ export async function registerEmployee(data: {
   notifyAdmins(
     "GENERAL",
     "New Employee Registration",
-    `${data.name} (${email}) has registered and is awaiting approval`,
+    `${data.name} (${email}) has created an account and is now active`,
     { userId: user.id, name: data.name, email }
   ).catch((err) => console.error("Admin notification failed:", err));
 
   return {
-    message: "Account created successfully. Please wait for admin approval before logging in.",
+    message: "Account created successfully. You can now log in.",
     user: {
       id: user.id,
       name: user.name,

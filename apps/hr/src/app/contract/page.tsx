@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { apiFetch } from "@/lib/api";
 import useSWR, { mutate } from "swr";
+import { Topstrip } from "@/components/portal-shell";
 import {
   FileText,
   CheckCircle2,
@@ -21,11 +22,6 @@ interface Contract {
   agreedAt?: string | null;
   status: string;
 }
-
-const cardClass =
-  "bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-[#E8E0D0] p-5";
-const btnClass =
-  "bg-[#1A1A1A] text-white py-2.5 px-6 rounded-full font-semibold hover:bg-[#2B2B2B] transition-all";
 
 const API_URL =
   process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/v1";
@@ -128,190 +124,195 @@ export default function ContractPage() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-[#FEFCF7] p-6 md:p-10">
-        <h1 className="text-4xl font-light text-[#1A1A1A] font-serif mb-8">
-          Employment Contract
-        </h1>
-        <div className={cardClass}>
-          <div className="space-y-4">
-            <div className="h-6 bg-[#F5F3EF] rounded animate-pulse w-1/3" />
-            <div className="h-4 bg-[#F5F3EF] rounded animate-pulse w-full" />
-            <div className="h-4 bg-[#F5F3EF] rounded animate-pulse w-2/3" />
+      <>
+        <Topstrip title="Employment Contract" sub="Review and manage your employment agreement" />
+        <div className="px-6 py-6 flex-1 overflow-y-auto max-w-[900px]">
+          <div className="v3-card p-6 space-y-3">
+            <div className="h-5 bg-muted rounded-xl animate-pulse w-1/3" />
+            <div className="h-4 bg-muted rounded-xl animate-pulse w-full" />
+            <div className="h-4 bg-muted rounded-xl animate-pulse w-2/3" />
           </div>
         </div>
-      </div>
+      </>
     );
   }
 
-  // Empty state
   if (hasNoContract && !contractToShow) {
     return (
-      <div className="min-h-screen bg-[#FEFCF7] p-6 md:p-10">
-        <h1 className="text-4xl font-light text-[#1A1A1A] font-serif mb-8">
-          Employment Contract
-        </h1>
-        <div className={`${cardClass} text-center py-16`}>
-          <FileText className="w-12 h-12 mx-auto mb-4 text-[#B0B0B0] opacity-40" />
-          <p className="text-[#B0B0B0] text-sm">
-            No employment contract found. Please contact HR.
-          </p>
+      <>
+        <Topstrip title="Employment Contract" sub="Review and manage your employment agreement" />
+        <div className="px-6 py-6 flex-1 overflow-y-auto max-w-[900px]">
+          <div className="v3-card p-12 text-center">
+            <FileText className="w-9 h-9 mx-auto mb-3 text-ink-4" />
+            <p className="text-[13px] text-ink-3 font-medium">
+              No employment contract found. Please contact HR.
+            </p>
+          </div>
         </div>
-      </div>
+      </>
     );
   }
 
-  // Pending contract - needs agreement
+  // Pending contract — needs agreement
   if (pending && !agreed) {
     return (
-      <div className="min-h-screen bg-[#FEFCF7] p-6 md:p-10">
-        <h1 className="text-4xl font-light text-[#1A1A1A] font-serif mb-8">
-          Employment Contract
-        </h1>
+      <>
+        <Topstrip title="Employment Contract" sub="Please review and sign your contract" />
+        <div className="px-6 py-6 flex-1 overflow-y-auto max-w-[900px] space-y-4">
 
-        {success && (
-          <div className="mb-6 px-4 py-3 rounded-lg bg-green-50 border border-green-200 text-green-700 text-sm flex items-center gap-2">
-            <CheckCircle2 className="w-4 h-4" />
-            {success}
-          </div>
-        )}
-        {error && (
-          <div className="mb-6 px-4 py-3 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm flex items-center gap-2">
-            <XCircle className="w-4 h-4" />
-            {error}
-          </div>
-        )}
-
-        <div className="mb-4 px-4 py-3 rounded-lg bg-yellow-50 border border-yellow-200 text-yellow-800 text-sm flex items-center gap-2">
-          <ShieldCheck className="w-4 h-4" />
-          Please review and agree to your employment contract below.
-        </div>
-
-        {/* Contract HTML Content */}
-        <div className={`${cardClass} mb-6`}>
-          {contractHtml ? (
-            <div
-              className="prose prose-sm max-w-none text-[#1A1A1A]"
-              dangerouslySetInnerHTML={{ __html: contractHtml }}
-            />
-          ) : (
-            <div className="space-y-3">
-              <div className="h-4 bg-[#F5F3EF] rounded animate-pulse w-full" />
-              <div className="h-4 bg-[#F5F3EF] rounded animate-pulse w-3/4" />
-              <div className="h-4 bg-[#F5F3EF] rounded animate-pulse w-5/6" />
+          {success && (
+            <div className="flex items-center gap-2 bg-success-bg border border-success/20 text-success px-4 py-3 rounded-xl text-[13px] font-medium">
+              <CheckCircle2 className="w-4 h-4" />
+              {success}
             </div>
           )}
-        </div>
+          {error && (
+            <div className="flex items-center gap-2 bg-danger-bg border border-danger/20 text-danger px-4 py-3 rounded-xl text-[13px] font-medium">
+              <XCircle className="w-4 h-4" />
+              {error}
+            </div>
+          )}
 
-        {/* Agreement Checkbox and Button */}
-        <div className={cardClass}>
-          <label className="flex items-start gap-3 cursor-pointer mb-5">
-            <input
-              type="checkbox"
-              checked={checked}
-              onChange={(e) => setChecked(e.target.checked)}
-              className="mt-0.5 w-4 h-4 rounded border-[#E8E0D0] text-[#F5D547] focus:ring-[#F5D547] accent-[#F5D547]"
-            />
-            <span className="text-sm text-[#1A1A1A]">
-              I have read and agree to all the terms and conditions
-            </span>
-          </label>
-          <button
-            onClick={handleAgree}
-            disabled={!checked || submitting}
-            className={`${btnClass} ${!checked ? "opacity-50 cursor-not-allowed" : ""}`}
-          >
-            {submitting ? "Processing..." : "I Agree"}
-          </button>
+          <div className="flex items-center gap-2.5 bg-attention-bg border border-attention/20 text-attention px-4 py-3 rounded-xl text-[13px] font-medium">
+            <ShieldCheck className="w-4 h-4 shrink-0" />
+            Please review your employment contract below and sign it.
+          </div>
+
+          {/* Contract HTML Content */}
+          <div className="v3-card">
+            <div className="px-5 h-12 flex items-center" style={{ borderBottom: "2px solid rgba(26,26,26,0.07)" }}>
+              <FileText className="w-4 h-4 text-ink-3 mr-2" />
+              <span className="text-[13px] font-semibold text-ink">Contract Document</span>
+            </div>
+            <div className="p-5">
+              {contractHtml ? (
+                <div
+                  className="prose prose-sm max-w-none text-ink"
+                  dangerouslySetInnerHTML={{ __html: contractHtml }}
+                />
+              ) : (
+                <div className="space-y-3">
+                  <div className="h-4 bg-muted rounded-xl animate-pulse w-full" />
+                  <div className="h-4 bg-muted rounded-xl animate-pulse w-3/4" />
+                  <div className="h-4 bg-muted rounded-xl animate-pulse w-5/6" />
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Agreement */}
+          <div className="v3-card">
+            <div className="px-5 h-12 flex items-center" style={{ borderBottom: "2px solid rgba(26,26,26,0.07)" }}>
+              <span className="text-[13px] font-semibold text-ink">Sign Contract</span>
+            </div>
+            <div className="p-5">
+              <label className="flex items-start gap-3 cursor-pointer mb-5">
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={(e) => setChecked(e.target.checked)}
+                  className="mt-0.5 w-4 h-4 rounded border-ink/20 accent-indigo"
+                />
+                <span className="text-[13px] text-ink leading-relaxed">
+                  I have read and agree to all the terms and conditions of this employment contract.
+                </span>
+              </label>
+              <button
+                onClick={handleAgree}
+                disabled={!checked || submitting}
+                className="btn-3d inline-flex items-center gap-2 px-5 h-10 rounded-xl bg-ink text-white text-[13px] font-semibold border-2 border-ink disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {submitting ? "Processing..." : "I Agree"}
+              </button>
+            </div>
+          </div>
         </div>
-      </div>
+      </>
     );
   }
 
   // Current / Agreed contract view
   const contract = contractToShow!;
   return (
-    <div className="min-h-screen bg-[#FEFCF7] p-6 md:p-10">
-      <h1 className="text-4xl font-light text-[#1A1A1A] font-serif mb-8">
-        Employment Contract
-      </h1>
+    <>
+      <Topstrip title="Employment Contract" sub="Your current employment agreement" />
+      <div className="px-6 py-6 flex-1 overflow-y-auto max-w-[900px] space-y-4">
 
-      {success && (
-        <div className="mb-6 px-4 py-3 rounded-lg bg-green-50 border border-green-200 text-green-700 text-sm flex items-center gap-2">
-          <CheckCircle2 className="w-4 h-4" />
-          {success}
-        </div>
-      )}
+        {success && (
+          <div className="flex items-center gap-2 bg-success-bg border border-success/20 text-success px-4 py-3 rounded-xl text-[13px] font-medium">
+            <CheckCircle2 className="w-4 h-4" />
+            {success}
+          </div>
+        )}
 
-      <div className={cardClass}>
-        <div className="flex items-center gap-3 mb-6">
-          <FileText className="w-5 h-5 text-[#F5D547]" />
-          <h2 className="text-lg font-semibold text-[#1A1A1A]">
-            Contract Details
-          </h2>
-          {contract.agreedAt && (
-            <span className="ml-auto inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-green-100 text-green-800 border border-green-300">
-              <BadgeCheck className="w-3.5 h-3.5" />
-              Agreed on{" "}
-              {new Date(contract.agreedAt).toLocaleDateString("en-IN", {
-                day: "numeric",
-                month: "short",
-                year: "numeric",
-              })}
-            </span>
-          )}
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-          <div className="p-4 rounded-xl bg-[#FEFCF7] border border-[#E8E0D0]">
-            <div className="flex items-center gap-2 mb-1">
-              <Building2 className="w-4 h-4 text-[#B0B0B0]" />
-              <span className="text-xs text-[#B0B0B0]">Designation</span>
+        <div className="v3-card">
+          <div className="px-5 h-12 flex items-center justify-between" style={{ borderBottom: "2px solid rgba(26,26,26,0.07)" }}>
+            <div className="flex items-center gap-2">
+              <FileText className="w-4 h-4 text-ink-3" />
+              <span className="text-[13px] font-semibold text-ink">Contract Details</span>
             </div>
-            <p className="text-sm font-semibold text-[#1A1A1A]">
-              {contract.designation}
-            </p>
+            {contract.agreedAt && (
+              <span className="inline-flex items-center gap-1.5 h-6 px-2.5 rounded-full text-[11px] font-semibold bg-success-bg text-success border border-success/20">
+                <BadgeCheck className="w-3.5 h-3.5" />
+                Agreed on{" "}
+                {new Date(contract.agreedAt).toLocaleDateString("en-IN", {
+                  day: "numeric",
+                  month: "short",
+                  year: "numeric",
+                })}
+              </span>
+            )}
           </div>
 
-          <div className="p-4 rounded-xl bg-[#FEFCF7] border border-[#E8E0D0]">
-            <div className="flex items-center gap-2 mb-1">
-              <Building2 className="w-4 h-4 text-[#B0B0B0]" />
-              <span className="text-xs text-[#B0B0B0]">Department</span>
+          <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="v3-card-inset p-4">
+              <div className="flex items-center gap-1.5 mb-1">
+                <Building2 className="w-3.5 h-3.5 text-ink-4" />
+                <p className="text-[11.5px] font-bold text-ink-3 uppercase tracking-wider">Designation</p>
+              </div>
+              <p className="text-[14px] font-semibold text-ink">{contract.designation}</p>
             </div>
-            <p className="text-sm font-semibold text-[#1A1A1A]">
-              {contract.department}
-            </p>
+
+            <div className="v3-card-inset p-4">
+              <div className="flex items-center gap-1.5 mb-1">
+                <Building2 className="w-3.5 h-3.5 text-ink-4" />
+                <p className="text-[11.5px] font-bold text-ink-3 uppercase tracking-wider">Department</p>
+              </div>
+              <p className="text-[14px] font-semibold text-ink">{contract.department}</p>
+            </div>
+
+            <div className="v3-card-inset p-4">
+              <p className="text-[11.5px] font-bold text-ink-3 uppercase tracking-wider mb-1">Salary</p>
+              <p className="text-[14px] font-semibold text-ink">
+                {contract.salary
+                  ? `INR ${contract.salary.toLocaleString("en-IN")}`
+                  : "--"}
+              </p>
+            </div>
+
+            <div className="v3-card-inset p-4">
+              <p className="text-[11.5px] font-bold text-ink-3 uppercase tracking-wider mb-1">Start Date</p>
+              <p className="text-[14px] font-semibold text-ink">
+                {new Date(contract.startDate).toLocaleDateString("en-IN", {
+                  day: "numeric",
+                  month: "long",
+                  year: "numeric",
+                })}
+              </p>
+            </div>
           </div>
 
-          <div className="p-4 rounded-xl bg-[#FEFCF7] border border-[#E8E0D0]">
-            <span className="text-xs text-[#B0B0B0]">Salary</span>
-            <p className="text-sm font-semibold text-[#1A1A1A]">
-              {contract.salary
-                ? `INR ${contract.salary.toLocaleString("en-IN")}`
-                : "--"}
-            </p>
-          </div>
-
-          <div className="p-4 rounded-xl bg-[#FEFCF7] border border-[#E8E0D0]">
-            <span className="text-xs text-[#B0B0B0]">Start Date</span>
-            <p className="text-sm font-semibold text-[#1A1A1A]">
-              {new Date(contract.startDate).toLocaleDateString("en-IN", {
-                day: "numeric",
-                month: "long",
-                year: "numeric",
-              })}
-            </p>
-          </div>
-        </div>
-
-        <div className="mt-6 pt-5 border-t border-[#E8E0D0]">
-          <button onClick={handleDownload} className={btnClass}>
-            <span className="flex items-center gap-2">
+          <div className="px-5 pb-5">
+            <button
+              onClick={handleDownload}
+              className="btn-3d inline-flex items-center gap-2 px-5 h-10 rounded-xl bg-ink text-white text-[13px] font-semibold border-2 border-ink"
+            >
               <Download className="w-4 h-4" />
               Download Contract
-            </span>
-          </button>
+            </button>
+          </div>
         </div>
       </div>
-    </div>
+    </>
   );
 }

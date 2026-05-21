@@ -1,9 +1,9 @@
 "use client";
-import { useState, useCallback } from "react";
+import { useState } from "react";
 import useSWR from "swr";
-import Link from "next/link";
+import { Topstrip } from "@/components/portal-shell";
 import {
-  ArrowLeft, Plus, Presentation as PresentationIcon, FileText, Trash2,
+  ArrowLeft, Plus, FileText, Trash2,
   Download, Eye, Edit2, Save, X, ChevronRight, Sparkles, BarChart3, Loader2,
 } from "lucide-react";
 
@@ -318,19 +318,24 @@ export default function PresentationsPage() {
     finally { setAiGenerating(false); }
   }
 
-  // Simple slide count from markdown
   const slideCount = markdown.split(/\n---\n/).length;
 
   if (mode === "preview") {
     return (
-      <div className="min-h-screen bg-[#1A1A1A]">
-        <div className="flex items-center justify-between px-4 py-3 bg-[#2B2B2B]">
-          <button onClick={() => setMode("edit")} className="flex items-center gap-2 text-white/70 hover:text-white text-sm">
+      <div className="min-h-screen bg-ink">
+        <div className="flex items-center justify-between px-4 py-3 bg-ink/90 border-b border-white/10">
+          <button
+            onClick={() => setMode("edit")}
+            className="flex items-center gap-2 text-white/60 hover:text-white text-[13px] font-medium transition-colors"
+          >
             <ArrowLeft className="h-4 w-4" /> Back to Editor
           </button>
-          <h2 className="text-white text-sm font-medium">{title}</h2>
-          <button onClick={handleDownload} className="flex items-center gap-2 bg-[#F5D547] text-[#1A1A1A] px-4 py-1.5 rounded-full text-sm font-medium hover:bg-[#e6c63e] transition-colors">
-            <Download className="h-4 w-4" /> Download HTML
+          <h2 className="text-white text-[13px] font-semibold">{title}</h2>
+          <button
+            onClick={handleDownload}
+            className="btn-3d inline-flex items-center gap-2 px-4 h-9 rounded-xl bg-indigo-soft text-indigo text-[12px] font-semibold border-2 border-indigo/20"
+          >
+            <Download className="h-3.5 w-3.5" /> Download HTML
           </button>
         </div>
         <iframe srcDoc={previewHtml} className="w-full" style={{ height: "calc(100vh - 52px)", border: "none" }} />
@@ -340,106 +345,78 @@ export default function PresentationsPage() {
 
   if (mode === "edit") {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-[#FDF6E3] via-[#F7ECD5] to-[#EFE2C4]">
-        <div className="max-w-7xl mx-auto px-4 py-6">
-          {/* Header */}
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-3">
-              <button onClick={() => setMode("list")} className="p-2 rounded-lg hover:bg-white/60 transition-colors">
-                <ArrowLeft className="h-5 w-5 text-[#1A1A1A]" />
-              </button>
-              <input
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                placeholder="Presentation title..."
-                className="text-2xl font-serif font-light text-[#1A1A1A] bg-transparent border-none outline-none placeholder:text-[#B0B0B0] w-96"
-              />
+      <div className="min-h-screen bg-bg">
+        {/* Editor Header */}
+        <div className="sticky top-0 z-10 bg-surface border-b-2 border-ink/7 px-6 h-14 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setMode("list")}
+              className="p-1.5 rounded-lg hover:bg-muted transition-colors"
+            >
+              <ArrowLeft className="h-5 w-5 text-ink" />
+            </button>
+            <input
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="Presentation title..."
+              className="text-[18px] font-display font-light text-ink bg-transparent border-none outline-none placeholder:text-ink-4 w-72"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-[12px] text-ink-4 font-medium mr-1">{slideCount} slides</span>
+            <button
+              onClick={handleSave}
+              disabled={saving}
+              className="btn-3d inline-flex items-center gap-2 px-4 h-9 rounded-xl bg-ink text-white text-[12px] font-semibold border-2 border-ink disabled:opacity-50"
+            >
+              <Save className="h-3.5 w-3.5" /> {saving ? "Saving..." : "Save"}
+            </button>
+            <button
+              onClick={handleExport}
+              className="btn-3d inline-flex items-center gap-2 px-4 h-9 rounded-xl bg-indigo-soft text-indigo text-[12px] font-semibold border-2 border-indigo/20"
+            >
+              <Eye className="h-3.5 w-3.5" /> Preview & Export
+            </button>
+          </div>
+        </div>
+
+        {/* Editor Body */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 p-6" style={{ height: "calc(100vh - 56px)" }}>
+          {/* Markdown Editor */}
+          <div className="v3-card overflow-hidden flex flex-col">
+            <div className="px-5 h-11 flex items-center justify-between" style={{ borderBottom: "2px solid rgba(26,26,26,0.07)" }}>
+              <span className="text-[13px] font-semibold text-ink">Marp Markdown</span>
+              <span className="text-[11px] text-ink-4 font-medium">Use --- to separate slides</span>
             </div>
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-[#7A7A7A] mr-2">{slideCount} slides</span>
-              <button onClick={handleSave} disabled={saving} className="flex items-center gap-2 bg-[#1A1A1A] text-white px-4 py-2 rounded-full text-sm font-medium hover:bg-[#2B2B2B] disabled:opacity-50 transition-all">
-                <Save className="h-4 w-4" /> {saving ? "Saving..." : "Save"}
-              </button>
-              <button onClick={handleExport} className="flex items-center gap-2 bg-[#F5D547] text-[#1A1A1A] px-4 py-2 rounded-full text-sm font-medium shadow-[0_4px_16px_rgba(245,213,71,0.35)] hover:shadow-[0_6px_24px_rgba(245,213,71,0.45)] transition-all">
-                <Eye className="h-4 w-4" /> Preview & Export
-              </button>
-            </div>
+            <textarea
+              value={markdown}
+              onChange={(e) => setMarkdown(e.target.value)}
+              className="flex-1 p-4 font-mono text-[12px] text-ink bg-bg resize-none focus:outline-none"
+              spellCheck={false}
+            />
           </div>
 
-          {/* Editor */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            {/* Markdown Editor */}
-            <div className="bg-white rounded-2xl border border-[#E8E0D0] shadow-[0_2px_16px_rgba(0,0,0,0.05)] overflow-hidden">
-              <div className="px-4 py-3 border-b border-[#F0EAD8] flex items-center justify-between">
-                <h3 className="text-sm font-medium text-[#1A1A1A]">Marp Markdown</h3>
-                <span className="text-xs text-[#7A7A7A]">Use --- to separate slides</span>
-              </div>
-              <textarea
-                value={markdown}
-                onChange={(e) => setMarkdown(e.target.value)}
-                className="w-full h-[calc(100vh-200px)] p-4 font-mono text-sm text-[#1A1A1A] bg-white resize-none focus:outline-none"
-                spellCheck={false}
-              />
+          {/* Help Panel */}
+          <div className="v3-card overflow-hidden flex flex-col">
+            <div className="px-5 h-11 flex items-center" style={{ borderBottom: "2px solid rgba(26,26,26,0.07)" }}>
+              <span className="text-[13px] font-semibold text-ink">Marp Cheatsheet</span>
             </div>
-
-            {/* Help Panel */}
-            <div className="bg-white rounded-2xl border border-[#E8E0D0] shadow-[0_2px_16px_rgba(0,0,0,0.05)] overflow-hidden">
-              <div className="px-4 py-3 border-b border-[#F0EAD8]">
-                <h3 className="text-sm font-medium text-[#1A1A1A]">Marp Cheatsheet</h3>
-              </div>
-              <div className="p-4 space-y-4 text-sm text-[#7A7A7A] overflow-y-auto" style={{ maxHeight: "calc(100vh - 200px)" }}>
-                <div>
-                  <h4 className="font-medium text-[#1A1A1A] mb-1">Slide Separator</h4>
-                  <code className="bg-[#FFF3C4] px-2 py-0.5 rounded text-xs">---</code>
-                  <p className="mt-1">Use three dashes on a new line to create a new slide</p>
+            <div className="flex-1 p-4 space-y-4 overflow-y-auto">
+              {[
+                { title: "Slide Separator", content: <><code className="bg-muted px-2 py-0.5 rounded text-[11px] text-ink font-mono">---</code><p className="text-[12px] text-ink-3 mt-1">Three dashes on a new line = new slide</p></> },
+                { title: "Front Matter", content: <pre className="v3-card-inset p-3 text-[11px] font-mono text-ink-3 overflow-x-auto">{`---\nmarp: true\ntheme: default\npaginate: true\nbackgroundColor: #fff\ncolor: #333\n---`}</pre> },
+                { title: "Headings", content: <pre className="v3-card-inset p-3 text-[11px] font-mono text-ink-3">{`# Title (large)\n## Subtitle\n### Section`}</pre> },
+                { title: "Lists", content: <pre className="v3-card-inset p-3 text-[11px] font-mono text-ink-3">{`- Bullet point\n1. Numbered item\n  - Nested item`}</pre> },
+                { title: "Tables", content: <pre className="v3-card-inset p-3 text-[11px] font-mono text-ink-3">{`| Header | Header |\n|--------|--------|\n| Cell   | Cell   |`}</pre> },
+                { title: "Images", content: <pre className="v3-card-inset p-3 text-[11px] font-mono text-ink-3">{`![bg](url)        # background\n![bg left](url)   # split left\n![w:300](url)     # sized image`}</pre> },
+                { title: "Styling", content: <pre className="v3-card-inset p-3 text-[11px] font-mono text-ink-3">{`**bold** *italic* \`code\`\n> blockquote\n~~strikethrough~~`}</pre> },
+                { title: "Per-slide Directives", content: <pre className="v3-card-inset p-3 text-[11px] font-mono text-ink-3">{`<!-- _backgroundColor: black -->\n<!-- _color: white -->\n<!-- _class: lead -->`}</pre> },
+              ].map(({ title: t, content }) => (
+                <div key={t}>
+                  <p className="text-[12px] font-semibold text-ink mb-1.5">{t}</p>
+                  {content}
                 </div>
-                <div>
-                  <h4 className="font-medium text-[#1A1A1A] mb-1">Front Matter</h4>
-                  <pre className="bg-[#FEFCF7] border border-[#E8E0D0] rounded-lg p-3 text-xs overflow-x-auto">{`---
-marp: true
-theme: default
-paginate: true
-backgroundColor: #fff
-color: #333
----`}</pre>
-                </div>
-                <div>
-                  <h4 className="font-medium text-[#1A1A1A] mb-1">Headings</h4>
-                  <pre className="bg-[#FEFCF7] border border-[#E8E0D0] rounded-lg p-3 text-xs">{`# Title (large)
-## Subtitle
-### Section`}</pre>
-                </div>
-                <div>
-                  <h4 className="font-medium text-[#1A1A1A] mb-1">Lists</h4>
-                  <pre className="bg-[#FEFCF7] border border-[#E8E0D0] rounded-lg p-3 text-xs">{`- Bullet point
-1. Numbered item
-  - Nested item`}</pre>
-                </div>
-                <div>
-                  <h4 className="font-medium text-[#1A1A1A] mb-1">Tables</h4>
-                  <pre className="bg-[#FEFCF7] border border-[#E8E0D0] rounded-lg p-3 text-xs">{`| Header | Header |
-|--------|--------|
-| Cell   | Cell   |`}</pre>
-                </div>
-                <div>
-                  <h4 className="font-medium text-[#1A1A1A] mb-1">Images</h4>
-                  <pre className="bg-[#FEFCF7] border border-[#E8E0D0] rounded-lg p-3 text-xs">{`![bg](url)        # background
-![bg left](url)   # split left
-![w:300](url)     # sized image`}</pre>
-                </div>
-                <div>
-                  <h4 className="font-medium text-[#1A1A1A] mb-1">Styling</h4>
-                  <pre className="bg-[#FEFCF7] border border-[#E8E0D0] rounded-lg p-3 text-xs">{`**bold** *italic* \`code\`
-> blockquote
-~~strikethrough~~`}</pre>
-                </div>
-                <div>
-                  <h4 className="font-medium text-[#1A1A1A] mb-1">Per-slide Directives</h4>
-                  <pre className="bg-[#FEFCF7] border border-[#E8E0D0] rounded-lg p-3 text-xs">{`<!-- _backgroundColor: black -->
-<!-- _color: white -->
-<!-- _class: lead -->`}</pre>
-                </div>
-              </div>
+              ))}
             </div>
           </div>
         </div>
@@ -449,77 +426,66 @@ color: #333
 
   // List mode
   return (
-    <div className="min-h-screen bg-gradient-to-br from-[#FDF6E3] via-[#F7ECD5] to-[#EFE2C4]">
-      <div className="max-w-4xl mx-auto px-4 py-8">
-        <div className="flex items-center justify-between mb-6">
-          <div className="flex items-center gap-3">
-            <Link href="/dashboard" className="p-2 rounded-lg hover:bg-white/60 transition-colors">
-              <ArrowLeft className="h-5 w-5 text-[#1A1A1A]" />
-            </Link>
-            <div>
-              <h1 className="font-serif text-3xl font-light text-[#1A1A1A]">Presentations</h1>
-              <p className="text-sm text-[#7A7A7A]">Create slide decks with Marp markdown</p>
-            </div>
-          </div>
-        </div>
+    <>
+      <Topstrip title="Presentations" sub="Create slide decks with Marp markdown" />
+      <div className="px-6 py-6 flex-1 overflow-y-auto max-w-[900px] space-y-5">
 
         {/* AI Create */}
-        <div className="mb-6">
-          <h3 className="text-sm font-medium text-[#7A7A7A] mb-3">Create with AI</h3>
+        <div>
+          <p className="text-[11.5px] font-bold text-ink-3 mb-3 uppercase tracking-wider">Create with AI</p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <button
               onClick={() => { setAiType("presentation"); setAiSlideCount(10); setShowAiModal(true); }}
-              className="bg-gradient-to-br from-[#F0EEFF] to-white rounded-xl border border-[#5B4BF5]/20 p-5 text-left hover:border-[#5B4BF5]/40 hover:shadow-[0_4px_20px_rgba(91,75,245,0.15)] transition-all group"
+              className="v3-card-lift v3-card p-4 text-left group"
             >
-              <div className="flex items-center gap-4">
-                <div className="h-12 w-12 rounded-xl bg-gradient-to-br from-[#5B4BF5] to-[#3023D0] flex items-center justify-center shadow-[0_4px_12px_rgba(91,75,245,0.3)]">
-                  <Sparkles className="h-6 w-6 text-white" />
+              <div className="flex items-center gap-3">
+                <div className="h-11 w-11 rounded-xl bg-indigo-soft flex items-center justify-center shrink-0">
+                  <Sparkles className="h-5 w-5 text-indigo" />
                 </div>
                 <div className="flex-1">
-                  <p className="font-medium text-[#1A1A1A] text-base">Create Presentation</p>
-                  <p className="text-xs text-[#7A7A7A] mt-0.5">AI generates slides from your topic</p>
+                  <p className="text-[13px] font-semibold text-ink">Create Presentation</p>
+                  <p className="text-[11px] text-ink-4 font-medium mt-0.5">AI generates slides from your topic</p>
                 </div>
-                <ChevronRight className="h-5 w-5 text-[#5B4BF5]/40 group-hover:text-[#5B4BF5] transition-colors" />
+                <ChevronRight className="h-4 w-4 text-ink-4 group-hover:text-indigo transition-colors" />
               </div>
             </button>
             <button
               onClick={() => { setAiType("report"); setAiSlideCount(8); setShowAiModal(true); }}
-              className="bg-gradient-to-br from-[#FFF3C4]/50 to-white rounded-xl border border-[#F5D547]/30 p-5 text-left hover:border-[#F5D547]/60 hover:shadow-[0_4px_20px_rgba(245,213,71,0.2)] transition-all group"
+              className="v3-card-lift v3-card p-4 text-left group"
             >
-              <div className="flex items-center gap-4">
-                <div className="h-12 w-12 rounded-xl bg-gradient-to-br from-[#F5D547] to-[#E6C63E] flex items-center justify-center shadow-[0_4px_12px_rgba(245,213,71,0.3)]">
-                  <BarChart3 className="h-6 w-6 text-[#1A1A1A]" />
+              <div className="flex items-center gap-3">
+                <div className="h-11 w-11 rounded-xl bg-muted flex items-center justify-center shrink-0">
+                  <BarChart3 className="h-5 w-5 text-ink-3" />
                 </div>
                 <div className="flex-1">
-                  <p className="font-medium text-[#1A1A1A] text-base">Create Report</p>
-                  <p className="text-xs text-[#7A7A7A] mt-0.5">AI generates a structured report deck</p>
+                  <p className="text-[13px] font-semibold text-ink">Create Report</p>
+                  <p className="text-[11px] text-ink-4 font-medium mt-0.5">AI generates a structured report deck</p>
                 </div>
-                <ChevronRight className="h-5 w-5 text-[#F5D547]/60 group-hover:text-[#F5D547] transition-colors" />
+                <ChevronRight className="h-4 w-4 text-ink-4 group-hover:text-ink transition-colors" />
               </div>
             </button>
           </div>
         </div>
 
         {/* Templates */}
-        <div className="mb-6">
-          <h3 className="text-sm font-medium text-[#7A7A7A] mb-3">Start from a template</h3>
+        <div>
+          <p className="text-[11.5px] font-bold text-ink-3 mb-3 uppercase tracking-wider">Start from a template</p>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             {TEMPLATES.map((tpl) => (
               <button
                 key={tpl.name}
                 onClick={() => newPresentation(tpl.markdown)}
-                className="bg-white rounded-xl border border-[#E8E0D0] p-4 text-left hover:border-[#F5D547] hover:shadow-[0_4px_16px_rgba(245,213,71,0.2)] transition-all group"
+                className="v3-card-lift v3-card p-4 text-left group"
               >
-                <div className="flex items-center gap-3 mb-2">
-                  <div className="h-10 w-10 rounded-xl bg-[#FFF3C4] flex items-center justify-center">
-                    <Plus className="h-5 w-5 text-[#1A1A1A]" />
+                <div className="flex items-center gap-3 mb-1">
+                  <div className="h-9 w-9 rounded-xl bg-muted flex items-center justify-center">
+                    <Plus className="h-4 w-4 text-ink-3" />
                   </div>
                   <div>
-                    <p className="font-medium text-[#1A1A1A]">{tpl.name}</p>
-                    <p className="text-xs text-[#7A7A7A]">{tpl.markdown.split(/\n---\n/).length} slides</p>
+                    <p className="text-[13px] font-semibold text-ink">{tpl.name}</p>
+                    <p className="text-[11px] text-ink-4 font-medium">{tpl.markdown.split(/\n---\n/).length} slides</p>
                   </div>
                 </div>
-                <ChevronRight className="h-4 w-4 text-[#B0B0B0] group-hover:text-[#F5D547] transition-colors ml-auto" />
               </button>
             ))}
           </div>
@@ -527,35 +493,49 @@ color: #333
 
         {/* Saved Presentations */}
         <div>
-          <h3 className="text-sm font-medium text-[#7A7A7A] mb-3">Your presentations</h3>
+          <p className="text-[11.5px] font-bold text-ink-3 mb-3 uppercase tracking-wider">Your presentations</p>
           {presentations.length === 0 ? (
-            <div className="bg-white rounded-xl border border-[#E8E0D0] p-10 text-center text-[#7A7A7A]">
-              <FileText className="h-12 w-12 mx-auto mb-3 opacity-30" />
-              <p>No presentations yet. Pick a template above to get started.</p>
+            <div className="v3-card p-10 text-center">
+              <FileText className="h-9 w-9 mx-auto mb-3 text-ink-4" />
+              <p className="text-[13px] text-ink-3 font-medium">No presentations yet. Pick a template above to get started.</p>
             </div>
           ) : (
-            <div className="space-y-2">
-              {presentations.map((p: any) => (
-                <div key={p.id} className="bg-white rounded-xl border border-[#E8E0D0] p-4 flex items-center gap-4 hover:shadow-[0_2px_12px_rgba(0,0,0,0.06)] transition-all">
-                  <div className="h-10 w-10 rounded-xl bg-[#FFF3C4] flex items-center justify-center shrink-0">
-                    <FileText className="h-5 w-5 text-[#1A1A1A]" />
+            <div className="v3-card">
+              <div className="px-5 h-12 flex items-center" style={{ borderBottom: "2px solid rgba(26,26,26,0.07)" }}>
+                <span className="text-[13px] font-semibold text-ink">Saved</span>
+                <span className="ml-2 h-5 w-5 rounded-full bg-muted text-ink-3 text-[11px] font-bold flex items-center justify-center">{presentations.length}</span>
+              </div>
+              <div className="px-5 py-3 space-y-1">
+                {presentations.map((p: any) => (
+                  <div key={p.id} className="v3-row flex items-center gap-4 px-4 py-3 rounded-xl">
+                    <div className="h-9 w-9 rounded-xl bg-muted flex items-center justify-center shrink-0">
+                      <FileText className="h-4 w-4 text-ink-3" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[13px] font-semibold text-ink truncate">{p.title || "Untitled"}</p>
+                      <p className="text-[11px] text-ink-4 font-medium">
+                        Updated {new Date(p.updatedAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => loadPresentation(p.id)}
+                        className="p-2 rounded-lg hover:bg-muted text-ink-4 hover:text-ink transition-colors"
+                        title="Edit"
+                      >
+                        <Edit2 className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        onClick={() => handleDelete(p.id)}
+                        className="p-2 rounded-lg hover:bg-danger-bg text-ink-4 hover:text-danger transition-colors"
+                        title="Delete"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
                   </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="font-medium text-[#1A1A1A] truncate">{p.title || "Untitled"}</p>
-                    <p className="text-xs text-[#7A7A7A]">
-                      Updated {new Date(p.updatedAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <button onClick={() => loadPresentation(p.id)} className="p-2 rounded-lg hover:bg-[#FFF8E1] text-[#7A7A7A] hover:text-[#1A1A1A] transition-colors" title="Edit">
-                      <Edit2 className="h-4 w-4" />
-                    </button>
-                    <button onClick={() => handleDelete(p.id)} className="p-2 rounded-lg hover:bg-red-50 text-[#7A7A7A] hover:text-red-600 transition-colors" title="Delete">
-                      <Trash2 className="h-4 w-4" />
-                    </button>
-                  </div>
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
           )}
         </div>
@@ -563,136 +543,137 @@ color: #333
 
       {/* AI Generation Modal */}
       {showAiModal && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => !aiGenerating && setShowAiModal(false)}>
-          <div className="bg-white rounded-2xl border border-[#E8E0D0] shadow-[0_8px_40px_rgba(0,0,0,0.12)] w-full max-w-lg" onClick={(e) => e.stopPropagation()}>
+        <div
+          className="fixed inset-0 bg-ink/40 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+          onClick={() => !aiGenerating && setShowAiModal(false)}
+        >
+          <div
+            className="bg-surface rounded-2xl border border-ink/10 shadow-[0_16px_48px_rgba(0,0,0,0.16)] w-full max-w-lg"
+            onClick={(e) => e.stopPropagation()}
+          >
             {/* Modal Header */}
-            <div className="flex items-center justify-between px-6 py-4 border-b border-[#F0EAD8]">
+            <div className="flex items-center justify-between px-5 h-14 border-b-2 border-ink/7">
               <div className="flex items-center gap-3">
-                <div className={`h-10 w-10 rounded-xl flex items-center justify-center ${aiType === "presentation" ? "bg-gradient-to-br from-[#5B4BF5] to-[#3023D0]" : "bg-gradient-to-br from-[#F5D547] to-[#E6C63E]"}`}>
-                  {aiType === "presentation" ? <Sparkles className="h-5 w-5 text-white" /> : <BarChart3 className="h-5 w-5 text-[#1A1A1A]" />}
+                <div className={`h-9 w-9 rounded-xl flex items-center justify-center ${aiType === "presentation" ? "bg-indigo-soft" : "bg-muted"}`}>
+                  {aiType === "presentation"
+                    ? <Sparkles className="h-4 w-4 text-indigo" />
+                    : <BarChart3 className="h-4 w-4 text-ink-3" />
+                  }
                 </div>
                 <div>
-                  <h3 className="font-medium text-[#1A1A1A]">Create {aiType === "presentation" ? "Presentation" : "Report"} with AI</h3>
-                  <p className="text-xs text-[#7A7A7A]">Powered by Claude</p>
+                  <p className="text-[13px] font-semibold text-ink">
+                    Create {aiType === "presentation" ? "Presentation" : "Report"} with AI
+                  </p>
+                  <p className="text-[11px] text-ink-4 font-medium">Powered by Claude</p>
                 </div>
               </div>
-              <button onClick={() => !aiGenerating && setShowAiModal(false)} className="p-2 rounded-lg hover:bg-[#F7ECD5] transition-colors">
-                <X className="h-4 w-4 text-[#7A7A7A]" />
+              <button
+                onClick={() => !aiGenerating && setShowAiModal(false)}
+                className="p-1.5 rounded-lg hover:bg-muted transition-colors"
+              >
+                <X className="h-4 w-4 text-ink-3" />
               </button>
             </div>
 
             {/* Modal Body */}
-            <div className="px-6 py-5 space-y-4">
+            <div className="px-5 py-4 space-y-4">
               {/* Type Toggle */}
-              <div className="flex gap-2 p-1 bg-[#F7ECD5] rounded-xl">
+              <div className="flex gap-1.5 p-1 bg-muted rounded-xl">
                 <button
                   onClick={() => { setAiType("presentation"); setAiSlideCount(10); }}
-                  className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-all ${aiType === "presentation" ? "bg-gradient-to-r from-[#3023D0] to-[#5B4BF5] text-white shadow-[0_2px_8px_rgba(91,75,245,0.25)]" : "text-[#7A7A7A] hover:text-[#1A1A1A]"}`}
+                  className={`flex-1 py-2 px-3 rounded-lg text-[12px] font-semibold transition-all ${aiType === "presentation" ? "bg-surface text-indigo shadow-sm" : "text-ink-3 hover:text-ink"}`}
                 >
                   Presentation
                 </button>
                 <button
                   onClick={() => { setAiType("report"); setAiSlideCount(8); }}
-                  className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-all ${aiType === "report" ? "bg-gradient-to-r from-[#3023D0] to-[#5B4BF5] text-white shadow-[0_2px_8px_rgba(91,75,245,0.25)]" : "text-[#7A7A7A] hover:text-[#1A1A1A]"}`}
+                  className={`flex-1 py-2 px-3 rounded-lg text-[12px] font-semibold transition-all ${aiType === "report" ? "bg-surface text-ink shadow-sm" : "text-ink-3 hover:text-ink"}`}
                 >
                   Report
                 </button>
               </div>
 
-              {/* Topic */}
               <div>
-                <label className="block text-sm font-medium text-[#1A1A1A] mb-1.5">Topic *</label>
+                <p className="text-[11.5px] font-bold text-ink-3 mb-1.5 uppercase tracking-wider">Topic *</p>
                 <input
                   value={aiTopic}
                   onChange={(e) => setAiTopic(e.target.value)}
                   placeholder={aiType === "presentation" ? "e.g., Q1 Marketing Strategy for Brand X" : "e.g., Monthly Social Media Performance Report"}
-                  className="w-full px-4 py-2.5 rounded-xl border border-[#E8E0D0] bg-white text-sm text-[#1A1A1A] placeholder:text-[#B0B0B0] focus:outline-none focus:ring-2 focus:ring-[#5B4BF5]/30 focus:border-[#5B4BF5]/50 transition-all"
+                  className="w-full h-10 px-3 text-[13px] font-medium rounded-xl bg-bg border-2 border-ink/10 focus:border-indigo outline-none transition-colors"
                   disabled={aiGenerating}
                 />
               </div>
 
-              {/* Slide Count & Audience */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-sm font-medium text-[#1A1A1A] mb-1.5">Slides</label>
+                  <p className="text-[11.5px] font-bold text-ink-3 mb-1.5 uppercase tracking-wider">Slides</p>
                   <select
                     value={aiSlideCount}
                     onChange={(e) => setAiSlideCount(Number(e.target.value))}
-                    className="w-full px-4 py-2.5 rounded-xl border border-[#E8E0D0] bg-white text-sm text-[#1A1A1A] focus:outline-none focus:ring-2 focus:ring-[#5B4BF5]/30 focus:border-[#5B4BF5]/50 transition-all"
+                    className="w-full h-10 px-3 text-[13px] font-medium rounded-xl bg-bg border-2 border-ink/10 focus:border-indigo outline-none transition-colors"
                     disabled={aiGenerating}
                   >
-                    <option value={5}>5 slides</option>
-                    <option value={8}>8 slides</option>
-                    <option value={10}>10 slides</option>
-                    <option value={12}>12 slides</option>
-                    <option value={15}>15 slides</option>
-                    <option value={20}>20 slides</option>
+                    {[5, 8, 10, 12, 15, 20].map((n) => (
+                      <option key={n} value={n}>{n} slides</option>
+                    ))}
                   </select>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-[#1A1A1A] mb-1.5">Audience</label>
+                  <p className="text-[11.5px] font-bold text-ink-3 mb-1.5 uppercase tracking-wider">Audience</p>
                   <input
                     value={aiAudience}
                     onChange={(e) => setAiAudience(e.target.value)}
-                    placeholder="e.g., Client, Team, Investors"
-                    className="w-full px-4 py-2.5 rounded-xl border border-[#E8E0D0] bg-white text-sm text-[#1A1A1A] placeholder:text-[#B0B0B0] focus:outline-none focus:ring-2 focus:ring-[#5B4BF5]/30 focus:border-[#5B4BF5]/50 transition-all"
+                    placeholder="e.g., Client, Team"
+                    className="w-full h-10 px-3 text-[13px] font-medium rounded-xl bg-bg border-2 border-ink/10 focus:border-indigo outline-none transition-colors"
                     disabled={aiGenerating}
                   />
                 </div>
               </div>
 
-              {/* Style */}
               <div>
-                <label className="block text-sm font-medium text-[#1A1A1A] mb-1.5">Style / Tone</label>
+                <p className="text-[11.5px] font-bold text-ink-3 mb-1.5 uppercase tracking-wider">Style / Tone</p>
                 <input
                   value={aiStyle}
                   onChange={(e) => setAiStyle(e.target.value)}
-                  placeholder="e.g., Professional, Casual, Data-heavy, Creative"
-                  className="w-full px-4 py-2.5 rounded-xl border border-[#E8E0D0] bg-white text-sm text-[#1A1A1A] placeholder:text-[#B0B0B0] focus:outline-none focus:ring-2 focus:ring-[#5B4BF5]/30 focus:border-[#5B4BF5]/50 transition-all"
+                  placeholder="e.g., Professional, Casual, Data-heavy"
+                  className="w-full h-10 px-3 text-[13px] font-medium rounded-xl bg-bg border-2 border-ink/10 focus:border-indigo outline-none transition-colors"
                   disabled={aiGenerating}
                 />
               </div>
 
-              {/* Additional Notes */}
               <div>
-                <label className="block text-sm font-medium text-[#1A1A1A] mb-1.5">Additional Notes</label>
+                <p className="text-[11.5px] font-bold text-ink-3 mb-1.5 uppercase tracking-wider">Additional Notes</p>
                 <textarea
                   value={aiNotes}
                   onChange={(e) => setAiNotes(e.target.value)}
                   placeholder="Any specific points, data, or structure you want included..."
                   rows={3}
-                  className="w-full px-4 py-2.5 rounded-xl border border-[#E8E0D0] bg-white text-sm text-[#1A1A1A] placeholder:text-[#B0B0B0] focus:outline-none focus:ring-2 focus:ring-[#5B4BF5]/30 focus:border-[#5B4BF5]/50 transition-all resize-none"
+                  className="w-full px-3 py-2.5 text-[13px] font-medium rounded-xl bg-bg border-2 border-ink/10 focus:border-indigo outline-none transition-colors resize-none"
                   disabled={aiGenerating}
                 />
               </div>
             </div>
 
             {/* Modal Footer */}
-            <div className="px-6 py-4 border-t border-[#F0EAD8] flex items-center justify-between">
-              <p className="text-xs text-[#B0B0B0]">You can edit the generated content after</p>
+            <div className="px-5 py-4 border-t-2 border-ink/7 flex items-center justify-between">
+              <p className="text-[11px] text-ink-4 font-medium">You can edit the generated content after</p>
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => setShowAiModal(false)}
                   disabled={aiGenerating}
-                  className="px-4 py-2 text-sm text-[#7A7A7A] hover:text-[#1A1A1A] transition-colors disabled:opacity-50"
+                  className="px-4 h-9 rounded-xl text-[12px] font-medium text-ink-3 hover:text-ink transition-colors disabled:opacity-50"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={handleAiGenerate}
                   disabled={aiGenerating || !aiTopic.trim()}
-                  className="flex items-center gap-2 bg-gradient-to-r from-[#3023D0] to-[#5B4BF5] text-white px-5 py-2.5 rounded-full text-sm font-medium shadow-[0_4px_16px_rgba(91,75,245,0.35)] hover:shadow-[0_6px_24px_rgba(91,75,245,0.45)] disabled:opacity-50 disabled:shadow-none transition-all"
+                  className="btn-3d inline-flex items-center gap-2 px-5 h-10 rounded-xl bg-ink text-white text-[12px] font-semibold border-2 border-ink disabled:opacity-50"
                 >
                   {aiGenerating ? (
-                    <>
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      Generating...
-                    </>
+                    <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Generating...</>
                   ) : (
-                    <>
-                      <Sparkles className="h-4 w-4" />
-                      Generate
-                    </>
+                    <><Sparkles className="h-3.5 w-3.5" /> Generate</>
                   )}
                 </button>
               </div>
@@ -700,6 +681,6 @@ color: #333
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 }

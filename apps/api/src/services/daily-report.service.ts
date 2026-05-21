@@ -32,6 +32,8 @@ function formatReport(report: any) {
       comments: link.comments,
       shares: link.shares,
       views: link.views,
+      isScheduled: link.isScheduled ?? false,
+      scheduledFor: link.scheduledFor instanceof Date ? link.scheduledFor.toISOString() : link.scheduledFor ?? null,
     })),
   };
 }
@@ -87,10 +89,11 @@ export async function submitDailyReport(
     throw new AppError(400, "VALIDATION_ERROR", `Maximum ${MAX_LINKS_PER_DAY} links per day allowed`);
   }
 
-  // Check for duplicate URLs within the submission
+  // Check for duplicate URLs within the submission (skip scheduled posts with no URL)
   const urlSet = new Set<string>();
   const duplicatesInSubmission: string[] = [];
   for (const link of links) {
+    if (!link.url || link.isScheduled) continue;
     const normalizedUrl = link.url.trim().toLowerCase();
     if (urlSet.has(normalizedUrl)) {
       duplicatesInSubmission.push(link.url);
@@ -106,14 +109,15 @@ export async function submitDailyReport(
     );
   }
 
-  // Check for duplicate URLs across ALL this employee's previous reports (global duplicate detection)
-  const existingLinks = await prisma.reportLink.findMany({
+  // Check for duplicate URLs across ALL this employee's previous reports (skip scheduled)
+  const liveUrls = links.filter((l) => !l.isScheduled && l.url).map((l) => l.url!.trim());
+  const existingLinks = liveUrls.length > 0 ? await prisma.reportLink.findMany({
     where: {
-      url: { in: links.map((l) => l.url.trim()) },
+      url: { in: liveUrls },
       report: { employeeId },
     },
     select: { url: true, report: { select: { date: true } } },
-  });
+  }) : [];
 
   const reportDate = new Date(date);
 
@@ -153,7 +157,7 @@ export async function submitDailyReport(
         links: {
           create: links.map((l) => ({
             accountId: l.accountId,
-            url: l.url.trim(),
+            url: l.url ? l.url.trim() : null,
             platform: l.platform,
             description: l.description,
             mediaUrl: l.mediaUrl,
@@ -161,6 +165,8 @@ export async function submitDailyReport(
             comments: l.comments,
             shares: l.shares,
             views: l.views,
+            isScheduled: l.isScheduled ?? false,
+            scheduledFor: l.scheduledFor ? new Date(l.scheduledFor) : null,
           })),
         },
       },
@@ -177,7 +183,7 @@ export async function submitDailyReport(
         links: {
           create: links.map((l) => ({
             accountId: l.accountId,
-            url: l.url.trim(),
+            url: l.url ? l.url.trim() : null,
             platform: l.platform,
             description: l.description,
             mediaUrl: l.mediaUrl,
@@ -185,6 +191,8 @@ export async function submitDailyReport(
             comments: l.comments,
             shares: l.shares,
             views: l.views,
+            isScheduled: l.isScheduled ?? false,
+            scheduledFor: l.scheduledFor ? new Date(l.scheduledFor) : null,
           })),
         },
       },

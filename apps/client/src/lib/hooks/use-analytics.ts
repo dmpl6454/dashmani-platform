@@ -21,6 +21,6 @@ export function useClientAnalytics() {
   return useSWR<ClientAnalytics>(
     "/client/analytics",
     async (url: string) => (await apiFetch<ClientAnalytics>(url)).data,
-    { refreshInterval: 60000 }
+    { revalidateOnFocus: false, dedupingInterval: 300_000 }
   );
 }

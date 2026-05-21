@@ -13,7 +13,8 @@ export function useClientContent(params?: { projectId?: string; status?: string;
     async (url: string) => {
       const env = await apiFetch<any[]>(url);
       return { items: env.data, meta: env.meta };
-    }
+    },
+    { revalidateOnFocus: false, dedupingInterval: 60_000 }
   );
 }
 

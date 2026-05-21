@@ -13,7 +13,8 @@ export function useClientProjects(params?: { status?: string; search?: string })
     async (url: string) => {
       const env = await apiFetch<any[]>(url);
       return { items: env.data, meta: env.meta };
-    }
+    },
+    { revalidateOnFocus: false, dedupingInterval: 120_000 }
   );
 }
 

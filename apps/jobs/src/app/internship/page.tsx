@@ -23,8 +23,9 @@ export default function InternshipPage() {
     setError("");
     setSubmitting(true);
     try {
+      const normalized = { ...form, email: form.email.trim().toLowerCase() };
       const fd = new FormData();
-      Object.entries(form).forEach(([k, v]) => { if (v) fd.append(k, v); });
+      Object.entries(normalized).forEach(([k, v]) => { if (v) fd.append(k, v); });
       if (resume) fd.append("resume", resume);
 
       const res = await fetch(`${API_URL}/internship/apply`, { method: "POST", body: fd });

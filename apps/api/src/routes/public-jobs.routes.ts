@@ -91,6 +91,7 @@ router.post(
       const { name, email: rawEmail, phone, college, course, startDate, duration, department, skills, portfolio, linkedin, coverLetter } = req.body;
       if (!name || !rawEmail) return res.status(400).json({ success: false, error: { message: "Name and email are required" } });
       const email = (rawEmail as string).trim().toLowerCase();
+      if (email.endsWith("@digitalsukoon.com")) return res.status(403).json({ success: false, error: { message: "Team members are not eligible to apply for internships" } });
 
       const app = await prisma.internshipApplication.create({
         data: {

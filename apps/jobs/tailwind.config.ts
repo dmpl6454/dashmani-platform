@@ -25,6 +25,7 @@ const config: Config = {
           "accent-deep": "#131AB8",
           "accent-light": "#4F58FF",
           "accent-tint": "#DEE0FF",
+          error: "#C4452C",
         },
       },
       borderRadius: {
@@ -34,11 +35,16 @@ const config: Config = {
         xl: "22px",
         pill: "999px",
       },
+      boxShadow: {
+        card: "0 2px 16px rgba(0,0,0,0.06)",
+        "card-lg": "0 8px 32px rgba(0,0,0,0.08)",
+      },
       fontFamily: {
-        sans: ['"DM Sans"', "system-ui", "sans-serif"],
-        bricolage: ['"Bricolage Grotesque"', "sans-serif"],
-        serif: ['"Instrument Serif"', '"Times New Roman"', "serif"],
-        mono: ['"JetBrains Mono"', "ui-monospace", "monospace"],
+        // CSS variables injected by next/font/google in layout.tsx
+        sans: ["var(--font-dm-sans)", "system-ui", "sans-serif"],
+        bricolage: ["var(--font-bricolage)", "sans-serif"],
+        serif: ["var(--font-instrument)", '"Times New Roman"', "serif"],
+        mono: ["var(--font-jetbrains)", "ui-monospace", "monospace"],
       },
     },
   },

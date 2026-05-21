@@ -1,5 +1,41 @@
 import type { Metadata, Viewport } from "next";
+import {
+  DM_Sans,
+  Bricolage_Grotesque,
+  Instrument_Serif,
+  JetBrains_Mono,
+} from "next/font/google";
 import "./globals.css";
+
+// Self-hosted via next/font — no render-blocking external stylesheet.
+const dmSans = DM_Sans({
+  subsets: ["latin"],
+  variable: "--font-dm-sans",
+  display: "swap",
+  weight: ["400", "500", "600", "700"],
+});
+
+const bricolage = Bricolage_Grotesque({
+  subsets: ["latin"],
+  variable: "--font-bricolage",
+  display: "swap",
+  weight: ["400", "500", "600", "700"],
+});
+
+const instrumentSerif = Instrument_Serif({
+  subsets: ["latin"],
+  variable: "--font-instrument",
+  weight: "400",
+  style: ["normal", "italic"],
+  display: "swap",
+});
+
+const jetbrainsMono = JetBrains_Mono({
+  subsets: ["latin"],
+  variable: "--font-jetbrains",
+  display: "swap",
+  weight: ["400", "500"],
+});
 
 const SITE_URL = "https://jobs.digitalsukoon.com";
 
@@ -72,11 +108,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     publisher: { "@type": "Organization", name: "Dashmani Media Private Limited" },
   };
 
+  const fontVars = [dmSans.variable, bricolage.variable, instrumentSerif.variable, jetbrainsMono.variable].join(" ");
+
   return (
-    <html lang="en">
+    <html lang="en" className={fontVars}>
       <head>
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link rel="canonical" href={SITE_URL} />
         <script
           type="application/ld+json"

@@ -8,8 +8,8 @@ import crypto from "crypto";
 
 export async function login(email: string, password: string) {
   const normalizedEmailValue = email.trim().toLowerCase();
-  const user = await prisma.user.findUnique({
-    where: { email: normalizedEmailValue, deletedAt: null },
+  const user = await prisma.user.findFirst({
+    where: { email: { equals: normalizedEmailValue, mode: "insensitive" }, deletedAt: null },
     include: { roles: { include: { role: true } } },
   });
 
@@ -112,7 +112,9 @@ export async function logout(userId: string) {
 
 export async function forgotPassword(email: string, app: "internal" | "hr" = "internal") {
   const normalizedEmailValue = email.trim().toLowerCase();
-  const user = await prisma.user.findUnique({ where: { email: normalizedEmailValue, deletedAt: null } });
+  const user = await prisma.user.findFirst({
+    where: { email: { equals: normalizedEmailValue, mode: "insensitive" }, deletedAt: null },
+  });
   if (!user) return; // silent — don't reveal whether email exists
 
   // If the account is in a state where a password reset won't actually unlock login,

@@ -307,9 +307,6 @@ export default function LoginPage() {
           <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-ink-3 font-semibold">© {new Date().getFullYear()} Digital Sukoon · Mumbai</p>
         </div>
         <div className="flex gap-6 text-[12px] font-semibold text-ink-3">
-          <a href="#" className="hover:text-ink">Status</a>
-          <a href="#" className="hover:text-ink">Changelog</a>
-          <a href="#" className="hover:text-ink">Security</a>
           <a href="mailto:admin@digitalsukoon.com" className="hover:text-ink">Contact</a>
         </div>
       </footer>

@@ -544,8 +544,11 @@ All phases (1–13) + Waves 7–9 + v2 production test remediation complete. See
 - **F-TOKEN-STORAGE (P0):** Auth tokens still in `localStorage` — httpOnly cookie migration is a large cross-cutting change.
 - **F-LEAVE-TZ-BUG (P0):** Leave start date shifts 1 day (IST→UTC). Fix: send `YYYY-MM-DD` string on wire instead of JS `Date`.
 - **F-PII-MASKING (P1):** Aadhaar/PAN/bank/IFSC shown as plain text in HR profile — needs masking after save.
-- **F-WORKLOAD-COLUMNS (P2):** Critical/High workload cells blank when value is 0 — needs `—` fallback.
 - **F-NAV-RESTRUCTURE (P2):** Internal sidebar "More" menu still buries key features.
+
+### Fixed since last update (2026-05-21)
+- **F-WORKLOAD-COLUMNS:** Critical/High cells now render `—` when 0 — `tasksByPriority?.critical ?? 0` guard added.
+- **Mobile sidebar — HR + Internal:** Both portals now have `hidden lg:flex` desktop aside + fixed mobile topbar (h-14/h-[57px], z-40) with hamburger + full-height overlay drawer (z-50). Close on route change. `pt-14 lg:pt-0` on `<main>` clears the fixed bar. Client portal already had this pattern.
 
 ### Employee vs Admin distinction (analytics/reports)
 

@@ -66,12 +66,12 @@ export default function WorkloadPage() {
                       <td className={`p-4 text-center ${loadColor}`}>{emp.accountCount}</td>
                       <td className="p-4 text-center text-[#1A1A1A]">{emp.openTaskCount}</td>
                       <td className="p-4 text-center">
-                        {emp.tasksByPriority.critical > 0
+                        {(emp.tasksByPriority?.critical ?? 0) > 0
                           ? <span className="rounded-full px-3 py-1 text-xs font-medium bg-[rgba(231,76,60,0.1)] text-[#E74C3C]">{emp.tasksByPriority.critical}</span>
                           : <span className="text-sm text-[#B0B0B0]">—</span>}
                       </td>
                       <td className="p-4 text-center">
-                        {emp.tasksByPriority.high > 0
+                        {(emp.tasksByPriority?.high ?? 0) > 0
                           ? <span className="rounded-full px-3 py-1 text-xs font-medium bg-[rgba(245,166,35,0.12)] text-[#F5A623]">{emp.tasksByPriority.high}</span>
                           : <span className="text-sm text-[#B0B0B0]">—</span>}
                       </td>

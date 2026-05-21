@@ -1,6 +1,7 @@
 import { prisma } from "@dashmani/db";
 import { AppError } from "../middleware/error-handler";
 import type { Prisma } from "@dashmani/db";
+import { sanitizeAccountHandle } from "@dashmani/shared";
 
 const accountInclude = {
   platform: { select: { id: true, name: true, slug: true } },
@@ -80,6 +81,7 @@ export async function createAccount(data: {
   clientName?: string;
   profileUrl?: string;
 }) {
+  data = { ...data, handle: sanitizeAccountHandle(data.handle) };
   const platform = await prisma.platform.findUnique({ where: { id: data.platformId } });
   if (!platform) throw new AppError(404, "NOT_FOUND", "Platform not found");
 
@@ -102,6 +104,7 @@ export async function updateAccount(id: string, data: {
   status?: string;
   followerCount?: number;
 }) {
+  if (data.handle) data = { ...data, handle: sanitizeAccountHandle(data.handle) };
   const account = await prisma.socialAccount.findUnique({ where: { id } });
   if (!account) throw new AppError(404, "NOT_FOUND", "Social account not found");
 

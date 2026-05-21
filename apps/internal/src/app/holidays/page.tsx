@@ -5,6 +5,7 @@ import { apiFetch } from "@/lib/api";
 import useSWR from "swr";
 import { CalendarDays, Plus, Trash2, ChevronLeft, ChevronRight } from "lucide-react";
 import { formatStatus } from "@dashmani/shared";
+import { ConfirmDialog } from "@dashmani/ui";
 import { usePageTitle } from "@/lib/hooks/use-page-title";
 
 const inputClass =
@@ -27,6 +28,7 @@ export default function HolidaysPage() {
     description: "",
   });
   const [adding, setAdding] = useState(false);
+  const [deleteId, setDeleteId] = useState<string | null>(null);
 
   const { data, isLoading, mutate } = useSWR(
     `/admin/holidays?year=${year}`,
@@ -55,13 +57,15 @@ export default function HolidaysPage() {
     }
   }
 
-  async function handleDelete(id: string) {
-    if (!confirm("Are you sure you want to delete this holiday?")) return;
+  async function confirmDelete() {
+    if (!deleteId) return;
     try {
-      await apiFetch(`/admin/holidays/${id}`, { method: "DELETE" });
+      await apiFetch(`/admin/holidays/${deleteId}`, { method: "DELETE" });
       mutate();
     } catch (e: any) {
       alert(e.message || "Failed to delete holiday");
+    } finally {
+      setDeleteId(null);
     }
   }
 
@@ -191,7 +195,7 @@ export default function HolidaysPage() {
                     <td className="p-4 text-[#7A7A7A] max-w-[250px] truncate">{h.description || "—"}</td>
                     <td className="p-4">
                       <button
-                        onClick={() => handleDelete(h.id)}
+                        onClick={() => setDeleteId(h.id)}
                         className="flex items-center gap-1 rounded-full bg-[rgba(231,76,60,0.08)] text-[#E74C3C] px-3 py-1.5 text-xs font-medium hover:bg-[rgba(231,76,60,0.18)] transition-colors"
                       >
                         <Trash2 size={13} /> Delete
@@ -204,6 +208,15 @@ export default function HolidaysPage() {
           </table>
         </div>
       </div>
+      <ConfirmDialog
+        open={!!deleteId}
+        title="Delete holiday?"
+        description="This cannot be undone."
+        confirmLabel="Delete"
+        destructive
+        onConfirm={confirmDelete}
+        onCancel={() => setDeleteId(null)}
+      />
     </div>
   );
 }

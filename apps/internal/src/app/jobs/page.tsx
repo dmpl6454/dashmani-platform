@@ -4,6 +4,7 @@ import { useState } from "react";
 import { apiFetch, API_BASE } from "@/lib/api";
 import { usePageTitle } from "@/lib/hooks/use-page-title";
 import { formatStatus } from "@dashmani/shared";
+import { ConfirmDialog } from "@dashmani/ui";
 import useSWR from "swr";
 import {
   Briefcase, Plus, ChevronUp, Users, X, FileText, Linkedin,
@@ -45,6 +46,8 @@ export default function JobsPage() {
     experience: "", salary: "", description: "", requirements: "",
     responsibilities: "", benefits: "", status: "ACTIVE",
   });
+
+  const [deleteJobId, setDeleteJobId] = useState<string | null>(null);
 
   const { data, mutate } = useSWR("/admin/jobs", (url: string) => apiFetch<any>(url));
   const jobs = data?.data || [];
@@ -108,12 +111,13 @@ export default function JobsPage() {
     } catch (e: any) { alert(e.message); }
   }
 
-  async function deleteJob(id: string) {
-    if (!confirm("Delete this job listing? This cannot be undone.")) return;
+  async function confirmDeleteJob() {
+    if (!deleteJobId) return;
     try {
-      await apiFetch(`/admin/jobs/${id}`, { method: "DELETE" });
+      await apiFetch(`/admin/jobs/${deleteJobId}`, { method: "DELETE" });
       mutate();
     } catch (e: any) { alert(e.message); }
+    finally { setDeleteJobId(null); }
   }
 
   async function updateAppStatus(appId: string, status: string) {
@@ -424,7 +428,7 @@ export default function JobsPage() {
                         {job.status === "ACTIVE" && (
                           <button onClick={() => toggleJobStatus(job.id, "CLOSED")} className="text-xs text-[#7A7A7A] hover:text-red-600">Close</button>
                         )}
-                        <button onClick={() => deleteJob(job.id)} className="text-xs text-[#7A7A7A] hover:text-red-600"><Trash2 size={13} /></button>
+                        <button onClick={() => setDeleteJobId(job.id)} className="text-xs text-[#7A7A7A] hover:text-red-600"><Trash2 size={13} /></button>
                       </div>
                     </td>
                   </tr>
@@ -434,6 +438,16 @@ export default function JobsPage() {
           </div>
         </div>
       )}
+
+      <ConfirmDialog
+        open={!!deleteJobId}
+        title="Delete job listing?"
+        description="This cannot be undone."
+        confirmLabel="Delete"
+        destructive
+        onConfirm={confirmDeleteJob}
+        onCancel={() => setDeleteJobId(null)}
+      />
     </div>
   );
 }

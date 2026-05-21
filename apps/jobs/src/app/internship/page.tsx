@@ -21,9 +21,14 @@ export default function InternshipPage() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
+    const normalizedEmail = form.email.trim().toLowerCase();
+    if (normalizedEmail.endsWith("@digitalsukoon.com")) {
+      setError("Team members are not eligible to apply for internships.");
+      return;
+    }
     setSubmitting(true);
     try {
-      const normalized = { ...form, email: form.email.trim().toLowerCase() };
+      const normalized = { ...form, email: normalizedEmail };
       const fd = new FormData();
       Object.entries(normalized).forEach(([k, v]) => { if (v) fd.append(k, v); });
       if (resume) fd.append("resume", resume);

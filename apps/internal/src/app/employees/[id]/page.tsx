@@ -11,6 +11,7 @@ import {
   Users as UsersIcon, Plus, Check, X, Eye, MonitorSmartphone, ExternalLink, ListTodo, Laptop, Smartphone, Monitor, Headphones,
 } from "lucide-react";
 import { getRoleColor } from "@/lib/role-colors";
+import { PlatformIcon } from "@/lib/platform-icon";
 import { useAuth } from "@/lib/auth";
 import { useRouter } from "next/navigation";
 import { formatStatus } from "@dashmani/shared";
@@ -471,8 +472,8 @@ export default function EmployeeDetailPage() {
               {assignedAccounts.map((a: any) => (
                 <div key={a.id} className="border border-[#E8E0D0] rounded-xl p-4 hover:border-[#F5D547] transition-colors">
                   <div className="flex items-center gap-3 mb-3">
-                    <div className="h-10 w-10 rounded-xl bg-[#FFF3C4] flex items-center justify-center text-lg font-bold text-[#1A1A1A]">
-                      {a.account?.platform?.name?.[0] || "?"}
+                    <div className="h-10 w-10 rounded-xl bg-[#FFF3C4] flex items-center justify-center">
+                      <PlatformIcon slug={a.account?.platform?.slug} className="h-5 w-5 text-[#B8960C]" />
                     </div>
                     <div className="min-w-0 flex-1">
                       <p className="font-semibold text-[#1A1A1A] truncate">{a.account?.displayName || a.account?.handle}</p>

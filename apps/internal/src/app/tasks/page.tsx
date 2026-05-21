@@ -5,6 +5,7 @@ import { useTasks } from "@/lib/hooks/use-tasks";
 import { TaskCard } from "@/components/task-card";
 import { formatStatus } from "@dashmani/shared";
 import { Plus, Search, LayoutGrid, List } from "lucide-react";
+import { usePageTitle } from "@/lib/hooks/use-page-title";
 
 const STATUS_COLUMNS = ["TODO", "IN_PROGRESS", "IN_REVIEW", "DONE"];
 const STATUS_LABELS: Record<string, string> = {
@@ -33,6 +34,7 @@ const COLUMN_ACCENT: Record<string, string> = {
 };
 
 export default function TasksPage() {
+  usePageTitle("Tasks");
   const [search, setSearch] = useState("");
   const [view,   setView]   = useState<"kanban" | "list">("kanban");
   const { data, isLoading } = useTasks({ search });

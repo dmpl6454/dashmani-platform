@@ -5,6 +5,7 @@ import { useTask } from "@/lib/hooks/use-tasks";
 import { Button, Input } from "@dashmani/ui";
 import { apiFetch } from "@/lib/api";
 import { useEmployees } from "@/lib/hooks/use-employees";
+import { usePageTitle } from "@/lib/hooks/use-page-title";
 
 const STATUS_LABELS: Record<string, string> = {
   TODO: "To Do", IN_PROGRESS: "In Progress", IN_REVIEW: "In Review", DONE: "Done", CANCELLED: "Cancelled",
@@ -20,6 +21,7 @@ const PRIORITY_BADGE: Record<string, string> = {
 };
 
 export default function TaskDetailPage() {
+  usePageTitle("Task Detail");
   const { id } = useParams();
   const router = useRouter();
   const { data, isLoading, mutate } = useTask(id as string);

@@ -3,6 +3,7 @@ import { useState } from "react";
 import useSWR from "swr";
 import { apiFetch } from "@/lib/api";
 import { Receipt, Check, X, Clock, IndianRupee } from "lucide-react";
+import { usePageTitle } from "@/lib/hooks/use-page-title";
 
 const STATUS_STYLES: Record<string, string> = {
   PENDING: "bg-[#FFF3C4] text-[#1A1A1A]",
@@ -11,6 +12,7 @@ const STATUS_STYLES: Record<string, string> = {
 };
 
 export default function ExpensesPage() {
+  usePageTitle("Expense Claims");
   const [filter, setFilter] = useState("PENDING");
   const { data, mutate } = useSWR(`/admin/expenses?status=${filter}`, (url) => apiFetch<any>(url), { refreshInterval: 15000 });
   const expenses = (data as any)?.data ?? [];

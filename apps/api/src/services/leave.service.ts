@@ -80,6 +80,9 @@ export async function approveLeaveRequest(id: string, approvedBy: string) {
   if (!leaveReq) {
     throw new AppError(404, "NOT_FOUND", "Leave request not found");
   }
+  if (leaveReq.employeeId === approvedBy) {
+    throw new AppError(403, "SELF_APPROVAL_FORBIDDEN", "You cannot approve your own leave request");
+  }
   if (leaveReq.status !== "PENDING") {
     throw new AppError(400, "ALREADY_PROCESSED", "Leave request has already been processed");
   }
@@ -98,6 +101,9 @@ export async function rejectLeaveRequest(id: string, approvedBy: string) {
   const leaveReq = await prisma.leaveRequest.findUnique({ where: { id } });
   if (!leaveReq) {
     throw new AppError(404, "NOT_FOUND", "Leave request not found");
+  }
+  if (leaveReq.employeeId === approvedBy) {
+    throw new AppError(403, "SELF_APPROVAL_FORBIDDEN", "You cannot reject your own leave request");
   }
   if (leaveReq.status !== "PENDING") {
     throw new AppError(400, "ALREADY_PROCESSED", "Leave request has already been processed");

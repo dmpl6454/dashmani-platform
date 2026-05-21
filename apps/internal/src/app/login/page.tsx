@@ -101,10 +101,10 @@ export default function LoginPage() {
           </div>
         </a>
         <nav className="hidden md:flex items-center gap-7 text-[13px] font-semibold text-ink-2">
-          <a href="https://digitalsukoon.com" className="hover:text-indigo transition-colors">Studio</a>
-          <a href="https://client.digitalsukoon.com" className="hover:text-indigo transition-colors">Clients</a>
-          <a href="https://hr.digitalsukoon.com" className="hover:text-indigo transition-colors">HR</a>
-          <a href="https://jobs.digitalsukoon.com" className="hover:text-indigo transition-colors">Careers</a>
+          <a href="https://digitalsukoon.com" target="_blank" rel="noopener noreferrer" className="hover:text-indigo transition-colors">Studio</a>
+          <a href="https://client.digitalsukoon.com" target="_blank" rel="noopener noreferrer" className="hover:text-indigo transition-colors">Clients</a>
+          <a href="https://hr.digitalsukoon.com" target="_blank" rel="noopener noreferrer" className="hover:text-indigo transition-colors">HR</a>
+          <a href="https://jobs.digitalsukoon.com" target="_blank" rel="noopener noreferrer" className="hover:text-indigo transition-colors">Careers</a>
         </nav>
         <div className="flex items-center gap-3">
           <span className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-action-soft border border-action-deep/40 text-[11.5px] font-semibold text-ink-2">
@@ -146,6 +146,8 @@ export default function LoginPage() {
             </button>
             <a
               href="https://client.digitalsukoon.com"
+              target="_blank"
+              rel="noopener noreferrer"
               className="inline-flex items-center gap-2 px-5 py-3 rounded-full bg-white border-2 border-ink text-ink font-semibold text-[14px] hover:bg-indigo-soft transition-colors"
               style={{ boxShadow: "3px 3px 0 #1A1A1A" }}
             >

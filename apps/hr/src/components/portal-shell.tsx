@@ -24,7 +24,7 @@ export function PortalShell({ children }: PortalShellProps) {
   return (
     <div className="min-h-screen flex bg-bg text-ink">
       <HrSidebar />
-      <main className="flex-1 min-w-0 flex flex-col overflow-hidden min-h-screen">
+      <main className="flex-1 min-w-0 flex flex-col overflow-hidden min-h-screen pt-14 lg:pt-0">
         {children}
       </main>
     </div>

@@ -391,6 +391,7 @@ function AIChat({ loading, setLoading, employees }: any) {
   const [messages, setMessages] = useState<{ role: string; content: string }[]>([]);
   const [input, setInput] = useState("");
   const [employeeId, setEmployeeId] = useState("");
+  const [employeeError, setEmployeeError] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -399,13 +400,18 @@ function AIChat({ loading, setLoading, employees }: any) {
 
   async function send() {
     if (!input.trim()) return;
+    if (!employeeId) {
+      setEmployeeError("Please select an employee");
+      return;
+    }
+    setEmployeeError("");
     const userMsg = input;
     setInput("");
     setMessages((prev) => [...prev, { role: "user", content: userMsg }]);
     setLoading(true);
     try {
       const res = await apiFetch<any>("/admin/ai/assist", {
-        method: "POST", body: JSON.stringify({ task: userMsg, employeeId: employeeId || undefined }),
+        method: "POST", body: JSON.stringify({ task: userMsg, employeeId }),
       });
       setMessages((prev) => [...prev, { role: "assistant", content: res.data.response }]);
     } catch (e: any) {
@@ -420,9 +426,9 @@ function AIChat({ loading, setLoading, employees }: any) {
         <h2 className="text-lg font-semibold text-[#1A1A1A] mb-1">AI Chat Assistant</h2>
         <p className="text-sm text-[#7A7A7A]">Ask anything — HR policies, email drafts, performance feedback, warning letters, etc.</p>
       </div>
-      <div className="flex gap-3 items-center">
-        <EmployeeSelect employees={employees} value={employeeId} onChange={setEmployeeId} />
-        <span className="text-xs text-[#B0B0B0] whitespace-nowrap">(optional context)</span>
+      <div className="space-y-1">
+        <EmployeeSelect employees={employees} value={employeeId} onChange={(v) => { setEmployeeId(v); if (v) setEmployeeError(""); }} />
+        {employeeError && <p role="alert" className="text-xs text-red-500 font-semibold">{employeeError}</p>}
       </div>
       <div className="border border-[#E8E0D0] rounded-xl h-[350px] overflow-y-auto p-4 bg-[#FEFCF7] space-y-3">
         {messages.length === 0 && (

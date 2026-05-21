@@ -213,8 +213,8 @@ export default function DevicesPage() {
                         </div>
                       </td>
                       <td className="p-4">
-                        <Link href={`/employees/${device.employee.id}`} className="text-[#1A1A1A] font-medium hover:text-blue-600">{device.employee.name}</Link>
-                        <p className="text-xs text-[#7A7A7A]">{device.employee.email}</p>
+                        <Link href={`/employees/${device.employee.id}`} className="text-[#1A1A1A] font-medium hover:text-blue-600">{toTitleCase(device.employee.name)}</Link>
+                        <p className="text-xs text-[#7A7A7A]">ID: {device.employee.id.slice(0, 8)}</p>
                       </td>
                       <td className="p-4 text-[#7A7A7A]">
                         {device.serialNumber && <p className="text-xs">S/N: {device.serialNumber}</p>}

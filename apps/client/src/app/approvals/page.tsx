@@ -138,7 +138,7 @@ export default function ApprovalsPage() {
       )}
 
       {/* Split layout */}
-      <div className="flex-1 grid min-h-0" style={{ gridTemplateColumns: "320px 1fr" }}>
+      <div className="flex-1 grid min-h-0" style={{ gridTemplateColumns: "clamp(260px, 30vw, 320px) 1fr" }}>
 
         {/* List panel */}
         <div className="overflow-y-auto bg-bg" style={{ borderRight: "2px solid rgba(26,26,26,0.08)" }}>
@@ -297,7 +297,7 @@ function ApprovalPreview({ post, project, onOpen, onApprove, onRevise, onReject 
         </div>
       </div>
 
-      <div className="grid gap-5 mb-20" style={{ gridTemplateColumns: "320px 1fr" }}>
+      <div className="grid gap-5 mb-20 grid-cols-1 lg:grid-cols-[320px_1fr]">
         <IGFeedCard post={previewPost} />
         <div className="space-y-4 min-w-0">
           <div className="v3-card p-4">

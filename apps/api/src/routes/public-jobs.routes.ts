@@ -88,8 +88,9 @@ router.post(
   uploadDocument.single("resume"),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const { name, email, phone, college, course, startDate, duration, department, skills, portfolio, linkedin, coverLetter } = req.body;
-      if (!name || !email) return res.status(400).json({ success: false, error: { message: "Name and email are required" } });
+      const { name, email: rawEmail, phone, college, course, startDate, duration, department, skills, portfolio, linkedin, coverLetter } = req.body;
+      if (!name || !rawEmail) return res.status(400).json({ success: false, error: { message: "Name and email are required" } });
+      const email = (rawEmail as string).trim().toLowerCase();
 
       const app = await prisma.internshipApplication.create({
         data: {

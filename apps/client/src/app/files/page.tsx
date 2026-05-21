@@ -245,7 +245,7 @@ export default function FilesPage() {
           {error && <PageError message="Could not load files. Please refresh." />}
 
           {!error && viewMode === "list" ? (
-            <div className="v3-card overflow-hidden fade-up d2">
+            <div className="v3-card overflow-x-auto fade-up d2">
               <div
                 className="grid px-5 h-11 bg-muted/40 text-[11px] uppercase tracking-wider font-bold text-ink-3 items-center"
                 style={{ gridTemplateColumns: "36px 1fr 80px 80px 120px 48px", borderBottom: "2px solid rgba(26,26,26,0.07)" }}

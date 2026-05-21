@@ -11,6 +11,7 @@ import {
   Globe, Plus, Search, Pencil, Trash2, X, Share2, ChevronDown,
   Users, LayoutGrid, ExternalLink, UserMinus, Check, RefreshCw,
 } from "lucide-react";
+import { PlatformIcon } from "@/lib/platform-icon";
 
 type Tab = "accounts" | "by-employee" | "platforms";
 
@@ -612,7 +613,7 @@ function AccountsPageInner() {
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-2.5">
                             <div className="h-8 w-8 rounded-lg bg-indigo-soft flex items-center justify-center shrink-0">
-                              <Globe className="h-4 w-4 text-indigo" />
+                              <PlatformIcon slug={acc.platform?.slug} className="h-4 w-4 text-indigo" />
                             </div>
                             <div>
                               <p className="font-semibold text-ink text-sm">{acc.displayName}</p>
@@ -790,7 +791,7 @@ function AccountsPageInner() {
                 <div key={p.id} className="v3-card p-5 space-y-3">
                   <div className="flex items-center gap-3">
                     <div className="h-10 w-10 rounded-xl bg-indigo-soft flex items-center justify-center">
-                      <Globe className="h-5 w-5 text-indigo" />
+                      <PlatformIcon slug={p.slug} className="h-5 w-5 text-indigo" />
                     </div>
                     <div>
                       <p className="font-bold text-ink">{p.name}</p>

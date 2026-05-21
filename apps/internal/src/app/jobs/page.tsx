@@ -14,6 +14,12 @@ import {
 
 const inputClass = "w-full border border-[#E8E0D0] bg-white rounded-lg px-4 py-2.5 text-sm text-[#1A1A1A] placeholder:text-[#B0B0B0] focus:outline-none focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547] transition-colors";
 
+const DEPARTMENTS = [
+  "Social Media", "Content Writing", "Graphic Design", "Video Production",
+  "Web Development", "Marketing", "Business Development", "HR & Operations",
+  "Sales", "Finance", "Engineering", "Other",
+];
+
 const statusColors: Record<string, string> = {
   ACTIVE: "bg-green-50 text-green-700",
   DRAFT: "bg-gray-100 text-gray-700",
@@ -175,7 +181,10 @@ export default function JobsPage() {
           <p className="font-medium text-[#1A1A1A] mb-4">{editingJob ? "Edit Job Listing" : "Create Job Listing"}</p>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             <input type="text" placeholder="Job Title *" value={form.title} onChange={(e) => updateForm("title", e.target.value)} required className={inputClass} />
-            <input type="text" placeholder="Department" value={form.department} onChange={(e) => updateForm("department", e.target.value)} className={inputClass} />
+            <select value={form.department} onChange={(e) => updateForm("department", e.target.value)} className={inputClass}>
+              <option value="">Department</option>
+              {DEPARTMENTS.map((d) => <option key={d} value={d}>{d}</option>)}
+            </select>
             <input type="text" placeholder="Location" value={form.location} onChange={(e) => updateForm("location", e.target.value)} className={inputClass} />
             <select value={form.type} onChange={(e) => updateForm("type", e.target.value)} className={inputClass}>
               <option value="FULL_TIME">Full Time</option><option value="PART_TIME">Part Time</option><option value="CONTRACT">Contract</option><option value="INTERNSHIP">Internship</option><option value="FREELANCE">Freelance</option>

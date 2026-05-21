@@ -195,7 +195,7 @@ export default function LoginPage() {
 
               <div className="flex items-center justify-between text-[12.5px]">
                 <label className="inline-flex items-center gap-2 cursor-pointer text-ink-2 font-semibold">
-                  <input type="checkbox" className="w-4 h-4 rounded border-border accent-indigo" defaultChecked />
+                  <input type="checkbox" className="w-4 h-4 rounded border-border accent-indigo" />
                   Keep me signed in
                 </label>
                 <button

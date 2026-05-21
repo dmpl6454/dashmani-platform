@@ -9,30 +9,31 @@ const inputClass = "w-full border border-[#E8E0D0] bg-white rounded-lg px-4 py-2
 export default function AutoTeamsPage() {
   const { data, isLoading, mutate } = useSWR("/admin/auto-teams", (url: string) => apiFetch<any>(url));
   const sharedAccounts = data?.data || [];
-  const [creating, setCreating] = useState<string | null>(null);
-  const [teamName, setTeamName] = useState("");
+  const [teamNames, setTeamNames] = useState<Record<string, string>>({});
+  const [submitting, setSubmitting] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState("");
 
   async function createTeam(account: any) {
-    if (!teamName.trim()) return;
-    setCreating(account.accountId);
+    const name = (teamNames[account.accountId] || "").trim();
+    if (!name) return;
+    setSubmitting(account.accountId);
     try {
       await apiFetch("/admin/auto-teams/create", {
         method: "POST",
         body: JSON.stringify({
-          name: teamName,
+          name,
           accountId: account.accountId,
           memberIds: account.members.map((m: any) => m.id),
         }),
       });
-      setSuccessMsg(`Team "${teamName}" created with ${account.members.length} members!`);
-      setTeamName("");
-      setCreating(null);
+      setSuccessMsg(`Team "${name}" created with ${account.members.length} members!`);
+      setTeamNames((prev) => ({ ...prev, [account.accountId]: "" }));
+      setSubmitting(null);
       mutate();
       setTimeout(() => setSuccessMsg(""), 4000);
     } catch (e: any) {
       alert(e.message);
-      setCreating(null);
+      setSubmitting(null);
     }
   }
 
@@ -115,17 +116,17 @@ export default function AutoTeamsPage() {
                   <input
                     type="text"
                     placeholder={`Team name (e.g., "${account.handle} Team")`}
-                    value={creating === account.accountId ? teamName : ""}
-                    onFocus={() => { setCreating(account.accountId); if (!teamName) setTeamName(`${account.displayName || account.handle} Team`); }}
-                    onChange={(e) => { setCreating(account.accountId); setTeamName(e.target.value); }}
+                    value={teamNames[account.accountId] ?? ""}
+                    onFocus={() => { if (!teamNames[account.accountId]) setTeamNames((prev) => ({ ...prev, [account.accountId]: `${account.displayName || account.handle} Team` })); }}
+                    onChange={(e) => setTeamNames((prev) => ({ ...prev, [account.accountId]: e.target.value }))}
                     className={inputClass}
                   />
                   <button
                     onClick={() => createTeam(account)}
-                    disabled={creating === account.accountId && !teamName.trim()}
+                    disabled={submitting === account.accountId || !teamNames[account.accountId]?.trim()}
                     className="flex items-center gap-2 bg-[#1A1A1A] text-white px-5 py-2.5 rounded-lg text-sm font-semibold hover:bg-[#2B2B2B] disabled:opacity-50 transition-all whitespace-nowrap"
                   >
-                    <UserPlus className="h-4 w-4" /> Create Team
+                    <UserPlus className="h-4 w-4" /> {submitting === account.accountId ? "Creating..." : "Create Team"}
                   </button>
                 </div>
               </div>

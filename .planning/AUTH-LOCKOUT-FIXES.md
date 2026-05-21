@@ -1,7 +1,8 @@
 # Auth Lockout Prevention — Fix Register
 
 **Created:** 2026-05-18
-**Status:** ✅ Implemented in code. ⏳ Requires DB backfill (`normalize-emails.ts`) on prod.
+**Updated:** 2026-05-21 — HR portal regression closed (commit `d82d0f3`); backfill run on prod, 2 collisions remain (see bottom).
+**Status:** ✅ Implemented in code. ✅ Backfill run on prod 2026-05-21. ⚠️ 2 collision pairs need manual resolution.
 
 ## Context
 
@@ -34,6 +35,32 @@ createClient}`, `employee.service.createEmployee`, admin
 
 For HR's `identifier` field (which accepts email OR phone), `normalizeIdentifier()`
 lowercases only if the value contains `@`.
+
+**Important supplement (2026-05-21):** normalizing the *input* is not enough by
+itself — the **DB query** must also be case-insensitive, because pre-existing
+rows may still hold mixed-case emails until the backfill runs (and even after,
+new rows from any non-validated code path could re-introduce them). All three
+auth services now query with Prisma `mode: "insensitive"` on the email branch:
+
+```ts
+// Internal: auth.service.ts (login, forgotPassword)
+where: { email: { equals: normalizedEmailValue, mode: "insensitive" }, deletedAt: null }
+
+// HR: hr-auth.service.ts (loginWithPassword, requestOtp, verifyOtp)
+where: {
+  deletedAt: null,
+  OR: isEmail
+    ? [{ email: { equals: normalized, mode: "insensitive" } }]
+    : [{ phone: normalized }],
+}
+
+// Client: client-auth.service.ts — same pattern
+```
+
+This caught Diksha's HR-portal regression on 2026-05-21: she was stored as
+`Diksha@digitalsukoon.com` (capital D), the form lowercased her input to
+`diksha@…`, and `hr-auth.service.ts` was still doing an exact `{ email: normalized }`
+match — silent miss → `INVALID_CREDENTIALS`. Fix landed in commit `d82d0f3`.
 
 ### 2. Pre-existing mixed-case rows in prod DB
 
@@ -156,3 +183,41 @@ account existence to attackers.
 - `apps/api/src/services/client-auth.service.ts` — normalize in all five auth fns.
 - `apps/api/src/services/employee.service.ts` — normalize in `createEmployee`.
 - `apps/api/src/routes/admin-features.routes.ts` — normalize + auto-promote `ONBOARDING` row on invite.
+
+## 2026-05-21 prod backfill result
+
+After `d82d0f3` deployed, ran `npx tsx prisma/normalize-emails.ts` on Linode:
+
+```
+[users] normalized=4, already_ok=77, collisions=2
+[clients] normalized=0, already_ok=3, collisions=0
+[admin_invites] normalized=0, already_ok=0, collisions=0
+[client_invites] normalized=0, already_ok=0, collisions=0
+```
+
+4 user rows were silently lowercased (now safe). 2 collision pairs remain — these are
+real duplicate accounts where both the lowercase and uppercase versions exist as
+separate rows. The case-insensitive DB query means **both users CAN now log in**, but
+the duplicate rows should be cleaned up:
+
+| Pair | Keep (used) | Archive (empty/typo) |
+|---|---|---|
+| Priyanshu | `0be2dec3-94cd-4731-b04c-66d9aff9c7c1` — `PRIYANSHU@DIGITALSUKOON.COM`, name "Priyanshu Sinha", has attendance + 4 refresh tokens, created 2026-04-06 | `989aaac8-1fc1-459d-8154-d894445b4f43` — `priyanshu@digitalsukoon.com`, name "Piryanshu" (typo), 0 reports, 0 attendance, created 2026-04-05 |
+| Prashant Shukla | `40d99c27-d3eb-4d65-b039-c282e3e80958` — `prashantshukla9242@gmail.com` (lower), ACTIVE, 1 daily report, created 2026-05-20 | `36ffee7b-98a5-4641-8bef-46720256745d` — `PRASHANTSHUKLA9242@GMAIL.COM` (upper), already soft-deleted 2026-05-21 |
+
+Recommended resolution (next session):
+
+```sql
+-- For Priyanshu: rename the empty/typo row to free the lowercase slot, then re-run backfill.
+UPDATE users SET email = email || '.archived' WHERE id = '989aaac8-1fc1-459d-8154-d894445b4f43';
+
+-- For Prashant: the upper-case row is already soft-deleted but its email is still occupying
+-- the unique. Free it the same way (mentioned in trap #4 above).
+UPDATE users SET email = email || '.deleted-' || EXTRACT(EPOCH FROM deleted_at)::int
+  WHERE id = '36ffee7b-98a5-4641-8bef-46720256745d';
+
+-- Re-run: cd /opt/dashmani-platform/packages/db && npx tsx prisma/normalize-emails.ts
+-- Expected: collisions=0
+```
+
+Do NOT run those SQL statements without explicit user approval — they alter live user data.

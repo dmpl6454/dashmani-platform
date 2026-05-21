@@ -441,7 +441,8 @@ Postgres unique constraints on `email` are case-**sensitive**. If `User.email` i
 - Validators in `packages/shared/src/validators/*` use the `normalizedEmail` Zod schema from [packages/shared/src/utils/sanitize.ts](packages/shared/src/utils/sanitize.ts). When in doubt, use `normalizedEmail` not `z.string().email()`.
 - Service-layer functions also call `.trim().toLowerCase()` defensively — don't trust upstream callers.
 - HR's `identifier` (email-or-phone) goes through `normalizeIdentifier()` which lowercases only when `@` is present.
-- One-time DB backfill: [packages/db/prisma/normalize-emails.ts](packages/db/prisma/normalize-emails.ts) lowercases existing mixed-case rows. Safe to re-run; reports collisions without writing if any rows would conflict.
+- **The DB query itself must be case-insensitive, not just the input.** Pre-existing mixed-case rows survive even after the input is normalized. All three auth services (`auth.service.ts`, `hr-auth.service.ts`, `client-auth.service.ts`) use `findFirst({ where: { email: { equals: x, mode: "insensitive" } } })` — never plain `findUnique({ where: { email: x } })` on user-supplied email. **If you add a new auth code path, copy this pattern.** A 2026-05-21 regression hit Diksha because `hr-auth.service.ts` was still doing exact-match while the input was normalized — silent miss.
+- One-time DB backfill: [packages/db/prisma/normalize-emails.ts](packages/db/prisma/normalize-emails.ts) lowercases existing mixed-case rows. Safe to re-run; reports collisions without writing if any rows would conflict. **Last run on prod: 2026-05-21** — 4 users normalized, 2 collision pairs flagged for manual resolution (see [.planning/AUTH-LOCKOUT-FIXES.md](.planning/AUTH-LOCKOUT-FIXES.md)).
 
 ### HR self-register vs admin-invite collision — handled
 

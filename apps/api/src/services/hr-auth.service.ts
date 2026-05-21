@@ -135,10 +135,13 @@ export async function registerEmployee(data: {
 
 export async function loginWithPassword(identifier: string, password: string) {
   const normalized = normalizeIdentifier(identifier);
+  const isEmail = normalized.includes("@");
   const user = await prisma.user.findFirst({
     where: {
       deletedAt: null,
-      OR: [{ email: normalized }, { phone: normalized }],
+      OR: isEmail
+        ? [{ email: { equals: normalized, mode: "insensitive" } }]
+        : [{ phone: normalized }],
     },
     include: { roles: { include: { role: true } } },
   });
@@ -199,10 +202,13 @@ export async function loginWithPassword(identifier: string, password: string) {
 
 export async function requestOtp(identifier: string, channel: "EMAIL" | "SMS" | "WHATSAPP") {
   const normalized = normalizeIdentifier(identifier);
+  const isEmail = normalized.includes("@");
   const user = await prisma.user.findFirst({
     where: {
       deletedAt: null,
-      OR: [{ email: normalized }, { phone: normalized }],
+      OR: isEmail
+        ? [{ email: { equals: normalized, mode: "insensitive" } }]
+        : [{ phone: normalized }],
     },
   });
 
@@ -239,10 +245,13 @@ export async function requestOtp(identifier: string, channel: "EMAIL" | "SMS" | 
 
 export async function verifyOtp(identifier: string, otp: string) {
   const normalized = normalizeIdentifier(identifier);
+  const isEmail = normalized.includes("@");
   const user = await prisma.user.findFirst({
     where: {
       deletedAt: null,
-      OR: [{ email: normalized }, { phone: normalized }],
+      OR: isEmail
+        ? [{ email: { equals: normalized, mode: "insensitive" } }]
+        : [{ phone: normalized }],
     },
     include: { roles: { include: { role: true } } },
   });

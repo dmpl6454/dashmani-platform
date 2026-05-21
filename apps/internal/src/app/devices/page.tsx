@@ -3,6 +3,7 @@ import { useState } from "react";
 import { apiFetch, API_BASE } from "@/lib/api";
 import useSWR from "swr";
 import { Laptop, Smartphone, Monitor, Headphones, Plus, X, RotateCcw, Trash2, Edit3 } from "lucide-react";
+import { toTitleCase } from "@dashmani/shared";
 import Link from "next/link";
 
 const inputClass = "w-full border border-[#E8E0D0] bg-white rounded-lg px-4 py-2.5 text-sm text-[#1A1A1A] placeholder:text-[#B0B0B0] focus:outline-none focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547] transition-colors";
@@ -206,7 +207,7 @@ export default function DevicesPage() {
                             <Icon className="h-4 w-4 text-[#B8960C]" />
                           </div>
                           <div>
-                            <p className="font-semibold text-[#1A1A1A]">{device.brand} {device.model}</p>
+                            <p className="font-semibold text-[#1A1A1A]">{toTitleCase(device.brand)} {toTitleCase(device.model)}</p>
                             <p className="text-xs text-[#7A7A7A]">{device.type}</p>
                           </div>
                         </div>

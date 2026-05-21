@@ -4,6 +4,9 @@ import { authenticate } from "../middleware/auth";
 import { authValidators } from "@dashmani/shared";
 import * as authService from "../services/auth.service";
 import { success } from "../utils/response";
+import { prisma } from "@dashmani/db";
+import { z } from "zod";
+import { safeString } from "@dashmani/shared";
 
 const router = Router();
 
@@ -69,6 +72,25 @@ router.post("/auth/reset-password", async (req: Request, res: Response, next: Ne
     }
     await authService.resetPassword(token, newPassword);
     return success(res, { message: "Password reset successfully" });
+  } catch (err) {
+    next(err);
+  }
+});
+
+const updateMeSchema = z.object({
+  name: safeString.pipe(z.string().min(2).max(100)).optional(),
+});
+
+router.put("/auth/me", authenticate, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const parsed = updateMeSchema.safeParse(req.body);
+    if (!parsed.success) return next(new Error(parsed.error.errors[0]?.message || "Invalid input"));
+    const updated = await prisma.user.update({
+      where: { id: req.user!.userId },
+      data: { ...(parsed.data.name ? { name: parsed.data.name } : {}) },
+      select: { id: true, name: true, email: true },
+    });
+    return success(res, updated);
   } catch (err) {
     next(err);
   }

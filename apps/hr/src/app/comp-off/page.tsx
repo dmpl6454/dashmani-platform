@@ -14,8 +14,8 @@ const statusCfg: Record<string, string> = {
 const fieldCls = "w-full h-10 px-3 text-[13px] font-medium rounded-xl bg-bg border-2 border-ink/10 focus:border-indigo outline-none";
 
 export default function CompOffPage() {
-  const { data: requests } = useSWR("/hr/leave-requests", fetcher);
-  const compOffRequests = (requests || []).filter((r: any) => r.type === "COMP_OFF");
+  const { data: requests } = useSWR("/hr/leave-requests?type=COMP_OFF", fetcher);
+  const compOffRequests = requests || [];
 
   const [form, setForm] = useState({ startDate: "", endDate: "", reason: "" });
   const [submitting, setSubmitting] = useState(false);
@@ -25,7 +25,7 @@ export default function CompOffPage() {
     e.preventDefault(); setSubmitting(true); setError(""); setSuccess("");
     try {
       await apiFetch("/hr/leave-requests", { method: "POST", body: JSON.stringify({ startDate: form.startDate, endDate: form.endDate || form.startDate, type: "COMP_OFF", reason: form.reason }) });
-      setSuccess("Comp off request submitted!"); setForm({ startDate: "", endDate: "", reason: "" }); mutate("/hr/leave-requests");
+      setSuccess("Comp off request submitted!"); setForm({ startDate: "", endDate: "", reason: "" }); mutate("/hr/leave-requests?type=COMP_OFF");
     } catch (err: any) { setError(err.message || "Failed to submit"); }
     finally { setSubmitting(false); }
   }

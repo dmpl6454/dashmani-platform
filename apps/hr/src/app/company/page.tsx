@@ -1,8 +1,13 @@
 "use client";
+import useSWR from "swr";
 import { Topstrip } from "@/components/portal-shell";
+import { apiFetch } from "@/lib/api";
 import { Building2, Users, Target, Globe, Award, Heart } from "lucide-react";
 
 export default function CompanyProfilePage() {
+  const { data: statsResult } = useSWR("/public/stats", (url) => apiFetch(url));
+  const stats = (statsResult as any)?.data;
+
   return (
     <>
       <Topstrip title="Company Profile" sub="About Dashmani Media & Digital Sukoon" />
@@ -43,7 +48,7 @@ export default function CompanyProfilePage() {
             </p>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               {[
-                { icon: Users, value: "50+", label: "Team Members" },
+                { icon: Users, value: stats?.employeeCount != null ? `${stats.employeeCount}` : "50+", label: "Team Members" },
                 { icon: Award, value: "200+", label: "Clients Served" },
                 { icon: Target, value: "500+", label: "Social Accounts Managed" },
               ].map(({ icon: Icon, value, label }) => (

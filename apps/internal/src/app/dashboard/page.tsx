@@ -18,7 +18,7 @@ import {
 // Each card links to the page that is the source of truth for the count it shows,
 // so clicking "Pending: 5" lands on the page that actually displays those 5 items.
 const statStrip: { key: string; label: string; icon: any; href: string }[] = [
-  { key: "totalEmployees",          label: "Active Employees", icon: Users,        href: "/employees" },
+  { key: "totalEmployees",            label: "Employees",        icon: Users,        href: "/employees" },
   { key: "activeTeams",             label: "Teams",            icon: Building2,    href: "/teams" },
   { key: "presentToday",            label: "Present",          icon: Clock,        href: "/attendance" },
   { key: "tasksCompletedThisMonth", label: "Tasks Done",       icon: CheckCircle,  href: "/tasks" },
@@ -293,7 +293,7 @@ export default function DashboardPage() {
           </div>
           <div className="flex-1 min-w-0">
             <p className="font-bold text-ink">{isLoading ? "—" : (stats.totalEmployees ?? 0)}</p>
-            <p className="text-xs text-ink-4">Active Employees</p>
+            <p className="text-xs text-ink-4">Employees</p>
           </div>
           <ArrowRight className="h-4 w-4 text-ink-4 opacity-0 group-hover:opacity-100 transition-opacity" />
         </Link>

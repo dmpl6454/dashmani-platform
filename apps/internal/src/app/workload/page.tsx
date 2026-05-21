@@ -1,6 +1,7 @@
 "use client";
 import { useWorkload } from "@/lib/hooks/use-accounts";
 import { usePageTitle } from "@/lib/hooks/use-page-title";
+import { PlatformIcon } from "@/lib/platform-icon";
 
 export default function WorkloadPage() {
   usePageTitle("Workload");
@@ -64,8 +65,9 @@ export default function WorkloadPage() {
                       <td className="p-4">
                         <div className="flex flex-wrap gap-1">
                           {emp.accounts?.slice(0, 5).map((acc: any) => (
-                            <span key={acc.id} className="rounded-full px-3 py-1 text-xs font-medium bg-[#FFF3C4] text-[#1A1A1A]">
-                              {acc.platform?.name?.slice(0, 2)}: {acc.handle}
+                            <span key={acc.id} title={acc.platform?.name} className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium bg-[#FFF3C4] text-[#1A1A1A]">
+                              <PlatformIcon slug={acc.platform?.slug} className="h-3 w-3 shrink-0" />
+                              {acc.handle}
                             </span>
                           ))}
                           {emp.accounts?.length > 5 && (

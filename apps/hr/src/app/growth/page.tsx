@@ -2,123 +2,89 @@
 import { useState } from "react";
 import { TrendingUp, TrendingDown } from "lucide-react";
 import { useAccountGrowth } from "@/lib/hooks/use-accounts";
+import { Topstrip } from "@/components/portal-shell";
 
-const PERIOD_OPTIONS = [
-  { label: "7 Days", value: 7 },
-  { label: "14 Days", value: 14 },
-  { label: "30 Days", value: 30 },
-  { label: "90 Days", value: 90 },
-];
+const PERIOD_OPTIONS = [{ label: "7d", value: 7 }, { label: "14d", value: 14 }, { label: "30d", value: 30 }, { label: "90d", value: 90 }];
 
-const PLATFORM_COLORS: Record<string, string> = {
-  facebook: "bg-blue-500",
-  instagram: "bg-pink-500",
-  youtube: "bg-red-500",
-  x: "bg-gray-800",
-  twitter: "bg-gray-800",
-  snapchat: "bg-yellow-400",
-  linkedin: "bg-blue-700",
+const PLATFORM_CFG: Record<string, { bg: string; text: string; label: string }> = {
+  instagram: { bg: "bg-pink-50",  text: "text-pink-700",  label: "Instagram" },
+  linkedin:  { bg: "bg-blue-50",  text: "text-blue-700",  label: "LinkedIn"  },
+  twitter:   { bg: "bg-sky-50",   text: "text-sky-600",   label: "Twitter/X" },
+  x:         { bg: "bg-sky-50",   text: "text-sky-600",   label: "Twitter/X" },
+  youtube:   { bg: "bg-red-50",   text: "text-red-600",   label: "YouTube"   },
+  facebook:  { bg: "bg-blue-50",  text: "text-blue-600",  label: "Facebook"  },
+  snapchat:  { bg: "bg-yellow-50",text: "text-yellow-700",label: "Snapchat"  },
 };
-
-function getPlatformColor(platform: string) {
-  return PLATFORM_COLORS[platform?.toLowerCase()] || "bg-gray-400";
-}
+function platCfg(p: string) { return PLATFORM_CFG[p?.toLowerCase()] ?? { bg: "bg-muted", text: "text-ink-3", label: p || "—" }; }
 
 export default function GrowthPage() {
   const [days, setDays] = useState(7);
   const { data, isLoading } = useAccountGrowth(days);
-  const accounts = data?.data || [];
+  const accounts = data?.data ?? [];
 
   return (
-    <div className="space-y-6 crx-animate-fade">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-4xl font-light text-[#1A1A1A] font-serif">Account Growth</h1>
-          <p className="text-[#7A7A7A] mt-1">Track follower growth across your accounts</p>
-        </div>
-        <div className="flex gap-2">
-          {PERIOD_OPTIONS.map((opt) => (
-            <button
-              key={opt.value}
-              onClick={() => setDays(opt.value)}
-              className={`px-4 py-2 rounded-full text-sm font-medium transition-all ${
-                days === opt.value
-                  ? "bg-[#1A1A1A] text-white shadow-md"
-                  : "bg-white border border-[#E8E0D0] text-[#7A7A7A] hover:border-[#F5D547]"
-              }`}
-            >
+    <>
+      <Topstrip title="Account Growth" sub="Follower trends" right={
+        <div className="flex gap-1">
+          {PERIOD_OPTIONS.map(opt => (
+            <button key={opt.value} onClick={() => setDays(opt.value)}
+              className={`h-8 px-3 rounded-full text-[12px] font-semibold border-2 transition-all ${days === opt.value ? "bg-ink text-white border-ink" : "bg-surface text-ink-2 border-ink/12 hover:border-ink/25"}`}>
               {opt.label}
             </button>
           ))}
         </div>
+      } />
+      <div className="px-6 py-6 flex-1 overflow-y-auto">
+        <div className="space-y-4 anim-fade-up d1">
+          {isLoading ? (
+            <div className="v3-card px-5 py-10 text-center"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo mx-auto" /></div>
+          ) : accounts.length === 0 ? (
+            <div className="v3-card px-5 py-10 text-center"><TrendingUp size={24} className="mx-auto mb-3 text-ink-4" /><p className="text-[13px] text-ink-3 font-medium">No growth data available</p></div>
+          ) : (
+            <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
+              {accounts.map((acc: any, i: number) => {
+                const change = acc.change ?? 0; const pct = acc.changePercent ?? 0; const isUp = change >= 0;
+                const snapshots: any[] = acc.snapshots?.slice(-7) ?? [];
+                const pc = platCfg(acc.platform);
+                const maxFollowers = Math.max(...snapshots.map((s: any) => s.followers || 0), 1);
+                return (
+                  <div key={acc.id} className={`v3-card v3-card-lift overflow-hidden anim-fade-up d${Math.min(i + 1, 8)}`}>
+                    <div className="px-5 h-12 flex items-center justify-between" style={{ borderBottom: "2px solid rgba(26,26,26,0.07)" }}>
+                      <div className="flex items-center gap-2">
+                        <span className={`h-5 px-2 rounded-full text-[10px] font-bold inline-flex items-center ${pc.bg} ${pc.text}`}>{pc.label}</span>
+                        <span className="text-[13px] font-semibold text-ink truncate">{acc.handle || acc.name}</span>
+                      </div>
+                      <div className={`flex items-center gap-1 text-[12px] font-semibold ${isUp ? "text-success" : "text-danger"}`}>
+                        {isUp ? <TrendingUp size={13} /> : <TrendingDown size={13} />}
+                        {isUp ? "+" : ""}{change.toLocaleString()} ({isUp ? "+" : ""}{pct.toFixed(1)}%)
+                      </div>
+                    </div>
+                    <div className="p-5">
+                      <div className="font-display text-[32px] font-semibold text-ink leading-none">{acc.currentFollowers?.toLocaleString("en-IN") ?? "—"}</div>
+                      <div className="text-[12px] text-ink-3 font-medium mt-1">current followers</div>
+                      {snapshots.length > 0 && (
+                        <div className="mt-4">
+                          <div className="flex items-end gap-1 h-16">
+                            {snapshots.map((s: any, j: number) => (
+                              <div key={j} className="flex-1 flex flex-col items-center gap-1">
+                                <div className="w-full rounded-t-sm" style={{ height: `${(s.followers / maxFollowers) * 56}px`, background: `rgba(93,95,239,${0.3 + j * 0.1})` }} />
+                              </div>
+                            ))}
+                          </div>
+                          <div className="flex justify-between mt-1 text-[10px] text-ink-4">
+                            {snapshots.length > 0 && <span>{new Date(snapshots[0].date).toLocaleDateString("en-IN", { month: "short", day: "numeric" })}</span>}
+                            {snapshots.length > 1 && <span>{new Date(snapshots[snapshots.length - 1].date).toLocaleDateString("en-IN", { month: "short", day: "numeric" })}</span>}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
       </div>
-
-      {isLoading ? (
-        <div className="flex items-center justify-center h-48">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#F5D547]" />
-        </div>
-      ) : accounts.length === 0 ? (
-        <div className="bg-white rounded-2xl border border-[#E8E0D0] p-12 text-center shadow-[0_2px_16px_rgba(0,0,0,0.06)]">
-          <p className="text-[#B0B0B0]">No growth data available.</p>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
-          {accounts.map((acc: any) => {
-            const change = acc.change ?? 0;
-            const pct = acc.changePercent ?? 0;
-            const isUp = change >= 0;
-            const snapshots: any[] = acc.snapshots?.slice(-7) || [];
-
-            return (
-              <div key={acc.id} className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-[#E8E0D0] p-5 space-y-4">
-                <div className="flex items-start gap-3">
-                  <div className={`w-3 h-3 rounded-full mt-1 flex-shrink-0 ${getPlatformColor(acc.platform)}`} />
-                  <div className="flex-1">
-                    <p className="font-semibold text-[#1A1A1A]">{acc.handle || acc.name}</p>
-                    <p className="text-xs text-[#B0B0B0] capitalize">{acc.platform}</p>
-                  </div>
-                </div>
-
-                <div className="flex items-end justify-between">
-                  <div>
-                    <p className="text-xs text-[#7A7A7A]">Current Followers</p>
-                    <p className="text-2xl font-light text-[#1A1A1A] font-serif">{acc.currentFollowers?.toLocaleString() ?? "—"}</p>
-                  </div>
-                  <div className={`flex items-center gap-1 text-sm font-medium ${isUp ? "text-[#6BCB77]" : "text-[#E74C3C]"}`}>
-                    {isUp ? <TrendingUp className="h-4 w-4" /> : <TrendingDown className="h-4 w-4" />}
-                    <span>{isUp ? "+" : ""}{change.toLocaleString()}</span>
-                    <span className="text-xs">({isUp ? "+" : ""}{pct.toFixed(1)}%)</span>
-                  </div>
-                </div>
-
-                {snapshots.length > 0 && (
-                  <div className="border-t border-[#E8E0D0] pt-3">
-                    <p className="text-xs font-medium text-[#7A7A7A] mb-2">Recent Snapshots</p>
-                    <table className="w-full text-xs">
-                      <thead>
-                        <tr className="text-[#B0B0B0]">
-                          <th className="text-left pb-1">Date</th>
-                          <th className="text-right pb-1">Followers</th>
-                          <th className="text-right pb-1">Posts</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-[#E8E0D0]/50">
-                        {snapshots.map((snap: any, i: number) => (
-                          <tr key={i} className="text-[#7A7A7A]">
-                            <td className="py-1">{snap.date ? new Date(snap.date).toLocaleDateString("en-IN", { month: "short", day: "numeric" }) : "—"}</td>
-                            <td className="text-right py-1">{snap.followers?.toLocaleString() ?? "—"}</td>
-                            <td className="text-right py-1">{snap.posts ?? "—"}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
+    </>
   );
 }

@@ -23,16 +23,19 @@ export async function listEmployees(params: {
     ];
   }
 
-  const employees = await prisma.user.findMany({
-    where,
-    take: params.limit + 1,
-    ...(params.cursor ? { cursor: { id: params.cursor }, skip: 1 } : {}),
-    include: {
-      roles: { include: { role: { select: { id: true, name: true } } } },
-      orgUnit: { select: { id: true, name: true, type: true } },
-    },
-    orderBy: [{ name: "asc" }, { createdAt: "desc" }],
-  });
+  const [employees, total] = await Promise.all([
+    prisma.user.findMany({
+      where,
+      take: params.limit + 1,
+      ...(params.cursor ? { cursor: { id: params.cursor }, skip: 1 } : {}),
+      include: {
+        roles: { include: { role: { select: { id: true, name: true } } } },
+        orgUnit: { select: { id: true, name: true, type: true } },
+      },
+      orderBy: [{ name: "asc" }, { createdAt: "desc" }],
+    }),
+    prisma.user.count({ where }),
+  ]);
 
   const hasMore = employees.length > params.limit;
   const items = hasMore ? employees.slice(0, params.limit) : employees;
@@ -51,6 +54,7 @@ export async function listEmployees(params: {
       updatedAt: e.updatedAt,
     })),
     meta: {
+      total,
       cursor: items.length > 0 ? items[items.length - 1].id : undefined,
       has_more: hasMore,
     },
@@ -76,6 +80,10 @@ export async function createEmployee(data: {
   phone?: string;
   orgUnitId?: string;
   roleIds: string[];
+  designation?: string;
+  department?: string;
+  joinDate?: string;
+  salary?: number;
 }) {
   const email = data.email.trim().toLowerCase();
   const existing = await prisma.user.findUnique({ where: { email } });
@@ -95,10 +103,18 @@ export async function createEmployee(data: {
       roles: {
         create: roleIds.map((roleId) => ({ roleId })),
       },
+      profile: (data.designation || data.salary != null || data.joinDate) ? {
+        create: {
+          designation: data.designation || null,
+          salary: data.salary ?? null,
+          joiningDate: data.joinDate ? new Date(data.joinDate) : null,
+        },
+      } : undefined,
     },
     include: {
       roles: { include: { role: { select: { id: true, name: true } } } },
       orgUnit: { select: { id: true, name: true } },
+      profile: { select: { designation: true, salary: true, joiningDate: true } },
     },
   });
 

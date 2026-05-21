@@ -18,6 +18,7 @@ import notificationRoutes from "./notification.routes";
 import adminFeaturesRoutes from "./admin-features.routes";
 import hrFeaturesRoutes from "./hr-features.routes";
 import publicJobsRoutes from "./public-jobs.routes";
+import publicStatsRoutes from "./public-stats.routes";
 
 const router = Router();
 
@@ -40,5 +41,6 @@ router.use(notificationRoutes);
 router.use(adminFeaturesRoutes);
 router.use(hrFeaturesRoutes);
 router.use(publicJobsRoutes);
+router.use(publicStatsRoutes);
 
 export default router;

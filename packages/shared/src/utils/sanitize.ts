@@ -19,3 +19,8 @@ export const normalizedEmail = z
   .trim()
   .toLowerCase()
   .pipe(z.string().email("Invalid email"));
+
+/** Strips query string (UTM params, igsh, etc.) from a social account handle */
+export function sanitizeAccountHandle(raw: string): string {
+  return raw.split("?")[0].trim();
+}

@@ -263,6 +263,7 @@ model SocialAccount {
   status          AccountStatus @default(ACTIVE)
   profileUrl      String?       @map("profile_url")
   followerCount   Int           @default(0) @map("follower_count")
+  lastSyncedAt    DateTime?     @map("last_synced_at")
   createdAt       DateTime      @default(now()) @map("created_at")
   updatedAt       DateTime      @updatedAt @map("updated_at")
 
@@ -666,7 +667,7 @@ model ReportLink {
   id           String   @id @default(uuid())
   reportId     String   @map("report_id")
   accountId    String   @map("account_id")
-  url          String
+  url          String?
   platform     String
   description  String?
   mediaUrl     String?  @map("media_url")
@@ -674,12 +675,13 @@ model ReportLink {
   comments     Int?
   shares       Int?
   views        Int?
+  isScheduled  Boolean  @default(false) @map("is_scheduled")
+  scheduledFor DateTime? @map("scheduled_for")
   createdAt    DateTime @default(now()) @map("created_at")
 
   report       DailyReport   @relation(fields: [reportId], references: [id], onDelete: Cascade)
   account      SocialAccount @relation(fields: [accountId], references: [id])
 
-  @@unique([reportId, url])
   @@index([reportId])
   @@index([accountId])
   @@index([url])

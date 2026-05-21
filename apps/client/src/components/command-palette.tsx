@@ -1,9 +1,11 @@
 "use client";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { FileText } from "lucide-react";
 import { Icon } from "./portal-icons";
 import { KbdRow } from "./portal-shared";
 import { useClientProjects } from "@/lib/hooks/use-projects";
+import { apiFetch } from "@/lib/api";
 
 interface PaletteItem {
   id: string;
@@ -49,6 +51,16 @@ export function CommandPalette() {
 
   const { data: projectsData } = useClientProjects();
   const projects: any[] = projectsData?.items ?? [];
+  const [posts, setPosts] = useState<any[]>([]);
+
+  useEffect(() => {
+    if (query.trim().length < 2) { setPosts([]); return; }
+    let cancelled = false;
+    apiFetch<any>(`/client/content?search=${encodeURIComponent(query.trim())}&limit=10`)
+      .then((res) => { if (!cancelled) setPosts(res?.data?.items ?? res?.data ?? []); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [query]);
 
   useEffect(() => {
     const l: Listener = (next) => setLocalOpen(next);
@@ -83,11 +95,18 @@ export function CommandPalette() {
       href:  `/projects/${p.id}`,
       icon:  Icon.Folder,
     }));
-    const all = [...PAGES, ...projectItems];
+    const postItems: PaletteItem[] = posts.map((p: any) => ({
+      id:    `post-${p.id}`,
+      label: p.title,
+      sub:   p.format ?? p.platform ?? p.status ?? "Post",
+      href:  `/content/${p.id}`,
+      icon:  FileText,
+    }));
+    const all = [...PAGES, ...projectItems, ...postItems];
     const q = query.trim().toLowerCase();
-    if (!q) return PAGES; // show quick nav when empty
+    if (!q) return PAGES;
     return all.filter((i) => i.label.toLowerCase().includes(q) || i.sub?.toLowerCase().includes(q));
-  }, [projects, query]);
+  }, [projects, posts, query]);
 
   useEffect(() => { setFocused(0); }, [query]);
 

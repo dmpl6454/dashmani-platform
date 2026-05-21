@@ -21,6 +21,8 @@ export * from "./validators/hr";
 // Utils
 export * from "./utils/status";
 export * from "./utils/sanitize";
+export * from "./utils/pluralize";
+export * from "./utils/date";
 
 // Validators
 export * as authValidators from "./validators/auth";

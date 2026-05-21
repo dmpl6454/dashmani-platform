@@ -95,9 +95,37 @@ export function TopNav({ onOpenSearch }: { onOpenSearch?: () => void }) {
   }
 
   /* ── Breadcrumb from pathname ── */
+  const ROUTE_LABELS: Record<string, string> = {
+    dashboard: "Dashboard",
+    employees: "Employees",
+    teams: "Team Structure",
+    tasks: "Tasks",
+    content: "Content",
+    accounts: "Accounts",
+    workload: "Workload Matrix",
+    clients: "Clients",
+    projects: "Projects",
+    attendance: "Attendance",
+    approvals: "Approvals",
+    analytics: "Analytics",
+    reports: "Daily Reports",
+    announcements: "Announcements",
+    "ai-assistant": "AI Assistant",
+    "salary-slips": "Salary Slips",
+    "offer-letters": "Offer Letters",
+    holidays: "Holiday Calendar",
+    jobs: "Job Listings",
+    expenses: "Expense Claims",
+    devices: "Assigned Devices",
+    "auto-teams": "Auto-Detected Teams",
+    internships: "Internships",
+    complaints: "Employee Complaints",
+    "bug-reports": "Bug Reports",
+    settings: "Settings",
+  };
   const crumb = pathname.split("/").filter(Boolean);
   const pageLabel = crumb[0]
-    ? crumb[0].charAt(0).toUpperCase() + crumb[0].slice(1).replace(/-/g, " ")
+    ? (ROUTE_LABELS[crumb[0]] ?? (crumb[0].charAt(0).toUpperCase() + crumb[0].slice(1).replace(/-/g, " ")))
     : "Dashboard";
 
   return (
@@ -124,11 +152,11 @@ export function TopNav({ onOpenSearch }: { onOpenSearch?: () => void }) {
         {pathname !== "/announcements" && (
           <Link
             href="/announcements"
-            title="Announcements history"
+            title="Announcements"
             className="hidden sm:flex items-center gap-1.5 h-8 px-3 rounded-xl border-2 border-ink/12 text-ink-3 text-xs font-semibold btn-3d hover:text-ink hover:bg-muted transition-colors"
           >
             <Megaphone className="h-3.5 w-3.5" />
-            History
+            Announcements
           </Link>
         )}
 
@@ -164,6 +192,18 @@ export function TopNav({ onOpenSearch }: { onOpenSearch?: () => void }) {
                     <p className="text-sm font-semibold text-ink leading-snug">{selectedNotif.title}</p>
                     <p className="text-xs text-ink-4">{new Date(selectedNotif.createdAt).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}</p>
                     <p className="text-sm text-ink-3 leading-relaxed whitespace-pre-wrap">{selectedNotif.message}</p>
+                    {/* Deep-link to approval page for employee registration notifications */}
+                    {(selectedNotif.title?.toLowerCase().includes("registration") ||
+                      selectedNotif.title?.toLowerCase().includes("approval") ||
+                      selectedNotif.message?.toLowerCase().includes("awaiting approval")) && (
+                      <Link
+                        href="/employees/pending"
+                        onClick={() => { setBellOpen(false); setSelectedNotif(null); }}
+                        className="inline-flex items-center gap-1.5 mt-1 px-3 py-1.5 rounded-lg bg-indigo text-white text-xs font-semibold hover:bg-indigo-deep transition-colors"
+                      >
+                        Review &amp; Approve →
+                      </Link>
+                    )}
                   </div>
                 </>
               ) : (
@@ -195,6 +235,16 @@ export function TopNav({ onOpenSearch }: { onOpenSearch?: () => void }) {
                             <p className={`text-sm ${!n.read ? "font-semibold text-ink" : "text-ink-3"}`}>{n.title}</p>
                             <p className="text-xs text-ink-4 mt-0.5 line-clamp-2">{n.message}</p>
                             <p className="text-[10px] text-ink-4 mt-1">{timeAgo(n.createdAt)}</p>
+                            {(n.title?.toLowerCase().includes("registration") ||
+                              n.message?.toLowerCase().includes("awaiting approval")) && (
+                              <Link
+                                href="/employees/pending"
+                                onClick={(e) => { e.stopPropagation(); setBellOpen(false); }}
+                                className="inline-flex items-center gap-1 mt-1.5 text-[10px] font-bold text-indigo hover:underline"
+                              >
+                                Review &amp; Approve →
+                              </Link>
+                            )}
                           </div>
                           <svg className="h-3.5 w-3.5 text-border shrink-0 mt-1" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7"/></svg>
                         </div>

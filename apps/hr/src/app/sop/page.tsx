@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect } from "react";
 import { apiFetch } from "@/lib/api";
+import { Topstrip } from "@/components/portal-shell";
 import { ScrollText, Check, Shield, Clock, Users, AlertTriangle } from "lucide-react";
 
 export default function SOPPage() {
@@ -30,7 +31,16 @@ export default function SOPPage() {
     setAccepting(false);
   }
 
-  if (loading) return <div className="flex items-center justify-center h-64"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#F5D547]" /></div>;
+  if (loading) {
+    return (
+      <>
+        <Topstrip title="Company SOPs & Terms" sub="Standard Operating Procedures and Terms of Employment" />
+        <div className="px-6 py-6 flex-1 overflow-y-auto max-w-[900px] flex justify-center pt-16">
+          <div className="animate-spin rounded-full h-7 w-7 border-b-2 border-indigo" />
+        </div>
+      </>
+    );
+  }
 
   const sections = [
     {
@@ -91,62 +101,79 @@ export default function SOPPage() {
   ];
 
   return (
-    <div className="min-h-screen bg-[#FEFCF7] p-6 md:p-10 space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-4xl font-light text-[#1A1A1A] font-serif flex items-center gap-3">
-            <ScrollText className="h-8 w-8 text-[#F5D547]" /> Company SOPs & Terms
-          </h1>
-          <p className="text-sm text-[#888] mt-1">Standard Operating Procedures and Terms of Employment</p>
+    <>
+      <Topstrip
+        title="Company SOPs & Terms"
+        sub="Standard Operating Procedures and Terms of Employment"
+        right={
+          accepted ? (
+            <div className="inline-flex h-8 items-center gap-2 bg-success-bg border border-success/20 text-success px-4 rounded-full text-[12px] font-semibold">
+              <Check className="h-3.5 w-3.5" />
+              Accepted {acceptedAt ? `on ${new Date(acceptedAt).toLocaleDateString("en-IN")}` : ""}
+            </div>
+          ) : undefined
+        }
+      />
+      <div className="px-6 py-6 flex-1 overflow-y-auto max-w-[900px] space-y-4">
+
+        {/* Company Header */}
+        <div className="v3-card overflow-hidden">
+          <div className="bg-ink px-6 py-5">
+            <p className="text-[15px] font-display text-white">Dashmani Media Private Limited — Digital Sukoon</p>
+            <p className="text-[12px] text-white/50 mt-1 font-medium">These SOPs apply to all employees and must be acknowledged upon joining.</p>
+          </div>
         </div>
-        {accepted && (
-          <div className="flex items-center gap-2 bg-green-50 border border-green-200 text-green-800 px-4 py-2 rounded-full text-sm font-medium">
-            <Check className="h-4 w-4" /> Accepted {acceptedAt ? `on ${new Date(acceptedAt).toLocaleDateString("en-IN")}` : ""}
+
+        {/* Sections */}
+        {sections.map((section, idx) => {
+          const Icon = section.icon;
+          return (
+            <div key={idx} className="v3-card">
+              <div className="px-5 h-12 flex items-center gap-2.5" style={{ borderBottom: "2px solid rgba(26,26,26,0.07)" }}>
+                <Icon className="h-4 w-4 text-indigo" />
+                <span className="text-[13px] font-semibold text-ink">{section.title}</span>
+              </div>
+              <ul className="px-5 py-4 space-y-2.5">
+                {section.items.map((item, i) => (
+                  <li key={i} className="flex gap-3 text-[13px] text-ink-3 leading-relaxed">
+                    <span className="shrink-0 mt-2 h-1.5 w-1.5 rounded-full bg-indigo" />
+                    {item}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          );
+        })}
+
+        {/* Accept Section */}
+        {!accepted && (
+          <div className="v3-card border-2 border-attention/30 bg-attention-bg">
+            <div className="px-5 h-12 flex items-center" style={{ borderBottom: "2px solid rgba(26,26,26,0.07)" }}>
+              <span className="text-[13px] font-semibold text-ink">Acknowledgement Required</span>
+            </div>
+            <div className="p-5">
+              <label className="flex items-start gap-3 cursor-pointer mb-5">
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={(e) => setChecked(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 rounded border-ink/20 accent-indigo"
+                />
+                <span className="text-[13px] text-ink leading-relaxed">
+                  I have read and understood the Standard Operating Procedures and Terms of Employment of Dashmani Media Pvt. Ltd. (Digital Sukoon). I agree to abide by these policies during my employment.
+                </span>
+              </label>
+              <button
+                onClick={handleAccept}
+                disabled={!checked || accepting}
+                className="btn-3d inline-flex items-center gap-2 px-5 h-10 rounded-xl bg-ink text-white text-[13px] font-semibold border-2 border-ink disabled:opacity-50"
+              >
+                {accepting ? "Accepting..." : "I Accept the Terms & SOPs"}
+              </button>
+            </div>
           </div>
         )}
       </div>
-
-      {/* Company Name Header */}
-      <div className="bg-gradient-to-r from-[#1A1A1A] to-[#333] rounded-2xl p-6 text-white">
-        <p className="text-lg font-serif">Dashmani Media Private Limited — Digital Sukoon</p>
-        <p className="text-sm text-white/60 mt-1">These SOPs apply to all employees and must be acknowledged upon joining.</p>
-      </div>
-
-      {/* Sections */}
-      {sections.map((section, idx) => {
-        const Icon = section.icon;
-        return (
-          <div key={idx} className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-[#E8E0D0] p-6">
-            <h2 className="text-lg font-semibold text-[#1A1A1A] flex items-center gap-2 mb-4">
-              <Icon className="h-5 w-5 text-[#B8960C]" /> {section.title}
-            </h2>
-            <ul className="space-y-2.5">
-              {section.items.map((item, i) => (
-                <li key={i} className="flex gap-3 text-sm text-[#555]">
-                  <span className="shrink-0 mt-1 h-1.5 w-1.5 rounded-full bg-[#F5D547]" />
-                  {item}
-                </li>
-              ))}
-            </ul>
-          </div>
-        );
-      })}
-
-      {/* Accept Section */}
-      {!accepted && (
-        <div className="bg-[#FFF3C4] border border-[#F5D547] rounded-2xl p-6">
-          <h3 className="font-semibold text-[#1A1A1A] mb-3">Acknowledgement Required</h3>
-          <label className="flex items-start gap-3 cursor-pointer mb-4">
-            <input type="checkbox" checked={checked} onChange={(e) => setChecked(e.target.checked)} className="mt-1 h-4 w-4 rounded border-gray-300 text-[#F5D547] focus:ring-[#F5D547]" />
-            <span className="text-sm text-[#1A1A1A]">
-              I have read and understood the Standard Operating Procedures and Terms of Employment of Dashmani Media Pvt. Ltd. (Digital Sukoon). I agree to abide by these policies during my employment.
-            </span>
-          </label>
-          <button onClick={handleAccept} disabled={!checked || accepting} className="bg-[#1A1A1A] text-white py-2.5 px-6 rounded-full text-sm font-semibold hover:bg-[#2B2B2B] disabled:opacity-50 transition-all">
-            {accepting ? "Accepting..." : "I Accept the Terms & SOPs"}
-          </button>
-        </div>
-      )}
-    </div>
+    </>
   );
 }

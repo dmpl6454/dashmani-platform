@@ -2,9 +2,19 @@
 import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@/lib/auth";
 import { apiFetch } from "@/lib/api";
+import useSWR from "swr";
 import {
   Mail, Lock, Eye, EyeOff, Check, AlertCircle, ArrowRight, Shield, Command, X,
 } from "lucide-react";
+
+// SSR-safe platform detection — resolves after mount to avoid hydration mismatch
+function useIsMac() {
+  const [isMac, setIsMac] = useState<boolean | null>(null);
+  useEffect(() => {
+    setIsMac(/Mac|iPhone|iPad/.test(navigator.platform));
+  }, []);
+  return isMac;
+}
 
 const emailOk = (v: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
 
@@ -33,21 +43,25 @@ export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [emailBlurred, setEmailBlurred] = useState(false);
+  const [passwordBlurred, setPasswordBlurred] = useState(false);
   const [showPass, setShowPass] = useState(false);
   const [error, setError] = useState("");
   const [submitState, setSubmitState] = useState<"idle" | "loading" | "success">("idle");
   const [forgotOpen, setForgotOpen] = useState(false);
   const formRef = useRef<HTMLDivElement>(null);
+  const isMac = useIsMac();
 
   const emailValid = email.length > 0 && emailOk(email);
-  const emailErr = emailBlurred && email && !emailOk(email) ? "Use a valid email" : null;
+  const emailErr = emailBlurred && email && !emailOk(email) ? "Use a valid email"
+    : emailBlurred && !email ? "Email is required" : null;
+  const passwordErr = passwordBlurred && !password ? "Password is required" : null;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
     if (!email || !emailOk(email) || !password) {
       setEmailBlurred(true);
-      if (!password) setError("Password is required");
+      setPasswordBlurred(true);
       return;
     }
     setSubmitState("loading");
@@ -137,12 +151,18 @@ export default function LoginPage() {
             >
               I'm a client
             </a>
-            <span className="text-[12px] text-ink-3 ml-1 flex items-center gap-1.5">
-              <Command size={13} /> Press
-              <kbd className="px-1.5 py-0.5 border border-border bg-white rounded text-[10.5px] font-mono">⌘</kbd>+
-              <kbd className="px-1.5 py-0.5 border border-border bg-white rounded text-[10.5px] font-mono">K</kbd>
-              in the app to search
-            </span>
+            {isMac !== null && (
+              <span className="text-[12px] text-ink-3 ml-1 flex items-center gap-1.5">
+                <Command size={13} /> Press
+                {isMac ? (
+                  <><kbd className="px-1.5 py-0.5 border border-border bg-white rounded text-[10.5px] font-mono">⌘</kbd>+</>
+                ) : (
+                  <><kbd className="px-1.5 py-0.5 border border-border bg-white rounded text-[10.5px] font-mono">Ctrl</kbd>+</>
+                )}
+                <kbd className="px-1.5 py-0.5 border border-border bg-white rounded text-[10.5px] font-mono">K</kbd>
+                in the app to search
+              </span>
+            )}
           </div>
 
           <div className="mt-9 auth-fade-up d6 pt-6" style={{ borderTop: "1.5px dashed #D4CBBA" }}>
@@ -187,7 +207,8 @@ export default function LoginPage() {
                 icon={<Lock size={16} />}
                 value={password}
                 onChange={(v) => { setPassword(v); if (error) setError(""); }}
-                error={null}
+                onBlur={() => setPasswordBlurred(true)}
+                error={passwordErr}
                 autoComplete="current-password"
                 showPass={showPass}
                 onToggleShowPass={() => setShowPass((s) => !s)}
@@ -195,7 +216,7 @@ export default function LoginPage() {
 
               <div className="flex items-center justify-between text-[12.5px]">
                 <label className="inline-flex items-center gap-2 cursor-pointer text-ink-2 font-semibold">
-                  <input type="checkbox" className="w-4 h-4 rounded border-border accent-indigo" defaultChecked />
+                  <input type="checkbox" className="w-4 h-4 rounded border-border accent-indigo" />
                   Keep me signed in
                 </label>
                 <button
@@ -402,9 +423,16 @@ const tickerSeed = [
 ];
 
 function OpsPanel() {
-  const employees = useCounter(124);
+  const { data: statsEnvelope } = useSWR(
+    "/public/stats",
+    (url: string) => apiFetch<{ employeeCount: number; activeProjects: number; postsPublishedThisMonth: number }>(url),
+    { revalidateOnFocus: false, refreshInterval: 3600000 }
+  );
+  const rawEmployees = (statsEnvelope as any)?.data?.employeeCount ?? 124;
+  const rawProjects  = (statsEnvelope as any)?.data?.activeProjects ?? 18;
+  const employees = useCounter(rawEmployees);
+  const liveProj  = useCounter(rawProjects);
   const approvals = useCounter(7);
-  const liveProj  = useCounter(18);
 
   const [clock, setClock] = useState<Date | null>(null);
   useEffect(() => {
@@ -533,12 +561,18 @@ function OpsPanel() {
 /* ─────────── Forgot password ─────────── */
 function ForgotPasswordModal({ onClose }: { onClose: () => void }) {
   const [email, setEmail] = useState("");
+  const [emailBlurred, setEmailBlurred] = useState(false);
   const [loading, setLoading] = useState(false);
   const [sent, setSent] = useState(false);
   const [error, setError] = useState("");
 
+  const emailErr = emailBlurred && !email ? "Email is required"
+    : emailBlurred && email && !emailOk(email) ? "Use a valid email" : null;
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    setEmailBlurred(true);
+    if (!email || !emailOk(email)) return;
     setLoading(true);
     setError("");
     try {
@@ -562,17 +596,37 @@ function ForgotPasswordModal({ onClose }: { onClose: () => void }) {
         </button>
         <h2 className="font-display text-[22px] font-semibold text-ink mb-1">Forgot password?</h2>
         {sent ? (
-          <p className="text-[13.5px] text-ink-3 mt-3 font-medium">
-            If that email is registered, a reset link has been sent. Check your inbox.
-          </p>
+          <div className="mt-3 space-y-4">
+            <p className="text-[13.5px] text-ink-3 font-medium">
+              If that email is registered, a reset link has been sent. Check your inbox.
+            </p>
+            <button
+              type="button"
+              onClick={onClose}
+              className="btn-3d w-full py-3 rounded-full bg-ink text-white text-sm font-bold"
+            >
+              Back to sign in
+            </button>
+          </div>
         ) : (
-          <form onSubmit={handleSubmit} className="space-y-4 mt-4">
+          <form onSubmit={handleSubmit} className="space-y-4 mt-4" noValidate>
             <p className="text-[13.5px] text-ink-3 font-medium">Enter your email and we'll send you a reset link.</p>
-            <input
-              type="email" value={email} onChange={(e) => setEmail(e.target.value)} required
-              placeholder="you@digitalsukoon.com"
-              className="w-full px-4 py-3 border-2 border-ink/15 rounded-xl text-sm text-ink bg-bg placeholder:text-ink-4 focus:outline-none focus:border-indigo transition-colors"
-            />
+            <div>
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => { setEmail(e.target.value); if (error) setError(""); }}
+                onBlur={() => setEmailBlurred(true)}
+                placeholder="you@digitalsukoon.com"
+                aria-invalid={!!emailErr}
+                className={`w-full px-4 py-3 border-2 rounded-xl text-sm text-ink bg-bg placeholder:text-ink-4 focus:outline-none transition-colors ${emailErr ? "border-danger bg-danger/5 focus:border-danger" : "border-ink/15 focus:border-indigo"}`}
+              />
+              {emailErr && (
+                <p role="alert" className="mt-1.5 ml-1 text-[12px] text-danger font-semibold flex items-center gap-1.5">
+                  <AlertCircle size={13} /> {emailErr}
+                </p>
+              )}
+            </div>
             {error && <p className="text-xs text-danger font-semibold">{error}</p>}
             <button
               type="submit" disabled={loading}

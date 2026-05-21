@@ -22,6 +22,7 @@ export function TaskForm({ task }: TaskFormProps) {
     dueDate: task?.dueDate ? task.dueDate.split("T")[0] : "",
   });
   const [error, setError] = useState("");
+  const [titleError, setTitleError] = useState("");
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -31,8 +32,13 @@ export function TaskForm({ task }: TaskFormProps) {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setLoading(true);
     setError("");
+    if (!form.title.trim()) {
+      setTitleError("Title is required");
+      return;
+    }
+    setTitleError("");
+    setLoading(true);
     try {
       const payload: any = {
         title: form.title,
@@ -63,7 +69,20 @@ export function TaskForm({ task }: TaskFormProps) {
       <CardContent>
         <form onSubmit={handleSubmit} className="space-y-4 max-w-lg">
           {error && <p className="text-sm text-red-500">{error}</p>}
-          <Input label="Title" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} required className="border border-[#E8E0D0] rounded-lg focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547]" />
+          <div>
+            <Input
+              label="Title"
+              value={form.title}
+              onChange={(e) => { setForm({ ...form, title: e.target.value }); if (titleError) setTitleError(""); }}
+              className={`border rounded-lg focus:ring-2 focus:border-[#F5D547] ${titleError ? "border-red-400 focus:ring-red-200" : "border-[#E8E0D0] focus:ring-[#F5D547]"}`}
+            />
+            {titleError && (
+              <p role="alert" className="mt-1.5 text-xs text-red-500 font-semibold flex items-center gap-1">
+                <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                {titleError}
+              </p>
+            )}
+          </div>
           <div className="space-y-1">
             <label className="text-sm font-medium text-[#1A1A1A]">Description</label>
             <textarea

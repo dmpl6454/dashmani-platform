@@ -1,6 +1,8 @@
 import { Router, Request, Response, NextFunction } from "express";
 import { authenticateHr } from "../middleware/hr-auth";
 import { success } from "../utils/response";
+import https from "https";
+import http from "http";
 import * as salaryService from "../services/salary-slip.service";
 import * as documentService from "../services/document.service";
 import * as profilePicService from "../services/profile-picture.service";
@@ -275,7 +277,8 @@ router.post("/hr/leave-requests", authenticateHr, async (req: Request, res: Resp
 router.get("/hr/leave-requests", authenticateHr, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const year = req.query.year ? parseInt(req.query.year as string) : undefined;
-    const leaves = await leaveService.getEmployeeLeaves(req.user!.userId, year);
+    const type = req.query.type ? (req.query.type as string) : undefined;
+    const leaves = await leaveService.getEmployeeLeaves(req.user!.userId, year, type);
     return success(res, leaves);
   } catch (err) {
     next(err);
@@ -782,6 +785,72 @@ router.post("/hr/reports", authenticateHr, async (req: Request, res: Response, n
       longitude,
     );
     return success(res, report, undefined, 201);
+  } catch (err) { next(err); }
+});
+
+// GET /hr/preview — fetch Open Graph metadata for a URL (used by smart paste UI)
+router.get("/hr/preview", authenticateHr, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { url } = req.query as { url?: string };
+    if (!url) return success(res, null);
+
+    let parsedUrl: URL;
+    try {
+      parsedUrl = new URL(url);
+    } catch {
+      return success(res, null);
+    }
+
+    // Only allow http/https
+    if (!["http:", "https:"].includes(parsedUrl.protocol)) return success(res, null);
+
+    const fetchHtml = (target: URL): Promise<string> =>
+      new Promise((resolve, reject) => {
+        const mod = target.protocol === "https:" ? https : http;
+        const reqOptions = {
+          hostname: target.hostname,
+          path: target.pathname + target.search,
+          headers: {
+            "User-Agent": "Mozilla/5.0 (compatible; DashmaniBot/1.0)",
+            Accept: "text/html",
+          },
+          timeout: 5000,
+        };
+        const req = mod.get(reqOptions, (res) => {
+          // Follow one redirect
+          if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+            try {
+              return resolve(fetchHtml(new URL(res.headers.location, target)));
+            } catch { return resolve(""); }
+          }
+          let data = "";
+          res.setEncoding("utf8");
+          res.on("data", (chunk) => { data += chunk; if (data.length > 50000) res.destroy(); });
+          res.on("end", () => resolve(data));
+          res.on("error", reject);
+        });
+        req.on("error", reject);
+        req.on("timeout", () => { req.destroy(); reject(new Error("timeout")); });
+      });
+
+    let html = "";
+    try { html = await fetchHtml(parsedUrl); } catch { return success(res, null); }
+
+    const getMeta = (property: string): string => {
+      const m = html.match(new RegExp(`<meta[^>]+(?:property|name)=["']${property}["'][^>]+content=["']([^"']+)["']`, "i"))
+        || html.match(new RegExp(`<meta[^>]+content=["']([^"']+)["'][^>]+(?:property|name)=["']${property}["']`, "i"));
+      return m ? m[1] : "";
+    };
+
+    const title = getMeta("og:title") || getMeta("twitter:title") || (html.match(/<title[^>]*>([^<]+)<\/title>/i)?.[1] ?? "");
+    const description = getMeta("og:description") || getMeta("twitter:description") || getMeta("description");
+    const image = getMeta("og:image") || getMeta("twitter:image");
+
+    return success(res, {
+      title: title.trim().slice(0, 200),
+      description: description.trim().slice(0, 400),
+      image: image.trim().slice(0, 500),
+    });
   } catch (err) { next(err); }
 });
 

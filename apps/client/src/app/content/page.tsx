@@ -55,6 +55,7 @@ export default function ContentPage() {
     pending:  posts.filter((p) => p.status === "PENDING_APPROVAL").length,
     approved: posts.filter((p) => ["APPROVED", "SCHEDULED"].includes(p.status)).length,
     live:     posts.filter((p) => p.status === "PUBLISHED").length,
+    rejected: posts.filter((p) => ["REJECTED", "REVISION"].includes(p.status)).length,
   };
 
   const CHIPS: { id: Filter; label: string; count?: number; dot?: boolean }[] = [
@@ -62,7 +63,7 @@ export default function ContentPage() {
     { id: "pending",  label: "Needs you",          count: counts.pending, dot: counts.pending > 0 },
     { id: "approved", label: "Approved",           count: counts.approved },
     { id: "live",     label: "Live",               count: counts.live },
-    { id: "rejected", label: "Revision / Rejected" },
+    { id: "rejected", label: "Revision / Rejected", count: counts.rejected },
   ];
 
   return (

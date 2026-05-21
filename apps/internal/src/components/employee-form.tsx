@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Button, Input, Card, CardHeader, CardTitle, CardContent } from "@dashmani/ui";
 import { apiFetch } from "@/lib/api";
@@ -12,13 +12,22 @@ interface EmployeeFormProps {
 export function EmployeeForm({ employee, roles }: EmployeeFormProps) {
   const router = useRouter();
   const isEdit = !!employee;
+  const [teams, setTeams] = useState<any[]>([]);
   const [form, setForm] = useState({
     name: employee?.name || "",
     email: employee?.email || "",
     password: "",
     phone: employee?.phone || "",
     roleIds: employee?.roles?.map((r: any) => r.id) || [],
+    orgUnitId: employee?.orgUnit?.id || "",
+    designation: employee?.profile?.designation || "",
+    joinDate: employee?.profile?.joiningDate ? employee.profile.joiningDate.split("T")[0] : "",
+    salary: employee?.profile?.salary != null ? String(employee.profile.salary) : "",
   });
+
+  useEffect(() => {
+    apiFetch("/teams").then((res: any) => setTeams(res.data || []));
+  }, []);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -28,15 +37,31 @@ export function EmployeeForm({ employee, roles }: EmployeeFormProps) {
     setError("");
     try {
       if (isEdit) {
-        const updateData = { name: form.name, phone: form.phone, roleIds: form.roleIds };
+        const updateData: any = {
+          name: form.name,
+          phone: form.phone,
+          roleIds: form.roleIds,
+          orgUnitId: form.orgUnitId || null,
+        };
         await apiFetch(`/employees/${employee.id}`, {
           method: "PUT",
           body: JSON.stringify(updateData),
         });
       } else {
+        const payload: any = {
+          name: form.name,
+          email: form.email,
+          password: form.password,
+          phone: form.phone || undefined,
+          roleIds: form.roleIds,
+          orgUnitId: form.orgUnitId || undefined,
+          designation: form.designation || undefined,
+          joinDate: form.joinDate || undefined,
+          salary: form.salary ? parseFloat(form.salary) : undefined,
+        };
         await apiFetch("/employees", {
           method: "POST",
-          body: JSON.stringify(form),
+          body: JSON.stringify(payload),
         });
       }
       router.push("/employees");
@@ -65,9 +90,43 @@ export function EmployeeForm({ employee, roles }: EmployeeFormProps) {
         <form onSubmit={handleSubmit} className="space-y-4 max-w-lg">
           {error && <p className="text-sm text-red-500">{error}</p>}
           <Input label="Full Name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required className="border border-[#E8E0D0] rounded-lg focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547]" />
-          {!isEdit && <Input label="Email" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} required className="border border-[#E8E0D0] rounded-lg focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547]" />}
-          {!isEdit && <Input label="Password" type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} required className="border border-[#E8E0D0] rounded-lg focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547]" />}
+          {!isEdit && <Input label="Email" type="email" autoComplete="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} required className="border border-[#E8E0D0] rounded-lg focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547]" />}
+          {!isEdit && <Input label="Password" type="password" autoComplete="new-password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} required className="border border-[#E8E0D0] rounded-lg focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547]" />}
           <Input label="Phone" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} className="border border-[#E8E0D0] rounded-lg focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547]" />
+
+          <div className="grid grid-cols-2 gap-4">
+            <Input
+              label="Designation"
+              value={form.designation}
+              onChange={(e) => setForm({ ...form, designation: e.target.value })}
+              className="border border-[#E8E0D0] rounded-lg focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547]"
+            />
+            <Input
+              label="Join Date"
+              type="date"
+              value={form.joinDate}
+              onChange={(e) => setForm({ ...form, joinDate: e.target.value })}
+              className="border border-[#E8E0D0] rounded-lg focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547]"
+            />
+            <Input
+              label="Salary (₹)"
+              type="number"
+              value={form.salary}
+              onChange={(e) => setForm({ ...form, salary: e.target.value })}
+              className="border border-[#E8E0D0] rounded-lg focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547]"
+            />
+            <div className="space-y-1">
+              <label className="text-sm font-medium text-[#1A1A1A]">Team</label>
+              <select
+                value={form.orgUnitId}
+                onChange={(e) => setForm({ ...form, orgUnitId: e.target.value })}
+                className="flex h-10 w-full rounded-lg border border-[#E8E0D0] bg-white px-3 py-2 text-sm focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547] outline-none"
+              >
+                <option value="">No team</option>
+                {teams.map((t: any) => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </select>
+            </div>
+          </div>
 
           <div className="space-y-2">
             <label className="text-sm font-medium text-[#1A1A1A]">Roles</label>

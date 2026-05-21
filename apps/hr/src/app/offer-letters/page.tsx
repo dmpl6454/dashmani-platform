@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { apiFetch } from "@/lib/api";
 import useSWR from "swr";
+import { Topstrip } from "@/components/portal-shell";
 import { FileText, Download, ChevronDown, ChevronUp, CheckCircle2, Clock, XCircle } from "lucide-react";
 
 interface OfferLetter {
@@ -17,11 +18,11 @@ interface OfferLetter {
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/v1";
 
-const statusConfig: Record<string, { label: string; bg: string; text: string; icon: typeof CheckCircle2 }> = {
-  PENDING: { label: "Pending", bg: "bg-yellow-50", text: "text-yellow-700", icon: Clock },
-  SENT: { label: "Sent", bg: "bg-blue-50", text: "text-blue-700", icon: FileText },
-  ACCEPTED: { label: "Accepted", bg: "bg-green-50", text: "text-green-700", icon: CheckCircle2 },
-  REJECTED: { label: "Rejected", bg: "bg-red-50", text: "text-red-700", icon: XCircle },
+const statusConfig: Record<string, { label: string; badge: string; icon: typeof CheckCircle2 }> = {
+  PENDING: { label: "Pending", badge: "bg-attention-bg text-attention border-attention/20", icon: Clock },
+  SENT: { label: "Sent", badge: "bg-indigo-soft text-indigo border-indigo/20", icon: FileText },
+  ACCEPTED: { label: "Accepted", badge: "bg-success-bg text-success border-success/20", icon: CheckCircle2 },
+  REJECTED: { label: "Rejected", badge: "bg-danger-bg text-danger border-danger/20", icon: XCircle },
 };
 
 function formatCurrency(amount: number) {
@@ -51,91 +52,112 @@ export default function OfferLettersPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#FEFCF7] p-6 md:p-10">
-      <div className="mb-8">
-        <h1 className="text-4xl font-light text-[#1A1A1A] font-serif">Offer Letters</h1>
-        <p className="text-sm text-[#888] mt-1">View and download your offer letters</p>
-      </div>
+    <>
+      <Topstrip title="Offer Letters" sub="View and download your offer letters" />
+      <div className="px-6 py-6 flex-1 overflow-y-auto max-w-[900px]">
 
-      {isLoading && (
-        <div className="flex items-center justify-center py-20">
-          <div className="h-8 w-8 border-2 border-[#F5D547] border-t-transparent rounded-full animate-spin" />
-        </div>
-      )}
-
-      {error && (
-        <div className="bg-red-50 border border-red-200 text-red-700 rounded-2xl p-5 text-sm">
-          Failed to load offer letters. Please try again later.
-        </div>
-      )}
-
-      {!isLoading && !error && (!data || data.length === 0) && (
-        <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-[#E8E0D0] p-12 text-center">
-          <div className="mx-auto w-16 h-16 bg-[#FEFCF7] rounded-full flex items-center justify-center mb-4">
-            <FileText className="w-8 h-8 text-[#C4B89C]" />
+        {isLoading && (
+          <div className="flex items-center justify-center py-16">
+            <div className="h-7 w-7 border-2 border-indigo border-t-transparent rounded-full animate-spin" />
           </div>
-          <h3 className="text-lg font-semibold text-[#1A1A1A] mb-1">No offer letters yet</h3>
-          <p className="text-sm text-[#888]">Your offer letters will appear here once they are generated.</p>
-        </div>
-      )}
+        )}
 
-      {data && data.length > 0 && (
-        <div className="space-y-4">
-          {data.map((letter: OfferLetter) => {
-            const expanded = expandedId === letter.id;
-            const status = statusConfig[letter.status] ?? statusConfig.PENDING;
-            const StatusIcon = status.icon;
+        {error && (
+          <div className="bg-danger-bg border border-danger/20 text-danger rounded-xl p-4 text-[13px] font-medium">
+            Failed to load offer letters. Please try again later.
+          </div>
+        )}
 
-            return (
-              <div key={letter.id} className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-[#E8E0D0] overflow-hidden transition-all">
-                <div className="flex items-center justify-between p-5 cursor-pointer hover:bg-[#FEFCF7] transition-colors" onClick={() => setExpandedId(expanded ? null : letter.id)}>
-                  <div className="flex items-center gap-4 flex-1 min-w-0">
-                    <div className="w-10 h-10 rounded-xl bg-[#FEFCF7] border border-[#E8E0D0] flex items-center justify-center shrink-0">
-                      <FileText className="w-5 h-5 text-[#C4B89C]" />
-                    </div>
-                    <div className="min-w-0">
-                      <p className="font-semibold text-[#1A1A1A] text-sm">{letter.designation}</p>
-                      <p className="text-xs text-[#888] mt-0.5">{letter.department} &middot; {new Date(letter.createdAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}</p>
-                    </div>
-                  </div>
+        {!isLoading && !error && (!data || data.length === 0) && (
+          <div className="v3-card p-12 text-center">
+            <div className="mx-auto w-14 h-14 bg-muted rounded-full flex items-center justify-center mb-3">
+              <FileText className="w-7 h-7 text-ink-4" />
+            </div>
+            <h3 className="text-[14px] font-semibold text-ink mb-1">No offer letters yet</h3>
+            <p className="text-[13px] text-ink-3 font-medium">Your offer letters will appear here once they are generated.</p>
+          </div>
+        )}
 
-                  <div className="flex items-center gap-4">
-                    <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium ${status.bg} ${status.text}`}>
-                      <StatusIcon className="w-3.5 h-3.5" />
-                      {status.label}
-                    </span>
-                    <button onClick={(e) => { e.stopPropagation(); handleDownload(letter); }} className="p-2 rounded-lg hover:bg-[#F5D547]/10 text-[#1A1A1A] transition-colors" title="Download">
-                      <Download className="w-4 h-4" />
-                    </button>
-                    <div className="text-[#888]">
-                      {expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-                    </div>
-                  </div>
-                </div>
+        {data && data.length > 0 && (
+          <div className="v3-card">
+            <div className="px-5 h-12 flex items-center" style={{ borderBottom: "2px solid rgba(26,26,26,0.07)" }}>
+              <span className="text-[13px] font-semibold text-ink">Your Offer Letters</span>
+              <span className="ml-2 h-5 w-5 rounded-full bg-muted text-ink-3 text-[11px] font-bold flex items-center justify-center">{data.length}</span>
+            </div>
+            <div className="px-5 py-3 space-y-1">
+              {data.map((letter: OfferLetter) => {
+                const expanded = expandedId === letter.id;
+                const status = statusConfig[letter.status] ?? statusConfig.PENDING;
+                const StatusIcon = status.icon;
 
-                {expanded && (
-                  <div className="border-t border-[#E8E0D0] bg-[#FEFCF7] p-5">
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                      <div className="p-4 rounded-xl bg-white border border-[#E8E0D0]">
-                        <span className="text-xs text-[#B0B0B0]">Designation</span>
-                        <p className="text-sm font-semibold text-[#1A1A1A]">{letter.designation}</p>
+                return (
+                  <div key={letter.id} className="rounded-xl overflow-hidden border border-ink/8">
+                    <div
+                      className="v3-row flex items-center justify-between px-4 py-3 cursor-pointer"
+                      onClick={() => setExpandedId(expanded ? null : letter.id)}
+                    >
+                      <div className="flex items-center gap-3 flex-1 min-w-0">
+                        <div className="w-9 h-9 rounded-xl bg-muted flex items-center justify-center shrink-0">
+                          <FileText className="w-4 h-4 text-ink-3" />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-[13px] font-semibold text-ink truncate">{letter.designation}</p>
+                          <p className="text-[11px] text-ink-4 font-medium mt-0.5">
+                            {letter.department} &middot;{" "}
+                            {new Date(letter.createdAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
+                          </p>
+                        </div>
                       </div>
-                      <div className="p-4 rounded-xl bg-white border border-[#E8E0D0]">
-                        <span className="text-xs text-[#B0B0B0]">Salary</span>
-                        <p className="text-sm font-semibold text-[#1A1A1A]">{letter.salary ? formatCurrency(letter.salary) : "--"}</p>
-                      </div>
-                      <div className="p-4 rounded-xl bg-white border border-[#E8E0D0]">
-                        <span className="text-xs text-[#B0B0B0]">Joining Date</span>
-                        <p className="text-sm font-semibold text-[#1A1A1A]">{letter.joiningDate ? new Date(letter.joiningDate).toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" }) : "--"}</p>
+
+                      <div className="flex items-center gap-3">
+                        <span className={`inline-flex items-center gap-1.5 h-6 px-2.5 rounded-full text-[11px] font-semibold border ${status.badge}`}>
+                          <StatusIcon className="w-3 h-3" />
+                          {status.label}
+                        </span>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleDownload(letter); }}
+                          className="p-1.5 rounded-lg hover:bg-muted text-ink-4 hover:text-ink transition-colors"
+                          title="Download"
+                        >
+                          <Download className="w-3.5 h-3.5" />
+                        </button>
+                        <div className="text-ink-4">
+                          {expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                        </div>
                       </div>
                     </div>
+
+                    {expanded && (
+                      <div className="border-t border-ink/7 bg-muted px-4 py-4">
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                          <div className="v3-card-inset p-4">
+                            <p className="text-[11.5px] font-bold text-ink-3 uppercase tracking-wider mb-1">Designation</p>
+                            <p className="text-[13px] font-semibold text-ink">{letter.designation}</p>
+                          </div>
+                          <div className="v3-card-inset p-4">
+                            <p className="text-[11.5px] font-bold text-ink-3 uppercase tracking-wider mb-1">Salary</p>
+                            <p className="text-[13px] font-semibold text-ink">
+                              {letter.salary ? formatCurrency(letter.salary) : "--"}
+                            </p>
+                          </div>
+                          <div className="v3-card-inset p-4">
+                            <p className="text-[11.5px] font-bold text-ink-3 uppercase tracking-wider mb-1">Joining Date</p>
+                            <p className="text-[13px] font-semibold text-ink">
+                              {letter.joiningDate
+                                ? new Date(letter.joiningDate).toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" })
+                                : "--"}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+    </>
   );
 }

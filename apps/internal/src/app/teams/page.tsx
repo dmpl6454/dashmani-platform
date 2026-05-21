@@ -3,7 +3,7 @@ import { useState } from "react";
 import useSWR from "swr";
 import { apiFetch, API_BASE } from "@/lib/api";
 import { useEmployees } from "@/lib/hooks/use-employees";
-import { formatStatus } from "@dashmani/shared";
+import { formatStatus, pluralize } from "@dashmani/shared";
 import { Users, Plus, ChevronDown, ChevronRight, Trash2, UserPlus, CheckSquare, Square, UserMinus, ArrowRightLeft } from "lucide-react";
 import { Input } from "@dashmani/ui";
 
@@ -146,7 +146,7 @@ export default function TeamsPage() {
           </div>
           <div className="flex-1 min-w-0">
             <p className="font-medium text-[#1A1A1A] text-sm">{team.name}</p>
-            <p className="text-xs text-[#7A7A7A]">{team.type} &middot; {team._count?.members ?? members.length} members</p>
+            <p className="text-xs text-[#7A7A7A]">{team.type} &middot; {pluralize(team._count?.members ?? members.length, "member")}</p>
           </div>
           <div className="flex items-center gap-1.5">
             <button

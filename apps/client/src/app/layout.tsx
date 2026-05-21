@@ -18,12 +18,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     const token = localStorage.getItem("clientAccessToken");
     const stored = localStorage.getItem("clientUser");
     if (token && stored) {
-      setUser(JSON.parse(stored));
+      try { setUser(JSON.parse(stored)); } catch { /* malformed stored user */ }
     } else if (!publicRoutes.includes(pathname)) {
       router.push("/login");
     }
     setIsLoading(false);
-  }, [pathname, router]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pathname]);
 
   async function login(email: string, password: string) {
     const res: any = await apiFetch("/client/auth/login", {

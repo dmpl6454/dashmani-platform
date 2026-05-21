@@ -113,7 +113,7 @@ export async function syncAllFollowerCounts() {
       // Update the social account's follower count
       await prisma.socialAccount.update({
         where: { id: account.id },
-        data: { followerCount: followers },
+        data: { followerCount: followers, lastSyncedAt: new Date() },
       });
 
       // Record a growth snapshot for today
@@ -162,7 +162,7 @@ export async function syncSingleAccountFollowers(accountId: string) {
   if (followers !== null && followers > 0) {
     await prisma.socialAccount.update({
       where: { id: accountId },
-      data: { followerCount: followers },
+      data: { followerCount: followers, lastSyncedAt: new Date() },
     });
 
     const today = new Date();

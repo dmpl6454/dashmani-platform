@@ -23,6 +23,7 @@ export * from "./utils/status";
 export * from "./utils/sanitize";
 export * from "./utils/pluralize";
 export * from "./utils/date";
+export * from "./utils/titleCase";
 
 // Validators
 export * as authValidators from "./validators/auth";

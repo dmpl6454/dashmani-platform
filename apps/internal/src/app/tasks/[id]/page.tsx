@@ -89,7 +89,7 @@ export default function TaskDetailPage() {
       <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0] crx-animate-slide crx-delay-1">
         <div className="p-6 space-y-4">
           {task.description && <p className="text-sm text-[#1A1A1A]">{task.description}</p>}
-          <div className="grid grid-cols-2 gap-4 text-sm">
+          <div className="grid grid-cols-2 gap-4 text-sm [&>div]:min-w-0 [&>div]:overflow-visible">
             <div className="flex items-center gap-2">
               <span className="text-[#7A7A7A]">Assignee:</span>
               <select

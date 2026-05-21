@@ -8,6 +8,9 @@ export const createEmployeeSchema = z.object({
   phone: z.string().optional(),
   orgUnitId: z.string().uuid().optional(),
   roleIds: z.array(z.string().uuid()).min(1, "At least one role is required"),
+  designation: safeString.pipe(z.string().max(100)).optional(),
+  joinDate: z.string().optional(),
+  salary: z.number().positive().optional(),
 });
 
 export const updateEmployeeSchema = z.object({

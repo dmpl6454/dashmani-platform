@@ -7,6 +7,7 @@ import {
   Briefcase, FolderOpen, FileEdit, TrendingUp, FileText, UserPlus, Megaphone,
   ChevronLeft, ChevronRight, Wallet, FileSignature, Calendar, BriefcaseBusiness,
   Bug, Sparkles, Laptop, GraduationCap, AlertCircle, Settings, LayoutGrid,
+  Menu, X as CloseIcon,
 } from "lucide-react";
 import { useOverviewStats } from "@/lib/hooks/use-analytics";
 import { useState, useEffect } from "react";
@@ -51,6 +52,7 @@ export function Sidebar() {
   const stats = (data as any)?.data;
   const [collapsed, setCollapsed] = useState(false);
   const [moreOpen, setMoreOpen]   = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
 
   useEffect(() => {
     const saved = localStorage.getItem("int-rail-collapsed");
@@ -58,6 +60,8 @@ export function Sidebar() {
     const savedMore = localStorage.getItem("int-more-open");
     if (savedMore !== null) setMoreOpen(savedMore === "1");
   }, []);
+
+  useEffect(() => { setMobileOpen(false); }, [pathname]);
 
   function toggleCollapsed() {
     setCollapsed(v => {
@@ -75,12 +79,13 @@ export function Sidebar() {
 
   const isMoreActive = moreNav.some(n => pathname === n.href || pathname.startsWith(n.href + "/"));
 
-  function NavItem({ href, label, icon: Icon, badgeKey, group, prevGroup }: {
-    href: string; label: string; icon: any; badgeKey?: "pendingEmployees"; group: string | null; prevGroup: string | null;
+  function NavItem({ href, label, icon: Icon, badgeKey, group, prevGroup, mobile }: {
+    href: string; label: string; icon: any; badgeKey?: "pendingEmployees"; group: string | null; prevGroup: string | null; mobile?: boolean;
   }) {
     const isActive = pathname === href || (href !== "/" && pathname.startsWith(href + "/"));
     const badge = badgeKey && stats ? stats[badgeKey] : 0;
-    const showGroupLabel = !collapsed && group && group !== prevGroup;
+    const expanded = !collapsed || !!mobile;
+    const showGroupLabel = expanded && group && group !== prevGroup;
 
     return (
       <>
@@ -91,15 +96,15 @@ export function Sidebar() {
         )}
         <Link
           href={href}
-          title={collapsed ? label : undefined}
+          title={!expanded ? label : undefined}
           className={cn(
             "group relative flex items-center gap-3 rounded-xl text-sm transition-all duration-150 select-none mb-0.5",
-            collapsed ? "justify-center h-10 px-0" : "h-10 px-3",
+            !expanded ? "justify-center h-10 px-0" : "h-10 px-3",
             isActive ? "nav-active" : "text-ink-3 font-medium hover:bg-muted hover:text-ink"
           )}
         >
           <Icon className="h-[18px] w-[18px] flex-shrink-0" strokeWidth={isActive ? 2.4 : 1.8} />
-          {!collapsed && (
+          {expanded && (
             <>
               <span className="flex-1 truncate">{label}</span>
               {badge > 0 && (
@@ -110,10 +115,10 @@ export function Sidebar() {
               )}
             </>
           )}
-          {collapsed && badge > 0 && (
+          {!expanded && badge > 0 && (
             <span className="absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-attention" />
           )}
-          {collapsed && (
+          {!expanded && (
             <div className="pointer-events-none absolute left-full ml-3 top-1/2 -translate-y-1/2 z-50 opacity-0 group-hover:opacity-100 transition-opacity px-2.5 py-1 bg-ink text-white text-xs font-medium rounded-lg whitespace-nowrap shadow-hard">
               {label}
               {badge > 0 && <span className="ml-1.5 bg-attention px-1.5 py-0.5 rounded-full text-[10px]">{badge}</span>}
@@ -124,20 +129,20 @@ export function Sidebar() {
     );
   }
 
-  return (
+  const SidebarBody = ({ mobile }: { mobile?: boolean }) => (
     <aside
       className={cn(
         "relative flex flex-col min-h-screen border-r-2 border-ink/10 bg-bg transition-[width] duration-200 ease-out shrink-0",
-        collapsed ? "w-[58px]" : "w-[220px]"
+        mobile ? "w-[280px]" : collapsed ? "w-[58px]" : "w-[220px]"
       )}
     >
       {/* Logo */}
       <div className={cn(
         "flex items-center border-b-2 border-ink/10 h-[57px] shrink-0 overflow-hidden",
-        collapsed ? "justify-center px-0" : "gap-2.5 px-4"
+        (!collapsed || mobile) ? "gap-2.5 px-4" : "justify-center px-0"
       )}>
         <img src="/logo.svg" alt="Digital Sukoon" className="h-8 w-8 rounded-full shrink-0" />
-        {!collapsed && (
+        {(!collapsed || mobile) && (
           <div className="min-w-0">
             <p className="text-[11px] font-bold text-ink uppercase tracking-[1.5px] leading-tight truncate">Digital Sukoon</p>
             <p className="text-[10px] text-ink-4 leading-tight">Management Portal</p>
@@ -159,6 +164,7 @@ export function Sidebar() {
                 badgeKey={item.badgeKey}
                 group={item.group}
                 prevGroup={prevGroup}
+                mobile={mobile}
               />
             );
             if (item.group) prevGroup = item.group;
@@ -170,7 +176,7 @@ export function Sidebar() {
         <div className="mx-3 my-2 border-t border-dashed border-ink/10" />
 
         {/* More toggle button */}
-        {collapsed ? (
+        {(collapsed && !mobile) ? (
           <button
             onClick={() => setMoreOpen(v => !v)}
             title="More"
@@ -201,7 +207,7 @@ export function Sidebar() {
         )}
 
         {/* More expandable grid */}
-        {!collapsed && (
+        {(!collapsed || mobile) && (
           <div
             className="overflow-hidden transition-all duration-250"
             style={{
@@ -259,22 +265,57 @@ export function Sidebar() {
         )}
       </nav>
 
-      {/* Collapse toggle */}
-      <div className="px-2 py-3 shrink-0 border-t-2 border-ink/10">
-        <button
-          onClick={toggleCollapsed}
-          title={collapsed ? "Expand" : "Collapse"}
-          className={cn(
-            "w-full flex items-center rounded-xl h-9 text-[12px] font-medium text-ink-3 hover:bg-muted hover:text-ink transition-colors",
-            collapsed ? "justify-center px-0" : "gap-2 px-3"
-          )}
-        >
-          {collapsed
-            ? <ChevronRight className="h-4 w-4" />
-            : <><ChevronLeft className="h-4 w-4" /><span>Collapse</span></>
-          }
-        </button>
-      </div>
+      {/* Collapse toggle — hidden in mobile drawer */}
+      {!mobile && (
+        <div className="px-2 py-3 shrink-0 border-t-2 border-ink/10">
+          <button
+            onClick={toggleCollapsed}
+            title={collapsed ? "Expand" : "Collapse"}
+            className={cn(
+              "w-full flex items-center rounded-xl h-9 text-[12px] font-medium text-ink-3 hover:bg-muted hover:text-ink transition-colors",
+              collapsed ? "justify-center px-0" : "gap-2 px-3"
+            )}
+          >
+            {collapsed
+              ? <ChevronRight className="h-4 w-4" />
+              : <><ChevronLeft className="h-4 w-4" /><span>Collapse</span></>
+            }
+          </button>
+        </div>
+      )}
     </aside>
+  );
+
+  return (
+    <>
+      {/* Mobile top-bar hamburger */}
+      <div className="lg:hidden fixed top-0 left-0 right-0 z-40 h-[57px] flex items-center gap-3 px-4 border-b-2 border-ink/10 bg-bg/95 backdrop-blur-md">
+        <button onClick={() => setMobileOpen(true)} className="p-1 text-ink-3 hover:text-ink" aria-label="Open menu">
+          <Menu className="h-5 w-5" />
+        </button>
+        <img src="/logo.svg" alt="Digital Sukoon" className="h-7 w-7 rounded-full shrink-0" />
+        <span className="text-[11px] font-bold text-ink uppercase tracking-[1.5px]">Digital Sukoon</span>
+      </div>
+
+      {/* Mobile drawer */}
+      {mobileOpen && (
+        <div className="lg:hidden fixed inset-0 z-50 flex">
+          <div className="absolute inset-0 bg-black/40" onClick={() => setMobileOpen(false)} />
+          <div className="relative z-10 flex flex-col h-full overflow-y-auto">
+            <div className="absolute top-3 right-3 z-10">
+              <button onClick={() => setMobileOpen(false)} className="p-1.5 rounded-lg bg-bg hover:bg-muted text-ink-3 hover:text-ink">
+                <CloseIcon className="h-4 w-4" />
+              </button>
+            </div>
+            <SidebarBody mobile />
+          </div>
+        </div>
+      )}
+
+      {/* Desktop sidebar */}
+      <div className="hidden lg:flex">
+        <SidebarBody />
+      </div>
+    </>
   );
 }

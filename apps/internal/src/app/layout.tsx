@@ -93,7 +93,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <Sidebar />
 
               {/* Main column */}
-              <div className="flex flex-col flex-1 min-w-0">
+              <div className="flex flex-col flex-1 min-w-0 pt-[57px] lg:pt-0">
                 {/* Thin topstrip */}
                 <TopNav onOpenSearch={() => setCmdOpen(true)} />
 

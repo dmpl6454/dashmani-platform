@@ -5,6 +5,7 @@ import { Save, User, Building2, CreditCard, Users, FileText, Camera, Check, Cloc
 import Link from "next/link";
 import { Topstrip } from "@/components/portal-shell";
 import { maskPII } from "@/lib/utils/mask";
+import { formatStatus } from "@dashmani/shared";
 
 interface ProfileData {
   id: string; userId: string; name: string; email: string; phone?: string | null;
@@ -121,7 +122,7 @@ export default function ProfilePage() {
                   <h2 className="font-display text-[22px] font-semibold text-ink">{profile?.name}</h2>
                   <p className="text-[13px] text-ink-3 font-medium mt-0.5">{profile?.designation || "Employee"}</p>
                   <div className="flex gap-2 mt-2">
-                    <span className={`h-6 px-2.5 rounded-full text-[10.5px] font-semibold inline-flex items-center ${statusCls}`}>{profile?.status}</span>
+                    <span className={`h-6 px-2.5 rounded-full text-[10.5px] font-semibold inline-flex items-center ${statusCls}`}>{profile?.status ? formatStatus(profile.status) : ""}</span>
                   </div>
                 </div>
                 {uploadingPic && <span className="text-[12px] text-ink-3 flex items-center gap-1 ml-2"><Clock size={12} /> Uploading…</span>}
@@ -284,7 +285,7 @@ function PasswordChangeSection() {
 
   async function handleChangePassword(e: React.FormEvent) {
     e.preventDefault(); setError(""); setSuccess("");
-    if (newPw.length < 6) { setError("New password must be at least 6 characters"); return; }
+    if (!/^(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{8,}$/.test(newPw)) { setError("Password must be at least 8 characters with 1 uppercase, 1 number, and 1 special character"); return; }
     if (newPw !== confirmPw) { setError("Passwords do not match"); return; }
     setSaving(true);
     try {

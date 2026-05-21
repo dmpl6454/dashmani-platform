@@ -277,7 +277,8 @@ router.post("/hr/leave-requests", authenticateHr, async (req: Request, res: Resp
 router.get("/hr/leave-requests", authenticateHr, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const year = req.query.year ? parseInt(req.query.year as string) : undefined;
-    const leaves = await leaveService.getEmployeeLeaves(req.user!.userId, year);
+    const type = req.query.type ? (req.query.type as string) : undefined;
+    const leaves = await leaveService.getEmployeeLeaves(req.user!.userId, year, type);
     return success(res, leaves);
   } catch (err) {
     next(err);

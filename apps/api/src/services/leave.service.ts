@@ -50,13 +50,17 @@ export async function createLeaveRequest(data: {
   });
 }
 
-export async function getEmployeeLeaves(employeeId: string, year?: number) {
+export async function getEmployeeLeaves(employeeId: string, year?: number, type?: string) {
   const where: any = { employeeId };
 
   if (year) {
     const startDate = new Date(year, 0, 1);
     const endDate = new Date(year, 11, 31, 23, 59, 59, 999);
     where.startDate = { gte: startDate, lte: endDate };
+  }
+
+  if (type) {
+    where.type = type;
   }
 
   return prisma.leaveRequest.findMany({

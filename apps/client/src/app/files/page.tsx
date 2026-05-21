@@ -248,13 +248,13 @@ export default function FilesPage() {
             <div className="v3-card overflow-x-auto fade-up d2">
               <div
                 className="grid px-5 h-11 bg-muted/40 text-[11px] uppercase tracking-wider font-bold text-ink-3 items-center"
-                style={{ gridTemplateColumns: "36px 1fr 80px 80px 120px 48px", borderBottom: "2px solid rgba(26,26,26,0.07)" }}
+                style={{ gridTemplateColumns: "36px 1fr 100px 100px 120px 48px", borderBottom: "2px solid rgba(26,26,26,0.07)" }}
               >
                 <span></span><span>Name</span><span>Type</span><span className="text-right">Size</span><span>Uploaded</span><span></span>
               </div>
 
               {isLoading && [...Array(4)].map((_, i) => (
-                <div key={i} className="grid px-5 items-center h-row" style={{ gridTemplateColumns: "36px 1fr 80px 80px 120px 48px", borderBottom: "1px solid rgba(26,26,26,0.06)" }}>
+                <div key={i} className="grid px-5 items-center h-row" style={{ gridTemplateColumns: "36px 1fr 100px 100px 120px 48px", borderBottom: "1px solid rgba(26,26,26,0.06)" }}>
                   <Skeleton className="h-7 w-7" />
                   <Skeleton className="h-3.5 w-2/3" />
                   <Skeleton className="h-5 w-12" />
@@ -275,7 +275,7 @@ export default function FilesPage() {
                     key={file.id}
                     className="grid px-5 items-center h-row v3-row cursor-pointer group fade-up"
                     style={{
-                      gridTemplateColumns: "36px 1fr 80px 80px 120px 48px",
+                      gridTemplateColumns: "36px 1fr 100px 100px 120px 48px",
                       animationDelay: `${(i + 3) * 0.05}s`,
                       ...(i < displayed.length - 1 ? { borderBottom: "1px solid rgba(26,26,26,0.06)" } : {}),
                     }}

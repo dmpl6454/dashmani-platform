@@ -616,6 +616,9 @@ router.post("/hr/poa", authenticateHr, async (req: Request, res: Response, next:
     if (!tasks) return res.status(400).json({ error: "Tasks field is required" });
     const poaDate = new Date(date || new Date());
     poaDate.setHours(0, 0, 0, 0);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    if (poaDate > today) return res.status(400).json({ success: false, error: { message: "Cannot submit a POA for a future date" } });
     // Upsert: one entry per employee per day
     const poa = await prisma.dailyPOA.upsert({
       where: { employeeId_date: { employeeId: req.user!.userId, date: poaDate } },

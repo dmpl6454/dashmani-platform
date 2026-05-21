@@ -57,6 +57,8 @@ export default function PlanOfActionPage() {
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
     if (!tasks.trim()) return;
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    if (date > today) return;
     setSaving(true);
     try {
       await apiFetch("/hr/poa", {
@@ -99,7 +101,7 @@ export default function PlanOfActionPage() {
               </span>
             )}
           </div>
-          <button onClick={() => changeDate(1)} className="p-1.5 rounded-lg hover:bg-muted transition-colors border border-ink/10">
+          <button onClick={() => changeDate(1)} disabled={isToday} className="p-1.5 rounded-lg hover:bg-muted transition-colors border border-ink/10 disabled:opacity-30 disabled:cursor-not-allowed">
             <ChevronRight className="h-4 w-4 text-ink" />
           </button>
           {!isToday && (

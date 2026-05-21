@@ -39,16 +39,17 @@ export default function EmployeesPage() {
 
   const { data, isLoading } = useEmployees(
     viewTab === "archived"
-      ? { search, includeDeleted: true }
-      : { search }
+      ? { search, includeDeleted: true, limit: 500 }
+      : { search, limit: 500 }
   );
   const allEmployees = (data as any)?.data || [];
+  const totalCount: number = (data as any)?.meta?.total ?? allEmployees.length;
 
   const employees = viewTab === "archived" || statusFilter === "ALL"
     ? allEmployees
     : allEmployees.filter((emp: any) => emp.status === statusFilter);
 
-  const statusCounts: Record<string, number> = { ALL: allEmployees.length };
+  const statusCounts: Record<string, number> = { ALL: totalCount };
   allEmployees.forEach((emp: any) => {
     statusCounts[emp.status] = (statusCounts[emp.status] || 0) + 1;
   });
@@ -69,7 +70,7 @@ export default function EmployeesPage() {
           {!isLoading && (
             <p className="text-sm text-ink-4 mt-0.5 flex items-center gap-1.5">
               <Users className="h-3.5 w-3.5" />
-              {allEmployees.length} {viewTab === "archived" ? "archived" : "total"}
+              {totalCount} {viewTab === "archived" ? "archived" : "total"}
             </p>
           )}
         </div>

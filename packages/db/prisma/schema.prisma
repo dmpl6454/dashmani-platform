@@ -263,6 +263,7 @@ model SocialAccount {
   status          AccountStatus @default(ACTIVE)
   profileUrl      String?       @map("profile_url")
   followerCount   Int           @default(0) @map("follower_count")
+  lastSyncedAt    DateTime?     @map("last_synced_at")
   createdAt       DateTime      @default(now()) @map("created_at")
   updatedAt       DateTime      @updatedAt @map("updated_at")
 

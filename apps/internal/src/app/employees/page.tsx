@@ -6,6 +6,7 @@ import { useEmployees } from "@/lib/hooks/use-employees";
 import { Plus, Search, BarChart3, Users } from "lucide-react";
 import { API_BASE } from "@/lib/api";
 import { getRoleColor } from "@/lib/role-colors";
+import { toTitleCase } from "@dashmani/shared";
 
 const STATUS_CONFIG: Record<string, { dot: string; badge: string; label: string }> = {
   ACTIVE:     { dot: "bg-success",    badge: "bg-success-bg text-success",     label: "Active" },
@@ -185,7 +186,7 @@ export default function EmployeesPage() {
                               {monogram(emp.name || "")}
                             </div>
                           )}
-                          <span className="font-semibold text-ink hover:text-indigo transition-colors">{emp.name}</span>
+                          <span className="font-semibold text-ink hover:text-indigo transition-colors">{toTitleCase(emp.name)}</span>
                         </Link>
                       </td>
                       <td className="px-5 py-3 text-ink-3 hidden md:table-cell">{emp.email}</td>

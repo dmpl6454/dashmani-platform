@@ -3,7 +3,7 @@ import { useState } from "react";
 import useSWR from "swr";
 import { apiFetch, API_BASE } from "@/lib/api";
 import { useEmployees } from "@/lib/hooks/use-employees";
-import { formatStatus, pluralize } from "@dashmani/shared";
+import { formatStatus, pluralize, toTitleCase } from "@dashmani/shared";
 import { Users, Plus, ChevronDown, ChevronRight, Trash2, UserPlus, CheckSquare, Square, UserMinus, ArrowRightLeft } from "lucide-react";
 import { Input } from "@dashmani/ui";
 
@@ -145,7 +145,7 @@ export default function TeamsPage() {
             <Users className="h-4 w-4 text-[#1A1A1A]" />
           </div>
           <div className="flex-1 min-w-0">
-            <p className="font-medium text-[#1A1A1A] text-sm">{team.name}</p>
+            <p className="font-medium text-[#1A1A1A] text-sm">{toTitleCase(team.name)}</p>
             <p className="text-xs text-[#7A7A7A]">{team.type} &middot; {pluralize(team._count?.members ?? members.length, "member")}</p>
           </div>
           <div className="flex items-center gap-1.5">
@@ -180,7 +180,7 @@ export default function TeamsPage() {
                       </div>
                     )}
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-[#1A1A1A]">{m.name}</p>
+                      <p className="text-sm font-medium text-[#1A1A1A]">{toTitleCase(m.name)}</p>
                       <p className="text-xs text-[#7A7A7A]">{m.email}</p>
                     </div>
                     <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${m.status === "ACTIVE" ? "bg-green-50 text-green-700" : "bg-[#FFF3C4] text-[#1A1A1A]"}`}>

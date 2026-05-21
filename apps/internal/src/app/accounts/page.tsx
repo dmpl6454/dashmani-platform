@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useAccounts, usePlatforms } from "@/lib/hooks/use-accounts";
 import { useEmployees } from "@/lib/hooks/use-employees";
-import { formatStatus } from "@dashmani/shared";
+import { formatStatus, toTitleCase } from "@dashmani/shared";
 import { apiFetch } from "@/lib/api";
 import { usePageTitle } from "@/lib/hooks/use-page-title";
 import {
@@ -634,7 +634,7 @@ function AccountsPageInner() {
                                   <div className="h-5 w-5 rounded-full bg-indigo flex items-center justify-center text-white text-[9px] font-bold shrink-0">
                                     {a.employee?.name?.[0]?.toUpperCase()}
                                   </div>
-                                  <span className="text-xs text-ink">{a.employee?.name}</span>
+                                  <span className="text-xs text-ink">{toTitleCase(a.employee?.name)}</span>
                                   <button
                                     onClick={() => handleUnassign(acc.id, a.employee.id)}
                                     className="opacity-0 group-hover:opacity-100 text-ink-4 hover:text-danger transition-all"
@@ -735,7 +735,7 @@ function AccountsPageInner() {
                         {emp.name?.[0]?.toUpperCase()}
                       </div>
                       <div className="min-w-0">
-                        <p className="font-semibold text-ink text-sm truncate">{emp.name}</p>
+                        <p className="font-semibold text-ink text-sm truncate">{toTitleCase(emp.name)}</p>
                         <p className="text-xs text-ink-4 truncate">{emp.designation || emp.email}</p>
                       </div>
                     </div>

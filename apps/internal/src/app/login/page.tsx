@@ -301,7 +301,7 @@ export default function LoginPage() {
       </section>
 
       {/* Footer */}
-      <footer className="relative z-10 max-w-[1320px] mx-auto px-6 lg:px-10 py-10 flex flex-wrap items-end justify-between gap-6">
+      <footer className="relative z-10 max-w-[1320px] mx-auto px-6 lg:px-10 pt-6 pb-4 flex flex-wrap items-end justify-between gap-6">
         <div className="flex items-center gap-3">
           <Logo size={28} />
           <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-ink-3 font-semibold">© {new Date().getFullYear()} Digital Sukoon · Mumbai</p>

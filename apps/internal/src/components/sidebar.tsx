@@ -245,8 +245,8 @@ export function Sidebar() {
                         <Icon className="h-3.5 w-3.5" strokeWidth={isActive ? 2.2 : 1.8} />
                       </div>
                       <span
-                        className="text-[9.5px] font-semibold leading-tight text-center w-full"
-                        style={{ wordBreak: "break-word" }}
+                        className="text-[9.5px] font-semibold leading-tight text-center w-full line-clamp-2"
+                        style={{ hyphens: "manual", wordBreak: "keep-all" }}
                       >
                         {item.label}
                       </span>

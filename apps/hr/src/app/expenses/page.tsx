@@ -2,7 +2,7 @@
 import { useState } from "react";
 import useSWR from "swr";
 import { Topstrip } from "@/components/portal-shell";
-import { Receipt, Plus, Clock, CheckCircle, XCircle } from "lucide-react";
+import { Receipt, Plus, Clock, CheckCircle, XCircle, IndianRupee } from "lucide-react";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/v1";
 
@@ -162,7 +162,7 @@ export default function ExpensesPage() {
         {/* List */}
         {expenses.length === 0 ? (
           <div className="v3-card p-12 text-center">
-            <Receipt className="h-9 w-9 mx-auto mb-3 text-ink-4" />
+            <IndianRupee className="h-9 w-9 mx-auto mb-3 text-ink-4" />
             <p className="text-[13px] text-ink-3 font-medium">No expense claims yet</p>
           </div>
         ) : (

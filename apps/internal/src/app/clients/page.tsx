@@ -2,7 +2,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useClients } from "@/lib/hooks/use-clients";
-import { Button, Input } from "@dashmani/ui";
+import { Button, Input, ConfirmDialog } from "@dashmani/ui";
 import { formatStatus } from "@dashmani/shared";
 import { Plus, Search, Building2, Send, X, Check, Trash2 } from "lucide-react";
 import { apiFetch } from "@/lib/api";
@@ -16,6 +16,7 @@ export default function ClientsPage() {
   const callerRoles = (currentUser?.roles ?? []).map((r) => r.toLowerCase());
   const isAdminOrSuperAdmin = callerRoles.includes("super admin") || callerRoles.includes("admin");
 
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
   const [inviteTarget, setInviteTarget] = useState<{ id: string; email: string; name: string } | null>(null);
   const [inviting, setInviting] = useState(false);
   const [inviteMsg, setInviteMsg] = useState<{ type: "success" | "error"; text: string } | null>(null);
@@ -26,12 +27,13 @@ export default function ClientsPage() {
     PAUSED: "bg-[#FFF3C4] text-[#1A1A1A]",
   };
 
-  async function handleDeleteClient(id: string, name: string) {
-    if (!confirm(`Delete client "${name}"? This cannot be undone.`)) return;
+  async function confirmDeleteClient() {
+    if (!deleteTarget) return;
     try {
-      await apiFetch(`/admin/clients/${id}`, { method: "DELETE" });
+      await apiFetch(`/admin/clients/${deleteTarget.id}`, { method: "DELETE" });
       mutate();
     } catch (err: any) { alert(err.message); }
+    finally { setDeleteTarget(null); }
   }
 
   async function sendInvite() {
@@ -93,7 +95,7 @@ export default function ClientsPage() {
                 )}
                 {isAdminOrSuperAdmin && (
                   <button
-                    onClick={() => handleDeleteClient(c.id, c.companyName)}
+                    onClick={() => setDeleteTarget({ id: c.id, name: c.companyName })}
                     className="flex items-center gap-1.5 text-xs text-red-500 hover:text-red-700 border border-red-100 hover:border-red-200 rounded-lg px-2.5 py-1.5 transition-all"
                     title="Delete Client"
                   >
@@ -105,6 +107,16 @@ export default function ClientsPage() {
           ))}
         </div>
       )}
+
+      <ConfirmDialog
+        open={!!deleteTarget}
+        title={`Delete "${deleteTarget?.name}"?`}
+        description="This cannot be undone."
+        confirmLabel="Delete"
+        destructive
+        onConfirm={confirmDeleteClient}
+        onCancel={() => setDeleteTarget(null)}
+      />
 
       {/* Invite confirmation modal */}
       {inviteTarget && (

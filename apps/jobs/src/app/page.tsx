@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import useSWR from "swr";
 import { apiFetch, apiUpload } from "@/lib/api";
+import { getDeptColor } from "@/lib/dept-colors";
 
 interface ApiJob {
   id: string;
@@ -28,27 +29,6 @@ const TYPE_DISPLAY: Record<string, string> = {
   FREELANCE: "Freelance",
 };
 
-const DEPT_COLORS: Record<string, string> = {
-  design: "#2027E6",
-  social: "#C9882A",
-  content: "#2F7F5A",
-  video: "#6D4DC9",
-  engineering: "#1F8FA8",
-  web: "#1F8FA8",
-  strategy: "#B05429",
-  production: "#B43E70",
-  marketing: "#B05429",
-  hr: "#B43E70",
-  operations: "#B43E70",
-};
-
-function getDeptColor(dept?: string): string {
-  if (!dept) return "#2027E6";
-  const lower = dept.toLowerCase();
-  const key = Object.keys(DEPT_COLORS).find((k) => lower.includes(k));
-  return key ? DEPT_COLORS[key] : "#2027E6";
-}
-
 function timeAgo(dateStr?: string): string {
   if (!dateStr) return "Recently posted";
   const days = Math.floor((Date.now() - new Date(dateStr).getTime()) / 86400000);
@@ -71,10 +51,6 @@ function pad2(n: number) {
   return String(n).padStart(2, "0");
 }
 
-function generateRef(prefix: string): string {
-  return prefix + "-" + Math.random().toString(36).slice(2, 7).toUpperCase();
-}
-
 const NUM_WORDS = ["zero","one","two","three","four","five","six","seven","eight","nine","ten",
   "eleven","twelve","thirteen","fourteen","fifteen","sixteen","seventeen","eighteen","nineteen","twenty"];
 
@@ -84,7 +60,9 @@ function numWord(n: number): string {
 
 export default function JobsPage() {
   const { data, isLoading } = useSWR("/jobs", (url: string) => apiFetch<any>(url));
-  const jobs: ApiJob[] = data?.data || [];
+
+  // Memoize so the array reference is stable — prevents useEffect re-firing every render.
+  const jobs: ApiJob[] = useMemo(() => data?.data ?? [], [data]);
 
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
@@ -96,10 +74,9 @@ export default function JobsPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [modalJob, setModalJob] = useState<ApiJob | null>(null);
   const [modalSuccess, setModalSuccess] = useState(false);
-  const [modalRef, setModalRef] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [applyForm, setApplyForm] = useState({
-    fullName: "", email: "", phone: "", portfolio: "", why: "",
+    fullName: "", email: "", phone: "", portfolioUrl: "", linkedinUrl: "", why: "",
   });
   const [applyFile, setApplyFile] = useState<File | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -108,7 +85,7 @@ export default function JobsPage() {
   // Toast
   const [toastMsg, setToastMsg] = useState("");
   const [toastVisible, setToastVisible] = useState(false);
-  const toastTimer = useRef<ReturnType<typeof setTimeout>>();
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   function showToast(msg: string) {
     setToastMsg(msg);
@@ -117,7 +94,7 @@ export default function JobsPage() {
     toastTimer.current = setTimeout(() => setToastVisible(false), 2400);
   }
 
-  // Load saved/applied from localStorage
+  // Load saved/applied from localStorage (client-side hint only — server has the real state).
   useEffect(() => {
     try {
       const raw = localStorage.getItem("ds-careers-v1");
@@ -129,10 +106,19 @@ export default function JobsPage() {
     } catch {}
   }, []);
 
-  // Auto-select first visible job
+  // Auto-select the first job once jobs load. Stable jobs reference (useMemo above)
+  // means this only fires when the actual list changes, not on every render.
   useEffect(() => {
     if (jobs.length && !selectedId) setSelectedId(jobs[0].id);
-  }, [jobs]);
+  }, [jobs, selectedId]);
+
+  // Lock body scroll while modal is open; clean up on unmount or close.
+  useEffect(() => {
+    if (modalOpen) {
+      document.body.style.overflow = "hidden";
+      return () => { document.body.style.overflow = ""; };
+    }
+  }, [modalOpen]);
 
   function persist(saved: Set<string>, applied: Set<string>) {
     try {
@@ -204,17 +190,16 @@ export default function JobsPage() {
   function openModal(job: ApiJob) {
     setModalJob(job);
     setModalSuccess(false);
-    setModalRef("");
-    setApplyForm({ fullName: "", email: "", phone: "", portfolio: "", why: "" });
+    setApplyForm({ fullName: "", email: "", phone: "", portfolioUrl: "", linkedinUrl: "", why: "" });
     setApplyFile(null);
     setModalOpen(true);
-    document.body.style.overflow = "hidden";
+    // Body scroll lock is handled by the useEffect above.
   }
 
   function closeModal() {
     setModalOpen(false);
     setModalJob(null);
-    document.body.style.overflow = "";
+    // Body scroll unlock is handled by the useEffect cleanup above.
   }
 
   async function handleApply(e: React.FormEvent) {
@@ -226,24 +211,26 @@ export default function JobsPage() {
       fd.append("applicantName", applyForm.fullName);
       fd.append("applicantEmail", applyForm.email);
       if (applyForm.phone) fd.append("applicantPhone", applyForm.phone);
-      if (applyForm.portfolio) fd.append("portfolioUrl", applyForm.portfolio);
+      // Keep field names aligned with what the API expects.
+      if (applyForm.linkedinUrl) fd.append("linkedinUrl", applyForm.linkedinUrl);
+      if (applyForm.portfolioUrl) fd.append("portfolioUrl", applyForm.portfolioUrl);
       if (applyForm.why) fd.append("coverLetter", applyForm.why);
       if (applyFile) fd.append("resume", applyFile);
       await apiUpload(`/jobs/${modalJob.id}/apply`, fd);
 
-      const ref = generateRef("DS");
       const next = new Set(appliedIds);
       next.add(modalJob.id);
       setAppliedIds(next);
       persist(savedIds, next);
-      setModalRef(ref);
       setModalSuccess(true);
       showToast("Application sent ✓");
-      setTimeout(closeModal, 2200);
+      // Don't auto-close — the success screen asks the user to note their confirmation.
     } catch (err: any) {
-      alert(err.message || "Submission failed. Please try again.");
+      // Use the toast (already in the design) instead of a blocking window.alert.
+      showToast(err.message || "Submission failed. Please try again.");
+    } finally {
+      setSubmitting(false);
     }
-    setSubmitting(false);
   }
 
   // Index title text
@@ -269,20 +256,6 @@ export default function JobsPage() {
     return `Showing all ${numWord(total)} — full descriptions on click.`;
   }
 
-  // Calendar: July 2026 application window
-  const calDays = [
-    { d: 30, cls: "dim" }, { d: 1, cls: "" }, { d: 2, cls: "event-start" },
-    { d: 3, cls: "event" }, { d: 4, cls: "event" }, { d: 5, cls: "event" }, { d: 6, cls: "event" },
-    { d: 7, cls: "event" }, { d: 8, cls: "event" }, { d: 9, cls: "event" }, { d: 10, cls: "event" },
-    { d: 11, cls: "event" }, { d: 12, cls: "event" }, { d: 13, cls: "event" },
-    { d: 14, cls: "event" }, { d: 15, cls: "event" }, { d: 16, cls: "event" }, { d: 17, cls: "event" },
-    { d: 18, cls: "event" }, { d: 19, cls: "event" }, { d: 20, cls: "event" },
-    { d: 21, cls: "event" }, { d: 22, cls: "event" }, { d: 23, cls: "event" }, { d: 24, cls: "event" },
-    { d: 25, cls: "event" }, { d: 26, cls: "event" }, { d: 27, cls: "event" },
-    { d: 28, cls: "event-end" }, { d: 29, cls: "" }, { d: 30, cls: "" }, { d: 31, cls: "" },
-    { d: 1, cls: "dim" }, { d: 2, cls: "dim" }, { d: 3, cls: "dim" },
-  ];
-
   return (
     <>
       {/* ───── HERO ───── */}
@@ -290,8 +263,6 @@ export default function JobsPage() {
         <div className="hero-main">
           <div className="ds-hero-eyebrow ds-mono">
             <span className="issue-num">Open Call</span>
-            <span className="pip" />
-            <span>Summer 2026</span>
             <span className="pip" />
             <span>{jobs.length} position{jobs.length !== 1 ? "s" : ""}</span>
           </div>
@@ -304,7 +275,7 @@ export default function JobsPage() {
 
           <p className="ds-hero-lede">
             <span className="pull">Digital Sukoon is a calm, full-service marketing studio in Mumbai.</span>
-            {" "}We&apos;re growing the team across multiple disciplines this summer — full-time, internship, and contract. No agency burnout. Real work, real hours, real care for the craft.
+            {" "}We&apos;re growing the team across multiple disciplines — full-time, internship, and contract. No agency burnout. Real work, real hours, real care for the craft.
           </p>
 
           <div className="ds-hero-ctas">
@@ -319,7 +290,7 @@ export default function JobsPage() {
         </div>
 
         <aside className="ds-hero-aside" aria-label="Open call summary">
-          {/* Dark pill */}
+          {/* Cohort intake pill — count comes from the API */}
           <div className="ds-aside-pill">
             <span className="label">Cohort intake</span>
             <div className="count">
@@ -328,31 +299,10 @@ export default function JobsPage() {
             </div>
             <p className="caption">
               {ftCount > 0 ? `${numWord(ftCount)} full-time` : ""}
-              {internCount > 0 ? `, ${numWord(internCount)} internship` : ""}
-              {contractCount > 0 ? `, ${numWord(contractCount)} contract` : ""}
-              {jobs.length > 0 ? ". All applications close 28 July." : "Check back soon for openings."}
+              {internCount > 0 ? `${ftCount > 0 ? ", " : ""}${numWord(internCount)} internship` : ""}
+              {contractCount > 0 ? `${(ftCount > 0 || internCount > 0) ? ", " : ""}${numWord(contractCount)} contract` : ""}
+              {jobs.length === 0 ? "Check back soon for openings." : ""}
             </p>
-          </div>
-
-          {/* Calendar */}
-          <div className="ds-aside-card">
-            <span className="label ds-mono">July 2026 — application window</span>
-            <div className="ds-calendar" aria-hidden="true">
-              {["M","T","W","T","F","S","S"].map((d, i) => (
-                <span key={i} className="dow">{d}</span>
-              ))}
-              {calDays.map((c, i) => (
-                <span key={i} className={`d ${c.cls}`}>{c.d}</span>
-              ))}
-            </div>
-            <div className="event-row">
-              <span className="name"><span className="dot start" />Applications open</span>
-              <span className="date">02 Jul</span>
-            </div>
-            <div className="event-row">
-              <span className="name"><span className="dot end" />Final review</span>
-              <span className="date">28 Jul</span>
-            </div>
           </div>
         </aside>
       </section>
@@ -364,7 +314,8 @@ export default function JobsPage() {
             <span className="ds-mono">§ Now open</span>
             <h3>{isLoading ? "Loading positions…" : indexTitle()}</h3>
           </div>
-          <div className="ds-filters" role="tablist">
+          {/* Filter buttons — regular toggle buttons, not a tab pattern */}
+          <div className="ds-filters">
             {[
               { key: "all", label: "All", count: jobs.length },
               { key: "Full-time", label: "Full-time", count: ftCount },
@@ -384,8 +335,7 @@ export default function JobsPage() {
                   }
                 }}
                 type="button"
-                role="tab"
-                aria-selected={filter === key}
+                aria-pressed={filter === key}
               >
                 {label} <span>· {count}</span>
               </button>
@@ -450,6 +400,16 @@ export default function JobsPage() {
                     className={`ds-role ${isActive ? "active" : ""} ${isApplied ? "applied" : ""}`}
                     style={{ "--dept": color } as React.CSSProperties}
                     onClick={() => selectJob(job.id)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        selectJob(job.id);
+                      }
+                    }}
+                    tabIndex={0}
+                    role="button"
+                    aria-pressed={isActive}
+                    aria-label={`${job.title}${job.department ? `, ${job.department}` : ""}${job.location ? `, ${job.location}` : ""}${isApplied ? ", already applied" : ""}`}
                   >
                     <span className="num">{pad2(idx + 1)}</span>
                     <span className="dept-bar" />
@@ -480,8 +440,16 @@ export default function JobsPage() {
             )}
           </ol>
 
-          {/* Right: sticky detail */}
-          <aside className="ds-role-detail" aria-live="polite">
+          {/* Right: sticky detail — aria-live on the narrow status region, not the whole aside */}
+          <aside className="ds-role-detail">
+            {/* Announce only the job title to screen readers on selection change */}
+            <span
+              className="sr-only"
+              aria-live="polite"
+              aria-atomic="true"
+            >
+              {selectedJob ? `Viewing ${selectedJob.title}` : ""}
+            </span>
             {!isLoading && selectedJob ? (
               <RoleDetail
                 job={selectedJob}
@@ -537,7 +505,9 @@ export default function JobsPage() {
                   We&apos;ve got it. Expect a reply from the{" "}
                   {modalJob.department || "team"} within five working days.
                 </p>
-                <p className="ref">Ref · {modalRef}</p>
+                <button className="ds-btn ghost" style={{ marginTop: 16 }} onClick={closeModal}>
+                  Close
+                </button>
               </div>
             ) : (
               <>
@@ -587,11 +557,20 @@ export default function JobsPage() {
                       />
                     </label>
                     <label className="ds-field">
-                      <span className="label">Portfolio / LinkedIn</span>
+                      <span className="label">LinkedIn URL</span>
                       <input
                         type="url"
-                        value={applyForm.portfolio}
-                        onChange={(e) => setApplyForm({ ...applyForm, portfolio: e.target.value })}
+                        value={applyForm.linkedinUrl}
+                        onChange={(e) => setApplyForm({ ...applyForm, linkedinUrl: e.target.value })}
+                        placeholder="https://linkedin.com/in/…"
+                      />
+                    </label>
+                    <label className="ds-field">
+                      <span className="label">Portfolio URL</span>
+                      <input
+                        type="url"
+                        value={applyForm.portfolioUrl}
+                        onChange={(e) => setApplyForm({ ...applyForm, portfolioUrl: e.target.value })}
                         placeholder="https://…"
                       />
                     </label>
@@ -623,7 +602,7 @@ export default function JobsPage() {
                           type="file"
                           accept=".pdf"
                           hidden
-                          onChange={(e) => setApplyFile(e.target.files?.[0] || null)}
+                          onChange={(e) => setApplyFile(e.target.files?.[0] ?? null)}
                         />
                       </div>
                     </div>

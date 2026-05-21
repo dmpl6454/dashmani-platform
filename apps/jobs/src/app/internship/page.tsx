@@ -18,7 +18,6 @@ export default function InternshipPage() {
   const [resume, setResume] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
-  const [refCode, setRefCode] = useState("");
   const [error, setError] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -39,8 +38,6 @@ export default function InternshipPage() {
       const data = await res.json();
       if (!data.success) throw new Error(data.error?.message || "Submission failed");
 
-      const ref = "DS-INT-" + Math.random().toString(36).slice(2, 8).toUpperCase();
-      setRefCode(ref);
       setSubmitted(true);
     } catch (e: any) {
       setError(e.message);
@@ -59,9 +56,6 @@ export default function InternshipPage() {
               Your internship application is in. We&apos;ll review it and get back within five working days.
               Keep an eye on your inbox.
             </p>
-            {refCode && <p style={{ fontFamily: '"JetBrains Mono", monospace', fontSize: 12, color: "var(--muted)", marginTop: 12 }}>
-              Ref · {refCode}
-            </p>}
             <a className="back-link" href="/">Back to open roles →</a>
           </div>
         </div>

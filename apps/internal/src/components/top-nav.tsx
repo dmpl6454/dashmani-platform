@@ -34,6 +34,10 @@ function Avatar({ name, imageUrl, size = 7 }: { name?: string; imageUrl?: string
 export function TopNav({ onOpenSearch }: { onOpenSearch?: () => void }) {
   const pathname = usePathname();
   const { user, logout } = useAuth();
+  const [isMac, setIsMac] = useState(true);
+  useEffect(() => {
+    setIsMac(/mac/i.test(navigator.platform || navigator.userAgent));
+  }, []);
   const [userMenuOpen, setUserMenuOpen]   = useState(false);
   const [bellOpen, setBellOpen]           = useState(false);
   const [selectedNotif, setSelectedNotif] = useState<any>(null);
@@ -144,7 +148,7 @@ export function TopNav({ onOpenSearch }: { onOpenSearch?: () => void }) {
         >
           <Search className="h-3.5 w-3.5" />
           <span>Search</span>
-          <kbd className="ml-0.5">⌘K</kbd>
+          <kbd className="ml-0.5">{isMac ? "⌘K" : "Ctrl K"}</kbd>
         </button>
 
         {/* Announcements history shortcut — distinct from the dashboard "Send announcement"

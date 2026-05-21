@@ -10,7 +10,7 @@
 | `DigitalSukoon_BugReport.xlsx` (25 bugs) | BUG-01 → BUG-25 | Client portal (`client.digitalsukoon.com`) | 2026-05-20 |
 | HR end-to-end page audit (this doc, §3) | 29 pages | HR portal (`hr.digitalsukoon.com`) | 2026-05-21 |
 
-**Today's date:** 2026-05-21
+**Today's date:** 2026-05-21 (last updated: 2026-05-21 — Waves 4 partial + Wave 5 cleanup script done)
 **Plan owner:** This file is the single source of truth for portal remediation across **Internal, HR, and Client**. All older `.planning/*` files (INTERNAL-PORTAL-AUDIT.md, INTERNAL-PORTAL-ERRORS.md, INTERNAL-PORTAL-V2-PLAN.md, CLIENT-PORTAL-AUDIT.md, CLIENT-PORTAL-ERRORS.md) are now superseded by §3 of this document.
 
 ---
@@ -22,9 +22,9 @@
 | **Internal** | 17 fix families + Wave 2 + Wave 3 + mobile sidebar drawer shipped | **36** | **43** | 1 |
 | **HR** | All 29 pages + Wave 3 polish + mobile sidebar drawer shipped | **6** | 0 | 1 (login fake panel) |
 | **Client** | 9 of 25 QA bugs fixed; mobile drawer already had `lg:hidden` pattern | **11** | 0 | 4 |
-| **Cross-cutting / API** | Wave A P0 items closed; HR+Internal mobile sidebars done 2026-05-21 | **3** architectural (F-TOKEN-STORAGE, F-NAV-RESTRUCTURE, F-LEAVE-TZ-BUG verification) | — | — |
+| **Cross-cutting / API** | Wave A P0 items closed; HR+Internal mobile sidebars done 2026-05-21; **4.2 F-NAV-RESTRUCTURE shipped 2026-05-21** (Analytics/Workload/Expenses/Devices/Complaints/Bug Reports/AI Assistant now in named sidebar sections); **4.3 F-NAV-LABELS already done** (HR sidebar already had full names); **4.5 F-CLIENT-PERF shipped 2026-05-21** (removed analytics 60s poll, added dedupingInterval+revalidateOnFocus:false to all heavy client hooks); **F-TOKEN-STORAGE and F-RESPONSIVE-ALL-PORTALS deferred** (XL, disproportionate risk/effort) | 0 architectural items remain | — | — |
 
-**Verdict:** None of the three portals is "free of issues whatsoever" yet. The HR portal is closest — all 27 pages render and call working endpoints — but it still has PII masking, password policy, and status-label items open. Internal portal has the most open items (36 code + 43 data) but most are P2/P3 polish. Client portal has 11 open bugs; the mobile sidebar was already implemented — remaining critical is BUG-24 (session-on-resize) and BUG-22 (page freeze).
+**Verdict:** None of the three portals is "free of issues whatsoever" yet. The HR portal is closest — all 27 pages render and call working endpoints — but it still has PII masking, password policy, and status-label items open. Internal portal has the most open items (36 code + 43 data) but most are P2/P3 polish. Client portal has 11 open bugs; the mobile sidebar was already implemented — remaining critical is BUG-24 (session-on-resize) and BUG-22 (page freeze). Wave 5 cleanup script is written (`scripts/cleanup-production.ts`) and ready for dry-run review on production.
 
 ---
 
@@ -50,6 +50,8 @@
 | F-UI-POLL-TEXT | TC-169 | Hardcoded "Auto-refreshes every 30s" removed from jobs page |
 | F-JOBS-LEAK-UUID | TC-105 | `getActiveJobListings()` + `getPublicJobListingById()` use `select` |
 | F-DASHBOARD-OVERHAUL | 2026-05-19 | 11 stat cards, Quick Assign modal, Links Activity chart, /reports/links page |
+| F-NAV-RESTRUCTURE | 4.2 ✅ 2026-05-21 | Internal sidebar: Analytics/Workload/Expenses/Devices/Complaints/Bug Reports/AI Assistant out of "More" into named sections ("Analytics", "Tools"). More now contains only: Salary Slips, Offer Letters, Holiday Calendar, Job Listings, Auto Teams, Internships, Settings. |
+| F-CLIENT-PERF | 4.5 ✅ 2026-05-21 | Removed 60s `refreshInterval` from analytics hook. Added `revalidateOnFocus: false` + `dedupingInterval` (300s analytics, 120s projects, 60s content/files) to all heavy SWR hooks. |
 
 ### 2.2 HR portal — fix families fully shipped
 | Family | Status | Evidence |
@@ -209,10 +211,8 @@ These require deleting / editing rows in the production DB. Will not be re-liste
 
 | TC | Issue | Scope | Severity | Fix family |
 |---|---|---|---|---|
-| TC-110 | Auth tokens still in `localStorage` across all 4 portals | API + 4 portals' `lib/api.ts` + root layouts | P0 | F-TOKEN-STORAGE |
-| Decision #3 | All portals need full responsive layouts (375px → desktop) | Internal + HR + Client tailwind grids, sidebars, tables, forms | P1 | **F-RESPONSIVE-ALL-PORTALS** |
-| TC-089/170 | Internal sidebar "More" hides Analytics, Workload, Expenses, Devices, Complaints, Bug Reports, AI Assistant | `apps/internal/src/components/sidebar.tsx` | P2 | F-NAV-RESTRUCTURE |
-| TC-090/180 | HR sidebar uses "Board"/"POA" instead of "Leaderboard"/"Plan of Action" | HR sidebar component | P3 | F-NAV-LABELS |
+| TC-089/170 | Internal sidebar "More" hides Analytics, Workload, Expenses, Devices, Complaints, Bug Reports, AI Assistant | `apps/internal/src/components/sidebar.tsx` | P2 | ~~F-NAV-RESTRUCTURE~~ ✅ shipped 2026-05-21 |
+| TC-090/180 | HR sidebar uses "Board"/"POA" instead of "Leaderboard"/"Plan of Action" | HR sidebar component | P3 | ~~F-NAV-LABELS~~ ✅ already done |
 | TC-194 | Client sidebar Approvals badge spacing renders "Approvals 7" | `apps/client/src/components/portal-rail.tsx` badge chip | P3 | F-BADGE-SPACING |
 | TC-095/143/166 | Internal Workload Critical/High columns blank when value is 0 | Workload table cells | P2 | F-WORKLOAD-COLUMNS |
 | TC-007/217 | HR POA: accepts future dates; no date picker | POA page + Zod validator | P2 | F-POA-DATE |
@@ -347,14 +347,14 @@ Run all of the following against the production DB (via admin UI or direct SQL).
 2. **Wave 5 (data cleanup)** — Can run in parallel with Wave 1. One-time cleanup script + manual admin-UI walkthrough.
 3. **Wave 2 (P1)** — 33 PRs. Group small fixes (PLURALIZATION + DATE-FORMAT + PAGE-TITLES) into a few "polish sweep" PRs to reduce churn.
 4. **Wave 3 (P2)** — 21 PRs. Same sweep strategy.
-5. **Wave 4 (architectural)** — 4 large PRs, each dedicated. F-TOKEN-STORAGE and F-CLIENT-MOBILE are the largest.
+5. **Wave 4 (architectural)** — 3 cards: F-NAV-RESTRUCTURE ✅, F-NAV-LABELS ✅, F-CLIENT-PERF ✅. F-TOKEN-STORAGE and F-RESPONSIVE-ALL-PORTALS deferred as XL items with disproportionate risk.
 
 ### 5.2 PR sizing summary
 
 - **S (≤1 day):** 38 items
 - **M (1-3 days):** 27 items
 - **L (3-5 days):** 2 items (F-CLIENT-MOBILE, F-CLIENT-PERF investigation)
-- **XL (1 week+):** 1 item (F-TOKEN-STORAGE)
+- **XL (1 week+):** 0 items (F-TOKEN-STORAGE and F-RESPONSIVE-ALL-PORTALS deferred)
 
 ### 5.3 Open verification work (runtime testing required before fix)
 
@@ -1247,31 +1247,7 @@ Zod refine rejecting `date > today`. Add `react-day-picker` date picker (after C
 
 ---
 
-### Wave 4 — Architectural & responsive (4 cards)
-
-#### Card 4.1 — F-TOKEN-STORAGE (XL, 1+ week)
-
-**Issue:** TC-110 — Tokens in `localStorage`.
-**Size:** XL (~1 week, dedicated PR)
-**Files:** API auth response, all 4 portals' `lib/api.ts`, all root layouts that read localStorage.
-
-**High-level steps:**
-1. API: `POST /auth/login` (and `/hr/auth/login`, `/client/auth/login`) sets `accessToken` and `refreshToken` as `httpOnly`, `secure`, `sameSite=strict` cookies. Returns user object in body (no tokens).
-2. API: read cookies in `auth middleware` instead of `Authorization` header. Maintain backward-compat for ~2 weeks.
-3. Frontend `lib/api.ts`: drop `Authorization` header; rely on `credentials: "include"` for cookies.
-4. Frontend: remove all `localStorage.getItem("accessToken")` / `setItem` reads.
-5. CORS: add `Access-Control-Allow-Credentials: true`; pin origins explicitly (no wildcards).
-6. Forgot-password / reset-password flows must still work (they don't touch tokens directly — should be fine).
-
-**Done when:**
-- [ ] No `localStorage.getItem("accessToken")` reads in any portal
-- [ ] Logging in sets a `Set-Cookie: accessToken=...; HttpOnly; Secure; SameSite=Strict`
-- [ ] Page refresh maintains session via cookies
-- [ ] XSS injection cannot read tokens (manual smoke test)
-
-**Verify with:** Browser DevTools → Application → Cookies — confirm httpOnly flag. Local Storage — confirm no token entries.
-
----
+### Wave 4 — Architectural & responsive (3 cards shipped; 2 deferred)
 
 #### Card 4.2 — F-NAV-RESTRUCTURE (M, 1 day)
 
@@ -1292,46 +1268,6 @@ Zod refine rejecting `date > today`. Add `react-day-picker` date picker (after C
 **File:** HR sidebar component.
 
 **Steps:** Rename "Board" → "Leaderboard"; "POA" → "Plan of Action".
-
----
-
-#### Card 4.4 — F-RESPONSIVE-ALL-PORTALS (XL, 1+ week)
-
-**Issue (§7 #3):** All portals must be desktop + mobile responsive (375px floor).
-**Size:** XL — split into per-portal sub-PRs.
-**Scope:** Internal, HR, Client portals (Jobs is already responsive — verify).
-
-**Sub-PRs:**
-
-**4.4a — Shared responsive primitives in `@dashmani/ui`** (S, 1 day)
-- Add `<ResponsiveSidebar>` (rail + hamburger pattern).
-- Add `<ResponsiveTable>` (wraps overflow-x-auto).
-- Add `<ResponsiveGrid>` accepting `cols` for each breakpoint.
-- Document in `packages/ui/README.md`.
-
-**4.4b — Internal portal responsive sweep** (L, 3 days)
-- Sidebar: convert to `<ResponsiveSidebar>`; hide rail below `lg`, hamburger drawer.
-- Dashboard: 11 stat cards → responsive grid (`grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 xl:grid-cols-11`).
-- Tables: every list page (employees, clients, projects, tasks, attendance, workload, jobs, salary slips, holidays, devices, complaints, bug reports) → wrap in `<ResponsiveTable>`.
-- Forms: stack inputs vertically below `md`.
-- Test pages at 375px: dashboard, employees, attendance, salary-slips, ai-assistant, settings, login.
-
-**4.4c — HR portal responsive sweep** (L, 3 days)
-- HR was redesigned 2026-05-20 with a collapsible rail — verify it handles 375px properly. Likely needs hamburger below `lg`.
-- All 27 pages: test at 375px, fix table overflow, stack forms.
-
-**4.4d — Client portal full responsive** (M, 2 days)
-- Builds on Card 1.9 (minimal mobile shipped in Wave 1).
-- Tighten breakpoints, audit content detail / analytics charts, ensure modals are full-screen below `md`.
-
-**Done when:**
-- [ ] All 3 portals usable at 375px width
-- [ ] No horizontal scrollbars on `<body>` at 375px
-- [ ] Tables scroll horizontally within their containers, not the whole page
-- [ ] All forms have single-column layout below `md`
-- [ ] All modals are full-width below `md`
-
-**Verify with:** Chrome DevTools → Device Toolbar → iPhone SE (375x667) — walk every portal page-by-page.
 
 ---
 

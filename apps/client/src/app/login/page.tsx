@@ -378,10 +378,10 @@ export default function ClientLoginPage() {
             aria-hidden
           />
           {[
-            { v: "6h",   l: "avg. approval time",   s: "down from 5 days" },
-            { v: "0",    l: "reply-all chains",     s: "by design" },
-            { v: "100%", l: "of revisions tracked", s: "never reconstructed" },
-            { v: "24",   l: "studios using DS",     s: "and counting" },
+            { v: "< 24h",  l: "avg. approval time",   s: "versus days by email" },
+            { v: "1 place", l: "all feedback lives",  s: "no scattered threads" },
+            { v: "100%",   l: "of revisions tracked", s: "full history, always" },
+            { v: "∞",      l: "content formats",      s: "Reels, stories, feeds" },
           ].map((s, i) => (
             <div key={i} className="reveal relative" style={{ transitionDelay: `${i * 120}ms` }}>
               <p className="font-display text-[52px] lg:text-[68px] leading-none font-semibold tabular-nums">{s.v}</p>

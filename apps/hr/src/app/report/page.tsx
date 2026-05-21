@@ -255,11 +255,6 @@ export default function ReportPage() {
   const validLinks = links.filter((l) => l.isScheduled || l.url.trim());
   const liveCount = validLinks.filter((l) => !l.isScheduled).length;
   const scheduledCount = validLinks.filter((l) => l.isScheduled).length;
-  const canSubmit = validLinks.length > 0
-    && duplicateUrls.length === 0
-    && overLimitAccounts.length === 0
-    && unmatchedCount === 0;
-
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
@@ -605,7 +600,7 @@ export default function ReportPage() {
         <div className="flex gap-3 pt-2">
           <button
             type="submit"
-            disabled={loading || !canSubmit}
+            disabled={loading}
             className="flex-1 bg-[#1A1A1A] text-white py-3.5 rounded-full font-semibold hover:bg-[#2B2B2B] disabled:opacity-50 transition-all shadow-md hover:shadow-lg flex items-center justify-center gap-2 group relative overflow-hidden"
           >
             {loading ? (

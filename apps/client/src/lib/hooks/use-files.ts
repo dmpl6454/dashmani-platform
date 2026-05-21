@@ -19,6 +19,7 @@ export function useClientFiles(projectId?: string, search?: string) {
   const query = params.toString();
   return useSWR<ClientFile[]>(
     `/client/files${query ? `?${query}` : ""}`,
-    async (url: string) => (await apiFetch<ClientFile[]>(url)).data
+    async (url: string) => (await apiFetch<ClientFile[]>(url)).data,
+    { revalidateOnFocus: false, dedupingInterval: 60_000 }
   );
 }

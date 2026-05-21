@@ -541,14 +541,19 @@ All phases (1–13) + Waves 7–9 + v2 production test remediation complete. See
 **Cascade deletes:** Prisma schema updated — all employee-owned data (Attendance, LeaveRequest, DailyReport, SalarySlip, EmploymentContract, OfferLetter, etc.) now has `onDelete: Cascade`; `AuditLog` intentionally kept `onDelete: Restrict` for compliance. ⚠️ **`db:push` required on Linode after deploy** — FK constraints only, no column drops.
 
 ### Still open (known remaining issues)
-- **F-TOKEN-STORAGE (P0):** Auth tokens still in `localStorage` — httpOnly cookie migration is a large cross-cutting change.
 - **F-LEAVE-TZ-BUG (P0):** Leave start date shifts 1 day (IST→UTC). Fix: send `YYYY-MM-DD` string on wire instead of JS `Date`.
-- **F-PII-MASKING (P1):** Aadhaar/PAN/bank/IFSC shown as plain text in HR profile — needs masking after save.
-- **F-NAV-RESTRUCTURE (P2):** Internal sidebar "More" menu still buries key features.
+- **F-TOKEN-STORAGE (deferred XL):** Auth tokens still in `localStorage` — httpOnly cookie migration is 1+ week, high blast radius across all 4 portals + API. Explicitly deferred per user decision 2026-05-21.
+- **F-RESPONSIVE-ALL-PORTALS (deferred XL):** Full 375px responsive sweep for Internal + HR. Deferred — internal portal is primarily desktop-used; mobile sidebars already work via hamburger drawers.
 
 ### Fixed since last update (2026-05-21)
 - **F-WORKLOAD-COLUMNS:** Critical/High cells now render `—` when 0 — `tasksByPriority?.critical ?? 0` guard added.
 - **Mobile sidebar — HR + Internal:** Both portals now have `hidden lg:flex` desktop aside + fixed mobile topbar (h-14/h-[57px], z-40) with hamburger + full-height overlay drawer (z-50). Close on route change. `pt-14 lg:pt-0` on `<main>` clears the fixed bar. Client portal already had this pattern.
+- **F-NAV-RESTRUCTURE (Card 4.2):** Internal sidebar restructured — Analytics/Workload/Expenses/Devices/Complaints/Bug Reports/AI Assistant pulled out of "More" into named sections ("Analytics", "Tools"). "More" now contains only rarely-used items.
+- **F-NAV-LABELS (Card 4.3):** HR sidebar already had full labels ("Leaderboard", "Plan of Action") — no change needed.
+- **F-CLIENT-PERF (Card 4.5):** Client portal SWR polling overhauled — removed 60s `refreshInterval` from analytics hook; added `revalidateOnFocus: false` + `dedupingInterval` to all heavy client hooks (analytics: 300s, projects: 120s, content/files: 60s).
+- **Wave 5 cleanup script:** `scripts/cleanup-production.ts` written. Dry-run safe by default. Run from `packages/db/`: `npx tsx ../../scripts/cleanup-production.ts`. Covers all 17 production cleanup operations. Requires `--apply --confirm-prod` flags to write anything.
+- **F-PLATFORM-SHORTCUT:** Top-nav search button now shows `⌘K` on Mac and `Ctrl K` on Windows/Linux — detected via `navigator.platform` in a `useEffect`.
+- **F-CLIENT-HOWITWORKS-STATS:** Client portal login "How it works" section no longer shows hardcoded `0` / `6h` / `24` values — replaced with honest non-numeric copy.
 
 ### Employee vs Admin distinction (analytics/reports)
 

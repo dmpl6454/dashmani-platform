@@ -102,7 +102,7 @@ export function PortalRail() {
             >
               <NavIcon size={18} sw={isActive ? 2.4 : 1.8} />
               {(!collapsed || onClose) && (
-                <>
+                <span className="flex-1 flex items-center gap-2">
                   <span className="flex-1 text-left">{n.label}</span>
                   {badgeCount > 0 && (
                     <span className={`h-5 min-w-[20px] px-1.5 rounded-full text-[10px] font-bold grid place-items-center tabular-nums
@@ -110,7 +110,7 @@ export function PortalRail() {
                       {badgeCount}
                     </span>
                   )}
-                </>
+                </span>
               )}
               {collapsed && !onClose && badgeCount > 0 && (
                 <span className="absolute top-2 right-2 h-2 w-2 rounded-full bg-attention dot-pulse" />

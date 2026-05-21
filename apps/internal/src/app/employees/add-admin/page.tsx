@@ -2,14 +2,29 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { apiFetch } from "@/lib/api";
-import { ArrowLeft, UserPlus, Send, Eye, EyeOff } from "lucide-react";
+import { stringSimilarity } from "@dashmani/shared";
+import { ArrowLeft, UserPlus, Send, Eye, EyeOff, AlertTriangle } from "lucide-react";
 import Link from "next/link";
 
 type Role = { id: string; name: string; description?: string };
+type Employee = { id: string; name: string; email: string };
+
+const DUP_THRESHOLD = 0.85;
+
+function findDuplicates(employees: Employee[], name: string, email: string): Employee[] {
+  const emailLocal = email.split("@")[0].toLowerCase();
+  return employees.filter((emp) => {
+    const nameSim = name ? stringSimilarity(emp.name, name) : 0;
+    const empLocal = emp.email.split("@")[0].toLowerCase();
+    const emailSim = emailLocal ? stringSimilarity(empLocal, emailLocal) : 0;
+    return nameSim >= DUP_THRESHOLD || emailSim >= DUP_THRESHOLD;
+  });
+}
 
 export default function AddAdminPage() {
   const router = useRouter();
   const [roles, setRoles] = useState<Role[]>([]);
+  const [employees, setEmployees] = useState<Employee[]>([]);
   const [tab, setTab] = useState<"create" | "invite">("create");
 
   // Create form
@@ -19,6 +34,8 @@ export default function AddAdminPage() {
   const [createError, setCreateError] = useState("");
   const [createSuccess, setCreateSuccess] = useState("");
   const [showPass, setShowPass] = useState(false);
+  const [createDups, setCreateDups] = useState<Employee[]>([]);
+  const [createDupDismissed, setCreateDupDismissed] = useState(false);
 
   // Invite form
   const [inviteForm, setInviteForm] = useState({ email: "", designation: "" });
@@ -26,10 +43,27 @@ export default function AddAdminPage() {
   const [inviteLoading, setInviteLoading] = useState(false);
   const [inviteError, setInviteError] = useState("");
   const [inviteSuccess, setInviteSuccess] = useState("");
+  const [inviteDups, setInviteDups] = useState<Employee[]>([]);
+  const [inviteDupDismissed, setInviteDupDismissed] = useState(false);
 
   useEffect(() => {
     apiFetch<any>("/roles").then((res) => setRoles(res.data || [])).catch(() => {});
+    apiFetch<any>("/employees?limit=500").then((res) => setEmployees(res.data || [])).catch(() => {});
   }, []);
+
+  function updateCreateForm(patch: Partial<typeof createForm>) {
+    const next = { ...createForm, ...patch };
+    setCreateForm(next);
+    setCreateDupDismissed(false);
+    setCreateDups(findDuplicates(employees, next.name, next.email));
+  }
+
+  function updateInviteForm(patch: Partial<typeof inviteForm>) {
+    const next = { ...inviteForm, ...patch };
+    setInviteForm(next);
+    setInviteDupDismissed(false);
+    setInviteDups(findDuplicates(employees, "", next.email));
+  }
 
   function toggleRole(id: string, arr: string[], setArr: (v: string[]) => void) {
     setArr(arr.includes(id) ? arr.filter((r) => r !== id) : [...arr, id]);
@@ -55,6 +89,7 @@ export default function AddAdminPage() {
       setCreateSuccess(`Admin user "${createForm.name}" created successfully.`);
       setCreateForm({ name: "", email: "", password: "", designation: "", salary: "" });
       setCreateRoleIds([]);
+      setCreateDups([]);
     } catch (err: any) {
       setCreateError(err.message || "Failed to create admin user");
     } finally {
@@ -79,6 +114,7 @@ export default function AddAdminPage() {
       setInviteSuccess(`Invite sent to ${inviteForm.email}.`);
       setInviteForm({ email: "", designation: "" });
       setInviteRoleIds([]);
+      setInviteDups([]);
     } catch (err: any) {
       setInviteError(err.message || "Failed to send invite");
     } finally {
@@ -87,6 +123,20 @@ export default function AddAdminPage() {
   }
 
   const inputClass = "w-full rounded-xl border border-[#F0EAD8] bg-[#FFF8E1]/60 px-4 py-3 text-sm outline-none focus:border-[#F5D547] focus:ring-2 focus:ring-[#F5D547]/20 transition-all placeholder:text-[#B0B0B0]";
+
+  function DupWarning({ dups, onDismiss }: { dups: Employee[]; onDismiss: () => void }) {
+    return (
+      <div className="flex items-start gap-2 text-sm text-amber-700 bg-amber-50/80 border border-amber-200 rounded-lg px-3 py-2.5">
+        <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+        <div className="flex-1">
+          <span className="font-medium">Possible duplicate: </span>
+          {dups.map((d) => `${d.name} (${d.email})`).join(", ")}
+          <span className="text-amber-500 ml-1">— you can still proceed.</span>
+        </div>
+        <button type="button" onClick={onDismiss} className="text-amber-400 hover:text-amber-600 text-xs shrink-0">Dismiss</button>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-2xl mx-auto">
@@ -121,13 +171,17 @@ export default function AddAdminPage() {
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-xs text-[#7A7A7A] mb-1.5 font-medium">Full Name *</label>
-                <input className={inputClass} required placeholder="Jane Doe" value={createForm.name} onChange={(e) => setCreateForm({ ...createForm, name: e.target.value })} />
+                <input className={inputClass} required placeholder="Jane Doe" value={createForm.name} onChange={(e) => updateCreateForm({ name: e.target.value })} />
               </div>
               <div>
                 <label className="block text-xs text-[#7A7A7A] mb-1.5 font-medium">Email *</label>
-                <input type="email" className={inputClass} required placeholder="jane@digitalsukoon.com" value={createForm.email} onChange={(e) => setCreateForm({ ...createForm, email: e.target.value })} />
+                <input type="email" className={inputClass} required placeholder="jane@digitalsukoon.com" value={createForm.email} onChange={(e) => updateCreateForm({ email: e.target.value })} />
               </div>
             </div>
+
+            {createDups.length > 0 && !createDupDismissed && (
+              <DupWarning dups={createDups} onDismiss={() => setCreateDupDismissed(true)} />
+            )}
 
             <div>
               <label className="block text-xs text-[#7A7A7A] mb-1.5 font-medium">Password *</label>
@@ -189,13 +243,17 @@ export default function AddAdminPage() {
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-xs text-[#7A7A7A] mb-1.5 font-medium">Email Address *</label>
-                <input type="email" className={inputClass} required placeholder="newadmin@digitalsukoon.com" value={inviteForm.email} onChange={(e) => setInviteForm({ ...inviteForm, email: e.target.value })} />
+                <input type="email" className={inputClass} required placeholder="newadmin@digitalsukoon.com" value={inviteForm.email} onChange={(e) => updateInviteForm({ email: e.target.value })} />
               </div>
               <div>
                 <label className="block text-xs text-[#7A7A7A] mb-1.5 font-medium">Designation</label>
                 <input className={inputClass} placeholder="e.g. Content Manager" value={inviteForm.designation} onChange={(e) => setInviteForm({ ...inviteForm, designation: e.target.value })} />
               </div>
             </div>
+
+            {inviteDups.length > 0 && !inviteDupDismissed && (
+              <DupWarning dups={inviteDups} onDismiss={() => setInviteDupDismissed(true)} />
+            )}
 
             <div>
               <label className="block text-xs text-[#7A7A7A] mb-2 font-medium">Roles</label>

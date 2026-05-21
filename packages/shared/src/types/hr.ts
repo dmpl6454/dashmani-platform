@@ -56,7 +56,7 @@ export interface EmployeeProfileResponse extends EmployeeProfileData {
 // Report Link
 export interface ReportLinkInput {
   accountId: string;
-  url: string;
+  url?: string;
   platform: string;
   description?: string;
   mediaUrl?: string;
@@ -64,6 +64,8 @@ export interface ReportLinkInput {
   comments?: number;
   shares?: number;
   views?: number;
+  isScheduled?: boolean;
+  scheduledFor?: string;
 }
 
 // Submit Daily Report
@@ -82,13 +84,15 @@ export interface ReportLinkResponse {
   accountName: string;
   platform: string;
   platformSlug: string;
-  url: string;
+  url?: string | null;
   description?: string | null;
   mediaUrl?: string | null;
   likes?: number | null;
   comments?: number | null;
   shares?: number | null;
   views?: number | null;
+  isScheduled: boolean;
+  scheduledFor?: string | null;
 }
 
 // Daily Report Response

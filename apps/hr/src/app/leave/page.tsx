@@ -2,303 +2,166 @@
 import { useState } from "react";
 import { apiFetch } from "@/lib/api";
 import useSWR, { mutate } from "swr";
-import Link from "next/link";
-import {
-  CalendarDays,
-  Send,
-  Clock,
-  CheckCircle2,
-  XCircle,
-  Palmtree,
-  Thermometer,
-  Award,
-  ArrowLeft,
-} from "lucide-react";
+import { Check, X, Calendar } from "lucide-react";
+import { Topstrip } from "@/components/portal-shell";
 
-interface LeaveBalance {
-  casual: { total: number; used: number; balance: number };
-  sick: { total: number; used: number; balance: number };
-  earned: { total: number; used: number; balance: number };
-}
+interface LeaveBalance { casual: { total: number; used: number; balance: number }; sick: { total: number; used: number; balance: number }; earned: { total: number; used: number; balance: number }; }
+interface LeaveRequest { id: string; startDate: string; endDate: string; type: string; reason: string; status: "PENDING" | "APPROVED" | "REJECTED"; createdAt: string; }
 
-interface LeaveRequest {
-  id: string;
-  startDate: string;
-  endDate: string;
-  type: string;
-  reason: string;
-  status: "PENDING" | "APPROVED" | "REJECTED";
-  createdAt: string;
-}
+const fetcher = (url: string) => apiFetch<any>(url).then(r => r.data);
 
-const inputClass =
-  "w-full border border-[#E8E0D0] bg-white rounded-lg px-4 py-2.5 text-sm text-[#1A1A1A] placeholder:text-[#B0B0B0] focus:outline-none focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547] transition-colors";
-const selectClass =
-  "w-full border border-[#E8E0D0] bg-white rounded-lg px-4 py-2.5 text-sm text-[#1A1A1A] focus:outline-none focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547] transition-colors";
-const cardClass =
-  "bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-[#E8E0D0] p-5";
-const btnClass =
-  "bg-[#1A1A1A] text-white py-2.5 px-6 rounded-full font-semibold hover:bg-[#2B2B2B] transition-all";
-
-const fetcher = (url: string) => apiFetch<any>(url).then((r) => r.data);
-
-const statusColors: Record<string, string> = {
-  PENDING: "bg-yellow-100 text-yellow-800 border-yellow-300",
-  APPROVED: "bg-green-100 text-green-800 border-green-300",
-  REJECTED: "bg-red-100 text-red-800 border-red-300",
+const statusCfg: Record<string, string> = {
+  PENDING:  "bg-attention-bg text-attention border-attention/20",
+  APPROVED: "bg-success-bg text-success border-success/20",
+  REJECTED: "bg-danger-bg text-danger border-danger/20",
 };
+
+const fieldCls = "w-full h-10 px-3 text-[13px] font-medium rounded-xl bg-bg border-2 border-ink/10 focus:border-indigo outline-none";
+const selectCls = fieldCls + " appearance-none pr-8";
 
 export default function LeavePage() {
   const { data: balance } = useSWR<LeaveBalance>("/hr/leave-balance", fetcher);
-  const { data: requests } = useSWR<LeaveRequest[]>(
-    "/hr/leave-requests",
-    fetcher
-  );
+  const { data: requests } = useSWR<LeaveRequest[]>("/hr/leave-requests", fetcher);
 
-  const [form, setForm] = useState({
-    type: "CASUAL",
-    startDate: "",
-    endDate: "",
-    reason: "",
-  });
+  const [form, setForm] = useState({ type: "CASUAL", startDate: "", endDate: "", reason: "" });
   const [submitting, setSubmitting] = useState(false);
   const [success, setSuccess] = useState("");
   const [error, setError] = useState("");
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setSubmitting(true);
-    setError("");
-    setSuccess("");
+    setSubmitting(true); setError(""); setSuccess("");
     try {
-      await apiFetch("/hr/leave-requests", {
-        method: "POST",
-        body: JSON.stringify({
-          startDate: form.startDate,
-          endDate: form.endDate,
-          type: form.type,
-          reason: form.reason,
-        }),
-      });
-      setSuccess("Leave request submitted successfully!");
+      await apiFetch("/hr/leave-requests", { method: "POST", body: JSON.stringify({ startDate: form.startDate, endDate: form.endDate, type: form.type, reason: form.reason }) });
+      setSuccess("Leave request submitted!");
       setForm({ type: "CASUAL", startDate: "", endDate: "", reason: "" });
-      mutate("/hr/leave-requests");
-      mutate("/hr/leave-balance");
+      mutate("/hr/leave-requests"); mutate("/hr/leave-balance");
     } catch (err: any) {
-      setError(err.message || "Failed to submit leave request");
-    } finally {
-      setSubmitting(false);
-    }
+      setError(err.message || "Failed to submit");
+    } finally { setSubmitting(false); }
   }
 
   const balanceCards = [
-    {
-      label: "Casual Leave",
-      icon: <Palmtree className="w-5 h-5 text-[#F5D547]" />,
-      data: balance?.casual,
-      color: "border-l-[#F5D547]",
-    },
-    {
-      label: "Sick Leave",
-      icon: <Thermometer className="w-5 h-5 text-red-400" />,
-      data: balance?.sick,
-      color: "border-l-red-400",
-    },
-    {
-      label: "Earned Leave",
-      icon: <Award className="w-5 h-5 text-blue-400" />,
-      data: balance?.earned,
-      color: "border-l-blue-400",
-    },
+    { label: "Casual Leave",  data: balance?.casual,  color: "text-indigo",    bg: "bg-indigo-soft" },
+    { label: "Sick Leave",    data: balance?.sick,    color: "text-danger",    bg: "bg-danger-bg"   },
+    { label: "Earned Leave",  data: balance?.earned,  color: "text-success",   bg: "bg-success-bg"  },
   ];
 
   return (
-    <div className="min-h-screen bg-[#FEFCF7] p-6 md:p-10">
-      <div className="flex items-center gap-4 mb-8">
-        <Link href="/dashboard" className="h-10 w-10 rounded-xl bg-white border border-[#E8E0D0] flex items-center justify-center hover:bg-[#FFF3C4] transition-colors">
-          <ArrowLeft className="h-5 w-5 text-[#1A1A1A]" />
-        </Link>
-        <h1 className="text-4xl font-light text-[#1A1A1A] font-serif">Leave Requests</h1>
-      </div>
+    <>
+      <Topstrip title="Leave Request" sub="Manage your time off" />
+      <div className="px-6 py-6 flex-1 overflow-y-auto max-w-[900px]">
+        <div className="space-y-5 anim-fade-up d1">
 
-      {/* Leave Balance Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-10">
-        {balanceCards.map((card) => (
-          <div
-            key={card.label}
-            className={`${cardClass} border-l-4 ${card.color}`}
-          >
-            <div className="flex items-center gap-3 mb-4">
-              {card.icon}
-              <span className="font-semibold text-[#1A1A1A] text-sm">
-                {card.label}
-              </span>
+          {/* Balance cards */}
+          <div className="grid grid-cols-3 gap-4">
+            {balanceCards.map(c => (
+              <div key={c.label} className="v3-card p-5">
+                <div className={`h-9 w-9 rounded-xl grid place-items-center mb-3 ${c.bg} ${c.color}`}>
+                  <Calendar size={16} strokeWidth={2} />
+                </div>
+                {c.data ? (
+                  <>
+                    <div className={`font-display text-[32px] font-semibold leading-none ${c.color}`}>{c.data.balance}</div>
+                    <div className="text-[12.5px] font-semibold text-ink mt-1">{c.label}</div>
+                    <div className="flex gap-3 mt-1 text-[11px] text-ink-3 font-medium">
+                      <span>Total: {c.data.total}</span><span>Used: {c.data.used}</span>
+                    </div>
+                    <div className="mt-2.5 h-1.5 bg-muted rounded-full overflow-hidden">
+                      <div className="h-full rounded-full bg-current" style={{ width: `${(c.data.balance / c.data.total) * 100}%`, color: "inherit" }} />
+                    </div>
+                  </>
+                ) : <div className="h-10 bg-muted rounded-lg animate-pulse" />}
+              </div>
+            ))}
+          </div>
+
+          {/* Request form */}
+          <div className="v3-card overflow-hidden">
+            <div className="px-5 h-12 flex items-center gap-2" style={{ borderBottom: "2px solid rgba(26,26,26,0.07)" }}>
+              <Calendar size={15} strokeWidth={2} className="text-indigo" />
+              <h3 className="text-[14px] font-bold text-ink">Request Leave</h3>
             </div>
-            {card.data ? (
-              <div className="flex items-end gap-4">
+            <form onSubmit={handleSubmit} className="p-5 space-y-4">
+              {success && (
+                <div className="v3-card-sm border border-success/20 bg-success-bg p-3 flex items-center gap-2">
+                  <Check size={14} strokeWidth={2.5} className="text-success shrink-0" />
+                  <p className="text-[12.5px] font-semibold text-success">{success}</p>
+                </div>
+              )}
+              {error && (
+                <div className="v3-card-sm border border-danger/20 bg-danger-bg p-3 flex items-center gap-2">
+                  <X size={14} strokeWidth={2.5} className="text-danger shrink-0" />
+                  <p className="text-[12.5px] font-semibold text-danger">{error}</p>
+                </div>
+              )}
+              <div className="grid grid-cols-3 gap-4">
                 <div>
-                  <p className="text-3xl font-light text-[#1A1A1A] font-serif">
-                    {card.data.balance}
-                  </p>
-                  <p className="text-xs text-[#B0B0B0] mt-1">Available</p>
+                  <label className="block text-[11.5px] font-bold text-ink-3 mb-1.5 uppercase tracking-wider">Type</label>
+                  <select value={form.type} onChange={e => setForm(f => ({ ...f, type: e.target.value }))} className={selectCls}>
+                    {["CASUAL","SICK","EARNED","UNPAID","WFH","COMP_OFF"].map(t => <option key={t} value={t}>{t.replace("_", " ")}</option>)}
+                  </select>
                 </div>
-                <div className="flex gap-3 text-xs text-[#B0B0B0] mb-1">
-                  <span>Total: {card.data.total}</span>
-                  <span>Used: {card.data.used}</span>
+                <div>
+                  <label className="block text-[11.5px] font-bold text-ink-3 mb-1.5 uppercase tracking-wider">From</label>
+                  <input type="date" value={form.startDate} onChange={e => setForm(f => ({ ...f, startDate: e.target.value }))} required className={fieldCls} />
                 </div>
+                <div>
+                  <label className="block text-[11.5px] font-bold text-ink-3 mb-1.5 uppercase tracking-wider">To</label>
+                  <input type="date" value={form.endDate} onChange={e => setForm(f => ({ ...f, endDate: e.target.value }))} required className={fieldCls} />
+                </div>
+              </div>
+              <div>
+                <label className="block text-[11.5px] font-bold text-ink-3 mb-1.5 uppercase tracking-wider">Reason</label>
+                <textarea value={form.reason} onChange={e => setForm(f => ({ ...f, reason: e.target.value }))} required rows={2}
+                  className="w-full px-3 py-2.5 text-[13.5px] font-medium rounded-xl bg-bg border-2 border-ink/10 focus:border-indigo outline-none resize-none placeholder:text-ink-4"
+                  placeholder="Describe the reason for your leave…" />
+              </div>
+              <button type="submit" disabled={submitting}
+                className="btn-3d inline-flex items-center gap-2 px-5 h-10 rounded-xl bg-ink text-white text-[13px] font-semibold border-2 border-ink disabled:opacity-50">
+                {submitting ? "Submitting…" : "Submit Request"}
+              </button>
+            </form>
+          </div>
+
+          {/* History */}
+          <div className="v3-card overflow-hidden">
+            <div className="px-5 h-12 flex items-center" style={{ borderBottom: "2px solid rgba(26,26,26,0.07)" }}>
+              <h3 className="text-[14px] font-bold text-ink">Your Leave Requests</h3>
+            </div>
+            {!requests ? (
+              <div className="p-5 space-y-2">{[1,2,3].map(i => <div key={i} className="h-12 bg-muted rounded-lg animate-pulse" />)}</div>
+            ) : requests.length === 0 ? (
+              <div className="px-5 py-10 text-center">
+                <Calendar size={24} className="mx-auto mb-3 text-ink-4" />
+                <p className="text-[13px] text-ink-3 font-medium">No leave requests found</p>
               </div>
             ) : (
-              <div className="h-10 bg-[#F5F3EF] rounded animate-pulse" />
+              <ul>
+                {requests.map((r, i) => {
+                  const sc = statusCfg[r.status] || statusCfg.PENDING;
+                  const fmtDate = (d: string) => new Date(d).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+                  return (
+                    <li key={r.id} style={i < requests.length - 1 ? { borderBottom: "1px solid rgba(26,26,26,0.06)" } : {}}>
+                      <div className="px-5 py-3.5 flex items-center gap-4 v3-row flex-wrap">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-[13.5px] font-semibold text-ink">{r.type.replace("_", " ")}</span>
+                            <span className="text-[11.5px] text-ink-3 font-medium">{fmtDate(r.startDate)} → {fmtDate(r.endDate)}</span>
+                          </div>
+                          <p className="text-[12px] text-ink-3 mt-0.5 font-medium">"{r.reason}"</p>
+                        </div>
+                        <span className={`inline-flex h-6 px-2.5 rounded-full text-[11px] font-semibold items-center border shrink-0 ${sc}`}>{r.status}</span>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
             )}
           </div>
-        ))}
+
+        </div>
       </div>
-
-      {/* Request Leave Form */}
-      <div className={`${cardClass} mb-10`}>
-        <h2 className="text-lg font-semibold text-[#1A1A1A] mb-5 flex items-center gap-2">
-          <Send className="w-4 h-4 text-[#F5D547]" />
-          Request Leave
-        </h2>
-
-        {success && (
-          <div className="mb-4 px-4 py-3 rounded-lg bg-green-50 border border-green-200 text-green-700 text-sm flex items-center gap-2">
-            <CheckCircle2 className="w-4 h-4" />
-            {success}
-          </div>
-        )}
-        {error && (
-          <div className="mb-4 px-4 py-3 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm flex items-center gap-2">
-            <XCircle className="w-4 h-4" />
-            {error}
-          </div>
-        )}
-
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-[#1A1A1A] mb-1.5">
-                Leave Type
-              </label>
-              <select
-                className={selectClass}
-                value={form.type}
-                onChange={(e) => setForm({ ...form, type: e.target.value })}
-              >
-                <option value="CASUAL">Casual</option>
-                <option value="SICK">Sick</option>
-                <option value="EARNED">Earned</option>
-                <option value="UNPAID">Unpaid</option>
-                <option value="WFH">Work from Home</option>
-                <option value="COMP_OFF">Comp Off</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-[#1A1A1A] mb-1.5">
-                Start Date
-              </label>
-              <input
-                type="date"
-                className={inputClass}
-                value={form.startDate}
-                onChange={(e) =>
-                  setForm({ ...form, startDate: e.target.value })
-                }
-                required
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-[#1A1A1A] mb-1.5">
-                End Date
-              </label>
-              <input
-                type="date"
-                className={inputClass}
-                value={form.endDate}
-                onChange={(e) => setForm({ ...form, endDate: e.target.value })}
-                required
-              />
-            </div>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-[#1A1A1A] mb-1.5">
-              Reason
-            </label>
-            <textarea
-              className={`${inputClass} min-h-[80px] resize-none`}
-              placeholder="Describe the reason for your leave..."
-              value={form.reason}
-              onChange={(e) => setForm({ ...form, reason: e.target.value })}
-              required
-            />
-          </div>
-          <div className="pt-2">
-            <button type="submit" className={btnClass} disabled={submitting}>
-              {submitting ? "Submitting..." : "Submit Request"}
-            </button>
-          </div>
-        </form>
-      </div>
-
-      {/* Leave Requests List */}
-      <div className={cardClass}>
-        <h2 className="text-lg font-semibold text-[#1A1A1A] mb-5 flex items-center gap-2">
-          <CalendarDays className="w-4 h-4 text-[#F5D547]" />
-          Your Leave Requests
-        </h2>
-
-        {!requests ? (
-          <div className="space-y-3">
-            {[1, 2, 3].map((i) => (
-              <div
-                key={i}
-                className="h-16 bg-[#F5F3EF] rounded-lg animate-pulse"
-              />
-            ))}
-          </div>
-        ) : requests.length === 0 ? (
-          <div className="text-center py-10 text-[#B0B0B0]">
-            <Clock className="w-10 h-10 mx-auto mb-3 opacity-40" />
-            <p className="text-sm">No leave requests found</p>
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {requests.map((req) => (
-              <div
-                key={req.id}
-                className="flex flex-col md:flex-row md:items-center justify-between gap-3 p-4 rounded-xl border border-[#E8E0D0] bg-[#FEFCF7]"
-              >
-                <div className="flex-1">
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="text-sm font-semibold text-[#1A1A1A]">
-                      {req.type}
-                    </span>
-                    <span className="text-xs text-[#B0B0B0]">
-                      {new Date(req.startDate).toLocaleDateString("en-IN", {
-                        day: "numeric",
-                        month: "short",
-                        year: "numeric",
-                      })}{" "}
-                      &ndash;{" "}
-                      {new Date(req.endDate).toLocaleDateString("en-IN", {
-                        day: "numeric",
-                        month: "short",
-                        year: "numeric",
-                      })}
-                    </span>
-                  </div>
-                  <p className="text-sm text-[#666]">{req.reason}</p>
-                </div>
-                <span
-                  className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold border ${statusColors[req.status] || ""}`}
-                >
-                  {req.status}
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
+    </>
   );
 }

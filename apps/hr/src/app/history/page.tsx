@@ -1,120 +1,91 @@
 "use client";
 import { useState } from "react";
-import { ChevronDown, ChevronUp, ExternalLink } from "lucide-react";
+import { ChevronDown, ChevronUp, ExternalLink, Clock } from "lucide-react";
 import { useMyReports } from "@/lib/hooks/use-reports";
+import { Topstrip } from "@/components/portal-shell";
+import { Check } from "lucide-react";
 
-const PLATFORM_COLORS: Record<string, string> = {
-  facebook: "bg-blue-500",
-  instagram: "bg-pink-500",
-  youtube: "bg-red-500",
-  x: "bg-gray-800",
-  twitter: "bg-gray-800",
-  snapchat: "bg-yellow-400",
-  linkedin: "bg-blue-700",
+const PLATFORM_CFG: Record<string, { bg: string; text: string }> = {
+  instagram: { bg: "bg-pink-50",  text: "text-pink-700"  },
+  linkedin:  { bg: "bg-blue-50",  text: "text-blue-700"  },
+  twitter:   { bg: "bg-sky-50",   text: "text-sky-600"   },
+  x:         { bg: "bg-sky-50",   text: "text-sky-600"   },
+  youtube:   { bg: "bg-red-50",   text: "text-red-600"   },
+  facebook:  { bg: "bg-blue-50",  text: "text-blue-600"  },
+  snapchat:  { bg: "bg-yellow-50",text: "text-yellow-700"},
 };
-
-function getPlatformColor(platform: string) {
-  return PLATFORM_COLORS[platform?.toLowerCase()] || "bg-gray-400";
-}
+function platCfg(p: string) { return PLATFORM_CFG[p?.toLowerCase()] ?? { bg: "bg-muted", text: "text-ink-3" }; }
 
 type RangeKey = "7d" | "30d" | "all";
-
-const RANGE_OPTIONS: { label: string; key: RangeKey }[] = [
-  { label: "Last 7 Days", key: "7d" },
-  { label: "Last 30 Days", key: "30d" },
-  { label: "All Time", key: "all" },
+const RANGES: { label: string; key: RangeKey }[] = [
+  { label: "7 Days", key: "7d" }, { label: "30 Days", key: "30d" }, { label: "All Time", key: "all" },
 ];
 
-function getDateRange(key: RangeKey): { startDate?: string; endDate?: string } {
-  const now = new Date();
-  const fmt = (d: Date) => d.toISOString().split("T")[0];
-  if (key === "7d") {
-    const start = new Date(now);
-    start.setDate(now.getDate() - 7);
-    return { startDate: fmt(start), endDate: fmt(now) };
-  }
-  if (key === "30d") {
-    const start = new Date(now);
-    start.setDate(now.getDate() - 30);
-    return { startDate: fmt(start), endDate: fmt(now) };
-  }
+function getDateRange(key: RangeKey) {
+  const now = new Date(); const fmt = (d: Date) => d.toISOString().split("T")[0];
+  if (key === "7d")  { const s = new Date(now); s.setDate(now.getDate() - 7);  return { startDate: fmt(s), endDate: fmt(now) }; }
+  if (key === "30d") { const s = new Date(now); s.setDate(now.getDate() - 30); return { startDate: fmt(s), endDate: fmt(now) }; }
   return {};
 }
 
 function ReportCard({ report }: { report: any }) {
   const [expanded, setExpanded] = useState(false);
-  const links = report.links || [];
-  const submittedAt = report.submittedAt || report.createdAt;
-
+  const links = report.links ?? [];
   return (
-    <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-[#E8E0D0] overflow-hidden">
-      <button
-        onClick={() => setExpanded((v) => !v)}
-        className="w-full text-left p-5 flex items-center justify-between hover:bg-[#FEFCF7] transition-colors"
-      >
-        <div className="flex items-center gap-4">
-          <div className="h-10 w-10 rounded-xl bg-[#FFF3C4] flex items-center justify-center text-sm font-bold text-[#1A1A1A]">
-            {links.length}
-          </div>
+    <div className="v3-card overflow-hidden">
+      <button onClick={() => setExpanded(v => !v)} className="w-full px-5 h-14 flex items-center justify-between v3-row text-left">
+        <div className="flex items-center gap-3">
+          <span className="h-8 w-8 rounded-xl bg-success-bg text-success grid place-items-center shrink-0">
+            <Check size={14} strokeWidth={2.5} />
+          </span>
           <div>
-            <p className="font-semibold text-[#1A1A1A]">
-              {new Date(report.date).toLocaleDateString("en-IN", {
-                weekday: "short",
-                year: "numeric",
-                month: "short",
-                day: "numeric",
-              })}
+            <p className="text-[13.5px] font-bold text-ink">
+              {new Date(report.date).toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short", year: "numeric" })}
             </p>
-            <p className="text-xs text-[#B0B0B0] mt-0.5">
+            <p className="text-[11px] text-ink-3 font-medium">
               {links.length} link{links.length !== 1 ? "s" : ""}
-              {submittedAt && (
-                <> &middot; Submitted {new Date(submittedAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}</>
-              )}
+              {report.submittedAt && <> · {new Date(report.submittedAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}</>}
             </p>
           </div>
         </div>
-        {expanded ? (
-          <ChevronUp className="h-4 w-4 text-[#B0B0B0]" />
-        ) : (
-          <ChevronDown className="h-4 w-4 text-[#B0B0B0]" />
-        )}
+        {expanded ? <ChevronUp size={14} className="text-ink-4" /> : <ChevronDown size={14} className="text-ink-4" />}
       </button>
-
       {expanded && (
-        <div className="border-t border-[#E8E0D0] p-5 space-y-3">
+        <div style={{ borderTop: "1px solid rgba(26,26,26,0.07)" }}>
           {links.length === 0 ? (
-            <p className="text-sm text-[#B0B0B0]">No links in this report.</p>
+            <div className="px-5 py-4 text-[12.5px] text-ink-3 font-medium">No links in this report.</div>
           ) : (
-            links.map((link: any, i: number) => (
-              <div key={i} className="flex items-start gap-3 p-3 bg-[#FEFCF7] rounded-xl border border-[#E8E0D0]">
-                <div className="flex-shrink-0 mt-0.5">
-                  <span className={`inline-block px-2.5 py-0.5 rounded-full text-xs text-white font-medium ${getPlatformColor(link.account?.platform)}`}>
-                    {link.account?.platform || "—"}
-                  </span>
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-[#1A1A1A]">{link.account?.handle || link.account?.name || "—"}</p>
-                  <a href={link.url} target="_blank" rel="noopener noreferrer" className="text-xs text-[#7A7A7A] hover:text-[#1A1A1A] flex items-center gap-1 mt-0.5 truncate">
-                    {link.url}
-                    <ExternalLink className="h-3 w-3 flex-shrink-0" />
-                  </a>
-                  {link.engagement && Object.values(link.engagement).some(Boolean) && (
-                    <div className="flex gap-3 mt-1.5 text-xs text-[#7A7A7A]">
-                      {link.engagement.likes != null && <span>{link.engagement.likes} likes</span>}
-                      {link.engagement.comments != null && <span>{link.engagement.comments} comments</span>}
-                      {link.engagement.shares != null && <span>{link.engagement.shares} shares</span>}
-                      {link.engagement.views != null && <span>{link.engagement.views} views</span>}
+            <ul>
+              {links.map((lk: any, i: number) => {
+                const pc = platCfg(lk.account?.platform ?? "");
+                return (
+                  <li key={i} style={i < links.length - 1 ? { borderBottom: "1px solid rgba(26,26,26,0.05)" } : {}}>
+                    <div className="px-5 py-3 flex items-center gap-3">
+                      <span className={`h-5 px-2 rounded-full text-[10px] font-bold inline-flex items-center shrink-0 ${pc.bg} ${pc.text}`}>
+                        {(lk.account?.platform ?? "—").toLowerCase()}
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-[12.5px] font-semibold text-ink truncate">{lk.account?.handle || lk.account?.name || "—"}</p>
+                        <a href={lk.url} target="_blank" rel="noopener noreferrer"
+                          className="text-[11.5px] text-indigo font-medium hover:underline truncate flex items-center gap-1">
+                          {lk.url} <ExternalLink size={10} />
+                        </a>
+                      </div>
+                      {lk.engagement && (
+                        <div className="flex gap-3 text-[10.5px] text-ink-4 font-medium shrink-0">
+                          {lk.engagement.likes != null && <span>{lk.engagement.likes} likes</span>}
+                          {lk.engagement.comments != null && <span>{lk.engagement.comments} comments</span>}
+                        </div>
+                      )}
                     </div>
-                  )}
-                </div>
-              </div>
-            ))
+                  </li>
+                );
+              })}
+            </ul>
           )}
-
           {report.notes && (
-            <div className="mt-3 p-3 bg-[#FFF3C4]/50 border border-[#FAE89E] rounded-xl">
-              <p className="text-xs font-medium text-[#7A7A7A]">Notes</p>
-              <p className="text-sm text-[#1A1A1A] mt-1">{report.notes}</p>
+            <div className="px-5 py-3 bg-muted/30" style={{ borderTop: "1px solid rgba(26,26,26,0.06)" }}>
+              <p className="text-[12px] text-ink-3 font-medium italic">"{report.notes}"</p>
             </div>
           )}
         </div>
@@ -127,47 +98,31 @@ export default function HistoryPage() {
   const [range, setRange] = useState<RangeKey>("7d");
   const { startDate, endDate } = getDateRange(range);
   const { data, isLoading } = useMyReports(startDate, endDate);
-  const reports = data?.data || [];
+  const reports = data?.data ?? [];
 
   return (
-    <div className="max-w-3xl mx-auto space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-4xl font-light text-[#1A1A1A] font-serif">Report History</h1>
-          <p className="text-[#7A7A7A] mt-1">View your past daily reports</p>
-        </div>
-        <div className="flex gap-2">
-          {RANGE_OPTIONS.map((opt) => (
-            <button
-              key={opt.key}
-              onClick={() => setRange(opt.key)}
-              className={`px-4 py-2 rounded-full text-sm font-medium transition-all ${
-                range === opt.key
-                  ? "bg-[#1A1A1A] text-white shadow-md"
-                  : "bg-white border border-[#E8E0D0] text-[#7A7A7A] hover:border-[#F5D547]"
-              }`}
-            >
-              {opt.label}
+    <>
+      <Topstrip title="Report History" sub={`${reports.length} reports`} right={
+        <div className="flex gap-1">
+          {RANGES.map(r => (
+            <button key={r.key} onClick={() => setRange(r.key)}
+              className={`h-8 px-3 rounded-full text-[12px] font-semibold border-2 transition-all ${range === r.key ? "bg-ink text-white border-ink" : "bg-surface text-ink-2 border-ink/12 hover:border-ink/25"}`}>
+              {r.label}
             </button>
           ))}
         </div>
+      } />
+      <div className="px-6 py-6 flex-1 overflow-y-auto max-w-[800px]">
+        <div className="space-y-3 anim-fade-up d1">
+          {isLoading ? (
+            <div className="v3-card px-5 py-10 text-center"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo mx-auto" /></div>
+          ) : reports.length === 0 ? (
+            <div className="v3-card px-5 py-10 text-center"><Clock size={24} className="mx-auto mb-3 text-ink-4" /><p className="text-[13px] text-ink-3 font-medium">No reports found for this period</p></div>
+          ) : (
+            reports.map((r: any) => <ReportCard key={r.id} report={r} />)
+          )}
+        </div>
       </div>
-
-      {isLoading ? (
-        <div className="flex items-center justify-center h-48">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#F5D547]" />
-        </div>
-      ) : reports.length === 0 ? (
-        <div className="bg-white rounded-2xl border border-[#E8E0D0] p-12 text-center shadow-[0_2px_16px_rgba(0,0,0,0.06)]">
-          <p className="text-[#B0B0B0]">No reports found for this period.</p>
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {reports.map((report: any) => (
-            <ReportCard key={report.id} report={report} />
-          ))}
-        </div>
-      )}
-    </div>
+    </>
   );
 }

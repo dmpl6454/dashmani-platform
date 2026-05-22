@@ -102,12 +102,92 @@ function MetricsRow({ link, onChange }: {
   );
 }
 
+// ─── Today's submitted links panel ───────────────────────────────────────────
+
+function TodaySubmittedPanel({ existing, accounts }: {
+  existing: any;
+  accounts: any[];
+}) {
+  if (!existing || !existing.links || existing.links.length === 0) return null;
+
+  const accountById = new Map(accounts.map((a) => [a.id, a]));
+  const fmtTime = (iso: string) => {
+    try {
+      return new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    } catch {
+      return "";
+    }
+  };
+
+  return (
+    <div className="bg-[#FAF7F0] border border-[#E8E0D0] rounded-2xl p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+          <h3 className="text-sm font-medium text-[#1A1A1A]">
+            Submitted today ({existing.links.length})
+          </h3>
+        </div>
+        <span className="text-[11px] text-[#7A7A7A]">
+          Last updated {fmtTime(existing.submittedAt || existing.updatedAt || existing.createdAt)}
+        </span>
+      </div>
+      <ul className="space-y-2 max-h-64 overflow-y-auto pr-1">
+        {existing.links.map((l: any, i: number) => {
+          const acc = accountById.get(l.accountId);
+          // Link carries platformSlug from formatReport; fall back to accounts map
+          const platform = (l.platformSlug || acc?.platformSlug || acc?.platform || "").toLowerCase();
+          // formatReport returns accountName; accounts map uses displayName/handle
+          const accountLabel = l.accountName || acc?.displayName || acc?.handle || "";
+          return (
+            <li
+              key={l.id || i}
+              className="flex items-start gap-3 bg-white border border-[#E8E0D0] rounded-lg px-3 py-2"
+            >
+              <span className="text-[11px] font-mono text-[#7A7A7A] mt-0.5 min-w-[1.5rem]">
+                {i + 1}.
+              </span>
+              <div className="flex-1 min-w-0">
+                {l.url ? (
+                  <a
+                    href={l.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-sm text-[#1A1A1A] hover:text-[#B8960C] truncate block"
+                  >
+                    {l.url}
+                  </a>
+                ) : (
+                  <span className="text-sm text-[#B0B0B0] italic">No URL yet</span>
+                )}
+                <div className="flex items-center gap-2 mt-0.5 text-[11px] text-[#7A7A7A]">
+                  {platform && <span className="capitalize">{platform}</span>}
+                  {accountLabel && <span>· {accountLabel}</span>}
+                  {l.isScheduled && (
+                    <span className="inline-flex items-center gap-1 text-amber-700">
+                      <Clock className="h-3 w-3" /> scheduled
+                      {l.scheduledFor && ` · ${new Date(l.scheduledFor).toLocaleDateString()}`}
+                    </span>
+                  )}
+                </div>
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+      <p className="text-[11px] text-[#7A7A7A]">
+        These are the links currently saved for today. Edit them below — the form is pre-filled with the same list.
+      </p>
+    </div>
+  );
+}
+
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function ReportPage() {
   const router = useRouter();
   const { data: accountsData } = useAssignedAccounts();
-  const { data: todayData } = useTodayReport();
+  const { data: todayData, mutate: mutateToday } = useTodayReport();
 
   const accounts = (accountsData as any)?.data || [];
   const existing = (todayData as any)?.data;
@@ -297,7 +377,15 @@ export default function ReportPage() {
           })),
         }),
       });
-      router.push("/dashboard");
+      // Refresh the today-report cache so the panel shows the new links immediately
+      await mutateToday();
+      if (existing) {
+        // Update: stay on page so user can see what they just saved in the panel
+        setPrefilled(false); // allow the prefill effect to re-run with fresh data
+      } else {
+        // First submit: go to dashboard
+        router.push("/dashboard");
+      }
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -336,6 +424,9 @@ export default function ReportPage() {
           <p className="text-[10px] text-[#B0B0B0]">Max {MAX_LINKS_PER_ACCOUNT} per account</p>
         </div>
       </div>
+
+      {/* Today's submitted links — read-only history panel */}
+      <TodaySubmittedPanel existing={existing} accounts={accounts} />
 
       {/* Warnings */}
       {duplicateUrls.length > 0 && (

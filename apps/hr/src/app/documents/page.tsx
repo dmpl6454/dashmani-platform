@@ -81,10 +81,13 @@ export default function DocumentsPage() {
                   onChange={e => setFile(e.target.files?.[0] ?? null)}
                   className="w-full h-10 px-3 text-[13px] font-medium rounded-xl bg-bg border-2 border-ink/10 focus:border-indigo outline-none file:border-0 file:bg-transparent file:text-[12px] file:text-ink-3" />
               </div>
-              <button onClick={handleUpload} disabled={uploading}
-                className="btn-3d inline-flex items-center justify-center gap-2 h-10 rounded-xl bg-ink text-white text-[13px] font-semibold border-2 border-ink disabled:opacity-50">
-                {uploading ? <><div className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin" />Uploading…</> : <><Upload size={14} />Upload</>}
-              </button>
+              <div>
+                <label className="block text-[11.5px] font-bold text-ink-3 mb-1.5 uppercase tracking-wider select-none">&nbsp;</label>
+                <button onClick={handleUpload} disabled={uploading}
+                  className="w-full btn-3d inline-flex items-center justify-center gap-2 h-10 rounded-xl bg-ink text-white text-[13px] font-semibold border-2 border-ink disabled:opacity-50">
+                  {uploading ? <><div className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin" />Uploading…</> : <><Upload size={14} />Upload</>}
+                </button>
+              </div>
             </div>
             {file && (
               <div className="mt-3 flex items-center gap-2 text-[12px] text-ink-3">

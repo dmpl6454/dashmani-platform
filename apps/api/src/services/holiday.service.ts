@@ -62,13 +62,13 @@ export async function getCalendarData(year: number, month: number, employeeId?: 
     orderBy: { date: "asc" },
   });
 
-  // Fetch APPROVED leave requests for the employee (only approved leaves show on calendar)
+  // Fetch leave requests for the employee — APPROVED, PENDING, REJECTED all shown with status
   let leaveRequests: any[] = [];
   if (employeeId) {
     leaveRequests = await prisma.leaveRequest.findMany({
       where: {
         employeeId,
-        status: "APPROVED",
+        status: { in: ["APPROVED", "PENDING", "REJECTED"] },
         OR: [
           { startDate: { gte: startDate, lte: endDate } },
           { endDate: { gte: startDate, lte: endDate } },
@@ -86,15 +86,17 @@ export async function getCalendarData(year: number, month: number, employeeId?: 
     holidayMap.set(key, { name: h.name, type: h.type });
   }
 
-  // Build a lookup map: date (YYYY-MM-DD) -> leave type
-  const leaveMap = new Map<string, string>();
+  // Build a lookup map: date (YYYY-MM-DD) -> { leaveType, leaveStatus }
+  const leaveMap = new Map<string, { leaveType: string; leaveStatus: string }>();
   for (const lr of leaveRequests) {
     const lStart = new Date(lr.startDate);
     const lEnd = new Date(lr.endDate);
-    // Iterate each day in the leave range
     for (let d = new Date(lStart); d <= lEnd; d.setDate(d.getDate() + 1)) {
       const key = d.toISOString().split("T")[0];
-      leaveMap.set(key, lr.type);
+      // APPROVED wins if same day has multiple overlapping requests
+      if (!leaveMap.has(key) || lr.status === "APPROVED") {
+        leaveMap.set(key, { leaveType: lr.type, leaveStatus: lr.status });
+      }
     }
   }
 
@@ -107,6 +109,7 @@ export async function getCalendarData(year: number, month: number, employeeId?: 
     holidayName?: string;
     isLeave: boolean;
     leaveType?: string;
+    leaveStatus?: string;
   }> = [];
 
   let weekends = 0;
@@ -115,10 +118,10 @@ export async function getCalendarData(year: number, month: number, employeeId?: 
   for (let day = 1; day <= totalDays; day++) {
     const date = new Date(year, month - 1, day);
     const dayOfWeek = date.getDay();
-    const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+    const isWeekend = dayOfWeek === 0; // Sunday only — Saturday is a working day
     const dateKey = date.toISOString().split("T")[0];
     const holiday = holidayMap.get(dateKey);
-    const leaveType = leaveMap.get(dateKey);
+    const leave = leaveMap.get(dateKey);
 
     if (isWeekend) weekends++;
     if (holiday && !isWeekend) holidaysOnWeekdays++;
@@ -128,8 +131,9 @@ export async function getCalendarData(year: number, month: number, employeeId?: 
       isWeekend,
       isHoliday: !!holiday,
       holidayName: holiday?.name,
-      isLeave: !!leaveType,
-      leaveType,
+      isLeave: !!leave,
+      leaveType: leave?.leaveType,
+      leaveStatus: leave?.leaveStatus,
     });
   }
 

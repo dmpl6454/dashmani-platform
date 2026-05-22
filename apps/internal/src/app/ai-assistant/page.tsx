@@ -7,7 +7,7 @@ import DOMPurify from "dompurify";
 import { usePageTitle } from "@/lib/hooks/use-page-title";
 import {
   Sparkles, Briefcase, FileText, ScrollText, Receipt, MessageSquare,
-  Loader2, Copy, Check, ExternalLink,
+  Loader2, Copy, Check, ExternalLink, Send,
 } from "lucide-react";
 
 const inputClass = "w-full border border-[#E8E0D0] bg-white rounded-lg px-4 py-2.5 text-sm text-[#1A1A1A] placeholder:text-[#B0B0B0] focus:outline-none focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547] transition-colors";
@@ -289,11 +289,14 @@ function AppointmentGenerator({ employees, loading, setLoading, result, setResul
 // ===== Contract Generator =====
 function ContractGenerator({ employees, loading, setLoading, result, setResult, openHtml }: any) {
   const [form, setForm] = useState({ employeeId: "", designation: "", department: "", salary: "", contractDate: "", probationMonths: "3", noticePeriod: "30", specialClauses: "" });
+  const [saving, setSaving] = useState(false);
+  const [sentAt, setSentAt] = useState<string | null>(null);
 
   async function generate() {
     if (!form.employeeId || !form.designation || !form.salary || !form.contractDate) return alert("Fill required fields");
     setLoading(true);
     setResult(null);
+    setSentAt(null);
     try {
       const res = await apiFetch<any>("/admin/ai/generate-contract", {
         method: "POST", body: JSON.stringify({ ...form, salary: parseFloat(form.salary), probationMonths: parseInt(form.probationMonths), noticePeriod: parseInt(form.noticePeriod) }),
@@ -303,6 +306,27 @@ function ContractGenerator({ employees, loading, setLoading, result, setResult, 
     finally { setLoading(false); }
   }
 
+  async function sendToEmployee() {
+    if (!form.employeeId || !form.designation || !form.salary || !form.contractDate) return;
+    setSaving(true);
+    try {
+      await apiFetch<any>("/admin/contracts", {
+        method: "POST",
+        body: JSON.stringify({
+          employeeId: form.employeeId,
+          contractDate: form.contractDate,
+          designation: form.designation,
+          department: form.department || undefined,
+          salary: parseFloat(form.salary),
+          probationMonths: parseInt(form.probationMonths),
+          noticePeriod: parseInt(form.noticePeriod),
+        }),
+      });
+      setSentAt(new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }));
+    } catch (e: any) { alert(e.message); }
+    finally { setSaving(false); }
+  }
+
   return (
     <div className="space-y-5">
       <div>
@@ -310,7 +334,7 @@ function ContractGenerator({ employees, loading, setLoading, result, setResult, 
         <p className="text-sm text-[#7A7A7A]">AI will create a legally sound employment contract with all standard clauses</p>
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        <EmployeeSelect employees={employees} value={form.employeeId} onChange={(v) => setForm({ ...form, employeeId: v })} />
+        <EmployeeSelect employees={employees} value={form.employeeId} onChange={(v) => { setForm({ ...form, employeeId: v }); setSentAt(null); }} />
         <input type="text" placeholder="Designation *" value={form.designation} onChange={(e) => setForm({ ...form, designation: e.target.value })} className={inputClass} />
         <input type="text" placeholder="Department" value={form.department} onChange={(e) => setForm({ ...form, department: e.target.value })} className={inputClass} />
         <input type="number" placeholder="Monthly CTC (INR) *" value={form.salary} onChange={(e) => setForm({ ...form, salary: e.target.value })} className={inputClass} />
@@ -324,13 +348,30 @@ function ContractGenerator({ employees, loading, setLoading, result, setResult, 
       </button>
       {result?.html && (
         <div className="border-t border-[#F0EAD8] pt-5">
-          <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
             <p className="font-semibold text-[#1A1A1A]">Employment Contract for {result.employeeName}</p>
-            <button onClick={() => openHtml(result.html, `Contract - ${result.employeeName}`)}
-              className="flex items-center gap-1 bg-[#1A1A1A] text-white rounded-full px-4 py-2 text-sm font-medium hover:bg-[#2B2B2B]">
-              <ExternalLink size={14} />Open & Print
-            </button>
+            <div className="flex items-center gap-2">
+              {sentAt ? (
+                <span className="flex items-center gap-1.5 bg-green-50 border border-green-200 text-green-700 rounded-full px-4 py-1.5 text-sm font-medium">
+                  <Check size={14} />Sent to employee at {sentAt}
+                </span>
+              ) : (
+                <button onClick={sendToEmployee} disabled={saving}
+                  className="flex items-center gap-1.5 bg-green-600 text-white rounded-full px-4 py-2 text-sm font-medium hover:bg-green-700 disabled:opacity-50">
+                  {saving ? <><Loader2 size={14} className="animate-spin" />Sending...</> : <><Send size={14} />Send to Employee</>}
+                </button>
+              )}
+              <button onClick={() => openHtml(result.html, `Contract - ${result.employeeName}`)}
+                className="flex items-center gap-1 bg-[#1A1A1A] text-white rounded-full px-4 py-2 text-sm font-medium hover:bg-[#2B2B2B]">
+                <ExternalLink size={14} />Open & Print
+              </button>
+            </div>
           </div>
+          {!sentAt && (
+            <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-3">
+              Preview only — click <strong>Send to Employee</strong> to save this contract so they can review and sign it in the HR portal.
+            </p>
+          )}
           <div className="border border-[#E8E0D0] rounded-xl overflow-hidden h-[400px]">
             <iframe srcDoc={DOMPurify.sanitize(result.html)} className="w-full h-full" title="Contract Preview" sandbox="allow-same-origin" />
           </div>

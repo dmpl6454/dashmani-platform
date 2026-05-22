@@ -17,6 +17,7 @@ interface CalendarDay {
   holidayName?: string;
   isLeave: boolean;
   leaveType?: string;
+  leaveStatus?: string;
 }
 
 interface CalendarData {
@@ -94,7 +95,11 @@ export default function CalendarPage() {
 
   function getCellClasses(day: CalendarDay | null) {
     if (!day) return "bg-transparent border-transparent";
-    if (day.isLeave) return "bg-indigo-soft border-indigo/20";
+    if (day.isLeave) {
+      if (day.leaveStatus === "PENDING") return "bg-attention-bg border-attention/30";
+      if (day.leaveStatus === "REJECTED") return "bg-danger-bg border-danger/20 opacity-70";
+      return "bg-indigo-soft border-indigo/20"; // APPROVED
+    }
     if (day.isHoliday) return "bg-danger-bg border-danger/20";
     if (day.isWeekend) return "bg-muted border-ink/5";
     return "bg-surface border-ink/8";
@@ -102,9 +107,20 @@ export default function CalendarPage() {
 
   function getDateTextClass(day: CalendarDay) {
     if (day.isHoliday) return "text-danger";
-    if (day.isLeave) return "text-indigo";
+    if (day.isLeave) {
+      if (day.leaveStatus === "PENDING") return "text-attention";
+      if (day.leaveStatus === "REJECTED") return "text-danger line-through";
+      return "text-indigo"; // APPROVED
+    }
     if (day.isWeekend) return "text-ink-4";
     return "text-ink";
+  }
+
+  function getLeaveStatusLabel(day: CalendarDay) {
+    if (!day.isLeave) return null;
+    if (day.leaveStatus === "PENDING") return { text: "Pending", cls: "text-attention" };
+    if (day.leaveStatus === "REJECTED") return { text: "Rejected", cls: "text-danger" };
+    return null; // APPROVED — just show leave type, no extra label
   }
 
   return (
@@ -167,7 +183,7 @@ export default function CalendarPage() {
                     day?.isHoliday
                       ? day.holidayName
                       : day?.isLeave
-                        ? `Leave: ${day.leaveType}`
+                        ? `${day.leaveType?.replace(/_/g, " ")} — ${day.leaveStatus}`
                         : undefined
                   }
                 >
@@ -181,11 +197,24 @@ export default function CalendarPage() {
                           {day.holidayName}
                         </p>
                       )}
-                      {day.isLeave && day.leaveType && (
-                        <p className="text-[9px] leading-tight text-indigo mt-0.5 truncate font-medium">
-                          {day.leaveType}
-                        </p>
-                      )}
+                      {day.isLeave && day.leaveType && (() => {
+                        const statusLabel = getLeaveStatusLabel(day);
+                        const leaveColor = day.leaveStatus === "PENDING" ? "text-attention"
+                          : day.leaveStatus === "REJECTED" ? "text-danger"
+                          : "text-indigo";
+                        return (
+                          <>
+                            <p className={`text-[9px] leading-tight mt-0.5 truncate font-medium ${leaveColor}`}>
+                              {day.leaveType.replace(/_/g, " ")}
+                            </p>
+                            {statusLabel && (
+                              <p className={`text-[8px] leading-tight mt-0.5 truncate font-bold uppercase tracking-wide ${statusLabel.cls}`}>
+                                {statusLabel.text}
+                              </p>
+                            )}
+                          </>
+                        );
+                      })()}
                     </>
                   )}
                 </div>
@@ -215,7 +244,15 @@ export default function CalendarPage() {
             </div>
             <div className="flex items-center gap-2">
               <span className="w-4 h-4 rounded-lg bg-indigo-soft border border-indigo/20" />
-              <span className="text-[12px] text-ink-3 font-medium">Leave</span>
+              <span className="text-[12px] text-ink-3 font-medium">Leave Approved</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="w-4 h-4 rounded-lg bg-attention-bg border border-attention/30" />
+              <span className="text-[12px] text-ink-3 font-medium">Leave Pending</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="w-4 h-4 rounded-lg bg-danger-bg border border-danger/20 opacity-70" />
+              <span className="text-[12px] text-ink-3 font-medium">Leave Rejected</span>
             </div>
           </div>
         </div>

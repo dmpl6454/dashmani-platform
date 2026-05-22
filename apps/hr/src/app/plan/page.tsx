@@ -79,33 +79,45 @@ export default function PlanOfActionPage() {
   }
 
   const isToday = formatDate(date) === formatDate(new Date());
+  const isReadOnly = !isToday;
 
-  const inputClass = "w-full h-10 px-3 text-[13px] font-medium rounded-xl bg-bg border-2 border-ink/10 focus:border-indigo outline-none transition-colors resize-none";
-  const textareaClass = "w-full px-3 py-2.5 text-[13px] font-medium rounded-xl bg-bg border-2 border-ink/10 focus:border-indigo outline-none transition-colors resize-none";
+  const textareaClass = (ro: boolean) =>
+    `w-full px-3 py-2.5 text-[13px] font-medium rounded-xl border-2 outline-none transition-colors resize-none ${
+      ro
+        ? "bg-muted border-ink/5 text-ink-3 cursor-default"
+        : "bg-bg border-ink/10 focus:border-indigo text-ink"
+    }`;
 
   return (
     <>
       <Topstrip title="Plan of Action" sub="Update your daily work plan and track progress" />
       <div className="px-6 py-6 flex-1 overflow-y-auto max-w-[900px] space-y-5">
 
-        {/* Date Navigation */}
+        {/* Date Navigation — back arrow to browse history; no forward past today */}
         <div className="v3-card-sm flex items-center gap-4">
           <button onClick={() => changeDate(-1)} className="p-1.5 rounded-lg hover:bg-muted transition-colors border border-ink/10">
             <ChevronLeft className="h-4 w-4 text-ink" />
           </button>
           <div className="text-center flex-1">
             <p className="text-[14px] font-semibold text-ink">{displayDate(date)}</p>
-            {isToday && (
-              <span className="inline-flex h-5 px-2.5 rounded-full text-[11px] font-semibold items-center bg-indigo-soft text-indigo border border-indigo/20 mt-1">
-                Today
-              </span>
-            )}
+            <span className={`inline-flex h-5 px-2.5 rounded-full text-[11px] font-semibold items-center border mt-1 ${
+              isToday
+                ? "bg-indigo-soft text-indigo border-indigo/20"
+                : "bg-muted text-ink-3 border-ink/10"
+            }`}>
+              {isToday ? "Today" : "Past — view only"}
+            </span>
           </div>
-          <button onClick={() => changeDate(1)} disabled={isToday} className="p-1.5 rounded-lg hover:bg-muted transition-colors border border-ink/10 disabled:opacity-30 disabled:cursor-not-allowed">
-            <ChevronRight className="h-4 w-4 text-ink" />
-          </button>
+          {/* Forward arrow hidden when viewing today — can't go to future */}
+          {!isToday ? (
+            <button onClick={() => changeDate(1)} className="p-1.5 rounded-lg hover:bg-muted transition-colors border border-ink/10">
+              <ChevronRight className="h-4 w-4 text-ink" />
+            </button>
+          ) : (
+            <div className="w-8" />
+          )}
           {!isToday && (
-            <button onClick={() => setDate(new Date())} className="text-[12px] text-indigo hover:underline font-semibold">
+            <button onClick={() => { const d = new Date(); d.setHours(0,0,0,0); setDate(d); }} className="text-[12px] text-indigo hover:underline font-semibold whitespace-nowrap">
               Go to Today
             </button>
           )}
@@ -117,26 +129,38 @@ export default function PlanOfActionPage() {
           </div>
         )}
 
-        {/* POA Form */}
+        {isReadOnly && (
+          <div className="flex items-center gap-2 bg-muted border border-ink/10 text-ink-3 px-4 py-3 rounded-xl text-[13px] font-medium">
+            <ClipboardList className="h-4 w-4 shrink-0" />
+            Past plans are read-only. Navigate to today to submit or update your POA.
+          </div>
+        )}
+
+        {/* POA Form / View */}
         {loading ? (
           <div className="v3-card flex justify-center py-12">
             <div className="animate-spin rounded-full h-7 w-7 border-b-2 border-indigo" />
           </div>
         ) : (
-          <form onSubmit={handleSave} className="space-y-4">
+          <form onSubmit={isReadOnly ? (e) => e.preventDefault() : handleSave} className="space-y-4">
             <div className="v3-card">
               <div className="px-5 h-12 flex items-center gap-2" style={{ borderBottom: "2px solid rgba(26,26,26,0.07)" }}>
-                <span className="text-[13px] font-semibold text-ink">Today's Tasks *</span>
+                <span className="text-[13px] font-semibold text-ink">
+                  {isToday ? "Today's Tasks *" : "Tasks"}
+                </span>
               </div>
               <div className="p-5">
-                <p className="text-[11.5px] font-bold text-ink-3 mb-1.5 uppercase tracking-wider">What did you work on?</p>
+                <p className="text-[11.5px] font-bold text-ink-3 mb-1.5 uppercase tracking-wider">
+                  {isToday ? "What did you work on?" : "What was worked on"}
+                </p>
                 <textarea
                   value={tasks}
-                  onChange={(e) => setTasks(e.target.value)}
+                  onChange={isReadOnly ? undefined : (e) => setTasks(e.target.value)}
+                  readOnly={isReadOnly}
                   rows={5}
-                  required
-                  placeholder="List your tasks and activities for the day..."
-                  className={textareaClass}
+                  required={!isReadOnly}
+                  placeholder={isReadOnly ? "No tasks recorded." : "List your tasks and activities for the day..."}
+                  className={textareaClass(isReadOnly)}
                 />
               </div>
             </div>
@@ -150,10 +174,11 @@ export default function PlanOfActionPage() {
                   <p className="text-[11.5px] font-bold text-ink-3 mb-1.5 uppercase tracking-wider">Completed / Won</p>
                   <textarea
                     value={achievements}
-                    onChange={(e) => setAchievements(e.target.value)}
+                    onChange={isReadOnly ? undefined : (e) => setAchievements(e.target.value)}
+                    readOnly={isReadOnly}
                     rows={3}
-                    placeholder="What was completed or achieved..."
-                    className={textareaClass}
+                    placeholder={isReadOnly ? "Nothing recorded." : "What was completed or achieved..."}
+                    className={textareaClass(isReadOnly)}
                   />
                 </div>
               </div>
@@ -165,10 +190,11 @@ export default function PlanOfActionPage() {
                   <p className="text-[11.5px] font-bold text-ink-3 mb-1.5 uppercase tracking-wider">Issues / Blockers</p>
                   <textarea
                     value={blockers}
-                    onChange={(e) => setBlockers(e.target.value)}
+                    onChange={isReadOnly ? undefined : (e) => setBlockers(e.target.value)}
+                    readOnly={isReadOnly}
                     rows={3}
-                    placeholder="Any blockers or issues faced..."
-                    className={textareaClass}
+                    placeholder={isReadOnly ? "Nothing recorded." : "Any blockers or issues faced..."}
+                    className={textareaClass(isReadOnly)}
                   />
                 </div>
               </div>
@@ -182,23 +208,26 @@ export default function PlanOfActionPage() {
                 <p className="text-[11.5px] font-bold text-ink-3 mb-1.5 uppercase tracking-wider">What's next?</p>
                 <textarea
                   value={tomorrowPlan}
-                  onChange={(e) => setTomorrowPlan(e.target.value)}
+                  onChange={isReadOnly ? undefined : (e) => setTomorrowPlan(e.target.value)}
+                  readOnly={isReadOnly}
                   rows={3}
-                  placeholder="What you plan to work on tomorrow..."
-                  className={textareaClass}
+                  placeholder={isReadOnly ? "Nothing recorded." : "What you plan to work on tomorrow..."}
+                  className={textareaClass(isReadOnly)}
                 />
               </div>
             </div>
 
-            <div className="flex justify-end">
-              <button
-                type="submit"
-                disabled={saving || !tasks.trim()}
-                className="btn-3d inline-flex items-center gap-2 px-5 h-10 rounded-xl bg-ink text-white text-[13px] font-semibold border-2 border-ink disabled:opacity-50"
-              >
-                <Save className="h-4 w-4" /> {saving ? "Saving..." : "Save POA"}
-              </button>
-            </div>
+            {!isReadOnly && (
+              <div className="flex justify-end">
+                <button
+                  type="submit"
+                  disabled={saving || !tasks.trim()}
+                  className="btn-3d inline-flex items-center gap-2 px-5 h-10 rounded-xl bg-ink text-white text-[13px] font-semibold border-2 border-ink disabled:opacity-50"
+                >
+                  <Save className="h-4 w-4" /> {saving ? "Saving..." : "Save POA"}
+                </button>
+              </div>
+            )}
           </form>
         )}
 
@@ -206,10 +235,10 @@ export default function PlanOfActionPage() {
         {history.length > 0 && (
           <div className="v3-card">
             <div className="px-5 h-12 flex items-center" style={{ borderBottom: "2px solid rgba(26,26,26,0.07)" }}>
-              <span className="text-[13px] font-semibold text-ink">Recent Updates</span>
+              <span className="text-[13px] font-semibold text-ink">Past Plans</span>
             </div>
             <div className="px-5 py-3 space-y-1">
-              {history.slice(0, 7).map((poa: any) => {
+              {history.slice(0, 10).map((poa: any) => {
                 const poaDate = new Date(poa.date);
                 const isSelected = formatDate(poaDate) === formatDate(date);
                 return (

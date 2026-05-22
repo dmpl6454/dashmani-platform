@@ -39,7 +39,9 @@ export default function DashboardPage() {
 
   const accounts = accountsData?.data ?? [];
   const todayReport = reportData?.data ?? null;
-  const attendance = attendanceData?.data;
+  const attendanceRaw = attendanceData?.data;
+  const isEmployee = attendanceRaw?.isEmployee !== false; // false only for admin-only accounts
+  const attendance = isEmployee ? attendanceRaw : null;
   const todayLinks = todayReport?.links ?? [];
   const submitted = !!todayReport;
 
@@ -57,13 +59,16 @@ export default function DashboardPage() {
     sage:      "bg-sage-soft text-sage",
   };
 
-  const stats = [
+  const baseStats = [
     { label: "Accounts Assigned", value: accounts.length,                   sub: "active",                      accent: "action",    icon: "📊" },
     { label: "Links Today",       value: submitted ? todayLinks.length : 0, sub: submitted ? "submitted" : "pending", accent: submitted ? "success" : "attention", icon: "🔗" },
     { label: "Today's Report",    value: submitted ? "Done" : "Pending",    sub: submitted ? "submitted" : "not yet",  accent: submitted ? "success" : "attention", icon: "📝" },
-    { label: "Attendance",        value: attendanceRate != null ? `${attendanceRate}%` : "—",
-      sub: attendanceDays ?? "this month", accent: "sage", icon: "📅" },
   ];
+  const attendanceStat = isEmployee
+    ? [{ label: "Attendance", value: attendanceRate != null ? `${attendanceRate}%` : "—",
+         sub: attendanceDays ?? "this month", accent: "sage", icon: "📅" }]
+    : [];
+  const stats = [...baseStats, ...attendanceStat];
 
   return (
     <>
@@ -249,7 +254,7 @@ export default function DashboardPage() {
                 </div>
               )}
 
-              {!attendance && !submitted && (
+              {isEmployee && !attendance && !submitted && (
                 <div className="v3-card p-4 text-center">
                   <p className="text-[12px] text-ink-3">No attendance data available.</p>
                 </div>

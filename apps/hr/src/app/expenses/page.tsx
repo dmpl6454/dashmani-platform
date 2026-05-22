@@ -1,21 +1,9 @@
 "use client";
 import { useState } from "react";
 import useSWR from "swr";
+import { apiFetch } from "@/lib/api";
 import { Topstrip } from "@/components/portal-shell";
 import { Receipt, Plus, Clock, CheckCircle, XCircle, IndianRupee } from "lucide-react";
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/v1";
-
-async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const token = typeof window !== "undefined" ? localStorage.getItem("accessToken") : null;
-  const res = await fetch(`${API_URL}${path}`, {
-    ...options,
-    headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}), ...options.headers },
-  });
-  const json = await res.json();
-  if (!res.ok) throw new Error(json.error?.message || "Request failed");
-  return json;
-}
 
 const CATEGORIES = ["TRAVEL", "FOOD", "EQUIPMENT", "SOFTWARE", "OFFICE_SUPPLIES", "COMMUNICATION", "OTHER"];
 
@@ -26,8 +14,8 @@ const STATUS_STYLES: Record<string, { badge: string; icon: any }> = {
 };
 
 export default function ExpensesPage() {
-  const { data, mutate } = useSWR("/hr/expenses", (url) => apiFetch<any>(url), { refreshInterval: 30000 });
-  const expenses = (data as any)?.data ?? [];
+  const { data, mutate } = useSWR("/hr/expenses", (url) => apiFetch<any>(url).then((r) => r.data), { refreshInterval: 30000 });
+  const expenses = data ?? [];
 
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ title: "", amount: "", category: "OTHER", description: "" });
@@ -42,7 +30,7 @@ export default function ExpensesPage() {
     try {
       await apiFetch("/hr/expenses", {
         method: "POST",
-        body: JSON.stringify(form),
+        body: JSON.stringify({ ...form, amount: parseFloat(form.amount) }),
       });
       setForm({ title: "", amount: "", category: "OTHER", description: "" });
       setShowForm(false);

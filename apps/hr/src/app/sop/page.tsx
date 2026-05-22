@@ -4,21 +4,93 @@ import { apiFetch } from "@/lib/api";
 import { Topstrip } from "@/components/portal-shell";
 import { ScrollText, Check, Shield, Clock, Users, AlertTriangle } from "lucide-react";
 
+const ICON_MAP: Record<string, any> = {
+  Clock,
+  Shield,
+  Users,
+  AlertTriangle,
+  ScrollText,
+};
+
+const DEFAULT_SECTIONS = [
+  {
+    icon: "Clock",
+    title: "Working Hours & Attendance",
+    items: [
+      "Standard working hours are 10:00 AM to 7:00 PM, Monday to Saturday.",
+      "All employees must mark attendance daily through the HR portal.",
+      "Late arrivals of more than 15 minutes will be recorded and may affect monthly reviews.",
+      "Work from Home (WFH) must be requested and approved in advance through the portal.",
+      "Compensatory offs (Comp-Off) must be approved by your reporting manager.",
+    ],
+  },
+  {
+    icon: "Shield",
+    title: "Code of Conduct",
+    items: [
+      "Maintain professional behavior with colleagues, clients, and partners at all times.",
+      "Respect confidentiality of client data, company strategies, and proprietary information.",
+      "Do not share login credentials, client access, or internal tools with unauthorized persons.",
+      "Personal use of company devices should be minimal and not interfere with work responsibilities.",
+      "Harassment, discrimination, or bullying of any kind will not be tolerated and may result in immediate termination.",
+    ],
+  },
+  {
+    icon: "Users",
+    title: "Leave & Time-Off Policy",
+    items: [
+      "Employees are entitled to 12 paid leaves per year (1 per month).",
+      "Sick leave requires notification before 10:00 AM on the day of absence.",
+      "Leave applications must be submitted at least 3 days in advance for planned leaves.",
+      "Unapproved absence for 3 consecutive days will be considered abandonment of duty.",
+      "National holidays as declared by the company will be observed.",
+    ],
+  },
+  {
+    icon: "AlertTriangle",
+    title: "Data & Social Media Policy",
+    items: [
+      "All social media accounts managed are property of the clients and the company.",
+      "Never share client social media credentials outside of authorized tools.",
+      "Content must be approved before publishing on any client account.",
+      "Personal opinions must not be expressed through client or company accounts.",
+      "Data breaches or unauthorized access must be reported immediately to your manager and admin.",
+    ],
+  },
+  {
+    icon: "ScrollText",
+    title: "Termination & Exit Policy",
+    items: [
+      "A minimum notice period of 30 days is required for resignation.",
+      "All company assets (laptops, phones, IDs) must be returned before the last working day.",
+      "Exit interviews will be conducted by HR.",
+      "Pending salary and dues will be cleared within 15 days of the last working day.",
+      "Non-compete and NDA clauses in the employment contract remain valid after exit.",
+    ],
+  },
+];
+
 export default function SOPPage() {
   const [accepted, setAccepted] = useState(false);
   const [acceptedAt, setAcceptedAt] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [accepting, setAccepting] = useState(false);
   const [checked, setChecked] = useState(false);
+  const [sections, setSections] = useState(DEFAULT_SECTIONS);
 
   useEffect(() => {
-    apiFetch<any>("/hr/sop-status")
-      .then((res) => {
-        setAccepted(res.data?.accepted || false);
-        setAcceptedAt(res.data?.acceptedAt || null);
-      })
-      .catch(() => {})
-      .finally(() => setLoading(false));
+    Promise.all([
+      apiFetch<any>("/hr/sop-status").catch(() => null),
+      apiFetch<any>("/admin/sop-content").catch(() => null),
+    ]).then(([statusRes, contentRes]) => {
+      if (statusRes?.data) {
+        setAccepted(statusRes.data.accepted || false);
+        setAcceptedAt(statusRes.data.acceptedAt || null);
+      }
+      if (contentRes?.data?.sections) {
+        setSections(contentRes.data.sections);
+      }
+    }).finally(() => setLoading(false));
   }, []);
 
   async function handleAccept() {
@@ -41,64 +113,6 @@ export default function SOPPage() {
       </>
     );
   }
-
-  const sections = [
-    {
-      icon: Clock,
-      title: "Working Hours & Attendance",
-      items: [
-        "Standard working hours are 10:00 AM to 7:00 PM, Monday to Saturday.",
-        "All employees must mark attendance daily through the HR portal.",
-        "Late arrivals of more than 15 minutes will be recorded and may affect monthly reviews.",
-        "Work from Home (WFH) must be requested and approved in advance through the portal.",
-        "Compensatory offs (Comp-Off) must be approved by your reporting manager.",
-      ],
-    },
-    {
-      icon: Shield,
-      title: "Code of Conduct",
-      items: [
-        "Maintain professional behavior with colleagues, clients, and partners at all times.",
-        "Respect confidentiality of client data, company strategies, and proprietary information.",
-        "Do not share login credentials, client access, or internal tools with unauthorized persons.",
-        "Personal use of company devices should be minimal and not interfere with work responsibilities.",
-        "Harassment, discrimination, or bullying of any kind will not be tolerated and may result in immediate termination.",
-      ],
-    },
-    {
-      icon: Users,
-      title: "Leave & Time-Off Policy",
-      items: [
-        "Employees are entitled to 12 paid leaves per year (1 per month).",
-        "Sick leave requires notification before 10:00 AM on the day of absence.",
-        "Leave applications must be submitted at least 3 days in advance for planned leaves.",
-        "Unapproved absence for 3 consecutive days will be considered abandonment of duty.",
-        "National holidays as declared by the company will be observed.",
-      ],
-    },
-    {
-      icon: AlertTriangle,
-      title: "Data & Social Media Policy",
-      items: [
-        "All social media accounts managed are property of the clients and the company.",
-        "Never share client social media credentials outside of authorized tools.",
-        "Content must be approved before publishing on any client account.",
-        "Personal opinions must not be expressed through client or company accounts.",
-        "Data breaches or unauthorized access must be reported immediately to your manager and admin.",
-      ],
-    },
-    {
-      icon: ScrollText,
-      title: "Termination & Exit Policy",
-      items: [
-        "A minimum notice period of 30 days is required for resignation.",
-        "All company assets (laptops, phones, IDs) must be returned before the last working day.",
-        "Exit interviews will be conducted by HR.",
-        "Pending salary and dues will be cleared within 15 days of the last working day.",
-        "Non-compete and NDA clauses in the employment contract remain valid after exit.",
-      ],
-    },
-  ];
 
   return (
     <>
@@ -126,7 +140,7 @@ export default function SOPPage() {
 
         {/* Sections */}
         {sections.map((section, idx) => {
-          const Icon = section.icon;
+          const Icon = ICON_MAP[section.icon] ?? ScrollText;
           return (
             <div key={idx} className="v3-card">
               <div className="px-5 h-12 flex items-center gap-2.5" style={{ borderBottom: "2px solid rgba(26,26,26,0.07)" }}>
@@ -134,7 +148,7 @@ export default function SOPPage() {
                 <span className="text-[13px] font-semibold text-ink">{section.title}</span>
               </div>
               <ul className="px-5 py-4 space-y-2.5">
-                {section.items.map((item, i) => (
+                {section.items.map((item: string, i: number) => (
                   <li key={i} className="flex gap-3 text-[13px] text-ink-3 leading-relaxed">
                     <span className="shrink-0 mt-2 h-1.5 w-1.5 rounded-full bg-indigo" />
                     {item}

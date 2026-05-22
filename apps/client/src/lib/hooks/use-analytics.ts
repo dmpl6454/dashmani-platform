@@ -8,6 +8,7 @@ export interface ClientAnalytics {
   approvalTurnaround: number;
   scheduledThisWeek: number;
   liveThisWeek: number;
+  weeklyPosts: { label: string; value: number }[];
   projectSummaries: {
     projectId: string;
     name: string;

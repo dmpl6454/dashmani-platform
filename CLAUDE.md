@@ -545,7 +545,7 @@ All phases (1–13) + Waves 7–9 + v2 production test remediation complete. See
 - **F-TOKEN-STORAGE (deferred XL):** Auth tokens still in `localStorage` — httpOnly cookie migration is 1+ week, high blast radius across all 4 portals + API. Explicitly deferred per user decision 2026-05-21.
 - **F-RESPONSIVE-ALL-PORTALS (deferred XL):** Full 375px responsive sweep for Internal + HR. Deferred — internal portal is primarily desktop-used; mobile sidebars already work via hamburger drawers.
 
-### Fixed since last update (2026-05-21)
+### Fixed since last update (2026-05-21 / 2026-05-22)
 - **F-WORKLOAD-COLUMNS:** Critical/High cells now render `—` when 0 — `tasksByPriority?.critical ?? 0` guard added.
 - **Mobile sidebar — HR + Internal:** Both portals now have `hidden lg:flex` desktop aside + fixed mobile topbar (h-14/h-[57px], z-40) with hamburger + full-height overlay drawer (z-50). Close on route change. `pt-14 lg:pt-0` on `<main>` clears the fixed bar. Client portal already had this pattern.
 - **F-NAV-RESTRUCTURE (Card 4.2):** Internal sidebar restructured — Analytics/Workload/Expenses/Devices/Complaints/Bug Reports/AI Assistant pulled out of "More" into named sections ("Analytics", "Tools"). "More" now contains only rarely-used items.
@@ -554,6 +554,8 @@ All phases (1–13) + Waves 7–9 + v2 production test remediation complete. See
 - **Wave 5 cleanup script:** `scripts/cleanup-production.ts` written. Dry-run safe by default. Run from `packages/db/`: `npx tsx ../../scripts/cleanup-production.ts`. Covers all 17 production cleanup operations. Requires `--apply --confirm-prod` flags to write anything.
 - **F-PLATFORM-SHORTCUT:** Top-nav search button now shows `⌘K` on Mac and `Ctrl K` on Windows/Linux — detected via `navigator.platform` in a `useEffect`.
 - **F-CLIENT-HOWITWORKS-STATS:** Client portal login "How it works" section no longer shows hardcoded `0` / `6h` / `24` values — replaced with honest non-numeric copy.
+- **TC-186 F-SOP-DB-BACKED (2026-05-22):** SOP sections no longer hardcoded. `system_settings` DB table added (additive). `GET /admin/sop-content` returns stored sections; `PUT /admin/sop-content` lets admins update them. HR portal fetches on load and falls back to default content if none is stored. ⚠️ **`db:push` required on Linode after this deploy.**
+- **BUG-20 F-CLIENT-CADENCE-DATA (2026-05-22):** Publishing cadence chart on client analytics now uses real `weeklyPosts` data from `getClientContentAnalytics()` — last 5 weeks of published-post counts. `ClientAnalytics` type updated accordingly.
 
 ### Employee vs Admin distinction (analytics/reports)
 

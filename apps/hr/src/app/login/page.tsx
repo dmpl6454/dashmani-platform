@@ -686,7 +686,7 @@ function ForgotPasswordModal({ onClose }: { onClose: () => void }) {
         <button type="button" onClick={onClose} aria-label="Close" className="absolute top-4 right-4 text-[#9C947C] hover:text-[#1A1A1A] text-xl leading-none transition-colors">×</button>
         <h2 className="font-display text-[22px] text-[#1A1A1A] font-semibold mb-1">Forgot password?</h2>
         {sent ? (
-          <p className="text-sm text-[#6C6555] mt-3">If that email is registered, a reset link has been sent. Check your inbox.</p>
+          <p className="text-sm text-[#6C6555] mt-3">If that email is registered, a reset link has been sent. Check your inbox — and your spam folder if you don't see it within a minute. The link is valid for 24 hours.</p>
         ) : (
           <form onSubmit={handleSubmit} className="space-y-4 mt-3">
             <p className="text-sm text-[#9C947C]">Enter your account email and we'll send a reset link.</p>

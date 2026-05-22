@@ -102,7 +102,7 @@ export async function clientForgotPassword(email: string) {
   if (!client) return; // silent — don't reveal whether email exists
 
   const token = crypto.randomBytes(32).toString("hex");
-  const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
 
   await prisma.otpToken.deleteMany({
     where: { clientId: client.id, channel: "EMAIL", target: "PASSWORD_RESET" },
@@ -123,8 +123,9 @@ export async function clientForgotPassword(email: string) {
       <div style="font-family:sans-serif;max-width:500px;margin:0 auto;padding:32px">
         <h2 style="margin:0 0 8px">Reset your password</h2>
         <p style="color:#555">Hi ${client.contactName},</p>
-        <p style="color:#555">Click the button below to reset your client-portal password. This link expires in 1 hour.</p>
+        <p style="color:#555">Click the button below to reset your client-portal password. This link expires in 24 hours.</p>
         <a href="${resetLink}" style="display:inline-block;margin:16px 0;padding:12px 24px;background:#1A1A1A;color:#fff;border-radius:8px;text-decoration:none;font-weight:600">Reset Password</a>
+        <p style="color:#999;font-size:12px">Didn't see this in your inbox? <strong>Check your spam or junk folder</strong>.</p>
         <p style="color:#999;font-size:12px">If you didn't request this, ignore this email.</p>
       </div>
     `,

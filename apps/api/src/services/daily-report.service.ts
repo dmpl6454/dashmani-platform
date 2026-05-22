@@ -23,6 +23,7 @@ function formatReport(report: any) {
       id: link.id,
       accountId: link.accountId,
       accountName: link.account?.displayName ?? "",
+      accountHandle: link.account?.handle ?? "",
       platform: link.account?.platform?.name ?? link.platform ?? "",
       platformSlug: link.account?.platform?.slug ?? "",
       url: link.url,

@@ -195,14 +195,14 @@ export default function DashboardPage() {
                   </div>
                   <ul>
                     {todayLinks.slice(0, 4).map((lk: any, i: number, arr: any[]) => {
-                      const platform = (lk.account?.platform || lk.platform || "").toLowerCase();
+                      const platform = (lk.platformSlug || lk.platform || "").toLowerCase();
                       const pc = platCfg(platform);
                       return (
                         <li key={i} style={i < arr.length - 1 ? { borderBottom: "1px solid rgba(26,26,26,0.06)" } : {}}>
                           <div className="px-5 py-3 flex items-center gap-3 v3-row">
                             <span className={`h-5 px-2 rounded-full text-[10px] font-bold inline-flex items-center shrink-0 ${pc.bg} ${pc.text}`}>{pc.label}</span>
                             <span className="flex-1 text-[12.5px] font-medium text-ink-2 truncate">
-                              {lk.account?.handle || lk.account?.name || lk.account?.displayName || "—"}
+                              {lk.accountHandle || lk.accountName || "—"}
                             </span>
                           </div>
                         </li>

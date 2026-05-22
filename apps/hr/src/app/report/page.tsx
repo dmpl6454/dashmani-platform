@@ -67,8 +67,12 @@ function detectPlatformFromUrl(url: string): string | null {
   return null;
 }
 
-const inputClass = "w-full border border-[#E8E0D0] bg-white rounded-lg px-4 py-2.5 text-sm text-[#1A1A1A] placeholder:text-[#B0B0B0] focus:outline-none focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547] transition-all duration-200";
-const selectClass = "w-full border border-[#E8E0D0] bg-white rounded-lg px-4 py-2.5 text-sm text-[#1A1A1A] focus:outline-none focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547] transition-all duration-200 appearance-none";
+// max-w-full + min-w-0 are critical on mobile: without them, the select's intrinsic
+// width (driven by its longest <option> text — e.g. "BollywoodChronicle (Instagram)")
+// can force its parent grid/flex cell wider than the viewport, which in turn pushes
+// the whole card past the right edge of the screen.
+const inputClass = "w-full max-w-full min-w-0 border border-[#E8E0D0] bg-white rounded-lg px-4 py-2.5 text-sm text-[#1A1A1A] placeholder:text-[#B0B0B0] focus:outline-none focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547] transition-all duration-200";
+const selectClass = "w-full max-w-full min-w-0 border border-[#E8E0D0] bg-white rounded-lg px-4 py-2.5 text-sm text-[#1A1A1A] focus:outline-none focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547] transition-all duration-200 appearance-none";
 
 // ─── Metrics row (shared) ─────────────────────────────────────────────────────
 
@@ -86,7 +90,7 @@ function MetricsRow({ link, onChange }: {
         {(["likes", "comments", "shares", "views"] as const).map((field, fi) => {
           const Icon = [Heart, MessageSquare, Share2, Eye][fi];
           return (
-            <div key={field} className="relative">
+            <div key={field} className="relative min-w-0">
               <Icon className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3 w-3 text-[#B0B0B0]" />
               <input type="number" min="0" value={link[field]}
                 onChange={(e) => onChange(field, e.target.value)}
@@ -97,7 +101,7 @@ function MetricsRow({ link, onChange }: {
         })}
         <input type="text" value={link.description}
           onChange={(e) => onChange("description", e.target.value)}
-          placeholder="Description" className={inputClass + " !py-2 !text-xs"} />
+          placeholder="Description" className={inputClass + " !py-2 !text-xs min-w-0"} />
       </div>
     </div>
   );
@@ -148,13 +152,13 @@ function TodaySubmittedPanel({ existing, accounts }: {
               <span className="text-[11px] font-mono text-[#7A7A7A] mt-0.5 min-w-[1.5rem]">
                 {i + 1}.
               </span>
-              <div className="flex-1 min-w-0">
+              <div className="flex-1 min-w-0 overflow-hidden">
                 {l.url ? (
                   <a
                     href={l.url}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-sm text-[#1A1A1A] hover:text-[#B8960C] truncate block"
+                    className="text-sm text-[#1A1A1A] hover:text-[#B8960C] block break-all"
                   >
                     {l.url}
                   </a>
@@ -380,7 +384,7 @@ export default function ReportPage() {
   }
 
   return (
-    <div className="max-w-3xl mx-auto space-y-6 crx-animate-fade">
+    <div className="max-w-3xl mx-auto px-3 sm:px-4 py-4 space-y-6 crx-animate-fade min-w-0">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
         <div>
@@ -528,7 +532,7 @@ export default function ReportPage() {
           return (
             <div
               key={i}
-              className={`bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.04)] border border-l-[3px] ${isUnmatched ? "border-orange-200 border-l-orange-400" : "border-[#E8E0D0] " + accentClass} p-4 space-y-3 hover:shadow-[0_4px_20px_rgba(0,0,0,0.06)] transition-all duration-200`}
+              className={`bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.04)] border border-l-[3px] ${isUnmatched ? "border-orange-200 border-l-orange-400" : "border-[#E8E0D0] " + accentClass} p-4 space-y-3 hover:shadow-[0_4px_20px_rgba(0,0,0,0.06)] transition-all duration-200 max-w-full overflow-hidden`}
               style={{ animation: "crx-slideUp 0.3s ease-out" }}
             >
               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -581,7 +585,7 @@ export default function ReportPage() {
               )}
 
               <div className="grid grid-cols-1 sm:grid-cols-[1fr_2fr] gap-3">
-                <div className="relative">
+                <div className="relative min-w-0">
                   <label className="block text-xs font-medium text-[#7A7A7A] mb-1">Account</label>
                   <select
                     value={link.accountId}
@@ -598,7 +602,7 @@ export default function ReportPage() {
                     ))}
                   </select>
                 </div>
-                <div>
+                <div className="min-w-0">
                   <label className="block text-xs font-medium text-[#7A7A7A] mb-1">
                     URL {link.isScheduled ? "(optional — fill when live)" : "*"}
                   </label>

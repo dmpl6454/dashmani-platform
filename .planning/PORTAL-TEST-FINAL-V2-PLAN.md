@@ -174,7 +174,7 @@ These require deleting / editing rows in the production DB. Will not be re-liste
 | TC-209/210 | Status renders `ACTIVE`/`ONBOARDING` uppercase; Designation literal "Assigned by Admin" | `apps/hr/src/app/profile/page.tsx:114,121` | P2 | F-STATUS-LABELS (HR) |
 | TC-091/116/182 | Three submission paths for WFH/Comp-Off: Leave dropdown + `/wfh` + `/comp-off` | `apps/hr/src/app/leave/page.tsx:102` dropdown includes WFH, plus `/wfh` and `/comp-off` pages exist | P2 | F-WFH-CONSOLIDATE |
 | TC-115 | WFH page filters all leave requests client-side | `apps/hr/src/app/wfh/page.tsx:18` filters `r.type === "WFH"` after fetching all leave | P2 | F-WFH-SERVER-FILTER |
-| TC-186 | SOP content hardcoded in component, not DB-backed | `apps/hr/src/app/sop/page.tsx:45-100` static `sections` array | P2 | F-SOP-DB-BACKED |
+| TC-186 | ~~SOP content hardcoded in component, not DB-backed~~ **FIXED 2026-05-22** — `system_settings` table + `GET/PUT /admin/sop-content`; HR page fetches + falls back to defaults; `db:push` required on Linode | `apps/hr/src/app/sop/page.tsx` now fetches from API | P2 | F-SOP-DB-BACKED ✅ |
 | TC-212 | Company stats "50+ Team Members" / "200+ Clients Served" hardcoded | `apps/hr/src/app/company/page.tsx:46-48` | P2 | F-HARDCODED-STATS |
 | TC-218 | Presentations: "Marp markdown" jargon, no live preview pane | `apps/hr/src/app/presentations/page.tsx:388-421` — only export-to-HTML preview | P3 | F-PRESENTATIONS-LIVE-PREVIEW |
 | TC-129 | Change-password policy length-only (≥6) on profile | `apps/hr/src/app/profile/page.tsx:245` — should add uppercase/digit/special-char rules | P2 | F-PASSWORD-STRENGTH |
@@ -197,7 +197,7 @@ These require deleting / editing rows in the production DB. Will not be re-liste
 | BUG-12 | Content detail "Created by" field blank | `apps/client/src/app/content/[id]/page.tsx:161` — `post.authorName` no fallback | Medium | F-CLIENT-AUTHOR-FALLBACK |
 | BUG-16 | Global search doesn't return content posts | `apps/client/src/components/command-palette.tsx:78-90` — only searches pages + projects | Medium | F-CLIENT-SEARCH-POSTS |
 | BUG-19 | Format mix chart shows "No data yet" (cascading from null formats — but BUG-11 is fixed) | `apps/client/src/app/analytics/page.tsx:143,203-204` — verify after BUG-11 fix shipped | Medium | F-CLIENT-FORMAT-MIX |
-| BUG-20 | Publishing cadence chart ~20 posts vs Total posts card shows 3 | `apps/client/src/app/analytics/page.tsx:136-150` — hardcoded `WEEKLY_DATA`; replace with API data | Medium | F-CLIENT-CADENCE-DATA |
+| BUG-20 | ~~Publishing cadence chart ~20 posts vs Total posts card shows 3~~ **FIXED 2026-05-22** — `weeklyPosts` added to `getClientContentAnalytics()`; chart now renders real published-post counts per week | `apps/client/src/app/analytics/page.tsx` + analytics service + `ClientAnalytics` type | Medium | F-CLIENT-CADENCE-DATA ✅ |
 | BUG-15 | Revision/Rejected tab missing count badge | `apps/client/src/app/content/page.tsx:65` — missing `count` prop | Low | F-CLIENT-TAB-COUNT |
 | BUG-17 | "SIZEUPLOADED" concatenated column header | `apps/client/src/app/files/page.tsx:253` — grid `80px 80px` collapses gap | Low | F-CLIENT-FILES-HEADER-GAP |
 | BUG-10 | Content breadcrumb "demo tabish. null" | Needs runtime verify; static read shows safe | NEEDS-VERIFY | — |

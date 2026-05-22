@@ -62,6 +62,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   if (isLoading) {
     return (
       <html lang="en">
+        <head>
+          <meta name="viewport" content="width=device-width, initial-scale=1" />
+        </head>
         <body>
           <div className="flex items-center justify-center min-h-screen bg-bg">
             <div
@@ -82,7 +85,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
   return (
     <html lang="en">
-      <head><title>Dashmani Portal</title></head>
+      <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>Dashmani Portal</title>
+      </head>
       <body className="bg-bg">
         <AuthContext.Provider value={{ user, login, logout, isLoading }}>
           {isPublicPage ? (

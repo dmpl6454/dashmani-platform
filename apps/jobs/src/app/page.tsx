@@ -268,9 +268,9 @@ export default function JobsPage() {
           </div>
 
           <h1 className="ds-hero-headline">
-            We&apos;re hiring people<br />
-            who want work<br />
-            to feel like <em>sukoon</em>.
+            We&apos;re building a team<br />
+            that values craft,<br />
+            calm, and real collaboration.
           </h1>
 
           <p className="ds-hero-lede">

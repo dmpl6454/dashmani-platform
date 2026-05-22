@@ -57,24 +57,28 @@ function ReportCard({ report }: { report: any }) {
           ) : (
             <ul>
               {links.map((lk: any, i: number) => {
-                const pc = platCfg(lk.account?.platform ?? "");
+                const platformSlug = (lk.platformSlug || lk.platform || "").toLowerCase();
+                const accountLabel = lk.accountHandle || lk.accountName || "—";
+                const pc = platCfg(platformSlug);
                 return (
-                  <li key={i} style={i < links.length - 1 ? { borderBottom: "1px solid rgba(26,26,26,0.05)" } : {}}>
+                  <li key={lk.id ?? i} style={i < links.length - 1 ? { borderBottom: "1px solid rgba(26,26,26,0.05)" } : {}}>
                     <div className="px-5 py-3 flex items-center gap-3">
                       <span className={`h-5 px-2 rounded-full text-[10px] font-bold inline-flex items-center shrink-0 ${pc.bg} ${pc.text}`}>
-                        {(lk.account?.platform ?? "—").toLowerCase()}
+                        {platformSlug || "—"}
                       </span>
                       <div className="flex-1 min-w-0">
-                        <p className="text-[12.5px] font-semibold text-ink truncate">{lk.account?.handle || lk.account?.name || "—"}</p>
-                        <a href={lk.url} target="_blank" rel="noopener noreferrer"
-                          className="text-[11.5px] text-indigo font-medium hover:underline truncate flex items-center gap-1">
-                          {lk.url} <ExternalLink size={10} />
-                        </a>
+                        <p className="text-[12.5px] font-semibold text-ink truncate">{accountLabel}</p>
+                        {lk.url && (
+                          <a href={lk.url} target="_blank" rel="noopener noreferrer"
+                            className="text-[11.5px] text-indigo font-medium hover:underline truncate flex items-center gap-1">
+                            {lk.url} <ExternalLink size={10} />
+                          </a>
+                        )}
                       </div>
-                      {lk.engagement && (
+                      {(lk.likes != null || lk.comments != null) && (
                         <div className="flex gap-3 text-[10.5px] text-ink-4 font-medium shrink-0">
-                          {lk.engagement.likes != null && <span>{lk.engagement.likes} likes</span>}
-                          {lk.engagement.comments != null && <span>{lk.engagement.comments} comments</span>}
+                          {lk.likes != null && <span>{lk.likes} likes</span>}
+                          {lk.comments != null && <span>{lk.comments} comments</span>}
                         </div>
                       )}
                     </div>

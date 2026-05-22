@@ -78,10 +78,12 @@ function MetricsRow({ link, onChange }: {
   onChange: (field: keyof LinkEntry, val: string) => void;
 }) {
   return (
-    <div className="flex items-center gap-2 pt-1">
-      <BarChart3 className="h-3.5 w-3.5 text-[#B0B0B0] flex-shrink-0" />
-      <span className="text-[10px] text-[#B0B0B0] uppercase tracking-wider font-medium flex-shrink-0">Metrics</span>
-      <div className="flex-1 grid grid-cols-2 sm:grid-cols-5 gap-2">
+    <div className="pt-1">
+      <div className="hidden sm:flex items-center gap-2 mb-1.5">
+        <BarChart3 className="h-3.5 w-3.5 text-[#B0B0B0]" />
+        <span className="text-[10px] text-[#B0B0B0] uppercase tracking-wider font-medium">Metrics</span>
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
         {(["likes", "comments", "shares", "views"] as const).map((field, fi) => {
           const Icon = [Heart, MessageSquare, Share2, Eye][fi];
           return (
@@ -121,7 +123,7 @@ function TodaySubmittedPanel({ existing, accounts }: {
 
   return (
     <div className="bg-[#FAF7F0] border border-[#E8E0D0] rounded-2xl p-4 space-y-3">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <CheckCircle2 className="h-4 w-4 text-emerald-600" />
           <h3 className="text-sm font-medium text-[#1A1A1A]">
@@ -160,7 +162,7 @@ function TodaySubmittedPanel({ existing, accounts }: {
                 ) : (
                   <span className="text-sm text-[#B0B0B0] italic">No URL yet</span>
                 )}
-                <div className="flex items-center gap-2 mt-0.5 text-[11px] text-[#7A7A7A]">
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-0.5 text-[11px] text-[#7A7A7A]">
                   {platform && <span className="capitalize">{platform}</span>}
                   {accountLabel && <span>· {accountLabel}</span>}
                   {l.isScheduled && (
@@ -396,7 +398,7 @@ export default function ReportPage() {
   return (
     <div className="max-w-3xl mx-auto space-y-6 crx-animate-fade">
       {/* Header */}
-      <div className="flex items-start justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
         <div>
           <div className="flex items-center gap-2 mb-2">
             <div className="h-9 w-9 rounded-xl bg-[#FFF3C4] flex items-center justify-center shadow-[0_2px_8px_rgba(245,213,71,0.2)]">
@@ -406,8 +408,8 @@ export default function ReportPage() {
           </div>
           <p className="text-[#7A7A7A] text-sm">{todayFormatted}</p>
         </div>
-        <div className="text-right space-y-1">
-          <div className="flex items-center gap-2 justify-end flex-wrap">
+        <div className="text-left sm:text-right space-y-1">
+          <div className="flex flex-wrap items-center gap-2 sm:justify-end">
             {liveCount > 0 && (
               <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium bg-[#FFF3C4] text-[#1A1A1A] border border-[#F5D547]/20">
                 <Hash className="h-3.5 w-3.5" />
@@ -452,7 +454,7 @@ export default function ReportPage() {
 
         {/* ── Smart Paste Panel ─────────────────────────────────────────── */}
         <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.04)] border border-[#E8E0D0] p-4 hover:shadow-[0_4px_20px_rgba(0,0,0,0.06)] transition-shadow">
-          <div className="flex items-center justify-between mb-2">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-2">
             <button
               type="button"
               onClick={() => { setShowPaste((v) => !v); setPasteResult(null); }}
@@ -466,12 +468,12 @@ export default function ReportPage() {
             </button>
 
             {accounts.length > 0 && (
-              <div className="flex items-center gap-2">
-                <label className="text-xs text-[#7A7A7A]">Fallback account:</label>
+              <div className="flex items-center gap-2 w-full sm:w-auto">
+                <label className="text-xs text-[#7A7A7A] shrink-0">Fallback account:</label>
                 <select
                   value={defaultAccountId}
                   onChange={(e) => setDefaultAccountId(e.target.value)}
-                  className="border border-[#E8E0D0] bg-white rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-[#F5D547] transition-all"
+                  className="border border-[#E8E0D0] bg-white rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-[#F5D547] transition-all flex-1 sm:flex-none min-w-0"
                 >
                   <option value="">None</option>
                   {accounts.map((acc: any) => (
@@ -552,9 +554,9 @@ export default function ReportPage() {
               className={`bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.04)] border border-l-[3px] ${isUnmatched ? "border-orange-200 border-l-orange-400" : "border-[#E8E0D0] " + accentClass} p-4 space-y-3 hover:shadow-[0_4px_20px_rgba(0,0,0,0.06)] transition-all duration-200`}
               style={{ animation: "crx-slideUp 0.3s ease-out" }}
             >
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span className="h-6 w-6 rounded-md bg-[#F7ECD5] flex items-center justify-center text-xs font-semibold text-[#7A7A7A]">{i + 1}</span>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-wrap items-center gap-2 min-w-0">
+                  <span className="h-6 w-6 rounded-md bg-[#F7ECD5] flex items-center justify-center text-xs font-semibold text-[#7A7A7A] shrink-0">{i + 1}</span>
                   <h3 className="font-medium text-[#1A1A1A] text-sm">Link #{i + 1}</h3>
                   {link.matchStatus === "auto" && (
                     <span className="text-[10px] text-green-600 font-medium flex items-center gap-0.5">
@@ -570,7 +572,7 @@ export default function ReportPage() {
                     <span className="text-[10px] uppercase tracking-wider text-[#B0B0B0] font-medium">{platform}</span>
                   )}
                 </div>
-                <div className="flex items-center gap-1">
+                <div className="flex items-center gap-1 shrink-0">
                   {/* Scheduled toggle */}
                   <button
                     type="button"

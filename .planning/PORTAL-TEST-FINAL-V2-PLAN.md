@@ -1,6 +1,43 @@
 # Portal Test — Final v3: Consolidated Audit & Remediation Plan
 
-**Last updated:** 2026-05-21
+**Last updated:** 2026-05-22 (code-level reconciliation pass)
+
+---
+
+## 0. 2026-05-22 RECONCILIATION — read this first
+
+A code-level audit on 2026-05-22 confirmed that several items previously listed as "open P0/P1" in §1 below are actually **already shipped**. The §1 table and §3 register reflect the older 2026-05-21 view and have not been line-edited; treat this §0 block as the current truth.
+
+### Confirmed RESOLVED (do not re-open, do not re-fix)
+
+| Item | Evidence (file:line) |
+|---|---|
+| **Employee count mismatch (#9, #71)** — "78 Active vs 50 total" on dashboard | `apps/api/src/services/analytics.service.ts:19-23` defines `employeeWhere` (status: ACTIVE, deletedAt: null, roles notIn Admin/Super Admin) used consistently for all employee counts. Same convention in `admin-reports.routes.ts`. |
+| **Self-approval of leave (#22, #66)** — admin could approve their own leave | `apps/api/src/services/leave.service.ts:82-102` throws 403 if `leaveReq.employeeId === approvedBy`. Same guard on reject path. |
+| **UTM params in account names (#36)** | `packages/shared/src/utils/sanitize.ts:24-26` exports `sanitizeAccountHandle()` (strips `?…` via `.split("?")[0]`); called in `account.service.ts:84, :107` on all handle writes. |
+| **No destructive confirm on job delete (#48)** | `apps/internal/src/app/jobs/page.tsx:7,56,451-455` — `ConfirmDialog` wired with `deleteJobId` state. |
+| **Password field autocomplete (#59)** | Internal `apps/internal/src/app/login/page.tsx:214` has `autoComplete="current-password"`. HR login same. (Admin add-employee form still uncovered but low priority.) |
+| **F-LEAVE-TZ-BUG** (previously listed P0) | `apps/api/src/services/leave.service.ts:17-20` parses with `setHours(0,0,0,0)`; form sends `YYYY-MM-DD`. No IST→UTC day shift. |
+| **BUG-23 Client mobile sidebar** | Shipped 2026-05-21 (see CLAUDE.md § Fixed since last update). |
+| **BUG-20 Client cadence chart real data** | Shipped 2026-05-22 — uses real `weeklyPosts` from `getClientContentAnalytics()`. |
+| **TC-186 SOP DB-backed** | Shipped 2026-05-22 — `system_settings` table + `GET/PUT /admin/sop-content`. |
+
+### Actually still open (smaller list than §1 implies)
+
+| Item | Severity | Notes |
+|---|---|---|
+| **#26 "Keep me signed in" checkbox** | P3 (dormant, not a security bug) | Renders on internal login but value is never read by login handler. Either wire it up to extend refresh token TTL, or remove the checkbox. |
+| **HR password strength enforcement** | P2 | `apps/hr/src/app/login/page.tsx` has `pwScore()` strength meter for display only — form does not reject weak passwords. Add submit-time validation gate. |
+| **F-TOKEN-STORAGE** | XL, deferred | localStorage → httpOnly cookies. Cross-portal blast radius. Explicitly deferred 2026-05-21. |
+| **F-RESPONSIVE-ALL-PORTALS** | XL, deferred | Full 375px sweep. Mobile sidebars already work via hamburger drawer. |
+| **Client portal BUG-24 (resize logout)** | NEEDS-VERIFY | Code in `apps/client/src/app/layout.tsx:17-27` looks correct (effect depends on `pathname`, not viewport). Needs a manual browser repro to confirm closed. |
+| **HR daily report — "links submitted today" history panel** | UX, planned | See [`HR-REPORT-LINK-HISTORY-PLAN.md`](HR-REPORT-LINK-HISTORY-PLAN.md). Frontend-only, no API change. |
+
+### Reconciliation rule
+
+If you read an item in §1 / §3 / Wave A–D below that contradicts §0, **§0 wins.** Do not regress by re-implementing already-shipped fixes from the old §3 register.
+
+---
 **Sources consolidated into this document:**
 
 | Source | Items | Target portal | Date |

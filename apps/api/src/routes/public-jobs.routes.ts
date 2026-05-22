@@ -3,7 +3,7 @@ import { success } from "../utils/response";
 import * as jobListingService from "../services/job-listing.service";
 import { uploadDocument, toUploadUrl } from "../middleware/upload";
 import { sendApplicationNotification, sendEmail, notifyHrByEmail } from "../services/email.service";
-import { notifyAdmins } from "../services/notification.service";
+import { dispatchNotification } from "../services/notification.service";
 import { prisma } from "@dashmani/db";
 
 const router = Router();
@@ -53,12 +53,12 @@ router.post(
 
       // Notify admins about new application (fire and forget)
       const job = await jobListingService.getJobListingById(req.params.id);
-      notifyAdmins(
-        "GENERAL",
-        "New Job Application",
-        `${req.body.applicantName} applied for ${job?.title || "a position"}`,
-        { applicationId: application.id, jobId: req.params.id, applicantName: req.body.applicantName, applicantEmail: req.body.applicantEmail }
-      ).catch((err) => console.error("Admin notification failed:", err));
+      dispatchNotification({
+        type: "GENERAL",
+        title: "New Job Application",
+        message: `${req.body.applicantName} applied for ${job?.title || "a position"}`,
+        metadata: { applicationId: application.id, jobId: req.params.id, applicantName: req.body.applicantName, applicantEmail: req.body.applicantEmail },
+      }).catch((err) => console.error("Admin notification failed:", err));
 
       // Send email notifications (don't await — fire and forget)
       sendApplicationNotification({
@@ -113,7 +113,7 @@ router.post(
         { label: "Department", value: department || "—" },
       ], "/internships").catch(() => {});
 
-      notifyAdmins("GENERAL", "New Internship Application", `${name} applied for a ${duration || "6 month"} internship${department ? ` in ${department}` : ""}`, { internshipId: app.id }).catch(() => {});
+      dispatchNotification({ type: "GENERAL", title: "New Internship Application", message: `${name} applied for a ${duration || "6 month"} internship${department ? ` in ${department}` : ""}`, metadata: { internshipId: app.id } }).catch(() => {});
 
       // Confirmation email to applicant
       sendEmail({ to: email, subject: "Internship Application Received - Digital Sukoon", html: `<p>Hi ${name},</p><p>Thank you for applying for the internship at Digital Sukoon. We have received your application and will review it shortly.</p><p>— Digital Sukoon HR Team</p>` }).catch(() => {});

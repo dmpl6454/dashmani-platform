@@ -12,6 +12,7 @@ import {
   Users, LayoutGrid, ExternalLink, UserMinus, Check, RefreshCw,
 } from "lucide-react";
 import { PlatformIcon } from "@/lib/platform-icon";
+import { ModalPortal } from "@/components/modal-portal";
 
 type Tab = "accounts" | "by-employee" | "platforms";
 
@@ -475,33 +476,35 @@ function AccountsPageInner() {
 
   return (
     <div className="space-y-5 pop-in">
-      {/* Modals */}
-      {(createOpen || editTarget) && (
-        <AccountPanel
-          account={editTarget ?? undefined}
-          platforms={platforms}
-          onClose={() => { setCreateOpen(false); setEditTarget(null); }}
-          onSaved={() => { setCreateOpen(false); setEditTarget(null); mutate(); }}
-        />
-      )}
-      {assignOpen && (
-        <AssignModal
-          accounts={accounts}
-          employees={employees}
-          preselectedEmployeeId={assignEmployeeId}
-          preselectedAccountId={assignAccountId}
-          onClose={() => { setAssignOpen(false); setAssignEmployeeId(undefined); setAssignAccountId(undefined); }}
-          onDone={() => mutate()}
-        />
-      )}
-      {deleteTarget && (
-        <DeleteModal
-          target={deleteTarget}
-          onCancel={() => setDeleteTarget(null)}
-          onConfirm={handleDelete}
-          deleting={deleting}
-        />
-      )}
+      {/* Modals — portalled to document.body so fixed positioning isn't affected by any transformed ancestor */}
+      <ModalPortal>
+        {(createOpen || editTarget) && (
+          <AccountPanel
+            account={editTarget ?? undefined}
+            platforms={platforms}
+            onClose={() => { setCreateOpen(false); setEditTarget(null); }}
+            onSaved={() => { setCreateOpen(false); setEditTarget(null); mutate(); }}
+          />
+        )}
+        {assignOpen && (
+          <AssignModal
+            accounts={accounts}
+            employees={employees}
+            preselectedEmployeeId={assignEmployeeId}
+            preselectedAccountId={assignAccountId}
+            onClose={() => { setAssignOpen(false); setAssignEmployeeId(undefined); setAssignAccountId(undefined); }}
+            onDone={() => mutate()}
+          />
+        )}
+        {deleteTarget && (
+          <DeleteModal
+            target={deleteTarget}
+            onCancel={() => setDeleteTarget(null)}
+            onConfirm={handleDelete}
+            deleting={deleting}
+          />
+        )}
+      </ModalPortal>
 
       {/* Page header */}
       <div className="flex items-start justify-between gap-4 flex-wrap">

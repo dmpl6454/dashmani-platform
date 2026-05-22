@@ -1,4 +1,51 @@
 import { prisma } from "@dashmani/db";
+import type { NotificationType } from "@dashmani/db";
+import { NOTIFICATION_AUDIENCE } from "./notification-routing";
+
+/**
+ * Route a notification to the correct audience(s) based on type.
+ * Replaces the old notifyAdmins() pattern — use this for all new triggers.
+ */
+export async function dispatchNotification(opts: {
+  type: NotificationType;
+  title: string;
+  message: string;
+  recipientUserId?: string;
+  metadata?: Record<string, any>;
+}) {
+  const audiences = NOTIFICATION_AUDIENCE[opts.type] ?? ["ADMINS"];
+  const userIds = new Set<string>();
+
+  if (audiences.includes("ADMINS")) {
+    const admins = await prisma.user.findMany({
+      where: {
+        status: "ACTIVE",
+        deletedAt: null,
+        roles: { some: { role: { name: { in: ["Super Admin", "Admin"] } } } },
+      },
+      select: { id: true },
+    });
+    admins.forEach((a) => userIds.add(a.id));
+  }
+
+  if (audiences.includes("RECIPIENT") && opts.recipientUserId) {
+    userIds.add(opts.recipientUserId);
+  }
+
+  // ALL_EMPLOYEES is handled by announcement.service.ts directly — skip here.
+
+  if (userIds.size === 0) return;
+
+  await prisma.notification.createMany({
+    data: Array.from(userIds).map((userId) => ({
+      userId,
+      type: opts.type,
+      title: opts.title,
+      message: opts.message,
+      metadata: opts.metadata ?? {},
+    })),
+  });
+}
 
 export async function createNotification(
   userId: string,
@@ -12,7 +59,9 @@ export async function createNotification(
   });
 }
 
-// Create a notification for ALL admin users (Super Admin role)
+/**
+ * @deprecated Use dispatchNotification() instead. This remains as a fallback for any caller not yet migrated.
+ */
 export async function notifyAdmins(
   type: string,
   title: string,

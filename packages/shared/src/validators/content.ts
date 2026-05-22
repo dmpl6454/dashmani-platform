@@ -6,8 +6,8 @@ export const createContentPostSchema = z.object({
   caption: safeString.pipe(z.string().max(5000)).optional(),
   mediaUrls: z.array(z.string().url("Each media URL must be a valid URL")).max(10).optional(),
   projectId: z.string().uuid("Invalid project ID"),
-  accountId: z.string().uuid("Invalid account ID").optional(),
-  scheduledAt: z.string().datetime({ offset: true }).optional(),
+  accountId: z.string().uuid("Account is required"),
+  scheduledAt: z.string().datetime({ offset: true }),
 });
 
 export const updateContentPostSchema = z.object({

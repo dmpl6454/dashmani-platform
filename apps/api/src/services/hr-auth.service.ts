@@ -4,7 +4,7 @@ import bcrypt from "bcrypt";
 import { AppError } from "../middleware/error-handler";
 import { signAccessToken, signRefreshToken, verifyRefreshToken } from "../utils/jwt";
 import type { JwtPayload } from "@dashmani/shared";
-import { notifyAdmins } from "./notification.service";
+import { dispatchNotification } from "./notification.service";
 
 function generateOtp(): string {
   return Math.floor(100000 + Math.random() * 900000).toString();
@@ -72,12 +72,12 @@ export async function registerEmployee(data: {
         update: {},
       });
 
-      notifyAdmins(
-        "GENERAL",
-        "New Employee Registration",
-        `${data.name} (${email}) has created an account and is now active`,
-        { userId: updated.id, name: data.name, email }
-      ).catch((err) => console.error("Admin notification failed:", err));
+      dispatchNotification({
+        type: "GENERAL",
+        title: "New Employee Registration",
+        message: `${data.name} (${email}) has created an account and is now active`,
+        metadata: { userId: updated.id, name: data.name, email },
+      }).catch((err) => console.error("Admin notification failed:", err));
 
       return {
         message: "Account created successfully. You can now log in.",
@@ -113,12 +113,12 @@ export async function registerEmployee(data: {
   });
 
   // Notify admins about new registration (fire and forget)
-  notifyAdmins(
-    "GENERAL",
-    "New Employee Registration",
-    `${data.name} (${email}) has created an account and is now active`,
-    { userId: user.id, name: data.name, email }
-  ).catch((err) => console.error("Admin notification failed:", err));
+  dispatchNotification({
+    type: "GENERAL",
+    title: "New Employee Registration",
+    message: `${data.name} (${email}) has created an account and is now active`,
+    metadata: { userId: user.id, name: data.name, email },
+  }).catch((err) => console.error("Admin notification failed:", err));
 
   return {
     message: "Account created successfully. You can now log in.",

@@ -1,6 +1,10 @@
 import { prisma } from "@dashmani/db";
 import { AppError } from "../middleware/error-handler";
 
+export async function countTeams() {
+  return prisma.orgUnit.count({ where: { parentId: null } });
+}
+
 export async function listOrgUnits(parentId?: string) {
   return prisma.orgUnit.findMany({
     where: parentId ? { parentId } : { parentId: null },

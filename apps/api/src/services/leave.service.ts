@@ -13,6 +13,10 @@ export async function createLeaveRequest(data: {
   endDate: string;
   type: "CASUAL" | "SICK" | "EARNED" | "UNPAID" | "WFH" | "COMP_OFF";
   reason: string;
+  attachmentUrl?: string;
+  attachmentName?: string;
+  attachmentMime?: string;
+  attachmentSize?: number;
 }) {
   const startDate = new Date(data.startDate);
   startDate.setHours(0, 0, 0, 0);
@@ -46,6 +50,12 @@ export async function createLeaveRequest(data: {
       type: data.type,
       reason: data.reason,
       status: "PENDING",
+      ...(data.attachmentUrl ? {
+        attachmentUrl: data.attachmentUrl,
+        attachmentName: data.attachmentName,
+        attachmentMime: data.attachmentMime,
+        attachmentSize: data.attachmentSize,
+      } : {}),
     },
   });
 }

@@ -7,7 +7,7 @@ import {
   Briefcase, FolderOpen, FileEdit, TrendingUp, FileText, UserPlus, Megaphone,
   ChevronLeft, ChevronRight, Wallet, FileSignature, Calendar, BriefcaseBusiness,
   Bug, Sparkles, Laptop, GraduationCap, AlertCircle, Settings, LayoutGrid,
-  Menu, X as CloseIcon,
+  Menu, X as CloseIcon, CalendarOff,
 } from "lucide-react";
 import { useOverviewStats } from "@/lib/hooks/use-analytics";
 import { useState, useEffect } from "react";
@@ -24,6 +24,7 @@ const primaryNav = [
   { href: "/clients",       label: "Clients",          icon: Briefcase,       group: "Business" },
   { href: "/projects",      label: "Projects",         icon: FolderOpen,      group: null },
   { href: "/attendance",    label: "Attendance",       icon: Clock,           group: "Analytics" },
+  { href: "/leave",         label: "Leave",            icon: CalendarOff,     group: null },
   { href: "/approvals",     label: "Approvals",        icon: CheckSquare,     group: null },
   { href: "/analytics",     label: "Analytics",        icon: TrendingUp,      group: null },
   { href: "/reports",       label: "Reports",          icon: FileText,        group: null },

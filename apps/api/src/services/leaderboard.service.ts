@@ -1,8 +1,11 @@
 import { prisma } from "@dashmani/db";
 import { calcStreaks } from "../utils/streak";
+import { employeeWhere } from "./analytics.service";
 
 export async function getLeaderboard(startDate?: string, endDate?: string) {
-  const where: any = {};
+  const where: any = {
+    employee: employeeWhere,
+  };
   if (startDate || endDate) {
     where.date = {};
     if (startDate) where.date.gte = new Date(startDate);

@@ -1,4 +1,5 @@
 import { prisma } from "@dashmani/db";
+import { countTeams } from "./team.service";
 
 // ===== Date helpers =====
 // @db.Date columns are stored as UTC-midnight timestamps. Daily reports are
@@ -16,7 +17,7 @@ function todayDate(): Date {
 
 // ===== Overview Stats =====
 
-const employeeWhere = {
+export const employeeWhere = {
   status: "ACTIVE" as const,
   deletedAt: null,
   roles: { some: { role: { name: { notIn: ["Super Admin", "Admin"] } } } },
@@ -64,7 +65,7 @@ export async function getOverviewStats(linkStartDate?: string, linkEndDate?: str
     // Count all non-deleted users (matches what the /employees page shows)
     prisma.user.count({ where: { deletedAt: null } }),
     // Count top-level teams only (matches what the /teams page shows)
-    prisma.orgUnit.count({ where: { parentId: null } }),
+    countTeams(),
     prisma.attendance.count({ where: { date: today, status: { in: ["PRESENT", "LATE", "HALF_DAY"] } } }),
     prisma.task.count({ where: { status: "DONE", completedAt: { gte: monthStart } } }),
     prisma.project.count({ where: { status: "ACTIVE" } }),

@@ -23,6 +23,8 @@ export function TaskForm({ task }: TaskFormProps) {
   });
   const [error, setError] = useState("");
   const [titleError, setTitleError] = useState("");
+  const [accountError, setAccountError] = useState("");
+  const [dueDateError, setDueDateError] = useState("");
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -33,11 +35,11 @@ export function TaskForm({ task }: TaskFormProps) {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
-    if (!form.title.trim()) {
-      setTitleError("Title is required");
-      return;
-    }
-    setTitleError("");
+    let hasError = false;
+    if (!form.title.trim()) { setTitleError("Title is required"); hasError = true; } else { setTitleError(""); }
+    if (!isEdit && !form.accountId) { setAccountError("Account is required"); hasError = true; } else { setAccountError(""); }
+    if (!isEdit && !form.dueDate) { setDueDateError("Due date is required"); hasError = true; } else { setDueDateError(""); }
+    if (hasError) return;
     setLoading(true);
     try {
       const payload: any = {
@@ -105,7 +107,10 @@ export function TaskForm({ task }: TaskFormProps) {
                 <option value="CRITICAL">Critical</option>
               </select>
             </div>
-            <Input label="Due Date" type="date" value={form.dueDate} onChange={(e) => setForm({ ...form, dueDate: e.target.value })} className="border border-[#E8E0D0] rounded-lg focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547]" />
+            <div>
+              <Input label="Due Date" type="date" value={form.dueDate} onChange={(e) => { setForm({ ...form, dueDate: e.target.value }); if (dueDateError) setDueDateError(""); }} className={`border rounded-lg focus:ring-2 focus:border-[#F5D547] ${dueDateError ? "border-red-400 focus:ring-red-200" : "border-[#E8E0D0] focus:ring-[#F5D547]"}`} />
+              {dueDateError && <p role="alert" className="mt-1 text-xs text-red-500 font-semibold">{dueDateError}</p>}
+            </div>
           </div>
           <div className="space-y-1">
             <label className="text-sm font-medium text-[#1A1A1A]">Assign To</label>
@@ -121,17 +126,18 @@ export function TaskForm({ task }: TaskFormProps) {
             </select>
           </div>
           <div className="space-y-1">
-            <label className="text-sm font-medium text-[#1A1A1A]">Linked Account</label>
+            <label className="text-sm font-medium text-[#1A1A1A]">Linked Account{!isEdit && <span className="text-red-500 ml-0.5">*</span>}</label>
             <select
-              className="flex h-10 w-full rounded-lg border border-[#E8E0D0] bg-white px-3 py-2 text-sm focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547] outline-none"
+              className={`flex h-10 w-full rounded-lg border bg-white px-3 py-2 text-sm focus:ring-2 focus:border-[#F5D547] outline-none ${accountError ? "border-red-400 focus:ring-red-200" : "border-[#E8E0D0] focus:ring-[#F5D547]"}`}
               value={form.accountId}
-              onChange={(e) => setForm({ ...form, accountId: e.target.value })}
+              onChange={(e) => { setForm({ ...form, accountId: e.target.value }); if (accountError) setAccountError(""); }}
             >
-              <option value="">None</option>
+              <option value="">Select account...</option>
               {accounts.map((acc: any) => (
                 <option key={acc.id} value={acc.id}>{acc.platform?.name}: {acc.handle}</option>
               ))}
             </select>
+            {accountError && <p role="alert" className="mt-1 text-xs text-red-500 font-semibold">{accountError}</p>}
           </div>
           <div className="flex gap-3">
             <Button type="submit" disabled={loading} className="bg-[#1A1A1A] text-white rounded-full hover:bg-[#2B2B2B]">

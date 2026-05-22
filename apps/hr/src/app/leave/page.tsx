@@ -1,12 +1,12 @@
 "use client";
-import { useState } from "react";
-import { apiFetch } from "@/lib/api";
+import { useState, useRef } from "react";
+import { apiFetch, apiUpload } from "@/lib/api";
 import useSWR, { mutate } from "swr";
-import { Check, X, Calendar } from "lucide-react";
+import { Check, X, Calendar, Paperclip } from "lucide-react";
 import { Topstrip } from "@/components/portal-shell";
 
 interface LeaveBalance { casual: { total: number; used: number; balance: number }; sick: { total: number; used: number; balance: number }; earned: { total: number; used: number; balance: number }; }
-interface LeaveRequest { id: string; startDate: string; endDate: string; type: string; reason: string; status: "PENDING" | "APPROVED" | "REJECTED"; createdAt: string; }
+interface LeaveRequest { id: string; startDate: string; endDate: string; type: string; reason: string; status: "PENDING" | "APPROVED" | "REJECTED"; createdAt: string; attachmentUrl?: string; attachmentName?: string; }
 
 const fetcher = (url: string) => apiFetch<any>(url).then(r => r.data);
 
@@ -28,17 +28,73 @@ export default function LeavePage() {
   const [success, setSuccess] = useState("");
   const [error, setError] = useState("");
 
+  // Attachment state (SICK leave)
+  const [attachmentFile, setAttachmentFile] = useState<File | null>(null);
+  const [uploadedAttachment, setUploadedAttachment] = useState<{ url: string; name: string; mime: string; size: number } | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const isSick = form.type === "SICK";
+
+  async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setAttachmentFile(file);
+    setUploading(true);
+    setError("");
+    try {
+      const fd = new FormData();
+      fd.append("attachment", file);
+      const res = await apiUpload<any>("/hr/leave/upload-attachment", fd);
+      setUploadedAttachment(res?.data ?? res);
+    } catch (err: any) {
+      setError(err.message || "File upload failed");
+      setAttachmentFile(null);
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  function clearAttachment() {
+    setAttachmentFile(null);
+    setUploadedAttachment(null);
+    if (fileRef.current) fileRef.current.value = "";
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setSubmitting(true); setError(""); setSuccess("");
+    setError(""); setSuccess("");
+
+    // Require attachment for SICK leave
+    if (isSick && !uploadedAttachment) {
+      setError("Please upload a medical certificate for sick leave.");
+      return;
+    }
+
+    setSubmitting(true);
     try {
-      await apiFetch("/hr/leave-requests", { method: "POST", body: JSON.stringify({ startDate: form.startDate, endDate: form.endDate, type: form.type, reason: form.reason }) });
+      const body: any = {
+        startDate: form.startDate,
+        endDate: form.endDate,
+        type: form.type,
+        reason: form.reason,
+      };
+      if (uploadedAttachment) {
+        body.attachmentUrl = uploadedAttachment.url;
+        body.attachmentName = uploadedAttachment.name;
+        body.attachmentMime = uploadedAttachment.mime;
+        body.attachmentSize = uploadedAttachment.size;
+      }
+      await apiFetch("/hr/leave-requests", { method: "POST", body: JSON.stringify(body) });
       setSuccess("Leave request submitted!");
       setForm({ type: "CASUAL", startDate: "", endDate: "", reason: "" });
-      mutate("/hr/leave-requests"); mutate("/hr/leave-balance");
+      clearAttachment();
+      mutate("/hr/leave-requests");
+      mutate("/hr/leave-balance");
     } catch (err: any) {
       setError(err.message || "Failed to submit");
-    } finally { setSubmitting(false); }
+    } finally {
+      setSubmitting(false); }
   }
 
   const balanceCards = [
@@ -98,7 +154,14 @@ export default function LeavePage() {
               <div className="grid grid-cols-3 gap-4">
                 <div>
                   <label className="block text-[11.5px] font-bold text-ink-3 mb-1.5 uppercase tracking-wider">Type</label>
-                  <select value={form.type} onChange={e => setForm(f => ({ ...f, type: e.target.value }))} className={selectCls}>
+                  <select
+                    value={form.type}
+                    onChange={e => {
+                      setForm(f => ({ ...f, type: e.target.value }));
+                      clearAttachment();
+                    }}
+                    className={selectCls}
+                  >
                     {["CASUAL","SICK","EARNED","UNPAID","WFH","COMP_OFF"].map(t => <option key={t} value={t}>{t.replace("_", " ")}</option>)}
                   </select>
                 </div>
@@ -117,7 +180,44 @@ export default function LeavePage() {
                   className="w-full px-3 py-2.5 text-[13.5px] font-medium rounded-xl bg-bg border-2 border-ink/10 focus:border-indigo outline-none resize-none placeholder:text-ink-4"
                   placeholder="Describe the reason for your leave…" />
               </div>
-              <button type="submit" disabled={submitting}
+
+              {/* Medical certificate — required for SICK leave */}
+              {isSick && (
+                <div className="v3-card-sm border-2 border-dashed border-ink/15 rounded-xl p-4 space-y-2">
+                  <label className="block text-[11.5px] font-bold text-ink-3 uppercase tracking-wider">
+                    Medical Certificate <span className="text-danger">*</span>
+                  </label>
+                  <p className="text-[11px] text-ink-4">Required for sick leave. Upload a PDF or image (max 10 MB).</p>
+                  {uploadedAttachment ? (
+                    <div className="flex items-center gap-2 bg-success-bg border border-success/20 rounded-lg px-3 py-2">
+                      <Check size={13} className="text-success shrink-0" />
+                      <span className="text-[12px] font-medium text-success flex-1 truncate">{uploadedAttachment.name}</span>
+                      <button type="button" onClick={clearAttachment} className="text-ink-4 hover:text-danger transition-colors">
+                        <X size={13} />
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => fileRef.current?.click()}
+                      disabled={uploading}
+                      className="inline-flex items-center gap-2 px-4 h-9 rounded-xl border-2 border-ink/15 text-[12.5px] font-semibold text-ink-3 hover:border-indigo hover:text-ink transition-colors disabled:opacity-50"
+                    >
+                      <Paperclip size={13} />
+                      {uploading ? "Uploading…" : "Choose file"}
+                    </button>
+                  )}
+                  <input
+                    ref={fileRef}
+                    type="file"
+                    accept=".pdf,.jpg,.jpeg,.png"
+                    hidden
+                    onChange={handleFileChange}
+                  />
+                </div>
+              )}
+
+              <button type="submit" disabled={submitting || uploading}
                 className="btn-3d inline-flex items-center gap-2 px-5 h-10 rounded-xl bg-ink text-white text-[13px] font-semibold border-2 border-ink disabled:opacity-50">
                 {submitting ? "Submitting…" : "Submit Request"}
               </button>
@@ -149,7 +249,13 @@ export default function LeavePage() {
                             <span className="text-[13.5px] font-semibold text-ink">{r.type.replace("_", " ")}</span>
                             <span className="text-[11.5px] text-ink-3 font-medium">{fmtDate(r.startDate)} → {fmtDate(r.endDate)}</span>
                           </div>
-                          <p className="text-[12px] text-ink-3 mt-0.5 font-medium">"{r.reason}"</p>
+                          <p className="text-[12px] text-ink-3 mt-0.5 font-medium">&quot;{r.reason}&quot;</p>
+                          {r.attachmentName && (
+                            <p className="text-[11px] text-ink-4 mt-0.5 flex items-center gap-1">
+                              <Paperclip size={10} />
+                              {r.attachmentName}
+                            </p>
+                          )}
                         </div>
                         <span className={`inline-flex h-6 px-2.5 rounded-full text-[11px] font-semibold items-center border shrink-0 ${sc}`}>{r.status}</span>
                       </div>

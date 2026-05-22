@@ -70,12 +70,12 @@ router.post(
         mimeType: req.file!.mimetype,
       });
       const user = await prisma.user.findUnique({ where: { id: req.user!.userId }, select: { name: true } });
-      notificationService.notifyAdmins(
-        "GENERAL",
-        "New Document Upload",
-        `${user?.name || "An employee"} uploaded a ${req.body.documentType} document for review`,
-        { documentId: doc.id }
-      ).catch(() => {});
+      notificationService.dispatchNotification({
+        type: "GENERAL",
+        title: "New Document Upload",
+        message: `${user?.name || "An employee"} uploaded a ${req.body.documentType} document for review`,
+        metadata: { documentId: doc.id },
+      }).catch(() => {});
       notifyHrByEmail("New Document Upload", [
         { label: "Employee", value: user?.name || "Unknown" },
         { label: "Type", value: req.body.documentType },
@@ -237,22 +237,46 @@ router.get("/hr/calendar", authenticateHr, async (req: Request, res: Response, n
 
 // ===== Leave Requests =====
 
+// POST /hr/leave/upload-attachment — upload a medical document before submitting a leave request
+router.post("/hr/leave/upload-attachment", authenticateHr, uploadDocument.single("attachment"), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ success: false, error: { code: "NO_FILE", message: "No file uploaded" } });
+    }
+    return success(res, {
+      url: toUploadUrl(req.file.path),
+      name: req.file.originalname,
+      mime: req.file.mimetype,
+      size: req.file.size,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // POST /hr/leave-requests — create a leave request
 router.post("/hr/leave-requests", authenticateHr, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const leaveRequest = await leaveService.createLeaveRequest({
-      ...req.body,
       employeeId: req.user!.userId,
+      startDate: req.body.startDate,
+      endDate: req.body.endDate,
+      type: req.body.type,
+      reason: req.body.reason,
+      attachmentUrl: req.body.attachmentUrl,
+      attachmentName: req.body.attachmentName,
+      attachmentMime: req.body.attachmentMime,
+      attachmentSize: req.body.attachmentSize ? Number(req.body.attachmentSize) : undefined,
     });
     // Notify admins about the new request
     const user = await prisma.user.findUnique({ where: { id: req.user!.userId }, select: { name: true } });
     const typeLabel = (req.body.type || "LEAVE").replace("_", " ");
-    notificationService.notifyAdmins(
-      "GENERAL",
-      `New ${typeLabel} Request`,
-      `${user?.name || "An employee"} has requested ${typeLabel} from ${req.body.startDate} to ${req.body.endDate || req.body.startDate}`,
-      { leaveRequestId: leaveRequest.id, type: req.body.type }
-    ).catch(() => {});
+    notificationService.dispatchNotification({
+      type: "LEAVE_REQUEST",
+      title: `New ${typeLabel} Request`,
+      message: `${user?.name || "An employee"} has requested ${typeLabel} from ${req.body.startDate} to ${req.body.endDate || req.body.startDate}`,
+      metadata: { leaveRequestId: leaveRequest.id, type: req.body.type },
+    }).catch(() => {});
     // Email notifications
     const empName = user?.name || "An employee";
     notifyHrByEmail(`New ${typeLabel} Request`, [
@@ -339,12 +363,12 @@ router.post("/hr/extra-hours", authenticateHr, async (req: Request, res: Respons
   try {
     const result = await extraWorkService.createExtraWorkHour({ ...req.body, employeeId: req.user!.userId });
     const user = await prisma.user.findUnique({ where: { id: req.user!.userId }, select: { name: true } });
-    notificationService.notifyAdmins(
-      "GENERAL",
-      "Extra Hours Request",
-      `${user?.name || "An employee"} logged ${req.body.hours}h extra work for approval`,
-      { extraHourId: result.id }
-    ).catch(() => {});
+    notificationService.dispatchNotification({
+      type: "GENERAL",
+      title: "Extra Hours Request",
+      message: `${user?.name || "An employee"} logged ${req.body.hours}h extra work for approval`,
+      metadata: { extraHourId: result.id },
+    }).catch(() => {});
     return success(res, result, undefined, 201);
   } catch (err) { next(err); }
 });
@@ -450,12 +474,12 @@ router.post("/hr/expenses", authenticateHr, async (req: Request, res: Response, 
       },
     });
     const user = await prisma.user.findUnique({ where: { id: req.user!.userId }, select: { name: true } });
-    notificationService.notifyAdmins(
-      "GENERAL",
-      "New Expense Claim",
-      `${user?.name || "An employee"} submitted an expense claim of ₹${req.body.amount} for "${req.body.title}"`,
-      { expenseId: expense.id }
-    ).catch(() => {});
+    notificationService.dispatchNotification({
+      type: "GENERAL",
+      title: "New Expense Claim",
+      message: `${user?.name || "An employee"} submitted an expense claim of ₹${req.body.amount} for "${req.body.title}"`,
+      metadata: { expenseId: expense.id },
+    }).catch(() => {});
     notifyHrByEmail("New Expense Claim", [
       { label: "Employee", value: user?.name || "Unknown" },
       { label: "Title", value: req.body.title },
@@ -664,7 +688,7 @@ router.post("/hr/complaints", authenticateHr, async (req: Request, res: Response
       data: { employeeId: req.user!.userId, subject, description, category: category || "GENERAL" },
     });
     const user = await prisma.user.findUnique({ where: { id: req.user!.userId }, select: { name: true } });
-    notificationService.notifyAdmins("GENERAL", "New Employee Complaint", `${user?.name || "An employee"} submitted a complaint: "${subject}"`, { complaintId: complaint.id }).catch(() => {});
+    notificationService.dispatchNotification({ type: "GENERAL", title: "New Employee Complaint", message: `${user?.name || "An employee"} submitted a complaint: "${subject}"`, metadata: { complaintId: complaint.id } }).catch(() => {});
     notifyHrByEmail("New Employee Complaint", [
       { label: "Employee", value: user?.name || "Unknown" },
       { label: "Subject", value: subject },
@@ -706,7 +730,7 @@ router.post("/hr/joining-date", authenticateHr, async (req: Request, res: Respon
       create: { userId: req.user!.userId, joiningDate: new Date(joiningDate) },
     });
     const user = await prisma.user.findUnique({ where: { id: req.user!.userId }, select: { name: true } });
-    notificationService.notifyAdmins("GENERAL", "Joining Date Submitted", `${user?.name || "An employee"} submitted their joining date: ${joiningDate}`, {}).catch(() => {});
+    notificationService.dispatchNotification({ type: "GENERAL", title: "Joining Date Submitted", message: `${user?.name || "An employee"} submitted their joining date: ${joiningDate}`, metadata: {} }).catch(() => {});
     notifyHrByEmail("Joining Date Submitted", [
       { label: "Employee", value: user?.name || "Unknown" },
       { label: "Joining Date", value: joiningDate },

@@ -487,6 +487,17 @@ export default function JobsPage() {
         </div>
       </section>
 
+      {/* ───── CONTACT BLOCK ───── */}
+      <section className="ds-contact-block" style={{ padding: "40px 24px", textAlign: "center", borderTop: "1px solid rgba(11,15,58,0.08)", maxWidth: 640, margin: "0 auto" }}>
+        <p style={{ fontSize: 15, color: "var(--muted, #666)", lineHeight: 1.6 }}>
+          Questions about your application?{" "}
+          <a href="mailto:careers@digitalsukoon.com" style={{ color: "var(--ink, #0b0f3a)", fontWeight: 600, textDecoration: "underline", textUnderlineOffset: 3 }}>
+            Email careers@digitalsukoon.com
+          </a>{" "}
+          and we&apos;ll get back to you.
+        </p>
+      </section>
+
       {/* ───── APPLY MODAL ───── */}
       {modalOpen && modalJob && (
         <div className="ds-modal-root" role="dialog" aria-modal="true" aria-labelledby="modal-title">
@@ -505,6 +516,12 @@ export default function JobsPage() {
                 <p>
                   We&apos;ve got it. Expect a reply from the{" "}
                   {modalJob.department || "team"} within five working days.
+                </p>
+                <p style={{ fontSize: 13, color: "var(--muted, #666)", marginTop: 10 }}>
+                  Have a question?{" "}
+                  <a href="mailto:careers@digitalsukoon.com" style={{ color: "inherit", fontWeight: 600, textDecoration: "underline", textUnderlineOffset: 2 }}>
+                    Email careers@digitalsukoon.com
+                  </a>
                 </p>
                 <button className="ds-btn ghost" style={{ marginTop: 16 }} onClick={closeModal}>
                   Close

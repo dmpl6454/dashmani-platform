@@ -261,9 +261,24 @@ export default function JobDetailPage() {
             <div className="check" aria-hidden="true">✓</div>
             <h3>Application Submitted!</h3>
             <p>Thank you for applying. We&apos;ll review your application and get back to you within five working days.</p>
+            <p style={{ marginTop: 10, fontSize: 14, opacity: 0.8 }}>
+              Have a question?{" "}
+              <a href="mailto:careers@digitalsukoon.com" style={{ fontWeight: 600, textDecoration: "underline" }}>
+                Email careers@digitalsukoon.com
+              </a>
+            </p>
           </div>
         </div>
       )}
+
+      <div style={{ padding: "32px 0 8px", textAlign: "center" }}>
+        <p style={{ fontSize: 14, color: "var(--muted, #666)", lineHeight: 1.6 }}>
+          Questions about your application?{" "}
+          <a href="mailto:careers@digitalsukoon.com" style={{ fontWeight: 600, textDecoration: "underline", textUnderlineOffset: 2, color: "inherit" }}>
+            Email careers@digitalsukoon.com
+          </a>
+        </p>
+      </div>
     </div>
   );
 }

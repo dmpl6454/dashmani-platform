@@ -3,6 +3,7 @@ import { authenticate } from "../middleware/auth";
 import { requirePermission } from "../middleware/rbac";
 import { success } from "../utils/response";
 import { hashPassword } from "../utils/password";
+import { generateOfferLetterSchema } from "@dashmani/shared";
 import { signAccessToken, signRefreshToken } from "../utils/jwt";
 import crypto from "crypto";
 import * as salaryService from "../services/salary-slip.service";
@@ -254,8 +255,13 @@ router.post(
   requirePermission("employees", "edit"),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
+      const parsed = generateOfferLetterSchema.safeParse(req.body);
+      if (!parsed.success) {
+        const msg = parsed.error.errors.map((e) => e.message).join("; ");
+        return res.status(400).json({ success: false, error: { code: "VALIDATION_ERROR", message: msg } });
+      }
       const result = await offerLetterService.generateOfferLetter({
-        ...req.body,
+        ...parsed.data,
         generatedBy: (req as any).user.userId,
       });
       return success(res, result, undefined, 201);
@@ -1324,10 +1330,10 @@ router.post("/admin/leave-requests/bulk", authenticate, requirePermission("emplo
 
 // ===== Announcements =====
 
-// POST /admin/announcements — broadcast a message to all active employees
+// POST /admin/announcements — broadcast a message to all active employees (or a specific team)
 router.post("/admin/announcements", authenticate, requireAdminRole, async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { title, message } = req.body as { title?: string; message?: string };
+    const { title, message, orgUnitId } = req.body as { title?: string; message?: string; orgUnitId?: string };
     if (!title?.trim() || !message?.trim()) {
       return res.status(400).json({ success: false, error: { code: "VALIDATION_ERROR", message: "title and message are required" } });
     }
@@ -1337,10 +1343,14 @@ router.post("/admin/announcements", authenticate, requireAdminRole, async (req: 
     if (message.trim().length > 2000) {
       return res.status(400).json({ success: false, error: { code: "VALIDATION_ERROR", message: "message must be 2000 characters or fewer" } });
     }
+    if (orgUnitId && typeof orgUnitId !== "string") {
+      return res.status(400).json({ success: false, error: { code: "VALIDATION_ERROR", message: "orgUnitId must be a string" } });
+    }
     const result = await announcementService.broadcastAnnouncement(
       (req as any).user.userId,
       title.trim(),
-      message.trim()
+      message.trim(),
+      orgUnitId || undefined
     );
     return success(res, result, undefined, 201);
   } catch (err) { next(err); }

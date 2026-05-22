@@ -304,6 +304,7 @@ export default function JobsPage() {
               {jobs.length === 0 ? "Check back soon for openings." : ""}
             </p>
           </div>
+          <MiniCalendar jobs={jobs} />
         </aside>
       </section>
 
@@ -630,6 +631,74 @@ export default function JobsPage() {
         <span>{toastMsg}</span>
       </div>
     </>
+  );
+}
+
+// ───── MINI CALENDAR ─────
+// Renders the current month dynamically — no hardcoded dates.
+// Highlights today and any jobs posted this calendar month.
+function MiniCalendar({ jobs }: { jobs: ApiJob[] }) {
+  const [today, setToday] = useState<Date | null>(null);
+
+  // Set on the client only to avoid SSR/hydration mismatch (new Date() differs server vs client).
+  useEffect(() => { setToday(new Date()); }, []);
+
+  if (!today) return null;
+
+  const year = today.getFullYear();
+  const month = today.getMonth();
+  const monthLabel = today.toLocaleString("en-IN", { month: "long", year: "numeric" });
+  const todayDate = today.getDate();
+
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const daysInPrevMonth = new Date(year, month, 0).getDate();
+  // Monday-first grid: convert JS Sunday-0 to Monday-0
+  const startPad = (new Date(year, month, 1).getDay() + 6) % 7;
+
+  // Highlight days in this month where a job was posted
+  const eventDays = new Set(
+    jobs
+      .map(j => j.createdAt ? new Date(j.createdAt) : null)
+      .filter((d): d is Date => d !== null && d.getFullYear() === year && d.getMonth() === month)
+      .map(d => d.getDate())
+  );
+
+  const cells: { d: number; cls: string }[] = [];
+  for (let i = startPad - 1; i >= 0; i--) {
+    cells.push({ d: daysInPrevMonth - i, cls: "dim" });
+  }
+  for (let d = 1; d <= daysInMonth; d++) {
+    cells.push({ d, cls: d === todayDate ? "today" : eventDays.has(d) ? "event" : "" });
+  }
+  const nextPad = cells.length % 7 === 0 ? 0 : 7 - (cells.length % 7);
+  for (let d = 1; d <= nextPad; d++) {
+    cells.push({ d, cls: "dim" });
+  }
+
+  return (
+    <div className="ds-aside-card">
+      <span className="label ds-mono">{monthLabel}</span>
+      <div className="ds-calendar" aria-hidden="true">
+        {["M","T","W","T","F","S","S"].map((d, i) => (
+          <span key={i} className="dow">{d}</span>
+        ))}
+        {cells.map((c, i) => (
+          <span key={i} className={`d ${c.cls}`}>{c.d}</span>
+        ))}
+      </div>
+      <div className="event-row">
+        <span className="name"><span className="dot end" />Today</span>
+        <span className="date">
+          {today.toLocaleDateString("en-IN", { day: "2-digit", month: "short" })}
+        </span>
+      </div>
+      {eventDays.size > 0 && (
+        <div className="event-row">
+          <span className="name"><span className="dot start" />Posted this month</span>
+          <span className="date">{eventDays.size} role{eventDays.size !== 1 ? "s" : ""}</span>
+        </div>
+      )}
+    </div>
   );
 }
 

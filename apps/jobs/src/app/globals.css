@@ -149,8 +149,8 @@
 .ds-hero-headline {
   font-family: "Bricolage Grotesque", sans-serif;
   font-weight: 600;
-  font-size: clamp(56px, 7.6vw, 124px);
-  line-height: 0.96;
+  font-size: clamp(36px, 4vw, 64px);
+  line-height: 1.05;
   letter-spacing: -0.035em;
   color: var(--ink);
   text-wrap: pretty;

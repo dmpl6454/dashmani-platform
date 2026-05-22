@@ -7,21 +7,12 @@ import {
   Download, Eye, Edit2, Save, X, ChevronRight, Sparkles, BarChart3, Loader2,
 } from "lucide-react";
 
+import { apiFetch } from "@/lib/api";
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/v1";
 
-async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const token = typeof window !== "undefined" ? localStorage.getItem("accessToken") : null;
-  const res = await fetch(`${API_URL}${path}`, {
-    ...options,
-    headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}), ...options.headers },
-  });
-  const json = await res.json();
-  if (!res.ok) throw new Error(json.error?.message || "Request failed");
-  return json;
-}
-
 async function apiFetchRaw(path: string): Promise<string> {
-  const token = typeof window !== "undefined" ? localStorage.getItem("accessToken") : null;
+  const token = typeof window !== "undefined" ? localStorage.getItem("hrAccessToken") : null;
   const res = await fetch(`${API_URL}${path}`, {
     method: "POST",
     headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },

@@ -324,6 +324,17 @@ router.get("/hr/leave-balance", authenticateHr, async (req: Request, res: Respon
 
 router.get("/hr/attendance", authenticateHr, async (req: Request, res: Response, next: NextFunction) => {
   try {
+    // Hide attendance for admin-only accounts (Super Admin / Admin with no employee-level role)
+    const userRoles = await prisma.userRole.findMany({
+      where: { userId: req.user!.userId },
+      include: { role: { select: { name: true } } },
+    });
+    const roleNames = userRoles.map((ur: any) => ur.role.name);
+    const isAdminOnly = roleNames.length > 0 && roleNames.every((r: string) => r === "Super Admin" || r === "Admin");
+    if (isAdminOnly) {
+      return success(res, { isEmployee: false });
+    }
+
     const now = new Date();
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     const result = await attendanceService.getAttendanceRecords({
@@ -339,7 +350,7 @@ router.get("/hr/attendance", authenticateHr, async (req: Request, res: Response,
       const d = new Date(startOfMonth);
       while (d <= now) {
         const day = d.getDay();
-        if (day !== 0 && day !== 6) count++;
+        if (day !== 0) count++; // Sunday is the only weekend day
         d.setDate(d.getDate() + 1);
       }
       return count;

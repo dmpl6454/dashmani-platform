@@ -259,6 +259,7 @@ All three `.env` files (root, api, db) need the same `DATABASE_URL` and `JWT_SEC
 | `SEED_ADMIN_PASSWORD` | `Admin@123456` | Password set for admin@digitalsukoon.com on seed |
 | `INTERNAL_APP_URL` | `http://localhost:3000` | Used in reset-password email links |
 | `HR_APP_URL` | `http://localhost:3002` | Used in HR notification emails |
+| `ANTHROPIC_API_KEY` | *(set locally)* | Required for AI features (Job Vacancy, Offer/Appointment/Employment docs, AI Chat in Internal portal; AI Presentation generator in HR portal). **Already set in `apps/api/.env` locally as of 2026-05-22.** Runtime-only — no rebuild needed. If the key is ever rotated on prod, refresh with: `ssh linode "grep ANTHROPIC_API_KEY /opt/dashmani-platform/apps/api/.env"`. |
 | `SMTP_HOST` | `smtp.gmail.com` | Optional — emails no-op if SMTP_PASS missing |
 | `SMTP_PORT` | `587` | Standard submission port; pairs with `SMTP_SECURE=false` (STARTTLS) |
 | `SMTP_SECURE` | `false` | `false`=STARTTLS on 587, `true`=implicit TLS on 465. STARTTLS is the modern standard despite the name |
@@ -542,12 +543,15 @@ All phases (1–13) + Waves 7–9 + v2 production test remediation complete. See
 
 ### Still open (known remaining issues)
 
-After a 2026-05-22 code-level audit, the items previously listed as "open P0/P1" turned out to be already-shipped. The actually-open list is small:
-
 - **F-TOKEN-STORAGE (deferred XL):** Auth tokens still in `localStorage` — httpOnly cookie migration is 1+ week, high blast radius across all 4 portals + API. Explicitly deferred per user decision 2026-05-21.
 - **F-RESPONSIVE-ALL-PORTALS (deferred XL):** Full 375px responsive sweep for Internal + HR. Deferred — internal portal is primarily desktop-used; mobile sidebars already work via hamburger drawers.
 - **"Keep me signed in" dead checkbox (#26, P3):** The checkbox renders on `apps/internal/src/app/login/page.tsx` but the value is never read by the login handler. Dormant UI, not a security risk — either wire it up or remove it.
 - **HR password strength enforcement (P2):** [apps/hr/src/app/login/page.tsx](apps/hr/src/app/login/page.tsx) shows a `pwScore()` strength meter (length 8+, upper/lower/digit/special) but only as display — the form does not reject weak passwords on submit. Needs `min` validation gate before allowing register.
+- **Internal portal notification bell (Issue 1 deferred):** Bell component not yet created for internal portal topbar. `dispatchNotification()` routing is wired; only the UI consumer is missing. See `.planning/PORTAL-FIXES-PLAN-2026-05-22.md` Issue 1.4.
+- **Assign modal portal fix (Issue 4):** `/accounts` page `AssignModal` still renders in-flow — needs `createPortal(…, document.body)` to fix viewport centering on pages with `transform`/`filter` parents.
+- **Offer letter date coercion (Issue 7):** `POST /admin/offer-letters` still has no Zod validator — date strings aren't coerced to `Date`, so Prisma rejects them. Needs `generateOfferLetterSchema` with `z.coerce.date()` wired via `validate()` middleware.
+- **Job applications admin visibility (Issue 9):** Diagnostic needed — confirm whether rows land in DB after public submission; then fix SWR cache/default tab in the admin applications page.
+- **Issues 10 + 14 (schema-changing):** `Announcement.orgUnitId` (team-targeted announcements) and `LeaveRequest.attachment*` (sick leave upload) — both require additive `db:push` on Linode. Deferred — implement locally first, then run `db:push` per CLAUDE.md schema-changing flow.
 
 ### Audited and confirmed resolved (2026-05-22)
 
@@ -579,6 +583,7 @@ These were previously listed as P0/P1 open but are in fact already shipped — k
 - **Reset-password TTL extended to 24h (2026-05-22):** `auth.service.ts` and `client-auth.service.ts` reset tokens now expire in 24h (was 1h). Triggered by Fareen Sabir missing back-to-back links (email delivered but TTL expired before she clicked). Email copy and all three forgot-password modal success messages updated to say 24h and prompt spam-folder check.
 - **deploy.sh: nuke .next/ before build (2026-05-22):** `scripts/deploy.sh` now wipes `apps/*/.next` before every `turbo build`. Fixes intermittent `ENOENT: .../page.js.nft.json` crash in Next.js 14's `collectBuildTraces` step caused by stale partial caches from prior OOM-killed builds.
 - **Jobs portal redesign (PR #10, 2026-05-22):** `apps/jobs` fully redesigned — editorial layout on listing page, rich detail panel with dept colors, apply form with file upload, toast notifications, keyboard navigation, prefers-reduced-motion, next/font (no render-blocking @import), `DEPT_COLORS` extracted to `apps/jobs/src/lib/dept-colors.ts`. All PR review critical issues resolved in follow-up commit before merge.
+- **Portal fixes batch (2026-05-22):** 9 issues from `.planning/PORTAL-FIXES-PLAN-2026-05-22.md` implemented — see plan file for full status. Key items: `dispatchNotification()` routing matrix (Issue 1 partial), jobs portal contact block (Issue 2), leaderboard admin filter (Issue 3), `countTeams()` helper (Issue 5), employee edit 400 fix (Issue 6), task/content required fields on create (Issue 8), internship sticky modal + header fix (Issue 11), scroll-to-top on report detail (Issue 12), Leave page + sidebar entry (Issue 13). All TypeScript checks pass.
 
 ### Employee vs Admin distinction (analytics/reports)
 

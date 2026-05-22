@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { ArrowLeft, Flame, Link2, BarChart2, Target, TrendingUp, CalendarDays, X } from "lucide-react";
 import { useAdminReports, useEmployeeReportStats } from "@/lib/hooks/use-reports";
@@ -59,6 +59,10 @@ function toISODate(d: Date) {
 
 export default function EmployeeReportsPage({ params }: { params: { employeeId: string } }) {
   const { employeeId } = params;
+
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: "instant" as ScrollBehavior });
+  }, [employeeId]);
 
   const today = new Date();
   const [startDate, setStartDate] = useState(toISODate(new Date(today.getTime() - 29 * 86400000)));

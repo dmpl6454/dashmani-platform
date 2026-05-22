@@ -34,3 +34,6 @@ export * as taskValidators from "./validators/task";
 export * as accountValidators from "./validators/account";
 export * as clientValidators from "./validators/client";
 export * as contentValidators from "./validators/content";
+export * as offerLetterValidators from "./validators/offer-letter";
+export { generateOfferLetterSchema } from "./validators/offer-letter";
+export type { GenerateOfferLetterInput } from "./validators/offer-letter";

@@ -13,6 +13,7 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/v1";
 export default function OfferLettersPage() {
   const [showForm, setShowForm] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
   const [form, setForm] = useState({
     employeeId: "",
     offerDate: "",
@@ -43,6 +44,7 @@ export default function OfferLettersPage() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setSubmitting(true);
+    setFormError(null);
     try {
       await apiFetch("/admin/offer-letters", {
         method: "POST",
@@ -65,7 +67,7 @@ export default function OfferLettersPage() {
       setShowForm(false);
       mutate();
     } catch (e: any) {
-      alert(e.message || "Failed to generate offer letter");
+      setFormError(e.message || "Failed to generate offer letter");
     } finally {
       setSubmitting(false);
     }
@@ -190,6 +192,9 @@ export default function OfferLettersPage() {
               />
             </div>
           </div>
+          {formError && (
+            <p className="mt-4 text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-4 py-2">{formError}</p>
+          )}
           <div className="mt-5 flex justify-end">
             <button
               type="submit"

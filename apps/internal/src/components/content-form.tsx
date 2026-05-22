@@ -22,6 +22,8 @@ export function ContentForm({ content }: ContentFormProps) {
     mediaUrls: content?.mediaUrls?.join("\n") || "",
   });
   const [error, setError] = useState("");
+  const [accountError, setAccountError] = useState("");
+  const [scheduledAtError, setScheduledAtError] = useState("");
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -31,8 +33,12 @@ export function ContentForm({ content }: ContentFormProps) {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setLoading(true);
     setError("");
+    let hasError = false;
+    if (!isEdit && !form.accountId) { setAccountError("Account is required"); hasError = true; } else { setAccountError(""); }
+    if (!isEdit && !form.scheduledAt) { setScheduledAtError("Scheduled date/time is required"); hasError = true; } else { setScheduledAtError(""); }
+    if (hasError) return;
+    setLoading(true);
     try {
       const mediaUrls = form.mediaUrls
         .split("\n")
@@ -102,27 +108,31 @@ export function ContentForm({ content }: ContentFormProps) {
             </select>
           </div>
           <div className="space-y-1">
-            <label className="text-sm font-medium text-[#1A1A1A]">Social Account</label>
+            <label className="text-sm font-medium text-[#1A1A1A]">Social Account{!isEdit && <span className="text-red-500 ml-0.5">*</span>}</label>
             <select
-              className="flex h-10 w-full rounded-lg border border-[#E8E0D0] bg-white px-3 py-2 text-sm focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547] outline-none"
+              className={`flex h-10 w-full rounded-lg border bg-white px-3 py-2 text-sm focus:ring-2 focus:border-[#F5D547] outline-none ${accountError ? "border-red-400 focus:ring-red-200" : "border-[#E8E0D0] focus:ring-[#F5D547]"}`}
               value={form.accountId}
-              onChange={(e) => setForm({ ...form, accountId: e.target.value })}
+              onChange={(e) => { setForm({ ...form, accountId: e.target.value }); if (accountError) setAccountError(""); }}
             >
-              <option value="">None (select later)</option>
+              <option value="">Select account...</option>
               {accounts.map((acc: any) => (
                 <option key={acc.id} value={acc.id}>
                   {acc.platform?.name}: {acc.handle}
                 </option>
               ))}
             </select>
+            {accountError && <p role="alert" className="mt-1 text-xs text-red-500 font-semibold">{accountError}</p>}
           </div>
-          <Input
-            label="Scheduled Date/Time"
-            type="datetime-local"
-            value={form.scheduledAt}
-            onChange={(e) => setForm({ ...form, scheduledAt: e.target.value })}
-            className="border border-[#E8E0D0] rounded-lg focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547]"
-          />
+          <div>
+            <Input
+              label={!isEdit ? "Scheduled Date/Time *" : "Scheduled Date/Time"}
+              type="datetime-local"
+              value={form.scheduledAt}
+              onChange={(e) => { setForm({ ...form, scheduledAt: e.target.value }); if (scheduledAtError) setScheduledAtError(""); }}
+              className={`border rounded-lg focus:ring-2 focus:border-[#F5D547] ${scheduledAtError ? "border-red-400 focus:ring-red-200" : "border-[#E8E0D0] focus:ring-[#F5D547]"}`}
+            />
+            {scheduledAtError && <p role="alert" className="mt-1 text-xs text-red-500 font-semibold">{scheduledAtError}</p>}
+          </div>
           <div className="space-y-1">
             <label className="text-sm font-medium text-[#1A1A1A]">Media URLs (one per line)</label>
             <textarea

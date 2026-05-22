@@ -4,15 +4,26 @@ import { sendEmail, announcementEmailHtml } from "./email.service";
 export async function broadcastAnnouncement(
   sentById: string,
   title: string,
-  message: string
+  message: string,
+  orgUnitId?: string
 ): Promise<{ recipientCount: number; announcementId: string }> {
   const employees = await prisma.user.findMany({
-    where: { status: "ACTIVE", deletedAt: null },
+    where: {
+      status: "ACTIVE",
+      deletedAt: null,
+      ...(orgUnitId ? { orgUnitId } : {}),
+    },
     select: { id: true, name: true, email: true },
   });
 
   const record = await prisma.announcement.create({
-    data: { title, message, sentById, recipientCount: employees.length },
+    data: {
+      title,
+      message,
+      sentById,
+      recipientCount: employees.length,
+      ...(orgUnitId ? { orgUnitId } : {}),
+    },
   });
 
   if (employees.length === 0) {
@@ -57,7 +68,10 @@ export async function getAnnouncements(page = 1, limit = 20) {
       skip,
       take: limit,
       orderBy: { createdAt: "desc" },
-      include: { sentBy: { select: { name: true } } },
+      include: {
+        sentBy: { select: { name: true } },
+        orgUnit: { select: { id: true, name: true } },
+      },
     }),
     prisma.announcement.count(),
   ]);

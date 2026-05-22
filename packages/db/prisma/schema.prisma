@@ -129,9 +129,10 @@ model OrgUnit {
   createdAt DateTime    @default(now()) @map("created_at")
   updatedAt DateTime    @updatedAt @map("updated_at")
 
-  parent    OrgUnit?  @relation("OrgHierarchy", fields: [parentId], references: [id])
-  children  OrgUnit[] @relation("OrgHierarchy")
-  members   User[]
+  parent        OrgUnit?       @relation("OrgHierarchy", fields: [parentId], references: [id])
+  children      OrgUnit[]      @relation("OrgHierarchy")
+  members       User[]
+  announcements Announcement[]
 
   @@map("org_units")
 }
@@ -173,19 +174,23 @@ enum AttendanceStatus {
 }
 
 model LeaveRequest {
-  id          String      @id @default(uuid())
-  employeeId  String      @map("employee_id")
-  startDate   DateTime    @map("start_date") @db.Date
-  endDate     DateTime    @map("end_date") @db.Date
-  type        LeaveType
-  reason      String
-  status      LeaveStatus @default(PENDING)
-  approvedBy  String?     @map("approved_by")
-  approvedAt  DateTime?   @map("approved_at")
-  createdAt   DateTime    @default(now()) @map("created_at")
-  updatedAt   DateTime    @updatedAt @map("updated_at")
+  id               String      @id @default(uuid())
+  employeeId       String      @map("employee_id")
+  startDate        DateTime    @map("start_date") @db.Date
+  endDate          DateTime    @map("end_date") @db.Date
+  type             LeaveType
+  reason           String
+  status           LeaveStatus @default(PENDING)
+  approvedBy       String?     @map("approved_by")
+  approvedAt       DateTime?   @map("approved_at")
+  attachmentUrl    String?     @map("attachment_url")
+  attachmentName   String?     @map("attachment_name")
+  attachmentMime   String?     @map("attachment_mime")
+  attachmentSize   Int?        @map("attachment_size")
+  createdAt        DateTime    @default(now()) @map("created_at")
+  updatedAt        DateTime    @updatedAt @map("updated_at")
 
-  employee    User @relation("LeaveRequester", fields: [employeeId], references: [id], onDelete: Cascade)
+  employee    User  @relation("LeaveRequester", fields: [employeeId], references: [id], onDelete: Cascade)
   approver    User? @relation("LeaveApprover", fields: [approvedBy], references: [id], onDelete: SetNull)
 
   @@map("leave_requests")
@@ -750,9 +755,11 @@ model Announcement {
   message        String   @db.Text
   sentById       String   @map("sent_by_id")
   recipientCount Int      @default(0) @map("recipient_count")
+  orgUnitId      String?  @map("org_unit_id")
   createdAt      DateTime @default(now()) @map("created_at")
 
   sentBy         User     @relation("AnnouncementsSent", fields: [sentById], references: [id])
+  orgUnit        OrgUnit? @relation(fields: [orgUnitId], references: [id], onDelete: SetNull)
 
   @@index([createdAt])
   @@map("announcements")

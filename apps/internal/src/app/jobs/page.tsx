@@ -9,7 +9,7 @@ import useSWR from "swr";
 import {
   Briefcase, Plus, ChevronUp, Users, X, FileText, Linkedin,
   Globe, Phone, Mail, Building2, Clock, Trash2,
-  ExternalLink, StickyNote, CheckCircle, XCircle, Eye,
+  ExternalLink, StickyNote, CheckCircle, XCircle, Eye, RefreshCw,
 } from "lucide-react";
 
 const inputClass = "w-full border border-[#E8E0D0] bg-white rounded-lg px-4 py-2.5 text-sm text-[#1A1A1A] placeholder:text-[#B0B0B0] focus:outline-none focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547] transition-colors";
@@ -67,7 +67,7 @@ export default function JobsPage() {
   const { data: allAppsData, mutate: mutateApps } = useSWR(
     `/admin/applications${appJobFilter ? `?jobId=${appJobFilter}` : ""}${appStatusFilter ? `${appJobFilter ? "&" : "?"}status=${appStatusFilter}` : ""}`,
     (url: string) => apiFetch<any>(url),
-    { revalidateOnFocus: false }
+    { revalidateOnFocus: true, dedupingInterval: 10000 }
   );
   const allApps = allAppsData?.data || [];
   const newAppsCount = allApps.filter((a: any) => a.status === "RECEIVED").length;
@@ -216,7 +216,16 @@ export default function JobsPage() {
           <div className="p-5 border-b border-[#F0EAD8]">
             <div className="flex items-center justify-between mb-4">
               <h3 className="font-semibold text-[#1A1A1A] text-lg">All Applications</h3>
-              <p className="text-xs text-[#7A7A7A]">{allApps.length} total</p>
+              <div className="flex items-center gap-3">
+                <p className="text-xs text-[#7A7A7A]">{allApps.length} total</p>
+                <button
+                  onClick={() => mutateApps()}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-white border border-[#E8E0D0] text-[#7A7A7A] hover:border-[#F5D547] transition-colors"
+                >
+                  <RefreshCw size={12} />
+                  Refresh
+                </button>
+              </div>
             </div>
             {/* Filters */}
             <div className="flex flex-wrap gap-3">

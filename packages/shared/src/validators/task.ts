@@ -6,8 +6,8 @@ export const createTaskSchema = z.object({
   description: safeString.pipe(z.string().max(5000)).optional(),
   priority: z.enum(["CRITICAL", "HIGH", "MEDIUM", "LOW"]).optional(),
   assigneeId: z.string().uuid().optional(),
-  accountId: z.string().uuid().optional(),
-  dueDate: z.string().datetime({ offset: true }).or(z.string().date()).optional(),
+  accountId: z.string().uuid("Account is required"),
+  dueDate: z.string().datetime({ offset: true }).or(z.string().date()),
   dependsOnId: z.string().uuid().optional(),
 });
 

@@ -18,5 +18,5 @@ export const updateEmployeeSchema = z.object({
   phone: z.string().optional(),
   orgUnitId: z.string().uuid().nullable().optional(),
   status: z.enum(["ACTIVE", "INACTIVE", "ONBOARDING"]).optional(),
-  roleIds: z.array(z.string().uuid()).min(1).optional(),
+  roleIds: z.array(z.string().uuid()).optional(),
 });

@@ -40,7 +40,7 @@ export function EmployeeForm({ employee, roles }: EmployeeFormProps) {
         const updateData: any = {
           name: form.name,
           phone: form.phone,
-          roleIds: form.roleIds,
+          ...(form.roleIds.length > 0 ? { roleIds: form.roleIds } : {}),
           orgUnitId: form.orgUnitId || null,
         };
         await apiFetch(`/employees/${employee.id}`, {

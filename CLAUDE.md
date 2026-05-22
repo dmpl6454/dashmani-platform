@@ -541,9 +541,29 @@ All phases (1–13) + Waves 7–9 + v2 production test remediation complete. See
 **Cascade deletes:** Prisma schema updated — all employee-owned data (Attendance, LeaveRequest, DailyReport, SalarySlip, EmploymentContract, OfferLetter, etc.) now has `onDelete: Cascade`; `AuditLog` intentionally kept `onDelete: Restrict` for compliance. ⚠️ **`db:push` required on Linode after deploy** — FK constraints only, no column drops.
 
 ### Still open (known remaining issues)
-- **F-LEAVE-TZ-BUG (P0):** Leave start date shifts 1 day (IST→UTC). Fix: send `YYYY-MM-DD` string on wire instead of JS `Date`.
+
+After a 2026-05-22 code-level audit, the items previously listed as "open P0/P1" turned out to be already-shipped. The actually-open list is small:
+
 - **F-TOKEN-STORAGE (deferred XL):** Auth tokens still in `localStorage` — httpOnly cookie migration is 1+ week, high blast radius across all 4 portals + API. Explicitly deferred per user decision 2026-05-21.
 - **F-RESPONSIVE-ALL-PORTALS (deferred XL):** Full 375px responsive sweep for Internal + HR. Deferred — internal portal is primarily desktop-used; mobile sidebars already work via hamburger drawers.
+- **"Keep me signed in" dead checkbox (#26, P3):** The checkbox renders on `apps/internal/src/app/login/page.tsx` but the value is never read by the login handler. Dormant UI, not a security risk — either wire it up or remove it.
+- **HR password strength enforcement (P2):** [apps/hr/src/app/login/page.tsx](apps/hr/src/app/login/page.tsx) shows a `pwScore()` strength meter (length 8+, upper/lower/digit/special) but only as display — the form does not reject weak passwords on submit. Needs `min` validation gate before allowing register.
+
+### Audited and confirmed resolved (2026-05-22)
+
+These were previously listed as P0/P1 open but are in fact already shipped — kept here so we don't re-open them by mistake:
+
+- **F-LEAVE-TZ-BUG:** Mitigated. Form sends `YYYY-MM-DD` ISO string; [apps/api/src/services/leave.service.ts](apps/api/src/services/leave.service.ts) parses with `setHours(0,0,0,0)` — no IST→UTC day shift.
+- **Employee count mismatch (#9/#71 "78 Active vs 50 total"):** Fixed. `employeeWhere` filter defined once at the top of [apps/api/src/services/analytics.service.ts](apps/api/src/services/analytics.service.ts) and used for all employee counts. (See "Employee vs Admin distinction" section below for the convention.)
+- **Self-approval of leave (#22/#66):** Fixed. `leave.service.ts:82-102` throws 403 if `leaveReq.employeeId === approvedBy`; same guard on reject path.
+- **UTM params exposed in account names (#36):** Fixed. `sanitizeAccountHandle()` in [packages/shared/src/utils/sanitize.ts](packages/shared/src/utils/sanitize.ts) strips query strings via `.split("?")[0]`; called defensively in `account.service.ts` on all handle writes.
+- **No destructive confirm on job delete (#48):** Fixed. `ConfirmDialog` wired in [apps/internal/src/app/jobs/page.tsx](apps/internal/src/app/jobs/page.tsx) with `deleteJobId` state.
+- **Password autocomplete (#59):** Fixed where it matters. Internal + HR login fields have `autoComplete="current-password"`. Admin add-employee form would still benefit from `autocomplete="new-password"` if/when that form is revisited.
+- **Client portal mobile + cadence chart (BUG-23/BUG-20):** Both shipped — see "Fixed since last update" below.
+
+### Known limitations / pending UX work
+
+- **HR daily report — "links submitted today" visibility (planned, not shipped):** When an HR user updates today's report later in the day, the form prefills with the saved links but mixes them with editable rows — easy to lose track of what was already submitted earlier. Plan: [`.planning/HR-REPORT-LINK-HISTORY-PLAN.md`](.planning/HR-REPORT-LINK-HISTORY-PLAN.md) — adds a read-only "Submitted today" panel above the form, frontend-only, no API change. The `POST /hr/reports` delete-and-recreate semantics in [daily-report.service.ts](apps/api/src/services/daily-report.service.ts) are intentionally left untouched (load-bearing for the org).
 
 ### Fixed since last update (2026-05-21 / 2026-05-22)
 - **F-WORKLOAD-COLUMNS:** Critical/High cells now render `—` when 0 — `tasksByPriority?.critical ?? 0` guard added.
@@ -556,6 +576,9 @@ All phases (1–13) + Waves 7–9 + v2 production test remediation complete. See
 - **F-CLIENT-HOWITWORKS-STATS:** Client portal login "How it works" section no longer shows hardcoded `0` / `6h` / `24` values — replaced with honest non-numeric copy.
 - **TC-186 F-SOP-DB-BACKED (2026-05-22):** SOP sections no longer hardcoded. `system_settings` DB table added (additive). `GET /admin/sop-content` returns stored sections; `PUT /admin/sop-content` lets admins update them. HR portal fetches on load and falls back to default content if none is stored. ⚠️ **`db:push` required on Linode after this deploy.**
 - **BUG-20 F-CLIENT-CADENCE-DATA (2026-05-22):** Publishing cadence chart on client analytics now uses real `weeklyPosts` data from `getClientContentAnalytics()` — last 5 weeks of published-post counts. `ClientAnalytics` type updated accordingly.
+- **Reset-password TTL extended to 24h (2026-05-22):** `auth.service.ts` and `client-auth.service.ts` reset tokens now expire in 24h (was 1h). Triggered by Fareen Sabir missing back-to-back links (email delivered but TTL expired before she clicked). Email copy and all three forgot-password modal success messages updated to say 24h and prompt spam-folder check.
+- **deploy.sh: nuke .next/ before build (2026-05-22):** `scripts/deploy.sh` now wipes `apps/*/.next` before every `turbo build`. Fixes intermittent `ENOENT: .../page.js.nft.json` crash in Next.js 14's `collectBuildTraces` step caused by stale partial caches from prior OOM-killed builds.
+- **Jobs portal redesign (PR #10, 2026-05-22):** `apps/jobs` fully redesigned — editorial layout on listing page, rich detail panel with dept colors, apply form with file upload, toast notifications, keyboard navigation, prefers-reduced-motion, next/font (no render-blocking @import), `DEPT_COLORS` extracted to `apps/jobs/src/lib/dept-colors.ts`. All PR review critical issues resolved in follow-up commit before merge.
 
 ### Employee vs Admin distinction (analytics/reports)
 

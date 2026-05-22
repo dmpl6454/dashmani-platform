@@ -1,5 +1,20 @@
 # Internal Admin Portal — v2 Fix Plan (Post Production Test Remediation)
 
+> **⚠️ SUPERSEDED 2026-05-22.** All P0/P1 items in this plan have shipped or been explicitly deferred. The current source of truth is [`PORTAL-TEST-FINAL-V2-PLAN.md`](PORTAL-TEST-FINAL-V2-PLAN.md) — see its §0 reconciliation block. Code-level audit on 2026-05-22 confirmed:
+>
+> - ✅ Wave A (P0 security): AI preview sandbox, default credentials env-driven, input sanitization (`safeString` + `sanitizeAccountHandle`) — all shipped
+> - ✅ Wave B (P1 core): analytics perm seed, AI employee dropdown, forgot-password, salary-slips/holidays API, missing endpoints, refresh-loop guard, crashing pages — all shipped
+> - ✅ Wave C (P2 UX): status labels via `formatStatus()`, page titles via `usePageTitle()`, fake login stats removed, profile view-mode, workload columns, login copy, RBAC sidebar gating, employee form fields — all shipped
+> - ⏸ F-TOKEN-STORAGE (TC-110, A-4): explicitly deferred XL per user decision 2026-05-21
+> - ⏸ #26 "Keep me signed in" dead checkbox: P3, dormant UI (no security risk)
+> - ⏸ HR password strength enforcement: P2, display-only meter — needs submit-time gate
+>
+> Do not action items from the waves below without first checking against the §0 block of `PORTAL-TEST-FINAL-V2-PLAN.md`. Several items here ("self-approval", "employee count mismatch", "UTM in account names") were already fixed by Wave A/B work — re-implementing them would be regression.
+>
+> This file is kept for historical context only.
+
+---
+
 **Source:** PORTAL-TEST-FINAL-V2-PLAN.md (215 manual test cases from production)
 **Date compiled:** 2026-05-16
 **Scope:** `apps/internal` + `apps/api` (internal/admin endpoints only)

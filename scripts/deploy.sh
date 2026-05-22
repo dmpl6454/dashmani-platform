@@ -25,6 +25,13 @@ npm install --prefer-offline
 echo "==> Regenerating Prisma client (needed when schema.prisma changes)"
 npm run db:generate
 
+# Wipe Next.js build caches before each build. Next.js 14's collectBuildTraces
+# step can fail with `ENOENT: ... page.js.nft.json` when a partial .next/ from
+# an interrupted/OOM-killed build is on disk. Nuking it up front is the only
+# reliable cure. The cost is one full (~uncached) build, ~60s extra.
+echo "==> Clearing stale Next.js build caches"
+rm -rf apps/client/.next apps/internal/.next apps/hr/.next apps/jobs/.next
+
 echo "==> Building apps (sequential to manage memory)"
 export NODE_OPTIONS="--max-old-space-size=900"
 npx turbo build --concurrency=1

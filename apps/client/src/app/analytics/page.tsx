@@ -65,10 +65,6 @@ function healthColor(score: number | null) {
   return "bg-success";
 }
 
-const WEEKLY_DATA = [
-  { label: "Apr W2", value: 2 }, { label: "Apr W3", value: 5 },
-  { label: "Apr W4", value: 3 }, { label: "May W1", value: 4 }, { label: "May W2", value: 6 },
-];
 const APPROVAL_DATA = [
   { label: "Mon", value: 3 }, { label: "Tue", value: 6 }, { label: "Wed", value: 4 },
   { label: "Thu", value: 8 }, { label: "Fri", value: 5 }, { label: "Sat", value: 2 }, { label: "Sun", value: 1 },
@@ -137,6 +133,7 @@ export default function ClientAnalyticsPage() {
     approvalTurnaround = 0,
     scheduledThisWeek = 0,
     liveThisWeek = 0,
+    weeklyPosts = [],
     projectSummaries = [],
   } = data ?? {};
 
@@ -189,7 +186,7 @@ export default function ClientAnalyticsPage() {
                   </div>
                   <span className="text-[11px] font-bold text-ink-3 bg-muted px-3 py-1 rounded-full">Last 5 weeks</span>
                 </div>
-                <BarChart data={WEEKLY_DATA} colorClass="bg-indigo" height={160} />
+                <BarChart data={weeklyPosts} colorClass="bg-indigo" height={160} />
               </div>
             </div>
 

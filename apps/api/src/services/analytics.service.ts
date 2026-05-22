@@ -574,6 +574,10 @@ export async function getClientContentAnalytics(clientId: string) {
 
   const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
 
+  // Build 5-week cadence buckets (oldest first)
+  const fiveWeeksAgo = new Date(weekStart);
+  fiveWeeksAgo.setDate(weekStart.getDate() - 28);
+
   const projectFilter = { project: { clientId } };
 
   const [
@@ -584,6 +588,7 @@ export async function getClientContentAnalytics(clientId: string) {
     liveThisWeek,
     projects,
     recentApproved,
+    publishedLast5Weeks,
   ] = await Promise.all([
     prisma.contentPost.count({ where: projectFilter }),
 
@@ -636,6 +641,15 @@ export async function getClientContentAnalytics(clientId: string) {
       select: { createdAt: true, updatedAt: true },
       take: 100,
     }),
+
+    prisma.contentPost.findMany({
+      where: {
+        ...projectFilter,
+        status: "PUBLISHED",
+        publishedAt: { gte: fiveWeeksAgo },
+      },
+      select: { publishedAt: true },
+    }),
   ]);
 
   const postsByStatus: Record<string, number> = {};
@@ -659,6 +673,25 @@ export async function getClientContentAnalytics(clientId: string) {
     approvalTurnaround = Math.round(totalMs / recentApproved.length / (1000 * 60 * 60));
   }
 
+  // Build weekly cadence buckets: 5 weeks ending with the current week
+  const weeklyPosts: { label: string; value: number }[] = [];
+  for (let i = 4; i >= 0; i--) {
+    const wStart = new Date(weekStart);
+    wStart.setDate(weekStart.getDate() - i * 7);
+    const wEnd = new Date(wStart);
+    wEnd.setDate(wStart.getDate() + 7);
+
+    const count = publishedLast5Weeks.filter((p) => {
+      const d = p.publishedAt ? new Date(p.publishedAt) : null;
+      return d && d >= wStart && d < wEnd;
+    }).length;
+
+    // Label format: "May W3"
+    const monthStr = wStart.toLocaleString("en-US", { month: "short" });
+    const weekOfMonth = Math.ceil(wStart.getDate() / 7);
+    weeklyPosts.push({ label: `${monthStr} W${weekOfMonth}`, value: count });
+  }
+
   const projectSummaries = projects.map((p) => ({
     projectId: p.id,
     name: p.name,
@@ -674,6 +707,7 @@ export async function getClientContentAnalytics(clientId: string) {
     approvalTurnaround,
     scheduledThisWeek,
     liveThisWeek,
+    weeklyPosts,
     projectSummaries,
   };
 }

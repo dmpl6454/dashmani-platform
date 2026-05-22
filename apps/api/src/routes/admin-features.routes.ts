@@ -1356,4 +1356,27 @@ router.get("/admin/announcements", authenticate, requireAdminRole, async (req: R
   } catch (err) { next(err); }
 });
 
+// ===== SOP Content (admin-managed) =====
+const SOP_KEY = "sop_sections";
+
+router.get("/admin/sop-content", authenticate, requirePermission("employees", "view"), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const row = await prisma.systemSetting.findUnique({ where: { key: SOP_KEY } });
+    return success(res, { sections: row ? JSON.parse(row.value) : null });
+  } catch (err) { next(err); }
+});
+
+router.put("/admin/sop-content", authenticate, requireAdminRole, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { sections } = req.body;
+    if (!Array.isArray(sections)) return next(new Error("sections must be an array"));
+    await prisma.systemSetting.upsert({
+      where: { key: SOP_KEY },
+      update: { value: JSON.stringify(sections) },
+      create: { key: SOP_KEY, value: JSON.stringify(sections) },
+    });
+    return success(res, { message: "SOP content updated" });
+  } catch (err) { next(err); }
+});
+
 export default router;

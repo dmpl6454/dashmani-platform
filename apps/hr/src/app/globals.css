@@ -23,6 +23,15 @@
   }
 }
 
+/* Prevent iOS Safari auto-zoom on input focus.
+   Safari zooms in when font-size < 16px; this floor keeps it at 16px on
+   touch devices while leaving desktop styles untouched. */
+@media (hover: none) and (pointer: coarse) {
+  input, textarea, select {
+    font-size: 16px !important;
+  }
+}
+
 /* ── Design system animations ── */
 @keyframes popIn      { 0%{opacity:0;transform:scale(0.93) translateY(6px)} 65%{transform:scale(1.025) translateY(-1px)} 100%{opacity:1;transform:scale(1) translateY(0)} }
 @keyframes fadeUp     { 0%{transform:translateY(12px);opacity:0} 100%{transform:translateY(0);opacity:1} }

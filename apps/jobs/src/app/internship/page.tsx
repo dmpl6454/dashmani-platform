@@ -47,8 +47,9 @@ export default function InternshipPage() {
       setSubmitted(true);
     } catch (e: any) {
       setError(e.message);
+    } finally {
+      setSubmitting(false);
     }
-    setSubmitting(false);
   }
 
   if (submitted) {
@@ -129,7 +130,7 @@ export default function InternshipPage() {
             <div style={{
               padding: "12px 16px", borderRadius: 12, marginBottom: 20,
               background: "rgba(196,69,44,0.08)", border: "1px solid rgba(196,69,44,0.2)",
-              color: "#C4452C", fontSize: 14,
+              color: "var(--error)", fontSize: 14,
             }}>
               {error}
             </div>

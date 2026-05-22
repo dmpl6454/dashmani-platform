@@ -265,6 +265,7 @@
 .ds-calendar .d.event-start { background: var(--ink); color: var(--paper); font-weight: 500; }
 .ds-calendar .d.event { background: rgba(11, 15, 58, 0.08); color: var(--ink); }
 .ds-calendar .d.event-end { background: var(--accent); color: var(--paper); font-weight: 500; }
+.ds-calendar .d.today { outline: 2px solid var(--accent); outline-offset: -2px; color: var(--accent); font-weight: 600; }
 .ds-aside-card .event-row {
   display: flex;
   align-items: center;

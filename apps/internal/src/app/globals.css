@@ -28,13 +28,25 @@
 @layer base {
   * { box-sizing: border-box; border-color: #D4CBBA; }
 
-  html, body { margin: 0; padding: 0; background: #FDFCF0; color: #1A1A1A; }
+  html, body { margin: 0; padding: 0; background: #FDFCF0; color: #1A1A1A; overflow-x: hidden; max-width: 100vw; }
 
   body {
     font-family: 'Instagram Sans', system-ui, sans-serif;
     font-weight: 400;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+  }
+}
+
+/* Prevent iOS Safari auto-zoom on input focus.
+   Safari zooms in when font-size < 16px; this floor keeps inputs at 16px on
+   touch devices while leaving desktop styles untouched. The [class] attribute
+   selector raises specificity to (0,1,1) so we beat Tailwind's own !important
+   utilities (e.g. `!text-xs`, `text-sm`) at (0,1,0). */
+@media (hover: none) and (pointer: coarse) {
+  input[class], textarea[class], select[class],
+  input, textarea, select {
+    font-size: 16px !important;
   }
 }
 

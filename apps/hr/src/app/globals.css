@@ -23,10 +23,23 @@
   }
 }
 
+/* Guard against horizontal overflow.
+   Long URLs / unconstrained children can push body wider than the viewport,
+   which on iOS combines with the auto-zoom to leave the page stuck in a
+   horizontally-scrolling, zoomed-in state. Clipping at the root prevents that. */
+html, body {
+  overflow-x: hidden;
+  max-width: 100vw;
+}
+
 /* Prevent iOS Safari auto-zoom on input focus.
    Safari zooms in when font-size < 16px; this floor keeps it at 16px on
-   touch devices while leaving desktop styles untouched. */
+   touch devices while leaving desktop styles untouched.
+   The [class] attribute selector raises specificity to (0,1,1) so we beat
+   Tailwind's own !important utilities (e.g. `!text-xs`, `text-sm`) which
+   sit at (0,1,0) and would otherwise win the cascade. */
 @media (hover: none) and (pointer: coarse) {
+  input[class], textarea[class], select[class],
   input, textarea, select {
     font-size: 16px !important;
   }

@@ -29,7 +29,6 @@ interface LinkEntry {
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const MAX_LINKS = 500;
-const MAX_LINKS_PER_ACCOUNT = 100;
 
 const PLATFORM_DOMAINS: Record<string, string[]> = {
   instagram: ["instagram.com", "instagr.am"],
@@ -246,21 +245,6 @@ export default function ReportPage() {
     return dups;
   })();
 
-  // Per-account limit check
-  const overLimitAccounts = (() => {
-    const counts = new Map<string, number>();
-    for (const l of links) {
-      if (l.accountId && (l.url.trim() || l.isScheduled)) {
-        counts.set(l.accountId, (counts.get(l.accountId) || 0) + 1);
-      }
-    }
-    return [...counts.entries()]
-      .filter(([, c]) => c > MAX_LINKS_PER_ACCOUNT)
-      .map(([id, c]) => {
-        const acc = accounts.find((a: any) => a.id === id);
-        return `${acc?.handle || acc?.displayName || "Unknown"} (${c}/${MAX_LINKS_PER_ACCOUNT})`;
-      });
-  })();
 
   // Unmatched links (pasted but no account assigned)
   const unmatchedCount = links.filter(
@@ -344,7 +328,7 @@ export default function ReportPage() {
     const missingAccount = validLinks.find((l) => !l.accountId);
     if (missingAccount) { setError("Please select an account for every link before submitting"); return; }
     if (duplicateUrls.length > 0) { setError("Please remove duplicate links before submitting"); return; }
-    if (overLimitAccounts.length > 0) { setError(`Account limit exceeded: ${overLimitAccounts.join(", ")}`); return; }
+
 
     setLoading(true);
     let geo: { latitude?: number; longitude?: number } = {};
@@ -423,7 +407,6 @@ export default function ReportPage() {
               </span>
             )}
           </div>
-          <p className="text-[10px] text-[#B0B0B0]">Max {MAX_LINKS_PER_ACCOUNT} per account</p>
         </div>
       </div>
 
@@ -435,12 +418,6 @@ export default function ReportPage() {
         <div className="bg-amber-50 border border-amber-200 rounded-xl p-3.5 flex items-start gap-2.5 crx-animate-scale">
           <AlertTriangle className="h-4 w-4 text-amber-600 mt-0.5 flex-shrink-0" />
           <p className="text-sm text-amber-700">Duplicate URLs detected: {duplicateUrls.slice(0, 3).join(", ")}</p>
-        </div>
-      )}
-      {overLimitAccounts.length > 0 && (
-        <div className="bg-red-50 border border-red-200 rounded-xl p-3.5 flex items-start gap-2.5 crx-animate-scale">
-          <AlertTriangle className="h-4 w-4 text-red-600 mt-0.5 flex-shrink-0" />
-          <p className="text-sm text-red-600">Account limit exceeded: {overLimitAccounts.join(", ")} — max {MAX_LINKS_PER_ACCOUNT} per account</p>
         </div>
       )}
       {unmatchedCount > 0 && (

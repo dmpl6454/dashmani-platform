@@ -134,7 +134,7 @@ export async function updateEmployee(id: string, data: {
   status?: string;
   roleIds?: string[];
 }) {
-  const employee = await prisma.user.findFirst({ where: { id, deletedAt: null } });
+  const employee = await prisma.user.findFirst({ where: { id } });
   if (!employee) throw new AppError(404, "NOT_FOUND", "Employee not found");
 
   const updateData: Prisma.UserUpdateInput = {};
@@ -143,9 +143,27 @@ export async function updateEmployee(id: string, data: {
   if (data.orgUnitId !== undefined) {
     updateData.orgUnit = data.orgUnitId ? { connect: { id: data.orgUnitId } } : { disconnect: true };
   }
-  if (data.status) updateData.status = data.status as any;
+  if (data.status) {
+    if (data.status === "INACTIVE") {
+      const activeAssignments = await prisma.accountAssignment.count({
+        where: { employeeId: id, unassignedAt: null },
+      });
+      if (activeAssignments > 0) {
+        throw new AppError(
+          409,
+          "ACTIVE_ASSIGNMENTS",
+          `Remove all ${activeAssignments} assigned channel(s) before deactivating this employee.`
+        );
+      }
+    }
+    updateData.status = data.status as any;
+    if (data.status === "ACTIVE") updateData.deletedAt = null;
+  }
 
   if (data.roleIds) {
+    if (data.roleIds.length === 0) {
+      throw new AppError(400, "NO_ROLES", "Every employee must have at least one role. Assign the Employee role if no other role applies.");
+    }
     await prisma.userRole.deleteMany({ where: { userId: id } });
     await prisma.userRole.createMany({
       data: data.roleIds.map((roleId) => ({ userId: id, roleId })),
@@ -178,6 +196,17 @@ export async function getEmployeeAccounts(employeeId: string) {
 export async function softDeleteEmployee(id: string) {
   const employee = await prisma.user.findFirst({ where: { id, deletedAt: null } });
   if (!employee) throw new AppError(404, "NOT_FOUND", "Employee not found");
+
+  const activeAssignments = await prisma.accountAssignment.count({
+    where: { employeeId: id, unassignedAt: null },
+  });
+  if (activeAssignments > 0) {
+    throw new AppError(
+      409,
+      "ACTIVE_ASSIGNMENTS",
+      `Remove all ${activeAssignments} assigned channel(s) before archiving this employee.`
+    );
+  }
 
   return prisma.user.update({
     where: { id },

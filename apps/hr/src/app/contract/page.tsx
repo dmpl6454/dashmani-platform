@@ -23,8 +23,6 @@ interface Contract {
   status: string;
 }
 
-const API_URL =
-  process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/v1";
 
 const fetcher = (url: string) => apiFetch<any>(url).then((r) => r.data);
 
@@ -87,36 +85,16 @@ export default function ContractPage() {
 
   function handleDownload() {
     if (!contractToShow?.id) return;
-    const token =
-      typeof window !== "undefined"
-        ? localStorage.getItem("hrAccessToken")
-        : null;
-    const url = `${API_URL}/hr/contract/${contractToShow.id}/html`;
-
-    fetch(url, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-    })
-      .then((r) => r.json())
-      .then((data) => {
-        const html = data.data?.html || data.data || "";
-        const win = window.open("", "_blank");
-        if (win) {
-          win.document.write(`
-            <!DOCTYPE html>
-            <html>
-            <head>
-              <title>Employment Contract</title>
-              <style>
-                body { font-family: Georgia, serif; max-width: 800px; margin: 40px auto; padding: 20px; color: #1A1A1A; }
-                @media print { body { margin: 0; padding: 20px; } }
-              </style>
-            </head>
-            <body>${html}</body>
-            </html>
-          `);
-          win.document.close();
-        }
-      });
+    apiFetch<any>(`/hr/contract/${contractToShow.id}/html`).then((res) => {
+      const html = res.data?.html || res.data || "";
+      const win = window.open("", "_blank");
+      if (win) {
+        win.document.write(`<!DOCTYPE html><html><head><title>Employment Contract</title>
+          <style>body{font-family:Georgia,serif;max-width:800px;margin:40px auto;padding:20px;color:#1A1A1A}@media print{body{margin:0;padding:20px}}</style>
+        </head><body>${html}</body></html>`);
+        win.document.close();
+      }
+    }).catch((e: any) => alert(e.message));
   }
 
   const isLoading = pendingLoading || currentLoading;

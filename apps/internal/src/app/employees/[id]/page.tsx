@@ -8,7 +8,7 @@ import useSWR from "swr";
 import Link from "next/link";
 import {
   User, FileText, Clock, IndianRupee, Award, BarChart3, Briefcase, CreditCard,
-  Users as UsersIcon, Plus, Check, X, Eye, MonitorSmartphone, ExternalLink, ListTodo, Laptop, Smartphone, Monitor, Headphones,
+  Users as UsersIcon, Plus, Check, X, Eye, MonitorSmartphone, ExternalLink, ListTodo, Laptop, Smartphone, Monitor, Headphones, AlertCircle, CheckCircle2,
 } from "lucide-react";
 import { getRoleColor } from "@/lib/role-colors";
 import { PlatformIcon } from "@/lib/platform-icon";
@@ -26,7 +26,7 @@ export default function EmployeeDetailPage() {
   const { id } = useParams();
   const router = useRouter();
   const { user: currentUser } = useAuth();
-  const { data, isLoading } = useEmployee(id as string);
+  const { data, isLoading, mutate: mutateEmployee } = useEmployee(id as string) as any;
   const [roles, setRoles] = useState([]);
   const [activeTab, setActiveTab] = useState<"profile" | "accounts" | "documents" | "hours" | "incentives" | "reviews" | "tasks" | "devices">("profile");
 
@@ -49,6 +49,19 @@ export default function EmployeeDetailPage() {
   const [addingIncentive, setAddingIncentive] = useState(false);
   const [reviewForm, setReviewForm] = useState({ period: "", rating: "3", strengths: "", improvements: "", comments: "", goals: "" });
   const [addingReview, setAddingReview] = useState(false);
+  const [pageError, setPageError] = useState<string | null>(null);
+  const [pageSuccess, setPageSuccess] = useState<string | null>(null);
+
+  function showError(msg: string) {
+    setPageError(msg);
+    setPageSuccess(null);
+    setTimeout(() => setPageError(null), 6000);
+  }
+  function showSuccess(msg: string) {
+    setPageSuccess(msg);
+    setPageError(null);
+    setTimeout(() => setPageSuccess(null), 4000);
+  }
 
   useEffect(() => {
     apiFetch("/roles").then((res: any) => setRoles(res.data));
@@ -79,7 +92,8 @@ export default function EmployeeDetailPage() {
         method: "PUT",
         body: JSON.stringify({ jobDescription: jdForm }),
       });
-    } catch (e: any) { alert(e.message); }
+      showSuccess("Job description saved.");
+    } catch (e: any) { showError(e.message); }
     finally { setSavingJd(false); }
   }
 
@@ -114,7 +128,8 @@ export default function EmployeeDetailPage() {
       });
       mutateProfile();
       setIsEditingProfile(false);
-    } catch (e: any) { alert(e.message); }
+      showSuccess("Profile data saved.");
+    } catch (e: any) { showError(e.message); }
     finally { setSavingProfile(false); }
   }
 
@@ -134,7 +149,8 @@ export default function EmployeeDetailPage() {
       });
       setIncentiveForm({ amount: "", reason: "", month: "", year: "" });
       mutateIncentives();
-    } catch (e: any) { alert(e.message); }
+      showSuccess("Incentive awarded.");
+    } catch (e: any) { showError(e.message); }
     finally { setAddingIncentive(false); }
   }
 
@@ -148,7 +164,8 @@ export default function EmployeeDetailPage() {
       });
       setReviewForm({ period: "", rating: "3", strengths: "", improvements: "", comments: "", goals: "" });
       mutateReviews();
-    } catch (e: any) { alert(e.message); }
+      showSuccess("Review submitted.");
+    } catch (e: any) { showError(e.message); }
     finally { setAddingReview(false); }
   }
 
@@ -156,7 +173,8 @@ export default function EmployeeDetailPage() {
     try {
       await apiFetch(`/admin/extra-hours/${ehId}/${action}`, { method: "POST" });
       mutateHours();
-    } catch (e: any) { alert(e.message); }
+      showSuccess(`Extra hours ${action}d.`);
+    } catch (e: any) { showError(e.message); }
   }
 
   const callerRoles = (currentUser?.roles ?? []).map((r) => r.toLowerCase());
@@ -167,7 +185,7 @@ export default function EmployeeDetailPage() {
     try {
       await apiFetch(`/admin/users/${id}`, { method: "DELETE" });
       router.push("/employees");
-    } catch (e: any) { alert(e.message); }
+    } catch (e: any) { showError(e.message); }
   }
 
   const tabs = [
@@ -183,6 +201,20 @@ export default function EmployeeDetailPage() {
 
   return (
     <div className="space-y-6 crx-animate-fade">
+      {/* Page-level notifications */}
+      {pageError && (
+        <div className="flex items-center gap-2 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm font-medium">
+          <AlertCircle className="h-4 w-4 shrink-0" />
+          {pageError}
+        </div>
+      )}
+      {pageSuccess && (
+        <div className="flex items-center gap-2 bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-xl text-sm font-medium">
+          <CheckCircle2 className="h-4 w-4 shrink-0" />
+          {pageSuccess}
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
@@ -200,9 +232,12 @@ export default function EmployeeDetailPage() {
             <p className="text-sm text-[#7A7A7A]">{employee.email} {profile?.designation ? `· ${profile.designation}` : ""}</p>
             {employee.roles?.length > 0 && (
               <div className="flex flex-wrap gap-1.5 mt-2">
-                {employee.roles.map((r: any) => (
-                  <span key={r.id} className={`rounded-full px-2.5 py-0.5 text-[11px] font-medium border ${getRoleColor(r.name)}`}>{r.name}</span>
-                ))}
+                {employee.roles.map((r: any) => {
+                  const role = r.role ?? r;
+                  return (
+                  <span key={role.id} className={`rounded-full px-2.5 py-0.5 text-[11px] font-medium border ${getRoleColor(role.name)}`}>{role.name}</span>
+                  );
+                })}
               </div>
             )}
           </div>
@@ -280,7 +315,7 @@ export default function EmployeeDetailPage() {
         <div className="space-y-6">
           {/* Employee Form (edit basic info) */}
           <div className="max-w-2xl">
-            <EmployeeForm employee={employee} roles={roles} />
+            <EmployeeForm employee={employee} roles={roles} profile={profile} onSaved={() => { mutateEmployee(); mutateProfile(); showSuccess("Employee updated."); }} />
           </div>
 
           {/* Role Management — admin/super-admin only */}
@@ -750,15 +785,22 @@ function InfoField({ label, value }: { label: string; value?: string | null }) {
 }
 
 function RoleManager({ employeeId, allRoles, currentRoles }: { employeeId: string; allRoles: any[]; currentRoles: any[] }) {
-  const [selected, setSelected] = useState<Set<string>>(new Set(currentRoles.map((r: any) => r.id)));
+  const [selected, setSelected] = useState<Set<string>>(new Set(currentRoles.map((r: any) => r.role?.id ?? r.id)));
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [roleError, setRoleError] = useState<string | null>(null);
+
+  const noneSelected = selected.size === 0;
 
   function toggle(roleId: string) {
     setSelected((prev) => {
       const next = new Set(prev);
-      if (next.has(roleId)) next.delete(roleId);
-      else next.add(roleId);
+      if (next.has(roleId)) {
+        if (next.size === 1) return prev; // block removing the last role
+        next.delete(roleId);
+      } else {
+        next.add(roleId);
+      }
       return next;
     });
     setSaved(false);
@@ -766,6 +808,7 @@ function RoleManager({ employeeId, allRoles, currentRoles }: { employeeId: strin
 
   async function handleSave() {
     setSaving(true);
+    setRoleError(null);
     try {
       await apiFetch(`/admin/users/${employeeId}/roles`, {
         method: "PUT",
@@ -773,7 +816,7 @@ function RoleManager({ employeeId, allRoles, currentRoles }: { employeeId: strin
       });
       setSaved(true);
       setTimeout(() => setSaved(false), 2500);
-    } catch (e: any) { alert(e.message); }
+    } catch (e: any) { setRoleError(e.message); }
     finally { setSaving(false); }
   }
 
@@ -783,17 +826,21 @@ function RoleManager({ employeeId, allRoles, currentRoles }: { employeeId: strin
         <UsersIcon className="h-5 w-5 text-[#7A7A7A]" />
         <h3 className="text-lg font-semibold text-[#1A1A1A]">Role Assignment</h3>
       </div>
-      <p className="text-xs text-[#7A7A7A] mb-4">Roles control what this employee can see and do across the portal.</p>
+      <p className="text-xs text-[#7A7A7A] mb-4">Roles control what this employee can see and do. Every employee must have at least one role.</p>
       <div className="flex flex-wrap gap-2 mb-5">
         {allRoles.map((role: any) => {
           const active = selected.has(role.id);
+          const isLast = active && selected.size === 1;
           return (
             <button
               key={role.id}
               onClick={() => toggle(role.id)}
+              title={isLast ? "Cannot remove the only role" : undefined}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border transition-all ${
                 active
-                  ? "bg-[#1A1A1A] text-white border-[#1A1A1A]"
+                  ? isLast
+                    ? "bg-[#1A1A1A] text-white border-[#1A1A1A] opacity-60 cursor-not-allowed"
+                    : "bg-[#1A1A1A] text-white border-[#1A1A1A]"
                   : "bg-white text-[#7A7A7A] border-[#E8E0D0] hover:border-[#B0B0B0]"
               }`}
             >
@@ -803,10 +850,16 @@ function RoleManager({ employeeId, allRoles, currentRoles }: { employeeId: strin
           );
         })}
       </div>
+      {noneSelected && (
+        <p className="text-xs text-red-500 mb-3">At least one role is required.</p>
+      )}
+      {roleError && (
+        <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 mb-3">{roleError}</p>
+      )}
       <div className="flex items-center gap-3">
         <button
           onClick={handleSave}
-          disabled={saving}
+          disabled={saving || noneSelected}
           className="bg-[#1A1A1A] text-white py-2 px-5 rounded-full text-sm font-semibold hover:bg-[#2B2B2B] disabled:opacity-50 transition-all"
         >
           {saving ? "Saving..." : "Save Roles"}

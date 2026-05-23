@@ -763,6 +763,15 @@ router.post("/hr/accept-sop", authenticateHr, async (req: Request, res: Response
   } catch (err) { next(err); }
 });
 
+const SOP_KEY = "sop_sections";
+
+router.get("/hr/sop-content", authenticateHr, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const row = await prisma.systemSetting.findUnique({ where: { key: SOP_KEY } });
+    return success(res, { sections: row ? JSON.parse(row.value) : null });
+  } catch (err) { next(err); }
+});
+
 router.get("/hr/sop-status", authenticateHr, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const profile = await prisma.employeeProfile.findUnique({

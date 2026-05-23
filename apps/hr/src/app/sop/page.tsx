@@ -81,7 +81,7 @@ export default function SOPPage() {
   useEffect(() => {
     Promise.all([
       apiFetch<any>("/hr/sop-status").catch(() => null),
-      apiFetch<any>("/admin/sop-content").catch(() => null),
+      apiFetch<any>("/hr/sop-content").catch(() => null),
     ]).then(([statusRes, contentRes]) => {
       if (statusRes?.data) {
         setAccepted(statusRes.data.accepted || false);

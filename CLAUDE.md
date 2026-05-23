@@ -604,6 +604,25 @@ This is defined once at the top of `apps/api/src/services/analytics.service.ts` 
 
 **Why `some: { notIn }` not `none: { in }`:** A user with both `Admin` + `Employee` roles passes this filter because they have at least one non-admin role — they are treated as an employee. Only a pure-admin (sole role = Super Admin or Admin, no employee-level role) is excluded. This is the correct semantic.
 
+### QA-confirmed (2026-05-23)
+
+Full end-to-end QA completed 2026-05-23. All major systems pass. Key findings:
+
+- **RBAC token isolation:** `auth.ts` middleware does NOT check `token.type` — it only verifies the JWT signature. `hr-auth.ts` DOES check `payload.type !== "hr"` → 403. The type check is per-middleware; RBAC resource permissions are the second gate for internal endpoints.
+- **`offerDate` already present:** Both `OfferLetterGenerator` and `AppointmentGenerator` in [ai-assistant/page.tsx](apps/internal/src/app/ai-assistant/page.tsx) include `offerDate: new Date().toISOString().split("T")[0]` in their `sendToEmployee()` POST bodies.
+- **Common endpoint path mistakes** (use the right column):
+
+  | Wrong | Correct |
+  |-------|---------|
+  | `POST /admin/salary-slips` | `POST /admin/salary-slips/generate` |
+  | `POST /admin/job-listings` | `POST /admin/jobs` |
+  | `GET /notifications` | `GET /admin/notifications` |
+  | `GET /hr/leave` | `GET /hr/leave-requests` |
+  | Announcement body: `content` | Use `message` |
+  | Task body: `assignedTo` | Use `assigneeId` |
+  | Account assignment: `userId` | Use `employeeId` |
+  | Contract `contractDate`: YYYY-MM-DD | Must be ISO-8601 DateTime: `2026-05-23T00:00:00.000Z` |
+
 ### Security notes
 - AI-generated HTML is sanitized with `DOMPurify` before render and before new-tab open (Blob URL)
 - All AI preview iframes use `sandbox="allow-same-origin"`

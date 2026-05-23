@@ -331,54 +331,6 @@ function AttendanceCard() {
 }
 
 /* ── Growth sparklines card ── */
-const ACCOUNTS = [
-  { handle: "@meher.co", d: 18, color: "#E07A5F" },
-  { handle: "@otto.studio", d: 11, color: "#5D5FEF" },
-  { handle: "caravan press", d: 24, color: "#4A7C52" },
-];
-
-function Spark({ pts, color, delay = 0 }: { pts: number[]; color: string; delay?: number }) {
-  const d = `M ${pts.map((p, i) => `${i * 12},${30 - p * 1.6}`).join(" L ")}`;
-  return (
-    <svg viewBox="0 0 132 32" className="w-full h-8">
-      <path d={`${d} L ${(pts.length - 1) * 12},32 L 0,32 Z`} fill={`${color}28`} />
-      <path d={d} stroke={color} strokeWidth="1.8" fill="none" strokeLinecap="round" strokeLinejoin="round"
-        style={{ strokeDasharray: "600", strokeDashoffset: "600", animation: `auth-drawline 1.8s cubic-bezier(0.22,1,0.36,1) ${delay}s forwards` }} />
-    </svg>
-  );
-}
-
-function GrowthCard() {
-  return (
-    <div className="v3-card w-[280px]">
-      <div className="px-4 h-11 flex items-center justify-between" style={{ borderBottom: "1.5px solid rgba(26,26,26,0.07)" }}>
-        <div className="flex items-center gap-2">
-          <IcChart className="text-[#5D5FEF]" />
-          <span className="text-[12.5px] font-bold text-[#1A1A1A]">Account growth · 14d</span>
-        </div>
-        <span className="font-mono text-[10.5px] text-[#4A7C52] font-bold">+4.8%</span>
-      </div>
-      <div className="px-4 py-3 space-y-2.5">
-        {ACCOUNTS.map((a, i) => {
-          const pts = Array(12).fill(0).map((_, k) => 4 + Math.sin(k * 0.7 + i) * 3 + k * 0.6 + i * 1.8);
-          return (
-            <div key={a.handle} className="flex items-center gap-3">
-              <div className="w-1.5 h-1.5 rounded-full" style={{ background: a.color }} />
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center justify-between text-[11px] font-semibold text-[#3A3A3A] mb-0.5">
-                  <span className="truncate">{a.handle}</span>
-                  <span className="font-mono text-[#4A7C52]">+{a.d}%</span>
-                </div>
-                <Spark pts={pts} color={a.color} delay={0.3 + i * 0.2} />
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
 /* ── Ring tile ── */
 function RingTile() {
   return (
@@ -520,7 +472,6 @@ function RightStage() {
 
       {card(0.7, { top: "8%", left: "8%" }, <ReportCard />, ".4s", "11s")}
       {card(1.4, { top: "4%", right: "2%" }, <AttendanceCard />, "1.2s", "13s")}
-      {card(1.1, { top: "52%", right: "-4%" }, <GrowthCard />, "0s", "14s")}
       {card(1.7, { top: "62%", left: "4%" }, <RingTile />, ".7s", "10s")}
       {card(0.5, { bottom: "2%", left: "22%" }, <SubmitBanner />, "1.8s", "12s")}
       {card(2.0, { top: "38%", left: "18%" }, <NotifTicker />, ".4s", "9s")}
@@ -611,12 +562,12 @@ function DayTimeline({ now }: { now: Date }) {
         <div className="flex items-center gap-3">
           <div className="px-2 py-0.5 rounded-md font-mono text-[10px] uppercase tracking-wider font-bold bg-[#F3EED8] text-[#3A3A3A]" style={{ border: "1px solid rgba(26,26,26,.10)" }}>anytime</div>
           <div>
-            <p className="font-display text-[16px] font-semibold text-[#1A1A1A] leading-tight">Leave · claims · growth tracks</p>
+            <p className="font-display text-[16px] font-semibold text-[#1A1A1A] leading-tight">Leave · claims · reports</p>
             <p className="text-[12px] text-[#6C6555] font-medium">Apply, log, learn — all in one quiet menu, no extra meetings.</p>
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          {[{ l: "Leave", c: "bg-[#FDF0EC]" }, { l: "Claims", c: "bg-[#FFF3C4]" }, { l: "Growth", c: "bg-[#EDEDFD]" }, { l: "Handbook", c: "bg-[#EEF4ED]" }].map((c) => (
+          {[{ l: "Leave", c: "bg-[#FDF0EC]" }, { l: "Claims", c: "bg-[#FFF3C4]" }, { l: "Reports", c: "bg-[#EDEDFD]" }, { l: "Handbook", c: "bg-[#EEF4ED]" }].map((c) => (
             <span key={c.l} className={`px-2.5 py-1 rounded-full text-[10.5px] font-bold text-[#3A3A3A] ${c.c}`} style={{ border: "1px solid rgba(26,26,26,.10)" }}>{c.l}</span>
           ))}
         </div>
@@ -928,7 +879,7 @@ export default function LoginPage() {
 
           {/* Feature chips */}
           <div className="flex flex-wrap gap-2 mt-5" style={{ animation: "auth-fadeUp .42s cubic-bezier(0.34,1.45,0.64,1) .4s both" }}>
-            {[{ l: "Daily report", c: "bg-[#FFF3C4]" }, { l: "Tasks", c: "bg-[#EDEDFD]" }, { l: "Attendance", c: "bg-[#EDF4EE]" }, { l: "Leave", c: "bg-[#FDF0EC]" }, { l: "Salary slips", c: "bg-[#EEF4ED]" }, { l: "Growth", c: "bg-[#F3EED8]" }].map((c) => (
+            {[{ l: "Daily report", c: "bg-[#FFF3C4]" }, { l: "Tasks", c: "bg-[#EDEDFD]" }, { l: "Attendance", c: "bg-[#EDF4EE]" }, { l: "Leave", c: "bg-[#FDF0EC]" }, { l: "Salary slips", c: "bg-[#EEF4ED]" }, { l: "Reviews", c: "bg-[#F3EED8]" }].map((c) => (
               <span key={c.l} className={`px-2.5 py-1 rounded-full text-[11px] font-bold text-[#3A3A3A] ${c.c} hover:-translate-y-0.5 transition-transform`} style={{ border: "1.2px solid rgba(26,26,26,.10)" }}>{c.l}</span>
             ))}
           </div>

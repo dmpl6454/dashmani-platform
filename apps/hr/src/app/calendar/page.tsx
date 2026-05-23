@@ -86,7 +86,7 @@ export default function CalendarPage() {
       const dow = dateObj.getDay();
       cells.push({
         date: dateObj.toISOString(),
-        isWeekend: dow === 0 || dow === 6,
+        isWeekend: dow === 0, // Mon–Sat working week — Sunday only
         isHoliday: false,
         isLeave: false,
       });
@@ -178,7 +178,7 @@ export default function CalendarPage() {
               {cells.map((day, idx) => (
                 <div
                   key={idx}
-                  className={`relative min-h-[64px] rounded-xl border p-1.5 transition-colors ${getCellClasses(day)}`}
+                  className={`relative min-h-[72px] rounded-xl border p-1.5 transition-colors ${getCellClasses(day)}`}
                   title={
                     day?.isHoliday
                       ? day.holidayName

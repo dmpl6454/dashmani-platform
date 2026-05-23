@@ -73,6 +73,108 @@ async function fetchYouTubeSubscribers(profileUrl: string): Promise<number | nul
   }
 }
 
+function parseFollowerCount(text: string): number | null {
+  // handles "14M", "1.2K", "553,000", "14,000,000", "553 thousand", etc.
+  const clean = text.replace(/,/g, "").trim();
+  const match = clean.match(/^([\d.]+)\s*([KkMmBbLl]|thousand|million|billion|lakh|crore)?/i);
+  if (!match) return null;
+  let num = parseFloat(match[1]);
+  const unit = (match[2] || "").toLowerCase();
+  if (unit === "k") num *= 1000;
+  else if (unit === "m") num *= 1000000;
+  else if (unit === "b") num *= 1000000000;
+  else if (unit === "l") num *= 100000;
+  else if (unit === "thousand") num *= 1000;
+  else if (unit === "lakh") num *= 100000;
+  else if (unit === "million") num *= 1000000;
+  else if (unit === "crore") num *= 10000000;
+  else if (unit === "billion") num *= 1000000000;
+  return isNaN(num) ? null : Math.round(num);
+}
+
+function extractHandle(profileUrl: string, platform: string): string {
+  try {
+    const url = new URL(profileUrl.split("?")[0].replace(/\/$/, ""));
+    const parts = url.pathname.split("/").filter(Boolean);
+    // facebook.com/paparazzziii or facebook.com/pages/name/id
+    if (platform === "facebook" && parts[0] === "pages" && parts.length >= 2) return parts[1];
+    return parts[parts.length - 1] || "";
+  } catch {
+    return "";
+  }
+}
+
+async function fetchPageHtml(url: string): Promise<string | null> {
+  try {
+    const res = await fetch(url, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Linux; Android 12; Pixel 6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Mobile Safari/537.36",
+        "Accept-Language": "en-US,en;q=0.9",
+      },
+    });
+    if (!res.ok) return null;
+    return res.text();
+  } catch {
+    return null;
+  }
+}
+
+async function fetchFacebookFollowers(profileUrl: string, handle: string): Promise<number | null> {
+  // Normalise URL — strip tracking params, use mbasic for lighter page
+  const slug = extractHandle(profileUrl, "facebook") || handle.replace(/^@/, "").split("?")[0];
+  if (!slug) return null;
+
+  const html = await fetchPageHtml(`https://mbasic.facebook.com/${encodeURIComponent(slug)}`);
+  if (!html) return null;
+
+  // "14,000,000 followers", "14M followers", "14M likes"
+  const patterns = [
+    /(\d[\d,.]*[KkMmBb]?)\s*(?:followers|people follow)/i,
+    /"followers_count"\s*:\s*(\d+)/,
+    /(\d[\d,.]*[KkMmBb]?)\s*likes/i,
+  ];
+  for (const re of patterns) {
+    const m = html.match(re);
+    if (m) {
+      const parsed = parseFollowerCount(m[1]);
+      if (parsed && parsed > 0) return parsed;
+    }
+  }
+  return null;
+}
+
+async function fetchTikTokFollowers(profileUrl: string, handle: string): Promise<number | null> {
+  const username = extractHandle(profileUrl, "tiktok") || handle.replace(/^@/, "").split("?")[0];
+  if (!username) return null;
+  const html = await fetchPageHtml(`https://www.tiktok.com/@${encodeURIComponent(username)}`);
+  if (!html) return null;
+  // JSON-LD or meta tags: "followerCount":"14000000"
+  const m = html.match(/"followerCount"\s*:\s*"?([\d,]+)"?/);
+  if (m) return parseFollowerCount(m[1]);
+  return null;
+}
+
+async function fetchLinkedInFollowers(profileUrl: string): Promise<number | null> {
+  // LinkedIn blocks scraping heavily; try the public page for follower text
+  const html = await fetchPageHtml(profileUrl);
+  if (!html) return null;
+  const m = html.match(/([\d,]+[KkMm]?)\s+followers/i);
+  if (m) return parseFollowerCount(m[1]);
+  return null;
+}
+
+async function fetchTwitterFollowers(profileUrl: string, handle: string): Promise<number | null> {
+  const username = extractHandle(profileUrl, "twitter") || handle.replace(/^@/, "").split("?")[0];
+  if (!username) return null;
+  // Use nitter as a public scrape proxy (fallback only — may not always be available)
+  const html = await fetchPageHtml(`https://nitter.net/${encodeURIComponent(username)}`);
+  if (!html) return null;
+  const m = html.match(/<span[^>]*class="[^"]*followers[^"]*"[^>]*>([\d,KkMm.]+)<\/span>/i)
+    || html.match(/Followers<\/[^>]+>\s*<[^>]+>([\d,KkMm.]+)</i);
+  if (m) return parseFollowerCount(m[1]);
+  return null;
+}
+
 export async function syncAllFollowerCounts() {
   igRateLimited = false;
   const accounts = await prisma.socialAccount.findMany({
@@ -89,7 +191,6 @@ export async function syncAllFollowerCounts() {
     let followers: number | null = null;
 
     if (slug === "instagram") {
-      // Extract clean username — strip @, query params, trailing slashes
       let username = account.handle.replace(/^@/, "").split("?")[0].split("/")[0].trim();
       if (!username && account.profileUrl) {
         username = account.profileUrl.match(/instagram\.com\/([^/?]+)/)?.[1] || "";
@@ -103,7 +204,28 @@ export async function syncAllFollowerCounts() {
         followers = await fetchYouTubeSubscribers(account.profileUrl);
         await sleep(DELAY_MS);
       }
+    } else if (slug === "facebook") {
+      if (account.profileUrl || account.handle) {
+        followers = await fetchFacebookFollowers(account.profileUrl || "", account.handle);
+        await sleep(DELAY_MS);
+      }
+    } else if (slug === "tiktok") {
+      if (account.profileUrl || account.handle) {
+        followers = await fetchTikTokFollowers(account.profileUrl || "", account.handle);
+        await sleep(DELAY_MS);
+      }
+    } else if (slug === "linkedin") {
+      if (account.profileUrl) {
+        followers = await fetchLinkedInFollowers(account.profileUrl);
+        await sleep(DELAY_MS);
+      }
+    } else if (slug === "twitter") {
+      if (account.profileUrl || account.handle) {
+        followers = await fetchTwitterFollowers(account.profileUrl || "", account.handle);
+        await sleep(DELAY_MS);
+      }
     } else {
+      // snapchat, pinterest, telegram — no public scrape available yet
       results.skipped++;
       continue;
     }
@@ -157,6 +279,14 @@ export async function syncSingleAccountFollowers(accountId: string) {
     if (username) followers = await fetchInstagramFollowers(username);
   } else if (slug === "youtube") {
     if (account.profileUrl) followers = await fetchYouTubeSubscribers(account.profileUrl);
+  } else if (slug === "facebook") {
+    followers = await fetchFacebookFollowers(account.profileUrl || "", account.handle);
+  } else if (slug === "tiktok") {
+    followers = await fetchTikTokFollowers(account.profileUrl || "", account.handle);
+  } else if (slug === "linkedin") {
+    if (account.profileUrl) followers = await fetchLinkedInFollowers(account.profileUrl);
+  } else if (slug === "twitter") {
+    followers = await fetchTwitterFollowers(account.profileUrl || "", account.handle);
   }
 
   if (followers !== null && followers > 0) {

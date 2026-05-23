@@ -380,7 +380,7 @@ export async function generateSalarySlipPreviewHtml(input: {
     <div class="item"><span class="label">Email:</span><span>${employee.email}</span></div>
     <div class="item"><span class="label">PAN:</span><span>${employee.profile?.panNumber || "—"}</span></div>
     <div class="item"><span class="label">Pay Period:</span><span>${monthNames[input.month - 1]} ${input.year}</span></div>
-    <div class="item"><span class="label">Status:</span><span>PENDING_APPROVAL</span></div>
+    <div class="item"><span class="label">Status:</span><span>Preview</span></div>
   </div>
 
   <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">

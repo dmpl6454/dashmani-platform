@@ -186,32 +186,34 @@ export function EmployeeForm({ employee, roles, profile, onSaved }: EmployeeForm
             )}
           </div>
 
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-[#1A1A1A]">Roles</label>
-            <div className="flex flex-wrap gap-2">
-              {roles.map((role: any) => {
-                const active = form.roleIds.includes(role.id);
-                const isLast = active && form.roleIds.length === 1;
-                return (
-                <button
-                  key={role.id}
-                  type="button"
-                  onClick={() => toggleRole(role.id)}
-                  title={isLast ? "Cannot remove the only role" : undefined}
-                  className={`px-3 py-1 rounded-full text-sm border transition-colors ${
-                    active
-                      ? isLast
-                        ? "bg-[#1A1A1A] text-white border-[#1A1A1A] opacity-60 cursor-not-allowed"
-                        : "bg-[#1A1A1A] text-white border-[#1A1A1A]"
-                      : "bg-white text-[#7A7A7A] border-[#E8E0D0] hover:border-[#F5D547]"
-                  }`}
-                >
-                  {role.name}
-                </button>
-                );
-              })}
+          {!isEdit && (
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-[#1A1A1A]">Roles</label>
+              <div className="flex flex-wrap gap-2">
+                {roles.map((role: any) => {
+                  const active = form.roleIds.includes(role.id);
+                  const isLast = active && form.roleIds.length === 1;
+                  return (
+                  <button
+                    key={role.id}
+                    type="button"
+                    onClick={() => toggleRole(role.id)}
+                    title={isLast ? "Cannot remove the only role" : undefined}
+                    className={`px-3 py-1 rounded-full text-sm border transition-colors ${
+                      active
+                        ? isLast
+                          ? "bg-[#1A1A1A] text-white border-[#1A1A1A] opacity-60 cursor-not-allowed"
+                          : "bg-[#1A1A1A] text-white border-[#1A1A1A]"
+                        : "bg-white text-[#7A7A7A] border-[#E8E0D0] hover:border-[#F5D547]"
+                    }`}
+                  >
+                    {role.name}
+                  </button>
+                  );
+                })}
+              </div>
             </div>
-          </div>
+          )}
 
           <div className="flex items-center gap-3">
             <Button type="submit" disabled={loading} className="bg-[#1A1A1A] text-white rounded-full hover:bg-[#2B2B2B]">

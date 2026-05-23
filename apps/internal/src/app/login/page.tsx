@@ -216,11 +216,7 @@ export default function LoginPage() {
                 onToggleShowPass={() => setShowPass((s) => !s)}
               />
 
-              <div className="flex items-center justify-between text-[12.5px]">
-                <label className="inline-flex items-center gap-2 cursor-pointer text-ink-2 font-semibold">
-                  <input type="checkbox" className="w-4 h-4 rounded border-border accent-indigo" />
-                  Keep me signed in
-                </label>
+              <div className="flex items-center justify-end text-[12.5px]">
                 <button
                   type="button"
                   onClick={() => setForgotOpen(true)}

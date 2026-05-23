@@ -877,12 +877,14 @@ enum ProfilePictureStatus {
 model OfferLetter {
   id              String   @id @default(uuid())
   employeeId      String   @map("employee_id")
+  letterType      String   @default("OFFER") @map("letter_type")
   offerDate       DateTime @map("offer_date") @db.Date
   joiningDate     DateTime @map("joining_date") @db.Date
   designation     String
   department      String?
   salary          Float
   probationMonths Int      @default(3) @map("probation_months")
+  noticePeriod    Int?     @map("notice_period")
   location        String?
   generatedBy     String   @map("generated_by")
   createdAt       DateTime @default(now()) @map("created_at")

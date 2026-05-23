@@ -3,12 +3,14 @@ import { AppError } from "../middleware/error-handler";
 
 interface GenerateOfferLetterData {
   employeeId: string;
+  letterType?: string;
   offerDate: Date;
   joiningDate: Date;
   designation: string;
   department?: string;
   salary: number;
   probationMonths?: number;
+  noticePeriod?: number;
   location?: string;
   generatedBy: string;
 }
@@ -26,12 +28,14 @@ export async function generateOfferLetter(data: GenerateOfferLetterData) {
   const offerLetter = await prisma.offerLetter.create({
     data: {
       employeeId: data.employeeId,
+      letterType: data.letterType ?? "OFFER",
       offerDate: data.offerDate,
       joiningDate: data.joiningDate,
       designation: data.designation,
       department: data.department,
       salary: data.salary,
       probationMonths: data.probationMonths ?? 3,
+      noticePeriod: data.noticePeriod,
       location: data.location,
       generatedBy: data.generatedBy,
     },

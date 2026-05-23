@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Heart, MessageCircle, Share2, Eye, ExternalLink, Image as ImageIcon } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 
@@ -187,8 +187,21 @@ export function LinkPreviewCard({ link }: { link: LinkData }) {
     previewCache.get(link.url) || null
   );
   const [imgError, setImgError] = useState(false);
+  const [visible, setVisible] = useState(false);
+  const cardRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    if (!cardRef.current) return;
+    const io = new IntersectionObserver(
+      ([e]) => { if (e.isIntersecting) setVisible(true); },
+      { rootMargin: "200px" }
+    );
+    io.observe(cardRef.current);
+    return () => io.disconnect();
+  }, []);
+
+  useEffect(() => {
+    if (!visible) return;
     if (staticThumb || previewCache.has(link.url)) return;
 
     let cancelled = false;
@@ -204,13 +217,13 @@ export function LinkPreviewCard({ link }: { link: LinkData }) {
       });
 
     return () => { cancelled = true; };
-  }, [link.url, staticThumb]);
+  }, [link.url, staticThumb, visible]);
 
   const thumbnail = staticThumb || ogData?.image;
   const ogTitle = ogData?.title;
 
   return (
-    <div className="rounded-xl border border-[#E8E0D0] bg-white overflow-hidden hover:border-[#F5D547] hover:shadow-[0_2px_12px_rgba(0,0,0,0.06)] transition-all group">
+    <div ref={cardRef} className="rounded-xl border border-[#E8E0D0] bg-white overflow-hidden hover:border-[#F5D547] hover:shadow-[0_2px_12px_rgba(0,0,0,0.06)] transition-all group">
       <div className="flex">
         {/* Thumbnail */}
         {thumbnail && !imgError ? (

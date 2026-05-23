@@ -14,7 +14,8 @@ export function useAdminReports(filters?: {
   if (filters?.accountId) params.set("accountId", filters.accountId);
   const query = params.toString() ? `?${params.toString()}` : "";
   return useSWR(`/admin/reports${query}`, (url) => apiFetch(url), {
-    refreshInterval: 30000,
+    revalidateOnFocus: false,
+    dedupingInterval: 60_000,
   });
 }
 
@@ -38,7 +39,7 @@ export function useEmployeeReportStats(employeeId?: string) {
   return useSWR(
     employeeId ? `/admin/reports/employee-stats/${employeeId}` : null,
     (url) => apiFetch(url),
-    { refreshInterval: 60000 },
+    { revalidateOnFocus: false, dedupingInterval: 60_000 },
   );
 }
 

@@ -1,6 +1,7 @@
 import { prisma } from "@dashmani/db";
 import { AppError } from "../middleware/error-handler";
 import type { Prisma } from "@dashmani/db";
+import { dispatchNotification } from "./notification.service";
 
 const taskInclude = {
   assignee: { select: { id: true, name: true, email: true } },
@@ -81,7 +82,7 @@ export async function createTask(data: {
     if (!dep) throw new AppError(404, "NOT_FOUND", "Dependency task not found");
   }
 
-  return prisma.task.create({
+  const task = await prisma.task.create({
     data: {
       title: data.title,
       description: data.description,
@@ -94,6 +95,17 @@ export async function createTask(data: {
     },
     include: taskInclude,
   });
+
+  if (data.assigneeId) {
+    dispatchNotification({
+      type: "TASK_ASSIGNED",
+      recipientUserId: data.assigneeId,
+      title: `New task assigned: ${task.title}`,
+      message: `You've been assigned a new task${task.dueDate ? ` due ${new Date(task.dueDate).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}` : ""}.`,
+    }).catch(() => {});
+  }
+
+  return task;
 }
 
 export async function updateTask(id: string, data: {
@@ -107,6 +119,8 @@ export async function updateTask(id: string, data: {
 }) {
   const task = await prisma.task.findUnique({ where: { id } });
   if (!task) throw new AppError(404, "NOT_FOUND", "Task not found");
+
+  const previousAssigneeId = task.assigneeId;
 
   const updateData: Prisma.TaskUpdateInput = {};
   if (data.title !== undefined) updateData.title = data.title;
@@ -124,11 +138,23 @@ export async function updateTask(id: string, data: {
     updateData.dependsOn = data.dependsOnId ? { connect: { id: data.dependsOnId } } : { disconnect: true };
   }
 
-  return prisma.task.update({
+  const updated = await prisma.task.update({
     where: { id },
     data: updateData,
     include: taskInclude,
   });
+
+  // Notify newly assigned employee (skip if same person was already assigned)
+  if (data.assigneeId && data.assigneeId !== previousAssigneeId) {
+    dispatchNotification({
+      type: "TASK_ASSIGNED",
+      recipientUserId: data.assigneeId,
+      title: `New task assigned: ${updated.title}`,
+      message: `You've been assigned a new task${updated.dueDate ? ` due ${new Date(updated.dueDate).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}` : ""}.`,
+    }).catch(() => {});
+  }
+
+  return updated;
 }
 
 export async function updateTaskStatus(id: string, status: string) {

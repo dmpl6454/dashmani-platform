@@ -236,18 +236,19 @@ export default function ReportPage() {
     }
   }, [existing, prefilled]);
 
-  // Duplicate URL detection
-  const duplicateUrls = (() => {
+  // Duplicate URL detection — returns a Set of normalized URLs that appear more than once
+  const duplicateUrlSet = (() => {
     const seen = new Set<string>();
-    const dups: string[] = [];
+    const dups = new Set<string>();
     for (const l of links) {
       if (!l.url.trim() || l.isScheduled) continue;
       const n = l.url.trim().toLowerCase();
-      if (seen.has(n)) dups.push(l.url);
+      if (seen.has(n)) dups.add(n);
       seen.add(n);
     }
     return dups;
   })();
+  const duplicateUrls = Array.from(duplicateUrlSet);
 
 
   // Unmatched links (pasted but no account assigned)
@@ -419,9 +420,11 @@ export default function ReportPage() {
 
       {/* Warnings */}
       {duplicateUrls.length > 0 && (
-        <div className="bg-amber-50 border border-amber-200 rounded-xl p-3.5 flex items-start gap-2.5 crx-animate-scale">
-          <AlertTriangle className="h-4 w-4 text-amber-600 mt-0.5 flex-shrink-0" />
-          <p className="text-sm text-amber-700">Duplicate URLs detected: {duplicateUrls.slice(0, 3).join(", ")}</p>
+        <div className="bg-red-50 border border-red-200 rounded-xl p-3.5 flex items-start gap-2.5 crx-animate-scale">
+          <AlertTriangle className="h-4 w-4 text-red-500 mt-0.5 flex-shrink-0" />
+          <p className="text-sm text-red-700">
+            <span className="font-semibold">{duplicateUrls.length} duplicate URL{duplicateUrls.length !== 1 ? "s" : ""} detected</span> — the affected cards are highlighted in red below. Remove the duplicates before submitting.
+          </p>
         </div>
       )}
       {unmatchedCount > 0 && (
@@ -528,28 +531,34 @@ export default function ReportPage() {
           const platform = getAccountPlatform(link.accountId);
           const accentClass = PLATFORM_ACCENT[platform] || "border-l-[#E8E0D0]";
           const isUnmatched = link.matchStatus === "unmatched" && !link.accountId;
+          const isDuplicate = !!link.url.trim() && duplicateUrlSet.has(link.url.trim().toLowerCase());
 
           return (
             <div
               key={i}
-              className={`bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.04)] border border-l-[3px] ${isUnmatched ? "border-orange-200 border-l-orange-400" : "border-[#E8E0D0] " + accentClass} p-4 space-y-3 hover:shadow-[0_4px_20px_rgba(0,0,0,0.06)] transition-all duration-200 max-w-full overflow-hidden`}
+              className={`bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.04)] border border-l-[3px] ${isDuplicate ? "border-red-200 border-l-red-500 bg-red-50/40" : isUnmatched ? "border-orange-200 border-l-orange-400" : "border-[#E8E0D0] " + accentClass} p-4 space-y-3 hover:shadow-[0_4px_20px_rgba(0,0,0,0.06)] transition-all duration-200 max-w-full overflow-hidden`}
               style={{ animation: "crx-slideUp 0.3s ease-out" }}
             >
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex flex-wrap items-center gap-2 min-w-0">
                   <span className="h-6 w-6 rounded-md bg-[#F7ECD5] flex items-center justify-center text-xs font-semibold text-[#7A7A7A] shrink-0">{i + 1}</span>
                   <h3 className="font-medium text-[#1A1A1A] text-sm">Link #{i + 1}</h3>
-                  {link.matchStatus === "auto" && (
+                  {link.matchStatus === "auto" && !isDuplicate && (
                     <span className="text-[10px] text-green-600 font-medium flex items-center gap-0.5">
                       <CheckCircle2 className="h-3 w-3" /> auto-matched
                     </span>
                   )}
-                  {isUnmatched && (
+                  {isDuplicate && (
+                    <span className="text-[10px] text-red-600 font-semibold flex items-center gap-0.5 bg-red-100 px-1.5 py-0.5 rounded-full">
+                      <XCircle className="h-3 w-3" /> Duplicate URL
+                    </span>
+                  )}
+                  {isUnmatched && !isDuplicate && (
                     <span className="text-[10px] text-orange-600 font-medium flex items-center gap-0.5">
                       <XCircle className="h-3 w-3" /> needs account
                     </span>
                   )}
-                  {platform && !isUnmatched && (
+                  {platform && !isUnmatched && !isDuplicate && (
                     <span className="text-[10px] uppercase tracking-wider text-[#B0B0B0] font-medium">{platform}</span>
                   )}
                 </div>

@@ -4,7 +4,7 @@ import { usePathname } from "next/navigation";
 import { useHrAuth } from "@/lib/auth";
 import { useState, useEffect } from "react";
 import {
-  LayoutDashboard, FileText, TrendingUp, Clock, Trophy, Users, UserCircle,
+  LayoutDashboard, FileText, Clock, Trophy, Users, UserCircle,
   Wallet, FolderOpen, Calendar, PlaneTakeoff, Home, Gift, ListTodo, Receipt,
   Presentation, ClipboardList, Timer, Award, AlertCircle, Building2, ScrollText,
   FileCheck, Bug, Mail, ChevronLeft, ChevronRight, ChevronDown, Grid3x3,
@@ -16,7 +16,6 @@ type NavItem = { href: string; label: string; icon: React.ElementType; group?: s
 const NAV_MAIN: NavItem[] = [
   { href: "/dashboard",    label: "Dashboard",      icon: LayoutDashboard },
   { href: "/report",       label: "Submit Report",  icon: FileText,        group: "Daily" },
-  { href: "/growth",       label: "Account Growth", icon: TrendingUp },
   { href: "/history",      label: "Report History", icon: Clock },
   { href: "/leaderboard",  label: "Leaderboard",    icon: Trophy },
   { href: "/team",         label: "My Team",        icon: Users,           group: "People" },

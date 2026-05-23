@@ -4,7 +4,7 @@ import { usePathname } from "next/navigation";
 import { useHrAuth } from "@/lib/auth";
 import { NotificationBell } from "./notification-bell";
 import {
-  LayoutDashboard, FileText, TrendingUp, Clock, Trophy, Users, UserCircle,
+  LayoutDashboard, FileText, Clock, Trophy, Users, UserCircle,
   LogOut, Settings, Menu, X, PlaneTakeoff, Home, Gift, ListTodo, Receipt,
   Presentation, ClipboardList, Calendar, Timer, Award, AlertCircle, Building2,
   ScrollText, FileCheck, Bug, Wallet, FolderOpen, Mail, MoreHorizontal, CalendarCheck,
@@ -14,7 +14,6 @@ import { useState, useRef, useEffect } from "react";
 const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/report", label: "Report", icon: FileText },
-  { href: "/growth", label: "Growth", icon: TrendingUp },
   { href: "/history", label: "History", icon: Clock },
   { href: "/leaderboard", label: "Board", icon: Trophy },
   { href: "/team", label: "Team", icon: Users },

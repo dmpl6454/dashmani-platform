@@ -6,6 +6,34 @@ function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+// In-memory progress so the UI can poll for a "syncing… X/Y" status
+type SyncProgress = {
+  state: "idle" | "running";
+  startedAt: string | null;
+  finishedAt: string | null;
+  total: number;
+  processed: number;
+  updated: number;
+  failed: number;
+  skipped: number;
+  lastError?: string;
+};
+
+let progress: SyncProgress = {
+  state: "idle",
+  startedAt: null,
+  finishedAt: null,
+  total: 0,
+  processed: 0,
+  updated: 0,
+  failed: 0,
+  skipped: 0,
+};
+
+export function getSyncProgress(): SyncProgress {
+  return { ...progress };
+}
+
 function parseYouTubeSubscribers(text: string): number | null {
   // "553 thousand subscribers" → 553000, "1.08 million" → 1080000
   const match = text.match(/([\d,.]+)\s*(thousand|million|billion|lakh|crore)?/i);
@@ -65,16 +93,28 @@ async function fetchYouTubeSubscribers(profileUrl: string): Promise<number | nul
     });
     if (!res.ok) return null;
     const html = await res.text();
-    const match = html.match(/"subscriberCountText":\{"accessibility":\{"accessibilityData":\{"label":"([^"]+)"/);
-    if (!match) return null;
-    return parseYouTubeSubscribers(match[1]);
+
+    // The channel's OWN subscriber count is rendered inside
+    // pageHeaderRenderer → contentMetadataViewModel → metadataParts as an
+    // `accessibilityLabel`.  In practice this is the ONLY `accessibilityLabel`
+    // on the page that mentions "subscribers" (the related-channels sidebar
+    // uses `subscriberCountText` instead).  Match the label directly.
+    const accLabel = html.match(/"accessibilityLabel":"([^"]*\bsubscribers?\b[^"]*)"/i);
+    if (accLabel) return parseYouTubeSubscribers(accLabel[1]);
+
+    // Fallback to the older sidebar-style key for alternate YT layouts.
+    // NOTE: on the current YT layout this returns the wrong (sidebar)
+    // channel's count, so it's only useful as a "better than null" guard.
+    const fallback = html.match(/"subscriberCountText":\{"accessibility":\{"accessibilityData":\{"label":"([^"]+)"/);
+    if (fallback) return parseYouTubeSubscribers(fallback[1]);
+    return null;
   } catch {
     return null;
   }
 }
 
 function parseFollowerCount(text: string): number | null {
-  // handles "14M", "1.2K", "553,000", "14,000,000", "553 thousand", etc.
+  // handles "14M", "1.2K", "553,000", "14,000,000", "553 thousand", "1,41,63,052", etc.
   const clean = text.replace(/,/g, "").trim();
   const match = clean.match(/^([\d.]+)\s*([KkMmBbLl]|thousand|million|billion|lakh|crore)?/i);
   if (!match) return null;
@@ -88,7 +128,6 @@ function parseFollowerCount(text: string): number | null {
   else if (unit === "lakh") num *= 100000;
   else if (unit === "million") num *= 1000000;
   else if (unit === "crore") num *= 10000000;
-  else if (unit === "billion") num *= 1000000000;
   return isNaN(num) ? null : Math.round(num);
 }
 
@@ -104,11 +143,30 @@ function extractHandle(profileUrl: string, platform: string): string {
   }
 }
 
-async function fetchPageHtml(url: string): Promise<string | null> {
+// Devanagari → ASCII digit map.  Facebook localises Indian pages so the
+// follower count comes back as "१,४१,६३,०५२" instead of "14,163,052".
+const DEVANAGARI_DIGIT_MAP: Record<string, string> = {
+  "०": "0", "१": "1", "२": "2", "३": "3", "४": "4",
+  "५": "5", "६": "6", "७": "7", "८": "8", "९": "9",
+};
+
+function devanagariToAscii(input: string): string {
+  return input.replace(/[०-९]/g, (d) => DEVANAGARI_DIGIT_MAP[d] || d);
+}
+
+function decodeHtmlEntities(s: string): string {
+  return s.replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))
+          .replace(/&#(\d+);/g, (_, dec) => String.fromCodePoint(parseInt(dec, 10)))
+          .replace(/&amp;/g, "&")
+          .replace(/&quot;/g, '"')
+          .replace(/&#x27;/g, "'");
+}
+
+async function fetchPageHtml(url: string, userAgent?: string): Promise<string | null> {
   try {
     const res = await fetch(url, {
       headers: {
-        "User-Agent": "Mozilla/5.0 (Linux; Android 12; Pixel 6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Mobile Safari/537.36",
+        "User-Agent": userAgent || "Mozilla/5.0 (Linux; Android 12; Pixel 6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Mobile Safari/537.36",
         "Accept-Language": "en-US,en;q=0.9",
       },
     });
@@ -120,17 +178,36 @@ async function fetchPageHtml(url: string): Promise<string | null> {
 }
 
 async function fetchFacebookFollowers(profileUrl: string, handle: string): Promise<number | null> {
-  // Normalise URL — strip tracking params, use mbasic for lighter page
+  // FB blocks default UAs and returns HTTP 400 on mbasic without a cookie.
+  // Googlebot UA is the only reliable way to get the public, un-walled page.
   const slug = extractHandle(profileUrl, "facebook") || handle.replace(/^@/, "").split("?")[0];
   if (!slug) return null;
 
-  const html = await fetchPageHtml(`https://mbasic.facebook.com/${encodeURIComponent(slug)}`);
+  const html = await fetchPageHtml(
+    `https://www.facebook.com/${encodeURIComponent(slug)}`,
+    "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
+  );
   if (!html) return null;
 
-  // "14,000,000 followers", "14M followers", "14M likes"
+  // 1) og:description meta tag — most reliable, format example for Indian pages:
+  //    "Paparazzii.&#x967;,&#x96a;&#x967;,&#x96c;&#x969;,&#x966;&#x96b;&#x968; आवडी · ..."
+  //    where the Devanagari digits decode to "1,41,63,052 likes (followers)"
+  const ogDesc = html.match(/<meta\s+property="og:description"\s+content="([^"]+)"/i);
+  if (ogDesc) {
+    const decoded = devanagariToAscii(decodeHtmlEntities(ogDesc[1]));
+    // Match the first number sequence (may use Indian "1,41,63,052" or Western "14,163,052")
+    const numMatch = decoded.match(/([\d,]+)/);
+    if (numMatch) {
+      const parsed = parseFollowerCount(numMatch[1]);
+      if (parsed && parsed > 0) return parsed;
+    }
+  }
+
+  // 2) JSON / inline patterns for English / pages without an og:description count
   const patterns = [
-    /(\d[\d,.]*[KkMmBb]?)\s*(?:followers|people follow)/i,
+    /"follower_count"\s*:\s*(\d+)/,
     /"followers_count"\s*:\s*(\d+)/,
+    /(\d[\d,.]*[KkMmBb]?)\s*(?:followers|people follow)/i,
     /(\d[\d,.]*[KkMmBb]?)\s*likes/i,
   ];
   for (const re of patterns) {
@@ -143,46 +220,35 @@ async function fetchFacebookFollowers(profileUrl: string, handle: string): Promi
   return null;
 }
 
-async function fetchTikTokFollowers(profileUrl: string, handle: string): Promise<number | null> {
-  const username = extractHandle(profileUrl, "tiktok") || handle.replace(/^@/, "").split("?")[0];
-  if (!username) return null;
-  const html = await fetchPageHtml(`https://www.tiktok.com/@${encodeURIComponent(username)}`);
-  if (!html) return null;
-  // JSON-LD or meta tags: "followerCount":"14000000"
-  const m = html.match(/"followerCount"\s*:\s*"?([\d,]+)"?/);
-  if (m) return parseFollowerCount(m[1]);
-  return null;
-}
-
-async function fetchLinkedInFollowers(profileUrl: string): Promise<number | null> {
-  // LinkedIn blocks scraping heavily; try the public page for follower text
-  const html = await fetchPageHtml(profileUrl);
-  if (!html) return null;
-  const m = html.match(/([\d,]+[KkMm]?)\s+followers/i);
-  if (m) return parseFollowerCount(m[1]);
-  return null;
-}
-
-async function fetchTwitterFollowers(profileUrl: string, handle: string): Promise<number | null> {
-  const username = extractHandle(profileUrl, "twitter") || handle.replace(/^@/, "").split("?")[0];
-  if (!username) return null;
-  // Use nitter as a public scrape proxy (fallback only — may not always be available)
-  const html = await fetchPageHtml(`https://nitter.net/${encodeURIComponent(username)}`);
-  if (!html) return null;
-  const m = html.match(/<span[^>]*class="[^"]*followers[^"]*"[^>]*>([\d,KkMm.]+)<\/span>/i)
-    || html.match(/Followers<\/[^>]+>\s*<[^>]+>([\d,KkMm.]+)</i);
-  if (m) return parseFollowerCount(m[1]);
-  return null;
-}
+// snapchat / pinterest / telegram / tiktok / linkedin / twitter — these
+// platforms either render entirely on the client (TikTok), gate everything
+// behind auth (LinkedIn returns HTTP 999 on bot UAs), or have unreliable proxy
+// scrapers (Twitter via nitter is mostly dead).  Skipped — admins should enter
+// counts manually for those.
 
 export async function syncAllFollowerCounts() {
+  // Don't allow overlapping runs
+  if (progress.state === "running") {
+    return progress;
+  }
+
   igRateLimited = false;
   const accounts = await prisma.socialAccount.findMany({
     where: { profileUrl: { not: "" } },
     include: { platform: { select: { slug: true } } },
   });
 
-  const results = { total: accounts.length, updated: 0, failed: 0, skipped: 0 };
+  progress = {
+    state: "running",
+    startedAt: new Date().toISOString(),
+    finishedAt: null,
+    total: accounts.length,
+    processed: 0,
+    updated: 0,
+    failed: 0,
+    skipped: 0,
+  };
+
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
@@ -209,36 +275,20 @@ export async function syncAllFollowerCounts() {
         followers = await fetchFacebookFollowers(account.profileUrl || "", account.handle);
         await sleep(DELAY_MS);
       }
-    } else if (slug === "tiktok") {
-      if (account.profileUrl || account.handle) {
-        followers = await fetchTikTokFollowers(account.profileUrl || "", account.handle);
-        await sleep(DELAY_MS);
-      }
-    } else if (slug === "linkedin") {
-      if (account.profileUrl) {
-        followers = await fetchLinkedInFollowers(account.profileUrl);
-        await sleep(DELAY_MS);
-      }
-    } else if (slug === "twitter") {
-      if (account.profileUrl || account.handle) {
-        followers = await fetchTwitterFollowers(account.profileUrl || "", account.handle);
-        await sleep(DELAY_MS);
-      }
     } else {
-      // snapchat, pinterest, telegram — no public scrape available yet
-      results.skipped++;
+      // tiktok, linkedin, twitter, snapchat, pinterest, telegram — manual entry only
+      progress.skipped++;
+      progress.processed++;
       continue;
     }
 
     if (followers !== null && followers > 0) {
       console.log(`[follower-sync] ${slug}/${account.handle}: ${followers}`);
-      // Update the social account's follower count
       await prisma.socialAccount.update({
         where: { id: account.id },
         data: { followerCount: followers, lastSyncedAt: new Date() },
       });
 
-      // Record a growth snapshot for today
       const existing = await prisma.accountGrowthSnapshot.findUnique({
         where: { accountId_date: { accountId: account.id, date: today } },
       });
@@ -254,13 +304,16 @@ export async function syncAllFollowerCounts() {
         });
       }
 
-      results.updated++;
+      progress.updated++;
     } else {
-      results.failed++;
+      progress.failed++;
     }
+    progress.processed++;
   }
 
-  return results;
+  progress.state = "idle";
+  progress.finishedAt = new Date().toISOString();
+  return { total: progress.total, updated: progress.updated, failed: progress.failed, skipped: progress.skipped };
 }
 
 // Sync a single account (for on-demand refresh)
@@ -281,13 +334,8 @@ export async function syncSingleAccountFollowers(accountId: string) {
     if (account.profileUrl) followers = await fetchYouTubeSubscribers(account.profileUrl);
   } else if (slug === "facebook") {
     followers = await fetchFacebookFollowers(account.profileUrl || "", account.handle);
-  } else if (slug === "tiktok") {
-    followers = await fetchTikTokFollowers(account.profileUrl || "", account.handle);
-  } else if (slug === "linkedin") {
-    if (account.profileUrl) followers = await fetchLinkedInFollowers(account.profileUrl);
-  } else if (slug === "twitter") {
-    followers = await fetchTwitterFollowers(account.profileUrl || "", account.handle);
   }
+  // Other platforms: no automated sync; admin must enter the count manually.
 
   if (followers !== null && followers > 0) {
     await prisma.socialAccount.update({

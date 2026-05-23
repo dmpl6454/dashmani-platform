@@ -422,16 +422,77 @@ function AccountsPageInner() {
   const [deleteTarget, setDeleteTarget]     = useState<any | null>(null);
   const [deleting, setDeleting]             = useState(false);
   const [syncing, setSyncing]               = useState(false);
+  const [syncProgress, setSyncProgress]     = useState<{ processed: number; total: number; updated: number; failed: number; skipped: number } | null>(null);
+  const [syncToast, setSyncToast]           = useState<string | null>(null);
 
   async function handleSyncFollowers() {
     setSyncing(true);
+    setSyncProgress({ processed: 0, total: 0, updated: 0, failed: 0, skipped: 0 });
+    setSyncToast("Sync started — Instagram, YouTube and Facebook will be refreshed (this can take a few minutes).");
     try {
       await apiFetch("/accounts/sync-followers", { method: "POST" });
-      setTimeout(() => mutate(), 5000);
+      // Poll status every 3s until idle, then refresh the table
+      const poll = async () => {
+        try {
+          const res = await apiFetch<any>("/accounts/sync-followers/status");
+          const data = res.data;
+          setSyncProgress({
+            processed: data.processed ?? 0,
+            total: data.total ?? 0,
+            updated: data.updated ?? 0,
+            failed: data.failed ?? 0,
+            skipped: data.skipped ?? 0,
+          });
+          if (data.state === "running") {
+            setTimeout(poll, 3000);
+          } else {
+            setSyncing(false);
+            mutate();
+            setSyncToast(
+              data.total > 0
+                ? `Sync complete — ${data.updated} updated, ${data.failed} failed, ${data.skipped} skipped (manual platforms).`
+                : "Sync complete — no accounts found to sync."
+            );
+            setTimeout(() => { setSyncToast(null); setSyncProgress(null); }, 8000);
+          }
+        } catch {
+          setSyncing(false);
+          setSyncToast("Sync status check failed. The job may still be running in the background.");
+          setTimeout(() => setSyncToast(null), 6000);
+        }
+      };
+      setTimeout(poll, 2000);
     } catch (err: any) {
-      alert(err.message);
-    } finally {
       setSyncing(false);
+      setSyncToast(`Sync failed: ${err.message}`);
+      setTimeout(() => setSyncToast(null), 6000);
+    }
+  }
+
+  async function handleManualFollowerEdit(accountId: string, currentValue: number | null | undefined) {
+    const input = window.prompt(
+      "Enter follower count (digits only; supports K / M shorthand, e.g. 14M, 553K, 1200000):",
+      currentValue ? String(currentValue) : ""
+    );
+    if (input === null) return; // cancelled
+    const trimmed = input.trim().toUpperCase();
+    if (!trimmed) return;
+    // Parse client-side so the user sees errors immediately
+    let n: number;
+    const m = trimmed.match(/^([\d.,]+)\s*([KM])?$/);
+    if (!m) { alert("Invalid number. Use digits only or shorthand like 14M, 553K."); return; }
+    n = parseFloat(m[1].replace(/,/g, ""));
+    if (m[2] === "K") n *= 1000;
+    if (m[2] === "M") n *= 1000000;
+    if (isNaN(n) || n < 0) { alert("Invalid number."); return; }
+    try {
+      await apiFetch(`/accounts/${accountId}`, {
+        method: "PUT",
+        body: JSON.stringify({ followerCount: Math.round(n) }),
+      });
+      mutate();
+    } catch (err: any) {
+      alert(err?.message || "Failed to update follower count");
     }
   }
   const [assignOpen, setAssignOpen]         = useState(false);
@@ -517,9 +578,14 @@ function AccountsPageInner() {
             onClick={handleSyncFollowers}
             disabled={syncing}
             className="flex items-center gap-2 h-9 px-4 rounded-full border-2 border-ink/15 text-sm font-semibold text-ink-3 hover:border-indigo/40 hover:text-indigo transition-colors disabled:opacity-50"
+            title="Re-fetch follower counts for Instagram, YouTube and Facebook accounts (other platforms must be entered manually)"
           >
             <RefreshCw className={`h-3.5 w-3.5 ${syncing ? "animate-spin" : ""}`} />
-            {syncing ? "Syncing…" : "Sync Followers"}
+            {syncing
+              ? syncProgress && syncProgress.total > 0
+                ? `Syncing ${syncProgress.processed}/${syncProgress.total}…`
+                : "Syncing…"
+              : "Sync Followers"}
           </button>
           <button
             onClick={() => openAssign({})}
@@ -535,6 +601,28 @@ function AccountsPageInner() {
           </button>
         </div>
       </div>
+
+      {/* Sync status banner */}
+      {syncToast && (
+        <div className="bg-indigo-soft border-2 border-indigo/20 rounded-2xl px-4 py-3 flex items-center gap-3">
+          <RefreshCw className={`h-4 w-4 text-indigo ${syncing ? "animate-spin" : ""} shrink-0`} />
+          <div className="flex-1 text-sm text-ink">
+            <p className="font-semibold">{syncToast}</p>
+            {syncing && syncProgress && syncProgress.total > 0 && (
+              <p className="text-xs text-ink-3 mt-0.5">
+                {syncProgress.processed} of {syncProgress.total} processed — {syncProgress.updated} updated, {syncProgress.failed} failed, {syncProgress.skipped} skipped
+              </p>
+            )}
+          </div>
+          <button
+            onClick={() => { setSyncToast(null); }}
+            className="text-ink-4 hover:text-ink"
+            title="Dismiss"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
 
       {/* Tabs */}
       <div className="flex items-center gap-1 border-b-2 border-ink/10">
@@ -665,7 +753,18 @@ function AccountsPageInner() {
                             </button>
                           )}
                         </td>
-                        <td className="px-4 py-3 text-sm text-ink-4">{acc.followerCount?.toLocaleString() ?? "—"}</td>
+                        <td className="px-4 py-3 text-sm text-ink-4">
+                          <div className="flex items-center gap-1.5">
+                            <span>{acc.followerCount?.toLocaleString() ?? "—"}</span>
+                            <button
+                              onClick={() => handleManualFollowerEdit(acc.id, acc.followerCount)}
+                              className="opacity-0 group-hover:opacity-100 hover:text-indigo transition-opacity"
+                              title="Edit follower count manually"
+                            >
+                              <Pencil className="h-3 w-3" />
+                            </button>
+                          </div>
+                        </td>
                         <td className="px-4 py-3 text-sm text-ink-4 hidden xl:table-cell">
                           {acc.lastSyncedAt
                             ? (() => {

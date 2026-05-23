@@ -25,6 +25,7 @@ import { uploadExcel } from "../middleware/upload";
 import { prisma } from "@dashmani/db";
 import { notifyHrByEmail, notifyAdminByEmail, sendEmail } from "../services/email.service";
 import * as notificationService from "../services/notification.service";
+import * as employeeService from "../services/employee.service";
 
 const router = Router();
 
@@ -528,6 +529,45 @@ router.get("/admin/employees/:id/profile-data", authenticate, requirePermission(
   try {
     const { prisma } = require("@dashmani/db");
     const profile = await prisma.employeeProfile.findUnique({ where: { userId: req.params.id } });
+    return success(res, profile);
+  } catch (err) { next(err); }
+});
+
+router.put("/admin/employees/:id/profile-data", authenticate, requirePermission("employees", "edit"), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { prisma } = require("@dashmani/db");
+    const {
+      designation, salary, joinDate,
+      bankName, bankAccountNumber, bankAccountHolderName, bankBranch, ifscCode,
+      aadhaarNumber, panNumber, mailingAddress,
+      familyContact1Name, familyContact1Phone, familyContact1Relation,
+      familyContact2Name, familyContact2Phone, familyContact2Relation,
+    } = req.body;
+
+    const data: Record<string, any> = {};
+    if (designation !== undefined) data.designation = designation || null;
+    if (salary !== undefined) data.salary = salary ? parseFloat(salary) : null;
+    if (joinDate !== undefined) data.joiningDate = joinDate ? new Date(joinDate) : null;
+    if (bankName !== undefined) data.bankName = bankName || null;
+    if (bankAccountNumber !== undefined) data.bankAccountNumber = bankAccountNumber || null;
+    if (bankAccountHolderName !== undefined) data.bankAccountHolderName = bankAccountHolderName || null;
+    if (bankBranch !== undefined) data.bankBranch = bankBranch || null;
+    if (ifscCode !== undefined) data.ifscCode = ifscCode || null;
+    if (aadhaarNumber !== undefined) data.aadhaarNumber = aadhaarNumber || null;
+    if (panNumber !== undefined) data.panNumber = panNumber || null;
+    if (mailingAddress !== undefined) data.mailingAddress = mailingAddress || null;
+    if (familyContact1Name !== undefined) data.familyContact1Name = familyContact1Name || null;
+    if (familyContact1Phone !== undefined) data.familyContact1Phone = familyContact1Phone || null;
+    if (familyContact1Relation !== undefined) data.familyContact1Relation = familyContact1Relation || null;
+    if (familyContact2Name !== undefined) data.familyContact2Name = familyContact2Name || null;
+    if (familyContact2Phone !== undefined) data.familyContact2Phone = familyContact2Phone || null;
+    if (familyContact2Relation !== undefined) data.familyContact2Relation = familyContact2Relation || null;
+
+    const profile = await prisma.employeeProfile.upsert({
+      where: { userId: req.params.id },
+      update: data,
+      create: { userId: req.params.id, ...data },
+    });
     return success(res, profile);
   } catch (err) { next(err); }
 });
@@ -1233,14 +1273,13 @@ router.put("/admin/users/:id/roles", authenticate, requireAdminRole, async (req:
   try {
     const { roleIds } = req.body as { roleIds: string[] };
     if (!Array.isArray(roleIds)) return res.status(400).json({ success: false, error: { message: "roleIds must be an array" } });
+    if (roleIds.length === 0) return res.status(400).json({ success: false, error: { message: "Every employee must have at least one role. Assign the Employee role if no other role applies." } });
     const user = await prisma.user.findUnique({ where: { id: req.params.id }, select: { id: true } });
     if (!user) return res.status(404).json({ success: false, error: { message: "User not found" } });
 
     await prisma.$transaction([
       prisma.userRole.deleteMany({ where: { userId: req.params.id } }),
-      ...(roleIds.length > 0
-        ? [prisma.userRole.createMany({ data: roleIds.map((roleId) => ({ userId: req.params.id, roleId })), skipDuplicates: true })]
-        : []),
+      prisma.userRole.createMany({ data: roleIds.map((roleId) => ({ userId: req.params.id, roleId })), skipDuplicates: true }),
     ]);
 
     const updated = await prisma.user.findUnique({
@@ -1269,7 +1308,7 @@ router.delete("/admin/users/:id", authenticate, requireAdminRole, async (req: Re
       return res.status(400).json({ success: false, error: { message: "You cannot delete your own account" } });
     }
 
-    await prisma.user.update({ where: { id: req.params.id }, data: { deletedAt: new Date(), status: "INACTIVE" } });
+    await employeeService.softDeleteEmployee(req.params.id);
     return success(res, { message: "User deleted" });
   } catch (err) { next(err); }
 });

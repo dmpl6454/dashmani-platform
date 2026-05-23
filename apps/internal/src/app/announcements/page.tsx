@@ -23,7 +23,7 @@ function AnnouncementModal({
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const { data: teamsData } = useSWR("/admin/teams", (url: string) => apiFetch<any>(url));
+  const { data: teamsData } = useSWR("/teams", (url: string) => apiFetch<any>(url));
   const teams: any[] = teamsData?.data ?? [];
 
   const selectedTeam = orgUnitId ? teams.find((t: any) => t.id === orgUnitId) : null;
@@ -60,7 +60,7 @@ function AnnouncementModal({
   const audienceLabel = selectedTeam ? `Team: ${selectedTeam.name}` : "All active employees";
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-ink/40 p-4 overflow-y-auto" onClick={onClose}>
       <div className="v3-card shadow-pop w-full max-w-lg overflow-hidden pop-in" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-6 py-4 border-b-2 border-ink/10">
           <h2 className="font-bold text-ink flex items-center gap-2">

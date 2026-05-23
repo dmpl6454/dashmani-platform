@@ -16,7 +16,6 @@ interface OfferLetter {
   createdAt: string;
 }
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/v1";
 
 const statusConfig: Record<string, { label: string; badge: string; icon: typeof CheckCircle2 }> = {
   PENDING: { label: "Pending", badge: "bg-attention-bg text-attention border-attention/20", icon: Clock },
@@ -34,21 +33,16 @@ export default function OfferLettersPage() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   function handleDownload(letter: OfferLetter) {
-    const token = typeof window !== "undefined" ? localStorage.getItem("hrAccessToken") : null;
-    const url = `${API_URL}/hr/offer-letters/${letter.id}/html`;
-
-    fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
-      .then((r) => r.json())
-      .then((data) => {
-        const html = data.data?.html || data.data || "";
-        const win = window.open("", "_blank");
-        if (win) {
-          win.document.write(`<!DOCTYPE html><html><head><title>Offer Letter - ${letter.designation}</title>
-            <style>body{font-family:Georgia,serif;max-width:800px;margin:40px auto;padding:20px;color:#1A1A1A}@media print{body{margin:0;padding:20px}}</style>
-          </head><body>${html}</body></html>`);
-          win.document.close();
-        }
-      });
+    apiFetch<any>(`/hr/offer-letters/${letter.id}/html`).then((res) => {
+      const html = res.data?.html || res.data || "";
+      const win = window.open("", "_blank");
+      if (win) {
+        win.document.write(`<!DOCTYPE html><html><head><title>Offer Letter - ${letter.designation}</title>
+          <style>body{font-family:Georgia,serif;max-width:800px;margin:40px auto;padding:20px;color:#1A1A1A}@media print{body{margin:0;padding:20px}}</style>
+        </head><body>${html}</body></html>`);
+        win.document.close();
+      }
+    }).catch((e: any) => alert(e.message));
   }
 
   return (

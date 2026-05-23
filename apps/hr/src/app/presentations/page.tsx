@@ -11,6 +11,7 @@ import { apiFetch } from "@/lib/api";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/v1";
 
+// Export returns raw HTML (not JSON), so apiFetch can't be used here
 async function apiFetchRaw(path: string): Promise<string> {
   const token = typeof window !== "undefined" ? localStorage.getItem("hrAccessToken") : null;
   const res = await fetch(`${API_URL}${path}`, {
@@ -330,8 +331,8 @@ export default function PresentationsPage() {
 
   if (mode === "preview") {
     return (
-      <div className="min-h-screen bg-ink">
-        <div className="flex items-center justify-between px-4 py-3 bg-ink/90 border-b border-white/10">
+      <>
+        <div className="flex items-center justify-between px-4 py-3 bg-ink shrink-0" style={{ borderBottom: "1px solid rgba(255,255,255,0.1)" }}>
           <button
             onClick={() => setMode("edit")}
             className="flex items-center gap-2 text-white/60 hover:text-white text-[13px] font-medium transition-colors"
@@ -346,16 +347,16 @@ export default function PresentationsPage() {
             <Download className="h-3.5 w-3.5" /> Download HTML
           </button>
         </div>
-        <iframe srcDoc={previewHtml} className="w-full" style={{ height: "calc(100vh - 52px)", border: "none" }} />
-      </div>
+        <iframe srcDoc={previewHtml} className="flex-1 w-full" style={{ border: "none" }} />
+      </>
     );
   }
 
   if (mode === "edit") {
     return (
-      <div className="min-h-screen bg-bg">
+      <>
         {/* Editor Header */}
-        <div className="sticky top-0 z-10 bg-surface border-b-2 border-ink/7 px-6 h-14 flex items-center justify-between">
+        <div className="sticky top-0 z-10 bg-surface border-b-2 border-ink/7 px-6 h-14 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-3">
             <button
               onClick={() => setMode("list")}
@@ -389,10 +390,10 @@ export default function PresentationsPage() {
         </div>
 
         {/* Editor Body */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 p-6" style={{ height: "calc(100vh - 56px)" }}>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 p-6 flex-1 overflow-hidden">
           {/* Markdown Editor */}
-          <div className="v3-card overflow-hidden flex flex-col">
-            <div className="px-5 h-11 flex items-center justify-between" style={{ borderBottom: "2px solid rgba(26,26,26,0.07)" }}>
+          <div className="v3-card overflow-hidden flex flex-col min-h-0">
+            <div className="px-5 h-11 flex items-center justify-between shrink-0" style={{ borderBottom: "2px solid rgba(26,26,26,0.07)" }}>
               <span className="text-[13px] font-semibold text-ink">Marp Markdown</span>
               <span className="text-[11px] text-ink-4 font-medium">Use --- to separate slides</span>
             </div>
@@ -405,8 +406,8 @@ export default function PresentationsPage() {
           </div>
 
           {/* Live Preview Panel */}
-          <div className="v3-card overflow-hidden flex flex-col">
-            <div className="px-5 h-11 flex items-center justify-between" style={{ borderBottom: "2px solid rgba(26,26,26,0.07)" }}>
+          <div className="v3-card overflow-hidden flex flex-col min-h-0">
+            <div className="px-5 h-11 flex items-center justify-between shrink-0" style={{ borderBottom: "2px solid rgba(26,26,26,0.07)" }}>
               <span className="text-[13px] font-semibold text-ink">Live Preview</span>
               <span className="text-[11px] text-ink-4 font-medium">{slideCount} slides</span>
             </div>
@@ -424,7 +425,7 @@ export default function PresentationsPage() {
             )}
           </div>
         </div>
-      </div>
+      </>
     );
   }
 

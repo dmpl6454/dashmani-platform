@@ -7,9 +7,11 @@ import { apiFetch } from "@/lib/api";
 interface EmployeeFormProps {
   employee?: any;
   roles: any[];
+  profile?: any;
+  onSaved?: () => void;
 }
 
-export function EmployeeForm({ employee, roles }: EmployeeFormProps) {
+export function EmployeeForm({ employee, roles, profile, onSaved }: EmployeeFormProps) {
   const router = useRouter();
   const isEdit = !!employee;
   const [teams, setTeams] = useState<any[]>([]);
@@ -18,18 +20,41 @@ export function EmployeeForm({ employee, roles }: EmployeeFormProps) {
     email: employee?.email || "",
     password: "",
     phone: employee?.phone || "",
-    roleIds: employee?.roles?.map((r: any) => r.id) || [],
+    roleIds: employee?.roles?.map((r: any) => r.role?.id ?? r.id) || [],
+    status: employee?.status || "ONBOARDING",
     orgUnitId: employee?.orgUnit?.id || "",
-    designation: employee?.profile?.designation || "",
-    joinDate: employee?.profile?.joiningDate ? employee.profile.joiningDate.split("T")[0] : "",
-    salary: employee?.profile?.salary != null ? String(employee.profile.salary) : "",
+    designation: profile?.designation || employee?.profile?.designation || "",
+    joinDate: profile?.joiningDate
+      ? new Date(profile.joiningDate).toISOString().split("T")[0]
+      : employee?.profile?.joiningDate
+        ? employee.profile.joiningDate.split("T")[0]
+        : "",
+    salary: profile?.salary != null
+      ? String(profile.salary)
+      : employee?.profile?.salary != null
+        ? String(employee.profile.salary)
+        : "",
   });
+
+  // Re-sync form when profile data arrives (async fetch)
+  useEffect(() => {
+    if (!profile) return;
+    setForm((prev) => ({
+      ...prev,
+      designation: profile.designation || prev.designation,
+      joinDate: profile.joiningDate
+        ? new Date(profile.joiningDate).toISOString().split("T")[0]
+        : prev.joinDate,
+      salary: profile.salary != null ? String(profile.salary) : prev.salary,
+    }));
+  }, [profile]);
 
   useEffect(() => {
     apiFetch("/teams").then((res: any) => setTeams(res.data || []));
   }, []);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [saved, setSaved] = useState(false);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -40,6 +65,7 @@ export function EmployeeForm({ employee, roles }: EmployeeFormProps) {
         const updateData: any = {
           name: form.name,
           phone: form.phone,
+          status: form.status,
           ...(form.roleIds.length > 0 ? { roleIds: form.roleIds } : {}),
           orgUnitId: form.orgUnitId || null,
         };
@@ -47,6 +73,20 @@ export function EmployeeForm({ employee, roles }: EmployeeFormProps) {
           method: "PUT",
           body: JSON.stringify(updateData),
         });
+        // Also persist designation / joinDate / salary to EmployeeProfile
+        if (form.designation || form.joinDate || form.salary) {
+          await apiFetch(`/admin/employees/${employee.id}/profile-data`, {
+            method: "PUT",
+            body: JSON.stringify({
+              designation: form.designation || undefined,
+              joinDate: form.joinDate || undefined,
+              salary: form.salary ? parseFloat(form.salary) : undefined,
+            }),
+          });
+        }
+        setSaved(true);
+        setTimeout(() => setSaved(false), 3000);
+        onSaved?.();
       } else {
         const payload: any = {
           name: form.name,
@@ -63,8 +103,8 @@ export function EmployeeForm({ employee, roles }: EmployeeFormProps) {
           method: "POST",
           body: JSON.stringify(payload),
         });
+        router.push("/employees");
       }
-      router.push("/employees");
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -73,12 +113,16 @@ export function EmployeeForm({ employee, roles }: EmployeeFormProps) {
   }
 
   function toggleRole(roleId: string) {
-    setForm((prev) => ({
-      ...prev,
-      roleIds: prev.roleIds.includes(roleId)
-        ? prev.roleIds.filter((id: string) => id !== roleId)
-        : [...prev.roleIds, roleId],
-    }));
+    setForm((prev) => {
+      const isSelected = prev.roleIds.includes(roleId);
+      if (isSelected && prev.roleIds.length === 1) return prev; // block removing the last role
+      return {
+        ...prev,
+        roleIds: isSelected
+          ? prev.roleIds.filter((id: string) => id !== roleId)
+          : [...prev.roleIds, roleId],
+      };
+    });
   }
 
   return (
@@ -126,35 +170,61 @@ export function EmployeeForm({ employee, roles }: EmployeeFormProps) {
                 {teams.map((t: any) => <option key={t.id} value={t.id}>{t.name}</option>)}
               </select>
             </div>
+            {isEdit && (
+              <div className="space-y-1">
+                <label className="text-sm font-medium text-[#1A1A1A]">Status</label>
+                <select
+                  value={form.status}
+                  onChange={(e) => setForm({ ...form, status: e.target.value })}
+                  className="flex h-10 w-full rounded-lg border border-[#E8E0D0] bg-white px-3 py-2 text-sm focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547] outline-none"
+                >
+                  <option value="ACTIVE">Active</option>
+                  <option value="ONBOARDING">Onboarding</option>
+                  <option value="INACTIVE">Inactive</option>
+                </select>
+              </div>
+            )}
           </div>
 
           <div className="space-y-2">
             <label className="text-sm font-medium text-[#1A1A1A]">Roles</label>
             <div className="flex flex-wrap gap-2">
-              {roles.map((role: any) => (
+              {roles.map((role: any) => {
+                const active = form.roleIds.includes(role.id);
+                const isLast = active && form.roleIds.length === 1;
+                return (
                 <button
                   key={role.id}
                   type="button"
                   onClick={() => toggleRole(role.id)}
+                  title={isLast ? "Cannot remove the only role" : undefined}
                   className={`px-3 py-1 rounded-full text-sm border transition-colors ${
-                    form.roleIds.includes(role.id)
-                      ? "bg-[#1A1A1A] text-white border-[#1A1A1A]"
+                    active
+                      ? isLast
+                        ? "bg-[#1A1A1A] text-white border-[#1A1A1A] opacity-60 cursor-not-allowed"
+                        : "bg-[#1A1A1A] text-white border-[#1A1A1A]"
                       : "bg-white text-[#7A7A7A] border-[#E8E0D0] hover:border-[#F5D547]"
                   }`}
                 >
                   {role.name}
                 </button>
-              ))}
+                );
+              })}
             </div>
           </div>
 
-          <div className="flex gap-3">
+          <div className="flex items-center gap-3">
             <Button type="submit" disabled={loading} className="bg-[#1A1A1A] text-white rounded-full hover:bg-[#2B2B2B]">
               {loading ? "Saving..." : isEdit ? "Update Employee" : "Create Employee"}
             </Button>
-            <Button type="button" variant="outline" onClick={() => router.back()} className="border border-[#E8E0D0] rounded-full text-[#1A1A1A] hover:bg-[#FEFCF7]">
-              Cancel
-            </Button>
+            {!isEdit && (
+              <Button type="button" variant="outline" onClick={() => router.back()} className="border border-[#E8E0D0] rounded-full text-[#1A1A1A] hover:bg-[#FEFCF7]">
+                Cancel
+              </Button>
+            )}
+            {saved && (
+              <span className="text-xs text-emerald-600 font-medium">✓ Saved</span>
+            )}
           </div>
         </form>
       </CardContent>

@@ -61,7 +61,7 @@ function AnnouncementModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4 overflow-y-auto" onClick={onClose}>
-      <div className="v3-card shadow-pop w-full max-w-lg overflow-hidden pop-in" onClick={(e) => e.stopPropagation()}>
+      <div className="v3-card shadow-pop w-full max-w-lg overflow-hidden pop-in max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-6 py-4 border-b-2 border-ink/10">
           <h2 className="font-bold text-ink flex items-center gap-2">
             <Megaphone size={18} className="text-action-deep" />
@@ -76,7 +76,7 @@ function AnnouncementModal({
         </div>
 
         {confirming ? (
-          <div className="p-6 space-y-4">
+          <div className="p-6 space-y-4 overflow-y-auto">
             <p className="text-sm text-ink-3">
               This will notify <strong>{audienceLabel}</strong> via portal and email. You can&apos;t undo this.
             </p>
@@ -111,7 +111,7 @@ function AnnouncementModal({
             </div>
           </div>
         ) : (
-          <form onSubmit={handleSubmit} className="p-6 space-y-4">
+          <form onSubmit={handleSubmit} className="p-6 space-y-4 overflow-y-auto">
             <div>
               <label className="text-xs font-bold text-ink-4 uppercase tracking-wider mb-1.5 block">Send to</label>
               <div className="relative">

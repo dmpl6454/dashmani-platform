@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import Link from "next/link";
 import { ArrowLeft, TrendingUp, TrendingDown, Link2, Users, Trophy, AlertCircle, X } from "lucide-react";
 import { useLinksAnalytics } from "@/lib/hooks/use-reports";
@@ -78,15 +78,17 @@ export default function LinksAnalyticsPage() {
   const { data, isLoading } = useLinksAnalytics(startDate, endDate);
   const d = (data as any)?.data;
 
-  const dailyTrend = (d?.dailyTrend ?? []).map((x: any) => ({
+  const rawDaily = d?.dailyTrend;
+  const rawWeekly = d?.weeklyTrend;
+  const dailyTrend = useMemo(() => (rawDaily ?? []).map((x: any) => ({
     date: fmtDate(x.date),
     links: x.linkCount,
     reports: x.reportCount,
-  }));
-  const weeklyTrend = (d?.weeklyTrend ?? []).map((x: any) => ({
+  })), [rawDaily]);
+  const weeklyTrend = useMemo(() => (rawWeekly ?? []).map((x: any) => ({
     week: fmtWeek(x.weekStart),
     links: x.linkCount,
-  }));
+  })), [rawWeekly]);
   const platformBreakdown: { platform: string; count: number; pct: number }[] = d?.platformBreakdown ?? [];
   const teamRanks: any[] = d?.teamRanks ?? [];
   const topSubmitters: any[] = d?.topSubmitters ?? [];

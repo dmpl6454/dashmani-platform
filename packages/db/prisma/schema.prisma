@@ -745,6 +745,7 @@ enum NotificationType {
   EXTRA_HOURS_APPROVED
   GENERAL
   ANNOUNCEMENT
+  TASK_ASSIGNED
 }
 
 // ============ ANNOUNCEMENTS ============

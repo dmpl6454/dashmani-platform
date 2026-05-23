@@ -9,6 +9,7 @@ import {
   Share2, Globe,
 } from "lucide-react";
 import { useState } from "react";
+import useSWR from "swr";
 import { usePageTitle } from "@/lib/hooks/use-page-title";
 import { apiFetch } from "@/lib/api";
 import {
@@ -34,10 +35,15 @@ const statStrip: { key: string; label: string; icon: any; href: string }[] = [
 function QuickAnnounceModal({ onClose }: { onClose: () => void }) {
   const [title,   setTitle]   = useState("");
   const [message, setMessage] = useState("");
+  const [orgUnitId, setOrgUnitId] = useState<string>("");
   const [sending, setSending] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [error,   setError]   = useState<string | null>(null);
   const [done,    setDone]    = useState<number | null>(null);
+
+  const { data: teamsData } = useSWR("/teams", (url: string) => apiFetch<any>(url));
+  const teams: any[] = (teamsData as any)?.data ?? [];
+  const selectedTeam = orgUnitId ? teams.find((t: any) => t.id === orgUnitId) : null;
 
   const inputCls = "w-full border-2 border-ink/15 bg-surface rounded-xl px-4 py-2.5 text-sm text-ink placeholder:text-ink-4 transition-colors";
 
@@ -51,9 +57,11 @@ function QuickAnnounceModal({ onClose }: { onClose: () => void }) {
     setSending(true);
     setError(null);
     try {
+      const body: any = { title: title.trim(), message: message.trim() };
+      if (orgUnitId) body.orgUnitId = orgUnitId;
       const res = await apiFetch<any>("/admin/announcements", {
         method: "POST",
-        body: JSON.stringify({ title: title.trim(), message: message.trim() }),
+        body: JSON.stringify(body),
       });
       setDone(res?.data?.recipientCount ?? 0);
     } catch (err: any) {
@@ -91,7 +99,9 @@ function QuickAnnounceModal({ onClose }: { onClose: () => void }) {
         {confirming ? (
           <div className="p-6 space-y-4">
             <p className="text-sm text-ink-3">
-              This will email every active employee and add a notification to their portal. You can't undo this.
+              {selectedTeam
+                ? `This will notify only members of "${selectedTeam.name}". You can't undo this.`
+                : "This will email every active employee and add a notification to their portal. You can't undo this."}
             </p>
             <div className="v3-card-inset p-4 space-y-2">
               <p className="text-xs font-bold text-ink-4 uppercase tracking-wider">Preview</p>
@@ -111,6 +121,22 @@ function QuickAnnounceModal({ onClose }: { onClose: () => void }) {
           </div>
         ) : (
           <form onSubmit={handleSubmit} className="p-6 space-y-4">
+            <div>
+              <label className="text-xs font-bold text-ink-4 uppercase tracking-wider mb-1.5 block">Send to</label>
+              <select
+                value={orgUnitId}
+                onChange={(e) => setOrgUnitId(e.target.value)}
+                className={inputCls}
+              >
+                <option value="">Everyone (all active employees)</option>
+                {teams.map((t: any) => (
+                  <option key={t.id} value={t.id}>Team: {t.name}</option>
+                ))}
+              </select>
+              <p className="text-xs text-ink-4 mt-1">
+                {selectedTeam ? `Only members of "${selectedTeam.name}" will be notified.` : "All active employees will be notified."}
+              </p>
+            </div>
             <div>
               <div className="flex justify-between mb-1.5">
                 <label className="text-xs font-bold text-ink-4 uppercase tracking-wider">Title</label>

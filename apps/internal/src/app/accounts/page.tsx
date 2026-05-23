@@ -406,6 +406,7 @@ function AccountsPageInner() {
 
   const [search, setSearch]               = useState("");
   const [platformFilter, setPlatformFilter] = useState("");
+  const [employeeSearch, setEmployeeSearch] = useState("");
 
   const { data, isLoading, mutate }       = useAccounts({ search, platformId: platformFilter });
   const { data: platformData }            = usePlatforms();
@@ -823,10 +824,22 @@ function AccountsPageInner() {
       {/* ── TAB: By Employee ── */}
       {tab === "by-employee" && (
         <div className="space-y-3">
+          <div className="relative max-w-md">
+            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-4" />
+            <input
+              type="text"
+              value={employeeSearch}
+              onChange={(e) => setEmployeeSearch(e.target.value)}
+              placeholder="Search employees…"
+              className="w-full pl-9 pr-3 py-2 rounded-xl border-2 border-ink/15 bg-surface text-sm"
+            />
+          </div>
           {employees.length === 0 ? (
             <div className="v3-card p-8 text-center text-sm text-ink-4">No active employees found</div>
+          ) : employees.filter((e: any) => !employeeSearch.trim() || e.name?.toLowerCase().includes(employeeSearch.trim().toLowerCase())).length === 0 ? (
+            <div className="v3-card p-8 text-center text-sm text-ink-4">No employees match "{employeeSearch}"</div>
           ) : (
-            employees.map((emp: any) => {
+            employees.filter((e: any) => !employeeSearch.trim() || e.name?.toLowerCase().includes(employeeSearch.trim().toLowerCase())).map((emp: any) => {
               const empAccounts = accounts.filter((a: any) =>
                 a.assignments?.some((asn: any) => !asn.unassignedAt && asn.employee?.id === emp.id)
               );

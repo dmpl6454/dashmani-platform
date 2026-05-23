@@ -33,4 +33,7 @@ export const NOTIFICATION_AUDIENCE: Record<NotificationType, Array<"ADMINS" | "R
 
   // Default for job apps, expense claims, complaints, registrations, etc.
   GENERAL:              ["ADMINS"],
+
+  // Task assigned to a specific employee
+  TASK_ASSIGNED:        ["RECIPIENT"],
 };

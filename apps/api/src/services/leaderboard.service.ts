@@ -66,8 +66,9 @@ export async function getLeaderboard(startDate?: string, endDate?: string) {
     };
   });
 
-  // Sort by totalReports desc, then currentStreak desc
+  // Sort by totalLinks desc, then totalReports desc, then currentStreak desc
   result.sort((a, b) => {
+    if (b.totalLinks !== a.totalLinks) return b.totalLinks - a.totalLinks;
     if (b.totalReports !== a.totalReports) return b.totalReports - a.totalReports;
     return b.currentStreak - a.currentStreak;
   });

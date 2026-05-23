@@ -302,6 +302,141 @@ export async function generateSalarySlipHtml(salarySlipId: string) {
   return html;
 }
 
+// Preview variant: takes form data directly instead of a saved slip ID
+export async function generateSalarySlipPreviewHtml(input: {
+  employeeId: string;
+  month: number;
+  year: number;
+  basicSalary: number;
+  hra: number;
+  conveyance: number;
+  medicalAllowance: number;
+  specialAllowance: number;
+  otherEarnings: number;
+  pf: number;
+  esi: number;
+  tax: number;
+  otherDeductions: number;
+  remarks?: string;
+}): Promise<{ html: string; employeeName: string; netSalary: number }> {
+  const employee = await prisma.user.findUnique({
+    where: { id: input.employeeId },
+    select: {
+      name: true, email: true, phone: true,
+      profile: {
+        select: {
+          designation: true, bankAccountHolderName: true, bankAccountNumber: true,
+          bankName: true, bankBranch: true, ifscCode: true, panNumber: true,
+        },
+      },
+    },
+  });
+  if (!employee) throw new AppError(404, "NOT_FOUND", "Employee not found");
+
+  const fmt = (n: number) => new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(n);
+  const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+
+  const grossSalary = input.basicSalary + input.hra + input.conveyance + input.medicalAllowance + input.specialAllowance + input.otherEarnings;
+  const totalDeductions = input.pf + input.esi + input.tax + input.otherDeductions;
+  const netSalary = grossSalary - totalDeductions;
+
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <style>
+    body { font-family: 'Segoe UI', Arial, sans-serif; margin: 0; padding: 30px; color: #1a1a1a; font-size: 13px; }
+    .header { text-align: center; margin-bottom: 20px; border-bottom: 3px solid #2563eb; padding-bottom: 15px; }
+    .header h1 { margin: 0; font-size: 24px; color: #2563eb; letter-spacing: 1px; }
+    .header p { margin: 4px 0 0; color: #666; font-size: 12px; }
+    .slip-title { text-align: center; font-size: 16px; font-weight: 700; margin: 20px 0; text-decoration: underline; }
+    .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 15px 0; padding: 12px; background: #f8fafc; border-radius: 6px; }
+    .info-grid .item { display: flex; gap: 6px; font-size: 12px; }
+    .info-grid .label { font-weight: 600; min-width: 120px; color: #555; }
+    table { width: 100%; border-collapse: collapse; margin: 15px 0; }
+    th { background: #2563eb; color: white; padding: 8px 12px; text-align: left; font-size: 12px; }
+    td { padding: 6px 12px; border: 1px solid #e2e8f0; font-size: 12px; }
+    .earnings td:last-child, .deductions td:last-child { text-align: right; }
+    .total-row { font-weight: 700; background: #f1f5f9; }
+    .net-pay { text-align: center; margin: 20px 0; padding: 15px; background: #dcfce7; border-radius: 8px; }
+    .net-pay .amount { font-size: 28px; font-weight: 700; color: #15803d; }
+    .net-pay .label { font-size: 12px; color: #555; text-transform: uppercase; letter-spacing: 1px; }
+    .bank-info { margin: 15px 0; padding: 12px; background: #eff6ff; border-radius: 6px; font-size: 12px; }
+    .footer { margin-top: 30px; text-align: center; font-size: 11px; color: #999; border-top: 1px solid #e2e8f0; padding-top: 15px; }
+    @media print { body { padding: 15px; } }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>${COMPANY.name}</h1>
+    <p>${COMPANY.legalName} &mdash; ${COMPANY.tagline}</p>
+  </div>
+
+  <div class="slip-title">SALARY SLIP &mdash; ${monthNames[input.month - 1]} ${input.year} (PREVIEW)</div>
+
+  <div class="info-grid">
+    <div class="item"><span class="label">Employee Name:</span><span>${employee.name}</span></div>
+    <div class="item"><span class="label">Designation:</span><span>${employee.profile?.designation || "—"}</span></div>
+    <div class="item"><span class="label">Email:</span><span>${employee.email}</span></div>
+    <div class="item"><span class="label">PAN:</span><span>${employee.profile?.panNumber || "—"}</span></div>
+    <div class="item"><span class="label">Pay Period:</span><span>${monthNames[input.month - 1]} ${input.year}</span></div>
+    <div class="item"><span class="label">Status:</span><span>PENDING_APPROVAL</span></div>
+  </div>
+
+  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+    <div>
+      <table class="earnings">
+        <thead><tr><th colspan="2">Earnings</th></tr></thead>
+        <tbody>
+          <tr><td>Basic Salary</td><td>${fmt(input.basicSalary)}</td></tr>
+          <tr><td>HRA</td><td>${fmt(input.hra)}</td></tr>
+          <tr><td>Conveyance</td><td>${fmt(input.conveyance)}</td></tr>
+          <tr><td>Medical Allowance</td><td>${fmt(input.medicalAllowance)}</td></tr>
+          <tr><td>Special Allowance</td><td>${fmt(input.specialAllowance)}</td></tr>
+          <tr><td>Other Earnings</td><td>${fmt(input.otherEarnings)}</td></tr>
+          <tr class="total-row"><td>Gross Salary</td><td>${fmt(grossSalary)}</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div>
+      <table class="deductions">
+        <thead><tr><th colspan="2">Deductions</th></tr></thead>
+        <tbody>
+          <tr><td>Provident Fund (PF)</td><td>${fmt(input.pf)}</td></tr>
+          <tr><td>ESI</td><td>${fmt(input.esi)}</td></tr>
+          <tr><td>Income Tax (TDS)</td><td>${fmt(input.tax)}</td></tr>
+          <tr><td>Other Deductions</td><td>${fmt(input.otherDeductions)}</td></tr>
+          <tr class="total-row"><td>Total Deductions</td><td>${fmt(totalDeductions)}</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="net-pay">
+    <div class="label">Net Pay</div>
+    <div class="amount">${fmt(netSalary)}</div>
+  </div>
+
+  ${employee.profile?.bankAccountNumber ? `
+  <div class="bank-info">
+    <strong>Bank Details:</strong> ${employee.profile.bankAccountHolderName || employee.name} |
+    A/c: ${employee.profile.bankAccountNumber} |
+    ${employee.profile.bankName || ""} ${employee.profile.bankBranch ? `(${employee.profile.bankBranch})` : ""} |
+    IFSC: ${employee.profile.ifscCode || "—"}
+  </div>` : ""}
+
+  ${input.remarks ? `<p style="font-size:12px;color:#555;"><strong>Remarks:</strong> ${input.remarks}</p>` : ""}
+
+  <div class="footer">
+    This is a computer-generated document. No signature is required.<br>
+    ${COMPANY.legalName} &mdash; ${COMPANY.tagline}
+  </div>
+</body>
+</html>`;
+
+  return { html, employeeName: employee.name, netSalary };
+}
+
 // ===== Employment Contract AI =====
 
 export async function generateContractContent(input: {

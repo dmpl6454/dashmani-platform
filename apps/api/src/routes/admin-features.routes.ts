@@ -3,7 +3,8 @@ import { authenticate } from "../middleware/auth";
 import { requirePermission } from "../middleware/rbac";
 import { success } from "../utils/response";
 import { hashPassword } from "../utils/password";
-import { generateOfferLetterSchema } from "@dashmani/shared";
+import { generateOfferLetterSchema, safeString } from "@dashmani/shared";
+import { z } from "zod";
 import { signAccessToken, signRefreshToken } from "../utils/jwt";
 import crypto from "crypto";
 import * as salaryService from "../services/salary-slip.service";
@@ -28,6 +29,37 @@ import * as notificationService from "../services/notification.service";
 import * as employeeService from "../services/employee.service";
 
 const router = Router();
+
+const updateSalarySlipSchema = z.object({
+  basicSalary: z.number().nonnegative().optional(),
+  hra: z.number().nonnegative().optional(),
+  conveyance: z.number().nonnegative().optional(),
+  medicalAllowance: z.number().nonnegative().optional(),
+  specialAllowance: z.number().nonnegative().optional(),
+  otherEarnings: z.number().nonnegative().optional(),
+  pf: z.number().nonnegative().optional(),
+  esi: z.number().nonnegative().optional(),
+  tax: z.number().nonnegative().optional(),
+  otherDeductions: z.number().nonnegative().optional(),
+  remarks: safeString.optional(),
+});
+
+const salarySlipPreviewSchema = z.object({
+  employeeId: z.string().uuid(),
+  month: z.number().int().min(1).max(12),
+  year: z.number().int().min(2020).max(2100),
+  basicSalary: z.number().nonnegative(),
+  hra: z.number().nonnegative(),
+  conveyance: z.number().nonnegative(),
+  medicalAllowance: z.number().nonnegative(),
+  specialAllowance: z.number().nonnegative(),
+  otherEarnings: z.number().nonnegative(),
+  pf: z.number().nonnegative(),
+  esi: z.number().nonnegative(),
+  tax: z.number().nonnegative(),
+  otherDeductions: z.number().nonnegative(),
+  remarks: safeString.optional(),
+});
 
 // ===== Salary Slips =====
 
@@ -76,17 +108,19 @@ router.get(
   requirePermission("employees", "edit"),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const { employeeId, month, year, status } = req.query as {
+      const { employeeId, month, year, status, search } = req.query as {
         employeeId?: string;
         month?: string;
         year?: string;
         status?: string;
+        search?: string;
       };
       const result = await salaryService.listSalarySlips({
         employeeId,
         month: month ? Number(month) : undefined,
         year: year ? Number(year) : undefined,
         status,
+        search,
       });
       return success(res, result);
     } catch (err) {
@@ -103,6 +137,23 @@ router.get(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const result = await salaryService.getSalarySlipById(req.params.id);
+      return success(res, result);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// PUT /admin/salary-slips/:id — edit a pending salary slip
+router.put(
+  "/admin/salary-slips/:id",
+  authenticate,
+  requirePermission("employees", "edit"),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const parsed = updateSalarySlipSchema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ success: false, error: parsed.error.format() });
+      const result = await salaryService.updateSalarySlip(req.params.id, parsed.data);
       return success(res, result);
     } catch (err) {
       next(err);
@@ -745,6 +796,15 @@ router.get("/admin/ai/salary-slip/:id/html", authenticate, requirePermission("em
     const html = await aiService.generateSalarySlipHtml(req.params.id);
     res.setHeader("Content-Type", "text/html");
     return res.send(html);
+  } catch (err) { next(err); }
+});
+
+router.post("/admin/ai/salary-slip/preview", authenticate, requirePermission("employees", "view"), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const parsed = salarySlipPreviewSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ success: false, error: parsed.error.format() });
+    const result = await aiService.generateSalarySlipPreviewHtml(parsed.data);
+    return success(res, result);
   } catch (err) { next(err); }
 });
 

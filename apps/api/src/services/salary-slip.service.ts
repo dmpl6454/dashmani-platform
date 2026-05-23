@@ -24,6 +24,7 @@ interface ListSalarySlipsFilters {
   month?: number;
   year?: number;
   status?: string;
+  search?: string;
 }
 
 export async function generateSalarySlip(data: GenerateSalarySlipInput) {
@@ -224,6 +225,46 @@ export async function rejectSalarySlip(
   return updated;
 }
 
+export async function updateSalarySlip(
+  id: string,
+  data: {
+    basicSalary?: number;
+    hra?: number;
+    conveyance?: number;
+    medicalAllowance?: number;
+    specialAllowance?: number;
+    otherEarnings?: number;
+    pf?: number;
+    esi?: number;
+    tax?: number;
+    otherDeductions?: number;
+    remarks?: string;
+  },
+) {
+  const existing = await prisma.salarySlip.findUnique({ where: { id } });
+  if (!existing) throw new AppError(404, "NOT_FOUND", "Salary slip not found");
+  if (existing.status === "APPROVED")
+    throw new AppError(400, "ALREADY_APPROVED", "Cannot edit an approved salary slip");
+
+  const merged = { ...existing, ...data };
+  const totalEarnings =
+    (merged.basicSalary || 0) +
+    (merged.hra || 0) +
+    (merged.conveyance || 0) +
+    (merged.medicalAllowance || 0) +
+    (merged.specialAllowance || 0) +
+    (merged.otherEarnings || 0);
+  const totalDeductions =
+    (merged.pf || 0) + (merged.esi || 0) + (merged.tax || 0) + (merged.otherDeductions || 0);
+  const netSalary = totalEarnings - totalDeductions;
+
+  return prisma.salarySlip.update({
+    where: { id },
+    data: { ...data, netSalary },
+    include: { employee: { select: { id: true, name: true, email: true } } },
+  });
+}
+
 export async function listSalarySlips(filters: ListSalarySlipsFilters) {
   const where: Record<string, unknown> = {};
 
@@ -231,6 +272,15 @@ export async function listSalarySlips(filters: ListSalarySlipsFilters) {
   if (filters.month) where.month = filters.month;
   if (filters.year) where.year = filters.year;
   if (filters.status) where.status = filters.status;
+  if (filters.search && filters.search.trim()) {
+    const s = filters.search.trim();
+    where.employee = {
+      OR: [
+        { name: { contains: s, mode: "insensitive" } },
+        { email: { contains: s, mode: "insensitive" } },
+      ],
+    };
+  }
 
   const slips = await prisma.salarySlip.findMany({
     where,

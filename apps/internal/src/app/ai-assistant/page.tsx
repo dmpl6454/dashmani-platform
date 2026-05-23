@@ -19,7 +19,7 @@ const tabs: { id: Tab; label: string; icon: any; desc: string }[] = [
   { id: "offer", label: "Offer Letter", icon: FileText, desc: "Generate offer letters" },
   { id: "appointment", label: "Appointment Letter", icon: ScrollText, desc: "Generate appointment letters" },
   { id: "contract", label: "Employment Contract", icon: ScrollText, desc: "Generate contracts" },
-  { id: "salary", label: "Salary Slip", icon: Receipt, desc: "View & print salary slips" },
+  { id: "salary", label: "Salary Slip", icon: Receipt, desc: "Generate & send salary slips" },
   { id: "assist", label: "AI Chat", icon: MessageSquare, desc: "Ask anything HR-related" },
 ];
 
@@ -74,7 +74,7 @@ export default function AIAssistantPage() {
         {activeTab === "offer" && <OfferLetterGenerator employees={employees} loading={loading} setLoading={setLoading} result={result} setResult={setResult} openHtml={openHtmlWindow} />}
         {activeTab === "appointment" && <AppointmentGenerator employees={employees} loading={loading} setLoading={setLoading} result={result} setResult={setResult} openHtml={openHtmlWindow} />}
         {activeTab === "contract" && <ContractGenerator employees={employees} loading={loading} setLoading={setLoading} result={result} setResult={setResult} openHtml={openHtmlWindow} />}
-        {activeTab === "salary" && <SalarySlipViewer />}
+        {activeTab === "salary" && <SalarySlipGenerator employees={employees} loading={loading} setLoading={setLoading} result={result} setResult={setResult} openHtml={openHtmlWindow} />}
         {activeTab === "assist" && <AIChat loading={loading} setLoading={setLoading} employees={employees} />}
       </div>
     </div>
@@ -467,46 +467,198 @@ function ContractGenerator({ employees, loading, setLoading, result, setResult, 
   );
 }
 
-// ===== Salary Slip Viewer =====
-function SalarySlipViewer() {
-  const [month, setMonth] = useState(new Date().getMonth() + 1);
-  const [year, setYear] = useState(new Date().getFullYear());
-  const { data } = useSWR(`/admin/salary-slips?month=${month}&year=${year}`, (url: string) => apiFetch<any>(url));
-  const slips = data?.data || [];
-  const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/v1";
+// ===== Salary Slip Generator =====
+function SalarySlipGenerator({ employees, loading, setLoading, result, setResult, openHtml }: any) {
+  const [form, setForm] = useState({
+    employeeId: "",
+    month: String(new Date().getMonth() + 1),
+    year: String(new Date().getFullYear()),
+    basicSalary: "",
+    hra: "",
+    conveyance: "",
+    medicalAllowance: "",
+    specialAllowance: "",
+    otherEarnings: "0",
+    pf: "",
+    esi: "",
+    tax: "0",
+    otherDeductions: "0",
+    remarks: "",
+  });
+  const [saving, setSaving] = useState(false);
+  const [sentAt, setSentAt] = useState<string | null>(null);
+
+  function handleEmployeeChange(id: string) {
+    setForm((prev) => { const f = { ...prev, employeeId: id }; setSentAt(null);
+      const emp = employees.find((e: any) => e.id === id);
+      const salary = emp?.profile?.salary;
+      if (salary) {
+        const basic = Math.round(salary * 0.4 * 100) / 100;
+        f.basicSalary = String(basic);
+        f.hra = String(Math.round(salary * 0.2 * 100) / 100);
+        f.conveyance = String(Math.round(salary * 0.05 * 100) / 100);
+        f.medicalAllowance = String(Math.round(salary * 0.05 * 100) / 100);
+        f.specialAllowance = String(Math.round(salary * 0.2 * 100) / 100);
+        f.otherEarnings = String(Math.round(salary * 0.1 * 100) / 100);
+        f.pf = String(Math.round(basic * 0.12 * 100) / 100);
+        f.esi = String(Math.round(salary * 0.0075 * 100) / 100);
+      }
+      return f;
+    });
+  }
+
+  async function generate() {
+    if (!form.employeeId || !form.basicSalary) return alert("Select employee and fill basic salary");
+    setLoading(true);
+    setResult(null);
+    setSentAt(null);
+    try {
+      const res = await apiFetch<any>("/admin/ai/salary-slip/preview", {
+        method: "POST",
+        body: JSON.stringify({
+          employeeId: form.employeeId,
+          month: parseInt(form.month),
+          year: parseInt(form.year),
+          basicSalary: parseFloat(form.basicSalary || "0"),
+          hra: parseFloat(form.hra || "0"),
+          conveyance: parseFloat(form.conveyance || "0"),
+          medicalAllowance: parseFloat(form.medicalAllowance || "0"),
+          specialAllowance: parseFloat(form.specialAllowance || "0"),
+          otherEarnings: parseFloat(form.otherEarnings || "0"),
+          pf: parseFloat(form.pf || "0"),
+          esi: parseFloat(form.esi || "0"),
+          tax: parseFloat(form.tax || "0"),
+          otherDeductions: parseFloat(form.otherDeductions || "0"),
+          remarks: form.remarks || undefined,
+        }),
+      });
+      setResult(res.data);
+    } catch (e: any) { alert(e.message); }
+    finally { setLoading(false); }
+  }
+
+  async function sendToEmployee() {
+    if (!form.employeeId || !form.basicSalary) return;
+    setSaving(true);
+    try {
+      await apiFetch<any>("/admin/salary-slips/generate", {
+        method: "POST",
+        body: JSON.stringify({
+          employeeId: form.employeeId,
+          month: parseInt(form.month),
+          year: parseInt(form.year),
+          basicSalary: parseFloat(form.basicSalary || "0"),
+          hra: parseFloat(form.hra || "0"),
+          conveyance: parseFloat(form.conveyance || "0"),
+          medicalAllowance: parseFloat(form.medicalAllowance || "0"),
+          specialAllowance: parseFloat(form.specialAllowance || "0"),
+          otherEarnings: parseFloat(form.otherEarnings || "0"),
+          pf: parseFloat(form.pf || "0"),
+          esi: parseFloat(form.esi || "0"),
+          tax: parseFloat(form.tax || "0"),
+          otherDeductions: parseFloat(form.otherDeductions || "0"),
+          remarks: form.remarks || undefined,
+        }),
+      });
+      setSentAt(new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }));
+    } catch (e: any) {
+      if (e.message?.includes("Unique constraint") || e.message?.includes("already exists")) {
+        alert("A salary slip for this employee and month already exists. Edit it from the /salary-slips page instead.");
+      } else {
+        alert(e.message);
+      }
+    }
+    finally { setSaving(false); }
+  }
 
   return (
     <div className="space-y-5">
       <div>
-        <h2 className="text-lg font-semibold text-[#1A1A1A] mb-1">Salary Slips</h2>
-        <p className="text-sm text-[#7A7A7A]">View and print professional salary slips for any month</p>
+        <h2 className="text-lg font-semibold text-[#1A1A1A] mb-1">Generate Salary Slip</h2>
+        <p className="text-sm text-[#7A7A7A]">AI-styled salary slip — preview, then send to the employee. They'll see it in the HR portal under 'Salary Slips'.</p>
       </div>
-      <div className="flex gap-4 items-center">
-        <select value={month} onChange={(e) => setMonth(parseInt(e.target.value))} className={inputClass + " !w-auto"}>
-          {["January","February","March","April","May","June","July","August","September","October","November","December"].map((m, i) => (
-            <option key={i} value={i + 1}>{m}</option>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <EmployeeSelect employees={employees} value={form.employeeId} onChange={handleEmployeeChange} />
+        <div>
+          <select value={form.month} onChange={(e) => setForm({ ...form, month: e.target.value })} className={inputClass}>
+            {["January","February","March","April","May","June","July","August","September","October","November","December"].map((m, i) => (
+              <option key={i} value={i + 1}>{m}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <select value={form.year} onChange={(e) => setForm({ ...form, year: e.target.value })} className={inputClass}>
+            {[2024, 2025, 2026, 2027].map((y) => <option key={y} value={y}>{y}</option>)}
+          </select>
+        </div>
+      </div>
+      <div>
+        <p className="text-xs font-semibold text-[#7A7A7A] uppercase tracking-wide mb-2">Earnings</p>
+        <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
+          {[
+            { key: "basicSalary", label: "Basic Salary *" },
+            { key: "hra", label: "HRA" },
+            { key: "conveyance", label: "Conveyance" },
+            { key: "medicalAllowance", label: "Medical Allowance" },
+            { key: "specialAllowance", label: "Special Allowance" },
+            { key: "otherEarnings", label: "Other Earnings" },
+          ].map(({ key, label }) => (
+            <input key={key} type="number" step="0.01" placeholder={label}
+              value={form[key as keyof typeof form]}
+              onChange={(e) => setForm({ ...form, [key]: e.target.value })}
+              className={inputClass} />
           ))}
-        </select>
-        <select value={year} onChange={(e) => setYear(parseInt(e.target.value))} className={inputClass + " !w-auto"}>
-          {[2024, 2025, 2026, 2027].map((y) => <option key={y} value={y}>{y}</option>)}
-        </select>
+        </div>
       </div>
-      {slips.length === 0 ? (
-        <p className="text-sm text-[#7A7A7A]">No salary slips for this period. Generate them from the Salary Slips page first.</p>
-      ) : (
-        <div className="divide-y divide-[#F0EAD8]">
-          {slips.map((slip: any) => (
-            <div key={slip.id} className="flex items-center justify-between py-3">
-              <div>
-                <p className="font-medium text-[#1A1A1A]">{slip.employee?.name}</p>
-                <p className="text-xs text-[#7A7A7A]">Net: {new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(slip.netSalary)} · {slip.status?.split("_").map((w: string) => w.charAt(0) + w.slice(1).toLowerCase()).join(" ")}</p>
-              </div>
-              <a href={`${API_URL}/admin/ai/salary-slip/${slip.id}/html`} target="_blank" rel="noopener noreferrer"
-                className="flex items-center gap-1 bg-[#1A1A1A] text-white rounded-full px-4 py-1.5 text-xs font-medium hover:bg-[#2B2B2B]">
-                <Receipt size={12} />View & Print
-              </a>
+      <div>
+        <p className="text-xs font-semibold text-[#7A7A7A] uppercase tracking-wide mb-2">Deductions</p>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          {[
+            { key: "pf", label: "PF" },
+            { key: "esi", label: "ESI" },
+            { key: "tax", label: "Income Tax (TDS)" },
+            { key: "otherDeductions", label: "Other Deductions" },
+          ].map(({ key, label }) => (
+            <input key={key} type="number" step="0.01" placeholder={label}
+              value={form[key as keyof typeof form]}
+              onChange={(e) => setForm({ ...form, [key]: e.target.value })}
+              className={inputClass} />
+          ))}
+        </div>
+      </div>
+      <textarea placeholder="Remarks (optional)" value={form.remarks} onChange={(e) => setForm({ ...form, remarks: e.target.value })} rows={2} className={inputClass + " resize-none"} />
+      <button onClick={generate} disabled={loading} className="bg-[#1A1A1A] text-white py-2.5 px-6 rounded-full font-semibold hover:bg-[#2B2B2B] disabled:opacity-50 flex items-center gap-2">
+        {loading ? <><Loader2 size={16} className="animate-spin" />Generating...</> : <><Sparkles size={16} />Generate Salary Slip</>}
+      </button>
+      {result?.html && (
+        <div className="border-t border-[#F0EAD8] pt-5">
+          <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
+            <p className="font-semibold text-[#1A1A1A]">Salary Slip for {result.employeeName}</p>
+            <div className="flex items-center gap-2">
+              {sentAt ? (
+                <span className="flex items-center gap-1.5 bg-green-50 border border-green-200 text-green-700 rounded-full px-4 py-1.5 text-sm font-medium">
+                  <Check size={14} />Sent to employee at {sentAt}
+                </span>
+              ) : (
+                <button onClick={sendToEmployee} disabled={saving}
+                  className="flex items-center gap-1.5 bg-green-600 text-white rounded-full px-4 py-2 text-sm font-medium hover:bg-green-700 disabled:opacity-50">
+                  {saving ? <><Loader2 size={14} className="animate-spin" />Sending...</> : <><Send size={14} />Send to Employee</>}
+                </button>
+              )}
+              <button onClick={() => openHtml(result.html, `Salary Slip - ${result.employeeName}`)}
+                className="flex items-center gap-1 bg-[#1A1A1A] text-white rounded-full px-4 py-2 text-sm font-medium hover:bg-[#2B2B2B]">
+                <ExternalLink size={14} />Open & Print
+              </button>
             </div>
-          ))}
+          </div>
+          {!sentAt && (
+            <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-3">
+              Preview only — click <strong>Send to Employee</strong> to save this salary slip. It will appear in /salary-slips for approval and in the employee's HR portal.
+            </p>
+          )}
+          <div className="border border-[#E8E0D0] rounded-xl overflow-hidden h-[400px]">
+            <iframe srcDoc={DOMPurify.sanitize(result.html)} className="w-full h-full" title="Salary Slip Preview" sandbox="allow-same-origin" />
+          </div>
         </div>
       )}
     </div>

@@ -208,7 +208,7 @@ export default function AnnouncementsPage() {
   }
 
   return (
-    <div className="space-y-5 pop-in">
+    <>
       {toast && (
         <div className="fixed top-5 right-5 z-50 v3-card shadow-pop px-5 py-3 flex items-center gap-2 toast-pop">
           <CheckCircle2 size={16} className="text-sage" />
@@ -222,6 +222,8 @@ export default function AnnouncementsPage() {
           onSent={handleSent}
         />
       )}
+
+      <div className="space-y-5 pop-in">
 
       <div className="flex items-end justify-between">
         <div>
@@ -316,5 +318,6 @@ export default function AnnouncementsPage() {
         </div>
       </div>
     </div>
+    </>
   );
 }

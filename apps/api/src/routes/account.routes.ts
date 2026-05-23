@@ -5,7 +5,7 @@ import { validate } from "../middleware/validate";
 import { auditLog } from "../middleware/audit-log";
 import { accountValidators } from "@dashmani/shared";
 import * as accountService from "../services/account.service";
-import { syncAllFollowerCounts, syncSingleAccountFollowers } from "../services/follower-sync.service";
+import { syncAllFollowerCounts, syncSingleAccountFollowers, getSyncProgress } from "../services/follower-sync.service";
 import { success } from "../utils/response";
 import { parsePagination } from "../utils/pagination";
 
@@ -73,14 +73,21 @@ router.delete("/accounts/:id/assign/:employeeId", authenticate, requirePermissio
   } catch (err) { next(err); }
 });
 
-// POST /accounts/sync-followers — trigger sync for all Instagram + YouTube accounts
+// POST /accounts/sync-followers — trigger sync for all Instagram + YouTube + Facebook accounts.
+// Returns immediately; UI polls GET /accounts/sync-followers/status for progress.
 router.post("/accounts/sync-followers", authenticate, requirePermission("accounts", "edit"), async (_req: Request, res: Response, next: NextFunction) => {
   try {
-    // Run in background, return immediately
     syncAllFollowerCounts()
       .then((results) => console.log("[follower-sync] Completed:", results))
       .catch((err) => console.error("[follower-sync] Error:", err));
-    return success(res, { message: "Follower sync started in background. Instagram & YouTube accounts will be updated." });
+    return success(res, { message: "Follower sync started. Instagram, YouTube and Facebook accounts will be refreshed." });
+  } catch (err) { next(err); }
+});
+
+// GET /accounts/sync-followers/status — UI polls this while the button spinner is on
+router.get("/accounts/sync-followers/status", authenticate, requirePermission("accounts", "view"), async (_req: Request, res: Response, next: NextFunction) => {
+  try {
+    return success(res, getSyncProgress());
   } catch (err) { next(err); }
 });
 

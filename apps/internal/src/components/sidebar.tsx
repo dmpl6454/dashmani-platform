@@ -38,7 +38,6 @@ const primaryNav = [
 
 /* ── More section items (3-col grid) ── */
 const moreNav = [
-  { href: "/salary-slips",  label: "Salary Slips",  icon: Wallet          },
   { href: "/offer-letters", label: "Offer Letters", icon: FileSignature   },
   { href: "/holidays",      label: "Holiday Calendar", icon: Calendar      },
   { href: "/jobs",          label: "Job Listings",  icon: BriefcaseBusiness },

@@ -282,14 +282,30 @@ export async function getReportSummary(startDate?: string, endDate?: string) {
     if (endDate) where.date.lte = new Date(endDate);
   }
 
-  const reports = await prisma.dailyReport.findMany({
-    where,
-    include: {
-      employee: { select: { id: true, name: true, email: true } },
-      links: true,
-    },
-    orderBy: { date: "asc" },
-  });
+  // Always fetch today's link counts independently of date range filter
+  const todayStr = new Date().toISOString().split("T")[0];
+  const todayDate = new Date(todayStr);
+
+  const [reports, todayReports] = await Promise.all([
+    prisma.dailyReport.findMany({
+      where,
+      include: {
+        employee: { select: { id: true, name: true, email: true } },
+        links: true,
+      },
+      orderBy: { date: "asc" },
+    }),
+    prisma.dailyReport.findMany({
+      where: { date: todayDate },
+      select: { employeeId: true, _count: { select: { links: true } } },
+    }),
+  ]);
+
+  // Build a map of employeeId → today's link count
+  const todayLinksMap = new Map<string, number>();
+  for (const r of todayReports) {
+    todayLinksMap.set(r.employeeId, r._count.links);
+  }
 
   // Group by employee
   const summaryMap = new Map<string, {
@@ -334,6 +350,7 @@ export async function getReportSummary(startDate?: string, endDate?: string) {
       ...rest,
       avgLinksPerDay,
       currentStreak,
+      linksToday: todayLinksMap.get(rest.id) ?? 0,
       lastSubmittedAt: rest.lastSubmittedAt?.toISOString() ?? null,
     };
   });

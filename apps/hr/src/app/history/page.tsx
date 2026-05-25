@@ -1,7 +1,7 @@
 "use client";
 import { useState } from "react";
-import { ChevronDown, ChevronUp, ExternalLink, Clock } from "lucide-react";
-import { useMyReports } from "@/lib/hooks/use-reports";
+import { ChevronDown, ChevronUp, ExternalLink, Clock, Link2 } from "lucide-react";
+import { useMyReports, useTodayReport } from "@/lib/hooks/use-reports";
 import { Topstrip } from "@/components/portal-shell";
 import { Check } from "lucide-react";
 
@@ -102,7 +102,12 @@ export default function HistoryPage() {
   const [range, setRange] = useState<RangeKey>("7d");
   const { startDate, endDate } = getDateRange(range);
   const { data, isLoading } = useMyReports(startDate, endDate);
+  const { data: todayData } = useTodayReport();
   const reports = data?.data ?? [];
+
+  const todayReport = todayData?.data ?? null;
+  const linksTodayCount: number = todayReport?.links?.length ?? 0;
+  const todayDateStr = new Date().toLocaleDateString("en-IN", { day: "numeric", month: "short" });
 
   return (
     <>
@@ -117,7 +122,27 @@ export default function HistoryPage() {
         </div>
       } />
       <div className="px-6 py-6 flex-1 overflow-y-auto max-w-[800px]">
-        <div className="space-y-3 anim-fade-up d1">
+        {/* Today's links stat */}
+        <div className="v3-card px-5 py-4 mb-4 flex items-center gap-3 anim-fade-up d1">
+          <div className={`h-10 w-10 rounded-xl flex items-center justify-center shrink-0 ${linksTodayCount > 0 ? "bg-success-bg" : "bg-attention-bg"}`}>
+            <Link2 size={16} className={linksTodayCount > 0 ? "text-success" : "text-attention"} />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-[13px] font-bold text-ink leading-tight">
+              {linksTodayCount > 0
+                ? `${linksTodayCount} link${linksTodayCount !== 1 ? "s" : ""} submitted today`
+                : "No links submitted today yet"}
+            </p>
+            <p className="text-[11px] text-ink-3 font-medium mt-0.5">{todayDateStr}</p>
+          </div>
+          {linksTodayCount > 0 && (
+            <span className="shrink-0 h-8 min-w-[2rem] rounded-xl bg-success-bg text-success text-[13px] font-bold grid place-items-center px-2">
+              {linksTodayCount}
+            </span>
+          )}
+        </div>
+
+        <div className="space-y-3 anim-fade-up d2">
           {isLoading ? (
             <div className="v3-card px-5 py-10 text-center"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo mx-auto" /></div>
           ) : reports.length === 0 ? (

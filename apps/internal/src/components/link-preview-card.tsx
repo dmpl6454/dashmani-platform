@@ -65,12 +65,26 @@ function InstagramGridCard({ link }: { link: LinkData }) {
   const accountName = link.accountName ?? link.account?.name ?? "";
   const hasEngagement = link.likes != null || link.comments != null || link.shares != null || link.views != null;
 
+  // Only mount the iframe once the card scrolls into view — avoids loading
+  // dozens of 300 KB Instagram embed pages simultaneously on page load.
+  const [inView, setInView] = useState(false);
+  const cardRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!cardRef.current) return;
+    const io = new IntersectionObserver(
+      ([e]) => { if (e.isIntersecting) { setInView(true); io.disconnect(); } },
+      { rootMargin: "300px" }
+    );
+    io.observe(cardRef.current);
+    return () => io.disconnect();
+  }, []);
+
   return (
-    <div className="rounded-xl border border-[#E8E0D0] bg-white overflow-hidden hover:border-pink-300 hover:shadow-[0_4px_20px_rgba(0,0,0,0.08)] transition-all w-[306px] inline-block align-top">
+    <div ref={cardRef} className="rounded-xl border border-[#E8E0D0] bg-white overflow-hidden hover:border-pink-300 hover:shadow-[0_4px_20px_rgba(0,0,0,0.08)] transition-all w-[306px] inline-block align-top">
       {/* 3:4 embed area — Instagram grid style */}
       <a href={link.url} target="_blank" rel="noopener noreferrer" className="block relative group">
         <div className="relative w-[306px] h-[408px] overflow-hidden bg-black">
-          {igEmbedUrl ? (
+          {igEmbedUrl && inView ? (
             <iframe
               src={igEmbedUrl}
               className="border-0 absolute top-0 left-0"
@@ -78,6 +92,11 @@ function InstagramGridCard({ link }: { link: LinkData }) {
               loading="lazy"
               allowTransparency
             />
+          ) : igEmbedUrl ? (
+            /* Placeholder shown until card scrolls into view */
+            <div className="w-full h-full bg-gradient-to-br from-purple-500 via-pink-500 to-orange-400 flex items-center justify-center opacity-60">
+              <img src={PLATFORM_ICONS.instagram} alt="" className="h-12 w-12 opacity-70" />
+            </div>
           ) : (
             <div className="w-full h-full bg-gradient-to-br from-purple-500 via-pink-500 to-orange-400 flex items-center justify-center">
               <img src={PLATFORM_ICONS.instagram} alt="" className="h-12 w-12 opacity-70" />

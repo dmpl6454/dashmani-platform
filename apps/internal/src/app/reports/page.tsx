@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { Input } from "@dashmani/ui";
 import { formatDate } from "@dashmani/shared";
@@ -42,6 +42,12 @@ function getAvatarGradient(name: string) {
 
 export default function ReportsPage() {
   const today = new Date().toISOString().slice(0, 10);
+
+  // Scroll the <main> container to top on mount (it uses overflow-auto, not window)
+  useEffect(() => {
+    document.querySelector("main")?.scrollTo({ top: 0, behavior: "instant" as ScrollBehavior });
+  }, []);
+
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [employeeId, setEmployeeId] = useState("");

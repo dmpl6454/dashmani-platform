@@ -268,7 +268,6 @@ export async function getAllReports(filters: AdminReportFilters) {
     where,
     include: reportInclude,
     orderBy: { date: "desc" },
-    take: 50,
   });
 
   return reports.map(formatReport);

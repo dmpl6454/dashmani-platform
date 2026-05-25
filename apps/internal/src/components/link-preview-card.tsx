@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useRef } from "react";
+import { memo, useState, useEffect, useRef } from "react";
 import { Heart, MessageCircle, Share2, Eye, ExternalLink, Image as ImageIcon } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 
@@ -32,12 +32,6 @@ function getStaticThumbnail(url: string, platform: string): string | null {
   return null;
 }
 
-function getInstagramEmbedUrl(url: string): string | null {
-  const match = url.match(/instagram\.com\/(p|reel|tv)\/([A-Za-z0-9_-]+)/);
-  if (match) return `https://www.instagram.com/${match[1]}/${match[2]}/embed/`;
-  return null;
-}
-
 function formatNumber(n: number | null | undefined): string {
   if (n == null) return "—";
   if (n >= 1000000) return (n / 1000000).toFixed(1) + "M";
@@ -59,82 +53,29 @@ interface LinkData {
   views?: number | null;
 }
 
-/* ── Instagram Grid Card ── */
+/* ── Instagram Grid Card (static — no iframe) ── */
 function InstagramGridCard({ link }: { link: LinkData }) {
-  const igEmbedUrl = getInstagramEmbedUrl(link.url);
   const accountName = link.accountName ?? link.account?.name ?? "";
   const hasEngagement = link.likes != null || link.comments != null || link.shares != null || link.views != null;
 
-  // Only mount the iframe once the card scrolls into view — avoids loading
-  // dozens of 300 KB Instagram embed pages simultaneously on page load.
-  const [inView, setInView] = useState(false);
-  const cardRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!cardRef.current) return;
-    const io = new IntersectionObserver(
-      ([e]) => { if (e.isIntersecting) { setInView(true); io.disconnect(); } },
-      { rootMargin: "300px" }
-    );
-    io.observe(cardRef.current);
-    return () => io.disconnect();
-  }, []);
-
   return (
-    <div ref={cardRef} className="rounded-xl border border-[#E8E0D0] bg-white overflow-hidden hover:border-pink-300 hover:shadow-[0_4px_20px_rgba(0,0,0,0.08)] transition-all w-[306px] inline-block align-top">
-      {/* 3:4 embed area — Instagram grid style */}
+    <div className="rounded-xl border border-[#E8E0D0] bg-white overflow-hidden hover:border-pink-300 hover:shadow-[0_4px_20px_rgba(0,0,0,0.08)] transition-all w-[306px] inline-block align-top">
       <a href={link.url} target="_blank" rel="noopener noreferrer" className="block relative group">
-        <div className="relative w-[306px] h-[408px] overflow-hidden bg-black">
-          {igEmbedUrl && inView ? (
-            <iframe
-              src={igEmbedUrl}
-              className="border-0 absolute top-0 left-0"
-              style={{ width: 306, height: 600, pointerEvents: "none" }}
-              loading="lazy"
-              allowTransparency
-            />
-          ) : igEmbedUrl ? (
-            /* Placeholder shown until card scrolls into view */
-            <div className="w-full h-full bg-gradient-to-br from-purple-500 via-pink-500 to-orange-400 flex items-center justify-center opacity-60">
-              <img src={PLATFORM_ICONS.instagram} alt="" className="h-12 w-12 opacity-70" />
-            </div>
-          ) : (
-            <div className="w-full h-full bg-gradient-to-br from-purple-500 via-pink-500 to-orange-400 flex items-center justify-center">
-              <img src={PLATFORM_ICONS.instagram} alt="" className="h-12 w-12 opacity-70" />
-            </div>
-          )}
-
-          {/* Hover overlay — Instagram style */}
-          {hasEngagement && (
-            <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-6">
-              {link.likes != null && (
-                <div className="flex items-center gap-1.5 text-white">
-                  <Heart className="h-5 w-5 fill-white" />
-                  <span className="font-semibold text-sm">{formatNumber(link.likes)}</span>
-                </div>
-              )}
-              {link.comments != null && (
-                <div className="flex items-center gap-1.5 text-white">
-                  <MessageCircle className="h-5 w-5 fill-white" />
-                  <span className="font-semibold text-sm">{formatNumber(link.comments)}</span>
-                </div>
-              )}
-              {link.shares != null && (
-                <div className="flex items-center gap-1.5 text-white">
-                  <Share2 className="h-5 w-5" />
-                  <span className="font-semibold text-sm">{formatNumber(link.shares)}</span>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Instagram icon badge */}
+        <div className="relative w-[306px] h-[180px] overflow-hidden bg-gradient-to-br from-purple-500 via-pink-500 to-orange-400 flex flex-col items-center justify-center gap-3">
+          <img src={PLATFORM_ICONS.instagram} alt="" className="h-14 w-14 opacity-80" />
+          <span className="text-white text-sm font-medium opacity-80">Instagram Post</span>
+          <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+            <span className="text-white text-sm font-semibold flex items-center gap-1.5">
+              <ExternalLink className="h-4 w-4" />
+              Open Post
+            </span>
+          </div>
           <div className="absolute top-2.5 right-2.5 h-7 w-7 rounded-lg bg-white/90 shadow flex items-center justify-center">
             <img src={PLATFORM_ICONS.instagram} alt="" className="h-4 w-4" />
           </div>
         </div>
       </a>
 
-      {/* Bottom info bar */}
       <div className="px-3 py-2.5">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2 min-w-0">
@@ -155,7 +96,7 @@ function InstagramGridCard({ link }: { link: LinkData }) {
         {link.description && (
           <p className="text-xs text-[#555] line-clamp-1 mt-1">{link.description}</p>
         )}
-        {/* Engagement row below */}
+        <p className="text-[10px] text-[#B0B0B0] truncate mt-1">{link.url}</p>
         {hasEngagement && (
           <div className="flex items-center gap-3 mt-2 pt-2 border-t border-[#F0EAD8]">
             {link.likes != null && (
@@ -190,7 +131,7 @@ function InstagramGridCard({ link }: { link: LinkData }) {
 }
 
 /* ── Generic Link Card (non-Instagram) ── */
-export function LinkPreviewCard({ link }: { link: LinkData }) {
+function LinkPreviewCardInner({ link }: { link: LinkData }) {
   const platform = (link.platform ?? "").toLowerCase();
 
   // Instagram gets its own grid-style card
@@ -346,3 +287,5 @@ export function LinkPreviewCard({ link }: { link: LinkData }) {
     </div>
   );
 }
+
+export const LinkPreviewCard = memo(LinkPreviewCardInner);

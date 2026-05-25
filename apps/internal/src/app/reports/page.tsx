@@ -6,7 +6,6 @@ import { formatDate } from "@dashmani/shared";
 import { Users, FileText, Link2, Calendar, Filter, X, TrendingUp, Trophy, Trash2, AlertTriangle, BarChart2 } from "lucide-react";
 import { useAdminReports, useReportSummary } from "@/lib/hooks/use-reports";
 import { useEmployees } from "@/lib/hooks/use-employees";
-import { LinkPreviewCard } from "@/components/link-preview-card";
 import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 
@@ -73,12 +72,18 @@ export default function ReportsPage() {
   const [platformModal, setPlatformModal] = useState<{ platform: string; count: number; dailyBreakdown: { date: string; count: number }[] } | null>(null);
 
   useEffect(() => {
+    const main = document.querySelector("main") as HTMLElement | null;
     if (empModal || platformModal) {
       document.body.style.overflow = "hidden";
+      if (main) main.style.overflow = "hidden";
     } else {
       document.body.style.overflow = "";
+      if (main) main.style.overflow = "";
     }
-    return () => { document.body.style.overflow = ""; };
+    return () => {
+      document.body.style.overflow = "";
+      if (main) main.style.overflow = "";
+    };
   }, [empModal, platformModal]);
 
   const { user } = useAuth();
@@ -455,21 +460,35 @@ export default function ReportsPage() {
                     <p className="text-sm text-[#7A7A7A] mb-4 italic pl-[52px]">{report.notes}</p>
                   )}
 
-                  <div className="space-y-2 pl-[52px]">
+                  <div className="space-y-1 pl-[52px]">
                     {(report.links ?? []).map((link: any, i: number) => (
-                      <div key={link.id ?? i} className="relative group/link">
-                        <LinkPreviewCard link={link} />
+                      <div key={link.id ?? i} className="flex items-center gap-2 group/link py-1 px-2 rounded-lg hover:bg-[#FEFCF7] transition-colors">
+                        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide border ${platformBadgeClass(link.platform)}`}>
+                          {link.platform ?? "—"}
+                        </span>
+                        <a
+                          href={link.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex-1 text-xs text-[#1A1A1A] truncate hover:text-[#F5D547] hover:underline"
+                          title={link.url}
+                        >
+                          {link.accountName || link.url}
+                        </a>
+                        {link.description && (
+                          <span className="text-xs text-[#B0B0B0] truncate max-w-[200px] hidden md:block">{link.description}</span>
+                        )}
                         {isAdmin && link.id && (
                           <button
                             onClick={() => handleDeleteLink(link.id)}
                             disabled={deletingLinkId === link.id}
                             title="Delete this link"
-                            className="absolute top-2 right-2 h-7 w-7 rounded-lg bg-white border border-[#E8E0D0] flex items-center justify-center text-[#B0B0B0] hover:text-red-500 hover:border-red-200 hover:bg-red-50 transition-all opacity-0 group-hover/link:opacity-100 disabled:opacity-50 disabled:cursor-not-allowed z-10"
+                            className="h-6 w-6 rounded-lg flex items-center justify-center text-[#B0B0B0] hover:text-red-500 hover:bg-red-50 transition-all opacity-0 group-hover/link:opacity-100 disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
                           >
                             {deletingLinkId === link.id ? (
-                              <svg className="animate-spin h-3.5 w-3.5" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                              <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
                             ) : (
-                              <Trash2 className="h-3.5 w-3.5" />
+                              <Trash2 className="h-3 w-3" />
                             )}
                           </button>
                         )}

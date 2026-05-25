@@ -307,6 +307,38 @@ router.get(
   },
 );
 
+// DELETE /admin/reports/links/:linkId — admin/super admin only
+router.delete(
+  "/admin/reports/links/:linkId",
+  authenticate,
+  requirePermission("reports", "manage"),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { linkId } = req.params;
+
+      const link = await prisma.reportLink.findUnique({
+        where: { id: linkId },
+        select: { id: true, reportId: true },
+      });
+      if (!link) {
+        return res.status(404).json({ success: false, error: { code: "NOT_FOUND", message: "Link not found" } });
+      }
+
+      await prisma.reportLink.delete({ where: { id: linkId } });
+
+      // If the report is now empty, delete it too so it doesn't ghost the employee's record
+      const remaining = await prisma.reportLink.count({ where: { reportId: link.reportId } });
+      if (remaining === 0) {
+        await prisma.dailyReport.delete({ where: { id: link.reportId } });
+      }
+
+      return success(res, { deleted: true, reportDeleted: remaining === 0 });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
 // GET /admin/link-preview?url=... — fetch OG metadata for link preview
 router.get(
   "/admin/link-preview",

@@ -3,10 +3,12 @@ import { useState } from "react";
 import Link from "next/link";
 import { Input } from "@dashmani/ui";
 import { formatDate } from "@dashmani/shared";
-import { Users, FileText, Link2, Calendar, Filter, X, TrendingUp, Trophy } from "lucide-react";
+import { Users, FileText, Link2, Calendar, Filter, X, TrendingUp, Trophy, Trash2, AlertTriangle } from "lucide-react";
 import { useAdminReports, useReportSummary } from "@/lib/hooks/use-reports";
 import { useEmployees } from "@/lib/hooks/use-employees";
 import { LinkPreviewCard } from "@/components/link-preview-card";
+import { apiFetch } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
 
 const PLATFORM_COLORS: Record<string, string> = {
   instagram: "bg-pink-100 text-pink-700",
@@ -43,9 +45,14 @@ export default function ReportsPage() {
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [employeeId, setEmployeeId] = useState("");
+  const [deletingLinkId, setDeletingLinkId] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
-  const { data: summaryData, isLoading: summaryLoading } = useReportSummary(startDate, endDate);
-  const { data: reportsData, isLoading: reportsLoading } = useAdminReports({ employeeId, startDate, endDate });
+  const { user } = useAuth();
+  const isAdmin = user?.roles?.some((r) => r === "Admin" || r === "Super Admin") ?? false;
+
+  const { data: summaryData, isLoading: summaryLoading, mutate: mutateSummary } = useReportSummary(startDate, endDate);
+  const { data: reportsData, isLoading: reportsLoading, mutate: mutateReports } = useAdminReports({ employeeId, startDate, endDate });
   const { data: employeesData } = useEmployees();
 
   const summary = (summaryData as any)?.data;
@@ -53,6 +60,20 @@ export default function ReportsPage() {
   const employees = (employeesData as any)?.data ?? [];
 
   const hasFilters = startDate || endDate || employeeId;
+
+  async function handleDeleteLink(linkId: string) {
+    if (!window.confirm("Delete this link? This cannot be undone.")) return;
+    setDeletingLinkId(linkId);
+    setDeleteError(null);
+    try {
+      await apiFetch(`/admin/reports/links/${linkId}`, { method: "DELETE" });
+      await Promise.all([mutateReports(), mutateSummary()]);
+    } catch (err: any) {
+      setDeleteError(err.message ?? "Failed to delete link");
+    } finally {
+      setDeletingLinkId(null);
+    }
+  }
 
   const statCards = [
     { title: "Employees Reporting", value: summary?.employeesReporting ?? 0, icon: Users, iconColor: "text-blue-600", bgColor: "bg-blue-50 shadow-[0_2px_8px_rgba(59,130,246,0.12)]", sub: "submitted reports" },
@@ -209,6 +230,12 @@ export default function ReportsPage() {
                       <th className="text-left py-2 pr-4 text-[#7A7A7A] text-xs font-medium">Email</th>
                       <th className="text-right py-2 pr-4 text-[#7A7A7A] text-xs font-medium">Reports</th>
                       <th className="text-right py-2 pr-4 text-[#7A7A7A] text-xs font-medium">Total Links</th>
+                      <th className="text-right py-2 pr-4 text-[#7A7A7A] text-xs font-medium whitespace-nowrap">
+                        <span className="inline-flex items-center gap-1">
+                          <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 inline-block" />
+                          Today
+                        </span>
+                      </th>
                       <th className="text-right py-2 pr-4 text-[#7A7A7A] text-xs font-medium">Avg/Day</th>
                       <th className="text-right py-2 pr-4 text-[#7A7A7A] text-xs font-medium">Streak</th>
                       <th className="text-left py-2 pr-4 text-[#7A7A7A] text-xs font-medium">Last Submitted</th>
@@ -241,6 +268,15 @@ export default function ReportsPage() {
                           </span>
                         </td>
                         <td className="py-3 pr-4 text-right">
+                          {(emp.linksToday ?? 0) > 0 ? (
+                            <span className="inline-flex items-center justify-center min-w-[28px] h-6 rounded-full bg-blue-50 text-blue-700 text-xs font-semibold px-2">
+                              {emp.linksToday}
+                            </span>
+                          ) : (
+                            <span className="text-xs text-[#B0B0B0]">—</span>
+                          )}
+                        </td>
+                        <td className="py-3 pr-4 text-right">
                           <span className="text-xs text-[#7A7A7A]">{emp.avgLinksPerDay ?? "—"}</span>
                         </td>
                         <td className="py-3 pr-4 text-right">
@@ -268,6 +304,17 @@ export default function ReportsPage() {
               </div>
             )}
           </div>
+        </div>
+      )}
+
+      {/* Delete error banner */}
+      {deleteError && (
+        <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 flex items-center gap-2 text-sm text-red-700">
+          <AlertTriangle className="h-4 w-4 shrink-0" />
+          {deleteError}
+          <button onClick={() => setDeleteError(null)} className="ml-auto text-red-400 hover:text-red-600">
+            <X className="h-4 w-4" />
+          </button>
         </div>
       )}
 
@@ -332,7 +379,23 @@ export default function ReportsPage() {
 
                   <div className="space-y-2 pl-[52px]">
                     {(report.links ?? []).map((link: any, i: number) => (
-                      <LinkPreviewCard key={link.id ?? i} link={link} />
+                      <div key={link.id ?? i} className="relative group/link">
+                        <LinkPreviewCard link={link} />
+                        {isAdmin && link.id && (
+                          <button
+                            onClick={() => handleDeleteLink(link.id)}
+                            disabled={deletingLinkId === link.id}
+                            title="Delete this link"
+                            className="absolute top-2 right-2 h-7 w-7 rounded-lg bg-white border border-[#E8E0D0] flex items-center justify-center text-[#B0B0B0] hover:text-red-500 hover:border-red-200 hover:bg-red-50 transition-all opacity-0 group-hover/link:opacity-100 disabled:opacity-50 disabled:cursor-not-allowed z-10"
+                          >
+                            {deletingLinkId === link.id ? (
+                              <svg className="animate-spin h-3.5 w-3.5" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                            ) : (
+                              <Trash2 className="h-3.5 w-3.5" />
+                            )}
+                          </button>
+                        )}
+                      </div>
                     ))}
                   </div>
                 </div>

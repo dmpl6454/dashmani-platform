@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect } from "react";
+import { memo, useCallback, useState, useEffect } from "react";
 import Link from "next/link";
 import { Input } from "@dashmani/ui";
 import { formatDate } from "@dashmani/shared";
@@ -55,6 +55,91 @@ function getAvatarGradient(name: string) {
   return AVATAR_GRADIENTS[Math.abs(hash) % AVATAR_GRADIENTS.length];
 }
 
+interface ReportCardProps {
+  report: any;
+  isAdmin: boolean;
+  deletingLinkId: string | null;
+  onDeleteLink: (linkId: string) => void;
+}
+
+const ReportCard = memo(function ReportCard({ report, isAdmin, deletingLinkId, onDeleteLink }: ReportCardProps) {
+  return (
+    <div
+      className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0] transition-shadow duration-200 hover:shadow-[0_8px_32px_rgba(0,0,0,0.07)]"
+      style={{ contentVisibility: "auto", containIntrinsicSize: "300px" } as React.CSSProperties}
+    >
+      <div className="p-5">
+        <div className="flex items-start justify-between mb-4">
+          <div className="flex items-center gap-3">
+            <div
+              className="h-10 w-10 rounded-full flex items-center justify-center text-white text-sm font-semibold shrink-0 ring-2 ring-white shadow-sm"
+              style={{ background: getAvatarGradient(report.employee?.name || "") }}
+            >
+              {report.employee?.name?.[0]?.toUpperCase()}
+            </div>
+            <div>
+              <p className="font-semibold text-[#1A1A1A]">{report.employee?.name ?? "Unknown"}</p>
+              <p className="text-xs text-[#7A7A7A]">{report.employee?.email}</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="rounded-full px-3 py-1 text-xs font-medium bg-[#FFF8E1] text-[#1A1A1A] border border-[#F0EAD8]">
+              {new Date(report.date ?? report.createdAt).toLocaleDateString()}
+            </span>
+            <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium bg-emerald-50 text-emerald-700">
+              <Link2 className="h-3 w-3" />
+              {report.links?.length ?? 0}
+            </span>
+          </div>
+        </div>
+
+        {report.notes && (
+          <p className="text-sm text-[#7A7A7A] mb-4 italic pl-[52px]">{report.notes}</p>
+        )}
+
+        <div className="space-y-1 pl-[52px]">
+          {(report.links ?? []).map((link: any, i: number) => (
+            <div key={link.id ?? i} className="flex items-center gap-2 group/link py-1 px-2 rounded-lg hover:bg-[#FEFCF7] transition-colors">
+              <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide border ${platformBadgeClass(link.platform)}`}>
+                {link.platform ?? "—"}
+              </span>
+              <a
+                href={link.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex-1 min-w-0 flex items-center gap-2 group/url"
+                title={link.url}
+              >
+                {link.accountName && (
+                  <span className="text-xs font-medium text-[#1A1A1A] shrink-0 group-hover/url:text-[#F5D547] transition-colors">{link.accountName}</span>
+                )}
+                <span className="text-[10px] text-[#B0B0B0] truncate group-hover/url:underline">{link.url}</span>
+              </a>
+              {link.description && (
+                <span className="text-xs text-[#B0B0B0] truncate max-w-[200px] hidden md:block">{link.description}</span>
+              )}
+              {isAdmin && link.id && (
+                <button
+                  onClick={() => onDeleteLink(link.id)}
+                  disabled={deletingLinkId === link.id}
+                  title="Delete this link"
+                  className="h-6 w-6 rounded-lg flex items-center justify-center text-[#B0B0B0] hover:text-red-500 hover:bg-red-50 transition-colors opacity-0 group-hover/link:opacity-100 disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+                >
+                  {deletingLinkId === link.id ? (
+                    <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                  ) : (
+                    <Trash2 className="h-3 w-3" />
+                  )}
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+});
+
 export default function ReportsPage() {
   const today = new Date().toISOString().slice(0, 10);
 
@@ -100,7 +185,7 @@ export default function ReportsPage() {
 
   const hasFilters = startDate || endDate || employeeId;
 
-  async function handleDeleteLink(linkId: string) {
+  const handleDeleteLink = useCallback(async (linkId: string) => {
     if (!window.confirm("Delete this link? This cannot be undone.")) return;
     setDeletingLinkId(linkId);
     setDeleteError(null);
@@ -112,7 +197,7 @@ export default function ReportsPage() {
     } finally {
       setDeletingLinkId(null);
     }
-  }
+  }, [mutateReports, mutateSummary]);
 
   const statCards = [
     { title: "Employees Reporting", value: summary?.employeesReporting ?? 0, icon: Users, iconColor: "text-blue-600", bgColor: "bg-blue-50 shadow-[0_2px_8px_rgba(59,130,246,0.12)]", sub: "submitted reports" },
@@ -123,7 +208,7 @@ export default function ReportsPage() {
 
   return (
     <>
-    <div className="space-y-6 crx-animate-fade">
+    <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -133,14 +218,14 @@ export default function ReportsPage() {
         <div className="flex items-center gap-2">
           <Link
             href="/reports/links"
-            className="inline-flex items-center gap-2 bg-white border border-[#E8E0D0] text-[#1A1A1A] rounded-full px-4 py-2 text-sm font-medium hover:shadow-[0_4px_12px_rgba(0,0,0,0.08)] hover:-translate-y-0.5 transition-all"
+            className="inline-flex items-center gap-2 bg-white border border-[#E8E0D0] text-[#1A1A1A] rounded-full px-4 py-2 text-sm font-medium hover:shadow-[0_4px_12px_rgba(0,0,0,0.08)] transition-shadow"
           >
             <TrendingUp className="h-4 w-4 text-emerald-600" />
             Links Analytics
           </Link>
           <Link
             href="/reports/leaderboard"
-            className="inline-flex items-center gap-2 bg-[#1A1A1A] text-white rounded-full px-5 py-2.5 text-sm font-medium shadow-[0_4px_16px_rgba(0,0,0,0.18)] hover:shadow-[0_6px_24px_rgba(0,0,0,0.22)] hover:-translate-y-0.5 transition-all"
+            className="inline-flex items-center gap-2 bg-[#1A1A1A] text-white rounded-full px-5 py-2.5 text-sm font-medium shadow-[0_4px_16px_rgba(0,0,0,0.18)] hover:shadow-[0_6px_24px_rgba(0,0,0,0.22)] transition-shadow"
           >
             <Trophy className="h-4 w-4" />
             Leaderboard
@@ -150,12 +235,12 @@ export default function ReportsPage() {
 
       {/* Stat Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        {statCards.map((card, i) => {
+        {statCards.map((card) => {
           const Icon = card.icon;
           return (
             <div
               key={card.title}
-              className={`bg-white rounded-2xl p-5 border border-[#E8E0D0] transition-all duration-300 hover:shadow-[0_8px_32px_rgba(0,0,0,0.06)] hover:-translate-y-0.5 crx-animate-slide crx-delay-${i + 1}`}
+              className="bg-white rounded-2xl p-5 border border-[#E8E0D0] transition-shadow duration-200 hover:shadow-[0_8px_32px_rgba(0,0,0,0.06)]"
             >
               <div className="flex items-center justify-between mb-3">
                 <span className="text-xs text-[#7A7A7A] font-medium">{card.title}</span>
@@ -212,7 +297,7 @@ export default function ReportsPage() {
       )}
 
       {/* Filters */}
-      <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0] crx-animate-slide crx-delay-5">
+      <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0]">
         <div className="px-6 py-4 border-b border-[#F0EAD8] flex items-center justify-between">
           <div className="flex items-center gap-2">
             <div className="h-8 w-8 rounded-lg bg-[#FFF8E1] flex items-center justify-center">
@@ -277,7 +362,7 @@ export default function ReportsPage() {
 
       {/* Summary Table */}
       {!employeeId && (
-        <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0] crx-animate-slide crx-delay-6">
+        <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0]">
           <div className="px-6 py-4 border-b border-[#F0EAD8] flex items-center gap-2">
             <div className="h-8 w-8 rounded-lg bg-[#FFF8E1] flex items-center justify-center">
               <TrendingUp className="h-4 w-4 text-[#B0B0B0]" />
@@ -433,78 +518,14 @@ export default function ReportsPage() {
           </div>
         ) : (
           <div className="space-y-4">
-            {reports.map((report: any, idx: number) => (
-              <div key={report.id} className={`bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0] transition-all duration-300 hover:shadow-[0_8px_32px_rgba(0,0,0,0.07)] crx-animate-slide crx-delay-${Math.min(idx + 1, 6)}`}>
-                <div className="p-5">
-                  {/* Employee info header */}
-                  <div className="flex items-start justify-between mb-4">
-                    <div className="flex items-center gap-3">
-                      <div
-                        className="h-10 w-10 rounded-full flex items-center justify-center text-white text-sm font-semibold shrink-0 ring-2 ring-white shadow-sm"
-                        style={{ background: getAvatarGradient(report.employee?.name || "") }}
-                      >
-                        {report.employee?.name?.[0]?.toUpperCase()}
-                      </div>
-                      <div>
-                        <p className="font-semibold text-[#1A1A1A]">{report.employee?.name ?? "Unknown"}</p>
-                        <p className="text-xs text-[#7A7A7A]">{report.employee?.email}</p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="rounded-full px-3 py-1 text-xs font-medium bg-[#FFF8E1] text-[#1A1A1A] border border-[#F0EAD8]">
-                        {new Date(report.date ?? report.createdAt).toLocaleDateString()}
-                      </span>
-                      <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium bg-emerald-50 text-emerald-700">
-                        <Link2 className="h-3 w-3" />
-                        {report.links?.length ?? 0}
-                      </span>
-                    </div>
-                  </div>
-
-                  {report.notes && (
-                    <p className="text-sm text-[#7A7A7A] mb-4 italic pl-[52px]">{report.notes}</p>
-                  )}
-
-                  <div className="space-y-1 pl-[52px]">
-                    {(report.links ?? []).map((link: any, i: number) => (
-                      <div key={link.id ?? i} className="flex items-center gap-2 group/link py-1 px-2 rounded-lg hover:bg-[#FEFCF7] transition-colors">
-                        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide border ${platformBadgeClass(link.platform)}`}>
-                          {link.platform ?? "—"}
-                        </span>
-                        <a
-                          href={link.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="flex-1 min-w-0 flex items-center gap-2 group/url"
-                          title={link.url}
-                        >
-                          {link.accountName && (
-                            <span className="text-xs font-medium text-[#1A1A1A] shrink-0 group-hover/url:text-[#F5D547] transition-colors">{link.accountName}</span>
-                          )}
-                          <span className="text-[10px] text-[#B0B0B0] truncate group-hover/url:underline">{link.url}</span>
-                        </a>
-                        {link.description && (
-                          <span className="text-xs text-[#B0B0B0] truncate max-w-[200px] hidden md:block">{link.description}</span>
-                        )}
-                        {isAdmin && link.id && (
-                          <button
-                            onClick={() => handleDeleteLink(link.id)}
-                            disabled={deletingLinkId === link.id}
-                            title="Delete this link"
-                            className="h-6 w-6 rounded-lg flex items-center justify-center text-[#B0B0B0] hover:text-red-500 hover:bg-red-50 transition-all opacity-0 group-hover/link:opacity-100 disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
-                          >
-                            {deletingLinkId === link.id ? (
-                              <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-                            ) : (
-                              <Trash2 className="h-3 w-3" />
-                            )}
-                          </button>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
+            {reports.map((report: any) => (
+              <ReportCard
+                key={report.id}
+                report={report}
+                isAdmin={isAdmin}
+                deletingLinkId={deletingLinkId}
+                onDeleteLink={handleDeleteLink}
+              />
             ))}
           </div>
         )}

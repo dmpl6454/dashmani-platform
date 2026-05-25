@@ -312,10 +312,14 @@ export async function getReportSummary(startDate?: string, endDate?: string) {
     id: string; name: string; email: string;
     reportCount: number; totalLinks: number;
     reportDates: Date[]; lastSubmittedAt: Date | null;
+    empPlatformMap: Record<string, number>;
   }>();
 
   let totalReports = 0;
   let totalLinks = 0;
+  const platformMap: Record<string, number> = {};
+  // platformDailyMap[platform][dateStr] = count
+  const platformDailyMap: Record<string, Record<string, number>> = {};
 
   for (const report of reports) {
     const key = report.employeeId;
@@ -328,6 +332,7 @@ export async function getReportSummary(startDate?: string, endDate?: string) {
         totalLinks: 0,
         reportDates: [],
         lastSubmittedAt: null,
+        empPlatformMap: {},
       });
     }
     const entry = summaryMap.get(key)!;
@@ -339,26 +344,49 @@ export async function getReportSummary(startDate?: string, endDate?: string) {
     }
     totalReports += 1;
     totalLinks += report.links.length;
+    const dateStr = new Date(report.date).toISOString().split("T")[0];
+    for (const link of report.links) {
+      const p = ((link as any).platform || "Unknown").toLowerCase();
+      platformMap[p] = (platformMap[p] || 0) + 1;
+      entry.empPlatformMap[p] = (entry.empPlatformMap[p] || 0) + 1;
+      if (!platformDailyMap[p]) platformDailyMap[p] = {};
+      platformDailyMap[p][dateStr] = (platformDailyMap[p][dateStr] || 0) + 1;
+    }
   }
 
-  const employees = Array.from(summaryMap.values()).map(({ reportDates, ...rest }) => {
+  const employees = Array.from(summaryMap.values()).map(({ reportDates, empPlatformMap, ...rest }) => {
     const { currentStreak } = calcStreaks(reportDates);
     const avgLinksPerDay = rest.reportCount > 0
       ? Math.round((rest.totalLinks / rest.reportCount) * 10) / 10
       : 0;
+    const platformBreakdown = Object.entries(empPlatformMap)
+      .sort(([, a], [, b]) => b - a)
+      .map(([platform, count]) => ({ platform, count }));
     return {
       ...rest,
       avgLinksPerDay,
       currentStreak,
       linksToday: todayLinksMap.get(rest.id) ?? 0,
       lastSubmittedAt: rest.lastSubmittedAt?.toISOString() ?? null,
+      platformBreakdown,
     };
   });
+
+  const platformBreakdown = Object.entries(platformMap)
+    .sort(([, a], [, b]) => b - a)
+    .map(([platform, count]) => ({
+      platform,
+      count,
+      dailyBreakdown: Object.entries(platformDailyMap[platform] || {})
+        .sort(([a], [b]) => b.localeCompare(a))
+        .map(([date, count]) => ({ date, count })),
+    }));
 
   return {
     employeesReporting: summaryMap.size,
     totalReports,
     totalLinks,
+    platformBreakdown,
     employees,
   };
 }

@@ -291,7 +291,7 @@ export async function getReportSummary(startDate?: string, endDate?: string) {
       where,
       include: {
         employee: { select: { id: true, name: true, email: true } },
-        links: true,
+        links: { select: { platform: true } },
       },
       orderBy: { date: "asc" },
     }),

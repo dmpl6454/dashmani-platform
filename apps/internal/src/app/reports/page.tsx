@@ -1,12 +1,11 @@
 "use client";
-import { useState, useEffect } from "react";
+import { memo, useCallback, useState, useEffect } from "react";
 import Link from "next/link";
 import { Input } from "@dashmani/ui";
 import { formatDate } from "@dashmani/shared";
 import { Users, FileText, Link2, Calendar, Filter, X, TrendingUp, Trophy, Trash2, AlertTriangle, BarChart2 } from "lucide-react";
 import { useAdminReports, useReportSummary } from "@/lib/hooks/use-reports";
 import { useEmployees } from "@/lib/hooks/use-employees";
-import { LinkPreviewCard } from "@/components/link-preview-card";
 import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 
@@ -56,6 +55,166 @@ function getAvatarGradient(name: string) {
   return AVATAR_GRADIENTS[Math.abs(hash) % AVATAR_GRADIENTS.length];
 }
 
+interface EmployeeRowProps {
+  emp: any;
+  onOpenEmpModal: (emp: any) => void;
+  onOpenTodayModal: (emp: any) => void;
+}
+
+const EmployeeRow = memo(function EmployeeRow({ emp, onOpenEmpModal, onOpenTodayModal }: EmployeeRowProps) {
+  return (
+    <tr className="border-b border-[#F0EAD8] last:border-0 hover:bg-[rgba(255,248,225,0.5)] transition-colors group">
+      <td className="py-3 pr-4">
+        <div className="flex items-center gap-3">
+          <div
+            className="h-8 w-8 rounded-full flex items-center justify-center text-white text-xs font-semibold shrink-0 ring-2 ring-white shadow-sm"
+            style={{ background: getAvatarGradient(emp.name) }}
+          >
+            {emp.name?.[0]?.toUpperCase()}
+          </div>
+          <span className="font-medium text-[#1A1A1A] group-hover:text-[#F5D547] transition-colors">{emp.name}</span>
+        </div>
+      </td>
+      <td className="py-3 pr-4 text-[#7A7A7A]">{emp.email}</td>
+      <td className="py-3 pr-4 text-right">
+        <span className="inline-flex items-center justify-center min-w-[28px] h-6 rounded-full bg-purple-50 text-purple-700 text-xs font-semibold px-2">
+          {emp.reportCount}
+        </span>
+      </td>
+      <td className="py-3 pr-4 text-right">
+        <button
+          onClick={() => onOpenEmpModal(emp)}
+          title="View platform breakdown"
+          className="inline-flex items-center gap-1 min-w-[28px] h-6 rounded-full bg-emerald-50 text-emerald-700 text-xs font-semibold px-2 hover:bg-emerald-100 transition-colors cursor-pointer border border-transparent hover:border-emerald-300"
+        >
+          {emp.totalLinks}
+          <BarChart2 className="h-3 w-3 opacity-60" />
+        </button>
+      </td>
+      <td className="py-3 pr-4 text-right">
+        <button
+          onClick={() => onOpenTodayModal(emp)}
+          title="View today's per-platform breakdown"
+          className={`inline-flex items-center gap-1 min-w-[28px] h-6 rounded-full text-xs font-semibold px-2 transition-colors cursor-pointer border ${
+            (emp.linksToday ?? 0) > 0
+              ? "bg-blue-50 text-blue-700 border-transparent hover:bg-blue-100 hover:border-blue-300"
+              : "bg-transparent text-[#B0B0B0] border-transparent hover:bg-[#F5F5F5] hover:border-[#E8E0D0]"
+          }`}
+        >
+          {(emp.linksToday ?? 0) > 0 ? emp.linksToday : "—"}
+          <BarChart2 className="h-3 w-3 opacity-60" />
+        </button>
+      </td>
+      <td className="py-3 pr-4 text-right">
+        <span className="text-xs text-[#7A7A7A]">{emp.avgLinksPerDay ?? "—"}</span>
+      </td>
+      <td className="py-3 pr-4 text-right">
+        <span className="inline-flex items-center gap-1 text-xs font-semibold text-orange-600">
+          {emp.currentStreak ?? 0} 🔥
+        </span>
+      </td>
+      <td className="py-3 pr-4 text-xs text-[#7A7A7A]">
+        {emp.lastSubmittedAt
+          ? new Date(emp.lastSubmittedAt).toLocaleDateString("en-IN", { day: "numeric", month: "short" })
+          : "—"}
+      </td>
+      <td className="py-3">
+        <Link
+          href={`/reports/${emp.id}`}
+          className="text-[#1A1A1A] hover:text-[#F5D547] text-xs font-medium transition-colors"
+        >
+          View Details
+        </Link>
+      </td>
+    </tr>
+  );
+});
+
+interface ReportCardProps {
+  report: any;
+  isAdmin: boolean;
+  deletingLinkId: string | null;
+  onDeleteLink: (linkId: string) => void;
+}
+
+const ReportCard = memo(function ReportCard({ report, isAdmin, deletingLinkId, onDeleteLink }: ReportCardProps) {
+  return (
+    <div
+      className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0] transition-shadow duration-200 hover:shadow-[0_8px_32px_rgba(0,0,0,0.07)]"
+      style={{ contentVisibility: "auto", containIntrinsicSize: "300px" } as any}
+    >
+      <div className="p-5">
+        <div className="flex items-start justify-between mb-4">
+          <div className="flex items-center gap-3">
+            <div
+              className="h-10 w-10 rounded-full flex items-center justify-center text-white text-sm font-semibold shrink-0 ring-2 ring-white shadow-sm"
+              style={{ background: getAvatarGradient(report.employee?.name || "") }}
+            >
+              {report.employee?.name?.[0]?.toUpperCase()}
+            </div>
+            <div>
+              <p className="font-semibold text-[#1A1A1A]">{report.employee?.name ?? "Unknown"}</p>
+              <p className="text-xs text-[#7A7A7A]">{report.employee?.email}</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="rounded-full px-3 py-1 text-xs font-medium bg-[#FFF8E1] text-[#1A1A1A] border border-[#F0EAD8]">
+              {new Date(report.date ?? report.createdAt).toLocaleDateString()}
+            </span>
+            <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium bg-emerald-50 text-emerald-700">
+              <Link2 className="h-3 w-3" />
+              {report.links?.length ?? 0}
+            </span>
+          </div>
+        </div>
+
+        {report.notes && (
+          <p className="text-sm text-[#7A7A7A] mb-4 italic pl-[52px]">{report.notes}</p>
+        )}
+
+        <div className="space-y-1 pl-[52px]">
+          {(report.links ?? []).map((link: any, i: number) => (
+            <div key={link.id ?? i} className="flex items-center gap-2 group/link py-1 px-2 rounded-lg hover:bg-[#FEFCF7] transition-colors">
+              <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide border ${platformBadgeClass(link.platform)}`}>
+                {link.platform ?? "—"}
+              </span>
+              <a
+                href={link.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex-1 min-w-0 flex items-center gap-2 group/url"
+                title={link.url}
+              >
+                {link.accountName && (
+                  <span className="text-xs font-medium text-[#1A1A1A] shrink-0 group-hover/url:text-[#F5D547] transition-colors">{link.accountName}</span>
+                )}
+                <span className="text-[10px] text-[#B0B0B0] truncate group-hover/url:underline">{link.url}</span>
+              </a>
+              {link.description && (
+                <span className="text-xs text-[#B0B0B0] truncate max-w-[200px] hidden md:block">{link.description}</span>
+              )}
+              {isAdmin && link.id && (
+                <button
+                  onClick={() => onDeleteLink(link.id)}
+                  disabled={deletingLinkId === link.id}
+                  title="Delete this link"
+                  className="h-6 w-6 rounded-lg flex items-center justify-center text-[#B0B0B0] hover:text-red-500 hover:bg-red-50 transition-colors opacity-0 group-hover/link:opacity-100 disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+                >
+                  {deletingLinkId === link.id ? (
+                    <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                  ) : (
+                    <Trash2 className="h-3 w-3" />
+                  )}
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+});
+
 export default function ReportsPage() {
   const today = new Date().toISOString().slice(0, 10);
 
@@ -71,15 +230,23 @@ export default function ReportsPage() {
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [empModal, setEmpModal] = useState<{ name: string; totalLinks: number; platformBreakdown: { platform: string; count: number }[] } | null>(null);
   const [platformModal, setPlatformModal] = useState<{ platform: string; count: number; dailyBreakdown: { date: string; count: number }[] } | null>(null);
+  const [todayModal, setTodayModal] = useState<{ name: string; linksToday: number; platformBreakdown: { platform: string; count: number }[] } | null>(null);
+  const [teamTodayModal, setTeamTodayModal] = useState<{ totalLinks: number; platformBreakdown: { platform: string; count: number }[] } | null>(null);
 
   useEffect(() => {
-    if (empModal || platformModal) {
+    const main = document.querySelector("main") as HTMLElement | null;
+    if (empModal || platformModal || todayModal || teamTodayModal) {
       document.body.style.overflow = "hidden";
+      if (main) main.style.overflow = "hidden";
     } else {
       document.body.style.overflow = "";
+      if (main) main.style.overflow = "";
     }
-    return () => { document.body.style.overflow = ""; };
-  }, [empModal, platformModal]);
+    return () => {
+      document.body.style.overflow = "";
+      if (main) main.style.overflow = "";
+    };
+  }, [empModal, platformModal, todayModal, teamTodayModal]);
 
   const { user } = useAuth();
   const isAdmin = user?.roles?.some((r) => r === "Admin" || r === "Super Admin") ?? false;
@@ -94,7 +261,15 @@ export default function ReportsPage() {
 
   const hasFilters = startDate || endDate || employeeId;
 
-  async function handleDeleteLink(linkId: string) {
+  const handleOpenEmpModal = useCallback((emp: any) => {
+    setEmpModal({ name: emp.name, totalLinks: emp.totalLinks, platformBreakdown: emp.platformBreakdown ?? [] });
+  }, []);
+
+  const handleOpenTodayModal = useCallback((emp: any) => {
+    setTodayModal({ name: emp.name, linksToday: emp.linksToday ?? 0, platformBreakdown: emp.todayPlatformBreakdown ?? [] });
+  }, []);
+
+  const handleDeleteLink = useCallback(async (linkId: string) => {
     if (!window.confirm("Delete this link? This cannot be undone.")) return;
     setDeletingLinkId(linkId);
     setDeleteError(null);
@@ -106,18 +281,28 @@ export default function ReportsPage() {
     } finally {
       setDeletingLinkId(null);
     }
-  }
+  }, [mutateReports, mutateSummary]);
+
+  // Compute today's team-wide per-platform breakdown from summary.platformBreakdown[i].dailyBreakdown
+  const todayTeamPlatformBreakdown = ((summary?.platformBreakdown ?? []) as any[])
+    .map((p: any) => ({
+      platform: p.platform,
+      count: ((p.dailyBreakdown ?? []) as any[]).find((d: any) => d.date === today)?.count ?? 0,
+    }))
+    .filter((p: any) => p.count > 0)
+    .sort((a: any, b: any) => b.count - a.count);
+  const todayTeamTotalLinks = todayTeamPlatformBreakdown.reduce((sum: number, p: any) => sum + p.count, 0);
 
   const statCards = [
     { title: "Employees Reporting", value: summary?.employeesReporting ?? 0, icon: Users, iconColor: "text-blue-600", bgColor: "bg-blue-50 shadow-[0_2px_8px_rgba(59,130,246,0.12)]", sub: "submitted reports" },
     { title: "Total Reports", value: summary?.totalReports ?? 0, icon: FileText, iconColor: "text-purple-600", bgColor: "bg-purple-50 shadow-[0_2px_8px_rgba(147,51,234,0.12)]", sub: "in this period" },
     { title: "Total Links", value: summary?.totalLinks ?? 0, icon: Link2, iconColor: "text-emerald-600", bgColor: "bg-emerald-50 shadow-[0_2px_8px_rgba(16,185,129,0.12)]", sub: "submitted" },
-    { title: "Today", value: formatDate(today), icon: Calendar, iconColor: "text-amber-600", bgColor: "bg-amber-50 shadow-[0_2px_8px_rgba(245,158,11,0.12)]", sub: "current date" },
+    { title: "Today's Posts", value: todayTeamTotalLinks, icon: Calendar, iconColor: "text-amber-600", bgColor: "bg-amber-50 shadow-[0_2px_8px_rgba(245,158,11,0.12)]", sub: formatDate(today), clickable: true },
   ];
 
   return (
     <>
-    <div className="space-y-6 crx-animate-fade">
+    <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -127,14 +312,14 @@ export default function ReportsPage() {
         <div className="flex items-center gap-2">
           <Link
             href="/reports/links"
-            className="inline-flex items-center gap-2 bg-white border border-[#E8E0D0] text-[#1A1A1A] rounded-full px-4 py-2 text-sm font-medium hover:shadow-[0_4px_12px_rgba(0,0,0,0.08)] hover:-translate-y-0.5 transition-all"
+            className="inline-flex items-center gap-2 bg-white border border-[#E8E0D0] text-[#1A1A1A] rounded-full px-4 py-2 text-sm font-medium hover:shadow-[0_4px_12px_rgba(0,0,0,0.08)] transition-shadow"
           >
             <TrendingUp className="h-4 w-4 text-emerald-600" />
             Links Analytics
           </Link>
           <Link
             href="/reports/leaderboard"
-            className="inline-flex items-center gap-2 bg-[#1A1A1A] text-white rounded-full px-5 py-2.5 text-sm font-medium shadow-[0_4px_16px_rgba(0,0,0,0.18)] hover:shadow-[0_6px_24px_rgba(0,0,0,0.22)] hover:-translate-y-0.5 transition-all"
+            className="inline-flex items-center gap-2 bg-[#1A1A1A] text-white rounded-full px-5 py-2.5 text-sm font-medium shadow-[0_4px_16px_rgba(0,0,0,0.18)] hover:shadow-[0_6px_24px_rgba(0,0,0,0.22)] transition-shadow"
           >
             <Trophy className="h-4 w-4" />
             Leaderboard
@@ -144,15 +329,23 @@ export default function ReportsPage() {
 
       {/* Stat Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        {statCards.map((card, i) => {
+        {statCards.map((card: any) => {
           const Icon = card.icon;
+          const isClickable = card.clickable && card.value > 0;
+          const onClickHandler = isClickable
+            ? () => setTeamTodayModal({ totalLinks: todayTeamTotalLinks, platformBreakdown: todayTeamPlatformBreakdown })
+            : undefined;
           return (
             <div
               key={card.title}
-              className={`bg-white rounded-2xl p-5 border border-[#E8E0D0] transition-all duration-300 hover:shadow-[0_8px_32px_rgba(0,0,0,0.06)] hover:-translate-y-0.5 crx-animate-slide crx-delay-${i + 1}`}
+              onClick={onClickHandler}
+              className={`bg-white rounded-2xl p-5 border border-[#E8E0D0] transition-shadow duration-200 hover:shadow-[0_8px_32px_rgba(0,0,0,0.06)] ${isClickable ? "cursor-pointer hover:border-amber-300" : ""}`}
             >
               <div className="flex items-center justify-between mb-3">
-                <span className="text-xs text-[#7A7A7A] font-medium">{card.title}</span>
+                <span className="text-xs text-[#7A7A7A] font-medium flex items-center gap-1.5">
+                  {card.title}
+                  {isClickable && <BarChart2 className="h-3 w-3 text-amber-500" />}
+                </span>
                 <div className={`h-10 w-10 rounded-xl ${card.bgColor} flex items-center justify-center`}>
                   <Icon className={`h-5 w-5 ${card.iconColor}`} />
                 </div>
@@ -206,7 +399,7 @@ export default function ReportsPage() {
       )}
 
       {/* Filters */}
-      <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0] crx-animate-slide crx-delay-5">
+      <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0]">
         <div className="px-6 py-4 border-b border-[#F0EAD8] flex items-center justify-between">
           <div className="flex items-center gap-2">
             <div className="h-8 w-8 rounded-lg bg-[#FFF8E1] flex items-center justify-center">
@@ -271,7 +464,7 @@ export default function ReportsPage() {
 
       {/* Summary Table */}
       {!employeeId && (
-        <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0] crx-animate-slide crx-delay-6">
+        <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0]">
           <div className="px-6 py-4 border-b border-[#F0EAD8] flex items-center gap-2">
             <div className="h-8 w-8 rounded-lg bg-[#FFF8E1] flex items-center justify-center">
               <TrendingUp className="h-4 w-4 text-[#B0B0B0]" />
@@ -317,65 +510,12 @@ export default function ReportsPage() {
                   </thead>
                   <tbody>
                     {(summary?.employees ?? []).map((emp: any) => (
-                      <tr key={emp.id} className="border-b border-[#F0EAD8] last:border-0 hover:bg-[rgba(255,248,225,0.5)] transition-colors group">
-                        <td className="py-3 pr-4">
-                          <div className="flex items-center gap-3">
-                            <div
-                              className="h-8 w-8 rounded-full flex items-center justify-center text-white text-xs font-semibold shrink-0 ring-2 ring-white shadow-sm"
-                              style={{ background: getAvatarGradient(emp.name) }}
-                            >
-                              {emp.name?.[0]?.toUpperCase()}
-                            </div>
-                            <span className="font-medium text-[#1A1A1A] group-hover:text-[#F5D547] transition-colors">{emp.name}</span>
-                          </div>
-                        </td>
-                        <td className="py-3 pr-4 text-[#7A7A7A]">{emp.email}</td>
-                        <td className="py-3 pr-4 text-right">
-                          <span className="inline-flex items-center justify-center min-w-[28px] h-6 rounded-full bg-purple-50 text-purple-700 text-xs font-semibold px-2">
-                            {emp.reportCount}
-                          </span>
-                        </td>
-                        <td className="py-3 pr-4 text-right">
-                          <button
-                            onClick={() => setEmpModal({ name: emp.name, totalLinks: emp.totalLinks, platformBreakdown: emp.platformBreakdown ?? [] })}
-                            title="View platform breakdown"
-                            className="inline-flex items-center gap-1 min-w-[28px] h-6 rounded-full bg-emerald-50 text-emerald-700 text-xs font-semibold px-2 hover:bg-emerald-200 hover:shadow-sm transition-all cursor-pointer border border-transparent hover:border-emerald-300"
-                          >
-                            {emp.totalLinks}
-                            <BarChart2 className="h-3 w-3 opacity-60" />
-                          </button>
-                        </td>
-                        <td className="py-3 pr-4 text-right">
-                          {(emp.linksToday ?? 0) > 0 ? (
-                            <span className="inline-flex items-center justify-center min-w-[28px] h-6 rounded-full bg-blue-50 text-blue-700 text-xs font-semibold px-2">
-                              {emp.linksToday}
-                            </span>
-                          ) : (
-                            <span className="text-xs text-[#B0B0B0]">—</span>
-                          )}
-                        </td>
-                        <td className="py-3 pr-4 text-right">
-                          <span className="text-xs text-[#7A7A7A]">{emp.avgLinksPerDay ?? "—"}</span>
-                        </td>
-                        <td className="py-3 pr-4 text-right">
-                          <span className="inline-flex items-center gap-1 text-xs font-semibold text-orange-600">
-                            {emp.currentStreak ?? 0} 🔥
-                          </span>
-                        </td>
-                        <td className="py-3 pr-4 text-xs text-[#7A7A7A]">
-                          {emp.lastSubmittedAt
-                            ? new Date(emp.lastSubmittedAt).toLocaleDateString("en-IN", { day: "numeric", month: "short" })
-                            : "—"}
-                        </td>
-                        <td className="py-3">
-                          <Link
-                            href={`/reports/${emp.id}`}
-                            className="text-[#1A1A1A] hover:text-[#F5D547] text-xs font-medium transition-colors"
-                          >
-                            View Details
-                          </Link>
-                        </td>
-                      </tr>
+                      <EmployeeRow
+                        key={emp.id}
+                        emp={emp}
+                        onOpenEmpModal={handleOpenEmpModal}
+                        onOpenTodayModal={handleOpenTodayModal}
+                      />
                     ))}
                   </tbody>
                 </table>
@@ -423,61 +563,14 @@ export default function ReportsPage() {
           </div>
         ) : (
           <div className="space-y-4">
-            {reports.map((report: any, idx: number) => (
-              <div key={report.id} className={`bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0] transition-all duration-300 hover:shadow-[0_8px_32px_rgba(0,0,0,0.07)] crx-animate-slide crx-delay-${Math.min(idx + 1, 6)}`}>
-                <div className="p-5">
-                  {/* Employee info header */}
-                  <div className="flex items-start justify-between mb-4">
-                    <div className="flex items-center gap-3">
-                      <div
-                        className="h-10 w-10 rounded-full flex items-center justify-center text-white text-sm font-semibold shrink-0 ring-2 ring-white shadow-sm"
-                        style={{ background: getAvatarGradient(report.employee?.name || "") }}
-                      >
-                        {report.employee?.name?.[0]?.toUpperCase()}
-                      </div>
-                      <div>
-                        <p className="font-semibold text-[#1A1A1A]">{report.employee?.name ?? "Unknown"}</p>
-                        <p className="text-xs text-[#7A7A7A]">{report.employee?.email}</p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="rounded-full px-3 py-1 text-xs font-medium bg-[#FFF8E1] text-[#1A1A1A] border border-[#F0EAD8]">
-                        {new Date(report.date ?? report.createdAt).toLocaleDateString()}
-                      </span>
-                      <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium bg-emerald-50 text-emerald-700">
-                        <Link2 className="h-3 w-3" />
-                        {report.links?.length ?? 0}
-                      </span>
-                    </div>
-                  </div>
-
-                  {report.notes && (
-                    <p className="text-sm text-[#7A7A7A] mb-4 italic pl-[52px]">{report.notes}</p>
-                  )}
-
-                  <div className="space-y-2 pl-[52px]">
-                    {(report.links ?? []).map((link: any, i: number) => (
-                      <div key={link.id ?? i} className="relative group/link">
-                        <LinkPreviewCard link={link} />
-                        {isAdmin && link.id && (
-                          <button
-                            onClick={() => handleDeleteLink(link.id)}
-                            disabled={deletingLinkId === link.id}
-                            title="Delete this link"
-                            className="absolute top-2 right-2 h-7 w-7 rounded-lg bg-white border border-[#E8E0D0] flex items-center justify-center text-[#B0B0B0] hover:text-red-500 hover:border-red-200 hover:bg-red-50 transition-all opacity-0 group-hover/link:opacity-100 disabled:opacity-50 disabled:cursor-not-allowed z-10"
-                          >
-                            {deletingLinkId === link.id ? (
-                              <svg className="animate-spin h-3.5 w-3.5" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-                            ) : (
-                              <Trash2 className="h-3.5 w-3.5" />
-                            )}
-                          </button>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
+            {reports.map((report: any) => (
+              <ReportCard
+                key={report.id}
+                report={report}
+                isAdmin={isAdmin}
+                deletingLinkId={deletingLinkId}
+                onDeleteLink={handleDeleteLink}
+              />
             ))}
           </div>
         )}
@@ -587,6 +680,124 @@ export default function ReportsPage() {
                     <div className="h-1.5 w-full rounded-full bg-[#F0EAD8]">
                       <div
                         className="h-1.5 rounded-full bg-emerald-400 transition-all duration-500"
+                        style={{ width: `${pct}%` }}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+    )}
+
+    {/* Today's platform breakdown modal */}
+    {todayModal && (
+      <div
+        className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40"
+        onClick={() => setTodayModal(null)}
+      >
+        <div
+          className="bg-white rounded-2xl border border-[#E8E0D0] shadow-[0_16px_48px_rgba(0,0,0,0.16)] w-full max-w-sm mx-4 p-6"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="flex items-center justify-between mb-5">
+            <div className="flex items-center gap-2">
+              <div className="h-9 w-9 rounded-xl bg-blue-50 flex items-center justify-center">
+                <BarChart2 className="h-5 w-5 text-blue-600" />
+              </div>
+              <div>
+                <h2 className="font-serif text-[#1A1A1A] font-medium text-base">{todayModal.name}</h2>
+                <p className="text-xs text-[#B0B0B0]">{todayModal.linksToday} links today · by platform</p>
+              </div>
+            </div>
+            <button
+              onClick={() => setTodayModal(null)}
+              className="h-7 w-7 rounded-lg flex items-center justify-center text-[#B0B0B0] hover:text-[#1A1A1A] hover:bg-[#F5F5F5] transition-colors"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+
+          {!todayModal.platformBreakdown.length ? (
+            <p className="text-sm text-[#B0B0B0] text-center py-6">No links submitted today.</p>
+          ) : (
+            <div className="space-y-3">
+              {todayModal.platformBreakdown.map(({ platform, count }) => {
+                const pct = todayModal.linksToday > 0 ? Math.round((count / todayModal.linksToday) * 100) : 0;
+                return (
+                  <div key={platform}>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium capitalize ${platformBadgeClass(platform)}`}>
+                        {platform}
+                      </span>
+                      <span className="text-sm font-semibold text-[#1A1A1A]">
+                        {count} <span className="text-xs font-normal text-[#B0B0B0]">({pct}%)</span>
+                      </span>
+                    </div>
+                    <div className="h-1.5 w-full rounded-full bg-[#F0EAD8]">
+                      <div
+                        className="h-1.5 rounded-full bg-blue-400 transition-all duration-500"
+                        style={{ width: `${pct}%` }}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+    )}
+
+    {/* Team-wide today's platform breakdown modal */}
+    {teamTodayModal && (
+      <div
+        className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40"
+        onClick={() => setTeamTodayModal(null)}
+      >
+        <div
+          className="bg-white rounded-2xl border border-[#E8E0D0] shadow-[0_16px_48px_rgba(0,0,0,0.16)] w-full max-w-sm mx-4 p-6"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="flex items-center justify-between mb-5">
+            <div className="flex items-center gap-2">
+              <div className="h-9 w-9 rounded-xl bg-amber-50 flex items-center justify-center">
+                <Calendar className="h-5 w-5 text-amber-600" />
+              </div>
+              <div>
+                <h2 className="font-serif text-[#1A1A1A] font-medium text-base">Today's Posts</h2>
+                <p className="text-xs text-[#B0B0B0]">{teamTodayModal.totalLinks} links · across team · by platform</p>
+              </div>
+            </div>
+            <button
+              onClick={() => setTeamTodayModal(null)}
+              className="h-7 w-7 rounded-lg flex items-center justify-center text-[#B0B0B0] hover:text-[#1A1A1A] hover:bg-[#F5F5F5] transition-colors"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+
+          {!teamTodayModal.platformBreakdown.length ? (
+            <p className="text-sm text-[#B0B0B0] text-center py-6">No links submitted today.</p>
+          ) : (
+            <div className="space-y-3">
+              {teamTodayModal.platformBreakdown.map(({ platform, count }) => {
+                const pct = teamTodayModal.totalLinks > 0 ? Math.round((count / teamTodayModal.totalLinks) * 100) : 0;
+                return (
+                  <div key={platform}>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium capitalize ${platformBadgeClass(platform)}`}>
+                        {platform}
+                      </span>
+                      <span className="text-sm font-semibold text-[#1A1A1A]">
+                        {count} <span className="text-xs font-normal text-[#B0B0B0]">({pct}%)</span>
+                      </span>
+                    </div>
+                    <div className="h-1.5 w-full rounded-full bg-[#F0EAD8]">
+                      <div
+                        className="h-1.5 rounded-full bg-amber-400 transition-all duration-500"
                         style={{ width: `${pct}%` }}
                       />
                     </div>

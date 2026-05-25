@@ -70,10 +70,11 @@ export default function ReportsPage() {
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [empModal, setEmpModal] = useState<{ name: string; totalLinks: number; platformBreakdown: { platform: string; count: number }[] } | null>(null);
   const [platformModal, setPlatformModal] = useState<{ platform: string; count: number; dailyBreakdown: { date: string; count: number }[] } | null>(null);
+  const [todayModal, setTodayModal] = useState<{ name: string; linksToday: number; platformBreakdown: { platform: string; count: number }[] } | null>(null);
 
   useEffect(() => {
     const main = document.querySelector("main") as HTMLElement | null;
-    if (empModal || platformModal) {
+    if (empModal || platformModal || todayModal) {
       document.body.style.overflow = "hidden";
       if (main) main.style.overflow = "hidden";
     } else {
@@ -84,7 +85,7 @@ export default function ReportsPage() {
       document.body.style.overflow = "";
       if (main) main.style.overflow = "";
     };
-  }, [empModal, platformModal]);
+  }, [empModal, platformModal, todayModal]);
 
   const { user } = useAuth();
   const isAdmin = user?.roles?.some((r) => r === "Admin" || r === "Super Admin") ?? false;
@@ -352,9 +353,13 @@ export default function ReportsPage() {
                         </td>
                         <td className="py-3 pr-4 text-right">
                           {(emp.linksToday ?? 0) > 0 ? (
-                            <span className="inline-flex items-center justify-center min-w-[28px] h-6 rounded-full bg-blue-50 text-blue-700 text-xs font-semibold px-2">
+                            <button
+                              onClick={() => setTodayModal({ name: emp.name, linksToday: emp.linksToday, platformBreakdown: emp.todayPlatformBreakdown ?? [] })}
+                              className="inline-flex items-center gap-1 min-w-[28px] h-6 rounded-full bg-blue-50 text-blue-700 text-xs font-semibold px-2 hover:bg-blue-200 transition-all cursor-pointer border border-transparent hover:border-blue-300"
+                            >
                               {emp.linksToday}
-                            </span>
+                              <BarChart2 className="h-3 w-3 opacity-60" />
+                            </button>
                           ) : (
                             <span className="text-xs text-[#B0B0B0]">—</span>
                           )}
@@ -470,10 +475,13 @@ export default function ReportsPage() {
                           href={link.url}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="flex-1 text-xs text-[#1A1A1A] truncate hover:text-[#F5D547] hover:underline"
+                          className="flex-1 min-w-0 flex items-center gap-2 group/url"
                           title={link.url}
                         >
-                          {link.accountName || link.url}
+                          {link.accountName && (
+                            <span className="text-xs font-medium text-[#1A1A1A] shrink-0 group-hover/url:text-[#F5D547] transition-colors">{link.accountName}</span>
+                          )}
+                          <span className="text-[10px] text-[#B0B0B0] truncate group-hover/url:underline">{link.url}</span>
                         </a>
                         {link.description && (
                           <span className="text-xs text-[#B0B0B0] truncate max-w-[200px] hidden md:block">{link.description}</span>
@@ -606,6 +614,65 @@ export default function ReportsPage() {
                     <div className="h-1.5 w-full rounded-full bg-[#F0EAD8]">
                       <div
                         className="h-1.5 rounded-full bg-emerald-400 transition-all duration-500"
+                        style={{ width: `${pct}%` }}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+    )}
+
+    {/* Today's platform breakdown modal */}
+    {todayModal && (
+      <div
+        className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40"
+        onClick={() => setTodayModal(null)}
+      >
+        <div
+          className="bg-white rounded-2xl border border-[#E8E0D0] shadow-[0_16px_48px_rgba(0,0,0,0.16)] w-full max-w-sm mx-4 p-6"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="flex items-center justify-between mb-5">
+            <div className="flex items-center gap-2">
+              <div className="h-9 w-9 rounded-xl bg-blue-50 flex items-center justify-center">
+                <BarChart2 className="h-5 w-5 text-blue-600" />
+              </div>
+              <div>
+                <h2 className="font-serif text-[#1A1A1A] font-medium text-base">{todayModal.name}</h2>
+                <p className="text-xs text-[#B0B0B0]">{todayModal.linksToday} links today · by platform</p>
+              </div>
+            </div>
+            <button
+              onClick={() => setTodayModal(null)}
+              className="h-7 w-7 rounded-lg flex items-center justify-center text-[#B0B0B0] hover:text-[#1A1A1A] hover:bg-[#F5F5F5] transition-colors"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+
+          {!todayModal.platformBreakdown.length ? (
+            <p className="text-sm text-[#B0B0B0] text-center py-6">No links submitted today.</p>
+          ) : (
+            <div className="space-y-3">
+              {todayModal.platformBreakdown.map(({ platform, count }) => {
+                const pct = todayModal.linksToday > 0 ? Math.round((count / todayModal.linksToday) * 100) : 0;
+                return (
+                  <div key={platform}>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium capitalize ${platformBadgeClass(platform)}`}>
+                        {platform}
+                      </span>
+                      <span className="text-sm font-semibold text-[#1A1A1A]">
+                        {count} <span className="text-xs font-normal text-[#B0B0B0]">({pct}%)</span>
+                      </span>
+                    </div>
+                    <div className="h-1.5 w-full rounded-full bg-[#F0EAD8]">
+                      <div
+                        className="h-1.5 rounded-full bg-blue-400 transition-all duration-500"
                         style={{ width: `${pct}%` }}
                       />
                     </div>

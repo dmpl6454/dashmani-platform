@@ -297,14 +297,21 @@ export async function getReportSummary(startDate?: string, endDate?: string) {
     }),
     prisma.dailyReport.findMany({
       where: { date: todayDate },
-      select: { employeeId: true, _count: { select: { links: true } } },
+      select: { employeeId: true, links: { select: { platform: true } } },
     }),
   ]);
 
-  // Build a map of employeeId → today's link count
+  // Build maps of employeeId → today's link count and platform breakdown
   const todayLinksMap = new Map<string, number>();
+  const todayPlatformMap = new Map<string, Record<string, number>>();
   for (const r of todayReports) {
-    todayLinksMap.set(r.employeeId, r._count.links);
+    todayLinksMap.set(r.employeeId, r.links.length);
+    const pMap: Record<string, number> = {};
+    for (const link of r.links) {
+      const p = ((link as any).platform || "unknown").toLowerCase();
+      pMap[p] = (pMap[p] || 0) + 1;
+    }
+    todayPlatformMap.set(r.employeeId, pMap);
   }
 
   // Group by employee
@@ -362,11 +369,15 @@ export async function getReportSummary(startDate?: string, endDate?: string) {
     const platformBreakdown = Object.entries(empPlatformMap)
       .sort(([, a], [, b]) => b - a)
       .map(([platform, count]) => ({ platform, count }));
+    const todayPlatformBreakdown = Object.entries(todayPlatformMap.get(rest.id) ?? {})
+      .sort(([, a], [, b]) => b - a)
+      .map(([platform, count]) => ({ platform, count }));
     return {
       ...rest,
       avgLinksPerDay,
       currentStreak,
       linksToday: todayLinksMap.get(rest.id) ?? 0,
+      todayPlatformBreakdown,
       lastSubmittedAt: rest.lastSubmittedAt?.toISOString() ?? null,
       platformBreakdown,
     };

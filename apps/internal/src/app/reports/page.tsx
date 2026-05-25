@@ -547,7 +547,7 @@ export default function ReportsPage() {
           </h3>
           {!reportsLoading && reports.length > 0 && (
             <span className="text-xs text-[#B0B0B0] ml-auto">
-              Showing {reports.length} most recent · use filters for older reports
+              {reports.length} report{reports.length !== 1 ? "s" : ""}
             </span>
           )}
         </div>

@@ -80,7 +80,23 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   if (!user && !isPublicPage) {
     const hasToken = typeof window !== "undefined" && !!localStorage.getItem("accessToken");
     if (!hasToken) router.push("/login");
-    return null;
+    // Return a spinner instead of null — returning null from the root layout
+    // renders a completely blank page while the router.push is in flight.
+    return (
+      <html lang="en">
+        <head>
+          <meta name="viewport" content="width=device-width, initial-scale=1" />
+        </head>
+        <body>
+          <div className="flex items-center justify-center min-h-screen bg-bg">
+            <div
+              className="h-8 w-8 rounded-full border-[3px] border-ink/10 border-t-indigo"
+              style={{ animation: "spin 0.7s linear infinite" }}
+            />
+          </div>
+        </body>
+      </html>
+    );
   }
 
   return (

@@ -4,6 +4,9 @@ import { useRouter } from "next/navigation";
 
 export default function Home() {
   const router = useRouter();
-  useEffect(() => { router.replace("/dashboard"); }, [router]);
+  useEffect(() => {
+    const token = localStorage.getItem("clientAccessToken");
+    router.replace(token ? "/dashboard" : "/login");
+  }, [router]);
   return null;
 }

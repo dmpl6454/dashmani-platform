@@ -66,7 +66,7 @@ const ReportCard = memo(function ReportCard({ report, isAdmin, deletingLinkId, o
   return (
     <div
       className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0] transition-shadow duration-200 hover:shadow-[0_8px_32px_rgba(0,0,0,0.07)]"
-      style={{ contentVisibility: "auto", containIntrinsicSize: "300px" } as React.CSSProperties}
+      style={{ contentVisibility: "auto", containIntrinsicSize: "300px" } as any}
     >
       <div className="p-5">
         <div className="flex items-start justify-between mb-4">

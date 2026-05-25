@@ -22,3 +22,15 @@ export function usePlatforms() {
 export function useWorkload() {
   return useSWR("/workload", (url) => apiFetch(url));
 }
+
+export function useAccountLinkStats(id?: string, startDate?: string, endDate?: string) {
+  const params = new URLSearchParams();
+  if (startDate) params.set("startDate", startDate);
+  if (endDate) params.set("endDate", endDate);
+  const query = params.toString() ? `?${params.toString()}` : "";
+  return useSWR(
+    id ? `/accounts/${id}/link-stats${query}` : null,
+    (url) => apiFetch(url),
+    { revalidateOnFocus: false, dedupingInterval: 120_000 },
+  );
+}

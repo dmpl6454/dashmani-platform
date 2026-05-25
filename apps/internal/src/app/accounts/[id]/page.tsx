@@ -1,10 +1,36 @@
 "use client";
 import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { useAccount } from "@/lib/hooks/use-accounts";
+import { useAccount, useAccountLinkStats } from "@/lib/hooks/use-accounts";
 import { Button } from "@dashmani/ui";
 import { apiFetch } from "@/lib/api";
-import { Pencil, Trash2, Search } from "lucide-react";
+import { Pencil, Trash2, Search, BarChart2, ChevronDown, X, Users, Link2 } from "lucide-react";
+import Link from "next/link";
+import {
+  BarChart, Bar, XAxis, YAxis, Tooltip,
+  ResponsiveContainer, CartesianGrid,
+} from "recharts";
+
+function fmtDate(d: string) {
+  try { return new Date(d).toLocaleDateString("en-IN", { day: "numeric", month: "short" }); }
+  catch { return d; }
+}
+
+function BarTip({ active, payload, label }: any) {
+  if (!active || !payload?.length) return null;
+  return (
+    <div className="bg-ink text-white text-xs rounded-lg px-3 py-2 shadow-lg">
+      <p className="font-semibold mb-0.5">{label}</p>
+      <p>{payload[0].value} links</p>
+    </div>
+  );
+}
+
+const DATE_PRESETS = [
+  { label: "30d", days: 29 },
+  { label: "90d", days: 89 },
+  { label: "Year", days: 364 },
+];
 
 export default function AccountDetailPage() {
   const { id } = useParams();
@@ -17,6 +43,26 @@ export default function AccountDetailPage() {
   const [assigning, setAssigning] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
+
+  // Link stats date range
+  const today = new Date();
+  const todayStr = today.toISOString().slice(0, 10);
+  const [statsStartDate, setStatsStartDate] = useState(
+    new Date(today.getTime() - 29 * 86400000).toISOString().slice(0, 10)
+  );
+  const [statsEndDate, setStatsEndDate] = useState(todayStr);
+  const activePreset = DATE_PRESETS.find(
+    (p) => statsStartDate === new Date(today.getTime() - p.days * 86400000).toISOString().slice(0, 10) && statsEndDate === todayStr
+  )?.label ?? null;
+
+  const { data: statsData, isLoading: statsLoading } = useAccountLinkStats(id as string, statsStartDate, statsEndDate);
+  const stats = (statsData as any)?.data;
+
+  const dailyTrend = (stats?.dailyTrend ?? []).map((x: any) => ({
+    date: fmtDate(x.date),
+    links: x.count,
+  }));
+  const employeeBreakdown: any[] = stats?.employeeBreakdown ?? [];
 
   useEffect(() => {
     apiFetch("/employees?status=ACTIVE&limit=500").then((res: any) => {
@@ -77,6 +123,7 @@ export default function AccountDetailPage() {
 
   return (
     <div className="max-w-3xl space-y-6 crx-animate-fade">
+      {/* Header */}
       <div className="flex items-start justify-between">
         <div>
           <h1 className="font-serif text-4xl font-light text-[#1A1A1A]">{account.displayName}</h1>
@@ -86,7 +133,7 @@ export default function AccountDetailPage() {
             <span className="rounded-full px-3 py-1 text-xs font-medium bg-[#FFF3C4] text-[#1A1A1A]">{account.followerCount?.toLocaleString()} followers</span>
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <button
             onClick={() => router.push(`/accounts/${id}/edit`)}
             className="flex items-center gap-1.5 border border-[#E8E0D0] rounded-full text-[#1A1A1A] hover:bg-[#F0EEFF] hover:border-[#5B4BF5]/30 hover:text-[#5B4BF5] px-4 py-2 text-sm font-medium transition-colors"
@@ -110,6 +157,7 @@ export default function AccountDetailPage() {
         </div>
       )}
 
+      {/* Active assignments */}
       <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0] crx-animate-slide crx-delay-2">
         <div className="px-6 py-4 border-b border-[#F0EAD8]">
           <h3 className="text-base font-serif text-[#1A1A1A] font-medium">Active Assignments ({activeAssignments.length})</h3>
@@ -178,6 +226,149 @@ export default function AccountDetailPage() {
         </div>
       </div>
 
+      {/* ── Link Statistics ─────────────────────────────────────────────────── */}
+      <div className="v3-card p-5 space-y-4">
+        {/* Section header + date range controls */}
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <div className="flex items-center gap-2">
+            <BarChart2 className="h-4 w-4 text-indigo" />
+            <p className="font-semibold text-ink">Link Statistics</p>
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            {/* Preset chips */}
+            <div className="flex items-center gap-1 bg-ink/5 rounded-xl p-1">
+              {DATE_PRESETS.map((p) => (
+                <button
+                  key={p.label}
+                  onClick={() => {
+                    setStatsStartDate(new Date(today.getTime() - p.days * 86400000).toISOString().slice(0, 10));
+                    setStatsEndDate(todayStr);
+                  }}
+                  className={`h-6 px-2.5 rounded-lg text-xs font-medium transition-colors ${
+                    activePreset === p.label
+                      ? "bg-surface text-ink shadow-sm"
+                      : "text-ink-4 hover:text-ink"
+                  }`}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+            <input
+              type="date"
+              value={statsStartDate}
+              onChange={(e) => setStatsStartDate(e.target.value)}
+              className="h-8 rounded-xl border-2 border-ink/15 bg-surface text-xs px-2 focus:outline-none focus:border-indigo"
+            />
+            <span className="text-xs text-ink-4">→</span>
+            <input
+              type="date"
+              value={statsEndDate}
+              onChange={(e) => setStatsEndDate(e.target.value)}
+              className="h-8 rounded-xl border-2 border-ink/15 bg-surface text-xs px-2 focus:outline-none focus:border-indigo"
+            />
+          </div>
+        </div>
+
+        {statsLoading ? (
+          <p className="text-xs text-ink-4 py-4 text-center">Loading…</p>
+        ) : !stats || stats.totalLinks === 0 ? (
+          <div className="text-center py-6 space-y-1">
+            <p className="text-sm text-ink-4">No links submitted for this account in the selected range</p>
+            <p className="text-xs text-ink-4">Try a wider date range</p>
+          </div>
+        ) : (
+          <>
+            {/* KPI strip */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+              <div className="v3-card-sm p-3 space-y-0.5">
+                <div className="h-6 w-6 rounded-lg bg-terra-soft flex items-center justify-center mb-1">
+                  <Link2 className="h-3 w-3 text-terra" />
+                </div>
+                <p className="font-display text-xl font-semibold text-ink leading-none">{stats.totalLinks}</p>
+                <p className="text-[10px] text-ink-4">Total Links</p>
+              </div>
+              <div className="v3-card-sm p-3 space-y-0.5">
+                <div className="h-6 w-6 rounded-lg bg-indigo-soft flex items-center justify-center mb-1">
+                  <Users className="h-3 w-3 text-indigo" />
+                </div>
+                <p className="font-display text-xl font-semibold text-ink leading-none">{employeeBreakdown.length}</p>
+                <p className="text-[10px] text-ink-4">Contributors</p>
+              </div>
+              <div className="v3-card-sm p-3 space-y-0.5">
+                <div className="h-6 w-6 rounded-lg bg-sage-soft flex items-center justify-center mb-1">
+                  <BarChart2 className="h-3 w-3 text-sage" />
+                </div>
+                <p className="font-display text-xl font-semibold text-ink leading-none">
+                  {dailyTrend.filter((d: any) => d.links > 0).length}
+                </p>
+                <p className="text-[10px] text-ink-4">Active Days</p>
+              </div>
+            </div>
+
+            {/* Daily trend chart */}
+            <div>
+              <p className="text-xs font-medium text-ink-4 mb-2">Daily submission trend</p>
+              <div className="h-36">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={dailyTrend} barSize={Math.max(4, Math.floor(320 / dailyTrend.length) - 2)} margin={{ top: 4, right: 4, left: -24, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.06)" vertical={false} />
+                    <XAxis
+                      dataKey="date"
+                      tick={{ fontSize: 9, fill: "var(--color-ink-4,#888)" }}
+                      axisLine={false}
+                      tickLine={false}
+                      interval={Math.floor(dailyTrend.length / 6)}
+                    />
+                    <YAxis tick={{ fontSize: 9, fill: "var(--color-ink-4,#888)" }} axisLine={false} tickLine={false} allowDecimals={false} />
+                    <Tooltip content={<BarTip />} cursor={{ fill: "rgba(0,0,0,0.04)" }} />
+                    <Bar dataKey="links" fill="var(--color-terra,#c97c3a)" radius={[3, 3, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            {/* Per-employee breakdown */}
+            <div>
+              <p className="text-xs font-medium text-ink-4 mb-2">Submitted by employee</p>
+              <div className="space-y-2.5">
+                {employeeBreakdown.map((emp: any) => (
+                  <div key={emp.employeeId} className="flex items-center gap-3">
+                    <div
+                      className="h-7 w-7 rounded-full flex items-center justify-center text-white text-[10px] font-semibold shrink-0"
+                      style={{ background: "linear-gradient(135deg, #5B4BF5, #3023D0)" }}
+                    >
+                      {emp.name?.[0]?.toUpperCase()}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between mb-0.5">
+                        <Link
+                          href={`/reports/${emp.employeeId}`}
+                          className="text-xs font-medium text-ink hover:text-indigo transition-colors truncate"
+                        >
+                          {emp.name}
+                        </Link>
+                        <div className="flex items-center gap-2 shrink-0 ml-2">
+                          <span className="text-[10px] text-ink-4">{emp.reportCount} day{emp.reportCount !== 1 ? "s" : ""}</span>
+                          <span className="text-xs font-semibold text-ink">{emp.totalLinks}</span>
+                          <span className="text-[10px] text-ink-4 w-8 text-right">{emp.pct}%</span>
+                        </div>
+                      </div>
+                      <div className="h-1.5 rounded-full bg-ink/8 overflow-hidden">
+                        <div
+                          className="h-full rounded-full bg-indigo transition-all duration-500"
+                          style={{ width: `${emp.pct}%` }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+
       {/* Delete Confirmation Modal */}
       {showDeleteConfirm && (
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => !deleting && setShowDeleteConfirm(false)}>
@@ -215,6 +406,7 @@ export default function AccountDetailPage() {
         </div>
       )}
 
+      {/* Past assignments */}
       {pastAssignments.length > 0 && (
         <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0] crx-animate-slide crx-delay-3">
           <div className="px-6 py-4 border-b border-[#F0EAD8]">

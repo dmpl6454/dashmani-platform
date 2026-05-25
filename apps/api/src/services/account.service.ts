@@ -180,6 +180,165 @@ export async function unassignEmployee(accountId: string, employeeId: string) {
   });
 }
 
+// ─── Link statistics ────────────────────────────────────────────────────────
+
+/**
+ * Returns every social account that had at least one link submitted in the
+ * given date range, ranked by total links descending.  Each entry includes a
+ * per-employee breakdown so the caller can show "who submitted how many links
+ * for this channel".
+ */
+export async function getAllAccountsLinkStats(startDate?: string, endDate?: string) {
+  const now = new Date();
+  const todayUTC = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const end = endDate ? new Date(endDate) : todayUTC;
+  const start = startDate ? new Date(startDate) : new Date(todayUTC.getTime() - 29 * 86400000);
+
+  const links = await prisma.reportLink.findMany({
+    where: { report: { date: { gte: start, lte: end } } },
+    select: {
+      accountId: true,
+      account: {
+        select: {
+          id: true,
+          handle: true,
+          displayName: true,
+          platform: { select: { name: true, slug: true } },
+        },
+      },
+      report: {
+        select: {
+          employeeId: true,
+          employee: { select: { id: true, name: true } },
+        },
+      },
+    },
+  });
+
+  // Aggregate by account then by employee
+  const accountMap: Record<string, {
+    account: any;
+    employees: Record<string, { name: string; count: number }>;
+  }> = {};
+
+  for (const link of links) {
+    if (!link.accountId) continue;
+    const aId = link.accountId;
+    if (!accountMap[aId]) accountMap[aId] = { account: link.account, employees: {} };
+    const eId = link.report.employeeId;
+    if (!accountMap[aId].employees[eId]) {
+      accountMap[aId].employees[eId] = { name: link.report.employee.name, count: 0 };
+    }
+    accountMap[aId].employees[eId].count++;
+  }
+
+  return Object.entries(accountMap)
+    .map(([accountId, data]) => {
+      const empEntries = Object.entries(data.employees).sort(([, a], [, b]) => b.count - a.count);
+      const totalLinks = empEntries.reduce((s, [, e]) => s + e.count, 0);
+      return {
+        accountId,
+        handle: data.account?.handle ?? accountId,
+        displayName: data.account?.displayName ?? accountId,
+        platform: data.account?.platform?.name ?? "Unknown",
+        platformSlug: data.account?.platform?.slug ?? "",
+        totalLinks,
+        employeeCount: empEntries.length,
+        topEmployee: empEntries[0]
+          ? { name: empEntries[0][1].name, totalLinks: empEntries[0][1].count }
+          : null,
+        employees: empEntries.map(([empId, e]) => ({
+          employeeId: empId,
+          name: e.name,
+          totalLinks: e.count,
+          pct: totalLinks > 0 ? Math.round((e.count / totalLinks) * 100) : 0,
+        })),
+      };
+    })
+    .sort((a, b) => b.totalLinks - a.totalLinks);
+}
+
+/**
+ * Returns link statistics for a single account: daily trend + per-employee
+ * breakdown for the given date range.
+ */
+export async function getAccountLinkStats(id: string, startDate?: string, endDate?: string) {
+  const account = await prisma.socialAccount.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      handle: true,
+      displayName: true,
+      platform: { select: { name: true, slug: true } },
+    },
+  });
+  if (!account) throw new AppError(404, "NOT_FOUND", "Social account not found");
+
+  const now = new Date();
+  const todayUTC = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const end = endDate ? new Date(endDate) : todayUTC;
+  const start = startDate ? new Date(startDate) : new Date(todayUTC.getTime() - 29 * 86400000);
+
+  const links = await prisma.reportLink.findMany({
+    where: { accountId: id, report: { date: { gte: start, lte: end } } },
+    select: {
+      report: {
+        select: {
+          date: true,
+          employeeId: true,
+          employee: { select: { id: true, name: true, email: true } },
+        },
+      },
+    },
+    orderBy: { report: { date: "asc" } },
+  });
+
+  const totalLinks = links.length;
+
+  // Daily trend (filled with zeroes)
+  const dailyMap: Record<string, number> = {};
+  for (const link of links) {
+    const d = new Date(link.report.date).toISOString().split("T")[0];
+    dailyMap[d] = (dailyMap[d] || 0) + 1;
+  }
+  const dayCount = Math.ceil((end.getTime() - start.getTime()) / 86400000) + 1;
+  const dailyTrend: { date: string; count: number }[] = [];
+  for (let i = 0; i < dayCount; i++) {
+    const d = new Date(start.getTime() + i * 86400000).toISOString().split("T")[0];
+    dailyTrend.push({ date: d, count: dailyMap[d] || 0 });
+  }
+
+  // Per-employee breakdown
+  const empMap: Record<string, { name: string; email: string; totalLinks: number; reportDates: Set<string> }> = {};
+  for (const link of links) {
+    const eId = link.report.employeeId;
+    if (!empMap[eId]) {
+      empMap[eId] = { name: link.report.employee.name, email: link.report.employee.email, totalLinks: 0, reportDates: new Set() };
+    }
+    empMap[eId].totalLinks++;
+    empMap[eId].reportDates.add(new Date(link.report.date).toISOString().split("T")[0]);
+  }
+
+  const employeeBreakdown = Object.entries(empMap)
+    .sort(([, a], [, b]) => b.totalLinks - a.totalLinks)
+    .map(([employeeId, data]) => ({
+      employeeId,
+      name: data.name,
+      email: data.email,
+      totalLinks: data.totalLinks,
+      reportCount: data.reportDates.size,
+      pct: totalLinks > 0 ? Math.round((data.totalLinks / totalLinks) * 100) : 0,
+    }));
+
+  return {
+    account,
+    totalLinks,
+    dateRange: { startDate: start.toISOString().split("T")[0], endDate: end.toISOString().split("T")[0] },
+    dailyTrend,
+    employeeBreakdown,
+  };
+}
+
 export async function getWorkloadMatrix() {
   const employees = await prisma.user.findMany({
     where: { status: "ACTIVE", deletedAt: null },

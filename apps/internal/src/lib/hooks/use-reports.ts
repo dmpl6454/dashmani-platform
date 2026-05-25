@@ -50,3 +50,14 @@ export function useLinksAnalytics(startDate?: string, endDate?: string) {
   const query = params.toString() ? `?${params.toString()}` : "";
   return useSWR(`/admin/reports/links-analytics${query}`, (url) => apiFetch(url));
 }
+
+export function useLinksAllAccounts(startDate?: string, endDate?: string) {
+  const params = new URLSearchParams();
+  if (startDate) params.set("startDate", startDate);
+  if (endDate) params.set("endDate", endDate);
+  const query = params.toString() ? `?${params.toString()}` : "";
+  return useSWR(`/admin/reports/links-by-account${query}`, (url) => apiFetch(url), {
+    revalidateOnFocus: false,
+    dedupingInterval: 120_000,
+  });
+}

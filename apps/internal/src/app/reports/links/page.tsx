@@ -1,8 +1,8 @@
 "use client";
 import { useState, useMemo } from "react";
 import Link from "next/link";
-import { ArrowLeft, TrendingUp, TrendingDown, Link2, Users, Trophy, AlertCircle, X } from "lucide-react";
-import { useLinksAnalytics } from "@/lib/hooks/use-reports";
+import { ArrowLeft, TrendingUp, TrendingDown, Link2, Users, Trophy, AlertCircle, X, ChevronDown, ChevronUp, BarChart2 } from "lucide-react";
+import { useLinksAnalytics, useLinksAllAccounts } from "@/lib/hooks/use-reports";
 import { usePageTitle } from "@/lib/hooks/use-page-title";
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip,
@@ -76,6 +76,9 @@ export default function LinksAnalyticsPage() {
   }
 
   const { data, isLoading } = useLinksAnalytics(startDate, endDate);
+  const { data: accountsData, isLoading: accountsLoading } = useLinksAllAccounts(startDate, endDate);
+  const allAccounts: any[] = useMemo(() => (accountsData as any)?.data ?? [], [accountsData]);
+  const [expandedAccount, setExpandedAccount] = useState<string | null>(null);
   const d = (data as any)?.data;
 
   const rawDaily = d?.dailyTrend;
@@ -362,6 +365,96 @@ export default function LinksAnalyticsPage() {
           </div>
         </div>
       )}
+
+      {/* By Account breakdown */}
+      <div className="v3-card p-5 space-y-3">
+        <div className="flex items-center gap-2">
+          <BarChart2 className="h-4 w-4 text-indigo" />
+          <p className="font-semibold text-ink">By Account</p>
+          <span className="ml-auto text-xs text-ink-4">{allAccounts.length} channel{allAccounts.length !== 1 ? "s" : ""} active in range</span>
+        </div>
+
+        {accountsLoading ? (
+          <p className="text-xs text-ink-4">Loading…</p>
+        ) : allAccounts.length === 0 ? (
+          <p className="text-xs text-ink-4">No account-linked submissions in this range</p>
+        ) : (
+          <div className="space-y-1">
+            {allAccounts.map((account, i) => {
+              const isExpanded = expandedAccount === account.accountId;
+              return (
+                <div key={account.accountId} className="rounded-xl border border-ink/8 overflow-hidden">
+                  {/* Account row */}
+                  <button
+                    onClick={() => setExpandedAccount(isExpanded ? null : account.accountId)}
+                    className="w-full flex items-center gap-3 px-4 py-3 hover:bg-ink/3 transition-colors text-left"
+                  >
+                    <span className="text-xs font-bold text-ink-4 w-5 text-right shrink-0">{i + 1}</span>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-sm font-medium text-ink truncate">{account.displayName}</span>
+                        <span className="text-xs text-ink-4 bg-ink/5 rounded-full px-2 py-0.5 shrink-0">{account.platform}</span>
+                        <span className="text-[10px] text-ink-4 font-mono truncate">@{account.handle}</span>
+                      </div>
+                      <p className="text-[10px] text-ink-4 mt-0.5">
+                        {account.employeeCount} employee{account.employeeCount !== 1 ? "s" : ""}
+                        {account.topEmployee ? ` · top: ${account.topEmployee.name} (${account.topEmployee.totalLinks})` : ""}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="text-sm font-semibold text-terra">{account.totalLinks}</span>
+                      <span className="text-xs text-ink-4">links</span>
+                      {isExpanded
+                        ? <ChevronUp className="h-3.5 w-3.5 text-ink-4" />
+                        : <ChevronDown className="h-3.5 w-3.5 text-ink-4" />
+                      }
+                    </div>
+                  </button>
+
+                  {/* Per-employee breakdown */}
+                  {isExpanded && (
+                    <div className="border-t border-ink/8 bg-ink/2 px-4 py-3 space-y-2">
+                      {account.employees.map((emp: any) => (
+                        <div key={emp.employeeId} className="flex items-center gap-3">
+                          <div
+                            className="h-6 w-6 rounded-full flex items-center justify-center text-white text-[10px] font-semibold shrink-0"
+                            style={{ background: "linear-gradient(135deg, #5B4BF5, #3023D0)" }}
+                          >
+                            {emp.name?.[0]?.toUpperCase()}
+                          </div>
+                          <Link
+                            href={`/reports/${emp.employeeId}`}
+                            className="text-xs font-medium text-ink hover:text-indigo transition-colors w-32 truncate shrink-0"
+                          >
+                            {emp.name}
+                          </Link>
+                          <div className="flex-1 h-1.5 rounded-full bg-ink/8 overflow-hidden">
+                            <div
+                              className="h-full rounded-full bg-indigo transition-all duration-500"
+                              style={{ width: `${emp.pct}%` }}
+                            />
+                          </div>
+                          <span className="text-xs text-ink-4 w-8 text-right shrink-0">{emp.pct}%</span>
+                          <span className="text-xs font-semibold text-ink w-8 text-right shrink-0">{emp.totalLinks}</span>
+                        </div>
+                      ))}
+                      <div className="pt-1 border-t border-ink/8 flex items-center justify-between">
+                        <span className="text-[10px] text-ink-4">Total for this channel</span>
+                        <Link
+                          href={`/accounts/${account.accountId}`}
+                          className="text-[10px] text-indigo hover:underline"
+                        >
+                          View account →
+                        </Link>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

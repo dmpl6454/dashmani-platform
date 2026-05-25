@@ -31,6 +31,15 @@ router.get("/accounts", authenticate, requirePermission("accounts", "view"), asy
   } catch (err) { next(err); }
 });
 
+// GET /accounts/:id/link-stats — link submission stats for one account with per-employee breakdown
+router.get("/accounts/:id/link-stats", authenticate, requirePermission("accounts", "view"), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { startDate, endDate } = req.query as { startDate?: string; endDate?: string };
+    const stats = await accountService.getAccountLinkStats(req.params.id, startDate, endDate);
+    return success(res, stats);
+  } catch (err) { next(err); }
+});
+
 router.get("/accounts/:id", authenticate, requirePermission("accounts", "view"), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const account = await accountService.getAccountById(req.params.id);

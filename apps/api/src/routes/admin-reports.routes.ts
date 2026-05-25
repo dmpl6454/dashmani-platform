@@ -9,6 +9,7 @@ import {
   getReportSummary,
 } from "../services/daily-report.service";
 import { recordGrowthSnapshot } from "../services/account-growth.service";
+import { getAllAccountsLinkStats } from "../services/account.service";
 import { getLeaderboard } from "../services/leaderboard.service";
 import {
   getPendingEmployees,
@@ -272,6 +273,20 @@ router.get(
         teamRanks, topSubmitters, nonSubmitters,
         totalLinks: currentTotal,
       });
+    } catch (err) { next(err); }
+  },
+);
+
+// GET /admin/reports/links-by-account — all accounts ranked by links, with per-employee breakdown
+router.get(
+  "/admin/reports/links-by-account",
+  authenticate,
+  requirePermission("reports", "view"),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { startDate, endDate } = req.query as { startDate?: string; endDate?: string };
+      const stats = await getAllAccountsLinkStats(startDate, endDate);
+      return success(res, stats);
     } catch (err) { next(err); }
   },
 );

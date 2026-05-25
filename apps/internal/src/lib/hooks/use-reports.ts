@@ -32,7 +32,10 @@ export function useReportSummary(startDate?: string, endDate?: string) {
   if (startDate) params.set("startDate", startDate);
   if (endDate) params.set("endDate", endDate);
   const query = params.toString() ? `?${params.toString()}` : "";
-  return useSWR(`/admin/reports/summary${query}`, (url) => apiFetch(url));
+  return useSWR(`/admin/reports/summary${query}`, (url) => apiFetch(url), {
+    revalidateOnFocus: false,
+    dedupingInterval: 300_000,
+  });
 }
 
 export function useEmployeeReportStats(employeeId?: string) {

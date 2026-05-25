@@ -20,12 +20,13 @@ const PLATFORM_COLORS: Record<string, string> = {
 };
 
 const PLATFORM_CARD_STYLES: Record<string, { bg: string; labelColor: string; labelBg: string; bar: string; border: string }> = {
-  instagram: { bg: "from-pink-50 to-rose-50",   labelColor: "text-pink-600",   labelBg: "bg-pink-100",    bar: "bg-pink-400",   border: "border-pink-100"  },
-  linkedin:  { bg: "from-blue-50 to-indigo-50", labelColor: "text-blue-700",   labelBg: "bg-blue-100",    bar: "bg-blue-500",   border: "border-blue-100"  },
-  youtube:   { bg: "from-red-50 to-orange-50",  labelColor: "text-red-600",    labelBg: "bg-red-100",     bar: "bg-red-400",    border: "border-red-100"   },
-  facebook:  { bg: "from-sky-50 to-blue-50",    labelColor: "text-sky-700",    labelBg: "bg-sky-100",     bar: "bg-sky-400",    border: "border-sky-100"   },
-  twitter:   { bg: "from-cyan-50 to-sky-50",    labelColor: "text-cyan-700",   labelBg: "bg-cyan-100",    bar: "bg-cyan-400",   border: "border-cyan-100"  },
-  tiktok:    { bg: "from-slate-50 to-zinc-50",  labelColor: "text-slate-700",  labelBg: "bg-slate-100",   bar: "bg-slate-400",  border: "border-slate-100" },
+  instagram: { bg: "from-pink-50 to-rose-50",     labelColor: "text-pink-600",   labelBg: "bg-pink-100",    bar: "bg-pink-400",   border: "border-pink-100"   },
+  linkedin:  { bg: "from-blue-50 to-indigo-50",   labelColor: "text-blue-700",   labelBg: "bg-blue-100",    bar: "bg-blue-500",   border: "border-blue-100"   },
+  youtube:   { bg: "from-red-50 to-orange-50",    labelColor: "text-red-600",    labelBg: "bg-red-100",     bar: "bg-red-400",    border: "border-red-100"    },
+  facebook:  { bg: "from-sky-50 to-blue-50",      labelColor: "text-sky-700",    labelBg: "bg-sky-100",     bar: "bg-sky-400",    border: "border-sky-100"    },
+  twitter:   { bg: "from-cyan-50 to-sky-50",      labelColor: "text-cyan-700",   labelBg: "bg-cyan-100",    bar: "bg-cyan-400",   border: "border-cyan-100"   },
+  tiktok:    { bg: "from-slate-50 to-zinc-50",    labelColor: "text-slate-700",  labelBg: "bg-slate-100",   bar: "bg-slate-400",  border: "border-slate-100"  },
+  snapchat:  { bg: "from-yellow-50 to-amber-50",  labelColor: "text-yellow-600", labelBg: "bg-yellow-100",  bar: "bg-yellow-400", border: "border-yellow-100" },
 };
 
 function platformCardStyle(platform: string) {
@@ -70,6 +71,15 @@ export default function ReportsPage() {
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [empModal, setEmpModal] = useState<{ name: string; totalLinks: number; platformBreakdown: { platform: string; count: number }[] } | null>(null);
   const [platformModal, setPlatformModal] = useState<{ platform: string; count: number; dailyBreakdown: { date: string; count: number }[] } | null>(null);
+
+  useEffect(() => {
+    if (empModal || platformModal) {
+      document.body.style.overflow = "hidden";
+    } else {
+      document.body.style.overflow = "";
+    }
+    return () => { document.body.style.overflow = ""; };
+  }, [empModal, platformModal]);
 
   const { user } = useAuth();
   const isAdmin = user?.roles?.some((r) => r === "Admin" || r === "Super Admin") ?? false;
@@ -168,7 +178,7 @@ export default function ReportsPage() {
                 <div
                   key={platform}
                   onClick={() => setPlatformModal({ platform, count, dailyBreakdown: (summary.platformBreakdown as any[]).find((p: any) => p.platform === platform)?.dailyBreakdown ?? [] })}
-                  className={`bg-gradient-to-br ${style.bg} rounded-2xl p-5 border ${style.border} shadow-[0_2px_12px_rgba(0,0,0,0.05)] flex flex-col gap-3 hover:shadow-[0_6px_20px_rgba(0,0,0,0.08)] hover:-translate-y-0.5 transition-all duration-200 cursor-pointer`}
+                  className={`bg-gradient-to-br ${style.bg} rounded-2xl p-5 border ${style.border} shadow-[0_2px_12px_rgba(0,0,0,0.05)] flex flex-col gap-3 hover:shadow-[0_6px_20px_rgba(0,0,0,0.08)] transition-shadow duration-150 cursor-pointer`}
                 >
                   {/* Header — name left, colored icon right (same pattern as stat cards) */}
                   <div className="flex items-center justify-between">
@@ -477,7 +487,7 @@ export default function ReportsPage() {
     {/* Platform daily breakdown modal */}
     {platformModal && (
       <div
-        className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40 backdrop-blur-sm"
+        className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40"
         onClick={() => setPlatformModal(null)}
       >
         <div
@@ -533,7 +543,7 @@ export default function ReportsPage() {
     {/* Per-employee platform breakdown modal */}
     {empModal && (
       <div
-        className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40 backdrop-blur-sm"
+        className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40"
         onClick={() => setEmpModal(null)}
       >
         <div

@@ -3,7 +3,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { Input } from "@dashmani/ui";
 import { formatDate } from "@dashmani/shared";
-import { Users, FileText, Link2, Calendar, Filter, X, TrendingUp, Trophy, Trash2, AlertTriangle } from "lucide-react";
+import { Users, FileText, Link2, Calendar, Filter, X, TrendingUp, Trophy, Trash2, AlertTriangle, BarChart2 } from "lucide-react";
 import { useAdminReports, useReportSummary } from "@/lib/hooks/use-reports";
 import { useEmployees } from "@/lib/hooks/use-employees";
 import { LinkPreviewCard } from "@/components/link-preview-card";
@@ -18,6 +18,21 @@ const PLATFORM_COLORS: Record<string, string> = {
   youtube: "bg-red-100 text-red-700",
   tiktok: "bg-[#F0E4C4] text-[#1A1A1A]",
 };
+
+const PLATFORM_CARD_STYLES: Record<string, { bg: string; labelColor: string; labelBg: string; bar: string; border: string }> = {
+  instagram: { bg: "from-pink-50 to-rose-50",   labelColor: "text-pink-600",   labelBg: "bg-pink-100",    bar: "bg-pink-400",   border: "border-pink-100"  },
+  linkedin:  { bg: "from-blue-50 to-indigo-50", labelColor: "text-blue-700",   labelBg: "bg-blue-100",    bar: "bg-blue-500",   border: "border-blue-100"  },
+  youtube:   { bg: "from-red-50 to-orange-50",  labelColor: "text-red-600",    labelBg: "bg-red-100",     bar: "bg-red-400",    border: "border-red-100"   },
+  facebook:  { bg: "from-sky-50 to-blue-50",    labelColor: "text-sky-700",    labelBg: "bg-sky-100",     bar: "bg-sky-400",    border: "border-sky-100"   },
+  twitter:   { bg: "from-cyan-50 to-sky-50",    labelColor: "text-cyan-700",   labelBg: "bg-cyan-100",    bar: "bg-cyan-400",   border: "border-cyan-100"  },
+  tiktok:    { bg: "from-slate-50 to-zinc-50",  labelColor: "text-slate-700",  labelBg: "bg-slate-100",   bar: "bg-slate-400",  border: "border-slate-100" },
+};
+
+function platformCardStyle(platform: string) {
+  return PLATFORM_CARD_STYLES[platform?.toLowerCase()] ?? {
+    bg: "from-[#FFFBF0] to-[#FFF8E1]", labelColor: "text-amber-700", labelBg: "bg-amber-100", bar: "bg-amber-400", border: "border-[#F0EAD8]",
+  };
+}
 
 function platformBadgeClass(platform: string) {
   return PLATFORM_COLORS[platform?.toLowerCase()] ?? "bg-[#FFF3C4] text-[#1A1A1A]";
@@ -47,6 +62,8 @@ export default function ReportsPage() {
   const [employeeId, setEmployeeId] = useState("");
   const [deletingLinkId, setDeletingLinkId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [empModal, setEmpModal] = useState<{ name: string; totalLinks: number; platformBreakdown: { platform: string; count: number }[] } | null>(null);
+  const [platformModal, setPlatformModal] = useState<{ platform: string; count: number; dailyBreakdown: { date: string; count: number }[] } | null>(null);
 
   const { user } = useAuth();
   const isAdmin = user?.roles?.some((r) => r === "Admin" || r === "Super Admin") ?? false;
@@ -83,6 +100,7 @@ export default function ReportsPage() {
   ];
 
   return (
+    <>
     <div className="space-y-6 crx-animate-fade">
       {/* Header */}
       <div className="flex items-center justify-between">
@@ -131,6 +149,45 @@ export default function ReportsPage() {
           );
         })}
       </div>
+
+      {/* Platform Breakdown Cards */}
+      {!summaryLoading && (summary?.platformBreakdown ?? []).filter((p: any) => p.count > 0).length > 0 && (
+        <div className="grid gap-4" style={{ gridTemplateColumns: `repeat(${(summary.platformBreakdown as any[]).filter((p) => p.count > 0).length}, minmax(0, 1fr))` }}>
+          {(summary.platformBreakdown as { platform: string; count: number }[])
+            .filter((p) => p.count > 0)
+            .map(({ platform, count }) => {
+              const style = platformCardStyle(platform);
+              const pct = summary.totalLinks > 0 ? Math.round((count / summary.totalLinks) * 100) : 0;
+              return (
+                <div
+                  key={platform}
+                  onClick={() => setPlatformModal({ platform, count, dailyBreakdown: (summary.platformBreakdown as any[]).find((p: any) => p.platform === platform)?.dailyBreakdown ?? [] })}
+                  className={`bg-gradient-to-br ${style.bg} rounded-2xl p-5 border ${style.border} shadow-[0_2px_12px_rgba(0,0,0,0.05)] flex flex-col gap-3 hover:shadow-[0_6px_20px_rgba(0,0,0,0.08)] hover:-translate-y-0.5 transition-all duration-200 cursor-pointer`}
+                >
+                  {/* Header — name left, colored icon right (same pattern as stat cards) */}
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-medium text-[#7A7A7A] capitalize">{platform}</span>
+                    <div className={`h-10 w-10 rounded-xl ${style.labelBg} flex items-center justify-center`}>
+                      <Link2 className={`h-5 w-5 ${style.labelColor}`} />
+                    </div>
+                  </div>
+
+                  {/* Count — left aligned like stat cards */}
+                  <p className="font-serif font-light text-[40px] text-[#1A1A1A] leading-tight">{count}</p>
+                  <p className="text-xs text-[#B0B0B0] -mt-2">links</p>
+
+                  {/* Progress bar */}
+                  <div className="h-1 w-full rounded-full bg-white/70">
+                    <div
+                      className={`h-1 rounded-full ${style.bar} transition-all duration-700`}
+                      style={{ width: `${pct}%` }}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+        </div>
+      )}
 
       {/* Filters */}
       <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0] crx-animate-slide crx-delay-5">
@@ -263,9 +320,14 @@ export default function ReportsPage() {
                           </span>
                         </td>
                         <td className="py-3 pr-4 text-right">
-                          <span className="inline-flex items-center justify-center min-w-[28px] h-6 rounded-full bg-emerald-50 text-emerald-700 text-xs font-semibold px-2">
+                          <button
+                            onClick={() => setEmpModal({ name: emp.name, totalLinks: emp.totalLinks, platformBreakdown: emp.platformBreakdown ?? [] })}
+                            title="View platform breakdown"
+                            className="inline-flex items-center gap-1 min-w-[28px] h-6 rounded-full bg-emerald-50 text-emerald-700 text-xs font-semibold px-2 hover:bg-emerald-200 hover:shadow-sm transition-all cursor-pointer border border-transparent hover:border-emerald-300"
+                          >
                             {emp.totalLinks}
-                          </span>
+                            <BarChart2 className="h-3 w-3 opacity-60" />
+                          </button>
                         </td>
                         <td className="py-3 pr-4 text-right">
                           {(emp.linksToday ?? 0) > 0 ? (
@@ -405,5 +467,121 @@ export default function ReportsPage() {
         )}
       </div>
     </div>
+
+    {/* Platform daily breakdown modal */}
+    {platformModal && (
+      <div
+        className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40 backdrop-blur-sm"
+        onClick={() => setPlatformModal(null)}
+      >
+        <div
+          className="bg-white rounded-2xl border border-[#E8E0D0] shadow-[0_16px_48px_rgba(0,0,0,0.16)] w-full max-w-sm mx-4 p-6"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {/* Header */}
+          <div className="flex items-center justify-between mb-5">
+            <div className="flex items-center gap-2">
+              <div className={`h-9 w-9 rounded-xl ${platformCardStyle(platformModal.platform).labelBg} flex items-center justify-center`}>
+                <Link2 className={`h-4 w-4 ${platformCardStyle(platformModal.platform).labelColor}`} />
+              </div>
+              <div>
+                <h2 className="font-serif text-[#1A1A1A] font-medium text-base capitalize">{platformModal.platform}</h2>
+                <p className="text-xs text-[#B0B0B0]">{platformModal.count} total links</p>
+              </div>
+            </div>
+            <button
+              onClick={() => setPlatformModal(null)}
+              className="h-7 w-7 rounded-lg flex items-center justify-center text-[#B0B0B0] hover:text-[#1A1A1A] hover:bg-[#F5F5F5] transition-colors"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+
+          {/* Daily breakdown table */}
+          {!platformModal.dailyBreakdown.length ? (
+            <p className="text-sm text-[#B0B0B0] text-center py-6">No data available.</p>
+          ) : (
+            <div className="max-h-72 overflow-y-auto pr-1 space-y-2">
+              {platformModal.dailyBreakdown.map(({ date, count }) => {
+                const pct = platformModal.count > 0 ? Math.round((count / platformModal.count) * 100) : 0;
+                const label = new Date(date).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+                return (
+                  <div key={date} className="flex items-center gap-3">
+                    <span className="text-xs text-[#7A7A7A] w-24 shrink-0">{label}</span>
+                    <div className="flex-1 h-1.5 rounded-full bg-[#F0EAD8]">
+                      <div
+                        className={`h-1.5 rounded-full ${platformCardStyle(platformModal.platform).bar} transition-all duration-500`}
+                        style={{ width: `${pct}%` }}
+                      />
+                    </div>
+                    <span className="text-sm font-semibold text-[#1A1A1A] w-8 text-right">{count}</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+    )}
+
+    {/* Per-employee platform breakdown modal */}
+    {empModal && (
+      <div
+        className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40 backdrop-blur-sm"
+        onClick={() => setEmpModal(null)}
+      >
+        <div
+          className="bg-white rounded-2xl border border-[#E8E0D0] shadow-[0_16px_48px_rgba(0,0,0,0.16)] w-full max-w-sm mx-4 p-6"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="flex items-center justify-between mb-5">
+            <div className="flex items-center gap-2">
+              <div className="h-9 w-9 rounded-xl bg-emerald-50 flex items-center justify-center">
+                <Link2 className="h-5 w-5 text-emerald-600" />
+              </div>
+              <div>
+                <h2 className="font-serif text-[#1A1A1A] font-medium text-base">{empModal.name}</h2>
+                <p className="text-xs text-[#B0B0B0]">{empModal.totalLinks} links · by platform</p>
+              </div>
+            </div>
+            <button
+              onClick={() => setEmpModal(null)}
+              className="h-7 w-7 rounded-lg flex items-center justify-center text-[#B0B0B0] hover:text-[#1A1A1A] hover:bg-[#F5F5F5] transition-colors"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+
+          {!empModal.platformBreakdown.length ? (
+            <p className="text-sm text-[#B0B0B0] text-center py-6">No links submitted yet.</p>
+          ) : (
+            <div className="space-y-3">
+              {empModal.platformBreakdown.map(({ platform, count }) => {
+                const pct = empModal.totalLinks > 0 ? Math.round((count / empModal.totalLinks) * 100) : 0;
+                return (
+                  <div key={platform}>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium capitalize ${platformBadgeClass(platform)}`}>
+                        {platform}
+                      </span>
+                      <span className="text-sm font-semibold text-[#1A1A1A]">
+                        {count} <span className="text-xs font-normal text-[#B0B0B0]">({pct}%)</span>
+                      </span>
+                    </div>
+                    <div className="h-1.5 w-full rounded-full bg-[#F0EAD8]">
+                      <div
+                        className="h-1.5 rounded-full bg-emerald-400 transition-all duration-500"
+                        style={{ width: `${pct}%` }}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+    )}
+    </>
   );
 }

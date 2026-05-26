@@ -79,9 +79,11 @@ export const UPLOAD_DIR_PATH = UPLOAD_DIR;
 
 /** Convert absolute file path to a URL path relative to the API (e.g. /uploads/profile-pictures/file.png) */
 export function toUploadUrl(absolutePath: string): string {
-  const idx = absolutePath.indexOf("/uploads/");
-  if (idx !== -1) return absolutePath.slice(idx);
+  // Normalize Windows backslashes to forward slashes — URLs use forward slashes only
+  const normalized = absolutePath.replace(/\\/g, "/");
+  const idx = normalized.indexOf("/uploads/");
+  if (idx !== -1) return normalized.slice(idx);
   // fallback: extract from UPLOAD_DIR
-  const relative = path.relative(UPLOAD_DIR, absolutePath);
+  const relative = path.relative(UPLOAD_DIR, absolutePath).replace(/\\/g, "/");
   return `/uploads/${relative}`;
 }

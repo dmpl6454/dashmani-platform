@@ -4,10 +4,23 @@ import Link from "next/link";
 import { ArrowLeft, Flame, Link2, BarChart2, Target, TrendingUp, CalendarDays, X } from "lucide-react";
 import { useAdminReports, useEmployeeReportStats } from "@/lib/hooks/use-reports";
 import { useEmployee } from "@/lib/hooks/use-employees";
-import { LinkPreviewCard } from "@/components/link-preview-card";
+import { UserAvatar } from "@/components/user-avatar";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
 } from "recharts";
+
+const PLATFORM_BADGE: Record<string, string> = {
+  instagram: "bg-pink-100 text-pink-700",
+  twitter: "bg-sky-100 text-sky-700",
+  linkedin: "bg-blue-50 text-blue-700",
+  facebook: "bg-blue-50 text-blue-700",
+  youtube: "bg-red-50 text-red-700",
+  tiktok: "bg-gray-100 text-gray-800",
+  snapchat: "bg-yellow-50 text-yellow-700",
+};
+function platformBadgeClass(platform: string) {
+  return PLATFORM_BADGE[(platform ?? "").toLowerCase()] ?? "bg-muted text-ink-3";
+}
 
 function formatTime(dateStr: string) {
   try { return new Date(dateStr).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); }
@@ -110,9 +123,12 @@ export default function EmployeeReportsPage({ params }: { params: { employeeId: 
           <div className="h-8 w-48 bg-muted animate-pulse rounded-lg" />
         ) : (
           <div className="flex items-center gap-4">
-            <div className="h-12 w-12 rounded-full flex items-center justify-center text-white text-lg font-semibold shrink-0 bg-indigo">
-              {employee?.name?.[0]?.toUpperCase() ?? "?"}
-            </div>
+            <UserAvatar
+              name={employee?.name}
+              imageUrl={employee?.profileImageUrl}
+              size={12}
+              textClassName="text-lg"
+            />
             <div>
               <h1 className="font-display text-2xl font-semibold text-ink">{employee?.name ?? "Employee"}</h1>
               <p className="text-sm text-ink-4">{employee?.email}</p>
@@ -274,10 +290,10 @@ export default function EmployeeReportsPage({ params }: { params: { employeeId: 
             <p className="text-xs text-ink-4 mt-1">Try expanding the range using the date picker above</p>
           </div>
         ) : (
-          reports.map((report: any, idx: number) => {
+          reports.map((report: any) => {
             const linkCount = report.links?.length ?? 0;
-            const reportDate = report.date ?? report.createdAt;
-            const submittedAt = report.createdAt ?? report.date;
+            const reportDate = report.date ?? report.submittedAt;
+            const submittedAt = report.submittedAt ?? report.createdAt ?? report.date;
             return (
               <div key={report.id} className="v3-card p-5 space-y-3">
                 <div className="flex items-start justify-between">
@@ -292,9 +308,25 @@ export default function EmployeeReportsPage({ params }: { params: { employeeId: 
                   <p className="text-sm text-ink-3 italic border-l-2 border-ink/10 pl-3">{report.notes}</p>
                 )}
 
-                <div className="space-y-2">
+                <div className="space-y-1">
                   {(report.links ?? []).map((link: any, i: number) => (
-                    <LinkPreviewCard key={link.id ?? i} link={link} />
+                    <div key={link.id ?? i} className="flex items-center gap-2 py-1 px-2 rounded-lg hover:bg-muted/40 transition-colors">
+                      <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${platformBadgeClass(link.platform)}`}>
+                        {link.platform ?? "—"}
+                      </span>
+                      <a
+                        href={link.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex-1 min-w-0 flex items-center gap-2 group/url"
+                        title={link.url}
+                      >
+                        {link.accountName && (
+                          <span className="text-xs font-medium text-ink shrink-0 group-hover/url:text-indigo transition-colors">{link.accountName}</span>
+                        )}
+                        <span className="text-[10px] text-ink-4 truncate group-hover/url:underline">{link.url}</span>
+                      </a>
+                    </div>
                   ))}
                 </div>
               </div>

@@ -100,20 +100,40 @@ router.get("/hr/documents", authenticateHr, async (req: Request, res: Response, 
 
 // ===== Profile Picture =====
 
-// POST /hr/profile-picture — request profile picture change
+// POST /hr/profile-picture — self-upload, applied immediately (no approval gate)
 router.post(
   "/hr/profile-picture",
   authenticateHr,
   uploadProfilePicture.single("file"),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const result = await profilePicService.requestProfilePictureChange(req.user!.userId, toUploadUrl(req.file!.path));
-      return success(res, result, undefined, 201);
+      if (!req.file) return next(new Error("No file uploaded"));
+      const url = toUploadUrl(req.file.path);
+      const updated = await prisma.user.update({
+        where: { id: req.user!.userId },
+        data: { profileImageUrl: url },
+        select: { id: true, name: true, email: true, profileImageUrl: true },
+      });
+      return success(res, updated, undefined, 200);
     } catch (err) {
       next(err);
     }
   },
 );
+
+// DELETE /hr/profile-picture — clear current profile picture
+router.delete("/hr/profile-picture", authenticateHr, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const updated = await prisma.user.update({
+      where: { id: req.user!.userId },
+      data: { profileImageUrl: null },
+      select: { id: true, name: true, email: true, profileImageUrl: true },
+    });
+    return success(res, updated);
+  } catch (err) {
+    next(err);
+  }
+});
 
 // GET /hr/profile-picture/requests — list profile picture change requests
 router.get("/hr/profile-picture/requests", authenticateHr, async (req: Request, res: Response, next: NextFunction) => {

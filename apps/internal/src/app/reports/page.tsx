@@ -8,6 +8,7 @@ import { useAdminReports, useReportSummary } from "@/lib/hooks/use-reports";
 import { useEmployees } from "@/lib/hooks/use-employees";
 import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
+import { UserAvatar } from "@/components/user-avatar";
 
 const PLATFORM_COLORS: Record<string, string> = {
   instagram: "bg-pink-100 text-pink-700",
@@ -66,12 +67,13 @@ const EmployeeRow = memo(function EmployeeRow({ emp, onOpenEmpModal, onOpenToday
     <tr className="border-b border-[#F0EAD8] last:border-0 hover:bg-[rgba(255,248,225,0.5)] transition-colors group">
       <td className="py-3 pr-4">
         <div className="flex items-center gap-3">
-          <div
-            className="h-8 w-8 rounded-full flex items-center justify-center text-white text-xs font-semibold shrink-0 ring-2 ring-white shadow-sm"
-            style={{ background: getAvatarGradient(emp.name) }}
-          >
-            {emp.name?.[0]?.toUpperCase()}
-          </div>
+          <UserAvatar
+            name={emp.name}
+            imageUrl={emp.profileImageUrl}
+            size={8}
+            className="ring-2 ring-white shadow-sm"
+            textClassName="text-xs"
+          />
           <span className="font-medium text-[#1A1A1A] group-hover:text-[#F5D547] transition-colors">{emp.name}</span>
         </div>
       </td>
@@ -146,12 +148,12 @@ const ReportCard = memo(function ReportCard({ report, isAdmin, deletingLinkId, o
       <div className="p-5">
         <div className="flex items-start justify-between mb-4">
           <div className="flex items-center gap-3">
-            <div
-              className="h-10 w-10 rounded-full flex items-center justify-center text-white text-sm font-semibold shrink-0 ring-2 ring-white shadow-sm"
-              style={{ background: getAvatarGradient(report.employee?.name || "") }}
-            >
-              {report.employee?.name?.[0]?.toUpperCase()}
-            </div>
+            <UserAvatar
+              name={report.employee?.name}
+              imageUrl={report.employee?.profileImageUrl}
+              size={10}
+              className="ring-2 ring-white shadow-sm"
+            />
             <div>
               <p className="font-semibold text-[#1A1A1A]">{report.employee?.name ?? "Unknown"}</p>
               <p className="text-xs text-[#7A7A7A]">{report.employee?.email}</p>
@@ -192,6 +194,11 @@ const ReportCard = memo(function ReportCard({ report, isAdmin, deletingLinkId, o
               </a>
               {link.description && (
                 <span className="text-xs text-[#B0B0B0] truncate max-w-[200px] hidden md:block">{link.description}</span>
+              )}
+              {report.submittedAt && (
+                <span className="text-[10px] text-[#B0B0B0] shrink-0 tabular-nums whitespace-nowrap">
+                  {new Date(report.submittedAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}
+                </span>
               )}
               {isAdmin && link.id && (
                 <button

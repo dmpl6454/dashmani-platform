@@ -5,6 +5,7 @@ import useSWR from "swr";
 import { Input } from "@dashmani/ui";
 import { Trophy, Flame, Users, FileText, Link2 } from "lucide-react";
 import { apiFetch } from "@/lib/api";
+import { UserAvatar } from "@/components/user-avatar";
 
 const MEDALS = ["#1", "#2", "#3"];
 
@@ -146,12 +147,12 @@ export default function AdminLeaderboardPage() {
                     </td>
                     <td className="py-3 px-4">
                       <div className="flex items-center gap-3">
-                        <div
-                          className="h-7 w-7 rounded-full flex items-center justify-center text-white text-xs font-semibold shrink-0"
-                          style={{ background: "linear-gradient(135deg, #5B4BF5, #3023D0)" }}
-                        >
-                          {entry.employee.name?.[0]?.toUpperCase()}
-                        </div>
+                        <UserAvatar
+                          name={entry.employee.name}
+                          imageUrl={entry.employee.profileImageUrl}
+                          size={7}
+                          textClassName="text-xs"
+                        />
                         <div>
                           <Link
                             href={`/reports/${entry.employee.id}`}

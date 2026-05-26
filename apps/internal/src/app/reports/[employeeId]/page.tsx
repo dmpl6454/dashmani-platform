@@ -4,6 +4,7 @@ import Link from "next/link";
 import { ArrowLeft, Flame, Link2, BarChart2, Target, TrendingUp, CalendarDays, X } from "lucide-react";
 import { useAdminReports, useEmployeeReportStats } from "@/lib/hooks/use-reports";
 import { useEmployee } from "@/lib/hooks/use-employees";
+import { UserAvatar } from "@/components/user-avatar";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
 } from "recharts";
@@ -122,9 +123,12 @@ export default function EmployeeReportsPage({ params }: { params: { employeeId: 
           <div className="h-8 w-48 bg-muted animate-pulse rounded-lg" />
         ) : (
           <div className="flex items-center gap-4">
-            <div className="h-12 w-12 rounded-full flex items-center justify-center text-white text-lg font-semibold shrink-0 bg-indigo">
-              {employee?.name?.[0]?.toUpperCase() ?? "?"}
-            </div>
+            <UserAvatar
+              name={employee?.name}
+              imageUrl={employee?.profileImageUrl}
+              size={12}
+              textClassName="text-lg"
+            />
             <div>
               <h1 className="font-display text-2xl font-semibold text-ink">{employee?.name ?? "Employee"}</h1>
               <p className="text-sm text-ink-4">{employee?.email}</p>

@@ -195,6 +195,11 @@ const ReportCard = memo(function ReportCard({ report, isAdmin, deletingLinkId, o
               {link.description && (
                 <span className="text-xs text-[#B0B0B0] truncate max-w-[200px] hidden md:block">{link.description}</span>
               )}
+              {report.submittedAt && (
+                <span className="text-[10px] text-[#B0B0B0] shrink-0 tabular-nums whitespace-nowrap">
+                  {new Date(report.submittedAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}
+                </span>
+              )}
               {isAdmin && link.id && (
                 <button
                   onClick={() => onDeleteLink(link.id)}

@@ -7,6 +7,7 @@ import { success } from "../utils/response";
 import { prisma } from "@dashmani/db";
 import { z } from "zod";
 import { safeString } from "@dashmani/shared";
+import { uploadProfilePicture, toUploadUrl } from "../middleware/upload";
 
 const router = Router();
 
@@ -88,12 +89,51 @@ router.put("/auth/me", authenticate, async (req: Request, res: Response, next: N
     const updated = await prisma.user.update({
       where: { id: req.user!.userId },
       data: { ...(parsed.data.name ? { name: parsed.data.name } : {}) },
-      select: { id: true, name: true, email: true },
+      select: { id: true, name: true, email: true, profileImageUrl: true },
     });
     return success(res, updated);
   } catch (err) {
     next(err);
   }
 });
+
+// POST /auth/me/profile-picture — self-upload, no approval needed (internal portal users)
+router.post(
+  "/auth/me/profile-picture",
+  authenticate,
+  uploadProfilePicture.single("file"),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      if (!req.file) return next(new Error("No file uploaded"));
+      const url = toUploadUrl(req.file.path);
+      const updated = await prisma.user.update({
+        where: { id: req.user!.userId },
+        data: { profileImageUrl: url },
+        select: { id: true, name: true, email: true, profileImageUrl: true },
+      });
+      return success(res, updated);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// DELETE /auth/me/profile-picture — remove profile picture (set to null)
+router.delete(
+  "/auth/me/profile-picture",
+  authenticate,
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const updated = await prisma.user.update({
+        where: { id: req.user!.userId },
+        data: { profileImageUrl: null },
+        select: { id: true, name: true, email: true, profileImageUrl: true },
+      });
+      return success(res, updated);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
 
 export default router;

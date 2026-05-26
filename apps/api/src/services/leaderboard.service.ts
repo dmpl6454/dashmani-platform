@@ -16,7 +16,7 @@ export async function getLeaderboard(startDate?: string, endDate?: string) {
     where,
     include: {
       links: true,
-      employee: { select: { id: true, name: true, email: true } },
+      employee: { select: { id: true, name: true, email: true, profileImageUrl: true } },
     },
     orderBy: { date: "asc" },
   });
@@ -25,7 +25,7 @@ export async function getLeaderboard(startDate?: string, endDate?: string) {
   const employeeMap = new Map<
     string,
     {
-      employee: { id: string; name: string; email: string };
+      employee: { id: string; name: string; email: string; profileImageUrl: string | null };
       reportDates: Date[];
       totalLinks: number;
       totalEngagement: number;

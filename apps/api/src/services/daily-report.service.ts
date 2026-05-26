@@ -8,7 +8,7 @@ function formatReport(report: any) {
     id: report.id,
     employeeId: report.employeeId,
     employeeName: report.employee?.name ?? "",
-    employee: report.employee ? { id: report.employee.id, name: report.employee.name, email: report.employee.email } : null,
+    employee: report.employee ? { id: report.employee.id, name: report.employee.name, email: report.employee.email, profileImageUrl: report.employee.profileImageUrl ?? null } : null,
     date: report.date instanceof Date
       ? report.date.toISOString().split("T")[0]
       : String(report.date),
@@ -40,7 +40,7 @@ function formatReport(report: any) {
 }
 
 const reportInclude = {
-  employee: { select: { id: true, name: true, email: true } },
+  employee: { select: { id: true, name: true, email: true, profileImageUrl: true } },
   links: {
     include: {
       account: {
@@ -290,7 +290,7 @@ export async function getReportSummary(startDate?: string, endDate?: string) {
     prisma.dailyReport.findMany({
       where,
       include: {
-        employee: { select: { id: true, name: true, email: true } },
+        employee: { select: { id: true, name: true, email: true, profileImageUrl: true } },
         links: { select: { platform: true } },
       },
       orderBy: { date: "asc" },
@@ -316,7 +316,7 @@ export async function getReportSummary(startDate?: string, endDate?: string) {
 
   // Group by employee
   const summaryMap = new Map<string, {
-    id: string; name: string; email: string;
+    id: string; name: string; email: string; profileImageUrl: string | null;
     reportCount: number; totalLinks: number;
     reportDates: Date[]; lastSubmittedAt: Date | null;
     empPlatformMap: Record<string, number>;
@@ -335,6 +335,7 @@ export async function getReportSummary(startDate?: string, endDate?: string) {
         id: report.employeeId,
         name: report.employee.name,
         email: (report.employee as any).email ?? "",
+        profileImageUrl: (report.employee as any).profileImageUrl ?? null,
         reportCount: 0,
         totalLinks: 0,
         reportDates: [],

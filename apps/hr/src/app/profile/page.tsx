@@ -1,7 +1,8 @@
 "use client";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { apiFetch, apiUpload, API_BASE } from "@/lib/api";
-import { Save, User, Building2, CreditCard, Users, FileText, Camera, Check, Clock, Upload, Lock, Eye, EyeOff, Pencil } from "lucide-react";
+import { Save, User, Building2, CreditCard, Users, FileText, Camera, Check, Clock, Upload, Lock, Eye, EyeOff, Pencil, X, ZoomIn, Trash2 } from "lucide-react";
+import Cropper from "react-easy-crop";
 import Link from "next/link";
 import { Topstrip } from "@/components/portal-shell";
 import { maskPII } from "@/lib/utils/mask";
@@ -27,6 +28,19 @@ export default function ProfilePage() {
   const [error, setError] = useState(""); const [success, setSuccess] = useState("");
   const [uploadingPic, setUploadingPic] = useState(false); const [picSuccess, setPicSuccess] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Preview lightbox (click current avatar to view large)
+  const [lightboxOpen, setLightboxOpen] = useState(false);
+
+  // Pre-upload cropper modal
+  const [editor, setEditor] = useState<{ dataUrl: string; mime: string } | null>(null);
+  const [crop, setCrop] = useState({ x: 0, y: 0 });
+  const [zoom, setZoom] = useState(1);
+  const [croppedAreaPixels, setCroppedAreaPixels] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
+
+  const onCropComplete = useCallback((_: any, pixels: any) => {
+    setCroppedAreaPixels(pixels);
+  }, []);
 
   const [form, setForm] = useState({
     bankAccountHolderName: "", bankAccountNumber: "", bankName: "", bankBranch: "", ifscCode: "",
@@ -60,16 +74,70 @@ export default function ProfilePage() {
     finally { setLoading(false); }
   }
 
-  async function handleProfilePicUpload(e: React.ChangeEvent<HTMLInputElement>) {
+  // Step 1: file picked → open cropper modal
+  function handleProfilePicPicked(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]; if (!file) return;
-    setUploadingPic(true); setPicSuccess("");
+    if (!file.type.startsWith("image/")) { setError("Please select a JPG, PNG or WebP image."); return; }
+    if (file.size > 8 * 1024 * 1024) { setError("Image must be 8MB or smaller before resize."); return; }
+    const reader = new FileReader();
+    reader.onload = () => {
+      setEditor({ dataUrl: String(reader.result), mime: file.type });
+      setCrop({ x: 0, y: 0 });
+      setZoom(1);
+      setCroppedAreaPixels(null);
+    };
+    reader.readAsDataURL(file);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
+  // Step 2: user confirms → canvas crop → upload
+  async function confirmAndUpload() {
+    if (!editor || !croppedAreaPixels) return;
+    setUploadingPic(true); setPicSuccess(""); setError("");
     try {
-      const fd = new FormData(); fd.append("file", file);
-      await apiUpload("/hr/profile-picture", fd);
-      setPicSuccess("Profile picture submitted for admin approval!");
-      setTimeout(() => setPicSuccess(""), 5000);
-    } catch (err: any) { setError(err.message); }
-    finally { setUploadingPic(false); if (fileInputRef.current) fileInputRef.current.value = ""; }
+      const blob = await getCroppedBlob(editor.dataUrl, croppedAreaPixels, 512, editor.mime);
+      const fd = new FormData();
+      fd.append("file", new File([blob], "avatar.jpg", { type: blob.type }));
+      const res: any = await apiUpload("/hr/profile-picture", fd);
+      const newUrl = res?.data?.profileImageUrl ?? null;
+      setProfile((p: any) => p ? { ...p, profileImageUrl: newUrl } : p);
+      setPicSuccess("Profile picture updated!");
+      setEditor(null);
+      setTimeout(() => setPicSuccess(""), 3500);
+    } catch (err: any) { setError(err.message || "Failed to upload."); }
+    finally { setUploadingPic(false); }
+  }
+
+  // Remove current profile picture (revert to placeholder)
+  async function handleRemovePic() {
+    if (!confirm("Remove your profile picture?")) return;
+    setUploadingPic(true); setPicSuccess(""); setError("");
+    try {
+      const res: any = await apiFetch("/hr/profile-picture", { method: "DELETE" });
+      setProfile((p: any) => p ? { ...p, profileImageUrl: res?.data?.profileImageUrl ?? null } : p);
+      setLightboxOpen(false);
+      setPicSuccess("Profile picture removed.");
+      setTimeout(() => setPicSuccess(""), 3500);
+    } catch (err: any) { setError(err.message || "Failed to remove."); }
+    finally { setUploadingPic(false); }
+  }
+
+  // Canvas crop from the pixel area returned by react-easy-crop
+  function getCroppedBlob(dataUrl: string, pixelCrop: { x: number; y: number; width: number; height: number }, size: number, mime: string): Promise<Blob> {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        canvas.width = size; canvas.height = size;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return reject(new Error("Canvas unsupported"));
+        ctx.drawImage(img, pixelCrop.x, pixelCrop.y, pixelCrop.width, pixelCrop.height, 0, 0, size, size);
+        const outMime = mime === "image/png" ? "image/png" : "image/jpeg";
+        canvas.toBlob((b) => b ? resolve(b) : reject(new Error("toBlob failed")), outMime, 0.9);
+      };
+      img.onerror = () => reject(new Error("Could not load image"));
+      img.src = dataUrl;
+    });
   }
 
   function upd(field: string, value: string) { setForm(prev => ({ ...prev, [field]: value })); }
@@ -105,8 +173,18 @@ export default function ProfilePage() {
               <div className="flex items-center gap-5 mb-5">
                 <div className="relative">
                   {profile?.profileImageUrl ? (
-                    <img src={profile.profileImageUrl.startsWith("http") ? profile.profileImageUrl : `${API_BASE}${profile.profileImageUrl}`} alt="Profile"
-                      className="h-16 w-16 rounded-2xl object-cover" style={{ border: "2px solid rgba(26,26,26,0.12)" }} />
+                    <button
+                      type="button"
+                      onClick={() => setLightboxOpen(true)}
+                      title="Click to preview"
+                      className="block relative group"
+                    >
+                      <img src={profile.profileImageUrl.startsWith("http") ? profile.profileImageUrl : `${API_BASE}${profile.profileImageUrl}`} alt="Profile"
+                        className="h-16 w-16 rounded-2xl object-cover" style={{ border: "2px solid rgba(26,26,26,0.12)" }} />
+                      <span className="absolute inset-0 rounded-2xl bg-black/0 group-hover:bg-black/30 transition-colors grid place-items-center">
+                        <ZoomIn size={16} className="text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+                      </span>
+                    </button>
                   ) : (
                     <div className="h-16 w-16 rounded-2xl bg-indigo-soft grid place-items-center" style={{ border: "2px solid rgba(26,26,26,0.12)" }}>
                       <User size={20} className="text-indigo" />
@@ -116,7 +194,7 @@ export default function ProfilePage() {
                     className="absolute -bottom-1 -right-1 h-6 w-6 rounded-full bg-ink text-white grid place-items-center hover:bg-ink-2 transition-colors">
                     <Camera size={12} />
                   </button>
-                  <input ref={fileInputRef} type="file" accept="image/jpeg,image/png,image/webp" onChange={handleProfilePicUpload} className="hidden" />
+                  <input ref={fileInputRef} type="file" accept="image/jpeg,image/png,image/webp" onChange={handleProfilePicPicked} className="hidden" />
                 </div>
                 <div>
                   <h2 className="font-display text-[22px] font-semibold text-ink">{profile?.name}</h2>
@@ -274,6 +352,114 @@ export default function ProfilePage() {
         {/* Password Change */}
         <PasswordChangeSection />
       </div>
+
+      {/* Lightbox preview — click current avatar to view large + actions */}
+      {lightboxOpen && profile?.profileImageUrl && (
+        <div
+          className="fixed inset-0 z-[300] bg-black/80 flex items-center justify-center p-6"
+          onClick={() => setLightboxOpen(false)}
+        >
+          <div className="flex flex-col items-center gap-4" onClick={(e) => e.stopPropagation()}>
+            <img
+              src={profile.profileImageUrl.startsWith("http") ? profile.profileImageUrl : `${API_BASE}${profile.profileImageUrl}`}
+              alt="Profile preview"
+              className="max-h-[80vh] max-w-[90vw] rounded-2xl shadow-2xl object-contain"
+            />
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => { setLightboxOpen(false); fileInputRef.current?.click(); }}
+                disabled={uploadingPic}
+                className="h-9 px-4 rounded-full bg-white/15 hover:bg-white/25 text-white text-[13px] font-semibold flex items-center gap-1.5 disabled:opacity-50"
+              >
+                <Camera size={13} /> Change
+              </button>
+              <button
+                type="button"
+                onClick={handleRemovePic}
+                disabled={uploadingPic}
+                className="h-9 px-4 rounded-full bg-red-500/90 hover:bg-red-500 text-white text-[13px] font-semibold flex items-center gap-1.5 disabled:opacity-50"
+              >
+                <Trash2 size={13} /> {uploadingPic ? "Removing…" : "Remove"}
+              </button>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setLightboxOpen(false)}
+            className="absolute top-5 right-5 h-9 w-9 rounded-full bg-white/15 hover:bg-white/25 text-white grid place-items-center"
+            aria-label="Close preview"
+          >
+            <X size={18} />
+          </button>
+        </div>
+      )}
+
+      {/* Crop modal with draggable border handles */}
+      {editor && (
+        <div className="fixed inset-0 z-[300] bg-black/80 flex items-center justify-center p-4">
+          <div
+            className="bg-bg rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+            style={{ border: "2px solid rgba(26,26,26,0.08)" }}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: "2px solid rgba(26,26,26,0.07)" }}>
+              <h3 className="text-[14px] font-bold text-ink flex items-center gap-2">
+                <Camera size={14} className="text-indigo" /> Crop Photo
+              </h3>
+              <button type="button" onClick={() => !uploadingPic && setEditor(null)} disabled={uploadingPic}
+                className="h-8 w-8 rounded-lg text-ink-3 hover:text-ink hover:bg-muted/60 grid place-items-center disabled:opacity-50">
+                <X size={16} />
+              </button>
+            </div>
+
+            {/* Cropper canvas */}
+            <div className="relative w-full bg-black" style={{ height: 300 }}>
+              <Cropper
+                image={editor.dataUrl}
+                crop={crop}
+                zoom={zoom}
+                aspect={1}
+                onCropChange={setCrop}
+                onZoomChange={setZoom}
+                onCropComplete={onCropComplete}
+                showGrid
+                style={{
+                  containerStyle: { borderRadius: 0 },
+                  cropAreaStyle: {
+                    border: "2px solid #ffffff",
+                    boxShadow: "0 0 0 9999px rgba(0,0,0,0.55)",
+                  },
+                }}
+              />
+            </div>
+
+            {/* Zoom slider */}
+            <div className="px-5 pt-4 pb-2">
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-[11px] font-bold text-ink-3 uppercase tracking-wider">Zoom</span>
+                <span className="text-[11px] text-ink-3 tabular-nums">{zoom.toFixed(1)}×</span>
+              </div>
+              <input type="range" min="1" max="3" step="0.05" value={zoom}
+                onChange={(e) => setZoom(parseFloat(e.target.value))}
+                className="w-full" disabled={uploadingPic} />
+            </div>
+
+            {/* Actions */}
+            <div className="flex items-center gap-2 justify-end px-5 pb-5 pt-2">
+              <button type="button" onClick={() => setEditor(null)} disabled={uploadingPic}
+                className="h-9 px-4 rounded-full text-[13px] font-semibold text-ink hover:bg-muted/60 disabled:opacity-50">
+                Cancel
+              </button>
+              <button type="button" onClick={confirmAndUpload} disabled={uploadingPic || !croppedAreaPixels}
+                className="h-9 px-4 rounded-full bg-ink text-white text-[13px] font-semibold hover:bg-ink-2 disabled:opacity-50 flex items-center gap-1.5">
+                {uploadingPic ? <><Clock size={13} /> Uploading…</> : <><Check size={13} /> Save Photo</>}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }

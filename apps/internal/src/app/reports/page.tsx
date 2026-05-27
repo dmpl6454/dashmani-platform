@@ -266,25 +266,45 @@ export default function ReportsPage() {
     }
   }, [mutateReports, mutateSummary]);
 
-  // Team-wide per-platform breakdown for the selected window (summary is already windowed).
-  const windowTeamPlatformBreakdown = ((summary?.platformBreakdown ?? []) as any[])
+  const windowLabel = rangeLabel(startDate, endDate);
+
+  // When an employee is selected, the cards scope to that one employee (their
+  // entry in summary.employees is already per-employee + windowed). Otherwise
+  // they show team-wide totals.
+  const selectedEmployee = employeeId
+    ? ((summary?.employees ?? []) as any[]).find((e: any) => e.id === employeeId)
+    : null;
+
+  // Per-platform breakdown that drives the platform cards + the avg-card modal.
+  const viewPlatformBreakdown: { platform: string; count: number }[] = (
+    selectedEmployee
+      ? (selectedEmployee.platformBreakdown ?? [])
+      : (summary?.platformBreakdown ?? [])
+  )
     .map((p: any) => ({ platform: p.platform, count: p.count ?? 0 }))
     .filter((p: any) => p.count > 0)
     .sort((a: any, b: any) => b.count - a.count);
-  const windowTeamTotalLinks = summary?.totalLinks ?? 0;
-  const windowLabel = rangeLabel(startDate, endDate);
+
+  const viewTotalLinks = selectedEmployee ? (selectedEmployee.totalLinks ?? 0) : (summary?.totalLinks ?? 0);
+  const viewTotalReports = selectedEmployee ? (selectedEmployee.reportCount ?? 0) : (summary?.totalReports ?? 0);
 
   // Avg links/day across the selected window (window length in days).
   const windowDays = Math.max(
     1,
     Math.round((new Date(endDate).getTime() - new Date(startDate).getTime()) / 86400000) + 1,
   );
-  const avgLinksInWindow = Math.round((windowTeamTotalLinks / windowDays) * 10) / 10;
+  const avgLinksInWindow = Math.round((viewTotalLinks / windowDays) * 10) / 10;
+
+  // First card: team mode shows "Employees Reporting"; single-employee mode shows that
+  // employee's current streak instead (more useful than a count of 1).
+  const firstCard = selectedEmployee
+    ? { title: "Current Streak", value: `${selectedEmployee.currentStreak ?? 0} 🔥`, icon: Users, iconColor: "text-orange-600", bgColor: "bg-orange-50 shadow-[0_2px_8px_rgba(234,88,12,0.12)]", sub: selectedEmployee.name }
+    : { title: "Employees Reporting", value: summary?.employeesReporting ?? 0, icon: Users, iconColor: "text-blue-600", bgColor: "bg-blue-50 shadow-[0_2px_8px_rgba(59,130,246,0.12)]", sub: "submitted reports" };
 
   const statCards = [
-    { title: "Employees Reporting", value: summary?.employeesReporting ?? 0, icon: Users, iconColor: "text-blue-600", bgColor: "bg-blue-50 shadow-[0_2px_8px_rgba(59,130,246,0.12)]", sub: "submitted reports" },
-    { title: "Total Reports", value: summary?.totalReports ?? 0, icon: FileText, iconColor: "text-purple-600", bgColor: "bg-purple-50 shadow-[0_2px_8px_rgba(147,51,234,0.12)]", sub: windowLabel },
-    { title: "Total Links", value: summary?.totalLinks ?? 0, icon: Link2, iconColor: "text-emerald-600", bgColor: "bg-emerald-50 shadow-[0_2px_8px_rgba(16,185,129,0.12)]", sub: windowLabel },
+    firstCard,
+    { title: "Total Reports", value: viewTotalReports, icon: FileText, iconColor: "text-purple-600", bgColor: "bg-purple-50 shadow-[0_2px_8px_rgba(147,51,234,0.12)]", sub: windowLabel },
+    { title: "Total Links", value: viewTotalLinks, icon: Link2, iconColor: "text-emerald-600", bgColor: "bg-emerald-50 shadow-[0_2px_8px_rgba(16,185,129,0.12)]", sub: windowLabel },
     { title: "Avg Links/Day", value: avgLinksInWindow, icon: TrendingUp, iconColor: "text-amber-600", bgColor: "bg-amber-50 shadow-[0_2px_8px_rgba(245,158,11,0.12)]", sub: windowLabel, clickable: true },
   ];
 
@@ -315,78 +335,7 @@ export default function ReportsPage() {
         </div>
       </div>
 
-      {/* Stat Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        {statCards.map((card: any) => {
-          const Icon = card.icon;
-          const isClickable = card.clickable && windowTeamTotalLinks > 0;
-          const onClickHandler = isClickable
-            ? () => setTeamTodayModal({ totalLinks: windowTeamTotalLinks, platformBreakdown: windowTeamPlatformBreakdown })
-            : undefined;
-          return (
-            <div
-              key={card.title}
-              onClick={onClickHandler}
-              className={`bg-white rounded-2xl p-5 border border-[#E8E0D0] transition-shadow duration-200 hover:shadow-[0_8px_32px_rgba(0,0,0,0.06)] ${isClickable ? "cursor-pointer hover:border-amber-300" : ""}`}
-            >
-              <div className="flex items-center justify-between mb-3">
-                <span className="text-xs text-[#7A7A7A] font-medium flex items-center gap-1.5">
-                  {card.title}
-                  {isClickable && <BarChart2 className="h-3 w-3 text-amber-500" />}
-                </span>
-                <div className={`h-10 w-10 rounded-xl ${card.bgColor} flex items-center justify-center`}>
-                  <Icon className={`h-5 w-5 ${card.iconColor}`} />
-                </div>
-              </div>
-              <p className={`font-light font-serif text-[#1A1A1A] leading-tight ${typeof card.value === "number" ? "text-[40px]" : "text-xl"}`}>
-                {summaryLoading ? "\u2014" : card.value}
-              </p>
-              <p className="text-xs text-[#B0B0B0] mt-1">{card.sub}</p>
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Platform Breakdown Cards */}
-      {!summaryLoading && (summary?.platformBreakdown ?? []).filter((p: any) => p.count > 0).length > 0 && (
-        <div className="grid gap-4" style={{ gridTemplateColumns: `repeat(${(summary.platformBreakdown as any[]).filter((p) => p.count > 0).length}, minmax(0, 1fr))` }}>
-          {(summary.platformBreakdown as { platform: string; count: number }[])
-            .filter((p) => p.count > 0)
-            .map(({ platform, count }) => {
-              const style = platformCardStyle(platform);
-              const pct = summary.totalLinks > 0 ? Math.round((count / summary.totalLinks) * 100) : 0;
-              return (
-                <div
-                  key={platform}
-                  onClick={() => setPlatformModal({ platform, count, dailyBreakdown: (summary.platformBreakdown as any[]).find((p: any) => p.platform === platform)?.dailyBreakdown ?? [] })}
-                  className={`bg-gradient-to-br ${style.bg} rounded-2xl p-5 border ${style.border} shadow-[0_2px_12px_rgba(0,0,0,0.05)] flex flex-col gap-3 hover:shadow-[0_6px_20px_rgba(0,0,0,0.08)] transition-shadow duration-150 cursor-pointer`}
-                >
-                  {/* Header — name left, colored icon right (same pattern as stat cards) */}
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-medium text-[#7A7A7A] capitalize">{platform}</span>
-                    <div className={`h-10 w-10 rounded-xl ${style.labelBg} flex items-center justify-center`}>
-                      <Link2 className={`h-5 w-5 ${style.labelColor}`} />
-                    </div>
-                  </div>
-
-                  {/* Count — left aligned like stat cards */}
-                  <p className="font-serif font-light text-[40px] text-[#1A1A1A] leading-tight">{count}</p>
-                  <p className="text-xs text-[#B0B0B0] -mt-2">links · {windowLabel.toLowerCase()}</p>
-
-                  {/* Progress bar */}
-                  <div className="h-1 w-full rounded-full bg-white/70">
-                    <div
-                      className={`h-1 rounded-full ${style.bar} transition-all duration-700`}
-                      style={{ width: `${pct}%` }}
-                    />
-                  </div>
-                </div>
-              );
-            })}
-        </div>
-      )}
-
-      {/* Filters */}
+      {/* Filters — above the cards so you choose the window/employee first, then read the numbers */}
       <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0]">
         <div className="px-6 py-4 border-b border-[#F0EAD8] flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -426,6 +375,80 @@ export default function ReportsPage() {
           </div>
         </div>
       </div>
+
+      {/* Stat Cards */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        {statCards.map((card: any) => {
+          const Icon = card.icon;
+          const isClickable = card.clickable && viewTotalLinks > 0;
+          const onClickHandler = isClickable
+            ? () => setTeamTodayModal({ totalLinks: viewTotalLinks, platformBreakdown: viewPlatformBreakdown })
+            : undefined;
+          return (
+            <div
+              key={card.title}
+              onClick={onClickHandler}
+              className={`bg-white rounded-2xl p-5 border border-[#E8E0D0] transition-shadow duration-200 hover:shadow-[0_8px_32px_rgba(0,0,0,0.06)] ${isClickable ? "cursor-pointer hover:border-amber-300" : ""}`}
+            >
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-xs text-[#7A7A7A] font-medium flex items-center gap-1.5">
+                  {card.title}
+                  {isClickable && <BarChart2 className="h-3 w-3 text-amber-500" />}
+                </span>
+                <div className={`h-10 w-10 rounded-xl ${card.bgColor} flex items-center justify-center`}>
+                  <Icon className={`h-5 w-5 ${card.iconColor}`} />
+                </div>
+              </div>
+              <p className={`font-light font-serif text-[#1A1A1A] leading-tight ${typeof card.value === "number" ? "text-[40px]" : "text-xl"}`}>
+                {summaryLoading ? "\u2014" : card.value}
+              </p>
+              <p className="text-xs text-[#B0B0B0] mt-1">{card.sub}</p>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Platform Breakdown Cards */}
+      {!summaryLoading && viewPlatformBreakdown.length > 0 && (
+        <div className="grid gap-4" style={{ gridTemplateColumns: `repeat(${viewPlatformBreakdown.length}, minmax(0, 1fr))` }}>
+          {viewPlatformBreakdown
+            .map(({ platform, count }) => {
+              const style = platformCardStyle(platform);
+              const pct = viewTotalLinks > 0 ? Math.round((count / viewTotalLinks) * 100) : 0;
+              // Daily drill-down only exists in team mode (summary.platformBreakdown carries dailyBreakdown).
+              const dailyBreakdown = selectedEmployee
+                ? []
+                : ((summary?.platformBreakdown ?? []) as any[]).find((p: any) => p.platform === platform)?.dailyBreakdown ?? [];
+              return (
+                <div
+                  key={platform}
+                  onClick={() => setPlatformModal({ platform, count, dailyBreakdown })}
+                  className={`bg-gradient-to-br ${style.bg} rounded-2xl p-5 border ${style.border} shadow-[0_2px_12px_rgba(0,0,0,0.05)] flex flex-col gap-3 hover:shadow-[0_6px_20px_rgba(0,0,0,0.08)] transition-shadow duration-150 cursor-pointer`}
+                >
+                  {/* Header — name left, colored icon right (same pattern as stat cards) */}
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-medium text-[#7A7A7A] capitalize">{platform}</span>
+                    <div className={`h-10 w-10 rounded-xl ${style.labelBg} flex items-center justify-center`}>
+                      <Link2 className={`h-5 w-5 ${style.labelColor}`} />
+                    </div>
+                  </div>
+
+                  {/* Count — left aligned like stat cards */}
+                  <p className="font-serif font-light text-[40px] text-[#1A1A1A] leading-tight">{count}</p>
+                  <p className="text-xs text-[#B0B0B0] -mt-2">links · {windowLabel.toLowerCase()}</p>
+
+                  {/* Progress bar */}
+                  <div className="h-1 w-full rounded-full bg-white/70">
+                    <div
+                      className={`h-1 rounded-full ${style.bar} transition-all duration-700`}
+                      style={{ width: `${pct}%` }}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+        </div>
+      )}
 
       {/* Summary Table */}
       {!employeeId && (
@@ -666,8 +689,8 @@ export default function ReportsPage() {
                 <Calendar className="h-5 w-5 text-amber-600" />
               </div>
               <div>
-                <h2 className="font-serif text-[#1A1A1A] font-medium text-base">Team Posts · {windowLabel}</h2>
-                <p className="text-xs text-[#B0B0B0]">{teamTodayModal.totalLinks} links · across team · by platform</p>
+                <h2 className="font-serif text-[#1A1A1A] font-medium text-base">{selectedEmployee ? selectedEmployee.name : "Team"} · {windowLabel}</h2>
+                <p className="text-xs text-[#B0B0B0]">{teamTodayModal.totalLinks} links · {selectedEmployee ? "by platform" : "across team · by platform"}</p>
               </div>
             </div>
             <button

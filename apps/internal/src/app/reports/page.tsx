@@ -525,7 +525,7 @@ export default function ReportsPage() {
                 <span>No report data found.</span>
               </div>
             ) : (
-              <div className="overflow-x-auto">
+              <div className="overflow-x-auto overflow-y-auto max-h-[560px]">
                 <table className="w-full text-sm">
                   <thead className="sticky top-0 z-10 bg-white">
                     <tr className="border-b border-[#F0EAD8]">

@@ -1,7 +1,7 @@
 "use client";
 import { memo, useCallback, useState, useEffect } from "react";
 import Link from "next/link";
-import { Users, FileText, Link2, Calendar, Filter, X, TrendingUp, Trophy, Trash2, AlertTriangle, BarChart2 } from "lucide-react";
+import { Users, FileText, Link2, Calendar, Filter, X, TrendingUp, Trophy, Trash2, AlertTriangle, BarChart2, ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react";
 import { useAdminReports, useReportSummary } from "@/lib/hooks/use-reports";
 import { useEmployees } from "@/lib/hooks/use-employees";
 import { apiFetch } from "@/lib/api";
@@ -38,21 +38,39 @@ function platformBadgeClass(platform: string) {
   return PLATFORM_COLORS[platform?.toLowerCase()] ?? "bg-[#FFF3C4] text-[#1A1A1A]";
 }
 
-const AVATAR_GRADIENTS = [
-  "linear-gradient(135deg, #667eea, #764ba2)",
-  "linear-gradient(135deg, #f093fb, #f5576c)",
-  "linear-gradient(135deg, #4facfe, #00f2fe)",
-  "linear-gradient(135deg, #43e97b, #38f9d7)",
-  "linear-gradient(135deg, #fa709a, #fee140)",
-  "linear-gradient(135deg, #a18cd1, #fbc2eb)",
-];
 
-function getAvatarGradient(name: string) {
-  let hash = 0;
-  for (let i = 0; i < (name || "").length; i++) {
-    hash = name.charCodeAt(i) + ((hash << 5) - hash);
-  }
-  return AVATAR_GRADIENTS[Math.abs(hash) % AVATAR_GRADIENTS.length];
+type SortKey = "name" | "email" | "reportCount" | "totalLinks" | "linksToday" | "avgLinksPerDay" | "currentStreak" | "lastSubmittedAt";
+type SortDir = "asc" | "desc";
+
+function sortEmployees(employees: any[], key: SortKey, dir: SortDir): any[] {
+  return [...employees].sort((a, b) => {
+    let av: any;
+    let bv: any;
+    if (key === "avgLinksPerDay") {
+      av = parseFloat(a.avgLinksPerDay ?? "0") || 0;
+      bv = parseFloat(b.avgLinksPerDay ?? "0") || 0;
+    } else if (key === "lastSubmittedAt") {
+      av = a.lastSubmittedAt ? new Date(a.lastSubmittedAt).getTime() : 0;
+      bv = b.lastSubmittedAt ? new Date(b.lastSubmittedAt).getTime() : 0;
+    } else if (key === "name" || key === "email") {
+      av = (a[key] ?? "").toLowerCase();
+      bv = (b[key] ?? "").toLowerCase();
+    } else {
+      av = a[key] ?? 0;
+      bv = b[key] ?? 0;
+    }
+    if (av < bv) return dir === "asc" ? -1 : 1;
+    if (av > bv) return dir === "asc" ? 1 : -1;
+    return 0;
+  });
+}
+
+interface SortIconProps { col: SortKey; sortKey: SortKey; sortDir: SortDir; }
+function SortIcon({ col, sortKey, sortDir }: SortIconProps) {
+  if (col !== sortKey) return <ArrowUpDown className="h-3 w-3 opacity-30 ml-0.5 inline-block" />;
+  return sortDir === "asc"
+    ? <ArrowUp className="h-3 w-3 ml-0.5 inline-block text-[#1A1A1A]" />
+    : <ArrowDown className="h-3 w-3 ml-0.5 inline-block text-[#1A1A1A]" />;
 }
 
 interface EmployeeRowProps {
@@ -233,6 +251,8 @@ export default function ReportsPage() {
   const [employeeId, setEmployeeId] = useState("");
   const [deletingLinkId, setDeletingLinkId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [sortKey, setSortKey] = useState<SortKey>("totalLinks");
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [empModal, setEmpModal] = useState<{ name: string; totalLinks: number; platformBreakdown: { platform: string; count: number }[] } | null>(null);
   const [platformModal, setPlatformModal] = useState<{ platform: string; count: number; dailyBreakdown: { date: string; count: number }[] } | null>(null);
   const [todayModal, setTodayModal] = useState<{ name: string; linksToday: number; platformBreakdown: { platform: string; count: number }[] } | null>(null);
@@ -507,26 +527,52 @@ export default function ReportsPage() {
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
-                  <thead>
+                  <thead className="sticky top-0 z-10 bg-white">
                     <tr className="border-b border-[#F0EAD8]">
-                      <th className="text-left py-2 pr-4 text-[#7A7A7A] text-xs font-medium">Employee</th>
-                      <th className="text-left py-2 pr-4 text-[#7A7A7A] text-xs font-medium">Email</th>
-                      <th className="text-right py-2 pr-4 text-[#7A7A7A] text-xs font-medium">Reports</th>
-                      <th className="text-right py-2 pr-4 text-[#7A7A7A] text-xs font-medium">Total Links</th>
-                      <th className="text-right py-2 pr-4 text-[#7A7A7A] text-xs font-medium whitespace-nowrap">
-                        <span className="inline-flex items-center gap-1" title="Links submitted today — always today, ignores the date filter">
-                          <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 inline-block" />
-                          Today
-                        </span>
-                      </th>
-                      <th className="text-right py-2 pr-4 text-[#7A7A7A] text-xs font-medium">Avg/Day</th>
-                      <th className="text-right py-2 pr-4 text-[#7A7A7A] text-xs font-medium">Streak</th>
-                      <th className="text-left py-2 pr-4 text-[#7A7A7A] text-xs font-medium">Last Submitted</th>
-                      <th className="text-left py-2 text-[#7A7A7A] text-xs font-medium"></th>
+                      {(
+                        [
+                          { key: "name",            label: "Employee",       align: "left"  },
+                          { key: "email",           label: "Email",          align: "left"  },
+                          { key: "reportCount",     label: "Reports",        align: "right" },
+                          { key: "totalLinks",      label: "Total Links",    align: "right" },
+                          { key: "linksToday",      label: null,             align: "right" },
+                          { key: "avgLinksPerDay",  label: "Avg/Day",        align: "right" },
+                          { key: "currentStreak",   label: "Streak",         align: "right" },
+                          { key: "lastSubmittedAt", label: "Last Submitted", align: "left"  },
+                        ] as { key: SortKey; label: string | null; align: "left" | "right" }[]
+                      ).map(({ key, label, align }) => (
+                        <th
+                          key={key}
+                          onClick={() => {
+                            if (sortKey === key) {
+                              setSortDir(d => d === "asc" ? "desc" : "asc");
+                            } else {
+                              setSortKey(key);
+                              setSortDir(key === "name" || key === "email" ? "asc" : "desc");
+                            }
+                          }}
+                          className={`py-2 pr-4 text-[#7A7A7A] text-xs font-medium cursor-pointer select-none whitespace-nowrap hover:text-[#1A1A1A] transition-colors ${align === "right" ? "text-right" : "text-left"} ${sortKey === key ? "text-[#1A1A1A]" : ""}`}
+                        >
+                          {key === "linksToday" ? (
+                            <span className="inline-flex items-center gap-1" title="Links submitted today — always today, ignores the date filter">
+                              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 inline-block" />
+                              Today
+                              <SortIcon col={key} sortKey={sortKey} sortDir={sortDir} />
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-0.5">
+                              {label}
+                              <SortIcon col={key} sortKey={sortKey} sortDir={sortDir} />
+                            </span>
+                          )}
+                        </th>
+                      ))}
+                      {/* non-sortable actions column */}
+                      <th className="py-2 text-[#7A7A7A] text-xs font-medium" />
                     </tr>
                   </thead>
                   <tbody>
-                    {(summary?.employees ?? []).map((emp: any) => (
+                    {sortEmployees(summary?.employees ?? [], sortKey, sortDir).map((emp: any) => (
                       <EmployeeRow
                         key={emp.id}
                         emp={emp}

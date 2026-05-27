@@ -86,6 +86,9 @@ export default function EmployeeReportsPage({ params }: { params: { employeeId: 
     date: new Date(d.date).toLocaleDateString("en-IN", { day: "numeric", month: "short" }),
     links: d.linkCount,
   }));
+  // Show ~8 evenly-spaced x-axis labels regardless of window length (a fixed
+  // interval hid most labels on short windows and crowded long ones).
+  const xAxisInterval = Math.max(0, Math.ceil(chartData.length / 8) - 1);
 
   const platformBreakdown: { platform: string; count: number }[] = s?.platformBreakdown ?? [];
 
@@ -158,7 +161,7 @@ export default function EmployeeReportsPage({ params }: { params: { employeeId: 
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={chartData} barSize={12} margin={{ top: 4, right: 4, left: -24, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.06)" vertical={false} />
-                <XAxis dataKey="date" tick={{ fontSize: 9, fill: "var(--color-ink-4, #888)" }} axisLine={false} tickLine={false} interval={4} />
+                <XAxis dataKey="date" tick={{ fontSize: 9, fill: "var(--color-ink-4, #888)" }} axisLine={false} tickLine={false} interval={xAxisInterval} />
                 <YAxis tick={{ fontSize: 9, fill: "var(--color-ink-4, #888)" }} axisLine={false} tickLine={false} allowDecimals={false} />
                 <Tooltip content={<ChartTooltip />} cursor={{ fill: "rgba(0,0,0,0.04)" }} />
                 <Bar dataKey="links" fill="var(--color-terra, #c97c3a)" radius={[3, 3, 0, 0]} />

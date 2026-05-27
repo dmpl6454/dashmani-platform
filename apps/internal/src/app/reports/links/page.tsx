@@ -157,7 +157,7 @@ export default function LinksAnalyticsPage() {
                   </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.06)" vertical={false} />
-                <XAxis dataKey="date" tick={{ fontSize: 9, fill: "var(--color-ink-4,#888)" }} axisLine={false} tickLine={false} interval={Math.floor(dailyTrend.length / 7)} />
+                <XAxis dataKey="date" tick={{ fontSize: 9, fill: "var(--color-ink-4,#888)" }} axisLine={false} tickLine={false} interval={Math.max(0, Math.ceil(dailyTrend.length / 8) - 1)} />
                 <YAxis tick={{ fontSize: 9, fill: "var(--color-ink-4,#888)" }} axisLine={false} tickLine={false} allowDecimals={false} />
                 <Tooltip content={<AreaTooltip />} />
                 <Area type="monotone" dataKey="links" name="Links" stroke="var(--color-terra,#c97c3a)" fill="url(#linkGrad)" strokeWidth={2} dot={false} />

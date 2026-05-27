@@ -289,25 +289,32 @@ export default function ReportsPage() {
 
   const windowLabel = rangeLabel(startDate, endDate);
 
-  // When an employee is selected, the cards scope to that one employee (their
-  // entry in summary.employees is already per-employee + windowed). Otherwise
-  // they show team-wide totals.
-  const selectedEmployee = employeeId
+  // When an employee is selected the cards scope to that one employee. Their
+  // entry in summary.employees is per-employee + windowed; if they have no
+  // reports in the window they won't be in that list, so we treat them as a
+  // zero-data employee (NOT fall back to team-wide totals).
+  const isEmployeeView = !!employeeId;
+  const selectedEmployee = isEmployeeView
     ? ((summary?.employees ?? []) as any[]).find((e: any) => e.id === employeeId)
     : null;
+  // Name for labels even when the employee has no windowed data.
+  const selectedEmployeeName =
+    selectedEmployee?.name ??
+    (employees as any[]).find((e: any) => e.id === employeeId)?.name ??
+    "Employee";
 
   // Per-platform breakdown that drives the platform cards + the avg-card modal.
   const viewPlatformBreakdown: { platform: string; count: number }[] = (
-    selectedEmployee
-      ? (selectedEmployee.platformBreakdown ?? [])
+    isEmployeeView
+      ? (selectedEmployee?.platformBreakdown ?? [])
       : (summary?.platformBreakdown ?? [])
   )
     .map((p: any) => ({ platform: p.platform, count: p.count ?? 0 }))
     .filter((p: any) => p.count > 0)
     .sort((a: any, b: any) => b.count - a.count);
 
-  const viewTotalLinks = selectedEmployee ? (selectedEmployee.totalLinks ?? 0) : (summary?.totalLinks ?? 0);
-  const viewTotalReports = selectedEmployee ? (selectedEmployee.reportCount ?? 0) : (summary?.totalReports ?? 0);
+  const viewTotalLinks = isEmployeeView ? (selectedEmployee?.totalLinks ?? 0) : (summary?.totalLinks ?? 0);
+  const viewTotalReports = isEmployeeView ? (selectedEmployee?.reportCount ?? 0) : (summary?.totalReports ?? 0);
 
   // Avg links/day across the selected window (window length in days).
   const windowDays = Math.max(
@@ -318,8 +325,8 @@ export default function ReportsPage() {
 
   // First card: team mode shows "Employees Reporting"; single-employee mode shows that
   // employee's current streak instead (more useful than a count of 1).
-  const firstCard = selectedEmployee
-    ? { title: "Current Streak", value: `${selectedEmployee.currentStreak ?? 0} 🔥`, icon: Users, iconColor: "text-orange-600", bgColor: "bg-orange-50 shadow-[0_2px_8px_rgba(234,88,12,0.12)]", sub: selectedEmployee.name }
+  const firstCard = isEmployeeView
+    ? { title: "Current Streak", value: `${selectedEmployee?.currentStreak ?? 0} 🔥`, icon: Users, iconColor: "text-orange-600", bgColor: "bg-orange-50 shadow-[0_2px_8px_rgba(234,88,12,0.12)]", sub: selectedEmployeeName }
     : { title: "Employees Reporting", value: summary?.employeesReporting ?? 0, icon: Users, iconColor: "text-blue-600", bgColor: "bg-blue-50 shadow-[0_2px_8px_rgba(59,130,246,0.12)]", sub: "submitted reports" };
 
   const statCards = [
@@ -437,8 +444,8 @@ export default function ReportsPage() {
               const style = platformCardStyle(platform);
               const pct = viewTotalLinks > 0 ? Math.round((count / viewTotalLinks) * 100) : 0;
               // Daily drill-down: per-employee when one is selected, else team-wide. Both carry dailyBreakdown.
-              const sourceBreakdown = selectedEmployee
-                ? (selectedEmployee.platformBreakdown ?? [])
+              const sourceBreakdown = isEmployeeView
+                ? (selectedEmployee?.platformBreakdown ?? [])
                 : (summary?.platformBreakdown ?? []);
               const dailyBreakdown = (sourceBreakdown as any[]).find((p: any) => p.platform === platform)?.dailyBreakdown ?? [];
               return (
@@ -777,8 +784,8 @@ export default function ReportsPage() {
                 <Calendar className="h-5 w-5 text-amber-600" />
               </div>
               <div>
-                <h2 className="font-serif text-[#1A1A1A] font-medium text-base">{selectedEmployee ? selectedEmployee.name : "Team"} · {windowLabel}</h2>
-                <p className="text-xs text-[#B0B0B0]">{teamTodayModal.totalLinks} links · {selectedEmployee ? "by platform" : "across team · by platform"}</p>
+                <h2 className="font-serif text-[#1A1A1A] font-medium text-base">{isEmployeeView ? selectedEmployeeName : "Team"} · {windowLabel}</h2>
+                <p className="text-xs text-[#B0B0B0]">{teamTodayModal.totalLinks} links · {isEmployeeView ? "by platform" : "across team · by platform"}</p>
               </div>
             </div>
             <button

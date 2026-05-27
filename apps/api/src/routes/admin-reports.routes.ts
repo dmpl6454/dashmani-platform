@@ -129,10 +129,11 @@ router.get(
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([week, linkCount]) => ({ week, linkCount }));
 
-      // Platform breakdown (windowed).
+      // Platform breakdown (windowed). Lowercase so "Instagram" and "instagram"
+      // (mixed-case rows in report_links.platform) collapse into one bucket.
       const platformMap: Record<string, number> = {};
       for (const link of windowLinks) {
-        const p = link.platform || "Unknown";
+        const p = (link.platform || "Unknown").toLowerCase();
         platformMap[p] = (platformMap[p] || 0) + 1;
       }
       const platformBreakdown = Object.entries(platformMap)

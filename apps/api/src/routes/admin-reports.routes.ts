@@ -65,51 +65,61 @@ router.get(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { employeeId } = req.params;
+      const { startDate, endDate } = req.query as { startDate?: string; endDate?: string };
       const now = new Date();
       const todayUTC = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-      const thirtyDaysAgo = new Date(todayUTC.getTime() - 29 * 86400000);
-      const twelveWeeksAgo = new Date(todayUTC.getTime() - 83 * 86400000);
 
-      const [allReports, recentLinks] = await Promise.all([
+      // Window: defaults to last 30 days when no range is supplied.
+      const end = endDate ? new Date(endDate) : todayUTC;
+      const start = startDate ? new Date(startDate) : new Date(todayUTC.getTime() - 29 * 86400000);
+      const rangeMs = end.getTime() - start.getTime();
+      const windowDays = Math.max(1, Math.ceil(rangeMs / 86400000) + 1);
+
+      // allReports: lifetime, used for streaks (an inherently all-time concept).
+      // windowReports: scoped to [start, end], drives every windowed stat below.
+      const [allReports, windowLinks] = await Promise.all([
         prisma.dailyReport.findMany({
           where: { employeeId },
           select: { date: true, _count: { select: { links: true } } },
           orderBy: { date: "asc" },
         }),
         prisma.reportLink.findMany({
-          where: { report: { employeeId, date: { gte: thirtyDaysAgo } } },
-          select: { platform: true, createdAt: true, report: { select: { date: true } } },
+          where: { report: { employeeId, date: { gte: start, lte: end } } },
+          select: { platform: true, report: { select: { date: true } } },
         }),
       ]);
 
-      const totalReports = allReports.length;
-      const totalLinks = allReports.reduce((s, r) => s + r._count.links, 0);
+      const windowReports = allReports.filter((r) => {
+        const t = new Date(r.date).getTime();
+        return t >= start.getTime() && t <= end.getTime();
+      });
+
+      const totalReports = windowReports.length;
+      const totalLinks = windowReports.reduce((s, r) => s + r._count.links, 0);
+      // Streaks remain all-time — a current streak is meaningless when scoped to a window.
       const { currentStreak, longestStreak } = calcStreaks(allReports.map((r) => r.date));
       const avgLinksPerDay = totalReports > 0 ? Math.round((totalLinks / totalReports) * 10) / 10 : 0;
 
-      // Days since first report for submission rate
-      const firstReport = allReports[0];
-      let submissionRate = 0;
-      if (firstReport) {
-        const daysSince = Math.max(1, Math.ceil((Date.now() - new Date(firstReport.date).getTime()) / 86400000));
-        submissionRate = Math.round((totalReports / daysSince) * 100);
-      }
+      // Submission rate = reporting days / window days (capped at 100%).
+      const submissionRate = windowDays > 0 ? Math.min(100, Math.round((totalReports / windowDays) * 100)) : 0;
 
-      // 30-day daily trend
+      // Daily trend across the full window (zero-filled).
       const dailyMap: Record<string, number> = {};
-      for (const r of allReports.filter((r) => new Date(r.date) >= thirtyDaysAgo)) {
+      for (const r of windowReports) {
         const d = new Date(r.date).toISOString().split("T")[0];
         dailyMap[d] = (dailyMap[d] || 0) + r._count.links;
       }
       const dailyTrend: { date: string; linkCount: number }[] = [];
-      for (let i = 29; i >= 0; i--) {
-        const d = new Date(todayUTC.getTime() - i * 86400000).toISOString().split("T")[0];
+      // Cap zero-fill to a sane number of buckets so a "Year" range doesn't return 365 points.
+      const fillDays = Math.min(windowDays, 90);
+      for (let i = fillDays - 1; i >= 0; i--) {
+        const d = new Date(end.getTime() - i * 86400000).toISOString().split("T")[0];
         dailyTrend.push({ date: d, linkCount: dailyMap[d] || 0 });
       }
 
-      // 12-week weekly trend
+      // Weekly trend across the window.
       const weeklyMap: Record<string, number> = {};
-      for (const r of allReports.filter((r) => new Date(r.date) >= twelveWeeksAgo)) {
+      for (const r of windowReports) {
         const d = new Date(r.date);
         const dayOfWeek = d.getUTCDay();
         const weekStart = new Date(d.getTime() - dayOfWeek * 86400000).toISOString().split("T")[0];
@@ -119,9 +129,9 @@ router.get(
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([week, linkCount]) => ({ week, linkCount }));
 
-      // Platform breakdown
+      // Platform breakdown (windowed).
       const platformMap: Record<string, number> = {};
-      for (const link of recentLinks) {
+      for (const link of windowLinks) {
         const p = link.platform || "Unknown";
         platformMap[p] = (platformMap[p] || 0) + 1;
       }
@@ -136,6 +146,7 @@ router.get(
         totalReports, totalLinks, currentStreak, longestStreak,
         avgLinksPerDay, submissionRate,
         dailyTrend, weeklyTrend, platformBreakdown, bestChannel, worstChannel,
+        windowDays,
       });
     } catch (err) { next(err); }
   },

@@ -1,10 +1,11 @@
 "use client";
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { ArrowLeft, Flame, Link2, BarChart2, Target, TrendingUp, CalendarDays, X } from "lucide-react";
+import { ArrowLeft, Flame, Link2, BarChart2, Target, TrendingUp, CalendarDays } from "lucide-react";
 import { useAdminReports, useEmployeeReportStats } from "@/lib/hooks/use-reports";
 import { useEmployee } from "@/lib/hooks/use-employees";
 import { UserAvatar } from "@/components/user-avatar";
+import { RangePills, presetStart, todayISO, rangeLabel } from "../_range";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
 } from "recharts";
@@ -59,17 +60,6 @@ function ChartTooltip({ active, payload, label }: any) {
   );
 }
 
-const QUICK_RANGES = [
-  { label: "Last 7 days",  days: 7 },
-  { label: "Last 30 days", days: 30 },
-  { label: "Last 90 days", days: 90 },
-  { label: "This year",    days: 365 },
-];
-
-function toISODate(d: Date) {
-  return d.toISOString().slice(0, 10);
-}
-
 export default function EmployeeReportsPage({ params }: { params: { employeeId: string } }) {
   const { employeeId } = params;
 
@@ -77,17 +67,19 @@ export default function EmployeeReportsPage({ params }: { params: { employeeId: 
     window.scrollTo({ top: 0, behavior: "instant" as ScrollBehavior });
   }, [employeeId]);
 
-  const today = new Date();
-  const [startDate, setStartDate] = useState(toISODate(new Date(today.getTime() - 29 * 86400000)));
-  const [endDate, setEndDate] = useState(toISODate(today));
+  // Default to last 30 days; the pills/custom range drive every stat, chart and list.
+  const [startDate, setStartDate] = useState(() => presetStart(30));
+  const [endDate, setEndDate] = useState(() => todayISO());
 
   const { data: employeeData, isLoading: empLoading } = useEmployee(employeeId);
   const { data: reportsData, isLoading: reportsLoading } = useAdminReports({ employeeId, startDate, endDate });
-  const { data: statsData, isLoading: statsLoading } = useEmployeeReportStats(employeeId);
+  const { data: statsData, isLoading: statsLoading } = useEmployeeReportStats(employeeId, startDate, endDate);
 
   const employee = (employeeData as any)?.data;
   const reports = (reportsData as any)?.data ?? [];
   const s = (statsData as any)?.data;
+
+  const windowLabel = rangeLabel(startDate, endDate);
 
   const dailyTrend: { date: string; linkCount: number }[] = s?.dailyTrend ?? [];
   const chartData = dailyTrend.map((d) => ({
@@ -96,19 +88,6 @@ export default function EmployeeReportsPage({ params }: { params: { employeeId: 
   }));
 
   const platformBreakdown: { platform: string; count: number }[] = s?.platformBreakdown ?? [];
-
-  function applyQuickRange(days: number) {
-    setStartDate(toISODate(new Date(today.getTime() - (days - 1) * 86400000)));
-    setEndDate(toISODate(today));
-  }
-
-  function clearRange() {
-    setStartDate(toISODate(new Date(today.getTime() - 29 * 86400000)));
-    setEndDate(toISODate(today));
-  }
-
-  const hasCustomRange = startDate !== toISODate(new Date(today.getTime() - 29 * 86400000)) ||
-    endDate !== toISODate(today);
 
   return (
     <div className="space-y-6 pop-in">
@@ -142,86 +121,28 @@ export default function EmployeeReportsPage({ params }: { params: { employeeId: 
         <div className="flex items-center gap-2">
           <CalendarDays className="h-4 w-4 text-indigo" />
           <p className="text-sm font-semibold text-ink">Date Range</p>
-          {hasCustomRange && (
-            <button
-              onClick={clearRange}
-              className="ml-auto flex items-center gap-1 text-xs text-ink-4 hover:text-danger transition-colors"
-            >
-              <X className="h-3 w-3" /> Reset
-            </button>
-          )}
+          <span className="ml-auto text-xs font-medium text-ink-4 bg-ink/5 px-2.5 py-1 rounded-full">{windowLabel}</span>
         </div>
-
-        {/* Quick range pills */}
-        <div className="flex flex-wrap gap-2">
-          {QUICK_RANGES.map((r) => {
-            const rStart = toISODate(new Date(today.getTime() - (r.days - 1) * 86400000));
-            const isActive = startDate === rStart && endDate === toISODate(today);
-            return (
-              <button
-                key={r.label}
-                onClick={() => applyQuickRange(r.days)}
-                className={`h-7 px-3 rounded-full text-xs font-semibold transition-all border-2 ${
-                  isActive
-                    ? "bg-indigo text-white border-indigo"
-                    : "bg-surface text-ink-4 border-ink/12 hover:border-indigo/30 hover:text-indigo"
-                }`}
-              >
-                {r.label}
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Custom date inputs */}
-        <div className="flex items-center gap-3 flex-wrap">
-          <div className="flex items-center gap-2">
-            <label className="text-xs text-ink-4 font-medium w-6">From</label>
-            <input
-              type="date"
-              value={startDate}
-              max={endDate}
-              onChange={(e) => setStartDate(e.target.value)}
-              className="h-9 rounded-xl border-2 border-ink/15 bg-surface text-sm px-3 focus:outline-none focus:border-indigo transition-colors"
-            />
-          </div>
-          <div className="flex items-center gap-2">
-            <label className="text-xs text-ink-4 font-medium w-6">To</label>
-            <input
-              type="date"
-              value={endDate}
-              min={startDate}
-              max={toISODate(today)}
-              onChange={(e) => setEndDate(e.target.value)}
-              className="h-9 rounded-xl border-2 border-ink/15 bg-surface text-sm px-3 focus:outline-none focus:border-indigo transition-colors"
-            />
-          </div>
-          <p className="text-xs text-ink-4">
-            Showing reports from{" "}
-            <span className="font-semibold text-ink">
-              {new Date(startDate).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
-            </span>{" "}
-            to{" "}
-            <span className="font-semibold text-ink">
-              {new Date(endDate).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
-            </span>
-          </p>
-        </div>
+        <RangePills
+          startDate={startDate}
+          endDate={endDate}
+          onChange={(start, end) => { setStartDate(start); setEndDate(end); }}
+        />
       </div>
 
-      {/* Stats strip — always based on all-time stats from employee-stats endpoint */}
+      {/* Stats strip — scoped to the selected window */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-        <StatCard label="Total Reports" value={statsLoading ? "—" : (s?.totalReports ?? 0)} icon={BarChart2} color="indigo" />
-        <StatCard label="Total Links" value={statsLoading ? "—" : (s?.totalLinks ?? 0)} icon={Link2} color="terra" />
+        <StatCard label="Reports" value={statsLoading ? "—" : (s?.totalReports ?? 0)} icon={BarChart2} color="indigo" />
+        <StatCard label="Links" value={statsLoading ? "—" : (s?.totalLinks ?? 0)} icon={Link2} color="terra" />
         <StatCard label="Current Streak" value={statsLoading ? "—" : (s?.currentStreak ?? 0)} icon={Flame} color="attention" sub={`Best: ${s?.longestStreak ?? 0} days`} />
         <StatCard label="Avg Links/Day" value={statsLoading ? "—" : (s?.avgLinksPerDay ?? 0)} icon={TrendingUp} color="sage" />
         <StatCard label="Submission Rate" value={statsLoading ? "—" : `${s?.submissionRate ?? 0}%`} icon={Target} color="indigo" />
       </div>
 
-      {/* 30-day chart (all-time trend) */}
+      {/* Daily trend chart for the selected window */}
       <div className="v3-card p-5 space-y-3">
         <div className="flex items-center justify-between">
-          <p className="font-semibold text-ink">Links — Last 30 Days (all-time)</p>
+          <p className="font-semibold text-ink">Links — {windowLabel}</p>
           {s?.bestChannel && (
             <span className="text-xs text-ink-4">
               Best channel: <span className="font-semibold text-terra">{s.bestChannel.platform}</span> ({s.bestChannel.count})
@@ -232,7 +153,7 @@ export default function EmployeeReportsPage({ params }: { params: { employeeId: 
           {statsLoading ? (
             <div className="h-full flex items-center justify-center"><p className="text-xs text-ink-4">Loading chart…</p></div>
           ) : chartData.length === 0 ? (
-            <div className="h-full flex items-center justify-center"><p className="text-xs text-ink-4">No data in the last 30 days</p></div>
+            <div className="h-full flex items-center justify-center"><p className="text-xs text-ink-4">No data in this window</p></div>
           ) : (
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={chartData} barSize={12} margin={{ top: 4, right: 4, left: -24, bottom: 0 }}>
@@ -251,7 +172,7 @@ export default function EmployeeReportsPage({ params }: { params: { employeeId: 
       {platformBreakdown.length > 0 && (
         <div className="v3-card p-5 space-y-3">
           <div className="flex items-center justify-between">
-            <p className="font-semibold text-ink">Platform Breakdown (all-time)</p>
+            <p className="font-semibold text-ink">Platform Breakdown · {windowLabel}</p>
             <div className="flex items-center gap-4 text-xs text-ink-4">
               {s?.bestChannel && <span>Best: <span className="font-semibold text-sage">{s.bestChannel.platform}</span></span>}
               {s?.worstChannel && <span>Least: <span className="font-semibold text-attention">{s.worstChannel.platform}</span></span>}

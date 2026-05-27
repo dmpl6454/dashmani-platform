@@ -1,9 +1,10 @@
 "use client";
 import { useState, useMemo } from "react";
 import Link from "next/link";
-import { ArrowLeft, TrendingUp, TrendingDown, Link2, Users, Trophy, AlertCircle, X, ChevronDown, ChevronUp, BarChart2 } from "lucide-react";
+import { ArrowLeft, TrendingUp, TrendingDown, Link2, Users, Trophy, AlertCircle, ChevronDown, ChevronUp, BarChart2 } from "lucide-react";
 import { useLinksAnalytics, useLinksAllAccounts } from "@/lib/hooks/use-reports";
 import { usePageTitle } from "@/lib/hooks/use-page-title";
+import { RangePills, presetStart, todayISO, rangeLabel } from "../_range";
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip,
   ResponsiveContainer, CartesianGrid,
@@ -44,36 +45,11 @@ function BarTip({ active, payload, label }: any) {
 export default function LinksAnalyticsPage() {
   usePageTitle("Links Analytics");
 
-  const today = new Date();
-  const todayStr = today.toISOString().slice(0, 10);
+  // Default to last 30 days; pills + custom range drive every chart/stat on the page.
+  const [startDate, setStartDate] = useState(() => presetStart(30));
+  const [endDate, setEndDate] = useState(() => todayISO());
 
-  const presets = [
-    {
-      label: "Week",
-      start: new Date(today.getTime() - 6 * 86400000).toISOString().slice(0, 10),
-      end: todayStr,
-    },
-    {
-      label: "Month",
-      start: new Date(today.getTime() - 29 * 86400000).toISOString().slice(0, 10),
-      end: todayStr,
-    },
-    {
-      label: "Year",
-      start: new Date(today.getTime() - 364 * 86400000).toISOString().slice(0, 10),
-      end: todayStr,
-    },
-  ];
-
-  const [startDate, setStartDate] = useState(presets[1].start);
-  const [endDate, setEndDate] = useState(todayStr);
-
-  const activePreset = presets.find((p) => p.start === startDate && p.end === endDate)?.label ?? null;
-
-  function applyPreset(preset: (typeof presets)[number]) {
-    setStartDate(preset.start);
-    setEndDate(preset.end);
-  }
+  const windowLabel = rangeLabel(startDate, endDate);
 
   const { data, isLoading } = useLinksAnalytics(startDate, endDate);
   const { data: accountsData, isLoading: accountsLoading } = useLinksAllAccounts(startDate, endDate);
@@ -108,59 +84,16 @@ export default function LinksAnalyticsPage() {
         </Link>
       </div>
 
-      <div className="flex items-center justify-between flex-wrap gap-4">
+      <div className="flex items-start justify-between flex-wrap gap-4">
         <div>
           <h1 className="font-display text-2xl font-semibold text-ink">Links Analytics</h1>
-          <p className="text-sm text-ink-4 mt-0.5">Organisation-wide link submission insights</p>
+          <p className="text-sm text-ink-4 mt-0.5">Organisation-wide link submission insights · {windowLabel}</p>
         </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          {/* Preset chips */}
-          <div className="flex items-center gap-1 bg-ink/5 rounded-xl p-1">
-            {presets.map((p) => (
-              <button
-                key={p.label}
-                onClick={() => applyPreset(p)}
-                className={`h-7 px-3 rounded-lg text-xs font-medium transition-colors ${
-                  activePreset === p.label
-                    ? "bg-surface text-ink shadow-sm"
-                    : "text-ink-4 hover:text-ink"
-                }`}
-              >
-                {p.label}
-              </button>
-            ))}
-          </div>
-          {/* Custom date pickers */}
-          <div className="flex items-center gap-2">
-            <label className="text-xs text-ink-4 font-medium">From</label>
-            <input
-              type="date"
-              value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
-              className="h-9 rounded-xl border-2 border-ink/15 bg-surface text-sm px-3 focus:outline-none focus:border-indigo transition-colors"
-            />
-          </div>
-          <div className="flex items-center gap-2">
-            <label className="text-xs text-ink-4 font-medium">To</label>
-            <input
-              type="date"
-              value={endDate}
-              onChange={(e) => setEndDate(e.target.value)}
-              className="h-9 rounded-xl border-2 border-ink/15 bg-surface text-sm px-3 focus:outline-none focus:border-indigo transition-colors"
-            />
-          </div>
-          {/* Reset — only shown when custom range is active */}
-          {!activePreset && (
-            <button
-              onClick={() => applyPreset(presets[1])}
-              className="h-9 flex items-center gap-1.5 rounded-xl border-2 border-ink/15 bg-surface px-3 text-xs text-ink-4 hover:text-ink hover:border-ink/30 transition-colors"
-              title="Reset to last 30 days"
-            >
-              <X className="h-3.5 w-3.5" />
-              Reset
-            </button>
-          )}
-        </div>
+        <RangePills
+          startDate={startDate}
+          endDate={endDate}
+          onChange={(start, end) => { setStartDate(start); setEndDate(end); }}
+        />
       </div>
 
       {/* Top stats */}

@@ -38,9 +38,13 @@ export function useReportSummary(startDate?: string, endDate?: string) {
   });
 }
 
-export function useEmployeeReportStats(employeeId?: string) {
+export function useEmployeeReportStats(employeeId?: string, startDate?: string, endDate?: string) {
+  const params = new URLSearchParams();
+  if (startDate) params.set("startDate", startDate);
+  if (endDate) params.set("endDate", endDate);
+  const query = params.toString() ? `?${params.toString()}` : "";
   return useSWR(
-    employeeId ? `/admin/reports/employee-stats/${employeeId}` : null,
+    employeeId ? `/admin/reports/employee-stats/${employeeId}${query}` : null,
     (url) => apiFetch(url),
     { revalidateOnFocus: false, dedupingInterval: 60_000 },
   );

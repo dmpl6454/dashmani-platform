@@ -58,9 +58,10 @@ function getAvatarGradient(name: string) {
 interface EmployeeRowProps {
   emp: any;
   onOpenEmpModal: (emp: any) => void;
+  onOpenTodayModal: (emp: any) => void;
 }
 
-const EmployeeRow = memo(function EmployeeRow({ emp, onOpenEmpModal }: EmployeeRowProps) {
+const EmployeeRow = memo(function EmployeeRow({ emp, onOpenEmpModal, onOpenTodayModal }: EmployeeRowProps) {
   return (
     <tr className="border-b border-[#F0EAD8] last:border-0 hover:bg-[rgba(255,248,225,0.5)] transition-colors group">
       <td className="py-3 pr-4">
@@ -88,6 +89,20 @@ const EmployeeRow = memo(function EmployeeRow({ emp, onOpenEmpModal }: EmployeeR
           className="inline-flex items-center gap-1 min-w-[28px] h-6 rounded-full bg-emerald-50 text-emerald-700 text-xs font-semibold px-2 hover:bg-emerald-100 transition-colors cursor-pointer border border-transparent hover:border-emerald-300"
         >
           {emp.totalLinks}
+          <BarChart2 className="h-3 w-3 opacity-60" />
+        </button>
+      </td>
+      <td className="py-3 pr-4 text-right">
+        <button
+          onClick={() => onOpenTodayModal(emp)}
+          title="View today's per-platform breakdown (always today, ignores the date filter)"
+          className={`inline-flex items-center gap-1 min-w-[28px] h-6 rounded-full text-xs font-semibold px-2 transition-colors cursor-pointer border ${
+            (emp.linksToday ?? 0) > 0
+              ? "bg-blue-50 text-blue-700 border-transparent hover:bg-blue-100 hover:border-blue-300"
+              : "bg-transparent text-[#B0B0B0] border-transparent hover:bg-[#F5F5F5] hover:border-[#E8E0D0]"
+          }`}
+        >
+          {(emp.linksToday ?? 0) > 0 ? emp.linksToday : "—"}
           <BarChart2 className="h-3 w-3 opacity-60" />
         </button>
       </td>
@@ -220,11 +235,12 @@ export default function ReportsPage() {
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [empModal, setEmpModal] = useState<{ name: string; totalLinks: number; platformBreakdown: { platform: string; count: number }[] } | null>(null);
   const [platformModal, setPlatformModal] = useState<{ platform: string; count: number; dailyBreakdown: { date: string; count: number }[] } | null>(null);
+  const [todayModal, setTodayModal] = useState<{ name: string; linksToday: number; platformBreakdown: { platform: string; count: number }[] } | null>(null);
   const [teamTodayModal, setTeamTodayModal] = useState<{ totalLinks: number; platformBreakdown: { platform: string; count: number }[] } | null>(null);
 
   useEffect(() => {
     const main = document.querySelector("main") as HTMLElement | null;
-    if (empModal || platformModal || teamTodayModal) {
+    if (empModal || platformModal || todayModal || teamTodayModal) {
       document.body.style.overflow = "hidden";
       if (main) main.style.overflow = "hidden";
     } else {
@@ -235,7 +251,7 @@ export default function ReportsPage() {
       document.body.style.overflow = "";
       if (main) main.style.overflow = "";
     };
-  }, [empModal, platformModal, teamTodayModal]);
+  }, [empModal, platformModal, todayModal, teamTodayModal]);
 
   const { user } = useAuth();
   const isAdmin = user?.roles?.some((r) => r === "Admin" || r === "Super Admin") ?? false;
@@ -250,6 +266,11 @@ export default function ReportsPage() {
 
   const handleOpenEmpModal = useCallback((emp: any) => {
     setEmpModal({ name: emp.name, totalLinks: emp.totalLinks, platformBreakdown: emp.platformBreakdown ?? [] });
+  }, []);
+
+  // Today's breakdown is always today, independent of the date-range filter.
+  const handleOpenTodayModal = useCallback((emp: any) => {
+    setTodayModal({ name: emp.name, linksToday: emp.linksToday ?? 0, platformBreakdown: emp.todayPlatformBreakdown ?? [] });
   }, []);
 
   const handleDeleteLink = useCallback(async (linkId: string) => {
@@ -415,10 +436,11 @@ export default function ReportsPage() {
             .map(({ platform, count }) => {
               const style = platformCardStyle(platform);
               const pct = viewTotalLinks > 0 ? Math.round((count / viewTotalLinks) * 100) : 0;
-              // Daily drill-down only exists in team mode (summary.platformBreakdown carries dailyBreakdown).
-              const dailyBreakdown = selectedEmployee
-                ? []
-                : ((summary?.platformBreakdown ?? []) as any[]).find((p: any) => p.platform === platform)?.dailyBreakdown ?? [];
+              // Daily drill-down: per-employee when one is selected, else team-wide. Both carry dailyBreakdown.
+              const sourceBreakdown = selectedEmployee
+                ? (selectedEmployee.platformBreakdown ?? [])
+                : (summary?.platformBreakdown ?? []);
+              const dailyBreakdown = (sourceBreakdown as any[]).find((p: any) => p.platform === platform)?.dailyBreakdown ?? [];
               return (
                 <div
                   key={platform}
@@ -484,6 +506,12 @@ export default function ReportsPage() {
                       <th className="text-left py-2 pr-4 text-[#7A7A7A] text-xs font-medium">Email</th>
                       <th className="text-right py-2 pr-4 text-[#7A7A7A] text-xs font-medium">Reports</th>
                       <th className="text-right py-2 pr-4 text-[#7A7A7A] text-xs font-medium">Total Links</th>
+                      <th className="text-right py-2 pr-4 text-[#7A7A7A] text-xs font-medium whitespace-nowrap">
+                        <span className="inline-flex items-center gap-1" title="Links submitted today — always today, ignores the date filter">
+                          <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 inline-block" />
+                          Today
+                        </span>
+                      </th>
                       <th className="text-right py-2 pr-4 text-[#7A7A7A] text-xs font-medium">Avg/Day</th>
                       <th className="text-right py-2 pr-4 text-[#7A7A7A] text-xs font-medium">Streak</th>
                       <th className="text-left py-2 pr-4 text-[#7A7A7A] text-xs font-medium">Last Submitted</th>
@@ -496,6 +524,7 @@ export default function ReportsPage() {
                         key={emp.id}
                         emp={emp}
                         onOpenEmpModal={handleOpenEmpModal}
+                        onOpenTodayModal={handleOpenTodayModal}
                       />
                     ))}
                   </tbody>
@@ -661,6 +690,65 @@ export default function ReportsPage() {
                     <div className="h-1.5 w-full rounded-full bg-[#F0EAD8]">
                       <div
                         className="h-1.5 rounded-full bg-emerald-400 transition-all duration-500"
+                        style={{ width: `${pct}%` }}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+    )}
+
+    {/* Per-employee TODAY platform breakdown modal (filter-independent) */}
+    {todayModal && (
+      <div
+        className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40"
+        onClick={() => setTodayModal(null)}
+      >
+        <div
+          className="bg-white rounded-2xl border border-[#E8E0D0] shadow-[0_16px_48px_rgba(0,0,0,0.16)] w-full max-w-sm mx-4 p-6"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="flex items-center justify-between mb-5">
+            <div className="flex items-center gap-2">
+              <div className="h-9 w-9 rounded-xl bg-blue-50 flex items-center justify-center">
+                <BarChart2 className="h-5 w-5 text-blue-600" />
+              </div>
+              <div>
+                <h2 className="font-serif text-[#1A1A1A] font-medium text-base">{todayModal.name}</h2>
+                <p className="text-xs text-[#B0B0B0]">{todayModal.linksToday} links today · by platform</p>
+              </div>
+            </div>
+            <button
+              onClick={() => setTodayModal(null)}
+              className="h-7 w-7 rounded-lg flex items-center justify-center text-[#B0B0B0] hover:text-[#1A1A1A] hover:bg-[#F5F5F5] transition-colors"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+
+          {!todayModal.platformBreakdown.length ? (
+            <p className="text-sm text-[#B0B0B0] text-center py-6">No links submitted today.</p>
+          ) : (
+            <div className="space-y-3">
+              {todayModal.platformBreakdown.map(({ platform, count }) => {
+                const pct = todayModal.linksToday > 0 ? Math.round((count / todayModal.linksToday) * 100) : 0;
+                return (
+                  <div key={platform}>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium capitalize ${platformBadgeClass(platform)}`}>
+                        {platform}
+                      </span>
+                      <span className="text-sm font-semibold text-[#1A1A1A]">
+                        {count} <span className="text-xs font-normal text-[#B0B0B0]">({pct}%)</span>
+                      </span>
+                    </div>
+                    <div className="h-1.5 w-full rounded-full bg-[#F0EAD8]">
+                      <div
+                        className="h-1.5 rounded-full bg-blue-400 transition-all duration-500"
                         style={{ width: `${pct}%` }}
                       />
                     </div>

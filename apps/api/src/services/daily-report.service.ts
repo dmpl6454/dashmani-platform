@@ -297,15 +297,28 @@ export async function getReportSummary(startDate?: string, endDate?: string) {
     }),
     prisma.dailyReport.findMany({
       where: { date: todayDate },
-      select: { employeeId: true, links: { select: { platform: true } } },
+      select: {
+        employeeId: true,
+        employee: { select: { id: true, name: true, email: true, profileImageUrl: true } },
+        links: { select: { platform: true } },
+      },
     }),
   ]);
 
-  // Build maps of employeeId → today's link count and platform breakdown
+  // Build maps of employeeId → today's link count and platform breakdown.
+  // Today's data is fetched independently of the date-range filter so the
+  // "Today" column stays real-time regardless of the selected window.
   const todayLinksMap = new Map<string, number>();
   const todayPlatformMap = new Map<string, Record<string, number>>();
+  const todayEmployeeMap = new Map<string, { id: string; name: string; email: string; profileImageUrl: string | null }>();
   for (const r of todayReports) {
     todayLinksMap.set(r.employeeId, r.links.length);
+    todayEmployeeMap.set(r.employeeId, {
+      id: r.employeeId,
+      name: r.employee.name,
+      email: (r.employee as any).email ?? "",
+      profileImageUrl: (r.employee as any).profileImageUrl ?? null,
+    });
     const pMap: Record<string, number> = {};
     for (const link of r.links) {
       const p = ((link as any).platform || "unknown").toLowerCase();
@@ -320,6 +333,8 @@ export async function getReportSummary(startDate?: string, endDate?: string) {
     reportCount: number; totalLinks: number;
     reportDates: Date[]; lastSubmittedAt: Date | null;
     empPlatformMap: Record<string, number>;
+    // empPlatformDailyMap[platform][dateStr] = count — powers the per-employee daily drill-down
+    empPlatformDailyMap: Record<string, Record<string, number>>;
   }>();
 
   let totalReports = 0;
@@ -341,6 +356,7 @@ export async function getReportSummary(startDate?: string, endDate?: string) {
         reportDates: [],
         lastSubmittedAt: null,
         empPlatformMap: {},
+        empPlatformDailyMap: {},
       });
     }
     const entry = summaryMap.get(key)!;
@@ -359,17 +375,45 @@ export async function getReportSummary(startDate?: string, endDate?: string) {
       entry.empPlatformMap[p] = (entry.empPlatformMap[p] || 0) + 1;
       if (!platformDailyMap[p]) platformDailyMap[p] = {};
       platformDailyMap[p][dateStr] = (platformDailyMap[p][dateStr] || 0) + 1;
+      if (!entry.empPlatformDailyMap[p]) entry.empPlatformDailyMap[p] = {};
+      entry.empPlatformDailyMap[p][dateStr] = (entry.empPlatformDailyMap[p][dateStr] || 0) + 1;
     }
   }
 
-  const employees = Array.from(summaryMap.values()).map(({ reportDates, empPlatformMap, ...rest }) => {
+  // Ensure anyone who submitted TODAY appears in the table even if today falls
+  // outside the selected window — their windowed stats stay 0 but the Today
+  // column shows their live count. Keeps the Today column truly filter-independent.
+  for (const [empId, emp] of todayEmployeeMap) {
+    if (!summaryMap.has(empId)) {
+      summaryMap.set(empId, {
+        id: empId,
+        name: emp.name,
+        email: emp.email,
+        profileImageUrl: emp.profileImageUrl,
+        reportCount: 0,
+        totalLinks: 0,
+        reportDates: [],
+        lastSubmittedAt: null,
+        empPlatformMap: {},
+        empPlatformDailyMap: {},
+      });
+    }
+  }
+
+  const employees = Array.from(summaryMap.values()).map(({ reportDates, empPlatformMap, empPlatformDailyMap, ...rest }) => {
     const { currentStreak } = calcStreaks(reportDates);
     const avgLinksPerDay = rest.reportCount > 0
       ? Math.round((rest.totalLinks / rest.reportCount) * 10) / 10
       : 0;
     const platformBreakdown = Object.entries(empPlatformMap)
       .sort(([, a], [, b]) => b - a)
-      .map(([platform, count]) => ({ platform, count }));
+      .map(([platform, count]) => ({
+        platform,
+        count,
+        dailyBreakdown: Object.entries(empPlatformDailyMap[platform] || {})
+          .sort(([a], [b]) => b.localeCompare(a))
+          .map(([date, count]) => ({ date, count })),
+      }));
     const todayPlatformBreakdown = Object.entries(todayPlatformMap.get(rest.id) ?? {})
       .sort(([, a], [, b]) => b - a)
       .map(([platform, count]) => ({ platform, count }));
@@ -395,7 +439,9 @@ export async function getReportSummary(startDate?: string, endDate?: string) {
     }));
 
   return {
-    employeesReporting: summaryMap.size,
+    // Count only employees who actually reported within the window (today-only
+    // merges have reportCount 0 and must not inflate this stat).
+    employeesReporting: employees.filter((e) => e.reportCount > 0).length,
     totalReports,
     totalLinks,
     platformBreakdown,

@@ -1,6 +1,7 @@
 import { prisma } from "@dashmani/db";
 import { AppError } from "../middleware/error-handler";
 import type { ReportLinkInput, DailyReportResponse, AdminReportFilters } from "@dashmani/shared";
+import { todayIST, istMidnight } from "@dashmani/shared";
 import { calcStreaks } from "../utils/streak";
 
 function formatReport(report: any) {
@@ -226,9 +227,7 @@ export async function getMyReports(employeeId: string, startDate?: string, endDa
 }
 
 export async function getTodayReport(employeeId: string) {
-  // Use YYYY-MM-DD string to construct a UTC midnight date — same approach as submitDailyReport
-  const todayStr = new Date().toISOString().split("T")[0];
-  const today = new Date(todayStr);
+  const today = istMidnight(todayIST());
 
   const report = await prisma.dailyReport.findUnique({
     where: { employeeId_date: { employeeId, date: today } },
@@ -285,8 +284,7 @@ export async function getReportSummary(startDate?: string, endDate?: string) {
   }
 
   // Always fetch today's link counts independently of date range filter
-  const todayStr = new Date().toISOString().split("T")[0];
-  const todayDate = new Date(todayStr);
+  const todayDate = istMidnight(todayIST());
 
   const [reports, todayReports] = await Promise.all([
     prisma.dailyReport.findMany({

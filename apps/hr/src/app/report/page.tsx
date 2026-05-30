@@ -235,7 +235,9 @@ export default function ReportPage() {
     { revalidateOnFocus: false, dedupingInterval: 60_000 },
   );
 
-  const today = new Date().toISOString().split("T")[0];
+  // Use local date (browser IST) — not toISOString() which returns UTC and would
+  // give the wrong date between 12:00 AM and 5:30 AM IST.
+  const today = (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; })();
   const todayFormatted = new Date().toLocaleDateString("en-IN", {
     weekday: "long", day: "numeric", month: "long", year: "numeric",
   });

@@ -1,6 +1,7 @@
 import { prisma } from "@dashmani/db";
 import { calcStreaks } from "../utils/streak";
 import { employeeWhere } from "./analytics.service";
+import { todayIST, istMidnight } from "@dashmani/shared";
 
 export async function getLeaderboard(startDate?: string, endDate?: string) {
   const where: any = {
@@ -102,8 +103,7 @@ export async function getTeamDashboard(teamLeadId: string) {
 
   const members = orgUnit.members;
 
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  const today = istMidnight(todayIST());
 
   // Get today's submissions
   const todayReports = await prisma.dailyReport.findMany({

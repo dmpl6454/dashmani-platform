@@ -1,14 +1,16 @@
+import { todayIST, istMidnight } from "@dashmani/shared";
+
 const DAY_MS = 86400000;
 
 export function calcStreaks(reportDates: Date[]): { currentStreak: number; longestStreak: number } {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  const today = istMidnight(todayIST());
 
   const sortedDesc = Array.from(
     new Set(
       reportDates.map((d) => {
+        // Report dates are stored as UTC midnight of the IST date — treat them as-is
         const dt = new Date(d);
-        dt.setHours(0, 0, 0, 0);
+        dt.setUTCHours(0, 0, 0, 0);
         return dt.getTime();
       })
     )

@@ -2,7 +2,7 @@ import { Router, Request, Response, NextFunction } from "express";
 import { authenticate } from "../middleware/auth";
 import { requirePermission } from "../middleware/rbac";
 import { validate } from "../middleware/validate";
-import { adminReportFilterSchema } from "@dashmani/shared";
+import { adminReportFilterSchema, todayIST, istMidnight, dateToIST } from "@dashmani/shared";
 import {
   getAllReports,
   getReportById,
@@ -66,12 +66,11 @@ router.get(
     try {
       const { employeeId } = req.params;
       const { startDate, endDate } = req.query as { startDate?: string; endDate?: string };
-      const now = new Date();
-      const todayUTC = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+      const todayDate = istMidnight(todayIST());
 
       // Window: defaults to last 30 days when no range is supplied.
-      const end = endDate ? new Date(endDate) : todayUTC;
-      const start = startDate ? new Date(startDate) : new Date(todayUTC.getTime() - 29 * 86400000);
+      const end = endDate ? new Date(endDate) : todayDate;
+      const start = startDate ? new Date(startDate) : new Date(todayDate.getTime() - 29 * 86400000);
       const rangeMs = end.getTime() - start.getTime();
       const windowDays = Math.max(1, Math.ceil(rangeMs / 86400000) + 1);
 
@@ -106,14 +105,14 @@ router.get(
       // Daily trend across the full window (zero-filled).
       const dailyMap: Record<string, number> = {};
       for (const r of windowReports) {
-        const d = new Date(r.date).toISOString().split("T")[0];
+        const d = dateToIST(new Date(r.date));
         dailyMap[d] = (dailyMap[d] || 0) + r._count.links;
       }
       const dailyTrend: { date: string; linkCount: number }[] = [];
       // Cap zero-fill to a sane number of buckets so a "Year" range doesn't return 365 points.
       const fillDays = Math.min(windowDays, 90);
       for (let i = fillDays - 1; i >= 0; i--) {
-        const d = new Date(end.getTime() - i * 86400000).toISOString().split("T")[0];
+        const d = dateToIST(new Date(end.getTime() - i * 86400000));
         dailyTrend.push({ date: d, linkCount: dailyMap[d] || 0 });
       }
 
@@ -122,7 +121,7 @@ router.get(
       for (const r of windowReports) {
         const d = new Date(r.date);
         const dayOfWeek = d.getUTCDay();
-        const weekStart = new Date(d.getTime() - dayOfWeek * 86400000).toISOString().split("T")[0];
+        const weekStart = dateToIST(new Date(d.getTime() - dayOfWeek * 86400000));
         weeklyMap[weekStart] = (weeklyMap[weekStart] || 0) + r._count.links;
       }
       const weeklyTrend = Object.entries(weeklyMap)
@@ -161,8 +160,7 @@ router.get(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { startDate, endDate } = req.query as { startDate?: string; endDate?: string };
-      const nowL = new Date();
-      const todayL = new Date(Date.UTC(nowL.getUTCFullYear(), nowL.getUTCMonth(), nowL.getUTCDate()));
+      const todayL = istMidnight(todayIST());
       const end = endDate ? new Date(endDate) : todayL;
       const start = startDate ? new Date(startDate) : new Date(todayL.getTime() - 29 * 86400000);
 
@@ -226,7 +224,7 @@ router.get(
       const dailyTrend: { date: string; linkCount: number; reportCount: number }[] = [];
       const dayCount = Math.ceil(rangeMs / 86400000) + 1;
       for (let i = 0; i < dayCount; i++) {
-        const d = new Date(start.getTime() + i * 86400000).toISOString().split("T")[0];
+        const d = dateToIST(new Date(start.getTime() + i * 86400000));
         dailyTrend.push({ date: d, ...(dailyMap[d] || { linkCount: 0, reportCount: 0 }) });
       }
 
@@ -235,7 +233,7 @@ router.get(
       for (const { date, linkCount } of dailyTrend) {
         const d = new Date(date);
         const dayOfWeek = d.getUTCDay();
-        const weekStart = new Date(d.getTime() - dayOfWeek * 86400000).toISOString().split("T")[0];
+        const weekStart = dateToIST(new Date(d.getTime() - dayOfWeek * 86400000));
         weeklyMap[weekStart] = (weeklyMap[weekStart] || 0) + linkCount;
       }
       const weeklyTrend = Object.entries(weeklyMap)

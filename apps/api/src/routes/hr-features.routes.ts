@@ -1,6 +1,7 @@
 import { Router, Request, Response, NextFunction } from "express";
 import { authenticateHr } from "../middleware/hr-auth";
 import { success } from "../utils/response";
+import { todayIST, istMidnight } from "@dashmani/shared";
 import https from "https";
 import http from "http";
 import * as salaryService from "../services/salary-slip.service";
@@ -355,23 +356,25 @@ router.get("/hr/attendance", authenticateHr, async (req: Request, res: Response,
       return success(res, { isEmployee: false });
     }
 
-    const now = new Date();
-    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const todayStr = todayIST();
+    const [y, m] = todayStr.split("-").map(Number);
+    const startOfMonthStr = `${y}-${String(m).padStart(2, "0")}-01`;
     const result = await attendanceService.getAttendanceRecords({
       employeeId: req.user!.userId,
-      startDate: startOfMonth.toISOString().slice(0, 10),
-      endDate: now.toISOString().slice(0, 10),
+      startDate: startOfMonthStr,
+      endDate: todayStr,
       limit: 100,
     });
 
     const records = result.items;
+    const todayMid = istMidnight(todayStr);
+    const startOfMonthDate = istMidnight(startOfMonthStr);
     const totalWorkdays = (() => {
       let count = 0;
-      const d = new Date(startOfMonth);
-      while (d <= now) {
-        const day = d.getDay();
-        if (day !== 0) count++; // Sunday is the only weekend day
-        d.setDate(d.getDate() + 1);
+      const d = new Date(startOfMonthDate);
+      while (d <= todayMid) {
+        if (d.getUTCDay() !== 0) count++; // Sunday is the only weekend day
+        d.setUTCDate(d.getUTCDate() + 1);
       }
       return count;
     })();
@@ -669,10 +672,8 @@ router.post("/hr/poa", authenticateHr, async (req: Request, res: Response, next:
   try {
     const { date, tasks, achievements, blockers, tomorrowPlan } = req.body;
     if (!tasks) return res.status(400).json({ error: "Tasks field is required" });
-    const poaDate = new Date(date || new Date());
-    poaDate.setHours(0, 0, 0, 0);
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    const poaDate = istMidnight(date || todayIST());
+    const today = istMidnight(todayIST());
     if (poaDate > today) return res.status(400).json({ success: false, error: { message: "Cannot submit a POA for a future date" } });
     // Upsert: one entry per employee per day
     const poa = await prisma.dailyPOA.upsert({

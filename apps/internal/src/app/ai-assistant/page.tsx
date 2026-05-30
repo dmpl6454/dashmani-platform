@@ -205,7 +205,7 @@ function OfferLetterGenerator({ employees, loading, setLoading, result, setResul
         method: "POST",
         body: JSON.stringify({
           employeeId: form.employeeId,
-          offerDate: new Date().toISOString().split("T")[0],
+          offerDate: (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; })(),
           joiningDate: form.joiningDate,
           designation: form.designation,
           department: form.department || undefined,
@@ -302,7 +302,7 @@ function AppointmentGenerator({ employees, loading, setLoading, result, setResul
         body: JSON.stringify({
           employeeId: form.employeeId,
           letterType: "APPOINTMENT",
-          offerDate: new Date().toISOString().split("T")[0],
+          offerDate: (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; })(),
           joiningDate: form.joiningDate,
           designation: form.designation,
           department: form.department || undefined,

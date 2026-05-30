@@ -58,6 +58,8 @@ model User {
   assignedDevices    AssignedDevice[]    @relation("DeviceEmployee")
   dailyPOAs          DailyPOA[]          @relation("POAEmployee")
   complaints         Complaint[]         @relation("ComplaintEmployee")
+  linkMetrics        LinkMetric[]
+  reportDrafts       ReportDraft[]
 
   @@map("users")
 }
@@ -686,6 +688,7 @@ model ReportLink {
 
   report       DailyReport   @relation(fields: [reportId], references: [id], onDelete: Cascade)
   account      SocialAccount @relation(fields: [accountId], references: [id])
+  metrics      LinkMetric[]
 
   @@index([reportId])
   @@index([accountId])
@@ -1276,4 +1279,62 @@ model SystemSetting {
   updatedAt DateTime @updatedAt @map("updated_at")
 
   @@map("system_settings")
+}
+
+// ============ REPORT DRAFT ============
+
+// Stores the in-progress (unsaved) daily report for each employee.
+// Keyed on (employeeId, dateKey) where dateKey is "YYYY-MM-DD" in IST.
+// Cleared on successful submit. Independent of daily_reports / report_links —
+// touching this table never affects submitted data.
+model ReportDraft {
+  id          String   @id @default(uuid())
+  employeeId  String   @map("employee_id")
+  dateKey     String   @map("date_key")   // "YYYY-MM-DD" in IST
+  notes       String?  @db.Text
+  linksJson   String   @db.Text @map("links_json") // JSON array of LinkEntry[]
+  savedAt     DateTime @default(now()) @map("saved_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  employee    User @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@unique([employeeId, dateKey])
+  @@index([employeeId, dateKey])
+  @@map("report_drafts")
+}
+
+// ============ SOCIAL INSIGHTS ============
+
+model LinkMetric {
+  id            String   @id @default(uuid())
+
+  // Nullable FK — survives ReportLink delete-and-recreate on resubmit (SetNull).
+  // Re-heal query in cron re-links orphaned snapshots to new ReportLink rows.
+  linkId        String?  @map("link_id")
+
+  // Denormalised so analytics work even when linkId is null
+  employeeId    String   @map("employee_id")
+  reportDate    DateTime @db.Date @map("report_date")
+  url           String
+  urlNormalized String   @map("url_normalized")
+  platform      String
+  videoId       String?  @map("video_id")
+
+  // Snapshot values
+  fetchedAt     DateTime @default(now()) @map("fetched_at")
+  status        String   // "ok" | "not_found" | "private" | "error"
+  views         Int?
+  likes         Int?
+  comments      Int?
+  shares        Int?
+  errorMessage  String?  @map("error_message")
+
+  link          ReportLink? @relation(fields: [linkId], references: [id], onDelete: SetNull)
+  employee      User        @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([employeeId, reportDate])
+  @@index([urlNormalized])
+  @@index([linkId])
+  @@index([platform, fetchedAt])
+  @@map("link_metrics")
 }

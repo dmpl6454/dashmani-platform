@@ -1,6 +1,7 @@
 import "./env";
 import app from "./app";
 import { syncAllFollowerCounts } from "./services/follower-sync.service";
+import { runSocialInsightsRefresh } from "./cron/social-insights.cron";
 
 const PORT = process.env.PORT || 4000;
 
@@ -13,4 +14,11 @@ app.listen(PORT, () => {
   };
   runFollowerSync();
   setInterval(runFollowerSync, 60 * 60 * 1000);
+
+  // Run social insights refresh once on startup, then every 6 hours
+  const runInsights = () => {
+    runSocialInsightsRefresh().catch((err) => console.error("[social-insights] error:", err));
+  };
+  runInsights();
+  setInterval(runInsights, 6 * 60 * 60 * 1000);
 });

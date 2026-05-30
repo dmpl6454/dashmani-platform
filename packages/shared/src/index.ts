@@ -25,6 +25,8 @@ export * from "./utils/pluralize";
 export * from "./utils/date";
 export * from "./utils/titleCase";
 export * from "./utils/levenshtein";
+export * from "./utils/social-insights";
+export * from "./utils/youtube";
 
 // Validators
 export * as authValidators from "./validators/auth";

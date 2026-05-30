@@ -68,3 +68,27 @@ export function useLinksAllAccounts(startDate?: string, endDate?: string) {
     dedupingInterval: 120_000,
   });
 }
+
+export function useInsightsSummary(startDate?: string, endDate?: string, employeeId?: string) {
+  const params = new URLSearchParams();
+  if (startDate) params.set("startDate", startDate);
+  if (endDate) params.set("endDate", endDate);
+  if (employeeId) params.set("employeeId", employeeId);
+  const query = params.toString() ? `?${params.toString()}` : "";
+  return useSWR(`/admin/reports/insights-summary${query}`, (url) => apiFetch(url), {
+    revalidateOnFocus: false,
+    dedupingInterval: 300_000,
+  });
+}
+
+export function useTopYouTubeLinks(startDate?: string, endDate?: string, limit = 20) {
+  const params = new URLSearchParams();
+  if (startDate) params.set("startDate", startDate);
+  if (endDate) params.set("endDate", endDate);
+  params.set("limit", String(limit));
+  const query = `?${params.toString()}`;
+  return useSWR(`/admin/reports/top-youtube-links${query}`, (url) => apiFetch(url), {
+    revalidateOnFocus: false,
+    dedupingInterval: 300_000,
+  });
+}

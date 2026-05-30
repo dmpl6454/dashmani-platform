@@ -193,4 +193,87 @@ router.get("/hr/team", authenticateHr, async (req: Request, res: Response, next:
   }
 });
 
+// ===== Report Draft =====
+// GET /hr/reports/draft?date=YYYY-MM-DD — fetch today's draft (if any)
+// Returns null data when no draft exists — never 404.
+router.get("/hr/reports/draft", authenticateHr, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const d = new Date();
+    const dateKey = req.query.date as string
+      || `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+    const draft = await prisma.reportDraft.findUnique({
+      where: { employeeId_dateKey: { employeeId: req.user!.userId, dateKey } },
+      select: { notes: true, linksJson: true, savedAt: true },
+    });
+    if (!draft) return success(res, null);
+    return success(res, {
+      notes: draft.notes ?? "",
+      links: JSON.parse(draft.linksJson),
+      savedAt: draft.savedAt,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// PUT /hr/reports/draft — upsert today's draft
+// Body: { date: "YYYY-MM-DD", notes: string, links: LinkEntry[] }
+// Idempotent — safe to call on every keystroke (after debounce).
+// Clearing the draft: send links: [] and notes: "".
+router.put("/hr/reports/draft", authenticateHr, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { date, notes, links } = req.body;
+    if (!date || !Array.isArray(links)) {
+      return res.status(400).json({ success: false, error: "date and links are required" });
+    }
+    const draft = await prisma.reportDraft.upsert({
+      where: { employeeId_dateKey: { employeeId: req.user!.userId, dateKey: date } },
+      create: {
+        employeeId: req.user!.userId,
+        dateKey: date,
+        notes: notes ?? "",
+        linksJson: JSON.stringify(links),
+      },
+      update: {
+        notes: notes ?? "",
+        linksJson: JSON.stringify(links),
+        savedAt: new Date(),
+      },
+      select: { savedAt: true },
+    });
+    return success(res, { savedAt: draft.savedAt });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// DELETE /hr/reports/draft?date=YYYY-MM-DD — explicitly clear a draft
+router.delete("/hr/reports/draft", authenticateHr, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const d = new Date();
+    const dateKey = req.query.date as string
+      || `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+    await prisma.reportDraft.deleteMany({
+      where: { employeeId: req.user!.userId, dateKey },
+    });
+    return success(res, null);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /hr/reports/my-link-insights?days=30 — employee's own YouTube insights
+// Returns list of links submitted in the window with their latest metric snapshot.
+// Only returns YouTube links (or links on supported platforms). Used by HR report page insights panel.
+router.get("/hr/reports/my-link-insights", authenticateHr, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const days = Math.min(Number(req.query.days) || 30, 90);
+    const { getMyLinkInsights } = await import("../services/social-insights.service");
+    const insights = await getMyLinkInsights(req.user!.userId, days);
+    return success(res, insights);
+  } catch (err) {
+    next(err);
+  }
+});
+
 export default router;

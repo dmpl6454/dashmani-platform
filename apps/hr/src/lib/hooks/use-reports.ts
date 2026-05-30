@@ -16,3 +16,11 @@ export function useMyReports(startDate?: string, endDate?: string) {
   if (query) path += `?${query}`;
   return useSWR(path, (p) => apiFetch<any>(p));
 }
+
+export function useMyLinkInsights(days = 30) {
+  return useSWR(
+    `/hr/reports/my-link-insights?days=${days}`,
+    (path) => apiFetch<any>(path),
+    { revalidateOnFocus: false, dedupingInterval: 300_000 }
+  );
+}

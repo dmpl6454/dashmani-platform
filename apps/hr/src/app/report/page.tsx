@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import useSWR from "swr";
 import {
@@ -9,7 +9,8 @@ import {
 } from "lucide-react";
 import { apiFetch, ApiError } from "@/lib/api";
 import { useAssignedAccounts } from "@/lib/hooks/use-accounts";
-import { useTodayReport } from "@/lib/hooks/use-reports";
+import { useTodayReport, useMyLinkInsights } from "@/lib/hooks/use-reports";
+import { InsightBadge } from "@/components/insight-badge";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -201,9 +202,23 @@ export default function ReportPage() {
   const router = useRouter();
   const { data: accountsData } = useAssignedAccounts();
   const { data: todayData, mutate: mutateToday } = useTodayReport();
+  const { data: myInsightsData, isLoading: myInsightsLoading } = useMyLinkInsights(30);
 
   const accounts = (accountsData as any)?.data || [];
   const existing = (todayData as any)?.data;
+
+  // ── Draft auto-save state ──────────────────────────────────────────────────
+  // "draft-pending" → user made a change, debounce timer running
+  // "saving"        → PUT /hr/reports/draft in flight
+  // "saved"         → last save succeeded (shows "Draft saved" indicator)
+  // "idle"          → no unsaved changes (on load, or after restore)
+  const [draftStatus, setDraftStatus] = useState<"idle" | "draft-pending" | "saving" | "saved">("idle");
+  const [draftRestored, setDraftRestored] = useState(false); // toast flag
+  const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Track whether draft restore has run (once per mount)
+  const draftRestoredRef = useRef(false);
+  // Track whether todayData has loaded (null = no report, object = has report)
+  const todayDataLoadedRef = useRef(false);
 
   const [links, setLinks] = useState<LinkEntry[]>([emptyLink()]);
   const [notes, setNotes] = useState("");
@@ -245,6 +260,8 @@ export default function ReportPage() {
   useEffect(() => {
     if (existing && !prefilled) {
       setPrefilled(true);
+      // Submitted report exists — discard any draft and use the real data
+      draftRestoredRef.current = true; // block draft restore from running
       setNotes(existing.notes || "");
       if (existing.links?.length > 0) {
         setLinks(existing.links.map((l: any) => ({
@@ -263,6 +280,74 @@ export default function ReportPage() {
       }
     }
   }, [existing, prefilled]);
+
+  // ── Draft restore: runs once todayData has resolved AND no submitted report exists ──
+  useEffect(() => {
+    // Wait for todayData to finish loading (it starts as undefined, resolves to data or null)
+    if (todayData === undefined) return;
+    // If a submitted report exists, skip draft restore entirely
+    if (existing) { draftRestoredRef.current = true; return; }
+    // Only run once per mount
+    if (draftRestoredRef.current) return;
+    draftRestoredRef.current = true;
+
+    const d = new Date();
+    const dateKey = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+
+    apiFetch<any>(`/hr/reports/draft?date=${dateKey}`)
+      .then((res) => {
+        const draft = res?.data;
+        if (!draft || !Array.isArray(draft.links) || draft.links.length === 0) return;
+        // Restore draft — replaces the initial empty row
+        setLinks(draft.links);
+        setNotes(draft.notes || "");
+        setDraftRestored(true);
+        setDraftStatus("idle");
+        // Dismiss the "Draft restored" toast after 5s
+        setTimeout(() => setDraftRestored(false), 5000);
+      })
+      .catch(() => { /* silently ignore — draft fetch failure is not critical */ });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [todayData]);
+
+  // ── Auto-save: debounced 3s after any links/notes change ──
+  // Only fires when there is no submitted report for today.
+  const saveDraft = useCallback(async (currentLinks: LinkEntry[], currentNotes: string) => {
+    if (existing) return; // submitted report exists — no need to draft
+    const d = new Date();
+    const dateKey = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+    setDraftStatus("saving");
+    try {
+      await apiFetch("/hr/reports/draft", {
+        method: "PUT",
+        body: JSON.stringify({ date: dateKey, notes: currentNotes, links: currentLinks }),
+      });
+      setDraftStatus("saved");
+    } catch {
+      setDraftStatus("idle"); // silently fall back — auto-save failure is not critical
+    }
+  }, [existing]);
+
+  // Trigger auto-save debounced 3s after any links or notes change.
+  // Using refs to capture latest values so the timer always gets fresh data.
+  const linksRef = useRef(links);
+  const notesRef = useRef(notes);
+  useEffect(() => { linksRef.current = links; }, [links]);
+  useEffect(() => { notesRef.current = notes; }, [notes]);
+
+  useEffect(() => {
+    // Don't auto-save while loading, before restore has run, or when submitted
+    if (existing || !draftRestoredRef.current) return;
+    setDraftStatus("draft-pending");
+    if (draftTimerRef.current) clearTimeout(draftTimerRef.current);
+    draftTimerRef.current = setTimeout(() => {
+      saveDraft(linksRef.current, notesRef.current);
+    }, 3000);
+    return () => {
+      if (draftTimerRef.current) clearTimeout(draftTimerRef.current);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [links, notes]);
 
   // ── Auto-dedupe: in-submission (keep first occurrence, remove subsequent) ──
   // Runs after every links change. Covers both Smart Paste and manual URL typing.
@@ -461,8 +546,16 @@ export default function ReportPage() {
       // Re-arm cross-day dedupe so the refreshed URL map is applied on next paste
       rearmCrossDay();
       setRowErrors({});
+
+      // Clear draft — submitted data now lives in daily_reports, not the draft store.
+      // Fire-and-forget: if this fails, the draft will just be stale — no data loss.
+      apiFetch("/hr/reports/draft", { method: "DELETE" })
+        .catch(() => { /* non-critical */ });
+      setDraftStatus("idle");
+
       if (existing) {
         // Update: stay on page so user can see what they just saved in the panel
+        draftRestoredRef.current = true; // block draft restore on re-render
         setPrefilled(false); // allow the prefill effect to re-run with fresh data
       } else {
         // First submit: go to dashboard
@@ -525,6 +618,17 @@ export default function ReportPage() {
                 {scheduledCount} scheduled
               </span>
             )}
+            {/* Draft auto-save status indicator — only shown when no submitted report */}
+            {!existing && draftStatus === "saving" && (
+              <span className="inline-flex items-center gap-1 text-[11px] text-[#B0B0B0]">
+                <Loader2 className="h-3 w-3 animate-spin" /> Saving…
+              </span>
+            )}
+            {!existing && draftStatus === "saved" && (
+              <span className="inline-flex items-center gap-1 text-[11px] text-emerald-600">
+                <CheckCircle2 className="h-3 w-3" /> Draft saved
+              </span>
+            )}
           </div>
         </div>
       </div>
@@ -547,6 +651,16 @@ export default function ReportPage() {
                   : dedupeToast.days?.join(", ") ?? "a previous date"}.
               </>
             )}
+          </p>
+        </div>
+      )}
+
+      {/* Draft restored toast */}
+      {draftRestored && (
+        <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-3.5 flex items-start gap-2.5 crx-animate-scale">
+          <CheckCircle2 className="h-4 w-4 text-indigo-600 mt-0.5 flex-shrink-0" />
+          <p className="text-sm text-indigo-700">
+            <span className="font-semibold">Draft restored</span> — your unsaved links have been recovered.
           </p>
         </div>
       )}
@@ -861,6 +975,45 @@ export default function ReportPage() {
           </button>
         </div>
       </form>
+
+      {/* ─── YouTube Insights Panel ─────────────────────────────────────────────
+          Sits OUTSIDE the form. Never touches Smart Paste / dedupe / validation.
+          Hidden entirely when the employee has no YouTube links in the last 30 days. */}
+      {!myInsightsLoading && (() => {
+        const allInsights: any[] = (myInsightsData as any)?.data ?? [];
+        const youtubeLinks = allInsights.filter((l: any) => l.platform === "youtube" && l.latest);
+        if (youtubeLinks.length === 0) return null;
+        return (
+          <section className="mt-8 bg-white border border-[#E8E0D0] rounded-2xl overflow-hidden">
+            <div className="px-6 py-4 border-b border-[#F0EAD8] flex items-start justify-between">
+              <div>
+                <h3 className="text-sm font-semibold text-[#1A1A1A]">Your YouTube insights</h3>
+                <p className="text-[11px] text-[#7A7A7A] mt-0.5">
+                  Insights are currently available for YouTube.
+                  Insights not yet supported for Instagram and Facebook.
+                </p>
+              </div>
+              <span className="text-[10px] text-[#B0B0B0] shrink-0 mt-0.5">Updates every 6h</span>
+            </div>
+            <ul className="divide-y divide-[#F5F0E8]">
+              {youtubeLinks.map((link: any, i: number) => (
+                <li key={`${link.linkId ?? link.url}-${i}`} className="px-6 py-3 flex items-center gap-3">
+                  <a
+                    href={link.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-[#1A1A1A] hover:underline truncate flex-1 min-w-0"
+                    title={link.url}
+                  >
+                    {link.url}
+                  </a>
+                  <InsightBadge platform={link.platform} metric={link.latest} />
+                </li>
+              ))}
+            </ul>
+          </section>
+        );
+      })()}
     </div>
   );
 }

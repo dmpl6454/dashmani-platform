@@ -317,6 +317,46 @@ router.get(
   },
 );
 
+// ===== Social Insights — MUST be before /:reportId and links/:linkId =====
+
+// GET /admin/reports/insights-summary?startDate&endDate&employeeId — aggregated engagement metrics
+router.get(
+  "/admin/reports/insights-summary",
+  authenticate,
+  requirePermission("reports", "view"),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { startDate, endDate, employeeId } = req.query as Record<string, string | undefined>;
+      const { getInsightsSummary } = await import("../services/social-insights.service");
+      const summary = await getInsightsSummary({ startDate, endDate, employeeId });
+      return success(res, summary);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// GET /admin/reports/top-youtube-links?startDate&endDate&limit — top YouTube links by views
+router.get(
+  "/admin/reports/top-youtube-links",
+  authenticate,
+  requirePermission("reports", "view"),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { startDate, endDate, limit } = req.query as Record<string, string | undefined>;
+      const { getTopYouTubeLinks } = await import("../services/social-insights.service");
+      const links = await getTopYouTubeLinks({
+        startDate,
+        endDate,
+        limit: limit ? parseInt(limit, 10) : 20,
+      });
+      return success(res, links);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
 // GET /admin/reports/:reportId
 router.get(
   "/admin/reports/:reportId",
@@ -326,6 +366,22 @@ router.get(
     try {
       const report = await getReportById(req.params.reportId);
       return success(res, report);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// GET /admin/reports/links/:linkId/metrics — MUST be before DELETE links/:linkId
+router.get(
+  "/admin/reports/links/:linkId/metrics",
+  authenticate,
+  requirePermission("reports", "view"),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { getLinkMetricsHistory } = await import("../services/social-insights.service");
+      const history = await getLinkMetricsHistory(req.params.linkId);
+      return success(res, history);
     } catch (err) {
       next(err);
     }

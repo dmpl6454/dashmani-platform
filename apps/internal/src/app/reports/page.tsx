@@ -1,8 +1,9 @@
 "use client";
 import { memo, useCallback, useState, useEffect } from "react";
 import Link from "next/link";
-import { Users, FileText, Link2, Calendar, Filter, X, TrendingUp, Trophy, Trash2, AlertTriangle, BarChart2, ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react";
-import { useAdminReports, useReportSummary } from "@/lib/hooks/use-reports";
+import { Users, FileText, Link2, Calendar, Filter, X, TrendingUp, Trophy, Trash2, AlertTriangle, BarChart2, ArrowUpDown, ArrowUp, ArrowDown, Eye } from "lucide-react";
+import { useTopYouTubeLinks } from "@/lib/hooks/use-reports";
+import { useAdminReports, useReportSummary, useInsightsSummary } from "@/lib/hooks/use-reports";
 import { useEmployees } from "@/lib/hooks/use-employees";
 import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
@@ -278,6 +279,8 @@ export default function ReportsPage() {
 
   const { data: summaryData, isLoading: summaryLoading, mutate: mutateSummary } = useReportSummary(startDate, endDate);
   const { data: reportsData, isLoading: reportsLoading, mutate: mutateReports } = useAdminReports({ employeeId, startDate, endDate });
+  const { data: insightsData, isLoading: insightsLoading } = useInsightsSummary(startDate, endDate, employeeId || undefined);
+  const { data: topYouTubeData, isLoading: topYouTubeLoading } = useTopYouTubeLinks(startDate, endDate, 10);
   const { data: employeesData } = useEmployees();
 
   const summary = (summaryData as any)?.data;
@@ -349,11 +352,31 @@ export default function ReportsPage() {
     ? { title: "Current Streak", value: `${selectedEmployee?.currentStreak ?? 0} 🔥`, icon: Users, iconColor: "text-orange-600", bgColor: "bg-orange-50 shadow-[0_2px_8px_rgba(234,88,12,0.12)]", sub: selectedEmployeeName }
     : { title: "Employees Reporting", value: summary?.employeesReporting ?? 0, icon: Users, iconColor: "text-blue-600", bgColor: "bg-blue-50 shadow-[0_2px_8px_rgba(59,130,246,0.12)]", sub: "submitted reports" };
 
+  // Engagement insight card — scopes to selected employee or whole team, follows window pill
+  const insights = (insightsData as any)?.data;
+  const engagementViews = insights?.totalViews ?? 0;
+  const engagementLikes = insights?.totalLikes ?? 0;
+  const engagementComments = insights?.totalComments ?? 0;
+  const hasInsights = !insightsLoading && engagementViews > 0;
+  function fmtCompact(n: number): string {
+    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+    if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+    return String(n);
+  }
+
   const statCards = [
     firstCard,
     { title: "Total Reports", value: viewTotalReports, icon: FileText, iconColor: "text-purple-600", bgColor: "bg-purple-50 shadow-[0_2px_8px_rgba(147,51,234,0.12)]", sub: windowLabel },
     { title: "Total Links", value: viewTotalLinks, icon: Link2, iconColor: "text-emerald-600", bgColor: "bg-emerald-50 shadow-[0_2px_8px_rgba(16,185,129,0.12)]", sub: windowLabel },
     { title: "Avg Links/Day", value: avgLinksInWindow, icon: TrendingUp, iconColor: "text-amber-600", bgColor: "bg-amber-50 shadow-[0_2px_8px_rgba(245,158,11,0.12)]", sub: windowLabel, clickable: true },
+    {
+      title: "YouTube Views",
+      value: insightsLoading ? "—" : hasInsights ? fmtCompact(engagementViews) : "—",
+      icon: Eye,
+      iconColor: "text-rose-600",
+      bgColor: "bg-rose-50 shadow-[0_2px_8px_rgba(244,63,94,0.12)]",
+      sub: hasInsights ? `${fmtCompact(engagementLikes)} likes · ${fmtCompact(engagementComments)} comments` : "Insights available for YouTube only",
+    },
   ];
 
   return (
@@ -425,7 +448,7 @@ export default function ReportsPage() {
       </div>
 
       {/* Stat Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         {statCards.map((card: any) => {
           const Icon = card.icon;
           const isClickable = card.clickable && viewTotalLinks > 0;
@@ -498,6 +521,45 @@ export default function ReportsPage() {
             })}
         </div>
       )}
+
+      {/* Top YouTube Links — sorted by views, follows window pill */}
+      {(() => {
+        const topLinks = (topYouTubeData as any)?.data ?? [];
+        if (topYouTubeLoading || topLinks.length === 0) return null;
+        return (
+          <div className="bg-white rounded-2xl border border-[#E8E0D0] shadow-[0_2px_16px_rgba(0,0,0,0.05)]">
+            <div className="px-6 py-4 border-b border-[#F0EAD8] flex items-center gap-2">
+              <div className="h-8 w-8 rounded-lg bg-red-50 flex items-center justify-center">
+                <Eye className="h-4 w-4 text-red-500" />
+              </div>
+              <h3 className="font-serif text-[#1A1A1A] font-medium">Top YouTube Links</h3>
+              <span className="ml-1 text-xs text-[#B0B0B0]">· {windowLabel}</span>
+              <span className="ml-auto text-[10px] text-[#B0B0B0]">Insights available for YouTube · updates every 6h</span>
+            </div>
+            <ul className="divide-y divide-[#F5F0E8]">
+              {topLinks.map((link: any, i: number) => (
+                <li key={`${link.linkId ?? link.url}-${i}`} className="px-6 py-3 flex items-center gap-3">
+                  <span className="text-xs font-medium text-[#B0B0B0] w-5 shrink-0">{i + 1}</span>
+                  <a
+                    href={link.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-[#1A1A1A] hover:underline truncate flex-1 min-w-0"
+                    title={link.url}
+                  >
+                    {link.url}
+                  </a>
+                  <span className="text-xs text-[#7A7A7A] shrink-0">{link.employeeName}</span>
+                  <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-rose-700 bg-rose-50 rounded-full px-2 py-0.5 shrink-0">
+                    <Eye className="h-2.5 w-2.5" />
+                    {link.views >= 1_000_000 ? `${(link.views / 1_000_000).toFixed(1)}M` : link.views >= 1_000 ? `${(link.views / 1_000).toFixed(1)}K` : link.views}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        );
+      })()}
 
       {/* Summary Table */}
       {!employeeId && (

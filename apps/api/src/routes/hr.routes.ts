@@ -9,6 +9,7 @@ import {
   getTodayReport,
 } from "../services/daily-report.service";
 import { prisma } from "@dashmani/db";
+import { todayIST, istMidnight } from "@dashmani/shared";
 import {
   getGrowthForEmployee,
   getAccountGrowth,
@@ -77,10 +78,8 @@ router.get("/hr/reports/today", authenticateHr, async (req: Request, res: Respon
 router.get("/hr/reports/my-link-urls", authenticateHr, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const days = Math.min(Number(req.query.days) || 60, 180);
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const since = new Date(today);
-    since.setDate(since.getDate() - days);
+    const today = istMidnight(todayIST());
+    const since = new Date(today.getTime() - days * 86400000);
 
     const rows = await prisma.reportLink.findMany({
       where: {

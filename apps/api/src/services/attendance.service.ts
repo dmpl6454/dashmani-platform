@@ -1,9 +1,9 @@
 import { prisma } from "@dashmani/db";
 import { AppError } from "../middleware/error-handler";
+import { todayIST, istMidnight } from "@dashmani/shared";
 
 export async function checkIn(employeeId: string, ipAddress?: string) {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  const today = istMidnight(todayIST());
 
   const existing = await prisma.attendance.findUnique({
     where: { employeeId_date: { employeeId, date: today } },
@@ -14,9 +14,8 @@ export async function checkIn(employeeId: string, ipAddress?: string) {
   }
 
   const now = new Date();
-  // Late if after 10:00 AM (configurable later via Settings)
-  const lateThreshold = new Date(today);
-  lateThreshold.setHours(10, 0, 0, 0);
+  // Late if after 10:00 AM IST
+  const lateThreshold = new Date(today.getTime() + 10 * 60 * 60 * 1000);
   const status = now > lateThreshold ? "LATE" : "PRESENT";
 
   if (existing) {
@@ -38,8 +37,7 @@ export async function checkIn(employeeId: string, ipAddress?: string) {
 }
 
 export async function checkOut(employeeId: string) {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  const today = istMidnight(todayIST());
 
   const record = await prisma.attendance.findUnique({
     where: { employeeId_date: { employeeId, date: today } },

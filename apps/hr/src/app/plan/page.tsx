@@ -5,7 +5,11 @@ import { Topstrip } from "@/components/portal-shell";
 import { ClipboardList, Save, ChevronLeft, ChevronRight, Check } from "lucide-react";
 
 function formatDate(d: Date) {
-  return d.toISOString().split("T")[0];
+  // Use local date parts so the date is correct in IST regardless of UTC offset
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }
 
 function displayDate(d: Date) {

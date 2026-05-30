@@ -47,8 +47,11 @@ export default function AttendancePage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
-  const startDate = useMemo(() => new Date(viewYear, viewMonth, 1).toISOString().split("T")[0], [viewYear, viewMonth]);
-  const endDate = useMemo(() => new Date(viewYear, viewMonth + 1, 0).toISOString().split("T")[0], [viewYear, viewMonth]);
+  const startDate = useMemo(() => `${viewYear}-${String(viewMonth + 1).padStart(2, "0")}-01`, [viewYear, viewMonth]);
+  const endDate = useMemo(() => {
+    const lastDay = new Date(viewYear, viewMonth + 1, 0).getDate();
+    return `${viewYear}-${String(viewMonth + 1).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+  }, [viewYear, viewMonth]);
 
   const { data, isLoading, mutate } = useAttendance({ startDate, endDate, employeeId: employeeFilter || undefined });
   const records = (data as any)?.data || [];

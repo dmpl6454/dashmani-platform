@@ -1,5 +1,6 @@
 import { prisma } from "@dashmani/db";
 import { AppError } from "../middleware/error-handler";
+import { todayIST, istMidnight } from "@dashmani/shared";
 
 export interface GrowthSnapshotInput {
   followerCount: number;
@@ -9,8 +10,7 @@ export interface GrowthSnapshotInput {
 }
 
 export async function recordGrowthSnapshot(accountId: string, data: GrowthSnapshotInput) {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  const today = istMidnight(todayIST());
 
   // Upsert snapshot for today
   const existing = await prisma.accountGrowthSnapshot.findUnique({
@@ -42,9 +42,7 @@ export async function recordGrowthSnapshot(accountId: string, data: GrowthSnapsh
 }
 
 export async function getAccountGrowth(accountId: string, days = 30) {
-  const since = new Date();
-  since.setDate(since.getDate() - days);
-  since.setHours(0, 0, 0, 0);
+  const since = new Date(istMidnight(todayIST()).getTime() - days * 86400000);
 
   const account = await prisma.socialAccount.findUnique({
     where: { id: accountId },

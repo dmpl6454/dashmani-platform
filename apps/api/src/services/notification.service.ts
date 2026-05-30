@@ -1,6 +1,7 @@
 import { prisma } from "@dashmani/db";
 import type { NotificationType } from "@dashmani/db";
 import { NOTIFICATION_AUDIENCE } from "./notification-routing";
+import { todayIST, istMidnight } from "@dashmani/shared";
 
 /**
  * Route a notification to the correct audience(s) based on type.
@@ -119,8 +120,7 @@ export async function markAllAsRead(userId: string) {
 }
 
 export async function sendReportReminders() {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  const today = istMidnight(todayIST());
 
   const employeesWithAssignments = await prisma.accountAssignment.findMany({
     where: { unassignedAt: null },
@@ -143,7 +143,7 @@ export async function sendReportReminders() {
         type: "REPORT_REMINDER" as const,
         title: "Daily Report Reminder",
         message: "You haven't submitted today's daily report yet.",
-        metadata: { date: today.toISOString().split("T")[0] },
+        metadata: { date: todayIST() },
       })),
     });
   }

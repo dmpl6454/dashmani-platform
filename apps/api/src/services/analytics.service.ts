@@ -1,18 +1,17 @@
 import { prisma } from "@dashmani/db";
 import { countTeams } from "./team.service";
+import { todayIST, istMidnight, dateToIST } from "@dashmani/shared";
 
 // ===== Date helpers =====
-// @db.Date columns are stored as UTC-midnight timestamps. Daily reports are
-// written with `new Date("YYYY-MM-DD")` which parses as UTC midnight, so all
-// boundary computations here must also be UTC midnight to match.
+// All "today" computations use IST (UTC+5:30) so they remain correct between
+// 12:00 AM and 5:30 AM IST (when UTC has already flipped to the next calendar day).
 function startOfMonth(): Date {
-  const now = new Date();
-  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+  const [y, m] = todayIST().split("-").map(Number);
+  return istMidnight(`${y}-${String(m).padStart(2, "0")}-01`);
 }
 
 function todayDate(): Date {
-  const now = new Date();
-  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  return istMidnight(todayIST());
 }
 
 // ===== Overview Stats =====
@@ -93,12 +92,12 @@ export async function getOverviewStats(linkStartDate?: string, linkEndDate?: str
   // Build trend with zeroes for missing days
   const trendMap: Record<string, number> = {};
   for (const r of trendReports) {
-    const d = r.date instanceof Date ? r.date.toISOString().split("T")[0] : String(r.date);
+    const d = r.date instanceof Date ? dateToIST(r.date) : String(r.date);
     trendMap[d] = (trendMap[d] || 0) + r._count.links;
   }
   const linksTrend: { date: string; count: number }[] = [];
   for (let i = trendDays - 1; i >= 0; i--) {
-    const d = new Date(rangeEnd.getTime() - i * 86400000).toISOString().split("T")[0];
+    const d = dateToIST(new Date(rangeEnd.getTime() - i * 86400000));
     linksTrend.push({ date: d, count: trendMap[d] || 0 });
   }
 
@@ -131,8 +130,8 @@ export async function getOverviewStats(linkStartDate?: string, linkEndDate?: str
     submittedInRange: isCustomRange ? submittedInRangeCount : null,
     submissionRateToday,
     linksTrend,
-    rangeStart: rangeStart.toISOString().split("T")[0],
-    rangeEnd: rangeEnd.toISOString().split("T")[0],
+    rangeStart: dateToIST(rangeStart),
+    rangeEnd: dateToIST(rangeEnd),
     isCustomRange,
   };
 }
@@ -451,7 +450,7 @@ export async function getAttendanceAnalytics(params?: { startDate?: string; endD
   const dateMap: Record<string, { present: number; absent: number; late: number; leave: number }> = {};
 
   for (const r of dailyRecords) {
-    const dateStr = new Date(r.date).toISOString().split("T")[0];
+    const dateStr = dateToIST(new Date(r.date));
     if (!dateMap[dateStr]) {
       dateMap[dateStr] = { present: 0, absent: 0, late: 0, leave: 0 };
     }
@@ -566,18 +565,15 @@ export async function getClientAnalytics(clientId: string) {
 // ===== Client Content Analytics =====
 
 export async function getClientContentAnalytics(clientId: string) {
-  const now = new Date();
-  const weekStart = new Date(now);
-  weekStart.setDate(now.getDate() - now.getDay()); // start of this week (Sunday)
-  weekStart.setHours(0, 0, 0, 0);
-  const weekEnd = new Date(weekStart);
-  weekEnd.setDate(weekStart.getDate() + 7);
+  const todayMid = todayDate();
+  // getUTCDay() on the IST-midnight date gives us the correct IST day-of-week
+  const weekStart = new Date(todayMid.getTime() - todayMid.getUTCDay() * 86400000);
+  const weekEnd = new Date(weekStart.getTime() + 7 * 86400000);
 
-  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  const thirtyDaysAgo = new Date(todayMid.getTime() - 30 * 86400000);
 
   // Build 5-week cadence buckets (oldest first)
-  const fiveWeeksAgo = new Date(weekStart);
-  fiveWeeksAgo.setDate(weekStart.getDate() - 28);
+  const fiveWeeksAgo = new Date(weekStart.getTime() - 28 * 86400000);
 
   const projectFilter = { project: { clientId } };
 

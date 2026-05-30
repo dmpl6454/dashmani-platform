@@ -21,10 +21,17 @@ const RANGES: { label: string; key: RangeKey }[] = [
   { label: "7 Days", key: "7d" }, { label: "30 Days", key: "30d" }, { label: "All Time", key: "all" },
 ];
 
+function localDateStr(d: Date) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
 function getDateRange(key: RangeKey) {
-  const now = new Date(); const fmt = (d: Date) => d.toISOString().split("T")[0];
-  if (key === "7d")  { const s = new Date(now); s.setDate(now.getDate() - 7);  return { startDate: fmt(s), endDate: fmt(now) }; }
-  if (key === "30d") { const s = new Date(now); s.setDate(now.getDate() - 30); return { startDate: fmt(s), endDate: fmt(now) }; }
+  const now = new Date();
+  if (key === "7d")  { const s = new Date(now); s.setDate(now.getDate() - 7);  return { startDate: localDateStr(s), endDate: localDateStr(now) }; }
+  if (key === "30d") { const s = new Date(now); s.setDate(now.getDate() - 30); return { startDate: localDateStr(s), endDate: localDateStr(now) }; }
   return {};
 }
 

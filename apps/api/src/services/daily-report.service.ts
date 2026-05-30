@@ -78,11 +78,12 @@ const MAX_LINKS_PER_DAY = 500;
 export async function submitDailyReport(
   employeeId: string,
   date: string,
-  links: ReportLinkInput[],
+  linksInput: ReportLinkInput[],
   notes?: string,
   latitude?: number,
   longitude?: number,
 ) {
+  let links = linksInput;
   if (!links || links.length === 0) {
     throw new AppError(400, "VALIDATION_ERROR", "At least one link is required");
   }
@@ -112,7 +113,11 @@ export async function submitDailyReport(
     );
   }
 
-  // Check for duplicate URLs across ALL this employee's previous reports (skip scheduled)
+  // Silently drop links already submitted on a previous day for this employee.
+  // The frontend auto-dedupe does this too, but may miss links pasted after the
+  // initial dedupe pass runs. Server is the safety net — drop rather than hard-block
+  // so the employee's submission always goes through.
+  const reportDate = new Date(date);
   const liveUrls = links.filter((l) => !l.isScheduled && l.url).map((l) => l.url!.trim());
   const existingLinks = liveUrls.length > 0 ? await prisma.reportLink.findMany({
     where: {
@@ -122,22 +127,24 @@ export async function submitDailyReport(
     select: { url: true, report: { select: { date: true } } },
   }) : [];
 
-  const reportDate = new Date(date);
+  const crossDayDupUrls = new Set(
+    existingLinks
+      .filter((el) => dateToIST(new Date(el.report.date)) !== dateToIST(reportDate))
+      .map((el) => el.url?.trim().toLowerCase())
+      .filter((u): u is string => !!u)
+  );
 
-  // Filter out links from today's own report (allow re-submission/update for today)
-  const trueDuplicates = existingLinks.filter((el) => {
-    const elDate = new Date(el.report.date);
-    return dateToIST(elDate) !== dateToIST(reportDate);
-  });
+  if (crossDayDupUrls.size > 0) {
+    // Drop silently — same behaviour as the frontend auto-dedupe
+    links = links.filter((l) => {
+      if (!l.url || l.isScheduled) return true;
+      return !crossDayDupUrls.has(l.url.trim().toLowerCase());
+    });
+  }
 
-  if (trueDuplicates.length > 0) {
-    const dupUrls = [...new Set(trueDuplicates.map((d) => d.url).filter((u): u is string => !!u))];
-    throw new AppError(
-      400,
-      "DUPLICATE_LINKS",
-      `These links were already submitted previously: ${dupUrls.slice(0, 5).join(", ")}${dupUrls.length > 5 ? ` and ${dupUrls.length - 5} more` : ""}`,
-      dupUrls.map((url) => ({ field: "links.url", message: url })),
-    );
+  // After dropping cross-day dupes, re-check we still have at least one link
+  if (links.filter((l) => l.isScheduled || l.url?.trim()).length === 0) {
+    throw new AppError(400, "VALIDATION_ERROR", "At least one link is required");
   }
 
   // Upsert: find existing report for this employee+date or create new

@@ -1,9 +1,7 @@
+// Normalised hosts (www. and m. already stripped)
 const YOUTUBE_HOSTS = new Set([
   "youtube.com",
-  "www.youtube.com",
-  "m.youtube.com",
   "youtu.be",
-  "www.youtu.be",
 ]);
 
 export function extractYouTubeVideoId(rawUrl: string): string | null {
@@ -15,7 +13,8 @@ export function extractYouTubeVideoId(rawUrl: string): string | null {
     return null;
   }
 
-  const host = url.hostname.toLowerCase().replace(/^www\./, "");
+  // Strip www. and m. prefixes before matching
+  const host = url.hostname.toLowerCase().replace(/^(www\.|m\.)/, "");
 
   // youtu.be/<videoId>
   if (host === "youtu.be") {
@@ -23,7 +22,7 @@ export function extractYouTubeVideoId(rawUrl: string): string | null {
     return isValidVideoId(id) ? id : null;
   }
 
-  if (!YOUTUBE_HOSTS.has(url.hostname.toLowerCase())) return null;
+  if (!YOUTUBE_HOSTS.has(host)) return null;
 
   const path = url.pathname;
 

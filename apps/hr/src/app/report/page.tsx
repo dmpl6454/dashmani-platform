@@ -257,38 +257,15 @@ export default function ReportPage() {
     weekday: "long", day: "numeric", month: "long", year: "numeric",
   });
 
+  // ── Prefill + draft restore (combined, runs once todayData resolves) ──────
+  // Priority:
+  //   1. If a draft exists and was saved AFTER the submitted report → restore draft
+  //      (employee added more links after submitting, then closed the tab)
+  //   2. If a submitted report exists (no newer draft) → prefill from submitted
+  //   3. If neither → start with empty form (or restore draft if one exists)
   useEffect(() => {
-    if (existing && !prefilled) {
-      setPrefilled(true);
-      // Submitted report exists — discard any draft and use the real data
-      draftRestoredRef.current = true; // block draft restore from running
-      setNotes(existing.notes || "");
-      if (existing.links?.length > 0) {
-        setLinks(existing.links.map((l: any) => ({
-          accountId: l.accountId || "",
-          url: l.url || "",
-          description: l.description || "",
-          likes: l.likes?.toString() || "",
-          comments: l.comments?.toString() || "",
-          shares: l.shares?.toString() || "",
-          views: l.views?.toString() || "",
-          mediaUrl: l.mediaUrl || "",
-          isScheduled: l.isScheduled || false,
-          scheduledFor: l.scheduledFor ? new Date(l.scheduledFor).toISOString().slice(0, 16) : "",
-          matchStatus: "manual" as const,
-        })));
-      }
-    }
-  }, [existing, prefilled]);
-
-  // ── Draft restore: runs once todayData has resolved AND no submitted report exists ──
-  useEffect(() => {
-    // Wait for todayData to finish loading (it starts as undefined, resolves to data or null)
-    if (todayData === undefined) return;
-    // If a submitted report exists, skip draft restore entirely
-    if (existing) { draftRestoredRef.current = true; return; }
-    // Only run once per mount
-    if (draftRestoredRef.current) return;
+    if (todayData === undefined) return; // SWR still loading
+    if (draftRestoredRef.current) return; // already ran
     draftRestoredRef.current = true;
 
     const d = new Date();
@@ -297,23 +274,70 @@ export default function ReportPage() {
     apiFetch<any>(`/hr/reports/draft?date=${dateKey}`)
       .then((res) => {
         const draft = res?.data;
-        if (!draft || !Array.isArray(draft.links) || draft.links.length === 0) return;
-        // Restore draft — replaces the initial empty row
-        setLinks(draft.links);
-        setNotes(draft.notes || "");
-        setDraftRestored(true);
-        setDraftStatus("idle");
-        // Dismiss the "Draft restored" toast after 5s
-        setTimeout(() => setDraftRestored(false), 5000);
+        const hasDraft = draft && Array.isArray(draft.links) && draft.links.length > 0;
+        const draftSavedAt = hasDraft ? new Date(draft.savedAt).getTime() : 0;
+        const submittedAt = existing?.updatedAt ? new Date(existing.updatedAt).getTime() : 0;
+
+        // Draft is newer than submitted report → restore draft (employee made changes after submitting)
+        if (hasDraft && draftSavedAt > submittedAt) {
+          setLinks(draft.links);
+          setNotes(draft.notes || "");
+          setDraftRestored(true);
+          setPrefilled(true);
+          setTimeout(() => setDraftRestored(false), 5000);
+          return;
+        }
+
+        // No newer draft → use submitted report if it exists
+        if (existing && !prefilled) {
+          setPrefilled(true);
+          setNotes(existing.notes || "");
+          if (existing.links?.length > 0) {
+            setLinks(existing.links.map((l: any) => ({
+              accountId: l.accountId || "",
+              url: l.url || "",
+              description: l.description || "",
+              likes: l.likes?.toString() || "",
+              comments: l.comments?.toString() || "",
+              shares: l.shares?.toString() || "",
+              views: l.views?.toString() || "",
+              mediaUrl: l.mediaUrl || "",
+              isScheduled: l.isScheduled || false,
+              scheduledFor: l.scheduledFor ? new Date(l.scheduledFor).toISOString().slice(0, 16) : "",
+              matchStatus: "manual" as const,
+            })));
+          }
+        }
       })
-      .catch(() => { /* silently ignore — draft fetch failure is not critical */ });
+      .catch(() => {
+        // Draft fetch failed — fall back to submitted report if available
+        if (existing && !prefilled) {
+          setPrefilled(true);
+          setNotes(existing.notes || "");
+          if (existing.links?.length > 0) {
+            setLinks(existing.links.map((l: any) => ({
+              accountId: l.accountId || "",
+              url: l.url || "",
+              description: l.description || "",
+              likes: l.likes?.toString() || "",
+              comments: l.comments?.toString() || "",
+              shares: l.shares?.toString() || "",
+              views: l.views?.toString() || "",
+              mediaUrl: l.mediaUrl || "",
+              isScheduled: l.isScheduled || false,
+              scheduledFor: l.scheduledFor ? new Date(l.scheduledFor).toISOString().slice(0, 16) : "",
+              matchStatus: "manual" as const,
+            })));
+          }
+        }
+      });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [todayData]);
 
-  // ── Auto-save: debounced 3s after any links/notes change ──
-  // Only fires when there is no submitted report for today.
+  // ── Auto-save: debounced 3s after any links/notes change ──────────────────
+  // Always runs — even when a submitted report exists — because the employee
+  // may be adding more links after submitting and we must preserve that.
   const saveDraft = useCallback(async (currentLinks: LinkEntry[], currentNotes: string) => {
-    if (existing) return; // submitted report exists — no need to draft
     const d = new Date();
     const dateKey = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
     setDraftStatus("saving");
@@ -324,20 +348,19 @@ export default function ReportPage() {
       });
       setDraftStatus("saved");
     } catch {
-      setDraftStatus("idle"); // silently fall back — auto-save failure is not critical
+      setDraftStatus("idle");
     }
-  }, [existing]);
+  }, []);
 
-  // Trigger auto-save debounced 3s after any links or notes change.
-  // Using refs to capture latest values so the timer always gets fresh data.
+  // Using refs so the debounce timer always gets the latest values.
   const linksRef = useRef(links);
   const notesRef = useRef(notes);
   useEffect(() => { linksRef.current = links; }, [links]);
   useEffect(() => { notesRef.current = notes; }, [notes]);
 
   useEffect(() => {
-    // Don't auto-save while loading, before restore has run, or when submitted
-    if (existing || !draftRestoredRef.current) return;
+    // Don't auto-save before initial restore has run (avoids saving the empty default row)
+    if (!draftRestoredRef.current) return;
     setDraftStatus("draft-pending");
     if (draftTimerRef.current) clearTimeout(draftTimerRef.current);
     draftTimerRef.current = setTimeout(() => {
@@ -551,16 +574,17 @@ export default function ReportPage() {
       rearmCrossDay();
       setRowErrors({});
 
-      // Clear draft — submitted data now lives in daily_reports, not the draft store.
-      // Fire-and-forget: if this fails, the draft will just be stale — no data loss.
+      // Clear draft — what was just submitted is now in daily_reports.
+      // Fire-and-forget — if DELETE fails the draft is stale but harmless.
       apiFetch("/hr/reports/draft", { method: "DELETE" })
         .catch(() => { /* non-critical */ });
       setDraftStatus("idle");
 
       if (existing) {
-        // Update: stay on page so user can see what they just saved in the panel
-        draftRestoredRef.current = true; // block draft restore on re-render
-        setPrefilled(false); // allow the prefill effect to re-run with fresh data
+        // Update (resubmit): stay on page. Re-arm restore so the freshly submitted
+        // report prefills and any further changes after this point get drafted.
+        draftRestoredRef.current = false;
+        setPrefilled(false);
       } else {
         // First submit: go to dashboard
         router.push("/dashboard");

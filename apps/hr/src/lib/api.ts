@@ -2,6 +2,18 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/v1";
 /** Base URL without /v1 — used for static file URLs like /uploads/ */
 export const API_BASE = API_URL.replace(/\/v1\/?$/, "");
 
+/** Structured error that preserves per-field validation details from the API */
+export class ApiError extends Error {
+  code?: string;
+  details?: Array<{ field: string; message: string }>;
+  constructor(message: string, code?: string, details?: Array<{ field: string; message: string }>) {
+    super(message);
+    this.name = "ApiError";
+    this.code = code;
+    this.details = details;
+  }
+}
+
 export async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
   const token = typeof window !== "undefined" ? localStorage.getItem("hrAccessToken") : null;
 
@@ -27,7 +39,11 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}): Prom
       localStorage.removeItem("hrUser");
       window.location.href = "/login";
     }
-    throw new Error(data.error?.message || "API error");
+    throw new ApiError(
+      data.error?.message || "API error",
+      data.error?.code,
+      data.error?.details,
+    );
   }
 
   return data;
@@ -57,7 +73,11 @@ export async function apiUpload<T>(path: string, formData: FormData): Promise<T>
       localStorage.removeItem("hrUser");
       window.location.href = "/login";
     }
-    throw new Error(data.error?.message || "Upload failed");
+    throw new ApiError(
+      data.error?.message || "Upload failed",
+      data.error?.code,
+      data.error?.details,
+    );
   }
 
   return data;

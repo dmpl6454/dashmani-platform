@@ -8,6 +8,7 @@ import {
   getMyReports,
   getTodayReport,
 } from "../services/daily-report.service";
+import { prisma } from "@dashmani/db";
 import {
   getGrowthForEmployee,
   getAccountGrowth,
@@ -64,6 +65,49 @@ router.get("/hr/reports/today", authenticateHr, async (req: Request, res: Respon
   try {
     const report = await getTodayReport(req.user!.userId);
     return success(res, report);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /hr/reports/my-link-urls?days=60
+// Returns a map of { normalizedUrl -> earliestSubmittedDate (YYYY-MM-DD) } for the last N days
+// Used client-side to auto-detect and remove cross-day duplicate links before submission.
+// Today's own report is excluded so that editing today's report doesn't flag its own links.
+router.get("/hr/reports/my-link-urls", authenticateHr, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const days = Math.min(Number(req.query.days) || 60, 180);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const since = new Date(today);
+    since.setDate(since.getDate() - days);
+
+    const rows = await prisma.reportLink.findMany({
+      where: {
+        url: { not: null },
+        isScheduled: false,
+        report: {
+          employeeId: req.user!.userId,
+          date: {
+            gte: since,
+            // Exclude today — editing today's report must not see its own links as "previous"
+            lt: today,
+          },
+        },
+      },
+      select: { url: true, report: { select: { date: true } } },
+    });
+
+    // Build url -> earliest-date map (normalised lowercase)
+    const map: Record<string, string> = {};
+    for (const r of rows) {
+      if (!r.url) continue;
+      const key = r.url.trim().toLowerCase();
+      const date = r.report.date.toISOString().slice(0, 10);
+      if (!map[key] || date < map[key]) map[key] = date;
+    }
+
+    return success(res, map);
   } catch (err) {
     next(err);
   }

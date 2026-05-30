@@ -107,6 +107,7 @@ export async function submitDailyReport(
       400,
       "DUPLICATE_LINKS",
       `Duplicate links found in submission: ${duplicatesInSubmission.slice(0, 5).join(", ")}${duplicatesInSubmission.length > 5 ? ` and ${duplicatesInSubmission.length - 5} more` : ""}`,
+      duplicatesInSubmission.map((url) => ({ field: "links.url", message: url })),
     );
   }
 
@@ -129,11 +130,12 @@ export async function submitDailyReport(
   });
 
   if (trueDuplicates.length > 0) {
-    const dupUrls = [...new Set(trueDuplicates.map((d) => d.url))];
+    const dupUrls = [...new Set(trueDuplicates.map((d) => d.url).filter((u): u is string => !!u))];
     throw new AppError(
       400,
       "DUPLICATE_LINKS",
       `These links were already submitted previously: ${dupUrls.slice(0, 5).join(", ")}${dupUrls.length > 5 ? ` and ${dupUrls.length - 5} more` : ""}`,
+      dupUrls.map((url) => ({ field: "links.url", message: url })),
     );
   }
 

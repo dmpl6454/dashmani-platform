@@ -494,6 +494,10 @@ export default function ReportPage() {
     setPasteResult({ matched, unmatched });
     setPasteText("");
     setTimeout(() => { setPasteResult(null); setShowPaste(false); }, 2500);
+
+    // Re-arm cross-day dedupe so newly pasted links get checked against past submissions.
+    // Without this, links pasted after the initial dedupe pass slip through unchecked.
+    crossDayDeduped.current = false;
   }
 
   const validLinks = links.filter((l) => l.isScheduled || l.url.trim());

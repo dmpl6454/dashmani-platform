@@ -1,12 +1,13 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
+import useSWR from "swr";
 import {
   Plus, Trash2, AlertTriangle, FileText, Link2, MessageSquare,
   BarChart3, Send, Loader2, ChevronDown, Hash, Eye, Heart, Share2,
   Clock, Zap, CheckCircle2, XCircle,
 } from "lucide-react";
-import { apiFetch } from "@/lib/api";
+import { apiFetch, ApiError } from "@/lib/api";
 import { useAssignedAccounts } from "@/lib/hooks/use-accounts";
 import { useTodayReport } from "@/lib/hooks/use-reports";
 
@@ -203,11 +204,29 @@ export default function ReportPage() {
   const [error, setError] = useState("");
   const [prefilled, setPrefilled] = useState(false);
 
+  // Per-row validation errors from API (key = row index, value = {field: message})
+  const [rowErrors, setRowErrors] = useState<Record<number, Record<string, string>>>({});
+
+  // Deduplication toast
+  const [dedupeToast, setDedupeToast] = useState<{
+    count: number;
+    type: "in-submission" | "cross-day";
+    days?: string[];
+  } | null>(null);
+  const dedupeToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   // Smart Paste state
   const [pasteText, setPasteText] = useState("");
   const [showPaste, setShowPaste] = useState(false);
   const [pasteResult, setPasteResult] = useState<{ matched: number; unmatched: number } | null>(null);
   const [defaultAccountId, setDefaultAccountId] = useState("");
+
+  // Past link URLs for cross-day duplicate detection (last 60 days, excluding today)
+  const { data: pastUrlMapData } = useSWR(
+    "/hr/reports/my-link-urls?days=60",
+    (key: string) => apiFetch<{ success: boolean; data: Record<string, string> }>(key).then((r) => r.data),
+    { revalidateOnFocus: false, dedupingInterval: 60_000 },
+  );
 
   const today = new Date().toISOString().split("T")[0];
   const todayFormatted = new Date().toLocaleDateString("en-IN", {
@@ -236,19 +255,71 @@ export default function ReportPage() {
     }
   }, [existing, prefilled]);
 
-  // Duplicate URL detection — returns a Set of normalized URLs that appear more than once
-  const duplicateUrlSet = (() => {
-    const seen = new Set<string>();
-    const dups = new Set<string>();
-    for (const l of links) {
-      if (!l.url.trim() || l.isScheduled) continue;
+  // ── Auto-dedupe: in-submission (keep first occurrence, remove subsequent) ──
+  // Runs after every links change. Covers both Smart Paste and manual URL typing.
+  const isDeduping = useRef(false);
+  useEffect(() => {
+    if (isDeduping.current) return;
+    const seen = new Map<string, number>(); // normalised url → first index
+    const toRemove: number[] = [];
+    links.forEach((l, i) => {
+      if (l.isScheduled || !l.url.trim()) return;
       const n = l.url.trim().toLowerCase();
-      if (seen.has(n)) dups.add(n);
-      seen.add(n);
+      if (seen.has(n)) {
+        toRemove.push(i);
+      } else {
+        seen.set(n, i);
+      }
+    });
+    if (toRemove.length > 0) {
+      isDeduping.current = true;
+      setLinks((prev) => prev.filter((_, i) => !toRemove.includes(i)));
+      if (dedupeToastTimer.current) clearTimeout(dedupeToastTimer.current);
+      setDedupeToast({ count: toRemove.length, type: "in-submission" });
+      dedupeToastTimer.current = setTimeout(() => {
+        setDedupeToast(null);
+        isDeduping.current = false;
+      }, 4000);
     }
-    return dups;
-  })();
-  const duplicateUrls = Array.from(duplicateUrlSet);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [links]);
+
+  // ── Auto-dedupe: cross-day (links already submitted on a previous day) ──
+  // Runs once the past URL map loads/reloads. Silent removal with a notice toast.
+  const crossDayDeduped = useRef(false);
+  useEffect(() => {
+    if (!pastUrlMapData || crossDayDeduped.current) return;
+    crossDayDeduped.current = true;
+    const removed: { url: string; date: string }[] = [];
+    setLinks((prev) => {
+      const next = prev.filter((l) => {
+        if (l.isScheduled || !l.url.trim()) return true;
+        const n = l.url.trim().toLowerCase();
+        if (pastUrlMapData[n]) {
+          removed.push({ url: l.url, date: pastUrlMapData[n] });
+          return false;
+        }
+        return true;
+      });
+      if (removed.length > 0) {
+        const days = [...new Set(removed.map((r) => r.date))].sort().reverse().slice(0, 3);
+        if (dedupeToastTimer.current) clearTimeout(dedupeToastTimer.current);
+        setDedupeToast({ count: removed.length, type: "cross-day", days });
+        dedupeToastTimer.current = setTimeout(() => setDedupeToast(null), 6000);
+      }
+      return next;
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pastUrlMapData]);
+
+  // Re-arm cross-day dedupe when the past URL map refreshes after submit
+  function rearmCrossDay() {
+    crossDayDeduped.current = false;
+  }
+
+  // (No longer a passive computed set — auto-dedupe handles duplicates reactively)
+  const duplicateUrlSet = new Set<string>(); // always empty; kept so row render stays unchanged
+  const duplicateUrls: string[] = [];
 
 
   // Unmatched links (pasted but no account assigned)
@@ -258,6 +329,14 @@ export default function ReportPage() {
 
   function updateLink(i: number, field: keyof LinkEntry, value: string) {
     setLinks((prev) => prev.map((l, idx) => idx === i ? { ...l, [field]: value } : l));
+    // Clear per-row errors for this row when user starts editing
+    if (rowErrors[i]) {
+      setRowErrors((prev) => {
+        const next = { ...prev };
+        delete next[i];
+        return next;
+      });
+    }
   }
 
   function addLink() {
@@ -370,6 +449,9 @@ export default function ReportPage() {
       });
       // Refresh the today-report cache so the panel shows the new links immediately
       await mutateToday();
+      // Re-arm cross-day dedupe so the refreshed URL map is applied on next paste
+      rearmCrossDay();
+      setRowErrors({});
       if (existing) {
         // Update: stay on page so user can see what they just saved in the panel
         setPrefilled(false); // allow the prefill effect to re-run with fresh data
@@ -379,6 +461,29 @@ export default function ReportPage() {
       }
     } catch (err: any) {
       setError(err.message);
+      // Unpack per-field details from ApiError so we can highlight individual rows
+      if (err instanceof ApiError && err.details?.length) {
+        const byRow: Record<number, Record<string, string>> = {};
+        for (const d of err.details) {
+          // Zod path "links.3.url" → row 3, field "url"
+          const m = d.field.match(/^links\.(\d+)\.(\w+)$/);
+          if (m) {
+            const idx = Number(m[1]);
+            (byRow[idx] ??= {})[m[2]] = d.message;
+          }
+        }
+        if (Object.keys(byRow).length > 0) {
+          setRowErrors(byRow);
+          // Scroll to the first error row
+          const firstIdx = Math.min(...Object.keys(byRow).map(Number));
+          setTimeout(() => {
+            document.getElementById(`link-row-${firstIdx}`)?.scrollIntoView({
+              behavior: "smooth",
+              block: "center",
+            });
+          }, 50);
+        }
+      }
     } finally {
       setLoading(false);
     }
@@ -418,15 +523,26 @@ export default function ReportPage() {
       {/* Today's submitted links — read-only history panel */}
       <TodaySubmittedPanel existing={existing} accounts={accounts} />
 
-      {/* Warnings */}
-      {duplicateUrls.length > 0 && (
-        <div className="bg-red-50 border border-red-200 rounded-xl p-3.5 flex items-start gap-2.5 crx-animate-scale">
-          <AlertTriangle className="h-4 w-4 text-red-500 mt-0.5 flex-shrink-0" />
-          <p className="text-sm text-red-700">
-            <span className="font-semibold">{duplicateUrls.length} duplicate URL{duplicateUrls.length !== 1 ? "s" : ""} detected</span> — the affected cards are highlighted in red below. Remove the duplicates before submitting.
+      {/* Auto-dedupe toast */}
+      {dedupeToast && (
+        <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3.5 flex items-start gap-2.5 crx-animate-scale">
+          <CheckCircle2 className="h-4 w-4 text-emerald-600 mt-0.5 flex-shrink-0" />
+          <p className="text-sm text-emerald-700">
+            {dedupeToast.type === "in-submission" ? (
+              <><span className="font-semibold">{dedupeToast.count} duplicate link{dedupeToast.count !== 1 ? "s" : ""} removed</span> — kept the first occurrence of each URL.</>
+            ) : (
+              <>
+                <span className="font-semibold">{dedupeToast.count} link{dedupeToast.count !== 1 ? "s" : ""} removed</span> — already submitted on{" "}
+                {dedupeToast.days?.length === 1
+                  ? dedupeToast.days[0]
+                  : dedupeToast.days?.join(", ") ?? "a previous date"}.
+              </>
+            )}
           </p>
         </div>
       )}
+
+      {/* Warnings */}
       {unmatchedCount > 0 && (
         <div className="bg-orange-50 border border-orange-200 rounded-xl p-3.5 flex items-start gap-2.5 crx-animate-scale">
           <AlertTriangle className="h-4 w-4 text-orange-500 mt-0.5 flex-shrink-0" />
@@ -532,11 +648,14 @@ export default function ReportPage() {
           const accentClass = PLATFORM_ACCENT[platform] || "border-l-[#E8E0D0]";
           const isUnmatched = link.matchStatus === "unmatched" && !link.accountId;
           const isDuplicate = !!link.url.trim() && duplicateUrlSet.has(link.url.trim().toLowerCase());
+          const rowErr = rowErrors[i];
+          const hasRowError = !!rowErr && Object.keys(rowErr).length > 0;
 
           return (
             <div
               key={i}
-              className={`bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.04)] border border-l-[3px] ${isDuplicate ? "border-red-200 border-l-red-500 bg-red-50/40" : isUnmatched ? "border-orange-200 border-l-orange-400" : "border-[#E8E0D0] " + accentClass} p-4 space-y-3 hover:shadow-[0_4px_20px_rgba(0,0,0,0.06)] transition-all duration-200 max-w-full overflow-hidden`}
+              id={`link-row-${i}`}
+              className={`bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.04)] border border-l-[3px] ${hasRowError ? "border-red-300 border-l-red-500 bg-red-50/30" : isDuplicate ? "border-red-200 border-l-red-500 bg-red-50/40" : isUnmatched ? "border-orange-200 border-l-orange-400" : "border-[#E8E0D0] " + accentClass} p-4 space-y-3 hover:shadow-[0_4px_20px_rgba(0,0,0,0.06)] transition-all duration-200 max-w-full overflow-hidden`}
               style={{ animation: "crx-slideUp 0.3s ease-out" }}
             >
               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -553,7 +672,12 @@ export default function ReportPage() {
                       <XCircle className="h-3 w-3" /> Duplicate URL
                     </span>
                   )}
-                  {isUnmatched && !isDuplicate && (
+                  {hasRowError && !isDuplicate && (
+                    <span className="text-[10px] text-red-600 font-semibold flex items-center gap-0.5 bg-red-100 px-1.5 py-0.5 rounded-full">
+                      <AlertTriangle className="h-3 w-3" /> Fix required
+                    </span>
+                  )}
+                  {isUnmatched && !isDuplicate && !hasRowError && (
                     <span className="text-[10px] text-orange-600 font-medium flex items-center gap-0.5">
                       <XCircle className="h-3 w-3" /> needs account
                     </span>
@@ -603,13 +727,16 @@ export default function ReportPage() {
                       // clear unmatched flag once user picks manually
                       if (link.matchStatus === "unmatched") updateLink(i, "matchStatus", "manual");
                     }}
-                    className={selectClass + (isUnmatched ? " border-orange-300 focus:ring-orange-300" : "")}
+                    className={selectClass + (isUnmatched ? " border-orange-300 focus:ring-orange-300" : rowErr?.accountId ? " border-red-400 focus:ring-red-300" : "")}
                   >
                     <option value="">Select account...</option>
                     {accounts.map((acc: any) => (
                       <option key={acc.id} value={acc.id}>{acc.handle || acc.displayName} ({acc.platform})</option>
                     ))}
                   </select>
+                  {rowErr?.accountId && (
+                    <p className="text-xs text-red-600 mt-1">{rowErr.accountId}</p>
+                  )}
                 </div>
                 <div className="min-w-0">
                   <label className="block text-xs font-medium text-[#7A7A7A] mb-1">
@@ -634,8 +761,11 @@ export default function ReportPage() {
                     }}
                     placeholder="https://instagram.com/p/..."
                     required={!link.isScheduled}
-                    className={inputClass}
+                    className={inputClass + (rowErr?.url ? " border-red-400 focus:ring-red-300" : "")}
                   />
+                  {rowErr?.url && (
+                    <p className="text-xs text-red-600 mt-1">{rowErr.url}</p>
+                  )}
                 </div>
               </div>
 
@@ -676,7 +806,14 @@ export default function ReportPage() {
         {error && (
           <div className="bg-red-50 border border-red-200 rounded-xl p-3.5 flex items-start gap-2.5 crx-animate-scale">
             <AlertTriangle className="h-4 w-4 text-red-500 mt-0.5 flex-shrink-0" />
-            <p className="text-sm text-red-600">{error}</p>
+            <div>
+              <p className="text-sm text-red-600">{error}</p>
+              {Object.keys(rowErrors).length > 0 && (
+                <p className="text-xs text-red-500 mt-1">
+                  {Object.keys(rowErrors).length} row{Object.keys(rowErrors).length !== 1 ? "s" : ""} highlighted below — fix the marked fields and resubmit.
+                </p>
+              )}
+            </div>
           </div>
         )}
 
@@ -684,19 +821,26 @@ export default function ReportPage() {
           <button
             type="submit"
             disabled={loading}
-            className="flex-1 bg-[#1A1A1A] text-white py-3.5 rounded-full font-semibold hover:bg-[#2B2B2B] disabled:opacity-50 transition-all shadow-md hover:shadow-lg flex items-center justify-center gap-2 group relative overflow-hidden"
+            className="flex-1 relative bg-indigo-600 text-white py-4 rounded-2xl font-bold text-base hover:bg-indigo-500 active:bg-indigo-800 active:scale-95 active:shadow-none disabled:opacity-60 disabled:cursor-not-allowed transition-all duration-100 shadow-[0_4px_14px_rgba(99,102,241,0.45)] hover:shadow-[0_6px_20px_rgba(99,102,241,0.55)] flex items-center justify-center gap-2.5 group overflow-hidden focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-indigo-400/50"
           >
             {loading ? (
-              <><Loader2 className="h-4 w-4 animate-spin" /><span>Submitting...</span></>
+              <>
+                <Loader2 className="h-5 w-5 animate-spin shrink-0" />
+                <span>{existing ? "Updating…" : "Submitting…"}</span>
+              </>
             ) : (
-              <><Send className="h-4 w-4 group-hover:translate-x-0.5 transition-transform" /><span>{existing ? "Update Report" : "Submit Report"}</span></>
+              <>
+                <Send className="h-5 w-5 shrink-0 group-hover:translate-x-1 transition-transform duration-150" />
+                <span>{existing ? "Update Report" : "Submit Report"}</span>
+              </>
             )}
-            <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/[0.05] to-transparent translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-700" />
+            {/* shimmer sweep on hover */}
+            <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-500 pointer-events-none" />
           </button>
           <button
             type="button"
             onClick={() => router.push("/dashboard")}
-            className="px-8 py-3.5 border border-[#E8E0D0] text-[#7A7A7A] rounded-full hover:bg-[#F7ECD5] hover:text-[#1A1A1A] transition-all font-medium"
+            className="px-8 py-4 border border-[#E8E0D0] text-[#7A7A7A] rounded-2xl hover:bg-[#F7ECD5] hover:text-[#1A1A1A] transition-all font-medium"
           >
             Cancel
           </button>

@@ -134,16 +134,23 @@ function TodaySubmittedPanel({ existing, accounts }: {
             Submitted today ({existing.links.length})
           </h3>
         </div>
-        <span className="text-[11px] text-[#7A7A7A]">
-          Last updated {fmtTime(existing.submittedAt || existing.updatedAt || existing.createdAt)}
-        </span>
+        <div className="flex items-center gap-3">
+          <span className="text-[11px] text-[#7A7A7A]">
+            Last updated {fmtTime(existing.submittedAt || existing.updatedAt || existing.createdAt)}
+          </span>
+          <button
+            type="button"
+            onClick={() => document.getElementById("post-links-form")?.scrollIntoView({ behavior: "smooth", block: "start" })}
+            className="text-[11px] font-medium text-indigo-600 hover:text-indigo-500 underline underline-offset-2 transition-colors shrink-0"
+          >
+            Edit submitted links ↓
+          </button>
+        </div>
       </div>
       <ul className="space-y-2 max-h-64 overflow-y-auto pr-1">
         {existing.links.map((l: any, i: number) => {
           const acc = accountById.get(l.accountId);
-          // Link carries platformSlug from formatReport; fall back to accounts map
           const platform = (l.platformSlug || acc?.platformSlug || acc?.platform || "").toLowerCase();
-          // formatReport returns accountName; accounts map uses displayName/handle
           const accountLabel = l.accountName || acc?.displayName || acc?.handle || "";
           return (
             <li
@@ -182,7 +189,7 @@ function TodaySubmittedPanel({ existing, accounts }: {
         })}
       </ul>
       <p className="text-[11px] text-[#7A7A7A]">
-        These are the links currently saved for today. Edit them below — the form is pre-filled with the same list.
+        To add, remove, or change a link — use the form below and click <span className="font-medium text-[#1A1A1A]">Update Report</span> to save.
       </p>
     </div>
   );
@@ -636,10 +643,15 @@ export default function ReportPage() {
         </div>
 
         {/* ── Post Links section header ─────────────────────────────────── */}
-        <div className="flex items-center gap-2">
+        <div id="post-links-form" className="flex items-center gap-2">
           <Link2 className="h-4 w-4 text-[#B8960C]" />
           <h2 className="text-sm font-semibold text-[#1A1A1A]">Post Links</h2>
           <div className="flex-1 h-px bg-[#E8E0D0]" />
+          {existing && (
+            <span className="text-[11px] text-indigo-500 font-medium shrink-0">
+              editing — trash to remove, then Update Report
+            </span>
+          )}
         </div>
 
         {/* ── Individual link cards ─────────────────────────────────────── */}
@@ -696,11 +708,12 @@ export default function ReportPage() {
                     <Clock className="h-3 w-3" />
                     {link.isScheduled ? "Scheduled" : "Scheduled?"}
                   </button>
-                  {links.length > 1 && (
+                  {(links.length > 1 || !!existing) && (
                     <button
                       type="button"
                       onClick={() => removeLink(i)}
                       className="text-[#B0B0B0] hover:text-red-500 transition-colors p-1.5 rounded-lg hover:bg-red-50"
+                      title="Remove this link"
                     >
                       <Trash2 className="h-4 w-4" />
                     </button>

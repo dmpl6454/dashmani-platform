@@ -1,7 +1,7 @@
 import { prisma } from "@dashmani/db";
 import { AppError } from "../middleware/error-handler";
 import type { ReportLinkInput, DailyReportResponse, AdminReportFilters } from "@dashmani/shared";
-import { todayIST, istMidnight } from "@dashmani/shared";
+import { todayIST, istMidnight, dateToIST } from "@dashmani/shared";
 import { calcStreaks } from "../utils/streak";
 
 function formatReport(report: any) {
@@ -11,7 +11,7 @@ function formatReport(report: any) {
     employeeName: report.employee?.name ?? "",
     employee: report.employee ? { id: report.employee.id, name: report.employee.name, email: report.employee.email, profileImageUrl: report.employee.profileImageUrl ?? null } : null,
     date: report.date instanceof Date
-      ? report.date.toISOString().split("T")[0]
+      ? dateToIST(report.date)
       : String(report.date),
     notes: report.notes,
     latitude: report.latitude,
@@ -127,7 +127,7 @@ export async function submitDailyReport(
   // Filter out links from today's own report (allow re-submission/update for today)
   const trueDuplicates = existingLinks.filter((el) => {
     const elDate = new Date(el.report.date);
-    return elDate.toISOString().split("T")[0] !== reportDate.toISOString().split("T")[0];
+    return dateToIST(elDate) !== dateToIST(reportDate);
   });
 
   if (trueDuplicates.length > 0) {
@@ -368,7 +368,7 @@ export async function getReportSummary(startDate?: string, endDate?: string) {
     }
     totalReports += 1;
     totalLinks += report.links.length;
-    const dateStr = new Date(report.date).toISOString().split("T")[0];
+    const dateStr = dateToIST(new Date(report.date));
     for (const link of report.links) {
       const p = ((link as any).platform || "Unknown").toLowerCase();
       platformMap[p] = (platformMap[p] || 0) + 1;

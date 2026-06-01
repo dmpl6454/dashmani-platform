@@ -191,6 +191,23 @@ describe("Daily Report API", () => {
 
       expect(res.status).toBe(401);
     });
+
+    it("accepts a submission with more than 500 links (no cap)", async () => {
+      const links = Array.from({ length: 650 }, (_, i) => ({
+        accountId,
+        url: `https://instagram.com/p/bulk-${i}`,
+        platform: "instagram",
+      }));
+
+      const res = await request(app)
+        .post("/v1/hr/reports")
+        .set("Authorization", `Bearer ${hrToken}`)
+        .send({ date: "2026-04-07", links });
+
+      expect(res.status).toBe(201);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.links.length).toBe(650);
+    });
   });
 
   describe("GET /v1/hr/reports/today", () => {

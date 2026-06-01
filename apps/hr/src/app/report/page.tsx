@@ -30,8 +30,6 @@ interface LinkEntry {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const MAX_LINKS = 500;
-
 const PLATFORM_DOMAINS: Record<string, string[]> = {
   instagram: ["instagram.com", "instagr.am"],
   facebook: ["facebook.com", "fb.com", "fb.watch"],
@@ -457,7 +455,6 @@ export default function ReportPage() {
   }
 
   function addLink() {
-    if (links.length >= MAX_LINKS) return;
     setLinks((prev) => [...prev, emptyLink()]);
   }
 
@@ -931,18 +928,16 @@ export default function ReportPage() {
           );
         })}
 
-        {links.length < MAX_LINKS && (
-          <button
-            type="button"
-            onClick={addLink}
-            className="flex items-center gap-2 text-sm text-[#7A7A7A] hover:text-[#1A1A1A] font-medium px-4 py-3 rounded-xl border border-dashed border-[#E8E0D0] hover:border-[#F5D547] hover:bg-[#FFFDF5] transition-all w-full justify-center bg-[#FEFCF7] group"
-          >
-            <div className="h-6 w-6 rounded-md bg-[#F7ECD5] flex items-center justify-center group-hover:bg-[#FFF3C4] transition-colors">
-              <Plus className="h-3.5 w-3.5 text-[#7A7A7A] group-hover:text-[#B8960C]" />
-            </div>
-            Add Another Link
-          </button>
-        )}
+        <button
+          type="button"
+          onClick={addLink}
+          className="flex items-center gap-2 text-sm text-[#7A7A7A] hover:text-[#1A1A1A] font-medium px-4 py-3 rounded-xl border border-dashed border-[#E8E0D0] hover:border-[#F5D547] hover:bg-[#FFFDF5] transition-all w-full justify-center bg-[#FEFCF7] group"
+        >
+          <div className="h-6 w-6 rounded-md bg-[#F7ECD5] flex items-center justify-center group-hover:bg-[#FFF3C4] transition-colors">
+            <Plus className="h-3.5 w-3.5 text-[#7A7A7A] group-hover:text-[#B8960C]" />
+          </div>
+          Add Another Link
+        </button>
 
         {/* Notes */}
         <div className="flex items-center gap-2 pt-2">

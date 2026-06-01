@@ -194,14 +194,17 @@ export async function submitDailyReport(
       include: reportInclude,
     });
   } else {
-    const created = await prisma.dailyReport.create({
-      data: { employeeId, date: reportDate, notes, latitude, longitude },
-    });
-    await prisma.reportLink.createMany({
-      data: linkRows(created.id),
+    // Wrap create + createMany in a transaction so a mid-write crash never
+    // leaves an empty DailyReport row with no links.
+    const createdId = await prisma.$transaction(async (tx) => {
+      const created = await tx.dailyReport.create({
+        data: { employeeId, date: reportDate, notes, latitude, longitude },
+      });
+      await tx.reportLink.createMany({ data: linkRows(created.id) });
+      return created.id;
     });
     report = await prisma.dailyReport.findUnique({
-      where: { id: created.id },
+      where: { id: createdId },
       include: reportInclude,
     });
   }

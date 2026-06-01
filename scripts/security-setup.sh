@@ -57,13 +57,14 @@ map $request_uri $block_request {
     ~*(eval|base64_decode|exec|system|passthru|shell_exec) 1;
 }
 
-# Limit request body size
-client_max_body_size 10m;
+# Limit request body size (>= API express.json 10mb limit, with headroom for large link batches)
+client_max_body_size 25m;
 
-# Connection timeouts
-client_body_timeout 10;
+# Connection timeouts — header timeout stays tight; body/send raised so large
+# daily-report submissions are not cut mid-upload/mid-response.
+client_body_timeout 120;
 client_header_timeout 10;
-send_timeout 10;
+send_timeout 120;
 keepalive_timeout 65;
 EOF
 

@@ -73,8 +73,6 @@ export async function getAssignedAccounts(employeeId: string) {
   }));
 }
 
-const MAX_LINKS_PER_DAY = 500;
-
 export async function submitDailyReport(
   employeeId: string,
   date: string,
@@ -86,10 +84,6 @@ export async function submitDailyReport(
   let links = linksInput;
   if (!links || links.length === 0) {
     throw new AppError(400, "VALIDATION_ERROR", "At least one link is required");
-  }
-
-  if (links.length > MAX_LINKS_PER_DAY) {
-    throw new AppError(400, "VALIDATION_ERROR", `Maximum ${MAX_LINKS_PER_DAY} links per day allowed`);
   }
 
   // Check for duplicate URLs within the submission (skip scheduled posts with no URL)
@@ -119,14 +113,25 @@ export async function submitDailyReport(
   // so the employee's submission always goes through.
   const reportDate = new Date(date);
   const liveUrls = links.filter((l) => !l.isScheduled && l.url).map((l) => l.url!.trim());
-  const existingLinks = liveUrls.length > 0 ? await prisma.reportLink.findMany({
-    where: {
-      url: { in: liveUrls },
-      report: { employeeId },
-    },
-    select: { url: true, report: { select: { date: true } } },
-  }) : [];
 
+  // Look up prior submissions of these URLs in CHUNKS so an unbounded link count
+  // never blows past Postgres's bind-parameter limit (each URL is one param).
+  const CHUNK = 1000;
+  const existingLinks: { url: string | null; report: { date: Date } }[] = [];
+  for (let i = 0; i < liveUrls.length; i += CHUNK) {
+    const slice = liveUrls.slice(i, i + CHUNK);
+    const rows = await prisma.reportLink.findMany({
+      where: {
+        url: { in: slice },
+        report: { employeeId },
+      },
+      select: { url: true, report: { select: { date: true } } },
+    });
+    existingLinks.push(...rows);
+  }
+
+  // A URL is a cross-day duplicate only if it exists on a DIFFERENT IST day.
+  // Comparing IST day strings (not raw Dates) is what makes the midnight rollover correct.
   const crossDayDupUrls = new Set(
     existingLinks
       .filter((el) => dateToIST(new Date(el.report.date)) !== dateToIST(reportDate))
@@ -154,61 +159,55 @@ export async function submitDailyReport(
 
   let report;
 
-  if (existing) {
-    // Delete old links and recreate
-    await prisma.reportLink.deleteMany({ where: { reportId: existing.id } });
+  const linkRows = (id: string) =>
+    links.map((l) => ({
+      reportId: id,
+      accountId: l.accountId,
+      url: l.url ? l.url.trim() : null,
+      platform: l.platform,
+      description: l.description,
+      mediaUrl: l.mediaUrl,
+      likes: l.likes,
+      comments: l.comments,
+      shares: l.shares,
+      views: l.views,
+      isScheduled: l.isScheduled ?? false,
+      scheduledFor: l.scheduledFor ? new Date(l.scheduledFor) : null,
+    }));
 
-    report = await prisma.dailyReport.update({
+  if (existing) {
+    // Atomic: delete old links + update report + bulk-insert new links in one transaction
+    await prisma.$transaction([
+      prisma.reportLink.deleteMany({ where: { reportId: existing.id } }),
+      prisma.dailyReport.update({
+        where: { id: existing.id },
+        data: { notes, latitude, longitude, submittedAt: new Date() },
+      }),
+      prisma.reportLink.createMany({
+        data: linkRows(existing.id),
+      }),
+    ]);
+
+    // createMany does not return rows — re-fetch with the include for the response.
+    report = await prisma.dailyReport.findUnique({
       where: { id: existing.id },
-      data: {
-        notes,
-        latitude,
-        longitude,
-        submittedAt: new Date(),
-        links: {
-          create: links.map((l) => ({
-            accountId: l.accountId,
-            url: l.url ? l.url.trim() : null,
-            platform: l.platform,
-            description: l.description,
-            mediaUrl: l.mediaUrl,
-            likes: l.likes,
-            comments: l.comments,
-            shares: l.shares,
-            views: l.views,
-            isScheduled: l.isScheduled ?? false,
-            scheduledFor: l.scheduledFor ? new Date(l.scheduledFor) : null,
-          })),
-        },
-      },
       include: reportInclude,
     });
   } else {
-    report = await prisma.dailyReport.create({
-      data: {
-        employeeId,
-        date: reportDate,
-        notes,
-        latitude,
-        longitude,
-        links: {
-          create: links.map((l) => ({
-            accountId: l.accountId,
-            url: l.url ? l.url.trim() : null,
-            platform: l.platform,
-            description: l.description,
-            mediaUrl: l.mediaUrl,
-            likes: l.likes,
-            comments: l.comments,
-            shares: l.shares,
-            views: l.views,
-            isScheduled: l.isScheduled ?? false,
-            scheduledFor: l.scheduledFor ? new Date(l.scheduledFor) : null,
-          })),
-        },
-      },
+    const created = await prisma.dailyReport.create({
+      data: { employeeId, date: reportDate, notes, latitude, longitude },
+    });
+    await prisma.reportLink.createMany({
+      data: linkRows(created.id),
+    });
+    report = await prisma.dailyReport.findUnique({
+      where: { id: created.id },
       include: reportInclude,
     });
+  }
+
+  if (!report) {
+    throw new AppError(500, "INTERNAL_ERROR", "Report could not be loaded after save");
   }
 
   return formatReport(report);

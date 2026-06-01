@@ -208,6 +208,64 @@ describe("Daily Report API", () => {
       expect(res.body.success).toBe(true);
       expect(res.body.data.links.length).toBe(650);
     });
+
+    it("drops cross-day duplicate links even in a large batch", async () => {
+      // Day 1: submit a link
+      await request(app)
+        .post("/v1/hr/reports")
+        .set("Authorization", `Bearer ${hrToken}`)
+        .send({
+          date: "2026-04-08",
+          links: [{ accountId, url: "https://instagram.com/p/yesterday", platform: "instagram" }],
+        });
+
+      // Day 2: submit a large batch that RE-INCLUDES yesterday's URL plus 600 new ones
+      const links = [
+        { accountId, url: "https://instagram.com/p/yesterday", platform: "instagram" }, // dup from day 1
+        ...Array.from({ length: 600 }, (_, i) => ({
+          accountId,
+          url: `https://instagram.com/p/day2-${i}`,
+          platform: "instagram",
+        })),
+      ];
+
+      const res = await request(app)
+        .post("/v1/hr/reports")
+        .set("Authorization", `Bearer ${hrToken}`)
+        .send({ date: "2026-04-09", links });
+
+      expect(res.status).toBe(201);
+      // The yesterday dup is silently dropped; only the 600 new ones remain.
+      expect(res.body.data.links.length).toBe(600);
+      const urls = res.body.data.links.map((l: any) => l.url);
+      expect(urls).not.toContain("https://instagram.com/p/yesterday");
+    });
+
+    it("does not drop a link when re-submitting the same day (not a cross-day dup of itself)", async () => {
+      // First submission
+      await request(app)
+        .post("/v1/hr/reports")
+        .set("Authorization", `Bearer ${hrToken}`)
+        .send({
+          date: "2026-04-10",
+          links: [{ accountId, url: "https://instagram.com/p/sameday", platform: "instagram" }],
+          notes: "first",
+        });
+
+      // Re-submit SAME date + SAME link (e.g. just changing notes)
+      const res = await request(app)
+        .post("/v1/hr/reports")
+        .set("Authorization", `Bearer ${hrToken}`)
+        .send({
+          date: "2026-04-10",
+          links: [{ accountId, url: "https://instagram.com/p/sameday", platform: "instagram" }],
+          notes: "edited notes",
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body.data.links.length).toBe(1); // link survives — not dropped
+      expect(res.body.data.notes).toBe("edited notes");
+    });
   });
 
   describe("GET /v1/hr/reports/today", () => {
@@ -332,8 +390,8 @@ describe("Daily Report API", () => {
         .set("Authorization", `Bearer ${adminToken}`);
 
       expect(res.status).toBe(200);
-      expect(res.body.data.length).toBeGreaterThan(0);
-      const entry = res.body.data.find((e: any) => e.employeeId === employeeId);
+      expect(res.body.data.employees.length).toBeGreaterThan(0);
+      const entry = res.body.data.employees.find((e: any) => e.id === employeeId);
       expect(entry).toBeDefined();
       expect(entry.reportCount).toBe(1);
       expect(entry.totalLinks).toBe(2);

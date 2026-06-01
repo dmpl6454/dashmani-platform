@@ -59,7 +59,7 @@ export const reportLinkSchema = z.object({
 
 export const submitDailyReportSchema = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be in YYYY-MM-DD format"),
-  links: z.array(reportLinkSchema).min(1, "At least one link is required").max(500, "Maximum 500 links per submission"),
+  links: z.array(reportLinkSchema).min(1, "At least one link is required"),
   notes: z.string().optional(),
   latitude: z.number().min(-90).max(90).optional(),
   longitude: z.number().min(-180).max(180).optional(),

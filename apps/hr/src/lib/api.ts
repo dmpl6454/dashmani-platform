@@ -60,7 +60,7 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}): Prom
     if (res.status === 413) {
       throw new ApiError("Your submission is too large for the server to accept.", "PAYLOAD_TOO_LARGE");
     }
-    if (res.status >= 500 || res.status === 0) {
+    if (res.status >= 500) {
       throw new ApiError(
         "The server took too long or returned an error. Your data was not saved — please try again.",
         "SERVER_ERROR",
@@ -119,7 +119,7 @@ export async function apiUpload<T>(path: string, formData: FormData): Promise<T>
     if (res.status === 413) {
       throw new ApiError("Your file is too large for the server to accept.", "PAYLOAD_TOO_LARGE");
     }
-    if (res.status >= 500 || res.status === 0) {
+    if (res.status >= 500) {
       throw new ApiError("The server returned an error. Your file was not uploaded — please try again.", "SERVER_ERROR");
     }
     throw new ApiError(`Unexpected server response (status ${res.status}). Please try again.`, "NON_JSON_RESPONSE");
@@ -142,7 +142,13 @@ async function tryRefresh(): Promise<boolean> {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ refreshToken }),
     });
-    const data = await res.json();
+    let data: any;
+    try {
+      const text = await res.text();
+      data = JSON.parse(text);
+    } catch {
+      return false;
+    }
     if (data.success) {
       localStorage.setItem("hrAccessToken", data.data.accessToken);
       localStorage.setItem("hrRefreshToken", data.data.refreshToken);

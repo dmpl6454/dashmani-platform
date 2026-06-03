@@ -9,6 +9,7 @@ import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { UserAvatar } from "@/components/user-avatar";
 import { RangePills, presetStart, todayISO, rangeLabel } from "./_range";
+import { ExportButton } from "./_export";
 
 const PLATFORM_COLORS: Record<string, string> = {
   instagram: "bg-pink-100 text-pink-700",
@@ -394,6 +395,7 @@ export default function ReportsPage() {
           <p className="text-sm text-[#7A7A7A] mt-1">Employee daily link submission reports</p>
         </div>
         <div className="flex items-center gap-2">
+          <ExportButton startDate={startDate} endDate={endDate} variant="light" />
           <Link
             href="/reports/links"
             className="inline-flex items-center gap-2 bg-white border border-[#E8E0D0] text-[#1A1A1A] rounded-full px-4 py-2 text-sm font-medium hover:shadow-[0_4px_12px_rgba(0,0,0,0.08)] transition-shadow"

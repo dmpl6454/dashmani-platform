@@ -241,6 +241,70 @@ describe("Daily Report API", () => {
       expect(urls).not.toContain("https://instagram.com/p/yesterday");
     });
 
+    it("preserves firstSeenAt per-URL across a same-day resubmit (true posting time)", async () => {
+      // First submission: 2 links. These get their firstSeenAt = T1.
+      await request(app)
+        .post("/v1/hr/reports")
+        .set("Authorization", `Bearer ${hrToken}`)
+        .send({
+          date: "2026-04-12",
+          links: [
+            { accountId, url: "https://instagram.com/p/early-a", platform: "instagram" },
+            { accountId, url: "https://instagram.com/p/early-b", platform: "instagram" },
+          ],
+        });
+
+      // Capture the original firstSeenAt for the two early links.
+      const earlyRows = await prisma.reportLink.findMany({
+        where: { url: { in: ["https://instagram.com/p/early-a", "https://instagram.com/p/early-b"] } },
+        select: { url: true, firstSeenAt: true },
+      });
+      expect(earlyRows.length).toBe(2);
+      const earlyA = earlyRows.find((r) => r.url === "https://instagram.com/p/early-a")!.firstSeenAt;
+
+      // Ensure a measurable time gap so T2 > T1.
+      await new Promise((r) => setTimeout(r, 25));
+
+      // Resubmit SAME day with the 2 originals + 2 brand-new links (the user's
+      // "2 links at 10am, then 10 more at 8:30pm" scenario, scaled down).
+      await request(app)
+        .post("/v1/hr/reports")
+        .set("Authorization", `Bearer ${hrToken}`)
+        .send({
+          date: "2026-04-12",
+          links: [
+            { accountId, url: "https://instagram.com/p/early-a", platform: "instagram" },
+            { accountId, url: "https://instagram.com/p/early-b", platform: "instagram" },
+            { accountId, url: "https://instagram.com/p/late-c", platform: "instagram" },
+            { accountId, url: "https://instagram.com/p/late-d", platform: "instagram" },
+          ],
+        });
+
+      const afterRows = await prisma.reportLink.findMany({
+        where: {
+          url: {
+            in: [
+              "https://instagram.com/p/early-a",
+              "https://instagram.com/p/early-b",
+              "https://instagram.com/p/late-c",
+              "https://instagram.com/p/late-d",
+            ],
+          },
+        },
+        select: { url: true, firstSeenAt: true },
+      });
+      expect(afterRows.length).toBe(4);
+
+      const byUrl = Object.fromEntries(afterRows.map((r) => [r.url, r.firstSeenAt]));
+
+      // The two early links KEPT their original firstSeenAt (not rewritten to T2).
+      expect(byUrl["https://instagram.com/p/early-a"]!.getTime()).toBe(earlyA.getTime());
+
+      // The two new links got a LATER firstSeenAt than the early ones.
+      expect(byUrl["https://instagram.com/p/late-c"]!.getTime()).toBeGreaterThan(earlyA.getTime());
+      expect(byUrl["https://instagram.com/p/late-d"]!.getTime()).toBeGreaterThan(earlyA.getTime());
+    });
+
     it("does not drop a link when re-submitting the same day (not a cross-day dup of itself)", async () => {
       // First submission
       await request(app)

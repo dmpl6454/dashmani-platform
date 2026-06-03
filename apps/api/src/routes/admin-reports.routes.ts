@@ -10,6 +10,7 @@ import {
 } from "../services/daily-report.service";
 import { recordGrowthSnapshot } from "../services/account-growth.service";
 import { getAllAccountsLinkStats } from "../services/account.service";
+import { generateReportsExport } from "../services/report-export.service";
 import { getLeaderboard } from "../services/leaderboard.service";
 import {
   getPendingEmployees,
@@ -298,6 +299,32 @@ router.get(
       const stats = await getAllAccountsLinkStats(startDate, endDate);
       return success(res, stats);
     } catch (err) { next(err); }
+  },
+);
+
+// GET /admin/reports/export.xlsx — two-sheet workbook (Channel Summary + Day-wise
+// Breakdown) for the selected window. Returns a binary .xlsx download, NOT the
+// JSON envelope. MUST be declared before /:reportId or Express captures it.
+router.get(
+  "/admin/reports/export.xlsx",
+  authenticate,
+  requirePermission("reports", "view"),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { startDate, endDate } = req.query as { startDate?: string; endDate?: string };
+      const { buffer, filename } = await generateReportsExport(startDate, endDate);
+      res.setHeader(
+        "Content-Type",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      );
+      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+      // Expose the filename header to the browser fetch so the client can read it.
+      res.setHeader("Access-Control-Expose-Headers", "Content-Disposition");
+      res.setHeader("Content-Length", String(buffer.length));
+      return res.status(200).send(buffer);
+    } catch (err) {
+      next(err);
+    }
   },
 );
 

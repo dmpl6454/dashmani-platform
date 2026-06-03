@@ -685,6 +685,12 @@ model ReportLink {
   isScheduled  Boolean  @default(false) @map("is_scheduled")
   scheduledFor DateTime? @map("scheduled_for")
   createdAt    DateTime @default(now()) @map("created_at")
+  // When this exact URL was FIRST submitted within its report's day. Unlike
+  // createdAt (which is rewritten on every resubmit because submission uses
+  // delete-and-recreate), firstSeenAt is preserved per-URL across edits — see
+  // submitDailyReport(). This is the only trustworthy "when was it posted" time.
+  // Historical rows are backfilled to createdAt (best available proxy).
+  firstSeenAt  DateTime @default(now()) @map("first_seen_at")
 
   report       DailyReport   @relation(fields: [reportId], references: [id], onDelete: Cascade)
   account      SocialAccount @relation(fields: [accountId], references: [id])
@@ -693,6 +699,7 @@ model ReportLink {
   @@index([reportId])
   @@index([accountId])
   @@index([url])
+  @@index([firstSeenAt])
   @@map("report_links")
 }
 

@@ -44,3 +44,41 @@ export function istMidnight(yyyymmdd: string): Date {
   // the same calendar date is sufficient and consistent.
   return new Date(`${yyyymmdd}T00:00:00.000Z`);
 }
+
+/**
+ * Returns the time-of-day of a Date as "HH:MM" (24h) in IST.
+ * Used for "submit time" columns in exports. Returns "" for null/invalid.
+ */
+export function istTimeOfDay(d: Date | null | undefined): string {
+  if (!d) return "";
+  const ist = new Date(d.getTime() + IST_OFFSET_MS);
+  const h = String(ist.getUTCHours()).padStart(2, "0");
+  const m = String(ist.getUTCMinutes()).padStart(2, "0");
+  return `${h}:${m}`;
+}
+
+/**
+ * Returns "YYYY-MM-DD HH:MM" in IST for a Date. Returns "" for null/invalid.
+ */
+export function istDateTime(d: Date | null | undefined): string {
+  if (!d) return "";
+  return `${dateToIST(d)} ${istTimeOfDay(d)}`;
+}
+
+/**
+ * Averages an array of Dates by their IST minutes-since-midnight and returns
+ * the mean as "HH:MM" in IST. Returns "" for an empty array. Each Date counts
+ * once — callers decide whether to pass one entry per link or per report.
+ */
+export function avgIstTimeOfDay(dates: Date[]): string {
+  if (!dates.length) return "";
+  let totalMinutes = 0;
+  for (const d of dates) {
+    const ist = new Date(d.getTime() + IST_OFFSET_MS);
+    totalMinutes += ist.getUTCHours() * 60 + ist.getUTCMinutes();
+  }
+  const mean = Math.round(totalMinutes / dates.length);
+  const h = String(Math.floor(mean / 60)).padStart(2, "0");
+  const m = String(mean % 60).padStart(2, "0");
+  return `${h}:${m}`;
+}

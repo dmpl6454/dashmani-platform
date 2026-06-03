@@ -159,32 +159,57 @@ export async function submitDailyReport(
 
   let report;
 
-  const linkRows = (id: string) =>
-    links.map((l) => ({
-      reportId: id,
-      accountId: l.accountId,
-      url: l.url ? l.url.trim() : null,
-      platform: l.platform,
-      description: l.description,
-      mediaUrl: l.mediaUrl,
-      likes: l.likes,
-      comments: l.comments,
-      shares: l.shares,
-      views: l.views,
-      isScheduled: l.isScheduled ?? false,
-      scheduledFor: l.scheduledFor ? new Date(l.scheduledFor) : null,
-    }));
+  // firstSeenAt must survive the delete-and-recreate resubmit. Before wiping the
+  // old link rows, capture each existing URL's original firstSeenAt so we can
+  // carry it forward — a link that was first submitted at 10am keeps its 10am
+  // time even when the report is edited (and new links added) later that day.
+  // Keyed on the trimmed+lowercased URL to match how dedupe normalizes URLs.
+  const priorFirstSeen = new Map<string, Date>();
+  if (existing) {
+    const prevLinks = await prisma.reportLink.findMany({
+      where: { reportId: existing.id },
+      select: { url: true, firstSeenAt: true },
+    });
+    for (const pl of prevLinks) {
+      if (pl.url) priorFirstSeen.set(pl.url.trim().toLowerCase(), pl.firstSeenAt);
+    }
+  }
+
+  const linkRows = (id: string, now: Date) =>
+    links.map((l) => {
+      const key = l.url ? l.url.trim().toLowerCase() : null;
+      // Reuse the original firstSeenAt for a URL already present in this report;
+      // brand-new URLs (and scheduled/no-URL rows) get the current submit time.
+      const firstSeenAt = (key && priorFirstSeen.get(key)) || now;
+      return {
+        reportId: id,
+        accountId: l.accountId,
+        url: l.url ? l.url.trim() : null,
+        platform: l.platform,
+        description: l.description,
+        mediaUrl: l.mediaUrl,
+        likes: l.likes,
+        comments: l.comments,
+        shares: l.shares,
+        views: l.views,
+        isScheduled: l.isScheduled ?? false,
+        scheduledFor: l.scheduledFor ? new Date(l.scheduledFor) : null,
+        firstSeenAt,
+      };
+    });
 
   if (existing) {
+    // Single submit moment shared by the report row and all newly-inserted links.
+    const submittedAt = new Date();
     // Atomic: delete old links + update report + bulk-insert new links in one transaction
     await prisma.$transaction([
       prisma.reportLink.deleteMany({ where: { reportId: existing.id } }),
       prisma.dailyReport.update({
         where: { id: existing.id },
-        data: { notes, latitude, longitude, submittedAt: new Date() },
+        data: { notes, latitude, longitude, submittedAt },
       }),
       prisma.reportLink.createMany({
-        data: linkRows(existing.id),
+        data: linkRows(existing.id, submittedAt),
       }),
     ]);
 
@@ -196,11 +221,12 @@ export async function submitDailyReport(
   } else {
     // Wrap create + createMany in a transaction so a mid-write crash never
     // leaves an empty DailyReport row with no links.
+    const now = new Date();
     const createdId = await prisma.$transaction(async (tx) => {
       const created = await tx.dailyReport.create({
         data: { employeeId, date: reportDate, notes, latitude, longitude },
       });
-      await tx.reportLink.createMany({ data: linkRows(created.id) });
+      await tx.reportLink.createMany({ data: linkRows(created.id, now) });
       return created.id;
     });
     report = await prisma.dailyReport.findUnique({

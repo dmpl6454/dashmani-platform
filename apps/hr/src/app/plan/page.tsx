@@ -19,7 +19,6 @@ function displayDate(d: Date) {
 export default function PlanOfActionPage() {
   const [date, setDate] = useState(() => { const d = new Date(); d.setHours(0,0,0,0); return d; });
   const [tasks, setTasks] = useState("");
-  const [achievements, setAchievements] = useState("");
   const [blockers, setBlockers] = useState("");
   const [tomorrowPlan, setTomorrowPlan] = useState("");
   const [saving, setSaving] = useState(false);
@@ -39,14 +38,13 @@ export default function PlanOfActionPage() {
       const res = await apiFetch<any>(`/hr/poa/${formatDate(d)}`);
       if (res.data) {
         setTasks(res.data.tasks || "");
-        setAchievements(res.data.achievements || "");
         setBlockers(res.data.blockers || "");
         setTomorrowPlan(res.data.tomorrowPlan || "");
       } else {
-        setTasks(""); setAchievements(""); setBlockers(""); setTomorrowPlan("");
+        setTasks(""); setBlockers(""); setTomorrowPlan("");
       }
     } catch {
-      setTasks(""); setAchievements(""); setBlockers(""); setTomorrowPlan("");
+      setTasks(""); setBlockers(""); setTomorrowPlan("");
     }
     setLoading(false);
   }
@@ -67,7 +65,7 @@ export default function PlanOfActionPage() {
     try {
       await apiFetch("/hr/poa", {
         method: "POST",
-        body: JSON.stringify({ date: formatDate(date), tasks, achievements, blockers, tomorrowPlan }),
+        body: JSON.stringify({ date: formatDate(date), tasks, tomorrowPlan, blockers }),
       });
       setSaved(true);
       loadHistory();
@@ -94,7 +92,7 @@ export default function PlanOfActionPage() {
 
   return (
     <>
-      <Topstrip title="Plan of Action" sub="Update your daily work plan and track progress" />
+      <Topstrip title="Daily Report" sub="Log what you did today — visible to your admins" />
       <div className="px-6 py-6 flex-1 overflow-y-auto max-w-[900px] space-y-5">
 
         {/* Date Navigation — back arrow to browse history; no forward past today */}
@@ -150,7 +148,7 @@ export default function PlanOfActionPage() {
             <div className="v3-card">
               <div className="px-5 h-12 flex items-center gap-2" style={{ borderBottom: "2px solid rgba(26,26,26,0.07)" }}>
                 <span className="text-[13px] font-semibold text-ink">
-                  {isToday ? "Today's Tasks *" : "Tasks"}
+                  {isToday ? "What I did today *" : "What was done"}
                 </span>
               </div>
               <div className="p-5">
@@ -169,38 +167,20 @@ export default function PlanOfActionPage() {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="v3-card">
-                <div className="px-5 h-12 flex items-center" style={{ borderBottom: "2px solid rgba(26,26,26,0.07)" }}>
-                  <span className="text-[13px] font-semibold text-ink">Achievements</span>
-                </div>
-                <div className="p-5">
-                  <p className="text-[11.5px] font-bold text-ink-3 mb-1.5 uppercase tracking-wider">Completed / Won</p>
-                  <textarea
-                    value={achievements}
-                    onChange={isReadOnly ? undefined : (e) => setAchievements(e.target.value)}
-                    readOnly={isReadOnly}
-                    rows={3}
-                    placeholder={isReadOnly ? "Nothing recorded." : "What was completed or achieved..."}
-                    className={textareaClass(isReadOnly)}
-                  />
-                </div>
+            <div className="v3-card">
+              <div className="px-5 h-12 flex items-center" style={{ borderBottom: "2px solid rgba(26,26,26,0.07)" }}>
+                <span className="text-[13px] font-semibold text-ink">Notes</span>
               </div>
-              <div className="v3-card">
-                <div className="px-5 h-12 flex items-center" style={{ borderBottom: "2px solid rgba(26,26,26,0.07)" }}>
-                  <span className="text-[13px] font-semibold text-ink">Blockers</span>
-                </div>
-                <div className="p-5">
-                  <p className="text-[11.5px] font-bold text-ink-3 mb-1.5 uppercase tracking-wider">Issues / Blockers</p>
-                  <textarea
-                    value={blockers}
-                    onChange={isReadOnly ? undefined : (e) => setBlockers(e.target.value)}
-                    readOnly={isReadOnly}
-                    rows={3}
-                    placeholder={isReadOnly ? "Nothing recorded." : "Any blockers or issues faced..."}
-                    className={textareaClass(isReadOnly)}
-                  />
-                </div>
+              <div className="p-5">
+                <p className="text-[11.5px] font-bold text-ink-3 mb-1.5 uppercase tracking-wider">Anything else worth noting</p>
+                <textarea
+                  value={blockers}
+                  onChange={isReadOnly ? undefined : (e) => setBlockers(e.target.value)}
+                  readOnly={isReadOnly}
+                  rows={3}
+                  placeholder={isReadOnly ? "Nothing recorded." : "Anything that doesn't fit above — issues, context, FYIs..."}
+                  className={textareaClass(isReadOnly)}
+                />
               </div>
             </div>
 

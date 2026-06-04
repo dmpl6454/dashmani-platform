@@ -3,7 +3,7 @@ import { authenticate } from "../middleware/auth";
 import { requirePermission } from "../middleware/rbac";
 import { success } from "../utils/response";
 import { hashPassword } from "../utils/password";
-import { generateOfferLetterSchema, safeString } from "@dashmani/shared";
+import { generateOfferLetterSchema, safeString, todayIST, istMidnight } from "@dashmani/shared";
 import { z } from "zod";
 import { signAccessToken, signRefreshToken } from "../utils/jwt";
 import crypto from "crypto";
@@ -1086,9 +1086,10 @@ router.get("/admin/poa", authenticate, requirePermission("employees", "view"), a
     const where: any = {};
     if (employeeId) where.employeeId = employeeId;
     if (date) {
-      const d = new Date(date);
-      d.setHours(0, 0, 0, 0);
-      where.date = d;
+      // istMidnight matches how POST /hr/poa stores the date (IST-aware), so the
+      // date filter actually hits the stored row. Raw new Date().setHours() would
+      // shift by the server's UTC offset and miss it (pre-existing IST date-key bug).
+      where.date = istMidnight(date);
     }
     const poas = await prisma.dailyPOA.findMany({
       where,
@@ -1097,6 +1098,42 @@ router.get("/admin/poa", authenticate, requirePermission("employees", "view"), a
       take: 100,
     });
     return success(res, poas);
+  } catch (err) { next(err); }
+});
+
+// ===== Daily Report status (who submitted / who hasn't, for a given day) =====
+
+router.get("/admin/daily-reports/status", authenticate, requirePermission("employees", "view"), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { date } = req.query as { date?: string };
+    const day = istMidnight(date || todayIST());
+
+    // Active, non-pure-admin employees = the people expected to submit a daily report.
+    const employees = await prisma.user.findMany({
+      where: {
+        status: "ACTIVE",
+        deletedAt: null,
+        roles: { some: { role: { name: { notIn: ["Super Admin", "Admin"] } } } },
+      },
+      select: { id: true, name: true, email: true },
+      orderBy: { name: "asc" },
+    });
+
+    // Who submitted a written report for `day`.
+    const submitted = await prisma.dailyPOA.findMany({
+      where: { date: day },
+      select: { employeeId: true },
+    });
+    const submittedIds = new Set(submitted.map((s) => s.employeeId));
+
+    const nonSubmitters = employees.filter((e) => !submittedIds.has(e.id));
+
+    return success(res, {
+      date: date || todayIST(),
+      totalEmployees: employees.length,
+      submittedCount: employees.length - nonSubmitters.length,
+      nonSubmitters,
+    });
   } catch (err) { next(err); }
 });
 

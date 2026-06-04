@@ -13,12 +13,12 @@ import { useState, useRef, useEffect } from "react";
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/report", label: "Report", icon: FileText },
+  { href: "/report", label: "Links", icon: FileText },
   { href: "/history", label: "History", icon: Clock },
   { href: "/leaderboard", label: "Board", icon: Trophy },
   { href: "/team", label: "Team", icon: Users },
   { href: "/leave", label: "Leave", icon: PlaneTakeoff },
-  { href: "/plan", label: "POA", icon: ClipboardList },
+  { href: "/plan", label: "Daily Update", icon: ClipboardList },
 ];
 
 const moreItems = [

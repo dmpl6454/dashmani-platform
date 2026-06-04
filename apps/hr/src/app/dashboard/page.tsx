@@ -81,7 +81,7 @@ export default function DashboardPage() {
               className="btn-3d inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-ink text-white text-[13px] font-semibold"
               style={{ border: "2px solid #1A1A1A" }}>
               <Edit2 size={14} />
-              Submit Report
+              Submit Links
             </Link>
           ) : undefined
         }
@@ -125,8 +125,8 @@ export default function DashboardPage() {
                 <div className="absolute top-0 right-0 w-48 h-48 rounded-full bg-action/10 blur-[60px]" />
                 <div className="relative">
                   <p className="text-action text-[11px] font-bold uppercase tracking-wider mb-1">Action Required</p>
-                  <p className="text-white text-[17px] font-bold">Submit your daily report</p>
-                  <p className="text-white/50 text-[13px] mt-0.5">Don&apos;t forget to log your work for today</p>
+                  <p className="text-white text-[17px] font-bold">Submit your links</p>
+                  <p className="text-white/50 text-[13px] mt-0.5">Don&apos;t forget to log your links for today</p>
                 </div>
                 <div className="relative h-11 w-11 rounded-xl bg-action grid place-items-center group-hover:scale-110 transition-transform shrink-0">
                   <ArrowRight size={18} className="text-ink" />

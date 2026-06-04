@@ -255,6 +255,15 @@ export default function ReportPage() {
     weekday: "long", day: "numeric", month: "long", year: "numeric",
   });
 
+  // Live refs to the latest links/notes — used both by the debounced draft
+  // auto-save AND by the restore effect's pristine-guard (so an async restore
+  // resolving after a paste can see the current form state). Declared before the
+  // restore effect because that effect references linksRef.
+  const linksRef = useRef(links);
+  const notesRef = useRef(notes);
+  useEffect(() => { linksRef.current = links; }, [links]);
+  useEffect(() => { notesRef.current = notes; }, [notes]);
+
   // ── Prefill + draft restore (combined, runs once todayData resolves) ──────
   // Priority:
   //   1. If a draft exists and was saved AFTER the submitted report → restore draft
@@ -269,6 +278,15 @@ export default function ReportPage() {
     const d = new Date();
     const dateKey = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
 
+    // Defense-in-depth: this async callback resolves AFTER mount, by which time the
+    // employee may have already typed/pasted links. Never overwrite a form that
+    // already holds user content — restoring a stale server/draft snapshot over
+    // freshly-entered links is exactly how added links silently vanished.
+    const formIsPristine = () => {
+      const ls = linksRef.current;
+      return ls.length <= 1 && !ls[0]?.url.trim() && !ls[0]?.isScheduled && !ls[0]?.accountId;
+    };
+
     apiFetch<any>(`/hr/reports/draft?date=${dateKey}`)
       .then((res) => {
         const draft = res?.data;
@@ -278,11 +296,13 @@ export default function ReportPage() {
 
         // Draft is newer than submitted report → restore draft (employee made changes after submitting)
         if (hasDraft && draftSavedAt > submittedAt) {
-          setLinks(draft.links);
-          setNotes(draft.notes || "");
-          setDraftRestored(true);
+          if (formIsPristine()) {
+            setLinks(draft.links);
+            setNotes(draft.notes || "");
+            setDraftRestored(true);
+            setTimeout(() => setDraftRestored(false), 5000);
+          }
           setPrefilled(true);
-          setTimeout(() => setDraftRestored(false), 5000);
           return;
         }
 
@@ -290,7 +310,7 @@ export default function ReportPage() {
         if (existing && !prefilled) {
           setPrefilled(true);
           setNotes(existing.notes || "");
-          if (existing.links?.length > 0) {
+          if (existing.links?.length > 0 && formIsPristine()) {
             setLinks(existing.links.map((l: any) => ({
               accountId: l.accountId || "",
               url: l.url || "",
@@ -312,7 +332,7 @@ export default function ReportPage() {
         if (existing && !prefilled) {
           setPrefilled(true);
           setNotes(existing.notes || "");
-          if (existing.links?.length > 0) {
+          if (existing.links?.length > 0 && formIsPristine()) {
             setLinks(existing.links.map((l: any) => ({
               accountId: l.accountId || "",
               url: l.url || "",
@@ -349,12 +369,6 @@ export default function ReportPage() {
       setDraftStatus("idle");
     }
   }, []);
-
-  // Using refs so the debounce timer always gets the latest values.
-  const linksRef = useRef(links);
-  const notesRef = useRef(notes);
-  useEffect(() => { linksRef.current = links; }, [links]);
-  useEffect(() => { notesRef.current = notes; }, [notes]);
 
   useEffect(() => {
     // Don't auto-save before initial restore has run (avoids saving the empty default row)
@@ -525,12 +539,22 @@ export default function ReportPage() {
   const scheduledCount = validLinks.filter((l) => l.isScheduled).length;
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    // In-flight guard: the button's disabled={loading} is cosmetic (Enter key / rapid
+    // taps can still re-enter). Prevent overlapping POSTs for the same employee+day,
+    // which could interleave the server's delete-and-recreate destructively.
+    if (loading) return;
     setError("");
     if (validLinks.length === 0) { setError("At least one link is required"); return; }
     const missingAccount = validLinks.find((l) => !l.accountId);
     if (missingAccount) { setError("Please select an account for every link before submitting"); return; }
     if (duplicateUrls.length > 0) { setError("Please remove duplicate links before submitting"); return; }
 
+    // Snapshot the payload BEFORE any await. The geolocation prompt below can take
+    // up to 5s, during which a paste or a late draft-restore could mutate `links`.
+    // Sending this frozen snapshot guarantees we POST exactly what the user saw at
+    // click time — a subset can never sneak in mid-submit.
+    const payloadLinks = validLinks;
+    const payloadNotes = notes;
 
     setLoading(true);
     let geo: { latitude?: number; longitude?: number } = {};
@@ -546,9 +570,9 @@ export default function ReportPage() {
         method: "POST",
         body: JSON.stringify({
           date: today,
-          notes,
+          notes: payloadNotes,
           ...geo,
-          links: validLinks.map((l) => ({
+          links: payloadLinks.map((l) => ({
             accountId: l.accountId,
             url: l.url.trim() || null,
             platform: (accounts.find((a: any) => a.id === l.accountId) as any)?.platformSlug
@@ -578,10 +602,14 @@ export default function ReportPage() {
       setDraftStatus("idle");
 
       if (existing) {
-        // Update (resubmit): stay on page. Re-arm restore so the freshly submitted
-        // report prefills and any further changes after this point get drafted.
-        draftRestoredRef.current = false;
-        setPrefilled(false);
+        // Update (resubmit): stay on page with the in-memory links intact (they now
+        // equal what was just saved). Do NOT re-arm the restore effect here — the
+        // restore effect is keyed on [todayData], and the mutateToday() above just
+        // changed todayData. Re-arming it caused the restore to re-run and overwrite
+        // the live form (e.g. base 181 + freshly-pasted 22) with the stale server
+        // snapshot before the additions were ever saved — the "added links vanish on
+        // refresh" bug. Auto-save keeps working because its guard only needs
+        // draftRestoredRef.current === true, which it already is.
       } else {
         // First submit: go to dashboard
         router.push("/dashboard");

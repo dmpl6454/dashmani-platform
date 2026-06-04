@@ -305,6 +305,82 @@ describe("Daily Report API", () => {
       expect(byUrl["https://instagram.com/p/late-d"]!.getTime()).toBeGreaterThan(earlyA.getTime());
     });
 
+    it("resubmitting a SUPERSET (base + increment) persists ALL links — the Anish scenario", async () => {
+      // Base: submit a batch (stand-in for Anish's 181 already-saved links).
+      const base = Array.from({ length: 30 }, (_, i) => ({
+        accountId,
+        url: `https://instagram.com/p/anish-base-${i}`,
+        platform: "instagram",
+      }));
+      const r1 = await request(app)
+        .post("/v1/hr/reports")
+        .set("Authorization", `Bearer ${hrToken}`)
+        .send({ date: "2026-04-14", links: base });
+      expect(r1.status).toBe(201);
+      expect(r1.body.data.links.length).toBe(30);
+
+      // Later: reopen, add an increment (stand-in for the +22), resubmit the FULL set.
+      // The server must persist 30 + 8 = 38 — never silently drop the increment.
+      const increment = Array.from({ length: 8 }, (_, i) => ({
+        accountId,
+        url: `https://instagram.com/p/anish-more-${i}`,
+        platform: "instagram",
+      }));
+      const r2 = await request(app)
+        .post("/v1/hr/reports")
+        .set("Authorization", `Bearer ${hrToken}`)
+        .send({ date: "2026-04-14", links: [...base, ...increment] });
+      expect(r2.status).toBe(201);
+      expect(r2.body.data.links.length).toBe(38);
+
+      // Verify against the DB (server truth, what a hard refresh would show).
+      const today = await request(app)
+        .get("/v1/hr/reports/today")
+        .set("Authorization", `Bearer ${hrToken}`);
+      // (today endpoint is IST-today; assert via direct DB read instead for date 2026-04-14)
+      const dbRows = await prisma.reportLink.count({
+        where: { report: { employeeId, date: new Date("2026-04-14") } },
+      });
+      expect(dbRows).toBe(38);
+    });
+
+    it("intentional link REMOVAL still works on resubmit (must not regress with the fix)", async () => {
+      // Submit 3 links.
+      await request(app)
+        .post("/v1/hr/reports")
+        .set("Authorization", `Bearer ${hrToken}`)
+        .send({
+          date: "2026-04-15",
+          links: [
+            { accountId, url: "https://instagram.com/p/keep-1", platform: "instagram" },
+            { accountId, url: "https://instagram.com/p/remove-me", platform: "instagram" },
+            { accountId, url: "https://instagram.com/p/keep-2", platform: "instagram" },
+          ],
+        });
+
+      // Resubmit WITHOUT the middle link (user removed it via the form).
+      const res = await request(app)
+        .post("/v1/hr/reports")
+        .set("Authorization", `Bearer ${hrToken}`)
+        .send({
+          date: "2026-04-15",
+          links: [
+            { accountId, url: "https://instagram.com/p/keep-1", platform: "instagram" },
+            { accountId, url: "https://instagram.com/p/keep-2", platform: "instagram" },
+          ],
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body.data.links.length).toBe(2);
+      const urls = res.body.data.links.map((l: any) => l.url);
+      expect(urls).not.toContain("https://instagram.com/p/remove-me");
+      // DB confirms the removed link is truly gone (delete-and-recreate semantics preserved).
+      const removed = await prisma.reportLink.count({
+        where: { url: "https://instagram.com/p/remove-me", report: { employeeId } },
+      });
+      expect(removed).toBe(0);
+    });
+
     it("does not drop a link when re-submitting the same day (not a cross-day dup of itself)", async () => {
       // First submission
       await request(app)

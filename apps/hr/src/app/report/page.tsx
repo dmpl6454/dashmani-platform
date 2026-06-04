@@ -500,17 +500,23 @@ export default function ReportPage() {
       let accountId = "";
       let matchStatus: LinkEntry["matchStatus"] = "unmatched";
 
-      if (matchingAccounts.length === 1) {
-        accountId = matchingAccounts[0].id;
-        matchStatus = "auto";
-        matched++;
-      } else if (defaultAccountId) {
-        // 2. Fall back to the user-selected default account
+      if (defaultAccountId) {
+        // 1. EXPLICIT user choice wins. If the employee picked a channel in the
+        // dropdown, ALL pasted links go to it — this is their stated intent and
+        // must override platform auto-match. (Previously auto-match for a single
+        // same-platform account silently ignored this pick, mis-filing links to
+        // the wrong channel for anyone with exactly one account on that platform.)
         accountId = defaultAccountId;
         matchStatus = "manual";
         matched++;
+      } else if (matchingAccounts.length === 1) {
+        // 2. No channel chosen → auto-match when the URL's platform maps to
+        // exactly one of the employee's accounts.
+        accountId = matchingAccounts[0].id;
+        matchStatus = "auto";
+        matched++;
       } else if (matchingAccounts.length > 1) {
-        // Multiple accounts on same platform — needs manual pick
+        // Multiple accounts on same platform and no channel chosen — needs manual pick
         matchStatus = "manual";
         unmatched++;
       } else {
@@ -745,13 +751,13 @@ export default function ReportPage() {
 
             {accounts.length > 0 && (
               <div className="flex items-center gap-2 w-full sm:w-auto">
-                <label className="text-xs text-[#7A7A7A] shrink-0">Fallback account:</label>
+                <label className="text-xs text-[#7A7A7A] shrink-0">Assign all to:</label>
                 <select
                   value={defaultAccountId}
                   onChange={(e) => setDefaultAccountId(e.target.value)}
                   className="border border-[#E8E0D0] bg-white rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-[#F5D547] transition-all flex-1 sm:flex-none min-w-0"
                 >
-                  <option value="">None</option>
+                  <option value="">None (auto-detect by platform)</option>
                   {accounts.map((acc: any) => (
                     <option key={acc.id} value={acc.id}>{acc.handle || acc.displayName} ({acc.platform})</option>
                   ))}
@@ -763,7 +769,7 @@ export default function ReportPage() {
           {showPaste && (
             <div className="space-y-3 mt-3 pt-3 border-t border-[#F0EAD8]" style={{ animation: "crx-slideDown 0.2s ease-out" }}>
               <p className="text-xs text-[#7A7A7A]">
-                Paste all your proof links at once — one per line. We&apos;ll detect the platform from each URL and automatically assign it to your matching account.
+                Paste all your proof links at once — one per line. Pick a channel in <span className="font-medium text-[#1A1A1A]">&ldquo;Assign all to&rdquo;</span> to send every pasted link to that channel, or leave it on <span className="font-medium text-[#1A1A1A]">None</span> to auto-detect the platform from each URL.
               </p>
               <textarea
                 value={pasteText}

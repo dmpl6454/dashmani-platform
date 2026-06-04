@@ -701,8 +701,10 @@ router.get("/hr/poa", authenticateHr, async (req: Request, res: Response, next: 
 
 router.get("/hr/poa/:date", authenticateHr, async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const d = new Date(req.params.date);
-    d.setHours(0, 0, 0, 0);
+    // Use the same IST-midnight helper the POST handler uses, so the read date
+    // matches the stored date (raw `new Date().setHours(0,0,0,0)` shifts by the
+    // server's UTC offset and misses the row — pre-existing IST date-key bug).
+    const d = istMidnight(req.params.date);
     const poa = await prisma.dailyPOA.findUnique({
       where: { employeeId_date: { employeeId: req.user!.userId, date: d } },
     });

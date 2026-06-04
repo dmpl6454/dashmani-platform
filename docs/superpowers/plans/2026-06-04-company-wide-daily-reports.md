@@ -438,7 +438,7 @@ export default function DailyReportsPage() {
             <div className="flex flex-wrap gap-2 mt-2">
               {nonSubmitters.map((e: any) => (
                 <span key={e.id} className="inline-flex items-center gap-1.5 bg-white border border-amber-200 rounded-full px-2.5 py-1 text-xs text-[#7A4A00]">
-                  <UserAvatar name={e.name} size={16} />
+                  <UserAvatar name={e.name} size={5} />
                   {e.name}
                 </span>
               ))}
@@ -466,7 +466,7 @@ export default function DailyReportsPage() {
             <div key={r.id} className="bg-white rounded-2xl border border-[#F0EAD8] p-5 space-y-3">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <UserAvatar name={r.employee?.name ?? "—"} size={32} />
+                  <UserAvatar name={r.employee?.name ?? "—"} size={9} />
                   <div>
                     <p className="text-sm font-semibold text-[#1A1A1A]">{r.employee?.name ?? "Unknown"}</p>
                     <p className="text-[11px] text-[#B0B0B0]">{r.employee?.email}</p>

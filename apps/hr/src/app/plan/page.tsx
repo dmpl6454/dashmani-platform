@@ -127,14 +127,14 @@ export default function PlanOfActionPage() {
 
         {saved && (
           <div className="flex items-center gap-2 bg-success-bg border border-success/20 text-success px-4 py-3 rounded-xl text-[13px] font-medium">
-            <Check className="h-4 w-4" /> POA saved successfully!
+            <Check className="h-4 w-4" /> Daily update saved successfully!
           </div>
         )}
 
         {isReadOnly && (
           <div className="flex items-center gap-2 bg-muted border border-ink/10 text-ink-3 px-4 py-3 rounded-xl text-[13px] font-medium">
             <ClipboardList className="h-4 w-4 shrink-0" />
-            Past plans are read-only. Navigate to today to submit or update your POA.
+            Past updates are read-only. Navigate to today to submit or update your daily update.
           </div>
         )}
 
@@ -208,7 +208,7 @@ export default function PlanOfActionPage() {
                   disabled={saving || !tasks.trim()}
                   className="btn-3d inline-flex items-center gap-2 px-5 h-10 rounded-xl bg-ink text-white text-[13px] font-semibold border-2 border-ink disabled:opacity-50"
                 >
-                  <Save className="h-4 w-4" /> {saving ? "Saving..." : "Save POA"}
+                  <Save className="h-4 w-4" /> {saving ? "Saving..." : "Save Daily Update"}
                 </button>
               </div>
             )}
@@ -219,7 +219,7 @@ export default function PlanOfActionPage() {
         {history.length > 0 && (
           <div className="v3-card">
             <div className="px-5 h-12 flex items-center" style={{ borderBottom: "2px solid rgba(26,26,26,0.07)" }}>
-              <span className="text-[13px] font-semibold text-ink">Past Plans</span>
+              <span className="text-[13px] font-semibold text-ink">Past Updates</span>
             </div>
             <div className="px-5 py-3 space-y-1">
               {history.slice(0, 10).map((poa: any) => {

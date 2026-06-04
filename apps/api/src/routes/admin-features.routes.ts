@@ -1086,9 +1086,10 @@ router.get("/admin/poa", authenticate, requirePermission("employees", "view"), a
     const where: any = {};
     if (employeeId) where.employeeId = employeeId;
     if (date) {
-      const d = new Date(date);
-      d.setHours(0, 0, 0, 0);
-      where.date = d;
+      // istMidnight matches how POST /hr/poa stores the date (IST-aware), so the
+      // date filter actually hits the stored row. Raw new Date().setHours() would
+      // shift by the server's UTC offset and miss it (pre-existing IST date-key bug).
+      where.date = istMidnight(date);
     }
     const poas = await prisma.dailyPOA.findMany({
       where,

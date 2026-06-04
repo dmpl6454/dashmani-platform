@@ -481,7 +481,7 @@ function RightStage() {
 
 /* ── Day timeline ── */
 const DAY_STEPS = [
-  { h: 9,  m: 30, title: "Daily report",  body: "A short morning ritual — what shipped yesterday, what's on today, blockers if any.", accent: "action" },
+  { h: 9,  m: 30, title: "Daily update",  body: "A short morning ritual — what shipped yesterday, what's on today, blockers if any.", accent: "action" },
   { h: 11, m: 0,  title: "Focus block",   body: "Heads-down work. We respect your calendar — no pings during marked focus time.",      accent: "sage" },
   { h: 12, m: 0,  title: "Team standup",  body: "A 15-min jam to unblock each other. Skip if you're heads-down — we keep notes.",      accent: "terra" },
   { h: 15, m: 0,  title: "Client review", body: "Open the review room. Read comments, action what's needed, close the loop calmly.",   accent: "indigo" },
@@ -879,7 +879,7 @@ export default function LoginPage() {
 
           {/* Feature chips */}
           <div className="flex flex-wrap gap-2 mt-5" style={{ animation: "auth-fadeUp .42s cubic-bezier(0.34,1.45,0.64,1) .4s both" }}>
-            {[{ l: "Daily report", c: "bg-[#FFF3C4]" }, { l: "Tasks", c: "bg-[#EDEDFD]" }, { l: "Attendance", c: "bg-[#EDF4EE]" }, { l: "Leave", c: "bg-[#FDF0EC]" }, { l: "Salary slips", c: "bg-[#EEF4ED]" }, { l: "Reviews", c: "bg-[#F3EED8]" }].map((c) => (
+            {[{ l: "Daily update", c: "bg-[#FFF3C4]" }, { l: "Tasks", c: "bg-[#EDEDFD]" }, { l: "Attendance", c: "bg-[#EDF4EE]" }, { l: "Leave", c: "bg-[#FDF0EC]" }, { l: "Salary slips", c: "bg-[#EEF4ED]" }, { l: "Reviews", c: "bg-[#F3EED8]" }].map((c) => (
               <span key={c.l} className={`px-2.5 py-1 rounded-full text-[11px] font-bold text-[#3A3A3A] ${c.c} hover:-translate-y-0.5 transition-transform`} style={{ border: "1.2px solid rgba(26,26,26,.10)" }}>{c.l}</span>
             ))}
           </div>

@@ -118,7 +118,7 @@ export default function HistoryPage() {
 
   return (
     <>
-      <Topstrip title="Report History" sub={`${reports.length} reports`} right={
+      <Topstrip title="Link History" sub={`${reports.length} reports`} right={
         <div className="flex gap-1">
           {RANGES.map(r => (
             <button key={r.key} onClick={() => setRange(r.key)}

@@ -178,7 +178,7 @@ function Field({ id, label, type = "text", Icon, value, onChange, error, success
 
 /* ── Typewriter daily report card ── */
 const REPORT_LINES = [
-  { kind: "head", text: "Daily Report · 18 May" },
+  { kind: "head", text: "Daily Update · 18 May" },
   { kind: "done", text: "Shipped IG carousel for @meher.co" },
   { kind: "done", text: "Closed 3 review threads on Otto" },
   { kind: "done", text: "Logged 6h focus · 0 context-switches" },
@@ -241,7 +241,7 @@ function ReportCard() {
       <div className="px-5 h-12 flex items-center justify-between" style={{ borderBottom: "2px solid rgba(26,26,26,0.07)" }}>
         <div className="flex items-center gap-2">
           <IcEdit className="text-[#5D5FEF]" />
-          <span className="text-[13px] font-bold text-[#1A1A1A]">Submit your daily report</span>
+          <span className="text-[13px] font-bold text-[#1A1A1A]">Submit your daily update</span>
         </div>
         <span className="text-[10.5px] font-bold text-[#E8C83A] bg-[#FFF3C4] px-2 py-0.5 rounded-full">DRAFT</span>
       </div>
@@ -402,7 +402,7 @@ function SubmitBanner() {
       <div className="absolute top-[-40px] right-[-40px] w-[180px] h-[180px] rounded-full" style={{ background: "rgba(245,213,71,.20)", filter: "blur(50px)" }} />
       <div className="relative flex-1">
         <p className="text-[#F5D547] text-[10.5px] font-black uppercase tracking-[0.16em] mb-1">Action required</p>
-        <p className="text-white text-[15px] font-bold leading-tight">Submit your daily report</p>
+        <p className="text-white text-[15px] font-bold leading-tight">Submit your daily update</p>
         <p className="text-white/55 text-[11.5px] mt-1 font-medium">Don't forget to log today's work</p>
       </div>
       <div className="relative h-10 w-10 rounded-xl bg-[#F5D547] grid place-items-center shrink-0" style={{ boxShadow: "0 0 0 1px rgba(26,26,26,.18)" }}>
@@ -481,7 +481,7 @@ function RightStage() {
 
 /* ── Day timeline ── */
 const DAY_STEPS = [
-  { h: 9,  m: 30, title: "Daily report",  body: "A short morning ritual — what shipped yesterday, what's on today, blockers if any.", accent: "action" },
+  { h: 9,  m: 30, title: "Daily update",  body: "A short morning ritual — what shipped yesterday, what's on today, blockers if any.", accent: "action" },
   { h: 11, m: 0,  title: "Focus block",   body: "Heads-down work. We respect your calendar — no pings during marked focus time.",      accent: "sage" },
   { h: 12, m: 0,  title: "Team standup",  body: "A 15-min jam to unblock each other. Skip if you're heads-down — we keep notes.",      accent: "terra" },
   { h: 15, m: 0,  title: "Client review", body: "Open the review room. Read comments, action what's needed, close the loop calmly.",   accent: "indigo" },
@@ -879,7 +879,7 @@ export default function LoginPage() {
 
           {/* Feature chips */}
           <div className="flex flex-wrap gap-2 mt-5" style={{ animation: "auth-fadeUp .42s cubic-bezier(0.34,1.45,0.64,1) .4s both" }}>
-            {[{ l: "Daily report", c: "bg-[#FFF3C4]" }, { l: "Tasks", c: "bg-[#EDEDFD]" }, { l: "Attendance", c: "bg-[#EDF4EE]" }, { l: "Leave", c: "bg-[#FDF0EC]" }, { l: "Salary slips", c: "bg-[#EEF4ED]" }, { l: "Reviews", c: "bg-[#F3EED8]" }].map((c) => (
+            {[{ l: "Daily update", c: "bg-[#FFF3C4]" }, { l: "Tasks", c: "bg-[#EDEDFD]" }, { l: "Attendance", c: "bg-[#EDF4EE]" }, { l: "Leave", c: "bg-[#FDF0EC]" }, { l: "Salary slips", c: "bg-[#EEF4ED]" }, { l: "Reviews", c: "bg-[#F3EED8]" }].map((c) => (
               <span key={c.l} className={`px-2.5 py-1 rounded-full text-[11px] font-bold text-[#3A3A3A] ${c.c} hover:-translate-y-0.5 transition-transform`} style={{ border: "1.2px solid rgba(26,26,26,.10)" }}>{c.l}</span>
             ))}
           </div>

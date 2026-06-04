@@ -32,7 +32,7 @@ const NAV_MAIN: NavItem[] = [
 const NAV_MORE: NavItem[] = [
   { href: "/offer-letters", label: "Offer Letters",  icon: Mail },
   { href: "/presentations", label: "Presentations",  icon: Presentation },
-  { href: "/plan",          label: "Plan of Action", icon: ClipboardList },
+  { href: "/plan",          label: "Daily Report",   icon: ClipboardList },
   { href: "/calendar",      label: "Calendar",       icon: Calendar },
   { href: "/extra-hours",   label: "Extra Hours",    icon: Timer },
   { href: "/reviews",       label: "My Reviews",     icon: Award },

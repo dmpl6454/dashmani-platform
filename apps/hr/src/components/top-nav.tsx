@@ -18,7 +18,7 @@ const navItems = [
   { href: "/leaderboard", label: "Board", icon: Trophy },
   { href: "/team", label: "Team", icon: Users },
   { href: "/leave", label: "Leave", icon: PlaneTakeoff },
-  { href: "/plan", label: "POA", icon: ClipboardList },
+  { href: "/plan", label: "Daily Report", icon: ClipboardList },
 ];
 
 const moreItems = [

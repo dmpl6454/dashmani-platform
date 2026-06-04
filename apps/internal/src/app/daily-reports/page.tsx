@@ -26,7 +26,7 @@ function fmtTime(v: string | null | undefined): string {
 }
 
 export default function DailyReportsPage() {
-  usePageTitle("Daily Reports");
+  usePageTitle("Daily Updates");
   const [date, setDate] = useState(todayLocalISO());
   const [employeeId, setEmployeeId] = useState("");
 
@@ -57,7 +57,7 @@ export default function DailyReportsPage() {
           <ClipboardList className="h-5 w-5 text-[#1A1A1A]" />
         </span>
         <div>
-          <h1 className="text-2xl font-bold text-[#1A1A1A]">Daily Reports</h1>
+          <h1 className="text-2xl font-bold text-[#1A1A1A]">Daily Updates</h1>
           <p className="text-sm text-[#7A7A7A]">Written work updates from all employees — {displayDate(date)}</p>
         </div>
       </div>
@@ -136,7 +136,7 @@ export default function DailyReportsPage() {
       ) : sortedReports.length === 0 ? (
         <div className="bg-white rounded-2xl border border-[#F0EAD8] p-10 text-center text-[#7A7A7A]">
           <ClipboardList className="h-8 w-8 mx-auto mb-2 opacity-40" />
-          No daily reports {employeeId ? "from this employee " : ""}for {displayDate(date)} yet.
+          No daily updates {employeeId ? "from this employee " : ""}for {displayDate(date)} yet.
         </div>
       ) : (
         <div className="space-y-3">

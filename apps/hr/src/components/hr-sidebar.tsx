@@ -15,8 +15,8 @@ type NavItem = { href: string; label: string; icon: React.ElementType; group?: s
 
 const NAV_MAIN: NavItem[] = [
   { href: "/dashboard",    label: "Dashboard",      icon: LayoutDashboard },
-  { href: "/report",       label: "Submit Report",  icon: FileText,        group: "Daily" },
-  { href: "/history",      label: "Report History", icon: Clock },
+  { href: "/report",       label: "Submit Links",   icon: FileText,        group: "Daily" },
+  { href: "/history",      label: "Link History",   icon: Clock },
   { href: "/leaderboard",  label: "Leaderboard",    icon: Trophy },
   { href: "/team",         label: "My Team",        icon: Users,           group: "People" },
   { href: "/leave",        label: "Leave Request",  icon: PlaneTakeoff,    group: "Time Off" },
@@ -32,7 +32,7 @@ const NAV_MAIN: NavItem[] = [
 const NAV_MORE: NavItem[] = [
   { href: "/offer-letters", label: "Offer Letters",  icon: Mail },
   { href: "/presentations", label: "Presentations",  icon: Presentation },
-  { href: "/plan",          label: "Daily Report",   icon: ClipboardList },
+  { href: "/plan",          label: "Daily Update",   icon: ClipboardList },
   { href: "/calendar",      label: "Calendar",       icon: Calendar },
   { href: "/extra-hours",   label: "Extra Hours",    icon: Timer },
   { href: "/reviews",       label: "My Reviews",     icon: Award },

@@ -92,7 +92,7 @@ export default function PlanOfActionPage() {
 
   return (
     <>
-      <Topstrip title="Daily Report" sub="Log what you did today — visible to your admins" />
+      <Topstrip title="Daily Update" sub="Log what you did today — visible to your admins" />
       <div className="px-6 py-6 flex-1 overflow-y-auto max-w-[900px] space-y-5">
 
         {/* Date Navigation — back arrow to browse history; no forward past today */}

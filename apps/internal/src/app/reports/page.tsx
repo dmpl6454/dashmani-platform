@@ -391,7 +391,7 @@ export default function ReportsPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="font-serif text-4xl font-light text-[#1A1A1A]">Daily Reports</h1>
+          <h1 className="font-serif text-4xl font-light text-[#1A1A1A]">Link Reports</h1>
           <p className="text-sm text-[#7A7A7A] mt-1">Employee daily link submission reports</p>
         </div>
         <div className="flex items-center gap-2">

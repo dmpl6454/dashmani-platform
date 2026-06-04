@@ -379,7 +379,7 @@ export default function DashboardPage() {
             <ClipboardList className="h-6 w-6 text-amber-600" />
           </div>
           <div className="flex-1 min-w-0">
-            <p className="font-bold text-ink">Daily Reports</p>
+            <p className="font-bold text-ink">Daily Updates</p>
             <p className="text-xs text-ink-4">See who wrote what today — notes, plans &amp; who hasn&apos;t submitted</p>
           </div>
           <ArrowRight className="h-4 w-4 text-ink-4 opacity-0 group-hover:opacity-100 transition-opacity" />

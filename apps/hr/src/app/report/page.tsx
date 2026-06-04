@@ -188,7 +188,7 @@ function TodaySubmittedPanel({ existing, accounts }: {
         })}
       </ul>
       <p className="text-[11px] text-[#7A7A7A]">
-        To add, remove, or change a link — use the form below and click <span className="font-medium text-[#1A1A1A]">Update Report</span> to save.
+        To add, remove, or change a link — use the form below and click <span className="font-medium text-[#1A1A1A]">Update Links</span> to save.
       </p>
     </div>
   );
@@ -653,7 +653,7 @@ export default function ReportPage() {
             <div className="h-9 w-9 rounded-xl bg-[#FFF3C4] flex items-center justify-center shadow-[0_2px_8px_rgba(245,213,71,0.2)]">
               <FileText className="h-4.5 w-4.5 text-[#B8960C]" />
             </div>
-            <h1 className="text-3xl font-light text-[#1A1A1A] font-serif">Daily Report</h1>
+            <h1 className="text-3xl font-light text-[#1A1A1A] font-serif">Link Report</h1>
           </div>
           <p className="text-[#7A7A7A] text-sm">{todayFormatted}</p>
         </div>
@@ -818,7 +818,7 @@ export default function ReportPage() {
           <div className="flex-1 h-px bg-[#E8E0D0]" />
           {existing && (
             <span className="text-[11px] text-indigo-500 font-medium shrink-0">
-              editing — trash to remove, then Update Report
+              editing — trash to remove, then Update Links
             </span>
           )}
         </div>
@@ -1011,7 +1011,7 @@ export default function ReportPage() {
             ) : (
               <>
                 <Send className="h-5 w-5 shrink-0 group-hover:translate-x-1 transition-transform duration-150" />
-                <span>{existing ? "Update Report" : "Submit Report"}</span>
+                <span>{existing ? "Update Links" : "Submit Links"}</span>
               </>
             )}
             {/* shimmer sweep on hover */}

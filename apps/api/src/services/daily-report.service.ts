@@ -1,7 +1,7 @@
 import { prisma } from "@dashmani/db";
 import { AppError } from "../middleware/error-handler";
 import type { ReportLinkInput, DailyReportResponse, AdminReportFilters } from "@dashmani/shared";
-import { todayIST, istMidnight, dateToIST } from "@dashmani/shared";
+import { todayIST, istMidnight, dateToIST, canonicalKey } from "@dashmani/shared";
 import { calcStreaks } from "../utils/streak";
 
 function formatReport(report: any) {
@@ -86,25 +86,23 @@ export async function submitDailyReport(
     throw new AppError(400, "VALIDATION_ERROR", "At least one link is required");
   }
 
-  // Check for duplicate URLs within the submission (skip scheduled posts with no URL)
-  const urlSet = new Set<string>();
-  const duplicatesInSubmission: string[] = [];
-  for (const link of links) {
-    if (!link.url || link.isScheduled) continue;
-    const normalizedUrl = link.url.trim().toLowerCase();
-    if (urlSet.has(normalizedUrl)) {
-      duplicatesInSubmission.push(link.url);
-    }
-    urlSet.add(normalizedUrl);
-  }
-
-  if (duplicatesInSubmission.length > 0) {
-    throw new AppError(
-      400,
-      "DUPLICATE_LINKS",
-      `Duplicate links found in submission: ${duplicatesInSubmission.slice(0, 5).join(", ")}${duplicatesInSubmission.length > 5 ? ` and ${duplicatesInSubmission.length - 5} more` : ""}`,
-      duplicatesInSubmission.map((url) => ({ field: "links.url", message: url })),
-    );
+  // In-submission de-duplication: silently keep the FIRST occurrence of each
+  // canonical key and drop later copies. Previously this threw a 400
+  // DUPLICATE_LINKS, but the frontend already merges dupes silently, so a hard
+  // reject only ever surfaced as a confusing blocked submit when the two
+  // disagreed. Keep-first-merge mirrors the client and guarantees the submission
+  // always goes through (defense-in-depth, never a blocker).
+  // canonicalKey collapses tracking-token variants of the same post (e.g. the
+  // same Instagram reel copied twice with different ?igsh= tokens).
+  {
+    const seenKeys = new Set<string>();
+    links = links.filter((l) => {
+      if (l.isScheduled || !l.url || !l.url.trim()) return true; // scheduled/no-url rows are never dup-merged
+      const key = canonicalKey(l.url);
+      if (seenKeys.has(key)) return false;
+      seenKeys.add(key);
+      return true;
+    });
   }
 
   // Silently drop links already submitted on a previous day for this employee.
@@ -112,38 +110,47 @@ export async function submitDailyReport(
   // initial dedupe pass runs. Server is the safety net — drop rather than hard-block
   // so the employee's submission always goes through.
   const reportDate = new Date(date);
-  const liveUrls = links.filter((l) => !l.isScheduled && l.url).map((l) => l.url!.trim());
 
-  // Look up prior submissions of these URLs in CHUNKS so an unbounded link count
-  // never blows past Postgres's bind-parameter limit (each URL is one param).
-  const CHUNK = 1000;
-  const existingLinks: { url: string | null; report: { date: Date } }[] = [];
-  for (let i = 0; i < liveUrls.length; i += CHUNK) {
-    const slice = liveUrls.slice(i, i + CHUNK);
-    const rows = await prisma.reportLink.findMany({
-      where: {
-        url: { in: slice },
-        report: { employeeId },
+  // We compare by canonicalKey, NOT by raw URL. The old code fetched prior rows
+  // with `url: { in: liveUrls }` (exact string match) — but Instagram regenerates
+  // the ?igsh= token on every copy, so a re-copied reel never matched yesterday's
+  // stored URL and the cross-day net was a no-op for Instagram. An exact-match
+  // fetch therefore CAN'T find the rows we need to compare. Instead we pull the
+  // employee's recent live links over a bounded window and compare canonical keys
+  // in memory. The window (90 days) matches the frontend my-link-urls horizon.
+  const CROSS_DAY_WINDOW_DAYS = 90;
+  const windowStart = new Date(reportDate.getTime() - CROSS_DAY_WINDOW_DAYS * 86400000);
+  const priorRows = await prisma.reportLink.findMany({
+    where: {
+      url: { not: null },
+      isScheduled: false,
+      report: {
+        employeeId,
+        // Bound the scan; include reportDate itself so the IST-day filter below
+        // can correctly EXCLUDE today's own links (a link on today's report must
+        // never be treated as a cross-day duplicate of itself on resubmit).
+        date: { gte: windowStart, lte: reportDate },
       },
-      select: { url: true, report: { select: { date: true } } },
-    });
-    existingLinks.push(...rows);
-  }
+    },
+    select: { url: true, report: { select: { date: true } } },
+  });
 
-  // A URL is a cross-day duplicate only if it exists on a DIFFERENT IST day.
-  // Comparing IST day strings (not raw Dates) is what makes the midnight rollover correct.
-  const crossDayDupUrls = new Set(
-    existingLinks
-      .filter((el) => dateToIST(new Date(el.report.date)) !== dateToIST(reportDate))
-      .map((el) => el.url?.trim().toLowerCase())
-      .filter((u): u is string => !!u)
+  // A canonical key is a cross-day duplicate only if it appears on a DIFFERENT
+  // IST day. Comparing IST day strings (not raw Dates) makes the midnight
+  // rollover correct.
+  const reportDayIST = dateToIST(reportDate);
+  const crossDayDupKeys = new Set(
+    priorRows
+      .filter((el) => dateToIST(new Date(el.report.date)) !== reportDayIST)
+      .map((el) => canonicalKey(el.url))
+      .filter((k) => !!k)
   );
 
-  if (crossDayDupUrls.size > 0) {
+  if (crossDayDupKeys.size > 0) {
     // Drop silently — same behaviour as the frontend auto-dedupe
     links = links.filter((l) => {
       if (!l.url || l.isScheduled) return true;
-      return !crossDayDupUrls.has(l.url.trim().toLowerCase());
+      return !crossDayDupKeys.has(canonicalKey(l.url));
     });
   }
 
@@ -163,7 +170,9 @@ export async function submitDailyReport(
   // old link rows, capture each existing URL's original firstSeenAt so we can
   // carry it forward — a link that was first submitted at 10am keeps its 10am
   // time even when the report is edited (and new links added) later that day.
-  // Keyed on the trimmed+lowercased URL to match how dedupe normalizes URLs.
+  // Keyed on canonicalKey to match how dedupe normalizes URLs (so a re-copied
+  // reel with a fresh ?igsh= token still maps to its original firstSeenAt).
+  // On key collision keep the EARLIEST timestamp — the true first-seen time.
   const priorFirstSeen = new Map<string, Date>();
   if (existing) {
     const prevLinks = await prisma.reportLink.findMany({
@@ -171,13 +180,16 @@ export async function submitDailyReport(
       select: { url: true, firstSeenAt: true },
     });
     for (const pl of prevLinks) {
-      if (pl.url) priorFirstSeen.set(pl.url.trim().toLowerCase(), pl.firstSeenAt);
+      if (!pl.url) continue;
+      const key = canonicalKey(pl.url);
+      const prev = priorFirstSeen.get(key);
+      if (!prev || pl.firstSeenAt < prev) priorFirstSeen.set(key, pl.firstSeenAt);
     }
   }
 
   const linkRows = (id: string, now: Date) =>
     links.map((l) => {
-      const key = l.url ? l.url.trim().toLowerCase() : null;
+      const key = l.url ? canonicalKey(l.url) : null;
       // Reuse the original firstSeenAt for a URL already present in this report;
       // brand-new URLs (and scheduled/no-URL rows) get the current submit time.
       const firstSeenAt = (key && priorFirstSeen.get(key)) || now;

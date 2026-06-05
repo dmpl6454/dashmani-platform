@@ -9,7 +9,7 @@ import {
   getTodayReport,
 } from "../services/daily-report.service";
 import { prisma } from "@dashmani/db";
-import { todayIST, istMidnight } from "@dashmani/shared";
+import { todayIST, istMidnight, canonicalKey } from "@dashmani/shared";
 import {
   getGrowthForEmployee,
   getAccountGrowth,
@@ -97,11 +97,16 @@ router.get("/hr/reports/my-link-urls", authenticateHr, async (req: Request, res:
       select: { url: true, report: { select: { date: true } } },
     });
 
-    // Build url -> earliest-date map (normalised lowercase)
+    // Build canonicalKey -> earliest-date map. The frontend cross-day dedupe
+    // looks up by canonicalKey(link.url), so the keys here MUST be canonical too
+    // (otherwise a re-copied Instagram reel with a fresh ?igsh= token would never
+    // match yesterday's stored URL). Both sides compute the key fresh on read;
+    // the DB still stores raw URLs.
     const map: Record<string, string> = {};
     for (const r of rows) {
       if (!r.url) continue;
-      const key = r.url.trim().toLowerCase();
+      const key = canonicalKey(r.url);
+      if (!key) continue;
       const date = r.report.date.toISOString().slice(0, 10);
       if (!map[key] || date < map[key]) map[key] = date;
     }

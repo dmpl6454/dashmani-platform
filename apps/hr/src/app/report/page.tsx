@@ -1,5 +1,6 @@
 "use client";
 import { useState, useEffect, useRef, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import useSWR from "swr";
 import {
@@ -228,17 +229,17 @@ export default function ReportPage() {
   // Per-row validation errors from API (key = row index, value = {field: message})
   const [rowErrors, setRowErrors] = useState<Record<number, Record<string, string>>>({});
 
-  // Deduplication modal — a prominent, in-your-face explanation of which links
-  // were auto-removed and WHY, grouped by reason. Replaces the old small corner
-  // toast that made the removal feel like an unexplained "link vanished".
-  //   - "in-submission": the same link appeared more than once in the form right
-  //      now (pasted twice, or pasted then typed again).
-  //   - "cross-day": the link was already submitted on a previous day.
-  // Compact COUNT-only notice (no per-link list, no screen-blocking modal — a long
-  // list became an unreadable full-screen scroll wall on mobile and alarmed people).
+  // Compact COUNT-only dedupe notice (no per-link list, no screen-blocking modal —
+  // a long list became an unreadable full-screen scroll wall on mobile and alarmed
+  // people). Rendered as a viewport-fixed toast via a portal to document.body (see
+  // below) so it stays in view regardless of scroll.
   //   inSubmission: same link already in the form (pasted/typed twice)
   //   crossDay: already submitted on a previous day
   const [dedupeNotice, setDedupeNotice] = useState<{ inSubmission: number; crossDay: number } | null>(null);
+  // Portal target only exists in the browser — gate rendering until mounted to
+  // avoid an SSR/hydration mismatch (document is undefined on the server).
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => { setMounted(true); }, []);
   const dedupeToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Coalesce removals from the SAME paste (in-submission + cross-day fire close
   // together) into one notice, but start fresh for a later paste. Tracks the last
@@ -726,12 +727,16 @@ export default function ReportPage() {
       {/* Today's submitted links — read-only history panel */}
       <TodaySubmittedPanel existing={existing} accounts={accounts} />
 
-      {/* Auto-dedupe notice — FIXED floating toast (bottom-center) so it's visible
-          no matter where the user has scrolled. Removing a duplicate happens
-          wherever they are in a long form; an inline top banner was off-screen.
-          z-40 floats above content but below the mobile sidebar drawer (z-50), so
-          it never blocks navigation. Count + reason only — no list, no backdrop. */}
-      {dedupeNotice && (dedupeNotice.inSubmission > 0 || dedupeNotice.crossDay > 0) && (() => {
+      {/* Auto-dedupe notice — viewport-fixed floating toast (bottom-center) so it's
+          visible no matter where the user has scrolled. Removing a duplicate happens
+          wherever they are in a long form; an inline banner was off-screen.
+          PORTALED to document.body: the page wrapper has `crx-animate-fade` whose
+          retained `transform` (animation-fill-mode: both) makes it the containing
+          block for position:fixed, which pinned the toast to the bottom of the form
+          instead of the viewport (had to scroll down to see it). Rendering outside
+          that subtree restores true viewport-fixed behaviour.
+          z-40 floats above content but below the mobile sidebar drawer (z-50). */}
+      {mounted && dedupeNotice && (dedupeNotice.inSubmission > 0 || dedupeNotice.crossDay > 0) && createPortal((() => {
         const total = dedupeNotice.inSubmission + dedupeNotice.crossDay;
         return (
           <div
@@ -768,7 +773,7 @@ export default function ReportPage() {
             </div>
           </div>
         );
-      })()}
+      })(), document.body)}
 
       {/* Draft restored toast */}
       {draftRestored && (

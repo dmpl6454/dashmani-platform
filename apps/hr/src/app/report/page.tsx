@@ -726,36 +726,46 @@ export default function ReportPage() {
       {/* Today's submitted links — read-only history panel */}
       <TodaySubmittedPanel existing={existing} accounts={accounts} />
 
-      {/* Auto-dedupe notice — compact inline banner (count + reason only, no list,
-          no backdrop, never blocks the screen). Auto-dismisses. */}
+      {/* Auto-dedupe notice — FIXED floating toast (bottom-center) so it's visible
+          no matter where the user has scrolled. Removing a duplicate happens
+          wherever they are in a long form; an inline top banner was off-screen.
+          z-40 floats above content but below the mobile sidebar drawer (z-50), so
+          it never blocks navigation. Count + reason only — no list, no backdrop. */}
       {dedupeNotice && (dedupeNotice.inSubmission > 0 || dedupeNotice.crossDay > 0) && (() => {
         const total = dedupeNotice.inSubmission + dedupeNotice.crossDay;
         return (
-          <div className="bg-amber-50 border border-amber-200 rounded-xl p-3.5 flex items-start gap-2.5 crx-animate-scale">
-            <AlertTriangle className="h-4 w-4 text-amber-600 mt-0.5 flex-shrink-0" />
-            <div className="text-sm text-amber-800 flex-1 min-w-0">
-              <span className="font-semibold">
-                {total} duplicate link{total !== 1 ? "s" : ""} removed
-              </span>
-              {" "}— your unique links are kept and safe.
-              <span className="block text-xs text-amber-700/90 mt-0.5">
-                {dedupeNotice.inSubmission > 0 && (
-                  <>{dedupeNotice.inSubmission} already in your list</>
-                )}
-                {dedupeNotice.inSubmission > 0 && dedupeNotice.crossDay > 0 && " · "}
-                {dedupeNotice.crossDay > 0 && (
-                  <>{dedupeNotice.crossDay} already posted on an earlier day</>
-                )}
-              </span>
+          <div
+            className="fixed inset-x-0 bottom-4 z-40 flex justify-center px-4 pointer-events-none"
+            role="status"
+            aria-live="polite"
+            style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+          >
+            <div className="pointer-events-auto w-full max-w-sm bg-amber-50 border border-amber-200 rounded-xl shadow-lg p-3.5 flex items-start gap-2.5 crx-animate-scale">
+              <AlertTriangle className="h-4 w-4 text-amber-600 mt-0.5 flex-shrink-0" />
+              <div className="text-sm text-amber-800 flex-1 min-w-0">
+                <span className="font-semibold">
+                  {total} duplicate link{total !== 1 ? "s" : ""} removed
+                </span>
+                {" "}— your unique links are kept and safe.
+                <span className="block text-xs text-amber-700/90 mt-0.5">
+                  {dedupeNotice.inSubmission > 0 && (
+                    <>{dedupeNotice.inSubmission} already in your list</>
+                  )}
+                  {dedupeNotice.inSubmission > 0 && dedupeNotice.crossDay > 0 && " · "}
+                  {dedupeNotice.crossDay > 0 && (
+                    <>{dedupeNotice.crossDay} already posted on an earlier day</>
+                  )}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setDedupeNotice(null)}
+                className="text-amber-600 hover:text-amber-800 flex-shrink-0"
+                aria-label="Dismiss"
+              >
+                <XCircle className="h-4 w-4" />
+              </button>
             </div>
-            <button
-              type="button"
-              onClick={() => setDedupeNotice(null)}
-              className="text-amber-600 hover:text-amber-800 flex-shrink-0"
-              aria-label="Dismiss"
-            >
-              <XCircle className="h-4 w-4" />
-            </button>
           </div>
         );
       })()}

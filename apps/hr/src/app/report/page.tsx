@@ -108,129 +108,6 @@ function MetricsRow({ link, onChange }: {
   );
 }
 
-// ─── Duplicate-removal modal ─────────────────────────────────────────────────
-// Prominent, centered explanation of which links were auto-removed and WHY.
-// Replaces the old small corner toast (which made removals feel like an
-// unexplained "link vanished" — scary for users entering 70+ links).
-
-type DedupeItem = { url: string; reason: "in-submission" | "cross-day"; date?: string };
-
-// Trim a long social URL to something readable in the list (host + last path bit).
-function shortenUrl(url: string): string {
-  try {
-    const u = new URL(url);
-    const host = u.hostname.replace(/^www\./, "");
-    const seg = u.pathname.split("/").filter(Boolean);
-    const tail = seg.slice(-2).join("/");
-    return tail ? `${host}/${tail}` : host;
-  } catch {
-    return url.length > 48 ? url.slice(0, 45) + "…" : url;
-  }
-}
-
-// "2026-06-04" → "4 Jun 2026" (the cross-day dates come as YYYY-MM-DD strings).
-function prettyDate(ymd?: string): string {
-  if (!ymd) return "a previous day";
-  const [y, m, d] = ymd.split("-").map(Number);
-  if (!y || !m || !d) return ymd;
-  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-  return `${d} ${months[m - 1]} ${y}`;
-}
-
-function DedupeModal({ items, onClose }: { items: DedupeItem[]; onClose: () => void }) {
-  // Auto-dismiss after a comfortable read time. Scales with how many links were
-  // removed so a big batch isn't yanked away before it can be read; capped so it
-  // never lingers forever. The user can also close it immediately with the button.
-  useEffect(() => {
-    const ms = Math.min(5000 + items.length * 400, 12000);
-    const t = setTimeout(onClose, ms);
-    return () => clearTimeout(t);
-  }, [items.length, onClose]);
-
-  const inSub = items.filter((i) => i.reason === "in-submission");
-  const crossDay = items.filter((i) => i.reason === "cross-day");
-  const total = items.length;
-
-  return (
-    <div
-      className="fixed inset-0 z-[300] bg-black/60 flex items-center justify-center p-4"
-      onClick={onClose}
-      role="dialog"
-      aria-modal="true"
-      aria-label="Duplicate links removed"
-    >
-      <div
-        className="bg-bg rounded-2xl shadow-2xl w-full max-w-md overflow-hidden crx-animate-scale"
-        onClick={(e) => e.stopPropagation()}
-        style={{ border: "2px solid rgba(26,26,26,0.08)" }}
-      >
-        {/* Header */}
-        <div className="px-5 py-4 border-b border-[#E8E0D0] flex items-start gap-3">
-          <div className="h-9 w-9 rounded-full bg-amber-100 flex items-center justify-center flex-shrink-0">
-            <AlertTriangle className="h-5 w-5 text-amber-600" />
-          </div>
-          <div>
-            <h3 className="text-base font-semibold text-[#1A1A1A]">
-              {total} duplicate link{total !== 1 ? "s" : ""} removed
-            </h3>
-            <p className="text-xs text-[#7A7A6A] mt-0.5">
-              These were the same post as another link — your unique links are all kept and safe.
-            </p>
-          </div>
-        </div>
-
-        {/* Grouped list */}
-        <div className="max-h-[50vh] overflow-y-auto px-5 py-3 space-y-4">
-          {inSub.length > 0 && (
-            <div>
-              <p className="text-[11px] font-semibold uppercase tracking-wide text-[#9A9A8A] mb-1.5">
-                Already in this report ({inSub.length}) — pasted or typed twice just now
-              </p>
-              <ul className="space-y-1">
-                {inSub.map((it, idx) => (
-                  <li key={`in-${idx}`} className="text-xs text-[#5A5A4A] flex items-center gap-1.5 break-all">
-                    <XCircle className="h-3 w-3 text-amber-500 flex-shrink-0" />
-                    {shortenUrl(it.url)}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-          {crossDay.length > 0 && (
-            <div>
-              <p className="text-[11px] font-semibold uppercase tracking-wide text-[#9A9A8A] mb-1.5">
-                Already submitted on a previous day ({crossDay.length})
-              </p>
-              <ul className="space-y-1">
-                {crossDay.map((it, idx) => (
-                  <li key={`cd-${idx}`} className="text-xs text-[#5A5A4A] flex items-center gap-1.5 break-all">
-                    <Clock className="h-3 w-3 text-indigo-400 flex-shrink-0" />
-                    <span>
-                      {shortenUrl(it.url)}{" "}
-                      <span className="text-[#9A9A8A]">— posted {prettyDate(it.date)}</span>
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </div>
-
-        {/* Footer */}
-        <div className="px-5 py-3 border-t border-[#E8E0D0] flex justify-end">
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-4 py-2 rounded-xl bg-[#1A1A1A] text-white text-sm font-medium hover:bg-black transition-colors"
-          >
-            Got it
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // ─── Today's submitted links panel ───────────────────────────────────────────
 
 function TodaySubmittedPanel({ existing, accounts }: {
@@ -357,10 +234,16 @@ export default function ReportPage() {
   //   - "in-submission": the same link appeared more than once in the form right
   //      now (pasted twice, or pasted then typed again).
   //   - "cross-day": the link was already submitted on a previous day.
-  const [dedupeModal, setDedupeModal] = useState<{
-    items: { url: string; reason: "in-submission" | "cross-day"; date?: string }[];
-  } | null>(null);
+  // Compact COUNT-only notice (no per-link list, no screen-blocking modal — a long
+  // list became an unreadable full-screen scroll wall on mobile and alarmed people).
+  //   inSubmission: same link already in the form (pasted/typed twice)
+  //   crossDay: already submitted on a previous day
+  const [dedupeNotice, setDedupeNotice] = useState<{ inSubmission: number; crossDay: number } | null>(null);
   const dedupeToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Coalesce removals from the SAME paste (in-submission + cross-day fire close
+  // together) into one notice, but start fresh for a later paste. Tracks the last
+  // notice's start time so we add-to vs. reset.
+  const dedupeNoticeStartedAt = useRef(0);
 
   // Smart Paste state
   const [pasteText, setPasteText] = useState("");
@@ -511,20 +394,40 @@ export default function ReportPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [links, notes]);
 
+  // Push removed-link COUNTS into the compact notice. Removals from the same paste
+  // (in-submission + cross-day fire within milliseconds) coalesce into one notice;
+  // a later paste (> the coalesce window) starts a fresh count rather than stacking
+  // onto a stale one. Auto-dismisses; no list, no backdrop.
+  const pushDedupeNotice = useCallback((reason: "in-submission" | "cross-day", count: number) => {
+    if (count <= 0) return;
+    const now = Date.now();
+    const COALESCE_MS = 1500;
+    setDedupeNotice((prev) => {
+      const fresh = !prev || now - dedupeNoticeStartedAt.current > COALESCE_MS;
+      const base = fresh ? { inSubmission: 0, crossDay: 0 } : prev!;
+      if (fresh) dedupeNoticeStartedAt.current = now;
+      return {
+        inSubmission: base.inSubmission + (reason === "in-submission" ? count : 0),
+        crossDay: base.crossDay + (reason === "cross-day" ? count : 0),
+      };
+    });
+    if (dedupeToastTimer.current) clearTimeout(dedupeToastTimer.current);
+    dedupeToastTimer.current = setTimeout(() => setDedupeNotice(null), 6000);
+  }, []);
+
   // ── Auto-dedupe: in-submission (keep first occurrence, remove subsequent) ──
   // Runs after every links change. Covers both Smart Paste and manual URL typing.
   const isDeduping = useRef(false);
+  const dedupeLatchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     if (isDeduping.current) return;
     const seen = new Map<string, number>(); // canonicalKey → first index
     const toRemove: number[] = [];
-    const removedUrls: string[] = [];
     links.forEach((l, i) => {
       if (l.isScheduled || !l.url.trim()) return;
       const k = canonicalKey(l.url); // collapses ?igsh= variants of the same post
       if (seen.has(k)) {
         toRemove.push(i);
-        removedUrls.push(l.url);
       } else {
         seen.set(k, i);
       }
@@ -532,19 +435,12 @@ export default function ReportPage() {
     if (toRemove.length > 0) {
       isDeduping.current = true;
       setLinks((prev) => prev.filter((_, i) => !toRemove.includes(i)));
-      // Surface in the modal, ACCUMULATING with any items already shown (a single
-      // paste can trigger both in-submission and cross-day removals).
-      setDedupeModal((prev) => ({
-        items: [
-          ...(prev?.items ?? []),
-          ...removedUrls.map((url) => ({ url, reason: "in-submission" as const })),
-        ],
-      }));
+      pushDedupeNotice("in-submission", toRemove.length);
       // The isDeduping latch clears shortly after the state settles so the effect
-      // doesn't re-enter on the setLinks-triggered re-render. The MODAL stays open
-      // until the user dismisses it (or its own auto-close) — independent of this.
-      if (dedupeToastTimer.current) clearTimeout(dedupeToastTimer.current);
-      dedupeToastTimer.current = setTimeout(() => {
+      // doesn't re-enter on the setLinks-triggered re-render. Own timer ref so it
+      // can't clobber the notice's auto-dismiss timer.
+      if (dedupeLatchTimer.current) clearTimeout(dedupeLatchTimer.current);
+      dedupeLatchTimer.current = setTimeout(() => {
         isDeduping.current = false;
       }, 400);
     }
@@ -569,13 +465,7 @@ export default function ReportPage() {
         return true;
       });
       if (removed.length > 0) {
-        // Accumulate into the modal alongside any in-submission removals.
-        setDedupeModal((prevModal) => ({
-          items: [
-            ...(prevModal?.items ?? []),
-            ...removed.map((r) => ({ url: r.url, reason: "cross-day" as const, date: r.date })),
-          ],
-        }));
+        pushDedupeNotice("cross-day", removed.length);
       }
       return next;
     });
@@ -836,10 +726,39 @@ export default function ReportPage() {
       {/* Today's submitted links — read-only history panel */}
       <TodaySubmittedPanel existing={existing} accounts={accounts} />
 
-      {/* Auto-dedupe modal — prominent, in-your-face explanation of removed links */}
-      {dedupeModal && dedupeModal.items.length > 0 && (
-        <DedupeModal items={dedupeModal.items} onClose={() => setDedupeModal(null)} />
-      )}
+      {/* Auto-dedupe notice — compact inline banner (count + reason only, no list,
+          no backdrop, never blocks the screen). Auto-dismisses. */}
+      {dedupeNotice && (dedupeNotice.inSubmission > 0 || dedupeNotice.crossDay > 0) && (() => {
+        const total = dedupeNotice.inSubmission + dedupeNotice.crossDay;
+        return (
+          <div className="bg-amber-50 border border-amber-200 rounded-xl p-3.5 flex items-start gap-2.5 crx-animate-scale">
+            <AlertTriangle className="h-4 w-4 text-amber-600 mt-0.5 flex-shrink-0" />
+            <div className="text-sm text-amber-800 flex-1 min-w-0">
+              <span className="font-semibold">
+                {total} duplicate link{total !== 1 ? "s" : ""} removed
+              </span>
+              {" "}— your unique links are kept and safe.
+              <span className="block text-xs text-amber-700/90 mt-0.5">
+                {dedupeNotice.inSubmission > 0 && (
+                  <>{dedupeNotice.inSubmission} already in your list</>
+                )}
+                {dedupeNotice.inSubmission > 0 && dedupeNotice.crossDay > 0 && " · "}
+                {dedupeNotice.crossDay > 0 && (
+                  <>{dedupeNotice.crossDay} already posted on an earlier day</>
+                )}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setDedupeNotice(null)}
+              className="text-amber-600 hover:text-amber-800 flex-shrink-0"
+              aria-label="Dismiss"
+            >
+              <XCircle className="h-4 w-4" />
+            </button>
+          </div>
+        );
+      })()}
 
       {/* Draft restored toast */}
       {draftRestored && (

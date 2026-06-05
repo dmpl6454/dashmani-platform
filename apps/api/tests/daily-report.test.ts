@@ -406,6 +406,141 @@ describe("Daily Report API", () => {
       expect(res.body.data.links.length).toBe(1); // link survives — not dropped
       expect(res.body.data.notes).toBe("edited notes");
     });
+
+    it("in-submission duplicates are silently merged (keep-first), NOT rejected with 400", async () => {
+      // The same URL twice in one submission used to throw 400 DUPLICATE_LINKS.
+      // Now the server keeps the first and drops the rest — submit always succeeds.
+      const res = await request(app)
+        .post("/v1/hr/reports")
+        .set("Authorization", `Bearer ${hrToken}`)
+        .send({
+          date: "2026-04-15",
+          links: [
+            { accountId, url: "https://instagram.com/p/dup-1", platform: "instagram" },
+            { accountId, url: "https://instagram.com/p/dup-1", platform: "instagram" }, // exact repeat
+            { accountId, url: "https://instagram.com/p/unique-1", platform: "instagram" },
+          ],
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body.data.links.length).toBe(2); // 3 sent, 1 dropped as dup
+      const urls = res.body.data.links.map((l: any) => l.url).sort();
+      expect(urls).toEqual(["https://instagram.com/p/dup-1", "https://instagram.com/p/unique-1"]);
+    });
+
+    it("merges Instagram reels that differ only by ?igsh= within one submission (canonical key)", async () => {
+      // Same reel copied twice → different igsh tokens → must collapse to one.
+      const res = await request(app)
+        .post("/v1/hr/reports")
+        .set("Authorization", `Bearer ${hrToken}`)
+        .send({
+          date: "2026-04-16",
+          links: [
+            { accountId, url: "https://www.instagram.com/reel/DZJyjhBKN5-/?igsh=AAA", platform: "instagram" },
+            { accountId, url: "https://www.instagram.com/reel/DZJyjhBKN5-/?igsh=BBB", platform: "instagram" },
+          ],
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body.data.links.length).toBe(1); // same reel, merged to one
+    });
+
+    it("drops an Instagram reel cross-day even when the ?igsh= token differs from the stored one", async () => {
+      // Day 1: post the reel with one igsh token.
+      await request(app)
+        .post("/v1/hr/reports")
+        .set("Authorization", `Bearer ${hrToken}`)
+        .send({
+          date: "2026-04-17",
+          links: [{ accountId, url: "https://www.instagram.com/reel/CrossDayCode/?igsh=ORIGINAL", platform: "instagram" }],
+        });
+
+      // Day 2: re-copy the SAME reel (fresh igsh) + one genuinely new reel.
+      const res = await request(app)
+        .post("/v1/hr/reports")
+        .set("Authorization", `Bearer ${hrToken}`)
+        .send({
+          date: "2026-04-18",
+          links: [
+            { accountId, url: "https://www.instagram.com/reel/CrossDayCode/?igsh=DIFFERENT_999", platform: "instagram" },
+            { accountId, url: "https://www.instagram.com/reel/BrandNewCode/?igsh=xyz", platform: "instagram" },
+          ],
+        });
+
+      expect(res.status).toBe(201);
+      // The re-copied reel is recognized as the same content and dropped; only the new one remains.
+      expect(res.body.data.links.length).toBe(1);
+      expect(res.body.data.links[0].url).toContain("BrandNewCode");
+    });
+
+    it("igsh-variant merge keeps the EARLIEST firstSeenAt across a same-day resubmit", async () => {
+      // Submit the reel once (igsh=AAA) → firstSeenAt = T1.
+      await request(app)
+        .post("/v1/hr/reports")
+        .set("Authorization", `Bearer ${hrToken}`)
+        .send({
+          date: "2026-04-19",
+          links: [{ accountId, url: "https://www.instagram.com/reel/FirstSeenCode/?igsh=AAA", platform: "instagram" }],
+        });
+      const firstRow = await prisma.reportLink.findFirst({
+        where: { url: { contains: "FirstSeenCode" } },
+        select: { firstSeenAt: true },
+      });
+      const t1 = firstRow!.firstSeenAt;
+
+      await new Promise((r) => setTimeout(r, 25));
+
+      // Resubmit SAME day with the same reel but a DIFFERENT igsh (+ a new link).
+      await request(app)
+        .post("/v1/hr/reports")
+        .set("Authorization", `Bearer ${hrToken}`)
+        .send({
+          date: "2026-04-19",
+          links: [
+            { accountId, url: "https://www.instagram.com/reel/FirstSeenCode/?igsh=BBB", platform: "instagram" },
+            { accountId, url: "https://www.instagram.com/reel/FirstSeenNew/?igsh=zzz", platform: "instagram" },
+          ],
+        });
+
+      const after = await prisma.reportLink.findFirst({
+        where: { url: { contains: "FirstSeenCode" } },
+        select: { firstSeenAt: true },
+      });
+      // firstSeenAt preserved by canonical key even though the URL string changed.
+      expect(after!.firstSeenAt.getTime()).toBe(t1.getTime());
+    });
+
+    it("keeps two DIFFERENT Facebook opaque /share/ links as distinct (never over-collapse)", async () => {
+      const res = await request(app)
+        .post("/v1/hr/reports")
+        .set("Authorization", `Bearer ${hrToken}`)
+        .send({
+          date: "2026-04-20",
+          links: [
+            { accountId, url: "https://www.facebook.com/share/r/16abcXYZ/", platform: "facebook" },
+            { accountId, url: "https://www.facebook.com/share/r/99zzzQQQ/", platform: "facebook" },
+          ],
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body.data.links.length).toBe(2); // distinct opaque shares both survive
+    });
+
+    it("keeps two YouTube videos that differ only by id case (ids are case-sensitive)", async () => {
+      const res = await request(app)
+        .post("/v1/hr/reports")
+        .set("Authorization", `Bearer ${hrToken}`)
+        .send({
+          date: "2026-04-21",
+          links: [
+            { accountId, url: "https://youtube.com/watch?v=dQw4w9WgXcQ", platform: "youtube" },
+            { accountId, url: "https://youtube.com/watch?v=DQW4W9WGXCQ", platform: "youtube" },
+          ],
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body.data.links.length).toBe(2); // different videos — neither dropped
+    });
   });
 
   describe("GET /v1/hr/reports/today", () => {

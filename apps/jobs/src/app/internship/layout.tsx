@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
-
-const SITE_URL = "https://jobs.digitalsukoon.com";
+import { safeJsonLd, SITE_URL } from "@/lib/jobs";
 
 export const metadata: Metadata = {
   title: "6-Month Internship Program — Digital Sukoon | Apply Now",
@@ -32,6 +31,12 @@ export default function InternshipLayout({ children }: { children: React.ReactNo
     "@type": "JobPosting",
     title: "6-Month Internship — Digital Marketing & Creative",
     description: "Join Digital Sukoon as an intern and gain hands-on experience in digital marketing, content creation, graphic design, video production, and social media management. Receive a completion certificate, letter of recommendation, and performance-based stipend.",
+    identifier: {
+      "@type": "PropertyValue",
+      name: "Digital Sukoon",
+      value: "internship-program",
+    },
+    url: `${SITE_URL}/internship`,
     datePosted: "2026-04-01",
     validThrough: "2026-12-31",
     employmentType: "INTERN",
@@ -39,6 +44,7 @@ export default function InternshipLayout({ children }: { children: React.ReactNo
       "@type": "Organization",
       name: "Digital Sukoon",
       sameAs: "https://digitalsukoon.com",
+      logo: "https://digitalsukoon.com/logo.svg",
     },
     jobLocation: {
       "@type": "Place",
@@ -61,7 +67,7 @@ export default function InternshipLayout({ children }: { children: React.ReactNo
     <>
       <script
         type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(internshipSchema) }}
+        dangerouslySetInnerHTML={{ __html: safeJsonLd(internshipSchema) }}
       />
       {children}
     </>

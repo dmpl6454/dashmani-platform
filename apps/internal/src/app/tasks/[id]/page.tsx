@@ -29,7 +29,8 @@ export default function TaskDetailPage() {
   const [commenting, setCommenting] = useState(false);
   const [reassigning, setReassigning] = useState(false);
   const [reassignValue, setReassignValue] = useState("");
-  const { data: employeesData } = useEmployees({ status: "ACTIVE" });
+  // limit:500 so the task-reassign dropdown lists all active employees (API caps at 50 otherwise).
+  const { data: employeesData } = useEmployees({ status: "ACTIVE", limit: 500 });
   const employees: any[] = (employeesData as any)?.data || [];
 
   if (isLoading) return <div className="flex items-center justify-center h-64"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#F5D547]" /></div>;

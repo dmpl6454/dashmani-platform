@@ -28,7 +28,8 @@ export function ContentForm({ content }: ContentFormProps) {
 
   useEffect(() => {
     apiFetch("/projects?limit=100").then((res: any) => setProjects(res.data || []));
-    apiFetch("/accounts?limit=100").then((res: any) => setAccounts(res.data || []));
+    // limit=500: prod has ~452 accounts; the "Select account" dropdown must list them all (API caps at 50 otherwise, frontend default was 100).
+    apiFetch("/accounts?limit=500").then((res: any) => setAccounts(res.data || []));
   }, []);
 
   async function handleSubmit(e: React.FormEvent) {

@@ -9,7 +9,9 @@ import { Input } from "@dashmani/ui";
 
 export default function TeamsPage() {
   const { data: teamsData, mutate } = useSWR("/teams", (url) => apiFetch<any>(url), { refreshInterval: 30000 });
-  const { data: employeesData } = useEmployees();
+  // limit:500 — the "Add Member" dropdown must list ALL employees. Without it the
+  // API caps at 50 (sorted by name), silently hiding everyone past ~rank 50.
+  const { data: employeesData } = useEmployees({ limit: 500 });
 
   const teams = (teamsData as any)?.data ?? [];
   const employees = (employeesData as any)?.data ?? [];

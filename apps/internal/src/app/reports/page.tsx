@@ -287,7 +287,8 @@ export default function ReportsPage() {
     ytAllTime ? undefined : endDate,
     20,
   );
-  const { data: employeesData } = useEmployees();
+  // limit:500 so the reports employee-filter dropdown lists all employees (API caps at 50 otherwise).
+  const { data: employeesData } = useEmployees({ limit: 500 });
 
   const summary = (summaryData as any)?.data;
   const reports = (reportsData as any)?.data ?? [];

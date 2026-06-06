@@ -31,8 +31,9 @@ export default function OfferLettersPage() {
   );
   const letters = lettersData?.data || [];
 
+  // ?limit=500 so the "Select employee" dropdown lists all employees (API caps at 50 otherwise).
   const { data: employeesData } = useSWR(
-    "/employees",
+    "/employees?limit=500",
     (url: string) => apiFetch<any>(url)
   );
   const employees = employeesData?.data || [];

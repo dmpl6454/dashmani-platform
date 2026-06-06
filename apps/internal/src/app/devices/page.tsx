@@ -22,7 +22,8 @@ function deviceIcon(type: string) {
 
 export default function DevicesPage() {
   const { data, isLoading, mutate } = useSWR("/admin/devices/all", (url: string) => apiFetch<any>(url));
-  const { data: employeesData } = useSWR("/employees", (url: string) => apiFetch<any>(url));
+  // ?limit=500 so the device-assign dropdown lists all employees (API caps at 50 otherwise).
+  const { data: employeesData } = useSWR("/employees?limit=500", (url: string) => apiFetch<any>(url));
   const devices = data?.data || [];
   const employees = employeesData?.data || [];
   const [showForm, setShowForm] = useState(false);

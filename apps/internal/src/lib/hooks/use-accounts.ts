@@ -6,7 +6,11 @@ export function useAccounts(params?: { platformId?: string; status?: string; sea
   if (params?.platformId) query.set("platformId", params.platformId);
   if (params?.status) query.set("status", params.status);
   if (params?.search) query.set("search", params.search);
-  query.set("limit", "100");
+  // Backend caps `limit` at 500 (apps/api/src/utils/pagination.ts). Prod has ~451
+  // accounts, so 500 returns the whole list in one request — no silent truncation.
+  // If the account count ever exceeds 500, the page surfaces a "narrow your search"
+  // warning off `meta.has_more`, and this should move to cursor pagination.
+  query.set("limit", "500");
 
   return useSWR(`/accounts?${query.toString()}`, (url) => apiFetch(url));
 }

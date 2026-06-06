@@ -412,6 +412,9 @@ function AccountsPageInner() {
   const { data: platformData }            = usePlatforms();
   const { data: employeeData }            = useEmployees({ status: "ACTIVE", limit: 500 });
   const accounts  = (data as any)?.data ?? [];
+  // `has_more` is true only if the server had more rows than the 500 ceiling.
+  // We surface it so the list can never silently hide accounts again.
+  const accountsTruncated = (data as any)?.meta?.has_more === true;
   const platforms = (platformData as any)?.data ?? [];
   const employees = ((employeeData as any)?.data ?? []).slice().sort((a: any, b: any) =>
     (a.name || "").localeCompare(b.name || "", undefined, { sensitivity: "base" })
@@ -677,6 +680,20 @@ function AccountsPageInner() {
               </button>
             )}
           </div>
+
+          {/* Result count — so truncation / empty states are never ambiguous */}
+          {!isLoading && (
+            <p className="text-xs text-ink-4 -mt-1">
+              {search || platformFilter
+                ? `${accounts.length} result${accounts.length === 1 ? "" : "s"}`
+                : `Showing ${accounts.length} account${accounts.length === 1 ? "" : "s"}`}
+              {accountsTruncated && (
+                <span className="ml-2 text-terra font-semibold">
+                  · showing the first 500 — narrow your search to see the rest
+                </span>
+              )}
+            </p>
+          )}
 
           {/* Accounts table */}
           <div className="v3-card overflow-hidden">

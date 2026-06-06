@@ -30,7 +30,8 @@ export default function AIAssistantPage() {
   const [result, setResult] = useState<any>(null);
   const [copied, setCopied] = useState(false);
 
-  const { data: employeesData } = useSWR("/employees", (url: string) => apiFetch<any>(url));
+  // ?limit=500 so the document-generator employee pickers list all employees (API caps at 50 otherwise).
+  const { data: employeesData } = useSWR("/employees?limit=500", (url: string) => apiFetch<any>(url));
   const employees = employeesData?.data || [];
 
   function copyText(text: string) {

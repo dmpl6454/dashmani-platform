@@ -56,7 +56,8 @@ export default function AttendancePage() {
   const { data, isLoading, mutate } = useAttendance({ startDate, endDate, employeeId: employeeFilter || undefined });
   const records = (data as any)?.data || [];
 
-  const { data: employeesData } = useEmployees({ status: "ACTIVE" });
+  // limit:500 so the attendance employee-filter dropdown lists all active employees (API caps at 50 otherwise).
+  const { data: employeesData } = useEmployees({ status: "ACTIVE", limit: 500 });
   const employees: any[] = (employeesData as any)?.data || [];
 
   function prevMonth() {

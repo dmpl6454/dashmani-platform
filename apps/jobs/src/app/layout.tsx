@@ -6,6 +6,7 @@ import {
   JetBrains_Mono,
 } from "next/font/google";
 import "./globals.css";
+import { safeJsonLd } from "@/lib/jobs";
 
 // Self-hosted via next/font — no render-blocking external stylesheet.
 const dmSans = DM_Sans({
@@ -113,10 +114,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" className={fontVars}>
       <head>
-        <link rel="canonical" href={SITE_URL} />
+        {/* NOTE: no hardcoded <link rel="canonical"> here — a layout-level canonical
+            applies to EVERY page and was overriding each job detail page's own
+            canonical, telling Google every role was a duplicate of the homepage.
+            Per-page canonicals come from `alternates.canonical` in each page's
+            metadata / generateMetadata (homepage default canonical is in metadata). */}
         <script
           type="application/ld+json"
-          dangerouslySetInnerHTML={{ __html: JSON.stringify([orgSchema, siteSchema]) }}
+          dangerouslySetInnerHTML={{ __html: safeJsonLd([orgSchema, siteSchema]) }}
         />
       </head>
       <body>

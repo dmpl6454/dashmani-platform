@@ -49,7 +49,7 @@ export const viewport: Viewport = {
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
   title: {
-    default: "Careers at Digital Sukoon | Dashmani Media — Jobs & Internships",
+    default: "Careers at Digital Sukoon — Jobs & Internships",
     template: "%s | Digital Sukoon Careers",
   },
   description:
@@ -71,12 +71,12 @@ export const metadata: Metadata = {
   openGraph: {
     type: "website", locale: "en_IN", url: SITE_URL,
     siteName: "Digital Sukoon Careers",
-    title: "Careers at Digital Sukoon | Dashmani Media",
+    title: "Careers at Digital Sukoon — Jobs & Internships",
     description: "Join our team. Explore open positions in marketing, content creation, design, video production, and more.",
   },
   twitter: {
     card: "summary_large_image",
-    title: "Careers at Digital Sukoon | Dashmani Media",
+    title: "Careers at Digital Sukoon — Jobs & Internships",
     description: "Explore open positions and internship opportunities at Digital Sukoon.",
   },
 };
@@ -158,7 +158,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 digitalsukoon.com
               </a>
             </nav>
-            <p className="copyright">© {new Date().getFullYear()} Dashmani Media Private Limited</p>
+            <p className="copyright">© {new Date().getFullYear()} Digital Sukoon</p>
           </footer>
         </div>
       </body>

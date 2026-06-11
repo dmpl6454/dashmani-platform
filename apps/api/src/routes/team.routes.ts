@@ -35,6 +35,26 @@ router.put("/teams/:id", authenticate, requirePermission("teams", "edit"), audit
   } catch (err) { next(err); }
 });
 
+// Add a member to a team (does NOT remove them from any other team).
+router.post("/teams/:id/members", authenticate, requirePermission("teams", "edit"), auditLog("teams", "add-member"), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const userId = req.body.userId as string;
+    if (!userId || typeof userId !== "string") {
+      return res.status(400).json({ success: false, error: { code: "VALIDATION_ERROR", message: "userId is required" } });
+    }
+    const unit = await teamService.addMember(req.params.id, userId);
+    return success(res, unit);
+  } catch (err) { next(err); }
+});
+
+// Remove a member from ONE team (other team memberships are untouched).
+router.delete("/teams/:id/members/:userId", authenticate, requirePermission("teams", "edit"), auditLog("teams", "remove-member"), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    await teamService.removeMember(req.params.id, req.params.userId);
+    return success(res, { message: "Member removed from team" });
+  } catch (err) { next(err); }
+});
+
 router.delete("/teams/bulk", authenticate, requirePermission("teams", "delete"), auditLog("teams", "bulk-delete"), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const ids: string[] = req.body.ids;

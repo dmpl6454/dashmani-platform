@@ -67,10 +67,21 @@ export async function getEmployeeById(id: string) {
     include: {
       roles: { include: { role: { include: { permissions: true } } } },
       orgUnit: true,
+      // All teams the user belongs to (orgUnit above is just the primary).
+      teamMemberships: {
+        select: { isPrimary: true, orgUnit: { select: { id: true, name: true, type: true } } },
+        orderBy: { isPrimary: "desc" },
+      },
     },
   });
   if (!employee) throw new AppError(404, "NOT_FOUND", "Employee not found");
-  return employee;
+  // Expose a flat `teams` array alongside the legacy singular `orgUnit`.
+  const { teamMemberships, ...rest } = employee;
+  return {
+    ...rest,
+    orgUnit: employee.orgUnit,
+    teams: teamMemberships.map((m) => ({ ...m.orgUnit, isPrimary: m.isPrimary })),
+  };
 }
 
 export async function createEmployee(data: {
@@ -99,6 +110,11 @@ export async function createEmployee(data: {
       passwordHash,
       phone: data.phone,
       orgUnitId: data.orgUnitId,
+      // Mirror the primary team into the multi-team join table so the Teams page
+      // (which reads from memberships) shows this person under their team too.
+      teamMemberships: data.orgUnitId
+        ? { create: { orgUnitId: data.orgUnitId, isPrimary: true } }
+        : undefined,
       status: "ONBOARDING",
       roles: {
         create: roleIds.map((roleId) => ({ roleId })),
@@ -141,7 +157,25 @@ export async function updateEmployee(id: string, data: {
   if (data.name) updateData.name = data.name;
   if (data.phone !== undefined) updateData.phone = data.phone;
   if (data.orgUnitId !== undefined) {
-    updateData.orgUnit = data.orgUnitId ? { connect: { id: data.orgUnitId } } : { disconnect: true };
+    // The employee form's Team dropdown sets the PRIMARY team. Keep the join
+    // table in sync: ensure a membership exists for the new primary and flag it.
+    // This is additive — it never drops the user's OTHER team memberships.
+    if (data.orgUnitId) {
+      updateData.orgUnit = { connect: { id: data.orgUnitId } };
+      await prisma.$transaction([
+        prisma.teamMembership.updateMany({ where: { userId: id }, data: { isPrimary: false } }),
+        prisma.teamMembership.upsert({
+          where: { userId_orgUnitId: { userId: id, orgUnitId: data.orgUnitId } },
+          create: { userId: id, orgUnitId: data.orgUnitId, isPrimary: true },
+          update: { isPrimary: true },
+        }),
+      ]);
+    } else {
+      // "No team" clears the primary AND removes all memberships (full unassign,
+      // matching the dropdown's "No team" semantics).
+      updateData.orgUnit = { disconnect: true };
+      await prisma.teamMembership.deleteMany({ where: { userId: id } });
+    }
   }
   if (data.status) {
     if (data.status === "INACTIVE") {

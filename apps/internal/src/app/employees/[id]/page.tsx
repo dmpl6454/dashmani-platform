@@ -240,6 +240,16 @@ export default function EmployeeDetailPage() {
                 })}
               </div>
             )}
+            {employee.teams?.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                <span className="text-[11px] text-[#7A7A7A]">Teams:</span>
+                {employee.teams.map((t: any) => (
+                  <span key={t.id} className={`rounded-full px-2.5 py-0.5 text-[11px] font-medium border ${t.isPrimary ? "bg-indigo-soft text-indigo border-indigo/30" : "bg-[#FFF8E1] text-[#1A1A1A] border-[#E8E0D0]"}`}>
+                    {t.name}{t.isPrimary ? " · Primary" : ""}
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
         </div>
         <div className="flex gap-2">

@@ -22,7 +22,11 @@ model User {
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
 
+  // orgUnit = the user's PRIMARY team (denormalized for single-team read paths:
+  // leaderboard, announcements, analytics). teamMemberships is the full set —
+  // a user can belong to multiple teams. Primary is always one of the memberships.
   orgUnit        OrgUnit?  @relation(fields: [orgUnitId], references: [id])
+  teamMemberships TeamMembership[]
   roles          UserRole[]
   attendanceRecords Attendance[]
   leaveRequests  LeaveRequest[] @relation("LeaveRequester")
@@ -133,7 +137,10 @@ model OrgUnit {
 
   parent        OrgUnit?       @relation("OrgHierarchy", fields: [parentId], references: [id])
   children      OrgUnit[]      @relation("OrgHierarchy")
+  // members = users whose PRIMARY team is this unit (back-relation of User.orgUnit).
+  // memberships = the full multi-team join (a user appears here for every team they're in).
   members       User[]
+  memberships   TeamMembership[]
   announcements Announcement[]
 
   @@map("org_units")
@@ -143,6 +150,23 @@ enum OrgUnitType {
   DEPARTMENT
   TEAM
   SUB_TEAM
+}
+
+// Join table enabling a user to belong to MULTIPLE teams (org units).
+// User.orgUnitId remains the "primary" team for single-team read paths.
+model TeamMembership {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  orgUnitId String   @map("org_unit_id")
+  isPrimary Boolean  @default(false) @map("is_primary")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  orgUnit   OrgUnit @relation(fields: [orgUnitId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, orgUnitId])
+  @@index([orgUnitId])
+  @@map("team_memberships")
 }
 
 // ============ ATTENDANCE ============

@@ -78,9 +78,11 @@ export default function TeamsPage() {
   async function handleAssign() {
     if (!assignModal || !assignEmployeeId) return;
     try {
-      await apiFetch(`/employees/${assignEmployeeId}`, {
-        method: "PUT",
-        body: JSON.stringify({ orgUnitId: assignModal.teamId }),
+      // Additive: adds the person to this team WITHOUT removing them from any
+      // other team they already belong to (POST creates a membership row).
+      await apiFetch(`/teams/${assignModal.teamId}/members`, {
+        method: "POST",
+        body: JSON.stringify({ userId: assignEmployeeId }),
       });
       setAssignModal(null);
       setAssignEmployeeId("");
@@ -88,22 +90,21 @@ export default function TeamsPage() {
     } catch (e: any) { alert(e.message); }
   }
 
-  async function handleRemoveMember(memberId: string) {
+  // Removes the member from THIS team only — leaves their other teams intact.
+  async function handleRemoveMember(teamId: string, memberId: string) {
     try {
-      await apiFetch(`/employees/${memberId}`, {
-        method: "PUT",
-        body: JSON.stringify({ orgUnitId: null }),
-      });
+      await apiFetch(`/teams/${teamId}/members/${memberId}`, { method: "DELETE" });
       mutate();
     } catch (e: any) { alert(e.message); }
   }
 
+  // "Add to another team" — additive, keeps the current membership.
   async function handleMoveMember() {
-    if (!moveModal) return;
+    if (!moveModal || !moveTargetTeamId) return;
     try {
-      await apiFetch(`/employees/${moveModal.memberId}`, {
-        method: "PUT",
-        body: JSON.stringify({ orgUnitId: moveTargetTeamId || null }),
+      await apiFetch(`/teams/${moveTargetTeamId}/members`, {
+        method: "POST",
+        body: JSON.stringify({ userId: moveModal.memberId }),
       });
       setMoveModal(null);
       setMoveTargetTeamId("");
@@ -185,6 +186,11 @@ export default function TeamsPage() {
                       <p className="text-sm font-medium text-[#1A1A1A]">{toTitleCase(m.name)}</p>
                       <p className="text-xs text-[#7A7A7A]">{m.email}</p>
                     </div>
+                    {m.isPrimary && (
+                      <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold bg-indigo-soft text-indigo" title="This is the member's primary team">
+                        Primary
+                      </span>
+                    )}
                     <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${m.status === "ACTIVE" ? "bg-green-50 text-green-700" : "bg-[#FFF3C4] text-[#1A1A1A]"}`}>
                       {formatStatus(m.status)}
                     </span>
@@ -193,14 +199,14 @@ export default function TeamsPage() {
                       <button
                         onClick={() => { setMoveModal({ memberId: m.id, memberName: m.name }); setMoveTargetTeamId(""); }}
                         className="p-1 rounded-md hover:bg-indigo-soft text-ink-4 hover:text-indigo transition-colors"
-                        title="Move to another team"
+                        title="Add to another team"
                       >
                         <ArrowRightLeft className="h-3.5 w-3.5" />
                       </button>
                       <button
-                        onClick={() => handleRemoveMember(m.id)}
+                        onClick={() => handleRemoveMember(team.id, m.id)}
                         className="p-1 rounded-md hover:bg-red-50 text-ink-4 hover:text-red-600 transition-colors"
-                        title="Remove from team"
+                        title="Remove from this team"
                       >
                         <UserMinus className="h-3.5 w-3.5" />
                       </button>
@@ -331,14 +337,14 @@ export default function TeamsPage() {
       {moveModal && (
         <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50" onClick={() => setMoveModal(null)}>
           <div className="bg-white rounded-2xl p-6 w-96 shadow-xl" onClick={(e) => e.stopPropagation()}>
-            <h3 className="font-serif text-lg font-medium text-[#1A1A1A] mb-1">Move Member</h3>
-            <p className="text-sm text-[#7A7A7A] mb-4">Moving <span className="font-semibold text-[#1A1A1A]">{moveModal.memberName}</span> to a new team</p>
+            <h3 className="font-serif text-lg font-medium text-[#1A1A1A] mb-1">Add to Another Team</h3>
+            <p className="text-sm text-[#7A7A7A] mb-4">Add <span className="font-semibold text-[#1A1A1A]">{moveModal.memberName}</span> to an additional team. They stay in their current team(s).</p>
             <select
               value={moveTargetTeamId}
               onChange={(e) => setMoveTargetTeamId(e.target.value)}
               className="w-full h-10 rounded-lg border border-[#E8E0D0] bg-white px-3 text-sm mb-4"
             >
-              <option value="">— Remove from all teams —</option>
+              <option value="">Select a team</option>
               {allUnits.map((u: any) => (
                 <option key={u.id} value={u.id}>{u.name} ({u.type})</option>
               ))}
@@ -347,9 +353,10 @@ export default function TeamsPage() {
               <button onClick={() => setMoveModal(null)} className="px-4 py-2 text-sm text-[#7A7A7A] hover:text-[#1A1A1A]">Cancel</button>
               <button
                 onClick={handleMoveMember}
-                className="bg-[#1A1A1A] text-white px-5 py-2 rounded-full text-sm font-semibold hover:bg-[#2B2B2B]"
+                disabled={!moveTargetTeamId}
+                className="bg-[#1A1A1A] text-white px-5 py-2 rounded-full text-sm font-semibold hover:bg-[#2B2B2B] disabled:opacity-50"
               >
-                {moveTargetTeamId ? "Move" : "Remove from team"}
+                Add to Team
               </button>
             </div>
           </div>

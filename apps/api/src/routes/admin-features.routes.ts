@@ -911,11 +911,23 @@ router.post("/admin/auto-teams/create", authenticate, requirePermission("teams",
     const team = await prisma.orgUnit.create({
       data: { name, type: "TEAM" },
     });
-    // Assign members to the team
-    await prisma.user.updateMany({
+    // Add members to the team via the multi-team join table (additive — does not
+    // remove them from any existing team). Also set this as their primary team
+    // only if they don't already have one.
+    const users = await prisma.user.findMany({
       where: { id: { in: memberIds } },
-      data: { orgUnitId: team.id },
+      select: { id: true, orgUnitId: true },
     });
+    await prisma.$transaction([
+      prisma.teamMembership.createMany({
+        data: users.map((u) => ({ userId: u.id, orgUnitId: team.id, isPrimary: !u.orgUnitId })),
+        skipDuplicates: true,
+      }),
+      prisma.user.updateMany({
+        where: { id: { in: users.filter((u) => !u.orgUnitId).map((u) => u.id) } },
+        data: { orgUnitId: team.id },
+      }),
+    ]);
     return success(res, { team, membersAssigned: memberIds.length }, undefined, 201);
   } catch (err) { next(err); }
 });

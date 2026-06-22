@@ -86,6 +86,18 @@ export async function submitDailyReport(
     throw new AppError(400, "VALIDATION_ERROR", "At least one link is required");
   }
 
+  // Count of de-dupable rows (scheduled / no-URL rows are never merged, so they
+  // never count toward a "skipped duplicate"). We snapshot this count before each
+  // dedupe pass so we can report HOW MANY links were silently dropped and WHY.
+  // This is purely observational — it changes no filter behaviour. The counts are
+  // returned to the client so the submit screen can honestly explain a lower saved
+  // count (e.g. "84 links saved · 2 duplicates skipped"), which is the #1 source of
+  // "my links vanished" reports: the dupe-removal toast had already auto-dismissed
+  // by the time the user clicked Update and noticed the count.
+  const liveCount = (rows: ReportLinkInput[]) =>
+    rows.filter((l) => !l.isScheduled && l.url && l.url.trim()).length;
+  const liveBeforeDedupe = liveCount(links);
+
   // In-submission de-duplication: silently keep the FIRST occurrence of each
   // canonical key and drop later copies. Previously this threw a 400
   // DUPLICATE_LINKS, but the frontend already merges dupes silently, so a hard
@@ -104,6 +116,7 @@ export async function submitDailyReport(
       return true;
     });
   }
+  const liveAfterInSubmission = liveCount(links);
 
   // Silently drop links already submitted on a previous day for this employee.
   // The frontend auto-dedupe does this too, but may miss links pasted after the
@@ -153,6 +166,15 @@ export async function submitDailyReport(
       return !crossDayDupKeys.has(canonicalKey(l.url));
     });
   }
+  const liveAfterCrossDay = liveCount(links);
+
+  // How many de-dupable links were silently dropped, split by reason. Used only
+  // for the at-submit summary; never affects what is stored.
+  const dedupe = {
+    inSubmission: liveBeforeDedupe - liveAfterInSubmission,
+    crossDay: liveAfterInSubmission - liveAfterCrossDay,
+    total: liveBeforeDedupe - liveAfterCrossDay,
+  };
 
   // After dropping cross-day dupes, re-check we still have at least one link
   if (links.filter((l) => l.isScheduled || l.url?.trim()).length === 0) {
@@ -251,7 +273,10 @@ export async function submitDailyReport(
     throw new AppError(500, "INTERNAL_ERROR", "Report could not be loaded after save");
   }
 
-  return formatReport(report);
+  // `dedupe` rides along as an additive sibling field on the submit response only.
+  // formatReport (used by every READ path + admin endpoints) is untouched, so no
+  // other consumer sees a shape change.
+  return { ...formatReport(report), dedupe };
 }
 
 export async function getMyReports(employeeId: string, startDate?: string, endDate?: string) {

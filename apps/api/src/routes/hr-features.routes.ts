@@ -824,39 +824,12 @@ router.put("/hr/profile", authenticateHr, async (req: Request, res: Response, ne
 });
 
 // ===== Daily Reports (employee-scoped) =====
-
-// GET /hr/reports/today — get today's report for self
-router.get("/hr/reports/today", authenticateHr, async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const report = await reportService.getTodayReport(req.user!.userId);
-    return success(res, report);
-  } catch (err) { next(err); }
-});
-
-// GET /hr/reports — get own report history
-router.get("/hr/reports", authenticateHr, async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const { startDate, endDate } = req.query as { startDate?: string; endDate?: string };
-    const reports = await reportService.getMyReports(req.user!.userId, startDate, endDate);
-    return success(res, reports);
-  } catch (err) { next(err); }
-});
-
-// POST /hr/reports — submit a daily report
-router.post("/hr/reports", authenticateHr, async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const { date, links, notes, latitude, longitude } = req.body;
-    const report = await reportService.submitDailyReport(
-      req.user!.userId,
-      date,
-      links,
-      notes,
-      latitude,
-      longitude,
-    );
-    return success(res, report, undefined, 201);
-  } catch (err) { next(err); }
-});
+// NOTE: GET /hr/reports/today, GET /hr/reports, and POST /hr/reports are NOT
+// defined here. They live in hr.routes.ts, which is mounted BEFORE this router
+// (see routes/index.ts), so Express always matches those first. Duplicate handlers
+// previously existed here but were dead (shadowed) — and the POST one had no
+// `validate(submitDailyReportSchema)`, a real footgun if mount order ever flipped.
+// Removed 2026-06-22. Add report endpoints to hr.routes.ts, not here.
 
 // GET /hr/preview — fetch Open Graph metadata for a URL (used by smart paste UI)
 router.get("/hr/preview", authenticateHr, async (req: Request, res: Response, next: NextFunction) => {

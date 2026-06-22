@@ -107,6 +107,12 @@ export interface DailyReportResponse {
   submittedFrom?: string | null;
   submittedAt: string;
   links: ReportLinkResponse[];
+  // Present ONLY on the POST /hr/reports submit response — counts of links the
+  // server silently de-duplicated, split by reason (in-submission = the same link
+  // pasted/typed twice; crossDay = already submitted on a previous day). Optional
+  // so every READ path / admin reuse of this type is unaffected. Lets the submit
+  // screen explain a lower saved count instead of it reading as data loss.
+  dedupe?: { inSubmission: number; crossDay: number; total: number };
 }
 
 // Assigned Account Response

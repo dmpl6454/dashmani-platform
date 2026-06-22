@@ -6,7 +6,7 @@ import useSWR from "swr";
 import {
   Plus, Trash2, AlertTriangle, FileText, Link2, MessageSquare,
   BarChart3, Send, Loader2, ChevronDown, Hash, Eye, Heart, Share2,
-  Clock, Zap, CheckCircle2, XCircle,
+  Clock, Zap, CheckCircle2, XCircle, X,
 } from "lucide-react";
 import { canonicalKey } from "@dashmani/shared";
 import { apiFetch, ApiError } from "@/lib/api";
@@ -252,9 +252,24 @@ export default function ReportPage() {
   const [pasteResult, setPasteResult] = useState<{ matched: number; unmatched: number } | null>(null);
   const [defaultAccountId, setDefaultAccountId] = useState("");
 
-  // Past link URLs for cross-day duplicate detection (last 60 days, excluding today)
+  // Persistent post-submit summary shown ABOVE the submit button (no auto-dismiss,
+  // no portal). The paste-time dedupe toast auto-dismisses after 6s, so a heavy
+  // submitter who scrolls to verify their rows sees no message by the time they
+  // click Update and notice a lower saved count — which reads as "my links
+  // vanished" even though the drop was correct de-duplication. This summary stays
+  // put at the exact spot the user is looking at submit time, and is cleared on
+  // the next edit/paste so it never lingers stale.
+  const [submitSummary, setSubmitSummary] = useState<
+    { saved: number; skipped: number; inSubmission: number; crossDay: number } | null
+  >(null);
+
+  // Past link URLs for cross-day duplicate detection (last 90 days, excluding
+  // today). 90 matches the server's CROSS_DAY_WINDOW_DAYS in daily-report.service
+  // — previously this was 60, so the server could silently drop a 61–90-day-old
+  // duplicate the client never flagged at paste time (a silent server-only drop).
+  // Aligning the windows means the client now flags exactly what the server drops.
   const { data: pastUrlMapData } = useSWR(
-    "/hr/reports/my-link-urls?days=60",
+    "/hr/reports/my-link-urls?days=90",
     (key: string) => apiFetch<{ success: boolean; data: Record<string, string> }>(key).then((r) => r.data),
     { revalidateOnFocus: false, dedupingInterval: 60_000 },
   );
@@ -490,6 +505,7 @@ export default function ReportPage() {
 
   function updateLink(i: number, field: keyof LinkEntry, value: string) {
     setLinks((prev) => prev.map((l, idx) => idx === i ? { ...l, [field]: value } : l));
+    setSubmitSummary(null); // any edit invalidates the last submit's summary
     // Clear per-row errors for this row when user starts editing
     if (rowErrors[i]) {
       setRowErrors((prev) => {
@@ -502,10 +518,12 @@ export default function ReportPage() {
 
   function addLink() {
     setLinks((prev) => [...prev, emptyLink()]);
+    setSubmitSummary(null);
   }
 
   function removeLink(i: number) {
     setLinks((prev) => prev.filter((_, idx) => idx !== i));
+    setSubmitSummary(null);
   }
 
   function getAccountPlatform(accountId: string): string {
@@ -565,6 +583,7 @@ export default function ReportPage() {
 
     setPasteResult({ matched, unmatched });
     setPasteText("");
+    setSubmitSummary(null); // new paste invalidates the last submit's summary
     setTimeout(() => { setPasteResult(null); setShowPaste(false); }, 2500);
 
     // Re-arm cross-day dedupe so newly pasted links get checked against past submissions.
@@ -604,7 +623,9 @@ export default function ReportPage() {
     } catch { /* optional */ }
 
     try {
-      await apiFetch("/hr/reports", {
+      const res = await apiFetch<{
+        data: { links: Array<{ url: string | null; isScheduled?: boolean }>; dedupe?: { inSubmission: number; crossDay: number; total: number } };
+      }>("/hr/reports", {
         method: "POST",
         body: JSON.stringify({
           date: today,
@@ -627,6 +648,20 @@ export default function ReportPage() {
           })),
         }),
       });
+
+      // Headline count is derived from the POST RESPONSE (what was actually saved)
+      // vs the snapshot we sent — counting live (non-scheduled, has-url) rows on
+      // both sides. This can never disagree with the count the user sees, because
+      // both come from the same saved `links` array the Today panel renders. The
+      // server's reason-split (`dedupe`) is optional enrichment for the copy; if a
+      // future server omits it, the headline still works. Read this BEFORE
+      // mutateToday() — the revalidated /today cache carries no `dedupe`.
+      const savedLinks = res?.data?.links ?? [];
+      const savedLive = savedLinks.filter((l) => !l.isScheduled && l.url && String(l.url).trim()).length;
+      const pastedLive = payloadLinks.filter((l) => !l.isScheduled && l.url.trim()).length;
+      const skipped = Math.max(0, pastedLive - savedLive);
+      const reasons = res?.data?.dedupe ?? { inSubmission: 0, crossDay: 0, total: skipped };
+
       // Refresh the today-report cache so the panel shows the new links immediately
       await mutateToday();
       // Re-arm cross-day dedupe so the refreshed URL map is applied on next paste
@@ -639,6 +674,22 @@ export default function ReportPage() {
         .catch(() => { /* non-critical */ });
       setDraftStatus("idle");
 
+      // Show the persistent at-submit summary whenever the server silently dropped
+      // duplicates — this is what stops "84 saved, no message" from reading as loss.
+      // When it fires we also clear the transient paste toast to avoid a double
+      // message, and we STAY on the page (even on a first submit) so the user
+      // actually reads it. Cross-day dedupe can drop links on a first submit too,
+      // so this is not exclusively a resubmit concern.
+      if (skipped > 0) {
+        setSubmitSummary({
+          saved: savedLive,
+          skipped,
+          inSubmission: reasons.inSubmission,
+          crossDay: reasons.crossDay,
+        });
+        setDedupeNotice(null);
+      }
+
       if (existing) {
         // Update (resubmit): stay on page with the in-memory links intact (they now
         // equal what was just saved). Do NOT re-arm the restore effect here — the
@@ -648,8 +699,11 @@ export default function ReportPage() {
         // snapshot before the additions were ever saved — the "added links vanish on
         // refresh" bug. Auto-save keeps working because its guard only needs
         // draftRestoredRef.current === true, which it already is.
+      } else if (skipped > 0) {
+        // First submit, but dupes were dropped — stay so the user sees the summary
+        // explaining the lower count instead of being whisked to the dashboard.
       } else {
-        // First submit: go to dashboard
+        // First submit, clean: go to dashboard
         router.push("/dashboard");
       }
     } catch (err: any) {
@@ -1061,6 +1115,45 @@ export default function ReportPage() {
                 </p>
               )}
             </div>
+          </div>
+        )}
+
+        {/* Persistent post-submit summary — sits directly above the button so it's
+            read at the moment the saved count is noticed (unlike the paste-time
+            toast, which auto-dismisses). Explains WHY the saved count is lower than
+            the pasted count: the difference is duplicates, not lost links. Stays
+            until the next edit/paste clears it. */}
+        {submitSummary && (
+          <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3.5 flex items-start gap-2.5 crx-animate-scale">
+            <CheckCircle2 className="h-4 w-4 text-emerald-600 mt-0.5 flex-shrink-0" />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm text-emerald-800">
+                <span className="font-semibold">{submitSummary.saved} link{submitSummary.saved !== 1 ? "s" : ""} saved</span>
+                {submitSummary.skipped > 0 && (
+                  <> · {submitSummary.skipped} duplicate{submitSummary.skipped !== 1 ? "s" : ""} skipped</>
+                )}
+                {" "}— no links were lost.
+              </p>
+              {submitSummary.skipped > 0 && (submitSummary.inSubmission > 0 || submitSummary.crossDay > 0) && (
+                <p className="text-xs text-emerald-700/90 mt-0.5">
+                  {submitSummary.inSubmission > 0 && (
+                    <>{submitSummary.inSubmission} already in your submitted list</>
+                  )}
+                  {submitSummary.inSubmission > 0 && submitSummary.crossDay > 0 && " · "}
+                  {submitSummary.crossDay > 0 && (
+                    <>{submitSummary.crossDay} already posted on an earlier day</>
+                  )}
+                </p>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => setSubmitSummary(null)}
+              className="text-emerald-600 hover:text-emerald-800 flex-shrink-0"
+              aria-label="Dismiss"
+            >
+              <X className="h-4 w-4" />
+            </button>
           </div>
         )}
 

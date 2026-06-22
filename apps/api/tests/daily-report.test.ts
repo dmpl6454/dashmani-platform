@@ -426,6 +426,8 @@ describe("Daily Report API", () => {
       expect(res.body.data.links.length).toBe(2); // 3 sent, 1 dropped as dup
       const urls = res.body.data.links.map((l: any) => l.url).sort();
       expect(urls).toEqual(["https://instagram.com/p/dup-1", "https://instagram.com/p/unique-1"]);
+      // dedupe summary reports the silent drop so the client can explain it
+      expect(res.body.data.dedupe).toEqual({ inSubmission: 1, crossDay: 0, total: 1 });
     });
 
     it("merges Instagram reels that differ only by ?igsh= within one submission (canonical key)", async () => {
@@ -443,6 +445,25 @@ describe("Daily Report API", () => {
 
       expect(res.status).toBe(201);
       expect(res.body.data.links.length).toBe(1); // same reel, merged to one
+      expect(res.body.data.dedupe).toEqual({ inSubmission: 1, crossDay: 0, total: 1 });
+    });
+
+    it("reports zero dedupe when all links are unique (no false 'duplicates skipped')", async () => {
+      const res = await request(app)
+        .post("/v1/hr/reports")
+        .set("Authorization", `Bearer ${hrToken}`)
+        .send({
+          date: "2026-04-21",
+          links: [
+            { accountId, url: "https://www.instagram.com/reel/UniqueOne11/?igsh=AAA", platform: "instagram" },
+            { accountId, url: "https://www.instagram.com/reel/UniqueTwo22/?igsh=BBB", platform: "instagram" },
+            { accountId, url: "https://www.instagram.com/reel/UniqueThr33/?igsh=CCC", platform: "instagram" },
+          ],
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body.data.links.length).toBe(3);
+      expect(res.body.data.dedupe).toEqual({ inSubmission: 0, crossDay: 0, total: 0 });
     });
 
     it("drops an Instagram reel cross-day even when the ?igsh= token differs from the stored one", async () => {
@@ -471,6 +492,8 @@ describe("Daily Report API", () => {
       // The re-copied reel is recognized as the same content and dropped; only the new one remains.
       expect(res.body.data.links.length).toBe(1);
       expect(res.body.data.links[0].url).toContain("BrandNewCode");
+      // The drop is attributed to cross-day (not in-submission) so the copy is accurate.
+      expect(res.body.data.dedupe).toEqual({ inSubmission: 0, crossDay: 1, total: 1 });
     });
 
     it("igsh-variant merge keeps the EARLIEST firstSeenAt across a same-day resubmit", async () => {

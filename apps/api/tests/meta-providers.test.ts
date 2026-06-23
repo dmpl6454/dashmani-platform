@@ -213,6 +213,71 @@ describe("instagramProvider", () => {
   });
 });
 
+// ── Instagram paging depth (env-overridable; mocked graphFetch) ──────────────
+//
+// The provider is imported once at module load, so MAX_PAGES_PER_ACCOUNT /
+// POLL_WINDOW_DAYS are read from process.env at import time. We can't flip the
+// constants after import, but we CAN prove the two contracts that matter without
+// the network:
+//   1. With NO env set (the cron's world), the default page cap is generous
+//      enough to walk a multi-page feed AND it self-limits — it does not page
+//      forever — and it stops early once a page contains media older than the
+//      90-day window.
+//   2. A shortcode absent from the (bounded) mocked feed → not_found.
+
+describe("instagramProvider — paging depth & window (env-overridable defaults)", () => {
+  it("pages a multi-paged feed and resolves a shortcode found on a later page", async () => {
+    process.env.META_SYSTEM_USER_TOKEN = FAKE_TOKEN;
+    const recent = new Date().toISOString();
+    // 3 media pages, all within the window; the target lives on page 3.
+    const graph = vi.fn(async (path: string) => {
+      if (path === "me/accounts") return ok({ data: [{ instagram_business_account: { id: "ig-1" } }] });
+      if (path === "ig-1/media")
+        return ok({
+          data: [{ id: "m1", shortcode: "P1", timestamp: recent }],
+          paging: { next: "https://graph.facebook.com/v21.0/ig-1/media?after=cur1" },
+        });
+      if (path.includes("after=cur1"))
+        return ok({
+          data: [{ id: "m2", shortcode: "P2", timestamp: recent }],
+          paging: { next: "https://graph.facebook.com/v21.0/ig-1/media?after=cur2" },
+        });
+      if (path.includes("after=cur2"))
+        return ok({
+          data: [{ id: "m3", shortcode: "TARGET", caption: "found deep", like_count: 5, comments_count: 1, timestamp: recent }],
+          // No further paging cursor → natural stop.
+        });
+      throw new Error(`unexpected path ${path}`);
+    });
+    setIgGraphFetch(graph as unknown as GraphFetchFn);
+
+    const res = await instagramProvider.fetchBatch([target("l1", "https://instagram.com/reel/TARGET/", "TARGET")]);
+    expect(res.get("l1")).toMatchObject({ ok: true, status: "ok", caption: "found deep", likes: 5 });
+  });
+
+  it("stops paging once a page contains media older than the poll window", async () => {
+    process.env.META_SYSTEM_USER_TOKEN = FAKE_TOKEN;
+    const old = new Date(Date.now() - 400 * 86_400_000).toISOString(); // > 90d old
+    const graph = vi.fn(async (path: string) => {
+      if (path === "me/accounts") return ok({ data: [{ instagram_business_account: { id: "ig-1" } }] });
+      if (path === "ig-1/media")
+        return ok({
+          // This first page already contains an out-of-window item → stop after it.
+          data: [{ id: "m1", shortcode: "OLD", timestamp: old }],
+          paging: { next: "https://graph.facebook.com/v21.0/ig-1/media?after=cur1" },
+        });
+      // If the provider followed the cursor it would hit this and fail the test.
+      throw new Error("should not page past the window boundary");
+    });
+    setIgGraphFetch(graph as unknown as GraphFetchFn);
+
+    const res = await instagramProvider.fetchBatch([target("l1", "https://instagram.com/reel/ABSENT/", "ABSENT")]);
+    expect(res.get("l1")).toMatchObject({ ok: false, status: "not_found" });
+    // Exactly 1 accounts call + 1 media page (the window early-stop fired).
+    expect(graph).toHaveBeenCalledTimes(2);
+  });
+});
+
 // ── Facebook provider tests (mocked graphFetch, no real token/network) ───────
 
 describe("facebookProvider", () => {

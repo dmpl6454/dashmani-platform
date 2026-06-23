@@ -1369,3 +1369,58 @@ model LinkMetric {
   @@index([platform, fetchedAt])
   @@map("link_metrics")
 }
+
+// ============ LINK ENTITY SEARCH ============
+// Additive-only feature (CREATE TABLE only — no ALTER/DROP on existing tables).
+// LinkContent has NO FK to ReportLink: the join is by canonicalKey() computed on
+// read (same philosophy as link dedupe — raw URLs stay in report_links, the key
+// is derived). Survives the report_links delete-and-recreate churn with zero re-linking.
+
+model Entity {
+  id            String   @id @default(uuid())
+  canonicalName String                       // "Salman Khan"
+  type          String   @default("PERSON")  // PERSON | TOPIC | BRAND | OTHER
+  aliases       String[]                      // ["bhaijaan","sallu","beingsalmankhan","सलमान"] — stored LOWERCASE
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt      @map("updated_at")
+
+  links         LinkContentEntity[]
+
+  @@unique([canonicalName])
+  @@index([type])
+  @@map("entities")
+}
+
+model LinkContent {
+  id           String    @id @default(uuid())
+  canonicalKey String                          // ig:CxYz / yt:dQw4 / fb:123 / full-url fallback
+  platform     String                          // classified by URL, not the dirty platform column
+  title        String?   @db.Text              // YouTube title
+  caption      String?   @db.Text              // IG/FB caption (and YouTube description)
+  status       String    @default("pending")   // pending | ok | not_found | private | unsupported | error
+  extractedAt  DateTime? @map("extracted_at")  // null until stage 2 runs; set when entities extracted
+  fetchedAt    DateTime? @map("fetched_at")    // when caption/title last fetched
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt      @map("updated_at")
+
+  entities     LinkContentEntity[]
+
+  @@unique([canonicalKey])
+  @@index([status])
+  @@index([extractedAt])
+  @@map("link_content")
+}
+
+model LinkContentEntity {
+  id            String      @id @default(uuid())
+  linkContentId String      @map("link_content_id")
+  entityId      String      @map("entity_id")
+  confidence    Float       @default(1.0)
+
+  content       LinkContent @relation(fields: [linkContentId], references: [id], onDelete: Cascade)
+  entity        Entity      @relation(fields: [entityId],      references: [id], onDelete: Cascade)
+
+  @@unique([linkContentId, entityId])
+  @@index([entityId])
+  @@map("link_content_entities")
+}

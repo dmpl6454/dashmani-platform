@@ -10,9 +10,15 @@ interface YouTubeStatistics {
   commentCount?: string;
 }
 
+interface YouTubeSnippet {
+  title?: string;
+  description?: string;
+}
+
 interface YouTubeItem {
   id: string;
   statistics?: YouTubeStatistics;
+  snippet?: YouTubeSnippet;
 }
 
 interface YouTubeApiResponse {
@@ -55,7 +61,7 @@ export const youTubeProvider: InsightProvider = {
       let data: YouTubeApiResponse;
       try {
         const res = await fetch(
-          `https://www.googleapis.com/youtube/v3/videos?part=statistics&id=${encodeURIComponent(videoIds)}&key=${apiKey}`,
+          `https://www.googleapis.com/youtube/v3/videos?part=statistics,snippet&id=${encodeURIComponent(videoIds)}&key=${apiKey}`,
           { signal: controller.signal }
         );
 
@@ -88,18 +94,19 @@ export const youTubeProvider: InsightProvider = {
         clearTimeout(timer);
       }
 
-      // Build a map of videoId → statistics from the response
-      const statsById = new Map<string, YouTubeStatistics>();
+      // Build a map of videoId → full item (statistics + snippet) from the response
+      const itemById = new Map<string, YouTubeItem>();
       for (const item of data.items ?? []) {
-        statsById.set(item.id, item.statistics ?? {});
+        itemById.set(item.id, item);
       }
 
       for (const t of batch) {
-        const stats = statsById.get(t.targetId);
-        if (!stats) {
+        const item = itemById.get(t.targetId);
+        if (!item) {
           // Video not in response — deleted, private, or unlisted
           results.set(t.linkId, { ok: false, status: "not_found" });
         } else {
+          const stats = item.statistics ?? {};
           results.set(t.linkId, {
             ok: true,
             status: "ok",
@@ -107,6 +114,8 @@ export const youTubeProvider: InsightProvider = {
             likes: stats.likeCount != null ? parseInt(stats.likeCount, 10) : null,
             comments: stats.commentCount != null ? parseInt(stats.commentCount, 10) : null,
             shares: null, // YouTube Data API does not provide share counts
+            title: item.snippet?.title ?? null,
+            caption: item.snippet?.description ?? null,
           });
         }
       }

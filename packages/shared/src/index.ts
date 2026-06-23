@@ -27,6 +27,8 @@ export * from "./utils/titleCase";
 export * from "./utils/levenshtein";
 export * from "./utils/social-insights";
 export * from "./utils/youtube";
+export * from "./utils/instagram";
+export * from "./utils/facebook";
 export * from "./utils/canonical-url";
 
 // Validators

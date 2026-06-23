@@ -178,6 +178,33 @@ describe("Daily Report API", () => {
       }
     });
 
+    it("submit-time FB resolution hands the resolver an AbortSignal (budget can cancel in-flight probes)", async () => {
+      // Prove the wall-clock budget is wired to actually cancel work: the resolver
+      // must be invoked WITH a signal argument.
+      let receivedSignal: AbortSignal | undefined | "absent" = "absent";
+      __setShareResolverForTesting(async (_url: string, signal?: AbortSignal) => {
+        receivedSignal = signal;
+        return null; // no clean url → original kept (fail-open path)
+      });
+      try {
+        const res = await request(app)
+          .post("/v1/hr/reports")
+          .set("Authorization", `Bearer ${hrToken}`)
+          .send({
+            date: "2026-04-23",
+            links: [{ accountId, url: "https://www.facebook.com/share/r/abc999/", platform: "facebook" }],
+          });
+
+        expect(res.status).toBe(201);
+        expect(res.body.data.links.length).toBe(1);
+        // The resolver was handed an AbortSignal (not undefined) — budget is wired.
+        expect(receivedSignal).not.toBe("absent");
+        expect(receivedSignal).toBeInstanceOf(AbortSignal);
+      } finally {
+        __setShareResolverForTesting(null);
+      }
+    });
+
     it("submit-time FB resolution leaves NON-/share/ urls untouched (no-op for IG/clean links)", async () => {
       // The resolver must never even be asked about non-/share/ urls; assert via a
       // resolver that would corrupt anything it touched.

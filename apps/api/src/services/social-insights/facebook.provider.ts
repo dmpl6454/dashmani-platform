@@ -143,14 +143,26 @@ export const facebookProvider: InsightProvider = {
 // URL, returns that numeric id (via extractFacebookPostId, which only accepts clean
 // numeric forms). If it lands on pfbid / anything opaque → returns null (GIVE UP —
 // no feed-matching). fetchImpl is injectable for tests; defaults to global fetch.
+// `externalSignal` lets a caller (e.g. a batch with an overall wall-clock budget)
+// abort the in-flight fetch when its own deadline fires — otherwise the probe would
+// keep running in the background past the caller's return. We still arm our own 10s
+// timeout as a fallback so a lone call without an external signal can't hang.
 export async function resolveOpaqueFacebookUrl(
   url: string,
-  fetchImpl: typeof fetch = fetch
+  fetchImpl: typeof fetch = fetch,
+  externalSignal?: AbortSignal
 ): Promise<string | null> {
   if (!url) return null;
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  // Chain the caller's signal: if it aborts, abort our controller too (cancelling
+  // the fetch). If it's already aborted, abort immediately.
+  const onExternalAbort = () => controller.abort();
+  if (externalSignal) {
+    if (externalSignal.aborted) controller.abort();
+    else externalSignal.addEventListener("abort", onExternalAbort, { once: true });
+  }
   try {
     const res = await fetchImpl(url, { redirect: "manual", signal: controller.signal });
     const location = res.headers.get("location");
@@ -162,6 +174,7 @@ export async function resolveOpaqueFacebookUrl(
     return null;
   } finally {
     clearTimeout(timer);
+    if (externalSignal) externalSignal.removeEventListener("abort", onExternalAbort);
   }
 }
 
@@ -178,12 +191,17 @@ export async function resolveOpaqueFacebookUrl(
 // return null (we never read the token here — this is a plain redirect probe, not
 // a Graph call). canonicalKey only cares about fb:<id>, so /reel/ is a fine
 // canonical form even if the original was a /videos/ post.
+//
+// `externalSignal` is forwarded so a batch caller's wall-clock budget can actually
+// CANCEL the underlying fetch (not just stop awaiting it) — see the submit-path
+// budget guard in daily-report.service.ts.
 export async function resolveFacebookShareUrl(
   url: string,
-  fetchImpl: typeof fetch = fetch
+  fetchImpl: typeof fetch = fetch,
+  externalSignal?: AbortSignal
 ): Promise<string | null> {
   try {
-    const id = await resolveOpaqueFacebookUrl(url, fetchImpl); // already fail-open
+    const id = await resolveOpaqueFacebookUrl(url, fetchImpl, externalSignal); // already fail-open
     return id ? `https://www.facebook.com/reel/${id}` : null;
   } catch {
     return null;

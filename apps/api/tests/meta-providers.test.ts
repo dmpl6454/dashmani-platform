@@ -437,4 +437,57 @@ describe("resolveFacebookShareUrl", () => {
     const clean = await resolveFacebookShareUrl("https://www.facebook.com/share/r/abcXYZ/", f as unknown as typeof fetch);
     expect(clean).toBeNull();
   });
+
+  it("forwards an external AbortSignal so a caller's budget can CANCEL the in-flight probe", async () => {
+    // The fetch impl observes the signal it was handed and rejects when that signal
+    // is/becomes aborted — proving the budget guard actually cancels work rather than
+    // just stopping the await. We abort the external signal AFTER the fetch starts.
+    const external = new AbortController();
+    let observedSignal: AbortSignal | undefined;
+    const f = vi.fn((_url: string, init?: { signal?: AbortSignal }) => {
+      observedSignal = init?.signal;
+      return new Promise<Response>((_resolve, reject) => {
+        const sig = init?.signal;
+        if (!sig) return; // would hang, but we always pass one here
+        const onAbort = () => reject(new Error("aborted"));
+        if (sig.aborted) onAbort();
+        else sig.addEventListener("abort", onAbort, { once: true });
+      });
+    });
+
+    const promise = resolveFacebookShareUrl(
+      "https://www.facebook.com/share/r/abcXYZ/",
+      f as unknown as typeof fetch,
+      external.signal,
+    );
+    // Abort the caller's signal mid-flight; the chained controller must abort our
+    // fetch's signal too, rejecting the pending fetch.
+    external.abort();
+    const clean = await promise;
+
+    // Fail-open: aborted probe → null, never throws.
+    expect(clean).toBeNull();
+    // The fetch received a signal that ended up aborted (chained from external).
+    expect(observedSignal).toBeDefined();
+    expect(observedSignal!.aborted).toBe(true);
+  });
+
+  it("aborts immediately when the external signal is already aborted before the call", async () => {
+    const pre = new AbortController();
+    pre.abort();
+    let observedAborted: boolean | undefined;
+    const f = vi.fn((_url: string, init?: { signal?: AbortSignal }) => {
+      observedAborted = init?.signal?.aborted;
+      return new Promise<Response>((_r, reject) => {
+        if (init?.signal?.aborted) reject(new Error("already aborted"));
+      });
+    });
+    const clean = await resolveFacebookShareUrl(
+      "https://www.facebook.com/share/r/abcXYZ/",
+      f as unknown as typeof fetch,
+      pre.signal,
+    );
+    expect(clean).toBeNull();
+    expect(observedAborted).toBe(true);
+  });
 });

@@ -30,11 +30,18 @@ const SHARE_URL_RE = /facebook\.com\/share\//i;
 const MAX_OPAQUE_RESOLVES_PER_SUBMIT = 50; // a huge paste never stalls submit
 const OPAQUE_RESOLVE_BUDGET_MS = 8_000; // overall wall-clock guard for the pass
 
+// The submit path only ever needs (url, signal) — it always uses the real fetch.
+// A narrow type keeps the injection seam simple and lets tests pass a 1-arg mock.
+type ShareResolver = (url: string, signal?: AbortSignal) => Promise<string | null>;
+
 // Injectable so unit tests can force fail-open / success without the network.
-// Defaults to the real fail-open resolver (real fetch).
-let resolveShareUrlImpl: typeof resolveFacebookShareUrl = resolveFacebookShareUrl;
-export function __setShareResolverForTesting(fn: typeof resolveFacebookShareUrl | null): void {
-  resolveShareUrlImpl = fn ?? resolveFacebookShareUrl;
+// Defaults to the real fail-open resolver (real fetch); the batch signal is
+// forwarded so the wall-clock budget can cancel in-flight probes.
+const defaultShareResolver: ShareResolver = (url, signal) =>
+  resolveFacebookShareUrl(url, fetch, signal);
+let resolveShareUrlImpl: ShareResolver = defaultShareResolver;
+export function __setShareResolverForTesting(fn: ShareResolver | null): void {
+  resolveShareUrlImpl = fn ?? defaultShareResolver;
 }
 
 // Best-effort, fail-open, additive replacement of opaque /share/ FB urls with
@@ -42,6 +49,12 @@ export function __setShareResolverForTesting(fn: typeof resolveFacebookShareUrl 
 // the input rows (callers pass the live links array); returns the same array so
 // the caller can reassign. NEVER throws.
 async function resolveOpaqueShareLinks(links: ReportLinkInput[]): Promise<ReportLinkInput[]> {
+  // Shared abort signal so the wall-clock budget ACTUALLY cancels the in-flight
+  // redirect probes — not just stops awaiting them. Without this, a slow batch
+  // would leave detached fetches running ~10s past submit (extra sockets + silent
+  // rate-limit consumption). We abort on the budget timeout and again in finally.
+  const batchController = new AbortController();
+  let budgetTimer: ReturnType<typeof setTimeout> | undefined;
   try {
     // Index only the de-dupable opaque /share/ links; cap how many we resolve.
     const targets: Array<{ idx: number; url: string }> = [];
@@ -54,13 +67,18 @@ async function resolveOpaqueShareLinks(links: ReportLinkInput[]): Promise<Report
     }
     if (targets.length === 0) return links;
 
-    // Overall wall-clock guard: if the batch outruns the budget, take whatever
-    // resolved and keep originals for the rest.
-    const deadline = new Promise<"timeout">((resolve) =>
-      setTimeout(() => resolve("timeout"), OPAQUE_RESOLVE_BUDGET_MS),
-    );
+    // Overall wall-clock guard: if the batch outruns the budget, abort the in-flight
+    // fetches, take whatever already resolved, and keep originals for the rest.
+    const deadline = new Promise<"timeout">((resolve) => {
+      budgetTimer = setTimeout(() => {
+        batchController.abort(); // cancel the still-pending redirect probes
+        resolve("timeout");
+      }, OPAQUE_RESOLVE_BUDGET_MS);
+    });
     const work = Promise.allSettled(
-      targets.map((t) => resolveShareUrlImpl(t.url).then((clean) => ({ idx: t.idx, clean }))),
+      targets.map((t) =>
+        resolveShareUrlImpl(t.url, batchController.signal).then((clean) => ({ idx: t.idx, clean })),
+      ),
     );
     const outcome = await Promise.race([work, deadline]);
     if (outcome === "timeout") return links; // budget blown → keep all originals
@@ -75,6 +93,11 @@ async function resolveOpaqueShareLinks(links: ReportLinkInput[]): Promise<Report
   } catch {
     // Belt-and-suspenders: any unexpected throw → original links, submit proceeds.
     return links;
+  } finally {
+    if (budgetTimer) clearTimeout(budgetTimer);
+    // Abort any probe still in flight (e.g. when work resolved before the deadline
+    // but a slow straggler in the allSettled batch is still open).
+    batchController.abort();
   }
 }
 

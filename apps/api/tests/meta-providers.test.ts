@@ -10,6 +10,7 @@ import {
 import {
   facebookProvider,
   resolveOpaqueFacebookUrl,
+  resolveFacebookShareUrl,
   __setGraphFetchForTesting as setFbGraphFetch,
   __resetFbRateLimitedForTesting,
 } from "../src/services/social-insights/facebook.provider";
@@ -213,6 +214,71 @@ describe("instagramProvider", () => {
   });
 });
 
+// ── Instagram paging depth (env-overridable; mocked graphFetch) ──────────────
+//
+// The provider is imported once at module load, so MAX_PAGES_PER_ACCOUNT /
+// POLL_WINDOW_DAYS are read from process.env at import time. We can't flip the
+// constants after import, but we CAN prove the two contracts that matter without
+// the network:
+//   1. With NO env set (the cron's world), the default page cap is generous
+//      enough to walk a multi-page feed AND it self-limits — it does not page
+//      forever — and it stops early once a page contains media older than the
+//      90-day window.
+//   2. A shortcode absent from the (bounded) mocked feed → not_found.
+
+describe("instagramProvider — paging depth & window (env-overridable defaults)", () => {
+  it("pages a multi-paged feed and resolves a shortcode found on a later page", async () => {
+    process.env.META_SYSTEM_USER_TOKEN = FAKE_TOKEN;
+    const recent = new Date().toISOString();
+    // 3 media pages, all within the window; the target lives on page 3.
+    const graph = vi.fn(async (path: string) => {
+      if (path === "me/accounts") return ok({ data: [{ instagram_business_account: { id: "ig-1" } }] });
+      if (path === "ig-1/media")
+        return ok({
+          data: [{ id: "m1", shortcode: "P1", timestamp: recent }],
+          paging: { next: "https://graph.facebook.com/v21.0/ig-1/media?after=cur1" },
+        });
+      if (path.includes("after=cur1"))
+        return ok({
+          data: [{ id: "m2", shortcode: "P2", timestamp: recent }],
+          paging: { next: "https://graph.facebook.com/v21.0/ig-1/media?after=cur2" },
+        });
+      if (path.includes("after=cur2"))
+        return ok({
+          data: [{ id: "m3", shortcode: "TARGET", caption: "found deep", like_count: 5, comments_count: 1, timestamp: recent }],
+          // No further paging cursor → natural stop.
+        });
+      throw new Error(`unexpected path ${path}`);
+    });
+    setIgGraphFetch(graph as unknown as GraphFetchFn);
+
+    const res = await instagramProvider.fetchBatch([target("l1", "https://instagram.com/reel/TARGET/", "TARGET")]);
+    expect(res.get("l1")).toMatchObject({ ok: true, status: "ok", caption: "found deep", likes: 5 });
+  });
+
+  it("stops paging once a page contains media older than the poll window", async () => {
+    process.env.META_SYSTEM_USER_TOKEN = FAKE_TOKEN;
+    const old = new Date(Date.now() - 400 * 86_400_000).toISOString(); // > 90d old
+    const graph = vi.fn(async (path: string) => {
+      if (path === "me/accounts") return ok({ data: [{ instagram_business_account: { id: "ig-1" } }] });
+      if (path === "ig-1/media")
+        return ok({
+          // This first page already contains an out-of-window item → stop after it.
+          data: [{ id: "m1", shortcode: "OLD", timestamp: old }],
+          paging: { next: "https://graph.facebook.com/v21.0/ig-1/media?after=cur1" },
+        });
+      // If the provider followed the cursor it would hit this and fail the test.
+      throw new Error("should not page past the window boundary");
+    });
+    setIgGraphFetch(graph as unknown as GraphFetchFn);
+
+    const res = await instagramProvider.fetchBatch([target("l1", "https://instagram.com/reel/ABSENT/", "ABSENT")]);
+    expect(res.get("l1")).toMatchObject({ ok: false, status: "not_found" });
+    // Exactly 1 accounts call + 1 media page (the window early-stop fired).
+    expect(graph).toHaveBeenCalledTimes(2);
+  });
+});
+
 // ── Facebook provider tests (mocked graphFetch, no real token/network) ───────
 
 describe("facebookProvider", () => {
@@ -330,5 +396,98 @@ describe("resolveOpaqueFacebookUrl", () => {
     });
     const id = await resolveOpaqueFacebookUrl("https://www.facebook.com/share/r/abcXYZ/", f as unknown as typeof fetch);
     expect(id).toBeNull();
+  });
+});
+
+// ── resolveFacebookShareUrl (submit-time clean-url-or-null wrapper) ────────────
+
+describe("resolveFacebookShareUrl", () => {
+  function mockFetch(location: string | null) {
+    return vi.fn(async () => {
+      return {
+        headers: { get: (h: string) => (h.toLowerCase() === "location" ? location : null) },
+      } as unknown as Response;
+    });
+  }
+
+  it("returns a CLEAN canonical /reel url when the opaque link redirects to a clean /reel/<n>", async () => {
+    const f = mockFetch("https://www.facebook.com/reel/841188021963723");
+    const clean = await resolveFacebookShareUrl("https://www.facebook.com/share/r/abcXYZ/", f as unknown as typeof fetch);
+    expect(clean).toBe("https://www.facebook.com/reel/841188021963723");
+  });
+
+  it("normalizes a clean /videos/<n> redirect target to the canonical /reel/<id> form (canonicalKey only cares about fb:<id>)", async () => {
+    // extractFacebookPostId matches a top-level /videos/<n>; resolveFacebookShareUrl
+    // always re-emits the canonical /reel/<id> shape — the id is what dedupe keys on.
+    const f = mockFetch("https://www.facebook.com/videos/555000111");
+    const clean = await resolveFacebookShareUrl("https://www.facebook.com/share/v/zzz/", f as unknown as typeof fetch);
+    expect(clean).toBe("https://www.facebook.com/reel/555000111");
+  });
+
+  it("returns null when the redirect lands on a pfbid / opaque permalink (gives up)", async () => {
+    const f = mockFetch("https://www.facebook.com/permalink.php?story_fbid=pfbid0abcDEF&id=100");
+    const clean = await resolveFacebookShareUrl("https://www.facebook.com/share/r/abcXYZ/", f as unknown as typeof fetch);
+    expect(clean).toBeNull();
+  });
+
+  it("returns null (never throws) when the fetch rejects — FAIL-OPEN", async () => {
+    const f = vi.fn(async () => {
+      throw new Error("network down");
+    });
+    const clean = await resolveFacebookShareUrl("https://www.facebook.com/share/r/abcXYZ/", f as unknown as typeof fetch);
+    expect(clean).toBeNull();
+  });
+
+  it("forwards an external AbortSignal so a caller's budget can CANCEL the in-flight probe", async () => {
+    // The fetch impl observes the signal it was handed and rejects when that signal
+    // is/becomes aborted — proving the budget guard actually cancels work rather than
+    // just stopping the await. We abort the external signal AFTER the fetch starts.
+    const external = new AbortController();
+    let observedSignal: AbortSignal | undefined;
+    const f = vi.fn((_url: string, init?: { signal?: AbortSignal }) => {
+      observedSignal = init?.signal;
+      return new Promise<Response>((_resolve, reject) => {
+        const sig = init?.signal;
+        if (!sig) return; // would hang, but we always pass one here
+        const onAbort = () => reject(new Error("aborted"));
+        if (sig.aborted) onAbort();
+        else sig.addEventListener("abort", onAbort, { once: true });
+      });
+    });
+
+    const promise = resolveFacebookShareUrl(
+      "https://www.facebook.com/share/r/abcXYZ/",
+      f as unknown as typeof fetch,
+      external.signal,
+    );
+    // Abort the caller's signal mid-flight; the chained controller must abort our
+    // fetch's signal too, rejecting the pending fetch.
+    external.abort();
+    const clean = await promise;
+
+    // Fail-open: aborted probe → null, never throws.
+    expect(clean).toBeNull();
+    // The fetch received a signal that ended up aborted (chained from external).
+    expect(observedSignal).toBeDefined();
+    expect(observedSignal!.aborted).toBe(true);
+  });
+
+  it("aborts immediately when the external signal is already aborted before the call", async () => {
+    const pre = new AbortController();
+    pre.abort();
+    let observedAborted: boolean | undefined;
+    const f = vi.fn((_url: string, init?: { signal?: AbortSignal }) => {
+      observedAborted = init?.signal?.aborted;
+      return new Promise<Response>((_r, reject) => {
+        if (init?.signal?.aborted) reject(new Error("already aborted"));
+      });
+    });
+    const clean = await resolveFacebookShareUrl(
+      "https://www.facebook.com/share/r/abcXYZ/",
+      f as unknown as typeof fetch,
+      pre.signal,
+    );
+    expect(clean).toBeNull();
+    expect(observedAborted).toBe(true);
   });
 });

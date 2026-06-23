@@ -138,18 +138,45 @@ export default function LinkSearchPage() {
         )}
       </div>
 
-      {/* Persistent coverage banner */}
+      {/* Persistent coverage banner — auto-derived, honest about platform limits */}
       {coverage && (
         <div className="rounded-xl border border-indigo/20 bg-indigo-soft px-4 py-3 flex items-start gap-3">
           <Info className="h-4 w-4 text-indigo shrink-0 mt-0.5" />
-          <div className="text-xs text-ink leading-relaxed">
+          <div className="text-xs text-ink leading-relaxed space-y-1">
             <p>
               Searching <span className="font-semibold">{coverage.enriched.toLocaleString()}</span> of{" "}
               <span className="font-semibold">{coverage.total.toLocaleString()}</span> enriched links.
-              Instagram &amp; Facebook enrichment is pending Meta API access — counts will grow as more links are enriched.
             </p>
+            <ul className="text-ink-4 space-y-0.5 list-disc pl-4">
+              <li>
+                <span className="font-medium text-ink-3">YouTube</span> — fully searchable (no date limit).
+              </li>
+              <li>
+                <span className="font-medium text-ink-3">Instagram &amp; Facebook</span>
+                {(() => {
+                  // Auto-detected coverage date = earliest enriched fetched_at across
+                  // the two Meta platforms (whichever is earlier). Crash-safe: byPlatform
+                  // or `since` may be absent on older API responses or before enrichment.
+                  const ig = coverage.byPlatform?.instagram?.since;
+                  const fb = coverage.byPlatform?.facebook?.since;
+                  const earliest = [ig, fb].filter(Boolean).sort()[0];
+                  return earliest ? (
+                    <> — searchable for posts published on or after{" "}
+                      <span className="font-medium text-ink-3">{fmtDate(earliest)}</span>; older posts
+                      are only partially available because Instagram/Facebook don't allow looking up old
+                      posts by link.</>
+                  ) : (
+                    <> — searchable from the date enrichment began; older posts are only partially
+                      available because Instagram/Facebook don't allow looking up old posts by link.</>
+                  );
+                })()}
+              </li>
+              <li>
+                Opaque <span className="font-mono text-[10px]">facebook.com/share/</span> links can't be matched to a post.
+              </li>
+            </ul>
             {coverage.notYetEnriched > 0 && (
-              <p className="text-ink-4 mt-1">
+              <p className="text-ink-4 pt-0.5">
                 <span className="font-semibold text-ink">{coverage.notYetEnriched.toLocaleString()}</span> links are not yet enriched and won't appear in results until they are.
               </p>
             )}

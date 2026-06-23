@@ -35,11 +35,35 @@ import {
 // DARK SWITCH: while META_SYSTEM_USER_TOKEN is absent, isSupported() is false, the
 // registry never polls this provider, and fetchBatch (if ever called directly)
 // returns an all-error map without touching the network.
+//
+// ── ENV-OVERRIDABLE PAGING DEPTH (for the one-time deep historical backfill) ──
+// The cron and the backfill share THIS provider; the only difference is how deep
+// each pages an account's /media feed. Two bounds are env-overridable so the cron
+// default is unchanged but a single backfill run can claw back more history:
+//   IG_BACKFILL_MAX_PAGES    — pages per account (default 60 → up to 6,000 recent
+//                              media/account; was a hardcoded 25). The deep
+//                              one-time backfill sets 200.
+//   IG_BACKFILL_WINDOW_DAYS  — paging stops once media is older than this window
+//                              (default 90, unchanged). The deep backfill sets 1825.
+// With NEITHER env var set, behaviour is exactly today's cron behaviour at the new
+// 60-page default. The IG/FB Graph API has no fetch-by-shortcode — the only read
+// path is paging /media newest-first — so deeper paging is the ONLY (and still
+// partial) lever on historical coverage; high-volume accounts bury old posts
+// beyond any reachable cap (measured ~1% historical resolve — a Meta API design
+// limit, not a bug). See docs/superpowers/plans/2026-06-23-ig-fb-futureproof-handoff.md.
 
 const TIMEOUT_MS = 10_000;
 const MEDIA_PAGE_SIZE = 100;
-const MAX_PAGES_PER_ACCOUNT = 25; // safety cap: 25 * 100 = up to 2,500 media/account
-const POLL_WINDOW_DAYS = 90; // stop paging once media is older than this (cron polls 60d; pad it)
+// Per-account /media paging cap. Env-overridable for the deep backfill; the cron
+// (no env) uses the default. 60 * 100 = up to 6,000 recent media/account.
+const MAX_PAGES_PER_ACCOUNT = Number(process.env.IG_BACKFILL_MAX_PAGES) || 60;
+// Stop paging once media is older than this window (cron polls 60d; pad it).
+// Env-overridable for the deep backfill; default unchanged at 90.
+const POLL_WINDOW_DAYS = Number(process.env.IG_BACKFILL_WINDOW_DAYS) || 90;
+// Account-discovery (me/accounts) pagination guard — intentionally fixed (NOT the
+// deep-paging cap). 38 IG accounts on prod fit well within 25 pages of 100; this
+// must not balloon when IG_BACKFILL_MAX_PAGES is raised for media paging.
+const MAX_ACCOUNT_DISCOVERY_PAGES = 25;
 
 // Module-level rate-limit flag — set when the Graph API throttles us, short-circuits
 // the rest of the run to rate_limited (mirrors youTubeQuotaExceeded). Reset at the
@@ -89,7 +113,7 @@ async function discoverIgUserIds(): Promise<string[]> {
   };
   let guard = 0;
 
-  while (path && guard < MAX_PAGES_PER_ACCOUNT) {
+  while (path && guard < MAX_ACCOUNT_DISCOVERY_PAGES) {
     guard++;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);

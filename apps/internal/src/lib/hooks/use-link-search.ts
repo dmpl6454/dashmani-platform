@@ -10,7 +10,7 @@ export interface LinkSearchData {
   channelCount: number;
   channels: Array<{ accountId: string; handle: string; displayName: string; platform: string; postCount: number }>;
   posts: Array<{ canonicalKey: string; url: string; platform: string; account: { id: string; handle: string; displayName: string }; employee: { id: string; name: string }; date: string; dupCount: number }>;
-  coverage: { enriched: number; notYetEnriched: number; total: number; byPlatform: Record<string, { enriched: number; total: number }> };
+  coverage: { enriched: number; notYetEnriched: number; total: number; byPlatform: Record<string, { enriched: number; total: number; since?: string }> };
   truncated?: boolean;
 }
 

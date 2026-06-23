@@ -1,8 +1,9 @@
 import { prisma } from "@dashmani/db";
-import { extractYouTubeVideoId } from "@dashmani/shared";
+import { extractYouTubeVideoId, canonicalKey } from "@dashmani/shared";
 import { getSupportedSlugs, getProvider } from "../services/social-insights";
 import type { InsightTarget } from "../services/social-insights";
 import { youTubeQuotaExceeded } from "../services/social-insights/youtube.provider";
+import { upsertLinkContent } from "../services/link-content.service";
 
 const POLL_WINDOW_DAYS = 60;
 
@@ -133,6 +134,28 @@ export async function runSocialInsightsRefresh(): Promise<void> {
           } catch (writeErr) {
             console.error(`[social-insights/${slug}] failed to write snapshot for linkId ${t.linkId}:`, writeErr);
             errors++;
+          }
+
+          // ── Link-content enrichment (ADDITIVE) ─────────────────────────────
+          // Store caption/title for the entity-search feature, keyed on the post's
+          // canonicalKey (one row per unique post). Independently guarded: a failure
+          // here must NEVER affect the metric snapshot written above. Only writes when
+          // the provider returned text (title/caption); skipped otherwise.
+          if (r.ok && (r.title != null || r.caption != null)) {
+            try {
+              const key = canonicalKey(t.url);
+              if (key) {
+                await upsertLinkContent({
+                  canonicalKey: key,
+                  title: r.title ?? null,
+                  caption: r.caption ?? null,
+                  status: "ok",
+                });
+              }
+            } catch (contentErr) {
+              console.error(`[social-insights/${slug}] link-content upsert failed for linkId ${t.linkId}:`, contentErr);
+              // swallow — never affects metrics or counters
+            }
           }
         }
 

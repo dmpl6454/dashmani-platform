@@ -50,7 +50,11 @@ export interface LinkSearchResult {
     enriched: number;
     notYetEnriched: number;
     total: number;
-    byPlatform: Record<string, { enriched: number; total: number }>;
+    // `since` is the earliest enriched (status='ok') fetched_at for the platform —
+    // the auto-detected date from which IG/FB results are reliable. Absent when the
+    // platform has no enriched rows yet. Additive: older API responses omit it and
+    // the UI tolerates that.
+    byPlatform: Record<string, { enriched: number; total: number; since?: string }>;
   };
   truncated?: boolean;
 }
@@ -71,13 +75,23 @@ function idPartFor(canonicalKeyValue: string): { contains?: string; equalsUrl?: 
 
 async function buildCoverage(): Promise<LinkSearchResult["coverage"]> {
   // Coverage is the honest "N of M" the UI shows: the LinkContent universe.
-  const grouped = await prisma.linkContent.groupBy({
-    by: ["platform", "status"],
-    _count: { _all: true },
-  });
+  // Two cheap grouped queries: counts by (platform, status), and the earliest
+  // enriched fetched_at per platform (the auto-detected "since" coverage date).
+  const [grouped, sinceByPlatform] = await Promise.all([
+    prisma.linkContent.groupBy({
+      by: ["platform", "status"],
+      _count: { _all: true },
+    }),
+    prisma.linkContent.groupBy({
+      by: ["platform"],
+      where: { status: "ok", fetchedAt: { not: null } },
+      _min: { fetchedAt: true },
+    }),
+  ]);
+
   let enriched = 0;
   let total = 0;
-  const byPlatform: Record<string, { enriched: number; total: number }> = {};
+  const byPlatform: Record<string, { enriched: number; total: number; since?: string }> = {};
   for (const g of grouped) {
     const n = g._count._all;
     total += n;
@@ -86,6 +100,12 @@ async function buildCoverage(): Promise<LinkSearchResult["coverage"]> {
     if (!byPlatform[p]) byPlatform[p] = { enriched: 0, total: 0 };
     byPlatform[p].total += n;
     if (g.status === "ok") byPlatform[p].enriched += n;
+  }
+  // Attach the per-platform "since" date (earliest enriched fetched_at).
+  for (const s of sinceByPlatform) {
+    const p = s.platform || "other";
+    const min = s._min.fetchedAt;
+    if (byPlatform[p] && min) byPlatform[p].since = min.toISOString();
   }
   return { enriched, notYetEnriched: total - enriched, total, byPlatform };
 }

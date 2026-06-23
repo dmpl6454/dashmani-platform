@@ -5,6 +5,8 @@ export interface InsightFetchResult {
   likes?: number | null;
   comments?: number | null;
   shares?: number | null;
+  title?: string | null;     // post title (YouTube snippet.title)
+  caption?: string | null;   // post caption (IG/FB caption; YouTube snippet.description)
   error?: string;
 }
 

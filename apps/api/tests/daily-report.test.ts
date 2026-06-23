@@ -4,6 +4,7 @@ import app from "../src/app";
 import { createTestUser, createTestRole, generateToken } from "./helpers";
 import { prisma } from "@dashmani/db";
 import jwt from "jsonwebtoken";
+import { __setShareResolverForTesting } from "../src/services/daily-report.service";
 import "./setup";
 
 // Generate an HR token (type: "hr")
@@ -126,6 +127,107 @@ describe("Daily Report API", () => {
       expect(res.body.data.links.length).toBe(1);
       expect(res.body.data.links[0].likes).toBe(100);
       expect(res.body.data.latitude).toBe(28.6139);
+    });
+
+    it("submit-time FB resolution is FAIL-OPEN: keeps the ORIGINAL url when the resolver throws", async () => {
+      // Force the opaque-share resolver to throw on every call. A throwing resolver
+      // must NEVER fail or alter the submit — the original /share/ url is stored.
+      __setShareResolverForTesting(async () => {
+        throw new Error("network down");
+      });
+      try {
+        const shareUrl = "https://www.facebook.com/share/r/181uwpf9M7/";
+        const res = await request(app)
+          .post("/v1/hr/reports")
+          .set("Authorization", `Bearer ${hrToken}`)
+          .send({
+            date: "2026-04-20",
+            links: [{ accountId, url: shareUrl, platform: "facebook" }],
+          });
+
+        expect(res.status).toBe(201);
+        expect(res.body.success).toBe(true);
+        expect(res.body.data.links.length).toBe(1);
+        // Fail-open: the original opaque url survives untouched.
+        expect(res.body.data.links[0].url).toBe(shareUrl);
+      } finally {
+        __setShareResolverForTesting(null); // restore the real (default) resolver
+      }
+    });
+
+    it("submit-time FB resolution REPLACES an opaque /share/ url with the clean redirect target", async () => {
+      // Resolver returns a clean /reel url for the opaque link; the stored url is
+      // the CLEAN one (additive replacement — link count unchanged, never dropped).
+      __setShareResolverForTesting(async (url: string) =>
+        /share\//i.test(url) ? "https://www.facebook.com/reel/841188021963723" : null,
+      );
+      try {
+        const res = await request(app)
+          .post("/v1/hr/reports")
+          .set("Authorization", `Bearer ${hrToken}`)
+          .send({
+            date: "2026-04-21",
+            links: [{ accountId, url: "https://www.facebook.com/share/r/181uwpf9M7/", platform: "facebook" }],
+          });
+
+        expect(res.status).toBe(201);
+        expect(res.body.data.links.length).toBe(1); // additive — never dropped
+        expect(res.body.data.links[0].url).toBe("https://www.facebook.com/reel/841188021963723");
+      } finally {
+        __setShareResolverForTesting(null);
+      }
+    });
+
+    it("submit-time FB resolution hands the resolver an AbortSignal (budget can cancel in-flight probes)", async () => {
+      // Prove the wall-clock budget is wired to actually cancel work: the resolver
+      // must be invoked WITH a signal argument.
+      let receivedSignal: AbortSignal | undefined | "absent" = "absent";
+      __setShareResolverForTesting(async (_url: string, signal?: AbortSignal) => {
+        receivedSignal = signal;
+        return null; // no clean url → original kept (fail-open path)
+      });
+      try {
+        const res = await request(app)
+          .post("/v1/hr/reports")
+          .set("Authorization", `Bearer ${hrToken}`)
+          .send({
+            date: "2026-04-23",
+            links: [{ accountId, url: "https://www.facebook.com/share/r/abc999/", platform: "facebook" }],
+          });
+
+        expect(res.status).toBe(201);
+        expect(res.body.data.links.length).toBe(1);
+        // The resolver was handed an AbortSignal (not undefined) — budget is wired.
+        expect(receivedSignal).not.toBe("absent");
+        expect(receivedSignal).toBeInstanceOf(AbortSignal);
+      } finally {
+        __setShareResolverForTesting(null);
+      }
+    });
+
+    it("submit-time FB resolution leaves NON-/share/ urls untouched (no-op for IG/clean links)", async () => {
+      // The resolver must never even be asked about non-/share/ urls; assert via a
+      // resolver that would corrupt anything it touched.
+      const seen: string[] = [];
+      __setShareResolverForTesting(async (url: string) => {
+        seen.push(url);
+        return "https://www.facebook.com/reel/000000000";
+      });
+      try {
+        const res = await request(app)
+          .post("/v1/hr/reports")
+          .set("Authorization", `Bearer ${hrToken}`)
+          .send({
+            date: "2026-04-22",
+            links: [{ accountId, url: "https://instagram.com/reel/ABC123", platform: "instagram" }],
+          });
+
+        expect(res.status).toBe(201);
+        expect(res.body.data.links[0].url).toBe("https://instagram.com/reel/ABC123");
+        expect(seen).toHaveLength(0); // resolver never invoked for a non-/share/ url
+      } finally {
+        __setShareResolverForTesting(null);
+      }
     });
 
     it("updates existing report for the same date", async () => {

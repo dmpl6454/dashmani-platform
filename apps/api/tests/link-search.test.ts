@@ -212,6 +212,33 @@ describe("searchLinksByEntity — same vs unique (DB-backed)", () => {
     expect(res.coverage.byPlatform.youtube.total).toBeGreaterThanOrEqual(3);
   });
 
+  it("coverage.byPlatform[platform].since = earliest enriched fetched_at (auto-detected coverage date)", async () => {
+    if (!dbAvailable) return;
+
+    // Two enriched rows in the test's prefix space with KNOWN fetched_at times; the
+    // earlier one must surface as `since`. A third row with NO fetched_at must not
+    // change the result (only enriched+dated rows count toward `since`).
+    const earlier = new Date("2026-06-23T05:00:00.000Z");
+    const later = new Date("2026-06-25T09:30:00.000Z");
+    await prisma.linkContent.create({
+      data: { canonicalKey: `${KEY_PREFIX}S1A`, platform: "youtube", status: "ok", fetchedAt: later },
+    });
+    await prisma.linkContent.create({
+      data: { canonicalKey: `${KEY_PREFIX}S1B`, platform: "youtube", status: "ok", fetchedAt: earlier },
+    });
+    await prisma.linkContent.create({
+      data: { canonicalKey: `${KEY_PREFIX}S1C`, platform: "youtube", status: "ok" }, // no fetchedAt
+    });
+
+    const res = await searchLinksByEntity({ q: "" });
+    const yt = res.coverage.byPlatform.youtube;
+    expect(yt).toBeTruthy();
+    expect(yt.since).toBeTruthy();
+    // The earliest dated enriched row wins; other tests' undated 'ok' rows can't
+    // push it earlier than our seeded `earlier` timestamp.
+    expect(new Date(yt.since!).getTime()).toBeLessThanOrEqual(earlier.getTime());
+  });
+
   it("resolves the entity by an exact alias (case-insensitive input)", async () => {
     if (!dbAvailable) return;
 

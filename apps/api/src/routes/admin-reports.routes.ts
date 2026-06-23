@@ -19,7 +19,7 @@ import {
   adminUpdateProfile,
 } from "../services/employee-profile.service";
 import { getEmployeePerformance } from "../services/employee-performance.service";
-import { success } from "../utils/response";
+import { success, error } from "../utils/response";
 import { calcStreaks } from "../utils/streak";
 import { prisma } from "@dashmani/db";
 
@@ -378,6 +378,55 @@ router.get(
         limit: limit ? parseInt(limit, 10) : 20,
       });
       return success(res, links);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// ===== Link entity search (Stage 3) =====
+// Grouped here by convention with the other admin search/report routes for
+// readability. The 2nd path segment ("link-search" / "entities") differs from
+// "reports/:reportId", so route order relative to /:reportId is irrelevant to
+// matching — /:reportId can never capture these regardless of placement.
+
+// GET /admin/link-search?q&from&to&platform — search uploaded links by entity
+// (person/topic). Reports same-vs-unique counts; never dedupes rows away.
+router.get(
+  "/admin/link-search",
+  authenticate,
+  requirePermission("reports", "view"),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { q, from, to, platform } = req.query as Record<string, string | undefined>;
+      const { searchLinksByEntity } = await import("../services/link-search.service");
+      if (!q || !q.trim()) {
+        // An empty query is NOT an error — still return coverage so the UI can
+        // explain an empty result ("0 — but only N of M enriched").
+        return success(res, await searchLinksByEntity({ q: "" }));
+      }
+      return success(res, await searchLinksByEntity({ q, from, to, platform }));
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// GET /admin/entities?q — entity autocomplete for the search typeahead.
+router.get(
+  "/admin/entities",
+  authenticate,
+  requirePermission("reports", "view"),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const q = ((req.query.q as string) || "").trim();
+      // Autocomplete with no query is a genuine bad request (nothing to match),
+      // unlike /admin/link-search whose empty-q still returns coverage.
+      if (!q) {
+        return error(res, "VALIDATION_ERROR", "Query parameter 'q' is required", 400);
+      }
+      const { listEntities } = await import("../services/link-search.service");
+      return success(res, await listEntities(q));
     } catch (err) {
       next(err);
     }

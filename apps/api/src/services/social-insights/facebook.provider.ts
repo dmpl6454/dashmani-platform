@@ -164,3 +164,28 @@ export async function resolveOpaqueFacebookUrl(
     clearTimeout(timer);
   }
 }
+
+// ── Submit-time clean-URL helper (clean-url-or-null) ───────────────────────────
+//
+// Thin wrapper over resolveOpaqueFacebookUrl used by the submit path. Returns a
+// CLEAN canonical Facebook URL (not just the numeric id) when an opaque
+// /share/r/<code> link redirects to a clean numeric /reel|/videos/<n>; else null.
+//
+// FAIL-OPEN by contract: resolveOpaqueFacebookUrl already swallows every
+// throw/timeout into null, and this wrapper adds its own try/catch belt — any
+// failure returns null and the caller keeps the original url. Dark-safe: with no
+// META token the HEAD redirect simply doesn't yield a clean Location and we
+// return null (we never read the token here — this is a plain redirect probe, not
+// a Graph call). canonicalKey only cares about fb:<id>, so /reel/ is a fine
+// canonical form even if the original was a /videos/ post.
+export async function resolveFacebookShareUrl(
+  url: string,
+  fetchImpl: typeof fetch = fetch
+): Promise<string | null> {
+  try {
+    const id = await resolveOpaqueFacebookUrl(url, fetchImpl); // already fail-open
+    return id ? `https://www.facebook.com/reel/${id}` : null;
+  } catch {
+    return null;
+  }
+}

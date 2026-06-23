@@ -10,6 +10,7 @@ import {
 import {
   facebookProvider,
   resolveOpaqueFacebookUrl,
+  resolveFacebookShareUrl,
   __setGraphFetchForTesting as setFbGraphFetch,
   __resetFbRateLimitedForTesting,
 } from "../src/services/social-insights/facebook.provider";
@@ -395,5 +396,45 @@ describe("resolveOpaqueFacebookUrl", () => {
     });
     const id = await resolveOpaqueFacebookUrl("https://www.facebook.com/share/r/abcXYZ/", f as unknown as typeof fetch);
     expect(id).toBeNull();
+  });
+});
+
+// ── resolveFacebookShareUrl (submit-time clean-url-or-null wrapper) ────────────
+
+describe("resolveFacebookShareUrl", () => {
+  function mockFetch(location: string | null) {
+    return vi.fn(async () => {
+      return {
+        headers: { get: (h: string) => (h.toLowerCase() === "location" ? location : null) },
+      } as unknown as Response;
+    });
+  }
+
+  it("returns a CLEAN canonical /reel url when the opaque link redirects to a clean /reel/<n>", async () => {
+    const f = mockFetch("https://www.facebook.com/reel/841188021963723");
+    const clean = await resolveFacebookShareUrl("https://www.facebook.com/share/r/abcXYZ/", f as unknown as typeof fetch);
+    expect(clean).toBe("https://www.facebook.com/reel/841188021963723");
+  });
+
+  it("normalizes a clean /videos/<n> redirect target to the canonical /reel/<id> form (canonicalKey only cares about fb:<id>)", async () => {
+    // extractFacebookPostId matches a top-level /videos/<n>; resolveFacebookShareUrl
+    // always re-emits the canonical /reel/<id> shape — the id is what dedupe keys on.
+    const f = mockFetch("https://www.facebook.com/videos/555000111");
+    const clean = await resolveFacebookShareUrl("https://www.facebook.com/share/v/zzz/", f as unknown as typeof fetch);
+    expect(clean).toBe("https://www.facebook.com/reel/555000111");
+  });
+
+  it("returns null when the redirect lands on a pfbid / opaque permalink (gives up)", async () => {
+    const f = mockFetch("https://www.facebook.com/permalink.php?story_fbid=pfbid0abcDEF&id=100");
+    const clean = await resolveFacebookShareUrl("https://www.facebook.com/share/r/abcXYZ/", f as unknown as typeof fetch);
+    expect(clean).toBeNull();
+  });
+
+  it("returns null (never throws) when the fetch rejects — FAIL-OPEN", async () => {
+    const f = vi.fn(async () => {
+      throw new Error("network down");
+    });
+    const clean = await resolveFacebookShareUrl("https://www.facebook.com/share/r/abcXYZ/", f as unknown as typeof fetch);
+    expect(clean).toBeNull();
   });
 });

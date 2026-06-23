@@ -3,6 +3,80 @@ import { AppError } from "../middleware/error-handler";
 import type { ReportLinkInput, DailyReportResponse, AdminReportFilters } from "@dashmani/shared";
 import { todayIST, istMidnight, dateToIST, canonicalKey } from "@dashmani/shared";
 import { calcStreaks } from "../utils/streak";
+import { resolveFacebookShareUrl } from "./social-insights/facebook.provider";
+
+// ── Submit-time opaque-Facebook resolution (injectable for tests) ─────────────
+//
+// ~84% of our Facebook links are opaque `facebook.com/share/r/<code>` redirects
+// that carry a share TOKEN, not a post id — the Graph API can't query them, so
+// they're unsearchable forever once stored. The durable fix is PREVENTION: at
+// submit time (when the link is fresh + cheap) we do ONE best-effort HEAD redirect
+// to recover the clean numeric `/reel/<n>` URL and store THAT instead, so future
+// FB links come in queryable. This stops FB coverage from bleeding going forward;
+// the unrecoverable historical tail (pfbid redirects) is unchanged and the UI is
+// honest about it.
+//
+// LOAD-BEARING SAFETY (the HR submit is the org's most-used path):
+//   • ADDITIVE — only REPLACES an opaque url with a clean one; never drops,
+//     reorders, or merges links. Dedupe runs on the cleaned set afterward.
+//   • FAIL-OPEN — the whole pass is wrapped so any throw/timeout keeps the
+//     ORIGINAL urls; resolution can never block, slow past a guard, or fail a
+//     submit.
+//   • OUTSIDE the $transaction — the network probe runs before any DB tx opens,
+//     so a slow redirect never holds a transaction open.
+//   • DARK-SAFE — with no META token / no network, resolveFacebookShareUrl
+//     returns null and every url is left untouched.
+const SHARE_URL_RE = /facebook\.com\/share\//i;
+const MAX_OPAQUE_RESOLVES_PER_SUBMIT = 50; // a huge paste never stalls submit
+const OPAQUE_RESOLVE_BUDGET_MS = 8_000; // overall wall-clock guard for the pass
+
+// Injectable so unit tests can force fail-open / success without the network.
+// Defaults to the real fail-open resolver (real fetch).
+let resolveShareUrlImpl: typeof resolveFacebookShareUrl = resolveFacebookShareUrl;
+export function __setShareResolverForTesting(fn: typeof resolveFacebookShareUrl | null): void {
+  resolveShareUrlImpl = fn ?? resolveFacebookShareUrl;
+}
+
+// Best-effort, fail-open, additive replacement of opaque /share/ FB urls with
+// their clean redirect target. Mutates url strings in place on a SHALLOW COPY of
+// the input rows (callers pass the live links array); returns the same array so
+// the caller can reassign. NEVER throws.
+async function resolveOpaqueShareLinks(links: ReportLinkInput[]): Promise<ReportLinkInput[]> {
+  try {
+    // Index only the de-dupable opaque /share/ links; cap how many we resolve.
+    const targets: Array<{ idx: number; url: string }> = [];
+    for (let i = 0; i < links.length; i++) {
+      const l = links[i];
+      if (l.isScheduled || !l.url || !l.url.trim()) continue;
+      if (SHARE_URL_RE.test(l.url) && targets.length < MAX_OPAQUE_RESOLVES_PER_SUBMIT) {
+        targets.push({ idx: i, url: l.url.trim() });
+      }
+    }
+    if (targets.length === 0) return links;
+
+    // Overall wall-clock guard: if the batch outruns the budget, take whatever
+    // resolved and keep originals for the rest.
+    const deadline = new Promise<"timeout">((resolve) =>
+      setTimeout(() => resolve("timeout"), OPAQUE_RESOLVE_BUDGET_MS),
+    );
+    const work = Promise.allSettled(
+      targets.map((t) => resolveShareUrlImpl(t.url).then((clean) => ({ idx: t.idx, clean }))),
+    );
+    const outcome = await Promise.race([work, deadline]);
+    if (outcome === "timeout") return links; // budget blown → keep all originals
+
+    for (const settled of outcome) {
+      if (settled.status === "fulfilled" && settled.value.clean) {
+        // REPLACE only — never drop. The cleaned url dedupes better downstream.
+        links[settled.value.idx] = { ...links[settled.value.idx], url: settled.value.clean };
+      }
+    }
+    return links;
+  } catch {
+    // Belt-and-suspenders: any unexpected throw → original links, submit proceeds.
+    return links;
+  }
+}
 
 function formatReport(report: any) {
   return {
@@ -85,6 +159,14 @@ export async function submitDailyReport(
   if (!links || links.length === 0) {
     throw new AppError(400, "VALIDATION_ERROR", "At least one link is required");
   }
+
+  // Submit-time opaque-Facebook resolution. Runs FIRST (before dedupe + outside
+  // any DB transaction) so the cleaned urls flow through canonicalKey dedupe and
+  // a network probe never holds a tx open. Fail-open + additive — see the helper's
+  // header. This is intentionally awaited but cannot block submit beyond its own
+  // wall-clock budget, and is a no-op for any submission with no /share/ links
+  // (the overwhelmingly common case, e.g. all-Instagram or all-YouTube reports).
+  links = await resolveOpaqueShareLinks(links);
 
   // Count of de-dupable rows (scheduled / no-URL rows are never merged, so they
   // never count toward a "skipped duplicate"). We snapshot this count before each

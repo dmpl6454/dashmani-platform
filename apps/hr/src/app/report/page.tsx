@@ -1193,8 +1193,8 @@ export default function ReportPage() {
       {!myInsightsLoading && (() => {
         const allInsights: any[] = (myInsightsData as any)?.data ?? [];
         // Show every link that has engagement metrics, across ALL supported
-        // platforms (YouTube + Instagram now; Facebook joins automatically once
-        // Meta App Review unblocks it). Sort by reach so the strongest posts lead.
+        // platforms (YouTube + Instagram + Facebook are all covered now).
+        // Sort by reach so the strongest posts lead.
         const withMetrics = allInsights
           .filter((l: any) => l.latest)
           .sort((a: any, b: any) => {
@@ -1208,8 +1208,7 @@ export default function ReportPage() {
               <div>
                 <h3 className="text-sm font-semibold text-[#1A1A1A]">Your link insights</h3>
                 <p className="text-[11px] text-[#7A7A7A] mt-0.5">
-                  Views, likes &amp; comments for your YouTube and Instagram links.
-                  Facebook insights are pending Meta approval and will appear here once available.
+                  Views, likes &amp; comments for your YouTube, Instagram and Facebook links. Updated every 6h.
                 </p>
               </div>
               <span className="text-[10px] text-[#B0B0B0] shrink-0 mt-0.5">Updates every 6h</span>

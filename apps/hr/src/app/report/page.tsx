@@ -1208,7 +1208,7 @@ export default function ReportPage() {
               <div>
                 <h3 className="text-sm font-semibold text-[#1A1A1A]">Your link insights</h3>
                 <p className="text-[11px] text-[#7A7A7A] mt-0.5">
-                  Views, likes &amp; comments for your YouTube, Instagram and Facebook links. Updated every 6h.
+                  Views, likes &amp; comments for your YouTube, Instagram and Facebook links.
                 </p>
               </div>
               <span className="text-[10px] text-[#B0B0B0] shrink-0 mt-0.5">Updates every 6h</span>

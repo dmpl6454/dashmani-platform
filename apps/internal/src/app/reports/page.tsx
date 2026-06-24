@@ -543,7 +543,8 @@ export default function ReportsPage() {
             Icon: Youtube,
             iconBg: "bg-red-50",
             iconColor: "text-red-500",
-            metric: "views" as const, // primary sort metric → drives the empty-vs-pending decision
+            metric: "views" as const, // primary sort metric (YouTube sorts by views, others by engagement)
+            showViews: true,
             data: (topYouTubeData as any)?.data ?? [],
             loading: topYouTubeLoading,
             note: "YouTube · updates every 6h",
@@ -555,6 +556,7 @@ export default function ReportsPage() {
             iconBg: "bg-fuchsia-50",
             iconColor: "text-fuchsia-600",
             metric: "engagement" as const,
+            showViews: false,
             data: (topInstagramData as any)?.data ?? [],
             loading: topInstagramLoading,
             note: "Instagram · likes + comments · updates every 6h",
@@ -566,6 +568,7 @@ export default function ReportsPage() {
             iconBg: "bg-blue-50",
             iconColor: "text-blue-600",
             metric: "engagement" as const,
+            showViews: true,
             data: (topFacebookData as any)?.data ?? [],
             loading: topFacebookLoading,
             note: "Facebook · likes + comments · updates every 6h",
@@ -582,7 +585,7 @@ export default function ReportsPage() {
               // Hide a panel entirely when it has no links in the active window.
               if (!p.loading && p.data.length === 0) return null;
               const showToggle = p.key === toggleAnchorKey;
-              const showViewsCol = p.metric === "views";
+              const showViewsCol = p.showViews;
               const cols = showViewsCol
                 ? "grid-cols-[1.5rem_1fr_8rem_5rem_5rem_5rem]"
                 : "grid-cols-[1.5rem_1fr_8rem_5rem_5rem]";

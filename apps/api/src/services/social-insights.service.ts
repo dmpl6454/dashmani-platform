@@ -187,16 +187,34 @@ export async function getInsightsSummary(params: {
   };
 }
 
-// ============ getTopYouTubeLinks ============
+// ============ getTopLinksByPlatform (generalized) ============
+//
+// Returns the top engagement links for ONE platform, newest-snapshot-per-link,
+// sorted by the metric that platform actually exposes:
+//   - youtube           → views (the YT Data API returns reliable view counts)
+//   - instagram/facebook → likes + comments (IG reels don't expose a reliable
+//     view count via the media list; FB likewise) — so views-sort would be all-zero.
+// This is the single path behind every "Top <Platform> Links" panel. A platform
+// with no enriched link_metric rows (e.g. Facebook until Meta App Review honors
+// pages_read_engagement) naturally returns [] — the UI renders an honest
+// "pending" state rather than a fake-empty table. Future-proof: when FB
+// enrichment lights up, the same query fills the same panel with zero code change.
 
-export async function getTopYouTubeLinks(params: {
+export type TopLinkSort = "views" | "engagement";
+
+export async function getTopLinksByPlatform(params: {
+  platform: string;
   startDate?: string;
   endDate?: string;
   limit?: number;
+  sortBy?: TopLinkSort;
 }): Promise<TopLink[]> {
+  const platform = params.platform.toLowerCase();
   const { startDate, endDate, limit = 20 } = params;
+  // Default sort: YouTube by views, everything else by engagement.
+  const sortBy: TopLinkSort = params.sortBy ?? (platform === "youtube" ? "views" : "engagement");
 
-  const where: Record<string, unknown> = { platform: "youtube", status: "ok" };
+  const where: Record<string, unknown> = { platform, status: "ok" };
   if (startDate) where.reportDate = { ...(where.reportDate as object | undefined), gte: new Date(startDate) };
   if (endDate) where.reportDate = { ...(where.reportDate as object | undefined), lte: new Date(endDate) };
 
@@ -229,15 +247,18 @@ export async function getTopYouTubeLinks(params: {
     }
   }
 
+  const score = (s: { views: number | null; likes: number | null; comments: number | null }) =>
+    sortBy === "views" ? (s.views ?? 0) : (s.likes ?? 0) + (s.comments ?? 0);
+
   return latest
-    .sort((a, b) => (b.views ?? 0) - (a.views ?? 0))
+    .sort((a, b) => score(b) - score(a))
     .slice(0, limit)
     .map((s) => ({
       linkId: s.linkId,
       url: s.url,
       urlNormalized: s.urlNormalized,
       videoId: s.videoId,
-      platform: "youtube",
+      platform,
       employeeId: s.employeeId,
       employeeName: s.employee.name,
       views: s.views,
@@ -245,6 +266,16 @@ export async function getTopYouTubeLinks(params: {
       comments: s.comments,
       fetchedAt: s.fetchedAt,
     }));
+}
+
+// ============ getTopYouTubeLinks (thin back-compat wrapper) ============
+
+export async function getTopYouTubeLinks(params: {
+  startDate?: string;
+  endDate?: string;
+  limit?: number;
+}): Promise<TopLink[]> {
+  return getTopLinksByPlatform({ ...params, platform: "youtube", sortBy: "views" });
 }
 
 // ============ getMyLinkInsights (HR — self-scoped) ============

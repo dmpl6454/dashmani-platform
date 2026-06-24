@@ -170,6 +170,41 @@ export async function runSocialInsightsRefresh(): Promise<void> {
       `[social-insights/${slug}] ${targets.length} links → ${polled} polled, ${succeeded} ok, ${notFound} not_found, ${errors} errors${quotaAborted ? " (QUOTA ABORTED)" : ""}`
     );
 
+    // 3b. Harvest the FULL feed map for content enrichment (ADDITIVE, independently
+    //     guarded). Providers that page an owned-account feed (Instagram) expose
+    //     EVERY post they saw this run — not just submitted links still top-of-feed.
+    //     This is what keeps IG content enrichment ahead of firehose volume: a
+    //     post's caption is captured at fetch time, keyed by canonicalKey, so a
+    //     later-matched report_link finds it even after it's buried in the feed.
+    //     A failure here can NEVER affect the metric snapshots written above.
+    //     No extra API calls — reuses the map fetchBatch just built.
+    if (typeof provider.harvestContent === "function" && !quotaAborted) {
+      try {
+        const harvested = provider.harvestContent();
+        let harvestWritten = 0;
+        for (const h of harvested) {
+          if (!h.canonicalKey || (h.title == null && h.caption == null)) continue;
+          try {
+            await upsertLinkContent({
+              canonicalKey: h.canonicalKey,
+              title: h.title ?? null,
+              caption: h.caption ?? null,
+              status: "ok",
+            });
+            harvestWritten++;
+          } catch (oneErr) {
+            // swallow per-row — never affects metrics or the rest of the harvest
+            console.error(`[social-insights/${slug}] harvest upsert failed for ${h.canonicalKey}:`, oneErr);
+          }
+        }
+        if (harvested.length > 0) {
+          console.log(`[social-insights/${slug}] harvested ${harvestWritten}/${harvested.length} feed-map captions → link_content`);
+        }
+      } catch (harvestErr) {
+        console.error(`[social-insights/${slug}] harvestContent failed (metrics unaffected):`, harvestErr);
+      }
+    }
+
     // 4. Re-heal: re-link orphaned snapshots (linkId=null) back to current ReportLink rows
     //    This fires after every poll run to restore FKs broken by delete-and-recreate resubmits.
     try {

@@ -52,6 +52,8 @@ interface FbFollowersAccountsResponse {
     access_token?: string;
     followers_count?: number;
     fan_count?: number;
+    username?: string;
+    name?: string;
     tasks?: string[];
   }>;
   paging?: { next?: string };
@@ -65,9 +67,12 @@ export interface IgFollowerCounts {
   posts: number | null;
 }
 
-// Returns a map keyed by lowercased IG username → current follower/following/post
-// counts. Discovers IG Business accounts via me/accounts (extending the sub-field
-// selection the IG provider uses), following paging.next until exhausted.
+// Returns a map MULTI-KEYED so the caller can look up by whichever identifier a
+// SocialAccount happens to store: the lowercased IG username AND the IG business
+// account id both point at the SAME counts value. (A SocialAccount may hold a
+// handle/username or, rarely, the numeric id — neither alone is guaranteed, so we
+// index both.) Discovers IG Business accounts via me/accounts (extending the
+// sub-field selection the IG provider uses), following paging.next until exhausted.
 export async function fetchInstagramFollowerMap(): Promise<Map<string, IgFollowerCounts>> {
   const map = new Map<string, IgFollowerCounts>();
 
@@ -101,11 +106,14 @@ export async function fetchInstagramFollowerMap(): Promise<Map<string, IgFollowe
       const username = acct?.username;
       const followers = acct?.followers_count;
       if (username && typeof followers === "number") {
-        map.set(username.toLowerCase(), {
+        const counts: IgFollowerCounts = {
           followers,
           following: typeof acct?.follows_count === "number" ? acct.follows_count : null,
           posts: typeof acct?.media_count === "number" ? acct.media_count : null,
-        });
+        };
+        // Multi-key: findable by lowercased username OR the IG business account id.
+        map.set(username.toLowerCase(), counts);
+        if (acct?.id) map.set(acct.id, counts);
       }
     }
 
@@ -123,11 +131,17 @@ export interface FbFollowerCounts {
   followers: number;
 }
 
-// Returns a map keyed by FB Page id → current follower count. Discovers administered
-// Pages via me/accounts (extending the field list the FB provider uses); only Pages
-// with a non-empty tasks array (admin role) and an id are kept. Prefers
-// followers_count, falling back to fan_count; an entry with no numeric count is
-// skipped. Follows paging.next until exhausted.
+// Returns a map MULTI-KEYED so the caller can match by whichever identifier a
+// SocialAccount stores. A SocialAccount holds a handle/profileUrl (e.g.
+// facebook.com/paparazzziii) — NOT the numeric page id — and there is no
+// page-id↔account mapping anywhere, so keying only by page id would be
+// unmatchable. We therefore index each administered Page's follower count under
+// the page id, the page username (if present), AND the page name (if present),
+// all lowercased, so the caller can look it up by slug/handle or name. Discovers
+// administered Pages via me/accounts (extending the field list the FB provider
+// uses); only Pages with a non-empty tasks array (admin role) and an id are kept.
+// Prefers followers_count, falling back to fan_count; an entry with no numeric
+// count is skipped. Follows paging.next until exhausted.
 export async function fetchFacebookFollowerMap(): Promise<Map<string, FbFollowerCounts>> {
   const map = new Map<string, FbFollowerCounts>();
 
@@ -136,7 +150,7 @@ export async function fetchFacebookFollowerMap(): Promise<Map<string, FbFollower
 
   let path: string | null = "me/accounts";
   let params: Record<string, string | number | undefined> | undefined = {
-    fields: "id,access_token,followers_count,fan_count,tasks",
+    fields: "id,access_token,followers_count,fan_count,username,name,tasks",
     limit: PAGE_SIZE,
   };
   let guard = 0;
@@ -164,7 +178,12 @@ export async function fetchFacebookFollowerMap(): Promise<Map<string, FbFollower
           ? pg.fan_count
           : null;
       if (count != null) {
-        map.set(pg.id, { followers: count });
+        const counts: FbFollowerCounts = { followers: count };
+        // Multi-key: page id, username, and name (all lowercased) all point at the
+        // same value so a SocialAccount can match by slug/handle or name.
+        map.set(pg.id.toLowerCase(), counts);
+        if (pg.username) map.set(pg.username.toLowerCase(), counts);
+        if (pg.name) map.set(pg.name.toLowerCase().trim(), counts);
       }
     }
 

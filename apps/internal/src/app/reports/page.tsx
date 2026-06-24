@@ -366,7 +366,8 @@ export default function ReportsPage() {
   const engagementLikes = insights?.totalLikes ?? 0;
   const engagementComments = insights?.totalComments ?? 0;
   const hasInsights = !insightsLoading && engagementViews > 0;
-  function fmtCompact(n: number): string {
+  function fmtCompact(n: number | null | undefined): string {
+    if (n == null) return "—";
     if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
     if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
     return String(n);

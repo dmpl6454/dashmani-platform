@@ -140,7 +140,7 @@ export default function LinkSearchPage() {
 
       {/* Persistent coverage banner — auto-derived, self-healing accuracy.
           "Searchable of submitted" is the honest framing: a permanently-unsearchable
-          link (e.g. Facebook posts we can't read yet) can never inflate the tally. */}
+          link (e.g. opaque facebook.com/share/ links, or posts older than our enrichment window) can never inflate the tally. */}
       {coverage && (() => {
         // Prefer the honest fields; fall back to legacy for older API responses.
         const searchable = coverage.searchable ?? coverage.enriched ?? 0;
@@ -171,9 +171,6 @@ export default function LinkSearchPage() {
                     {p === "youtube" && <span className="text-ink-4">· no date limit</span>}
                     {(p === "instagram" || p === "facebook") && since && (
                       <span className="text-ink-4">· since {fmtDate(since)}</span>
-                    )}
-                    {p === "facebook" && (s ?? 0) === 0 && (
-                      <span className="text-ink-4">· pending Meta approval</span>
                     )}
                   </li>
                 ))}

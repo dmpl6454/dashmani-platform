@@ -47,14 +47,30 @@ export interface LinkSearchResult {
     dupCount: number;
   }>;
   coverage: {
+    // ── Legacy fields (kept for back-compat; `enriched`/`total` were the old
+    //    "N of M" pair where M counted attempted rows incl. not_found). ──────────
     enriched: number;
     notYetEnriched: number;
     total: number;
-    // `since` is the earliest enriched (status='ok') fetched_at for the platform —
-    // the auto-detected date from which IG/FB results are reliable. Absent when the
-    // platform has no enriched rows yet. Additive: older API responses omit it and
-    // the UI tolerates that.
-    byPlatform: Record<string, { enriched: number; total: number; since?: string }>;
+    // ── Honest accuracy fields (self-healing — a permanently-unsearchable link can
+    //    never inflate the "searchable" tally) ─────────────────────────────────
+    // searchable   = link_content rows with status='ok' (have a caption → findable)
+    // unsearchable = rows tried but unfindable (not_found/error/private/unsupported)
+    // submitted    = the real report_links universe (the honest denominator)
+    searchable: number;
+    unsearchable: number;
+    submitted: number;
+    byPlatform: Record<
+      string,
+      {
+        enriched: number; // == searchable; kept for back-compat with older UI
+        total: number; // == attempted (ok + unsearchable); kept for back-compat
+        searchable: number;
+        unsearchable: number;
+        submitted: number; // report_links for this platform (the honest denominator)
+        since?: string; // earliest enriched fetched_at — auto-detected coverage date
+      }
+    >;
   };
   truncated?: boolean;
 }
@@ -73,11 +89,19 @@ function idPartFor(canonicalKeyValue: string): { contains?: string; equalsUrl?: 
   return { equalsUrl: canonicalKeyValue };
 }
 
+type CoverageBucket = LinkSearchResult["coverage"]["byPlatform"][string];
+
 async function buildCoverage(): Promise<LinkSearchResult["coverage"]> {
-  // Coverage is the honest "N of M" the UI shows: the LinkContent universe.
-  // Two cheap grouped queries: counts by (platform, status), and the earliest
-  // enriched fetched_at per platform (the auto-detected "since" coverage date).
-  const [grouped, sinceByPlatform] = await Promise.all([
+  // Three cheap grouped queries:
+  //  1. link_content counts by (platform, status) — searchable (ok) vs unsearchable
+  //  2. earliest enriched fetched_at per platform — the auto-detected "since" date
+  //  3. report_links count by platform — the HONEST denominator (what was submitted)
+  //
+  // The accuracy fix: a permanently-unsearchable link (FB not_found) must NOT count
+  // toward "searchable", and the denominator is "submitted", not "attempted". So a
+  // platform we can't read (FB until App Review) shows e.g. "0 searchable of 18,909
+  // submitted" — never "X of Y enriched" where Y silently grows with failed attempts.
+  const [grouped, sinceByPlatform, submittedByPlatform] = await Promise.all([
     prisma.linkContent.groupBy({
       by: ["platform", "status"],
       _count: { _all: true },
@@ -87,27 +111,65 @@ async function buildCoverage(): Promise<LinkSearchResult["coverage"]> {
       where: { status: "ok", fetchedAt: { not: null } },
       _min: { fetchedAt: true },
     }),
+    prisma.reportLink.groupBy({
+      by: ["platform"],
+      where: { url: { not: null }, isScheduled: false },
+      _count: { _all: true },
+    }),
   ]);
 
-  let enriched = 0;
-  let total = 0;
-  const byPlatform: Record<string, { enriched: number; total: number; since?: string }> = {};
+  const ensure = (map: Record<string, CoverageBucket>, p: string): CoverageBucket => {
+    if (!map[p]) map[p] = { enriched: 0, total: 0, searchable: 0, unsearchable: 0, submitted: 0 };
+    return map[p];
+  };
+
+  let searchable = 0;
+  let unsearchable = 0;
+  const byPlatform: Record<string, CoverageBucket> = {};
+
   for (const g of grouped) {
     const n = g._count._all;
-    total += n;
-    if (g.status === "ok") enriched += n;
-    const p = g.platform || "other";
-    if (!byPlatform[p]) byPlatform[p] = { enriched: 0, total: 0 };
-    byPlatform[p].total += n;
-    if (g.status === "ok") byPlatform[p].enriched += n;
+    const p = (g.platform || "other").toLowerCase();
+    const b = ensure(byPlatform, p);
+    b.total += n; // attempted (ok + unsearchable) — legacy
+    if (g.status === "ok") {
+      b.searchable += n;
+      b.enriched += n; // legacy alias
+      searchable += n;
+    } else {
+      b.unsearchable += n;
+      unsearchable += n;
+    }
   }
-  // Attach the per-platform "since" date (earliest enriched fetched_at).
+
+  // report_links submitted-per-platform (honest denominator). platform col is dirty
+  // (some IG rows mislabeled FB) but it reflects what was submitted under each label.
+  for (const s of submittedByPlatform) {
+    const p = (s.platform || "other").toLowerCase();
+    ensure(byPlatform, p).submitted += s._count._all;
+  }
+
+  // Auto-detected per-platform coverage date (earliest enriched fetched_at).
   for (const s of sinceByPlatform) {
-    const p = s.platform || "other";
+    const p = (s.platform || "other").toLowerCase();
     const min = s._min.fetchedAt;
     if (byPlatform[p] && min) byPlatform[p].since = min.toISOString();
   }
-  return { enriched, notYetEnriched: total - enriched, total, byPlatform };
+
+  const attemptedTotal = searchable + unsearchable;
+  const submitted = Object.values(byPlatform).reduce((acc, b) => acc + b.submitted, 0);
+
+  return {
+    // legacy pair (enriched = searchable; total = attempted)
+    enriched: searchable,
+    notYetEnriched: attemptedTotal - searchable,
+    total: attemptedTotal,
+    // honest fields
+    searchable,
+    unsearchable,
+    submitted,
+    byPlatform,
+  };
 }
 
 function emptyResult(coverage: LinkSearchResult["coverage"], extra?: Partial<LinkSearchResult>): LinkSearchResult {

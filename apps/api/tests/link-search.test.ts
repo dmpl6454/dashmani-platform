@@ -212,6 +212,34 @@ describe("searchLinksByEntity — same vs unique (DB-backed)", () => {
     expect(res.coverage.byPlatform.youtube.total).toBeGreaterThanOrEqual(3);
   });
 
+  it("coverage exposes honest searchable/unsearchable/submitted (self-healing accuracy)", async () => {
+    if (!dbAvailable) return;
+
+    const NAME = `${NAME_PREFIX}Salman`;
+    await seedEntityWithContent(NAME); // 2 'ok' (searchable) youtube rows
+    // a not_found row = ATTEMPTED but UNSEARCHABLE — must NOT count toward searchable
+    await prisma.linkContent.create({
+      data: { canonicalKey: `${KEY_PREFIX}NF1`, platform: "facebook", status: "not_found" },
+    });
+
+    const res = await searchLinksByEntity({ q: NAME });
+    const c = res.coverage;
+
+    // honest fields present and self-consistent
+    expect(c.searchable).toBeGreaterThanOrEqual(2);
+    expect(c.unsearchable).toBeGreaterThanOrEqual(1); // the not_found row
+    // legacy alias holds: enriched == searchable
+    expect(c.enriched).toBe(c.searchable);
+    // a not_found FB row contributes to unsearchable, never to searchable
+    const fb = c.byPlatform.facebook;
+    expect(fb).toBeTruthy();
+    expect(fb.searchable).toBe(0);
+    expect(fb.unsearchable).toBeGreaterThanOrEqual(1);
+    // submitted is the report_links denominator (>= 0; may be 0 in an isolated test DB)
+    expect(typeof c.submitted).toBe("number");
+    expect(c.submitted).toBeGreaterThanOrEqual(0);
+  });
+
   it("coverage.byPlatform[platform].since = earliest enriched fetched_at (auto-detected coverage date)", async () => {
     if (!dbAvailable) return;
 

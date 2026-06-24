@@ -5,6 +5,7 @@ import {
   instagramProvider,
   __setGraphFetchForTesting as setIgGraphFetch,
   __resetIgRateLimitedForTesting,
+  __resetIgMapForTesting,
   igRateLimited,
 } from "../src/services/social-insights/instagram.provider";
 import {
@@ -37,6 +38,7 @@ const FAKE_TOKEN = "FAKE_META_TOKEN_FOR_TESTS";
 
 beforeEach(() => {
   __resetIgRateLimitedForTesting();
+  __resetIgMapForTesting();
   __resetFbRateLimitedForTesting();
   setIgGraphFetch(null);
   setFbGraphFetch(null);
@@ -186,6 +188,40 @@ describe("instagramProvider", () => {
     });
     // Map built once: exactly 1 accounts call + 1 media call.
     expect(graph).toHaveBeenCalledTimes(2);
+  });
+
+  it("harvestContent() exposes EVERY captioned post in the run's feed map, keyed by canonicalKey", async () => {
+    process.env.META_SYSTEM_USER_TOKEN = FAKE_TOKEN;
+    const now = new Date().toISOString();
+    const graph = vi.fn(async (path: string) => {
+      if (path === "me/accounts") return ok({ data: [{ instagram_business_account: { id: "ig-1" } }] });
+      if (path === "ig-1/media")
+        return ok({
+          data: [
+            { id: "m1", shortcode: "SUBMITTED1", caption: "post about Salman Khan", like_count: 10, comments_count: 2, timestamp: now },
+            { id: "m2", shortcode: "NOTSUBMITTED", caption: "post about Kriti Sanon", like_count: 5, comments_count: 1, timestamp: now },
+            { id: "m3", shortcode: "NOCAPTION", timestamp: now }, // no caption → excluded from harvest
+          ],
+        });
+      throw new Error(`unexpected path ${path}`);
+    });
+    setIgGraphFetch(graph as unknown as GraphFetchFn);
+
+    // fetchBatch only asked about ONE submitted link…
+    await instagramProvider.fetchBatch([target("l1", "https://instagram.com/reel/SUBMITTED1/", "SUBMITTED1")]);
+
+    // …but harvestContent exposes ALL captioned posts the map saw (incl. the
+    // never-submitted one), keyed by ig:<shortcode>, excluding the caption-less post.
+    const harvested = instagramProvider.harvestContent!();
+    const keys = harvested.map((h) => h.canonicalKey).sort();
+    expect(keys).toEqual(["ig:NOTSUBMITTED", "ig:SUBMITTED1"]);
+    expect(harvested.find((h) => h.canonicalKey === "ig:NOTSUBMITTED")?.caption).toBe("post about Kriti Sanon");
+  });
+
+  it("harvestContent() returns [] after a dark (no-token) run — never stale", async () => {
+    delete process.env.META_SYSTEM_USER_TOKEN;
+    await instagramProvider.fetchBatch([target("l1", "https://instagram.com/reel/ABC/", "ABC")]);
+    expect(instagramProvider.harvestContent!()).toEqual([]);
   });
 
   it("returns not_found for a shortcode not in any managed account's media", async () => {

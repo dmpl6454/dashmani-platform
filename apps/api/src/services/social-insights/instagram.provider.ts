@@ -1,5 +1,5 @@
 import { extractInstagramShortcode } from "@dashmani/shared";
-import type { InsightProvider, InsightTarget, InsightFetchResult } from "./types";
+import type { InsightProvider, InsightTarget, InsightFetchResult, HarvestedContent } from "./types";
 import {
   graphFetch as defaultGraphFetch,
   metaConfigured,
@@ -205,6 +205,16 @@ async function buildShortcodeMap(): Promise<Map<string, IgMediaItem>> {
   return map;
 }
 
+// The map built by the most recent fetchBatch run, cached so harvestContent() can
+// expose the FULL set of paged posts without re-paging the Graph API. Reset at the
+// start of each fetchBatch run. Module-level (mirrors igRateLimited) — the cron
+// calls fetchBatch then harvestContent sequentially in one run.
+let lastBuiltMap: Map<string, IgMediaItem> = new Map();
+
+export function __resetIgMapForTesting(): void {
+  lastBuiltMap = new Map();
+}
+
 export const instagramProvider: InsightProvider = {
   slug: "instagram",
 
@@ -230,10 +240,13 @@ export const instagramProvider: InsightProvider = {
     // Reset the run-scoped rate-limit flag.
     igRateLimited = false;
 
-    // Build the shortcode→media map once for this run.
+    // Build the shortcode→media map once for this run. Reset the cache first so a
+    // failed/rate-limited build can't let harvestContent() return stale data.
+    lastBuiltMap = new Map();
     let map: Map<string, IgMediaItem>;
     try {
       map = await buildShortcodeMap();
+      lastBuiltMap = map; // cache for harvestContent() (same run, no re-paging)
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       for (const t of targets) {
@@ -272,5 +285,20 @@ export const instagramProvider: InsightProvider = {
     }
 
     return results;
+  },
+
+  // Expose EVERY post paged into the map this run (not just submitted/top-of-feed
+  // ones), so the cron can persist captions before firehose volume buries them.
+  // Keyed by canonicalKey (ig:<shortcode>) to match how submitted links are keyed.
+  // Only posts that actually carry a caption are worth harvesting. No API calls —
+  // reads the cached map from the just-completed fetchBatch.
+  harvestContent(): HarvestedContent[] {
+    const out: HarvestedContent[] = [];
+    for (const [shortcode, item] of lastBuiltMap) {
+      if (item.caption != null && item.caption !== "") {
+        out.push({ canonicalKey: `ig:${shortcode}`, caption: item.caption, title: null });
+      }
+    }
+    return out;
   },
 };

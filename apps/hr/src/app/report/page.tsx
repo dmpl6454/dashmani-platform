@@ -1192,22 +1192,30 @@ export default function ReportPage() {
           Hidden entirely when the employee has no YouTube links in the last 30 days. */}
       {!myInsightsLoading && (() => {
         const allInsights: any[] = (myInsightsData as any)?.data ?? [];
-        const youtubeLinks = allInsights.filter((l: any) => l.platform === "youtube" && l.latest);
-        if (youtubeLinks.length === 0) return null;
+        // Show every link that has engagement metrics, across ALL supported
+        // platforms (YouTube + Instagram now; Facebook joins automatically once
+        // Meta App Review unblocks it). Sort by reach so the strongest posts lead.
+        const withMetrics = allInsights
+          .filter((l: any) => l.latest)
+          .sort((a: any, b: any) => {
+            const reach = (x: any) => (x.latest?.views ?? 0) + (x.latest?.likes ?? 0) + (x.latest?.comments ?? 0);
+            return reach(b) - reach(a);
+          });
+        if (withMetrics.length === 0) return null;
         return (
           <section className="mt-8 bg-white border border-[#E8E0D0] rounded-2xl overflow-hidden">
             <div className="px-6 py-4 border-b border-[#F0EAD8] flex items-start justify-between">
               <div>
-                <h3 className="text-sm font-semibold text-[#1A1A1A]">Your YouTube insights</h3>
+                <h3 className="text-sm font-semibold text-[#1A1A1A]">Your link insights</h3>
                 <p className="text-[11px] text-[#7A7A7A] mt-0.5">
-                  Insights are currently available for YouTube.
-                  Insights not yet supported for Instagram and Facebook.
+                  Views, likes &amp; comments for your YouTube and Instagram links.
+                  Facebook insights are pending Meta approval and will appear here once available.
                 </p>
               </div>
               <span className="text-[10px] text-[#B0B0B0] shrink-0 mt-0.5">Updates every 6h</span>
             </div>
             <ul className="divide-y divide-[#F5F0E8]">
-              {youtubeLinks.map((link: any, i: number) => (
+              {withMetrics.map((link: any, i: number) => (
                 <li key={`${link.linkId ?? link.url}-${i}`} className="px-6 py-3 flex items-center gap-3">
                   <a
                     href={link.url}

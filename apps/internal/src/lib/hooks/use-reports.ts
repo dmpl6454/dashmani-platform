@@ -92,3 +92,20 @@ export function useTopYouTubeLinks(startDate?: string, endDate?: string, limit =
     dedupingInterval: 300_000,
   });
 }
+
+// Generalized top-links hook — one per platform (youtube|instagram|facebook).
+// YouTube sorts by views server-side; instagram/facebook by likes+comments.
+// A platform with no enriched metrics returns an empty list (e.g. Facebook until
+// Meta App Review honors pages_read_engagement) → the panel shows a "pending" state.
+export function useTopLinks(platform: string, startDate?: string, endDate?: string, limit = 20) {
+  const params = new URLSearchParams();
+  params.set("platform", platform);
+  if (startDate) params.set("startDate", startDate);
+  if (endDate) params.set("endDate", endDate);
+  params.set("limit", String(limit));
+  const query = `?${params.toString()}`;
+  return useSWR(`/admin/reports/top-links${query}`, (url) => apiFetch(url), {
+    revalidateOnFocus: false,
+    dedupingInterval: 300_000,
+  });
+}

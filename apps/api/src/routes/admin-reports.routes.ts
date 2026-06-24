@@ -384,6 +384,35 @@ router.get(
   },
 );
 
+// GET /admin/reports/top-links?platform&startDate&endDate&limit — top links for ANY
+// supported platform (youtube=by views, instagram/facebook=by likes+comments).
+// One endpoint behind every "Top <Platform> Links" panel. A platform with no
+// enriched metrics returns [] (e.g. Facebook until App Review honors
+// pages_read_engagement) → the UI shows an honest "pending" state.
+router.get(
+  "/admin/reports/top-links",
+  authenticate,
+  requirePermission("reports", "view"),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { platform, startDate, endDate, limit } = req.query as Record<string, string | undefined>;
+      if (!platform) {
+        return res.status(400).json({ success: false, error: { code: "VALIDATION_ERROR", message: "platform is required" } });
+      }
+      const { getTopLinksByPlatform } = await import("../services/social-insights.service");
+      const links = await getTopLinksByPlatform({
+        platform,
+        startDate,
+        endDate,
+        limit: limit ? parseInt(limit, 10) : 20,
+      });
+      return success(res, links);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
 // ===== Link entity search (Stage 3) =====
 // Grouped here by convention with the other admin search/report routes for
 // readability. The 2nd path segment ("link-search" / "entities") differs from

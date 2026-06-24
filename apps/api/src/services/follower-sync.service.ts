@@ -358,28 +358,18 @@ export async function syncSingleAccountFollowers(accountId: string) {
   let followers: number | null = null;
   const slug = account.platform.slug;
 
+  // Single-account refresh uses the scraper directly — building the full Graph
+  // account map (all ~38 IG / ~87 FB) to read ONE account would waste the shared
+  // Meta rate budget on this user-interactive path (the per-account refresh
+  // button). The hourly batch sync (syncAllFollowerCounts) gets Graph coverage,
+  // where the map is built once for ALL accounts and is efficient.
   if (slug === "instagram") {
     const username = account.handle.replace(/^@/, "") || account.profileUrl?.match(/instagram\.com\/([^/?]+)/)?.[1];
-    if (username) {
-      // Graph-first: one batched discovery call, then look up this account.
-      // Guarded + fail-open — an empty map (dark switch / throw) falls through
-      // to the scraper, so behaviour is unchanged.
-      let map = new Map<string, { followers: number; following: number | null; posts: number | null }>();
-      try { map = await fetchInstagramFollowerMap(); } catch (e) { console.error("[follower-sync] IG graph map failed:", e); }
-      const entry = map.get(username.toLowerCase());
-      followers = entry ? entry.followers : await fetchInstagramFollowers(username);
-    }
+    if (username) followers = await fetchInstagramFollowers(username);
   } else if (slug === "youtube") {
     if (account.profileUrl) followers = await fetchYouTubeSubscribers(account.profileUrl);
   } else if (slug === "facebook") {
-    // Graph-first: match by slug from the profile URL, then by handle. Guarded +
-    // fail-open — empty map falls through to the scraper.
-    let map = new Map<string, { followers: number }>();
-    try { map = await fetchFacebookFollowerMap(); } catch (e) { console.error("[follower-sync] FB graph map failed:", e); }
-    const fbSlug = extractHandle(account.profileUrl || "", "facebook").toLowerCase();
-    const handleLower = account.handle.replace(/^@/, "").split("?")[0].toLowerCase();
-    const entry = map.get(fbSlug) ?? map.get(handleLower);
-    followers = entry ? entry.followers : await fetchFacebookFollowers(account.profileUrl || "", account.handle);
+    followers = await fetchFacebookFollowers(account.profileUrl || "", account.handle);
   }
   // Other platforms: no automated sync; admin must enter the count manually.
 

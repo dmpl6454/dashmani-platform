@@ -53,7 +53,6 @@ interface FbFollowersAccountsResponse {
     followers_count?: number;
     fan_count?: number;
     username?: string;
-    name?: string;
     tasks?: string[];
   }>;
   paging?: { next?: string };
@@ -136,12 +135,15 @@ export interface FbFollowerCounts {
 // facebook.com/paparazzziii) — NOT the numeric page id — and there is no
 // page-id↔account mapping anywhere, so keying only by page id would be
 // unmatchable. We therefore index each administered Page's follower count under
-// the page id, the page username (if present), AND the page name (if present),
-// all lowercased, so the caller can look it up by slug/handle or name. Discovers
-// administered Pages via me/accounts (extending the field list the FB provider
-// uses); only Pages with a non-empty tasks array (admin role) and an id are kept.
-// Prefers followers_count, falling back to fan_count; an entry with no numeric
-// count is skipped. Follows paging.next until exhausted.
+// the page id AND the page username (if present), both lowercased, so the caller
+// can look it up by slug/handle. Both are stable identifiers; we deliberately do
+// NOT key by the page name — it's free-text, non-unique, and could silently
+// collide with another page's id/username (last-write-wins). The reader matches
+// by URL slug + handle, never by display name, so a name key earns nothing.
+// Discovers administered Pages via me/accounts (extending the field list the FB
+// provider uses); only Pages with a non-empty tasks array (admin role) and an id
+// are kept. Prefers followers_count, falling back to fan_count; an entry with no
+// numeric count is skipped. Follows paging.next until exhausted.
 export async function fetchFacebookFollowerMap(): Promise<Map<string, FbFollowerCounts>> {
   const map = new Map<string, FbFollowerCounts>();
 
@@ -150,7 +152,7 @@ export async function fetchFacebookFollowerMap(): Promise<Map<string, FbFollower
 
   let path: string | null = "me/accounts";
   let params: Record<string, string | number | undefined> | undefined = {
-    fields: "id,access_token,followers_count,fan_count,username,name,tasks",
+    fields: "id,access_token,followers_count,fan_count,username,tasks",
     limit: PAGE_SIZE,
   };
   let guard = 0;
@@ -179,11 +181,11 @@ export async function fetchFacebookFollowerMap(): Promise<Map<string, FbFollower
           : null;
       if (count != null) {
         const counts: FbFollowerCounts = { followers: count };
-        // Multi-key: page id, username, and name (all lowercased) all point at the
-        // same value so a SocialAccount can match by slug/handle or name.
+        // Multi-key: page id + username (both lowercased) point at the same value
+        // so a SocialAccount can match by slug/handle. Name is deliberately NOT a
+        // key — it's non-unique free-text and would risk silent collisions.
         map.set(pg.id.toLowerCase(), counts);
         if (pg.username) map.set(pg.username.toLowerCase(), counts);
-        if (pg.name) map.set(pg.name.toLowerCase().trim(), counts);
       }
     }
 

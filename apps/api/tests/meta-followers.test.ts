@@ -96,7 +96,7 @@ describe("fetchInstagramFollowerMap", () => {
 // ── fetchFacebookFollowerMap ─────────────────────────────────────────────────
 
 describe("fetchFacebookFollowerMap", () => {
-  it("maps administered page by id/username/name → { followers }, with fan_count fallback, skipping pages with no tasks", async () => {
+  it("maps administered page by id/username → { followers }, with fan_count fallback, skipping pages with no tasks and NOT keying by name", async () => {
     process.env.META_SYSTEM_USER_TOKEN = FAKE_TOKEN;
     const graph = vi.fn(async (path: string) => {
       if (path === "me/accounts") {
@@ -113,11 +113,12 @@ describe("fetchFacebookFollowerMap", () => {
     setFollowersGraphFetch(graph as unknown as GraphFetchFn);
 
     const map = await fetchFacebookFollowerMap();
-    // Multi-keyed: findable by page id, username, AND name (lowercased) — all the
-    // same value, so a SocialAccount can match by whichever identifier it stores.
+    // Multi-keyed by page id + username (lowercased) — both stable identifiers,
+    // same value. The display name is deliberately NOT a key (non-unique
+    // free-text, collision risk; the reader never matches on it).
     expect(map.get("100")).toEqual({ followers: 5000 });
     expect(map.get("mypage")).toEqual({ followers: 5000 });
-    expect(map.get("my page")).toEqual({ followers: 5000 });
+    expect(map.has("my page")).toBe(false); // name is NOT a key
     expect(map.get("200")).toEqual({ followers: 999 }); // fan_count fallback
     expect(map.has("300")).toBe(false); // no tasks → absent
   });

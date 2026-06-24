@@ -76,6 +76,18 @@ describe("fetchInstagramFollowerMap", () => {
     const map = await fetchInstagramFollowerMap();
     expect(map.size).toBe(0);
   });
+
+  it("skips an account whose follower count is missing/non-numeric", async () => {
+    process.env.META_SYSTEM_USER_TOKEN = FAKE_TOKEN;
+    const graph = vi.fn(async () =>
+      ok({ data: [{ instagram_business_account: { id: "1", username: "NoCountAccount" } }] }),
+    );
+    setFollowersGraphFetch(graph as unknown as GraphFetchFn);
+
+    const map = await fetchInstagramFollowerMap();
+    expect(map.has("nocountaccount")).toBe(false);
+    expect(map.size).toBe(0);
+  });
 });
 
 // ── fetchFacebookFollowerMap ─────────────────────────────────────────────────
@@ -124,6 +136,18 @@ describe("fetchFacebookFollowerMap", () => {
     setFollowersGraphFetch(graph as unknown as GraphFetchFn);
 
     const map = await fetchFacebookFollowerMap();
+    expect(map.size).toBe(0);
+  });
+
+  it("skips an administered page whose follower count is missing/non-numeric", async () => {
+    process.env.META_SYSTEM_USER_TOKEN = FAKE_TOKEN;
+    const graph = vi.fn(async () =>
+      ok({ data: [{ id: "400", access_token: "PT", tasks: ["MANAGE"] }] }),
+    );
+    setFollowersGraphFetch(graph as unknown as GraphFetchFn);
+
+    const map = await fetchFacebookFollowerMap();
+    expect(map.has("400")).toBe(false);
     expect(map.size).toBe(0);
   });
 });

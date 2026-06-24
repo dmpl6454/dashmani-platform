@@ -14,6 +14,7 @@ import {
   resolveFacebookShareUrl,
   __setGraphFetchForTesting as setFbGraphFetch,
   __resetFbRateLimitedForTesting,
+  __resetFbMapForTesting,
 } from "../src/services/social-insights/facebook.provider";
 import type { GraphFetchResult, GraphFetchFn } from "../src/services/social-insights/meta-graph";
 
@@ -40,6 +41,7 @@ beforeEach(() => {
   __resetIgRateLimitedForTesting();
   __resetIgMapForTesting();
   __resetFbRateLimitedForTesting();
+  __resetFbMapForTesting();
   setIgGraphFetch(null);
   setFbGraphFetch(null);
   delete process.env.META_SYSTEM_USER_TOKEN;
@@ -340,59 +342,119 @@ describe("facebookProvider", () => {
     expect(res.get("l1")).toMatchObject({ ok: false, status: "error" });
   });
 
-  it("resolves a clean numeric id to its caption + counts", async () => {
-    process.env.META_SYSTEM_USER_TOKEN = FAKE_TOKEN;
-    const graph = vi.fn(async (path: string) => {
-      expect(path).toBe("123456789");
-      return ok({
-        id: "123456789",
-        message: "Diwali sale announcement",
-        likes: { summary: { total_count: 88 } },
-        comments: { summary: { total_count: 12 } },
-      });
+  // Owned-Page model mock: me/accounts → one ADMIN page (has tasks + token) + one
+  // NON-admin page (no tasks); the admin page's /published_posts carries a post whose
+  // numeric id matches our target; /insights returns views + reactions + activity.
+  function ownedPageGraph(opts?: { withComments?: boolean }) {
+    const recent = new Date().toISOString();
+    return vi.fn(async (path: string, params?: Record<string, unknown>) => {
+      if (path === "me/accounts")
+        return ok({
+          data: [
+            { id: "pg-admin", access_token: "PAGE_TOKEN_A", tasks: ["ANALYZE", "CREATE_CONTENT"] },
+            { id: "pg-none", access_token: "PAGE_TOKEN_B" }, // no tasks → skipped
+          ],
+        });
+      if (path === "pg-admin/published_posts") {
+        // must be called WITH the page token
+        expect(params?.access_token).toBe("PAGE_TOKEN_A");
+        // A FB reel has two ids: the /reel/<permalinkId> (matches submitted links)
+        // and the {pageId}_{postId} composite (the only id /insights accepts).
+        return ok({
+          data: [
+            { id: "pg-admin_990888777", permalink_url: "https://www.facebook.com/reel/555000111", message: "Bhumi Pednekar at the event", created_time: recent },
+          ],
+        });
+      }
+      // /insights MUST be hit with the COMPOSITE id, never the permalink reel id.
+      if (path === "555000111/insights") throw new Error("insights must use the composite id, not the permalink reel id");
+      if (path === "pg-admin_990888777/insights") {
+        const metric = String(params?.metric ?? "");
+        if (metric.includes("post_video_views")) {
+          return ok({ data: [{ name: "post_video_views", values: [{ value: 107 }] }] });
+        }
+        // reactions + activity batch
+        const activity: Record<string, number> = { like: 9, share: 1 };
+        if (opts?.withComments) activity.comment = 4;
+        return ok({
+          data: [
+            { name: "post_reactions_by_type_total", values: [{ value: { like: 9 } }] },
+            { name: "post_activity_by_action_type", values: [{ value: activity }] },
+          ],
+        });
+      }
+      throw new Error(`unexpected fb path ${path}`);
     });
-    setFbGraphFetch(graph as unknown as GraphFetchFn);
+  }
 
-    const res = await facebookProvider.fetchBatch([target("l1", "https://facebook.com/reel/123456789", "123456789")]);
+  it("resolves a numeric id via owned-Page feed + /insights (caption, views, likes)", async () => {
+    process.env.META_SYSTEM_USER_TOKEN = FAKE_TOKEN;
+    setFbGraphFetch(ownedPageGraph() as unknown as GraphFetchFn);
+
+    const res = await facebookProvider.fetchBatch([target("l1", "https://facebook.com/reel/555000111", "555000111")]);
     expect(res.get("l1")).toMatchObject({
       ok: true,
       status: "ok",
-      caption: "Diwali sale announcement",
-      likes: 88,
-      comments: 12,
-      views: null,
-      shares: null,
+      caption: "Bhumi Pednekar at the event",
+      views: 107,
+      likes: 9, // summed from post_reactions_by_type_total
+      shares: 1, // from post_activity_by_action_type
     });
   });
 
-  it("returns not_found for an unknown / deleted id", async () => {
+  it("reads comments from post_activity_by_action_type when present", async () => {
     process.env.META_SYSTEM_USER_TOKEN = FAKE_TOKEN;
-    const graph = vi.fn(async (): Promise<GraphFetchResult> => {
-      return { ok: false, rateLimited: false, status: 400, error: "Unsupported get request" };
-    });
-    setFbGraphFetch(graph as unknown as GraphFetchFn);
+    setFbGraphFetch(ownedPageGraph({ withComments: true }) as unknown as GraphFetchFn);
 
-    const res = await facebookProvider.fetchBatch([target("l1", "https://facebook.com/reel/999", "999")]);
+    const res = await facebookProvider.fetchBatch([target("l1", "https://facebook.com/reel/555000111", "555000111")]);
+    expect(res.get("l1")).toMatchObject({ ok: true, status: "ok", comments: 4 });
+  });
+
+  it("returns not_found for a post not on any ADMINISTERED Page's feed", async () => {
+    process.env.META_SYSTEM_USER_TOKEN = FAKE_TOKEN;
+    setFbGraphFetch(ownedPageGraph() as unknown as GraphFetchFn);
+
+    const res = await facebookProvider.fetchBatch([target("l1", "https://facebook.com/reel/999999", "999999")]);
     expect(res.get("l1")).toMatchObject({ ok: false, status: "not_found" });
   });
 
-  it("short-circuits remaining targets to rate_limited once throttled", async () => {
+  it("skips non-administered Pages (no tasks → never paged)", async () => {
     process.env.META_SYSTEM_USER_TOKEN = FAKE_TOKEN;
-    let call = 0;
-    const graph = vi.fn(async (): Promise<GraphFetchResult> => {
-      call++;
-      if (call === 1) return { ok: false, rateLimited: true, status: 429, error: "rate limit" };
-      throw new Error("should not be called after rate limit");
+    const graph = vi.fn(async (path: string) => {
+      if (path === "me/accounts") return ok({ data: [{ id: "pg-none", access_token: "T", /* no tasks */ }] });
+      if (path === "pg-none/published_posts") throw new Error("must NOT page a non-admin page");
+      throw new Error(`unexpected ${path}`);
     });
     setFbGraphFetch(graph as unknown as GraphFetchFn);
 
-    const res = await facebookProvider.fetchBatch([
-      target("l1", "https://facebook.com/reel/1", "1"),
-      target("l2", "https://facebook.com/reel/2", "2"),
-    ]);
+    const res = await facebookProvider.fetchBatch([target("l1", "https://facebook.com/reel/1", "1")]);
+    expect(res.get("l1")).toMatchObject({ ok: false, status: "not_found" });
+  });
+
+  it("short-circuits the whole run to rate_limited when discovery is throttled", async () => {
+    process.env.META_SYSTEM_USER_TOKEN = FAKE_TOKEN;
+    const graph = vi.fn(async (): Promise<GraphFetchResult> => ({ ok: false, rateLimited: true, status: 429, error: "rate limit" }));
+    setFbGraphFetch(graph as unknown as GraphFetchFn);
+
+    const res = await facebookProvider.fetchBatch([target("l1", "https://facebook.com/reel/1", "1")]);
     expect(res.get("l1")).toMatchObject({ ok: false, status: "rate_limited" });
-    expect(res.get("l2")).toMatchObject({ ok: false, status: "rate_limited" });
-    expect(graph).toHaveBeenCalledTimes(1); // l2 never hit the network
+  });
+
+  it("harvestContent() exposes every captioned post from administered Pages (fb:<numericId>)", async () => {
+    process.env.META_SYSTEM_USER_TOKEN = FAKE_TOKEN;
+    setFbGraphFetch(ownedPageGraph() as unknown as GraphFetchFn);
+
+    await facebookProvider.fetchBatch([target("l1", "https://facebook.com/reel/555000111", "555000111")]);
+    const harvested = facebookProvider.harvestContent!();
+    expect(harvested).toEqual([
+      { canonicalKey: "fb:555000111", caption: "Bhumi Pednekar at the event", title: null },
+    ]);
+  });
+
+  it("harvestContent() returns [] after a dark (no-token) run — never stale", async () => {
+    delete process.env.META_SYSTEM_USER_TOKEN;
+    await facebookProvider.fetchBatch([target("l1", "https://facebook.com/reel/1", "1")]);
+    expect(facebookProvider.harvestContent!()).toEqual([]);
   });
 });
 

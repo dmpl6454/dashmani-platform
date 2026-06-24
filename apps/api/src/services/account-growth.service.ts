@@ -134,8 +134,13 @@ export async function getGrowthOverview(days = 30): Promise<GrowthOverview> {
     let kept = snaps;
     if (snaps.length > MAX_OVERVIEW_SNAPSHOTS) {
       const stride = Math.ceil(snaps.length / MAX_OVERVIEW_SNAPSHOTS);
+      const lastIndex = snaps.length - 1;
       kept = snaps.filter((_, i) => i % stride === 0);
-      if (kept[kept.length - 1] !== snaps[snaps.length - 1]) kept.push(snaps[snaps.length - 1]);
+      // Always include the latest point. The stride filter only keeps indices
+      // divisible by `stride`, so the last index is missing iff lastIndex % stride !== 0.
+      // Index-based (not reference-identity) so this stays correct even if the
+      // middle is ever cloned/mapped during sampling.
+      if (lastIndex % stride !== 0) kept.push(snaps[lastIndex]);
     }
 
     return {

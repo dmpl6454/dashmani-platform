@@ -1,0 +1,129 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import {
+  fetchInstagramFollowerMap,
+  fetchFacebookFollowerMap,
+  __setGraphFetchForTesting as setFollowersGraphFetch,
+} from "../src/services/social-insights/meta-followers";
+import type { GraphFetchResult, GraphFetchFn } from "../src/services/social-insights/meta-graph";
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+function ok<T>(data: T): GraphFetchResult<T> {
+  return { ok: true, rateLimited: false, status: 200, data };
+}
+
+const FAKE_TOKEN = "FAKE_META_TOKEN_FOR_TESTS";
+
+beforeEach(() => {
+  setFollowersGraphFetch(null);
+  delete process.env.META_SYSTEM_USER_TOKEN;
+});
+
+afterEach(() => {
+  setFollowersGraphFetch(null);
+  delete process.env.META_SYSTEM_USER_TOKEN;
+});
+
+// ── fetchInstagramFollowerMap ────────────────────────────────────────────────
+
+describe("fetchInstagramFollowerMap", () => {
+  it("maps lowercased username → { followers, following, posts } from me/accounts", async () => {
+    process.env.META_SYSTEM_USER_TOKEN = FAKE_TOKEN;
+    const graph = vi.fn(async (path: string) => {
+      if (path === "me/accounts") {
+        return ok({
+          data: [
+            {
+              instagram_business_account: {
+                id: "1",
+                username: "DigitalSukoon",
+                followers_count: 14163052,
+                media_count: 320,
+                follows_count: 12,
+              },
+            },
+          ],
+        });
+      }
+      throw new Error(`unexpected graph path: ${path}`);
+    });
+    setFollowersGraphFetch(graph as unknown as GraphFetchFn);
+
+    const map = await fetchInstagramFollowerMap();
+    expect(map.get("digitalsukoon")).toEqual({ followers: 14163052, following: 12, posts: 320 });
+  });
+
+  it("returns an empty map with NO network call when no token is configured (dark switch)", async () => {
+    delete process.env.META_SYSTEM_USER_TOKEN;
+    const spy = vi.fn();
+    setFollowersGraphFetch(spy as unknown as GraphFetchFn);
+
+    const map = await fetchInstagramFollowerMap();
+    expect(spy).not.toHaveBeenCalled();
+    expect(map.size).toBe(0);
+  });
+
+  it("returns an empty map (no throw) when the first page is rate-limited", async () => {
+    process.env.META_SYSTEM_USER_TOKEN = FAKE_TOKEN;
+    const graph = vi.fn(async (): Promise<GraphFetchResult> => ({
+      ok: false,
+      rateLimited: true,
+      status: 429,
+      error: "rate limit",
+    }));
+    setFollowersGraphFetch(graph as unknown as GraphFetchFn);
+
+    const map = await fetchInstagramFollowerMap();
+    expect(map.size).toBe(0);
+  });
+});
+
+// ── fetchFacebookFollowerMap ─────────────────────────────────────────────────
+
+describe("fetchFacebookFollowerMap", () => {
+  it("maps administered page id → { followers }, with fan_count fallback, skipping pages with no tasks", async () => {
+    process.env.META_SYSTEM_USER_TOKEN = FAKE_TOKEN;
+    const graph = vi.fn(async (path: string) => {
+      if (path === "me/accounts") {
+        return ok({
+          data: [
+            { id: "100", access_token: "PT", tasks: ["MANAGE"], followers_count: 5000 },
+            { id: "200", access_token: "PT2", tasks: ["ANALYZE"], fan_count: 999 },
+            { id: "300", access_token: "PT3", tasks: [] }, // no tasks → not administered
+          ],
+        });
+      }
+      throw new Error(`unexpected graph path: ${path}`);
+    });
+    setFollowersGraphFetch(graph as unknown as GraphFetchFn);
+
+    const map = await fetchFacebookFollowerMap();
+    expect(map.get("100")).toEqual({ followers: 5000 });
+    expect(map.get("200")).toEqual({ followers: 999 }); // fan_count fallback
+    expect(map.has("300")).toBe(false); // no tasks → absent
+  });
+
+  it("returns an empty map with NO network call when no token is configured (dark switch)", async () => {
+    delete process.env.META_SYSTEM_USER_TOKEN;
+    const spy = vi.fn();
+    setFollowersGraphFetch(spy as unknown as GraphFetchFn);
+
+    const map = await fetchFacebookFollowerMap();
+    expect(spy).not.toHaveBeenCalled();
+    expect(map.size).toBe(0);
+  });
+
+  it("returns an empty map (no throw) when the first page is rate-limited", async () => {
+    process.env.META_SYSTEM_USER_TOKEN = FAKE_TOKEN;
+    const graph = vi.fn(async (): Promise<GraphFetchResult> => ({
+      ok: false,
+      rateLimited: true,
+      status: 429,
+      error: "rate limit",
+    }));
+    setFollowersGraphFetch(graph as unknown as GraphFetchFn);
+
+    const map = await fetchFacebookFollowerMap();
+    expect(map.size).toBe(0);
+  });
+});

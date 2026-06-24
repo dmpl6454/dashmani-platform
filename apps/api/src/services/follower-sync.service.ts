@@ -1,4 +1,9 @@
 import { prisma } from "@dashmani/db";
+import { todayIST, istMidnight } from "@dashmani/shared";
+import {
+  fetchInstagramFollowerMap,
+  fetchFacebookFollowerMap,
+} from "./social-insights/meta-followers";
 
 const DELAY_MS = 5000; // 5s between requests to avoid rate limiting
 
@@ -233,6 +238,17 @@ export async function syncAllFollowerCounts() {
   }
 
   igRateLimited = false;
+
+  // Build the Meta Graph follower maps ONCE per run (single batched discovery
+  // call each). Graph-first source for IG/FB; the legacy scrapers stay as the
+  // per-account fallback when the map has no entry. Guarded so a throw leaves the
+  // map empty — an empty map is exactly the local/dark-switch case, where the
+  // loop falls back to the scrapers and behaviour is unchanged. NEVER throws here.
+  let igFollowerMap = new Map<string, { followers: number; following: number | null; posts: number | null }>();
+  let fbFollowerMap = new Map<string, { followers: number }>();
+  try { igFollowerMap = await fetchInstagramFollowerMap(); } catch (e) { console.error("[follower-sync] IG graph map failed:", e); }
+  try { fbFollowerMap = await fetchFacebookFollowerMap(); } catch (e) { console.error("[follower-sync] FB graph map failed:", e); }
+
   const accounts = await prisma.socialAccount.findMany({
     where: { profileUrl: { not: "" } },
     include: { platform: { select: { slug: true } } },
@@ -249,8 +265,9 @@ export async function syncAllFollowerCounts() {
     skipped: 0,
   };
 
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  // IST midnight — consistent with account-growth.service.ts so the
+  // (accountId, date) snapshot upsert is idempotent across both writers.
+  const today = istMidnight(todayIST());
 
   for (const account of accounts) {
     const slug = account.platform.slug;
@@ -262,8 +279,14 @@ export async function syncAllFollowerCounts() {
         username = account.profileUrl.match(/instagram\.com\/([^/?]+)/)?.[1] || "";
       }
       if (username) {
-        followers = await fetchInstagramFollowers(username);
-        await sleep(DELAY_MS);
+        // Graph-first (single batched call, no sleep). Fall back to the scraper.
+        const entry = igFollowerMap.get(username.toLowerCase());
+        if (entry) {
+          followers = entry.followers;
+        } else {
+          followers = await fetchInstagramFollowers(username);
+          await sleep(DELAY_MS);
+        }
       }
     } else if (slug === "youtube") {
       if (account.profileUrl) {
@@ -272,8 +295,16 @@ export async function syncAllFollowerCounts() {
       }
     } else if (slug === "facebook") {
       if (account.profileUrl || account.handle) {
-        followers = await fetchFacebookFollowers(account.profileUrl || "", account.handle);
-        await sleep(DELAY_MS);
+        // Graph-first: match by slug from the profile URL, then by handle.
+        const fbSlug = extractHandle(account.profileUrl || "", "facebook").toLowerCase();
+        const handleLower = account.handle.replace(/^@/, "").split("?")[0].toLowerCase();
+        const entry = fbFollowerMap.get(fbSlug) ?? fbFollowerMap.get(handleLower);
+        if (entry) {
+          followers = entry.followers;
+        } else {
+          followers = await fetchFacebookFollowers(account.profileUrl || "", account.handle);
+          await sleep(DELAY_MS);
+        }
       }
     } else {
       // tiktok, linkedin, twitter, snapchat, pinterest, telegram — manual entry only
@@ -329,11 +360,26 @@ export async function syncSingleAccountFollowers(accountId: string) {
 
   if (slug === "instagram") {
     const username = account.handle.replace(/^@/, "") || account.profileUrl?.match(/instagram\.com\/([^/?]+)/)?.[1];
-    if (username) followers = await fetchInstagramFollowers(username);
+    if (username) {
+      // Graph-first: one batched discovery call, then look up this account.
+      // Guarded + fail-open — an empty map (dark switch / throw) falls through
+      // to the scraper, so behaviour is unchanged.
+      let map = new Map<string, { followers: number; following: number | null; posts: number | null }>();
+      try { map = await fetchInstagramFollowerMap(); } catch (e) { console.error("[follower-sync] IG graph map failed:", e); }
+      const entry = map.get(username.toLowerCase());
+      followers = entry ? entry.followers : await fetchInstagramFollowers(username);
+    }
   } else if (slug === "youtube") {
     if (account.profileUrl) followers = await fetchYouTubeSubscribers(account.profileUrl);
   } else if (slug === "facebook") {
-    followers = await fetchFacebookFollowers(account.profileUrl || "", account.handle);
+    // Graph-first: match by slug from the profile URL, then by handle. Guarded +
+    // fail-open — empty map falls through to the scraper.
+    let map = new Map<string, { followers: number }>();
+    try { map = await fetchFacebookFollowerMap(); } catch (e) { console.error("[follower-sync] FB graph map failed:", e); }
+    const fbSlug = extractHandle(account.profileUrl || "", "facebook").toLowerCase();
+    const handleLower = account.handle.replace(/^@/, "").split("?")[0].toLowerCase();
+    const entry = map.get(fbSlug) ?? map.get(handleLower);
+    followers = entry ? entry.followers : await fetchFacebookFollowers(account.profileUrl || "", account.handle);
   }
   // Other platforms: no automated sync; admin must enter the count manually.
 
@@ -343,8 +389,8 @@ export async function syncSingleAccountFollowers(accountId: string) {
       data: { followerCount: followers, lastSyncedAt: new Date() },
     });
 
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    // IST midnight — consistent with account-growth.service.ts / the batch sync.
+    const today = istMidnight(todayIST());
     const existing = await prisma.accountGrowthSnapshot.findUnique({
       where: { accountId_date: { accountId, date: today } },
     });

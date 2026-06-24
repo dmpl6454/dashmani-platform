@@ -48,12 +48,61 @@ const defaultRawExtract: RawExtractFn = async (caption, title, knownNames) => {
   return block && block.type === "text" ? block.text : "";
 };
 
-/** Parse the LLM's JSON. Strips accidental ```json fences. Throws on invalid (caller marks row error). */
+/**
+ * Parse the LLM's JSON array of entities. Robust against the ways Haiku wraps its
+ * reply: a bare array, a ```json/``` fence, a fence plus a prose preamble
+ * ("Here is the JSON:\n```json\n[...]"), or trailing commentary after the array.
+ * Strategy (in order):
+ *   1. Direct JSON.parse of the trimmed string.
+ *   2. Strip a leading/trailing markdown fence, then parse.
+ *   3. Last resort: extract the substring from the FIRST '[' to the LAST ']' and
+ *      parse that — immune to preamble prose, fence artifacts, and trailing text.
+ * Throws only if all three fail OR the result isn't an array (caller marks the
+ * row status='error'). This is shared by the cron + backfill, so hardening it
+ * fixes forward extraction too — Haiku frequently returns ```json fences despite
+ * the "no markdown fences" instruction.
+ */
 export function parseExtraction(raw: string): ExtractedEntity[] {
-  let s = (raw || "").trim();
-  // strip markdown fences if the model added them
-  s = s.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
-  const data = JSON.parse(s); // throws on invalid → caller handles
+  const original = (raw || "").trim();
+
+  const tryParse = (candidate: string): unknown | undefined => {
+    const c = candidate.trim();
+    if (!c) return undefined;
+    try {
+      return JSON.parse(c);
+    } catch {
+      return undefined;
+    }
+  };
+
+  let data: unknown;
+
+  // 1. Direct parse.
+  data = tryParse(original);
+
+  // 2. Strip a leading/trailing markdown fence.
+  if (data === undefined) {
+    const defenced = original
+      .replace(/^```(?:json)?\s*/i, "")
+      .replace(/\s*```$/i, "")
+      .trim();
+    data = tryParse(defenced);
+  }
+
+  // 3. Last resort: carve out the first '[' .. last ']' span. Handles a prose
+  //    preamble before the array and/or commentary after it.
+  if (data === undefined) {
+    const start = original.indexOf("[");
+    const end = original.lastIndexOf("]");
+    if (start !== -1 && end !== -1 && end > start) {
+      data = tryParse(original.slice(start, end + 1));
+    }
+  }
+
+  if (data === undefined) {
+    // Nothing parsed — let the caller mark the row error (same contract as before).
+    throw new Error("extraction: no parseable JSON array in LLM reply");
+  }
   if (!Array.isArray(data)) throw new Error("extraction not an array");
   return data
     .filter((d) => d && typeof d.canonicalName === "string" && d.canonicalName.trim())

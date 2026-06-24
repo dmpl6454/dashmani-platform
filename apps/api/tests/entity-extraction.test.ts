@@ -35,6 +35,34 @@ describe("parseExtraction", () => {
     expect(out[0].canonicalName).toBe("Aamir Khan");
   });
 
+  it("parses a multi-line ```json fenced non-empty array (the real Haiku shape)", () => {
+    const raw =
+      '```json\n[\n  {"canonicalName": "Salman Khan", "type": "PERSON", "confidence": 0.98, "isNew": false},\n  {"canonicalName": "Mumbai", "type": "LOCATION", "confidence": 0.99, "isNew": false}\n]\n```';
+    const out = parseExtraction(raw);
+    expect(out).toHaveLength(2);
+    expect(out[0].canonicalName).toBe("Salman Khan");
+  });
+
+  it("parses despite a prose preamble before a fenced array (bracket-carve fallback)", () => {
+    const raw =
+      'Here is the JSON array:\n```json\n[{"canonicalName":"Shah Rukh Khan","type":"PERSON","confidence":0.9,"isNew":true}]\n```';
+    const out = parseExtraction(raw);
+    expect(out).toHaveLength(1);
+    expect(out[0].canonicalName).toBe("Shah Rukh Khan");
+  });
+
+  it("parses despite trailing commentary after the array", () => {
+    const raw =
+      '[{"canonicalName":"Aamir Khan","type":"PERSON","confidence":1,"isNew":true}]\n\nNote: only one identifiable person.';
+    const out = parseExtraction(raw);
+    expect(out).toHaveLength(1);
+    expect(out[0].canonicalName).toBe("Aamir Khan");
+  });
+
+  it("parses an empty fenced array → []", () => {
+    expect(parseExtraction("```json\n[]\n```")).toEqual([]);
+  });
+
   it("returns [] for an empty array", () => {
     expect(parseExtraction("[]")).toEqual([]);
   });

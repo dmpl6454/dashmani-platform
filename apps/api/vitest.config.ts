@@ -25,6 +25,12 @@ export default defineConfig({
   test: {
     env: {
       NODE_ENV: "test",
+      // Set to 0 so the DELAY_MS sleep() calls in follower-sync.service.ts
+      // resolve immediately in tests, avoiding 5s-per-account delays.
+      FOLLOWER_SYNC_DELAY_MS: "0",
+      // Set to 0 so the 429/401 rate-limit backoff in the IG scraper resolves
+      // immediately in tests, avoiding the 30s retry wait.
+      FOLLOWER_SYNC_BACKOFF_MS: "0",
     },
     setupFiles: ["./tests/setup.ts"],
     pool: "forks",

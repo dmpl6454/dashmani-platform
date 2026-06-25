@@ -62,6 +62,7 @@ interface FbFollowersAccountsResponse {
     followers_count?: number;
     fan_count?: number;
     username?: string;
+    name?: string;
     tasks?: string[];
   }>;
   paging?: { next?: string };
@@ -322,12 +323,16 @@ export interface FbFollowerCounts {
 // SocialAccount stores. A SocialAccount holds a handle/profileUrl (e.g.
 // facebook.com/paparazzziii) — NOT the numeric page id — and there is no
 // page-id↔account mapping anywhere, so keying only by page id would be
-// unmatchable. We therefore index each administered Page's follower count under
-// the page id AND the page username (if present), both lowercased, so the caller
-// can look it up by slug/handle. Both are stable identifiers; we deliberately do
-// NOT key by the page name — it's free-text, non-unique, and could silently
-// collide with another page's id/username (last-write-wins). The reader matches
-// by URL slug + handle, never by display name, so a name key earns nothing.
+// unmatchable. We therefore index each administered Page's follower count under:
+//   • the page id (lowercased)
+//   • the page username (lowercased, if present) — a stable URL slug
+//   • the page name (lowercased, if present) — to match stale SocialAccount rows
+//     whose handle was stored as the human-readable display name (e.g. "Bollywood
+//     Society") rather than a URL slug. Name keys risk silent collisions between
+//     pages, but the practical gain (matching ~6 stale administered rows out of 87
+//     that the slug key missed) outweighs the low collision probability for the
+//     handful of pages a System User administers. Last-write-wins if two pages
+//     share a lowercased name (harmless: both are administered pages we own).
 // Discovers administered Pages via me/accounts (extending the field list the FB
 // provider uses); only Pages with a non-empty tasks array (admin role) and an id
 // are kept. Prefers followers_count, falling back to fan_count; an entry with no
@@ -340,7 +345,7 @@ export async function fetchFacebookFollowerMap(): Promise<Map<string, FbFollower
 
   let path: string | null = "me/accounts";
   let params: Record<string, string | number | undefined> | undefined = {
-    fields: "id,access_token,followers_count,fan_count,username,tasks",
+    fields: "id,access_token,followers_count,fan_count,username,name,tasks",
     limit: PAGE_SIZE,
   };
   let guard = 0;
@@ -369,11 +374,13 @@ export async function fetchFacebookFollowerMap(): Promise<Map<string, FbFollower
           : null;
       if (count != null) {
         const counts: FbFollowerCounts = { followers: count };
-        // Multi-key: page id + username (both lowercased) point at the same value
-        // so a SocialAccount can match by slug/handle. Name is deliberately NOT a
-        // key — it's non-unique free-text and would risk silent collisions.
+        // Multi-key: page id + username + name (all lowercased). The name key lets
+        // stale SocialAccount rows stored under a display name (e.g. "Bollywood
+        // Society") match their administered Page without a URL slug. Last-write-wins
+        // on name collisions between administered pages (acceptable — both are ours).
         map.set(pg.id.toLowerCase(), counts);
         if (pg.username) map.set(pg.username.toLowerCase(), counts);
+        if (pg.name) map.set(pg.name.toLowerCase(), counts);
       }
     }
 
@@ -382,4 +389,65 @@ export async function fetchFacebookFollowerMap(): Promise<Map<string, FbFollower
   }
 
   return map;
+}
+
+// ── Facebook lookup-key helper ────────────────────────────────────────────────
+
+// Reserved path segments in facebook.com URLs that are NOT usernames.
+// Segments matching these should not be pushed as candidate keys.
+const FB_RESERVED_SEGMENTS = new Set(["share", "profile.php", "pages", "people", "groups"]);
+
+/**
+ * Given a stored FB account's handle + profileUrl, return an ordered list of
+ * lowercased candidate keys to try against the administered-FB-page map
+ * (keyed by id, username, and name). Pure function — no network.
+ *
+ * Extracts:
+ *   - profile.php?id=<numeric> → the numeric id string
+ *   - facebook.com/<username>  → the slug (if not a reserved segment)
+ *   - the raw handle (trimmed + lowercased) — covers display-name match against
+ *     the new name key in fetchFacebookFollowerMap
+ *   - /share/... URLs: do NOT emit a key from the share token (opaque, can't
+ *     resolve to a page id without a redirect — accepted as unresolvable)
+ *
+ * Output is deduped and empty strings are dropped. URL-derived identifiers
+ * (id, username) are pushed before the handle so they take priority when the
+ * caller tries each key in order.
+ */
+export function fbLookupKeys(handle: string, profileUrl: string): string[] {
+  const keys: string[] = [];
+  const seen = new Set<string>(); // dedup guard only
+  const push = (key: string) => {
+    const k = key.trim().toLowerCase();
+    if (k && !seen.has(k)) {
+      seen.add(k);
+      keys.push(k);
+    }
+  };
+
+  const url = profileUrl.trim();
+
+  if (url) {
+    // Extract a numeric id from ?id=<digits> (profile.php?id=... pattern).
+    const idMatch = url.match(/[?&]id=(\d+)/);
+    if (idMatch) push(idMatch[1]);
+
+    // Extract the URL path segment after facebook.com/ (if not reserved).
+    // Works for both http and https, with or without www.
+    const segMatch = url.match(/facebook\.com\/([^/?#]+)/);
+    if (segMatch) {
+      const seg = segMatch[1];
+      // Skip reserved segments (share, profile.php, pages, people, groups)
+      // so we don't emit a meaningless or unsafe key.
+      if (!FB_RESERVED_SEGMENTS.has(seg.toLowerCase())) {
+        push(seg);
+      }
+    }
+  }
+
+  // Always include the handle itself (lowercased). This covers display-name
+  // matches against the name key added to fetchFacebookFollowerMap.
+  push(handle);
+
+  return keys;
 }

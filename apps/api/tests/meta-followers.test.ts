@@ -3,6 +3,7 @@ import {
   fetchInstagramFollowerMap,
   fetchFacebookFollowerMap,
   fetchPublicInstagramFollowerMap,
+  fbLookupKeys,
   __setGraphFetchForTesting as setFollowersGraphFetch,
 } from "../src/services/social-insights/meta-followers";
 import type { GraphFetchResult, GraphFetchFn } from "../src/services/social-insights/meta-graph";
@@ -118,7 +119,7 @@ describe("fetchInstagramFollowerMap", () => {
 // ── fetchFacebookFollowerMap ─────────────────────────────────────────────────
 
 describe("fetchFacebookFollowerMap", () => {
-  it("maps administered page by id/username → { followers }, with fan_count fallback, skipping pages with no tasks and NOT keying by name", async () => {
+  it("maps administered page by id/username/name → { followers }, with fan_count fallback, skipping pages with no tasks", async () => {
     process.env.META_SYSTEM_USER_TOKEN = FAKE_TOKEN;
     const graph = vi.fn(async (path: string) => {
       if (path === "me/accounts") {
@@ -135,13 +136,12 @@ describe("fetchFacebookFollowerMap", () => {
     setFollowersGraphFetch(graph as unknown as GraphFetchFn);
 
     const map = await fetchFacebookFollowerMap();
-    // Multi-keyed by page id + username (lowercased) — both stable identifiers,
-    // same value. The display name is deliberately NOT a key (non-unique
-    // free-text, collision risk; the reader never matches on it).
+    // Multi-keyed by page id + username + name (all lowercased) — so display-name
+    // stored SocialAccount rows can be matched against administered pages.
     expect(map.get("100")).toEqual({ followers: 5000 });
     expect(map.get("mypage")).toEqual({ followers: 5000 });
-    expect(map.has("my page")).toBe(false); // name is NOT a key
-    expect(map.get("200")).toEqual({ followers: 999 }); // fan_count fallback
+    expect(map.get("my page")).toEqual({ followers: 5000 }); // name IS now a key
+    expect(map.get("200")).toEqual({ followers: 999 }); // fan_count fallback (no name/username)
     expect(map.has("300")).toBe(false); // no tasks → absent
   });
 
@@ -179,6 +179,111 @@ describe("fetchFacebookFollowerMap", () => {
     const map = await fetchFacebookFollowerMap();
     expect(map.has("400")).toBe(false);
     expect(map.size).toBe(0);
+  });
+
+  it("keys by name (lowercased) so a SocialAccount stored under its display name can match", async () => {
+    process.env.META_SYSTEM_USER_TOKEN = FAKE_TOKEN;
+    const graph = vi.fn(async (path: string) => {
+      if (path === "me/accounts") {
+        return ok({
+          data: [
+            {
+              id: "123",
+              access_token: "T",
+              tasks: ["MANAGE"],
+              name: "Bollywood Society",
+              followers_count: 12_000_000,
+            },
+          ],
+        });
+      }
+      throw new Error(`unexpected path: ${path}`);
+    });
+    setFollowersGraphFetch(graph as unknown as GraphFetchFn);
+
+    const map = await fetchFacebookFollowerMap();
+    // id key always present
+    expect(map.get("123")).toEqual({ followers: 12_000_000 });
+    // name key (lowercased) — NEW: allows display-name match
+    expect(map.get("bollywood society")).toEqual({ followers: 12_000_000 });
+    // no username → username key absent
+    expect(map.has("undefined")).toBe(false);
+  });
+
+  it("does not add an empty name key when page name is absent", async () => {
+    process.env.META_SYSTEM_USER_TOKEN = FAKE_TOKEN;
+    const graph = vi.fn(async (path: string) => {
+      if (path === "me/accounts") {
+        return ok({
+          data: [
+            { id: "555", access_token: "T", tasks: ["ANALYZE"], followers_count: 100 },
+          ],
+        });
+      }
+      throw new Error(`unexpected path: ${path}`);
+    });
+    setFollowersGraphFetch(graph as unknown as GraphFetchFn);
+
+    const map = await fetchFacebookFollowerMap();
+    expect(map.get("555")).toEqual({ followers: 100 });
+    expect(map.has("")).toBe(false);
+  });
+});
+
+// ── fbLookupKeys ─────────────────────────────────────────────────────────────
+
+describe("fbLookupKeys", () => {
+  it("profile.php?id=<numeric> → extracts the numeric id + handle", () => {
+    const keys = fbLookupKeys("Some Page", "https://www.facebook.com/profile.php?id=100086");
+    expect(keys).toContain("100086");
+    expect(keys).toContain("some page"); // handle lowercased
+  });
+
+  it("facebook.com/<username> → extracts the username (lowercased), deduped with matching handle", () => {
+    // URL segment "HellooBollywood" lowercases to "helloobollywood" (double-o).
+    // Handle "HellooBollywood" also lowercases to "helloobollywood" → deduped to one key.
+    const keys = fbLookupKeys("HellooBollywood", "https://www.facebook.com/HellooBollywood");
+    expect(keys).toContain("helloobollywood");
+    // Should NOT contain the literal share token or raw mixed-case
+    expect(keys.some(k => k.startsWith("share"))).toBe(false);
+    expect(keys).not.toContain("HellooBollywood");
+  });
+
+  it("facebook.com/<username> is lowercased", () => {
+    const keys = fbLookupKeys("MyHandle", "https://www.facebook.com/UpperCasePage");
+    expect(keys).toContain("uppercasepage");
+  });
+
+  it("/share/ URL → only handle key, no share token key", () => {
+    const keys = fbLookupKeys("Bollywood News", "https://www.facebook.com/share/r/abc123XYZ/");
+    // No share token — opaque, can't resolve to a page id
+    expect(keys.some(k => k.includes("abc123") || k.includes("share"))).toBe(false);
+    // Handle is the only candidate
+    expect(keys).toContain("bollywood news");
+  });
+
+  it("display-name handle with empty profileUrl → only the lowercased handle", () => {
+    const keys = fbLookupKeys("Bollywood Society", "");
+    expect(keys).toEqual(["bollywood society"]);
+  });
+
+  it("skips reserved path segments (pages, people, profile.php without id) from profileUrl", () => {
+    const keys = fbLookupKeys("some page", "https://www.facebook.com/pages/MyBrand/123456789");
+    // "pages" is a reserved segment — should not be added as a key
+    expect(keys).not.toContain("pages");
+    expect(keys).toContain("some page"); // handle is always included
+  });
+
+  it("deduplicates keys: handle matches the extracted username → only one entry", () => {
+    // When the stored handle IS the username from the URL, it shouldn't appear twice
+    const keys = fbLookupKeys("mypage", "https://www.facebook.com/mypage");
+    expect(keys).toEqual(["mypage"]); // deduped: url-extracted "mypage" == handle "mypage"
+  });
+
+  it("drops empty strings from output", () => {
+    const keys = fbLookupKeys("  ", "https://www.facebook.com/");
+    // The root path "/" has no meaningful segment; empty handle trims to ""
+    expect(keys.every(k => k.length > 0)).toBe(true);
   });
 });
 

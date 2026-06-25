@@ -12,8 +12,9 @@ export interface LinkSearchData {
   posts: Array<{ canonicalKey: string; url: string; platform: string; account: { id: string; handle: string; displayName: string }; employee: { id: string; name: string }; date: string; dupCount: number }>;
   coverage: {
     enriched: number; notYetEnriched: number; total: number;
-    searchable: number; unsearchable: number; submitted: number;
-    byPlatform: Record<string, { enriched: number; total: number; searchable: number; unsearchable: number; submitted: number; since?: string }>;
+    searchable: number; pendingExtraction?: number; nameSearchable?: number;
+    unsearchable: number; submitted: number;
+    byPlatform: Record<string, { enriched: number; total: number; searchable: number; pendingExtraction?: number; nameSearchable?: number; unsearchable: number; submitted: number; since?: string }>;
   };
   truncated?: boolean;
 }

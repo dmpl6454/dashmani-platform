@@ -12,6 +12,10 @@ import { fetchYouTubeSubscriberCounts } from "./social-insights/youtube-follower
 // Tests can set FOLLOWER_SYNC_DELAY_MS=0 to skip the delay.
 const DELAY_MS = parseInt(process.env.FOLLOWER_SYNC_DELAY_MS ?? "5000", 10);
 
+// RATE_LIMIT_BACKOFF_MS: backoff after a 429/401 from the IG scraper before the
+// single retry. Tests can set FOLLOWER_SYNC_BACKOFF_MS=0 to skip the wait.
+const RATE_LIMIT_BACKOFF_MS = parseInt(process.env.FOLLOWER_SYNC_BACKOFF_MS ?? "30000", 10);
+
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
@@ -77,8 +81,8 @@ async function fetchInstagramFollowers(username: string): Promise<number | null>
       );
       if (res.status === 429 || res.status === 401) {
         if (attempt === 0) {
-          console.log(`[follower-sync] Instagram rate limited for ${username}, waiting 30s...`);
-          await sleep(30000);
+          console.log(`[follower-sync] Instagram rate limited for ${username}, waiting ${RATE_LIMIT_BACKOFF_MS}ms...`);
+          await sleep(RATE_LIMIT_BACKOFF_MS);
           continue;
         }
         // Still limited after retry — mark all Instagram as skipped for this run
@@ -389,14 +393,30 @@ export async function syncAllFollowerCounts() {
 
   // — Instagram: business_discovery edge ————————————————————————————————————
   // fetchPublicInstagramFollowerMap internally re-discovers one administered IG
-  // node via me/accounts (~1 cheap call). This is an extra paginated discovery
-  // walk per sync run — acceptable because it stops at the first IG node found.
-  // The resolver self-limits on Meta rate-limit; a partial map is still useful.
-  if (unresolvedIg.length > 0) {
+  // node via me/accounts (~1 cheap call) AND fires ONE business_discovery call
+  // PER handle. To protect the shared ~200-call/hr Meta budget (also used by the
+  // harvest cron):
+  //   • Only invoke Tier-3 if Tier-1 actually worked (igFollowerMap.size > 0).
+  //     An EMPTY igFollowerMap means Meta is unavailable/rate-limiting this token
+  //     this run (Tier-1's catch left it empty) — firing one call per unresolved
+  //     handle would pile onto an already-limited token and starve the harvest.
+  //     When skipped, the unresolved IG accounts simply stay as-is (fail-open)
+  //     and retry next hour — we do NOT count them as failed (deliberate skip,
+  //     not an attempted-and-missed resolution).
+  //   • Cap the handles slice at 30 — belt-and-suspenders for a large unresolved
+  //     tail even when Tier-1 partially succeeded. Accounts beyond the cap are
+  //     DEFERRED to a future run, NOT counted as failed (not attempted this run).
+  const IG_TIER3_MAX_HANDLES = 30;
+  if (unresolvedIg.length > 0 && igFollowerMap.size > 0) {
+    const attempted = unresolvedIg.slice(0, IG_TIER3_MAX_HANDLES);
     try {
-      const handles = unresolvedIg.map((a) => a.handle.replace(/^@/, "").split("?")[0].split("/")[0].trim()).filter(Boolean);
+      const handles = attempted
+        .map((a) => a.handle.replace(/^@/, "").split("?")[0].split("/")[0].trim())
+        .filter(Boolean);
       const publicIgMap = await fetchPublicInstagramFollowerMap(handles);
-      for (const account of unresolvedIg) {
+      // Only count failed for accounts we actually attempted (the slice), not the
+      // deferred tail beyond the cap.
+      for (const account of attempted) {
         const handle = account.handle.replace(/^@/, "").split("?")[0].split("/")[0].trim().toLowerCase();
         const entry = publicIgMap.get(handle);
         if (entry && entry.followers > 0) {
@@ -407,7 +427,8 @@ export async function syncAllFollowerCounts() {
       }
     } catch (e) {
       console.error("[follower-sync] Public IG resolver failed — skipping IG Tier-3:", e);
-      progress.failed += unresolvedIg.length;
+      // Only the attempted slice is counted as failed; the deferred tail is not.
+      progress.failed += attempted.length;
     }
   }
 
@@ -462,6 +483,12 @@ export async function syncAllFollowerCounts() {
 
 // Sync a single account (for on-demand refresh)
 export async function syncSingleAccountFollowers(accountId: string) {
+  // Reset the module-level IG rate-limit flag: a user-initiated single refresh
+  // must always attempt the network, independent of a prior/concurrent batch
+  // run that may have set igRateLimited=true mid-run. Otherwise the refresh
+  // button would silently no-op (return null) without ever hitting Instagram.
+  igRateLimited = false;
+
   const account = await prisma.socialAccount.findUnique({
     where: { id: accountId },
     include: { platform: { select: { slug: true } } },

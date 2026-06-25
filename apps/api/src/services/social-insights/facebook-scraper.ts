@@ -48,15 +48,57 @@ export interface ScrapedFbEngagement {
   views: number | null;
   likes: number | null;
   comments: number | null;
+  // The post caption — feeds Link Search name-search (entity extraction tags who's
+  // in it). Prefer og:description (the post body, which carries the person's name)
+  // over og:title (often just the Page name, e.g. "Paparazzi Reels"). Verified live
+  // 2026-06-25: og:description is the richer name-bearing text for ~all reels.
+  caption: string | null;
 }
 
-const EMPTY: ScrapedFbEngagement = { views: null, likes: null, comments: null };
+const EMPTY: ScrapedFbEngagement = { views: null, likes: null, comments: null, caption: null };
 
 // Injectable fetch for tests (no network). Defaults to global fetch.
 export type FetchFn = typeof fetch;
 
-// Parse the three engagement numbers out of a reel page's HTML. Exported for unit
-// tests with captured fixtures. Pure + synchronous.
+// Decode the HTML entities Facebook uses in og tags (&#x915; Devanagari, &amp;, &quot;,
+// numeric refs). Best-effort: an undecodable entity is left as-is.
+function decodeEntities(s: string): string {
+  return s
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => {
+      try { return String.fromCodePoint(parseInt(h, 16)); } catch { return _; }
+    })
+    .replace(/&#(\d+);/g, (_, d) => {
+      try { return String.fromCodePoint(Number(d)); } catch { return _; }
+    })
+    .replace(/&quot;/g, '"')
+    .replace(/&#039;|&apos;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&");
+}
+
+// Pull the best caption from the reel HTML. og:description is the post body (richest,
+// name-bearing); og:title is "<views> views · <n> reactions | <caption>" or just the
+// Page name. So: prefer a meaningful og:description; else the og:title's post-`|` tail.
+function parseFbCaption(html: string): string | null {
+  const ogDesc = (html.match(/<meta property="og:description" content="([^"]*)"/) || [])[1] || "";
+  const ogTitle = (html.match(/<meta property="og:title" content="([^"]*)"/) || [])[1] || "";
+
+  const desc = decodeEntities(ogDesc).trim();
+  if (desc.length > 3) return desc;
+
+  // Fall back to og:title. Strip a leading "N views · M reactions | " engagement
+  // prefix if present (keep only the caption after the last " | ").
+  let title = decodeEntities(ogTitle).trim();
+  if (title.includes(" | ")) {
+    const tail = title.split(" | ").slice(1).join(" | ").trim();
+    if (tail.length > 0) title = tail;
+  }
+  return title.length > 3 ? title : null;
+}
+
+// Parse engagement + caption out of a reel page's HTML. Exported for unit tests with
+// captured fixtures. Pure + synchronous.
 export function parseFbReelHtml(html: string): ScrapedFbEngagement {
   if (!html || html.length < MIN_REEL_HTML_LEN) return { ...EMPTY };
 
@@ -76,6 +118,7 @@ export function parseFbReelHtml(html: string): ScrapedFbEngagement {
     views: Number.isFinite(views as number) ? views : null,
     likes: Number.isFinite(likes as number) ? likes : null,
     comments: Number.isFinite(comments as number) ? comments : null,
+    caption: parseFbCaption(html),
   };
 }
 

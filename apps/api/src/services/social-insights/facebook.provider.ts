@@ -349,7 +349,7 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 // and only attempts purely-numeric reel ids (the only form the scraper URL accepts).
 async function tryScrapeFallback(
   targetId: string
-): Promise<{ views: number | null; likes: number | null; comments: number | null } | null> {
+): Promise<{ views: number | null; likes: number | null; comments: number | null; caption: string | null } | null> {
   if (!fbScraperEnabled() || fbScraperBlocked) return null;
   if (!/^\d+$/.test(targetId)) return null; // opaque/pfbid ids can't be scraped by reel url
 
@@ -360,10 +360,12 @@ async function tryScrapeFallback(
     ? await scrapeFacebookReelEngagement(targetId, scraperFetchImpl)
     : await scrapeFacebookReelEngagement(targetId);
 
-  // A hit = at least one real metric. An all-null result means we either got a wall
-  // or a non-reel page; don't manufacture an "ok" row from nothing.
-  if (m.views == null && m.likes == null && m.comments == null) return null;
-  return { views: m.views, likes: m.likes, comments: m.comments };
+  // A hit = at least one real signal (metric OR caption). An all-null result means we
+  // got a wall or a non-reel page; don't manufacture an "ok" row from nothing.
+  // The caption matters even when metrics are 0/null — it makes the reel name-
+  // searchable in Link Search (the cron upserts r.caption → link_content).
+  if (m.views == null && m.likes == null && m.comments == null && m.caption == null) return null;
+  return { views: m.views, likes: m.likes, comments: m.comments, caption: m.caption };
 }
 
 // Build the numericId→entry map across all administered Pages, once per run.
@@ -453,7 +455,9 @@ export const facebookProvider: InsightProvider = {
             comments: scraped.comments,
             shares: null, // shares aren't exposed in the public reel HTML
             title: null,
-            caption: null, // captions still come via the Graph harvest path, not here
+            // The scraped caption (og:description-preferred) makes this reel
+            // name-searchable in Link Search — the cron upserts it to link_content.
+            caption: scraped.caption,
           });
         } else {
           results.set(t.linkId, { ok: false, status: "not_found" });

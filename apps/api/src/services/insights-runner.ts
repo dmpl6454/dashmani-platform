@@ -74,7 +74,10 @@ export function triggerInsightsRun(
   // as an unhandled rejection.
   (async () => {
     try {
-      await runSocialInsightsRefresh();
+      // Manual trigger: harvest + extraction only (fast, settles in minutes).
+      // The full metric sweep (37k links) runs only on the scheduled 6h cron
+      // via index.ts, which calls runSocialInsightsRefresh() with no args.
+      await runSocialInsightsRefresh({ harvestOnly: trigger === "manual" });
 
       state.phase = "extracting";
       await runEntityExtraction();

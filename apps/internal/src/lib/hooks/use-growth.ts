@@ -1,6 +1,41 @@
 import useSWR from "swr";
 import { apiFetch } from "@/lib/api";
 
+export type SyncState = "LIVE" | "STALE" | "MANUAL";
+
+export interface GrowthAccount {
+  accountId: string;
+  displayName: string;
+  platform: string;
+  latest: number | null;
+  delta: number | null;
+  deltaPct: number | null;
+  /** Added when API ships the enriched response */
+  syncState?: SyncState;
+  lastSyncedAt?: string | null;
+}
+
+export interface GrowthOverviewData {
+  totalFollowers: number;
+  totalDelta: number;
+  accountCount: number;
+  accounts: GrowthAccount[];
+  topMovers: Array<{
+    accountId: string;
+    displayName: string;
+    platform: string;
+    delta: number | null;
+    deltaPct: number | null;
+  }>;
+  /** Coverage counts — optional so older API responses don't break */
+  liveCount?: number;
+  staleCount?: number;
+  manualCount?: number;
+  liveFollowers?: number;
+  staleFollowers?: number;
+  manualFollowers?: number;
+}
+
 export function useGrowthOverview(days = 30) {
   return useSWR(`/admin/growth?days=${days}`, (url) => apiFetch(url), {
     revalidateOnFocus: false,

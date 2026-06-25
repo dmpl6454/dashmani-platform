@@ -97,6 +97,131 @@ describe("Account Growth API", () => {
       expect(res.body.data.accountCount).toBe(2);
     });
 
+    // ── syncState + coverage counts ──────────────────────────────────────────
+
+    it("marks an account synced 1h ago as LIVE and counts it in liveCount/liveFollowers", async () => {
+      // Set accountA lastSyncedAt to 1 hour ago (within 48h window → LIVE).
+      const oneHourAgo = new Date(Date.now() - 1 * 60 * 60 * 1000);
+      await prisma.socialAccount.update({
+        where: { id: accountAId },
+        data: { lastSyncedAt: oneHourAgo },
+      });
+
+      const res = await request(app)
+        .get("/v1/admin/growth")
+        .set("Authorization", `Bearer ${adminToken}`);
+
+      expect(res.status).toBe(200);
+      const d = res.body.data;
+      const a = d.accounts.find((x: any) => x.accountId === accountAId);
+
+      expect(a.syncState).toBe("LIVE");
+      expect(a.lastSyncedAt).toBeTruthy();
+
+      // liveCount should be 1 (only accountA was set to LIVE)
+      expect(d.liveCount).toBe(1);
+      // accountB has null lastSyncedAt → MANUAL
+      expect(d.manualCount).toBe(1);
+      expect(d.staleCount).toBe(0);
+    });
+
+    it("marks an account synced 5 days ago as STALE and counts it in staleCount", async () => {
+      // Set accountB lastSyncedAt to 5 days ago (> 48h → STALE).
+      const fiveDaysAgo = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000);
+      await prisma.socialAccount.update({
+        where: { id: accountBId },
+        data: { lastSyncedAt: fiveDaysAgo },
+      });
+
+      const res = await request(app)
+        .get("/v1/admin/growth")
+        .set("Authorization", `Bearer ${adminToken}`);
+
+      expect(res.status).toBe(200);
+      const d = res.body.data;
+      const b = d.accounts.find((x: any) => x.accountId === accountBId);
+
+      expect(b.syncState).toBe("STALE");
+      expect(b.lastSyncedAt).toBeTruthy();
+
+      expect(d.staleCount).toBe(1);
+      // accountA still has null lastSyncedAt → MANUAL
+      expect(d.manualCount).toBe(1);
+      expect(d.liveCount).toBe(0);
+    });
+
+    it("marks an account with null lastSyncedAt as MANUAL and counts it in manualCount/manualFollowers", async () => {
+      // Both accountA and accountB were created without lastSyncedAt — they should be MANUAL.
+      const res = await request(app)
+        .get("/v1/admin/growth")
+        .set("Authorization", `Bearer ${adminToken}`);
+
+      expect(res.status).toBe(200);
+      const d = res.body.data;
+
+      const a = d.accounts.find((x: any) => x.accountId === accountAId);
+      const b = d.accounts.find((x: any) => x.accountId === accountBId);
+
+      expect(a.syncState).toBe("MANUAL");
+      expect(a.lastSyncedAt).toBeNull();
+      expect(b.syncState).toBe("MANUAL");
+      expect(b.lastSyncedAt).toBeNull();
+
+      expect(d.manualCount).toBe(2);
+      expect(d.liveCount).toBe(0);
+      expect(d.staleCount).toBe(0);
+
+      // manualFollowers = sum of latest for MANUAL accounts = 1200 + 4900
+      expect(d.manualFollowers).toBe(6100);
+    });
+
+    it("liveCount+staleCount+manualCount equals accountCount, and follower sums match totalFollowers", async () => {
+      // Make a mixed set: accountA=LIVE (synced 1h ago), accountB=STALE (synced 5d ago).
+      // Create a third account with null lastSyncedAt → MANUAL.
+      const oneHourAgo = new Date(Date.now() - 1 * 60 * 60 * 1000);
+      const fiveDaysAgo = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000);
+
+      await prisma.socialAccount.update({
+        where: { id: accountAId },
+        data: { lastSyncedAt: oneHourAgo },
+      });
+      await prisma.socialAccount.update({
+        where: { id: accountBId },
+        data: { lastSyncedAt: fiveDaysAgo },
+      });
+      const accountC = await prisma.socialAccount.create({
+        data: {
+          handle: "@manual",
+          displayName: "ManualAccount",
+          platformId,
+          status: "ACTIVE",
+          followerCount: 500,
+          lastSyncedAt: null,
+        },
+      });
+
+      const res = await request(app)
+        .get("/v1/admin/growth")
+        .set("Authorization", `Bearer ${adminToken}`);
+
+      expect(res.status).toBe(200);
+      const d = res.body.data;
+
+      // Counts must sum to accountCount
+      expect(d.liveCount + d.staleCount + d.manualCount).toBe(d.accountCount);
+      expect(d.accountCount).toBe(3);
+      expect(d.liveCount).toBe(1);
+      expect(d.staleCount).toBe(1);
+      expect(d.manualCount).toBe(1);
+
+      // Follower sums must equal totalFollowers (1200 + 4900 + 500 = 6600)
+      expect(d.liveFollowers + d.staleFollowers + d.manualFollowers).toBe(d.totalFollowers);
+      expect(d.totalFollowers).toBe(6600);
+      expect(d.liveFollowers).toBe(1200);   // accountA latest
+      expect(d.staleFollowers).toBe(4900);  // accountB latest
+      expect(d.manualFollowers).toBe(500);  // accountC latest
+    });
+
     it("returns 403 without reports:view permission", async () => {
       await createTestRole("NoPerms", []);
       const user = await createTestUser({ email: `noperms-${Date.now()}@test.com`, roleNames: ["NoPerms"] });

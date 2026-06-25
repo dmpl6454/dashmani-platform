@@ -62,6 +62,7 @@ interface FbFollowersAccountsResponse {
     followers_count?: number;
     fan_count?: number;
     username?: string;
+    name?: string;
     tasks?: string[];
   }>;
   paging?: { next?: string };
@@ -172,6 +173,146 @@ export async function fetchInstagramFollowerMap(): Promise<Map<string, IgFollowe
   return map;
 }
 
+// ── Instagram public (business_discovery) ─────────────────────────────────
+
+// Response shape for the business_discovery edge. Only the fields we request.
+interface BusinessDiscoveryResponse {
+  business_discovery?: {
+    username?: string;
+    followers_count?: number;
+    media_count?: number;
+    id?: string;
+  };
+}
+
+export interface IgPublicCounts {
+  followers: number;
+  mediaCount: number | null;
+}
+
+// Resolve follower counts for PUBLIC Instagram business/creator accounts we do
+// NOT administer, via the Graph API business_discovery edge. Used as a fallback
+// for IG rows the administered-account map (fetchInstagramFollowerMap) didn't
+// cover.
+//
+// Endpoint shape (proven live):
+//   GET /{ourIgId}?fields=business_discovery.username({handle}){followers_count,media_count}
+//
+// where {ourIgId} is the numeric id of ANY ONE IG business account we
+// administer — used as the "requesting" node. The %7B/%7D URL-encoding of the
+// curly braces is handled by graphFetch's URL-building (URLSearchParams encodes
+// them automatically, graphFetch passes the fields param as a plain value).
+//
+// Skip cases (no throw, absent from map):
+//   - HTTP 400 code 110 (error_subcode 2207013): private/personal/renamed account.
+//   - Any other non-OK non-rate-limit result: also skipped (defensive).
+//
+// Fail-open: NEVER throws; returns whatever it resolved.
+// Budget note: processes handles sequentially so we share the ~200-call/hr Meta
+// budget with the administered-account sync and harvest crons.
+//
+// @param handles bare usernames (no leading @). Caller should strip '@'.
+// @returns Map keyed by lowercased handle → counts. Rate-limited early-return
+//          preserves whatever was collected up to that point.
+export async function fetchPublicInstagramFollowerMap(
+  handles: string[],
+): Promise<Map<string, IgPublicCounts>> {
+  const map = new Map<string, IgPublicCounts>();
+
+  // DARK: no token → empty map, NEVER touch the network.
+  if (!metaConfigured()) return map;
+
+  // ── Normalise handles: strip '@', lowercase, deduplicate ─────────────────
+  const normalised = [...new Set(handles.map((h) => h.replace(/^@/, "").toLowerCase()))].filter(
+    Boolean,
+  );
+  if (normalised.length === 0) return map;
+
+  // ── Discover ONE administered IG node (the "requesting" node for business_discovery) ──
+  // We only need the FIRST id; abort as soon as we find it. Mirrors STEP 1 of
+  // fetchInstagramFollowerMap — same bare-field pattern (no nested sub-selection).
+  let ourIgId: string | null = null;
+  {
+    let path: string | null = "me/accounts";
+    let params: Record<string, string | number | undefined> | undefined = {
+      fields: "instagram_business_account",
+      limit: PAGE_SIZE,
+    };
+    let guard = 0;
+
+    while (path && guard < MAX_DISCOVERY_PAGES && ourIgId === null) {
+      guard++;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+      let res;
+      try {
+        res = await graphFetchImpl<IgFollowersAccountsResponse>(path, params, { signal: controller.signal });
+      } finally {
+        clearTimeout(timer);
+      }
+
+      if (res.rateLimited) return map; // rate-limited during discovery → empty, never throw
+      if (!res.ok || !res.data) break;
+
+      for (const page of res.data.data ?? []) {
+        const igId = page.instagram_business_account?.id;
+        if (igId) {
+          ourIgId = igId;
+          break;
+        }
+      }
+
+      path = res.data.paging?.next ?? null;
+      params = undefined;
+    }
+  }
+
+  // No administered IG account found → can't use business_discovery. Return empty, fail-open.
+  if (!ourIgId) return map;
+
+  // ── Per-handle: call business_discovery edge ──────────────────────────────
+  // The field syntax (curly-brace sub-selection) is passed as a plain string
+  // value in the `fields` param; URLSearchParams inside graphFetch encodes the
+  // braces as %7B/%7D automatically.
+  for (const handle of normalised) {
+    const fields = `business_discovery.username(${handle}){followers_count,media_count}`;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+    let res;
+    try {
+      res = await graphFetchImpl<BusinessDiscoveryResponse>(
+        ourIgId,
+        { fields },
+        { signal: controller.signal },
+      );
+    } finally {
+      clearTimeout(timer);
+    }
+
+    // Rate-limited → stop, return partial map. Never throw.
+    if (res.rateLimited) return map;
+
+    if (!res.ok) {
+      // HTTP 400 code 110 = private/personal/renamed account — expected skip case.
+      // Any other non-OK result is also skipped (defensive).
+      continue;
+    }
+
+    const disc = res.data?.business_discovery;
+    if (!disc) continue;
+
+    const followers = disc.followers_count;
+    if (typeof followers !== "number") continue;
+
+    map.set(handle, {
+      followers,
+      mediaCount: typeof disc.media_count === "number" ? disc.media_count : null,
+    });
+  }
+
+  return map;
+}
+
 // ── Facebook ───────────────────────────────────────────────────────────────
 
 export interface FbFollowerCounts {
@@ -182,12 +323,16 @@ export interface FbFollowerCounts {
 // SocialAccount stores. A SocialAccount holds a handle/profileUrl (e.g.
 // facebook.com/paparazzziii) — NOT the numeric page id — and there is no
 // page-id↔account mapping anywhere, so keying only by page id would be
-// unmatchable. We therefore index each administered Page's follower count under
-// the page id AND the page username (if present), both lowercased, so the caller
-// can look it up by slug/handle. Both are stable identifiers; we deliberately do
-// NOT key by the page name — it's free-text, non-unique, and could silently
-// collide with another page's id/username (last-write-wins). The reader matches
-// by URL slug + handle, never by display name, so a name key earns nothing.
+// unmatchable. We therefore index each administered Page's follower count under:
+//   • the page id (lowercased)
+//   • the page username (lowercased, if present) — a stable URL slug
+//   • the page name (lowercased, if present) — to match stale SocialAccount rows
+//     whose handle was stored as the human-readable display name (e.g. "Bollywood
+//     Society") rather than a URL slug. Name keys risk silent collisions between
+//     pages, but the practical gain (matching ~6 stale administered rows out of 87
+//     that the slug key missed) outweighs the low collision probability for the
+//     handful of pages a System User administers. Last-write-wins if two pages
+//     share a lowercased name (harmless: both are administered pages we own).
 // Discovers administered Pages via me/accounts (extending the field list the FB
 // provider uses); only Pages with a non-empty tasks array (admin role) and an id
 // are kept. Prefers followers_count, falling back to fan_count; an entry with no
@@ -200,7 +345,7 @@ export async function fetchFacebookFollowerMap(): Promise<Map<string, FbFollower
 
   let path: string | null = "me/accounts";
   let params: Record<string, string | number | undefined> | undefined = {
-    fields: "id,access_token,followers_count,fan_count,username,tasks",
+    fields: "id,access_token,followers_count,fan_count,username,name,tasks",
     limit: PAGE_SIZE,
   };
   let guard = 0;
@@ -229,11 +374,13 @@ export async function fetchFacebookFollowerMap(): Promise<Map<string, FbFollower
           : null;
       if (count != null) {
         const counts: FbFollowerCounts = { followers: count };
-        // Multi-key: page id + username (both lowercased) point at the same value
-        // so a SocialAccount can match by slug/handle. Name is deliberately NOT a
-        // key — it's non-unique free-text and would risk silent collisions.
+        // Multi-key: page id + username + name (all lowercased). The name key lets
+        // stale SocialAccount rows stored under a display name (e.g. "Bollywood
+        // Society") match their administered Page without a URL slug. Last-write-wins
+        // on name collisions between administered pages (acceptable — both are ours).
         map.set(pg.id.toLowerCase(), counts);
         if (pg.username) map.set(pg.username.toLowerCase(), counts);
+        if (pg.name) map.set(pg.name.toLowerCase(), counts);
       }
     }
 
@@ -242,4 +389,65 @@ export async function fetchFacebookFollowerMap(): Promise<Map<string, FbFollower
   }
 
   return map;
+}
+
+// ── Facebook lookup-key helper ────────────────────────────────────────────────
+
+// Reserved path segments in facebook.com URLs that are NOT usernames.
+// Segments matching these should not be pushed as candidate keys.
+const FB_RESERVED_SEGMENTS = new Set(["share", "profile.php", "pages", "people", "groups"]);
+
+/**
+ * Given a stored FB account's handle + profileUrl, return an ordered list of
+ * lowercased candidate keys to try against the administered-FB-page map
+ * (keyed by id, username, and name). Pure function — no network.
+ *
+ * Extracts:
+ *   - profile.php?id=<numeric> → the numeric id string
+ *   - facebook.com/<username>  → the slug (if not a reserved segment)
+ *   - the raw handle (trimmed + lowercased) — covers display-name match against
+ *     the new name key in fetchFacebookFollowerMap
+ *   - /share/... URLs: do NOT emit a key from the share token (opaque, can't
+ *     resolve to a page id without a redirect — accepted as unresolvable)
+ *
+ * Output is deduped and empty strings are dropped. URL-derived identifiers
+ * (id, username) are pushed before the handle so they take priority when the
+ * caller tries each key in order.
+ */
+export function fbLookupKeys(handle: string, profileUrl: string): string[] {
+  const keys: string[] = [];
+  const seen = new Set<string>(); // dedup guard only
+  const push = (key: string) => {
+    const k = key.trim().toLowerCase();
+    if (k && !seen.has(k)) {
+      seen.add(k);
+      keys.push(k);
+    }
+  };
+
+  const url = profileUrl.trim();
+
+  if (url) {
+    // Extract a numeric id from ?id=<digits> (profile.php?id=... pattern).
+    const idMatch = url.match(/[?&]id=(\d+)/);
+    if (idMatch) push(idMatch[1]);
+
+    // Extract the URL path segment after facebook.com/ (if not reserved).
+    // Works for both http and https, with or without www.
+    const segMatch = url.match(/facebook\.com\/([^/?#]+)/);
+    if (segMatch) {
+      const seg = segMatch[1];
+      // Skip reserved segments (share, profile.php, pages, people, groups)
+      // so we don't emit a meaningless or unsafe key.
+      if (!FB_RESERVED_SEGMENTS.has(seg.toLowerCase())) {
+        push(seg);
+      }
+    }
+  }
+
+  // Always include the handle itself (lowercased). This covers display-name
+  // matches against the name key added to fetchFacebookFollowerMap.
+  push(handle);
+
+  return keys;
 }

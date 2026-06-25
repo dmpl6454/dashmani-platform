@@ -15,7 +15,8 @@ function chunk<T>(arr: T[], size: number): T[][] {
   return out;
 }
 
-export async function runSocialInsightsRefresh(): Promise<void> {
+export async function runSocialInsightsRefresh(opts?: { harvestOnly?: boolean }): Promise<void> {
+  const harvestOnly = opts?.harvestOnly === true;
   const startedAt = Date.now();
   const since = new Date(Date.now() - POLL_WINDOW_DAYS * 86_400_000);
   console.log(`[social-insights] starting at ${new Date().toISOString()}`);
@@ -140,6 +141,12 @@ export async function runSocialInsightsRefresh(): Promise<void> {
       // edge case where targets.length === 0 or every batch throws.
       let harvestedThisRun = false;
 
+      if (harvestOnly) {
+        console.log(
+          `[social-insights/${slug}] harvestOnly — skipping metric sweep (${targets.length} links), harvest only`
+        );
+      }
+
       for (const batch of chunk(targets, 50)) {
         try {
           const results = await provider.fetchBatch(batch);
@@ -155,58 +162,60 @@ export async function runSocialInsightsRefresh(): Promise<void> {
             }
           }
 
-          // Write snapshots
-          for (const t of batch) {
-            const r = results.get(t.linkId);
-            if (!r) continue;
-            polled++;
+          // Write snapshots + per-link content enrichment (skipped in harvestOnly mode)
+          if (!harvestOnly) {
+            for (const t of batch) {
+              const r = results.get(t.linkId);
+              if (!r) continue;
+              polled++;
 
-            try {
-              await prisma.linkMetric.create({
-                data: {
-                  linkId: t.linkId,
-                  employeeId: t.employeeId,
-                  reportDate: t.reportDate,
-                  url: t.url,
-                  urlNormalized: t.urlNormalized,
-                  platform: slug,
-                  videoId: slug === "youtube" ? extractYouTubeVideoId(t.url) : null,
-                  status: r.status,
-                  views: r.views ?? null,
-                  likes: r.likes ?? null,
-                  comments: r.comments ?? null,
-                  shares: r.shares ?? null,
-                  errorMessage: r.error ?? null,
-                },
-              });
-
-              if (r.status === "ok") succeeded++;
-              else if (r.status === "not_found") notFound++;
-              else errors++;
-            } catch (writeErr) {
-              console.error(`[social-insights/${slug}] failed to write snapshot for linkId ${t.linkId}:`, writeErr);
-              errors++;
-            }
-
-            // ── Link-content enrichment (ADDITIVE) ─────────────────────────────
-            // Store caption/title for the entity-search feature, keyed on the post's
-            // canonicalKey (one row per unique post). Independently guarded: a failure
-            // here must NEVER affect the metric snapshot written above. Only writes when
-            // the provider returned text (title/caption); skipped otherwise.
-            if (r.ok && (r.title != null || r.caption != null)) {
               try {
-                const key = canonicalKey(t.url);
-                if (key) {
-                  await upsertLinkContent({
-                    canonicalKey: key,
-                    title: r.title ?? null,
-                    caption: r.caption ?? null,
-                    status: "ok",
-                  });
+                await prisma.linkMetric.create({
+                  data: {
+                    linkId: t.linkId,
+                    employeeId: t.employeeId,
+                    reportDate: t.reportDate,
+                    url: t.url,
+                    urlNormalized: t.urlNormalized,
+                    platform: slug,
+                    videoId: slug === "youtube" ? extractYouTubeVideoId(t.url) : null,
+                    status: r.status,
+                    views: r.views ?? null,
+                    likes: r.likes ?? null,
+                    comments: r.comments ?? null,
+                    shares: r.shares ?? null,
+                    errorMessage: r.error ?? null,
+                  },
+                });
+
+                if (r.status === "ok") succeeded++;
+                else if (r.status === "not_found") notFound++;
+                else errors++;
+              } catch (writeErr) {
+                console.error(`[social-insights/${slug}] failed to write snapshot for linkId ${t.linkId}:`, writeErr);
+                errors++;
+              }
+
+              // ── Link-content enrichment (ADDITIVE) ─────────────────────────────
+              // Store caption/title for the entity-search feature, keyed on the post's
+              // canonicalKey (one row per unique post). Independently guarded: a failure
+              // here must NEVER affect the metric snapshot written above. Only writes when
+              // the provider returned text (title/caption); skipped otherwise.
+              if (r.ok && (r.title != null || r.caption != null)) {
+                try {
+                  const key = canonicalKey(t.url);
+                  if (key) {
+                    await upsertLinkContent({
+                      canonicalKey: key,
+                      title: r.title ?? null,
+                      caption: r.caption ?? null,
+                      status: "ok",
+                    });
+                  }
+                } catch (contentErr) {
+                  console.error(`[social-insights/${slug}] link-content upsert failed for linkId ${t.linkId}:`, contentErr);
+                  // swallow — never affects metrics or counters
                 }
-              } catch (contentErr) {
-                console.error(`[social-insights/${slug}] link-content upsert failed for linkId ${t.linkId}:`, contentErr);
-                // swallow — never affects metrics or counters
               }
             }
           }
@@ -248,15 +257,21 @@ export async function runSocialInsightsRefresh(): Promise<void> {
           }
 
           if (quotaAborted) break;
+          // In harvestOnly mode: once the early harvest has fired (feed map populated +
+          // captions written), stop grinding through the remaining metric batches.
+          // The post-loop fallback below will not re-run (harvestedThisRun is true).
+          if (harvestOnly && harvestedThisRun) break;
         } catch (batchErr) {
           console.error(`[social-insights/${slug}] batch failed:`, batchErr);
           errors += batch.length;
         }
       }
 
-      console.log(
-        `[social-insights/${slug}] ${targets.length} links → ${polled} polled, ${succeeded} ok, ${notFound} not_found, ${errors} errors${quotaAborted ? " (QUOTA ABORTED)" : ""}`
-      );
+      if (!harvestOnly) {
+        console.log(
+          `[social-insights/${slug}] ${targets.length} links → ${polled} polled, ${succeeded} ok, ${notFound} not_found, ${errors} errors${quotaAborted ? " (QUOTA ABORTED)" : ""}`
+        );
+      }
 
       // 3b. Harvest fallback: runs only if the early harvest above was never reached
       //     (e.g. targets.length === 0, every batch threw, or early harvest itself

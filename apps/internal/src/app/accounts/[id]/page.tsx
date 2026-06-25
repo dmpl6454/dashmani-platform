@@ -2,14 +2,25 @@
 import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useAccount, useAccountLinkStats } from "@/lib/hooks/use-accounts";
+import { useAccountGrowth } from "@/lib/hooks/use-growth";
 import { Button } from "@dashmani/ui";
 import { apiFetch } from "@/lib/api";
-import { Pencil, Trash2, Search, BarChart2, ChevronDown, X, Users, Link2 } from "lucide-react";
+import { Pencil, Trash2, Search, BarChart2, ChevronDown, X, Users, Link2, TrendingUp, TrendingDown } from "lucide-react";
 import Link from "next/link";
 import {
-  BarChart, Bar, XAxis, YAxis, Tooltip,
+  AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip,
   ResponsiveContainer, CartesianGrid,
 } from "recharts";
+
+function fmtCompact(n: number | null | undefined): string {
+  if (n == null) return "—";
+  const abs = Math.abs(n);
+  if (abs >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (abs >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return String(n);
+}
+
+const GROWTH_WINDOWS = [7, 30, 90];
 
 function fmtDate(d: string) {
   try { return new Date(d).toLocaleDateString("en-IN", { day: "numeric", month: "short" }); }
@@ -22,6 +33,16 @@ function BarTip({ active, payload, label }: any) {
     <div className="bg-ink text-white text-xs rounded-lg px-3 py-2 shadow-lg">
       <p className="font-semibold mb-0.5">{label}</p>
       <p>{payload[0].value} links</p>
+    </div>
+  );
+}
+
+function FollowerTip({ active, payload, label }: any) {
+  if (!active || !payload?.length) return null;
+  return (
+    <div className="bg-ink text-white text-xs rounded-lg px-3 py-2 shadow-lg">
+      <p className="font-semibold mb-0.5">{label}</p>
+      <p>{Number(payload[0].value).toLocaleString()} followers</p>
     </div>
   );
 }
@@ -57,6 +78,24 @@ export default function AccountDetailPage() {
 
   const { data: statsData, isLoading: statsLoading } = useAccountLinkStats(id as string, statsStartDate, statsEndDate);
   const stats = (statsData as any)?.data;
+
+  // Follower growth (section-scoped window pills)
+  const [growthDays, setGrowthDays] = useState(30);
+  const { data: growthData, isLoading: growthLoading } = useAccountGrowth(id as string, growthDays);
+  const growth = (growthData as any)?.data;
+  const growthSnapshots: any[] = growth?.snapshots ?? [];
+  const growthChart = growthSnapshots.map((s: any) => ({
+    date: fmtDate(s.date),
+    followers: s.followerCount,
+  }));
+  const growthFirst: number | null = growthSnapshots.length ? growthSnapshots[0].followerCount : null;
+  const growthLast: number | null = growthSnapshots.length ? growthSnapshots[growthSnapshots.length - 1].followerCount : null;
+  const growthDelta = growthFirst != null && growthLast != null ? growthLast - growthFirst : null;
+  const growthPct = growthFirst != null && growthFirst > 0 && growthDelta != null
+    ? Math.round((growthDelta / growthFirst) * 100)
+    : null;
+  const growthUp = (growthDelta ?? 0) > 0;
+  const growthDown = (growthDelta ?? 0) < 0;
 
   const dailyTrend = (stats?.dailyTrend ?? []).map((x: any) => ({
     date: fmtDate(x.date),
@@ -364,6 +403,83 @@ export default function AccountDetailPage() {
                   </div>
                 ))}
               </div>
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* ── Follower Growth ─────────────────────────────────────────────────── */}
+      <div className="v3-card p-5 space-y-4">
+        {/* Section header + window pills */}
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <div className="flex items-center gap-2">
+            <TrendingUp className="h-4 w-4 text-indigo" />
+            <p className="font-semibold text-ink">Follower Growth</p>
+          </div>
+          <div className="flex items-center gap-1.5">
+            {GROWTH_WINDOWS.map((w) => (
+              <button
+                key={w}
+                onClick={() => setGrowthDays(w)}
+                className={`text-[11px] px-2.5 py-0.5 rounded-full border transition-colors ${
+                  growthDays === w
+                    ? "bg-[#1A1A1A] text-white border-[#1A1A1A]"
+                    : "text-[#7A7A7A] border-[#E8E0D0] hover:border-[#1A1A1A]"
+                }`}
+              >
+                {w}d
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {growthLoading ? (
+          <p className="text-xs text-ink-4 py-4 text-center">Loading…</p>
+        ) : growthSnapshots.length < 2 ? (
+          <div className="text-center py-6 space-y-1">
+            <p className="text-sm text-ink-4">Not enough data yet — growth appears after a couple of daily syncs.</p>
+          </div>
+        ) : (
+          <>
+            {/* Current count + window delta */}
+            <div className="flex items-end gap-4 flex-wrap">
+              <div>
+                <p className="font-display text-2xl font-semibold text-ink leading-none">{fmtCompact(growthLast)}</p>
+                <p className="text-[10px] text-ink-4 mt-1">current followers</p>
+              </div>
+              <span className={`inline-flex items-center gap-1 text-sm font-semibold pb-0.5 ${growthUp ? "text-[#3E9B4F]" : growthDown ? "text-[#D14343]" : "text-ink-4"}`}>
+                {growthUp && <TrendingUp className="h-4 w-4 shrink-0" />}
+                {growthDown && <TrendingDown className="h-4 w-4 shrink-0" />}
+                {(growthDelta ?? 0) > 0 ? "+" : ""}{fmtCompact(growthDelta)}
+                {growthPct != null && (
+                  <span className="text-ink-4 font-normal">({(growthDelta ?? 0) > 0 ? "+" : ""}{growthPct}%) · {growthDays}d</span>
+                )}
+              </span>
+            </div>
+
+            {/* Follower trend chart */}
+            <div className="h-[200px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={growthChart} margin={{ top: 4, right: 4, left: -24, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="followerGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="var(--color-indigo, #5b4bf5)" stopOpacity={0.25} />
+                      <stop offset="95%" stopColor="var(--color-indigo, #5b4bf5)" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.06)" vertical={false} />
+                  <XAxis
+                    dataKey="date"
+                    tick={{ fontSize: 9, fill: "var(--color-ink-4,#888)" }}
+                    axisLine={false}
+                    tickLine={false}
+                    interval={Math.max(0, Math.ceil(growthChart.length / 8) - 1)}
+                  />
+                  <YAxis tick={{ fontSize: 9, fill: "var(--color-ink-4,#888)" }} axisLine={false} tickLine={false} allowDecimals={false} domain={["auto", "auto"]} />
+                  <Tooltip content={<FollowerTip />} cursor={{ fill: "rgba(0,0,0,0.04)" }} />
+                  <Area type="monotone" dataKey="followers" name="Followers" stroke="var(--color-indigo,#5b4bf5)" fill="url(#followerGrad)" strokeWidth={2} dot={false} />
+                </AreaChart>
+              </ResponsiveContainer>
             </div>
           </>
         )}

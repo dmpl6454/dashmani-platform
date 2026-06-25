@@ -18,6 +18,7 @@ const SEARCH_ITEMS = [
   { id: "tasks",         label: "Tasks",         group: "Pages", icon: CheckSquare,       href: "/tasks"         },
   { id: "content",       label: "Content",       group: "Pages", icon: FileEdit,          href: "/content"       },
   { id: "accounts",      label: "Accounts",      group: "Pages", icon: Globe,             href: "/accounts"      },
+  { id: "account-growth", label: "Account Growth", group: "Pages", icon: TrendingUp,      href: "/accounts/growth" },
   { id: "workload",      label: "Workload",      group: "Pages", icon: BarChart3,         href: "/workload"      },
   { id: "clients",       label: "Clients",       group: "Pages", icon: Briefcase,         href: "/clients"       },
   { id: "projects",      label: "Projects",      group: "Pages", icon: FolderOpen,        href: "/projects"      },

@@ -1,0 +1,189 @@
+"use client";
+import { useState } from "react";
+import Link from "next/link";
+import { ArrowLeft, TrendingUp, TrendingDown, Users, LineChart, Trophy } from "lucide-react";
+import { useGrowthOverview } from "@/lib/hooks/use-growth";
+import { usePageTitle } from "@/lib/hooks/use-page-title";
+
+function fmtCompact(n: number | null | undefined): string {
+  if (n == null) return "—";
+  const abs = Math.abs(n);
+  if (abs >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (abs >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return String(n);
+}
+
+const WINDOWS = [7, 30, 90];
+
+function pillClass(active: boolean) {
+  return `text-[11px] px-2.5 py-0.5 rounded-full border transition-colors ${
+    active
+      ? "bg-[#1A1A1A] text-white border-[#1A1A1A]"
+      : "text-[#7A7A7A] border-[#E8E0D0] hover:border-[#1A1A1A]"
+  }`;
+}
+
+/** Signed compact delta with directional icon + color. */
+function DeltaBadge({ delta, deltaPct }: { delta: number | null | undefined; deltaPct?: number | null }) {
+  const d = delta ?? 0;
+  const up = d > 0;
+  const down = d < 0;
+  const color = up ? "text-[#3E9B4F]" : down ? "text-[#D14343]" : "text-[#7A7A7A]";
+  const sign = d > 0 ? "+" : "";
+  return (
+    <span className={`inline-flex items-center gap-1 text-xs font-semibold ${color}`}>
+      {up && <TrendingUp className="h-3.5 w-3.5 shrink-0" />}
+      {down && <TrendingDown className="h-3.5 w-3.5 shrink-0" />}
+      {sign}{fmtCompact(d)}
+      {deltaPct != null && (
+        <span className="text-[#B0B0B0] font-normal">({sign}{deltaPct}%)</span>
+      )}
+    </span>
+  );
+}
+
+export default function AccountGrowthPage() {
+  usePageTitle("Account Growth");
+
+  const [days, setDays] = useState(30);
+  const { data, isLoading } = useGrowthOverview(days);
+  const d = (data as any)?.data;
+
+  const totalFollowers: number = d?.totalFollowers ?? 0;
+  const totalDelta: number = d?.totalDelta ?? 0;
+  const accountCount: number = d?.accountCount ?? 0;
+  const accounts: any[] = d?.accounts ?? [];
+  const topMovers: any[] = d?.topMovers ?? [];
+
+  const totalUp = totalDelta > 0;
+  const totalDown = totalDelta < 0;
+
+  return (
+    <div className="space-y-6 pop-in">
+      {/* Header */}
+      <div className="flex items-center gap-3">
+        <Link href="/accounts" className="flex items-center gap-1 text-sm text-[#7A7A7A] hover:text-[#1A1A1A] transition-colors">
+          <ArrowLeft className="h-4 w-4" /> Accounts
+        </Link>
+      </div>
+
+      <div className="flex items-start justify-between flex-wrap gap-4">
+        <div>
+          <h1 className="font-serif text-2xl font-medium text-[#1A1A1A]">Account Growth</h1>
+          <p className="text-sm text-[#7A7A7A] mt-0.5">Follower &amp; subscriber growth across all tracked accounts</p>
+        </div>
+        <div className="flex items-center gap-1.5">
+          {WINDOWS.map((w) => (
+            <button key={w} onClick={() => setDays(w)} className={pillClass(days === w)}>
+              {w}d
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {isLoading && !data ? (
+        <div className="bg-white rounded-2xl border border-[#E8E0D0] shadow-[0_2px_16px_rgba(0,0,0,0.05)] px-6 py-10 text-center text-sm text-[#B0B0B0]">
+          Loading…
+        </div>
+      ) : accountCount === 0 ? (
+        <div className="bg-white rounded-2xl border border-[#E8E0D0] shadow-[0_2px_16px_rgba(0,0,0,0.05)] px-6 py-10 text-center space-y-1">
+          <p className="text-sm text-[#7A7A7A]">No follower snapshots yet — counts populate from the hourly sync.</p>
+          <p className="text-xs text-[#B0B0B0]">Check back after a couple of sync cycles.</p>
+        </div>
+      ) : (
+        <>
+          {/* Stat row */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="bg-white rounded-2xl border border-[#E8E0D0] shadow-[0_2px_16px_rgba(0,0,0,0.05)] p-5 space-y-1">
+              <div className="h-7 w-7 rounded-lg bg-[#F0EEFF] flex items-center justify-center">
+                <Users className="h-3.5 w-3.5 text-[#5B4BF5]" />
+              </div>
+              <p className="font-serif text-2xl font-medium text-[#1A1A1A] leading-none pt-1">{fmtCompact(totalFollowers)}</p>
+              <p className="text-xs text-[#7A7A7A]">Total Followers</p>
+            </div>
+            <div className="bg-white rounded-2xl border border-[#E8E0D0] shadow-[0_2px_16px_rgba(0,0,0,0.05)] p-5 space-y-1">
+              <div className={`h-7 w-7 rounded-lg flex items-center justify-center ${totalUp ? "bg-[#E8F5EA]" : totalDown ? "bg-[#FBE9E9]" : "bg-[#F2F2F2]"}`}>
+                {totalUp
+                  ? <TrendingUp className="h-3.5 w-3.5 text-[#3E9B4F]" />
+                  : totalDown
+                    ? <TrendingDown className="h-3.5 w-3.5 text-[#D14343]" />
+                    : <TrendingUp className="h-3.5 w-3.5 text-[#7A7A7A]" />}
+              </div>
+              <p className={`font-serif text-2xl font-medium leading-none pt-1 ${totalUp ? "text-[#3E9B4F]" : totalDown ? "text-[#D14343]" : "text-[#1A1A1A]"}`}>
+                {totalDelta > 0 ? "+" : ""}{fmtCompact(totalDelta)}
+              </p>
+              <p className="text-xs text-[#7A7A7A]">Net Change · {days}d</p>
+            </div>
+            <div className="bg-white rounded-2xl border border-[#E8E0D0] shadow-[0_2px_16px_rgba(0,0,0,0.05)] p-5 space-y-1">
+              <div className="h-7 w-7 rounded-lg bg-[#FFF3C4] flex items-center justify-center">
+                <LineChart className="h-3.5 w-3.5 text-[#1A1A1A]" />
+              </div>
+              <p className="font-serif text-2xl font-medium text-[#1A1A1A] leading-none pt-1">{accountCount}</p>
+              <p className="text-xs text-[#7A7A7A]">Accounts Tracked</p>
+            </div>
+          </div>
+
+          {/* Top Movers */}
+          {topMovers.length > 0 && (
+            <div className="bg-white rounded-2xl border border-[#E8E0D0] shadow-[0_2px_16px_rgba(0,0,0,0.05)]">
+              <div className="px-6 py-4 border-b border-[#F0EAD8] flex items-center gap-2">
+                <Trophy className="h-4 w-4 text-[#C99A2E]" />
+                <h3 className="font-serif text-[#1A1A1A] font-medium">Top Movers</h3>
+                <span className="ml-auto text-[10px] text-[#B0B0B0]">last {days}d</span>
+              </div>
+              <ul className="divide-y divide-[#F5F0E8]">
+                {topMovers.map((m: any, i: number) => (
+                  <li key={m.accountId} className="px-6 py-3 flex items-center gap-3">
+                    <span className="text-xs font-bold text-[#B0B0B0] w-5 text-right shrink-0">{i + 1}</span>
+                    <Link href={`/accounts/${m.accountId}`} className="text-sm font-medium text-[#1A1A1A] hover:underline truncate flex-1 min-w-0">
+                      {m.displayName}
+                    </Link>
+                    <span className="text-[10px] text-[#7A7A7A] bg-[rgba(0,0,0,0.05)] rounded-full px-2 py-0.5 shrink-0">{m.platform}</span>
+                    <DeltaBadge delta={m.delta} deltaPct={m.deltaPct} />
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* All Accounts */}
+          <div className="bg-white rounded-2xl border border-[#E8E0D0] shadow-[0_2px_16px_rgba(0,0,0,0.05)]">
+            <div className="px-6 py-4 border-b border-[#F0EAD8] flex items-center gap-2">
+              <h3 className="font-serif text-[#1A1A1A] font-medium">All Accounts</h3>
+              <span className="ml-auto text-[10px] text-[#B0B0B0]">{accounts.length} tracked</span>
+            </div>
+            {/* Column headers */}
+            <div className="px-6 py-2 grid grid-cols-[1fr_6rem_5rem_5rem_4rem] gap-3 text-[10px] font-medium text-[#B0B0B0] uppercase tracking-wide border-b border-[#F5F0E8]">
+              <span>Account</span>
+              <span>Platform</span>
+              <span className="text-right">Followers</span>
+              <span className="text-right">Δ</span>
+              <span className="text-right">Δ%</span>
+            </div>
+            <ul className="divide-y divide-[#F5F0E8]">
+              {accounts.map((a: any) => {
+                const up = (a.delta ?? 0) > 0;
+                const down = (a.delta ?? 0) < 0;
+                const color = up ? "text-[#3E9B4F]" : down ? "text-[#D14343]" : "text-[#7A7A7A]";
+                const sign = (a.delta ?? 0) > 0 ? "+" : "";
+                return (
+                  <li key={a.accountId} className="px-6 py-3 grid grid-cols-[1fr_6rem_5rem_5rem_4rem] gap-3 items-center">
+                    <Link href={`/accounts/${a.accountId}`} className="text-sm font-medium text-[#1A1A1A] hover:underline truncate min-w-0">
+                      {a.displayName}
+                    </Link>
+                    <span className="text-[10px] text-[#7A7A7A] bg-[rgba(0,0,0,0.05)] rounded-full px-2 py-0.5 w-fit truncate">{a.platform}</span>
+                    <span className="text-xs font-semibold text-[#1A1A1A] text-right">{fmtCompact(a.latest)}</span>
+                    <span className={`text-xs font-semibold text-right ${color}`}>{sign}{fmtCompact(a.delta)}</span>
+                    <span className={`text-[11px] text-right ${color}`}>
+                      {a.deltaPct == null ? "—" : `${sign}${a.deltaPct}%`}
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}

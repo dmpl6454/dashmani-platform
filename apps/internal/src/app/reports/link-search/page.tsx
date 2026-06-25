@@ -165,6 +165,7 @@ export default function LinkSearchPage() {
         const rows = ORDER
           .filter((p) => bp[p])
           .map((p) => ({ p, ...bp[p]! }));
+        const totalPending = coverage.pendingExtraction ?? 0;
         const isRunning = refreshStatus === "running";
         return (
           <div className="space-y-2">
@@ -235,7 +236,7 @@ export default function LinkSearchPage() {
                 )}
 
                 <ul className="text-ink-4 space-y-1">
-                  {rows.map(({ p, searchable: s, submitted: sub, since }) => (
+                  {rows.map(({ p, searchable: s, submitted: sub, since, pendingExtraction: pPending }) => (
                     <li key={p} className="flex items-baseline gap-1.5 flex-wrap">
                       <span className="font-medium text-ink-3 w-20 shrink-0">{LABEL[p] ?? p}</span>
                       <span>
@@ -246,9 +247,18 @@ export default function LinkSearchPage() {
                       {(p === "instagram" || p === "facebook") && since && (
                         <span className="text-ink-4">· since {fmtDate(since)}</span>
                       )}
+                      {(pPending ?? 0) > 0 && (
+                        <span className="text-ink-4">· {(pPending!).toLocaleString()} tagging</span>
+                      )}
                     </li>
                   ))}
                 </ul>
+                {totalPending > 0 && (
+                  <p className="text-ink-4 pt-0.5" aria-live="polite">
+                    {totalPending.toLocaleString()} captured {totalPending === 1 ? "caption is" : "captions are"} still being tagged with people &amp; topics — {totalPending === 1 ? "it" : "they"}&rsquo;ll be searchable by name within a few hours. (Use Refresh to check progress.)
+                  </p>
+                )}
+
                 <p className="text-ink-4 pt-0.5 border-t border-indigo/10 mt-1">
                   Instagram &amp; Facebook can only be searched from when enrichment began — they don&rsquo;t allow
                   looking up old posts by link. Opaque <span className="font-mono text-[10px]">facebook.com/share/</span> links can&rsquo;t be matched to a post.

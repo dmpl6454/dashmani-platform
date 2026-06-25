@@ -3,9 +3,14 @@ import { todayIST, istMidnight } from "@dashmani/shared";
 import {
   fetchInstagramFollowerMap,
   fetchFacebookFollowerMap,
+  fetchPublicInstagramFollowerMap,
+  fbLookupKeys,
 } from "./social-insights/meta-followers";
+import { fetchYouTubeSubscriberCounts } from "./social-insights/youtube-followers";
 
-const DELAY_MS = 5000; // 5s between requests to avoid rate limiting
+// DELAY_MS: 5s between scraper requests to avoid rate limiting.
+// Tests can set FOLLOWER_SYNC_DELAY_MS=0 to skip the delay.
+const DELAY_MS = parseInt(process.env.FOLLOWER_SYNC_DELAY_MS ?? "5000", 10);
 
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
@@ -269,6 +274,51 @@ export async function syncAllFollowerCounts() {
   // (accountId, date) snapshot upsert is idempotent across both writers.
   const today = istMidnight(todayIST());
 
+  // ── Shared write helper — DRY, identical semantics for all three tiers ────
+  //
+  // Guards: followers must be > 0. Never overwrites a good value with 0/null.
+  // Uses the IST midnight date key so the (accountId, date) upsert is idempotent
+  // regardless of which tier writes first.
+  async function persistFollowerCount(
+    account: { id: string; handle: string; platform: { slug: string } },
+    followers: number,
+  ) {
+    if (followers <= 0) return;
+    console.log(`[follower-sync] ${account.platform.slug}/${account.handle}: ${followers}`);
+    await prisma.socialAccount.update({
+      where: { id: account.id },
+      data: { followerCount: followers, lastSyncedAt: new Date() },
+    });
+    const existing = await prisma.accountGrowthSnapshot.findUnique({
+      where: { accountId_date: { accountId: account.id, date: today } },
+    });
+    if (existing) {
+      await prisma.accountGrowthSnapshot.update({
+        where: { id: existing.id },
+        data: { followerCount: followers },
+      });
+    } else {
+      await prisma.accountGrowthSnapshot.create({
+        data: { accountId: account.id, date: today, followerCount: followers },
+      });
+    }
+    progress.updated++;
+  }
+
+  // ── Tier-3 collection buckets (filled during the first pass) ─────────────
+  //
+  // Accounts that Tier 1 (administered map + scraper) could not resolve are
+  // collected here, grouped by platform. After the first pass, a single batched
+  // call per platform tries to fill the gaps via the public-API tier.
+  const unresolvedIg: typeof accounts = [];
+  const unresolvedYt: typeof accounts = [];
+  // FB unresolved accounts reuse the EXISTING fbFollowerMap via fbLookupKeys
+  // (the name-keyed map added in commit f967ac1 already covers display-name
+  // accounts); no second network call is needed for FB.
+  const unresolvedFb: typeof accounts = [];
+
+  // ── First pass: administered map, then scraper ────────────────────────────
+
   for (const account of accounts) {
     const slug = account.platform.slug;
     let followers: number | null = null;
@@ -289,16 +339,23 @@ export async function syncAllFollowerCounts() {
         }
       }
     } else if (slug === "youtube") {
-      if (account.profileUrl) {
-        followers = await fetchYouTubeSubscribers(account.profileUrl);
-        await sleep(DELAY_MS);
-      }
+      // YouTube scraper removed in favour of the Data API v3 resolver (Tier 3).
+      // The legacy fetchYouTubeSubscribers() is kept for syncSingleAccountFollowers
+      // but is intentionally NOT called here — the per-scrape-with-sleep approach
+      // was O(accounts) HTTP requests; the batched API call is far cheaper.
+      // All YouTube accounts go directly to the Tier-3 bucket.
     } else if (slug === "facebook") {
       if (account.profileUrl || account.handle) {
-        // Graph-first: match by slug from the profile URL, then by handle.
-        const fbSlug = extractHandle(account.profileUrl || "", "facebook").toLowerCase();
-        const handleLower = account.handle.replace(/^@/, "").split("?")[0].toLowerCase();
-        const entry = fbFollowerMap.get(fbSlug) ?? fbFollowerMap.get(handleLower);
+        // Graph-first: try fbLookupKeys (id, username slug, display name) against
+        // the administered-page map. The map is now name-keyed (commit f967ac1),
+        // so stale rows stored under a display name (e.g. "Bollywood Society") also
+        // match here without any new network call.
+        const candidateKeys = fbLookupKeys(account.handle, account.profileUrl || "");
+        let entry: { followers: number } | undefined;
+        for (const key of candidateKeys) {
+          entry = fbFollowerMap.get(key);
+          if (entry) break;
+        }
         if (entry) {
           followers = entry.followers;
         } else {
@@ -314,32 +371,88 @@ export async function syncAllFollowerCounts() {
     }
 
     if (followers !== null && followers > 0) {
-      console.log(`[follower-sync] ${slug}/${account.handle}: ${followers}`);
-      await prisma.socialAccount.update({
-        where: { id: account.id },
-        data: { followerCount: followers, lastSyncedAt: new Date() },
-      });
+      await persistFollowerCount(account, followers);
+    } else {
+      // Collect for the Tier-3 pass; don't increment failed yet.
+      if (slug === "instagram") unresolvedIg.push(account);
+      else if (slug === "youtube") unresolvedYt.push(account);
+      else if (slug === "facebook") unresolvedFb.push(account);
+      else progress.failed++; // should never reach (handled by the else-skip above)
+    }
+    progress.processed++;
+  }
 
-      const existing = await prisma.accountGrowthSnapshot.findUnique({
-        where: { accountId_date: { accountId: account.id, date: today } },
-      });
+  // ── Tier-3: public-API pass for unresolved accounts ──────────────────────
+  //
+  // Each resolver is wrapped in try/catch so a throw from one platform can
+  // NEVER abort the sync or leave other platforms untouched. Fail-open contract.
 
-      if (existing) {
-        await prisma.accountGrowthSnapshot.update({
-          where: { id: existing.id },
-          data: { followerCount: followers },
-        });
-      } else {
-        await prisma.accountGrowthSnapshot.create({
-          data: { accountId: account.id, date: today, followerCount: followers },
-        });
+  // — Instagram: business_discovery edge ————————————————————————————————————
+  // fetchPublicInstagramFollowerMap internally re-discovers one administered IG
+  // node via me/accounts (~1 cheap call). This is an extra paginated discovery
+  // walk per sync run — acceptable because it stops at the first IG node found.
+  // The resolver self-limits on Meta rate-limit; a partial map is still useful.
+  if (unresolvedIg.length > 0) {
+    try {
+      const handles = unresolvedIg.map((a) => a.handle.replace(/^@/, "").split("?")[0].split("/")[0].trim()).filter(Boolean);
+      const publicIgMap = await fetchPublicInstagramFollowerMap(handles);
+      for (const account of unresolvedIg) {
+        const handle = account.handle.replace(/^@/, "").split("?")[0].split("/")[0].trim().toLowerCase();
+        const entry = publicIgMap.get(handle);
+        if (entry && entry.followers > 0) {
+          await persistFollowerCount(account, entry.followers);
+        } else {
+          progress.failed++;
+        }
       }
+    } catch (e) {
+      console.error("[follower-sync] Public IG resolver failed — skipping IG Tier-3:", e);
+      progress.failed += unresolvedIg.length;
+    }
+  }
 
-      progress.updated++;
+  // — Facebook: fbLookupKeys against the EXISTING administered map ——————————
+  // No new network call — we reuse fbFollowerMap (now name-keyed). Accounts
+  // whose handle is a display name (e.g. "Bollywood Society") now resolve via
+  // the name key without hitting the network again.
+  for (const account of unresolvedFb) {
+    const candidateKeys = fbLookupKeys(account.handle, account.profileUrl || "");
+    let entry: { followers: number } | undefined;
+    for (const key of candidateKeys) {
+      entry = fbFollowerMap.get(key);
+      if (entry) break;
+    }
+    if (entry && entry.followers > 0) {
+      await persistFollowerCount(account, entry.followers);
     } else {
       progress.failed++;
     }
-    progress.processed++;
+  }
+
+  // — YouTube: Data API v3 (channels.list, forHandle, search.list) ——————————
+  // Note: progress.processed is already incremented for YouTube accounts in the
+  // first pass (where they are collected into unresolvedYt). Do NOT increment it
+  // again here.
+  if (unresolvedYt.length > 0) {
+    try {
+      const ytResults = await fetchYouTubeSubscriberCounts(
+        unresolvedYt.map((a) => ({ id: a.id, handle: a.handle, profileUrl: a.profileUrl || "" })),
+        { maxSearchLookups: 10 },
+      );
+      // Index results by accountId for O(1) lookup
+      const ytMap = new Map(ytResults.map((r) => [r.accountId, r.subscribers]));
+      for (const account of unresolvedYt) {
+        const subscribers = ytMap.get(account.id);
+        if (subscribers != null && subscribers > 0) {
+          await persistFollowerCount(account, subscribers);
+        } else {
+          progress.failed++;
+        }
+      }
+    } catch (e) {
+      console.error("[follower-sync] YouTube resolver failed — skipping YT Tier-3:", e);
+      progress.failed += unresolvedYt.length;
+    }
   }
 
   progress.state = "idle";

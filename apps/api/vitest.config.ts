@@ -25,6 +25,9 @@ export default defineConfig({
   test: {
     env: {
       NODE_ENV: "test",
+      // Set to 0 so the DELAY_MS sleep() calls in follower-sync.service.ts
+      // resolve immediately in tests, avoiding 5s-per-account delays.
+      FOLLOWER_SYNC_DELAY_MS: "0",
     },
     setupFiles: ["./tests/setup.ts"],
     pool: "forks",

@@ -16,7 +16,11 @@ import {
 //
 // CORRECT APPROACH (what this provider does):
 //   1. The META_SYSTEM_USER_TOKEN manages a set of IG Business accounts.
-//      Discover them via GET /me/accounts?fields=instagram_business_account{id}.
+//      Discover them via GET /me/accounts?fields=instagram_business_account (bare
+//      field — NO sub-selection). The `{id}` nested sub-selection form
+//      (instagram_business_account{id}) intermittently returns HTTP 500 from the
+//      live Graph API; the bare field reliably returns { instagram_business_account:
+//      { id } } for each Page. See meta-followers.ts STEP 1 for the same rationale.
 //   2. For each managed IG user id, page GET /{ig-user-id}/media?fields=
 //      id,shortcode,caption,like_count,comments_count,media_type,timestamp&limit=100
 //      (paginate up to a sane cap; stop early once media is older than the poll
@@ -104,11 +108,19 @@ interface IgMediaResponse {
 }
 
 // Discover the IG Business account ids the token manages.
+//
+// IMPORTANT: request the bare `instagram_business_account` field — NOT the
+// `instagram_business_account{id}` sub-selection form. The sub-selection
+// intermittently triggers HTTP 500 from the live Graph API, causing this
+// function to silently return an empty array (the `!res.ok` guard breaks the
+// loop with no warning). The bare field is reliably honored and the response
+// shape is identical: { instagram_business_account: { id } }. This mirrors
+// the pattern documented in meta-followers.ts STEP 1.
 async function discoverIgUserIds(): Promise<string[]> {
   const ids: string[] = [];
   let path: string | null = "me/accounts";
   let params: Record<string, string | number | undefined> | undefined = {
-    fields: "instagram_business_account{id}",
+    fields: "instagram_business_account",
     limit: MEDIA_PAGE_SIZE,
   };
   let guard = 0;
@@ -138,6 +150,12 @@ async function discoverIgUserIds(): Promise<string[]> {
     // Follow paging cursor (absolute URL already carries its params + token).
     path = res.data.paging?.next ?? null;
     params = undefined;
+  }
+
+  if (ids.length === 0) {
+    console.warn(
+      "[social-insights/instagram] discovery returned 0 IG accounts — possible Graph API issue (token is set)",
+    );
   }
 
   return ids;

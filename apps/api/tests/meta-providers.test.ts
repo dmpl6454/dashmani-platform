@@ -250,6 +250,33 @@ describe("instagramProvider", () => {
     expect(res.get("l1")).toMatchObject({ ok: false, status: "rate_limited" });
     expect(igRateLimited).toBe(true);
   });
+
+  it("emits a console.warn and returns not_found (no throw) when me/accounts returns zero IG accounts", async () => {
+    process.env.META_SYSTEM_USER_TOKEN = FAKE_TOKEN;
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const graph = vi.fn(async (path: string) => {
+      if (path === "me/accounts") {
+        // Empty data array: no IG Business accounts linked to any Page.
+        return ok({ data: [] });
+      }
+      throw new Error(`unexpected graph path: ${path}`);
+    });
+    setIgGraphFetch(graph as unknown as GraphFetchFn);
+
+    const targets = [target("l1", "https://instagram.com/reel/ABC/", "ABC")];
+    const res = await instagramProvider.fetchBatch(targets);
+
+    // All targets come back not_found (empty map, no throw).
+    expect(res.get("l1")).toMatchObject({ ok: false, status: "not_found" });
+
+    // A loud warning must have been emitted so the silent failure is observable.
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("discovery returned 0 IG accounts"),
+    );
+
+    warnSpy.mockRestore();
+  });
 });
 
 // ── Instagram paging depth (env-overridable; mocked graphFetch) ──────────────

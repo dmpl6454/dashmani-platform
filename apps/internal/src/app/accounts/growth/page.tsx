@@ -2,7 +2,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { ArrowLeft, TrendingUp, TrendingDown, Users, LineChart, Trophy } from "lucide-react";
-import { useGrowthOverview, type SyncState, type GrowthAccount } from "@/lib/hooks/use-growth";
+import { useGrowthOverview, type SyncState, type GrowthAccount, type TopMover } from "@/lib/hooks/use-growth";
 import { usePageTitle } from "@/lib/hooks/use-page-title";
 
 function fmtCompact(n: number | null | undefined): string {
@@ -117,7 +117,19 @@ export default function AccountGrowthPage() {
   const totalDelta: number = d?.totalDelta ?? 0;
   const accountCount: number = d?.accountCount ?? 0;
   const accounts: GrowthAccount[] = d?.accounts ?? [];
-  const topMovers: any[] = d?.topMovers ?? [];
+  const topMovers: TopMover[] = d?.topMovers ?? [];
+  // days from API (reflects actual window); fall back to the local pill value then 30
+  const apiDays: number = d?.days ?? days ?? 30;
+  const topMoversByPlatform: Record<string, TopMover[]> | undefined = d?.topMoversByPlatform;
+
+  // Sort accounts: LIVE → STALE → MANUAL → undefined, then by latest desc within group
+  const SYNC_RANK: Record<string, number> = { LIVE: 0, STALE: 1, MANUAL: 2 };
+  const sortedAccounts = [...accounts].sort((a, b) => {
+    const ra = a.syncState != null ? (SYNC_RANK[a.syncState] ?? 3) : 3;
+    const rb = b.syncState != null ? (SYNC_RANK[b.syncState] ?? 3) : 3;
+    if (ra !== rb) return ra - rb;
+    return (b.latest ?? 0) - (a.latest ?? 0);
+  });
 
   // Coverage counts — only present when API ships the enriched response
   const liveCount: number | undefined = d?.liveCount;
@@ -188,7 +200,7 @@ export default function AccountGrowthPage() {
               <p className={`font-serif text-2xl font-medium leading-none pt-1 ${totalUp ? "text-[#3E9B4F]" : totalDown ? "text-[#D14343]" : "text-[#1A1A1A]"}`}>
                 {totalDelta > 0 ? "+" : ""}{fmtCompact(totalDelta)}
               </p>
-              <p className="text-xs text-[#7A7A7A]">Net Change · {days}d</p>
+              <p className="text-xs text-[#7A7A7A]">Net Change · last {apiDays}d</p>
             </div>
             <div className="bg-white rounded-2xl border border-[#E8E0D0] shadow-[0_2px_16px_rgba(0,0,0,0.05)] p-5 space-y-1">
               <div className="h-7 w-7 rounded-lg bg-[#FFF3C4] flex items-center justify-center">
@@ -205,10 +217,10 @@ export default function AccountGrowthPage() {
               <div className="px-6 py-4 border-b border-[#F0EAD8] flex items-center gap-2">
                 <Trophy className="h-4 w-4 text-[#C99A2E]" />
                 <h3 className="font-serif text-[#1A1A1A] font-medium">Top Movers</h3>
-                <span className="ml-auto text-[10px] text-[#B0B0B0]">last {days}d</span>
+                <span className="ml-auto text-[10px] text-[#B0B0B0]">last {apiDays}d</span>
               </div>
               <ul className="divide-y divide-[#F5F0E8]">
-                {topMovers.map((m: any, i: number) => (
+                {topMovers.map((m: TopMover, i: number) => (
                   <li key={m.accountId} className="px-6 py-3 flex items-center gap-3">
                     <span className="text-xs font-bold text-[#B0B0B0] w-5 text-right shrink-0">{i + 1}</span>
                     <Link href={`/accounts/${m.accountId}`} className="text-sm font-medium text-[#1A1A1A] hover:underline truncate flex-1 min-w-0">
@@ -219,6 +231,40 @@ export default function AccountGrowthPage() {
                   </li>
                 ))}
               </ul>
+            </div>
+          )}
+
+          {/* Per-platform Top Movers — only rendered when API includes topMoversByPlatform */}
+          {topMoversByPlatform && Object.keys(topMoversByPlatform).length > 0 && (
+            <div className="bg-white rounded-2xl border border-[#E8E0D0] shadow-[0_2px_16px_rgba(0,0,0,0.05)]">
+              <div className="px-6 py-4 border-b border-[#F0EAD8] flex items-center gap-2">
+                <Trophy className="h-4 w-4 text-[#C99A2E]" />
+                <h3 className="font-serif text-[#1A1A1A] font-medium">Top Movers by Platform</h3>
+                <span className="ml-auto text-[10px] text-[#B0B0B0]">last {apiDays}d</span>
+              </div>
+              <div className="divide-y divide-[#F5F0E8]">
+                {Object.entries(topMoversByPlatform).map(([platform, movers]) =>
+                  movers.length === 0 ? null : (
+                    <div key={platform}>
+                      {/* Platform sub-header */}
+                      <div className="px-6 py-2 flex items-center gap-2 bg-[#FAFAF8]">
+                        <span className="text-[10px] font-medium text-[#7A7A7A] bg-[rgba(0,0,0,0.05)] rounded-full px-2 py-0.5">{platform}</span>
+                      </div>
+                      <ul className="divide-y divide-[#F5F0E8]">
+                        {movers.map((m: TopMover, i: number) => (
+                          <li key={m.accountId} className="px-6 py-2.5 flex items-center gap-3">
+                            <span className="text-xs font-bold text-[#B0B0B0] w-5 text-right shrink-0">{i + 1}</span>
+                            <Link href={`/accounts/${m.accountId}`} className="text-sm font-medium text-[#1A1A1A] hover:underline truncate flex-1 min-w-0">
+                              {m.displayName}
+                            </Link>
+                            <DeltaBadge delta={m.delta} deltaPct={m.deltaPct} />
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )
+                )}
+              </div>
             </div>
           )}
 
@@ -233,11 +279,11 @@ export default function AccountGrowthPage() {
               <span>Account</span>
               <span>Platform</span>
               <span className="text-right">Followers</span>
-              <span className="text-right">Δ</span>
+              <span className="text-right">Δ {apiDays}d</span>
               <span className="text-right">Δ%</span>
             </div>
             <ul className="divide-y divide-[#F5F0E8]">
-              {accounts.map((a: GrowthAccount) => {
+              {sortedAccounts.map((a: GrowthAccount) => {
                 const up = (a.delta ?? 0) > 0;
                 const down = (a.delta ?? 0) < 0;
                 const color = up ? "text-[#3E9B4F]" : down ? "text-[#D14343]" : "text-[#7A7A7A]";

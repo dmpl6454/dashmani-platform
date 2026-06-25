@@ -111,6 +111,8 @@ export interface GrowthOverviewAccount {
 }
 
 export interface GrowthOverview {
+  /** The window (in days) used to compute deltas. Echoes the `days` param (default 30). */
+  days: number;
   totalFollowers: number;
   totalDelta: number;
   accountCount: number;
@@ -134,6 +136,21 @@ export interface GrowthOverview {
     delta: number;
     deltaPct: number | null;
   }>;
+  /**
+   * Top 5 movers per platform, keyed by platform name.
+   * Only platforms with at least one account whose abs(delta) > 0 are included.
+   * Within each group, sorted by abs(delta) desc (same ordering as topMovers).
+   */
+  topMoversByPlatform: Record<
+    string,
+    Array<{
+      accountId: string;
+      displayName: string;
+      platform: string;
+      delta: number;
+      deltaPct: number | null;
+    }>
+  >;
 }
 
 const MAX_OVERVIEW_SNAPSHOTS = 60;
@@ -213,18 +230,37 @@ export async function getGrowthOverview(days = 30): Promise<GrowthOverview> {
     .filter((a) => a.syncState === "MANUAL")
     .reduce((sum, a) => sum + a.latest, 0);
 
+  const moverShape = (a: GrowthOverviewAccount) => ({
+    accountId: a.accountId,
+    displayName: a.displayName,
+    platform: a.platform,
+    delta: a.delta,
+    deltaPct: a.deltaPct,
+  });
+
   const topMovers = [...overviewAccounts]
     .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))
     .slice(0, 5)
-    .map((a) => ({
-      accountId: a.accountId,
-      displayName: a.displayName,
-      platform: a.platform,
-      delta: a.delta,
-      deltaPct: a.deltaPct,
-    }));
+    .map(moverShape);
+
+  // Group by platform → top-5 per platform (only platforms with at least one non-zero delta).
+  const platformGroups = new Map<string, GrowthOverviewAccount[]>();
+  for (const acc of overviewAccounts) {
+    if (acc.delta === 0) continue; // skip zero-delta accounts for per-platform grouping
+    const group = platformGroups.get(acc.platform) ?? [];
+    group.push(acc);
+    platformGroups.set(acc.platform, group);
+  }
+  const topMoversByPlatform: GrowthOverview["topMoversByPlatform"] = {};
+  for (const [platform, group] of platformGroups) {
+    topMoversByPlatform[platform] = group
+      .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))
+      .slice(0, 5)
+      .map(moverShape);
+  }
 
   return {
+    days,
     totalFollowers,
     totalDelta,
     accountCount: overviewAccounts.length,
@@ -236,6 +272,7 @@ export async function getGrowthOverview(days = 30): Promise<GrowthOverview> {
     manualFollowers,
     accounts: overviewAccounts,
     topMovers,
+    topMoversByPlatform,
   };
 }
 

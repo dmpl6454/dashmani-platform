@@ -387,8 +387,7 @@ router.get(
 // GET /admin/reports/top-links?platform&startDate&endDate&limit — top links for ANY
 // supported platform (youtube=by views, instagram/facebook=by likes+comments).
 // One endpoint behind every "Top <Platform> Links" panel. A platform with no
-// enriched metrics returns [] (e.g. Facebook until App Review honors
-// pages_read_engagement) → the UI shows an honest "pending" state.
+// enriched metrics for the window returns [] and the UI simply shows no rows.
 router.get(
   "/admin/reports/top-links",
   authenticate,

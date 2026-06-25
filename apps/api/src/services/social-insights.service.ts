@@ -195,10 +195,9 @@ export async function getInsightsSummary(params: {
 //   - instagram/facebook → likes + comments (IG reels don't expose a reliable
 //     view count via the media list; FB likewise) — so views-sort would be all-zero.
 // This is the single path behind every "Top <Platform> Links" panel. A platform
-// with no enriched link_metric rows (e.g. Facebook until Meta App Review honors
-// pages_read_engagement) naturally returns [] — the UI renders an honest
-// "pending" state rather than a fake-empty table. Future-proof: when FB
-// enrichment lights up, the same query fills the same panel with zero code change.
+// with no enriched link_metric rows for the window naturally returns [] — the UI
+// simply renders no rows rather than a fake-empty table. The same query fills the
+// same panel for every supported platform with zero per-platform code.
 
 export type TopLinkSort = "views" | "engagement";
 

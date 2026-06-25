@@ -95,8 +95,7 @@ export function useTopYouTubeLinks(startDate?: string, endDate?: string, limit =
 
 // Generalized top-links hook — one per platform (youtube|instagram|facebook).
 // YouTube sorts by views server-side; instagram/facebook by likes+comments.
-// A platform with no enriched metrics returns an empty list (e.g. Facebook until
-// Meta App Review honors pages_read_engagement) → the panel shows a "pending" state.
+// A platform with no links in the window returns [] and its panel simply hides.
 export function useTopLinks(platform: string, startDate?: string, endDate?: string, limit = 20) {
   const params = new URLSearchParams();
   params.set("platform", platform);

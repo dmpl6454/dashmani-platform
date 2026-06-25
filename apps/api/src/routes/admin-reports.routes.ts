@@ -8,7 +8,7 @@ import {
   getReportById,
   getReportSummary,
 } from "../services/daily-report.service";
-import { recordGrowthSnapshot } from "../services/account-growth.service";
+import { recordGrowthSnapshot, getGrowthOverview, getAccountGrowth } from "../services/account-growth.service";
 import { getAllAccountsLinkStats } from "../services/account.service";
 import { generateReportsExport } from "../services/report-export.service";
 import { getLeaderboard } from "../services/leaderboard.service";
@@ -560,6 +560,44 @@ router.get(
       return res.json({ success: true, data: { image: ogImage || null, title: ogTitle || null, description: ogDesc || null } });
     } catch {
       return res.json({ success: true, data: { image: null, title: null, description: null } });
+    }
+  },
+);
+
+// ===== Follower growth =====
+
+// GET /admin/growth?days=30 — org-wide follower-growth overview.
+// Declared before /admin/growth/:accountId, but they can't collide anyway
+// ("record" is a POST; this is a fixed path, the dynamic one is a separate GET).
+router.get(
+  "/admin/growth",
+  authenticate,
+  requirePermission("reports", "view"),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const parsed = req.query.days ? parseInt(String(req.query.days), 10) : 30;
+      const days = Number.isFinite(parsed) && parsed > 0 ? parsed : 30;
+      const overview = await getGrowthOverview(days);
+      return success(res, overview);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// GET /admin/growth/:accountId?days=30 — per-account follower trend.
+router.get(
+  "/admin/growth/:accountId",
+  authenticate,
+  requirePermission("reports", "view"),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const parsed = req.query.days ? parseInt(String(req.query.days), 10) : 30;
+      const days = Number.isFinite(parsed) && parsed > 0 ? parsed : 30;
+      const growth = await getAccountGrowth(req.params.accountId, days);
+      return success(res, growth);
+    } catch (err) {
+      next(err);
     }
   },
 );

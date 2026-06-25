@@ -72,6 +72,115 @@ export async function getAccountGrowth(accountId: string, days = 30) {
   };
 }
 
+// Stringify a snapshot @db.Date the same way getAccountGrowth does.
+function snapshotDateStr(date: Date | unknown): string {
+  return date instanceof Date ? date.toISOString().split("T")[0] : String(date);
+}
+
+export interface GrowthOverviewAccount {
+  accountId: string;
+  displayName: string;
+  platform: string;
+  latest: number;
+  first: number;
+  delta: number;
+  deltaPct: number | null;
+  snapshots: Array<{ date: string; followerCount: number }>;
+}
+
+export interface GrowthOverview {
+  totalFollowers: number;
+  totalDelta: number;
+  accountCount: number;
+  accounts: GrowthOverviewAccount[];
+  topMovers: Array<{
+    accountId: string;
+    displayName: string;
+    platform: string;
+    delta: number;
+    deltaPct: number | null;
+  }>;
+}
+
+const MAX_OVERVIEW_SNAPSHOTS = 60;
+
+export async function getGrowthOverview(days = 30): Promise<GrowthOverview> {
+  const since = new Date(istMidnight(todayIST()).getTime() - days * 86400000);
+
+  // ACTIVE accounts only — SocialAccount has no deletedAt; it gates on status.
+  const accounts = await prisma.socialAccount.findMany({
+    where: { status: "ACTIVE" },
+    include: {
+      platform: true,
+      growthSnapshots: {
+        where: { date: { gte: since } },
+        orderBy: { date: "asc" },
+      },
+    },
+  });
+
+  const overviewAccounts: GrowthOverviewAccount[] = accounts.map((account) => {
+    const snaps = account.growthSnapshots; // already date-asc, windowed
+
+    // first/latest fall back to the account's live followerCount when there are
+    // no in-window snapshots.
+    const first = snaps.length > 0 ? snaps[0].followerCount : account.followerCount;
+    const latest = snaps.length > 0 ? snaps[snaps.length - 1].followerCount : account.followerCount;
+    const delta = latest - first;
+    const deltaPct = first > 0 ? Math.round((delta / first) * 100) : null;
+
+    // Cap snapshot points to avoid huge payloads on long windows: stride-sample
+    // down to ~MAX, always keeping the first and last point.
+    let kept = snaps;
+    if (snaps.length > MAX_OVERVIEW_SNAPSHOTS) {
+      const stride = Math.ceil(snaps.length / MAX_OVERVIEW_SNAPSHOTS);
+      const lastIndex = snaps.length - 1;
+      kept = snaps.filter((_, i) => i % stride === 0);
+      // Always include the latest point. The stride filter only keeps indices
+      // divisible by `stride`, so the last index is missing iff lastIndex % stride !== 0.
+      // Index-based (not reference-identity) so this stays correct even if the
+      // middle is ever cloned/mapped during sampling.
+      if (lastIndex % stride !== 0) kept.push(snaps[lastIndex]);
+    }
+
+    return {
+      accountId: account.id,
+      displayName: account.displayName,
+      platform: account.platform.name,
+      latest,
+      first,
+      delta,
+      deltaPct,
+      snapshots: kept.map((s) => ({
+        date: snapshotDateStr(s.date),
+        followerCount: s.followerCount,
+      })),
+    };
+  });
+
+  const totalFollowers = overviewAccounts.reduce((sum, a) => sum + a.latest, 0);
+  const totalDelta = overviewAccounts.reduce((sum, a) => sum + a.delta, 0);
+
+  const topMovers = [...overviewAccounts]
+    .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))
+    .slice(0, 5)
+    .map((a) => ({
+      accountId: a.accountId,
+      displayName: a.displayName,
+      platform: a.platform,
+      delta: a.delta,
+      deltaPct: a.deltaPct,
+    }));
+
+  return {
+    totalFollowers,
+    totalDelta,
+    accountCount: overviewAccounts.length,
+    accounts: overviewAccounts,
+    topMovers,
+  };
+}
+
 export async function getGrowthForEmployee(employeeId: string, days = 30) {
   const assignments = await prisma.accountAssignment.findMany({
     where: { employeeId, unassignedAt: null },

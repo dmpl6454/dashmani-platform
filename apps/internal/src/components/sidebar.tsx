@@ -20,6 +20,7 @@ const primaryNav = [
   { href: "/tasks",         label: "Tasks",            icon: CheckSquare,     group: "Work" },
   { href: "/content",       label: "Content",          icon: FileEdit,        group: null },
   { href: "/accounts",      label: "Accounts",         icon: Globe,           group: null },
+  { href: "/accounts/growth", label: "Account Growth", icon: TrendingUp,      group: null },
   { href: "/daily-reports", label: "Daily Updates",    icon: ClipboardList,   group: null },
   { href: "/workload",      label: "Workload Matrix",  icon: BarChart3,       group: null },
   { href: "/clients",       label: "Clients",          icon: Briefcase,       group: "Business" },

@@ -33,17 +33,26 @@ export function __setGraphFetchForTesting(fn: GraphFetchFn | null): void {
 
 // ── Graph response shapes (only the fields we request) ───────────────────────
 
+// STEP 1 (me/accounts) response. The Graph API ONLY reliably returns the nested
+// instagram_business_account *id* here — deep sub-field selection
+// (username/followers_count) is NOT honored (the nested object comes back as just
+// {id} and the field name even gets mangled to `instagram_business_accountid` in
+// the paging cursor). So we request only the id and resolve the rest per-id in
+// STEP 2. Mirrors IgAccountsResponse in instagram.provider.ts.
 interface IgFollowersAccountsResponse {
-  data?: Array<{
-    instagram_business_account?: {
-      id?: string;
-      username?: string;
-      followers_count?: number;
-      media_count?: number;
-      follows_count?: number;
-    };
-  }>;
+  data?: Array<{ instagram_business_account?: { id?: string } }>;
   paging?: { next?: string };
+}
+
+// STEP 2 (GET /{ig-id}) response — the per-account node DOES honor these flat
+// fields (verified live: {"username":...,"followers_count":...,"media_count":...,
+// "follows_count":...}).
+interface IgUserResponse {
+  id?: string;
+  username?: string;
+  followers_count?: number;
+  media_count?: number;
+  follows_count?: number;
 }
 
 interface FbFollowersAccountsResponse {
@@ -70,55 +79,90 @@ export interface IgFollowerCounts {
 // SocialAccount happens to store: the lowercased IG username AND the IG business
 // account id both point at the SAME counts value. (A SocialAccount may hold a
 // handle/username or, rarely, the numeric id — neither alone is guaranteed, so we
-// index both.) Discovers IG Business accounts via me/accounts (extending the
-// sub-field selection the IG provider uses), following paging.next until exhausted.
+// index both.)
+//
+// TWO-STEP (the live API forces this). me/accounts deep sub-field expansion
+// (instagram_business_account{username,followers_count,...}) is NOT honored — the
+// nested object returns ONLY {id}. So:
+//   STEP 1: page me/accounts?fields=instagram_business_account → collect IG ids
+//           (mirrors discoverIgUserIds() in instagram.provider.ts).
+//   STEP 2: GET /{ig-id}?fields=username,followers_count,media_count,follows_count
+//           per id → the flat fields ARE honored here (verified live).
+// Honors the rateLimited sentinel at BOTH stages (stop, return partial map) and
+// never throws — a per-id error or non-numeric count just skips that id.
 export async function fetchInstagramFollowerMap(): Promise<Map<string, IgFollowerCounts>> {
   const map = new Map<string, IgFollowerCounts>();
 
   // DARK: no token → empty map, NEVER touch the network.
   if (!metaConfigured()) return map;
 
-  let path: string | null = "me/accounts";
-  let params: Record<string, string | number | undefined> | undefined = {
-    fields: "instagram_business_account{id,username,followers_count,media_count,follows_count}",
-    limit: PAGE_SIZE,
-  };
-  let guard = 0;
+  // ── STEP 1: discover the IG business account ids via me/accounts paging ──────
+  const igUserIds: string[] = [];
+  {
+    let path: string | null = "me/accounts";
+    let params: Record<string, string | number | undefined> | undefined = {
+      fields: "instagram_business_account",
+      limit: PAGE_SIZE,
+    };
+    let guard = 0;
 
-  while (path && guard < MAX_DISCOVERY_PAGES) {
-    guard++;
+    while (path && guard < MAX_DISCOVERY_PAGES) {
+      guard++;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+      let res;
+      try {
+        res = await graphFetchImpl<IgFollowersAccountsResponse>(path, params, { signal: controller.signal });
+      } finally {
+        clearTimeout(timer);
+      }
+
+      // Rate-limited → stop, return whatever we have (empty here). Any other failure → break.
+      if (res.rateLimited) return map;
+      if (!res.ok || !res.data) break;
+
+      for (const page of res.data.data ?? []) {
+        const igId = page.instagram_business_account?.id;
+        if (igId) igUserIds.push(igId);
+      }
+
+      // Follow paging cursor (absolute URL already carries its params + token).
+      path = res.data.paging?.next ?? null;
+      params = undefined;
+    }
+  }
+
+  // ── STEP 2: per IG id, fetch the flat profile fields ─────────────────────────
+  for (const igId of igUserIds) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
     let res;
     try {
-      res = await graphFetchImpl<IgFollowersAccountsResponse>(path, params, { signal: controller.signal });
+      res = await graphFetchImpl<IgUserResponse>(
+        `${igId}`,
+        { fields: "username,followers_count,media_count,follows_count" },
+        { signal: controller.signal },
+      );
     } finally {
       clearTimeout(timer);
     }
 
-    // Rate-limited → stop paging, return whatever we have. Any other failure → break.
-    if (res.rateLimited) break;
-    if (!res.ok || !res.data) break;
+    // Rate-limited mid-step-2 → stop, return the partial map. Other failures → skip this id.
+    if (res.rateLimited) return map;
+    if (!res.ok || !res.data) continue;
 
-    for (const page of res.data.data ?? []) {
-      const acct = page.instagram_business_account;
-      const username = acct?.username;
-      const followers = acct?.followers_count;
-      if (username && typeof followers === "number") {
-        const counts: IgFollowerCounts = {
-          followers,
-          following: typeof acct?.follows_count === "number" ? acct.follows_count : null,
-          posts: typeof acct?.media_count === "number" ? acct.media_count : null,
-        };
-        // Multi-key: findable by lowercased username OR the IG business account id.
-        map.set(username.toLowerCase(), counts);
-        if (acct?.id) map.set(acct.id, counts);
-      }
+    const username = res.data.username;
+    const followers = res.data.followers_count;
+    if (username && typeof followers === "number") {
+      const counts: IgFollowerCounts = {
+        followers,
+        following: typeof res.data.follows_count === "number" ? res.data.follows_count : null,
+        posts: typeof res.data.media_count === "number" ? res.data.media_count : null,
+      };
+      // Multi-key: findable by lowercased username OR the IG business account id.
+      map.set(username.toLowerCase(), counts);
+      map.set(igId, counts);
     }
-
-    // Follow paging cursor (absolute URL already carries its params + token).
-    path = res.data.paging?.next ?? null;
-    params = undefined;
   }
 
   return map;

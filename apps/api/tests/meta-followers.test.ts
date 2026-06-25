@@ -27,22 +27,21 @@ afterEach(() => {
 // ── fetchInstagramFollowerMap ────────────────────────────────────────────────
 
 describe("fetchInstagramFollowerMap", () => {
-  it("maps lowercased username → { followers, following, posts } from me/accounts", async () => {
+  it("two-step: me/accounts → ig ids, then GET /{ig-id} → { followers, following, posts }", async () => {
     process.env.META_SYSTEM_USER_TOKEN = FAKE_TOKEN;
+    // The live me/accounts call returns ONLY the nested {id} (deep sub-field
+    // expansion is NOT honored), so STEP 2 must fetch the flat fields per id.
     const graph = vi.fn(async (path: string) => {
-      if (path === "me/accounts") {
+      if (path.startsWith("me/accounts")) {
+        return ok({ data: [{ instagram_business_account: { id: "17841473204180170" } }] });
+      }
+      if (path === "17841473204180170") {
         return ok({
-          data: [
-            {
-              instagram_business_account: {
-                id: "1",
-                username: "DigitalSukoon",
-                followers_count: 14163052,
-                media_count: 320,
-                follows_count: 12,
-              },
-            },
-          ],
+          id: "17841473204180170",
+          username: "DigitalSukoon",
+          followers_count: 14163052,
+          media_count: 320,
+          follows_count: 12,
         });
       }
       throw new Error(`unexpected graph path: ${path}`);
@@ -53,7 +52,9 @@ describe("fetchInstagramFollowerMap", () => {
     const expected = { followers: 14163052, following: 12, posts: 320 };
     // Multi-keyed: findable by lowercased username AND by IG business account id.
     expect(map.get("digitalsukoon")).toEqual(expected);
-    expect(map.get("1")).toEqual(expected);
+    expect(map.get("17841473204180170")).toEqual(expected);
+    // Step 1 (me/accounts) + step 2 (per-id) = 2 calls.
+    expect(graph).toHaveBeenCalledTimes(2);
   });
 
   it("returns an empty map with NO network call when no token is configured (dark switch)", async () => {
@@ -66,7 +67,7 @@ describe("fetchInstagramFollowerMap", () => {
     expect(map.size).toBe(0);
   });
 
-  it("returns an empty map (no throw) when the first page is rate-limited", async () => {
+  it("returns an empty map (no throw) when STEP 1 (me/accounts) is rate-limited", async () => {
     process.env.META_SYSTEM_USER_TOKEN = FAKE_TOKEN;
     const graph = vi.fn(async (): Promise<GraphFetchResult> => ({
       ok: false,
@@ -80,15 +81,35 @@ describe("fetchInstagramFollowerMap", () => {
     expect(map.size).toBe(0);
   });
 
-  it("skips an account whose follower count is missing/non-numeric", async () => {
+  it("returns a partial/empty map (no throw) when STEP 2 (per-id) is rate-limited", async () => {
     process.env.META_SYSTEM_USER_TOKEN = FAKE_TOKEN;
-    const graph = vi.fn(async () =>
-      ok({ data: [{ instagram_business_account: { id: "1", username: "NoCountAccount" } }] }),
-    );
+    const graph = vi.fn(async (path: string): Promise<GraphFetchResult> => {
+      if (path.startsWith("me/accounts")) {
+        return ok({ data: [{ instagram_business_account: { id: "17841473204180170" } }] });
+      }
+      // STEP 2 throttled → stop, partial (here empty) map, never throw.
+      return { ok: false, rateLimited: true, status: 429, error: "rate limit" };
+    });
+    setFollowersGraphFetch(graph as unknown as GraphFetchFn);
+
+    const map = await fetchInstagramFollowerMap();
+    expect(map.size).toBe(0);
+  });
+
+  it("skips an id whose STEP 2 response has a username but no numeric follower count", async () => {
+    process.env.META_SYSTEM_USER_TOKEN = FAKE_TOKEN;
+    const graph = vi.fn(async (path: string) => {
+      if (path.startsWith("me/accounts")) {
+        return ok({ data: [{ instagram_business_account: { id: "1" } }] });
+      }
+      // Username present but no followers_count → skipped.
+      return ok({ id: "1", username: "NoCountAccount" });
+    });
     setFollowersGraphFetch(graph as unknown as GraphFetchFn);
 
     const map = await fetchInstagramFollowerMap();
     expect(map.has("nocountaccount")).toBe(false);
+    expect(map.has("1")).toBe(false);
     expect(map.size).toBe(0);
   });
 });

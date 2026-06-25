@@ -23,6 +23,7 @@ vi.mock("@dashmani/db", () => ({
   prisma: {
     socialAccount: {
       findMany: vi.fn(),
+      findUnique: vi.fn(),
       update: vi.fn(),
     },
     accountGrowthSnapshot: {
@@ -61,11 +62,15 @@ import {
   fbLookupKeys,
 } from "../src/services/social-insights/meta-followers";
 import { fetchYouTubeSubscriberCounts } from "../src/services/social-insights/youtube-followers";
-import { syncAllFollowerCounts } from "../src/services/follower-sync.service";
+import {
+  syncAllFollowerCounts,
+  syncSingleAccountFollowers,
+} from "../src/services/follower-sync.service";
 
 // ── Typed mock helpers ───────────────────────────────────────────────────────
 
 const mockFindMany = prisma.socialAccount.findMany as ReturnType<typeof vi.fn>;
+const mockFindUnique = prisma.socialAccount.findUnique as ReturnType<typeof vi.fn>;
 const mockAccountUpdate = prisma.socialAccount.update as ReturnType<typeof vi.fn>;
 const mockSnapshotFindUnique = prisma.accountGrowthSnapshot.findUnique as ReturnType<typeof vi.fn>;
 const mockSnapshotCreate = prisma.accountGrowthSnapshot.create as ReturnType<typeof vi.fn>;
@@ -150,7 +155,11 @@ describe("syncAllFollowerCounts — Tier 3: public-API fallback", () => {
     });
     mockFindMany.mockResolvedValue([account]);
 
-    // Tier 1 map is empty → account is unresolved after first pass.
+    // Tier 1 map is NON-EMPTY (Meta is reachable → Tier-3 is allowed) but does
+    // NOT contain our account → unresolved after first pass.
+    mockFetchIgMap.mockResolvedValue(
+      new Map([["othaccount", { followers: 1, following: 1, posts: 1 }]]),
+    );
     // Tier 3: public-discovery map has the real count.
     const publicMap = new Map([
       ["bollywoodsocietyy", { followers: 4600000, mediaCount: 12000 }],
@@ -297,18 +306,25 @@ describe("syncAllFollowerCounts — Tier 3: public-API fallback", () => {
     });
     mockFindMany.mockResolvedValue([account]);
 
-    // All tiers return nothing
-    mockFetchIgMap.mockResolvedValue(new Map());
-    mockFetchPublicIg.mockResolvedValue(new Map()); // no hit
+    // Tier-1 map is NON-EMPTY (so Tier-3 IG is actually invoked — see the
+    // igFollowerMap.size>0 guard) but does NOT contain our ghost account.
+    mockFetchIgMap.mockResolvedValue(
+      new Map([["someoneelse", { followers: 999, following: 1, posts: 1 }]]),
+    );
+    // Public-discovery (Tier-3) also misses → attempted-and-missed → failed.
+    mockFetchPublicIg.mockResolvedValue(new Map());
 
     const result = await syncAllFollowerCounts();
+
+    // Tier-3 IG WAS invoked (Tier-1 worked) and missed this account.
+    expect(mockFetchPublicIg).toHaveBeenCalledOnce();
 
     // DB must NOT be updated (keeps prior value of 5000)
     expect(mockAccountUpdate).not.toHaveBeenCalled();
     expect(mockSnapshotCreate).not.toHaveBeenCalled();
     expect(mockSnapshotUpdate).not.toHaveBeenCalled();
 
-    // Counted as failed (not updated, not skipped)
+    // Counted as failed (attempted-and-missed, not skipped)
     expect(result.failed).toBeGreaterThanOrEqual(1);
     expect(result.updated).toBe(0);
   });
@@ -350,12 +366,19 @@ describe("syncAllFollowerCounts — Tier 3: public-API fallback", () => {
     });
     mockFindMany.mockResolvedValue([ig, yt]);
 
+    // Tier-1 map non-empty (Meta reachable) so Tier-3 IG is actually invoked.
+    mockFetchIgMap.mockResolvedValue(
+      new Map([["other", { followers: 1, following: 1, posts: 1 }]]),
+    );
     // Public IG resolver throws; YouTube resolver works fine
     mockFetchPublicIg.mockRejectedValue(new Error("Meta is down"));
     mockFetchYt.mockResolvedValue([{ accountId: "acc-yt-ok", subscribers: 200000 }]);
 
     // Should NOT throw
     const result = await syncAllFollowerCounts();
+
+    // Tier-3 IG WAS attempted (and threw — fail-open caught it)
+    expect(mockFetchPublicIg).toHaveBeenCalledOnce();
 
     // YouTube account still resolved
     expect(mockAccountUpdate).toHaveBeenCalledWith(
@@ -382,6 +405,10 @@ describe("syncAllFollowerCounts — Tier 3: public-API fallback", () => {
     });
     mockFindMany.mockResolvedValue([yt, ig]);
 
+    // Tier-1 map non-empty (Meta reachable) so Tier-3 IG is actually invoked.
+    mockFetchIgMap.mockResolvedValue(
+      new Map([["other", { followers: 1, following: 1, posts: 1 }]]),
+    );
     // YouTube resolver throws; IG public resolver works fine
     mockFetchYt.mockRejectedValue(new Error("YouTube quota exceeded"));
     const publicMap = new Map([["working_ig", { followers: 123456, mediaCount: 500 }]]);
@@ -482,5 +509,140 @@ describe("syncAllFollowerCounts — Tier 3: public-API fallback", () => {
 
     // Public resolver was called (ig2 was unresolved after first pass)
     expect(mockFetchPublicIg).toHaveBeenCalledOnce();
+  });
+
+  // ── Rate-budget guard: empty Tier-1 map → skip Tier-3 IG entirely ─────────
+
+  it("does NOT invoke the public-IG resolver when the Tier-1 administered map is EMPTY (Meta unavailable)", async () => {
+    // Many IG accounts, all unresolved by Tier-1 (empty map = Meta down/limited).
+    const accounts = Array.from({ length: 5 }, (_, i) =>
+      makeAccount({
+        id: `acc-ig-empty-${i}`,
+        handle: `acct${i}`,
+        profileUrl: `https://www.instagram.com/acct${i}/`,
+        platformSlug: "instagram",
+        followerCount: 1000 + i,
+      }),
+    );
+    mockFindMany.mockResolvedValue(accounts);
+
+    // Tier-1 map is EMPTY → signal that Meta is unavailable this run.
+    mockFetchIgMap.mockResolvedValue(new Map());
+
+    const result = await syncAllFollowerCounts();
+
+    // Tier-3 must be skipped — do NOT pile ~N business_discovery calls onto an
+    // already-rate-limited token (would starve the shared harvest budget).
+    expect(mockFetchPublicIg).not.toHaveBeenCalled();
+
+    // Skipped accounts stay as-is (fail-open) and are NOT counted as failed.
+    expect(result.failed).toBe(0);
+    expect(result.updated).toBe(0);
+    expect(mockAccountUpdate).not.toHaveBeenCalled();
+  });
+
+  // ── Rate-budget guard: handles slice cap (30) ─────────────────────────────
+
+  it("caps the number of IG handles sent to the public resolver at 30 even with a larger unresolved tail", async () => {
+    // 50 unresolved IG accounts.
+    const accounts = Array.from({ length: 50 }, (_, i) =>
+      makeAccount({
+        id: `acc-ig-cap-${i}`,
+        handle: `capacct${i}`,
+        profileUrl: `https://www.instagram.com/capacct${i}/`,
+        platformSlug: "instagram",
+      }),
+    );
+    mockFindMany.mockResolvedValue(accounts);
+
+    // Tier-1 map non-empty (Meta reachable) but contains none of these accounts.
+    mockFetchIgMap.mockResolvedValue(
+      new Map([["someoneelse", { followers: 1, following: 1, posts: 1 }]]),
+    );
+    // Public resolver returns nothing (we only care about the input cap here).
+    mockFetchPublicIg.mockResolvedValue(new Map());
+
+    const result = await syncAllFollowerCounts();
+
+    expect(mockFetchPublicIg).toHaveBeenCalledOnce();
+    const handlesArg: string[] = mockFetchPublicIg.mock.calls[0][0];
+    // No more than 30 handles attempted this run.
+    expect(handlesArg.length).toBe(30);
+
+    // Only the 30 ATTEMPTED-and-missed accounts count as failed; the deferred
+    // 20 beyond the cap are NOT failed (not attempted this run).
+    expect(result.failed).toBe(30);
+    expect(result.updated).toBe(0);
+  });
+});
+
+// ── syncSingleAccountFollowers — on-demand single refresh ──────────────────
+
+describe("syncSingleAccountFollowers", () => {
+  it("attempts the network even if a prior batch run left igRateLimited=true (refresh button must never silently no-op)", async () => {
+    // 1) Force the module-level igRateLimited=true via a batch run that hits a
+    //    429 mid-run. We stub fetch to return 429 twice (attempt 0 waits then
+    //    retries, attempt 1 still limited → igRateLimited=true), with DELAY 0.
+    const igAccount = makeAccount({
+      id: "acc-ig-limit",
+      handle: "limit_trigger",
+      profileUrl: "https://www.instagram.com/limit_trigger/",
+      platformSlug: "instagram",
+    });
+    mockFindMany.mockResolvedValue([igAccount]);
+    // Empty Tier-1 map → goes to scraper. Scraper sees 429 → sets igRateLimited.
+    mockFetchIgMap.mockResolvedValue(new Map());
+
+    // fetch returns 429 on every call (the IG scraper: attempt0 429 → sleep(0) →
+    // attempt1 429 → igRateLimited=true → returns null).
+    const fetch429 = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 429,
+      json: async () => ({}),
+      text: async () => "",
+    });
+    vi.stubGlobal("fetch", fetch429);
+
+    await syncAllFollowerCounts();
+    // After this run igRateLimited is true (the batch tripped it).
+
+    // 2) Now a user clicks "refresh" on a single IG account. The success-path
+    //    fetch returns a valid follower count. If the stale igRateLimited flag
+    //    were honoured, fetchInstagramFollowers would bail to null WITHOUT a
+    //    network call and the refresh would silently no-op.
+    const successFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ data: { user: { edge_followed_by: { count: 88888 } } } }),
+      text: async () => "",
+    });
+    vi.stubGlobal("fetch", successFetch);
+
+    mockFindUnique.mockResolvedValue(
+      makeAccount({
+        id: "acc-refresh-1",
+        handle: "refresh_me",
+        profileUrl: "https://www.instagram.com/refresh_me/",
+        platformSlug: "instagram",
+      }),
+    );
+
+    const result = await syncSingleAccountFollowers("acc-refresh-1");
+
+    // The IG profile-info endpoint MUST have been called (network attempted).
+    expect(successFetch).toHaveBeenCalled();
+    const calledUrl = successFetch.mock.calls[0][0] as string;
+    expect(calledUrl).toContain("web_profile_info");
+
+    // And the resolved count is written.
+    expect(result).toEqual(
+      expect.objectContaining({ accountId: "acc-refresh-1", followers: 88888, updated: true }),
+    );
+    expect(mockAccountUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "acc-refresh-1" },
+        data: expect.objectContaining({ followerCount: 88888 }),
+      }),
+    );
   });
 });

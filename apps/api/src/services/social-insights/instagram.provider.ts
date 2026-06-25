@@ -40,30 +40,40 @@ import {
 // registry never polls this provider, and fetchBatch (if ever called directly)
 // returns an all-error map without touching the network.
 //
-// ── ENV-OVERRIDABLE PAGING DEPTH (for the one-time deep historical backfill) ──
-// The cron and the backfill share THIS provider; the only difference is how deep
-// each pages an account's /media feed. Two bounds are env-overridable so the cron
-// default is unchanged but a single backfill run can claw back more history:
-//   IG_BACKFILL_MAX_PAGES    — pages per account (default 60 → up to 6,000 recent
-//                              media/account; was a hardcoded 25). The deep
-//                              one-time backfill sets 200.
+// ── ENV-OVERRIDABLE PAGING DEPTH ─────────────────────────────────────────────
+// The forward 6h cron and the one-off deep backfill share THIS provider; the only
+// difference is how deep each pages an account's /media feed. Two bounds are
+// env-overridable so the cron uses SHALLOW forward defaults while a single backfill
+// run can claw back more history:
+//   IG_BACKFILL_MAX_PAGES    — pages per account (forward default 8 → up to 800
+//                              recent media/account). The deep one-time backfill
+//                              sets 200.
 //   IG_BACKFILL_WINDOW_DAYS  — paging stops once media is older than this window
-//                              (default 90, unchanged). The deep backfill sets 1825.
-// With NEITHER env var set, behaviour is exactly today's cron behaviour at the new
-// 60-page default. The IG/FB Graph API has no fetch-by-shortcode — the only read
-// path is paging /media newest-first — so deeper paging is the ONLY (and still
-// partial) lever on historical coverage; high-volume accounts bury old posts
-// beyond any reachable cap (measured ~1% historical resolve — a Meta API design
-// limit, not a bug). See docs/superpowers/plans/2026-06-23-ig-fb-futureproof-handoff.md.
+//                              (forward default 21). The deep backfill sets 1825.
+//
+// ⚠️ WHY THE FORWARD DEFAULTS ARE SHALLOW (8 pages / 21 days), not 60/90:
+// buildShortcodeMap() pages EVERY managed account's feed newest-first ONCE per run,
+// and the harvest (the only thing Link Search needs) can't run until that build
+// finishes. With a 90-day window, high-volume "firehose" accounts (10k+ posts/yr)
+// stay within the window for 20-25 pages each → the build took ~20 MINUTES on the
+// 2GB prod box and competed with follower-sync for Meta's shared ~200-call/hr
+// budget, so the harvest was perpetually starved (measured live 2026-06-25:
+// IG link_content stuck at ~1k of 40k). Shallow forward paging builds the map in
+// ~2 min and captures today/yesterday's posts (always page 1-2) reliably every
+// cycle. The IG/FB Graph API has no fetch-by-shortcode — the only read path is
+// paging /media newest-first — so deep paging never resolved meaningful history
+// anyway (measured ~1% historical resolve, a Meta API design limit, not a bug).
+// See .planning/LINK-SEARCH-ACCURACY-AUDIT-2026-06-25.md and
+// docs/superpowers/plans/2026-06-23-ig-fb-futureproof-handoff.md.
 
 const TIMEOUT_MS = 10_000;
 const MEDIA_PAGE_SIZE = 100;
-// Per-account /media paging cap. Env-overridable for the deep backfill; the cron
-// (no env) uses the default. 60 * 100 = up to 6,000 recent media/account.
-const MAX_PAGES_PER_ACCOUNT = Number(process.env.IG_BACKFILL_MAX_PAGES) || 60;
-// Stop paging once media is older than this window (cron polls 60d; pad it).
-// Env-overridable for the deep backfill; default unchanged at 90.
-const POLL_WINDOW_DAYS = Number(process.env.IG_BACKFILL_WINDOW_DAYS) || 90;
+// Per-account /media paging cap. Forward cron uses the shallow default; the deep
+// backfill raises it via env. 8 * 100 = up to 800 newest media/account.
+const MAX_PAGES_PER_ACCOUNT = Number(process.env.IG_BACKFILL_MAX_PAGES) || 8;
+// Stop paging once media is older than this window. Forward default 21d keeps the
+// build fast + captures fresh posts; the deep backfill raises it via env.
+const POLL_WINDOW_DAYS = Number(process.env.IG_BACKFILL_WINDOW_DAYS) || 21;
 // Account-discovery (me/accounts) pagination guard — intentionally fixed (NOT the
 // deep-paging cap). 38 IG accounts on prod fit well within 25 pages of 100; this
 // must not balloon when IG_BACKFILL_MAX_PAGES is raised for media paging.

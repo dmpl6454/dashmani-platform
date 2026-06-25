@@ -41,16 +41,21 @@ import {
 // registry never polls this provider, and fetchBatch returns an all-error map
 // without touching the network.
 //
-// ── ENV-OVERRIDABLE PAGING DEPTH (for a one-time deep historical backfill) ──
-//   FB_BACKFILL_MAX_PAGES   — /published_posts pages per Page (default 8; backfill ↑)
-//   FB_BACKFILL_WINDOW_DAYS — stop paging once a post is older than this (default 90)
-// With neither set, the cron uses the shallow defaults that keep up with fresh posts
-// without burning the shared ~200-call/hr Graph budget.
+// ── ENV-OVERRIDABLE PAGING DEPTH ─────────────────────────────────────────────
+//   FB_BACKFILL_MAX_PAGES   — /published_posts pages per Page (forward default 6; backfill ↑)
+//   FB_BACKFILL_WINDOW_DAYS — stop paging once a post is older than this (forward default 21)
+// The forward 6h cron uses these SHALLOW defaults so buildPostMap() finishes fast
+// and the harvest (the only thing Link Search needs) runs promptly every cycle —
+// see the matching rationale in instagram.provider.ts (the 90-day window made the
+// map build page firehose feeds 20+ pages each, starving the harvest on the 2GB
+// box and burning Meta's shared ~200-call/hr budget). Deep history was never
+// reachable anyway (~1% resolve, a Meta design limit). A one-time deep backfill
+// raises both via env.
 
 const TIMEOUT_MS = 10_000;
 const PAGE_FEED_SIZE = 100;
-const MAX_FEED_PAGES_PER_PAGE = Number(process.env.FB_BACKFILL_MAX_PAGES) || 8;
-const POLL_WINDOW_DAYS = Number(process.env.FB_BACKFILL_WINDOW_DAYS) || 90;
+const MAX_FEED_PAGES_PER_PAGE = Number(process.env.FB_BACKFILL_MAX_PAGES) || 6;
+const POLL_WINDOW_DAYS = Number(process.env.FB_BACKFILL_WINDOW_DAYS) || 21;
 const MAX_PAGE_DISCOVERY_PAGES = 25; // fixed: 87 managed Pages fit in <1 page of 100
 // Insight metrics we request per post. Split into two batches by validity profile so
 // one post type's invalid metric can't 400 the other batch.

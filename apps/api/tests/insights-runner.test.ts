@@ -99,6 +99,16 @@ describe("triggerInsightsRun — happy path", () => {
     expect(vi.mocked(runSocialInsightsRefresh)).toHaveBeenCalledTimes(1);
   });
 
+  it("passes {harvestOnly:true} for manual trigger — skips metric sweep", () => {
+    triggerInsightsRun("manual");
+    expect(vi.mocked(runSocialInsightsRefresh)).toHaveBeenCalledWith({ harvestOnly: true });
+  });
+
+  it("passes {harvestOnly:false} for scheduled trigger — runs full metric sweep", () => {
+    triggerInsightsRun("scheduled");
+    expect(vi.mocked(runSocialInsightsRefresh)).toHaveBeenCalledWith({ harvestOnly: false });
+  });
+
   it("transitions to extracting after harvest resolves", async () => {
     triggerInsightsRun();
 

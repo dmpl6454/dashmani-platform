@@ -1,5 +1,5 @@
 "use client";
-import { useState, useMemo, useRef, useEffect } from "react";
+import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import Link from "next/link";
 import {
   ArrowLeft, Search, Link2, Layers, CopyMinus, Globe, Users,
@@ -35,8 +35,11 @@ export default function LinkSearchPage() {
   const { data, isLoading, mutate: mutateLinkSearch } = useLinkSearch(submitted);
   const { data: suggestions } = useEntitySuggestions(q);
 
+  // Stable callback — SWR's mutate is referentially stable, so this never
+  // changes identity and won't re-fire the hook's mount-probe effect on typing.
+  const onEnrichmentComplete = useCallback(() => { mutateLinkSearch(); }, [mutateLinkSearch]);
   const { status: refreshStatus, phase: refreshPhase, triggerRefresh, dismiss: dismissRefresh } =
-    useInsightsRefresh({ onComplete: () => { mutateLinkSearch(); } });
+    useInsightsRefresh({ onComplete: onEnrichmentComplete });
 
   // Close the suggestion dropdown on outside click.
   useEffect(() => {
@@ -167,7 +170,7 @@ export default function LinkSearchPage() {
           <div className="space-y-2">
             {/* Success banner */}
             {refreshStatus === "success" && (
-              <div className="rounded-xl border border-sage/30 bg-sage/5 px-4 py-2.5 flex items-center gap-2">
+              <div role="status" aria-live="polite" className="rounded-xl border border-sage/30 bg-sage/5 px-4 py-2.5 flex items-center gap-2">
                 <Info className="h-4 w-4 text-sage shrink-0" />
                 <p className="text-xs text-ink flex-1">
                   Enrichment complete. New posts are now searchable.
@@ -185,7 +188,7 @@ export default function LinkSearchPage() {
 
             {/* Error banner */}
             {refreshStatus === "error" && (
-              <div className="rounded-xl border border-terra/30 bg-terra/5 px-4 py-2.5 flex items-start gap-2">
+              <div role="alert" aria-live="assertive" className="rounded-xl border border-terra/30 bg-terra/5 px-4 py-2.5 flex items-start gap-2">
                 <AlertTriangle className="h-4 w-4 text-terra shrink-0 mt-0.5" />
                 <p className="text-xs text-ink flex-1">
                   Couldn&rsquo;t refresh just now — the Instagram/Facebook API may be rate-limited or temporarily unavailable.

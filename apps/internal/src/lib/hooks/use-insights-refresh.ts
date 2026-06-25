@@ -27,6 +27,15 @@ export function useInsightsRefresh({ onComplete }: UseInsightsRefreshOptions = {
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const mountedRef = useRef(true);
 
+  // Hold the latest onComplete in a ref so the callback chain (applyState →
+  // pollStatus → startPolling) stays referentially stable across renders.
+  // Without this, an inline onComplete recreated each render would cascade to
+  // an unstable startPolling and re-fire the mount-probe effect on every keystroke.
+  const onCompleteRef = useRef(onComplete);
+  useEffect(() => {
+    onCompleteRef.current = onComplete;
+  }, [onComplete]);
+
   useEffect(() => {
     mountedRef.current = true;
     return () => {
@@ -61,7 +70,7 @@ export function useInsightsRefresh({ onComplete }: UseInsightsRefreshOptions = {
           } else {
             setStatus("success");
             setErrorMsg(null);
-            onComplete?.();
+            onCompleteRef.current?.();
           }
         } else {
           // Idle on initial mount probe — not running, nothing to show.
@@ -70,11 +79,12 @@ export function useInsightsRefresh({ onComplete }: UseInsightsRefreshOptions = {
         }
       }
     },
-    [onComplete, stopPolling],
+    [stopPolling],
   );
 
   const pollStatus = useCallback(async () => {
     try {
+      // GET /status envelope: data IS the RunState.
       const res = await apiFetch<{ data: RunState }>("/admin/insights/status");
       applyState(res.data);
     } catch (err) {
@@ -93,7 +103,15 @@ export function useInsightsRefresh({ onComplete }: UseInsightsRefreshOptions = {
     pollIntervalRef.current = setInterval(pollStatus, 4_000);
   }, [pollStatus, stopPolling]);
 
-  // On mount: one status check — if a run is already in progress, start polling.
+  // Keep a stable ref to startPolling so the mount-probe effect can run
+  // exactly once on mount without depending on (and re-firing for) it.
+  const startPollingRef = useRef(startPolling);
+  useEffect(() => {
+    startPollingRef.current = startPolling;
+  }, [startPolling]);
+
+  // On mount: exactly ONE status check — if a run is already in progress,
+  // start polling. Empty deps → runs once; never re-fires on search-box typing.
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -104,7 +122,7 @@ export function useInsightsRefresh({ onComplete }: UseInsightsRefreshOptions = {
           wasRunningRef.current = true;
           setStatus("running");
           setPhase(res.data.phase);
-          startPolling();
+          startPollingRef.current();
         }
       } catch {
         // Silently ignore — we'll just start in idle
@@ -113,7 +131,7 @@ export function useInsightsRefresh({ onComplete }: UseInsightsRefreshOptions = {
     return () => {
       cancelled = true;
     };
-  }, [startPolling]);
+  }, []);
 
   // Cleanup on unmount.
   useEffect(() => {
@@ -130,13 +148,16 @@ export function useInsightsRefresh({ onComplete }: UseInsightsRefreshOptions = {
     wasRunningRef.current = true;
 
     try {
-      const res = await apiFetch<{ data: RunState }>("/admin/insights/refresh", {
-        method: "POST",
-        body: JSON.stringify({}),
-      });
+      // POST envelope nests the RunState at data.state — data itself is
+      // { started, running, state } and has no phase/lastError of its own.
+      const res = await apiFetch<{ data: { started: boolean; running: boolean; state: RunState } }>(
+        "/admin/insights/refresh",
+        { method: "POST", body: JSON.stringify({}) },
+      );
       if (!mountedRef.current) return;
-      // If already running or just started — begin polling.
-      applyState(res.data, true);
+      // Apply the real RunState (data.state) so the phase shows and a
+      // finished+errored state is classified as error, not success.
+      applyState(res.data.state, true);
       if (res.data.running) {
         startPolling();
       }

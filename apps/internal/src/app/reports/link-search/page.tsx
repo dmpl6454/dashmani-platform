@@ -292,15 +292,17 @@ export default function LinkSearchPage() {
                 )}
 
                 <p className="text-ink-4 pt-0.5 border-t border-indigo/10 mt-1">
-                  Instagram &amp; Facebook can only be searched from when enrichment began — they don&rsquo;t allow
-                  looking up old posts by link. Opaque <span className="font-mono text-[10px]">facebook.com/share/</span> links can&rsquo;t be matched to a post.
+                  Newly submitted posts become searchable within a few hours; older posts are added gradually as enrichment
+                  works through the backlog. Opaque <span className="font-mono text-[10px]">facebook.com/share/</span> links
+                  (with no post id) can&rsquo;t be matched to a post.
                 </p>
 
                 {/* Plain-language explainer */}
                 <p className="text-ink-4 pt-0.5">
-                  Enrichment reads captions from the Instagram &amp; Facebook accounts we manage and tags who&rsquo;s in each post,
-                  so you can search by name. New posts become searchable automatically within a few hours — use Refresh to pull
-                  the latest now. A full pass usually takes a few minutes.
+                  Enrichment reads each post&rsquo;s caption and tags who&rsquo;s in it, so you can search by name. YouTube and
+                  Facebook are read directly from each public post; Instagram is read from the accounts we manage. New posts
+                  become searchable automatically within a few hours — use Refresh to pull the latest now. A full pass usually
+                  takes a few minutes.
                 </p>
               </div>
             </div>

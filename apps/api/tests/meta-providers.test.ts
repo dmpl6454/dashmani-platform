@@ -490,10 +490,12 @@ describe("facebookProvider", () => {
   });
 
   // ── Public-reel scraper FALLBACK (covers reels we don't administer) ──────────
-  // A ~60KB reel HTML fixture carrying the engagement keys the live page embeds.
-  function scrapedReelHtml(views: number, reactions: number, comments: number): string {
+  // A ~60KB reel HTML fixture carrying the engagement keys + og:description the
+  // live page embeds.
+  function scrapedReelHtml(views: number, reactions: number, comments: number, caption = "Some caption text"): string {
     return [
       "<html><head>",
+      `<meta property="og:description" content="${caption}" />`,
       `"reaction_count":{"count":${reactions},"is_empty":false}`,
       `"total_comment_count":${comments}`,
       // carousel noise that must NOT be read as the view count:
@@ -505,11 +507,11 @@ describe("facebookProvider", () => {
     ].join("");
   }
 
-  it("falls back to the scraper for a not_found reel → upgrades to ok with scraped metrics", async () => {
+  it("falls back to the scraper for a not_found reel → upgrades to ok with scraped metrics + caption", async () => {
     process.env.META_SYSTEM_USER_TOKEN = FAKE_TOKEN;
     process.env.FB_SCRAPER_ENABLED = "1"; // enable the fallback for this test
     setFbGraphFetch(ownedPageGraph() as unknown as GraphFetchFn); // graph has no matching post → not_found
-    const scraperFetch = vi.fn(async () => new Response(scrapedReelHtml(13547, 264, 8), { status: 200 }));
+    const scraperFetch = vi.fn(async () => new Response(scrapedReelHtml(13547, 264, 8, "Kriti Sanon at the event"), { status: 200 }));
     setFbScraperFetch(scraperFetch as unknown as typeof fetch);
 
     const res = await facebookProvider.fetchBatch([target("l1", "https://facebook.com/reel/888777", "888777")]);
@@ -521,6 +523,28 @@ describe("facebookProvider", () => {
       likes: 264,
       comments: 8,
       shares: null, // not exposed by the public reel HTML
+      caption: "Kriti Sanon at the event", // makes it name-searchable in Link Search
+    });
+  });
+
+  it("a caption-only scrape (zero metrics) still upgrades to ok so the reel is name-searchable", async () => {
+    process.env.META_SYSTEM_USER_TOKEN = FAKE_TOKEN;
+    process.env.FB_SCRAPER_ENABLED = "1";
+    setFbGraphFetch(ownedPageGraph() as unknown as GraphFetchFn);
+    // A reel HTML with a caption but no engagement keys at all.
+    const captionOnly = [
+      "<html><head>",
+      '<meta property="og:description" content="Janhvi Kapoor spotted at Bandra" />',
+      "</head><body>", "x".repeat(60_000), "</body></html>",
+    ].join("");
+    setFbScraperFetch(vi.fn(async () => new Response(captionOnly, { status: 200 })) as unknown as typeof fetch);
+
+    const res = await facebookProvider.fetchBatch([target("l1", "https://facebook.com/reel/888777", "888777")]);
+    expect(res.get("l1")).toMatchObject({
+      ok: true,
+      status: "ok",
+      views: null,
+      caption: "Janhvi Kapoor spotted at Bandra",
     });
   });
 

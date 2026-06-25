@@ -1,11 +1,12 @@
 "use client";
-import { useState, useMemo, useRef, useEffect } from "react";
+import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import Link from "next/link";
 import {
   ArrowLeft, Search, Link2, Layers, CopyMinus, Globe, Users,
-  Info, AlertTriangle, ExternalLink, X as CloseIcon,
+  Info, AlertTriangle, ExternalLink, X as CloseIcon, RefreshCw,
 } from "lucide-react";
 import { useLinkSearch, useEntitySuggestions } from "@/lib/hooks/use-link-search";
+import { useInsightsRefresh } from "@/lib/hooks/use-insights-refresh";
 import { usePageTitle } from "@/lib/hooks/use-page-title";
 
 function fmtDate(d: string) {
@@ -17,6 +18,12 @@ function cap(s: string) {
   return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
 }
 
+function phaseLabel(phase: "idle" | "harvesting" | "extracting"): string {
+  if (phase === "harvesting") return "Reading Instagram & Facebook captions…";
+  if (phase === "extracting") return "Tagging people & topics…";
+  return "Starting…";
+}
+
 export default function LinkSearchPage() {
   usePageTitle("Link Search");
 
@@ -25,8 +32,14 @@ export default function LinkSearchPage() {
   const [showSuggest, setShowSuggest] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
 
-  const { data, isLoading } = useLinkSearch(submitted);
+  const { data, isLoading, mutate: mutateLinkSearch } = useLinkSearch(submitted);
   const { data: suggestions } = useEntitySuggestions(q);
+
+  // Stable callback — SWR's mutate is referentially stable, so this never
+  // changes identity and won't re-fire the hook's mount-probe effect on typing.
+  const onEnrichmentComplete = useCallback(() => { mutateLinkSearch(); }, [mutateLinkSearch]);
+  const { status: refreshStatus, phase: refreshPhase, triggerRefresh, dismiss: dismissRefresh } =
+    useInsightsRefresh({ onComplete: onEnrichmentComplete });
 
   // Close the suggestion dropdown on outside click.
   useEffect(() => {
@@ -152,33 +165,102 @@ export default function LinkSearchPage() {
         const rows = ORDER
           .filter((p) => bp[p])
           .map((p) => ({ p, ...bp[p]! }));
+        const isRunning = refreshStatus === "running";
         return (
-          <div className="rounded-xl border border-indigo/20 bg-indigo-soft px-4 py-3 flex items-start gap-3">
-            <Info className="h-4 w-4 text-indigo shrink-0 mt-0.5" />
-            <div className="text-xs text-ink leading-relaxed space-y-1.5 w-full">
-              <p>
-                Searching <span className="font-semibold">{searchable.toLocaleString()}</span> searchable
-                {submitted > 0 && <> of <span className="font-semibold">{submitted.toLocaleString()}</span> submitted</>} links.
-              </p>
-              <ul className="text-ink-4 space-y-1">
-                {rows.map(({ p, searchable: s, submitted: sub, since }) => (
-                  <li key={p} className="flex items-baseline gap-1.5 flex-wrap">
-                    <span className="font-medium text-ink-3 w-20 shrink-0">{LABEL[p] ?? p}</span>
-                    <span>
-                      <span className="font-semibold text-ink">{(s ?? 0).toLocaleString()}</span>
-                      {sub != null && sub > 0 && <> of {sub.toLocaleString()}</>} searchable
-                    </span>
-                    {p === "youtube" && <span className="text-ink-4">· no date limit</span>}
-                    {(p === "instagram" || p === "facebook") && since && (
-                      <span className="text-ink-4">· since {fmtDate(since)}</span>
-                    )}
-                  </li>
-                ))}
-              </ul>
-              <p className="text-ink-4 pt-0.5 border-t border-indigo/10 mt-1">
-                Instagram &amp; Facebook can only be searched from when enrichment began — they don&rsquo;t allow
-                looking up old posts by link. Opaque <span className="font-mono text-[10px]">facebook.com/share/</span> links can&rsquo;t be matched to a post.
-              </p>
+          <div className="space-y-2">
+            {/* Success banner */}
+            {refreshStatus === "success" && (
+              <div role="status" aria-live="polite" className="rounded-xl border border-sage/30 bg-sage/5 px-4 py-2.5 flex items-center gap-2">
+                <Info className="h-4 w-4 text-sage shrink-0" />
+                <p className="text-xs text-ink flex-1">
+                  Enrichment complete. New posts are now searchable.
+                </p>
+                <button
+                  type="button"
+                  onClick={dismissRefresh}
+                  className="text-ink-4 hover:text-ink transition-colors shrink-0"
+                  aria-label="Dismiss"
+                >
+                  <CloseIcon className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            )}
+
+            {/* Error banner */}
+            {refreshStatus === "error" && (
+              <div role="alert" aria-live="assertive" className="rounded-xl border border-terra/30 bg-terra/5 px-4 py-2.5 flex items-start gap-2">
+                <AlertTriangle className="h-4 w-4 text-terra shrink-0 mt-0.5" />
+                <p className="text-xs text-ink flex-1">
+                  Couldn&rsquo;t refresh just now — the Instagram/Facebook API may be rate-limited or temporarily unavailable.
+                  Your existing results are unaffected, and enrichment keeps running automatically. Try again in a few minutes.
+                </p>
+                <button
+                  type="button"
+                  onClick={dismissRefresh}
+                  className="text-ink-4 hover:text-ink transition-colors shrink-0"
+                  aria-label="Dismiss"
+                >
+                  <CloseIcon className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            )}
+
+            {/* Coverage banner */}
+            <div className="rounded-xl border border-indigo/20 bg-indigo-soft px-4 py-3 flex items-start gap-3">
+              <Info className="h-4 w-4 text-indigo shrink-0 mt-0.5" />
+              <div className="text-xs text-ink leading-relaxed space-y-1.5 w-full">
+                {/* Header row with refresh button */}
+                <div className="flex items-start justify-between gap-3">
+                  <p>
+                    Searching <span className="font-semibold">{searchable.toLocaleString()}</span> searchable
+                    {submitted > 0 && <> of <span className="font-semibold">{submitted.toLocaleString()}</span> submitted</>} links.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={triggerRefresh}
+                    disabled={isRunning}
+                    className="shrink-0 flex items-center gap-1.5 rounded-lg border border-indigo/30 bg-white/60 px-2.5 py-1 text-[11px] font-medium text-indigo hover:bg-white/90 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+                    aria-label="Refresh enrichment"
+                  >
+                    <RefreshCw className={`h-3 w-3 ${isRunning ? "animate-spin" : ""}`} />
+                    Refresh enrichment
+                  </button>
+                </div>
+
+                {/* Live phase text while running */}
+                {isRunning && (
+                  <p className="text-indigo font-medium" aria-live="polite">
+                    {phaseLabel(refreshPhase)}
+                  </p>
+                )}
+
+                <ul className="text-ink-4 space-y-1">
+                  {rows.map(({ p, searchable: s, submitted: sub, since }) => (
+                    <li key={p} className="flex items-baseline gap-1.5 flex-wrap">
+                      <span className="font-medium text-ink-3 w-20 shrink-0">{LABEL[p] ?? p}</span>
+                      <span>
+                        <span className="font-semibold text-ink">{(s ?? 0).toLocaleString()}</span>
+                        {sub != null && sub > 0 && <> of {sub.toLocaleString()}</>} searchable
+                      </span>
+                      {p === "youtube" && <span className="text-ink-4">· no date limit</span>}
+                      {(p === "instagram" || p === "facebook") && since && (
+                        <span className="text-ink-4">· since {fmtDate(since)}</span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+                <p className="text-ink-4 pt-0.5 border-t border-indigo/10 mt-1">
+                  Instagram &amp; Facebook can only be searched from when enrichment began — they don&rsquo;t allow
+                  looking up old posts by link. Opaque <span className="font-mono text-[10px]">facebook.com/share/</span> links can&rsquo;t be matched to a post.
+                </p>
+
+                {/* Plain-language explainer */}
+                <p className="text-ink-4 pt-0.5">
+                  Enrichment reads captions from the Instagram &amp; Facebook accounts we manage and tags who&rsquo;s in each post,
+                  so you can search by name. New posts become searchable automatically within a few hours — use Refresh to pull
+                  the latest now. A full pass usually takes a few minutes.
+                </p>
+              </div>
             </div>
           </div>
         );

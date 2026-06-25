@@ -77,6 +77,24 @@ function snapshotDateStr(date: Date | unknown): string {
   return date instanceof Date ? date.toISOString().split("T")[0] : String(date);
 }
 
+/** How trustworthy the follower number is for a given account. */
+export type SyncState = "LIVE" | "STALE" | "MANUAL";
+
+/**
+ * An account is LIVE when its lastSyncedAt is within the last 48 hours.
+ * We use a raw Date-diff here (not the IST date-key helpers) because this is a
+ * duration check ("was this synced recently?"), not a calendar-day boundary
+ * check. The IST helpers exist to avoid UTC-vs-IST day flips when comparing
+ * YYYY-MM-DD date keys; a millisecond duration comparison is inherently
+ * timezone-agnostic and is the correct tool for freshness windows.
+ */
+const LIVE_WINDOW_MS = 48 * 60 * 60 * 1000; // 48 hours
+
+function computeSyncState(lastSyncedAt: Date | null): SyncState {
+  if (lastSyncedAt === null) return "MANUAL";
+  return Date.now() - lastSyncedAt.getTime() <= LIVE_WINDOW_MS ? "LIVE" : "STALE";
+}
+
 export interface GrowthOverviewAccount {
   accountId: string;
   displayName: string;
@@ -86,12 +104,28 @@ export interface GrowthOverviewAccount {
   delta: number;
   deltaPct: number | null;
   snapshots: Array<{ date: string; followerCount: number }>;
+  /** ISO string of the last API sync, or null if never synced (manual entry). */
+  lastSyncedAt: string | null;
+  /** LIVE = synced within 48h; STALE = synced but older than 48h; MANUAL = never synced. */
+  syncState: SyncState;
 }
 
 export interface GrowthOverview {
   totalFollowers: number;
   totalDelta: number;
   accountCount: number;
+  /** Accounts synced via API within the last 48 hours. */
+  liveCount: number;
+  /** Accounts synced via API but more than 48 hours ago. */
+  staleCount: number;
+  /** Accounts with no API sync record (manual entry or unsupported platform). */
+  manualCount: number;
+  /** Sum of latest follower counts for LIVE accounts. */
+  liveFollowers: number;
+  /** Sum of latest follower counts for STALE accounts. */
+  staleFollowers: number;
+  /** Sum of latest follower counts for MANUAL accounts. */
+  manualFollowers: number;
   accounts: GrowthOverviewAccount[];
   topMovers: Array<{
     accountId: string;
@@ -143,6 +177,8 @@ export async function getGrowthOverview(days = 30): Promise<GrowthOverview> {
       if (lastIndex % stride !== 0) kept.push(snaps[lastIndex]);
     }
 
+    const syncState = computeSyncState(account.lastSyncedAt);
+
     return {
       accountId: account.id,
       displayName: account.displayName,
@@ -155,11 +191,27 @@ export async function getGrowthOverview(days = 30): Promise<GrowthOverview> {
         date: snapshotDateStr(s.date),
         followerCount: s.followerCount,
       })),
+      lastSyncedAt: account.lastSyncedAt ? account.lastSyncedAt.toISOString() : null,
+      syncState,
     };
   });
 
   const totalFollowers = overviewAccounts.reduce((sum, a) => sum + a.latest, 0);
   const totalDelta = overviewAccounts.reduce((sum, a) => sum + a.delta, 0);
+
+  const liveCount = overviewAccounts.filter((a) => a.syncState === "LIVE").length;
+  const staleCount = overviewAccounts.filter((a) => a.syncState === "STALE").length;
+  const manualCount = overviewAccounts.filter((a) => a.syncState === "MANUAL").length;
+
+  const liveFollowers = overviewAccounts
+    .filter((a) => a.syncState === "LIVE")
+    .reduce((sum, a) => sum + a.latest, 0);
+  const staleFollowers = overviewAccounts
+    .filter((a) => a.syncState === "STALE")
+    .reduce((sum, a) => sum + a.latest, 0);
+  const manualFollowers = overviewAccounts
+    .filter((a) => a.syncState === "MANUAL")
+    .reduce((sum, a) => sum + a.latest, 0);
 
   const topMovers = [...overviewAccounts]
     .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))
@@ -176,6 +228,12 @@ export async function getGrowthOverview(days = 30): Promise<GrowthOverview> {
     totalFollowers,
     totalDelta,
     accountCount: overviewAccounts.length,
+    liveCount,
+    staleCount,
+    manualCount,
+    liveFollowers,
+    staleFollowers,
+    manualFollowers,
     accounts: overviewAccounts,
     topMovers,
   };

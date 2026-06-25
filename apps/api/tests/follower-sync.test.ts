@@ -173,6 +173,15 @@ describe("syncAllFollowerCounts — Tier 3: public-API fallback", () => {
     const igHandlesArg: string[] = mockFetchPublicIg.mock.calls[0][0];
     expect(igHandlesArg).toContain("bollywoodsocietyy");
 
+    // The Tier-1 IG scraper (fetchInstagramFollowers → IG web_profile_info
+    // endpoint) must NOT be called in the bulk path: a map miss now falls
+    // straight through to Tier-3 business_discovery, no logged-out scrape.
+    const fetchMock = global.fetch as ReturnType<typeof vi.fn>;
+    const hitProfileInfo = fetchMock.mock.calls.some(([url]) =>
+      String(url).includes("web_profile_info"),
+    );
+    expect(hitProfileInfo).toBe(false);
+
     // Should have written 4,600,000 to the DB
     expect(mockAccountUpdate).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -183,6 +192,49 @@ describe("syncAllFollowerCounts — Tier 3: public-API fallback", () => {
     expect(mockSnapshotCreate).toHaveBeenCalledOnce();
 
     expect(result.updated).toBe(1);
+    expect(result.failed).toBe(0);
+  });
+
+  it("does NOT call the Tier-1 IG scraper for any IG account during the bulk sync (map-then-Tier-3 only)", async () => {
+    // Several non-administered IG accounts. Pre-fix, each would have invoked
+    // fetchInstagramFollowers (a logged-out IG scrape that 429s) + a sleep,
+    // adding ~9 min before Tier-3 ran. Post-fix, the scraper is never called
+    // in the bulk path — accounts go straight to Tier-3 business_discovery.
+    const accounts = Array.from({ length: 3 }, (_, i) =>
+      makeAccount({
+        id: `acc-ig-noscrape-${i}`,
+        handle: `noscrape${i}`,
+        profileUrl: `https://www.instagram.com/noscrape${i}/`,
+        platformSlug: "instagram",
+      }),
+    );
+    mockFindMany.mockResolvedValue(accounts);
+
+    // Tier-1 map NON-EMPTY (Meta reachable → Tier-3 allowed) but missing all.
+    mockFetchIgMap.mockResolvedValue(
+      new Map([["someoneelse", { followers: 1, following: 1, posts: 1 }]]),
+    );
+    // Tier-3 resolves all three.
+    mockFetchPublicIg.mockResolvedValue(
+      new Map([
+        ["noscrape0", { followers: 1000, mediaCount: 10 }],
+        ["noscrape1", { followers: 2000, mediaCount: 20 }],
+        ["noscrape2", { followers: 3000, mediaCount: 30 }],
+      ]),
+    );
+
+    const result = await syncAllFollowerCounts();
+
+    // Scraper endpoint never hit in the bulk path.
+    const fetchMock = global.fetch as ReturnType<typeof vi.fn>;
+    const scraperCalls = fetchMock.mock.calls.filter(([url]) =>
+      String(url).includes("web_profile_info"),
+    );
+    expect(scraperCalls.length).toBe(0);
+
+    // All three resolved via Tier-3 instead.
+    expect(mockFetchPublicIg).toHaveBeenCalledOnce();
+    expect(result.updated).toBe(3);
     expect(result.failed).toBe(0);
   });
 

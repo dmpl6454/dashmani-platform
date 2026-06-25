@@ -333,13 +333,19 @@ export async function syncAllFollowerCounts() {
         username = account.profileUrl.match(/instagram\.com\/([^/?]+)/)?.[1] || "";
       }
       if (username) {
-        // Graph-first (single batched call, no sleep). Fall back to the scraper.
+        // Graph-first (single batched call, no sleep). The legacy
+        // fetchInstagramFollowers() logged-out scraper is intentionally NOT
+        // called here: IG blocks logged-out scraping, so it can NEVER resolve a
+        // non-administered account — it just 429s (a 30s backoff on the first
+        // hit + a 5s sleep per account), trips igRateLimited, and returns null
+        // for the rest. With ~109 unresolved IG accounts that was ~9+ min of
+        // dead delay BEFORE Tier-3 (business_discovery, the reliable resolver)
+        // even ran. So on a map miss we leave followers=null and let the account
+        // fall through to unresolvedIg → Tier-3. (Mirrors the YouTube branch
+        // below; the scraper stays defined for syncSingleAccountFollowers.)
         const entry = igFollowerMap.get(username.toLowerCase());
         if (entry) {
           followers = entry.followers;
-        } else {
-          followers = await fetchInstagramFollowers(username);
-          await sleep(DELAY_MS);
         }
       }
     } else if (slug === "youtube") {

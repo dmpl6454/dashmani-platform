@@ -96,9 +96,15 @@ export function triggerInsightsRun(
     // Belt-and-suspenders: the async IIFE above already catches everything, but
     // if something truly escapes the inner try/catch, absorb it here so the
     // process never crashes due to an unhandled rejection from this module.
+    // Reset state fully (mirror the inner cleanup) so status never reports a
+    // permanently-"running" run after a last-resort failure.
+    const endMs = Date.now();
     console.error("[insights-runner] unhandled error in background run:", unhandled);
+    state.lastError = unhandled instanceof Error ? unhandled.message : String(unhandled);
     state.running = false;
     state.phase = "idle";
+    state.finishedAt = new Date(endMs).toISOString();
+    state.durationMs = endMs - startMs;
   });
 
   return { started: true, running: true };

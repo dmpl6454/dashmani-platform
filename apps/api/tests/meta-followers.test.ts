@@ -300,21 +300,8 @@ describe("fetchPublicInstagramFollowerMap", () => {
 
   it("happy path: resolves two handles and returns correct followers/mediaCount keyed by lowercased handle", async () => {
     process.env.META_SYSTEM_USER_TOKEN = FAKE_TOKEN;
-    const graph = vi.fn(async (path: string) => {
-      // STEP 1: me/accounts discovery
-      if (path.startsWith("me/accounts")) return DISCOVERY_RESPONSE;
-      // STEP 2: business_discovery per handle
-      if (path === OUR_IG_ID) {
-        // The fn receives path + params; extract the handle from the params.
-        // We let the mock delegate by inspecting the second argument in the real call,
-        // but vi.fn captures args — we'll check via call args below.
-        // Return based on invocation order instead: first call is discovery, rest are per-handle.
-      }
-      return ok({});
-    });
-
-    // More precise mock: inspect params for handle identity.
-    const preciseGraph = vi.fn(async (path: string, params?: Record<string, string | number | undefined>) => {
+    // Mock inspects the `fields` param to dispatch per-handle responses.
+    const graph = vi.fn(async (path: string, params?: Record<string, string | number | undefined>) => {
       if (path.startsWith("me/accounts")) return DISCOVERY_RESPONSE;
       // business_discovery field contains the handle; parse it.
       const fields = params?.fields as string | undefined;
@@ -342,7 +329,7 @@ describe("fetchPublicInstagramFollowerMap", () => {
       }
       throw new Error(`unexpected path=${path} handle=${handle}`);
     });
-    setFollowersGraphFetch(preciseGraph as unknown as GraphFetchFn);
+    setFollowersGraphFetch(graph as unknown as GraphFetchFn);
 
     const map = await fetchPublicInstagramFollowerMap(["salmankhanofficial", "kritisanon"]);
 
@@ -351,7 +338,14 @@ describe("fetchPublicInstagramFollowerMap", () => {
     expect(map.get("kritisanon")).toEqual({ followers: 38000000, mediaCount: 1200 });
     expect(map.size).toBe(2);
     // discovery (1) + 2 per-handle calls = 3 total
-    expect(preciseGraph).toHaveBeenCalledTimes(3);
+    expect(graph).toHaveBeenCalledTimes(3);
+
+    // The discovery call uses a SMALL page limit (=5), NOT 100 — resolving 100
+    // Pages' IG node in one page 500s on the prod token. Assert the first call
+    // (me/accounts) was made with limit: 5.
+    const discoveryCall = graph.mock.calls.find(([p]) => String(p).startsWith("me/accounts"));
+    expect(discoveryCall).toBeDefined();
+    expect((discoveryCall![1] as Record<string, unknown>).limit).toBe(5);
   });
 
   it("HTTP 400 code 110 (Invalid user id / private account) → handle absent from map, no throw, other handles still resolved", async () => {
@@ -480,5 +474,53 @@ describe("fetchPublicInstagramFollowerMap", () => {
     expect(map.size).toBe(0);
     // Only discovery call was made; no per-handle calls.
     expect(graph).toHaveBeenCalledTimes(1);
+  });
+
+  it("discovery pages me/accounts with limit=5 and stops at the FIRST page that has an IG node", async () => {
+    process.env.META_SYSTEM_USER_TOKEN = FAKE_TOKEN;
+    // First me/accounts page has NO IG node but DOES have a paging cursor;
+    // second page (the cursor) yields the IG node. With limit=5 we page through
+    // until we find one. This proves the small-limit discovery still resolves
+    // ourIgId across pages (the prod-500 fix doesn't break pagination).
+    const graph = vi.fn(async (path: string, params?: Record<string, string | number | undefined>) => {
+      if (path === "me/accounts") {
+        // No IG node on page 1, but there's a next cursor.
+        return ok({
+          data: [{ instagram_business_account: undefined }],
+          paging: { next: "me/accounts?after=CURSOR2" },
+        });
+      }
+      if (path === "me/accounts?after=CURSOR2") {
+        // Page 2 has the IG node.
+        return ok({ data: [{ instagram_business_account: { id: OUR_IG_ID } }] });
+      }
+      // STEP 2: business_discovery for the handle, using the resolved OUR_IG_ID.
+      const fields = params?.fields as string | undefined;
+      const handleMatch = fields?.match(/business_discovery\.username\(([^)]+)\)/);
+      const handle = handleMatch?.[1];
+      if (path === OUR_IG_ID && handle === "pagedhandle") {
+        return ok({
+          business_discovery: {
+            username: "pagedhandle",
+            followers_count: 99,
+            media_count: 7,
+            id: "zzz",
+          },
+        });
+      }
+      throw new Error(`unexpected path=${path} handle=${handle}`);
+    });
+    setFollowersGraphFetch(graph as unknown as GraphFetchFn);
+
+    const map = await fetchPublicInstagramFollowerMap(["pagedhandle"]);
+    expect(map.get("pagedhandle")).toEqual({ followers: 99, mediaCount: 7 });
+    expect(map.size).toBe(1);
+
+    // The FIRST discovery call (me/accounts, before the cursor) used limit: 5.
+    const firstDiscovery = graph.mock.calls.find(([p]) => p === "me/accounts");
+    expect(firstDiscovery).toBeDefined();
+    expect((firstDiscovery![1] as Record<string, unknown>).limit).toBe(5);
+    // Calls: page 1 + page 2 (cursor) + 1 per-handle = 3.
+    expect(graph).toHaveBeenCalledTimes(3);
   });
 });

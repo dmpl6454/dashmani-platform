@@ -461,6 +461,38 @@ router.get(
   },
 );
 
+// POST /admin/insights/refresh — trigger an on-demand enrichment pass (harvest + extract).
+// Returns 202 when a new run is started, 200 when one is already in flight.
+router.post(
+  "/admin/insights/refresh",
+  authenticate,
+  requirePermission("reports", "view"),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { triggerInsightsRun, getInsightsRunState } = await import("../services/insights-runner");
+      const result = triggerInsightsRun("manual");
+      return success(res, { ...result, state: getInsightsRunState() }, undefined, result.started ? 202 : 200);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// GET /admin/insights/status — poll the current enrichment run state.
+router.get(
+  "/admin/insights/status",
+  authenticate,
+  requirePermission("reports", "view"),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { getInsightsRunState } = await import("../services/insights-runner");
+      return success(res, getInsightsRunState());
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
 // GET /admin/reports/:reportId
 router.get(
   "/admin/reports/:reportId",

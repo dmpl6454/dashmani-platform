@@ -203,10 +203,24 @@ async function loadPageFeed(
         if (!Number.isNaN(t) && t < oldestAllowed) sawOlderThanWindow = true;
       }
     }
-    if (sawOlderThanWindow) return;
+    if (sawOlderThanWindow) {
+      if (process.env.INSIGHTS_DEBUG) {
+        console.log(`[social-insights/facebook] page ${page.id}: paged ${pages} page(s), stopped at window edge`);
+      }
+      return;
+    }
 
     path = res.data.paging?.next ?? null;
     params = undefined; // the paging.next cursor already carries fields + token
+  }
+
+  // Reached the page cap or end of feed without hitting the window edge. Surface the
+  // depth under INSIGHTS_DEBUG so "why wasn't post X harvested?" is answerable without
+  // a code change — a high-volume Page that maxes out MAX_FEED_PAGES_PER_PAGE can't be
+  // paged deeper here (forward coverage stays current; deep history is out of reach).
+  // Default off (no log spam).
+  if (process.env.INSIGHTS_DEBUG) {
+    console.log(`[social-insights/facebook] page ${page.id}: paged ${pages} page(s) (cap ${MAX_FEED_PAGES_PER_PAGE}), feed ${path ? "has more (cap hit)" : "exhausted"}`);
   }
 }
 

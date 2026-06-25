@@ -205,10 +205,24 @@ async function loadAccountMedia(
 
     // Media is returned newest-first; once a page contains anything older than the
     // window there's no point paging further back.
-    if (sawOlderThanWindow) return;
+    if (sawOlderThanWindow) {
+      if (process.env.INSIGHTS_DEBUG) {
+        console.log(`[social-insights/instagram] account ${igUserId}: paged ${pages} page(s), stopped at window edge`);
+      }
+      return;
+    }
 
     path = res.data.paging?.next ?? null;
     params = undefined;
+  }
+
+  // Reached the page cap or end of feed without hitting the window edge. Surface the
+  // depth under INSIGHTS_DEBUG so "why wasn't post X harvested?" is answerable without
+  // a code change — a firehose account that maxes out MAX_PAGES_PER_ACCOUNT can't be
+  // paged deeper (Meta has no fetch-by-shortcode), so older posts are structurally
+  // out of reach. Default off (no log spam).
+  if (process.env.INSIGHTS_DEBUG) {
+    console.log(`[social-insights/instagram] account ${igUserId}: paged ${pages} page(s) (cap ${MAX_PAGES_PER_ACCOUNT}), feed ${path ? "has more (cap hit)" : "exhausted"}`);
   }
 }
 

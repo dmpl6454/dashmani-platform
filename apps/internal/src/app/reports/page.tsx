@@ -1,7 +1,7 @@
 "use client";
 import { memo, useCallback, useState, useEffect } from "react";
 import Link from "next/link";
-import { Users, FileText, Link2, Calendar, Filter, X, TrendingUp, Trophy, Trash2, AlertTriangle, BarChart2, ArrowUpDown, ArrowUp, ArrowDown, Eye, Heart, MessageCircle, Youtube, Instagram, Facebook, Clock } from "lucide-react";
+import { Users, FileText, Link2, Calendar, Filter, X, TrendingUp, Trophy, Trash2, AlertTriangle, BarChart2, ArrowUpDown, ArrowUp, ArrowDown, Eye, Heart, MessageCircle, Youtube, Instagram, Facebook } from "lucide-react";
 import { useTopLinks } from "@/lib/hooks/use-reports";
 import { useAdminReports, useReportSummary, useInsightsSummary } from "@/lib/hooks/use-reports";
 import { useEmployees } from "@/lib/hooks/use-employees";
@@ -366,7 +366,8 @@ export default function ReportsPage() {
   const engagementLikes = insights?.totalLikes ?? 0;
   const engagementComments = insights?.totalComments ?? 0;
   const hasInsights = !insightsLoading && engagementViews > 0;
-  function fmtCompact(n: number): string {
+  function fmtCompact(n: number | null | undefined): string {
+    if (n == null) return "—";
     if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
     if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
     return String(n);
@@ -534,7 +535,7 @@ export default function ReportsPage() {
       {/* Top Links panels — YouTube, Instagram, Facebook. One shared window toggle
           on the first rendered panel; each panel reuses the same /admin/reports/top-links
           endpoint. YouTube ranks by views; Instagram/Facebook by likes+comments.
-          A platform with no enriched metrics shows an honest empty/pending state. */}
+          A platform with no links in the active window simply hides its panel. */}
       {(() => {
         const PLATFORMS = [
           {
@@ -543,7 +544,8 @@ export default function ReportsPage() {
             Icon: Youtube,
             iconBg: "bg-red-50",
             iconColor: "text-red-500",
-            metric: "views" as const, // primary sort metric → drives the empty-vs-pending decision
+            metric: "views" as const, // primary sort metric (YouTube sorts by views, others by engagement)
+            showViews: true,
             data: (topYouTubeData as any)?.data ?? [],
             loading: topYouTubeLoading,
             note: "YouTube · updates every 6h",
@@ -555,6 +557,7 @@ export default function ReportsPage() {
             iconBg: "bg-fuchsia-50",
             iconColor: "text-fuchsia-600",
             metric: "engagement" as const,
+            showViews: false,
             data: (topInstagramData as any)?.data ?? [],
             loading: topInstagramLoading,
             note: "Instagram · likes + comments · updates every 6h",
@@ -566,30 +569,24 @@ export default function ReportsPage() {
             iconBg: "bg-blue-50",
             iconColor: "text-blue-600",
             metric: "engagement" as const,
+            showViews: true,
             data: (topFacebookData as any)?.data ?? [],
             loading: topFacebookLoading,
             note: "Facebook · likes + comments · updates every 6h",
-            // Facebook content is currently blocked on Meta App Review
-            // (pages_read_engagement not yet honored), so it has no enriched
-            // metrics. Show an honest pending state instead of hiding it — the
-            // same panel auto-fills once enrichment lights up. No code change.
-            pendingWhenEmpty: true,
           },
         ];
 
-        // Anchor the shared window toggle to the first panel that renders content
-        // (or the FB pending panel if nothing else has data).
-        const willRender = PLATFORMS.filter((p) => p.loading || p.data.length > 0 || p.pendingWhenEmpty);
+        // Anchor the shared window toggle to the first panel that renders content.
+        const willRender = PLATFORMS.filter((p) => p.loading || p.data.length > 0);
         const toggleAnchorKey = willRender[0]?.key;
 
         return (
           <div className="space-y-6">
             {PLATFORMS.map((p) => {
-              const isPending = p.pendingWhenEmpty && !p.loading && p.data.length === 0;
-              // YouTube/Instagram: hide entirely when empty (their data is real-or-nothing).
-              if (!p.loading && p.data.length === 0 && !p.pendingWhenEmpty) return null;
+              // Hide a panel entirely when it has no links in the active window.
+              if (!p.loading && p.data.length === 0) return null;
               const showToggle = p.key === toggleAnchorKey;
-              const showViewsCol = p.metric === "views";
+              const showViewsCol = p.showViews;
               const cols = showViewsCol
                 ? "grid-cols-[1.5rem_1fr_8rem_5rem_5rem_5rem]"
                 : "grid-cols-[1.5rem_1fr_8rem_5rem_5rem]";
@@ -620,14 +617,6 @@ export default function ReportsPage() {
                   </div>
                   {p.loading ? (
                     <div className="px-6 py-4 text-xs text-[#B0B0B0]">Loading…</div>
-                  ) : isPending ? (
-                    <div className="px-6 py-8 flex flex-col items-center gap-2 text-center">
-                      <Clock className="h-7 w-7 text-[#E8E0D0]" />
-                      <p className="text-sm font-medium text-[#1A1A1A]">Facebook insights pending</p>
-                      <p className="text-xs text-[#7A7A7A] max-w-md">
-                        Facebook post data requires Meta App Review approval (the <code className="text-[10px]">pages_read_engagement</code> permission). This panel populates automatically once that&rsquo;s granted — no further setup.
-                      </p>
-                    </div>
                   ) : (
                     <>
                       <div className={`px-6 py-2 grid ${cols} gap-3 text-[10px] font-medium text-[#B0B0B0] uppercase tracking-wide border-b border-[#F5F0E8]`}>

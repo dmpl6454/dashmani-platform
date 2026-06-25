@@ -99,8 +99,9 @@ async function buildCoverage(): Promise<LinkSearchResult["coverage"]> {
   //
   // The accuracy fix: a permanently-unsearchable link (FB not_found) must NOT count
   // toward "searchable", and the denominator is "submitted", not "attempted". So a
-  // platform we can't read (FB until App Review) shows e.g. "0 searchable of 18,909
-  // submitted" — never "X of Y enriched" where Y silently grows with failed attempts.
+  // platform with few enriched rows (e.g. FB/IG historical posts beyond the firehose
+  // window) shows e.g. "0 searchable of 18,909 submitted" — never "X of Y enriched"
+  // where Y silently grows with failed attempts.
   const [grouped, sinceByPlatform, submittedByPlatform] = await Promise.all([
     prisma.linkContent.groupBy({
       by: ["platform", "status"],

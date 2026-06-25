@@ -22,6 +22,14 @@ const PAGE_SIZE = 100;
 // Account-discovery pagination guard. 38 IG accounts / 87 FB Pages on prod fit
 // comfortably within 25 pages of 100 — this is a safety bound, not a deep-paging cap.
 const MAX_DISCOVERY_PAGES = 25;
+// Small page size used ONLY by fetchPublicInstagramFollowerMap's "find one IG node"
+// discovery. With the prod token's 87 administered Pages, asking Meta to resolve the
+// instagram_business_account node for 100 Pages in a single page returns HTTP 500
+// after ~30s (verified live); limit=5 returns 200 in ~2.6s with IG nodes present.
+// We only need the FIRST IG id (the loop breaks at it), so a small page + paging is
+// both faster and avoids the 500. Do NOT raise this — and do NOT apply it to
+// fetchInstagramFollowerMap, which must page ALL administered IG accounts.
+const IG_DISCOVERY_PAGE_LIMIT = 5;
 
 // Injectable Graph fetcher. Defaults to the real implementation; tests swap it via
 // __setGraphFetchForTesting so they need neither a token nor the network.
@@ -230,13 +238,15 @@ export async function fetchPublicInstagramFollowerMap(
 
   // ── Discover ONE administered IG node (the "requesting" node for business_discovery) ──
   // We only need the FIRST id; abort as soon as we find it. Mirrors STEP 1 of
-  // fetchInstagramFollowerMap — same bare-field pattern (no nested sub-selection).
+  // fetchInstagramFollowerMap — same bare-field pattern (no nested sub-selection) —
+  // but with a SMALL page limit: resolving 100 Pages' IG node in one page 500s on
+  // the prod token (87 Pages). limit=5 + paging finds the first IG id fast.
   let ourIgId: string | null = null;
   {
     let path: string | null = "me/accounts";
     let params: Record<string, string | number | undefined> | undefined = {
       fields: "instagram_business_account",
-      limit: PAGE_SIZE,
+      limit: IG_DISCOVERY_PAGE_LIMIT,
     };
     let guard = 0;
 

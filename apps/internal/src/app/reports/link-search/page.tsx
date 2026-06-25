@@ -24,6 +24,24 @@ function phaseLabel(phase: "idle" | "harvesting" | "extracting"): string {
   return "Starting…";
 }
 
+// Debounce a fast-changing value (search input) so we don't fire a query on every
+// keystroke. ~350ms is the sweet spot: snappy but well clear of typing cadence.
+function useDebouncedValue<T>(value: T, delayMs: number): T {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(value), delayMs);
+    return () => clearTimeout(t);
+  }, [value, delayMs]);
+  return debounced;
+}
+
+// Minimum query length before an AUTOMATIC (debounced) search fires. Single
+// characters would match too broadly and waste a round-trip on the bounded
+// (OOM-safe) search endpoint. Explicit Enter / button / suggestion click bypass
+// this and search whatever was typed.
+const MIN_AUTOSEARCH_LEN = 2;
+const SEARCH_DEBOUNCE_MS = 350;
+
 export default function LinkSearchPage() {
   usePageTitle("Link Search");
 
@@ -31,6 +49,20 @@ export default function LinkSearchPage() {
   const [submitted, setSubmitted] = useState("");
   const [showSuggest, setShowSuggest] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
+
+  // ── Dynamic search ──────────────────────────────────────────────────────────
+  // Auto-search as the user types (debounced), so they don't have to press Search.
+  // The debounced term drives `submitted` once it's >= MIN_AUTOSEARCH_LEN; Enter /
+  // the button / a suggestion click still search immediately via runSearch().
+  const debouncedQ = useDebouncedValue(q, SEARCH_DEBOUNCE_MS);
+  useEffect(() => {
+    const t = debouncedQ.trim();
+    // Only auto-fire for queries long enough to be meaningful. Clearing the box
+    // (length 0) resets back to the coverage-only view; a single stray char does
+    // not trigger a query.
+    if (t.length === 0) setSubmitted("");
+    else if (t.length >= MIN_AUTOSEARCH_LEN) setSubmitted(t);
+  }, [debouncedQ]);
 
   const { data, isLoading, mutate: mutateLinkSearch } = useLinkSearch(submitted);
   const { data: suggestions } = useEntitySuggestions(q);
@@ -111,7 +143,7 @@ export default function LinkSearchPage() {
               value={q}
               onChange={(e) => { setQ(e.target.value); setShowSuggest(true); }}
               onFocus={() => setShowSuggest(true)}
-              placeholder="Search by person's name…"
+              placeholder="Search by person's name… (searches as you type)"
               className="w-full h-11 pl-10 pr-9 rounded-xl border-2 border-ink/10 bg-bg text-sm text-ink placeholder:text-ink-4 focus:outline-none focus:border-indigo transition-colors"
             />
             {q && (

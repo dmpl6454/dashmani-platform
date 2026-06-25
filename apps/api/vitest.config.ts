@@ -31,6 +31,11 @@ export default defineConfig({
       // Set to 0 so the 429/401 rate-limit backoff in the IG scraper resolves
       // immediately in tests, avoiding the 30s retry wait.
       FOLLOWER_SYNC_BACKOFF_MS: "0",
+      // Disable the Facebook public-reel scraper fallback by default in tests so the
+      // FB provider's not_found path never touches the real www.facebook.com. The
+      // dedicated fallback tests flip FB_SCRAPER_ENABLED on AND inject a stub fetch.
+      FB_SCRAPER_ENABLED: "0",
+      FB_SCRAPER_DELAY_MS: "0",
     },
     setupFiles: ["./tests/setup.ts"],
     pool: "forks",

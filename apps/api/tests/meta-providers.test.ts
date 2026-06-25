@@ -13,6 +13,7 @@ import {
   resolveOpaqueFacebookUrl,
   resolveFacebookShareUrl,
   __setGraphFetchForTesting as setFbGraphFetch,
+  __setScraperFetchForTesting as setFbScraperFetch,
   __resetFbRateLimitedForTesting,
   __resetFbMapForTesting,
 } from "../src/services/social-insights/facebook.provider";
@@ -44,13 +45,17 @@ beforeEach(() => {
   __resetFbMapForTesting();
   setIgGraphFetch(null);
   setFbGraphFetch(null);
+  setFbScraperFetch(null); // no scraper stub → fallback can't run (also FB_SCRAPER_ENABLED=0)
   delete process.env.META_SYSTEM_USER_TOKEN;
+  process.env.FB_SCRAPER_ENABLED = "0"; // vitest.config sets this; re-assert per-test
 });
 
 afterEach(() => {
   setIgGraphFetch(null);
   setFbGraphFetch(null);
+  setFbScraperFetch(null);
   delete process.env.META_SYSTEM_USER_TOKEN;
+  process.env.FB_SCRAPER_ENABLED = "0";
 });
 
 // ── Extractor unit tests ───────────────────────────────────────────────────
@@ -482,6 +487,90 @@ describe("facebookProvider", () => {
     delete process.env.META_SYSTEM_USER_TOKEN;
     await facebookProvider.fetchBatch([target("l1", "https://facebook.com/reel/1", "1")]);
     expect(facebookProvider.harvestContent!()).toEqual([]);
+  });
+
+  // ── Public-reel scraper FALLBACK (covers reels we don't administer) ──────────
+  // A ~60KB reel HTML fixture carrying the engagement keys the live page embeds.
+  function scrapedReelHtml(views: number, reactions: number, comments: number): string {
+    return [
+      "<html><head>",
+      `"reaction_count":{"count":${reactions},"is_empty":false}`,
+      `"total_comment_count":${comments}`,
+      // carousel noise that must NOT be read as the view count:
+      `{"play_count":${views * 3 + 11},"playable_duration":34}`,
+      `"video_view_count":${views}`,
+      "</head><body>",
+      "x".repeat(60_000),
+      "</body></html>",
+    ].join("");
+  }
+
+  it("falls back to the scraper for a not_found reel → upgrades to ok with scraped metrics", async () => {
+    process.env.META_SYSTEM_USER_TOKEN = FAKE_TOKEN;
+    process.env.FB_SCRAPER_ENABLED = "1"; // enable the fallback for this test
+    setFbGraphFetch(ownedPageGraph() as unknown as GraphFetchFn); // graph has no matching post → not_found
+    const scraperFetch = vi.fn(async () => new Response(scrapedReelHtml(13547, 264, 8), { status: 200 }));
+    setFbScraperFetch(scraperFetch as unknown as typeof fetch);
+
+    const res = await facebookProvider.fetchBatch([target("l1", "https://facebook.com/reel/888777", "888777")]);
+    expect(scraperFetch).toHaveBeenCalledTimes(1);
+    expect(res.get("l1")).toMatchObject({
+      ok: true,
+      status: "ok",
+      views: 13547, // video_view_count, NOT the play_count carousel value
+      likes: 264,
+      comments: 8,
+      shares: null, // not exposed by the public reel HTML
+    });
+  });
+
+  it("leaves not_found when the scraper misses (login wall / no metrics)", async () => {
+    process.env.META_SYSTEM_USER_TOKEN = FAKE_TOKEN;
+    process.env.FB_SCRAPER_ENABLED = "1";
+    setFbGraphFetch(ownedPageGraph() as unknown as GraphFetchFn);
+    // 200 but a short body (wall/shell) → parser returns all-null → still not_found.
+    setFbScraperFetch(vi.fn(async () => new Response("<html>too short</html>", { status: 200 })) as unknown as typeof fetch);
+
+    const res = await facebookProvider.fetchBatch([target("l1", "https://facebook.com/reel/888777", "888777")]);
+    expect(res.get("l1")).toMatchObject({ ok: false, status: "not_found" });
+  });
+
+  it("does NOT scrape when FB_SCRAPER_ENABLED=0 (kill switch) — stays not_found", async () => {
+    process.env.META_SYSTEM_USER_TOKEN = FAKE_TOKEN;
+    process.env.FB_SCRAPER_ENABLED = "0";
+    setFbGraphFetch(ownedPageGraph() as unknown as GraphFetchFn);
+    const scraperFetch = vi.fn();
+    setFbScraperFetch(scraperFetch as unknown as typeof fetch);
+
+    const res = await facebookProvider.fetchBatch([target("l1", "https://facebook.com/reel/888777", "888777")]);
+    expect(scraperFetch).not.toHaveBeenCalled();
+    expect(res.get("l1")).toMatchObject({ ok: false, status: "not_found" });
+  });
+
+  it("does NOT scrape an opaque/non-numeric target id (can't build a reel url)", async () => {
+    process.env.META_SYSTEM_USER_TOKEN = FAKE_TOKEN;
+    process.env.FB_SCRAPER_ENABLED = "1";
+    setFbGraphFetch(ownedPageGraph() as unknown as GraphFetchFn);
+    const scraperFetch = vi.fn();
+    setFbScraperFetch(scraperFetch as unknown as typeof fetch);
+
+    // targetId is non-numeric (e.g. a pfbid-derived id) → scraper skipped.
+    const res = await facebookProvider.fetchBatch([target("l1", "https://facebook.com/x", "pfbid0abc")]);
+    expect(scraperFetch).not.toHaveBeenCalled();
+    expect(res.get("l1")).toMatchObject({ ok: false, status: "not_found" });
+  });
+
+  it("still prefers the Graph /insights path for an administered reel (scraper NOT called)", async () => {
+    process.env.META_SYSTEM_USER_TOKEN = FAKE_TOKEN;
+    process.env.FB_SCRAPER_ENABLED = "1";
+    setFbGraphFetch(ownedPageGraph() as unknown as GraphFetchFn);
+    const scraperFetch = vi.fn();
+    setFbScraperFetch(scraperFetch as unknown as typeof fetch);
+
+    // 555000111 IS in the administered feed → Graph resolves it; scraper must not run.
+    const res = await facebookProvider.fetchBatch([target("l1", "https://facebook.com/reel/555000111", "555000111")]);
+    expect(scraperFetch).not.toHaveBeenCalled();
+    expect(res.get("l1")).toMatchObject({ ok: true, status: "ok", views: 107, likes: 9 });
   });
 });
 

@@ -15,18 +15,24 @@ export interface GrowthAccount {
   lastSyncedAt?: string | null;
 }
 
+export interface TopMover {
+  accountId: string;
+  displayName: string;
+  platform: string;
+  delta: number | null;
+  deltaPct: number | null;
+}
+
 export interface GrowthOverviewData {
   totalFollowers: number;
   totalDelta: number;
   accountCount: number;
   accounts: GrowthAccount[];
-  topMovers: Array<{
-    accountId: string;
-    displayName: string;
-    platform: string;
-    delta: number | null;
-    deltaPct: number | null;
-  }>;
+  topMovers: TopMover[];
+  /** The window (in days) the delta figures are measured over */
+  days?: number;
+  /** Per-platform top movers — optional; absent on older API responses */
+  topMoversByPlatform?: Record<string, TopMover[]>;
   /** Coverage counts — optional so older API responses don't break */
   liveCount?: number;
   staleCount?: number;

@@ -86,6 +86,34 @@ describe("Account Growth API", () => {
       expect(d.topMovers[0].accountId).toBe(accountAId);
       expect(d.topMovers[0].delta).toBe(200);
       expect(d.topMovers[1].accountId).toBe(accountBId);
+
+      // days is echoed (default 30).
+      expect(d.days).toBe(30);
+
+      // topMoversByPlatform: both accounts are Instagram → one group "Instagram".
+      expect(typeof d.topMoversByPlatform).toBe("object");
+      expect(Array.isArray(d.topMoversByPlatform["Instagram"])).toBe(true);
+      // Sorted by abs(delta) desc: accountA (+200) before accountB (-100).
+      expect(d.topMoversByPlatform["Instagram"][0].accountId).toBe(accountAId);
+      expect(d.topMoversByPlatform["Instagram"][0].delta).toBe(200);
+      expect(d.topMoversByPlatform["Instagram"][1].accountId).toBe(accountBId);
+      expect(d.topMoversByPlatform["Instagram"][1].delta).toBe(-100);
+      // Each mover has the expected shape.
+      const mover = d.topMoversByPlatform["Instagram"][0];
+      expect(mover).toHaveProperty("accountId");
+      expect(mover).toHaveProperty("displayName");
+      expect(mover).toHaveProperty("platform", "Instagram");
+      expect(mover).toHaveProperty("delta");
+      expect(mover).toHaveProperty("deltaPct");
+    });
+
+    it("echoes the days param when supplied", async () => {
+      const res = await request(app)
+        .get("/v1/admin/growth?days=7")
+        .set("Authorization", `Bearer ${adminToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.days).toBe(7);
     });
 
     it("respects the days query param", async () => {
@@ -95,6 +123,28 @@ describe("Account Growth API", () => {
 
       expect(res.status).toBe(200);
       expect(res.body.data.accountCount).toBe(2);
+    });
+
+    it("topMoversByPlatform omits platforms where all accounts have zero delta", async () => {
+      // Create a Facebook platform + account with zero delta (first == latest, no snapshots).
+      const fbPlatform = await prisma.platform.create({
+        data: { name: "Facebook", slug: "facebook" },
+      });
+      // No snapshots → first and latest both fall back to followerCount (2000), delta = 0.
+      await prisma.socialAccount.create({
+        data: { handle: "@fbpage", displayName: "FBPage", platformId: fbPlatform.id, status: "ACTIVE", followerCount: 2000 },
+      });
+
+      const res = await request(app)
+        .get("/v1/admin/growth")
+        .set("Authorization", `Bearer ${adminToken}`);
+
+      expect(res.status).toBe(200);
+      const d = res.body.data;
+      // Facebook account has delta=0 → must NOT appear in topMoversByPlatform.
+      expect(d.topMoversByPlatform).not.toHaveProperty("Facebook");
+      // Instagram accounts still appear (non-zero deltas).
+      expect(d.topMoversByPlatform).toHaveProperty("Instagram");
     });
 
     // ── syncState + coverage counts ──────────────────────────────────────────

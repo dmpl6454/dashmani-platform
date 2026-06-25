@@ -577,14 +577,17 @@ export default function ReportsPage() {
         ];
 
         // Anchor the shared window toggle to the first panel that renders content.
-        const willRender = PLATFORMS.filter((p) => p.loading || p.data.length > 0);
+        // Facebook always renders (it shows an honest "collected in the background"
+        // note when this window has no data yet), so include it for toggle-anchoring.
+        const willRender = PLATFORMS.filter((p) => p.key === "facebook" || p.loading || p.data.length > 0);
         const toggleAnchorKey = willRender[0]?.key;
 
         return (
           <div className="space-y-6">
             {PLATFORMS.map((p) => {
-              // Hide a panel entirely when it has no links in the active window.
-              if (!p.loading && p.data.length === 0) return null;
+              // YouTube and Instagram hide when empty — no data in this window is fine.
+              // Facebook always renders so the "metrics refresh periodically" note shows.
+              if (p.key !== "facebook" && !p.loading && p.data.length === 0) return null;
               const showToggle = p.key === toggleAnchorKey;
               const showViewsCol = p.showViews;
               const cols = showViewsCol
@@ -617,6 +620,14 @@ export default function ReportsPage() {
                   </div>
                   {p.loading ? (
                     <div className="px-6 py-4 text-xs text-[#B0B0B0]">Loading…</div>
+                  ) : p.key === "facebook" && p.data.length === 0 ? (
+                    /* Facebook empty state — honest: metrics are collected gradually by the
+                       insights job, so this fills in over time rather than being unavailable. */
+                    <div className="px-6 py-5 text-xs text-[#7A7A7A] leading-relaxed max-w-prose">
+                      Facebook views, reactions and comments are collected in the background and
+                      refresh periodically. Recently submitted reels appear here once the next
+                      insights run picks them up &mdash; check back shortly.
+                    </div>
                   ) : (
                     <>
                       <div className={`px-6 py-2 grid ${cols} gap-3 text-[10px] font-medium text-[#B0B0B0] uppercase tracking-wide border-b border-[#F5F0E8]`}>

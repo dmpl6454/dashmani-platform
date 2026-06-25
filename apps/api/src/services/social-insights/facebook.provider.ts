@@ -5,6 +5,10 @@ import {
   metaConfigured,
   type GraphFetchFn,
 } from "./meta-graph";
+import {
+  scrapeFacebookReelEngagement,
+  type FetchFn as ScraperFetchFn,
+} from "./facebook-scraper";
 
 // ── Facebook insight provider (owned-Page paging — mirrors the Instagram model) ─
 //
@@ -66,6 +70,28 @@ const ACTIVITY_METRICS = "post_reactions_by_type_total,post_activity_by_action_t
 // the rest of the run to rate_limited. Reset at the top of each fetchBatch run.
 export let fbRateLimited = false;
 
+// ── Public-reel scraper fallback (covers the ~85-95% of reels we DON'T administer) ─
+// When the Graph path returns not_found for a target, we try the public scraper
+// (facebook-scraper.ts). It's fail-open and ADDITIVE: a hit upgrades not_found →
+// ok with scraped views/likes/comments; a miss leaves not_found exactly as before.
+// Disabled by default in tests (no network); enabled in the real cron path.
+//
+// FB_SCRAPER_ENABLED=0 turns the fallback off entirely (kill switch). The scrape is
+// done politely (small inter-call delay) and short-circuits for the rest of the run
+// once a login wall / block is detected, so it can never hammer Facebook.
+// Read at CALL time (not frozen at import) so tests + a runtime kill switch both work.
+const fbScraperEnabled = () => process.env.FB_SCRAPER_ENABLED !== "0";
+const fbScraperDelayMs = () => Number(process.env.FB_SCRAPER_DELAY_MS) || 250;
+// Set true the moment a scrape comes back empty enough times in a row to look like a
+// block — stops scraping for the rest of the run (reset each fetchBatch).
+let fbScraperBlocked = false;
+// Injectable scraper fetch (tests pass a stub; real path uses global fetch).
+let scraperFetchImpl: ScraperFetchFn | null = null; // null → use the scraper's default global fetch
+
+export function __setScraperFetchForTesting(fn: ScraperFetchFn | null): void {
+  scraperFetchImpl = fn;
+}
+
 // Injectable Graph fetcher. Defaults to the real implementation; tests swap it via
 // __setGraphFetchForTesting so they need neither a token nor the network.
 let graphFetchImpl: GraphFetchFn = defaultGraphFetch;
@@ -76,6 +102,7 @@ export function __setGraphFetchForTesting(fn: GraphFetchFn | null): void {
 
 export function __resetFbRateLimitedForTesting(): void {
   fbRateLimited = false;
+  fbScraperBlocked = false;
 }
 
 // ── Graph response shapes (only the fields we request) ───────────────────────
@@ -314,6 +341,31 @@ async function fetchPostInsights(
   return out;
 }
 
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+// Scraper fallback for a target not reachable via Graph. Returns scraped engagement
+// when the public reel page yields at least one real number; null on a miss (so the
+// caller keeps not_found). Honors the kill switch + the per-run block short-circuit,
+// and only attempts purely-numeric reel ids (the only form the scraper URL accepts).
+async function tryScrapeFallback(
+  targetId: string
+): Promise<{ views: number | null; likes: number | null; comments: number | null } | null> {
+  if (!fbScraperEnabled() || fbScraperBlocked) return null;
+  if (!/^\d+$/.test(targetId)) return null; // opaque/pfbid ids can't be scraped by reel url
+
+  await sleep(fbScraperDelayMs()); // polite spacing between scrapes
+  // Pass the test stub when set; otherwise let scrapeFacebookReelEngagement use its
+  // own global-fetch default (don't pass undefined explicitly — keep it positional).
+  const m = scraperFetchImpl
+    ? await scrapeFacebookReelEngagement(targetId, scraperFetchImpl)
+    : await scrapeFacebookReelEngagement(targetId);
+
+  // A hit = at least one real metric. An all-null result means we either got a wall
+  // or a non-reel page; don't manufacture an "ok" row from nothing.
+  if (m.views == null && m.likes == null && m.comments == null) return null;
+  return { views: m.views, likes: m.likes, comments: m.comments };
+}
+
 // Build the numericId→entry map across all administered Pages, once per run.
 async function buildPostMap(): Promise<Map<string, FbPostEntry>> {
   const map = new Map<string, FbPostEntry>();
@@ -356,6 +408,7 @@ export const facebookProvider: InsightProvider = {
     }
 
     fbRateLimited = false;
+    fbScraperBlocked = false;
     lastBuiltMap = new Map();
 
     // Build the numericId→{caption, pageToken} map once for this run.
@@ -387,8 +440,24 @@ export const facebookProvider: InsightProvider = {
       const entry = map.get(t.targetId);
       if (!entry) {
         // Post not on any administered Page's recent feed (unmanaged Page, or older
-        // than the paged window). Correct + bounded — we never guess.
-        results.set(t.linkId, { ok: false, status: "not_found" });
+        // than the paged window) → Graph can't read it. Fall back to the public
+        // scraper, which reads engagement for ANY public reel (administered or not).
+        // Fail-open: a scraper miss leaves the result exactly as before (not_found).
+        const scraped = await tryScrapeFallback(t.targetId);
+        if (scraped) {
+          results.set(t.linkId, {
+            ok: true,
+            status: "ok",
+            views: scraped.views,
+            likes: scraped.likes,
+            comments: scraped.comments,
+            shares: null, // shares aren't exposed in the public reel HTML
+            title: null,
+            caption: null, // captions still come via the Graph harvest path, not here
+          });
+        } else {
+          results.set(t.linkId, { ok: false, status: "not_found" });
+        }
         continue;
       }
       const metrics = await fetchPostInsights(entry.insightsId, entry.pageToken);

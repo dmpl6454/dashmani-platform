@@ -133,6 +133,10 @@ export async function fetchInstagramFollowerMap(): Promise<Map<string, IgFollowe
   }
 
   // ── STEP 2: per IG id, fetch the flat profile fields ─────────────────────────
+  // One Graph call per IG account. The count is bounded by STEP 1's page guard
+  // (MAX_DISCOVERY_PAGES × PAGE_SIZE), and the rateLimited early-return below is
+  // the real backstop against the shared ~200-call/hr Meta budget — fine for an
+  // hourly cron over the handful of IG accounts the System User token administers.
   for (const igId of igUserIds) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);

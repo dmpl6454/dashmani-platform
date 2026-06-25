@@ -2,7 +2,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { ArrowLeft, TrendingUp, TrendingDown, Users, LineChart, Trophy } from "lucide-react";
-import { useGrowthOverview } from "@/lib/hooks/use-growth";
+import { useGrowthOverview, type SyncState, type GrowthAccount } from "@/lib/hooks/use-growth";
 import { usePageTitle } from "@/lib/hooks/use-page-title";
 
 function fmtCompact(n: number | null | undefined): string {
@@ -42,6 +42,70 @@ function DeltaBadge({ delta, deltaPct }: { delta: number | null | undefined; del
   );
 }
 
+/** Returns a short relative time string like "2h ago", "5d ago", "just now". */
+function relativeTime(isoString: string | null | undefined): string {
+  if (!isoString) return "";
+  const diff = Date.now() - new Date(isoString).getTime();
+  if (diff < 0) return "just now";
+  const mins = Math.floor(diff / 60_000);
+  if (mins < 2) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  return `${days}d ago`;
+}
+
+/**
+ * Small inline badge showing the sync freshness of an account.
+ * LIVE  = green  — fetched from the platform within ~2 days
+ * STALE = amber  — last sync older than 2 days (or sync failed)
+ * MANUAL = grey  — hand-entered or platform with no public API (X, Snapchat, TikTok, etc.)
+ */
+function SyncBadge({
+  state,
+  lastSyncedAt,
+}: {
+  state: SyncState | undefined;
+  lastSyncedAt: string | null | undefined;
+}) {
+  if (!state) return null;
+
+  const ago = relativeTime(lastSyncedAt);
+
+  let dot = "";
+  let label = "";
+  let titleText = "";
+  let cls = "";
+
+  if (state === "LIVE") {
+    dot = "bg-[#3E9B4F]";
+    label = ago ? `Live · ${ago}` : "Live";
+    titleText = "Live — follower count fetched automatically from the platform within ~2 days.";
+    cls = "text-[#3E9B4F] border-[#C6E8CB]";
+  } else if (state === "STALE") {
+    dot = "bg-[#C2861D]";
+    label = ago ? `Stale · ${ago}` : "Stale";
+    titleText = "Stale — last sync was more than 2 days ago; number may be out of date.";
+    cls = "text-[#C2861D] border-[#F3D9A4]";
+  } else {
+    dot = "bg-[#7A7A7A]";
+    label = "Manual";
+    titleText = "Manual — this count is entered by hand; the platform has no public follower API (e.g. X / Twitter, Snapchat, TikTok, LinkedIn).";
+    cls = "text-[#7A7A7A] border-[#DCDCDC]";
+  }
+
+  return (
+    <span
+      title={titleText}
+      className={`inline-flex items-center gap-1 text-[10px] font-medium border rounded-full px-1.5 py-0.5 leading-none whitespace-nowrap ${cls}`}
+    >
+      <span className={`inline-block h-1.5 w-1.5 rounded-full shrink-0 ${dot}`} />
+      {label}
+    </span>
+  );
+}
+
 export default function AccountGrowthPage() {
   usePageTitle("Account Growth");
 
@@ -52,8 +116,13 @@ export default function AccountGrowthPage() {
   const totalFollowers: number = d?.totalFollowers ?? 0;
   const totalDelta: number = d?.totalDelta ?? 0;
   const accountCount: number = d?.accountCount ?? 0;
-  const accounts: any[] = d?.accounts ?? [];
+  const accounts: GrowthAccount[] = d?.accounts ?? [];
   const topMovers: any[] = d?.topMovers ?? [];
+
+  // Coverage counts — only present when API ships the enriched response
+  const liveCount: number | undefined = d?.liveCount;
+  const staleCount: number | undefined = d?.staleCount;
+  const manualCount: number | undefined = d?.manualCount;
 
   const totalUp = totalDelta > 0;
   const totalDown = totalDelta < 0;
@@ -100,6 +169,13 @@ export default function AccountGrowthPage() {
               </div>
               <p className="font-serif text-2xl font-medium text-[#1A1A1A] leading-none pt-1">{fmtCompact(totalFollowers)}</p>
               <p className="text-xs text-[#7A7A7A]">Total Followers</p>
+              {liveCount !== undefined && (
+                <p className="text-[10px] text-[#7A7A7A] leading-snug">
+                  {liveCount} of {accountCount} live-synced
+                  {staleCount ? ` · ${staleCount} stale` : ""}
+                  {manualCount ? ` · ${manualCount} manual` : ""}
+                </p>
+              )}
             </div>
             <div className="bg-white rounded-2xl border border-[#E8E0D0] shadow-[0_2px_16px_rgba(0,0,0,0.05)] p-5 space-y-1">
               <div className={`h-7 w-7 rounded-lg flex items-center justify-center ${totalUp ? "bg-[#E8F5EA]" : totalDown ? "bg-[#FBE9E9]" : "bg-[#F2F2F2]"}`}>
@@ -161,16 +237,19 @@ export default function AccountGrowthPage() {
               <span className="text-right">Δ%</span>
             </div>
             <ul className="divide-y divide-[#F5F0E8]">
-              {accounts.map((a: any) => {
+              {accounts.map((a: GrowthAccount) => {
                 const up = (a.delta ?? 0) > 0;
                 const down = (a.delta ?? 0) < 0;
                 const color = up ? "text-[#3E9B4F]" : down ? "text-[#D14343]" : "text-[#7A7A7A]";
                 const sign = (a.delta ?? 0) > 0 ? "+" : "";
                 return (
                   <li key={a.accountId} className="px-6 py-3 grid grid-cols-[1fr_6rem_5rem_5rem_4rem] gap-3 items-center">
-                    <Link href={`/accounts/${a.accountId}`} className="text-sm font-medium text-[#1A1A1A] hover:underline truncate min-w-0">
-                      {a.displayName}
-                    </Link>
+                    <div className="min-w-0 space-y-0.5">
+                      <Link href={`/accounts/${a.accountId}`} className="block text-sm font-medium text-[#1A1A1A] hover:underline truncate">
+                        {a.displayName}
+                      </Link>
+                      <SyncBadge state={a.syncState} lastSyncedAt={a.lastSyncedAt} />
+                    </div>
                     <span className="text-[10px] text-[#7A7A7A] bg-[rgba(0,0,0,0.05)] rounded-full px-2 py-0.5 w-fit truncate">{a.platform}</span>
                     <span className="text-xs font-semibold text-[#1A1A1A] text-right">{fmtCompact(a.latest)}</span>
                     <span className={`text-xs font-semibold text-right ${color}`}>{sign}{fmtCompact(a.delta)}</span>

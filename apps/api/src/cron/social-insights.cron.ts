@@ -130,6 +130,15 @@ export async function runSocialInsightsRefresh(): Promise<void> {
       let notFound = 0;
       let errors = 0;
       let quotaAborted = false;
+      // Tracks whether the feed-map harvest has already been flushed this run.
+      // The provider builds its in-memory feed map on the FIRST fetchBatch call
+      // and caches it; all subsequent batches reuse the cache. We therefore
+      // harvest immediately after the first SUCCESSFUL batch — this guarantees
+      // that all current-feed captions reach link_content within ~80s of the
+      // run starting, well before the multi-hour metric sweep over 37k links
+      // completes (or is interrupted). A post-loop fallback below covers the
+      // edge case where targets.length === 0 or every batch throws.
+      let harvestedThisRun = false;
 
       for (const batch of chunk(targets, 50)) {
         try {
@@ -202,6 +211,42 @@ export async function runSocialInsightsRefresh(): Promise<void> {
             }
           }
 
+          // ── Early harvest: flush the full feed-map right after the first successful
+          //    batch (the map is now cached; no extra API calls needed). Independently
+          //    guarded so a harvest failure NEVER affects the metric writes above.
+          if (!harvestedThisRun && typeof provider.harvestContent === "function" && !quotaAborted) {
+            try {
+              const harvested = provider.harvestContent();
+              let harvestWritten = 0;
+              for (const h of harvested) {
+                if (!h.canonicalKey || (h.title == null && h.caption == null)) continue;
+                try {
+                  await upsertLinkContent({
+                    canonicalKey: h.canonicalKey,
+                    title: h.title ?? null,
+                    caption: h.caption ?? null,
+                    status: "ok",
+                  });
+                  harvestWritten++;
+                } catch (oneErr) {
+                  // swallow per-row — never affects metrics or the rest of the harvest
+                  console.error(`[social-insights/${slug}] harvest upsert failed for ${h.canonicalKey}:`, oneErr);
+                }
+              }
+              console.log(`[social-insights/${slug}] harvested ${harvestWritten}/${harvested.length} feed-map captions → link_content (early, after first batch)`);
+              // Only consider the run harvested if the feed map actually had content.
+              // An EMPTY map means buildShortcodeMap()/buildPostMap() transiently failed
+              // on this batch (fetchBatch swallows the build error and returns an all-error
+              // result without re-throwing, leaving lastBuiltMap empty). Leaving the flag
+              // false lets a later batch — whose build may succeed — or the post-loop
+              // fallback retry the harvest, instead of locking in the empty map.
+              if (harvested.length > 0) harvestedThisRun = true;
+            } catch (harvestErr) {
+              // Log but don't set harvestedThisRun — the post-loop fallback will retry
+              console.error(`[social-insights/${slug}] early harvestContent failed (metrics unaffected):`, harvestErr);
+            }
+          }
+
           if (quotaAborted) break;
         } catch (batchErr) {
           console.error(`[social-insights/${slug}] batch failed:`, batchErr);
@@ -213,15 +258,13 @@ export async function runSocialInsightsRefresh(): Promise<void> {
         `[social-insights/${slug}] ${targets.length} links → ${polled} polled, ${succeeded} ok, ${notFound} not_found, ${errors} errors${quotaAborted ? " (QUOTA ABORTED)" : ""}`
       );
 
-      // 3b. Harvest the FULL feed map for content enrichment (ADDITIVE, independently
-      //     guarded). Providers that page an owned-account feed (Instagram) expose
-      //     EVERY post they saw this run — not just submitted links still top-of-feed.
-      //     This is what keeps IG content enrichment ahead of firehose volume: a
-      //     post's caption is captured at fetch time, keyed by canonicalKey, so a
-      //     later-matched report_link finds it even after it's buried in the feed.
+      // 3b. Harvest fallback: runs only if the early harvest above was never reached
+      //     (e.g. targets.length === 0, every batch threw, or early harvest itself
+      //     threw). Covers the owned-account feed providers (Instagram, Facebook) that
+      //     expose every post seen this run — not just matched submitted links.
+      //     No extra API calls — reuses the map fetchBatch already built.
       //     A failure here can NEVER affect the metric snapshots written above.
-      //     No extra API calls — reuses the map fetchBatch just built.
-      if (typeof provider.harvestContent === "function" && !quotaAborted) {
+      if (!harvestedThisRun && typeof provider.harvestContent === "function" && !quotaAborted) {
         try {
           const harvested = provider.harvestContent();
           let harvestWritten = 0;
@@ -240,7 +283,8 @@ export async function runSocialInsightsRefresh(): Promise<void> {
               console.error(`[social-insights/${slug}] harvest upsert failed for ${h.canonicalKey}:`, oneErr);
             }
           }
-          console.log(`[social-insights/${slug}] harvested ${harvestWritten}/${harvested.length} feed-map captions → link_content`);
+          console.log(`[social-insights/${slug}] harvested ${harvestWritten}/${harvested.length} feed-map captions → link_content (fallback)`);
+          harvestedThisRun = true;
         } catch (harvestErr) {
           console.error(`[social-insights/${slug}] harvestContent failed (metrics unaffected):`, harvestErr);
         }

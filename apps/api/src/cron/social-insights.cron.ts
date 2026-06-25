@@ -234,7 +234,13 @@ export async function runSocialInsightsRefresh(): Promise<void> {
                 }
               }
               console.log(`[social-insights/${slug}] harvested ${harvestWritten}/${harvested.length} feed-map captions → link_content (early, after first batch)`);
-              harvestedThisRun = true;
+              // Only consider the run harvested if the feed map actually had content.
+              // An EMPTY map means buildShortcodeMap()/buildPostMap() transiently failed
+              // on this batch (fetchBatch swallows the build error and returns an all-error
+              // result without re-throwing, leaving lastBuiltMap empty). Leaving the flag
+              // false lets a later batch — whose build may succeed — or the post-loop
+              // fallback retry the harvest, instead of locking in the empty map.
+              if (harvested.length > 0) harvestedThisRun = true;
             } catch (harvestErr) {
               // Log but don't set harvestedThisRun — the post-loop fallback will retry
               console.error(`[social-insights/${slug}] early harvestContent failed (metrics unaffected):`, harvestErr);

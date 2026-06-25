@@ -54,10 +54,14 @@ export interface LinkSearchResult {
     total: number;
     // ── Honest accuracy fields (self-healing — a permanently-unsearchable link can
     //    never inflate the "searchable" tally) ─────────────────────────────────
-    // searchable   = link_content rows with status='ok' (have a caption → findable)
-    // unsearchable = rows tried but unfindable (not_found/error/private/unsupported)
-    // submitted    = the real report_links universe (the honest denominator)
+    // searchable        = link_content rows with status='ok' (caption captured)
+    // pendingExtraction = status='ok' AND extractedAt IS NULL (captured but not yet tagged)
+    // nameSearchable    = searchable - pendingExtraction (actually findable by name right now)
+    // unsearchable      = rows tried but unfindable (not_found/error/private/unsupported)
+    // submitted         = the real report_links universe (the honest denominator)
     searchable: number;
+    pendingExtraction: number; // captured captions not yet tagged with people/topics
+    nameSearchable: number;    // actually findable by name right now (searchable - pendingExtraction)
     unsearchable: number;
     submitted: number;
     byPlatform: Record<
@@ -66,6 +70,8 @@ export interface LinkSearchResult {
         enriched: number; // == searchable; kept for back-compat with older UI
         total: number; // == attempted (ok + unsearchable); kept for back-compat
         searchable: number;
+        pendingExtraction: number; // captured but not yet entity-tagged for this platform
+        nameSearchable: number;    // searchable - pendingExtraction for this platform
         unsearchable: number;
         submitted: number; // report_links for this platform (the honest denominator)
         since?: string; // earliest enriched fetched_at — auto-detected coverage date
@@ -92,17 +98,20 @@ function idPartFor(canonicalKeyValue: string): { contains?: string; equalsUrl?: 
 type CoverageBucket = LinkSearchResult["coverage"]["byPlatform"][string];
 
 async function buildCoverage(): Promise<LinkSearchResult["coverage"]> {
-  // Three cheap grouped queries:
+  // Four cheap grouped queries:
   //  1. link_content counts by (platform, status) — searchable (ok) vs unsearchable
   //  2. earliest enriched fetched_at per platform — the auto-detected "since" date
   //  3. report_links count by platform — the HONEST denominator (what was submitted)
+  //  4. link_content rows with status='ok' AND extractedAt IS NULL — captured but not
+  //     yet entity-tagged (pendingExtraction). These are captions we have but haven't
+  //     yet run the LLM tagging pass on, so they're NOT findable by name yet.
   //
   // The accuracy fix: a permanently-unsearchable link (FB not_found) must NOT count
   // toward "searchable", and the denominator is "submitted", not "attempted". So a
   // platform with few enriched rows (e.g. FB/IG historical posts beyond the firehose
   // window) shows e.g. "0 searchable of 18,909 submitted" — never "X of Y enriched"
   // where Y silently grows with failed attempts.
-  const [grouped, sinceByPlatform, submittedByPlatform] = await Promise.all([
+  const [grouped, sinceByPlatform, submittedByPlatform, pendingByPlatform] = await Promise.all([
     prisma.linkContent.groupBy({
       by: ["platform", "status"],
       _count: { _all: true },
@@ -117,10 +126,15 @@ async function buildCoverage(): Promise<LinkSearchResult["coverage"]> {
       where: { url: { not: null }, isScheduled: false },
       _count: { _all: true },
     }),
+    prisma.linkContent.groupBy({
+      by: ["platform"],
+      where: { status: "ok", extractedAt: null },
+      _count: { _all: true },
+    }),
   ]);
 
   const ensure = (map: Record<string, CoverageBucket>, p: string): CoverageBucket => {
-    if (!map[p]) map[p] = { enriched: 0, total: 0, searchable: 0, unsearchable: 0, submitted: 0 };
+    if (!map[p]) map[p] = { enriched: 0, total: 0, searchable: 0, pendingExtraction: 0, nameSearchable: 0, unsearchable: 0, submitted: 0 };
     return map[p];
   };
 
@@ -157,8 +171,24 @@ async function buildCoverage(): Promise<LinkSearchResult["coverage"]> {
     if (byPlatform[p] && min) byPlatform[p].since = min.toISOString();
   }
 
+  // Pending extraction: status='ok' but extractedAt IS NULL — captions captured but
+  // not yet entity-tagged. These inflate "searchable" but aren't findable by name yet.
+  let pendingExtraction = 0;
+  for (const g of pendingByPlatform) {
+    const p = (g.platform || "other").toLowerCase();
+    const n = g._count._all;
+    ensure(byPlatform, p).pendingExtraction += n;
+    pendingExtraction += n;
+  }
+
+  // Per-platform nameSearchable = searchable - pendingExtraction (clamped at 0).
+  for (const b of Object.values(byPlatform)) {
+    b.nameSearchable = Math.max(0, b.searchable - b.pendingExtraction);
+  }
+
   const attemptedTotal = searchable + unsearchable;
   const submitted = Object.values(byPlatform).reduce((acc, b) => acc + b.submitted, 0);
+  const nameSearchable = Math.max(0, searchable - pendingExtraction);
 
   return {
     // legacy pair (enriched = searchable; total = attempted)
@@ -167,6 +197,8 @@ async function buildCoverage(): Promise<LinkSearchResult["coverage"]> {
     total: attemptedTotal,
     // honest fields
     searchable,
+    pendingExtraction,
+    nameSearchable,
     unsearchable,
     submitted,
     byPlatform,

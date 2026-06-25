@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   fetchInstagramFollowerMap,
   fetchFacebookFollowerMap,
+  fetchPublicInstagramFollowerMap,
   __setGraphFetchForTesting as setFollowersGraphFetch,
 } from "../src/services/social-insights/meta-followers";
 import type { GraphFetchResult, GraphFetchFn } from "../src/services/social-insights/meta-graph";
@@ -178,5 +179,201 @@ describe("fetchFacebookFollowerMap", () => {
     const map = await fetchFacebookFollowerMap();
     expect(map.has("400")).toBe(false);
     expect(map.size).toBe(0);
+  });
+});
+
+// ── fetchPublicInstagramFollowerMap ───────────────────────────────────────────
+
+describe("fetchPublicInstagramFollowerMap", () => {
+  // The OUR_IG_ID returned from me/accounts discovery — used as the requesting node.
+  const OUR_IG_ID = "17841473204180170";
+
+  // me/accounts discovery response (one administered account → ourIgId).
+  const DISCOVERY_RESPONSE = ok({
+    data: [{ instagram_business_account: { id: OUR_IG_ID } }],
+  });
+
+  it("happy path: resolves two handles and returns correct followers/mediaCount keyed by lowercased handle", async () => {
+    process.env.META_SYSTEM_USER_TOKEN = FAKE_TOKEN;
+    const graph = vi.fn(async (path: string) => {
+      // STEP 1: me/accounts discovery
+      if (path.startsWith("me/accounts")) return DISCOVERY_RESPONSE;
+      // STEP 2: business_discovery per handle
+      if (path === OUR_IG_ID) {
+        // The fn receives path + params; extract the handle from the params.
+        // We let the mock delegate by inspecting the second argument in the real call,
+        // but vi.fn captures args — we'll check via call args below.
+        // Return based on invocation order instead: first call is discovery, rest are per-handle.
+      }
+      return ok({});
+    });
+
+    // More precise mock: inspect params for handle identity.
+    const preciseGraph = vi.fn(async (path: string, params?: Record<string, string | number | undefined>) => {
+      if (path.startsWith("me/accounts")) return DISCOVERY_RESPONSE;
+      // business_discovery field contains the handle; parse it.
+      const fields = params?.fields as string | undefined;
+      const handleMatch = fields?.match(/business_discovery\.username\(([^)]+)\)/);
+      const handle = handleMatch?.[1];
+      if (path === OUR_IG_ID && handle === "salmankhanofficial") {
+        return ok({
+          business_discovery: {
+            username: "salmankhanofficial",
+            followers_count: 4621284,
+            media_count: 65037,
+            id: "111222333",
+          },
+        });
+      }
+      if (path === OUR_IG_ID && handle === "kritisanon") {
+        return ok({
+          business_discovery: {
+            username: "kritisanon",
+            followers_count: 38000000,
+            media_count: 1200,
+            id: "444555666",
+          },
+        });
+      }
+      throw new Error(`unexpected path=${path} handle=${handle}`);
+    });
+    setFollowersGraphFetch(preciseGraph as unknown as GraphFetchFn);
+
+    const map = await fetchPublicInstagramFollowerMap(["salmankhanofficial", "kritisanon"]);
+
+    // Both handles resolved and keyed lowercased.
+    expect(map.get("salmankhanofficial")).toEqual({ followers: 4621284, mediaCount: 65037 });
+    expect(map.get("kritisanon")).toEqual({ followers: 38000000, mediaCount: 1200 });
+    expect(map.size).toBe(2);
+    // discovery (1) + 2 per-handle calls = 3 total
+    expect(preciseGraph).toHaveBeenCalledTimes(3);
+  });
+
+  it("HTTP 400 code 110 (Invalid user id / private account) → handle absent from map, no throw, other handles still resolved", async () => {
+    process.env.META_SYSTEM_USER_TOKEN = FAKE_TOKEN;
+    const graph = vi.fn(async (path: string, params?: Record<string, string | number | undefined>) => {
+      if (path.startsWith("me/accounts")) return DISCOVERY_RESPONSE;
+      const fields = params?.fields as string | undefined;
+      const handleMatch = fields?.match(/business_discovery\.username\(([^)]+)\)/);
+      const handle = handleMatch?.[1];
+      if (handle === "private_or_gone") {
+        // HTTP 400 with error code 110 — the expected "skip" case.
+        return {
+          ok: false,
+          rateLimited: false,
+          status: 400,
+          error: "Invalid user id",
+          data: { error: { code: 110, error_subcode: 2207013, message: "Invalid user id" } },
+        } satisfies GraphFetchResult;
+      }
+      if (handle === "publichandle") {
+        return ok({
+          business_discovery: {
+            username: "publichandle",
+            followers_count: 10000,
+            media_count: 50,
+            id: "777888999",
+          },
+        });
+      }
+      throw new Error(`unexpected handle=${handle}`);
+    });
+    setFollowersGraphFetch(graph as unknown as GraphFetchFn);
+
+    const map = await fetchPublicInstagramFollowerMap(["private_or_gone", "publichandle"]);
+
+    // private_or_gone is absent (silently skipped), publichandle resolved.
+    expect(map.has("private_or_gone")).toBe(false);
+    expect(map.get("publichandle")).toEqual({ followers: 10000, mediaCount: 50 });
+    expect(map.size).toBe(1);
+  });
+
+  it("returns empty map with NO network call when no token is configured (dark switch)", async () => {
+    delete process.env.META_SYSTEM_USER_TOKEN;
+    const spy = vi.fn();
+    setFollowersGraphFetch(spy as unknown as GraphFetchFn);
+
+    const map = await fetchPublicInstagramFollowerMap(["anyhandle"]);
+    expect(spy).not.toHaveBeenCalled();
+    expect(map.size).toBe(0);
+  });
+
+  it("strips leading @ and deduplicates/lowercases input handles before calling the API", async () => {
+    process.env.META_SYSTEM_USER_TOKEN = FAKE_TOKEN;
+    const graph = vi.fn(async (path: string, params?: Record<string, string | number | undefined>) => {
+      if (path.startsWith("me/accounts")) return DISCOVERY_RESPONSE;
+      const fields = params?.fields as string | undefined;
+      const handleMatch = fields?.match(/business_discovery\.username\(([^)]+)\)/);
+      const handle = handleMatch?.[1];
+      if (handle === "testuser") {
+        return ok({
+          business_discovery: {
+            username: "testuser",
+            followers_count: 500,
+            media_count: 10,
+            id: "123",
+          },
+        });
+      }
+      throw new Error(`unexpected handle=${handle}`);
+    });
+    setFollowersGraphFetch(graph as unknown as GraphFetchFn);
+
+    // "@TestUser", "TestUser", "testuser" are all the same after stripping + lowercasing + dedup.
+    const map = await fetchPublicInstagramFollowerMap(["@TestUser", "TestUser", "testuser"]);
+
+    // Exactly ONE API call for the deduplicated handle "testuser".
+    // Total calls: 1 (discovery) + 1 (testuser) = 2
+    expect(graph).toHaveBeenCalledTimes(2);
+    expect(map.get("testuser")).toEqual({ followers: 500, mediaCount: 10 });
+    expect(map.size).toBe(1);
+  });
+
+  it("returns partial map on rate-limit mid-run (stops early, no throw)", async () => {
+    process.env.META_SYSTEM_USER_TOKEN = FAKE_TOKEN;
+    let callCount = 0;
+    const graph = vi.fn(async (path: string, params?: Record<string, string | number | undefined>) => {
+      if (path.startsWith("me/accounts")) return DISCOVERY_RESPONSE;
+      callCount++;
+      const fields = params?.fields as string | undefined;
+      const handleMatch = fields?.match(/business_discovery\.username\(([^)]+)\)/);
+      const handle = handleMatch?.[1];
+      if (callCount === 1 && handle === "first") {
+        return ok({
+          business_discovery: {
+            username: "first",
+            followers_count: 1000,
+            media_count: 5,
+            id: "aaa",
+          },
+        });
+      }
+      // Second handle → rate-limited → stop.
+      return { ok: false, rateLimited: true, status: 429, error: "rate limit" } satisfies GraphFetchResult;
+    });
+    setFollowersGraphFetch(graph as unknown as GraphFetchFn);
+
+    const map = await fetchPublicInstagramFollowerMap(["first", "second"]);
+    // "first" resolved before rate-limit; "second" absent.
+    expect(map.get("first")).toEqual({ followers: 1000, mediaCount: 5 });
+    expect(map.has("second")).toBe(false);
+    expect(map.size).toBe(1);
+  });
+
+  it("returns empty map if me/accounts discovery finds no IG node (fail-open)", async () => {
+    process.env.META_SYSTEM_USER_TOKEN = FAKE_TOKEN;
+    const graph = vi.fn(async (path: string) => {
+      if (path.startsWith("me/accounts")) {
+        // No instagram_business_account on any page.
+        return ok({ data: [{ instagram_business_account: undefined }] });
+      }
+      throw new Error("should not be called");
+    });
+    setFollowersGraphFetch(graph as unknown as GraphFetchFn);
+
+    const map = await fetchPublicInstagramFollowerMap(["anyhandle"]);
+    expect(map.size).toBe(0);
+    // Only discovery call was made; no per-handle calls.
+    expect(graph).toHaveBeenCalledTimes(1);
   });
 });

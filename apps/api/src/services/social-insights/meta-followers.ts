@@ -172,6 +172,146 @@ export async function fetchInstagramFollowerMap(): Promise<Map<string, IgFollowe
   return map;
 }
 
+// ── Instagram public (business_discovery) ─────────────────────────────────
+
+// Response shape for the business_discovery edge. Only the fields we request.
+interface BusinessDiscoveryResponse {
+  business_discovery?: {
+    username?: string;
+    followers_count?: number;
+    media_count?: number;
+    id?: string;
+  };
+}
+
+export interface IgPublicCounts {
+  followers: number;
+  mediaCount: number | null;
+}
+
+// Resolve follower counts for PUBLIC Instagram business/creator accounts we do
+// NOT administer, via the Graph API business_discovery edge. Used as a fallback
+// for IG rows the administered-account map (fetchInstagramFollowerMap) didn't
+// cover.
+//
+// Endpoint shape (proven live):
+//   GET /{ourIgId}?fields=business_discovery.username({handle}){followers_count,media_count}
+//
+// where {ourIgId} is the numeric id of ANY ONE IG business account we
+// administer — used as the "requesting" node. The %7B/%7D URL-encoding of the
+// curly braces is handled by graphFetch's URL-building (URLSearchParams encodes
+// them automatically, graphFetch passes the fields param as a plain value).
+//
+// Skip cases (no throw, absent from map):
+//   - HTTP 400 code 110 (error_subcode 2207013): private/personal/renamed account.
+//   - Any other non-OK non-rate-limit result: also skipped (defensive).
+//
+// Fail-open: NEVER throws; returns whatever it resolved.
+// Budget note: processes handles sequentially so we share the ~200-call/hr Meta
+// budget with the administered-account sync and harvest crons.
+//
+// @param handles bare usernames (no leading @). Caller should strip '@'.
+// @returns Map keyed by lowercased handle → counts. Rate-limited early-return
+//          preserves whatever was collected up to that point.
+export async function fetchPublicInstagramFollowerMap(
+  handles: string[],
+): Promise<Map<string, IgPublicCounts>> {
+  const map = new Map<string, IgPublicCounts>();
+
+  // DARK: no token → empty map, NEVER touch the network.
+  if (!metaConfigured()) return map;
+
+  // ── Normalise handles: strip '@', lowercase, deduplicate ─────────────────
+  const normalised = [...new Set(handles.map((h) => h.replace(/^@/, "").toLowerCase()))].filter(
+    Boolean,
+  );
+  if (normalised.length === 0) return map;
+
+  // ── Discover ONE administered IG node (the "requesting" node for business_discovery) ──
+  // We only need the FIRST id; abort as soon as we find it. Mirrors STEP 1 of
+  // fetchInstagramFollowerMap — same bare-field pattern (no nested sub-selection).
+  let ourIgId: string | null = null;
+  {
+    let path: string | null = "me/accounts";
+    let params: Record<string, string | number | undefined> | undefined = {
+      fields: "instagram_business_account",
+      limit: PAGE_SIZE,
+    };
+    let guard = 0;
+
+    while (path && guard < MAX_DISCOVERY_PAGES && ourIgId === null) {
+      guard++;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+      let res;
+      try {
+        res = await graphFetchImpl<IgFollowersAccountsResponse>(path, params, { signal: controller.signal });
+      } finally {
+        clearTimeout(timer);
+      }
+
+      if (res.rateLimited) return map; // rate-limited during discovery → empty, never throw
+      if (!res.ok || !res.data) break;
+
+      for (const page of res.data.data ?? []) {
+        const igId = page.instagram_business_account?.id;
+        if (igId) {
+          ourIgId = igId;
+          break;
+        }
+      }
+
+      path = res.data.paging?.next ?? null;
+      params = undefined;
+    }
+  }
+
+  // No administered IG account found → can't use business_discovery. Return empty, fail-open.
+  if (!ourIgId) return map;
+
+  // ── Per-handle: call business_discovery edge ──────────────────────────────
+  // The field syntax (curly-brace sub-selection) is passed as a plain string
+  // value in the `fields` param; URLSearchParams inside graphFetch encodes the
+  // braces as %7B/%7D automatically.
+  for (const handle of normalised) {
+    const fields = `business_discovery.username(${handle}){followers_count,media_count}`;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+    let res;
+    try {
+      res = await graphFetchImpl<BusinessDiscoveryResponse>(
+        ourIgId,
+        { fields },
+        { signal: controller.signal },
+      );
+    } finally {
+      clearTimeout(timer);
+    }
+
+    // Rate-limited → stop, return partial map. Never throw.
+    if (res.rateLimited) return map;
+
+    if (!res.ok) {
+      // HTTP 400 code 110 = private/personal/renamed account — expected skip case.
+      // Any other non-OK result is also skipped (defensive).
+      continue;
+    }
+
+    const disc = res.data?.business_discovery;
+    if (!disc) continue;
+
+    const followers = disc.followers_count;
+    if (typeof followers !== "number") continue;
+
+    map.set(handle, {
+      followers,
+      mediaCount: typeof disc.media_count === "number" ? disc.media_count : null,
+    });
+  }
+
+  return map;
+}
+
 // ── Facebook ───────────────────────────────────────────────────────────────
 
 export interface FbFollowerCounts {

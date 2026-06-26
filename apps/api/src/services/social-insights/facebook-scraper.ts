@@ -81,6 +81,30 @@ function decodeEntities(s: string): string {
     .replace(/&amp;/g, "&");
 }
 
+// Normalize Devanagari digits (०-९) to ASCII so og:title numbers parse. Indian-locale
+// reel pages render the engagement summary in Hindi numerals + unit words.
+function devanagariToAscii(s: string): string {
+  const map: Record<string, string> = { "०": "0", "१": "1", "२": "2", "३": "3", "४": "4", "५": "5", "६": "6", "७": "7", "८": "8", "९": "9" };
+  return s.replace(/[०-९]/g, (d) => map[d] ?? d);
+}
+
+// Parse a "<number><unit> <keyword>" count out of the (decoded) og:title — the TARGET
+// reel's own figure (what Facebook puts in the share preview), NOT a carousel value.
+// Handles English K/M/B and Hindi units ह/हज़ार (1e3), लाख (1e5), कोटी/करोड़ (1e7).
+// Returns a ROUNDED-but-CORRECT count (e.g. "264", or 1,800,000 for "१८ लाख"), or null.
+function parseOgTitleCount(ogTitleDecoded: string, keywords: string[]): number | null {
+  const t = devanagariToAscii(ogTitleDecoded);
+  for (const kw of keywords) {
+    const m = t.match(new RegExp(`([\\d.,]+)\\s*(ह|हज़ार|हजार|लाख|कोटी|करोड़|K|M|B|k|m|b)?\\s*${kw}`));
+    if (!m) continue;
+    const n = parseFloat(m[1].replace(/,/g, ""));
+    if (!Number.isFinite(n)) continue;
+    const mult: Record<string, number> = { "ह": 1e3, "हज़ार": 1e3, "हजार": 1e3, "लाख": 1e5, "कोटी": 1e7, "करोड़": 1e7, K: 1e3, k: 1e3, M: 1e6, m: 1e6, B: 1e9, b: 1e9 };
+    return Math.round(n * (mult[m[2]] ?? 1));
+  }
+  return null;
+}
+
 // Pull the best caption from the reel HTML. og:description is the post body (richest,
 // name-bearing); og:title is "<views> views · <n> reactions | <caption>" or just the
 // Page name. So: prefer a meaningful og:description; else the og:title's post-`|` tail.
@@ -103,20 +127,33 @@ function parseFbCaption(html: string): string | null {
 
 // Parse engagement + caption out of a reel page's HTML. Exported for unit tests with
 // captured fixtures. Pure + synchronous.
+//
+// ⚠️ TARGET-SCOPING (2026-06-26 likes fix): the reel page is a FEED carrying ~22
+// recommended reels. So feed-wide JSON keys CANNOT be read by first-match:
+//   • views   = `video_view_count` — appears EXACTLY ONCE (only the target reel has it;
+//     carousel reels carry play_count). Verified vs Graph post_video_views 5/5 EXACT.
+//   • comments = `total_comment_count` — also single-occurrence = the target's. ✓
+//   • likes   = ❌ NOT the loose first `reaction_count.count` — that appears ~22 times
+//     (one per carousel reel) and the first-match is a DIFFERENT reel's value (caused
+//     the "7476 likes on 46 different reels" bug). The TARGET's reaction count is in
+//     the og:title share-preview string ("… · 264 प्रतिक्रिया | <caption>"), rounded
+//     but correct + target-scoped. We parse THAT; if og:title has no reactions segment
+//     (low-engagement reel), likes = null (honest) — never a wrong carousel number.
 export function parseFbReelHtml(html: string): ScrapedFbEngagement {
   if (!html || html.length < MIN_REEL_HTML_LEN) return { ...EMPTY };
 
-  // Views: the single, stable `video_view_count` (NOT play_count — see header note).
+  // Views: the single, stable `video_view_count` (NOT play_count — carousel noise).
   const vm = html.match(/"video_view_count"\s*:\s*(\d+)/);
   const views = vm ? Number(vm[1]) : null;
 
-  // Likes/reactions: `"reaction_count":{"count":264, ...}` — take the count.
-  const rm = html.match(/"reaction_count"\s*:\s*\{[^}]*?"count"\s*:\s*(\d+)/);
-  const likes = rm ? Number(rm[1]) : null;
-
-  // Comments: `"total_comment_count":N`.
+  // Comments: `total_comment_count` is single-occurrence = the target reel's. ✓
   const cm = html.match(/"total_comment_count"\s*:\s*(\d+)/);
   const comments = cm ? Number(cm[1]) : null;
+
+  // Likes: parse the TARGET's reaction count from the og:title (rounded-correct,
+  // target-scoped). NOT the loose `reaction_count` first-match (carousel noise).
+  const ogTitle = (html.match(/<meta property="og:title" content="([^"]*)"/) || [])[1] || "";
+  const likes = parseOgTitleCount(decodeEntities(ogTitle), ["प्रतिक्रिया", "reactions", "reaction"]);
 
   return {
     views: Number.isFinite(views as number) ? views : null,

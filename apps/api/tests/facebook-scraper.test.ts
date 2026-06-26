@@ -10,11 +10,11 @@ import {
 // embeds them (verified live 2026-06-25).
 function reelHtml(opts: {
   videoViewCount?: number;
-  playCounts?: number[]; // carousel noise — must be IGNORED
-  reactionCount?: number;
+  playCounts?: number[]; // carousel noise — must be IGNORED for views
+  looseReactionCounts?: number[]; // carousel `reaction_count` noise — must be IGNORED for likes
   totalCommentCount?: number;
   ogDescription?: string;
-  ogTitle?: string;
+  ogTitle?: string; // the TARGET's share-preview string — the source of truth for likes
 }): string {
   const parts: string[] = ['<!DOCTYPE html><html><head><meta charset="utf-8">'];
   if (opts.ogTitle != null)
@@ -23,8 +23,9 @@ function reelHtml(opts: {
     parts.push(`<meta property="og:description" content="${opts.ogDescription}" />`);
   // Carousel reels carry play_count but NOT video_view_count. These must be ignored.
   for (const pc of opts.playCounts ?? []) parts.push(`{"play_count":${pc},"playable_duration":34}`);
-  if (opts.reactionCount != null)
-    parts.push(`"reaction_count":{"count":${opts.reactionCount},"is_empty":false}`);
+  // Carousel reels EACH carry a reaction_count — the first-match is a DIFFERENT reel's
+  // value (the "7476 likes on 46 reels" bug). The parser must NOT read these.
+  for (const rc of opts.looseReactionCounts ?? []) parts.push(`"reaction_count":{"count":${rc},"is_empty":false}`);
   if (opts.totalCommentCount != null) parts.push(`"total_comment_count":${opts.totalCommentCount}`);
   // The TARGET reel's view count: appears exactly once, also as video_post_view_count.
   if (opts.videoViewCount != null)
@@ -36,17 +37,47 @@ function reelHtml(opts: {
 }
 
 describe("parseFbReelHtml", () => {
-  it("reads views from video_view_count (the TRUE count), NOT play_count", () => {
+  it("views=video_view_count (NOT play_count); likes=og:title reactions (NOT loose reaction_count)", () => {
     const html = reelHtml({
       videoViewCount: 13547,
-      playCounts: [43198, 2309, 5653], // carousel noise — first-match would be wrong
-      reactionCount: 264,
+      playCounts: [43198, 2309, 5653], // carousel noise — first-match would be wrong for views
+      looseReactionCounts: [846, 7476, 792], // carousel noise — first-match would be wrong for likes
+      ogTitle: "43K views · 264 reactions | KL Rahul at Bandra",
       totalCommentCount: 8,
     });
     const r = parseFbReelHtml(html);
     expect(r.views).toBe(13547); // NOT 43198 (the loose first play_count)
-    expect(r.likes).toBe(264);
+    expect(r.likes).toBe(264); // from og:title — NOT 846 (the loose first reaction_count)
     expect(r.comments).toBe(8);
+  });
+
+  it("likes parse from Devanagari og:title (lakh/hazaar units) — Indian-locale reel page", () => {
+    // "१८ लाख प्रतिक्रिया" = 18 lakh reactions = 1,800,000. Loose reaction_count noise ignored.
+    const html = reelHtml({
+      videoViewCount: 97794737,
+      looseReactionCounts: [7476, 792, 601],
+      ogTitle: "३६ कोटी व्ह्यू · १८ लाख प्रतिक्रिया | Veteran Actor clip",
+      totalCommentCount: 33801,
+    });
+    const r = parseFbReelHtml(html);
+    expect(r.views).toBe(97794737);
+    expect(r.likes).toBe(1_800_000); // १८ लाख, NOT 7476
+    expect(r.comments).toBe(33801);
+  });
+
+  it("likes=null when og:title has NO reactions segment (low-engagement reel) — never a carousel value", () => {
+    // og:title is just views + caption (no "reactions"). The loose reaction_count noise
+    // must NOT leak in as a wrong like count — honest null beats confidently-wrong.
+    const html = reelHtml({
+      videoViewCount: 170,
+      looseReactionCounts: [846, 7476, 792], // present but must be ignored
+      ogTitle: "1.4K views | Glamour wrapped in confidence",
+      totalCommentCount: 0,
+    });
+    const r = parseFbReelHtml(html);
+    expect(r.views).toBe(170);
+    expect(r.likes).toBeNull(); // NOT 846 — no target reactions in og:title
+    expect(r.comments).toBe(0);
   });
 
   it("returns all-null for a body shorter than the reel-page minimum (login wall / shell)", () => {
@@ -59,7 +90,7 @@ describe("parseFbReelHtml", () => {
   });
 
   it("handles a reel with zero comments and present reactions", () => {
-    const r = parseFbReelHtml(reelHtml({ videoViewCount: 4455, reactionCount: 78, totalCommentCount: 0 }));
+    const r = parseFbReelHtml(reelHtml({ videoViewCount: 4455, ogTitle: "13K views · 78 reactions | clip", totalCommentCount: 0 }));
     expect(r.views).toBe(4455);
     expect(r.likes).toBe(78);
     expect(r.comments).toBe(0);
@@ -115,9 +146,9 @@ describe("scrapeFacebookReelEngagement", () => {
   it("parses engagement + caption from a 200 reel response", async () => {
     const html = reelHtml({
       videoViewCount: 9859,
-      reactionCount: 198,
+      ogTitle: "19K views · 198 reactions | Rajpal Yadav clip", // likes source
       totalCommentCount: 0,
-      ogDescription: "Rajpal Yadav at the prayer meet",
+      ogDescription: "Rajpal Yadav at the prayer meet", // richer caption (preferred)
     });
     const f = vi.fn(async () => new Response(html, { status: 200 })) as unknown as typeof fetch;
     const r = await scrapeFacebookReelEngagement("1345780967432337", f);

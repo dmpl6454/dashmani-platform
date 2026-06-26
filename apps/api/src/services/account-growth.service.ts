@@ -258,7 +258,19 @@ export async function getGrowthOverview(days = 30): Promise<GrowthOverview> {
     deltaPct: a.deltaPct,
   });
 
+  // Exclude DATA-CORRECTION ARTIFACTS from Top Movers (NOT from the full accounts list —
+  // the data stays visible there). When a never-live-synced account carried a stale
+  // manual value (e.g. a round 1,040,000) and then got its FIRST real sync to the true
+  // count (e.g. 10,900), the in-window delta computes as a ~-99% "drop" and wrongly tops
+  // the movers board. A real account does not lose ≥90% of followers in this window —
+  // such a swing is a stale-guess→measurement correction, not organic movement. We drop
+  // any account whose deltaPct is a ≥90% collapse from its baseline. (Positive swings are
+  // kept: a +Large% can be a genuinely small→viral account, and an upward correction is
+  // far rarer + less misleading than a fake catastrophic drop.)
+  const isCorrectionArtifact = (a: GrowthOverviewAccount) => a.deltaPct != null && a.deltaPct <= -90;
+
   const topMovers = [...overviewAccounts]
+    .filter((a) => !isCorrectionArtifact(a))
     .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))
     .slice(0, 5)
     .map(moverShape);
@@ -267,6 +279,7 @@ export async function getGrowthOverview(days = 30): Promise<GrowthOverview> {
   const platformGroups = new Map<string, GrowthOverviewAccount[]>();
   for (const acc of overviewAccounts) {
     if (acc.delta === 0) continue; // skip zero-delta accounts for per-platform grouping
+    if (isCorrectionArtifact(acc)) continue; // skip stale→live correction artifacts
     const group = platformGroups.get(acc.platform) ?? [];
     group.push(acc);
     platformGroups.set(acc.platform, group);

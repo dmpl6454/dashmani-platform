@@ -107,6 +107,33 @@ describe("Account Growth API", () => {
       expect(mover).toHaveProperty("deltaPct");
     });
 
+    it("excludes data-correction artifacts (>=90% collapse) from Top Movers but keeps them in accounts", async () => {
+      // The "Total Filmi" case: a stale manual 1,040,000 carried for weeks, then first
+      // real sync to 10,900 → ~-99% delta. Must NOT appear in topMovers (it's a
+      // measurement correction, not real loss) but MUST stay in the full accounts list.
+      const corrected = await prisma.socialAccount.create({
+        data: { handle: "@corrected", displayName: "Corrected", platformId, status: "ACTIVE", followerCount: 10900 },
+      });
+      await prisma.accountGrowthSnapshot.createMany({
+        data: [
+          { accountId: corrected.id, date: dateOnlyDaysAgo(10), followerCount: 1040000 },
+          { accountId: corrected.id, date: dateOnlyDaysAgo(1), followerCount: 10900 },
+        ],
+      });
+
+      const res = await request(app).get("/v1/admin/growth").set("Authorization", `Bearer ${adminToken}`);
+      expect(res.status).toBe(200);
+      const d = res.body.data;
+      // Still present in the full accounts list (data stays visible/honest).
+      const row = d.accounts.find((x: any) => x.accountId === corrected.id);
+      expect(row).toBeDefined();
+      expect(row.deltaPct).toBeLessThanOrEqual(-90);
+      // But NOT ranked in topMovers / topMoversByPlatform (artifact suppressed).
+      expect(d.topMovers.find((m: any) => m.accountId === corrected.id)).toBeUndefined();
+      const igMovers = d.topMoversByPlatform?.["Instagram"] ?? [];
+      expect(igMovers.find((m: any) => m.accountId === corrected.id)).toBeUndefined();
+    });
+
     it("only exposes http(s) profileUrl — strips javascript:/non-http (XSS guard)", async () => {
       // profile_url is admin-entered free text. A javascript: URI must NOT reach the
       // client as a clickable href. The API scheme-validates before returning it.

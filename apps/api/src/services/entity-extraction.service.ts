@@ -12,6 +12,9 @@ import { AppError } from "../middleware/error-handler";
 // never again corrupt a caption's status.
 const ANTHROPIC_MODEL = "claude-haiku-4-5-20251001";
 const OPENAI_MODEL = "gpt-4o-mini";
+// Gemini fallback — LITE model ONLY (per the project owner's directive). gemini-2.5-
+// flash-lite is the current lite SKU (gemini-2.0-flash-lite was retired → 404).
+const GEMINI_MODEL = "gemini-2.5-flash-lite";
 
 let _client: Anthropic | null = null;
 function getClient(): Anthropic | null {
@@ -39,10 +42,10 @@ function isTransientError(err: unknown): boolean {
   ) {
     return true;
   }
-  // OpenAI raw-fetch failures: our openaiExtract throws Error("openai: HTTP <code> …")
+  // Raw-fetch failures from openaiExtract / geminiExtract throw Error("<prov>: HTTP <code> …")
   // or an AbortError/TypeError on network failure. Treat 429/5xx + network as transient.
   const msg = err instanceof Error ? err.message : String(err);
-  if (/^openai: HTTP (429|5\d\d)\b/.test(msg)) return true;
+  if (/^(openai|gemini): HTTP (429|5\d\d)\b/.test(msg)) return true;
   if (err instanceof Error && (err.name === "AbortError" || err.name === "TimeoutError")) return true;
   if (/network|fetch failed|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN/i.test(msg)) return true;
   return false;
@@ -119,24 +122,66 @@ async function openaiExtract(caption: string, title: string, knownNames: string[
   return data.choices?.[0]?.message?.content ?? "";
 }
 
-// Default extractor: try Anthropic (primary, tuned), fall back to OpenAI on ANY
-// Anthropic failure. Throws only if BOTH providers fail — and even then the caller
-// (extractOne) must NOT demote the caption's status (it'll just retry next cron).
-const defaultRawExtract: RawExtractFn = async (caption, title, knownNames) => {
-  // No provider configured at all → surface a clear, non-retryable config error.
-  if (!process.env.ANTHROPIC_API_KEY && !process.env.OPENAI_API_KEY) {
-    throw new AppError(500, "AI_NOT_CONFIGURED", "No extraction provider configured. Set ANTHROPIC_API_KEY or OPENAI_API_KEY.");
+// Provider 3: Google Gemini (LITE model only) via raw fetch. Throws on any non-200 /
+// API error so the caller treats it as a failure (no demote). Gemini sometimes 503s
+// under load — that's a transient error the caller will retry next run.
+async function geminiExtract(caption: string, title: string, knownNames: string[]): Promise<string> {
+  const key = process.env.GOOGLE_GEMINI_API_KEY;
+  if (!key) throw new Error("gemini: GOOGLE_GEMINI_API_KEY not set");
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${key}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        // Gemini has no separate system role; prepend the instructions to the prompt.
+        contents: [{ parts: [{ text: `${buildSystemPrompt()}\n\n${buildUserPrompt(caption, title, knownNames)}` }] }],
+        generationConfig: { maxOutputTokens: 1024 },
+      }),
+      signal: AbortSignal.timeout(30_000),
+    }
+  );
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`gemini: HTTP ${res.status} ${body.slice(0, 200)}`);
   }
-  // Primary: Anthropic. On failure (rate-limit / out-of-credit / network), fall back.
-  if (process.env.ANTHROPIC_API_KEY) {
+  const data = (await res.json()) as {
+    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+  };
+  return data.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+}
+
+// Default extractor: a fallback CHAIN of configured providers, in order:
+//   Anthropic Haiku (primary, tuned) → OpenAI gpt-4o-mini → Gemini-lite.
+// Each provider is tried only if its key is set; on failure we fall through to the
+// next. Throws only if EVERY configured provider fails — and even then the caller
+// (extractOne) must NOT demote the caption's status (it just retries next cron).
+// This makes extraction resilient to ANY single provider being down/out-of-credit
+// (the 2026-06-26 incident: Anthropic ran out of credit and there was no fallback).
+const defaultRawExtract: RawExtractFn = async (caption, title, knownNames) => {
+  const providers: Array<{ key: string | undefined; fn: () => Promise<string> }> = [
+    { key: process.env.ANTHROPIC_API_KEY, fn: () => anthropicExtract(caption, title, knownNames) },
+    { key: process.env.OPENAI_API_KEY, fn: () => openaiExtract(caption, title, knownNames) },
+    { key: process.env.GOOGLE_GEMINI_API_KEY, fn: () => geminiExtract(caption, title, knownNames) },
+  ].filter((p) => !!p.key);
+
+  if (providers.length === 0) {
+    throw new AppError(500, "AI_NOT_CONFIGURED", "No extraction provider configured. Set ANTHROPIC_API_KEY / OPENAI_API_KEY / GOOGLE_GEMINI_API_KEY.");
+  }
+
+  let lastErr: unknown;
+  for (let i = 0; i < providers.length; i++) {
     try {
-      return await anthropicExtract(caption, title, knownNames);
-    } catch (anthropicErr) {
-      if (!process.env.OPENAI_API_KEY) throw anthropicErr; // no fallback available
-      // fall through to OpenAI
+      return await providers[i].fn();
+    } catch (err) {
+      lastErr = err;
+      // Fall through to the next provider; if this was the last one, rethrow below.
+      if (i < providers.length - 1) {
+        console.warn(`[entity-extraction] provider ${i + 1}/${providers.length} failed, trying next:`, err instanceof Error ? err.message : err);
+      }
     }
   }
-  return await openaiExtract(caption, title, knownNames);
+  throw lastErr; // all providers failed → extractOne classifies (transient → retry)
 };
 
 /**

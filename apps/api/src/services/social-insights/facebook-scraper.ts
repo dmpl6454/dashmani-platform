@@ -53,6 +53,10 @@ export interface ScrapedFbEngagement {
   // over og:title (often just the Page name, e.g. "Paparazzi Reels"). Verified live
   // 2026-06-25: og:description is the richer name-bearing text for ~all reels.
   caption: string | null;
+  // True when Facebook served a login/checkpoint wall or a non-200 (i.e. we were
+  // BLOCKED, not "this reel has no data"). The provider counts consecutive walls to
+  // trip its per-run scraper short-circuit. Absent/false on a real (even zero) reel.
+  walled?: boolean;
 }
 
 const EMPTY: ScrapedFbEngagement = { views: null, likes: null, comments: null, caption: null };
@@ -138,13 +142,16 @@ export async function scrapeFacebookReelEngagement(
       redirect: "follow",
       signal: controller.signal,
     });
-    if (!res.ok) return { ...EMPTY };
-    // A redirect to /login means we got the wall, not the reel — bail.
-    if (/\/login|\/checkpoint/i.test(res.url)) return { ...EMPTY };
+    // Non-200 or a redirect to /login|/checkpoint = we were BLOCKED (not "no data").
+    // Signal walled:true so the provider can short-circuit after N consecutive walls.
+    if (!res.ok) return { ...EMPTY, walled: true };
+    if (/\/login|\/checkpoint/i.test(res.url)) return { ...EMPTY, walled: true };
     const html = await res.text();
     return parseFbReelHtml(html);
   } catch {
-    return { ...EMPTY };
+    // Network error / timeout — could be a soft block; treat as walled (the provider's
+    // consecutive-wall counter resets on the next success, so a one-off blip is benign).
+    return { ...EMPTY, walled: true };
   } finally {
     clearTimeout(timer);
   }

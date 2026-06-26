@@ -140,6 +140,42 @@ describe("Account Growth API", () => {
       expect(d.decliners).toBe(1);
     });
 
+    it("dedups the same real page stored under two URL forms (tracking-param / trailing-slash) — F5 fix", async () => {
+      // Same FB page counted twice: one clean URL, one with ?mibextid=… → must collapse
+      // to ONE account so totalFollowers + Net Change + Top Movers don't double-count.
+      const a = await prisma.socialAccount.create({
+        data: { handle: "@dupe1", displayName: "Dupe Page", platformId, status: "ACTIVE", followerCount: 1000000, profileUrl: "https://www.facebook.com/dupepage/" },
+      });
+      const b = await prisma.socialAccount.create({
+        data: { handle: "@dupe2", displayName: "Dupe Page (clone)", platformId, status: "ACTIVE", followerCount: 1000000, profileUrl: "https://facebook.com/dupepage?mibextid=ABC123" },
+      });
+
+      const res = await request(app).get("/v1/admin/growth").set("Authorization", `Bearer ${adminToken}`);
+      expect(res.status).toBe(200);
+      const d = res.body.data;
+      // Exactly ONE of the two survives in the accounts list (same normalized URL).
+      const dupeRows = d.accounts.filter((x: any) => x.accountId === a.id || x.accountId === b.id);
+      expect(dupeRows).toHaveLength(1);
+      // The 1,000,000 is counted ONCE in totalFollowers, not 2,000,000.
+      // (Other test accounts also contribute; assert the dupe pair added exactly 1M.)
+      // We can't know the exact base here, so assert accountCount didn't double-count:
+      const idsSeen = new Set(d.accounts.map((x: any) => x.accountId));
+      expect(idsSeen.has(a.id) !== idsSeen.has(b.id)).toBe(true); // exactly one present
+    });
+
+    it("does NOT merge profile.php?id=<n> pages with different ids (distinct real pages)", async () => {
+      const p1 = await prisma.socialAccount.create({
+        data: { handle: "@pid1", displayName: "PID One", platformId, status: "ACTIVE", followerCount: 100, profileUrl: "https://facebook.com/profile.php?id=111" },
+      });
+      const p2 = await prisma.socialAccount.create({
+        data: { handle: "@pid2", displayName: "PID Two", platformId, status: "ACTIVE", followerCount: 200, profileUrl: "https://facebook.com/profile.php?id=222" },
+      });
+      const res = await request(app).get("/v1/admin/growth").set("Authorization", `Bearer ${adminToken}`);
+      const ids = new Set(res.body.data.accounts.map((x: any) => x.accountId));
+      expect(ids.has(p1.id)).toBe(true);
+      expect(ids.has(p2.id)).toBe(true); // both kept — different id = different page
+    });
+
     it("only exposes http(s) profileUrl — strips javascript:/non-http (XSS guard)", async () => {
       // profile_url is admin-entered free text. A javascript: URI must NOT reach the
       // client as a clickable href. The API scheme-validates before returning it.

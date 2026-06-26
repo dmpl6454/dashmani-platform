@@ -360,11 +360,15 @@ export default function ReportsPage() {
     ? { title: "Current Streak", value: `${selectedEmployee?.currentStreak ?? 0} 🔥`, icon: Users, iconColor: "text-orange-600", bgColor: "bg-orange-50 shadow-[0_2px_8px_rgba(234,88,12,0.12)]", sub: selectedEmployeeName }
     : { title: "Employees Reporting", value: summary?.employeesReporting ?? 0, icon: Users, iconColor: "text-blue-600", bgColor: "bg-blue-50 shadow-[0_2px_8px_rgba(59,130,246,0.12)]", sub: "submitted reports" };
 
-  // Engagement insight card — scopes to selected employee or whole team, follows window pill
+  // Engagement insight card — scopes to selected employee or whole team, follows window pill.
+  // ⚠️ The card is labelled "YouTube Views", so it MUST use the YOUTUBE-only figures, not the
+  // cross-platform totalViews (which folds in FB/IG and overstated YT views 4.6–5.5×). The
+  // per-platform breakdown is in insights.byPlatform; pull YouTube's row.
   const insights = (insightsData as any)?.data;
-  const engagementViews = insights?.totalViews ?? 0;
-  const engagementLikes = insights?.totalLikes ?? 0;
-  const engagementComments = insights?.totalComments ?? 0;
+  const ytPlatform = (insights?.byPlatform ?? []).find((p: any) => p?.platform === "youtube");
+  const engagementViews = ytPlatform?.totalViews ?? 0;
+  const engagementLikes = ytPlatform?.totalLikes ?? 0;
+  const engagementComments = ytPlatform?.totalComments ?? 0;
   const hasInsights = !insightsLoading && engagementViews > 0;
   function fmtCompact(n: number | null | undefined): string {
     if (n == null) return "—";
@@ -384,7 +388,7 @@ export default function ReportsPage() {
       icon: Eye,
       iconColor: "text-rose-600",
       bgColor: "bg-rose-50 shadow-[0_2px_8px_rgba(244,63,94,0.12)]",
-      sub: hasInsights ? `${fmtCompact(engagementLikes)} likes · ${fmtCompact(engagementComments)} comments` : "Insights available for YouTube only",
+      sub: hasInsights ? `${fmtCompact(engagementLikes)} likes · ${fmtCompact(engagementComments)} comments` : "No YouTube views in this window",
     },
   ];
 

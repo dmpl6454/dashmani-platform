@@ -112,6 +112,39 @@ function safeHttpUrl(url: string | null | undefined): string | null {
   }
 }
 
+// Normalize a profile URL into a DEDUP KEY so the SAME real page stored under two URL
+// forms collapses to one account (F5, 2026-06-26 audit): e.g. facebook.com/paparazzziii
+// and facebook.com/paparazzziii?mibextid=… are one 15M page counted twice, inflating
+// totalFollowers (~6.5%) + Net Change (~11.8%) + showing as two Top Movers.
+// Conservative: lowercase, strip scheme/www/trailing-slash, DROP only known tracking
+// params (mibextid/igsh/si/ref/utm_*/fbclid), but KEEP profile.php?id=<n> distinct (the
+// id IS the page identity). Returns null when there's no usable URL → such accounts are
+// NEVER merged (we can't prove identity), each stays distinct.
+const TRACKING_PARAMS = new Set(["mibextid", "igsh", "si", "ref", "fbclid", "utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term"]);
+function profileDedupKey(url: string | null | undefined): string | null {
+  const safe = safeHttpUrl(url);
+  if (!safe) return null;
+  try {
+    const u = new URL(safe);
+    const host = u.hostname.replace(/^www\./, "").toLowerCase();
+    // Keep profile.php?id=<n> as its own identity (the id distinguishes real pages).
+    const idParam = u.pathname.toLowerCase() === "/profile.php" ? u.searchParams.get("id") : null;
+    const path = u.pathname.replace(/\/+$/, "").toLowerCase(); // strip trailing slashes
+    return idParam ? `${host}${path}?id=${idParam}` : `${host}${path}`;
+  } catch {
+    return null;
+  }
+}
+
+// Which of two same-page rows is the "better" survivor: prefer a real sync (LIVE>STALE>
+// MANUAL by lastSyncedAt recency), then the higher follower count (more complete data).
+function preferAccount<T extends { lastSyncedAt: Date | null; followerCount: number }>(a: T, b: T): T {
+  const at = a.lastSyncedAt ? a.lastSyncedAt.getTime() : -1;
+  const bt = b.lastSyncedAt ? b.lastSyncedAt.getTime() : -1;
+  if (at !== bt) return at > bt ? a : b; // more recently synced wins
+  return a.followerCount >= b.followerCount ? a : b;
+}
+
 export interface GrowthOverviewAccount {
   accountId: string;
   displayName: string;
@@ -195,7 +228,29 @@ export async function getGrowthOverview(days = 30): Promise<GrowthOverview> {
     },
   });
 
-  const overviewAccounts: GrowthOverviewAccount[] = accounts.map((account) => {
+  // ── DEDUP same-page accounts (F5) ────────────────────────────────────────────
+  // Collapse accounts whose normalized profile URL is identical (same real page stored
+  // under two URL forms) to a single survivor, so totals / Net Change / Top Movers / the
+  // list don't double-count it. Accounts with no usable URL are kept distinct (key=null
+  // → never merged). Survivor = the freshest-synced / most-complete row in the group.
+  const dedupGroups = new Map<string, typeof accounts[number]>();
+  const dedupedAccounts: typeof accounts = [];
+  for (const account of accounts) {
+    const key = profileDedupKey(account.profileUrl);
+    if (key === null) {
+      dedupedAccounts.push(account); // no URL → can't prove a dupe → keep distinct
+      continue;
+    }
+    const existing = dedupGroups.get(key);
+    if (!existing) {
+      dedupGroups.set(key, account);
+    } else {
+      dedupGroups.set(key, preferAccount(existing, account)); // keep the better survivor
+    }
+  }
+  for (const survivor of dedupGroups.values()) dedupedAccounts.push(survivor);
+
+  const overviewAccounts: GrowthOverviewAccount[] = dedupedAccounts.map((account) => {
     const snaps = account.growthSnapshots; // already date-asc, windowed
 
     // first/latest fall back to the account's live followerCount when there are

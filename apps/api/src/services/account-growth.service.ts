@@ -95,6 +95,23 @@ function computeSyncState(lastSyncedAt: Date | null): SyncState {
   return Date.now() - lastSyncedAt.getTime() <= LIVE_WINDOW_MS ? "LIVE" : "STALE";
 }
 
+/**
+ * profile_url is admin/employee-entered free text. Before exposing it as a clickable
+ * href, allow ONLY http(s) — a `javascript:`/`data:` URI would be a stored-XSS vector
+ * when rendered as <a href>. Returns the normalized URL, or null if absent/non-http(s)/
+ * unparseable (the UI then simply omits the open-channel link). Belt-and-suspenders:
+ * the client re-validates too, so bad data is blocked at both layers.
+ */
+function safeHttpUrl(url: string | null | undefined): string | null {
+  if (!url || !url.trim()) return null;
+  try {
+    const u = new URL(url.trim());
+    return u.protocol === "https:" || u.protocol === "http:" ? u.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
 export interface GrowthOverviewAccount {
   accountId: string;
   displayName: string;
@@ -202,7 +219,7 @@ export async function getGrowthOverview(days = 30): Promise<GrowthOverview> {
       accountId: account.id,
       displayName: account.displayName,
       platform: account.platform.name,
-      profileUrl: account.profileUrl && account.profileUrl.trim() ? account.profileUrl.trim() : null,
+      profileUrl: safeHttpUrl(account.profileUrl),
       latest,
       first,
       delta,

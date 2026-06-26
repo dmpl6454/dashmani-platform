@@ -13,6 +13,18 @@ function fmtCompact(n: number | null | undefined): string {
   return String(n);
 }
 
+// Return the URL only if it's a safe http(s) link — never render a javascript:/data:
+// URI as an href (stored-XSS guard; profile_url is admin-entered free text).
+function httpUrlOrNull(url: string | null | undefined): string | null {
+  if (!url) return null;
+  try {
+    const u = new URL(url);
+    return u.protocol === "https:" || u.protocol === "http:" ? u.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
 const WINDOWS = [7, 30, 90];
 
 function pillClass(active: boolean) {
@@ -295,19 +307,26 @@ export default function AccountGrowthPage() {
                         <Link href={`/accounts/${a.accountId}`} className="text-sm font-medium text-[#1A1A1A] hover:underline truncate">
                           {a.displayName}
                         </Link>
-                        {a.profileUrl && (
-                          <a
-                            href={a.profileUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            onClick={(e) => e.stopPropagation()}
-                            title="Open channel in a new tab"
-                            aria-label={`Open ${a.displayName} channel`}
-                            className="shrink-0 text-[#B0B0B0] hover:text-[#5B5BD6] transition-colors"
-                          >
-                            <ExternalLink className="h-3.5 w-3.5" />
-                          </a>
-                        )}
+                        {(() => {
+                          // Defense-in-depth: only render an open-channel link for an
+                          // http(s) URL. profile_url is admin-entered free text; a
+                          // javascript:/data: URI in an href would be a stored-XSS vector.
+                          // (The API also scheme-validates, so bad data shouldn't arrive.)
+                          const safeUrl = httpUrlOrNull(a.profileUrl);
+                          return safeUrl ? (
+                            <a
+                              href={safeUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={(e) => e.stopPropagation()}
+                              title="Open channel in a new tab"
+                              aria-label={`Open ${a.displayName} channel`}
+                              className="shrink-0 text-[#B0B0B0] hover:text-[#5B5BD6] transition-colors"
+                            >
+                              <ExternalLink className="h-3.5 w-3.5" />
+                            </a>
+                          ) : null;
+                        })()}
                       </div>
                       <SyncBadge state={a.syncState} lastSyncedAt={a.lastSyncedAt} />
                     </div>

@@ -152,6 +152,7 @@ export interface GrowthOverview {
     accountId: string;
     displayName: string;
     platform: string;
+    profileUrl: string | null;
     delta: number;
     deltaPct: number | null;
   }>;
@@ -166,6 +167,7 @@ export interface GrowthOverview {
       accountId: string;
       displayName: string;
       platform: string;
+      profileUrl: string | null;
       delta: number;
       deltaPct: number | null;
     }>
@@ -254,6 +256,7 @@ export async function getGrowthOverview(days = 30): Promise<GrowthOverview> {
     accountId: a.accountId,
     displayName: a.displayName,
     platform: a.platform,
+    profileUrl: a.profileUrl, // already scheme-validated to http(s)|null
     delta: a.delta,
     deltaPct: a.deltaPct,
   });

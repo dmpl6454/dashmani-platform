@@ -8,10 +8,10 @@ const BATCH_CAP = Number(process.env.ENTITY_EXTRACTION_CAP) || 1500;
 
 export async function runEntityExtraction(): Promise<void> {
   const startedAt = Date.now();
-  // Run if EITHER provider is configured — extraction now falls back Anthropic→OpenAI,
-  // so an out-of-credit/rate-limited Anthropic key no longer halts extraction.
-  if (!process.env.ANTHROPIC_API_KEY && !process.env.OPENAI_API_KEY) {
-    console.log("[entity-extraction] no LLM provider configured (ANTHROPIC_API_KEY / OPENAI_API_KEY) — skipping run");
+  // Run if ANY provider is configured — extraction falls back Anthropic→OpenAI→Gemini-lite,
+  // so a single out-of-credit/rate-limited provider no longer halts extraction.
+  if (!process.env.ANTHROPIC_API_KEY && !process.env.OPENAI_API_KEY && !process.env.GOOGLE_GEMINI_API_KEY) {
+    console.log("[entity-extraction] no LLM provider configured (ANTHROPIC_API_KEY / OPENAI_API_KEY / GOOGLE_GEMINI_API_KEY) — skipping run");
     return;
   }
   // Idempotent selector: only rows with text fetched (status=ok) and not yet extracted.

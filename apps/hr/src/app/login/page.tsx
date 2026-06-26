@@ -305,7 +305,7 @@ function AttendanceCard() {
       <div className="flex items-center justify-between mb-3">
         <div>
           <p className="text-[10.5px] uppercase tracking-[0.16em] font-bold text-[#9C947C]">Attendance · May</p>
-          <p className="font-display text-[22px] font-semibold text-[#1A1A1A] leading-none mt-1">{rate}%</p>
+          <p className="font-num text-[22px] font-semibold text-[#1A1A1A] leading-none mt-1">{rate}%</p>
         </div>
         <span className="bg-[#EDF4EE] text-[#4A7C52] text-[10.5px] font-bold px-2 py-1 rounded-full">on track</span>
       </div>
@@ -342,7 +342,7 @@ function RingTile() {
             strokeDasharray="264" style={{ "--off": "74", animation: "auth-ringDraw 1.4s cubic-bezier(0.22,1,0.36,1) .6s both" } as React.CSSProperties} />
         </svg>
         <div className="absolute inset-0 flex flex-col items-center justify-center">
-          <p className="font-display text-[24px] font-semibold text-[#1A1A1A] leading-none">72%</p>
+          <p className="font-num text-[24px] font-semibold text-[#1A1A1A] leading-none">72%</p>
           <p className="text-[9.5px] font-bold uppercase tracking-wider text-[#6C6555] mt-0.5">May goal</p>
         </div>
       </div>
@@ -1096,7 +1096,7 @@ export default function LoginPage() {
             { v: 0,   dec: 0, l: "all-nighters",         s: "we keep it that way" },
           ].map((stat, i) => (
             <div key={i} className="auth-reveal relative" style={{ transitionDelay: `${i * 120}ms` }}>
-              <p className="font-display text-[48px] lg:text-[64px] leading-none font-semibold tabular-nums">
+              <p className="font-num text-[48px] lg:text-[64px] leading-none font-semibold tabular-nums">
                 <CountUp value={stat.v} decimals={stat.dec} />
               </p>
               <p className="text-[13px] mt-2 font-bold">{stat.l}</p>

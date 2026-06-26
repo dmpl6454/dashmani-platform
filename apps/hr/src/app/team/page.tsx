@@ -29,7 +29,7 @@ export default function TeamPage() {
                   { label: "Today's Submission Rate", value: `${dashboard.submissionRate ?? 0}%`,                                            color: dashboard.submissionRate >= 70 ? "text-success" : "text-attention" },
                 ].map(s => (
                   <div key={s.label} className="v3-card p-4 text-center">
-                    <div className={`font-display text-[24px] font-semibold ${s.color}`}>{s.value}</div>
+                    <div className={`font-num text-[24px] font-semibold ${s.color}`}>{s.value}</div>
                     <div className="text-[11.5px] text-ink-3 font-medium mt-0.5">{s.label}</div>
                   </div>
                 ))}

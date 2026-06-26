@@ -480,7 +480,7 @@ export default function ReportsPage() {
                   <Icon className={`h-5 w-5 ${card.iconColor}`} />
                 </div>
               </div>
-              <p className={`font-light font-serif text-[#1A1A1A] leading-tight ${typeof card.value === "number" ? "text-[40px]" : "text-xl"}`}>
+              <p className={`font-light font-num text-[#1A1A1A] leading-tight ${typeof card.value === "number" ? "text-[40px]" : "text-xl"}`}>
                 {summaryLoading ? "\u2014" : card.value}
               </p>
               <p className="text-xs text-[#B0B0B0] mt-1">{card.sub}</p>
@@ -516,7 +516,7 @@ export default function ReportsPage() {
                   </div>
 
                   {/* Count — left aligned like stat cards */}
-                  <p className="font-serif font-light text-[40px] text-[#1A1A1A] leading-tight">{count}</p>
+                  <p className="font-num font-light text-[40px] text-[#1A1A1A] leading-tight">{count}</p>
                   <p className="text-xs text-[#B0B0B0] -mt-2">links · {windowLabel.toLowerCase()}</p>
 
                   {/* Progress bar */}

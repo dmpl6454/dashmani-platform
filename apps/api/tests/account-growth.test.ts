@@ -132,6 +132,12 @@ describe("Account Growth API", () => {
       expect(d.topMovers.find((m: any) => m.accountId === corrected.id)).toBeUndefined();
       const igMovers = d.topMoversByPlatform?.["Instagram"] ?? [];
       expect(igMovers.find((m: any) => m.accountId === corrected.id)).toBeUndefined();
+      // AND the artifact's -1,029,100 delta must NOT pollute the headline Net Change.
+      // Only accountA(+200) + accountB(-100) count → totalDelta = +100 (NOT -1,029,000).
+      expect(d.totalDelta).toBe(100);
+      // gainers/decliners exclude the artifact too: A grew, B declined → 1 / 1.
+      expect(d.gainers).toBe(1);
+      expect(d.decliners).toBe(1);
     });
 
     it("only exposes http(s) profileUrl — strips javascript:/non-http (XSS guard)", async () => {

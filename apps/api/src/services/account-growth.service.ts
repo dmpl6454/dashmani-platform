@@ -135,6 +135,10 @@ export interface GrowthOverview {
   totalFollowers: number;
   totalDelta: number;
   accountCount: number;
+  /** Accounts that grew over the window (delta > 0, excluding correction artifacts). */
+  gainers: number;
+  /** Accounts that declined over the window (delta < 0, excluding correction artifacts). */
+  decliners: number;
   /** Accounts synced via API within the last 48 hours. */
   liveCount: number;
   /** Accounts synced via API but more than 48 hours ago. */
@@ -235,8 +239,25 @@ export async function getGrowthOverview(days = 30): Promise<GrowthOverview> {
     };
   });
 
+  // A DATA-CORRECTION ARTIFACT: a never-live-synced account carried a stale value
+  // (e.g. 1,040,000) then got its FIRST real sync to the true count (e.g. 10,900) →
+  // an in-window delta that's a ≥90% collapse. That's a measurement correction, NOT
+  // organic movement. Excluded from BOTH the headline Net Change AND Top Movers
+  // (consistent), so the number reflects real follower change. The account's true
+  // CURRENT value still counts toward totalFollowers — only its artifact DELTA is dropped.
+  const isCorrectionArtifact = (a: GrowthOverviewAccount) => a.deltaPct != null && a.deltaPct <= -90;
+
   const totalFollowers = overviewAccounts.reduce((sum, a) => sum + a.latest, 0);
-  const totalDelta = overviewAccounts.reduce((sum, a) => sum + a.delta, 0);
+  // Net Change excludes correction artifacts (e.g. a stale 1.04M→real 10,900 first-sync
+  // would otherwise drag the headline ~1M too low — verified live 2026-06-26).
+  const totalDelta = overviewAccounts.reduce((sum, a) => sum + (isCorrectionArtifact(a) ? 0 : a.delta), 0);
+
+  // Portfolio pulse: how many accounts grew vs declined over the window (excluding
+  // correction artifacts + zero-change). A health signal beyond the single net number —
+  // shows whether growth is broad or a few big accounts mask widespread decline.
+  const realMovers = overviewAccounts.filter((a) => !isCorrectionArtifact(a));
+  const gainers = realMovers.filter((a) => a.delta > 0).length;
+  const decliners = realMovers.filter((a) => a.delta < 0).length;
 
   const liveCount = overviewAccounts.filter((a) => a.syncState === "LIVE").length;
   const staleCount = overviewAccounts.filter((a) => a.syncState === "STALE").length;
@@ -265,13 +286,10 @@ export async function getGrowthOverview(days = 30): Promise<GrowthOverview> {
   // the data stays visible there). When a never-live-synced account carried a stale
   // manual value (e.g. a round 1,040,000) and then got its FIRST real sync to the true
   // count (e.g. 10,900), the in-window delta computes as a ~-99% "drop" and wrongly tops
-  // the movers board. A real account does not lose ≥90% of followers in this window —
-  // such a swing is a stale-guess→measurement correction, not organic movement. We drop
-  // any account whose deltaPct is a ≥90% collapse from its baseline. (Positive swings are
-  // kept: a +Large% can be a genuinely small→viral account, and an upward correction is
-  // far rarer + less misleading than a fake catastrophic drop.)
-  const isCorrectionArtifact = (a: GrowthOverviewAccount) => a.deltaPct != null && a.deltaPct <= -90;
-
+  // the movers board (same isCorrectionArtifact predicate defined above — applied to
+  // both Net Change and Top Movers so the artifact is suppressed consistently).
+  // Positive swings are kept: a +Large% can be a genuinely small→viral account, and an
+  // upward correction is far rarer + less misleading than a fake catastrophic drop.
   const topMovers = [...overviewAccounts]
     .filter((a) => !isCorrectionArtifact(a))
     .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))
@@ -300,6 +318,8 @@ export async function getGrowthOverview(days = 30): Promise<GrowthOverview> {
     totalFollowers,
     totalDelta,
     accountCount: overviewAccounts.length,
+    gainers,
+    decliners,
     liveCount,
     staleCount,
     manualCount,

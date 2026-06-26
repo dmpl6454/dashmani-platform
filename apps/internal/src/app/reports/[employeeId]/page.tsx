@@ -43,7 +43,7 @@ function StatCard({ label, value, icon: Icon, sub, color = "indigo" }: {
       <div className={`h-8 w-8 rounded-lg flex items-center justify-center ${bg}`}>
         <Icon className={`h-4 w-4 ${fg}`} />
       </div>
-      <p className="font-display text-2xl font-semibold text-ink leading-none mt-1">{value}</p>
+      <p className="font-num text-2xl font-semibold text-ink leading-none mt-1">{value}</p>
       <p className="text-xs text-ink-4 font-medium">{label}</p>
       {sub && <p className={`text-[10px] font-semibold ${fg}`}>{sub}</p>}
     </div>

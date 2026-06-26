@@ -932,17 +932,17 @@ function AccountsPageInner() {
                   </div>
                   <div className="flex items-center gap-4 text-center">
                     <div>
-                      <p className="font-display text-xl font-semibold text-ink leading-none">{pAccounts.length}</p>
+                      <p className="font-num text-xl font-semibold text-ink leading-none">{pAccounts.length}</p>
                       <p className="text-[10px] text-ink-4 mt-0.5">Total</p>
                     </div>
                     <div className="w-px h-8 bg-ink/10" />
                     <div>
-                      <p className="font-display text-xl font-semibold text-sage leading-none">{activeCount}</p>
+                      <p className="font-num text-xl font-semibold text-sage leading-none">{activeCount}</p>
                       <p className="text-[10px] text-ink-4 mt-0.5">Active</p>
                     </div>
                     <div className="w-px h-8 bg-ink/10" />
                     <div>
-                      <p className="font-display text-xl font-semibold text-terra leading-none">{assignedCount}</p>
+                      <p className="font-num text-xl font-semibold text-terra leading-none">{assignedCount}</p>
                       <p className="text-[10px] text-ink-4 mt-0.5">Assigned</p>
                     </div>
                   </div>

@@ -44,6 +44,9 @@ export interface GrowthOverviewData {
   liveFollowers?: number;
   staleFollowers?: number;
   manualFollowers?: number;
+  /** Portfolio pulse — accounts that grew / declined over the window (optional) */
+  gainers?: number;
+  decliners?: number;
 }
 
 export function useGrowthOverview(days = 30) {

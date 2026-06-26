@@ -48,7 +48,7 @@ export default function ProjectDetailPage() {
             key={card.title}
             className={`bg-white rounded-2xl p-5 shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0] transition-all hover:shadow-[0_4px_24px_rgba(0,0,0,0.07)] text-center crx-animate-slide crx-delay-${i + 1}`}
           >
-            <p className="text-[40px] font-light font-serif text-[#1A1A1A] leading-tight">{card.value}</p>
+            <p className="text-[40px] font-light font-num text-[#1A1A1A] leading-tight">{card.value}</p>
             <p className="text-sm text-[#7A7A7A] mt-1">{card.title}</p>
           </div>
         ))}

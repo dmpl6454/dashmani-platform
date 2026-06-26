@@ -159,10 +159,17 @@ async function geminiExtract(caption: string, title: string, knownNames: string[
 // This makes extraction resilient to ANY single provider being down/out-of-credit
 // (the 2026-06-26 incident: Anthropic ran out of credit and there was no fallback).
 const defaultRawExtract: RawExtractFn = async (caption, title, knownNames) => {
+  // Provider order = PRIMARY → fallbacks (per owner directive 2026-06-26):
+  //   1. OpenAI gpt-4o-mini — primary: cheapest for our short outputs + currently the
+  //      reliably-funded key (Anthropic was out of credit, which is why it's no longer
+  //      first — every call used to waste a doomed Anthropic request).
+  //   2. Gemini gemini-2.5-flash-lite — 2nd fallback (lite SKU only).
+  //   3. Anthropic Haiku — last fallback (tuned but pricier; was the dry one).
+  // Each tried only if its key is set; falls through on failure.
   const providers: Array<{ key: string | undefined; fn: () => Promise<string> }> = [
-    { key: process.env.ANTHROPIC_API_KEY, fn: () => anthropicExtract(caption, title, knownNames) },
     { key: process.env.OPENAI_API_KEY, fn: () => openaiExtract(caption, title, knownNames) },
     { key: process.env.GOOGLE_GEMINI_API_KEY, fn: () => geminiExtract(caption, title, knownNames) },
+    { key: process.env.ANTHROPIC_API_KEY, fn: () => anthropicExtract(caption, title, knownNames) },
   ].filter((p) => !!p.key);
 
   if (providers.length === 0) {

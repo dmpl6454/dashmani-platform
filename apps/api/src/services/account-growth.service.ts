@@ -99,6 +99,8 @@ export interface GrowthOverviewAccount {
   accountId: string;
   displayName: string;
   platform: string;
+  /** The account's public profile URL, for an open-channel link (null if not stored). */
+  profileUrl: string | null;
   latest: number;
   first: number;
   delta: number;
@@ -200,6 +202,7 @@ export async function getGrowthOverview(days = 30): Promise<GrowthOverview> {
       accountId: account.id,
       displayName: account.displayName,
       platform: account.platform.name,
+      profileUrl: account.profileUrl && account.profileUrl.trim() ? account.profileUrl.trim() : null,
       latest,
       first,
       delta,

@@ -65,17 +65,17 @@ export default function ExpensesPage() {
         <div className="grid grid-cols-3 gap-3">
           <div className="v3-card-sm text-center py-4">
             <Receipt className="h-5 w-5 mx-auto mb-1.5 text-ink-3" />
-            <p className="text-xl font-display font-light text-ink">{expenses.length}</p>
+            <p className="text-xl font-num font-light text-ink">{expenses.length}</p>
             <p className="text-[11px] text-ink-4 font-medium">Total Claims</p>
           </div>
           <div className="v3-card-sm text-center py-4">
             <Clock className="h-5 w-5 mx-auto mb-1.5 text-attention" />
-            <p className="text-xl font-display font-light text-ink">&#8377;{totalPending.toLocaleString("en-IN")}</p>
+            <p className="text-xl font-num font-light text-ink">&#8377;{totalPending.toLocaleString("en-IN")}</p>
             <p className="text-[11px] text-ink-4 font-medium">Pending</p>
           </div>
           <div className="v3-card-sm text-center py-4">
             <CheckCircle className="h-5 w-5 mx-auto mb-1.5 text-success" />
-            <p className="text-xl font-display font-light text-success">&#8377;{totalApproved.toLocaleString("en-IN")}</p>
+            <p className="text-xl font-num font-light text-success">&#8377;{totalApproved.toLocaleString("en-IN")}</p>
             <p className="text-[11px] text-ink-4 font-medium">Approved</p>
           </div>
         </div>

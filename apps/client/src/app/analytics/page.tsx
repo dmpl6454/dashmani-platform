@@ -164,7 +164,7 @@ export default function ClientAnalyticsPage() {
                       <IC size={16} sw={2} />
                     </div>
                     <div>
-                      <div className="font-display text-[34px] font-semibold leading-none text-ink">{tile.value}</div>
+                      <div className="font-num text-[34px] font-semibold leading-none text-ink">{tile.value}</div>
                       <div className="text-[13px] font-semibold text-ink mt-1">{tile.label}</div>
                       <div className="text-[11.5px] text-ink-3 font-medium mt-0.5">{tile.sub}</div>
                     </div>

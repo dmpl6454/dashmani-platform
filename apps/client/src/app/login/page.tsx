@@ -384,7 +384,7 @@ export default function ClientLoginPage() {
             { v: "∞",      l: "content formats",      s: "Reels, stories, feeds" },
           ].map((s, i) => (
             <div key={i} className="reveal relative" style={{ transitionDelay: `${i * 120}ms` }}>
-              <p className="font-display text-[52px] lg:text-[68px] leading-none font-semibold tabular-nums">{s.v}</p>
+              <p className="font-num text-[52px] lg:text-[68px] leading-none font-semibold tabular-nums">{s.v}</p>
               <p className="text-[13.5px] mt-2 font-bold">{s.l}</p>
               <p className="text-[11px] text-action font-mono-auth uppercase tracking-wider mt-1 font-bold">{s.s}</p>
             </div>
@@ -637,7 +637,7 @@ function DashboardPreview({ publicStats }: { publicStats: any }) {
               <div className={`h-7 w-7 rounded-lg grid place-items-center ${s.accent}`}>
                 <Ic size={14} />
               </div>
-              <div className="font-display text-[24px] font-semibold text-ink leading-none mt-2 tabular-nums">{s.value}</div>
+              <div className="font-num text-[24px] font-semibold text-ink leading-none mt-2 tabular-nums">{s.value}</div>
               <div className="text-[10.5px] text-ink-3 font-bold mt-1 leading-tight">{s.label}</div>
             </div>
           );

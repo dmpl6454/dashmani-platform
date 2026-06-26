@@ -272,7 +272,7 @@ export default function DashboardPage() {
                   isPending ? "text-attention" : isLinks ? "text-terra" : "text-indigo"
                 }`} />
               </div>
-              <p className="font-display text-xl font-semibold text-ink leading-none">
+              <p className="font-num text-xl font-semibold text-ink leading-none">
                 {isLoading ? "—" : (value ?? 0)}
               </p>
               <p className="text-[10px] text-ink-4 font-medium leading-tight">{label}</p>
@@ -498,24 +498,24 @@ export default function DashboardPage() {
           {/* Stat chips */}
           <div className="flex items-center gap-4 text-center flex-wrap">
             <div>
-              <p className="font-display text-lg font-semibold text-ink leading-none">{isLoading ? "—" : (stats.linksToday ?? 0)}</p>
+              <p className="font-num text-lg font-semibold text-ink leading-none">{isLoading ? "—" : (stats.linksToday ?? 0)}</p>
               <p className="text-[10px] text-ink-4 mt-0.5">Today</p>
             </div>
             <div className="w-px h-8 bg-ink/10" />
             <div>
-              <p className="font-display text-lg font-semibold text-ink leading-none">{isLoading ? "—" : (stats.linksThisWeek ?? 0)}</p>
+              <p className="font-num text-lg font-semibold text-ink leading-none">{isLoading ? "—" : (stats.linksThisWeek ?? 0)}</p>
               <p className="text-[10px] text-ink-4 mt-0.5">This Week</p>
             </div>
             <div className="w-px h-8 bg-ink/10" />
             <div>
-              <p className="font-display text-lg font-semibold text-ink leading-none">{isLoading ? "—" : (stats.linksThisMonth ?? 0)}</p>
+              <p className="font-num text-lg font-semibold text-ink leading-none">{isLoading ? "—" : (stats.linksThisMonth ?? 0)}</p>
               <p className="text-[10px] text-ink-4 mt-0.5">This Month</p>
             </div>
             {stats.isCustomRange && stats.linksInRange !== null && (
               <>
                 <div className="w-px h-8 bg-ink/10" />
                 <div>
-                  <p className="font-display text-lg font-semibold text-terra leading-none">{isLoading ? "—" : stats.linksInRange}</p>
+                  <p className="font-num text-lg font-semibold text-terra leading-none">{isLoading ? "—" : stats.linksInRange}</p>
                   <p className="text-[10px] text-terra mt-0.5">In Range</p>
                 </div>
               </>

@@ -38,7 +38,7 @@ export default function LeaderboardPage() {
                     {entry.employee.name?.[0]?.toUpperCase() || "?"}
                   </div>
                   <p className="text-[13.5px] font-bold text-ink">{entry.employee.name}</p>
-                  <div className="font-display text-[22px] font-semibold text-indigo mt-1">{entry.totalReports}</div>
+                  <div className="font-num text-[22px] font-semibold text-indigo mt-1">{entry.totalReports}</div>
                   <div className="text-[11px] text-ink-3 font-medium">reports</div>
                   <div className="flex items-center justify-center gap-1 mt-2 text-[11px] text-ink-3">
                     <Flame size={11} className="text-terra" />
@@ -59,7 +59,7 @@ export default function LeaderboardPage() {
               {entries.map((entry: any, i: number) => (
                 <div key={entry.employee.id} style={i < entries.length - 1 ? { borderBottom: "1px solid rgba(26,26,26,0.06)" } : {}}>
                   <div className="px-5 py-3.5 flex items-center gap-4 v3-row">
-                    <span className={`font-display text-[18px] font-semibold w-7 text-center shrink-0 ${entry.rank <= 3 ? "text-indigo" : "text-ink-4"}`}>{entry.rank}</span>
+                    <span className={`font-num text-[18px] font-semibold w-7 text-center shrink-0 ${entry.rank <= 3 ? "text-indigo" : "text-ink-4"}`}>{entry.rank}</span>
                     <div className="h-8 w-8 rounded-full grid place-items-center text-white text-[11px] font-bold shrink-0"
                          style={{ background: avatarGrad(entry.employee.name) }}>
                       {entry.employee.name?.[0]?.toUpperCase() || "?"}

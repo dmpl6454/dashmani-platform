@@ -6,6 +6,9 @@ import { youTubeQuotaExceeded } from "../services/social-insights/youtube.provid
 import { upsertLinkContent } from "../services/link-content.service";
 
 const POLL_WINDOW_DAYS = 60;
+// Per-provider metric-sweep wall-clock budget (default 25 min). A provider yields to
+// the next once this elapses AFTER its early harvest has fired — see slugDeadline use.
+const SWEEP_BUDGET_MS = Number(process.env.INSIGHTS_SWEEP_BUDGET_MS) || 25 * 60 * 1000;
 
 function chunk<T>(arr: T[], size: number): T[][] {
   const out: T[][] = [];
@@ -140,6 +143,13 @@ export async function runSocialInsightsRefresh(opts?: { harvestOnly?: boolean })
       // completes (or is interrupted). A post-loop fallback below covers the
       // edge case where targets.length === 0 or every batch throws.
       let harvestedThisRun = false;
+      // Per-provider metric-sweep wall-clock budget. WHY: the sweep is sequential
+      // across providers; a slow/rate-limited provider (e.g. Instagram's ~38k-link
+      // sweep) could consume the whole run and the loop would never ADVANCE to the
+      // next provider (Facebook), starving it (the 2026-06-26 "FB 0 ok" outage). Each
+      // provider self-bounds: once its EARLY harvest has fired (captions safe), it
+      // yields after SWEEP_BUDGET_MS so every provider gets a turn within the 6h run.
+      const slugDeadline = Date.now() + SWEEP_BUDGET_MS;
 
       if (harvestOnly) {
         console.log(
@@ -151,8 +161,11 @@ export async function runSocialInsightsRefresh(opts?: { harvestOnly?: boolean })
         try {
           const results = await provider.fetchBatch(batch);
 
-          // Check if quota exceeded mid-run
-          if (youTubeQuotaExceeded) {
+          // Check if quota exceeded mid-run. SCOPED to YouTube: youTubeQuotaExceeded is
+          // a module-level flag that is never reset, so reading it for IG/FB would let a
+          // YT-quota day suppress the NEXT provider's harvest. IG/FB have their own
+          // igRateLimited/fbRateLimited; this cross-provider read was always wrong.
+          if (slug === "youtube" && youTubeQuotaExceeded) {
             quotaAborted = true;
             // Mark remaining in batch as rate_limited
             for (const t of batch) {
@@ -261,6 +274,27 @@ export async function runSocialInsightsRefresh(opts?: { harvestOnly?: boolean })
           // captions written), stop grinding through the remaining metric batches.
           // The post-loop fallback below will not re-run (harvestedThisRun is true).
           if (harvestOnly && harvestedThisRun) break;
+          // Per-provider budget: once THIS provider's early harvest has fired AND its
+          // wall-clock budget is spent, yield so the loop ADVANCES to the next provider
+          // (prevents one slow provider from starving the rest — captions are already
+          // safe via the early harvest, only the per-link metric tail is cut short).
+          if (harvestedThisRun && Date.now() > slugDeadline) {
+            console.log(
+              `[social-insights/${slug}] metric-sweep budget (${SWEEP_BUDGET_MS}ms) spent after harvest — yielding to next provider`
+            );
+            break;
+          }
+          // HARD backstop: if the early harvest NEVER fired (e.g. IG discovery returned
+          // 0 accounts → empty map → harvestedThisRun stays false) the soft break above
+          // can't trigger and the loop would grind every batch, starving later providers
+          // (the exact IG-0-accounts → FB-starved failure mode). Yield at 2× budget no
+          // matter what — a non-harvesting provider has nothing to flush anyway.
+          if (Date.now() > slugDeadline + SWEEP_BUDGET_MS) {
+            console.warn(
+              `[social-insights/${slug}] metric-sweep HARD budget (${2 * SWEEP_BUDGET_MS}ms) spent (harvest fired=${harvestedThisRun}) — yielding to next provider`
+            );
+            break;
+          }
         } catch (batchErr) {
           console.error(`[social-insights/${slug}] batch failed:`, batchErr);
           errors += batch.length;

@@ -194,9 +194,13 @@ describe("extractEntitiesFromContent (DB-backed)", () => {
     expect(joins[0].confidence).toBe(0.9);
   });
 
-  it("malformed LLM response marks the row status='error', leaves extractedAt null, does NOT throw", async () => {
+  it("PERMANENT parse failure keeps status='ok' + stamps extractedAt (no re-pay loop) — 2026-06-26 fix", async () => {
     if (!dbAvailable) return;
 
+    // An unparseable reply is permanent FOR THIS ROW. The caption is still VALID, so
+    // status MUST stay 'ok' (searchable + coverage-counted). extractedAt is stamped so
+    // it exits the retry queue (no infinite re-pay). The OLD code set status='error',
+    // hiding a perfectly-good caption from Link Search forever — the 13k FB regression.
     const content = await seedContent("02", "some caption");
     const fakeLLM: RawExtractFn = async () => "not json at all {";
 
@@ -207,8 +211,88 @@ describe("extractEntitiesFromContent (DB-backed)", () => {
     expect(res.error).toBe(1);
 
     const row = await prisma.linkContent.findUnique({ where: { id: content.id } });
-    expect(row?.status).toBe("error");
+    expect(row?.status).toBe("ok"); // NEVER demoted — caption stays searchable
+    expect(row?.extractedAt).not.toBeNull(); // terminally marked → no re-pay hot-loop
+  });
+
+  it("a PERMANENT API error (out-of-credit) keeps status='ok' + stamps extractedAt", async () => {
+    if (!dbAvailable) return;
+
+    const content = await seedContent("02b", "Salman Khan spotted at the airport");
+    // The real incident: a plain Error (out-of-credit). NOT a transient SDK error → the
+    // classifier treats it as permanent → markDone (status stays ok, extractedAt set).
+    const deadProvider: RawExtractFn = async () => {
+      throw new Error("Your credit balance is too low to access the Anthropic API.");
+    };
+
+    const res = await extractEntitiesFromContent(
+      [{ id: content.id, title: content.title, caption: content.caption }],
+      deadProvider
+    );
+    expect(res.error).toBe(1);
+
+    const row = await prisma.linkContent.findUnique({ where: { id: content.id } });
+    expect(row?.status).toBe("ok"); // NOT demoted — the caption is still good
+    expect(row?.extractedAt).not.toBeNull(); // terminally marked, but searchable
+  });
+
+  it("a TRANSIENT failure (rate-limit/5xx) → 'retry', row left PRISTINE for next run", async () => {
+    if (!dbAvailable) return;
+
+    const content = await seedContent("02c", "Shah Rukh Khan at the premiere");
+    // An OpenAI 429 surfaces from openaiExtract as Error("openai: HTTP 429 …") → the
+    // classifier treats it as transient → retry, row untouched (status ok, extractedAt null).
+    const rateLimited: RawExtractFn = async () => {
+      throw new Error("openai: HTTP 429 Too Many Requests");
+    };
+
+    const res = await extractEntitiesFromContent(
+      [{ id: content.id, title: content.title, caption: content.caption }],
+      rateLimited
+    );
+    expect(res.retry).toBe(1);
+    expect(res.error).toBe(0);
+
+    const row = await prisma.linkContent.findUnique({ where: { id: content.id } });
+    expect(row?.status).toBe("ok"); // pristine
+    expect(row?.extractedAt).toBeNull(); // still in the retry queue
+    // The cron's pending selector must still include it (it will be re-attempted).
+    const pending = await prisma.linkContent.findMany({
+      where: { status: "ok", extractedAt: null, canonicalKey: { startsWith: KEY_PREFIX } },
+    });
+    expect(pending.find((p) => p.id === content.id)).toBeDefined();
+  });
+
+  it("a TRANSIENT row succeeds on retry once the provider recovers (no demotion in between)", async () => {
+    if (!dbAvailable) return;
+
+    const NAME = `${NAME_PREFIX}Deepika Padukone`;
+    const content = await seedContent("02d", "Deepika Padukone glows at the gala");
+    let call = 0;
+    const flaky: RawExtractFn = async () => {
+      call++;
+      if (call === 1) throw new Error("openai: HTTP 503 Service Unavailable"); // transient
+      return JSON.stringify([{ canonicalName: NAME, type: "PERSON", confidence: 0.9, isNew: true }]);
+    };
+
+    // First pass → retry (pristine).
+    const r1 = await extractEntitiesFromContent(
+      [{ id: content.id, title: content.title, caption: content.caption }],
+      flaky
+    );
+    expect(r1.retry).toBe(1);
+    let row = await prisma.linkContent.findUnique({ where: { id: content.id } });
     expect(row?.extractedAt).toBeNull();
+
+    // Second pass (provider recovered) → tagged.
+    const r2 = await extractEntitiesFromContent(
+      [{ id: content.id, title: content.title, caption: content.caption }],
+      flaky
+    );
+    expect(r2.ok).toBe(1);
+    row = await prisma.linkContent.findUnique({ where: { id: content.id } });
+    expect(row?.status).toBe("ok");
+    expect(row?.extractedAt).not.toBeNull();
   });
 
   it("idempotency: success stamps extractedAt → the pending selector excludes it", async () => {

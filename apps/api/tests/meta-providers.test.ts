@@ -495,10 +495,13 @@ describe("facebookProvider", () => {
   function scrapedReelHtml(views: number, reactions: number, comments: number, caption = "Some caption text"): string {
     return [
       "<html><head>",
+      // og:title carries the TARGET's reaction count (likes source); og:description is the caption.
+      `<meta property="og:title" content="${views} views · ${reactions} reactions | ${caption}" />`,
       `<meta property="og:description" content="${caption}" />`,
-      `"reaction_count":{"count":${reactions},"is_empty":false}`,
+      // carousel `reaction_count` noise — the provider must NOT read this for likes.
+      `"reaction_count":{"count":${reactions + 9999},"is_empty":false}`,
       `"total_comment_count":${comments}`,
-      // carousel noise that must NOT be read as the view count:
+      // carousel play_count noise — must NOT be read as views.
       `{"play_count":${views * 3 + 11},"playable_duration":34}`,
       `"video_view_count":${views}`,
       "</head><body>",

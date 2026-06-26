@@ -275,9 +275,9 @@ export default function LinkSearchPage() {
                         <span className="font-semibold text-ink">{(s ?? 0).toLocaleString()}</span>
                         {sub != null && sub > 0 && <> of {sub.toLocaleString()}</>} searchable
                       </span>
-                      {p === "youtube" && <span className="text-ink-4">· no date limit</span>}
+                      {p === "youtube" && <span className="text-ink-4">· all dates</span>}
                       {(p === "instagram" || p === "facebook") && since && (
-                        <span className="text-ink-4">· since {fmtDate(since)}</span>
+                        <span className="text-ink-4">· capturing since {fmtDate(since)}</span>
                       )}
                       {(pPending ?? 0) > 0 && (
                         <span className="text-ink-4">· {(pPending!).toLocaleString()} tagging</span>
@@ -292,9 +292,15 @@ export default function LinkSearchPage() {
                 )}
 
                 <p className="text-ink-4 pt-0.5 border-t border-indigo/10 mt-1">
-                  Newly submitted posts become searchable within a few hours; older posts are added gradually as enrichment
-                  works through the backlog. Opaque <span className="font-mono text-[10px]">facebook.com/share/</span> links
-                  (with no post id) can&rsquo;t be matched to a post.
+                  The denominator is <span className="font-medium">every link ever submitted</span> for each platform (all dates),
+                  and &ldquo;searchable&rdquo; counts how many of those we&rsquo;ve captured a caption for — old and new alike, not just
+                  recent ones. &ldquo;Capturing since&rdquo; is the date we started reading captions, not a cutoff on which links count.
+                </p>
+                <p className="text-ink-4 pt-0.5">
+                  The gap (submitted minus searchable) is mostly Instagram/Facebook posts that have scrolled too far back in
+                  their account&rsquo;s feed for Meta to return by link (there&rsquo;s no fetch-by-id), plus opaque
+                  <span className="font-mono text-[10px]"> facebook.com/share/</span> links that carry no post id. YouTube has no
+                  such limit. These links still exist in the system — they just can&rsquo;t be caption-searched.
                 </p>
 
                 {/* Plain-language explainer */}

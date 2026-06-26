@@ -118,7 +118,7 @@ export default function LeavePage() {
                 </div>
                 {c.data ? (
                   <>
-                    <div className={`font-display text-[32px] font-semibold leading-none ${c.color}`}>{c.data.balance}</div>
+                    <div className={`font-num text-[32px] font-semibold leading-none ${c.color}`}>{c.data.balance}</div>
                     <div className="text-[12.5px] font-semibold text-ink mt-1">{c.label}</div>
                     <div className="flex gap-3 mt-1 text-[11px] text-ink-3 font-medium">
                       <span>Total: {c.data.total}</span><span>Used: {c.data.used}</span>

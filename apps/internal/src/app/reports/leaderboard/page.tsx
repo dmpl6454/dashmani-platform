@@ -99,7 +99,7 @@ export default function AdminLeaderboardPage() {
                   <Icon className="h-5 w-5 text-[#1A1A1A]" />
                 </div>
               </div>
-              <p className="text-[40px] font-light font-serif text-[#1A1A1A] leading-tight truncate">
+              <p className="text-[40px] font-light font-num text-[#1A1A1A] leading-tight truncate">
                 {isLoading ? "--" : card.value}
               </p>
               <p className="text-xs text-[#B0B0B0] mt-1">{card.sub}</p>
@@ -138,7 +138,7 @@ export default function AdminLeaderboardPage() {
                     key={entry.employee.id}
                     className="border-b border-[#F0EAD8] last:border-0 hover:bg-[rgba(255,248,225,0.5)] transition-colors"
                   >
-                    <td className="py-3 px-5 text-center text-lg font-serif">
+                    <td className="py-3 px-5 text-center text-lg font-num">
                       {entry.rank <= 3 ? (
                         <span className="inline-flex items-center justify-center h-8 w-8 rounded-full bg-[#FFF3C4] text-[#1A1A1A] font-bold text-sm">
                           {MEDALS[entry.rank - 1]}

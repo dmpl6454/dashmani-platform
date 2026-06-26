@@ -135,7 +135,7 @@ export default function CalendarPage() {
               <Briefcase className="w-4 h-4 text-indigo" />
             </div>
             <div>
-              <p className="text-xl font-display font-light text-ink">
+              <p className="text-xl font-num font-light text-ink">
                 {calendar?.workingDays ?? "--"}
               </p>
               <p className="text-[11px] text-ink-4 font-medium">Working Days</p>

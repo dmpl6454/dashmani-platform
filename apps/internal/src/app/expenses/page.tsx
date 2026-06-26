@@ -55,7 +55,7 @@ export default function ExpensesPage() {
               <Receipt className="h-5 w-5 text-[#1A1A1A]" />
             </div>
           </div>
-          <p className="text-[40px] font-light font-serif text-[#1A1A1A] leading-tight">{expenses.length}</p>
+          <p className="text-[40px] font-light font-num text-[#1A1A1A] leading-tight">{expenses.length}</p>
         </div>
         <div className="bg-white rounded-2xl p-5 shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0]">
           <div className="flex items-center justify-between mb-3">
@@ -64,7 +64,7 @@ export default function ExpensesPage() {
               <IndianRupee className="h-5 w-5 text-[#1A1A1A]" />
             </div>
           </div>
-          <p className="text-[40px] font-light font-serif text-[#1A1A1A] leading-tight">{"\u20B9"}{totalAmount.toLocaleString("en-IN")}</p>
+          <p className="text-[40px] font-light font-num text-[#1A1A1A] leading-tight">{"\u20B9"}{totalAmount.toLocaleString("en-IN")}</p>
         </div>
       </div>
 

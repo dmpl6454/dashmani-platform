@@ -49,7 +49,7 @@ export default function ExtraHoursPage() {
               { label: "Total Entries",   value: hours.length, color: "text-ink" },
             ].map(s => (
               <div key={s.label} className="v3-card p-4 text-center">
-                <div className={`font-display text-[26px] font-semibold ${s.color}`}>{s.value}</div>
+                <div className={`font-num text-[26px] font-semibold ${s.color}`}>{s.value}</div>
                 <div className="text-[11.5px] text-ink-3 font-medium mt-0.5">{s.label}</div>
               </div>
             ))}

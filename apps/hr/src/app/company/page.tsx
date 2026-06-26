@@ -54,7 +54,7 @@ export default function CompanyProfilePage() {
               ].map(({ icon: Icon, value, label }) => (
                 <div key={label} className="v3-card-inset text-center py-4">
                   <Icon className="h-5 w-5 mx-auto mb-2 text-indigo" />
-                  <p className="text-xl font-display font-light text-ink">{value}</p>
+                  <p className="text-xl font-num font-light text-ink">{value}</p>
                   <p className="text-[11px] text-ink-4 font-medium mt-0.5">{label}</p>
                 </div>
               ))}

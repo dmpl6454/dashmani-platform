@@ -368,28 +368,28 @@ export default function LinkSearchPage() {
               <div className="h-7 w-7 rounded-lg bg-terra-soft flex items-center justify-center">
                 <Link2 className="h-3.5 w-3.5 text-terra" />
               </div>
-              <p className="font-display text-2xl font-semibold text-ink leading-none pt-1">{data!.totalPosts.toLocaleString()}</p>
+              <p className="font-num text-2xl font-semibold text-ink leading-none pt-1">{data!.totalPosts.toLocaleString()}</p>
               <p className="text-xs text-ink-4">Total Posts</p>
             </div>
             <div className="v3-card-sm p-4 space-y-1">
               <div className="h-7 w-7 rounded-lg bg-sage-soft flex items-center justify-center">
                 <Layers className="h-3.5 w-3.5 text-sage" />
               </div>
-              <p className="font-display text-2xl font-semibold text-ink leading-none pt-1">{data!.uniquePosts.toLocaleString()}</p>
+              <p className="font-num text-2xl font-semibold text-ink leading-none pt-1">{data!.uniquePosts.toLocaleString()}</p>
               <p className="text-xs text-ink-4">Unique Posts</p>
             </div>
             <div className="v3-card-sm p-4 space-y-1">
               <div className="h-7 w-7 rounded-lg bg-attention/10 flex items-center justify-center">
                 <CopyMinus className="h-3.5 w-3.5 text-attention" />
               </div>
-              <p className="font-display text-2xl font-semibold text-ink leading-none pt-1">{data!.duplicatePosts.toLocaleString()}</p>
+              <p className="font-num text-2xl font-semibold text-ink leading-none pt-1">{data!.duplicatePosts.toLocaleString()}</p>
               <p className="text-xs text-ink-4">Duplicates</p>
             </div>
             <div className="v3-card-sm p-4 space-y-1">
               <div className="h-7 w-7 rounded-lg bg-indigo-soft flex items-center justify-center">
                 <Globe className="h-3.5 w-3.5 text-indigo" />
               </div>
-              <p className="font-display text-2xl font-semibold text-ink leading-none pt-1">{data!.channelCount.toLocaleString()}</p>
+              <p className="font-num text-2xl font-semibold text-ink leading-none pt-1">{data!.channelCount.toLocaleString()}</p>
               <p className="text-xs text-ink-4">Channels</p>
             </div>
           </div>

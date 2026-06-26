@@ -158,7 +158,7 @@ export default function EmployeePerformancePage() {
                 <span className="text-xs text-[#7A7A7A]">{card.title}</span>
                 <Icon className="h-4 w-4 text-[#B0B0B0]" />
               </div>
-              <p className="text-[28px] font-light font-serif text-[#1A1A1A] leading-tight">{card.value}</p>
+              <p className="text-[28px] font-light font-num text-[#1A1A1A] leading-tight">{card.value}</p>
               <p className="text-[10px] text-[#B0B0B0] mt-1">{card.sub}</p>
             </div>
           );
@@ -175,7 +175,7 @@ export default function EmployeePerformancePage() {
                 <Icon className={`h-5 w-5 ${card.color}`} />
               </div>
               <div>
-                <p className="text-xl font-light font-serif text-[#1A1A1A]">{card.value.toLocaleString()}</p>
+                <p className="text-xl font-light font-num text-[#1A1A1A]">{card.value.toLocaleString()}</p>
                 <p className="text-xs text-[#7A7A7A]">{card.label}</p>
               </div>
             </div>

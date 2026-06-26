@@ -198,6 +198,8 @@ export default function AccountGrowthPage() {
   const liveCount: number | undefined = d?.liveCount;
   const staleCount: number | undefined = d?.staleCount;
   const manualCount: number | undefined = d?.manualCount;
+  const gainers: number | undefined = d?.gainers;
+  const decliners: number | undefined = d?.decliners;
 
   const totalUp = totalDelta > 0;
   const totalDown = totalDelta < 0;
@@ -259,12 +261,12 @@ export default function AccountGrowthPage() {
       ) : (
         <>
           {/* Stat row */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             <div className="bg-white rounded-2xl border border-[#E8E0D0] shadow-[0_2px_16px_rgba(0,0,0,0.05)] p-5 space-y-1">
               <div className="h-7 w-7 rounded-lg bg-[#F0EEFF] flex items-center justify-center">
                 <Users className="h-3.5 w-3.5 text-[#5B4BF5]" />
               </div>
-              <p className="font-serif text-2xl font-medium text-[#1A1A1A] leading-none pt-1">{fmtCompact(totalFollowers)}</p>
+              <p className="font-num text-2xl font-semibold text-[#1A1A1A] leading-none pt-1">{fmtCompact(totalFollowers)}</p>
               <p className="text-xs text-[#7A7A7A]">Total Followers</p>
               {liveCount !== undefined && (
                 <p className="text-[10px] text-[#7A7A7A] leading-snug">
@@ -282,7 +284,7 @@ export default function AccountGrowthPage() {
                     ? <TrendingDown className="h-3.5 w-3.5 text-[#D14343]" />
                     : <TrendingUp className="h-3.5 w-3.5 text-[#7A7A7A]" />}
               </div>
-              <p className={`font-serif text-2xl font-medium leading-none pt-1 ${totalUp ? "text-[#3E9B4F]" : totalDown ? "text-[#D14343]" : "text-[#1A1A1A]"}`}>
+              <p className={`font-num text-2xl font-semibold leading-none pt-1 ${totalUp ? "text-[#3E9B4F]" : totalDown ? "text-[#D14343]" : "text-[#1A1A1A]"}`}>
                 {totalDelta > 0 ? "+" : ""}{fmtCompact(totalDelta)}
               </p>
               <p className="text-xs text-[#7A7A7A]">Net Change · last {apiDays}d</p>
@@ -291,9 +293,23 @@ export default function AccountGrowthPage() {
               <div className="h-7 w-7 rounded-lg bg-[#FFF3C4] flex items-center justify-center">
                 <LineChart className="h-3.5 w-3.5 text-[#1A1A1A]" />
               </div>
-              <p className="font-serif text-2xl font-medium text-[#1A1A1A] leading-none pt-1">{accountCount}</p>
+              <p className="font-num text-2xl font-semibold text-[#1A1A1A] leading-none pt-1">{accountCount}</p>
               <p className="text-xs text-[#7A7A7A]">Accounts Tracked</p>
             </div>
+            {/* Portfolio pulse: gainers vs decliners over the window */}
+            {(gainers !== undefined || decliners !== undefined) && (
+              <div className="bg-white rounded-2xl border border-[#E8E0D0] shadow-[0_2px_16px_rgba(0,0,0,0.05)] p-5 space-y-1">
+                <div className="h-7 w-7 rounded-lg bg-[#E8F5EA] flex items-center justify-center">
+                  <TrendingUp className="h-3.5 w-3.5 text-[#3E9B4F]" />
+                </div>
+                <p className="font-num text-2xl font-semibold leading-none pt-1">
+                  <span className="text-[#3E9B4F]">{gainers ?? 0}</span>
+                  <span className="text-[#B0B0B0] text-lg"> / </span>
+                  <span className="text-[#D14343]">{decliners ?? 0}</span>
+                </p>
+                <p className="text-xs text-[#7A7A7A]">Gainers / Decliners · last {apiDays}d</p>
+              </div>
+            )}
           </div>
 
           {/* Top Movers */}

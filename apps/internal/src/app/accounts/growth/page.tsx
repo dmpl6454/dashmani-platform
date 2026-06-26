@@ -146,6 +146,12 @@ export default function AccountGrowthPage() {
   const { data, isLoading } = useGrowthOverview(days);
   const d = (data as any)?.data;
 
+  // ── All-Accounts list controls (client-side; data already fetched) ──────────
+  const [search, setSearch] = useState("");
+  const [platformFilter, setPlatformFilter] = useState<string>("all");
+  // Sort options for the All Accounts table.
+  const [sortBy, setSortBy] = useState<"sync" | "followers" | "delta" | "deltaPct" | "name">("sync");
+
   const totalFollowers: number = d?.totalFollowers ?? 0;
   const totalDelta: number = d?.totalDelta ?? 0;
   const accountCount: number = d?.accountCount ?? 0;
@@ -155,13 +161,37 @@ export default function AccountGrowthPage() {
   const apiDays: number = d?.days ?? days ?? 30;
   const topMoversByPlatform: Record<string, TopMover[]> | undefined = d?.topMoversByPlatform;
 
-  // Sort accounts: LIVE → STALE → MANUAL → undefined, then by latest desc within group
+  // Platforms present in the data (for the filter dropdown).
+  const platformOptions = Array.from(new Set(accounts.map((a) => a.platform))).sort();
+
+  // Filter (search + platform) then sort the All Accounts list. All client-side over
+  // the already-fetched accounts — no extra requests.
   const SYNC_RANK: Record<string, number> = { LIVE: 0, STALE: 1, MANUAL: 2 };
-  const sortedAccounts = [...accounts].sort((a, b) => {
-    const ra = a.syncState != null ? (SYNC_RANK[a.syncState] ?? 3) : 3;
-    const rb = b.syncState != null ? (SYNC_RANK[b.syncState] ?? 3) : 3;
-    if (ra !== rb) return ra - rb;
-    return (b.latest ?? 0) - (a.latest ?? 0);
+  const q = search.trim().toLowerCase();
+  const filteredAccounts = accounts.filter((a) => {
+    if (platformFilter !== "all" && a.platform !== platformFilter) return false;
+    if (q && !a.displayName.toLowerCase().includes(q)) return false;
+    return true;
+  });
+  const sortedAccounts = [...filteredAccounts].sort((a, b) => {
+    switch (sortBy) {
+      case "followers":
+        return (b.latest ?? 0) - (a.latest ?? 0);
+      case "delta":
+        return (b.delta ?? 0) - (a.delta ?? 0);
+      case "deltaPct":
+        return (b.deltaPct ?? 0) - (a.deltaPct ?? 0);
+      case "name":
+        return a.displayName.localeCompare(b.displayName);
+      case "sync":
+      default: {
+        // LIVE → STALE → MANUAL → undefined, then by latest desc within group.
+        const ra = a.syncState != null ? (SYNC_RANK[a.syncState] ?? 3) : 3;
+        const rb = b.syncState != null ? (SYNC_RANK[b.syncState] ?? 3) : 3;
+        if (ra !== rb) return ra - rb;
+        return (b.latest ?? 0) - (a.latest ?? 0);
+      }
+    }
   });
 
   // Coverage counts — only present when API ships the enriched response
@@ -198,6 +228,22 @@ export default function AccountGrowthPage() {
               {w}d
             </button>
           ))}
+          {/* Custom day-range: type N days; clamped 1–365. Highlighted when active (not a preset). */}
+          <div className={`flex items-center gap-1 rounded-full border px-2 py-1 ${!WINDOWS.includes(days) ? "border-[#1A1A1A] bg-[#1A1A1A] text-white" : "border-[#E8E0D0] text-[#7A7A7A]"}`}>
+            <input
+              type="number"
+              min={1}
+              max={365}
+              value={days}
+              onChange={(e) => {
+                const n = parseInt(e.target.value, 10);
+                if (Number.isFinite(n)) setDays(Math.max(1, Math.min(365, n)));
+              }}
+              aria-label="Custom day range"
+              className="w-10 bg-transparent text-[11px] text-center outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none"
+            />
+            <span className="text-[11px]">d</span>
+          </div>
         </div>
       </div>
 
@@ -311,9 +357,46 @@ export default function AccountGrowthPage() {
 
           {/* All Accounts */}
           <div className="bg-white rounded-2xl border border-[#E8E0D0] shadow-[0_2px_16px_rgba(0,0,0,0.05)]">
-            <div className="px-6 py-4 border-b border-[#F0EAD8] flex items-center gap-2">
+            <div className="px-6 py-4 border-b border-[#F0EAD8] flex items-center gap-2 flex-wrap">
               <h3 className="font-serif text-[#1A1A1A] font-medium">All Accounts</h3>
-              <span className="ml-auto text-[10px] text-[#B0B0B0]">{accounts.length} tracked</span>
+              <span className="text-[10px] text-[#B0B0B0]">
+                {sortedAccounts.length === accounts.length
+                  ? `${accounts.length} tracked`
+                  : `${sortedAccounts.length} of ${accounts.length}`}
+              </span>
+              {/* Controls: search · platform filter · sort */}
+              <div className="ml-auto flex items-center gap-2 flex-wrap">
+                <input
+                  type="text"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Search channel…"
+                  className="h-8 w-44 rounded-lg border border-[#E8E0D0] bg-[#FAFAF8] px-3 text-xs text-[#1A1A1A] placeholder:text-[#B0B0B0] focus:outline-none focus:border-[#1A1A1A]"
+                />
+                <select
+                  value={platformFilter}
+                  onChange={(e) => setPlatformFilter(e.target.value)}
+                  aria-label="Filter by platform"
+                  className="h-8 rounded-lg border border-[#E8E0D0] bg-[#FAFAF8] px-2 text-xs text-[#1A1A1A] focus:outline-none focus:border-[#1A1A1A]"
+                >
+                  <option value="all">All platforms</option>
+                  {platformOptions.map((p) => (
+                    <option key={p} value={p}>{p}</option>
+                  ))}
+                </select>
+                <select
+                  value={sortBy}
+                  onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
+                  aria-label="Sort by"
+                  className="h-8 rounded-lg border border-[#E8E0D0] bg-[#FAFAF8] px-2 text-xs text-[#1A1A1A] focus:outline-none focus:border-[#1A1A1A]"
+                >
+                  <option value="sync">Sort: Freshness</option>
+                  <option value="followers">Sort: Followers</option>
+                  <option value="delta">Sort: Δ change</option>
+                  <option value="deltaPct">Sort: Δ %</option>
+                  <option value="name">Sort: Name (A–Z)</option>
+                </select>
+              </div>
             </div>
             {/* Column headers */}
             <div className="px-6 py-2 grid grid-cols-[1fr_6rem_5rem_5rem_4rem] gap-3 text-[10px] font-medium text-[#B0B0B0] uppercase tracking-wide border-b border-[#F5F0E8]">
@@ -324,6 +407,11 @@ export default function AccountGrowthPage() {
               <span className="text-right">Δ%</span>
             </div>
             <ul className="divide-y divide-[#F5F0E8]">
+              {sortedAccounts.length === 0 && (
+                <li className="px-6 py-8 text-center text-xs text-[#B0B0B0]">
+                  No channels match {search.trim() ? `“${search.trim()}”` : "this filter"}.
+                </li>
+              )}
               {sortedAccounts.map((a: GrowthAccount) => {
                 const up = (a.delta ?? 0) > 0;
                 const down = (a.delta ?? 0) < 0;

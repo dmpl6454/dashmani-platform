@@ -596,6 +596,34 @@ describe("facebookProvider", () => {
     expect(scraperFetch).not.toHaveBeenCalled();
     expect(res.get("l1")).toMatchObject({ ok: true, status: "ok", views: 107, likes: 9 });
   });
+
+  it("short-circuits the scraper after N consecutive login walls (block detection)", async () => {
+    process.env.META_SYSTEM_USER_TOKEN = FAKE_TOKEN;
+    process.env.FB_SCRAPER_ENABLED = "1";
+    process.env.FB_SCRAPER_WALL_LIMIT = "3"; // trip after 3 consecutive walls
+    setFbGraphFetch(ownedPageGraph() as unknown as GraphFetchFn); // none match → all scrape
+
+    // Every scrape returns a login wall (302 → /login). After 3 walls the provider
+    // must stop calling the scraper for the rest of the run (blind-scraping 19k = abuse).
+    const wallResp = () => {
+      const r = new Response("short", { status: 200 });
+      Object.defineProperty(r, "url", { value: "https://www.facebook.com/login/" });
+      return r;
+    };
+    const scraperFetch = vi.fn(async () => wallResp());
+    setFbScraperFetch(scraperFetch as unknown as typeof fetch);
+
+    // 6 not_found reels, but the scraper should be called only 3 times then short-circuit.
+    const targets = Array.from({ length: 6 }, (_, i) =>
+      target(`w${i}`, `https://facebook.com/reel/${900000 + i}`, String(900000 + i)),
+    );
+    const res = await facebookProvider.fetchBatch(targets);
+    expect(scraperFetch).toHaveBeenCalledTimes(3); // stopped after the wall limit
+    // All stay not_found (fail-open — a walled scrape never fabricates data).
+    for (const t of targets) expect(res.get(t.linkId)).toMatchObject({ ok: false, status: "not_found" });
+
+    delete process.env.FB_SCRAPER_WALL_LIMIT;
+  });
 });
 
 // ── resolveOpaqueFacebookUrl (opt-in helper) ──────────────────────────────────

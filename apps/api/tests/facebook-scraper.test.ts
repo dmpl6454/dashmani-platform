@@ -124,26 +124,27 @@ describe("scrapeFacebookReelEngagement", () => {
     expect(r).toEqual({ views: 9859, likes: 198, comments: 0, caption: "Rajpal Yadav at the prayer meet" });
   });
 
-  it("fails open (all-null) on a non-200 response", async () => {
+  it("fails open + signals walled:true on a non-200 response (a block, not 'no data')", async () => {
     const f = vi.fn(async () => new Response("", { status: 400 })) as unknown as typeof fetch;
     const r = await scrapeFacebookReelEngagement("123", f);
-    expect(r).toEqual({ views: null, likes: null, comments: null, caption: null });
+    expect(r).toEqual({ views: null, likes: null, comments: null, caption: null, walled: true });
   });
 
-  it("fails open when redirected to a login wall", async () => {
-    // A Response whose url contains /login → treated as a wall, not parsed.
+  it("signals walled:true when redirected to a login wall", async () => {
+    // A Response whose url contains /login → a block; the provider counts these to
+    // trip its per-run short-circuit. Metrics still all-null (fail-open).
     const resp = new Response(reelHtml({ videoViewCount: 1 }), { status: 200 });
     Object.defineProperty(resp, "url", { value: "https://www.facebook.com/login/" });
     const f = vi.fn(async () => resp) as unknown as typeof fetch;
     const r = await scrapeFacebookReelEngagement("123", f);
-    expect(r).toEqual({ views: null, likes: null, comments: null, caption: null });
+    expect(r).toEqual({ views: null, likes: null, comments: null, caption: null, walled: true });
   });
 
-  it("fails open (all-null) when fetch throws", async () => {
+  it("signals walled:true when fetch throws (could be a soft block)", async () => {
     const f = vi.fn(async () => {
       throw new Error("network down");
     }) as unknown as typeof fetch;
     const r = await scrapeFacebookReelEngagement("123", f);
-    expect(r).toEqual({ views: null, likes: null, comments: null, caption: null });
+    expect(r).toEqual({ views: null, likes: null, comments: null, caption: null, walled: true });
   });
 });

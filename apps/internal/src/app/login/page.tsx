@@ -482,7 +482,7 @@ function OpsPanel() {
           ].map((s, i) => (
             <div key={s.k} className={`auth-fade-up d${i + 4} ops-tile rounded-2xl p-4 bg-white/[0.04] backdrop-blur-sm`} style={{ border: "1px solid rgba(255,255,255,.10)" }}>
               <p className="text-[10.5px] uppercase tracking-[0.14em] text-white/55 font-semibold mb-3">{s.k}</p>
-              <p className={`font-display text-[32px] leading-none font-semibold tabular-nums ${s.accent}`}>{s.v}</p>
+              <p className={`font-num text-[32px] leading-none font-semibold tabular-nums ${s.accent}`}>{s.v}</p>
               <p className="text-[11px] text-white/50 mt-2 font-medium">{s.sub}</p>
             </div>
           ))}

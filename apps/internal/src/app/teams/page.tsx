@@ -305,19 +305,19 @@ export default function TeamsPage() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <div className="bg-white rounded-2xl p-5 shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0]">
           <p className="text-sm text-[#7A7A7A]">Departments</p>
-          <p className="text-[32px] font-light font-serif text-[#1A1A1A]">{allUnits.filter((u: any) => u.type === "DEPARTMENT").length}</p>
+          <p className="text-[32px] font-light font-num text-[#1A1A1A]">{allUnits.filter((u: any) => u.type === "DEPARTMENT").length}</p>
         </div>
         <div className="bg-white rounded-2xl p-5 shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0]">
           <p className="text-sm text-[#7A7A7A]">Teams</p>
-          <p className="text-[32px] font-light font-serif text-[#1A1A1A]">{allUnits.filter((u: any) => u.type === "TEAM").length}</p>
+          <p className="text-[32px] font-light font-num text-[#1A1A1A]">{allUnits.filter((u: any) => u.type === "TEAM").length}</p>
         </div>
         <div className="bg-white rounded-2xl p-5 shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0]">
           <p className="text-sm text-[#7A7A7A]">Sub Teams</p>
-          <p className="text-[32px] font-light font-serif text-[#1A1A1A]">{allUnits.filter((u: any) => u.type === "SUB_TEAM").length}</p>
+          <p className="text-[32px] font-light font-num text-[#1A1A1A]">{allUnits.filter((u: any) => u.type === "SUB_TEAM").length}</p>
         </div>
         <div className="bg-white rounded-2xl p-5 shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0]">
           <p className="text-sm text-[#7A7A7A]">Total Members</p>
-          <p className="text-[32px] font-light font-serif text-[#1A1A1A]">{allUnits.reduce((s: number, u: any) => s + (u._count?.members ?? u.members?.length ?? 0), 0)}</p>
+          <p className="text-[32px] font-light font-num text-[#1A1A1A]">{allUnits.reduce((s: number, u: any) => s + (u._count?.members ?? u.members?.length ?? 0), 0)}</p>
         </div>
       </div>
 

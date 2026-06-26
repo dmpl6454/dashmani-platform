@@ -70,7 +70,7 @@ export default function ContentAnalyticsPage() {
             className={`bg-white rounded-2xl p-5 shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0] transition-all hover:shadow-[0_4px_24px_rgba(0,0,0,0.07)] crx-animate-slide crx-delay-${i + 1}`}
           >
             <span className="text-sm text-[#7A7A7A]">{card.title}</span>
-            <p className={`text-[40px] font-light font-serif leading-tight mt-2 ${card.color}`}>{card.value}</p>
+            <p className={`text-[40px] font-light font-num leading-tight mt-2 ${card.color}`}>{card.value}</p>
             <p className="text-xs text-[#B0B0B0] mt-1">{card.sub}</p>
           </div>
         ))}

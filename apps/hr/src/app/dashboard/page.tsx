@@ -107,7 +107,7 @@ export default function DashboardPage() {
                     {s.icon}
                   </div>
                   <div>
-                    <div className="font-display text-[28px] font-semibold leading-none text-ink">{s.value}</div>
+                    <div className="font-num text-[28px] font-semibold leading-none text-ink">{s.value}</div>
                     <div className="text-[12.5px] font-semibold text-ink mt-1">{s.label}</div>
                     <div className="text-[11px] text-ink-3 font-medium mt-0.5">{s.sub}</div>
                   </div>

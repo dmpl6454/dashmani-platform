@@ -324,21 +324,21 @@ export default function AccountDetailPage() {
                 <div className="h-6 w-6 rounded-lg bg-terra-soft flex items-center justify-center mb-1">
                   <Link2 className="h-3 w-3 text-terra" />
                 </div>
-                <p className="font-display text-xl font-semibold text-ink leading-none">{stats.totalLinks}</p>
+                <p className="font-num text-xl font-semibold text-ink leading-none">{stats.totalLinks}</p>
                 <p className="text-[10px] text-ink-4">Total Links</p>
               </div>
               <div className="v3-card-sm p-3 space-y-0.5">
                 <div className="h-6 w-6 rounded-lg bg-indigo-soft flex items-center justify-center mb-1">
                   <Users className="h-3 w-3 text-indigo" />
                 </div>
-                <p className="font-display text-xl font-semibold text-ink leading-none">{employeeBreakdown.length}</p>
+                <p className="font-num text-xl font-semibold text-ink leading-none">{employeeBreakdown.length}</p>
                 <p className="text-[10px] text-ink-4">Contributors</p>
               </div>
               <div className="v3-card-sm p-3 space-y-0.5">
                 <div className="h-6 w-6 rounded-lg bg-sage-soft flex items-center justify-center mb-1">
                   <BarChart2 className="h-3 w-3 text-sage" />
                 </div>
-                <p className="font-display text-xl font-semibold text-ink leading-none">
+                <p className="font-num text-xl font-semibold text-ink leading-none">
                   {dailyTrend.filter((d: any) => d.links > 0).length}
                 </p>
                 <p className="text-[10px] text-ink-4">Active Days</p>
@@ -444,7 +444,7 @@ export default function AccountDetailPage() {
             {/* Current count + window delta */}
             <div className="flex items-end gap-4 flex-wrap">
               <div>
-                <p className="font-display text-2xl font-semibold text-ink leading-none">{fmtCompact(growthLast)}</p>
+                <p className="font-num text-2xl font-semibold text-ink leading-none">{fmtCompact(growthLast)}</p>
                 <p className="text-[10px] text-ink-4 mt-1">current followers</p>
               </div>
               <span className={`inline-flex items-center gap-1 text-sm font-semibold pb-0.5 ${growthUp ? "text-[#3E9B4F]" : growthDown ? "text-[#D14343]" : "text-ink-4"}`}>

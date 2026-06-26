@@ -23,6 +23,8 @@ export interface TopMover {
   platform: string;
   delta: number | null;
   deltaPct: number | null;
+  /** Public profile URL (http(s), scheme-validated server-side) — optional on older responses */
+  profileUrl?: string | null;
 }
 
 export interface GrowthOverviewData {

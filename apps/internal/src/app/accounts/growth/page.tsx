@@ -25,6 +25,27 @@ function httpUrlOrNull(url: string | null | undefined): string | null {
   }
 }
 
+// Open-the-real-channel external link. Renders nothing if there's no safe http(s) URL.
+// Used in All Accounts + both Top Movers lists. stopPropagation so it doesn't trigger
+// any row-level nav.
+function ChannelLink({ url, name }: { url: string | null | undefined; name: string }) {
+  const safe = httpUrlOrNull(url);
+  if (!safe) return null;
+  return (
+    <a
+      href={safe}
+      target="_blank"
+      rel="noopener noreferrer"
+      onClick={(e) => e.stopPropagation()}
+      title="Open channel in a new tab"
+      aria-label={`Open ${name} channel`}
+      className="shrink-0 text-[#B0B0B0] hover:text-[#5B5BD6] transition-colors"
+    >
+      <ExternalLink className="h-3.5 w-3.5" />
+    </a>
+  );
+}
+
 const WINDOWS = [7, 30, 90];
 
 function pillClass(active: boolean) {
@@ -164,6 +185,12 @@ export default function AccountGrowthPage() {
         <div>
           <h1 className="font-serif text-2xl font-medium text-[#1A1A1A]">Account Growth</h1>
           <p className="text-sm text-[#7A7A7A] mt-0.5">Follower &amp; subscriber growth across all tracked accounts</p>
+          <p className="text-xs text-[#B0B0B0] mt-1 max-w-2xl leading-snug">
+            Counts refresh automatically <span className="font-medium text-[#7A7A7A]">every hour</span>.
+            <span className="text-[#3E9B4F] font-medium"> Live</span> = synced within the last 48h ·
+            <span className="text-[#C2861D] font-medium"> Stale</span> = synced longer ago (number may be out of date) ·
+            <span className="text-[#7A7A7A] font-medium"> Manual</span> = entered by hand / no public API to sync from.
+          </p>
         </div>
         <div className="flex items-center gap-1.5">
           {WINDOWS.map((w) => (
@@ -238,6 +265,7 @@ export default function AccountGrowthPage() {
                     <Link href={`/accounts/${m.accountId}`} className="text-sm font-medium text-[#1A1A1A] hover:underline truncate flex-1 min-w-0">
                       {m.displayName}
                     </Link>
+                    <ChannelLink url={m.profileUrl} name={m.displayName} />
                     <span className="text-[10px] text-[#7A7A7A] bg-[rgba(0,0,0,0.05)] rounded-full px-2 py-0.5 shrink-0">{m.platform}</span>
                     <DeltaBadge delta={m.delta} deltaPct={m.deltaPct} />
                   </li>
@@ -269,6 +297,7 @@ export default function AccountGrowthPage() {
                             <Link href={`/accounts/${m.accountId}`} className="text-sm font-medium text-[#1A1A1A] hover:underline truncate flex-1 min-w-0">
                               {m.displayName}
                             </Link>
+                            <ChannelLink url={m.profileUrl} name={m.displayName} />
                             <DeltaBadge delta={m.delta} deltaPct={m.deltaPct} />
                           </li>
                         ))}
@@ -307,26 +336,7 @@ export default function AccountGrowthPage() {
                         <Link href={`/accounts/${a.accountId}`} className="text-sm font-medium text-[#1A1A1A] hover:underline truncate">
                           {a.displayName}
                         </Link>
-                        {(() => {
-                          // Defense-in-depth: only render an open-channel link for an
-                          // http(s) URL. profile_url is admin-entered free text; a
-                          // javascript:/data: URI in an href would be a stored-XSS vector.
-                          // (The API also scheme-validates, so bad data shouldn't arrive.)
-                          const safeUrl = httpUrlOrNull(a.profileUrl);
-                          return safeUrl ? (
-                            <a
-                              href={safeUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              onClick={(e) => e.stopPropagation()}
-                              title="Open channel in a new tab"
-                              aria-label={`Open ${a.displayName} channel`}
-                              className="shrink-0 text-[#B0B0B0] hover:text-[#5B5BD6] transition-colors"
-                            >
-                              <ExternalLink className="h-3.5 w-3.5" />
-                            </a>
-                          ) : null;
-                        })()}
+                        <ChannelLink url={a.profileUrl} name={a.displayName} />
                       </div>
                       <SyncBadge state={a.syncState} lastSyncedAt={a.lastSyncedAt} />
                     </div>

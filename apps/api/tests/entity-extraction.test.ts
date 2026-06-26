@@ -263,6 +263,27 @@ describe("extractEntitiesFromContent (DB-backed)", () => {
     expect(pending.find((p) => p.id === content.id)).toBeDefined();
   });
 
+  it("a Gemini 503 (transient overload) is classified transient → 'retry', row pristine", async () => {
+    if (!dbAvailable) return;
+
+    const content = await seedContent("02e", "Alia Bhatt at the airport");
+    // gemini-2.5-flash-lite 503s under load → geminiExtract throws Error("gemini: HTTP 503 …").
+    // The classifier must treat it as transient (retry), not permanent (markDone).
+    const geminiOverloaded: RawExtractFn = async () => {
+      throw new Error("gemini: HTTP 503 This model is currently experiencing high demand.");
+    };
+
+    const res = await extractEntitiesFromContent(
+      [{ id: content.id, title: content.title, caption: content.caption }],
+      geminiOverloaded
+    );
+    expect(res.retry).toBe(1);
+    expect(res.error).toBe(0);
+    const row = await prisma.linkContent.findUnique({ where: { id: content.id } });
+    expect(row?.status).toBe("ok"); // pristine
+    expect(row?.extractedAt).toBeNull(); // still queued for retry
+  });
+
   it("a TRANSIENT row succeeds on retry once the provider recovers (no demotion in between)", async () => {
     if (!dbAvailable) return;
 

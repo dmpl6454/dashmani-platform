@@ -1,7 +1,7 @@
 "use client";
 import { useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, TrendingUp, TrendingDown, Users, LineChart, Trophy } from "lucide-react";
+import { ArrowLeft, TrendingUp, TrendingDown, Users, LineChart, Trophy, ExternalLink } from "lucide-react";
 import { useGrowthOverview, type SyncState, type GrowthAccount, type TopMover } from "@/lib/hooks/use-growth";
 import { usePageTitle } from "@/lib/hooks/use-page-title";
 
@@ -291,9 +291,24 @@ export default function AccountGrowthPage() {
                 return (
                   <li key={a.accountId} className="px-6 py-3 grid grid-cols-[1fr_6rem_5rem_5rem_4rem] gap-3 items-center">
                     <div className="min-w-0 space-y-0.5">
-                      <Link href={`/accounts/${a.accountId}`} className="block text-sm font-medium text-[#1A1A1A] hover:underline truncate">
-                        {a.displayName}
-                      </Link>
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <Link href={`/accounts/${a.accountId}`} className="text-sm font-medium text-[#1A1A1A] hover:underline truncate">
+                          {a.displayName}
+                        </Link>
+                        {a.profileUrl && (
+                          <a
+                            href={a.profileUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            title="Open channel in a new tab"
+                            aria-label={`Open ${a.displayName} channel`}
+                            className="shrink-0 text-[#B0B0B0] hover:text-[#5B5BD6] transition-colors"
+                          >
+                            <ExternalLink className="h-3.5 w-3.5" />
+                          </a>
+                        )}
+                      </div>
                       <SyncBadge state={a.syncState} lastSyncedAt={a.lastSyncedAt} />
                     </div>
                     <span className="text-[10px] text-[#7A7A7A] bg-[rgba(0,0,0,0.05)] rounded-full px-2 py-0.5 w-fit truncate">{a.platform}</span>

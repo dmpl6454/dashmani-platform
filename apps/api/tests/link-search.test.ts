@@ -11,6 +11,9 @@ import { searchLinksByEntity, listEntities } from "../src/services/link-search.s
 const NAME_PREFIX = "ZZTEST_";
 const KEY_PREFIX = "yt:ZZTESTvid"; // followed by an 11-char-ending video id
 
+// Monotonic counter so each seedBase() Platform row gets a unique name+slug.
+let seedCounter = 0;
+
 // Two real-shaped 11-char YouTube video ids so canonicalKey() yields yt:<id>.
 const VID1 = "ZZTESTvid01"; // 11 chars [A-Za-z0-9_-]
 const VID2 = "ZZTESTvid02";
@@ -63,8 +66,12 @@ afterAll(async () => {
  * are created fresh here. Returns ids the tests use to build report_links.
  */
 async function seedBase() {
+  // Platform.name is @unique — use a unique name so a leftover row from a prior run
+  // (this is the prod-mirror DB) doesn't 409 this create. The tests only use platform.id
+  // (FK); the name string is never asserted, so uniquifying it is safe.
+  const uniq = `${Date.now()}_${seedCounter++}`;
   const platform = await prisma.platform.create({
-    data: { name: "YouTube", slug: `yt-${Date.now()}` },
+    data: { name: `YT_${uniq}`, slug: `yt-${uniq}` },
   });
   const accountA = await prisma.socialAccount.create({
     data: { handle: "channelA", displayName: "Channel A", platformId: platform.id },
@@ -240,31 +247,29 @@ describe("searchLinksByEntity — same vs unique (DB-backed)", () => {
     expect(c.submitted).toBeGreaterThanOrEqual(0);
   });
 
-  it("coverage.byPlatform[platform].since = earliest enriched fetched_at (auto-detected coverage date)", async () => {
+  it("coverage.byPlatform[platform].since = earliest enriched createdAt, and does NOT drift with fetchedAt (F9)", async () => {
     if (!dbAvailable) return;
 
-    // Two enriched rows in the test's prefix space with KNOWN fetched_at times; the
-    // earlier one must surface as `since`. A third row with NO fetched_at must not
-    // change the result (only enriched+dated rows count toward `since`).
-    const earlier = new Date("2026-06-23T05:00:00.000Z");
-    const later = new Date("2026-06-25T09:30:00.000Z");
+    // `since` is the date we FIRST captured a caption = min(createdAt), which is
+    // immutable. It must NOT track fetchedAt (which upsertLinkContent bumps on every
+    // re-harvest → would drift forward). Seed an early-createdAt row whose fetchedAt is
+    // LATER than a later-createdAt row's: `since` must still be the early createdAt.
+    const earlyCreated = new Date("2026-06-23T05:00:00.000Z");
+    const lateCreated = new Date("2026-06-25T09:30:00.000Z");
     await prisma.linkContent.create({
-      data: { canonicalKey: `${KEY_PREFIX}S1A`, platform: "youtube", status: "ok", fetchedAt: later },
+      // earliest createdAt, but a RECENT fetchedAt (re-harvested) — must still win `since`
+      data: { canonicalKey: `${KEY_PREFIX}S1A`, platform: "youtube", status: "ok", createdAt: earlyCreated, fetchedAt: new Date() },
     });
     await prisma.linkContent.create({
-      data: { canonicalKey: `${KEY_PREFIX}S1B`, platform: "youtube", status: "ok", fetchedAt: earlier },
-    });
-    await prisma.linkContent.create({
-      data: { canonicalKey: `${KEY_PREFIX}S1C`, platform: "youtube", status: "ok" }, // no fetchedAt
+      data: { canonicalKey: `${KEY_PREFIX}S1B`, platform: "youtube", status: "ok", createdAt: lateCreated, fetchedAt: lateCreated },
     });
 
     const res = await searchLinksByEntity({ q: "" });
     const yt = res.coverage.byPlatform.youtube;
     expect(yt).toBeTruthy();
     expect(yt.since).toBeTruthy();
-    // The earliest dated enriched row wins; other tests' undated 'ok' rows can't
-    // push it earlier than our seeded `earlier` timestamp.
-    expect(new Date(yt.since!).getTime()).toBeLessThanOrEqual(earlier.getTime());
+    // `since` reflects the earliest createdAt (06-23), NOT the recent fetchedAt bump.
+    expect(new Date(yt.since!).getTime()).toBeLessThanOrEqual(earlyCreated.getTime());
   });
 
   it("resolves the entity by an exact alias (case-insensitive input)", async () => {
@@ -290,6 +295,29 @@ describe("searchLinksByEntity — same vs unique (DB-backed)", () => {
     expect(res.entity).toBeNull();
     expect(res.disambiguation).toBeDefined();
     expect(res.disambiguation!.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("exact-name match resolves directly even when it's a SUBSTRING of a longer entity (no infinite disambiguation) — F4 fix", async () => {
+    if (!dbAvailable) return;
+
+    // "Kareena Kapoor" is a substring of "Kareena Kapoor Khan" → a `contains` query for
+    // the shorter name matches BOTH and used to disambiguate forever (the shorter name
+    // was unreachable). An EXACT-name query must now resolve straight to it.
+    const SHORT = `${NAME_PREFIX}Kareena Kapoor`;
+    const LONG = `${NAME_PREFIX}Kareena Kapoor Khan`;
+    await seedEntityWithContent(SHORT); // give the short entity real content
+    await prisma.entity.create({ data: { canonicalName: LONG, type: "PERSON", aliases: [] } });
+
+    // Exact query for the short name → resolves to the short entity, NOT disambiguation.
+    const res = await searchLinksByEntity({ q: SHORT });
+    expect(res.entity).not.toBeNull();
+    expect(res.entity!.canonicalName).toBe(SHORT);
+    expect(res.disambiguation ?? []).toHaveLength(0);
+
+    // A genuine partial (matches both, exact-matches neither) still disambiguates.
+    const partial = await searchLinksByEntity({ q: `${NAME_PREFIX}Kareena` });
+    expect(partial.entity).toBeNull();
+    expect(partial.disambiguation!.length).toBeGreaterThanOrEqual(2);
   });
 
   it("empty q → zero result but coverage still filled", async () => {

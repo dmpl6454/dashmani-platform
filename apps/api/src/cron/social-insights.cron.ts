@@ -41,14 +41,50 @@ export async function runSocialInsightsRefresh(opts?: { harvestOnly?: boolean })
         report: { employeeId: string; date: Date };
       }>;
 
+      // ⚠️ Route by URL HOST, not the dirty `platform` column. ~2,220 Facebook reels are
+      // mislabeled platform='instagram' (and YT-under-FB etc.); routing purely by the
+      // platform column sent them to the wrong provider, whose extractTargetId returns
+      // null, so they got ZERO metrics (F2, 2026-06-26 audit). We instead fetch a
+      // candidate set = (platform column == slug) OR (url contains a host this provider
+      // owns), then let provider.extractTargetId() be the FINAL arbiter of ownership
+      // (a link gets a metric only from the provider whose extractor succeeds). The
+      // platform-column clause is kept so a correctly-labeled link with an odd host
+      // still gets tried by its declared provider.
+      const ownedHosts: Record<string, string[]> = {
+        youtube: ["youtube.com", "youtu.be"],
+        instagram: ["instagram.com"],
+        facebook: ["facebook.com", "fb.watch", "fb.me"],
+      };
+      const hostClauses = (ownedHosts[slug] ?? []).map((h) => ({
+        url: { contains: h, mode: "insensitive" as const },
+      }));
+
+      // ── ROTATING CURSOR (F3) ──────────────────────────────────────────────────
+      // The metric sweep is wall-clock-budgeted (~25 min/provider) but a full FB pass
+      // is ~80 min, so without an ordered cursor the sweep re-processed the SAME head
+      // every run (only ~17% of FB links ever got a metric; 3,298 stayed frozen at a
+      // pre-scraper not_found). We now order by id ASC and resume past the last id
+      // processed last run, so successive runs cover the WHOLE tail and wrap around.
+      const cursorKey = `insights-cursor:${slug}`;
+      let cursor = "";
+      try {
+        const row = await prisma.systemSetting.findUnique({ where: { key: cursorKey } });
+        cursor = row?.value ?? "";
+      } catch { /* default to start */ }
+
       try {
         rows = await prisma.reportLink.findMany({
           where: {
-            platform: { equals: slug, mode: "insensitive" },
+            OR: [
+              { platform: { equals: slug, mode: "insensitive" } },
+              ...hostClauses,
+            ],
             url: { not: null },
             isScheduled: false,
             report: { date: { gte: since } },
+            ...(cursor ? { id: { gt: cursor } } : {}),
           },
+          orderBy: { id: "asc" }, // deterministic order → cursor can resume
           select: {
             id: true,
             url: true,
@@ -59,6 +95,24 @@ export async function runSocialInsightsRefresh(opts?: { harvestOnly?: boolean })
       } catch (err) {
         console.error(`[social-insights/${slug}] failed to query links:`, err);
         continue;
+      }
+      // If resuming past the cursor returned nothing, we've reached the end of the tail
+      // → wrap: reset cursor and re-query from the start so this run still does work.
+      if (rows.length === 0 && cursor) {
+        cursor = "";
+        try {
+          await prisma.systemSetting.upsert({ where: { key: cursorKey }, create: { key: cursorKey, value: "" }, update: { value: "" } });
+          rows = await prisma.reportLink.findMany({
+            where: {
+              OR: [{ platform: { equals: slug, mode: "insensitive" } }, ...hostClauses],
+              url: { not: null }, isScheduled: false, report: { date: { gte: since } },
+            },
+            orderBy: { id: "asc" },
+            select: { id: true, url: true, platform: true, report: { select: { employeeId: true, date: true } } },
+          });
+        } catch (err) {
+          console.error(`[social-insights/${slug}] cursor-wrap re-query failed:`, err);
+        }
       }
 
       // 2. Extract targetId (videoId), skip links where extraction fails.
@@ -143,6 +197,11 @@ export async function runSocialInsightsRefresh(opts?: { harvestOnly?: boolean })
       // completes (or is interrupted). A post-loop fallback below covers the
       // edge case where targets.length === 0 or every batch throws.
       let harvestedThisRun = false;
+      // Cursor bookkeeping (F3): track the last report_link id whose metric we wrote, and
+      // whether the sweep yielded early (budget) so we know to RESUME there next run vs
+      // RESET to the start (full pass done). targets are id-asc, so the last is the max.
+      let lastProcessedLinkId = "";
+      let sweepBrokeEarly = false;
       // Per-provider metric-sweep wall-clock budget. WHY: the sweep is sequential
       // across providers; a slow/rate-limited provider (e.g. Instagram's ~38k-link
       // sweep) could consume the whole run and the loop would never ADVANCE to the
@@ -181,6 +240,7 @@ export async function runSocialInsightsRefresh(opts?: { harvestOnly?: boolean })
               const r = results.get(t.linkId);
               if (!r) continue;
               polled++;
+              lastProcessedLinkId = t.linkId; // targets are id-asc → advances monotonically
 
               try {
                 await prisma.linkMetric.create({
@@ -282,6 +342,7 @@ export async function runSocialInsightsRefresh(opts?: { harvestOnly?: boolean })
             console.log(
               `[social-insights/${slug}] metric-sweep budget (${SWEEP_BUDGET_MS}ms) spent after harvest — yielding to next provider`
             );
+            sweepBrokeEarly = true;
             break;
           }
           // HARD backstop: if the early harvest NEVER fired (e.g. IG discovery returned
@@ -293,6 +354,7 @@ export async function runSocialInsightsRefresh(opts?: { harvestOnly?: boolean })
             console.warn(
               `[social-insights/${slug}] metric-sweep HARD budget (${2 * SWEEP_BUDGET_MS}ms) spent (harvest fired=${harvestedThisRun}) — yielding to next provider`
             );
+            sweepBrokeEarly = true;
             break;
           }
         } catch (batchErr) {
@@ -305,6 +367,19 @@ export async function runSocialInsightsRefresh(opts?: { harvestOnly?: boolean })
         console.log(
           `[social-insights/${slug}] ${targets.length} links → ${polled} polled, ${succeeded} ok, ${notFound} not_found, ${errors} errors${quotaAborted ? " (QUOTA ABORTED)" : ""}`
         );
+        // Persist the rotating cursor (F3): if the sweep yielded early, RESUME after the
+        // last processed link next run; if it ran to completion, RESET so the next run
+        // wraps to the start (a fresh full pass). harvestOnly runs never touch the cursor.
+        try {
+          const nextCursor = sweepBrokeEarly && lastProcessedLinkId ? lastProcessedLinkId : "";
+          await prisma.systemSetting.upsert({
+            where: { key: cursorKey },
+            create: { key: cursorKey, value: nextCursor },
+            update: { value: nextCursor },
+          });
+        } catch (cursorErr) {
+          console.error(`[social-insights/${slug}] failed to persist cursor:`, cursorErr);
+        }
       }
 
       // 3b. Harvest fallback: runs only if the early harvest above was never reached

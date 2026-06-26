@@ -504,7 +504,7 @@ export default function LinkSearchPage() {
           <p className="text-sm font-medium text-ink">No posts found for &ldquo;{submitted}&rdquo;.</p>
           <p className="text-xs text-ink-4 max-w-md mx-auto">
             {coverage
-              ? `Only ${coverage.enriched.toLocaleString()} of ${coverage.total.toLocaleString()} links are enriched so far — this person may have posts that aren't enriched yet.`
+              ? `Only ${(coverage.nameSearchable ?? coverage.searchable ?? 0).toLocaleString()} of ${(coverage.submitted ?? coverage.total ?? 0).toLocaleString()} submitted links are searchable by name so far — this person may have posts that aren't tagged yet (check back as enrichment catches up).`
               : "Try a different name or check the spelling."}
           </p>
         </div>

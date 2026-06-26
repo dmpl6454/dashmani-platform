@@ -116,16 +116,32 @@ async function buildCoverage(): Promise<LinkSearchResult["coverage"]> {
       by: ["platform", "status"],
       _count: { _all: true },
     }),
+    // "Capturing since" = when we FIRST captured a caption for this platform. Use
+    // createdAt (set once at insert), NOT fetchedAt — upsertLinkContent bumps fetchedAt
+    // on every re-harvest, so min(fetchedAt) drifts FORWARD as old anchor rows age out
+    // (F9). createdAt is immutable → a true, stable start date.
     prisma.linkContent.groupBy({
       by: ["platform"],
-      where: { status: "ok", fetchedAt: { not: null } },
-      _min: { fetchedAt: true },
+      where: { status: "ok" },
+      _min: { createdAt: true },
     }),
-    prisma.reportLink.groupBy({
-      by: ["platform"],
-      where: { url: { not: null }, isScheduled: false },
-      _count: { _all: true },
-    }),
+    // Per-platform SUBMITTED denominator, bucketed by URL HOST (F8) — the numerator
+    // (searchable) buckets by link_content.platform which is derived from the URL's
+    // canonicalKey, so the denominator must match. The old groupBy on the DIRTY
+    // report_links.platform column mis-split IG/FB by ~2,200 (the aggregate was right,
+    // only the split misled). ELSE keeps the platform column so no row is dropped — the
+    // total is identical, only the bucketing is corrected.
+    prisma.$queryRaw<Array<{ platform: string; cnt: bigint }>>`
+      SELECT CASE
+        WHEN url ~* 'youtube\.com|youtu\.be' THEN 'youtube'
+        WHEN url ~* 'instagram\.com' THEN 'instagram'
+        WHEN url ~* 'facebook\.com|fb\.watch|fb\.me' THEN 'facebook'
+        ELSE lower(coalesce(platform, 'other'))
+      END AS platform, count(*)::bigint AS cnt
+      FROM report_links
+      WHERE url IS NOT NULL AND is_scheduled = false
+      GROUP BY 1
+    `,
     prisma.linkContent.groupBy({
       by: ["platform"],
       where: { status: "ok", extractedAt: null },
@@ -157,17 +173,17 @@ async function buildCoverage(): Promise<LinkSearchResult["coverage"]> {
     }
   }
 
-  // report_links submitted-per-platform (honest denominator). platform col is dirty
-  // (some IG rows mislabeled FB) but it reflects what was submitted under each label.
+  // report_links submitted-per-platform (honest denominator), bucketed by URL host to
+  // match the numerator's source (F8) — no longer the dirty platform column.
   for (const s of submittedByPlatform) {
     const p = (s.platform || "other").toLowerCase();
-    ensure(byPlatform, p).submitted += s._count._all;
+    ensure(byPlatform, p).submitted += Number(s.cnt);
   }
 
-  // Auto-detected per-platform coverage date (earliest enriched fetched_at).
+  // Auto-detected per-platform coverage date (earliest enriched createdAt — immutable).
   for (const s of sinceByPlatform) {
     const p = (s.platform || "other").toLowerCase();
-    const min = s._min.fetchedAt;
+    const min = s._min.createdAt;
     if (byPlatform[p] && min) byPlatform[p].since = min.toISOString();
   }
 
@@ -248,13 +264,28 @@ export async function searchLinksByEntity(params: {
   });
 
   if (matches.length === 0) return emptyResult(coverage);
-  if (matches.length > 1) {
+
+  // EXACT-MATCH SHORT-CIRCUIT (fixes the disambiguation infinite loop, F4/2026-06-26):
+  // a `contains` query for "Kareena Kapoor" also matches "Kareena Kapoor Khan", so a
+  // shorter name whose string is a substring of a longer one would disambiguate
+  // FOREVER — clicking the chip re-sends the same name and never resolves (141 entities,
+  // incl. the largest, were unreachable). When `q` EXACTLY equals one entity's
+  // canonicalName (case-insensitive) or one of its aliases, resolve straight to it —
+  // that's the entity the user picked. Only fall to disambiguation for a genuinely
+  // ambiguous partial (no exact hit, multiple contains-matches).
+  const qLower = q.toLowerCase();
+  const exact = matches.filter(
+    (m) => m.canonicalName.toLowerCase() === qLower || m.aliases.some((a) => a.toLowerCase() === qLower)
+  );
+
+  if (exact.length !== 1 && matches.length > 1) {
     return emptyResult(coverage, {
       disambiguation: matches.map((m) => ({ id: m.id, canonicalName: m.canonicalName, type: m.type })),
     });
   }
 
-  const entity = matches[0];
+  // Resolve to the exact match if there is one, else the sole contains-match.
+  const entity = exact.length === 1 ? exact[0] : matches[0];
 
   // ── The entity's canonicalKeys (small: tens-to-hundreds) ──────────────────
   const joins = await prisma.linkContentEntity.findMany({

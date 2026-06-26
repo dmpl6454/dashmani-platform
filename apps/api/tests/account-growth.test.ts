@@ -107,6 +107,24 @@ describe("Account Growth API", () => {
       expect(mover).toHaveProperty("deltaPct");
     });
 
+    it("only exposes http(s) profileUrl — strips javascript:/non-http (XSS guard)", async () => {
+      // profile_url is admin-entered free text. A javascript: URI must NOT reach the
+      // client as a clickable href. The API scheme-validates before returning it.
+      const evil = await prisma.socialAccount.create({
+        data: { handle: "@evil", displayName: "Evil", platformId, status: "ACTIVE", followerCount: 10, profileUrl: "javascript:alert(document.cookie)" },
+      });
+      const good = await prisma.socialAccount.create({
+        data: { handle: "@good", displayName: "Good", platformId, status: "ACTIVE", followerCount: 10, profileUrl: "https://instagram.com/good" },
+      });
+
+      const res = await request(app).get("/v1/admin/growth").set("Authorization", `Bearer ${adminToken}`);
+      expect(res.status).toBe(200);
+      const evilRow = res.body.data.accounts.find((x: any) => x.accountId === evil.id);
+      const goodRow = res.body.data.accounts.find((x: any) => x.accountId === good.id);
+      expect(evilRow.profileUrl).toBeNull(); // javascript: stripped → no clickable href
+      expect(goodRow.profileUrl).toBe("https://instagram.com/good"); // http(s) preserved
+    });
+
     it("echoes the days param when supplied", async () => {
       const res = await request(app)
         .get("/v1/admin/growth?days=7")

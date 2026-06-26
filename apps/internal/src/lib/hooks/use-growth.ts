@@ -13,6 +13,8 @@ export interface GrowthAccount {
   /** Added when API ships the enriched response */
   syncState?: SyncState;
   lastSyncedAt?: string | null;
+  /** Public profile URL for an open-channel link (optional; absent on older API responses) */
+  profileUrl?: string | null;
 }
 
 export interface TopMover {

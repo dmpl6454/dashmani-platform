@@ -82,9 +82,13 @@ export let fbRateLimited = false;
 // Read at CALL time (not frozen at import) so tests + a runtime kill switch both work.
 const fbScraperEnabled = () => process.env.FB_SCRAPER_ENABLED !== "0";
 const fbScraperDelayMs = () => Number(process.env.FB_SCRAPER_DELAY_MS) || 250;
-// Set true the moment a scrape comes back empty enough times in a row to look like a
-// block — stops scraping for the rest of the run (reset each fetchBatch).
+// Set true the moment the scraper hits enough consecutive login/checkpoint walls to
+// look like a block — stops scraping for the rest of the run (reset each fetchBatch).
 let fbScraperBlocked = false;
+// Consecutive walled-scrape counter; trips fbScraperBlocked at the limit. Reset on any
+// successful (non-walled) scrape AND at the start of each fetchBatch run.
+let fbScraperConsecutiveWalls = 0;
+const fbScraperWallLimit = () => Number(process.env.FB_SCRAPER_WALL_LIMIT) || 5;
 // Injectable scraper fetch (tests pass a stub; real path uses global fetch).
 let scraperFetchImpl: ScraperFetchFn | null = null; // null → use the scraper's default global fetch
 
@@ -103,6 +107,7 @@ export function __setGraphFetchForTesting(fn: GraphFetchFn | null): void {
 export function __resetFbRateLimitedForTesting(): void {
   fbRateLimited = false;
   fbScraperBlocked = false;
+  fbScraperConsecutiveWalls = 0;
 }
 
 // ── Graph response shapes (only the fields we request) ───────────────────────
@@ -360,8 +365,23 @@ async function tryScrapeFallback(
     ? await scrapeFacebookReelEngagement(targetId, scraperFetchImpl)
     : await scrapeFacebookReelEngagement(targetId);
 
-  // A hit = at least one real signal (metric OR caption). An all-null result means we
-  // got a wall or a non-reel page; don't manufacture an "ok" row from nothing.
+  // Block detection: Facebook served a login/checkpoint wall or a non-200. Count
+  // consecutive walls and short-circuit the rest of the run once we hit the limit —
+  // a sustained wall means blind-scraping ~17-19k more targets would just hammer FB.
+  if (m.walled) {
+    fbScraperConsecutiveWalls++;
+    if (fbScraperConsecutiveWalls >= fbScraperWallLimit()) {
+      fbScraperBlocked = true;
+      console.warn(
+        `[social-insights/facebook] scraper hit ${fbScraperConsecutiveWalls} consecutive walls — short-circuiting scrape for the rest of this run`
+      );
+    }
+    return null; // fail-open: keep the Graph result / not_found
+  }
+  fbScraperConsecutiveWalls = 0; // a real (even empty) reel response resets the streak
+
+  // A hit = at least one real signal (metric OR caption). An all-null NON-walled result
+  // means a real page with nothing parseable; don't manufacture an "ok" from nothing.
   // The caption matters even when metrics are 0/null — it makes the reel name-
   // searchable in Link Search (the cron upserts r.caption → link_content).
   if (m.views == null && m.likes == null && m.comments == null && m.caption == null) return null;
@@ -411,6 +431,7 @@ export const facebookProvider: InsightProvider = {
 
     fbRateLimited = false;
     fbScraperBlocked = false;
+    fbScraperConsecutiveWalls = 0;
     lastBuiltMap = new Map();
 
     // Build the numericId→{caption, pageToken} map once for this run.

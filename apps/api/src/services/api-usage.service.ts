@@ -132,6 +132,12 @@ export interface CostSheet {
   // hasReconstructed = some rows are ESTIMATED (operation endsWith '-reconstructed'),
   // so the UI flags the figure as an estimate and points to provider billing consoles.
   hasReconstructed: boolean;
+  // projectionReliable = false while a one-time backfill backlog is still DRAINING
+  // (the extraction cron runs at catch-up speed, far above the true forward inflow),
+  // so any forward projection measured now would OVERSTATE steady-state. When false,
+  // the UI suppresses the dollar projection and explains why instead of presuming.
+  projectionReliable: boolean;
+  pendingExtractionBacklog: number; // captions captured but not yet tagged (drives the gate)
 }
 
 /**
@@ -224,6 +230,20 @@ export async function getCostSheet(windowDays = 30): Promise<CostSheet> {
   // Otherwise fall back to the horizon-honest window rate (total / real elapsed days).
   const steadyDailyUsd = recentForwardRows.length > 0 ? recentForwardCost / recentDaysWithData : totalCostUsd / effectiveDays;
 
+  // ── Projection-reliability gate (the user's "never presume" point) ──────────
+  // The forward projection is only meaningful once the system is at STEADY STATE.
+  // While a large historical backfill backlog is still DRAINING, the extraction
+  // cron runs at full catch-up speed (e.g. ~2,800/hr) — many times the true forward
+  // inflow (~1.7k/day) — so the trailing-days rate measures the catch-up burst, not
+  // the go-forward cost, and would OVERSTATE it. Gate on the pending-extraction
+  // backlog: if it's still large, the projection is NOT reliable; the UI suppresses
+  // the dollar figure and says "still draining backfill" rather than presume a number.
+  const pendingExtractionBacklog = await prisma.linkContent.count({
+    where: { status: "ok", extractedAt: null },
+  });
+  const BACKLOG_RELIABLE_THRESHOLD = 2000; // below this, the cron is keeping up ≈ steady state
+  const projectionReliable = pendingExtractionBacklog < BACKLOG_RELIABLE_THRESHOLD;
+
   return {
     windowDays: days,
     since: since.toISOString(),
@@ -238,5 +258,7 @@ export async function getCostSheet(windowDays = 30): Promise<CostSheet> {
     effectiveDays,
     fullWindow,
     hasReconstructed,
+    projectionReliable,
+    pendingExtractionBacklog,
   };
 }

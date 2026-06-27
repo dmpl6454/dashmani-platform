@@ -18,6 +18,8 @@
 // subs, quota exhausted, no API key, network error) are simply absent from the
 // result array.
 
+import { recordApiUsage } from "../api-usage.service";
+
 const BATCH_SIZE = 50; // YouTube hard cap for channels.list?id=
 const TIMEOUT_MS = 10_000;
 const DEFAULT_MAX_SEARCH_LOOKUPS = 25;
@@ -88,6 +90,15 @@ function stripAt(handle: string): string {
  * Perform a fetch with timeout; returns null on any network/abort error (fail-open).
  */
 async function safeFetch(url: string): Promise<Response | null> {
+  // Cost Sheet: record the call + its QUOTA UNITS. YouTube Data API is free within
+  // a 10,000-unit/day quota, but the cost VARIES sharply by endpoint — search.list
+  // is 100 units, channels.list/videos.list are 1 — so a few searches can blow the
+  // quota silently. Recording units (not just calls) makes that cliff visible.
+  // Fire-and-forget + fail-open. operation by endpoint.
+  const isSearch = /\/search\?/.test(url);
+  const op = isSearch ? "youtube-search" : url.includes("/channels?") ? "youtube-channels" : "youtube-other";
+  recordApiUsage({ provider: "youtube", operation: op, calls: 1, units: isSearch ? 100 : 1 });
+
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
   try {

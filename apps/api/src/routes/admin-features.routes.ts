@@ -1537,4 +1537,22 @@ router.put("/admin/sop-content", authenticate, requireAdminRole, async (req: Req
   } catch (err) { next(err); }
 });
 
+// GET /admin/api-usage/cost-sheet?days=30 — the API Usage / Cost Sheet.
+// Aggregates the api_usage ledger into per-provider + per-operation spend, a daily
+// series, and a forward projection. Admin-gated (financial/system data).
+router.get(
+  "/admin/api-usage/cost-sheet",
+  authenticate,
+  requirePermission("employees", "edit"),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const days = Number((req.query.days as string) || "30");
+      const { getCostSheet } = await import("../services/api-usage.service");
+      return success(res, await getCostSheet(Number.isFinite(days) ? days : 30));
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
 export default router;

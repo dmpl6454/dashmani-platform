@@ -15,6 +15,7 @@ import {
   graphFetch as defaultGraphFetch,
   metaConfigured,
   type GraphFetchFn,
+  type GraphFetchResult,
 } from "./meta-graph";
 
 const TIMEOUT_MS = 10_000;
@@ -198,6 +199,51 @@ export interface IgPublicCounts {
   mediaCount: number | null;
 }
 
+// Discover ONE administered IG node id to use as the "requesting" node for any
+// business_discovery call. Shared by fetchPublicInstagramFollowerMap and
+// fetchPublicInstagramCaptions. Mirrors STEP 1 of fetchInstagramFollowerMap —
+// bare `instagram_business_account` field (no nested sub-selection, which the
+// live API does NOT honor) — with the SMALL IG_DISCOVERY_PAGE_LIMIT page size
+// (resolving 100 Pages' IG node in one page 500s on the 87-Page prod token;
+// limit=5 returns 200 in ~2.6s). We only need the FIRST id; abort at it.
+// Returns the id, or null (rate-limited / none found) — caller fails open.
+async function discoverRequestingIgNode(): Promise<string | null> {
+  let ourIgId: string | null = null;
+  let path: string | null = "me/accounts";
+  let params: Record<string, string | number | undefined> | undefined = {
+    fields: "instagram_business_account",
+    limit: IG_DISCOVERY_PAGE_LIMIT,
+  };
+  let guard = 0;
+
+  while (path && guard < MAX_DISCOVERY_PAGES && ourIgId === null) {
+    guard++;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+    let res;
+    try {
+      res = await graphFetchImpl<IgFollowersAccountsResponse>(path, params, { signal: controller.signal });
+    } finally {
+      clearTimeout(timer);
+    }
+
+    if (res.rateLimited) return null; // rate-limited during discovery → null, never throw
+    if (!res.ok || !res.data) break;
+
+    for (const page of res.data.data ?? []) {
+      const igId = page.instagram_business_account?.id;
+      if (igId) {
+        ourIgId = igId;
+        break;
+      }
+    }
+
+    path = res.data.paging?.next ?? null;
+    params = undefined;
+  }
+  return ourIgId;
+}
+
 // Resolve follower counts for PUBLIC Instagram business/creator accounts we do
 // NOT administer, via the Graph API business_discovery edge. Used as a fallback
 // for IG rows the administered-account map (fetchInstagramFollowerMap) didn't
@@ -237,47 +283,9 @@ export async function fetchPublicInstagramFollowerMap(
   if (normalised.length === 0) return map;
 
   // ── Discover ONE administered IG node (the "requesting" node for business_discovery) ──
-  // We only need the FIRST id; abort as soon as we find it. Mirrors STEP 1 of
-  // fetchInstagramFollowerMap — same bare-field pattern (no nested sub-selection) —
-  // but with a SMALL page limit: resolving 100 Pages' IG node in one page 500s on
-  // the prod token (87 Pages). limit=5 + paging finds the first IG id fast.
-  let ourIgId: string | null = null;
-  {
-    let path: string | null = "me/accounts";
-    let params: Record<string, string | number | undefined> | undefined = {
-      fields: "instagram_business_account",
-      limit: IG_DISCOVERY_PAGE_LIMIT,
-    };
-    let guard = 0;
-
-    while (path && guard < MAX_DISCOVERY_PAGES && ourIgId === null) {
-      guard++;
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
-      let res;
-      try {
-        res = await graphFetchImpl<IgFollowersAccountsResponse>(path, params, { signal: controller.signal });
-      } finally {
-        clearTimeout(timer);
-      }
-
-      if (res.rateLimited) return map; // rate-limited during discovery → empty, never throw
-      if (!res.ok || !res.data) break;
-
-      for (const page of res.data.data ?? []) {
-        const igId = page.instagram_business_account?.id;
-        if (igId) {
-          ourIgId = igId;
-          break;
-        }
-      }
-
-      path = res.data.paging?.next ?? null;
-      params = undefined;
-    }
-  }
-
-  // No administered IG account found → can't use business_discovery. Return empty, fail-open.
+  const ourIgId = await discoverRequestingIgNode();
+  // No administered IG account found (or rate-limited) → can't use business_discovery.
+  // Return empty, fail-open.
   if (!ourIgId) return map;
 
   // ── Per-handle: call business_discovery edge ──────────────────────────────
@@ -321,6 +329,148 @@ export async function fetchPublicInstagramFollowerMap(
   }
 
   return map;
+}
+
+// ── Instagram public CAPTIONS (business_discovery.media edge) ────────────────
+
+// One post from the business_discovery .media edge.
+export interface IgPublicMedia {
+  shortcode: string; // parsed from permalink → matches our canonicalKey `ig:<shortcode>`
+  permalink: string;
+  caption: string | null;
+  timestamp: string | null; // ISO8601 from the API
+}
+
+interface BusinessDiscoveryMediaResponse {
+  business_discovery?: {
+    media?: {
+      data?: Array<{ caption?: string | null; permalink?: string | null; timestamp?: string | null }>;
+      paging?: { cursors?: { after?: string }; next?: string };
+    };
+  };
+}
+
+// Default forward/backfill paging bounds. A backfill caller can override maxPages.
+const IG_CAPTION_PAGE_SIZE = 50; // posts per page (proven live; 50 is the comfortable max)
+const IG_CAPTION_MAX_PAGES_DEFAULT = 40; // 40×50 = 2,000 posts/account — covers our 11-week corpus
+const IG_CAPTION_DELAY_MS = 300; // polite delay between pages (shares the ~200-call/hr budget)
+
+// Parse the IG shortcode out of a permalink. Mirrors canonicalKey()'s IG rule so
+// the key we build (`ig:<shortcode>`) matches submitted-link keys byte-for-byte.
+function shortcodeFromPermalink(permalink: string | null | undefined): string | null {
+  if (!permalink) return null;
+  const m = permalink.match(/instagram\.com\/(?:[^/]+\/)?(?:p|reel|reels|tv)\/([A-Za-z0-9_-]+)/i);
+  return m ? m[1] : null;
+}
+
+/**
+ * Fetch recent post CAPTIONS for PUBLIC Instagram accounts we do NOT administer,
+ * via the business_discovery.media edge — the one free, ToS-compliant, already-
+ * authenticated path into external accounts' captions (the administered-only
+ * /media harvest can't reach them). Proven live 2026-06-27: returns caption +
+ * permalink + timestamp; the permalink's shortcode matches our `ig:<shortcode>`
+ * canonicalKey (38/50 of one account's recent posts matched submitted links).
+ *
+ * Endpoint shape:
+ *   GET /{ourIgId}?fields=business_discovery.username({handle}){media.limit(50){caption,permalink,timestamp}}
+ * Pages NEWEST-FIRST via the .media's after-cursor, expressed inline as
+ *   media.limit(50).after(<cursor>){...}
+ * (the only paging form the edge honors — there is NO by-shortcode lookup, so this
+ * is feed-paging, same mechanic as owned /media but reaching external accounts).
+ *
+ * Stop conditions per handle: no items, no after-cursor, maxPages reached, or
+ * `stopBefore` date passed (posts older than our corpus start are pointless to page).
+ *
+ * Fail-open: NEVER throws. Rate-limited → returns whatever was collected so far.
+ *
+ * @param handles  bare usernames (no '@'); deduped + lowercased internally.
+ * @param opts.maxPages    per-account page cap (default 40 → ~2,000 posts).
+ * @param opts.stopBefore  stop paging an account once posts predate this Date.
+ * @param opts.onAccount   optional progress callback per finished handle.
+ * @returns Map<lowercased handle, IgPublicMedia[]>.
+ */
+export async function fetchPublicInstagramCaptions(
+  handles: string[],
+  opts?: { maxPages?: number; stopBefore?: Date; onAccount?: (handle: string, posts: number, pages: number) => void },
+): Promise<Map<string, IgPublicMedia[]>> {
+  const out = new Map<string, IgPublicMedia[]>();
+  if (!metaConfigured()) return out;
+
+  const normalised = [...new Set(handles.map((h) => h.replace(/^@/, "").toLowerCase()))].filter(Boolean);
+  if (normalised.length === 0) return out;
+
+  const ourIgId = await discoverRequestingIgNode();
+  if (!ourIgId) return out;
+
+  const maxPages = Math.max(1, opts?.maxPages ?? IG_CAPTION_MAX_PAGES_DEFAULT);
+  const stopBeforeMs = opts?.stopBefore ? opts.stopBefore.getTime() : null;
+
+  for (const handle of normalised) {
+    const posts: IgPublicMedia[] = [];
+    let after: string | null = null;
+    let pages = 0;
+    let stop = false;
+
+    while (pages < maxPages && !stop) {
+      const inner: string = after
+        ? `media.limit(${IG_CAPTION_PAGE_SIZE}).after(${after})`
+        : `media.limit(${IG_CAPTION_PAGE_SIZE})`;
+      const fields = `business_discovery.username(${handle}){${inner}{caption,permalink,timestamp}}`;
+
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+      let res: GraphFetchResult<BusinessDiscoveryMediaResponse>;
+      try {
+        res = await graphFetchImpl<BusinessDiscoveryMediaResponse>(ourIgId, { fields }, { signal: controller.signal });
+      } finally {
+        clearTimeout(timer);
+      }
+
+      // Rate-limited → record what we have for this handle, then STOP the whole run.
+      if (res.rateLimited) {
+        if (posts.length) out.set(handle, posts);
+        return out;
+      }
+      // Non-OK (private/renamed account code 110, or any other error) → skip this handle.
+      if (!res.ok) break;
+
+      const media = res.data?.business_discovery?.media;
+      const items = media?.data ?? [];
+      if (items.length === 0) break;
+
+      for (const it of items) {
+        const sc = shortcodeFromPermalink(it.permalink);
+        if (!sc) continue;
+        // stopBefore: once we reach posts older than the corpus boundary, stop paging
+        // this account — everything beyond is older than any submitted link.
+        if (stopBeforeMs && it.timestamp) {
+          const t = Date.parse(it.timestamp);
+          if (!Number.isNaN(t) && t < stopBeforeMs) {
+            stop = true;
+            break;
+          }
+        }
+        posts.push({
+          shortcode: sc,
+          permalink: it.permalink!,
+          caption: it.caption ?? null,
+          timestamp: it.timestamp ?? null,
+        });
+      }
+
+      pages++;
+      after = media?.paging?.cursors?.after ?? null;
+      if (!after) break; // feed window ends here
+
+      // Polite pause between pages (shared Meta budget).
+      if (!stop && pages < maxPages) await new Promise((r) => setTimeout(r, IG_CAPTION_DELAY_MS));
+    }
+
+    if (posts.length) out.set(handle, posts);
+    opts?.onAccount?.(handle, posts.length, pages);
+  }
+
+  return out;
 }
 
 // ── Facebook ───────────────────────────────────────────────────────────────

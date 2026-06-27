@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { prisma } from "@dashmani/db";
 import { AppError } from "../middleware/error-handler";
+import { recordApiUsage } from "./api-usage.service";
 
 // Primary extractor: Claude Haiku (tuned prompt). Fallback: OpenAI gpt-4o-mini.
 // WHY a fallback: the extraction LLM is a single point of failure — if the
@@ -92,6 +93,13 @@ async function anthropicExtract(caption: string, title: string, knownNames: stri
     system: buildSystemPrompt(),
     messages: [{ role: "user", content: buildUserPrompt(caption, title, knownNames) }],
   });
+  recordApiUsage({
+    provider: "anthropic",
+    operation: "entity-extraction",
+    model: ANTHROPIC_MODEL,
+    inputTokens: msg.usage?.input_tokens ?? 0,
+    outputTokens: msg.usage?.output_tokens ?? 0,
+  });
   const block = msg.content.find((b) => b.type === "text");
   return block && block.type === "text" ? block.text : "";
 }
@@ -118,7 +126,17 @@ async function openaiExtract(caption: string, title: string, knownNames: string[
     const body = await res.text().catch(() => "");
     throw new Error(`openai: HTTP ${res.status} ${body.slice(0, 200)}`);
   }
-  const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
+  const data = (await res.json()) as {
+    choices?: Array<{ message?: { content?: string } }>;
+    usage?: { prompt_tokens?: number; completion_tokens?: number };
+  };
+  recordApiUsage({
+    provider: "openai",
+    operation: "entity-extraction",
+    model: OPENAI_MODEL,
+    inputTokens: data.usage?.prompt_tokens ?? 0,
+    outputTokens: data.usage?.completion_tokens ?? 0,
+  });
   return data.choices?.[0]?.message?.content ?? "";
 }
 
@@ -147,7 +165,15 @@ async function geminiExtract(caption: string, title: string, knownNames: string[
   }
   const data = (await res.json()) as {
     candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+    usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number };
   };
+  recordApiUsage({
+    provider: "gemini",
+    operation: "entity-extraction",
+    model: GEMINI_MODEL,
+    inputTokens: data.usageMetadata?.promptTokenCount ?? 0,
+    outputTokens: data.usageMetadata?.candidatesTokenCount ?? 0,
+  });
   return data.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
 }
 

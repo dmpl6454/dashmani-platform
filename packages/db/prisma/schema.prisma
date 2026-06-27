@@ -1424,3 +1424,36 @@ model LinkContentEntity {
   @@index([entityId])
   @@map("link_content_entities")
 }
+
+// API-usage ledger for the admin Cost Sheet. One row per billable API call (or
+// batch). ADDITIVE + write-only from the app's perspective — nothing reads it on
+// the hot path; the Cost Sheet aggregates it on demand. Logging is fail-open: a
+// write failure here must NEVER affect the underlying API call.
+//
+// provider:   "openai" | "gemini" | "anthropic" | "meta" | "youtube"
+// model:      model id (e.g. "gpt-4o-mini", "claude-haiku-4-5") or "" for non-LLM
+// operation:  what the call did (e.g. "entity-extraction", "ai-generate",
+//             "graph-business-discovery", "youtube-statistics") — for breakdowns
+// calls:      number of API calls this row represents (usually 1; batched > 1)
+// units:      provider-native billable units (Graph calls, YouTube quota units) —
+//             null for token-billed LLMs
+// inputTokens/outputTokens: LLM token counts — null for non-LLM
+// costUsd:    computed cost in USD from the price table at write time (so a later
+//             price change doesn't retroactively rewrite history). May be 0 when
+//             the unit price is unknown — the call is still recorded (count != 0).
+model ApiUsage {
+  id           String   @id @default(uuid())
+  provider     String
+  model        String   @default("")
+  operation    String   @default("")
+  calls        Int      @default(1)
+  units        Int?
+  inputTokens  Int?     @map("input_tokens")
+  outputTokens Int?     @map("output_tokens")
+  costUsd      Float    @default(0) @map("cost_usd")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@index([provider, createdAt])
+  @@index([createdAt])
+  @@map("api_usage")
+}

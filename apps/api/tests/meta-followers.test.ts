@@ -3,6 +3,7 @@ import {
   fetchInstagramFollowerMap,
   fetchFacebookFollowerMap,
   fetchPublicInstagramFollowerMap,
+  fetchPublicInstagramCaptions,
   fbLookupKeys,
   __setGraphFetchForTesting as setFollowersGraphFetch,
 } from "../src/services/social-insights/meta-followers";
@@ -522,5 +523,148 @@ describe("fetchPublicInstagramFollowerMap", () => {
     expect((firstDiscovery![1] as Record<string, unknown>).limit).toBe(5);
     // Calls: page 1 + page 2 (cursor) + 1 per-handle = 3.
     expect(graph).toHaveBeenCalledTimes(3);
+  });
+});
+
+// ── fetchPublicInstagramCaptions (business_discovery.media edge) ──────────────
+
+describe("fetchPublicInstagramCaptions", () => {
+  // A me/accounts discovery response that yields ONE administered IG node.
+  const discovery = ok({ data: [{ instagram_business_account: { id: "NODE1" } }] });
+
+  it("returns empty with NO network call when no token is configured (dark switch)", async () => {
+    const graph = vi.fn();
+    setFollowersGraphFetch(graph as unknown as GraphFetchFn);
+    const map = await fetchPublicInstagramCaptions(["paparazzzee"]);
+    expect(map.size).toBe(0);
+    expect(graph).not.toHaveBeenCalled();
+  });
+
+  it("parses shortcode from permalink → ig:<shortcode> and returns caption+timestamp", async () => {
+    process.env.META_SYSTEM_USER_TOKEN = FAKE_TOKEN;
+    const graph = vi.fn(async (path: string) => {
+      if (path.startsWith("me/accounts")) return discovery;
+      // business_discovery.media single page, no after-cursor → stops after one page.
+      return ok({
+        business_discovery: {
+          media: {
+            data: [
+              { caption: "KL Rahul spotted", permalink: "https://www.instagram.com/reel/DaFL4P5AeP8/", timestamp: "2026-06-20T10:00:00+0000" },
+              { caption: "Athiya at airport", permalink: "https://www.instagram.com/p/DaDeRUqD3AA/", timestamp: "2026-06-19T10:00:00+0000" },
+            ],
+            paging: { cursors: {} }, // no `after` → single page
+          },
+        },
+      });
+    });
+    setFollowersGraphFetch(graph as unknown as GraphFetchFn);
+
+    const map = await fetchPublicInstagramCaptions(["movie_review_preview"]);
+    const posts = map.get("movie_review_preview");
+    expect(posts).toBeDefined();
+    expect(posts!.map((p) => p.shortcode)).toEqual(["DaFL4P5AeP8", "DaDeRUqD3AA"]);
+    expect(posts![0].caption).toBe("KL Rahul spotted");
+    expect(posts![0].timestamp).toBe("2026-06-20T10:00:00+0000");
+  });
+
+  it("pages NEWEST-FIRST via the .after() cursor until the cursor runs out", async () => {
+    process.env.META_SYSTEM_USER_TOKEN = FAKE_TOKEN;
+    let mediaCall = 0;
+    const graph = vi.fn(async (path: string, params?: Record<string, unknown>) => {
+      if (path.startsWith("me/accounts")) return discovery;
+      mediaCall++;
+      const fields = String(params?.fields ?? "");
+      if (mediaCall === 1) {
+        // Page 1: no .after(), returns a cursor for page 2.
+        expect(fields).not.toContain(".after(");
+        return ok({
+          business_discovery: {
+            media: {
+              data: [{ caption: "p1", permalink: "https://instagram.com/reel/AAA1/", timestamp: "2026-06-20T00:00:00+0000" }],
+              paging: { cursors: { after: "CURSOR_2" } },
+            },
+          },
+        });
+      }
+      // Page 2: must carry the cursor inline, then no further cursor → stop.
+      expect(fields).toContain(".after(CURSOR_2)");
+      return ok({
+        business_discovery: {
+          media: {
+            data: [{ caption: "p2", permalink: "https://instagram.com/reel/BBB2/", timestamp: "2026-06-19T00:00:00+0000" }],
+            paging: { cursors: {} },
+          },
+        },
+      });
+    });
+    setFollowersGraphFetch(graph as unknown as GraphFetchFn);
+
+    const map = await fetchPublicInstagramCaptions(["paparazzzee"], { maxPages: 10 });
+    const posts = map.get("paparazzzee")!;
+    expect(posts.map((p) => p.shortcode)).toEqual(["AAA1", "BBB2"]);
+    expect(mediaCall).toBe(2); // exactly two media pages
+  });
+
+  it("stops paging an account once posts predate stopBefore (no point reading older-than-corpus)", async () => {
+    process.env.META_SYSTEM_USER_TOKEN = FAKE_TOKEN;
+    const graph = vi.fn(async (path: string) => {
+      if (path.startsWith("me/accounts")) return discovery;
+      return ok({
+        business_discovery: {
+          media: {
+            data: [
+              { caption: "recent", permalink: "https://instagram.com/reel/NEW1/", timestamp: "2026-06-20T00:00:00+0000" },
+              { caption: "too old", permalink: "https://instagram.com/reel/OLD1/", timestamp: "2026-01-01T00:00:00+0000" },
+              { caption: "older still", permalink: "https://instagram.com/reel/OLD2/", timestamp: "2025-12-01T00:00:00+0000" },
+            ],
+            paging: { cursors: { after: "WOULD_CONTINUE" } },
+          },
+        },
+      });
+    });
+    setFollowersGraphFetch(graph as unknown as GraphFetchFn);
+
+    const map = await fetchPublicInstagramCaptions(["bollywooddazzle"], { stopBefore: new Date("2026-03-25T00:00:00Z") });
+    const posts = map.get("bollywooddazzle")!;
+    // Only the recent post is kept; the two older-than-stopBefore posts are dropped
+    // and paging halts (the after-cursor is NOT followed).
+    expect(posts.map((p) => p.shortcode)).toEqual(["NEW1"]);
+  });
+
+  it("rate-limit on a media page → returns partial (no throw)", async () => {
+    process.env.META_SYSTEM_USER_TOKEN = FAKE_TOKEN;
+    let mediaCall = 0;
+    const graph = vi.fn(async (path: string): Promise<GraphFetchResult> => {
+      if (path.startsWith("me/accounts")) return discovery as GraphFetchResult;
+      mediaCall++;
+      if (mediaCall === 1) {
+        return ok({
+          business_discovery: {
+            media: {
+              data: [{ caption: "got one", permalink: "https://instagram.com/reel/KEEP1/", timestamp: "2026-06-20T00:00:00+0000" }],
+              paging: { cursors: { after: "NEXT" } },
+            },
+          },
+        }) as GraphFetchResult;
+      }
+      return { ok: false, rateLimited: true, status: 429, error: "rate limited" };
+    });
+    setFollowersGraphFetch(graph as unknown as GraphFetchFn);
+
+    const map = await fetchPublicInstagramCaptions(["paparazzireel"], { maxPages: 10 });
+    // The first page's post is preserved despite the second page being rate-limited.
+    expect(map.get("paparazzireel")!.map((p) => p.shortcode)).toEqual(["KEEP1"]);
+  });
+
+  it("skips a private/renamed account (non-OK code 110) without throwing", async () => {
+    process.env.META_SYSTEM_USER_TOKEN = FAKE_TOKEN;
+    const graph = vi.fn(async (path: string): Promise<GraphFetchResult> => {
+      if (path.startsWith("me/accounts")) return discovery as GraphFetchResult;
+      return { ok: false, rateLimited: false, status: 400, error: "(#110) ..." };
+    });
+    setFollowersGraphFetch(graph as unknown as GraphFetchFn);
+
+    const map = await fetchPublicInstagramCaptions(["private_acct"]);
+    expect(map.size).toBe(0);
   });
 });

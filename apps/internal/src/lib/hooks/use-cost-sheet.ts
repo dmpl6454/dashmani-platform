@@ -24,6 +24,8 @@ export interface CostSheet {
   effectiveDays?: number;
   fullWindow?: boolean;
   hasReconstructed?: boolean;
+  projectionReliable?: boolean;
+  pendingExtractionBacklog?: number;
 }
 
 export function useCostSheet(days = 30) {

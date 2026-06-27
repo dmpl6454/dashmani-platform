@@ -3,6 +3,7 @@ import app from "./app";
 import { syncAllFollowerCounts } from "./services/follower-sync.service";
 import { runSocialInsightsRefresh } from "./cron/social-insights.cron";
 import { runEntityExtraction } from "./cron/entity-extraction.cron";
+import { runIgCaptionBackfill } from "./cron/ig-caption-backfill.cron";
 
 const PORT = process.env.PORT || 4000;
 
@@ -32,4 +33,18 @@ app.listen(PORT, () => {
   };
   runExtraction();
   setInterval(runExtraction, 60 * 60 * 1000);
+
+  // IG caption backfill — spaced waves, HOURLY. Closes the historical IG-caption
+  // gap (external accounts business_discovery can read but the owned-harvest can't)
+  // a few accounts per hour, self-throttling under Meta's (#4) rate limit. Idles
+  // once the gap is covered (~1-2 days). DARK without META_SYSTEM_USER_TOKEN.
+  // First run delayed 5 min so it doesn't fire at the same instant as the startup
+  // follower-sync + social-insights runs (all share the ~200-call/hr Meta budget).
+  const runIgBackfill = () => {
+    runIgCaptionBackfill().catch((err) => console.error("[ig-caption-backfill] error:", err));
+  };
+  setTimeout(() => {
+    runIgBackfill();
+    setInterval(runIgBackfill, 60 * 60 * 1000);
+  }, 5 * 60 * 1000);
 });

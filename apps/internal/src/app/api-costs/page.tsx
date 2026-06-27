@@ -41,6 +41,11 @@ export default function ApiCostsPage() {
   const fullWindow: boolean = d?.fullWindow ?? true;
   const hasReconstructed: boolean = d?.hasReconstructed ?? false;
   const effectiveDays: number = d?.effectiveDays ?? days;
+  // Projection is only trustworthy at steady state. While a backfill backlog drains,
+  // the cron runs at catch-up speed → any forward number would overstate. Default
+  // true so older API responses (no flag) behave as before.
+  const projectionReliable: boolean = d?.projectionReliable ?? true;
+  const pendingBacklog: number = d?.pendingExtractionBacklog ?? 0;
   const fmtDay = (iso: string | null) =>
     iso ? new Date(iso).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }) : "—";
   // If tracking is younger than the selected window, the headline covers only the
@@ -115,15 +120,25 @@ export default function ApiCostsPage() {
               <div className="h-8 w-8 rounded-lg bg-indigo-soft flex items-center justify-center">
                 <TrendingUp className="h-4 w-4 text-indigo" />
               </div>
-              <p className="font-num text-3xl font-semibold text-ink leading-none pt-1">{usd(projMonthly)}</p>
-              <p className="text-xs text-ink-4">Projected next 30 days (forward run-rate, excl. one-time backfill)</p>
+              <p className="font-num text-3xl font-semibold text-ink leading-none pt-1">
+                {projectionReliable ? usd(projMonthly) : "—"}
+              </p>
+              <p className="text-xs text-ink-4">
+                {projectionReliable
+                  ? "Projected next 30 days (forward run-rate, excl. one-time backfill)"
+                  : "Forward projection pending — backfill still draining"}
+              </p>
             </div>
             <div className="v3-card p-5 space-y-1">
               <div className="h-8 w-8 rounded-lg bg-sage-soft flex items-center justify-center">
                 <Activity className="h-4 w-4 text-sage" />
               </div>
-              <p className="font-num text-3xl font-semibold text-ink leading-none pt-1">{usd(projDaily)}</p>
-              <p className="text-xs text-ink-4">Forward daily run-rate (steady state)</p>
+              <p className="font-num text-3xl font-semibold text-ink leading-none pt-1">
+                {projectionReliable ? usd(projDaily) : "—"}
+              </p>
+              <p className="text-xs text-ink-4">
+                {projectionReliable ? "Forward daily run-rate (steady state)" : "Available once at steady state"}
+              </p>
             </div>
           </div>
 
@@ -131,12 +146,21 @@ export default function ApiCostsPage() {
           <div className="rounded-xl border border-indigo/20 bg-indigo-soft px-4 py-3 flex items-start gap-3">
             <Info className="h-4 w-4 text-indigo shrink-0 mt-0.5" />
             <p className="text-xs text-ink leading-relaxed">
-              To cover the next month, keep at least{" "}
-              <span className="font-semibold">{usd(projMonthly)}</span> of credit across the paid AI providers
-              (OpenAI is primary; Gemini &amp; Anthropic are fallbacks). This projection is the <span className="font-medium">forward steady-state</span> rate
-              (the daily new-link inflow) — it deliberately excludes the one-time historical backfill, which already happened and won&rsquo;t recur,
-              so the going-forward cost is much lower than total spend-to-date. Meta Graph and YouTube are <span className="font-medium">free within their quotas</span> —
-              they show call volume, not dollars, so you can spot a quota cliff before it bites.
+              {projectionReliable ? (
+                <>
+                  To cover the next month, keep at least{" "}
+                  <span className="font-semibold">{usd(projMonthly)}</span> of credit across the paid AI providers
+                  (OpenAI is primary; Gemini &amp; Anthropic are fallbacks). This is the <span className="font-medium">forward steady-state</span> rate
+                  (the daily new-link inflow) — it excludes the one-time historical backfill, which won&rsquo;t recur, so going-forward cost is well below total spend-to-date.{" "}
+                </>
+              ) : (
+                <>
+                  A forward credit estimate isn&rsquo;t shown yet because the system is still <span className="font-medium">working through a one-time enrichment backlog</span>{" "}
+                  ({pendingBacklog.toLocaleString()} captions left to tag) — the extraction cron is running at catch-up speed, well above the normal daily rate,
+                  so any projection now would overstate. It&rsquo;ll appear once the backlog clears (~a day) and the true forward rate can be measured. In the meantime, keep a comfortable buffer of OpenAI credit.{" "}
+                </>
+              )}
+              Meta Graph and YouTube are <span className="font-medium">free within their quotas</span> — they show call volume, not dollars, so you can spot a quota cliff before it bites.
             </p>
           </div>
 

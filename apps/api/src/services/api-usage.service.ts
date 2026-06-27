@@ -121,6 +121,17 @@ export interface CostSheet {
   // Forward projection from the observed daily run-rate over the window.
   projectedMonthlyUsd: number;
   projectedDailyUsd: number;
+  // ── Horizon honesty (2026-06-27) ───────────────────────────────────────────
+  // trackingSince = the earliest api_usage row's timestamp. If usage tracking is
+  // younger than the requested window, the headline + projection must NOT pretend
+  // to cover the full window. effectiveDays = the REAL elapsed span the numbers
+  // cover (so the projection divides by real days, not the requested 30).
+  trackingSince: string | null;
+  effectiveDays: number;
+  fullWindow: boolean; // true once tracking ≥ requested window (numbers cover it fully)
+  // hasReconstructed = some rows are ESTIMATED (operation endsWith '-reconstructed'),
+  // so the UI flags the figure as an estimate and points to provider billing consoles.
+  hasReconstructed: boolean;
 }
 
 /**
@@ -146,6 +157,10 @@ export async function getCostSheet(windowDays = 30): Promise<CostSheet> {
       createdAt: true,
     },
   });
+
+  // Earliest row overall (not just in-window) — the true tracking horizon.
+  const earliest = await prisma.apiUsage.aggregate({ _min: { createdAt: true } });
+  const trackingSince = earliest._min.createdAt ?? null;
 
   const byProviderMap = new Map<string, ProviderCost>();
   const byOpMap = new Map<string, { provider: string; operation: string; calls: number; costUsd: number }>();
@@ -176,7 +191,39 @@ export async function getCostSheet(windowDays = 30): Promise<CostSheet> {
     dailyMap.set(dateKey, d);
   }
 
-  const projectedDailyUsd = totalCostUsd / days;
+  const hasReconstructed = [...byOpMap.values()].some((o) => o.operation.endsWith("-reconstructed"));
+
+  // ── Horizon-honest, steady-state projection ────────────────────────────────
+  // TWO corrections over the naive `total / windowDays`:
+  //
+  // (1) HORIZON: if tracking is younger than the window, dividing the total by the
+  //     full window understates the rate (e.g. 48 min of data / 30 days). Use the
+  //     REAL elapsed span (now − trackingSince), capped to the window.
+  //
+  // (2) STEADY-STATE (the user's point): the window total is dominated by ONE-TIME
+  //     backfill spend (the ~40k-caption historical enrichment). Projecting THAT
+  //     run-rate forward would massively OVERSTATE future cost — going forward only
+  //     the daily new-link inflow (~1.7k/day) is enriched, far cheaper. So the
+  //     forward projection is based on the RECENT steady-state daily cost (the
+  //     trailing 3 full days, EXCLUDING reconstructed backfill rows), NOT the
+  //     backfill-inflated window average. The window TOTAL still reports actual spend.
+  const now = Date.now();
+  const trackedMs = trackingSince ? now - trackingSince.getTime() : days * 86400_000;
+  const effectiveDays = Math.max(1 / 24, Math.min(days, trackedMs / 86400_000)); // ≥1h, ≤window
+  const fullWindow = !!trackingSince && trackedMs >= days * 86400_000;
+
+  // Steady-state daily rate: sum the trailing 3 days of NON-reconstructed (i.e.
+  // organically-recorded, forward) cost, over the number of those days that have data.
+  const THREE_DAYS_AGO = new Date(now - 3 * 86400_000);
+  const recentForwardRows = rows.filter(
+    (r) => !r.operation.endsWith("-reconstructed") && r.createdAt >= THREE_DAYS_AGO,
+  );
+  const recentForwardCost = recentForwardRows.reduce((s, r) => s + r.costUsd, 0);
+  const recentDaysWithData = new Set(recentForwardRows.map((r) => r.createdAt.toISOString().slice(0, 10))).size || 1;
+  // If we have organic forward data, project from it (the true go-forward rate).
+  // Otherwise fall back to the horizon-honest window rate (total / real elapsed days).
+  const steadyDailyUsd = recentForwardRows.length > 0 ? recentForwardCost / recentDaysWithData : totalCostUsd / effectiveDays;
+
   return {
     windowDays: days,
     since: since.toISOString(),
@@ -184,7 +231,12 @@ export async function getCostSheet(windowDays = 30): Promise<CostSheet> {
     byProvider: [...byProviderMap.values()].sort((a, b) => b.costUsd - a.costUsd),
     byOperation: [...byOpMap.values()].sort((a, b) => b.costUsd - a.costUsd),
     daily: [...dailyMap.values()].sort((a, b) => (a.date < b.date ? -1 : 1)),
-    projectedDailyUsd,
-    projectedMonthlyUsd: projectedDailyUsd * 30,
+    // Projection = forward STEADY-STATE rate (excludes one-time backfill), ×30.
+    projectedDailyUsd: steadyDailyUsd,
+    projectedMonthlyUsd: steadyDailyUsd * 30,
+    trackingSince: trackingSince ? trackingSince.toISOString() : null,
+    effectiveDays,
+    fullWindow,
+    hasReconstructed,
   };
 }

@@ -3,11 +3,12 @@ import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import Link from "next/link";
 import {
   ArrowLeft, Search, Link2, Layers, CopyMinus, Globe, Users,
-  Info, AlertTriangle, ExternalLink, X as CloseIcon, RefreshCw,
+  Info, AlertTriangle, ExternalLink, X as CloseIcon, RefreshCw, Download,
 } from "lucide-react";
 import { useLinkSearch, useEntitySuggestions } from "@/lib/hooks/use-link-search";
 import { useInsightsRefresh } from "@/lib/hooks/use-insights-refresh";
 import { usePageTitle } from "@/lib/hooks/use-page-title";
+import { apiFetchBlob, downloadBlob } from "@/lib/api";
 
 function fmtDate(d: string) {
   try { return new Date(d).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }); }
@@ -16,6 +17,13 @@ function fmtDate(d: string) {
 
 function cap(s: string) {
   return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
+}
+
+// Render a handle with exactly ONE leading "@". Some stored social_accounts handles
+// already include a leading "@" (e.g. "@BollywoodChronicle"), which the old `@{handle}`
+// render turned into "@@BollywoodChronicle". Strip any leading @'s, then prepend one.
+function fmtHandle(handle: string) {
+  return `@${(handle || "").replace(/^@+/, "")}`;
 }
 
 function phaseLabel(phase: "idle" | "harvesting" | "extracting"): string {
@@ -48,6 +56,8 @@ export default function LinkSearchPage() {
   const [q, setQ] = useState("");
   const [submitted, setSubmitted] = useState("");
   const [showSuggest, setShowSuggest] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
 
   // ── Dynamic search ──────────────────────────────────────────────────────────
@@ -87,6 +97,27 @@ export default function LinkSearchPage() {
     setQ(t);
     setSubmitted(t);
     setShowSuggest(false);
+  }
+
+  // Export EVERY submitted link for the currently-resolved entity to a styled
+  // .xlsx (date, platform, channel, submitted-by, URL, dup flag) + an About sheet
+  // with totals + the coverage caveat. Uses the resolved entity name (or the typed
+  // query) so the export matches exactly what's on screen.
+  async function handleExport() {
+    const term = (data?.entity?.canonicalName || submitted || q).trim();
+    if (!term || exporting) return;
+    setExporting(true);
+    setExportError(null);
+    try {
+      const { blob, filename } = await apiFetchBlob(
+        `/admin/link-search/export.xlsx?q=${encodeURIComponent(term)}`,
+      );
+      downloadBlob(blob, filename || `link-search-${term}.xlsx`);
+    } catch (e) {
+      setExportError(e instanceof Error ? e.message : "Export failed");
+    } finally {
+      setExporting(false);
+    }
   }
 
   const coverage = data?.coverage;
@@ -360,7 +391,26 @@ export default function LinkSearchPage() {
             {entity.aliases.length > 0 && (
               <span className="text-xs text-ink-4">aka {entity.aliases.join(", ")}</span>
             )}
+            {data!.totalPosts > 0 && (
+              <button
+                type="button"
+                onClick={handleExport}
+                disabled={exporting}
+                className="ml-auto self-center flex items-center gap-1.5 rounded-lg border-2 border-ink/10 px-3 py-1.5 text-xs font-medium text-ink hover:border-indigo hover:bg-indigo-soft disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+                aria-label="Export all links to Excel"
+                title="Download every link for this person as an Excel sheet"
+              >
+                <Download className={`h-3.5 w-3.5 ${exporting ? "animate-pulse" : ""}`} />
+                {exporting ? "Preparing…" : "Export to Excel"}
+              </button>
+            )}
           </div>
+          {exportError && (
+            <div role="alert" className="rounded-xl border border-terra/30 bg-terra/5 px-4 py-2 flex items-center gap-2">
+              <AlertTriangle className="h-4 w-4 text-terra shrink-0" />
+              <p className="text-xs text-ink">Couldn&rsquo;t export: {exportError}</p>
+            </div>
+          )}
 
           {/* Summary strip */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -420,7 +470,7 @@ export default function LinkSearchPage() {
                           <Link href={`/accounts/${c.accountId}`} className="font-medium text-ink hover:text-indigo transition-colors">
                             {c.displayName}
                           </Link>
-                          <span className="text-[11px] text-ink-4 font-mono ml-2">@{c.handle}</span>
+                          <span className="text-[11px] text-ink-4 font-mono ml-2">{fmtHandle(c.handle)}</span>
                         </td>
                         <td className="py-2.5 pr-3">
                           <span className="text-xs text-ink-4 bg-ink/5 rounded-full px-2 py-0.5">{cap(c.platform)}</span>
@@ -464,7 +514,7 @@ export default function LinkSearchPage() {
                             <ExternalLink className="h-3 w-3 shrink-0" />
                           </a>
                           <p className="text-[11px] text-ink-4 mt-0.5">
-                            {p.account.displayName} <span className="font-mono">@{p.account.handle}</span>
+                            {p.account.displayName} <span className="font-mono">{fmtHandle(p.account.handle)}</span>
                             {" · "}submitted by <span className="font-medium text-ink-3">{p.employee.name}</span>
                             {" · "}{fmtDate(p.date)}
                           </p>
@@ -483,7 +533,7 @@ export default function LinkSearchPage() {
                             <p key={`${s.employee.id}-${s.date}-${i}`} className="text-[11px] text-ink-4">
                               <span className="font-medium text-ink-3">{s.employee.name}</span>
                               {" · "}{fmtDate(s.date)}
-                              {" · "}<span className="font-mono">@{s.account.handle}</span>
+                              {" · "}<span className="font-mono">{fmtHandle(s.account.handle)}</span>
                             </p>
                           ))}
                         </div>

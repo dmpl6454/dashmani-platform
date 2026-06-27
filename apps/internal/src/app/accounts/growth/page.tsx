@@ -308,6 +308,10 @@ export default function AccountGrowthPage() {
                   <span className="text-[#D14343]">{decliners ?? 0}</span>
                 </p>
                 <p className="text-xs text-[#7A7A7A]">Gainers / Decliners · last {apiDays}d</p>
+                <p className="text-[11px] text-[#9A9A9A] leading-snug">
+                  Accounts that grew vs shrank over the window. The rest of the {accountCount} tracked
+                  were flat or have no comparable history yet (manual / single snapshot).
+                </p>
               </div>
             )}
           </div>

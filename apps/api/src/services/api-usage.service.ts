@@ -16,16 +16,23 @@ export type UsageProvider = "openai" | "gemini" | "anthropic" | "meta" | "youtub
 // ── Price table (USD). Keep current; edit here when a provider changes pricing. ──
 // LLM prices are per 1,000,000 tokens (input/output separately). Sourced from each
 // provider's public pricing as of 2026-06. These are the models we actually call.
-const LLM_PRICES: Record<string, { inPerM: number; outPerM: number }> = {
-  // OpenAI — primary extraction model + any ai.service usage.
-  "gpt-4o-mini": { inPerM: 0.15, outPerM: 0.6 },
-  "gpt-4o": { inPerM: 2.5, outPerM: 10 },
-  // Google Gemini — extraction fallback (lite only, per the no-break rule).
-  "gemini-2.5-flash-lite": { inPerM: 0.1, outPerM: 0.4 },
-  // Anthropic — extraction fallback (Haiku) + ai.service doc generators (Sonnet).
-  "claude-haiku-4-5": { inPerM: 1.0, outPerM: 5.0 },
-  "claude-haiku-4-5-20251001": { inPerM: 1.0, outPerM: 5.0 },
-  "claude-sonnet-4-20250514": { inPerM: 3.0, outPerM: 15.0 },
+// inPerM = uncached input $/1M; cachedPerM = CACHED input $/1M; outPerM = output $/1M.
+// PROMPT CACHING (verified against OpenAI's billed export 2026-06-27): our extraction
+// prompt sends a large STABLE prefix (system + the known-entities list) on every call,
+// with only the caption varying at the END — the ideal shape for auto-caching. OpenAI
+// bills the cached prefix at HALF, so charging full rate overstated cost (~40% high:
+// our 28,559 Jun-26 calls were $55.98 at full rate, but OpenAI billed $33.74 — an
+// effective 60% of full, i.e. ~40% of input was cached). cachedPerM corrects this.
+const LLM_PRICES: Record<string, { inPerM: number; cachedPerM: number; outPerM: number }> = {
+  // OpenAI — cached input is HALF the uncached rate.
+  "gpt-4o-mini": { inPerM: 0.15, cachedPerM: 0.075, outPerM: 0.6 },
+  "gpt-4o": { inPerM: 2.5, cachedPerM: 1.25, outPerM: 10 },
+  // Google Gemini lite — implicit cache ~$0.025/M.
+  "gemini-2.5-flash-lite": { inPerM: 0.1, cachedPerM: 0.025, outPerM: 0.4 },
+  // Anthropic — we don't set cache_control, so no auto-cache (cached == full rate).
+  "claude-haiku-4-5": { inPerM: 1.0, cachedPerM: 1.0, outPerM: 5.0 },
+  "claude-haiku-4-5-20251001": { inPerM: 1.0, cachedPerM: 1.0, outPerM: 5.0 },
+  "claude-sonnet-4-20250514": { inPerM: 3.0, cachedPerM: 3.0, outPerM: 15.0 },
 };
 
 // Non-LLM per-unit prices (USD). Meta Graph + YouTube Data API are FREE within
@@ -41,11 +48,17 @@ const UNIT_PRICES: Record<UsageProvider, number> = {
   anthropic: 0,
 };
 
-/** Compute USD cost for an LLM call from token counts + the price table. */
-export function llmCostUsd(model: string, inputTokens: number, outputTokens: number): number {
+/**
+ * Compute USD cost for an LLM call. `cachedTokens` (a subset of inputTokens) is
+ * billed at the cheaper cached rate; the rest of input at the full rate. Default 0
+ * → behaves like before for callers that don't have the cached count.
+ */
+export function llmCostUsd(model: string, inputTokens: number, outputTokens: number, cachedTokens = 0): number {
   const p = LLM_PRICES[model];
   if (!p) return 0;
-  return (inputTokens / 1_000_000) * p.inPerM + (outputTokens / 1_000_000) * p.outPerM;
+  const cached = Math.min(Math.max(0, cachedTokens), inputTokens);
+  const uncached = inputTokens - cached;
+  return (uncached / 1_000_000) * p.inPerM + (cached / 1_000_000) * p.cachedPerM + (outputTokens / 1_000_000) * p.outPerM;
 }
 
 export interface RecordUsageInput {
@@ -56,6 +69,9 @@ export interface RecordUsageInput {
   units?: number | null;
   inputTokens?: number | null;
   outputTokens?: number | null;
+  /** Cached input tokens (subset of inputTokens), billed at the cheaper cached rate.
+   *  From OpenAI's usage.prompt_tokens_details.cached_tokens. Default 0. */
+  cachedInputTokens?: number | null;
   /** Override the computed cost (rarely needed). If omitted, computed from prices. */
   costUsd?: number;
 }
@@ -74,7 +90,7 @@ export function recordApiUsage(input: RecordUsageInput): void {
   let costUsd = input.costUsd;
   if (costUsd == null) {
     if (inputTokens != null || outputTokens != null) {
-      costUsd = llmCostUsd(model, inputTokens ?? 0, outputTokens ?? 0);
+      costUsd = llmCostUsd(model, inputTokens ?? 0, outputTokens ?? 0, input.cachedInputTokens ?? 0);
     } else {
       const unitPrice = UNIT_PRICES[input.provider] ?? 0;
       costUsd = (input.units ?? 0) * unitPrice;

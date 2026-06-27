@@ -128,7 +128,7 @@ async function openaiExtract(caption: string, title: string, knownNames: string[
   }
   const data = (await res.json()) as {
     choices?: Array<{ message?: { content?: string } }>;
-    usage?: { prompt_tokens?: number; completion_tokens?: number };
+    usage?: { prompt_tokens?: number; completion_tokens?: number; prompt_tokens_details?: { cached_tokens?: number } };
   };
   recordApiUsage({
     provider: "openai",
@@ -136,6 +136,9 @@ async function openaiExtract(caption: string, title: string, knownNames: string[
     model: OPENAI_MODEL,
     inputTokens: data.usage?.prompt_tokens ?? 0,
     outputTokens: data.usage?.completion_tokens ?? 0,
+    // OpenAI auto-caches the stable prompt prefix (system + known-entities list) and
+    // bills it at HALF — capturing cached_tokens makes our cost match the real bill.
+    cachedInputTokens: data.usage?.prompt_tokens_details?.cached_tokens ?? 0,
   });
   return data.choices?.[0]?.message?.content ?? "";
 }
@@ -165,7 +168,7 @@ async function geminiExtract(caption: string, title: string, knownNames: string[
   }
   const data = (await res.json()) as {
     candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
-    usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number };
+    usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number; cachedContentTokenCount?: number };
   };
   recordApiUsage({
     provider: "gemini",
@@ -173,6 +176,7 @@ async function geminiExtract(caption: string, title: string, knownNames: string[
     model: GEMINI_MODEL,
     inputTokens: data.usageMetadata?.promptTokenCount ?? 0,
     outputTokens: data.usageMetadata?.candidatesTokenCount ?? 0,
+    cachedInputTokens: data.usageMetadata?.cachedContentTokenCount ?? 0,
   });
   return data.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
 }

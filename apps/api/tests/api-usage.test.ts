@@ -17,6 +17,18 @@ describe("llmCostUsd", () => {
     expect(llmCostUsd("gemini-2.5-flash-lite", 1_000_000, 1_000_000)).toBeCloseTo(0.5, 6);
   });
 
+  it("bills cached input tokens at the HALF rate (prompt-caching correction)", () => {
+    // gpt-4o-mini: 1M input of which 800k cached → 200k @ $0.15 + 800k @ $0.075 + 0 out
+    //  = $0.03 + $0.06 = $0.09  (vs $0.15 if we'd (wrongly) charged all at full rate)
+    expect(llmCostUsd("gpt-4o-mini", 1_000_000, 0, 800_000)).toBeCloseTo(0.09, 6);
+    // cachedTokens defaults to 0 → unchanged behaviour for callers without the count
+    expect(llmCostUsd("gpt-4o-mini", 1_000_000, 0)).toBeCloseTo(0.15, 6);
+    // cached can never exceed input (clamped)
+    expect(llmCostUsd("gpt-4o-mini", 1_000_000, 0, 5_000_000)).toBeCloseTo(0.075, 6);
+    // Anthropic has no auto-cache → cached billed at full rate (cachedPerM == inPerM)
+    expect(llmCostUsd("claude-haiku-4-5", 1_000_000, 0, 1_000_000)).toBeCloseTo(1.0, 6);
+  });
+
   it("scales linearly with token count (a realistic small extraction call)", () => {
     // 500 in + 80 out for gpt-4o-mini ≈ $0.000075 + $0.000048 = $0.000123
     const c = llmCostUsd("gpt-4o-mini", 500, 80);

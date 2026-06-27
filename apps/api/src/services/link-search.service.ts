@@ -355,14 +355,43 @@ export async function searchLinksByEntity(params: {
     (m) => m.canonicalName.toLowerCase() === qLower || m.aliases.some((a) => a.toLowerCase() === qLower)
   );
 
-  if (exact.length !== 1 && matches.length > 1) {
+  // Resolve the entity. The exact-match short-circuit (F4) handles the
+  // substring-prefix loop. But a query can EXACT-match >1 entity when the same name
+  // is one entity's canonicalName AND another's alias — which happens after an
+  // entity MERGE leaves the folded name as an alias, and the live extraction cron
+  // (briefly, before its own alias-resolution catches up) re-creates a thin
+  // duplicate under that canonicalName. Disambiguating those two against each other
+  // loops forever (clicking the chip re-sends the same name → same 2 matches). So
+  // when multiple entities exact-match, DON'T loop — pick a single winner:
+  //   1) prefer a canonicalName exact-match over an alias-only match, else
+  //   2) the entity with the most linked posts (the real, populated one).
+  // Only genuinely ambiguous PARTIALS (no exact hit, >1 contains-match) disambiguate.
+  let entity: (typeof matches)[number];
+  if (exact.length === 1) {
+    entity = exact[0];
+  } else if (exact.length > 1) {
+    // Multiple exact matches → resolve to a single winner, never loop. Pick the
+    // entity with the MOST linked posts — that's the real, populated identity. (Do
+    // NOT prefer a canonicalName-match here: in the post-merge duplicate case the
+    // THIN duplicate is the one whose canonicalName equals the query, while the
+    // real SURVIVOR carries the name as an alias — link-count is the honest tiebreak.)
+    const counts = await prisma.linkContentEntity.groupBy({
+      by: ["entityId"],
+      where: { entityId: { in: exact.map((m) => m.id) } },
+      _count: { _all: true },
+    });
+    const countById = new Map(counts.map((c) => [c.entityId, c._count._all]));
+    entity = exact.reduce((best, m) =>
+      (countById.get(m.id) ?? 0) > (countById.get(best.id) ?? 0) ? m : best,
+    );
+  } else if (matches.length > 1) {
+    // No exact hit + multiple partial matches → genuine disambiguation.
     return emptyResult(coverage, {
       disambiguation: matches.map((m) => ({ id: m.id, canonicalName: m.canonicalName, type: m.type })),
     });
+  } else {
+    entity = matches[0];
   }
-
-  // Resolve to the exact match if there is one, else the sole contains-match.
-  const entity = exact.length === 1 ? exact[0] : matches[0];
 
   // ── The entity's canonicalKeys (small: tens-to-hundreds) ──────────────────
   const joins = await prisma.linkContentEntity.findMany({

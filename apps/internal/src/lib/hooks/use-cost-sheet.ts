@@ -19,6 +19,11 @@ export interface CostSheet {
   daily: Array<{ date: string; costUsd: number; calls: number }>;
   projectedMonthlyUsd: number;
   projectedDailyUsd: number;
+  // Horizon honesty (optional — absent on older API responses)
+  trackingSince?: string | null;
+  effectiveDays?: number;
+  fullWindow?: boolean;
+  hasReconstructed?: boolean;
 }
 
 export function useCostSheet(days = 30) {

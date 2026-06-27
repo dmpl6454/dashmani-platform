@@ -2,7 +2,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import {
-  ArrowLeft, Receipt, DollarSign, TrendingUp, Info, Activity, Server,
+  ArrowLeft, Receipt, DollarSign, TrendingUp, Info, Activity, Server, AlertTriangle,
 } from "lucide-react";
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid,
@@ -35,6 +35,19 @@ export default function ApiCostsPage() {
   const byProvider: ProviderCost[] = d?.byProvider ?? [];
   const byOperation: Array<{ provider: string; operation: string; calls: number; costUsd: number }> = d?.byOperation ?? [];
   const daily: Array<{ date: string; costUsd: number; calls: number }> = d?.daily ?? [];
+
+  // Horizon-honesty fields (optional on older API responses).
+  const trackingSince: string | null = d?.trackingSince ?? null;
+  const fullWindow: boolean = d?.fullWindow ?? true;
+  const hasReconstructed: boolean = d?.hasReconstructed ?? false;
+  const effectiveDays: number = d?.effectiveDays ?? days;
+  const fmtDay = (iso: string | null) =>
+    iso ? new Date(iso).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }) : "—";
+  // If tracking is younger than the selected window, the headline covers only the
+  // real span — say so instead of implying the full N days.
+  const coverageLabel = fullWindow
+    ? `Spent in the last ${days} days`
+    : `Spent since tracking started (${fmtDay(trackingSince)}, ~${effectiveDays < 1 ? "<1" : Math.round(effectiveDays)} day${Math.round(effectiveDays) === 1 ? "" : "s"})`;
 
   const paidProviders = byProvider.filter((p) => PAID.has(p.provider));
   const freeProviders = byProvider.filter((p) => !PAID.has(p.provider));
@@ -96,21 +109,21 @@ export default function ApiCostsPage() {
                 <DollarSign className="h-4 w-4 text-terra" />
               </div>
               <p className="font-num text-3xl font-semibold text-ink leading-none pt-1">{usd(total)}</p>
-              <p className="text-xs text-ink-4">Spent in the last {days} days</p>
+              <p className="text-xs text-ink-4">{coverageLabel}</p>
             </div>
             <div className="v3-card p-5 space-y-1">
               <div className="h-8 w-8 rounded-lg bg-indigo-soft flex items-center justify-center">
                 <TrendingUp className="h-4 w-4 text-indigo" />
               </div>
               <p className="font-num text-3xl font-semibold text-ink leading-none pt-1">{usd(projMonthly)}</p>
-              <p className="text-xs text-ink-4">Projected next 30 days (at current run-rate)</p>
+              <p className="text-xs text-ink-4">Projected next 30 days (forward run-rate, excl. one-time backfill)</p>
             </div>
             <div className="v3-card p-5 space-y-1">
               <div className="h-8 w-8 rounded-lg bg-sage-soft flex items-center justify-center">
                 <Activity className="h-4 w-4 text-sage" />
               </div>
               <p className="font-num text-3xl font-semibold text-ink leading-none pt-1">{usd(projDaily)}</p>
-              <p className="text-xs text-ink-4">Average per day</p>
+              <p className="text-xs text-ink-4">Forward daily run-rate (steady state)</p>
             </div>
           </div>
 
@@ -118,12 +131,30 @@ export default function ApiCostsPage() {
           <div className="rounded-xl border border-indigo/20 bg-indigo-soft px-4 py-3 flex items-start gap-3">
             <Info className="h-4 w-4 text-indigo shrink-0 mt-0.5" />
             <p className="text-xs text-ink leading-relaxed">
-              To cover the next month at the current pace, keep at least{" "}
-              <span className="font-semibold">{usd(projMonthly)}</span> of credit topped up across the paid AI providers
-              (OpenAI is primary; Gemini &amp; Anthropic are fallbacks). Meta Graph and YouTube are <span className="font-medium">free within their quotas</span> —
+              To cover the next month, keep at least{" "}
+              <span className="font-semibold">{usd(projMonthly)}</span> of credit across the paid AI providers
+              (OpenAI is primary; Gemini &amp; Anthropic are fallbacks). This projection is the <span className="font-medium">forward steady-state</span> rate
+              (the daily new-link inflow) — it deliberately excludes the one-time historical backfill, which already happened and won&rsquo;t recur,
+              so the going-forward cost is much lower than total spend-to-date. Meta Graph and YouTube are <span className="font-medium">free within their quotas</span> —
               they show call volume, not dollars, so you can spot a quota cliff before it bites.
             </p>
           </div>
+
+          {/* Estimate / authoritative-source disclosure */}
+          {(hasReconstructed || !fullWindow) && (
+            <div className="rounded-xl border border-attention/30 bg-attention/5 px-4 py-3 flex items-start gap-3">
+              <AlertTriangle className="h-4 w-4 text-attention shrink-0 mt-0.5" />
+              <p className="text-xs text-ink leading-relaxed">
+                {hasReconstructed && (
+                  <>Spend before usage-tracking went live is <span className="font-medium">reconstructed (estimated)</span> from caption/metric timestamps at measured per-call token rates — treat it as a close approximation, not an invoice. </>
+                )}
+                {!fullWindow && (
+                  <>Precise per-call tracking began {fmtDay(trackingSince)}; figures fully cover the selected {days}-day window only after that much time elapses. </>
+                )}
+                For the <span className="font-medium">authoritative billed amount</span>, check each provider&rsquo;s console — OpenAI (platform.openai.com/usage), Anthropic (console.anthropic.com), Google AI Studio.
+              </p>
+            </div>
+          )}
 
           {/* Daily spend chart */}
           {chartData.length > 0 && (

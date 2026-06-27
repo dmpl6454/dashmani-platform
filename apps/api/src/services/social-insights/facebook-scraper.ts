@@ -35,6 +35,8 @@
 // FAIL-OPEN by contract: any non-200, login redirect, timeout, or parse miss
 // returns nulls — the caller keeps whatever the Graph path produced (or not_found).
 
+import { recordApiUsage } from "../api-usage.service";
+
 // Googlebot UA — the chrome UA returns the 604KB empty app-shell (no engagement);
 // Googlebot/facebookexternalhit get the server-rendered HTML with the JSON.
 const SCRAPER_UA =
@@ -170,6 +172,11 @@ export async function scrapeFacebookReelEngagement(
   fetchImpl: FetchFn = fetch
 ): Promise<ScrapedFbEngagement> {
   if (!reelId || !/^\d+$/.test(reelId)) return { ...EMPTY };
+
+  // Cost Sheet: count each scrape attempt (free public fetch; $0). Surfaces the
+  // scraper's call VOLUME (the 17k-reel backfill + ongoing not_found fallback) so it
+  // isn't invisible. Fire-and-forget, fail-open.
+  recordApiUsage({ provider: "meta", operation: "fb-reel-scraper", calls: 1, units: 1 });
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), SCRAPER_TIMEOUT_MS);

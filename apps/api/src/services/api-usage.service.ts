@@ -138,6 +138,10 @@ export interface CostSheet {
   // the UI suppresses the dollar projection and explains why instead of presuming.
   projectionReliable: boolean;
   pendingExtractionBacklog: number; // captions captured but not yet tagged (drives the gate)
+  // estimatedHistoricalUsd = reconstructed pre-tracking spend, a ROUGH CEILING that
+  // overstates incident days (flat per-call rate × variable history + mixed providers).
+  // Kept SEPARATE from totalCostUsd (measured) and clearly labeled in the UI.
+  estimatedHistoricalUsd: number;
 }
 
 /**
@@ -171,10 +175,19 @@ export async function getCostSheet(windowDays = 30): Promise<CostSheet> {
   const byProviderMap = new Map<string, ProviderCost>();
   const byOpMap = new Map<string, { provider: string; operation: string; calls: number; costUsd: number }>();
   const dailyMap = new Map<string, { date: string; costUsd: number; calls: number }>();
-  let totalCostUsd = 0;
+  // MEASURED = organically-recorded calls with REAL per-call token counts (accurate).
+  // ESTIMATED = '-reconstructed' rows: pre-tracking history rebuilt from timestamps at
+  // a FLAT per-call cost. Proven to OVERSTATE high-volume incident days (the prompt
+  // grows over time → early calls were cheaper; mixed providers; shared key). So we
+  // keep them SEPARATE — the headline is measured-only; the estimate is a labeled
+  // rough ceiling, never summed into the precise figure.
+  let totalCostUsd = 0;          // measured only
+  let estimatedHistoricalUsd = 0; // reconstructed (rough ceiling)
 
   for (const r of rows) {
-    totalCostUsd += r.costUsd;
+    const isReconstructed = r.operation.endsWith("-reconstructed");
+    if (isReconstructed) estimatedHistoricalUsd += r.costUsd;
+    else totalCostUsd += r.costUsd;
 
     const pv = byProviderMap.get(r.provider) ?? { provider: r.provider, calls: 0, units: 0, inputTokens: 0, outputTokens: 0, costUsd: 0 };
     pv.calls += r.calls;
@@ -260,5 +273,6 @@ export async function getCostSheet(windowDays = 30): Promise<CostSheet> {
     hasReconstructed,
     projectionReliable,
     pendingExtractionBacklog,
+    estimatedHistoricalUsd,
   };
 }

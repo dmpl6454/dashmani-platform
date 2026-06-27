@@ -26,6 +26,7 @@ export interface CostSheet {
   hasReconstructed?: boolean;
   projectionReliable?: boolean;
   pendingExtractionBacklog?: number;
+  estimatedHistoricalUsd?: number;
 }
 
 export function useCostSheet(days = 30) {

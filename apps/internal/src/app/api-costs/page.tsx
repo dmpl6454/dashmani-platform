@@ -39,7 +39,6 @@ export default function ApiCostsPage() {
   // Horizon-honesty fields (optional on older API responses).
   const trackingSince: string | null = d?.trackingSince ?? null;
   const fullWindow: boolean = d?.fullWindow ?? true;
-  const hasReconstructed: boolean = d?.hasReconstructed ?? false;
   const effectiveDays: number = d?.effectiveDays ?? days;
   // Projection is only trustworthy at steady state. While a backfill backlog drains,
   // the cron runs at catch-up speed → any forward number would overstate. Default
@@ -164,21 +163,22 @@ export default function ApiCostsPage() {
             </p>
           </div>
 
-          {/* Estimate / authoritative-source disclosure */}
-          {(hasReconstructed || !fullWindow) && (
-            <div className="rounded-xl border border-attention/30 bg-attention/5 px-4 py-3 flex items-start gap-3">
-              <AlertTriangle className="h-4 w-4 text-attention shrink-0 mt-0.5" />
-              <p className="text-xs text-ink leading-relaxed">
-                {hasReconstructed && (
-                  <>Spend before usage-tracking went live is <span className="font-medium">reconstructed (estimated)</span> from caption/metric timestamps at measured per-call token rates — treat it as a close approximation, not an invoice. </>
-                )}
-                {!fullWindow && (
-                  <>Precise per-call tracking began {fmtDay(trackingSince)}; figures fully cover the selected {days}-day window only after that much time elapses. </>
-                )}
-                For the <span className="font-medium">authoritative billed amount</span>, check each provider&rsquo;s console — OpenAI (platform.openai.com/usage), Anthropic (console.anthropic.com), Google AI Studio.
+          {/* Authoritative-source + shared-key disclosure — the honest framing of what
+              this sheet can and cannot tell you. */}
+          <div className="rounded-xl border border-attention/30 bg-attention/5 px-4 py-3 flex items-start gap-3">
+            <AlertTriangle className="h-4 w-4 text-attention shrink-0 mt-0.5" />
+            <div className="text-xs text-ink leading-relaxed space-y-1.5">
+              <p>
+                <span className="font-semibold">This figure is measured precisely going forward</span> (real per-call tokens, since {fmtDay(trackingSince)}) — it is the trustworthy number for predicting future top-ups. For spend <span className="font-medium">before</span> that, the provider console is authoritative; we don&rsquo;t show a reconstructed dollar guess because it over-counted high-volume days.
+              </p>
+              <p>
+                <span className="font-semibold">⚠️ The OpenAI key is shared</span> with another project (&ldquo;Post Automation&rdquo;), so OpenAI&rsquo;s project total (e.g. <span className="font-medium">~$108 for June</span>) covers <span className="font-medium">both apps combined</span> — neither this sheet nor OpenAI&rsquo;s project view isolates this app&rsquo;s spend alone. To get an exact, isolated figure, give this app its <span className="font-medium">own OpenAI API key / project</span>; then OpenAI&rsquo;s dashboard breaks it out directly.
+              </p>
+              <p className="text-ink-4">
+                Authoritative billed totals: OpenAI <span className="font-mono">platform.openai.com/usage</span> · Anthropic <span className="font-mono">console.anthropic.com</span> · Google AI Studio. {!fullWindow && <>Precise in-app tracking began {fmtDay(trackingSince)}.</>}
               </p>
             </div>
-          )}
+          </div>
 
           {/* Daily spend chart */}
           {chartData.length > 0 && (

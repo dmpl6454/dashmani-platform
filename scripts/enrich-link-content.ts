@@ -63,21 +63,41 @@ async function enrichPlatform(slug: string): Promise<void> {
   console.log(`\n=== [${slug}] enrich-link-content (${APPLY ? "APPLY" : "DRY-RUN"}) ===`);
 
   // 1. Pull candidate links for this platform. Classify by canonicalKey prefix
-  //    (NOT the dirty platform column) — but pre-filter on the column to keep the
-  //    query bounded, then the canonicalKey check is the exact arbiter below.
-  const rows = await prisma.reportLink.findMany({
-    where: {
-      platform: { equals: slug, mode: "insensitive" },
-      url: { not: null },
-      isScheduled: false,
-    },
-    select: {
-      id: true,
-      url: true,
-      report: { select: { employeeId: true, date: true } },
-    },
-  });
-  console.log(`[${slug}] candidate report_links: ${rows.length}`);
+  //    (NOT the dirty platform column) — the canonicalKey check on line ~91 is the
+  //    exact arbiter. The PREFILTER must match by URL HOST, not the dirty
+  //    report_links.platform column: ~2,220 FB reels are mislabeled
+  //    platform='instagram' (and some IG/YT cross-mislabels exist too), so a
+  //    platform-column prefilter silently drops them and they never get enriched
+  //    (the FB historical-backfill bug, 2026-06-27). Host-matching widens the
+  //    candidate set to every link whose URL belongs to this platform regardless of
+  //    the stored label; the canonicalKey-prefix check below still rejects anything
+  //    that isn't truly this platform's, so widening is safe (only adds correct
+  //    candidates, can't admit wrong ones).
+  const hostPatternFor: Record<string, string> = {
+    youtube: "youtube\\.com|youtu\\.be",
+    instagram: "instagram\\.com",
+    facebook: "facebook\\.com|fb\\.watch|fb\\.me",
+  };
+  const hostPattern = hostPatternFor[slug];
+  const rows = hostPattern
+    ? await prisma.reportLink.findMany({
+        // Host-match prefilter (correct: catches cross-mislabeled rows).
+        where: {
+          url: { not: null },
+          isScheduled: false,
+          // Prisma has no `~*` operator helper, so match the host substrings via OR.
+          OR: hostPattern.split("|").map((h) => ({
+            url: { contains: h.replace(/\\/g, ""), mode: "insensitive" as const },
+          })),
+        },
+        select: { id: true, url: true, report: { select: { employeeId: true, date: true } } },
+      })
+    : // Unknown slug (no host pattern) — fall back to the platform column.
+      await prisma.reportLink.findMany({
+        where: { platform: { equals: slug, mode: "insensitive" }, url: { not: null }, isScheduled: false },
+        select: { id: true, url: true, report: { select: { employeeId: true, date: true } } },
+      });
+  console.log(`[${slug}] candidate report_links (host-matched): ${rows.length}`);
 
   // 2. Collapse to distinct canonicalKey; build one InsightTarget per key via the
   //    provider's own extractTargetId (videoId / shortcode / numeric post id).

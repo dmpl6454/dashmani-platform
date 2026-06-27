@@ -1555,4 +1555,23 @@ router.get(
   },
 );
 
+// GET /admin/api-usage/openai-billing?days=30 — AUTHORITATIVE OpenAI billed cost
+// (Costs API). Exact billed dollars, caching-aware, self-correcting. Dark/fail-open:
+// returns {available:false} without an OPENAI_ADMIN_KEY or on any error. Combined
+// across the shared key (both apps) — labeled as such in the UI.
+router.get(
+  "/admin/api-usage/openai-billing",
+  authenticate,
+  requirePermission("employees", "edit"),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const days = Number((req.query.days as string) || "30");
+      const { fetchOpenAiBilling } = await import("../services/openai-costs.service");
+      return success(res, await fetchOpenAiBilling(Number.isFinite(days) ? days : 30));
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
 export default router;

@@ -111,7 +111,73 @@ async function buildCoverage(): Promise<LinkSearchResult["coverage"]> {
   // platform with few enriched rows (e.g. FB/IG historical posts beyond the firehose
   // window) shows e.g. "0 searchable of 18,909 submitted" — never "X of Y enriched"
   // where Y silently grows with failed attempts.
-  const [grouped, sinceByPlatform, submittedByPlatform, pendingByPlatform] = await Promise.all([
+  // SEARCHABLE = captions whose canonicalKey matches a SUBMITTED link — the
+  // intersection of link_content(status='ok') and report_links. This is the
+  // critical correctness fix (2026-06-27): the old numerator counted ALL ok
+  // captions, including ones HARVESTED from administered-Page feeds that no
+  // employee ever submitted as a link (~12.8k FB, ~8.5k IG). Counting those made
+  // "searchable" exceed "submitted" on FB (26k of 22k — impossible on its face)
+  // and silently over-counted IG too. "Searchable of submitted" must mean a
+  // SUBSET of submitted, so the numerator is bounded by the denominator.
+  //
+  // OOM-SAFE: this is a COUNT over a join keyed on derived ids, never a row load.
+  // We derive each report_links URL's canonicalKey-equivalent id in SQL (the same
+  // shapes canonicalKey() produces: yt:<id>, ig:<shortcode>, fb:<numeric>) and
+  // intersect with link_content.canonicalKey. Opaque/unparseable URLs derive to
+  // NULL and correctly don't match. The per-post search path is unchanged — this
+  // only fixes the aggregate COVERAGE banner.
+  // The derived submitted-key CTE is reused by both the searchable and the
+  // pending-extraction intersections, so define it once as a SQL fragment.
+  // (Inlined into each query below — Prisma $queryRaw doesn't share CTEs across calls.)
+  const searchableByPlatform = prisma.$queryRaw<Array<{ platform: string; searchable: bigint }>>`
+    WITH submitted_keys AS (
+      SELECT DISTINCT
+        CASE
+          WHEN url ~* 'youtube\.com/watch\?v=|youtube\.com/shorts/|youtu\.be/|youtube\.com/embed/'
+            THEN 'yt:' || substring(url from '(?:v=|/shorts/|youtu\.be/|/embed/)([A-Za-z0-9_-]{6,})')
+          WHEN url ~* 'instagram\.com/(?:[^/]+/)?(?:p|reel|reels|tv)/'
+            THEN 'ig:' || substring(url from 'instagram\.com/(?:[^/]+/)?(?:p|reel|reels|tv)/([A-Za-z0-9_-]+)')
+          WHEN url ~* 'facebook\.com/reel/[0-9]'
+            THEN 'fb:' || substring(url from 'facebook\.com/reel/([0-9]+)')
+          ELSE NULL
+        END AS k
+      FROM report_links
+      WHERE url IS NOT NULL AND is_scheduled = false
+    )
+    SELECT lc.platform AS platform, count(*)::bigint AS searchable
+    FROM link_content lc
+    JOIN submitted_keys sk ON sk.k = lc."canonicalKey"
+    WHERE lc.status = 'ok'
+    GROUP BY lc.platform
+  `;
+
+  // pendingExtraction, intersected with submitted links the SAME way as searchable —
+  // so nameSearchable = searchable - pendingExtraction stays consistent (both count
+  // only submitted-matching captions). A harvested-not-submitted untagged caption
+  // must NOT count as "pending" against the submitted denominator.
+  const pendingMatchedByPlatform = prisma.$queryRaw<Array<{ platform: string; pending: bigint }>>`
+    WITH submitted_keys AS (
+      SELECT DISTINCT
+        CASE
+          WHEN url ~* 'youtube\.com/watch\?v=|youtube\.com/shorts/|youtu\.be/|youtube\.com/embed/'
+            THEN 'yt:' || substring(url from '(?:v=|/shorts/|youtu\.be/|/embed/)([A-Za-z0-9_-]{6,})')
+          WHEN url ~* 'instagram\.com/(?:[^/]+/)?(?:p|reel|reels|tv)/'
+            THEN 'ig:' || substring(url from 'instagram\.com/(?:[^/]+/)?(?:p|reel|reels|tv)/([A-Za-z0-9_-]+)')
+          WHEN url ~* 'facebook\.com/reel/[0-9]'
+            THEN 'fb:' || substring(url from 'facebook\.com/reel/([0-9]+)')
+          ELSE NULL
+        END AS k
+      FROM report_links
+      WHERE url IS NOT NULL AND is_scheduled = false
+    )
+    SELECT lc.platform AS platform, count(*)::bigint AS pending
+    FROM link_content lc
+    JOIN submitted_keys sk ON sk.k = lc."canonicalKey"
+    WHERE lc.status = 'ok' AND lc.extracted_at IS NULL
+    GROUP BY lc.platform
+  `;
+
+  const [grouped, sinceByPlatform, submittedByPlatform, pendingMatched, searchableMatched] = await Promise.all([
     prisma.linkContent.groupBy({
       by: ["platform", "status"],
       _count: { _all: true },
@@ -142,11 +208,8 @@ async function buildCoverage(): Promise<LinkSearchResult["coverage"]> {
       WHERE url IS NOT NULL AND is_scheduled = false
       GROUP BY 1
     `,
-    prisma.linkContent.groupBy({
-      by: ["platform"],
-      where: { status: "ok", extractedAt: null },
-      _count: { _all: true },
-    }),
+    pendingMatchedByPlatform,
+    searchableByPlatform,
   ]);
 
   const ensure = (map: Record<string, CoverageBucket>, p: string): CoverageBucket => {
@@ -158,16 +221,28 @@ async function buildCoverage(): Promise<LinkSearchResult["coverage"]> {
   let unsearchable = 0;
   const byPlatform: Record<string, CoverageBucket> = {};
 
+  // SEARCHABLE — captions matching a submitted link (the intersection query). This
+  // is a SUBSET of submitted by construction, so it can never exceed the denominator.
+  for (const s of searchableMatched) {
+    const p = (s.platform || "other").toLowerCase();
+    const n = Number(s.searchable);
+    ensure(byPlatform, p).searchable += n;
+    byPlatform[p].enriched += n; // legacy alias (== searchable)
+    searchable += n;
+  }
+
+  // UNSEARCHABLE — captions we TRIED but couldn't use (not_found/error/private/etc).
+  // Counted from link_content non-ok rows. (We don't intersect these with submitted
+  // links — they're a "we attempted N and they failed" signal, kept for the legacy
+  // `total`/`notYetEnriched` fields; the headline now leads with searchable/submitted.)
   for (const g of grouped) {
     const n = g._count._all;
     const p = (g.platform || "other").toLowerCase();
     const b = ensure(byPlatform, p);
-    b.total += n; // attempted (ok + unsearchable) — legacy
     if (g.status === "ok") {
-      b.searchable += n;
-      b.enriched += n; // legacy alias
-      searchable += n;
+      b.total += n; // attempted includes ok (legacy)
     } else {
+      b.total += n;
       b.unsearchable += n;
       unsearchable += n;
     }
@@ -187,12 +262,14 @@ async function buildCoverage(): Promise<LinkSearchResult["coverage"]> {
     if (byPlatform[p] && min) byPlatform[p].since = min.toISOString();
   }
 
-  // Pending extraction: status='ok' but extractedAt IS NULL — captions captured but
-  // not yet entity-tagged. These inflate "searchable" but aren't findable by name yet.
+  // Pending extraction: status='ok' AND extractedAt IS NULL, INTERSECTED with
+  // submitted links (same as searchable) — captured but not yet entity-tagged, so
+  // not findable BY NAME yet. Intersecting keeps nameSearchable = searchable -
+  // pendingExtraction consistent (both over the submitted-matching universe).
   let pendingExtraction = 0;
-  for (const g of pendingByPlatform) {
+  for (const g of pendingMatched) {
     const p = (g.platform || "other").toLowerCase();
-    const n = g._count._all;
+    const n = Number(g.pending);
     ensure(byPlatform, p).pendingExtraction += n;
     pendingExtraction += n;
   }

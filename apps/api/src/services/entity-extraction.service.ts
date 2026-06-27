@@ -298,11 +298,29 @@ function aliasOf(name: string): string {
 export async function resolveAndPersist(linkContentId: string, extracted: ExtractedEntity[]): Promise<void> {
   for (const e of extracted) {
     const alias = aliasOf(e.canonicalName);
-    const entity = await prisma.entity.upsert({
-      where: { canonicalName: e.canonicalName },
-      create: { canonicalName: e.canonicalName, type: e.type, aliases: [alias] },
-      update: {}, // do not blow away type on every sighting
+    // RESOLVE-BY-ALIAS-FIRST (durability fix, 2026-06-27): before creating a new
+    // entity, check whether this name is already an ALIAS of an existing entity —
+    // not just a canonicalName match. Without this, a name that was MERGED into
+    // another entity (e.g. "Kareena Kapoor" folded into "Kareena Kapoor Khan" as an
+    // alias) would not match by canonicalName, so the upsert would re-CREATE the
+    // merged-away duplicate — silently undoing every entity merge as the cron keeps
+    // tagging captions. Matching aliases first makes merges durable.
+    const existing = await prisma.entity.findFirst({
+      where: {
+        OR: [
+          { canonicalName: { equals: e.canonicalName, mode: "insensitive" } },
+          { aliases: { has: alias } },
+        ],
+      },
+      select: { id: true },
     });
+    const entity = existing
+      ? { id: existing.id }
+      : await prisma.entity.upsert({
+          where: { canonicalName: e.canonicalName },
+          create: { canonicalName: e.canonicalName, type: e.type, aliases: [alias] },
+          update: {}, // do not blow away type on every sighting
+        });
     // dedup-safe alias merge: ensure the lowercased alias is present exactly once.
     // array_append then array(distinct) via raw SQL avoids the read-modify-write race.
     await prisma.$executeRaw`

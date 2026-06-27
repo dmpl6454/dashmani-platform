@@ -35,3 +35,24 @@ export function useCostSheet(days = 30) {
     dedupingInterval: 120_000,
   });
 }
+
+export interface OpenAiBilling {
+  available: boolean;
+  reason?: string;
+  totalUsd: number;
+  currency: string;
+  daily: Array<{ date: string; costUsd: number }>;
+  byProject: Array<{ projectId: string | null; apiKeyId: string | null; costUsd: number }>;
+  windowDays: number;
+  since: string | null;
+  lagNote: string;
+}
+
+// Authoritative OpenAI billed cost (Costs API). Longer dedupe — slow-moving data,
+// heavier upstream call.
+export function useOpenAiBilling(days = 30) {
+  return useSWR(`/admin/api-usage/openai-billing?days=${days}`, (url) => apiFetch(url), {
+    revalidateOnFocus: false,
+    dedupingInterval: 300_000,
+  });
+}

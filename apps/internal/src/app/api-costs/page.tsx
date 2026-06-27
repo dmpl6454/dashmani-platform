@@ -7,7 +7,7 @@ import {
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid,
 } from "recharts";
-import { useCostSheet, type ProviderCost } from "@/lib/hooks/use-cost-sheet";
+import { useCostSheet, useOpenAiBilling, type ProviderCost, type OpenAiBilling } from "@/lib/hooks/use-cost-sheet";
 import { usePageTitle } from "@/lib/hooks/use-page-title";
 
 const usd = (n: number) =>
@@ -28,6 +28,12 @@ export default function ApiCostsPage() {
   const [days, setDays] = useState<number>(30);
   const { data, isLoading } = useCostSheet(days);
   const d = (data as any)?.data;
+
+  // Authoritative OpenAI billed cost (Costs API) — the source of truth when the
+  // admin key is configured. Combined across the shared key (both apps).
+  const { data: billingResp } = useOpenAiBilling(days);
+  const billing: OpenAiBilling | undefined = (billingResp as any)?.data;
+  const billingAvailable = !!billing?.available;
 
   const total: number = d?.totalCostUsd ?? 0;
   const projMonthly: number = d?.projectedMonthlyUsd ?? 0;
@@ -106,6 +112,28 @@ export default function ApiCostsPage() {
 
       {d && (
         <>
+          {/* AUTHORITATIVE — OpenAI billed cost (Costs API). The source of truth when
+              the admin key is set. Shown ABOVE our estimate so the real number leads. */}
+          {billingAvailable && (
+            <div className="v3-card p-5 border-2 border-sage/40 bg-sage/5 space-y-2">
+              <div className="flex items-center gap-2">
+                <DollarSign className="h-4 w-4 text-sage" />
+                <p className="font-semibold text-ink">OpenAI — Billed (authoritative)</p>
+                <span className="ml-auto text-[11px] text-ink-4">official Costs API</span>
+              </div>
+              <p className="font-num text-3xl font-semibold text-ink leading-none">{usd(billing!.totalUsd)}</p>
+              <p className="text-xs text-ink-4">
+                Exact billed spend over the last {days} days{billing!.since ? `, since ${fmtDay(billing!.since)}` : ""}.
+                This is the <span className="font-medium">real invoice figure</span> — caching-aware, not an estimate.
+              </p>
+              <p className="text-[11px] text-ink-4 leading-snug border-t border-sage/20 pt-1.5">
+                ⚠️ <span className="font-medium">Combined total</span> — the OpenAI key is shared with the other app
+                (&ldquo;Post Automation&rdquo;), so this covers <span className="font-medium">both apps</span>. {billing!.lagNote} Our token-based
+                figures below are an internal estimate for this app&rsquo;s share + the forward projection.
+              </p>
+            </div>
+          )}
+
           {/* Headline cards */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div className="v3-card p-5 space-y-1">

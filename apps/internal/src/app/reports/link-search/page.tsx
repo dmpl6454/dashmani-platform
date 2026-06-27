@@ -3,11 +3,12 @@ import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import Link from "next/link";
 import {
   ArrowLeft, Search, Link2, Layers, CopyMinus, Globe, Users,
-  Info, AlertTriangle, ExternalLink, X as CloseIcon, RefreshCw,
+  Info, AlertTriangle, ExternalLink, X as CloseIcon, RefreshCw, Download,
 } from "lucide-react";
 import { useLinkSearch, useEntitySuggestions } from "@/lib/hooks/use-link-search";
 import { useInsightsRefresh } from "@/lib/hooks/use-insights-refresh";
 import { usePageTitle } from "@/lib/hooks/use-page-title";
+import { apiFetchBlob, downloadBlob } from "@/lib/api";
 
 function fmtDate(d: string) {
   try { return new Date(d).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }); }
@@ -48,6 +49,8 @@ export default function LinkSearchPage() {
   const [q, setQ] = useState("");
   const [submitted, setSubmitted] = useState("");
   const [showSuggest, setShowSuggest] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
 
   // ── Dynamic search ──────────────────────────────────────────────────────────
@@ -87,6 +90,27 @@ export default function LinkSearchPage() {
     setQ(t);
     setSubmitted(t);
     setShowSuggest(false);
+  }
+
+  // Export EVERY submitted link for the currently-resolved entity to a styled
+  // .xlsx (date, platform, channel, submitted-by, URL, dup flag) + an About sheet
+  // with totals + the coverage caveat. Uses the resolved entity name (or the typed
+  // query) so the export matches exactly what's on screen.
+  async function handleExport() {
+    const term = (data?.entity?.canonicalName || submitted || q).trim();
+    if (!term || exporting) return;
+    setExporting(true);
+    setExportError(null);
+    try {
+      const { blob, filename } = await apiFetchBlob(
+        `/admin/link-search/export.xlsx?q=${encodeURIComponent(term)}`,
+      );
+      downloadBlob(blob, filename || `link-search-${term}.xlsx`);
+    } catch (e) {
+      setExportError(e instanceof Error ? e.message : "Export failed");
+    } finally {
+      setExporting(false);
+    }
   }
 
   const coverage = data?.coverage;
@@ -360,7 +384,26 @@ export default function LinkSearchPage() {
             {entity.aliases.length > 0 && (
               <span className="text-xs text-ink-4">aka {entity.aliases.join(", ")}</span>
             )}
+            {data!.totalPosts > 0 && (
+              <button
+                type="button"
+                onClick={handleExport}
+                disabled={exporting}
+                className="ml-auto self-center flex items-center gap-1.5 rounded-lg border-2 border-ink/10 px-3 py-1.5 text-xs font-medium text-ink hover:border-indigo hover:bg-indigo-soft disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+                aria-label="Export all links to Excel"
+                title="Download every link for this person as an Excel sheet"
+              >
+                <Download className={`h-3.5 w-3.5 ${exporting ? "animate-pulse" : ""}`} />
+                {exporting ? "Preparing…" : "Export to Excel"}
+              </button>
+            )}
           </div>
+          {exportError && (
+            <div role="alert" className="rounded-xl border border-terra/30 bg-terra/5 px-4 py-2 flex items-center gap-2">
+              <AlertTriangle className="h-4 w-4 text-terra shrink-0" />
+              <p className="text-xs text-ink">Couldn&rsquo;t export: {exportError}</p>
+            </div>
+          )}
 
           {/* Summary strip */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">

@@ -440,6 +440,34 @@ router.get(
   },
 );
 
+// GET /admin/link-search/export.xlsx?q&from&to&platform — styled .xlsx of EVERY
+// submitted link for the searched entity (date, platform, channel, submitted-by,
+// URL, same-post group, duplicate flag) + an About sheet with totals + coverage
+// caveat. Binary download, NOT the JSON envelope. Reconciles with the on-screen
+// Link Search result (same searchLinksByEntity call, same same-vs-unique rows).
+router.get(
+  "/admin/link-search/export.xlsx",
+  authenticate,
+  requirePermission("reports", "view"),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { q, from, to, platform } = req.query as Record<string, string | undefined>;
+      if (!q || !q.trim()) {
+        return error(res, "VALIDATION_ERROR", "Query parameter 'q' is required", 400);
+      }
+      const { generateLinkSearchExport } = await import("../services/link-search-export.service");
+      const { buffer, filename } = await generateLinkSearchExport({ q, from, to, platform }, new Date());
+      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+      res.setHeader("Access-Control-Expose-Headers", "Content-Disposition");
+      res.setHeader("Content-Length", String(buffer.length));
+      return res.status(200).send(buffer);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
 // GET /admin/entities?q — entity autocomplete for the search typeahead.
 router.get(
   "/admin/entities",

@@ -4,6 +4,7 @@ import { getSupportedSlugs, getProvider } from "../services/social-insights";
 import type { InsightTarget } from "../services/social-insights";
 import { youTubeQuotaExceeded } from "../services/social-insights/youtube.provider";
 import { upsertLinkContent } from "../services/link-content.service";
+import { recordApiUsage } from "../services/api-usage.service";
 
 const POLL_WINDOW_DAYS = 60;
 // Per-provider metric-sweep wall-clock budget (default 25 min). A provider yields to
@@ -367,6 +368,19 @@ export async function runSocialInsightsRefresh(opts?: { harvestOnly?: boolean })
         console.log(
           `[social-insights/${slug}] ${targets.length} links → ${polled} polled, ${succeeded} ok, ${notFound} not_found, ${errors} errors${quotaAborted ? " (QUOTA ABORTED)" : ""}`
         );
+        // Cost Sheet: record this provider's call volume for the run (AGGREGATE, one
+        // row per provider per run — keeps the meta-graph/YT fetch helpers pure and
+        // avoids tens of thousands of per-call DB writes in the hot loop). Meta &
+        // YouTube are free within quota, so cost is 0; the COUNT is the useful signal
+        // (spot a quota cliff). Fire-and-forget, fail-open. youtube→youtube; ig/fb→meta.
+        if (polled > 0) {
+          recordApiUsage({
+            provider: slug === "youtube" ? "youtube" : "meta",
+            operation: `social-insights:${slug}`,
+            calls: polled,
+            units: polled,
+          });
+        }
         // Persist the rotating cursor (F3): if the sweep yielded early, RESUME after the
         // last processed link next run; if it ran to completion, RESET so the next run
         // wraps to the start (a fresh full pass). harvestOnly runs never touch the cursor.

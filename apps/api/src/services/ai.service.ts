@@ -1,6 +1,9 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { prisma } from "@dashmani/db";
 import { AppError } from "../middleware/error-handler";
+import { recordApiUsage } from "./api-usage.service";
+
+const AI_SERVICE_MODEL = "claude-sonnet-4-20250514";
 
 let _client: Anthropic | null = null;
 function getClient(): Anthropic {
@@ -23,10 +26,17 @@ const COMPANY = {
 async function askClaude(systemPrompt: string, userPrompt: string): Promise<string> {
   const client = getClient();
   const msg = await client.messages.create({
-    model: "claude-sonnet-4-20250514",
+    model: AI_SERVICE_MODEL,
     max_tokens: 4096,
     system: systemPrompt,
     messages: [{ role: "user", content: userPrompt }],
+  });
+  recordApiUsage({
+    provider: "anthropic",
+    operation: "ai-generate",
+    model: AI_SERVICE_MODEL,
+    inputTokens: msg.usage?.input_tokens ?? 0,
+    outputTokens: msg.usage?.output_tokens ?? 0,
   });
   const block = msg.content.find((b) => b.type === "text");
   return block ? block.text : "";

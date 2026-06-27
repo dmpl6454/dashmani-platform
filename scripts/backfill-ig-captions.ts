@@ -89,14 +89,19 @@ async function main() {
   }
 
   // 2. Which submitted keys already have an OK caption? Skip accounts fully covered.
+  //    Chunk the IN(...) — Postgres caps prepared-statement bind variables at 32,767
+  //    and there are ~39k+ distinct IG keys, so a single findMany overflows (P2035).
   const allKeys = [...submittedKeys];
-  const okRows = allKeys.length
-    ? await prisma.linkContent.findMany({
-        where: { canonicalKey: { in: allKeys }, status: "ok" },
-        select: { canonicalKey: true },
-      })
-    : [];
-  const okSet = new Set(okRows.map((r) => r.canonicalKey));
+  const okSet = new Set<string>();
+  const KEY_CHUNK = 20_000;
+  for (let i = 0; i < allKeys.length; i += KEY_CHUNK) {
+    const chunk = allKeys.slice(i, i + KEY_CHUNK);
+    const rows = await prisma.linkContent.findMany({
+      where: { canonicalKey: { in: chunk }, status: "ok" },
+      select: { canonicalKey: true },
+    });
+    for (const r of rows) okSet.add(r.canonicalKey);
+  }
 
   // Gap handles = handles with >=1 submitted key not yet ok.
   let gapHandles = [...byHandle.values()]

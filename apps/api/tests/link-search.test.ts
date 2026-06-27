@@ -197,6 +197,41 @@ describe("searchLinksByEntity — same vs unique (DB-backed)", () => {
     expect(a?.handle).toBe("channelA");
   });
 
+  it("RESOLVES (does not loop) when a name exact-matches TWO entities — one by canonicalName, one by alias (post-merge duplicate)", async () => {
+    if (!dbAvailable) return;
+
+    // Reproduce the post-merge duplicate state: a survivor entity carries the folded
+    // name as an ALIAS, and a thin duplicate exists under that exact canonicalName.
+    // A search for that name exact-matches BOTH → the OLD logic returned an empty
+    // disambiguation forever (clicking the chip re-sent the same name → nothing).
+    const NAME = `${NAME_PREFIX}Kareena Kapoor`;
+    const aliasLower = NAME.toLowerCase();
+    // Survivor: canonicalName "<prefix>Kareena Kapoor Khan", alias includes the folded name.
+    const survivor = await prisma.entity.create({
+      data: { canonicalName: `${NAME}_KHAN`, type: "PERSON", aliases: [aliasLower] },
+    });
+    // Thin duplicate: canonicalName exactly the searched name.
+    const dup = await prisma.entity.create({
+      data: { canonicalName: NAME, type: "PERSON", aliases: [aliasLower] },
+    });
+    // Give the survivor more linked content than the duplicate (it's the real one).
+    const c1 = await prisma.linkContent.create({ data: { canonicalKey: `${KEY_PREFIX}KK01`, platform: "youtube", status: "ok", extractedAt: new Date() } });
+    const c2 = await prisma.linkContent.create({ data: { canonicalKey: `${KEY_PREFIX}KK02`, platform: "youtube", status: "ok", extractedAt: new Date() } });
+    const c3 = await prisma.linkContent.create({ data: { canonicalKey: `${KEY_PREFIX}KK03`, platform: "youtube", status: "ok", extractedAt: new Date() } });
+    await prisma.linkContentEntity.createMany({ data: [
+      { linkContentId: c1.id, entityId: survivor.id, confidence: 1 },
+      { linkContentId: c2.id, entityId: survivor.id, confidence: 1 },
+      { linkContentId: c3.id, entityId: dup.id, confidence: 1 },
+    ]});
+
+    const res = await searchLinksByEntity({ q: NAME });
+    // MUST resolve to a single entity — NOT return an empty disambiguation loop.
+    expect(res.disambiguation).toBeUndefined();
+    expect(res.entity).not.toBeNull();
+    // Winner is the survivor (most links), not the thin duplicate.
+    expect(res.entity!.id).toBe(survivor.id);
+  });
+
   it("coverage reflects enriched ('ok') vs not-yet-enriched ('pending') LinkContent", async () => {
     if (!dbAvailable) return;
 

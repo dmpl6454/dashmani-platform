@@ -22,5 +22,8 @@ export const normalizedEmail = z
 
 /** Strips query string (UTM params, igsh, etc.) from a social account handle */
 export function sanitizeAccountHandle(raw: string): string {
-  return raw.split("?")[0].trim();
+  // Strip query string, trim, then remove any leading "@" — a social handle never
+  // legitimately starts with "@", and a stray leading "@" (pasted from a profile
+  // mention) otherwise renders as "@@handle" wherever the UI prepends its own "@".
+  return raw.split("?")[0].trim().replace(/^@+/, "");
 }

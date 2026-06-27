@@ -19,6 +19,13 @@ function cap(s: string) {
   return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
 }
 
+// Render a handle with exactly ONE leading "@". Some stored social_accounts handles
+// already include a leading "@" (e.g. "@BollywoodChronicle"), which the old `@{handle}`
+// render turned into "@@BollywoodChronicle". Strip any leading @'s, then prepend one.
+function fmtHandle(handle: string) {
+  return `@${(handle || "").replace(/^@+/, "")}`;
+}
+
 function phaseLabel(phase: "idle" | "harvesting" | "extracting"): string {
   if (phase === "harvesting") return "Reading Instagram & Facebook captions…";
   if (phase === "extracting") return "Tagging people & topics…";
@@ -463,7 +470,7 @@ export default function LinkSearchPage() {
                           <Link href={`/accounts/${c.accountId}`} className="font-medium text-ink hover:text-indigo transition-colors">
                             {c.displayName}
                           </Link>
-                          <span className="text-[11px] text-ink-4 font-mono ml-2">@{c.handle}</span>
+                          <span className="text-[11px] text-ink-4 font-mono ml-2">{fmtHandle(c.handle)}</span>
                         </td>
                         <td className="py-2.5 pr-3">
                           <span className="text-xs text-ink-4 bg-ink/5 rounded-full px-2 py-0.5">{cap(c.platform)}</span>
@@ -507,7 +514,7 @@ export default function LinkSearchPage() {
                             <ExternalLink className="h-3 w-3 shrink-0" />
                           </a>
                           <p className="text-[11px] text-ink-4 mt-0.5">
-                            {p.account.displayName} <span className="font-mono">@{p.account.handle}</span>
+                            {p.account.displayName} <span className="font-mono">{fmtHandle(p.account.handle)}</span>
                             {" · "}submitted by <span className="font-medium text-ink-3">{p.employee.name}</span>
                             {" · "}{fmtDate(p.date)}
                           </p>
@@ -526,7 +533,7 @@ export default function LinkSearchPage() {
                             <p key={`${s.employee.id}-${s.date}-${i}`} className="text-[11px] text-ink-4">
                               <span className="font-medium text-ink-3">{s.employee.name}</span>
                               {" · "}{fmtDate(s.date)}
-                              {" · "}<span className="font-mono">@{s.account.handle}</span>
+                              {" · "}<span className="font-mono">{fmtHandle(s.account.handle)}</span>
                             </p>
                           ))}
                         </div>

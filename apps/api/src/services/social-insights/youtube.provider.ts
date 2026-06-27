@@ -1,5 +1,6 @@
 import { extractYouTubeVideoId } from "@dashmani/shared";
 import type { InsightProvider, InsightTarget, InsightFetchResult } from "./types";
+import { recordApiUsage } from "../api-usage.service";
 
 const BATCH_SIZE = 50;
 const TIMEOUT_MS = 10_000;
@@ -60,6 +61,9 @@ export const youTubeProvider: InsightProvider = {
 
       let data: YouTubeApiResponse;
       try {
+        // Cost Sheet: videos.list = 1 quota unit per call (free within 10k/day).
+        // Fire-and-forget, fail-open.
+        recordApiUsage({ provider: "youtube", operation: "youtube-videos", calls: 1, units: 1 });
         const res = await fetch(
           `https://www.googleapis.com/youtube/v3/videos?part=statistics,snippet&id=${encodeURIComponent(videoIds)}&key=${apiKey}`,
           { signal: controller.signal }

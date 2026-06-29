@@ -159,6 +159,35 @@ describe("leaderboard engagement (link_metrics-sourced)", () => {
     expect(c.engagementViews).toBe(999);
   });
 
+  it("Top Links board reports submittedLinkCount (the coverage denominator) >= engagedLinkCount", async () => {
+    if (!dbAvailable) return;
+    const erin = await seedEmployee("erin", "ZZ Erin");
+    const acct = await seedAccount();
+    // Erin submitted 3 links but only 1 has a metric snapshot (mirrors IG cron lag).
+    await prisma.dailyReport.create({
+      data: {
+        employeeId: erin.id,
+        date: new Date("2026-06-09"),
+        links: {
+          create: [
+            { accountId: acct.id, url: `${URL_PREFIX}e1`, platform: "instagram" },
+            { accountId: acct.id, url: `${URL_PREFIX}e2`, platform: "instagram" },
+            { accountId: acct.id, url: `${URL_PREFIX}e3`, platform: "instagram" },
+          ],
+        },
+      },
+    });
+    // Only one of the three has engagement collected so far.
+    await snap({ employeeId: erin.id, url: `${URL_PREFIX}e1`, fetchedAt: new Date("2026-06-09"), platform: "instagram", views: 0, likes: 40, comments: 3 });
+
+    const board = await getTopLinksLeaderboard();
+    const e = board.find((r) => r.employee.id === erin.id)!;
+    expect(e.engagedLinkCount).toBe(1); // covered
+    expect(e.submittedLinkCount).toBe(3); // sent — the partial-coverage denominator
+    expect(e.views).toBe(0); // IG → views legitimately 0, not missing
+    expect(e.totalEngagement).toBe(43); // 0 + 40 + 3, from the one covered link
+  });
+
   it("an employee with reports but no metrics shows 0 engagement (no crash, no fake number)", async () => {
     if (!dbAvailable) return;
     const dave = await seedEmployee("dave", "ZZ Dave");

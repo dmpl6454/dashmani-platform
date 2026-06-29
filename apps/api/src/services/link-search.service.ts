@@ -97,7 +97,22 @@ function idPartFor(canonicalKeyValue: string): { contains?: string; equalsUrl?: 
 
 type CoverageBucket = LinkSearchResult["coverage"]["byPlatform"][string];
 
+// Coverage is a global aggregate — it only changes when the enrichment cron
+// runs (at most hourly). Re-computing it on every search burns 5 heavy queries
+// per keystroke. Cache it for 5 minutes; expose an invalidator for tests.
+const COVERAGE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+let _coverageCache: { value: LinkSearchResult["coverage"]; builtAt: number } | null = null;
+
+export function invalidateCoverageCache(): void {
+  _coverageCache = null;
+}
+
 async function buildCoverage(): Promise<LinkSearchResult["coverage"]> {
+  const now = Date.now();
+  if (_coverageCache && now - _coverageCache.builtAt < COVERAGE_TTL_MS) {
+    return _coverageCache.value;
+  }
+
   // Four cheap grouped queries:
   //  1. link_content counts by (platform, status) — searchable (ok) vs unsearchable
   //  2. earliest enriched fetched_at per platform — the auto-detected "since" date
@@ -283,7 +298,7 @@ async function buildCoverage(): Promise<LinkSearchResult["coverage"]> {
   const submitted = Object.values(byPlatform).reduce((acc, b) => acc + b.submitted, 0);
   const nameSearchable = Math.max(0, searchable - pendingExtraction);
 
-  return {
+  const result: LinkSearchResult["coverage"] = {
     // legacy pair (enriched = searchable; total = attempted)
     enriched: searchable,
     notYetEnriched: attemptedTotal - searchable,
@@ -296,6 +311,9 @@ async function buildCoverage(): Promise<LinkSearchResult["coverage"]> {
     submitted,
     byPlatform,
   };
+
+  _coverageCache = { value: result, builtAt: Date.now() };
+  return result;
 }
 
 function emptyResult(coverage: LinkSearchResult["coverage"], extra?: Partial<LinkSearchResult>): LinkSearchResult {

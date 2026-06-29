@@ -267,26 +267,29 @@ export async function getCostSheet(windowDays = 30): Promise<CostSheet> {
   //     the cron runs at full catch-up speed (e.g. ~2,800/hr) — many times the true
   //     forward inflow (~1.7k/day). Gate on pending-extraction backlog.
   //
-  // (B) ENOUGH FORWARD HISTORY *AFTER* THE BURST (2026-06-29 fix): the backlog can
-  //     drain to near-zero while the trailing-3-day cost we average is STILL almost
+  // (B) ENOUGH ELAPSED TIME SINCE TRACKING BEGAN (2026-06-29, corrected): the backlog
+  //     can drain to near-zero while the trailing cost we average is STILL almost
   //     entirely the one-time backfill burst (it just finished hours ago). That was
-  //     the real bug behind the bogus "$466/mo" — backlog had fallen to 456, so (A)
-  //     passed, but `recentForwardCost` was dominated by the ~36k burst calls of the
-  //     prior 2 days, so the rate (and the ×30 projection) was the BURST extrapolated
-  //     forward, not steady state. A backfill burst dwarfs forward inflow, so when the
-  //     trailing-3-day window still CONTAINS burst days the daily rate is inflated.
-  //     Require the steady-state sample to span at least MIN_FORWARD_DAYS DISTINCT
-  //     days of organic (non-reconstructed) data — i.e. let a few full days pass so
-  //     the trailing average is real forward inflow, not the tail of the burst. Until
-  //     then the UI shows "—" / "measuring true forward rate" instead of presuming.
+  //     the real bug behind the bogus "$466/mo" — backlog had fallen below 2000, so
+  //     (A) passed, but `recentForwardCost` was dominated by the ~36k burst calls of
+  //     the prior ~2 days, so the rate (and the ×30 projection) was the BURST
+  //     extrapolated forward, not steady state.
+  //     ⚠️ A FIRST attempt gated on "≥3 DISTINCT calendar days of organic data" — but
+  //     a burst that merely STRADDLES two midnights trivially yields 3 date-buckets
+  //     (e.g. Jun 27/28/29) while only ~1.8 real days have elapsed, so that gate let
+  //     the burst through. The honest signal is ELAPSED TIME since tracking began
+  //     (effectiveDays), not how many date-buckets got touched: only once enough real
+  //     days have passed is the backfill genuinely BEHIND us and the trailing rate
+  //     made of forward inflow. Require effectiveDays ≥ MIN_FORWARD_DAYS. Until then
+  //     the UI shows "—" / "measuring true forward rate" instead of presuming.
   const pendingExtractionBacklog = await prisma.linkContent.count({
     where: { status: "ok", extractedAt: null },
   });
   const BACKLOG_RELIABLE_THRESHOLD = 2000; // below this, the cron is keeping up ≈ steady state
-  const MIN_FORWARD_DAYS = 3; // need ≥3 distinct days of organic data before trusting the rate
+  const MIN_FORWARD_DAYS = 4; // need ≥4 real elapsed days of tracking before trusting the rate
   const backlogDrained = pendingExtractionBacklog < BACKLOG_RELIABLE_THRESHOLD;
-  const enoughForwardHistory = recentDaysWithData >= MIN_FORWARD_DAYS;
-  const projectionReliable = backlogDrained && enoughForwardHistory;
+  const enoughElapsedTime = effectiveDays >= MIN_FORWARD_DAYS;
+  const projectionReliable = backlogDrained && enoughElapsedTime;
 
   return {
     windowDays: days,

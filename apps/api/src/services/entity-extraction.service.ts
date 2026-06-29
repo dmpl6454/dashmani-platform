@@ -181,29 +181,34 @@ async function geminiExtract(caption: string, title: string, knownNames: string[
   return data.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
 }
 
-// Default extractor: a fallback CHAIN of configured providers, in order:
-//   Anthropic Haiku (primary, tuned) → OpenAI gpt-4o-mini → Gemini-lite.
+// Default extractor: a fallback CHAIN of configured providers.
 // Each provider is tried only if its key is set; on failure we fall through to the
 // next. Throws only if EVERY configured provider fails — and even then the caller
 // (extractOne) must NOT demote the caption's status (it just retries next cron).
 // This makes extraction resilient to ANY single provider being down/out-of-credit
 // (the 2026-06-26 incident: Anthropic ran out of credit and there was no fallback).
 const defaultRawExtract: RawExtractFn = async (caption, title, knownNames) => {
-  // Provider order = PRIMARY → fallbacks (per owner directive 2026-06-26):
-  //   1. OpenAI gpt-4o-mini — primary: cheapest for our short outputs + currently the
-  //      reliably-funded key (Anthropic was out of credit, which is why it's no longer
-  //      first — every call used to waste a doomed Anthropic request).
-  //   2. Gemini gemini-2.5-flash-lite — 2nd fallback (lite SKU only).
-  //   3. Anthropic Haiku — last fallback (tuned but pricier; was the dry one).
-  // Each tried only if its key is set; falls through on failure.
+  // Provider order — GEMINI-ONLY (owner directive 2026-06-29, after measuring live
+  // per-call economics on prod for the IDENTICAL ~15k-token extraction prompt):
+  //   Gemini gemini-2.5-flash-lite : $0.000451/call  (1×, the baseline)
+  //   OpenAI gpt-4o-mini           : $0.001287/call  (2.85× pricier)
+  //   Anthropic Haiku 4.5          : $0.014772/call  (32.75× pricier — no auto-cache)
+  // Entity extraction is a high-volume, tiny-output classification task (pull
+  // person/brand names out of a caption) — input price-per-million is the whole
+  // ballgame, and Gemini-lite wins decisively with no quality loss (verified live:
+  // it returns clean JSON for the same prompt). So OpenAI + Anthropic are REMOVED
+  // from the active chain — they were 2.85×/32.75× more expensive for zero benefit,
+  // and (as of 2026-06-29) both keys are out of credit anyway, so keeping them first
+  // only added a doomed pre-flight 429/400 round-trip (latency + noise) to every call.
+  // The openaiExtract / anthropicExtract functions are kept defined (tests + a quick
+  // re-add path) but are no longer wired in. To re-add a paid fallback for burst
+  // headroom, append it to this array.
   const providers: Array<{ key: string | undefined; fn: () => Promise<string> }> = [
-    { key: process.env.OPENAI_API_KEY, fn: () => openaiExtract(caption, title, knownNames) },
     { key: process.env.GOOGLE_GEMINI_API_KEY, fn: () => geminiExtract(caption, title, knownNames) },
-    { key: process.env.ANTHROPIC_API_KEY, fn: () => anthropicExtract(caption, title, knownNames) },
   ].filter((p) => !!p.key);
 
   if (providers.length === 0) {
-    throw new AppError(500, "AI_NOT_CONFIGURED", "No extraction provider configured. Set ANTHROPIC_API_KEY / OPENAI_API_KEY / GOOGLE_GEMINI_API_KEY.");
+    throw new AppError(500, "AI_NOT_CONFIGURED", "No extraction provider configured. Set GOOGLE_GEMINI_API_KEY.");
   }
 
   let lastErr: unknown;

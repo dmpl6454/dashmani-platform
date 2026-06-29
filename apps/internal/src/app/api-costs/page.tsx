@@ -20,6 +20,13 @@ const PROVIDER_LABEL: Record<string, string> = {
   openai: "OpenAI", gemini: "Gemini", anthropic: "Anthropic (Claude)",
   meta: "Meta Graph (IG/FB)", youtube: "YouTube Data",
 };
+// The ONLY active LLM going forward is Gemini (entity-extraction switched to
+// Gemini-only on 2026-06-29 — measured cheapest by far). OpenAI + Anthropic rows
+// are HISTORICAL: real spend that already happened, kept visible for honesty, but
+// no NEW cost accrues from them. We label them "historical" rather than hide them
+// (hiding real spend would itself be a data lie + would mismatch the authoritative
+// OpenAI billing panel). If a provider is ever re-activated, drop it from this set.
+const HISTORICAL_PROVIDERS = new Set(["openai", "anthropic"]);
 
 const RANGES = [7, 14, 30, 90] as const;
 
@@ -234,6 +241,7 @@ export default function ApiCostsPage() {
             <div className="flex items-center gap-2">
               <DollarSign className="h-4 w-4 text-terra" />
               <p className="font-semibold text-ink">Paid AI Providers</p>
+              <span className="ml-auto text-[11px] text-ink-4">Gemini is the only active LLM — OpenAI/Anthropic are historical</span>
             </div>
             {paidProviders.length === 0 ? (
               <p className="text-xs text-ink-4">No paid-provider usage recorded in this window.</p>
@@ -250,15 +258,28 @@ export default function ApiCostsPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-ink/6">
-                    {paidProviders.map((p) => (
-                      <tr key={p.provider}>
-                        <td className="py-2.5 font-medium text-ink">{PROVIDER_LABEL[p.provider] ?? p.provider}</td>
+                    {paidProviders.map((p) => {
+                      const historical = HISTORICAL_PROVIDERS.has(p.provider);
+                      return (
+                      <tr key={p.provider} className={historical ? "opacity-70" : ""}>
+                        <td className="py-2.5 font-medium text-ink">
+                          {PROVIDER_LABEL[p.provider] ?? p.provider}
+                          {historical && (
+                            <span
+                              className="ml-2 inline-block rounded px-1.5 py-0.5 text-[10px] font-medium bg-ink/8 text-ink-4 align-middle"
+                              title="No longer used — extraction switched to Gemini-only on 29 Jun 2026. This is past spend, kept for the record; no new cost accrues."
+                            >
+                              historical
+                            </span>
+                          )}
+                        </td>
                         <td className="py-2.5 text-right tabular-nums text-ink-3">{num(p.calls)}</td>
                         <td className="py-2.5 text-right tabular-nums text-ink-4">{num(p.inputTokens)}</td>
                         <td className="py-2.5 text-right tabular-nums text-ink-4">{num(p.outputTokens)}</td>
                         <td className="py-2.5 text-right font-num font-semibold text-terra">{usd(p.costUsd)}</td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

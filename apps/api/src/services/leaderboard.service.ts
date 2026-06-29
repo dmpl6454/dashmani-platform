@@ -166,20 +166,55 @@ export async function getLeaderboard(startDate?: string, endDate?: string) {
 export async function getTopLinksLeaderboard(startDate?: string, endDate?: string) {
   // Resolve employee identity for everyone who has engagement, scoped to real
   // employees (excludes pure-admin accounts), matching the main leaderboard's filter.
-  const [engagementByEmployee, employees] = await Promise.all([
+  // Also fetch each employee's TOTAL submitted (non-scheduled) link count for the
+  // SAME window — the denominator of the "metrics on X of Y links" coverage note.
+  // Metric coverage lags submission (the 6h cron is Meta-rate-limited, IG especially),
+  // so engagedLinkCount is often << submitted. Surfacing both makes a partial row
+  // (e.g. metrics on 350 of 2,171 IG links) visibly partial, not mistaken for complete.
+  const reportWhere: any = { employee: employeeWhere };
+  if (startDate || endDate) {
+    reportWhere.date = {};
+    if (startDate) reportWhere.date.gte = new Date(startDate);
+    if (endDate) reportWhere.date.lte = new Date(endDate);
+  }
+
+  const [engagementByEmployee, employees, submittedGroups] = await Promise.all([
     getEngagementByEmployee(startDate, endDate),
     prisma.user.findMany({
       where: employeeWhere,
       select: { id: true, name: true, email: true, profileImageUrl: true },
     }),
+    // Count non-scheduled links per employee in-window (the coverage denominator).
+    prisma.reportLink.groupBy({
+      by: ["reportId"],
+      where: { isScheduled: false, report: reportWhere },
+      _count: { _all: true },
+    }),
   ]);
 
   const empById = new Map(employees.map((e) => [e.id, e]));
+
+  // groupBy reportId → roll up to employee via the reports we just matched.
+  const reportToEmp = new Map(
+    (
+      await prisma.dailyReport.findMany({
+        where: reportWhere,
+        select: { id: true, employeeId: true },
+      })
+    ).map((r) => [r.id, r.employeeId]),
+  );
+  const submittedByEmployee = new Map<string, number>();
+  for (const g of submittedGroups) {
+    const empId = reportToEmp.get(g.reportId);
+    if (!empId) continue;
+    submittedByEmployee.set(empId, (submittedByEmployee.get(empId) ?? 0) + g._count._all);
+  }
 
   const rows = [...engagementByEmployee.entries()]
     .map(([employeeId, agg]) => {
       const employee = empById.get(employeeId);
       if (!employee) return null; // engagement from a non-employee account → skip
+      const submittedLinkCount = submittedByEmployee.get(employeeId) ?? agg.linkCount;
       return {
         employee,
         totalEngagement: agg.views + agg.likes + agg.comments,
@@ -187,6 +222,10 @@ export async function getTopLinksLeaderboard(startDate?: string, endDate?: strin
         likes: agg.likes,
         comments: agg.comments,
         engagedLinkCount: agg.linkCount,
+        // Denominator for the "metrics on X of Y links" coverage note. Clamp so
+        // coverage can never read > 100% (a metric snapshot can outlive its report
+        // edit; engagedLinkCount is the floor of what's truly covered).
+        submittedLinkCount: Math.max(submittedLinkCount, agg.linkCount),
       };
     })
     .filter((r): r is NonNullable<typeof r> => r !== null);

@@ -74,7 +74,7 @@ export default function LinkSearchPage() {
     else if (t.length >= MIN_AUTOSEARCH_LEN) setSubmitted(t);
   }, [debouncedQ]);
 
-  const { data, isLoading, mutate: mutateLinkSearch } = useLinkSearch(submitted);
+  const { data, isLoading, isValidating, mutate: mutateLinkSearch } = useLinkSearch(submitted);
   const { data: suggestions } = useEntitySuggestions(q);
 
   // Stable callback — SWR's mutate is referentially stable, so this never
@@ -143,7 +143,10 @@ export default function LinkSearchPage() {
   }, [data?.posts]);
 
   const showSuggestions = showSuggest && q.trim().length >= 2 && (suggestions?.length ?? 0) > 0;
-  const loadingFresh = isLoading && !data;
+  // isValidating = true on EVERY in-flight request (including refetches with
+  // keepPreviousData). isLoading is only true before the first result arrives.
+  // We want a spinner any time a search is running, so use isValidating.
+  const loadingFresh = isValidating;
 
   return (
     <div className="space-y-6 pop-in">

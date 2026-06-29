@@ -210,9 +210,9 @@ export default function AdminLeaderboardPage() {
           <Info className="h-4 w-4 text-[#B0B0B0] mt-0.5 shrink-0" />
           <p className="text-xs text-[#7A7A7A] leading-relaxed">
             Ranked by total engagement (views&nbsp;+&nbsp;likes&nbsp;+&nbsp;comments) from collected post metrics &mdash; the same data behind the Top&nbsp;Links panels.
-            YouTube contributes <span className="font-medium">views</span>; Instagram &amp; Facebook contribute <span className="font-medium">likes&nbsp;+&nbsp;comments</span> (those platforms don&rsquo;t expose reliable view counts).
+            YouTube contributes <span className="font-medium">views</span>; Instagram &amp; Facebook contribute <span className="font-medium">likes&nbsp;+&nbsp;comments</span> (those platforms don&rsquo;t expose view counts &mdash; so a 0 in Views is correct for an IG/FB post, not missing data).
             {" "}<span className="font-medium">Snapchat is not counted yet</span> &mdash; it exposes no engagement API (manual-only); it will be added in a later pass.
-            Only links we&rsquo;ve been able to collect metrics for are included.
+            The <span className="font-medium">Links (metrics&nbsp;/&nbsp;sent)</span> column shows how many of each person&rsquo;s links we&rsquo;ve collected metrics for so far &mdash; new links are picked up automatically by a background job, but collection lags submission (Instagram most of all), so a person&rsquo;s engagement reflects their <span className="font-medium">covered</span> links and grows as coverage catches up.
           </p>
         </div>
         {tlLoading ? (
@@ -229,7 +229,7 @@ export default function AdminLeaderboardPage() {
                   <th className="text-right py-3 px-4 text-[#7A7A7A] text-xs font-medium">Views</th>
                   <th className="text-right py-3 px-4 text-[#7A7A7A] text-xs font-medium">Likes</th>
                   <th className="text-right py-3 px-4 text-[#7A7A7A] text-xs font-medium">Comments</th>
-                  <th className="text-right py-3 px-4 text-[#7A7A7A] text-xs font-medium">Links</th>
+                  <th className="text-right py-3 px-4 text-[#7A7A7A] text-xs font-medium" title="Links with metrics collected / total links submitted. Coverage fills in over time as the metrics job runs.">Links (metrics&nbsp;/&nbsp;sent)</th>
                   <th className="text-right py-3 px-4 text-[#7A7A7A] text-xs font-medium">Total Engagement</th>
                 </tr>
               </thead>
@@ -280,7 +280,25 @@ export default function AdminLeaderboardPage() {
                         <MessageCircle className="h-3.5 w-3.5 text-[#B0B0B0]" />{fmtCompact(entry.comments)}
                       </span>
                     </td>
-                    <td className="py-3 px-4 text-right text-[#7A7A7A]">{entry.engagedLinkCount}</td>
+                    <td className="py-3 px-4 text-right text-[#7A7A7A]">
+                      {(() => {
+                        const covered = entry.engagedLinkCount ?? 0;
+                        const submitted = entry.submittedLinkCount ?? covered;
+                        const partial = submitted > covered;
+                        return (
+                          <span
+                            title={partial
+                              ? `Metrics collected on ${covered.toLocaleString()} of ${submitted.toLocaleString()} submitted links — the rest are still being collected (Instagram metrics lag the most).`
+                              : `Metrics on all ${covered.toLocaleString()} links`}
+                          >
+                            <span className="text-[#1A1A1A]">{covered.toLocaleString()}</span>
+                            {partial && (
+                              <span className="text-[#B0B0B0]"> / {submitted.toLocaleString()}</span>
+                            )}
+                          </span>
+                        );
+                      })()}
+                    </td>
                     <td className="py-3 px-4 text-right font-semibold text-[#1A1A1A]" title={`${(entry.totalEngagement ?? 0).toLocaleString()} total`}>{fmtCompact(entry.totalEngagement)}</td>
                   </tr>
                 ))}

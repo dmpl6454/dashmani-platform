@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { prisma } from "@dashmani/db";
 import { canonicalKey } from "@dashmani/shared";
-import { searchLinksByEntity, listEntities } from "../src/services/link-search.service";
+import { searchLinksByEntity, listEntities, invalidateCoverageCache } from "../src/services/link-search.service";
 
 // ── DB-backed tests (skip cleanly if no DB) ───────────────────────────────
 // setup.ts's TRUNCATE covers report_links / daily_reports / social_accounts /
@@ -47,6 +47,12 @@ beforeAll(async () => {
 });
 
 beforeEach(async () => {
+  // buildCoverage() caches its global aggregate at module scope for 5 minutes.
+  // Each test rebuilds the DB fixture via cleanupEntities(), so the cache must be
+  // reset too — otherwise a later test's coverage assertions see an earlier test's
+  // cached numbers (cross-test pollution). invalidateCoverageCache() is exported
+  // for exactly this purpose.
+  invalidateCoverageCache();
   if (dbAvailable) await cleanupEntities();
 });
 

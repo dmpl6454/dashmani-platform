@@ -11,7 +11,7 @@ import {
 import { recordGrowthSnapshot, getGrowthOverview, getAccountGrowth } from "../services/account-growth.service";
 import { getAllAccountsLinkStats } from "../services/account.service";
 import { generateReportsExport } from "../services/report-export.service";
-import { getLeaderboard } from "../services/leaderboard.service";
+import { getLeaderboard, getTopLinksLeaderboard } from "../services/leaderboard.service";
 import {
   getPendingEmployees,
   approveEmployee,
@@ -338,6 +338,23 @@ router.get(
       const { startDate, endDate } = req.query as { startDate?: string; endDate?: string };
       const leaderboard = await getLeaderboard(startDate, endDate);
       return success(res, leaderboard);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// GET /admin/reports/top-links-leaderboard — engagement ranking (views+likes+comments
+// from link_metrics). Separate from the main leaderboard. MUST be before /:reportId.
+router.get(
+  "/admin/reports/top-links-leaderboard",
+  authenticate,
+  requirePermission("reports", "view"),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { startDate, endDate } = req.query as { startDate?: string; endDate?: string };
+      const board = await getTopLinksLeaderboard(startDate, endDate);
+      return success(res, board);
     } catch (err) {
       next(err);
     }

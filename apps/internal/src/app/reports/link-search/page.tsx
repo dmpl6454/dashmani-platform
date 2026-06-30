@@ -226,8 +226,8 @@ export default function LinkSearchPage() {
         const submitted = coverage.submitted ?? coverage.total ?? 0;
         const bp = coverage.byPlatform ?? {};
         // Per-platform rows in a stable, meaningful order.
-        const ORDER = ["youtube", "instagram", "facebook"] as const;
-        const LABEL: Record<string, string> = { youtube: "YouTube", instagram: "Instagram", facebook: "Facebook" };
+        const ORDER = ["youtube", "instagram", "facebook", "snapchat"] as const;
+        const LABEL: Record<string, string> = { youtube: "YouTube", instagram: "Instagram", facebook: "Facebook", snapchat: "Snapchat" };
         const rows = ORDER
           .filter((p) => bp[p])
           .map((p) => ({ p, ...bp[p]! }));

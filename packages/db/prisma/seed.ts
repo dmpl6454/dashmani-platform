@@ -169,6 +169,23 @@ async function main() {
   }
   console.log("Seeded 8 platforms");
 
+  // Seed Demo Snapchat account
+  const snapchatPlatform = await prisma.platform.findUnique({ where: { slug: "snapchat" } });
+  if (snapchatPlatform) {
+    await prisma.socialAccount.upsert({
+      where: { handle_platformId: { handle: "demo_snapchat", platformId: snapchatPlatform.id } },
+      update: {},
+      create: {
+        handle: "demo_snapchat",
+        displayName: "Demo Snapchat",
+        platformId: snapchatPlatform.id,
+        status: "ACTIVE",
+        followerCount: 0,
+      },
+    });
+    console.log("Seeded Demo Snapchat account");
+  }
+
   // Seed demo client
   const clientPasswordHash = await hash("Client@123456", 12);
   await prisma.client.upsert({

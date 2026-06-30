@@ -7,6 +7,7 @@ import {
   fbLookupKeys,
 } from "./social-insights/meta-followers";
 import { fetchYouTubeSubscriberCounts } from "./social-insights/youtube-followers";
+import { scrapeSnapchatFollowers, SC_SCRAPER_DELAY_MS } from "./social-insights/snapchat-scraper";
 
 // DELAY_MS: 5s between scraper requests to avoid rate limiting.
 // Tests can set FOLLOWER_SYNC_DELAY_MS=0 to skip the delay.
@@ -373,8 +374,30 @@ export async function syncAllFollowerCounts() {
           await sleep(DELAY_MS);
         }
       }
+    } else if (slug === "snapchat") {
+      // Snapchat public creator profiles expose subscriber counts on their
+      // public profile page (snapchat.com/add/<handle>). The scraper tries
+      // that page + story.snapchat.com/@<handle> with a Googlebot UA.
+      // ⚠️ MUST be live-verified from Linode IP before trusting results —
+      // the scraper is fail-open (returns null on any miss, never throws).
+      // Kill switch: SC_SCRAPER_ENABLED=0
+      const scHandle = account.handle.replace(/^@/, "").split("?")[0].trim()
+        || account.profileUrl?.match(/snapchat\.com\/(?:add\/|@?)([^/?#]+)/)?.[1]
+        || "";
+      if (scHandle) {
+        const result = await scrapeSnapchatFollowers(scHandle);
+        if (result.followers && result.followers > 0) {
+          followers = result.followers;
+        }
+        await sleep(SC_SCRAPER_DELAY_MS);
+      }
+      if (followers === null) {
+        progress.skipped++;
+        progress.processed++;
+        continue;
+      }
     } else {
-      // tiktok, linkedin, twitter, snapchat, pinterest, telegram — manual entry only
+      // tiktok, linkedin, twitter, pinterest, telegram — manual entry only
       progress.skipped++;
       progress.processed++;
       continue;
@@ -516,6 +539,14 @@ export async function syncSingleAccountFollowers(accountId: string) {
     if (account.profileUrl) followers = await fetchYouTubeSubscribers(account.profileUrl);
   } else if (slug === "facebook") {
     followers = await fetchFacebookFollowers(account.profileUrl || "", account.handle);
+  } else if (slug === "snapchat") {
+    const scHandle = account.handle.replace(/^@/, "").split("?")[0].trim()
+      || account.profileUrl?.match(/snapchat\.com\/(?:add\/|@?)([^/?#]+)/)?.[1]
+      || "";
+    if (scHandle) {
+      const result = await scrapeSnapchatFollowers(scHandle);
+      followers = result.followers;
+    }
   }
   // Other platforms: no automated sync; admin must enter the count manually.
 

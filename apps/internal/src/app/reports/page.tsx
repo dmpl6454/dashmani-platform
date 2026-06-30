@@ -18,6 +18,7 @@ const PLATFORM_COLORS: Record<string, string> = {
   facebook: "bg-[#FFF3C4] text-[#1A1A1A]",
   youtube: "bg-red-100 text-red-700",
   tiktok: "bg-[#F0E4C4] text-[#1A1A1A]",
+  snapchat: "bg-yellow-100 text-yellow-700",
 };
 
 const PLATFORM_CARD_STYLES: Record<string, { bg: string; labelColor: string; labelBg: string; bar: string; border: string }> = {

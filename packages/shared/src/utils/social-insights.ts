@@ -1,4 +1,4 @@
-export const SUPPORTED_INSIGHT_PLATFORMS = ["youtube", "instagram", "facebook"] as const;
+export const SUPPORTED_INSIGHT_PLATFORMS = ["youtube", "instagram", "facebook", "snapchat"] as const;
 export type SupportedInsightPlatform = (typeof SUPPORTED_INSIGHT_PLATFORMS)[number];
 
 export function getSupportedInsightPlatforms(): readonly string[] {

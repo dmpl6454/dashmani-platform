@@ -11,6 +11,13 @@ import { searchLinksByEntity, listEntities, invalidateCoverageCache } from "../s
 const NAME_PREFIX = "ZZTEST_";
 const KEY_PREFIX = "yt:ZZTESTvid"; // followed by an 11-char-ending video id
 
+// Snapchat Spotlight fixture — a real-shaped Spotlight URL whose canonicalKey() is
+// sc:spotlight:<id>. The id carries the ZZTEST marker so the SC-specific cleanup
+// below removes only our rows from the prod-mirror DB.
+const SC_SPOTLIGHT_ID = "ZZTESTscSpot01";
+const SC_URL = `https://www.snapchat.com/spotlight/${SC_SPOTLIGHT_ID}`;
+const SC_KEY_PREFIX = "sc:spotlight:ZZTESTsc"; // matches the id prefix above
+
 // Monotonic counter so each seedBase() Platform row gets a unique name+slug.
 let seedCounter = 0;
 
@@ -28,11 +35,14 @@ async function cleanupEntities() {
     where: {
       OR: [
         { content: { canonicalKey: { startsWith: KEY_PREFIX } } },
+        { content: { canonicalKey: { startsWith: SC_KEY_PREFIX } } },
         { entity: { canonicalName: { startsWith: NAME_PREFIX } } },
       ],
     },
   });
-  await prisma.linkContent.deleteMany({ where: { canonicalKey: { startsWith: KEY_PREFIX } } });
+  await prisma.linkContent.deleteMany({
+    where: { OR: [{ canonicalKey: { startsWith: KEY_PREFIX } }, { canonicalKey: { startsWith: SC_KEY_PREFIX } }] },
+  });
   await prisma.entity.deleteMany({ where: { canonicalName: { startsWith: NAME_PREFIX } } });
 }
 
@@ -317,6 +327,61 @@ describe("searchLinksByEntity — same vs unique (DB-backed)", () => {
     expect(yt.searchable).toBeLessThanOrEqual(yt.submitted);
     // And across all platforms, the headline numerator never exceeds the denominator.
     expect(res.coverage.searchable).toBeLessThanOrEqual(res.coverage.submitted);
+  });
+
+  it("SNAPCHAT coverage: an ok caption matching a SUBMITTED Spotlight link counts as searchable (CTE derives sc:spotlight: key)", async () => {
+    if (!dbAvailable) return;
+
+    // REGRESSION GUARD for the PR #69 coverage bug: the buildCoverage() searchable/
+    // pending CTEs derived submitted keys for yt:/ig:/fb: only, so a Snapchat caption
+    // could never JOIN a submitted Snapchat link → "Snapchat 0 of N searchable"
+    // FOREVER even after enrichment + extraction populated link_content correctly.
+    const { accountA, emp1 } = await seedBase();
+
+    // The caption is keyed on canonicalKey(SC_URL) — the SAME key the cron writes —
+    // so this proves the JS write-side key and the SQL read-side derivation AGREE.
+    const scKey = canonicalKey(SC_URL);
+    expect(scKey).toBe(`sc:spotlight:${SC_SPOTLIGHT_ID}`); // contract sanity-check
+    await prisma.linkContent.create({
+      data: { canonicalKey: scKey, platform: "snapchat", status: "ok", extractedAt: new Date() },
+    });
+    // Submit the SAME Spotlight URL as a report_link so the caption matches a real link.
+    const day = new Date("2026-06-03T00:00:00.000Z");
+    await addLink({ employeeId: emp1.id, accountId: accountA.id, url: SC_URL, date: day, platform: "snapchat" });
+
+    const res = await searchLinksByEntity({ q: "" });
+    const sc = res.coverage.byPlatform.snapchat;
+    expect(sc).toBeTruthy();
+    // BEFORE the fix this was 0 (the CTE's ELSE NULL dropped the snapchat URL); after, ≥1.
+    expect(sc.searchable).toBeGreaterThanOrEqual(1);
+    // The submitted denominator must include our Spotlight link, and the headline
+    // invariant (searchable ⊆ submitted) must hold for Snapchat too.
+    expect(sc.submitted).toBeGreaterThanOrEqual(1);
+    expect(sc.searchable).toBeLessThanOrEqual(sc.submitted);
+  });
+
+  it("SNAPCHAT coverage: a captured-but-not-yet-tagged caption shows as pendingExtraction, not nameSearchable", async () => {
+    if (!dbAvailable) return;
+
+    // A harvested Snapchat caption with status='ok' but extractedAt=NULL is captured
+    // (searchable) but not yet findable BY NAME → must surface as pendingExtraction so
+    // the banner's "N tagging" note is honest for Snapchat (same as IG/FB).
+    const { accountA, emp1 } = await seedBase();
+    const scKey = canonicalKey(SC_URL);
+    await prisma.linkContent.create({
+      data: { canonicalKey: scKey, platform: "snapchat", status: "ok", extractedAt: null },
+    });
+    const day = new Date("2026-06-04T00:00:00.000Z");
+    await addLink({ employeeId: emp1.id, accountId: accountA.id, url: SC_URL, date: day, platform: "snapchat" });
+
+    const res = await searchLinksByEntity({ q: "" });
+    const sc = res.coverage.byPlatform.snapchat;
+    expect(sc).toBeTruthy();
+    expect(sc.searchable).toBeGreaterThanOrEqual(1);
+    expect(sc.pendingExtraction).toBeGreaterThanOrEqual(1);
+    // nameSearchable = searchable - pendingExtraction, clamped ≥0 → our single untagged
+    // row nets out of the name-searchable count.
+    expect(sc.nameSearchable).toBe(Math.max(0, sc.searchable - sc.pendingExtraction));
   });
 
   it("coverage.byPlatform[platform].since = earliest enriched createdAt, and does NOT drift with fetchedAt (F9)", async () => {

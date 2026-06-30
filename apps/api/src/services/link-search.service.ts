@@ -156,6 +156,10 @@ async function buildCoverage(): Promise<LinkSearchResult["coverage"]> {
             THEN 'ig:' || substring(url from 'instagram\.com/(?:[^/]+/)?(?:p|reel|reels|tv)/([A-Za-z0-9_-]+)')
           WHEN url ~* 'facebook\.com/reel/[0-9]'
             THEN 'fb:' || substring(url from 'facebook\.com/reel/([0-9]+)')
+          WHEN url ~* 'snapchat\.com/spotlight/'
+            THEN 'sc:spotlight:' || substring(url from 'snapchat\.com/spotlight/([^/?#]+)')
+          WHEN url ~* 'snapchat\.com/s/'
+            THEN 'sc:story:' || substring(url from 'snapchat\.com/s/([^/?#]+)')
           ELSE NULL
         END AS k
       FROM report_links
@@ -182,6 +186,10 @@ async function buildCoverage(): Promise<LinkSearchResult["coverage"]> {
             THEN 'ig:' || substring(url from 'instagram\.com/(?:[^/]+/)?(?:p|reel|reels|tv)/([A-Za-z0-9_-]+)')
           WHEN url ~* 'facebook\.com/reel/[0-9]'
             THEN 'fb:' || substring(url from 'facebook\.com/reel/([0-9]+)')
+          WHEN url ~* 'snapchat\.com/spotlight/'
+            THEN 'sc:spotlight:' || substring(url from 'snapchat\.com/spotlight/([^/?#]+)')
+          WHEN url ~* 'snapchat\.com/s/'
+            THEN 'sc:story:' || substring(url from 'snapchat\.com/s/([^/?#]+)')
           ELSE NULL
         END AS k
       FROM report_links

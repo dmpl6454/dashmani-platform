@@ -401,26 +401,10 @@ router.get(
   },
 );
 
-// GET /admin/reports/top-snapchat-links?startDate&endDate&limit — top Snapchat links by submission count
-router.get(
-  "/admin/reports/top-snapchat-links",
-  authenticate,
-  requirePermission("reports", "view"),
-  async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const { startDate, endDate, limit } = req.query as Record<string, string | undefined>;
-      const { getTopSnapchatLinks } = await import("../services/social-insights.service");
-      const links = await getTopSnapchatLinks({
-        startDate,
-        endDate,
-        limit: limit ? parseInt(limit, 10) : 20,
-      });
-      return success(res, links);
-    } catch (err) {
-      next(err);
-    }
-  },
-);
+// (Removed 2026-06-30) GET /admin/reports/top-snapchat-links — a submission-count
+// ranking that posed as "Top Links". Snapchat has no server-readable engagement, so it
+// can't have an engagement-ranked Top Links panel; the submission-count variant was
+// dropped. Snapchat follower counts (Account Growth) remain the only working feature.
 
 // GET /admin/reports/top-links?platform&startDate&endDate&limit — top links for ANY
 // supported platform (youtube=by views, instagram/facebook=by likes+comments).

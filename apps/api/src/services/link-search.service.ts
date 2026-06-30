@@ -91,6 +91,8 @@ function idPartFor(canonicalKeyValue: string): { contains?: string; equalsUrl?: 
   if (canonicalKeyValue.startsWith("yt:")) return { contains: canonicalKeyValue.slice(3) };
   if (canonicalKeyValue.startsWith("ig:")) return { contains: `/${canonicalKeyValue.slice(3)}` };
   if (canonicalKeyValue.startsWith("fb:")) return { contains: canonicalKeyValue.slice(3) };
+  if (canonicalKeyValue.startsWith("sc:spotlight:")) return { contains: canonicalKeyValue.slice("sc:spotlight:".length) };
+  if (canonicalKeyValue.startsWith("sc:story:")) return { contains: canonicalKeyValue.slice("sc:story:".length) };
   // Full-URL fallback key (already lowercased). Match the url exactly, case-insensitive.
   return { equalsUrl: canonicalKeyValue };
 }
@@ -217,6 +219,7 @@ async function buildCoverage(): Promise<LinkSearchResult["coverage"]> {
         WHEN url ~* 'youtube\.com|youtu\.be' THEN 'youtube'
         WHEN url ~* 'instagram\.com' THEN 'instagram'
         WHEN url ~* 'facebook\.com|fb\.watch|fb\.me' THEN 'facebook'
+        WHEN url ~* 'snapchat\.com|story\.snapchat\.com' THEN 'snapchat'
         ELSE lower(coalesce(platform, 'other'))
       END AS platform, count(*)::bigint AS cnt
       FROM report_links

@@ -2,7 +2,7 @@
 import { useState, useMemo } from "react";
 import Link from "next/link";
 import { ArrowLeft, TrendingUp, TrendingDown, Link2, Users, Trophy, AlertCircle, ChevronDown, ChevronUp, BarChart2, Eye, Heart, MessageCircle } from "lucide-react";
-import { useLinksAnalytics, useLinksAllAccounts, useTopYouTubeLinks } from "@/lib/hooks/use-reports";
+import { useLinksAnalytics, useLinksAllAccounts, useTopYouTubeLinks, useTopSnapchatLinks } from "@/lib/hooks/use-reports";
 import { usePageTitle } from "@/lib/hooks/use-page-title";
 import { RangePills, presetStart, todayISO, rangeLabel } from "../_range";
 import { ExportButton } from "../_export";
@@ -65,6 +65,12 @@ export default function LinksAnalyticsPage() {
   const { data: topYouTubeData, isLoading: topYouTubeLoading } = useTopYouTubeLinks(
     ytAllTime ? undefined : startDate,
     ytAllTime ? undefined : endDate,
+    20,
+  );
+  const [scAllTime, setScAllTime] = useState(false);
+  const { data: topSnapchatData, isLoading: topSnapchatLoading } = useTopSnapchatLinks(
+    scAllTime ? undefined : startDate,
+    scAllTime ? undefined : endDate,
     20,
   );
   const allAccounts: any[] = useMemo(() => (accountsData as any)?.data ?? [], [accountsData]);
@@ -417,7 +423,6 @@ export default function LinksAnalyticsPage() {
                   <Eye className="h-4 w-4 text-red-500" />
                 </div>
                 <h3 className="font-serif text-[#1A1A1A] font-medium">Top YouTube Links</h3>
-                {/* Window toggle */}
                 <div className="flex items-center gap-1 ml-2">
                   <button
                     onClick={() => setYtAllTime(false)}
@@ -438,7 +443,6 @@ export default function LinksAnalyticsPage() {
                 <div className="px-6 py-4 text-xs text-[#B0B0B0]">Loading…</div>
               ) : (
                 <>
-                  {/* Column headers */}
                   <div className="px-6 py-2 grid grid-cols-[1.5rem_1fr_8rem_5rem_5rem_5rem] gap-3 text-[10px] font-medium text-[#B0B0B0] uppercase tracking-wide border-b border-[#F5F0E8]">
                     <span>#</span>
                     <span>Link</span>
@@ -451,27 +455,70 @@ export default function LinksAnalyticsPage() {
                     {topLinks.map((link: any, i: number) => (
                       <li key={`${link.linkId ?? link.url}-${i}`} className="px-6 py-3 grid grid-cols-[1.5rem_1fr_8rem_5rem_5rem_5rem] gap-3 items-center">
                         <span className="text-xs font-medium text-[#B0B0B0]">{i + 1}</span>
-                        <a
-                          href={link.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-xs text-[#1A1A1A] hover:underline truncate min-w-0"
-                          title={link.url}
-                        >
-                          {link.url}
-                        </a>
+                        <a href={link.url} target="_blank" rel="noopener noreferrer" className="text-xs text-[#1A1A1A] hover:underline truncate min-w-0" title={link.url}>{link.url}</a>
                         <span className="text-xs text-[#7A7A7A] truncate">{link.employeeName}</span>
-                        <span className="inline-flex items-center justify-end gap-1 text-[11px] font-semibold text-rose-700">
-                          <Eye className="h-3 w-3 shrink-0" />
-                          {fmtCompact(link.views)}
-                        </span>
-                        <span className="inline-flex items-center justify-end gap-1 text-[11px] font-semibold text-pink-600">
-                          <Heart className="h-3 w-3 shrink-0" />
-                          {fmtCompact(link.likes)}
-                        </span>
-                        <span className="inline-flex items-center justify-end gap-1 text-[11px] font-semibold text-slate-500">
-                          <MessageCircle className="h-3 w-3 shrink-0" />
-                          {fmtCompact(link.comments)}
+                        <span className="inline-flex items-center justify-end gap-1 text-[11px] font-semibold text-rose-700"><Eye className="h-3 w-3 shrink-0" />{fmtCompact(link.views)}</span>
+                        <span className="inline-flex items-center justify-end gap-1 text-[11px] font-semibold text-pink-600"><Heart className="h-3 w-3 shrink-0" />{fmtCompact(link.likes)}</span>
+                        <span className="inline-flex items-center justify-end gap-1 text-[11px] font-semibold text-slate-500"><MessageCircle className="h-3 w-3 shrink-0" />{fmtCompact(link.comments)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
+            </div>
+          );
+        })()}
+
+        {/* Top Snapchat Links */}
+        {(() => {
+          const topLinks = (topSnapchatData as any)?.data ?? [];
+          if (!topSnapchatLoading && topLinks.length === 0) return null;
+          const windowLbl = rangeLabel(startDate, endDate);
+          return (
+            <div className="bg-white rounded-2xl border border-[#E8E0D0] shadow-[0_2px_16px_rgba(0,0,0,0.05)]">
+              <div className="px-6 py-4 border-b border-[#F0EAD8] flex items-center gap-2 flex-wrap">
+                <div className="h-8 w-8 rounded-lg bg-yellow-50 flex items-center justify-center shrink-0">
+                  {/* Snapchat ghost icon */}
+                  <svg className="h-4 w-4 text-yellow-500" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M12.002 2C8.756 2 6.6 4.09 6.6 7.2v.617c-.43.19-.9.127-1.37.064C4.8 7.818 4.37 7.8 4 7.98c-.55.26-.58.94-.12 1.24.1.063.82.44 1.32 1.56.04.094.062.18.062.25 0 .063-.02.13-.055.2-.256.47-.9.73-1.44.87-.63.162-.9.51-.82.88.094.44.596.7 1.22.7.11 0 .23-.01.35-.03.28-.043.55-.07.78-.07.18 0 .34.018.48.055-.04.44-.065.89-.065 1.34 0 2.547 2.14 4.518 5.29 4.518.22 0 .44-.01.65-.03.142.23.396.36.67.36h.336c.275 0 .53-.13.67-.36.213.02.432.03.652.03 3.15 0 5.29-1.97 5.29-4.518 0-.45-.026-.9-.065-1.34.14-.037.3-.055.48-.055.228 0 .5.027.777.07.12.02.24.03.353.03.622 0 1.125-.26 1.218-.7.08-.37-.19-.718-.82-.88-.54-.14-1.183-.4-1.44-.87a.42.42 0 0 1-.055-.2c0-.07.023-.156.063-.25.497-1.12 1.22-1.497 1.32-1.56.457-.3.43-.98-.12-1.24-.37-.18-.8-.162-1.23-.1-.467.064-.937.127-1.37-.063V7.2C17.4 4.09 15.245 2 12.002 2Z" />
+                  </svg>
+                </div>
+                <h3 className="font-serif text-[#1A1A1A] font-medium">Top Snapchat Links</h3>
+                <div className="flex items-center gap-1 ml-2">
+                  <button
+                    onClick={() => setScAllTime(false)}
+                    className={`text-[11px] px-2.5 py-0.5 rounded-full border transition-colors ${!scAllTime ? "bg-[#1A1A1A] text-white border-[#1A1A1A]" : "text-[#7A7A7A] border-[#E8E0D0] hover:border-[#1A1A1A]"}`}
+                  >
+                    {windowLbl}
+                  </button>
+                  <button
+                    onClick={() => setScAllTime(true)}
+                    className={`text-[11px] px-2.5 py-0.5 rounded-full border transition-colors ${scAllTime ? "bg-[#1A1A1A] text-white border-[#1A1A1A]" : "text-[#7A7A7A] border-[#E8E0D0] hover:border-[#1A1A1A]"}`}
+                  >
+                    All time
+                  </button>
+                </div>
+                <span className="ml-auto text-[10px] text-[#B0B0B0] shrink-0">Snapchat · ranked by submissions</span>
+              </div>
+              {topSnapchatLoading ? (
+                <div className="px-6 py-4 text-xs text-[#B0B0B0]">Loading…</div>
+              ) : (
+                <>
+                  <div className="px-6 py-2 grid grid-cols-[1.5rem_1fr_1fr_6rem] gap-3 text-[10px] font-medium text-[#B0B0B0] uppercase tracking-wide border-b border-[#F5F0E8]">
+                    <span>#</span>
+                    <span>Link</span>
+                    <span>Submitted by</span>
+                    <span className="text-right">Submissions</span>
+                  </div>
+                  <ul className="divide-y divide-[#F5F0E8]">
+                    {topLinks.map((link: any, i: number) => (
+                      <li key={`${link.url}-${i}`} className="px-6 py-3 grid grid-cols-[1.5rem_1fr_1fr_6rem] gap-3 items-center">
+                        <span className="text-xs font-medium text-[#B0B0B0]">{i + 1}</span>
+                        <a href={link.url} target="_blank" rel="noopener noreferrer" className="text-xs text-[#1A1A1A] hover:underline truncate min-w-0" title={link.url}>{link.url}</a>
+                        <span className="text-xs text-[#7A7A7A] truncate">{(link.employees ?? []).slice(0, 3).join(", ")}{(link.employees ?? []).length > 3 ? ` +${link.employees.length - 3}` : ""}</span>
+                        <span className="inline-flex items-center justify-end gap-1 text-[11px] font-semibold text-yellow-700">
+                          <Link2 className="h-3 w-3 shrink-0" />
+                          {link.submissionCount}
                         </span>
                       </li>
                     ))}

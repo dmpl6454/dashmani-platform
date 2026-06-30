@@ -74,6 +74,17 @@ export function canonicalKey(rawUrl: string | null | undefined): string {
     // /share/r/…, /posts/…, /story.php, pfbid… → intentionally fall through.
   }
 
+  // ── Snapchat ──────────────────────────────────────────────────────────────
+  // Spotlight: /spotlight/{id}
+  // Public story: story.snapchat.com/s/{id}  or  /s/{id}
+  // Profile add links (/add/{username}) fall through — not content, not deduped.
+  if (host === "snapchat.com" || host.endsWith(".snapchat.com")) {
+    const spotlight = url.pathname.match(/^\/spotlight\/([^/?#]+)/i);
+    if (spotlight && spotlight[1]) return `sc:spotlight:${spotlight[1]}`;
+    const story = url.pathname.match(/^\/s\/([^/?#]+)/i);
+    if (story && story[1]) return `sc:story:${story[1]}`;
+  }
+
   // ── Fallback ─────────────────────────────────────────────────────────────
   // Exactly the old behavior for everything we don't explicitly recognize.
   return s.toLowerCase();

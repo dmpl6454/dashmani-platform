@@ -16,6 +16,26 @@ import { ModalPortal } from "@/components/modal-portal";
 
 type Tab = "accounts" | "by-employee" | "platforms";
 
+// Build a safe, correct external href for an account.
+// For Snapchat: always construct from the handle (https://www.snapchat.com/add/<handle>)
+// so it's correct regardless of whatever format profileUrl was saved in.
+// For other platforms: validate https:// scheme; add it if missing.
+function safeProfileHref(
+  url: string | null | undefined,
+  platform?: { slug?: string },
+  handle?: string,
+): string | null {
+  if (platform?.slug === "snapchat") {
+    const h = (handle ?? "").replace(/^@/, "").split("?")[0].trim();
+    if (h) return `https://www.snapchat.com/add/${encodeURIComponent(h)}`;
+  }
+  if (!url || !url.trim()) return null;
+  let raw = url.trim();
+  if (!/^https?:\/\//i.test(raw)) raw = "https://" + raw.replace(/^\/\//, "");
+  try { new URL(raw); } catch { return null; }
+  return raw;
+}
+
 const STATUS_COLORS: Record<string, string> = {
   ACTIVE:   "bg-sage-soft text-sage",
   PAUSED:   "bg-attention/10 text-attention",
@@ -801,9 +821,9 @@ function AccountsPageInner() {
                         </td>
                         <td className="px-4 py-3">
                           <div className="flex items-center justify-end gap-1">
-                            {acc.profileUrl && (
+                            {safeProfileHref(acc.profileUrl, acc.platform, acc.handle) && (
                               <a
-                                href={acc.profileUrl}
+                                href={safeProfileHref(acc.profileUrl, acc.platform, acc.handle)!}
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 className="p-1.5 rounded-lg text-ink-4 hover:bg-muted hover:text-indigo transition-colors"

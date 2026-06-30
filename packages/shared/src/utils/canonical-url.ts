@@ -74,16 +74,15 @@ export function canonicalKey(rawUrl: string | null | undefined): string {
     // /share/r/…, /posts/…, /story.php, pfbid… → intentionally fall through.
   }
 
-  // ── Snapchat ──────────────────────────────────────────────────────────────
-  // Spotlight: /spotlight/{id}
-  // Public story: story.snapchat.com/s/{id}  or  /s/{id}
-  // Profile add links (/add/{username}) fall through — not content, not deduped.
-  if (host === "snapchat.com" || host.endsWith(".snapchat.com")) {
-    const spotlight = url.pathname.match(/^\/spotlight\/([^/?#]+)/i);
-    if (spotlight && spotlight[1]) return `sc:spotlight:${spotlight[1]}`;
-    const story = url.pathname.match(/^\/s\/([^/?#]+)/i);
-    if (story && story[1]) return `sc:story:${story[1]}`;
-  }
+  // ── Snapchat: intentionally NOT canonicalized ──────────────────────────────
+  // Prod Snapchat links are snapchat.com/t/<code> share redirects whose code is a
+  // tracking token, not a content id (like FB's opaque /share/ links). They resolve
+  // to client-rendered profile pages with no server-readable caption/engagement, and
+  // there's no public organic API — so there's no caption-search to feed a stable key.
+  // We let all Snapchat URLs fall through to the full-URL fallback below (same as the
+  // old behavior). A Spotlight/story canonical key was removed (2026-06-30) along with
+  // the dead insight provider. Follower counts + submission-count Top Links don't need
+  // a canonical key.
 
   // ── Fallback ─────────────────────────────────────────────────────────────
   // Exactly the old behavior for everything we don't explicitly recognize.

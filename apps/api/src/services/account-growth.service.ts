@@ -299,6 +299,13 @@ export async function getGrowthOverview(days = 30): Promise<GrowthOverview> {
       displayName: account.displayName,
       platform: account.platform.name,
       profileUrl: (() => {
+        // For Snapchat, always build the URL from the stored handle — the correct
+        // profile URL format is https://www.snapchat.com/add/<handle> and we can
+        // guarantee it regardless of whatever format profileUrl was saved in.
+        if (account.platform.slug === "snapchat") {
+          const h = account.handle.replace(/^@/, "").split("?")[0].trim();
+          if (h) return `https://www.snapchat.com/add/${encodeURIComponent(h)}`;
+        }
         const u = safeHttpUrl(account.profileUrl);
         return u ? normalizeSnapchatUrl(u) : null;
       })(),

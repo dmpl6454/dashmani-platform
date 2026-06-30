@@ -301,7 +301,7 @@ export async function getTopSnapchatLinks(params: {
       { platform: { equals: "snapchat", mode: "insensitive" } },
       { url: { contains: "snapchat.com", mode: "insensitive" } },
     ],
-    is_scheduled: false,
+    isScheduled: false,
   };
 
   if (startDate || endDate) {

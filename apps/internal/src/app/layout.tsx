@@ -15,14 +15,30 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   const pathname = usePathname();
   const router = useRouter();
 
+  const publicRoutes = ["/login", "/admin-signup", "/reset-password"];
+  const isPublicPage = publicRoutes.includes(pathname);
+
   useEffect(() => {
     const token = localStorage.getItem("accessToken");
     const storedUser = localStorage.getItem("user");
     if (token && storedUser) {
-      setUser(JSON.parse(storedUser));
+      try {
+        setUser(JSON.parse(storedUser));
+      } catch {
+        localStorage.removeItem("user");
+      }
     }
     setIsLoading(false);
   }, []);
+
+  // Redirect to login once loading is done and there's no authenticated user.
+  // Must be in useEffect — calling router.push() during render causes a React warning
+  // and can silently no-op when the token exists but the user object is missing.
+  useEffect(() => {
+    if (!isLoading && !user && !isPublicPage) {
+      router.push("/login");
+    }
+  }, [isLoading, user, isPublicPage, router]);
 
   /* Global Ctrl+K / Cmd+K handler */
   useEffect(() => {
@@ -56,9 +72,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     router.push("/login");
   }, [router]);
 
-  const publicRoutes = ["/login", "/admin-signup", "/reset-password"];
-  const isPublicPage = publicRoutes.includes(pathname);
-
   if (isLoading) {
     return (
       <html lang="en">
@@ -78,10 +91,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   }
 
   if (!user && !isPublicPage) {
-    const hasToken = typeof window !== "undefined" && !!localStorage.getItem("accessToken");
-    if (!hasToken) router.push("/login");
-    // Return a spinner instead of null — returning null from the root layout
-    // renders a completely blank page while the router.push is in flight.
+    // useEffect above handles the redirect — just show spinner while it fires.
     return (
       <html lang="en">
         <head>

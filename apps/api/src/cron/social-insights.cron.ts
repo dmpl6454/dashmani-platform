@@ -54,7 +54,6 @@ export async function runSocialInsightsRefresh(opts?: { harvestOnly?: boolean })
         youtube: ["youtube.com", "youtu.be"],
         instagram: ["instagram.com"],
         facebook: ["facebook.com", "fb.watch", "fb.me"],
-        snapchat: ["snapchat.com", "story.snapchat.com"],
       };
       const hostClauses = (ownedHosts[slug] ?? []).map((h) => ({
         url: { contains: h, mode: "insensitive" as const },

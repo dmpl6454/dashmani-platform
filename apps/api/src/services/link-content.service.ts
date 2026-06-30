@@ -5,7 +5,6 @@ export function platformFromCanonicalKey(canonicalKey: string): string {
   if (canonicalKey.startsWith("yt:")) return "youtube";
   if (canonicalKey.startsWith("ig:")) return "instagram";
   if (canonicalKey.startsWith("fb:")) return "facebook";
-  if (canonicalKey.startsWith("sc:")) return "snapchat";
   return "other";
 }
 

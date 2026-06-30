@@ -225,9 +225,11 @@ export default function LinkSearchPage() {
         const searchable = coverage.searchable ?? coverage.enriched ?? 0;
         const submitted = coverage.submitted ?? coverage.total ?? 0;
         const bp = coverage.byPlatform ?? {};
-        // Per-platform rows in a stable, meaningful order.
-        const ORDER = ["youtube", "instagram", "facebook", "snapchat"] as const;
-        const LABEL: Record<string, string> = { youtube: "YouTube", instagram: "Instagram", facebook: "Facebook", snapchat: "Snapchat" };
+        // Per-platform rows in a stable, meaningful order. Snapchat is intentionally
+        // excluded: it isn't caption-searchable (share-redirect links → client-rendered
+        // profile pages, no public API), so it would only ever show "0 of N" and mislead.
+        const ORDER = ["youtube", "instagram", "facebook"] as const;
+        const LABEL: Record<string, string> = { youtube: "YouTube", instagram: "Instagram", facebook: "Facebook" };
         const rows = ORDER
           .filter((p) => bp[p])
           .map((p) => ({ p, ...bp[p]! }));

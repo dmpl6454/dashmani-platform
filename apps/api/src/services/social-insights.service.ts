@@ -277,6 +277,69 @@ export async function getTopYouTubeLinks(params: {
   return getTopLinksByPlatform({ ...params, platform: "youtube", sortBy: "views" });
 }
 
+// ============ getTopSnapchatLinks ============
+//
+// Snapchat has no public engagement API, so we rank by submission count —
+// the most-submitted Snapchat URL across all employees in the window.
+
+export interface TopSnapchatLink {
+  url: string;
+  submissionCount: number;
+  employees: string[]; // distinct employee names who submitted this link
+}
+
+export async function getTopSnapchatLinks(params: {
+  startDate?: string;
+  endDate?: string;
+  limit?: number;
+}): Promise<TopSnapchatLink[]> {
+  const { startDate, endDate, limit = 20 } = params;
+
+  const where: Record<string, unknown> = {
+    url: { not: null },
+    OR: [
+      { platform: { equals: "snapchat", mode: "insensitive" } },
+      { url: { contains: "snapchat.com", mode: "insensitive" } },
+    ],
+    is_scheduled: false,
+  };
+
+  if (startDate || endDate) {
+    const dateFilter: Record<string, unknown> = {};
+    if (startDate) dateFilter.gte = new Date(`${startDate}T00:00:00.000Z`);
+    if (endDate) dateFilter.lte = new Date(`${endDate}T23:59:59.999Z`);
+    where.report = { date: dateFilter };
+  }
+
+  const rows = await prisma.reportLink.findMany({
+    where: where as any,
+    select: {
+      url: true,
+      report: { select: { employee: { select: { name: true } } } },
+    },
+  });
+
+  // Group by lowercased URL
+  const grouped = new Map<string, { count: number; employees: Set<string> }>();
+  for (const row of rows) {
+    if (!row.url) continue;
+    const key = row.url.trim().toLowerCase();
+    const existing = grouped.get(key) ?? { count: 0, employees: new Set<string>() };
+    existing.count += 1;
+    existing.employees.add(row.report.employee.name);
+    grouped.set(key, existing);
+  }
+
+  return Array.from(grouped.entries())
+    .sort((a, b) => b[1].count - a[1].count)
+    .slice(0, limit)
+    .map(([url, { count, employees }]) => ({
+      url,
+      submissionCount: count,
+      employees: Array.from(employees),
+    }));
+}
+
 // ============ getMyLinkInsights (HR — self-scoped) ============
 
 export async function getMyLinkInsights(

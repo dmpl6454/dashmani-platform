@@ -93,6 +93,18 @@ export function useTopYouTubeLinks(startDate?: string, endDate?: string, limit =
   });
 }
 
+export function useTopSnapchatLinks(startDate?: string, endDate?: string, limit = 20) {
+  const params = new URLSearchParams();
+  if (startDate) params.set("startDate", startDate);
+  if (endDate) params.set("endDate", endDate);
+  params.set("limit", String(limit));
+  const query = `?${params.toString()}`;
+  return useSWR(`/admin/reports/top-snapchat-links${query}`, (url) => apiFetch(url), {
+    revalidateOnFocus: false,
+    dedupingInterval: 300_000,
+  });
+}
+
 // Generalized top-links hook — one per platform (youtube|instagram|facebook).
 // YouTube sorts by views server-side; instagram/facebook by likes+comments.
 // A platform with no links in the window returns [] and its panel simply hides.

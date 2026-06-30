@@ -401,6 +401,27 @@ router.get(
   },
 );
 
+// GET /admin/reports/top-snapchat-links?startDate&endDate&limit — top Snapchat links by submission count
+router.get(
+  "/admin/reports/top-snapchat-links",
+  authenticate,
+  requirePermission("reports", "view"),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { startDate, endDate, limit } = req.query as Record<string, string | undefined>;
+      const { getTopSnapchatLinks } = await import("../services/social-insights.service");
+      const links = await getTopSnapchatLinks({
+        startDate,
+        endDate,
+        limit: limit ? parseInt(limit, 10) : 20,
+      });
+      return success(res, links);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
 // GET /admin/reports/top-links?platform&startDate&endDate&limit — top links for ANY
 // supported platform (youtube=by views, instagram/facebook=by likes+comments).
 // One endpoint behind every "Top <Platform> Links" panel. A platform with no

@@ -16,6 +16,21 @@ import { ModalPortal } from "@/components/modal-portal";
 
 type Tab = "accounts" | "by-employee" | "platforms";
 
+// Normalize a profile URL for use as an href:
+// 1. Add https:// if the URL has no scheme (e.g. "www.snapchat.com/add/handle").
+// 2. Fix Snapchat /add/@handle → /add/handle (@ in that path returns a "Sorry" page).
+function safeProfileHref(url: string | null | undefined): string | null {
+  if (!url || !url.trim()) return null;
+  let raw = url.trim();
+  if (!/^https?:\/\//i.test(raw)) raw = "https://" + raw.replace(/^\/\//, "");
+  try {
+    new URL(raw); // validate
+  } catch {
+    return null;
+  }
+  return raw.replace(/(snapchat\.com\/add\/)@([^/?#]+)/i, "$1$2");
+}
+
 const STATUS_COLORS: Record<string, string> = {
   ACTIVE:   "bg-sage-soft text-sage",
   PAUSED:   "bg-attention/10 text-attention",
@@ -801,9 +816,9 @@ function AccountsPageInner() {
                         </td>
                         <td className="px-4 py-3">
                           <div className="flex items-center justify-end gap-1">
-                            {acc.profileUrl && (
+                            {safeProfileHref(acc.profileUrl) && (
                               <a
-                                href={acc.profileUrl}
+                                href={safeProfileHref(acc.profileUrl)!}
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 className="p-1.5 rounded-lg text-ink-4 hover:bg-muted hover:text-indigo transition-colors"

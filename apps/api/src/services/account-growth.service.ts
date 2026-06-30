@@ -101,15 +101,33 @@ function computeSyncState(lastSyncedAt: Date | null): SyncState {
  * when rendered as <a href>. Returns the normalized URL, or null if absent/non-http(s)/
  * unparseable (the UI then simply omits the open-channel link). Belt-and-suspenders:
  * the client re-validates too, so bad data is blocked at both layers.
+ *
+ * Also prepends https:// when admins enter URLs without a scheme (e.g. "www.snapchat.com/…")
+ * since those would otherwise parse as invalid absolute URLs.
  */
 function safeHttpUrl(url: string | null | undefined): string | null {
   if (!url || !url.trim()) return null;
+  let raw = url.trim();
+  // Add https:// if the URL has no scheme (e.g. "www.snapchat.com/add/handle").
+  if (!/^https?:\/\//i.test(raw)) {
+    raw = "https://" + raw.replace(/^\/\//, "");
+  }
   try {
-    const u = new URL(url.trim());
+    const u = new URL(raw);
     return u.protocol === "https:" || u.protocol === "http:" ? u.toString() : null;
   } catch {
     return null;
   }
+}
+
+/**
+ * Fix Snapchat profile URLs: strip `@` from the `/add/<handle>` path segment.
+ * Snapchat's "Add" URL format is `/add/<handle>` (no @). Admins sometimes enter
+ * `https://www.snapchat.com/add/@handle` which Snapchat returns a "Sorry" page for.
+ * `story.snapchat.com/@handle` is intentionally left unchanged — @ is correct there.
+ */
+function normalizeSnapchatUrl(url: string): string {
+  return url.replace(/(snapchat\.com\/add\/)@([^/?#]+)/i, "$1$2");
 }
 
 // Normalize a profile URL into a DEDUP KEY so the SAME real page stored under two URL
@@ -280,7 +298,10 @@ export async function getGrowthOverview(days = 30): Promise<GrowthOverview> {
       accountId: account.id,
       displayName: account.displayName,
       platform: account.platform.name,
-      profileUrl: safeHttpUrl(account.profileUrl),
+      profileUrl: (() => {
+        const u = safeHttpUrl(account.profileUrl);
+        return u ? normalizeSnapchatUrl(u) : null;
+      })(),
       latest,
       first,
       delta,

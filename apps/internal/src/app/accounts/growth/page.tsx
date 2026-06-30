@@ -93,7 +93,7 @@ function relativeTime(isoString: string | null | undefined): string {
  * Small inline badge showing the sync freshness of an account.
  * LIVE  = green  — fetched from the platform within ~2 days
  * STALE = amber  — last sync older than 2 days (or sync failed)
- * MANUAL = grey  — hand-entered or platform with no public API (X, Snapchat, TikTok, etc.)
+ * MANUAL = grey  — hand-entered or platform with no public API (X, TikTok, LinkedIn, etc.)
  */
 function SyncBadge({
   state,
@@ -124,7 +124,7 @@ function SyncBadge({
   } else {
     dot = "bg-[#7A7A7A]";
     label = "Manual";
-    titleText = "Manual — this count is entered by hand; the platform has no public follower API (e.g. X / Twitter, Snapchat, TikTok, LinkedIn).";
+    titleText = "Manual — this count is entered by hand; the platform has no public follower API (e.g. X / Twitter, TikTok, LinkedIn).";
     cls = "text-[#7A7A7A] border-[#DCDCDC]";
   }
 

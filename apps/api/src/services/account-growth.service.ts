@@ -351,10 +351,13 @@ export async function getGrowthOverview(days = 30): Promise<GrowthOverview> {
     .slice(0, 5)
     .map(moverShape);
 
-  // Group by platform → top-5 per platform (only platforms with at least one non-zero delta).
+  // Group by platform → top-5 per platform.
+  // Include all accounts (even zero-delta ones) so platforms whose follower counts are
+  // manually entered (e.g. Snapchat) still appear — sorted by |delta| desc, then by
+  // latest follower count desc as tiebreaker. Platforms where every account has delta=0
+  // will show their top accounts by follower count rather than by movement.
   const platformGroups = new Map<string, GrowthOverviewAccount[]>();
   for (const acc of overviewAccounts) {
-    if (acc.delta === 0) continue; // skip zero-delta accounts for per-platform grouping
     if (isCorrectionArtifact(acc)) continue; // skip stale→live correction artifacts
     const group = platformGroups.get(acc.platform) ?? [];
     group.push(acc);
@@ -363,7 +366,7 @@ export async function getGrowthOverview(days = 30): Promise<GrowthOverview> {
   const topMoversByPlatform: GrowthOverview["topMoversByPlatform"] = {};
   for (const [platform, group] of platformGroups) {
     topMoversByPlatform[platform] = group
-      .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))
+      .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta) || (b.latest ?? 0) - (a.latest ?? 0))
       .slice(0, 5)
       .map(moverShape);
   }

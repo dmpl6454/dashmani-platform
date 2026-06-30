@@ -144,7 +144,7 @@ export default function AdminLeaderboardPage() {
                   <th className="text-right py-3 px-4 text-[#7A7A7A] text-xs font-medium" title="Average links per reporting day (days the employee submitted), not per calendar day">Avg/Report</th>
                   <th className="text-center py-3 px-4 text-[#7A7A7A] text-xs font-medium">Streak</th>
                   <th className="text-center py-3 px-4 text-[#7A7A7A] text-xs font-medium">Best Streak</th>
-                  <th className="text-right py-3 px-4 text-[#7A7A7A] text-xs font-medium" title="Views + likes + comments from collected link metrics (YouTube views; IG/FB likes+comments). Snapchat not counted.">Engagement</th>
+                  <th className="text-right py-3 px-4 text-[#7A7A7A] text-xs font-medium" title="Views + likes + comments from collected link metrics (YouTube views; IG/FB/Snapchat likes+comments).">Engagement</th>
                 </tr>
               </thead>
               <tbody>
@@ -211,7 +211,7 @@ export default function AdminLeaderboardPage() {
           <p className="text-xs text-[#7A7A7A] leading-relaxed">
             Ranked by total engagement (views&nbsp;+&nbsp;likes&nbsp;+&nbsp;comments) from collected post metrics &mdash; the same data behind the Top&nbsp;Links panels.
             YouTube contributes <span className="font-medium">views</span>; Instagram &amp; Facebook contribute <span className="font-medium">likes&nbsp;+&nbsp;comments</span> (those platforms don&rsquo;t expose view counts &mdash; so a 0 in Views is correct for an IG/FB post, not missing data).
-            {" "}<span className="font-medium">Snapchat is not counted yet</span> &mdash; it exposes no engagement API (manual-only); it will be added in a later pass.
+            {" "}Snapchat links are counted in submission totals but engagement metrics are not collected via API.
             The <span className="font-medium">Links (metrics&nbsp;/&nbsp;sent)</span> column shows how many of each person&rsquo;s links we&rsquo;ve collected metrics for so far &mdash; new links are picked up automatically by a background job, but collection lags submission (Instagram most of all), so a person&rsquo;s engagement reflects their <span className="font-medium">covered</span> links and grows as coverage catches up.
           </p>
         </div>

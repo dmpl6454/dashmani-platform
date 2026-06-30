@@ -2,23 +2,26 @@ import type { InsightProvider } from "./types";
 import { youTubeProvider } from "./youtube.provider";
 import { instagramProvider } from "./instagram.provider";
 import { facebookProvider } from "./facebook.provider";
-import { snapchatProvider } from "./snapchat.provider";
 
 // ⚠️ ORDER IS THE 6h-CRON METRIC-SWEEP ORDER (getSupportedSlugs is only consumed by
 // social-insights.cron.ts). Priority: cheapest-and-most-reliable FIRST, slowest LAST.
 //   1. youtube   — ~2k links, fast Data API.
 //   2. facebook  — ~19k links via the public-reel scraper.
-//   3. snapchat  — Spotlight scraper (public pages, Googlebot UA). Runs 3rd —
-//      after YT/FB (which are heavier) but before IG (rate-limit-prone). Scraped
-//      per-link at 400ms/link; ~78 Spotlight links on prod → ~31s total. No feed map
-//      to build, no early harvest needed (captions returned inline in fetchBatch).
-//   4. instagram — ~38k links, the slow/rate-limit-prone sweep. IG is the safe one
+//   3. instagram — ~38k links, the slow/rate-limit-prone sweep. IG is the safe one
 //      to run LAST (harvest fires early, engagement is Graph-administered-only).
-// Do NOT move Instagram before Facebook/Snapchat — that re-starves them (2026-06-26 outage).
+// Do NOT move Instagram before Facebook — that re-starves it (2026-06-26 outage).
+//
+// NOTE: Snapchat has NO insight provider. Its post captions/engagement are not
+// readable server-side — prod links are snapchat.com/t/<code> share redirects that
+// resolve to client-rendered profile pages (no caption/views in the HTML), and there
+// is no public organic API. A Spotlight scraper was removed (2026-06-30) after a live
+// Linode probe confirmed it produced nothing for the real /t/ link shape. The only
+// working Snapchat feature is follower-count sync (Account Growth) in
+// follower-sync.service.ts, which needs no insight provider. There is no Snapchat
+// "Top Links" — engagement is unreadable, so an engagement-ranked panel is impossible.
 const providers: InsightProvider[] = [
   youTubeProvider,
   facebookProvider,
-  snapchatProvider,
   instagramProvider,
 ];
 

@@ -304,16 +304,21 @@ export default function LinkSearchPage() {
                 )}
 
                 <ul className="text-ink-4 space-y-1">
-                  {rows.map(({ p, searchable: s, submitted: sub, since, pendingExtraction: pPending }) => (
+                  {rows.map(({ p, searchable: s, submitted: sub, since, dataSince, pendingExtraction: pPending }) => (
                     <li key={p} className="flex items-baseline gap-1.5 flex-wrap">
                       <span className="font-medium text-ink-3 w-20 shrink-0">{LABEL[p] ?? p}</span>
                       <span>
                         <span className="font-semibold text-ink">{(s ?? 0).toLocaleString()}</span>
                         {sub != null && sub > 0 && <> of {sub.toLocaleString()}</>} searchable
                       </span>
-                      {p === "youtube" && <span className="text-ink-4">· all dates</span>}
+                      {/* TRUE data-back-to date: how far the submitted links actually go
+                          (min daily_reports.date). Distinct from "capturing since" (enrichment). */}
+                      {dataSince && (
+                        <span className="text-ink-4">· data since {fmtDate(dataSince)}</span>
+                      )}
+                      {p === "youtube" && <span className="text-ink-4">· captions: all dates</span>}
                       {(p === "instagram" || p === "facebook") && since && (
-                        <span className="text-ink-4">· capturing since {fmtDate(since)}</span>
+                        <span className="text-ink-4">· captions since {fmtDate(since)}</span>
                       )}
                       {(pPending ?? 0) > 0 && (
                         <span className="text-ink-4">· {(pPending!).toLocaleString()} tagging</span>
@@ -328,9 +333,12 @@ export default function LinkSearchPage() {
                 )}
 
                 <p className="text-ink-4 pt-0.5 border-t border-indigo/10 mt-1">
-                  The denominator is <span className="font-medium">every link ever submitted</span> for each platform (all dates),
-                  and &ldquo;searchable&rdquo; counts how many of those we&rsquo;ve captured a caption for — old and new alike, not just
-                  recent ones. &ldquo;Capturing since&rdquo; is the date we started reading captions, not a cutoff on which links count.
+                  Two dates, and they mean different things: <span className="font-medium">&ldquo;data since&rdquo;</span> is how far back the
+                  submitted links themselves go (the earliest post any employee logged for that platform) — that&rsquo;s the true reach of
+                  the data. <span className="font-medium">&ldquo;captions since&rdquo;</span> is when we started <em>reading captions</em> for
+                  caption-search, which is later. The denominator is <span className="font-medium">every link ever submitted</span> (all
+                  dates back to &ldquo;data since&rdquo;), and &ldquo;searchable&rdquo; counts how many of those we&rsquo;ve captured a caption
+                  for — old and new alike. Neither date is a cutoff on which links count.
                 </p>
                 <p className="text-ink-4 pt-0.5">
                   The gap (submitted minus searchable) is mostly Instagram/Facebook posts that have scrolled too far back in

@@ -11,7 +11,7 @@ import {
 import { recordGrowthSnapshot, getGrowthOverview, getAccountGrowth } from "../services/account-growth.service";
 import { getAllAccountsLinkStats } from "../services/account.service";
 import { generateReportsExport } from "../services/report-export.service";
-import { getLeaderboard, getTopLinksLeaderboard } from "../services/leaderboard.service";
+import { getLeaderboard, getTopLinksLeaderboard, getLeaderboardCoverage } from "../services/leaderboard.service";
 import {
   getPendingEmployees,
   approveEmployee,
@@ -355,6 +355,23 @@ router.get(
       const { startDate, endDate } = req.query as { startDate?: string; endDate?: string };
       const board = await getTopLinksLeaderboard(startDate, endDate);
       return success(res, board);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// GET /admin/reports/leaderboard-coverage — true data-back-to dates for the leaderboard
+// (reportsSince = earliest report; metricsSince = earliest engagement metric). Honest
+// coverage disclosure. MUST be before /:reportId.
+router.get(
+  "/admin/reports/leaderboard-coverage",
+  authenticate,
+  requirePermission("reports", "view"),
+  async (_req: Request, res: Response, next: NextFunction) => {
+    try {
+      const coverage = await getLeaderboardCoverage();
+      return success(res, coverage);
     } catch (err) {
       next(err);
     }

@@ -14,7 +14,7 @@ export interface LinkSearchData {
     enriched: number; notYetEnriched: number; total: number;
     searchable: number; pendingExtraction?: number; nameSearchable?: number;
     unsearchable: number; submitted: number;
-    byPlatform: Record<string, { enriched: number; total: number; searchable: number; pendingExtraction?: number; nameSearchable?: number; unsearchable: number; submitted: number; since?: string }>;
+    byPlatform: Record<string, { enriched: number; total: number; searchable: number; pendingExtraction?: number; nameSearchable?: number; unsearchable: number; submitted: number; since?: string; dataSince?: string }>;
   };
   truncated?: boolean;
 }

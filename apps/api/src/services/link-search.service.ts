@@ -74,7 +74,8 @@ export interface LinkSearchResult {
         nameSearchable: number;    // searchable - pendingExtraction for this platform
         unsearchable: number;
         submitted: number; // report_links for this platform (the honest denominator)
-        since?: string; // earliest enriched fetched_at — auto-detected coverage date
+        since?: string; // earliest CAPTION captured (min link_content.createdAt) — enrichment start
+        dataSince?: string; // TRUE earliest submitted-link date (min daily_reports.date) — how far the data really goes back
       }
     >;
   };
@@ -213,15 +214,20 @@ async function buildCoverage(): Promise<LinkSearchResult["coverage"]> {
     // report_links.platform column mis-split IG/FB by ~2,200 (the aggregate was right,
     // only the split misled). ELSE keeps the platform column so no row is dropped — the
     // total is identical, only the bucketing is corrected.
-    prisma.$queryRaw<Array<{ platform: string; cnt: bigint }>>`
+    // Also returns dataSince = the TRUE earliest submitted-link date per platform
+    // (min of the parent daily_report.date). This is DISTINCT from `since`
+    // (min link_content.createdAt = when we started CAPTURING captions): dataSince
+    // is how far back the underlying links actually go, which is months earlier than
+    // enrichment start. The banner shows both, honestly labelled.
+    prisma.$queryRaw<Array<{ platform: string; cnt: bigint; data_since: Date | null }>>`
       SELECT CASE
-        WHEN url ~* 'youtube\.com|youtu\.be' THEN 'youtube'
-        WHEN url ~* 'instagram\.com' THEN 'instagram'
-        WHEN url ~* 'facebook\.com|fb\.watch|fb\.me' THEN 'facebook'
-        ELSE lower(coalesce(platform, 'other'))
-      END AS platform, count(*)::bigint AS cnt
-      FROM report_links
-      WHERE url IS NOT NULL AND is_scheduled = false
+        WHEN rl.url ~* 'youtube\.com|youtu\.be' THEN 'youtube'
+        WHEN rl.url ~* 'instagram\.com' THEN 'instagram'
+        WHEN rl.url ~* 'facebook\.com|fb\.watch|fb\.me' THEN 'facebook'
+        ELSE lower(coalesce(rl.platform, 'other'))
+      END AS platform, count(*)::bigint AS cnt, min(dr.date) AS data_since
+      FROM report_links rl JOIN daily_reports dr ON dr.id = rl.report_id
+      WHERE rl.url IS NOT NULL AND rl.is_scheduled = false
       GROUP BY 1
     `,
     pendingMatchedByPlatform,
@@ -268,7 +274,11 @@ async function buildCoverage(): Promise<LinkSearchResult["coverage"]> {
   // match the numerator's source (F8) — no longer the dirty platform column.
   for (const s of submittedByPlatform) {
     const p = (s.platform || "other").toLowerCase();
-    ensure(byPlatform, p).submitted += Number(s.cnt);
+    const b = ensure(byPlatform, p);
+    b.submitted += Number(s.cnt);
+    // TRUE data-back-to date: earliest submitted-link date for this platform (min
+    // daily_reports.date). Distinct from `since` (enrichment start). @db.Date → date-only.
+    if (s.data_since) b.dataSince = new Date(s.data_since).toISOString().slice(0, 10);
   }
 
   // Auto-detected per-platform coverage date (earliest enriched createdAt — immutable).

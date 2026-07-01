@@ -153,7 +153,7 @@ async function main() {
     { name: "Instagram", slug: "instagram" },
     { name: "Facebook", slug: "facebook" },
     { name: "YouTube", slug: "youtube" },
-    { name: "Twitter/X", slug: "twitter" },
+    { name: "X", slug: "x" }, // formerly "Twitter/X" (slug "twitter") — deduped 2026-07-01; the real accounts live under slug "x"
     { name: "LinkedIn", slug: "linkedin" },
     { name: "Snapchat", slug: "snapchat" },
     { name: "Pinterest", slug: "pinterest" },

@@ -318,3 +318,28 @@ export async function getTeamDashboard(teamLeadId: string) {
     submissionRate,
   };
 }
+
+// ============ Leaderboard data-coverage dates ============
+//
+// The TRUE "how far back does the data go" for the leaderboard, so the UI can state it
+// honestly instead of showing no coverage date at all. Two distinct sources:
+//  - reportsSince = earliest daily_reports.date → how far back link VOLUME / reports go
+//    (drives the main leaderboard: totalLinks, reports, streaks).
+//  - metricsSince = earliest link_metrics.reportDate (status ok) → how far back ENGAGEMENT
+//    data goes (drives the Top Links leaderboard: views/likes/comments). This is later
+//    than reportsSince and only covers links that got enriched.
+// Cheap: two indexed min() aggregates. Returns ISO date strings (YYYY-MM-DD) or null.
+export async function getLeaderboardCoverage(): Promise<{
+  reportsSince: string | null;
+  metricsSince: string | null;
+}> {
+  const [reportMin, metricMin] = await Promise.all([
+    prisma.dailyReport.aggregate({ _min: { date: true } }),
+    prisma.linkMetric.aggregate({ where: { status: "ok" }, _min: { reportDate: true } }),
+  ]);
+  const toDay = (d: Date | null | undefined) => (d ? d.toISOString().slice(0, 10) : null);
+  return {
+    reportsSince: toDay(reportMin._min.date),
+    metricsSince: toDay(metricMin._min.reportDate),
+  };
+}

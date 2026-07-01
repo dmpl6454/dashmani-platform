@@ -375,23 +375,22 @@ export async function syncAllFollowerCounts() {
         }
       }
     } else if (slug === "snapchat") {
-      // Snapchat public creator profiles expose subscriber counts on their
-      // public profile page (snapchat.com/add/<handle>). The scraper tries
-      // that page + story.snapchat.com/@<handle> with a Googlebot UA.
-      // ⚠️ MUST be live-verified from Linode IP before trusting results —
-      // the scraper is fail-open (returns null on any miss, never throws).
+      // Snapchat follower counts live on the account's PUBLIC PROFILE page. Our
+      // accounts are `/t/<code>` share links (in profile_url) that resolve to a
+      // `snapchat.com/p/<uuid>` page — NOT `/add/<handle>` (that 404s). The scraper
+      // tries profile_url FIRST, then legacy /add/ handle fallbacks, all with a
+      // Googlebot UA. Live-verified from the Linode IP 2026-07-01.
+      // ⚠️ Fail-open: returns null on any miss (we keep the existing value, never zero it).
       // Kill switch: SC_SCRAPER_ENABLED=0
-      const scHandle = account.handle.replace(/^@/, "").split("?")[0].trim()
-        || account.profileUrl?.match(/snapchat\.com\/(?:add\/|@?)([^/?#]+)/)?.[1]
-        || "";
-      if (scHandle) {
-        const result = await scrapeSnapchatFollowers(scHandle);
-        if (result.followers && result.followers > 0) {
-          followers = result.followers;
-        }
-        await sleep(SC_SCRAPER_DELAY_MS);
+      const scHandle = account.handle.replace(/^@/, "").split("?")[0].trim();
+      const result = await scrapeSnapchatFollowers(scHandle, fetch, account.profileUrl);
+      if (result.followers && result.followers > 0) {
+        followers = result.followers;
       }
+      await sleep(SC_SCRAPER_DELAY_MS);
       if (followers === null) {
+        // No count recoverable (dead share link + no /add/ profile). Keep the
+        // existing manual value; count as skipped, do not overwrite with 0.
         progress.skipped++;
         progress.processed++;
         continue;
@@ -540,13 +539,11 @@ export async function syncSingleAccountFollowers(accountId: string) {
   } else if (slug === "facebook") {
     followers = await fetchFacebookFollowers(account.profileUrl || "", account.handle);
   } else if (slug === "snapchat") {
-    const scHandle = account.handle.replace(/^@/, "").split("?")[0].trim()
-      || account.profileUrl?.match(/snapchat\.com\/(?:add\/|@?)([^/?#]+)/)?.[1]
-      || "";
-    if (scHandle) {
-      const result = await scrapeSnapchatFollowers(scHandle);
-      followers = result.followers;
-    }
+    // profile_url (a /t/ or /p/ link) is tried FIRST by the scraper — that's where
+    // the count lives; /add/<handle> 404s for our accounts. See snapchat-scraper.ts.
+    const scHandle = account.handle.replace(/^@/, "").split("?")[0].trim();
+    const result = await scrapeSnapchatFollowers(scHandle, fetch, account.profileUrl);
+    followers = result.followers;
   }
   // Other platforms: no automated sync; admin must enter the count manually.
 

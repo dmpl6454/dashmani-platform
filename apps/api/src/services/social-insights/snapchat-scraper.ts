@@ -107,25 +107,47 @@ export function parseSnapchatProfileHtml(html: string): number | null {
   }
 
   // ── Strategy 2: JSON-LD <script type="application/ld+json"> ─────────────
+  // The live /p/<uuid> public-profile page is a schema.org ProfilePage whose
+  // FollowAction stat is NESTED under mainEntity (an Organization), and whose
+  // interactionType is an OBJECT ({"@type":"FollowAction"}), not a string URL.
+  // We therefore (a) search interactionStatistic at the top level AND under
+  // mainEntity, and (b) match interactionType whether it's a string ("…/FollowAction")
+  // or an object ({"@type":"FollowAction"}).
+  const isFollowType = (t: unknown): boolean => {
+    if (typeof t === "string") return t.toLowerCase().includes("follow");
+    if (t && typeof t === "object") {
+      const at = (t as any)["@type"];
+      return typeof at === "string" && at.toLowerCase().includes("follow");
+    }
+    return false;
+  };
+  const followCountFromStats = (stats: unknown): number | null => {
+    if (!Array.isArray(stats)) return null;
+    for (const stat of stats) {
+      const c = stat?.userInteractionCount;
+      const n = typeof c === "number" ? c : typeof c === "string" ? parseSnapCount(c) : null;
+      if (n && n > 0 && isFollowType(stat?.interactionType)) return n;
+    }
+    return null;
+  };
   const ldBlocks = html.matchAll(/<script type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/g);
   for (const block of ldBlocks) {
     try {
       const ld = JSON.parse(block[1]);
-      // schema.org Person / ProfilePage / interactionStatistic
-      const stats: any[] = ld?.interactionStatistic ?? [];
-      for (const stat of stats) {
-        if (
-          typeof stat?.userInteractionCount === "number" &&
-          (stat?.interactionType === "https://schema.org/FollowAction" ||
-           stat?.interactionType === "http://schema.org/FollowAction" ||
-           String(stat?.interactionType).toLowerCase().includes("follow"))
-        ) {
-          if (stat.userInteractionCount > 0) return stat.userInteractionCount;
+      // Check both top-level and mainEntity (the real page nests the stat there).
+      const fromTop = followCountFromStats(ld?.interactionStatistic);
+      if (fromTop) return fromTop;
+      const fromMain = followCountFromStats(ld?.mainEntity?.interactionStatistic);
+      if (fromMain) return fromMain;
+      // fallback: any key called subscriberCount / followerCount at top level or on mainEntity
+      for (const src of [ld, ld?.mainEntity]) {
+        const top = src?.subscriberCount ?? src?.followerCount ?? src?.numberOfSubscribers;
+        if (typeof top === "number" && top > 0) return top;
+        if (typeof top === "string") {
+          const n = parseSnapCount(top);
+          if (n && n > 0) return n;
         }
       }
-      // fallback: any key called subscriberCount / followerCount at top level
-      const top = ld?.subscriberCount ?? ld?.followerCount ?? ld?.numberOfSubscribers;
-      if (typeof top === "number" && top > 0) return top;
     } catch { /* ignore */ }
   }
 
@@ -149,11 +171,15 @@ export function parseSnapchatProfileHtml(html: string): number | null {
   }
 
   // ── Strategy 4: inline text / JSON patterns ──────────────────────────────
+  // NOTE: the value may be quoted ("subscriberCount":"98100") or bare
+  // ("subscriberCount":98100) — accept both. The optional quote before the digits
+  // is what makes this match the real /p/<uuid> page. The `\d` requirement also
+  // skips the Hindi UI-template decoys like "{subscriberCount} फ़ॉलोअर" (no digits).
   const patterns: RegExp[] = [
-    /"subscriberCount"\s*:\s*(\d+)/,
-    /"followerCount"\s*:\s*(\d+)/,
-    /"subscriber_count"\s*:\s*(\d+)/,
-    /"follower_count"\s*:\s*(\d+)/,
+    /"subscriberCount"\s*:\s*"?(\d+)"?/,
+    /"followerCount"\s*:\s*"?(\d+)"?/,
+    /"subscriber_count"\s*:\s*"?(\d+)"?/,
+    /"follower_count"\s*:\s*"?(\d+)"?/,
     // plain text: "1.2M Subscribers" or "1,234 subscribers"
     /([\d,.]+[KkMmBb]?)\s*[Ss]ubscribers?/,
     /([\d,.]+[KkMmBb]?)\s*[Ff]ollowers?/,
@@ -172,29 +198,58 @@ export function parseSnapchatProfileHtml(html: string): number | null {
 // ── Network fetcher ───────────────────────────────────────────────────────────
 
 /**
- * Scrape the follower/subscriber count for a public Snapchat handle.
+ * Build the ordered list of candidate profile URLs to scrape.
  *
- * Tries in order:
- *  1. https://www.snapchat.com/add/<handle>          (main profile page)
- *  2. https://story.snapchat.com/@<handle>            (story/public profile)
+ * ⚠️ LIVE-VERIFIED 2026-07-01: the real Snapchat accounts we track are NOT
+ * `snapchat.com/add/<username>` profiles — that path 404s for all of them. Their
+ * real public profile is a `snapchat.com/p/<uuid>` page, reached via the `/t/<code>`
+ * share link stored in `profile_url`. The `/p/<uuid>` page returns HTTP 200 with the
+ * subscriber count in JSON-LD (FollowAction) + inline `"subscriberCount":"N"`.
+ * So we try the STORED profile_url FIRST (redirect:"follow" resolves /t/ → /p/),
+ * then fall back to the legacy handle-based paths for any account that happens to
+ * be an /add/ profile. `t.snapchat.com/<code>` links in the data are dead (404) —
+ * they're tried (harmless) and simply miss.
+ */
+export function snapchatCandidateUrls(handle: string, profileUrl?: string | null): string[] {
+  const urls: string[] = [];
+  const p = (profileUrl || "").trim();
+  // Only add http(s) profile URLs; a bare handle stored in profile_url is useless here.
+  if (/^https?:\/\//i.test(p)) urls.push(p);
+  const clean = (handle || "").replace(/^@/, "").split("?")[0].trim();
+  if (clean) {
+    urls.push(`https://www.snapchat.com/add/${encodeURIComponent(clean)}`);
+    urls.push(`https://story.snapchat.com/@${encodeURIComponent(clean)}`);
+  }
+  // De-dupe while preserving order.
+  return Array.from(new Set(urls));
+}
+
+/**
+ * Scrape the follower/subscriber count for a public Snapchat account.
  *
- * Returns { followers: null, walled: true } if blocked, { followers: null }
- * on a parse miss (the account page loaded but had no count — likely a private
- * or non-creator account).
+ * Pass the account's stored `profileUrl` (a `/t/<code>` or `/p/<uuid>` link) — it is
+ * tried FIRST because that is where the count actually lives (see
+ * snapchatCandidateUrls). The `handle` is used to build legacy `/add/` fallbacks.
+ *
+ * FAIL-OPEN: returns { followers: null } on any miss/timeout/parse-fail (caller keeps
+ * the existing value), or { followers: null, walled: true } on a hard block/login wall.
+ * Logs one line per account so a future "why is X still 0?" is answerable from pm2 logs
+ * (the previous silent version is exactly why this bug went undiagnosed).
  */
 export async function scrapeSnapchatFollowers(
   handle: string,
   fetchImpl: FetchFn = fetch,
+  profileUrl?: string | null,
 ): Promise<ScrapedSnapchatFollowers> {
   if (!SC_SCRAPER_ENABLED) return MISS;
-  const clean = handle.replace(/^@/, "").split("?")[0].trim();
-  if (!clean) return MISS;
 
-  const urls = [
-    `https://www.snapchat.com/add/${encodeURIComponent(clean)}`,
-    `https://story.snapchat.com/@${encodeURIComponent(clean)}`,
-  ];
+  const urls = snapchatCandidateUrls(handle, profileUrl);
+  if (urls.length === 0) {
+    console.log(`[snapchat-scraper] ${handle || "(no handle)"}: no candidate URL (no http profile_url, no handle) — skip`);
+    return MISS;
+  }
 
+  let sawWall = false;
   for (const url of urls) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
@@ -211,24 +266,30 @@ export async function scrapeSnapchatFollowers(
       clearTimeout(timer);
 
       if (!res.ok) {
-        if (res.status === 404) continue; // try next URL
-        return { followers: null, walled: true };
+        if (res.status === 404) continue; // dead/wrong URL — try next candidate
+        sawWall = true;
+        continue;
       }
       // Redirect to a login/auth page = walled
       if (/\/login|\/signup|\/accounts\/login/i.test(res.url)) {
-        return { followers: null, walled: true };
+        sawWall = true;
+        continue;
       }
 
       const html = await res.text();
       const followers = parseSnapchatProfileHtml(html);
-      if (followers !== null) return { followers };
-      // Count was not found in this URL — try the next
+      if (followers !== null) {
+        console.log(`[snapchat-scraper] ${handle}: ${followers} (via ${url} → ${res.url})`);
+        return { followers };
+      }
+      // Page loaded but no count found — try the next candidate.
     } catch {
       clearTimeout(timer);
-      // Timeout / network error — treat as a soft wall for this URL; try next
+      // Timeout / network error — try next candidate.
     }
   }
 
-  // Both URLs failed or returned no count
-  return MISS;
+  // All candidates failed or returned no count.
+  console.log(`[snapchat-scraper] ${handle}: no count found (${urls.length} URL(s) tried${sawWall ? ", saw wall/error" : ", all 404/miss"})`);
+  return sawWall ? { followers: null, walled: true } : MISS;
 }

@@ -299,12 +299,17 @@ export async function getGrowthOverview(days = 30): Promise<GrowthOverview> {
       displayName: account.displayName,
       platform: account.platform.name,
       profileUrl: (() => {
-        // For Snapchat, always build the URL from the stored handle — the correct
-        // profile URL format is https://www.snapchat.com/add/<handle> and we can
-        // guarantee it regardless of whatever format profileUrl was saved in.
+        // For Snapchat, PREFER the stored profile_url (a /t/<code> or /p/<uuid> link) —
+        // it resolves to the real profile page. ⚠️ Do NOT build /add/<handle>: that path
+        // 404s ("Sorry" page) for our accounts (live-verified 2026-07-01; same finding
+        // that fixed the follower scraper in PR #73). Only fall back to /add/<handle> if
+        // there is no usable profile_url at all (better than nothing).
         if (account.platform.slug === "snapchat") {
+          const u = safeHttpUrl(account.profileUrl);
+          if (u) return u;
           const h = account.handle.replace(/^@/, "").split("?")[0].trim();
           if (h) return `https://www.snapchat.com/add/${encodeURIComponent(h)}`;
+          return null;
         }
         const u = safeHttpUrl(account.profileUrl);
         return u ? normalizeSnapchatUrl(u) : null;

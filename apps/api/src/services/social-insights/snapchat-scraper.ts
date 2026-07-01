@@ -1,9 +1,23 @@
-// ── Snapchat public-profile follower-count scraper ───────────────────────────
+// ── Snapchat public-profile FOLLOWER-COUNT scraper ───────────────────────────
 //
-// Snapchat public creator profiles expose a "Subscribers" count on their
-// public profile page at https://www.snapchat.com/add/<handle>.
-// The page is server-rendered and returns the count in multiple embedded
-// formats (JSON-LD, __NEXT_DATA__, og:description, plain text patterns).
+// Reads ONLY the creator's follower/subscriber count from their public profile
+// page. Our accounts' real profile is snapchat.com/p/<uuid>, reached via the
+// /t/<code> share link stored in profile_url (NOT /add/<handle> — that 404s for
+// our accounts; see snapchatCandidateUrls). The count is embedded as a JSON-LD
+// FollowAction (userInteractionCount) + inline "subscriberCount":"N".
+//
+// ⚠️⚠️ FOLLOWER COUNT IS THE ONLY SCRAPEABLE METRIC. Views/likes/shares are NOT
+// available and must NEVER be parsed from this page. Live-verified from the Linode
+// IP (2026-07-01): on a POST page (/p/<uuid>/<storyId>?chapterid=…) the per-post
+// engagement fields are served as SENTINELS — `"viewCount":"-1"`, `"shareCount":"0"`,
+// plus a literal `"{viewCount}"` UI template — and there is NO WatchAction/ViewAction/
+// LikeAction. Snapchat deliberately withholds per-post engagement from logged-out/bot
+// requests. The ONLY real InteractionCounter on the page is the profile-level
+// FollowAction (followers). DO NOT add a views/likes parser here or key any metric on
+// `viewCount`/`shareCount`/`play_count` — those are noise/sentinels (same trap as the
+// Facebook carousel `play_count`). Per-post Snapchat engagement is only reachable via
+// the allowlisted Snap Public Profile API (Spotlight views/shares), never by scraping —
+// see docs/SNAPCHAT-CONNECTION-STEPS.md.
 //
 // ⚠️ VERIFICATION NOTE: This scraper must be live-verified from the Linode
 // datacenter IP before relying on it. Residential success ≠ datacenter success

@@ -17,23 +17,31 @@ import { ModalPortal } from "@/components/modal-portal";
 type Tab = "accounts" | "by-employee" | "platforms";
 
 // Build a safe, correct external href for an account.
-// For Snapchat: always construct from the handle (https://www.snapchat.com/add/<handle>)
-// so it's correct regardless of whatever format profileUrl was saved in.
+// For Snapchat: PREFER the stored profileUrl (a /t/<code> or /p/<uuid> link that resolves
+// to the real profile). ⚠️ Do NOT build /add/<handle> — that path 404s ("Sorry" page) for
+// our accounts (live-verified 2026-07-01). Fall back to /add/<handle> only if there is no
+// usable profileUrl at all.
 // For other platforms: validate https:// scheme; add it if missing.
+function toHttp(url: string | null | undefined): string | null {
+  if (!url || !url.trim()) return null;
+  let raw = url.trim();
+  if (!/^https?:\/\//i.test(raw)) raw = "https://" + raw.replace(/^\/\//, "");
+  try { new URL(raw); } catch { return null; }
+  return raw;
+}
 function safeProfileHref(
   url: string | null | undefined,
   platform?: { slug?: string },
   handle?: string,
 ): string | null {
   if (platform?.slug === "snapchat") {
+    const fromUrl = toHttp(url);
+    if (fromUrl) return fromUrl;
     const h = (handle ?? "").replace(/^@/, "").split("?")[0].trim();
     if (h) return `https://www.snapchat.com/add/${encodeURIComponent(h)}`;
+    return null;
   }
-  if (!url || !url.trim()) return null;
-  let raw = url.trim();
-  if (!/^https?:\/\//i.test(raw)) raw = "https://" + raw.replace(/^\/\//, "");
-  try { new URL(raw); } catch { return null; }
-  return raw;
+  return toHttp(url);
 }
 
 const STATUS_COLORS: Record<string, string> = {

@@ -11,7 +11,7 @@ import {
 import { recordGrowthSnapshot, getGrowthOverview, getAccountGrowth } from "../services/account-growth.service";
 import { getAllAccountsLinkStats } from "../services/account.service";
 import { generateReportsExport } from "../services/report-export.service";
-import { getLeaderboard, getTopLinksLeaderboard, getLeaderboardCoverage } from "../services/leaderboard.service";
+import { getLeaderboard, getTopLinksLeaderboard, getLeaderboardCoverage, getPlatformLeaderboards } from "../services/leaderboard.service";
 import {
   getPendingEmployees,
   approveEmployee,
@@ -355,6 +355,25 @@ router.get(
       const { startDate, endDate } = req.query as { startDate?: string; endDate?: string };
       const board = await getTopLinksLeaderboard(startDate, endDate);
       return success(res, board);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// GET /admin/reports/platform-leaderboards — FAIR per-platform Top Links boards
+// (youtube/facebook ranked by views, instagram by likes+comments). Separate from the
+// combined board so platforms with different exposed metrics aren't unfairly compared.
+// MUST be before /:reportId.
+router.get(
+  "/admin/reports/platform-leaderboards",
+  authenticate,
+  requirePermission("reports", "view"),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { startDate, endDate } = req.query as { startDate?: string; endDate?: string };
+      const boards = await getPlatformLeaderboards(startDate, endDate);
+      return success(res, boards);
     } catch (err) {
       next(err);
     }

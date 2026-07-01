@@ -36,6 +36,16 @@ export default function AdminLeaderboardPage() {
   );
   const tlEntries: any[] = (tlData as any)?.data ?? [];
 
+  // True data-back-to dates (global, window-independent) so the coverage note is honest
+  // about how far the underlying data actually reaches \u2014 not just "coverage lags".
+  const { data: covData } = useSWR(`/admin/reports/leaderboard-coverage`, (url) => apiFetch(url), {
+    revalidateOnFocus: false,
+    dedupingInterval: 300_000,
+  });
+  const coverage = (covData as any)?.data ?? {};
+  const fmtCovDate = (iso?: string | null) =>
+    iso ? new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }) : null;
+
   const topPerformer = entries[0]?.employee?.name ?? "\u2014";
   const activeEmployees = entries.length;
   const totalReports = entries.reduce((sum: number, e: any) => sum + e.totalReports, 0);
@@ -210,9 +220,16 @@ export default function AdminLeaderboardPage() {
           <Info className="h-4 w-4 text-[#B0B0B0] mt-0.5 shrink-0" />
           <p className="text-xs text-[#7A7A7A] leading-relaxed">
             Ranked by total engagement (views&nbsp;+&nbsp;likes&nbsp;+&nbsp;comments) from collected post metrics &mdash; the same data behind the Top&nbsp;Links panels.
-            YouTube contributes <span className="font-medium">views</span>; Instagram &amp; Facebook contribute <span className="font-medium">likes&nbsp;+&nbsp;comments</span> (those platforms don&rsquo;t expose view counts &mdash; so a 0 in Views is correct for an IG/FB post, not missing data).
+            YouTube and Facebook contribute <span className="font-medium">views&nbsp;+&nbsp;likes&nbsp;+&nbsp;comments</span>; Instagram contributes <span className="font-medium">likes&nbsp;+&nbsp;comments</span> only (Instagram doesn&rsquo;t expose a view count &mdash; so a 0 in Views is correct for an Instagram post, not missing data; a 0 on a YouTube or Facebook post means its metrics haven&rsquo;t been collected yet).
             {" "}Snapchat links are counted in submission totals but engagement metrics are not collected via API.
             The <span className="font-medium">Links (metrics&nbsp;/&nbsp;sent)</span> column shows how many of each person&rsquo;s links we&rsquo;ve collected metrics for so far &mdash; new links are picked up automatically by a background job, but collection lags submission (Instagram most of all), so a person&rsquo;s engagement reflects their <span className="font-medium">covered</span> links and grows as coverage catches up.
+            {(coverage.reportsSince || coverage.metricsSince) && (
+              <>
+                {" "}<span className="font-medium">Data coverage:</span> reports go back to{" "}
+                <span className="font-medium">{fmtCovDate(coverage.reportsSince) ?? "—"}</span>
+                {coverage.metricsSince && <> and engagement metrics to <span className="font-medium">{fmtCovDate(coverage.metricsSince)}</span> (earlier links have volume but may lack collected metrics)</>}.
+              </>
+            )}
           </p>
         </div>
         {tlLoading ? (

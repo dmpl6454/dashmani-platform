@@ -64,6 +64,57 @@ async function getEngagementByEmployee(
   return byEmployee;
 }
 
+// Classify a link's platform from its normalized URL (same host rules as everywhere else).
+// Returns null for anything we don't rank per-platform (keeps unknown links out of the
+// per-platform boards; they still count in the combined raw-volume board).
+function platformOfUrl(url: string): "youtube" | "instagram" | "facebook" | null {
+  if (/youtube\.com|youtu\.be/i.test(url)) return "youtube";
+  if (/instagram\.com/i.test(url)) return "instagram";
+  if (/facebook\.com|fb\.watch|fb\.me/i.test(url)) return "facebook";
+  return null;
+}
+
+// Per-(employee, platform) engagement — latest snapshot per unique link, split by
+// platform. Same dedup + latest-wins logic as getEngagementByEmployee, but keyed by
+// (employee, platform) so we can build FAIR per-platform boards (each ranked by the
+// metric that platform actually exposes — see getPlatformLeaderboards).
+async function getEngagementByEmployeePlatform(
+  startDate?: string,
+  endDate?: string,
+): Promise<Map<string, Map<"youtube" | "instagram" | "facebook", EngagementAgg>>> {
+  const where: Record<string, unknown> = { status: "ok" };
+  if (startDate || endDate) {
+    const range: Record<string, Date> = {};
+    if (startDate) range.gte = new Date(startDate);
+    if (endDate) range.lte = new Date(endDate);
+    where.reportDate = range;
+  }
+  const snapshots = await prisma.linkMetric.findMany({
+    where,
+    orderBy: { fetchedAt: "desc" },
+    select: { employeeId: true, urlNormalized: true, views: true, likes: true, comments: true },
+  });
+  const seen = new Set<string>();
+  const byEmp = new Map<string, Map<"youtube" | "instagram" | "facebook", EngagementAgg>>();
+  for (const s of snapshots) {
+    if (!s.employeeId) continue;
+    const key = `${s.employeeId}::${s.urlNormalized}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const plat = platformOfUrl(s.urlNormalized ?? "");
+    if (!plat) continue;
+    let perPlat = byEmp.get(s.employeeId);
+    if (!perPlat) { perPlat = new Map(); byEmp.set(s.employeeId, perPlat); }
+    let agg = perPlat.get(plat);
+    if (!agg) { agg = { views: 0, likes: 0, comments: 0, linkCount: 0 }; perPlat.set(plat, agg); }
+    agg.views += s.views ?? 0;
+    agg.likes += s.likes ?? 0;
+    agg.comments += s.comments ?? 0;
+    agg.linkCount += 1;
+  }
+  return byEmp;
+}
+
 export async function getLeaderboard(startDate?: string, endDate?: string) {
   const where: any = {
     employee: employeeWhere,
@@ -341,5 +392,63 @@ export async function getLeaderboardCoverage(): Promise<{
   return {
     reportsSince: toDay(reportMin._min.date),
     metricsSince: toDay(metricMin._min.reportDate),
+  };
+}
+
+// ============ Per-platform Top Links leaderboards (FAIR ranking) ============
+//
+// WHY: the combined Top Links board sums views+likes+comments across platforms, which is
+// UNFAIR — the platforms don't expose the same metrics or scales (verified on prod):
+//   - Instagram exposes NO views (0 of 11k rows) — only likes+comments.
+//   - Facebook's raw numbers dwarf YouTube's (~30× views, ~190× likes on average).
+// So a combined score structurally favors Facebook/YouTube over Instagram. The FAIR fix
+// (no employee posts to all 3; ≤2 platforms each, so fragmentation is mild) is a SEPARATE
+// board per platform, each ranked by the metric that platform actually exposes:
+//   - youtube  → ranked by VIEWS (likes/comments shown for context)
+//   - facebook → ranked by VIEWS (FB has real views via the reel scraper; likes/comments shown)
+//   - instagram→ ranked by LIKES+COMMENTS (no views exist — the UI omits a Views column)
+// The combined board is KEPT but relabeled in the UI as raw cross-platform volume (not a
+// fair ranking). Employees with zero engagement on a platform simply don't appear on it.
+export type PlatformBoardKey = "youtube" | "facebook" | "instagram";
+export async function getPlatformLeaderboards(startDate?: string, endDate?: string): Promise<
+  Record<PlatformBoardKey, Array<{
+    rank: number;
+    employee: { id: string; name: string; email: string; profileImageUrl: string | null };
+    views: number; likes: number; comments: number; engagedLinkCount: number;
+    rankMetric: number; // the value this board is ranked by (views, or likes+comments for IG)
+  }>>
+> {
+  const [byEmpPlat, employees] = await Promise.all([
+    getEngagementByEmployeePlatform(startDate, endDate),
+    prisma.user.findMany({
+      where: employeeWhere,
+      select: { id: true, name: true, email: true, profileImageUrl: true },
+    }),
+  ]);
+  const empById = new Map(employees.map((e) => [e.id, e]));
+
+  const build = (plat: PlatformBoardKey, rankBy: (a: EngagementAgg) => number) => {
+    const rows = [...byEmpPlat.entries()]
+      .map(([empId, perPlat]) => {
+        const agg = perPlat.get(plat);
+        const employee = empById.get(empId);
+        if (!agg || !employee || agg.linkCount === 0) return null;
+        const rankMetric = rankBy(agg);
+        if (rankMetric <= 0) return null; // no measurable engagement on this platform → omit
+        return {
+          employee,
+          views: agg.views, likes: agg.likes, comments: agg.comments,
+          engagedLinkCount: agg.linkCount, rankMetric,
+        };
+      })
+      .filter((r): r is NonNullable<typeof r> => r !== null)
+      .sort((a, b) => b.rankMetric - a.rankMetric || b.engagedLinkCount - a.engagedLinkCount);
+    return rows.map((r, i) => ({ rank: i + 1, ...r }));
+  };
+
+  return {
+    youtube: build("youtube", (a) => a.views),
+    facebook: build("facebook", (a) => a.views),
+    instagram: build("instagram", (a) => a.likes + a.comments), // IG has no views
   };
 }

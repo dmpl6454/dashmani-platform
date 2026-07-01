@@ -36,6 +36,15 @@ export default function AdminLeaderboardPage() {
   );
   const tlEntries: any[] = (tlData as any)?.data ?? [];
 
+  // FAIR per-platform boards — each platform ranked by the metric it actually exposes
+  // (YouTube/Facebook by views; Instagram by likes+comments). Separate from the combined
+  // board above, which mixes incomparable metrics/scales and is only a raw-volume view.
+  const { data: platData, isLoading: platLoading } = useSWR(
+    `/admin/reports/platform-leaderboards${query}`,
+    (url) => apiFetch(url),
+  );
+  const platBoards: Record<string, any[]> = (platData as any)?.data ?? {};
+
   // True data-back-to dates (global, window-independent) so the coverage note is honest
   // about how far the underlying data actually reaches \u2014 not just "coverage lags".
   const { data: covData } = useSWR(`/admin/reports/leaderboard-coverage`, (url) => apiFetch(url), {
@@ -212,14 +221,14 @@ export default function AdminLeaderboardPage() {
       <div className="rounded-2xl border border-[#E8E0D0] bg-white overflow-hidden shadow-[0_2px_16px_rgba(0,0,0,0.05)] crx-animate-slide crx-delay-6">
         <div className="px-6 py-4 border-b border-[#F0EAD8] flex items-center gap-2">
           <TrendingUp className="h-5 w-5 text-[#F5A623]" />
-          <h3 className="font-semibold font-serif text-[#1A1A1A]">Top Links Leaderboard</h3>
-          <span className="text-xs text-[#B0B0B0] font-normal">ranked by post engagement</span>
+          <h3 className="font-semibold font-serif text-[#1A1A1A]">Total Collected Engagement</h3>
+          <span className="text-xs text-[#B0B0B0] font-normal">raw cross-platform volume &mdash; not a fair ranking</span>
         </div>
         {/* Honest coverage note */}
         <div className="px-6 py-3 bg-[#FFFBEF] border-b border-[#F0EAD8] flex items-start gap-2">
           <Info className="h-4 w-4 text-[#B0B0B0] mt-0.5 shrink-0" />
           <p className="text-xs text-[#7A7A7A] leading-relaxed">
-            Ranked by total engagement (views&nbsp;+&nbsp;likes&nbsp;+&nbsp;comments) from collected post metrics &mdash; the same data behind the Top&nbsp;Links panels.
+            <span className="font-medium">This is raw total volume, not a fair ranking</span> &mdash; it sums views&nbsp;+&nbsp;likes&nbsp;+&nbsp;comments across platforms, but platforms don&rsquo;t expose the same metrics or scales (Facebook&rsquo;s raw numbers dwarf YouTube&rsquo;s, and Instagram has no views at all), so it structurally favors some platforms. <span className="font-medium">For a fair comparison, use the per-platform boards below.</span> It&rsquo;s the same data behind the Top&nbsp;Links panels.
             YouTube and Facebook contribute <span className="font-medium">views&nbsp;+&nbsp;likes&nbsp;+&nbsp;comments</span>; Instagram contributes <span className="font-medium">likes&nbsp;+&nbsp;comments</span> only (Instagram doesn&rsquo;t expose a view count &mdash; so a 0 in Views is correct for an Instagram post, not missing data; a 0 on a YouTube or Facebook post means its metrics haven&rsquo;t been collected yet).
             {" "}Snapchat links are counted in submission totals but engagement metrics are not collected via API.
             The <span className="font-medium">Links (metrics&nbsp;/&nbsp;sent)</span> column shows how many of each person&rsquo;s links we&rsquo;ve collected metrics for so far &mdash; new links are picked up automatically by a background job, but collection lags submission (Instagram most of all), so a person&rsquo;s engagement reflects their <span className="font-medium">covered</span> links and grows as coverage catches up.
@@ -324,6 +333,84 @@ export default function AdminLeaderboardPage() {
           </div>
         )}
       </div>
+
+      {/* ============ FAIR per-platform boards ============ */}
+      {/* Each platform ranked by the metric it actually exposes, so people are compared
+          against peers on the same yardstick (no cross-platform metric/scale mixing). */}
+      {([
+        { key: "youtube", label: "YouTube", rankBy: "Views", showViews: true },
+        { key: "facebook", label: "Facebook", rankBy: "Views", showViews: true },
+        { key: "instagram", label: "Instagram", rankBy: "Likes + Comments", showViews: false },
+      ] as const).map(({ key, label, rankBy, showViews }) => {
+        const board = platBoards[key] ?? [];
+        return (
+          <div key={key} className="rounded-2xl border border-[#E8E0D0] bg-white overflow-hidden shadow-[0_2px_16px_rgba(0,0,0,0.05)]">
+            <div className="px-6 py-4 border-b border-[#F0EAD8] flex items-center gap-2">
+              <TrendingUp className="h-5 w-5 text-[#F5A623]" />
+              <h3 className="font-semibold font-serif text-[#1A1A1A]">{label} Leaderboard</h3>
+              <span className="text-xs text-[#B0B0B0] font-normal">ranked by {rankBy}{!showViews && " (Instagram exposes no view count)"}</span>
+            </div>
+            {platLoading ? (
+              <p className="py-8 text-center text-sm text-[#B0B0B0]">Loading...</p>
+            ) : board.length === 0 ? (
+              <p className="py-8 text-center text-sm text-[#B0B0B0]">No {label} engagement data yet for this period.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-[#F0EAD8]">
+                      <th className="text-left py-3 px-5 text-[#7A7A7A] text-xs font-medium w-16">Rank</th>
+                      <th className="text-left py-3 px-4 text-[#7A7A7A] text-xs font-medium">Employee</th>
+                      {showViews && <th className="text-right py-3 px-4 text-[#7A7A7A] text-xs font-medium">Views</th>}
+                      <th className="text-right py-3 px-4 text-[#7A7A7A] text-xs font-medium">Likes</th>
+                      <th className="text-right py-3 px-4 text-[#7A7A7A] text-xs font-medium">Comments</th>
+                      <th className="text-right py-3 px-4 text-[#7A7A7A] text-xs font-medium">Links</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {board.map((entry: any) => (
+                      <tr key={entry.employee.id} className="border-b border-[#F0EAD8] last:border-0 hover:bg-[rgba(255,248,225,0.5)] transition-colors">
+                        <td className="py-3 px-5 text-center text-lg font-num">
+                          {entry.rank <= 3 ? (
+                            <span className="inline-flex items-center justify-center h-8 w-8 rounded-full bg-[#FFF3C4] text-[#1A1A1A] font-bold text-sm">{MEDALS[entry.rank - 1]}</span>
+                          ) : `#${entry.rank}`}
+                        </td>
+                        <td className="py-3 px-4">
+                          <div className="flex items-center gap-3">
+                            <UserAvatar name={entry.employee.name} imageUrl={entry.employee.profileImageUrl} size={7} textClassName="text-xs" />
+                            <div>
+                              <Link href={`/reports/${entry.employee.id}`} className="font-medium text-[#1A1A1A] hover:text-[#F5D547]">{entry.employee.name}</Link>
+                              <p className="text-xs text-[#B0B0B0]">{entry.employee.email}</p>
+                            </div>
+                          </div>
+                        </td>
+                        {showViews && (
+                          <td className="py-3 px-4 text-right text-[#1A1A1A]">
+                            <span className="inline-flex items-center justify-end gap-1" title={`${(entry.views ?? 0).toLocaleString()} views`}>
+                              <Eye className="h-3.5 w-3.5 text-[#B0B0B0]" />{fmtCompact(entry.views)}
+                            </span>
+                          </td>
+                        )}
+                        <td className="py-3 px-4 text-right text-[#1A1A1A]">
+                          <span className="inline-flex items-center justify-end gap-1" title={`${(entry.likes ?? 0).toLocaleString()} likes`}>
+                            <Heart className="h-3.5 w-3.5 text-[#B0B0B0]" />{fmtCompact(entry.likes)}
+                          </span>
+                        </td>
+                        <td className="py-3 px-4 text-right text-[#1A1A1A]">
+                          <span className="inline-flex items-center justify-end gap-1" title={`${(entry.comments ?? 0).toLocaleString()} comments`}>
+                            <MessageCircle className="h-3.5 w-3.5 text-[#B0B0B0]" />{fmtCompact(entry.comments)}
+                          </span>
+                        </td>
+                        <td className="py-3 px-4 text-right text-[#7A7A7A]" title={`Metrics collected on ${(entry.engagedLinkCount ?? 0).toLocaleString()} ${label} links`}>{(entry.engagedLinkCount ?? 0).toLocaleString()}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }

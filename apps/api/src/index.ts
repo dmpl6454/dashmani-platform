@@ -17,12 +17,18 @@ app.listen(PORT, () => {
   runFollowerSync();
   setInterval(runFollowerSync, 60 * 60 * 1000);
 
-  // Run social insights refresh once on startup, then every 6 hours
+  // Run social insights refresh once on startup, then on INSIGHTS_INTERVAL_MS (default
+  // 6h, unchanged). Prod raises cadence via .env (e.g. 2h) to shrink the IG/FB per-link
+  // refresh latency — the metric sweep is cursor-based, so more runs cover more of the
+  // ~35k IG / ~11k FB tail per day. Bounded ≥2h in practice to stay under the shared
+  // ~200-call/hr Meta budget (follower-sync + ig-caption-backfill also draw from it) and
+  // to keep the Facebook public-reel scraper polite. See the 2026-07-03 freshness plan.
+  const INSIGHTS_INTERVAL_MS = Number(process.env.INSIGHTS_INTERVAL_MS) || 6 * 60 * 60 * 1000;
   const runInsights = () => {
     runSocialInsightsRefresh().catch((err) => console.error("[social-insights] error:", err));
   };
   runInsights();
-  setInterval(runInsights, 6 * 60 * 60 * 1000);
+  setInterval(runInsights, INSIGHTS_INTERVAL_MS);
 
   // Run entity extraction once on startup, then HOURLY (independent of insights).
   // Hourly (was 6h) gives ~12,000 captions/day of tagging throughput — enough to keep

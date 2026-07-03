@@ -378,6 +378,24 @@ export default function ReportsPage() {
     return String(n);
   }
 
+  // Human "updated N ago" from the newest fetchedAt across a panel's rows. Returns null
+  // when there are no rows (panel then shows only the cadence-agnostic note).
+  function relativeUpdated(rows: Array<{ fetchedAt?: string | Date | null }>): string | null {
+    let newest = 0;
+    for (const r of rows) {
+      if (!r?.fetchedAt) continue;
+      const t = new Date(r.fetchedAt).getTime();
+      if (!Number.isNaN(t) && t > newest) newest = t;
+    }
+    if (!newest) return null;
+    const mins = Math.max(0, Math.round((Date.now() - newest) / 60000));
+    if (mins < 60) return `Updated ${mins}m ago`;
+    const hrs = Math.round(mins / 60);
+    if (hrs < 48) return `Updated ${hrs}h ago`;
+    const days = Math.round(hrs / 24);
+    return `Updated ${days}d ago`;
+  }
+
   const statCards = [
     firstCard,
     { title: "Total Reports", value: viewTotalReports, icon: FileText, iconColor: "text-purple-600", bgColor: "bg-purple-50 shadow-[0_2px_8px_rgba(147,51,234,0.12)]", sub: windowLabel },
@@ -553,7 +571,7 @@ export default function ReportsPage() {
             showViews: true,
             data: (topYouTubeData as any)?.data ?? [],
             loading: topYouTubeLoading,
-            note: "YouTube · updates every 6h",
+            note: "YouTube · views",
           },
           {
             key: "instagram" as const,
@@ -565,7 +583,7 @@ export default function ReportsPage() {
             showViews: false,
             data: (topInstagramData as any)?.data ?? [],
             loading: topInstagramLoading,
-            note: "Instagram · likes + comments · updates every 6h",
+            note: "Instagram · likes + comments",
           },
           {
             key: "facebook" as const,
@@ -577,7 +595,7 @@ export default function ReportsPage() {
             showViews: true,
             data: (topFacebookData as any)?.data ?? [],
             loading: topFacebookLoading,
-            note: "Facebook · likes + comments · updates every 6h",
+            note: "Facebook · likes + comments",
           },
         ];
 
@@ -621,7 +639,13 @@ export default function ReportsPage() {
                         </button>
                       </div>
                     )}
-                    <span className="ml-auto text-[10px] text-[#B0B0B0] shrink-0">{p.note}</span>
+                    <span className="ml-auto text-[10px] text-[#B0B0B0] shrink-0">
+                      {p.note}
+                      {(() => {
+                        const rel = relativeUpdated(p.data);
+                        return rel ? ` · ${rel}` : "";
+                      })()}
+                    </span>
                   </div>
                   {p.loading ? (
                     <div className="px-6 py-4 text-xs text-[#B0B0B0]">Loading…</div>

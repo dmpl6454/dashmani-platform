@@ -9,6 +9,13 @@ const POLL_WINDOW_DAYS = 60;
 // Per-provider metric-sweep wall-clock budget (default 25 min). A provider yields to
 // the next once this elapses AFTER its early harvest has fired — see slugDeadline use.
 const SWEEP_BUDGET_MS = Number(process.env.INSIGHTS_SWEEP_BUDGET_MS) || 25 * 60 * 1000;
+// The metric-sweep budget bounds the PER-LINK POLLING phase, measured from the moment
+// the early harvest fires (i.e. after the one-time feed-map build). WHY separate from
+// SWEEP_BUDGET_MS: for owned-feed providers (IG/FB) the map build can itself consume
+// tens of minutes; if the budget clock includes it, the provider yields having polled
+// almost nothing (the 2026-07-03 IG "~25-day refresh cycle" bug). Defaults to
+// SWEEP_BUDGET_MS so behavior is unchanged unless explicitly tuned in prod .env.
+const METRIC_BUDGET_MS = Number(process.env.INSIGHTS_METRIC_BUDGET_MS) || SWEEP_BUDGET_MS;
 
 function chunk<T>(arr: T[], size: number): T[][] {
   const out: T[][] = [];
@@ -207,8 +214,15 @@ export async function runSocialInsightsRefresh(opts?: { harvestOnly?: boolean })
       // sweep) could consume the whole run and the loop would never ADVANCE to the
       // next provider (Facebook), starving it (the 2026-06-26 "FB 0 ok" outage). Each
       // provider self-bounds: once its EARLY harvest has fired (captions safe), it
-      // yields after SWEEP_BUDGET_MS so every provider gets a turn within the 6h run.
-      const slugDeadline = Date.now() + SWEEP_BUDGET_MS;
+      // yields after METRIC_BUDGET_MS so every provider gets a turn within the 6h run.
+      // Deadline for THIS provider's metric sweep. It is (re)based to
+      // now + METRIC_BUDGET_MS the moment the early harvest fires — so the budget bounds
+      // the cheap per-link polling phase, NOT the one-time map build that precedes it.
+      // Until then it sits far in the future so the map-build batch can't trip it. The
+      // HARD backstop below (2×) still fires on Date.now() to protect the never-harvests
+      // case (e.g. IG discovery returns 0 accounts → empty map → harvest never fires).
+      let slugDeadline = Number.MAX_SAFE_INTEGER;
+      const runStartedForSlug = Date.now();
 
       if (harvestOnly) {
         console.log(
@@ -322,7 +336,13 @@ export async function runSocialInsightsRefresh(opts?: { harvestOnly?: boolean })
               // result without re-throwing, leaving lastBuiltMap empty). Leaving the flag
               // false lets a later batch — whose build may succeed — or the post-loop
               // fallback retry the harvest, instead of locking in the empty map.
-              if (harvested.length > 0) harvestedThisRun = true;
+              if (harvested.length > 0) {
+                harvestedThisRun = true;
+                // Rebase the metric-sweep budget to start NOW — the map is built + cached,
+                // so the remaining batches are cheap map lookups. This is the fix for the
+                // IG "map build eats the whole budget → ~1 batch polled" starvation.
+                slugDeadline = Date.now() + METRIC_BUDGET_MS;
+              }
             } catch (harvestErr) {
               // Log but don't set harvestedThisRun — the post-loop fallback will retry
               console.error(`[social-insights/${slug}] early harvestContent failed (metrics unaffected):`, harvestErr);
@@ -340,19 +360,21 @@ export async function runSocialInsightsRefresh(opts?: { harvestOnly?: boolean })
           // safe via the early harvest, only the per-link metric tail is cut short).
           if (harvestedThisRun && Date.now() > slugDeadline) {
             console.log(
-              `[social-insights/${slug}] metric-sweep budget (${SWEEP_BUDGET_MS}ms) spent after harvest — yielding to next provider`
+              `[social-insights/${slug}] metric-sweep budget (${METRIC_BUDGET_MS}ms) spent after harvest — yielding to next provider`
             );
             sweepBrokeEarly = true;
             break;
           }
           // HARD backstop: if the early harvest NEVER fired (e.g. IG discovery returned
-          // 0 accounts → empty map → harvestedThisRun stays false) the soft break above
-          // can't trigger and the loop would grind every batch, starving later providers
-          // (the exact IG-0-accounts → FB-starved failure mode). Yield at 2× budget no
-          // matter what — a non-harvesting provider has nothing to flush anyway.
-          if (Date.now() > slugDeadline + SWEEP_BUDGET_MS) {
+          // 0 accounts → empty map → harvestedThisRun stays false), slugDeadline is still
+          // MAX_SAFE_INTEGER, so the soft break above can't trigger and the loop would
+          // grind every batch, starving later providers (the exact IG-0-accounts →
+          // FB-starved failure mode). Bound the whole provider (map-build + polling) at
+          // 2× METRIC_BUDGET_MS from run start — a non-harvesting provider has nothing to
+          // flush anyway, so yielding costs nothing.
+          if (Date.now() > runStartedForSlug + 2 * METRIC_BUDGET_MS) {
             console.warn(
-              `[social-insights/${slug}] metric-sweep HARD budget (${2 * SWEEP_BUDGET_MS}ms) spent (harvest fired=${harvestedThisRun}) — yielding to next provider`
+              `[social-insights/${slug}] metric-sweep HARD budget (${2 * METRIC_BUDGET_MS}ms) spent (harvest fired=${harvestedThisRun}) — yielding to next provider`
             );
             sweepBrokeEarly = true;
             break;

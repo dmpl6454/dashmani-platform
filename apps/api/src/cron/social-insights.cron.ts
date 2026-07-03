@@ -215,12 +215,12 @@ export async function runSocialInsightsRefresh(opts?: { harvestOnly?: boolean })
       // next provider (Facebook), starving it (the 2026-06-26 "FB 0 ok" outage). Each
       // provider self-bounds: once its EARLY harvest has fired (captions safe), it
       // yields after METRIC_BUDGET_MS so every provider gets a turn within the 6h run.
-      // Deadline for THIS provider's metric sweep. It is (re)based to
-      // now + METRIC_BUDGET_MS the moment the early harvest fires — so the budget bounds
-      // the cheap per-link polling phase, NOT the one-time map build that precedes it.
-      // Until then it sits far in the future so the map-build batch can't trip it. The
-      // HARD backstop below (2×) still fires on Date.now() to protect the never-harvests
-      // case (e.g. IG discovery returns 0 accounts → empty map → harvest never fires).
+      // The deadline is (re)based to now + METRIC_BUDGET_MS the moment the early harvest
+      // fires — so the budget bounds the cheap per-link polling phase, NOT the one-time
+      // map build that precedes it. Until then it sits far in the future so the map-build
+      // batch can't trip it. The HARD backstop below (2×) still fires on Date.now() to
+      // protect the never-harvests case (e.g. IG discovery returns 0 accounts → empty
+      // map → harvest never fires).
       let slugDeadline = Number.MAX_SAFE_INTEGER;
       const runStartedForSlug = Date.now();
 

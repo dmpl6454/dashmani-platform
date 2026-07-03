@@ -140,8 +140,10 @@ export function parseSnapchatProfileHtml(html: string): number | null {
       const n = parseSnapCount(m[1]);
       if (n && n > 0) return n;
     }
-    // Indian locale: "N अनुयायी" (followers in Hindi) or "N सदस्य"
-    const mHi = desc.match(/([\d,.]+[KkMmBb]?)\s*(?:अनुयायी|सदस्य)/);
+    // Indian locale: "N अनुयायी" (followers in Hindi), "N सदस्य", or
+    // "N सब्स्क्राइबर" (Hindi transliteration of "subscriber" — used on
+    // Snapchat's Hindi-locale profile pages, e.g. "147k सब्स्क्राइबर").
+    const mHi = desc.match(/([\d,.]+[KkMmBb]?)\s*(?:अनुयायी|सदस्य|सब्स्क्राइबर)/);
     if (mHi) {
       const n = parseSnapCount(mHi[1]);
       if (n && n > 0) return n;
@@ -157,6 +159,9 @@ export function parseSnapchatProfileHtml(html: string): number | null {
     // plain text: "1.2M Subscribers" or "1,234 subscribers"
     /([\d,.]+[KkMmBb]?)\s*[Ss]ubscribers?/,
     /([\d,.]+[KkMmBb]?)\s*[Ff]ollowers?/,
+    // Hindi: "147k सब्स्क्राइबर" (used on Hindi-locale profile pages)
+    /([\d,.]+[KkMmBb]?)\s*सब्स्क्राइबर/,
+    /([\d,.]+[KkMmBb]?)\s*(?:अनुयायी|सदस्य)/,
   ];
   for (const re of patterns) {
     const m = html.match(re);
@@ -171,12 +176,20 @@ export function parseSnapchatProfileHtml(html: string): number | null {
 
 // ── Network fetcher ───────────────────────────────────────────────────────────
 
+// UUID format: 8-4-4-4-12 hex chars (Snapchat profile_id from /p/<uuid> URLs)
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /**
- * Scrape the follower/subscriber count for a public Snapchat handle.
+ * Scrape the follower/subscriber count for a public Snapchat profile.
+ *
+ * Accepts either a plain handle OR a profile UUID (from /p/<uuid> share URLs).
  *
  * Tries in order:
- *  1. https://www.snapchat.com/add/<handle>          (main profile page)
- *  2. https://story.snapchat.com/@<handle>            (story/public profile)
+ *  — UUID input:
+ *    1. https://www.snapchat.com/p/<uuid>             (direct profile page)
+ *  — Handle input:
+ *    1. https://www.snapchat.com/add/<handle>          (main profile page)
+ *    2. https://story.snapchat.com/@<handle>            (story/public profile)
  *
  * Returns { followers: null, walled: true } if blocked, { followers: null }
  * on a parse miss (the account page loaded but had no count — likely a private
@@ -190,10 +203,16 @@ export async function scrapeSnapchatFollowers(
   const clean = handle.replace(/^@/, "").split("?")[0].trim();
   if (!clean) return MISS;
 
-  const urls = [
-    `https://www.snapchat.com/add/${encodeURIComponent(clean)}`,
-    `https://story.snapchat.com/@${encodeURIComponent(clean)}`,
-  ];
+  // If the input is a UUID (profile_id extracted from a /p/<uuid>/... share
+  // URL), go directly to the creator's public profile page. This avoids
+  // needing to know the human-readable handle for accounts whose stored
+  // profileUrl is in the /p/<uuid> format rather than /add/<handle>.
+  const urls = UUID_RE.test(clean)
+    ? [`https://www.snapchat.com/p/${clean}`]
+    : [
+        `https://www.snapchat.com/add/${encodeURIComponent(clean)}`,
+        `https://story.snapchat.com/@${encodeURIComponent(clean)}`,
+      ];
 
   for (const url of urls) {
     const controller = new AbortController();

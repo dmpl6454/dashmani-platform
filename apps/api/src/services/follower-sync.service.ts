@@ -381,16 +381,73 @@ export async function syncAllFollowerCounts() {
       // ⚠️ MUST be live-verified from Linode IP before trusting results —
       // the scraper is fail-open (returns null on any miss, never throws).
       // Kill switch: SC_SCRAPER_ENABLED=0
-      const scHandle = account.handle.replace(/^@/, "").split("?")[0].trim()
-        || account.profileUrl?.match(/snapchat\.com\/(?:add\/|@?)([^/?#]+)/)?.[1]
-        || "";
-      if (scHandle) {
-        const result = await scrapeSnapchatFollowers(scHandle);
-        if (result.followers && result.followers > 0) {
-          followers = result.followers;
+
+      // ── Handle/UUID extraction (in priority order) ───────────────────────
+      // 1. account.handle — the canonical source; admins set this via the edit form.
+      // 2. profileUrl /t/<code> — Snapchat share short-links; follow the 303
+      //    redirect once to extract the profile UUID from the resolved URL.
+      // 3. profileUrl /p/<uuid> — direct profile page URL; extract UUID.
+      // 4. profileUrl /add/<h> or /@<h> — classic handle-based fallback.
+      //    GUARD: reject single-segment reserved path words ("p", "add", "t",
+      //    "spotlight", "story") that appear when profileUrl is in the /p/ format.
+      const RESERVED_SC_SEGMENTS = new Set(["p", "add", "t", "spotlight", "story", "s"]);
+      const UUID_PATTERN = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+      let scHandle = account.handle.replace(/^@/, "").split("?")[0].trim();
+      let resolvedProfileUrl = account.profileUrl || "";
+
+      // Auto-resolve /t/<code> short links → extract profile UUID from the redirect
+      if (!scHandle && /snapchat\.com\/t\/[A-Za-z0-9]+/.test(resolvedProfileUrl)) {
+        try {
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), 8_000);
+          const res = await fetch(resolvedProfileUrl, {
+            redirect: "follow",
+            headers: { "User-Agent": "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)" },
+            signal: controller.signal,
+          });
+          clearTimeout(timer);
+          // The resolved URL contains the profile UUID (e.g. /p/<uuid>/...)
+          resolvedProfileUrl = res.url || resolvedProfileUrl;
+          console.log(`[follower-sync] snapchat/${account.displayName}: /t/ resolved → ${resolvedProfileUrl}`);
+        } catch {
+          // Fail-open: keep using the original URL for UUID extraction attempt
         }
-        await sleep(SC_SCRAPER_DELAY_MS);
       }
+
+      if (!scHandle) {
+        // Try to extract a profile UUID from the resolved/stored URL
+        const uuidMatch = resolvedProfileUrl.match(UUID_PATTERN)?.[0];
+        if (uuidMatch) {
+          scHandle = uuidMatch; // scraper detects UUID and fetches /p/<uuid> directly
+        } else {
+          // Classic /add/<handle> or /@<handle> URL
+          const urlMatch = resolvedProfileUrl.match(/snapchat\.com\/(?:add\/|@?)([^/?#]+)/)?.[1];
+          if (urlMatch && !RESERVED_SC_SEGMENTS.has(urlMatch.toLowerCase())) {
+            scHandle = urlMatch;
+          }
+        }
+      }
+      if (!scHandle) {
+        console.warn(
+          `[follower-sync] snapchat/${account.displayName}: no usable handle or profile UUID — ` +
+          `set the Handle field to the Snapchat username, or set profileUrl to ` +
+          `snapchat.com/p/<uuid> or snapchat.com/add/<handle>. ` +
+          `profileUrl=${account.profileUrl || "(none)"}`
+        );
+        progress.skipped++;
+        progress.processed++;
+        continue;
+      }
+      const scResult = await scrapeSnapchatFollowers(scHandle);
+      if (scResult.followers && scResult.followers > 0) {
+        followers = scResult.followers;
+      } else {
+        console.warn(
+          `[follower-sync] snapchat/${account.displayName} (handle="${scHandle}"): ` +
+          `scraper returned null${scResult.walled ? " (WALLED — Snapchat blocked the request)" : ""}`
+        );
+      }
+      await sleep(SC_SCRAPER_DELAY_MS);
       if (followers === null) {
         progress.skipped++;
         progress.processed++;
@@ -540,9 +597,13 @@ export async function syncSingleAccountFollowers(accountId: string) {
   } else if (slug === "facebook") {
     followers = await fetchFacebookFollowers(account.profileUrl || "", account.handle);
   } else if (slug === "snapchat") {
-    const scHandle = account.handle.replace(/^@/, "").split("?")[0].trim()
-      || account.profileUrl?.match(/snapchat\.com\/(?:add\/|@?)([^/?#]+)/)?.[1]
-      || "";
+    const UUID_PATTERN_SINGLE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+    let scHandle = account.handle.replace(/^@/, "").split("?")[0].trim();
+    if (!scHandle) {
+      scHandle = account.profileUrl?.match(UUID_PATTERN_SINGLE)?.[0]
+        || account.profileUrl?.match(/snapchat\.com\/(?:add\/|@?)([^/?#]+)/)?.[1]
+        || "";
+    }
     if (scHandle) {
       const result = await scrapeSnapchatFollowers(scHandle);
       followers = result.followers;

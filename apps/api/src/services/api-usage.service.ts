@@ -27,8 +27,13 @@ const LLM_PRICES: Record<string, { inPerM: number; cachedPerM: number; outPerM: 
   // OpenAI — cached input is HALF the uncached rate.
   "gpt-4o-mini": { inPerM: 0.15, cachedPerM: 0.075, outPerM: 0.6 },
   "gpt-4o": { inPerM: 2.5, cachedPerM: 1.25, outPerM: 10 },
-  // Google Gemini lite — implicit cache ~$0.025/M.
-  "gemini-2.5-flash-lite": { inPerM: 0.1, cachedPerM: 0.025, outPerM: 0.4 },
+  // Google Gemini flash-lite (Standard tier). Cached-input is $0.01/M — live-verified
+  // from ai.google.dev/gemini-api/docs/pricing (2026-07). The old 0.025 was the 2.5
+  // *Flash* rate, not Flash-Lite. NOTE (2026-07): a live probe proved the extraction
+  // cron gets ZERO implicit-cache hits (Gemini returns no cachedContentTokenCount for
+  // our mutating-prefix prompt), so in practice every input token is billed at the
+  // full $0.10/M — cachedPerM only applies if a future call actually reports cache hits.
+  "gemini-2.5-flash-lite": { inPerM: 0.1, cachedPerM: 0.01, outPerM: 0.4 },
   // Anthropic — we don't set cache_control, so no auto-cache (cached == full rate).
   "claude-haiku-4-5": { inPerM: 1.0, cachedPerM: 1.0, outPerM: 5.0 },
   "claude-haiku-4-5-20251001": { inPerM: 1.0, cachedPerM: 1.0, outPerM: 5.0 },
@@ -59,6 +64,42 @@ export function llmCostUsd(model: string, inputTokens: number, outputTokens: num
   const cached = Math.min(Math.max(0, cachedTokens), inputTokens);
   const uncached = inputTokens - cached;
   return (uncached / 1_000_000) * p.inPerM + (cached / 1_000_000) * p.cachedPerM + (outputTokens / 1_000_000) * p.outPerM;
+}
+
+// ── Display-layer truth recompute (2026-07) ──────────────────────────────────
+// Historical api_usage rows stored a cost_usd computed at write time — but the
+// Gemini extraction rows were booked at a WRONG effective rate (~$0.029/M instead
+// of Google's real $0.10/M — a live probe proved the cron gets ZERO cache hits, so
+// the stored cost is a ~3.5× under-count). Per the "forward-only + recompute
+// display" decision, we DON'T rewrite the stored rows (they stay as an audit trail
+// of what was booked); instead the Cost Sheet recomputes each row's cost from its
+// raw token counts at the CURRENT, correct price table, at read time.
+//
+// Recompute rules (a row is only recomputed when we can price it token-accurately):
+//  - '-reconstructed' estimate rows → keep stored cost (a labeled rough ceiling, not
+//    token-accurate; recomputing an estimate would falsely present it as precise).
+//  - known LLM model WITH token counts → recompute from tokens (the truth).
+//  - unknown model, or no token counts (non-LLM meta/youtube, $0 within quota) →
+//    keep stored cost (recompute can't price it → would zero-out a real figure).
+export interface UsageRowForCost {
+  provider: string;
+  model: string;
+  operation: string;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  costUsd: number;
+}
+
+export function effectiveRowCostUsd(row: UsageRowForCost): number {
+  // Estimates are intentionally left as their labeled rough ceiling.
+  if (row.operation.endsWith("-reconstructed")) return row.costUsd;
+  // Only LLM token-priced rows are recomputable. No priceable model → keep stored.
+  if (!(row.model in LLM_PRICES)) return row.costUsd;
+  // No token counts recorded → can't recompute → keep stored.
+  if (row.inputTokens == null && row.outputTokens == null) return row.costUsd;
+  // Recompute from tokens. cachedTokens=0: we don't persist cached counts and the
+  // cron gets no cache hits, so all input is billed uncached (the accurate figure).
+  return llmCostUsd(row.model, row.inputTokens ?? 0, row.outputTokens ?? 0, 0);
 }
 
 export interface RecordUsageInput {
@@ -174,6 +215,7 @@ export async function getCostSheet(windowDays = 30): Promise<CostSheet> {
     where: { createdAt: { gte: since } },
     select: {
       provider: true,
+      model: true, // needed by effectiveRowCostUsd to price the row from tokens
       operation: true,
       calls: true,
       units: true,
@@ -201,27 +243,31 @@ export async function getCostSheet(windowDays = 30): Promise<CostSheet> {
   let estimatedHistoricalUsd = 0; // reconstructed (rough ceiling)
 
   for (const r of rows) {
+    // TRUTH RECOMPUTE: use the token-accurate cost at the CURRENT price table, not
+    // the (possibly stale/buggy) cost_usd stored at write time. Estimates + non-LLM +
+    // unknown-model rows fall through to their stored value (see effectiveRowCostUsd).
+    const cost = effectiveRowCostUsd(r);
     const isReconstructed = r.operation.endsWith("-reconstructed");
-    if (isReconstructed) estimatedHistoricalUsd += r.costUsd;
-    else totalCostUsd += r.costUsd;
+    if (isReconstructed) estimatedHistoricalUsd += cost;
+    else totalCostUsd += cost;
 
     const pv = byProviderMap.get(r.provider) ?? { provider: r.provider, calls: 0, units: 0, inputTokens: 0, outputTokens: 0, costUsd: 0 };
     pv.calls += r.calls;
     pv.units += r.units ?? 0;
     pv.inputTokens += r.inputTokens ?? 0;
     pv.outputTokens += r.outputTokens ?? 0;
-    pv.costUsd += r.costUsd;
+    pv.costUsd += cost;
     byProviderMap.set(r.provider, pv);
 
     const opKey = `${r.provider}:${r.operation}`;
     const op = byOpMap.get(opKey) ?? { provider: r.provider, operation: r.operation, calls: 0, costUsd: 0 };
     op.calls += r.calls;
-    op.costUsd += r.costUsd;
+    op.costUsd += cost;
     byOpMap.set(opKey, op);
 
     const dateKey = r.createdAt.toISOString().slice(0, 10);
     const d = dailyMap.get(dateKey) ?? { date: dateKey, costUsd: 0, calls: 0 };
-    d.costUsd += r.costUsd;
+    d.costUsd += cost;
     d.calls += r.calls;
     dailyMap.set(dateKey, d);
   }
@@ -253,7 +299,9 @@ export async function getCostSheet(windowDays = 30): Promise<CostSheet> {
   const recentForwardRows = rows.filter(
     (r) => !r.operation.endsWith("-reconstructed") && r.createdAt >= THREE_DAYS_AGO,
   );
-  const recentForwardCost = recentForwardRows.reduce((s, r) => s + r.costUsd, 0);
+  // Use the recomputed (truth) cost here too, so the forward projection reflects the
+  // corrected rate — not the stale stored cost.
+  const recentForwardCost = recentForwardRows.reduce((s, r) => s + effectiveRowCostUsd(r), 0);
   const recentDaysWithData = new Set(recentForwardRows.map((r) => r.createdAt.toISOString().slice(0, 10))).size || 1;
   // If we have organic forward data, project from it (the true go-forward rate).
   // Otherwise fall back to the horizon-honest window rate (total / real elapsed days).

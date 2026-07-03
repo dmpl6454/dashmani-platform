@@ -431,7 +431,7 @@ export default function LinksAnalyticsPage() {
                     All time
                   </button>
                 </div>
-                <span className="ml-auto text-[10px] text-[#B0B0B0] shrink-0">YouTube only · updates every 6h</span>
+                <span className="ml-auto text-[10px] text-[#B0B0B0] shrink-0">YouTube only</span>
               </div>
               {topYouTubeLoading ? (
                 <div className="px-6 py-4 text-xs text-[#B0B0B0]">Loading…</div>

@@ -18,6 +18,7 @@
 
 import { runSocialInsightsRefresh } from "../cron/social-insights.cron";
 import { runEntityExtraction } from "../cron/entity-extraction.cron";
+import { invalidateCoverageCache } from "./link-search.service";
 
 export type Phase = "idle" | "harvesting" | "extracting";
 
@@ -87,6 +88,10 @@ export function triggerInsightsRun(
       state.phase = "idle";
       state.finishedAt = new Date(endMs).toISOString();
       state.durationMs = endMs - startMs;
+      // New captions/entities landed — force the next coverage fetch to rebuild
+      // so the Link Search banner reflects the just-completed run immediately
+      // instead of the (≤5 min) cached pre-run numbers.
+      invalidateCoverageCache();
     } catch (err) {
       const endMs = Date.now();
       state.lastError = err instanceof Error ? err.message : String(err);
@@ -94,6 +99,9 @@ export function triggerInsightsRun(
       state.phase = "idle";
       state.finishedAt = new Date(endMs).toISOString();
       state.durationMs = endMs - startMs;
+      // A partially-successful run may still have harvested captions before
+      // throwing — invalidate so the banner reflects whatever did land.
+      invalidateCoverageCache();
     }
   })().catch((unhandled) => {
     // Belt-and-suspenders: the async IIFE above already catches everything, but
@@ -108,6 +116,7 @@ export function triggerInsightsRun(
     state.phase = "idle";
     state.finishedAt = new Date(endMs).toISOString();
     state.durationMs = endMs - startMs;
+    invalidateCoverageCache();
   });
 
   return { started: true, running: true };

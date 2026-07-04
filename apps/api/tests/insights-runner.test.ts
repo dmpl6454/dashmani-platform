@@ -38,10 +38,17 @@ vi.mock("../src/cron/entity-extraction.cron", () => ({
   runEntityExtraction: vi.fn(() => extractPromise),
 }));
 
+// insights-runner imports ONLY invalidateCoverageCache from link-search.service,
+// so a mock exposing just that surface is sufficient and won't affect other tests.
+vi.mock("../src/services/link-search.service", () => ({
+  invalidateCoverageCache: vi.fn(),
+}));
+
 // Import AFTER mocks are declared so the module gets the mock implementations.
 import { getInsightsRunState, triggerInsightsRun } from "../src/services/insights-runner";
 import { runSocialInsightsRefresh } from "../src/cron/social-insights.cron";
 import { runEntityExtraction } from "../src/cron/entity-extraction.cron";
+import { invalidateCoverageCache } from "../src/services/link-search.service";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -234,5 +241,34 @@ describe("triggerInsightsRun — error handling", () => {
     const s = getInsightsRunState();
     expect(s.lastError).toBe("string error");
     expect(s.running).toBe(false);
+  });
+});
+
+describe("triggerInsightsRun — coverage-cache invalidation", () => {
+  it("invalidates the coverage cache after a run completes successfully", async () => {
+    triggerInsightsRun("manual");
+
+    // Not invalidated at start — only after new data has landed.
+    expect(vi.mocked(invalidateCoverageCache)).not.toHaveBeenCalled();
+
+    resolveHarvest();
+    await ticks(2);
+    resolveExtract();
+    await ticks(2);
+
+    expect(getInsightsRunState().phase).toBe("idle");
+    expect(vi.mocked(invalidateCoverageCache)).toHaveBeenCalled();
+  });
+
+  it("still invalidates the coverage cache when the harvest cron rejects (partial harvest may have landed captions)", async () => {
+    triggerInsightsRun("manual");
+
+    rejectHarvest(new Error("harvest network timeout"));
+    await ticks(4);
+
+    const s = getInsightsRunState();
+    expect(s.phase).toBe("idle");
+    expect(s.lastError).toBe("harvest network timeout");
+    expect(vi.mocked(invalidateCoverageCache)).toHaveBeenCalled();
   });
 });

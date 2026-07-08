@@ -180,7 +180,10 @@ export function TopNav({ onOpenSearch }: { onOpenSearch?: () => void }) {
           </button>
 
           {bellOpen && (
-            <div className="absolute right-0 top-11 z-50 w-80 v3-card shadow-pop overflow-hidden">
+            // Anchored to the viewport edge on phones (fixed + inset-x) instead of the small
+            // bell icon (absolute + right-0) — a 320px panel anchored to an icon that isn't at
+            // the screen's true right edge was overflowing off the left side of the screen.
+            <div className="fixed inset-x-4 top-[114px] sm:absolute sm:inset-x-auto sm:right-0 sm:top-11 z-50 w-auto sm:w-80 v3-card shadow-pop overflow-hidden">
               {selectedNotif ? (
                 /* ── Detail view ── */
                 <>
@@ -273,7 +276,9 @@ export function TopNav({ onOpenSearch }: { onOpenSearch?: () => void }) {
           </button>
 
           {userMenuOpen && (
-            <div className="absolute right-0 top-11 z-50 w-56 v3-card shadow-pop overflow-hidden">
+            // Same viewport-anchoring fix as the notifications panel above — fixed to the
+            // screen edge on phones instead of the small avatar button.
+            <div className="fixed right-4 top-[114px] sm:absolute sm:right-0 sm:top-11 z-50 w-56 v3-card shadow-pop overflow-hidden">
               <div className="px-4 py-3 border-b-2 border-ink/10 bg-muted/40">
                 <p className="text-sm font-bold text-ink">{user?.name}</p>
                 <p className="text-xs text-ink-4 truncate">{user?.email}</p>

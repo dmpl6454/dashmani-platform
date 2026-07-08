@@ -41,12 +41,12 @@ export default function ContentListPage() {
   return (
     <div className="space-y-5 pop-in">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="font-display text-3xl font-semibold text-ink">Content</h1>
           {!isLoading && <p className="text-sm text-ink-4 mt-0.5">{posts.length} post{posts.length !== 1 ? "s" : ""}</p>}
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Link href="/content/calendar">
             <button className="h-9 px-4 rounded-full border-2 border-ink/15 text-sm font-semibold text-ink-3 hover:bg-muted transition-colors">
               Calendar

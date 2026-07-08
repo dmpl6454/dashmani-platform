@@ -152,7 +152,7 @@ export default function JobsPage() {
   return (
     <div className="space-y-6 crx-animate-fade">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="font-serif text-4xl font-light text-[#1A1A1A]">Job Listings</h1>
         <div className="flex items-center gap-3">
           <button onClick={() => { if (showForm) resetForm(); else { setShowForm(true); setView("jobs"); } }} className="bg-[#1A1A1A] text-white py-2.5 px-6 rounded-full font-semibold hover:bg-[#2B2B2B] transition-all flex items-center gap-2">
@@ -163,7 +163,7 @@ export default function JobsPage() {
       </div>
 
       {/* View Toggle */}
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
         <button onClick={() => setView("applications")}
           className={`flex items-center gap-2 px-5 py-2.5 rounded-full text-sm font-medium transition-all ${view === "applications" ? "bg-[#1A1A1A] text-white" : "bg-white text-[#7A7A7A] border border-[#E8E0D0] hover:border-[#F5D547]"}`}>
           <Users size={16} />Applications

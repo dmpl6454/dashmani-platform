@@ -158,15 +158,15 @@ export default function ApprovalsPage() {
     <div className="space-y-6 crx-animate-fade">
       <h1 className="font-serif text-4xl font-light text-[#1A1A1A]">Approvals</h1>
 
-      {/* Tab Navigation */}
-      <div className="flex gap-2 border-b border-[#E8E0D0]">
+      {/* Tab Navigation — scrolls horizontally on phones like the Accounts tabs */}
+      <div className="flex gap-2 border-b border-[#E8E0D0] overflow-x-auto">
         {tabs.map((tab) => {
           const Icon = tab.icon;
           return (
             <button
               key={tab.key}
               onClick={() => setActiveTab(tab.key)}
-              className={`flex items-center gap-2 px-5 py-3 text-sm font-medium border-b-2 transition-colors ${
+              className={`flex items-center gap-2 px-3 sm:px-5 py-3 text-sm font-medium border-b-2 transition-colors whitespace-nowrap shrink-0 ${
                 activeTab === tab.key
                   ? "border-[#F5D547] text-[#1A1A1A]"
                   : "border-transparent text-[#7A7A7A] hover:text-[#1A1A1A]"

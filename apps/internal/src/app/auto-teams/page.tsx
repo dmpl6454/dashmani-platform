@@ -101,7 +101,7 @@ export default function AutoTeamsPage() {
                     )}
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium text-[#1A1A1A] truncate">{member.name}</p>
-                      <p className="text-xs text-[#7A7A7A]">{member.email}</p>
+                      <p className="text-xs text-[#7A7A7A] truncate">{member.email}</p>
                     </div>
                     {member.currentTeam && (
                       <span className="text-xs bg-[#FFF3C4] text-[#B8960C] px-2.5 py-1 rounded-full font-medium">{member.currentTeam}</span>

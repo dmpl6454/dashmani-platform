@@ -24,7 +24,7 @@ export default function ProjectsPage() {
   return (
     <div className="space-y-5 pop-in">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="font-display text-3xl font-semibold text-ink">Projects</h1>
           {!isLoading && (

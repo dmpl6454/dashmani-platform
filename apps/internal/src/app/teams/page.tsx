@@ -224,7 +224,7 @@ export default function TeamsPage() {
 
   return (
     <div className="space-y-6 crx-animate-fade">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="font-serif text-4xl font-light text-[#1A1A1A]">Team Structure</h1>
           <p className="text-[#7A7A7A] mt-1">Organization hierarchy and team management</p>

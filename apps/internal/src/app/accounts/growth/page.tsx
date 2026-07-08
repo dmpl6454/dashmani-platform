@@ -418,8 +418,8 @@ export default function AccountGrowthPage() {
                 </select>
               </div>
             </div>
-            {/* Column headers */}
-            <div className="px-6 py-2 grid grid-cols-[1fr_6rem_5rem_5rem_4rem] gap-3 text-[10px] font-medium text-[#B0B0B0] uppercase tracking-wide border-b border-[#F5F0E8]">
+            {/* Column headers — hidden on phones where rows wrap to two lines */}
+            <div className="hidden sm:grid px-6 py-2 grid-cols-[1fr_6rem_5rem_5rem_4rem] gap-3 text-[10px] font-medium text-[#B0B0B0] uppercase tracking-wide border-b border-[#F5F0E8]">
               <span>Account</span>
               <span>Platform</span>
               <span className="text-right">Followers</span>
@@ -438,8 +438,9 @@ export default function AccountGrowthPage() {
                 const color = up ? "text-[#3E9B4F]" : down ? "text-[#D14343]" : "text-[#7A7A7A]";
                 const sign = (a.delta ?? 0) > 0 ? "+" : "";
                 return (
-                  <li key={a.accountId} className="px-6 py-3 grid grid-cols-[1fr_6rem_5rem_5rem_4rem] gap-3 items-center">
-                    <div className="min-w-0 space-y-0.5">
+                  /* phones: account on line 1, platform + numbers on line 2; sm+: original grid */
+                  <li key={a.accountId} className="px-4 sm:px-6 py-3 flex flex-wrap items-center gap-x-3 gap-y-1.5 sm:grid sm:grid-cols-[1fr_6rem_5rem_5rem_4rem] sm:gap-3">
+                    <div className="min-w-0 space-y-0.5 basis-full sm:basis-auto">
                       <div className="flex items-center gap-1.5 min-w-0">
                         <Link href={`/accounts/${a.accountId}`} className="text-sm font-medium text-[#1A1A1A] hover:underline truncate">
                           {a.displayName}

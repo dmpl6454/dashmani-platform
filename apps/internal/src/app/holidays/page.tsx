@@ -74,7 +74,7 @@ export default function HolidaysPage() {
 
   return (
     <div className="space-y-6 crx-animate-fade">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="font-serif text-4xl font-light text-[#1A1A1A]">Holiday Calendar</h1>
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2">

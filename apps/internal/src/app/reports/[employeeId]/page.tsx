@@ -229,7 +229,7 @@ export default function EmployeeReportsPage({ params }: { params: { employeeId: 
                 </div>
 
                 {report.notes && (
-                  <p className="text-sm text-ink-3 italic border-l-2 border-ink/10 pl-3">{report.notes}</p>
+                  <p className="text-sm text-ink-3 italic border-l-2 border-ink/10 pl-3 break-words">{report.notes}</p>
                 )}
 
                 <div className="space-y-1">

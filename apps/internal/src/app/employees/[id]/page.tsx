@@ -215,21 +215,22 @@ export default function EmployeeDetailPage() {
         </div>
       )}
 
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <div className="relative">
+      {/* Header — stacks vertically on phones so the long name + action buttons
+          never fight for the same row; sm+ keeps the original side-by-side layout */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="flex items-center gap-3 sm:gap-4 min-w-0">
+          <div className="relative shrink-0">
             {employee.profileImageUrl ? (
-              <img src={employee.profileImageUrl.startsWith("http") ? employee.profileImageUrl : `${API_BASE}${employee.profileImageUrl}`} alt="" className="h-16 w-16 rounded-2xl object-cover border-2 border-[#E8E0D0]" />
+              <img src={employee.profileImageUrl.startsWith("http") ? employee.profileImageUrl : `${API_BASE}${employee.profileImageUrl}`} alt="" className="h-12 w-12 sm:h-16 sm:w-16 rounded-2xl object-cover border-2 border-[#E8E0D0]" />
             ) : (
-              <div className="h-16 w-16 rounded-2xl bg-[#FFF3C4] flex items-center justify-center border-2 border-[#E8E0D0]">
-                <User className="h-7 w-7 text-[#7A7A7A]" />
+              <div className="h-12 w-12 sm:h-16 sm:w-16 rounded-2xl bg-[#FFF3C4] flex items-center justify-center border-2 border-[#E8E0D0]">
+                <User className="h-5 w-5 sm:h-7 sm:w-7 text-[#7A7A7A]" />
               </div>
             )}
           </div>
-          <div>
-            <h1 className="font-serif text-3xl font-light text-[#1A1A1A]">{employee.name}</h1>
-            <p className="text-sm text-[#7A7A7A]">{employee.email} {profile?.designation ? `· ${profile.designation}` : ""}</p>
+          <div className="min-w-0">
+            <h1 className="font-serif text-xl sm:text-3xl font-light text-[#1A1A1A] truncate">{employee.name}</h1>
+            <p className="text-xs sm:text-sm text-[#7A7A7A] truncate">{employee.email} {profile?.designation ? `· ${profile.designation}` : ""}</p>
             {employee.roles?.length > 0 && (
               <div className="flex flex-wrap gap-1.5 mt-2">
                 {employee.roles.map((r: any) => {
@@ -252,7 +253,7 @@ export default function EmployeeDetailPage() {
             )}
           </div>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2 sm:shrink-0">
           <Link
             href={`/employees/${id}/performance`}
             className="flex items-center gap-2 bg-[#1A1A1A] text-white py-2.5 px-5 rounded-full text-sm font-semibold hover:bg-[#2B2B2B] transition-all"

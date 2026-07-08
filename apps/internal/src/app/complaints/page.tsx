@@ -43,22 +43,22 @@ export default function AdminComplaintsPage() {
 
   return (
     <div className="space-y-6 crx-animate-fade">
-      <div className="flex items-center justify-between">
-        <div>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
           <h1 className="font-serif text-3xl font-light text-[#1A1A1A]">Employee Complaints</h1>
           <p className="text-sm text-[#7A7A7A] mt-1">Review and respond to employee complaints</p>
         </div>
         {openCount > 0 && (
-          <div className="flex items-center gap-2 bg-yellow-50 border border-yellow-200 text-yellow-800 px-4 py-2 rounded-full text-sm font-medium">
-            <AlertCircle className="h-4 w-4" /> {openCount} Open
+          <div className="flex items-center gap-1.5 bg-yellow-50 border border-yellow-200 text-yellow-800 px-3 py-1.5 sm:px-4 sm:py-2 rounded-full text-xs sm:text-sm font-medium shrink-0 whitespace-nowrap mt-1">
+            <AlertCircle className="h-3.5 w-3.5 sm:h-4 sm:w-4" /> {openCount} Open
           </div>
         )}
       </div>
 
-      {/* Filters */}
-      <div className="flex gap-2">
+      {/* Filters — compact pills that wrap so every filter stays fully visible on phones */}
+      <div className="flex flex-wrap gap-2">
         {["", "OPEN", "IN_REVIEW", "RESOLVED", "CLOSED"].map((s) => (
-          <button key={s} onClick={() => setFilter(s)} className={`px-4 py-2 rounded-full text-sm font-medium transition-all ${filter === s ? "bg-[#1A1A1A] text-white" : "bg-white text-[#7A7A7A] border border-[#E8E0D0] hover:bg-[#FFF8E1]"}`}>
+          <button key={s} onClick={() => setFilter(s)} className={`px-3 py-1.5 sm:px-4 sm:py-2 rounded-full text-xs sm:text-sm font-medium transition-all whitespace-nowrap ${filter === s ? "bg-[#1A1A1A] text-white" : "bg-white text-[#7A7A7A] border border-[#E8E0D0] hover:bg-[#FFF8E1]"}`}>
             {s ? formatStatus(s) : "All"}
           </button>
         ))}
@@ -73,14 +73,14 @@ export default function AdminComplaintsPage() {
         <div className="space-y-4">
           {complaints.map((c: any) => (
             <div key={c.id} className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-[#E8E0D0] p-5">
-              <div className="flex items-start justify-between mb-3">
-                <div>
+              <div className="flex flex-wrap items-start justify-between gap-2 mb-3">
+                <div className="min-w-0">
                   <h3 className="font-semibold text-[#1A1A1A]">{c.subject}</h3>
                   <p className="text-xs text-[#7A7A7A] mt-0.5">
                     {c.employee?.name} ({c.employee?.email}) · {c.category} · {new Date(c.createdAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
                   </p>
                 </div>
-                <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${statusColors[c.status]}`}>{formatStatus(c.status)}</span>
+                <span className={`px-2.5 py-1 rounded-full text-xs font-medium shrink-0 whitespace-nowrap ${statusColors[c.status]}`}>{formatStatus(c.status)}</span>
               </div>
               <p className="text-sm text-[#555] whitespace-pre-wrap mb-3">{c.description}</p>
 
@@ -94,7 +94,7 @@ export default function AdminComplaintsPage() {
               {responding === c.id ? (
                 <div className="space-y-3 border-t border-[#F0EAD8] pt-3">
                   <textarea placeholder="Type your response..." value={response} onChange={(e) => setResponse(e.target.value)} rows={3} className={inputClass} />
-                  <div className="flex items-center gap-3">
+                  <div className="flex flex-wrap items-center gap-3">
                     <select value={responseStatus} onChange={(e) => setResponseStatus(e.target.value)} className={inputClass + " max-w-[150px]"}>
                       <option value="IN_REVIEW">In Review</option>
                       <option value="RESOLVED">Resolved</option>

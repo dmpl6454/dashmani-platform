@@ -139,7 +139,7 @@ function VacancyGenerator({ loading, setLoading, result, setResult, copyText, co
         <div className="space-y-4 border-t border-[#F0EAD8] pt-5">
           <div className="flex items-center justify-between">
             <h3 className="font-semibold text-[#1A1A1A]">Generated Job Description</h3>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <button onClick={() => copyText(`${result.description}\n\nRequirements:\n${result.requirements}\n\nResponsibilities:\n${result.responsibilities}\n\nBenefits:\n${result.benefits}`)}
                 className="flex items-center gap-1 text-xs text-[#7A7A7A] hover:text-[#1A1A1A] border border-[#E8E0D0] rounded-full px-3 py-1.5">
                 {copied ? <Check size={12} /> : <Copy size={12} />}{copied ? "Copied" : "Copy All"}

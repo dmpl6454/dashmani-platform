@@ -72,7 +72,7 @@ export default function ContentCalendarPage() {
 
   return (
     <div className="space-y-6 crx-animate-fade">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="font-serif text-4xl font-light text-[#1A1A1A]">Content Calendar</h1>
         <div className="flex items-center gap-2">
           <Link href="/content">
@@ -84,7 +84,7 @@ export default function ContentCalendarPage() {
         </div>
       </div>
 
-      <div className="flex items-center gap-4 crx-animate-slide crx-delay-1">
+      <div className="flex flex-wrap items-center gap-3 sm:gap-4 crx-animate-slide crx-delay-1">
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" onClick={prevMonth} className="border border-[#E8E0D0] rounded-full text-[#1A1A1A] hover:bg-[rgba(255,248,225,0.5)]">
             &larr;
@@ -97,7 +97,7 @@ export default function ContentCalendarPage() {
           </Button>
         </div>
         <select
-          className="h-10 rounded-lg border border-[#E8E0D0] bg-white px-3 py-2 text-sm focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547] outline-none"
+          className="h-10 max-w-full rounded-lg border border-[#E8E0D0] bg-white px-3 py-2 text-sm focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547] outline-none"
           value={projectId}
           onChange={(e) => setProjectId(e.target.value)}
         >

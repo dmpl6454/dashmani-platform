@@ -241,7 +241,7 @@ export default function DashboardPage() {
 
       {/* Stat strip — 11 cards (4 cols mobile → wrap). Each card links to the page
           that is the source of truth for its count. */}
-      <div className="grid grid-cols-4 lg:grid-cols-11 gap-3 fade-up d2">
+      <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-11 gap-3 fade-up d2">
         {statStrip.map(({ key, label, icon: Icon, href }, i) => {
           const value = stats[key];
           const isPending = key === "pendingApprovals" || key === "pendingEmployees";
@@ -288,7 +288,8 @@ export default function DashboardPage() {
       <div className="bento grid-cols-1 lg:grid-cols-3 fade-up d3">
 
         {/* Broadcast CTA — full width */}
-        <div className="lg:col-span-3 v3-card p-5 flex items-center justify-between gap-4 flex-wrap bg-ink v3-card-lift" style={{ borderColor: "#1A1A1A" }}>
+        {/* .v3-card (same utilities layer, declared later) beats bg-ink — inline style keeps the dark bg */}
+        <div className="lg:col-span-3 v3-card p-5 flex items-center justify-between gap-4 flex-wrap bg-ink v3-card-lift" style={{ borderColor: "#1A1A1A", background: "#1A1A1A" }}>
           <div className="flex items-center gap-4">
             <div className="h-11 w-11 rounded-xl bg-action flex items-center justify-center shrink-0">
               <Megaphone className="h-5 w-5 text-ink" />
@@ -302,7 +303,7 @@ export default function DashboardPage() {
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Link href="/announcements" className="px-4 py-2 rounded-full border border-white/20 text-white/70 text-xs font-medium hover:bg-white/10 transition-colors">
               View history
             </Link>
@@ -387,7 +388,7 @@ export default function DashboardPage() {
 
         {/* Pending employees alert */}
         {!isLoading && pendingEmployees > 0 && (
-          <div className="lg:col-span-3 v3-card p-4 flex items-center justify-between gap-4 bg-attention/5 v3-card-lift">
+          <div className="lg:col-span-3 v3-card p-4 flex flex-wrap items-center justify-between gap-4 bg-attention/5 v3-card-lift">
             <div className="flex items-center gap-3">
               <div className="h-10 w-10 rounded-xl bg-attention/10 flex items-center justify-center">
                 <UserPlus className="h-5 w-5 text-attention" />
@@ -420,7 +421,7 @@ export default function DashboardPage() {
                 <p className="text-xs text-ink-4">{rangeLabel}</p>
               </div>
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex flex-wrap items-center gap-2 sm:gap-3">
               {/* Quick range pills */}
               {LINK_QUICK_RANGES.map((r) => {
                 const rStart = toISO(new Date(today.getTime() - (r.days - 1) * 86400000));

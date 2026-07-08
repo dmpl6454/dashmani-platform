@@ -280,7 +280,7 @@ export default function SettingsPage() {
           <User size={16} className="text-ink-4" /> Profile
         </h2>
         <form onSubmit={handleUpdateProfile} className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-medium text-ink-3 mb-1">Name</label>
               <input type="text" value={profileForm.name} onChange={(e) => setProfileForm({ name: e.target.value })}
@@ -288,7 +288,7 @@ export default function SettingsPage() {
             </div>
             <div>
               <label className="block text-xs font-medium text-ink-3 mb-1">Email</label>
-              <p className="w-full border-2 border-ink/10 bg-surface/60 rounded-xl px-4 py-2.5 text-sm text-ink-3 select-all">
+              <p className="w-full border-2 border-ink/10 bg-surface/60 rounded-xl px-4 py-2.5 text-sm text-ink-3 select-all truncate" title={user?.email ?? undefined}>
                 {user?.email ?? "—"}
               </p>
             </div>

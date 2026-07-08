@@ -42,7 +42,7 @@ export default function InternshipsPage() {
 
   return (
     <div className="space-y-6 crx-animate-fade">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="font-serif text-4xl font-light text-[#1A1A1A]">Internship Applications</h1>
           <p className="text-sm text-[#7A7A7A] mt-1">Manage 6-month internship applications</p>

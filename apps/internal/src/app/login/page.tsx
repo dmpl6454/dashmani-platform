@@ -114,9 +114,9 @@ export default function LoginPage() {
       </header>
 
       {/* Hero + form */}
-      <section className="relative z-10 max-w-[1320px] mx-auto px-6 lg:px-10 pt-10 lg:pt-16 pb-20 grid lg:grid-cols-[1.05fr_0.95fr] gap-10 lg:gap-14 items-stretch">
+      <section className="relative z-10 max-w-[1320px] mx-auto px-6 lg:px-10 pt-10 lg:pt-16 pb-20 grid lg:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)] gap-10 lg:gap-14 items-stretch">
         {/* Left: hero + form */}
-        <div className="flex flex-col">
+        <div className="flex flex-col min-w-0">
           <div
             className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white border-2 border-ink self-start text-[11.5px] font-semibold text-ink-2 auth-fade-up d2"
             style={{ boxShadow: "2px 2px 0 #5D5FEF" }}
@@ -244,8 +244,9 @@ export default function LoginPage() {
           </div>
         </div>
 
-        {/* Right: Live Ops panel */}
-        <aside className="relative min-h-[680px] lg:min-h-[820px] lg:sticky lg:top-8 auth-slide-right d4">
+        {/* Right: Live Ops panel — min-w-0 lets the grid column shrink below the
+            ticker text's nowrap min-content so the panel never overflows on phones */}
+        <aside className="relative min-w-0 min-h-[680px] lg:min-h-[820px] lg:sticky lg:top-8 auth-slide-right d4">
           <OpsPanel />
         </aside>
       </section>
@@ -437,7 +438,8 @@ function OpsPanel() {
   }, []);
 
   const hhmm = clock?.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false }) ?? "--:--";
-  const ss = clock?.toLocaleTimeString("en-IN", { second: "2-digit" }) ?? "--";
+  // toLocaleTimeString({second:"2-digit"}) does NOT zero-pad in en-IN — pad manually
+  const ss = clock ? String(clock.getSeconds()).padStart(2, "0") : "--";
   const dayLabel = clock?.toLocaleDateString("en-IN", { day: "2-digit", month: "short" }) ?? "";
 
   const [idx, setIdx] = useState(0);
@@ -454,7 +456,7 @@ function OpsPanel() {
       <div className="absolute -bottom-40 -right-24 w-[440px] h-[440px] aurora aurora-2" />
       <div className="absolute inset-0 opacity-[0.25]" style={{ backgroundImage: "radial-gradient(rgba(255,255,255,.18) 1px,transparent 1px)", backgroundSize: "22px 22px" }} />
 
-      <div className="relative h-full p-7 flex flex-col gap-5">
+      <div className="relative h-full p-5 sm:p-7 flex flex-col gap-5">
         <div className="flex items-center justify-between auth-slide-right d2">
           <div className="flex items-center gap-2.5">
             <span className="live-dot" />
@@ -474,14 +476,16 @@ function OpsPanel() {
           </h2>
         </div>
 
-        <div className="grid grid-cols-3 gap-3">
+        {/* single column under 360px — three-across tiles can't hold the labels there */}
+        <div className="grid grid-cols-1 min-[360px]:grid-cols-3 gap-3">
           {[
             { k: "Employees", v: employees, sub: "active", accent: "text-indigo-soft" },
             { k: "Live projects", v: liveProj, sub: "in flight", accent: "text-sage-soft" },
             { k: "Approvals", v: approvals, sub: "waiting", accent: "text-action" },
           ].map((s, i) => (
-            <div key={s.k} className={`auth-fade-up d${i + 4} ops-tile rounded-2xl p-4 bg-white/[0.04] backdrop-blur-sm`} style={{ border: "1px solid rgba(255,255,255,.10)" }}>
-              <p className="text-[10.5px] uppercase tracking-[0.14em] text-white/55 font-semibold mb-3">{s.k}</p>
+            <div key={s.k} className={`auth-fade-up d${i + 4} ops-tile rounded-2xl p-3 sm:p-4 bg-white/[0.04] backdrop-blur-sm`} style={{ border: "1px solid rgba(255,255,255,.10)" }}>
+              {/* tighter size/tracking below sm — at 0.14em the labels outgrow the narrow tiles */}
+              <p className="text-[9px] sm:text-[10.5px] uppercase tracking-[0.04em] sm:tracking-[0.14em] text-white/55 font-semibold mb-3">{s.k}</p>
               <p className={`font-num text-[32px] leading-none font-semibold tabular-nums ${s.accent}`}>{s.v}</p>
               <p className="text-[11px] text-white/50 mt-2 font-medium">{s.sub}</p>
             </div>
@@ -491,7 +495,7 @@ function OpsPanel() {
         <div className="grid grid-cols-5 gap-3">
           <div className="col-span-3 auth-fade-up d7 ops-tile rounded-2xl p-4 bg-white/[0.04]" style={{ border: "1px solid rgba(255,255,255,.10)" }}>
             <div className="flex items-center justify-between mb-2">
-              <p className="text-[10.5px] uppercase tracking-[0.14em] text-white/55 font-semibold">Throughput · 14d</p>
+              <p className="text-[9.5px] sm:text-[10.5px] uppercase tracking-[0.06em] sm:tracking-[0.14em] text-white/55 font-semibold">Throughput · 14d</p>
               <span className="text-[10.5px] font-mono text-action">+18.4%</span>
             </div>
             <svg viewBox="0 0 240 60" className="w-full h-[60px]">
@@ -509,7 +513,7 @@ function OpsPanel() {
             </svg>
           </div>
           <div className="col-span-2 auth-fade-up d8 ops-tile rounded-2xl p-4 bg-white/[0.04]" style={{ border: "1px solid rgba(255,255,255,.10)" }}>
-            <p className="text-[10.5px] uppercase tracking-[0.14em] text-white/55 font-semibold mb-3">Today</p>
+            <p className="text-[9.5px] sm:text-[10.5px] uppercase tracking-[0.06em] sm:tracking-[0.14em] text-white/55 font-semibold mb-3">Today</p>
             <div className="flex items-end gap-1.5 h-[44px]">
               {[14, 22, 18, 30, 26, 38, 33].map((h, i) => (
                 <div key={i} className="flex-1 rounded-t" style={{ height: `${h * 1.1}px`, background: i === 6 ? "#5D5FEF" : "rgba(255,255,255,.18)" }} />
@@ -522,7 +526,7 @@ function OpsPanel() {
         </div>
 
         <div className="auth-fade-up d9 ops-tile rounded-2xl p-4 bg-white/[0.04]" style={{ border: "1px solid rgba(255,255,255,.10)" }}>
-          <p className="text-[10.5px] uppercase tracking-[0.14em] text-white/55 font-semibold mb-2.5">Live activity</p>
+          <p className="text-[9.5px] sm:text-[10.5px] uppercase tracking-[0.06em] sm:tracking-[0.14em] text-white/55 font-semibold mb-2.5">Live activity</p>
           <div className="space-y-2 min-h-[60px]">
             {[0, 1].map((off) => {
               const a = tickerSeed[(idx + off) % tickerSeed.length];
@@ -532,7 +536,9 @@ function OpsPanel() {
                     {a.who.split(" ").map((x) => x[0]).join("")}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-[12.5px] text-white/90 leading-tight truncate">
+                    {/* line-clamp-2 instead of truncate: on phones the text wraps to a
+                        second line instead of cutting mid-word with an ellipsis */}
+                    <p className="text-[12.5px] text-white/90 leading-tight line-clamp-2">
                       <span className="font-semibold">{a.who.split(" ")[0]}</span>
                       <span className="text-white/55"> {a.text}</span>
                     </p>
@@ -683,7 +689,10 @@ function AuthStyles() {
       .auth-field-wrap { position: relative; }
       .auth-field {
         width: 100%; background: #FDFCF0; border: 1.5px solid #D4CBBA; border-radius: 14px;
-        padding: 22px 14px 8px 42px; font: 500 14px/1.2 'Plus Jakarta Sans','Instagram Sans',sans-serif; color: #1A1A1A;
+        /* right padding leaves room for the eye/success icons (right:12px + 16px) so long
+           emails don't collide with them or clip at the border, esp. at the mobile 16px font floor */
+        padding: 22px 42px 8px 42px; font: 500 14px/1.2 'Plus Jakarta Sans','Instagram Sans',sans-serif; color: #1A1A1A;
+        text-overflow: ellipsis;
         transition: border-color .2s, box-shadow .2s, background-color .2s; outline: none;
       }
       .auth-field:hover:not(:focus) { border-color: #9C947C; }

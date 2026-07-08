@@ -109,18 +109,20 @@ export default function EmployeePerformancePage() {
         </Link>
       </div>
 
-      <div className="flex items-start justify-between">
-        <div className="flex items-center gap-4">
+      {/* Stacks vertically on phones — the name + action button used to fight for
+          the same row, wrapping the name to 2 lines and clipping the button. */}
+      <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
+        <div className="flex items-center gap-3 sm:gap-4 min-w-0">
           <div
-            className="h-16 w-16 rounded-2xl flex items-center justify-center text-white text-2xl font-semibold"
+            className="h-12 w-12 sm:h-16 sm:w-16 rounded-2xl flex items-center justify-center text-white text-lg sm:text-2xl font-semibold shrink-0"
             style={{ background: "linear-gradient(135deg, #5B4BF5, #3023D0)" }}
           >
             {employee.name?.[0]?.toUpperCase()}
           </div>
-          <div>
-            <h1 className="font-serif text-4xl font-light text-[#1A1A1A]">{employee.name}</h1>
-            <div className="flex items-center gap-3 mt-1">
-              <span className="text-[#7A7A7A] text-sm">{employee.email}</span>
+          <div className="min-w-0">
+            <h1 className="font-serif text-xl sm:text-4xl font-light text-[#1A1A1A] truncate">{employee.name}</h1>
+            <div className="flex flex-wrap items-center gap-2 sm:gap-3 mt-1">
+              <span className="text-[#7A7A7A] text-xs sm:text-sm truncate">{employee.email}</span>
               {employee.designation && (
                 <span className="bg-[#FFF3C4] text-[#1A1A1A] px-2.5 py-0.5 rounded-full text-xs font-medium">{employee.designation}</span>
               )}
@@ -142,7 +144,7 @@ export default function EmployeePerformancePage() {
         </div>
         <Link
           href={`/reports/${id}`}
-          className="inline-flex items-center gap-2 bg-[#1A1A1A] text-white rounded-full px-5 py-2.5 text-sm font-medium hover:bg-[#2B2B2B] transition-all"
+          className="inline-flex items-center gap-2 bg-[#1A1A1A] text-white rounded-full px-5 py-2.5 text-sm font-medium hover:bg-[#2B2B2B] transition-all shrink-0 w-fit"
         >
           <FileText className="h-4 w-4" /> View All Reports
         </Link>
@@ -165,18 +167,18 @@ export default function EmployeePerformancePage() {
         })}
       </div>
 
-      {/* Engagement Breakdown */}
-      <div className="grid grid-cols-4 gap-4">
+      {/* Engagement Breakdown — 2 columns on phones so "Comments" doesn't clip to "Comme" */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
         {engagementCards.map((card) => {
           const Icon = card.icon;
           return (
-            <div key={card.label} className="bg-white rounded-2xl p-4 shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0] flex items-center gap-3">
-              <div className="h-10 w-10 rounded-xl bg-[#FFF8E1] flex items-center justify-center">
-                <Icon className={`h-5 w-5 ${card.color}`} />
+            <div key={card.label} className="bg-white rounded-2xl p-3 sm:p-4 shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0] flex items-center gap-2 sm:gap-3 min-w-0">
+              <div className="h-9 w-9 sm:h-10 sm:w-10 rounded-xl bg-[#FFF8E1] flex items-center justify-center shrink-0">
+                <Icon className={`h-4 w-4 sm:h-5 sm:w-5 ${card.color}`} />
               </div>
-              <div>
-                <p className="text-xl font-light font-num text-[#1A1A1A]">{card.value.toLocaleString()}</p>
-                <p className="text-xs text-[#7A7A7A]">{card.label}</p>
+              <div className="min-w-0">
+                <p className="text-lg sm:text-xl font-light font-num text-[#1A1A1A]">{card.value.toLocaleString()}</p>
+                <p className="text-xs text-[#7A7A7A] truncate">{card.label}</p>
               </div>
             </div>
           );
@@ -247,11 +249,13 @@ export default function EmployeePerformancePage() {
           </h3>
           <span className="text-xs text-[#B0B0B0]">Last 12 weeks</span>
         </div>
-        <div className="flex items-end gap-2 h-32">
+        {/* min-w-0 on each column: flex items default to min-width:auto, so 12 columns
+            of content-sized labels overflowed the container instead of shrinking. */}
+        <div className="flex items-end gap-1.5 sm:gap-2 h-32">
           {weeklyTrend.map((w: any, i: number) => {
             const h = maxWeeklyLinks > 0 ? (w.links / maxWeeklyLinks) * 100 : 0;
             return (
-              <div key={i} className="flex-1 flex flex-col items-center gap-1 group">
+              <div key={i} className="flex-1 min-w-0 flex flex-col items-center gap-1 group">
                 <div className="relative w-full flex justify-center">
                   <div className="absolute -top-6 hidden group-hover:block">
                     <span className="bg-[#1A1A1A] text-white text-[10px] px-2 py-0.5 rounded-lg whitespace-nowrap">

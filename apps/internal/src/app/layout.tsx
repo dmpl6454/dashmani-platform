@@ -130,7 +130,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 <TopNav onOpenSearch={() => setCmdOpen(true)} />
 
                 {/* Page content */}
-                <main className="flex-1 px-6 py-6 overflow-auto">
+                <main className="flex-1 px-4 sm:px-6 py-6 overflow-y-auto overflow-x-hidden">
                   {children}
                 </main>
               </div>

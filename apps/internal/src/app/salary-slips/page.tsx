@@ -76,7 +76,7 @@ export default function SalarySlipsPage() {
 
   return (
     <div className="space-y-6 crx-animate-fade">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="font-serif text-4xl font-light text-[#1A1A1A]">Salary Slips</h1>
         <button
           onClick={handleGenerateBulk}

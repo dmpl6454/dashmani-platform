@@ -166,20 +166,20 @@ const ReportCard = memo(function ReportCard({ report, isAdmin, deletingLinkId, o
       style={{ contentVisibility: "auto", containIntrinsicSize: "300px" } as any}
     >
       <div className="p-5">
-        <div className="flex items-start justify-between mb-4">
-          <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-start justify-between gap-2 mb-4">
+          <div className="flex items-center gap-3 min-w-0">
             <UserAvatar
               name={report.employee?.name}
               imageUrl={report.employee?.profileImageUrl}
               size={10}
               className="ring-2 ring-white shadow-sm"
             />
-            <div>
-              <p className="font-semibold text-[#1A1A1A]">{report.employee?.name ?? "Unknown"}</p>
-              <p className="text-xs text-[#7A7A7A]">{report.employee?.email}</p>
+            <div className="min-w-0">
+              <p className="font-semibold text-[#1A1A1A] truncate">{report.employee?.name ?? "Unknown"}</p>
+              <p className="text-xs text-[#7A7A7A] truncate">{report.employee?.email}</p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 shrink-0">
             <span className="rounded-full px-3 py-1 text-xs font-medium bg-[#FFF8E1] text-[#1A1A1A] border border-[#F0EAD8]">
               {new Date(report.date ?? report.createdAt).toLocaleDateString()}
             </span>
@@ -191,7 +191,9 @@ const ReportCard = memo(function ReportCard({ report, isAdmin, deletingLinkId, o
         </div>
 
         {report.notes && (
-          <p className="text-sm text-[#7A7A7A] mb-4 italic pl-[52px]">{report.notes}</p>
+          // break-words: notes are free text and occasionally contain an unbroken URL,
+          // which has no spaces for the browser to wrap on and overflows the card.
+          <p className="text-sm text-[#7A7A7A] mb-4 italic pl-[52px] break-words">{report.notes}</p>
         )}
 
         <div className="space-y-1 pl-[52px]">
@@ -415,12 +417,12 @@ export default function ReportsPage() {
     <>
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="font-serif text-4xl font-light text-[#1A1A1A]">Link Reports</h1>
           <p className="text-sm text-[#7A7A7A] mt-1">Employee daily link submission reports</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <ExportButton startDate={startDate} endDate={endDate} variant="light" />
           <Link
             href="/reports/links"
@@ -441,7 +443,7 @@ export default function ReportsPage() {
 
       {/* Filters — above the cards so you choose the window/employee first, then read the numbers */}
       <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0]">
-        <div className="px-6 py-4 border-b border-[#F0EAD8] flex items-center justify-between">
+        <div className="px-6 py-4 border-b border-[#F0EAD8] flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <div className="h-8 w-8 rounded-lg bg-[#FFF8E1] flex items-center justify-center">
               <Filter className="h-4 w-4 text-[#B0B0B0]" />
@@ -467,7 +469,7 @@ export default function ReportsPage() {
             <select
               value={employeeId}
               onChange={(e) => setEmployeeId(e.target.value)}
-              className="h-10 rounded-xl border border-[#E8E0D0] bg-[#FEFCF8] px-3 py-1 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547] w-52"
+              className="h-10 rounded-xl border border-[#E8E0D0] bg-[#FEFCF8] px-3 py-1 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547] w-full sm:w-52"
             >
               <option value="">All Employees</option>
               {employees.map((emp: any) => (
@@ -514,7 +516,10 @@ export default function ReportsPage() {
 
       {/* Platform Breakdown Cards */}
       {!summaryLoading && viewPlatformBreakdown.length > 0 && (
-        <div className="grid gap-4" style={{ gridTemplateColumns: `repeat(${viewPlatformBreakdown.length}, minmax(0, 1fr))` }}>
+        <div
+          className="grid gap-4 grid-cols-2 sm:grid-cols-3 lg:grid-cols-[repeat(var(--pb-cols),minmax(0,1fr))]"
+          style={{ ["--pb-cols" as any]: viewPlatformBreakdown.length }}
+        >
           {viewPlatformBreakdown
             .map(({ platform, count }) => {
               const style = platformCardStyle(platform);
@@ -658,8 +663,12 @@ export default function ReportsPage() {
                       insights run picks them up &mdash; check back shortly.
                     </div>
                   ) : (
-                    <>
-                      <div className={`px-6 py-2 grid ${cols} gap-3 text-[10px] font-medium text-[#B0B0B0] uppercase tracking-wide border-b border-[#F5F0E8]`}>
+                    /* Phones: rows wrap to two lines (link on top; employee + metrics below)
+                       so views/likes/comments stay visible without horizontal scrolling.
+                       sm+ keeps the original single-line grid table. */
+                    <div className="overflow-x-auto">
+                    <div className={showViewsCol ? "sm:min-w-[620px]" : "sm:min-w-[540px]"}>
+                      <div className={`hidden sm:grid px-6 py-2 ${cols} gap-3 text-[10px] font-medium text-[#B0B0B0] uppercase tracking-wide border-b border-[#F5F0E8]`}>
                         <span>#</span>
                         <span>Link</span>
                         <span>Employee</span>
@@ -669,18 +678,20 @@ export default function ReportsPage() {
                       </div>
                       <ul className="divide-y divide-[#F5F0E8]">
                         {p.data.map((link: any, i: number) => (
-                          <li key={`${link.linkId ?? link.url}-${i}`} className={`px-6 py-3 grid ${cols} gap-3 items-center`}>
+                          <li key={`${link.linkId ?? link.url}-${i}`} className={`px-4 sm:px-6 py-3 flex flex-wrap items-center gap-x-3 gap-y-1.5 sm:grid ${cols} sm:gap-3`}>
                             <span className="text-xs font-medium text-[#B0B0B0]">{i + 1}</span>
                             <a
                               href={link.url}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="text-xs text-[#1A1A1A] hover:underline truncate min-w-0"
+                              className="text-xs text-[#1A1A1A] hover:underline truncate min-w-0 flex-1 sm:flex-none"
                               title={link.url}
                             >
                               {link.url}
                             </a>
-                            <span className="text-xs text-[#7A7A7A] truncate">{link.employeeName}</span>
+                            {/* forces the wrap onto line 2 on phones; absent from the sm grid */}
+                            <span aria-hidden className="basis-full h-0 sm:hidden" />
+                            <span className="text-xs text-[#7A7A7A] truncate flex-1 min-w-0 sm:flex-none">{link.employeeName}</span>
                             {showViewsCol && (
                               <span className="inline-flex items-center justify-end gap-1 text-[11px] font-semibold text-rose-700">
                                 <Eye className="h-3 w-3 shrink-0" />
@@ -698,7 +709,8 @@ export default function ReportsPage() {
                           </li>
                         ))}
                       </ul>
-                    </>
+                    </div>
+                    </div>
                   )}
                 </div>
               );

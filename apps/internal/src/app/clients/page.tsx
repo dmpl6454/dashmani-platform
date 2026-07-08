@@ -56,7 +56,7 @@ export default function ClientsPage() {
 
   return (
     <div className="space-y-6 crx-animate-fade">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="font-serif text-4xl font-light text-[#1A1A1A]">Clients</h1>
         <Link href="/clients/new"><Button className="bg-[#1A1A1A] text-white rounded-full hover:bg-[#2B2B2B]"><Plus className="h-4 w-4 mr-2" /> New Client</Button></Link>
       </div>
@@ -69,8 +69,8 @@ export default function ClientsPage() {
       ) : (
         <div className="grid gap-3">
           {clients.map((c: any, i: number) => (
-            <div key={c.id} className={`bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0] p-4 flex items-center justify-between transition-all hover:shadow-[0_4px_24px_rgba(0,0,0,0.07)] crx-animate-slide crx-delay-${Math.min(i + 2, 6)}`}>
-              <Link href={`/clients/${c.id}`} className="flex items-center gap-3 flex-1 min-w-0">
+            <div key={c.id} className={`bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0] p-4 flex flex-wrap items-center justify-between gap-2 transition-all hover:shadow-[0_4px_24px_rgba(0,0,0,0.07)] crx-animate-slide crx-delay-${Math.min(i + 2, 6)}`}>
+              <Link href={`/clients/${c.id}`} className="flex items-center gap-3 flex-1 min-w-0 basis-full sm:basis-0">
                 <div className="h-10 w-10 rounded-xl bg-[#FFF3C4] flex items-center justify-center shrink-0">
                   <Building2 className="h-5 w-5 text-[#1A1A1A]" />
                 </div>
@@ -79,7 +79,7 @@ export default function ClientsPage() {
                   <p className="text-xs text-[#7A7A7A] truncate">{c.contactName} · {c.email}</p>
                 </div>
               </Link>
-              <div className="flex items-center gap-3 shrink-0 ml-3">
+              <div className="flex flex-wrap items-center gap-2 sm:gap-3 sm:shrink-0 sm:ml-3">
                 <span className="text-xs text-[#B0B0B0]">{pluralize(c._count?.projects || 0, "project")}</span>
                 <span className={`rounded-full px-3 py-1 text-xs font-medium ${statusBadge[c.status] || "bg-[rgba(0,0,0,0.06)] text-[#7A7A7A]"}`}>
                   {formatStatus(c.status)}

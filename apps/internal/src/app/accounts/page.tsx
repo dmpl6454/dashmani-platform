@@ -605,7 +605,7 @@ function AccountsPageInner() {
           <p className="text-xs font-bold text-ink-4 uppercase tracking-widest mb-0.5">Social Media</p>
           <h1 className="font-display text-2xl font-semibold text-ink">Accounts</h1>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <button
             onClick={handleSyncFollowers}
             disabled={syncing}
@@ -657,12 +657,12 @@ function AccountsPageInner() {
       )}
 
       {/* Tabs */}
-      <div className="flex items-center gap-1 border-b-2 border-ink/10">
+      <div className="flex items-center gap-1 border-b-2 border-ink/10 overflow-x-auto">
         {tabs.map(({ id, label, icon: Icon }) => (
           <button
             key={id}
             onClick={() => setTab(id)}
-            className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-semibold border-b-2 -mb-[2px] transition-colors ${
+            className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-semibold border-b-2 -mb-[2px] transition-colors whitespace-nowrap shrink-0 ${
               tab === id
                 ? "border-indigo text-indigo"
                 : "border-transparent text-ink-4 hover:text-ink"
@@ -730,7 +730,8 @@ function AccountsPageInner() {
                 <thead>
                   <tr className="border-b-2 border-ink/10">
                     <th className="text-left px-4 py-3 text-[11px] font-bold text-ink-4 uppercase tracking-wider">Account</th>
-                    <th className="text-left px-4 py-3 text-[11px] font-bold text-ink-4 uppercase tracking-wider">Platform</th>
+                    {/* On phones the platform pill moves under the account name so it's visible without scrolling */}
+                    <th className="text-left px-4 py-3 text-[11px] font-bold text-ink-4 uppercase tracking-wider hidden sm:table-cell">Platform</th>
                     <th className="text-left px-4 py-3 text-[11px] font-bold text-ink-4 uppercase tracking-wider">Client</th>
                     <th className="text-left px-4 py-3 text-[11px] font-bold text-ink-4 uppercase tracking-wider">Assigned To</th>
                     <th className="text-left px-4 py-3 text-[11px] font-bold text-ink-4 uppercase tracking-wider">Followers</th>
@@ -755,10 +756,15 @@ function AccountsPageInner() {
                             <div>
                               <p className="font-semibold text-ink text-sm">{acc.displayName}</p>
                               <p className="text-xs text-ink-4">{acc.handle}</p>
+                              {acc.platform?.name && (
+                                <span className="sm:hidden inline-block bg-terra-soft text-terra text-[10px] font-semibold px-2 py-0.5 rounded-full mt-1">
+                                  {acc.platform.name}
+                                </span>
+                              )}
                             </div>
                           </div>
                         </td>
-                        <td className="px-4 py-3">
+                        <td className="px-4 py-3 hidden sm:table-cell">
                           <span className="inline-block bg-terra-soft text-terra text-xs font-semibold px-2.5 py-1 rounded-full">
                             {acc.platform?.name}
                           </span>

@@ -70,7 +70,7 @@ export default function AdminLeaderboardPage() {
   return (
     <div className="space-y-6 crx-animate-fade">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="font-serif text-4xl font-light text-[#1A1A1A] flex items-center gap-3">
             <Trophy className="h-8 w-8 text-[#F5D547]" />

@@ -137,7 +137,7 @@ export default function ContentDetailPage() {
             </span>
           </div>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           {post.status !== "PUBLISHED" && (
             <>
               <Button variant="outline" onClick={() => setIsEditing(true)} className="border border-[#E8E0D0] rounded-full text-[#1A1A1A] hover:bg-[rgba(255,248,225,0.5)]">Edit</Button>

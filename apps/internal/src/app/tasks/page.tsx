@@ -43,7 +43,7 @@ export default function TasksPage() {
   return (
     <div className="space-y-5 pop-in">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="font-display text-3xl font-semibold text-ink">Tasks</h1>
           {!isLoading && <p className="text-sm text-ink-4 mt-0.5">{tasks.length} task{tasks.length !== 1 ? "s" : ""}</p>}

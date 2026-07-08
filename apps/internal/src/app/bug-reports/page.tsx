@@ -41,12 +41,13 @@ export default function BugReportsPage() {
 
   return (
     <div className="space-y-6 crx-animate-fade">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="font-serif text-4xl font-light text-[#1A1A1A]">Bug Reports</h1>
-        <div className="flex gap-2">
+        {/* wraps on phones so every pill stays fully visible */}
+        <div className="flex flex-wrap gap-2">
           {["", "OPEN", "IN_PROGRESS", "RESOLVED", "CLOSED"].map((s) => (
             <button key={s} onClick={() => setStatusFilter(s)}
-              className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${statusFilter === s ? "bg-[#1A1A1A] text-white" : "bg-white text-[#7A7A7A] border border-[#E8E0D0] hover:border-[#F5D547]"}`}
+              className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors whitespace-nowrap ${statusFilter === s ? "bg-[#1A1A1A] text-white" : "bg-white text-[#7A7A7A] border border-[#E8E0D0] hover:border-[#F5D547]"}`}
             >{s ? formatStatus(s) : "All"}</button>
           ))}
         </div>
@@ -62,7 +63,7 @@ export default function BugReportsPage() {
             <div className="p-5 cursor-pointer hover:bg-[#FEFCF7] transition-colors" onClick={() => setExpandedId(expandedId === bug.id ? null : bug.id)}>
               <div className="flex items-start justify-between gap-4">
                 <div>
-                  <div className="flex items-center gap-2 mb-1">
+                  <div className="flex flex-wrap items-center gap-2 mb-1">
                     <h3 className="font-semibold text-[#1A1A1A]">{bug.title}</h3>
                     <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${severityColors[bug.severity] || ""}`}>{formatStatus(bug.severity)}</span>
                     <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${statusColors[bug.status] || ""}`}>{formatStatus(bug.status)}</span>
@@ -75,11 +76,11 @@ export default function BugReportsPage() {
               <div className="border-t border-[#E8E0D0] p-5 bg-[#FEFCF7] space-y-3">
                 <p className="text-sm text-[#555] whitespace-pre-line">{bug.description}</p>
                 {bug.resolution && <div className="bg-green-50 rounded-lg p-3 text-sm"><strong>Resolution:</strong> {bug.resolution}</div>}
-                <div className="flex items-center gap-3">
+                <div className="flex flex-wrap items-center gap-3">
                   <input
                     type="text" placeholder="Resolution note (optional)" value={resolution}
                     onChange={(e) => setResolution(e.target.value)}
-                    className="flex-1 border border-[#E8E0D0] rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-[#F5D547]"
+                    className="flex-1 min-w-[180px] border border-[#E8E0D0] rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-[#F5D547]"
                   />
                   {bug.status === "OPEN" && (
                     <button onClick={() => updateStatus(bug.id, "IN_PROGRESS")} className="rounded-full bg-yellow-50 text-yellow-700 px-3 py-1.5 text-xs font-medium hover:bg-yellow-100">In Progress</button>

@@ -39,7 +39,7 @@ export default function ExpensesPage() {
 
   return (
     <div className="space-y-6 crx-animate-fade">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="font-serif text-4xl font-light text-[#1A1A1A]">Expense Claims</h1>
           <p className="text-[#7A7A7A] mt-1">Review and manage employee expense reimbursements</p>
@@ -69,7 +69,7 @@ export default function ExpensesPage() {
       </div>
 
       {/* Filter */}
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
         {["PENDING", "APPROVED", "REJECTED"].map((s) => (
           <button
             key={s}

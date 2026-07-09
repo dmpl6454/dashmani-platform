@@ -5,6 +5,21 @@ import { runSocialInsightsRefresh } from "./cron/social-insights.cron";
 import { runEntityExtraction } from "./cron/entity-extraction.cron";
 import { runIgCaptionBackfill } from "./cron/ig-caption-backfill.cron";
 
+// ── Process-level crash backstops (defense-in-depth) ────────────────────────────
+// The 2026-07-08 outage was an unhandled promise rejection (a P2024 pool timeout in an
+// unguarded async middleware) that crash-looped the process for hours. Task 2's
+// asyncHandler fixes the known surface; these handlers are the NET so a FUTURE unguarded
+// `await` logs loudly instead of silently killing the box under load. We deliberately do
+// NOT process.exit() here — an operational DB blip should degrade to logged 500s, not a
+// restart storm. (A truly corrupt process state is vanishingly rare vs. the pool-timeout
+// case this incident proved; pm2 still restarts on a real hard crash.)
+process.on("unhandledRejection", (reason) => {
+  console.error("[unhandledRejection] (kept alive — see incident 2026-07-08):", reason);
+});
+process.on("uncaughtException", (err) => {
+  console.error("[uncaughtException] (kept alive — see incident 2026-07-08):", err);
+});
+
 const PORT = process.env.PORT || 4000;
 
 app.listen(PORT, () => {

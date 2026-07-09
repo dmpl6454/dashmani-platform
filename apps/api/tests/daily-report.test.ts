@@ -5,6 +5,7 @@ import { createTestUser, createTestRole, generateToken } from "./helpers";
 import { prisma } from "@dashmani/db";
 import jwt from "jsonwebtoken";
 import { __setShareResolverForTesting } from "../src/services/daily-report.service";
+import { submitDailyReportSchema } from "@dashmani/shared";
 import "./setup";
 
 // Generate an HR token (type: "hr")
@@ -770,6 +771,40 @@ describe("Daily Report API", () => {
       const res = await request(app).get("/v1/admin/reports");
       expect(res.status).toBe(401);
     });
+
+    it("paginates: defaults to 50/page and reports meta", async () => {
+      // getAllReports used to be unbounded (incident 2026-07-08 — OOM'd mobile
+      // browsers + held pooled DB connections for the full unbounded query).
+      // Seed 55 reports (one per date, since DailyReport is unique per
+      // employee+date) to exercise the default page size.
+      for (let i = 0; i < 55; i++) {
+        const day = String((i % 28) + 1).padStart(2, "0");
+        const month = i < 28 ? "01" : "02";
+        await request(app)
+          .post("/v1/hr/reports")
+          .set("Authorization", `Bearer ${hrToken}`)
+          .send({
+            date: `2025-${month}-${day}`,
+            links: [{ accountId, url: `https://instagram.com/p/page-${i}`, platform: "instagram" }],
+          });
+      }
+
+      const page1 = await request(app)
+        .get("/v1/admin/reports")
+        .set("Authorization", `Bearer ${adminToken}`);
+
+      expect(page1.status).toBe(200);
+      expect(page1.body.data.length).toBe(50);
+      expect(page1.body.meta).toMatchObject({ page: 1, pageSize: 50, total: 55, hasMore: true });
+
+      const page2 = await request(app)
+        .get("/v1/admin/reports?page=2&pageSize=50")
+        .set("Authorization", `Bearer ${adminToken}`);
+
+      expect(page2.status).toBe(200);
+      expect(page2.body.data.length).toBe(5);
+      expect(page2.body.meta).toMatchObject({ page: 2, pageSize: 50, total: 55, hasMore: false });
+    });
   });
 
   describe("GET /v1/admin/reports/summary", () => {
@@ -803,6 +838,34 @@ describe("Daily Report API", () => {
         .set("Authorization", `Bearer ${hrToken}`);
 
       expect(res.status).toBe(403);
+    });
+  });
+
+  describe("submitDailyReportSchema — oversized URL guard (btree 54000 fix)", () => {
+    const base = {
+      date: "2026-07-09",
+      links: [
+        {
+          accountId: "11111111-1111-1111-1111-111111111111",
+          url: "https://instagram.com/reel/" + "A".repeat(3000), // ~3027 bytes > 2704 btree limit
+          platform: "instagram",
+        },
+      ],
+    };
+
+    it("rejects a URL longer than 2048 chars with a structured field error (not a thrown 500)", () => {
+      const result = submitDailyReportSchema.safeParse(base);
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        const urlIssue = result.error.issues.find((i) => i.path.join(".") === "links.0.url");
+        expect(urlIssue).toBeTruthy();
+        expect(urlIssue!.message).toMatch(/too long/i);
+      }
+    });
+
+    it("accepts a normal-length URL", () => {
+      const ok = { ...base, links: [{ ...base.links[0], url: "https://instagram.com/reel/DaUlZhNoAbc" }] };
+      expect(submitDailyReportSchema.safeParse(ok).success).toBe(true);
     });
   });
 });

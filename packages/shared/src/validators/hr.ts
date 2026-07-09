@@ -42,7 +42,11 @@ export const updateProfileSchema = z.object({
 
 export const reportLinkSchema = z.object({
   accountId: z.string().uuid("Invalid account ID"),
-  url: z.string().url("Invalid URL").optional().nullable(),
+  // .max(2048): a URL longer than the Postgres b-tree limit (2704 bytes) on
+  // report_links_url_idx makes createMany throw an unhandled 54000 → a generic 500
+  // (incident 2026-07-08). 2048 is well under that ceiling and far above any real
+  // social-media URL (prod max is 719). Reject cleanly here as a 400 field error.
+  url: z.string().url("Invalid URL").max(2048, "URL is too long (max 2048 characters)").optional().nullable(),
   platform: z.string().min(1, "Platform is required"),
   description: z.string().optional(),
   mediaUrl: z.string().url("Invalid media URL").optional(),
@@ -70,4 +74,6 @@ export const adminReportFilterSchema = z.object({
   startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   accountId: z.string().uuid().optional(),
+  page: z.coerce.number().int().positive().optional(),
+  pageSize: z.coerce.number().int().positive().optional(),
 });

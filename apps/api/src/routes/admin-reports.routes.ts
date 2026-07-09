@@ -25,7 +25,7 @@ import { prisma } from "@dashmani/db";
 
 const router = Router();
 
-// GET /admin/reports — filtered reports
+// GET /admin/reports — filtered reports (paginated — see getAllReports for why)
 router.get(
   "/admin/reports",
   authenticate,
@@ -34,8 +34,10 @@ router.get(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const filters = req.query as any;
-      const reports = await getAllReports(filters);
-      return success(res, reports);
+      const { reports, total, page, pageSize, hasMore } = await getAllReports(filters);
+      // `data` stays the array (unchanged shape for existing consumers); pagination
+      // rides in `meta` so it's additive, not a breaking response-shape change.
+      return success(res, reports, { page, pageSize, total, hasMore } as any);
     } catch (err) {
       next(err);
     }

@@ -1,9 +1,14 @@
 import { Request, Response, NextFunction } from "express";
 import { prisma } from "@dashmani/db";
 import { error } from "../utils/response";
+import { asyncHandler } from "../utils/async-handler";
 
 export function requirePermission(resource: string, action: string) {
-  return async (req: Request, res: Response, next: NextFunction) => {
+  // asyncHandler forwards any DB rejection (e.g. a P2024 pool timeout) to next(err)
+  // → the errorHandler returns a handled 500, instead of an unhandled rejection that
+  // crashes the whole process. This one guard is what stops the crash-loop; the auth
+  // middlewares are synchronous JWT-only and don't touch Prisma, so they need no guard.
+  return asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
     if (!req.user) {
       return error(res, "UNAUTHORIZED", "Authentication required", 401);
     }
@@ -22,14 +27,13 @@ export function requirePermission(resource: string, action: string) {
     });
 
     const hasPermission = userRoles.some(
-      (ur) => ur.role.permissions.length > 0
+      (ur) => ur.role.permissions.length > 0,
     );
 
     if (!hasPermission) {
       return error(res, "FORBIDDEN", `No permission: ${action} on ${resource}`, 403);
     }
 
-    // Attach the highest scope for this permission to the request
     const scopes = userRoles
       .flatMap((ur) => ur.role.permissions)
       .map((p) => p.scope);
@@ -39,5 +43,5 @@ export function requirePermission(resource: string, action: string) {
 
     (req as any).permissionScope = highestScope;
     next();
-  };
+  });
 }

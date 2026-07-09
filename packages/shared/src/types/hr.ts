@@ -149,6 +149,8 @@ export interface AdminReportFilters {
   startDate?: string;
   endDate?: string;
   accountId?: string;
+  page?: number;
+  pageSize?: number;
 }
 
 // Notification

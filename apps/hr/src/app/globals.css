@@ -32,16 +32,19 @@ html, body {
   max-width: 100vw;
 }
 
-/* Prevent iOS Safari auto-zoom on input focus.
-   Safari zooms in when font-size < 16px; this floor keeps it at 16px on
-   touch devices while leaving desktop styles untouched.
+/* Mobile form-field font floor.
+   Fields are designed at 13px; on touch devices we lift them to a legible
+   14px (leaving desktop styles untouched). This is deliberately BELOW iOS
+   Safari's 16px auto-zoom threshold — per product decision (2026-07-08) we
+   accept the minor zoom-on-focus on iOS in exchange for form text that isn't
+   oversized. Android does not zoom regardless.
    The [class] attribute selector raises specificity to (0,1,1) so we beat
    Tailwind's own !important utilities (e.g. `!text-xs`, `text-sm`) which
    sit at (0,1,0) and would otherwise win the cascade. */
 @media (hover: none) and (pointer: coarse) {
   input[class], textarea[class], select[class],
   input, textarea, select {
-    font-size: 16px !important;
+    font-size: 14px !important;
   }
 }
 

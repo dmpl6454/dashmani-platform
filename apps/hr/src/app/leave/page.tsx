@@ -151,8 +151,8 @@ export default function LeavePage() {
                   <p className="text-[12.5px] font-semibold text-danger">{error}</p>
                 </div>
               )}
-              <div className="grid grid-cols-3 gap-4">
-                <div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="min-w-0">
                   <label className="block text-[11.5px] font-bold text-ink-3 mb-1.5 uppercase tracking-wider">Type</label>
                   <select
                     value={form.type}
@@ -165,11 +165,11 @@ export default function LeavePage() {
                     {["CASUAL","SICK","EARNED","UNPAID","WFH","COMP_OFF"].map(t => <option key={t} value={t}>{t.replace("_", " ")}</option>)}
                   </select>
                 </div>
-                <div>
+                <div className="min-w-0">
                   <label className="block text-[11.5px] font-bold text-ink-3 mb-1.5 uppercase tracking-wider">From</label>
                   <input type="date" value={form.startDate} onChange={e => setForm(f => ({ ...f, startDate: e.target.value }))} required className={fieldCls} />
                 </div>
-                <div>
+                <div className="min-w-0">
                   <label className="block text-[11.5px] font-bold text-ink-3 mb-1.5 uppercase tracking-wider">To</label>
                   <input type="date" value={form.endDate} onChange={e => setForm(f => ({ ...f, endDate: e.target.value }))} required className={fieldCls} />
                 </div>

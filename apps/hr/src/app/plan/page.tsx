@@ -16,6 +16,12 @@ function displayDate(d: Date) {
   return d.toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
 }
 
+// Compact variant for narrow (mobile) widths so the date-nav row fits without the
+// label spilling past its capsule — "Mon, 6 Jul 2026" instead of "Monday, 6 July 2026".
+function displayDateShort(d: Date) {
+  return d.toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short", year: "numeric" });
+}
+
 export default function PlanOfActionPage() {
   const [date, setDate] = useState(() => { const d = new Date(); d.setHours(0,0,0,0); return d; });
   const [tasks, setTasks] = useState("");
@@ -96,12 +102,15 @@ export default function PlanOfActionPage() {
       <div className="px-6 py-6 flex-1 overflow-y-auto max-w-[900px] space-y-5">
 
         {/* Date Navigation — back arrow to browse history; no forward past today */}
-        <div className="v3-card-sm flex items-center gap-4">
-          <button onClick={() => changeDate(-1)} className="p-1.5 rounded-lg hover:bg-muted transition-colors border border-ink/10">
+        <div className="v3-card-sm p-3 flex items-center gap-2 sm:gap-4">
+          <button onClick={() => changeDate(-1)} className="shrink-0 p-1.5 rounded-lg hover:bg-muted transition-colors border border-ink/10">
             <ChevronLeft className="h-4 w-4 text-ink" />
           </button>
-          <div className="text-center flex-1">
-            <p className="text-[14px] font-semibold text-ink">{displayDate(date)}</p>
+          <div className="text-center flex-1 min-w-0">
+            <p className="text-[14px] font-semibold text-ink">
+              <span className="sm:hidden">{displayDateShort(date)}</span>
+              <span className="hidden sm:inline">{displayDate(date)}</span>
+            </p>
             <span className={`inline-flex h-5 px-2.5 rounded-full text-[11px] font-semibold items-center border mt-1 ${
               isToday
                 ? "bg-indigo-soft text-indigo border-indigo/20"
@@ -112,15 +121,16 @@ export default function PlanOfActionPage() {
           </div>
           {/* Forward arrow hidden when viewing today — can't go to future */}
           {!isToday ? (
-            <button onClick={() => changeDate(1)} className="p-1.5 rounded-lg hover:bg-muted transition-colors border border-ink/10">
+            <button onClick={() => changeDate(1)} className="shrink-0 p-1.5 rounded-lg hover:bg-muted transition-colors border border-ink/10">
               <ChevronRight className="h-4 w-4 text-ink" />
             </button>
           ) : (
-            <div className="w-8" />
+            <div className="w-8 shrink-0" />
           )}
           {!isToday && (
-            <button onClick={() => { const d = new Date(); d.setHours(0,0,0,0); setDate(d); }} className="text-[12px] text-indigo hover:underline font-semibold whitespace-nowrap">
-              Go to Today
+            <button onClick={() => { const d = new Date(); d.setHours(0,0,0,0); setDate(d); }} className="shrink-0 text-[12px] text-indigo hover:underline font-semibold whitespace-nowrap">
+              <span className="sm:hidden">Today</span>
+              <span className="hidden sm:inline">Go to Today</span>
             </button>
           )}
         </div>

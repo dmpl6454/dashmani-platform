@@ -41,9 +41,9 @@ export default function CompOffPage() {
             {success && <div className="v3-card-sm border border-success/20 bg-success-bg p-3 flex items-center gap-2 mb-3"><Check size={14} strokeWidth={2.5} className="text-success shrink-0" /><p className="text-[12.5px] font-semibold text-success">{success}</p></div>}
             {error && <div className="v3-card-sm border border-danger/20 bg-danger-bg p-3 flex items-center gap-2 mb-3"><X size={14} strokeWidth={2.5} className="text-danger shrink-0" /><p className="text-[12.5px] font-semibold text-danger">{error}</p></div>}
             <form onSubmit={handleSubmit} className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div><label className="block text-[11.5px] font-bold text-ink-3 mb-1.5 uppercase tracking-wider">Comp Off Date *</label><input type="date" value={form.startDate} onChange={e => setForm(f => ({ ...f, startDate: e.target.value }))} required className={fieldCls} /></div>
-                <div><label className="block text-[11.5px] font-bold text-ink-3 mb-1.5 uppercase tracking-wider">End Date</label><input type="date" value={form.endDate} onChange={e => setForm(f => ({ ...f, endDate: e.target.value }))} className={fieldCls} /></div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="min-w-0"><label className="block text-[11.5px] font-bold text-ink-3 mb-1.5 uppercase tracking-wider">Comp Off Date *</label><input type="date" value={form.startDate} onChange={e => setForm(f => ({ ...f, startDate: e.target.value }))} required className={fieldCls} /></div>
+                <div className="min-w-0"><label className="block text-[11.5px] font-bold text-ink-3 mb-1.5 uppercase tracking-wider">End Date</label><input type="date" value={form.endDate} onChange={e => setForm(f => ({ ...f, endDate: e.target.value }))} className={fieldCls} /></div>
               </div>
               <div><label className="block text-[11.5px] font-bold text-ink-3 mb-1.5 uppercase tracking-wider">Reason *</label>
                 <textarea value={form.reason} onChange={e => setForm(f => ({ ...f, reason: e.target.value }))} required rows={2}

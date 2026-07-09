@@ -22,6 +22,12 @@ const fieldCls = "w-full h-10 px-3 text-[13px] font-medium rounded-xl bg-bg bord
 const selectCls = fieldCls + " appearance-none pr-8";
 const RELATIONS = ["Father","Mother","Spouse","Brother","Sister","Son","Daughter","Other"];
 
+// Emergency-contact phones are stored as "+91 <digits>". The +91 country code is
+// shown as a fixed prefix in the UI so the user never types it; these helpers split
+// the stored value for display and re-combine on edit (empty digits → stored as "").
+const stripIN = (v: string) => (v || "").replace(/^\+91\s*/, "");
+const combineIN = (digits: string) => (digits ? `+91 ${digits}` : "");
+
 export default function ProfilePage() {
   const [profile, setProfile] = useState<ProfileData | null>(null);
   const [loading, setLoading] = useState(true); const [saving, setSaving] = useState(false);
@@ -206,11 +212,13 @@ export default function ProfilePage() {
                 {uploadingPic && <span className="text-[12px] text-ink-3 flex items-center gap-1 ml-2"><Clock size={12} /> Uploading…</span>}
                 {picSuccess && <span className="text-[12px] text-success flex items-center gap-1 ml-2"><Check size={12} strokeWidth={2.5} /> {picSuccess}</span>}
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {[["Name",        profile?.name ?? ""],["Email",      profile?.email ?? ""],["Phone",       profile?.phone ?? "Not set"],["Designation", profile?.designation ?? "Assigned by admin"]].map(([label, val]) => (
-                  <div key={label}>
+                  <div key={label} className="min-w-0">
                     <label className="block text-[11.5px] font-bold text-ink-3 mb-1.5 uppercase tracking-wider">{label}</label>
-                    <div className="h-10 px-3 flex items-center text-[13px] font-medium text-ink-2 rounded-xl bg-muted/50 border-2 border-ink/5">{val}</div>
+                    <div className="h-10 px-3 flex items-center rounded-xl bg-muted/50 border-2 border-ink/5">
+                      <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-ink-2" title={String(val)}>{val}</span>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -223,8 +231,8 @@ export default function ProfilePage() {
               <CreditCard size={15} className="text-indigo" />
               <h3 className="text-[14px] font-bold text-ink">Bank Account Details</h3>
             </div>
-            <div className="p-5 grid grid-cols-2 gap-4">
-              <div>
+            <div className="p-5 grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="min-w-0">
                 <label className="block text-[11.5px] font-bold text-ink-3 mb-1.5 uppercase tracking-wider">Account Holder Name</label>
                 <input type="text" value={form.bankAccountHolderName} onChange={e => upd("bankAccountHolderName", e.target.value)} placeholder="Full name as per bank" className={fieldCls} />
               </div>
@@ -254,7 +262,7 @@ export default function ProfilePage() {
                 <label className="block text-[11.5px] font-bold text-ink-3 mb-1.5 uppercase tracking-wider">Bank Name</label>
                 <input type="text" value={form.bankName} onChange={e => upd("bankName", e.target.value)} placeholder="e.g. State Bank of India" className={fieldCls} />
               </div>
-              <div className="col-span-2">
+              <div className="col-span-1 sm:col-span-2">
                 <label className="block text-[11.5px] font-bold text-ink-3 mb-1.5 uppercase tracking-wider">Branch Name</label>
                 <input type="text" value={form.bankBranch} onChange={e => upd("bankBranch", e.target.value)} placeholder="e.g. Connaught Place, New Delhi" className={fieldCls} />
               </div>
@@ -282,8 +290,8 @@ export default function ProfilePage() {
                 <Upload size={12} /> Upload Documents
               </Link>
             </div>
-            <div className="p-5 grid grid-cols-2 gap-4">
-              <div>
+            <div className="p-5 grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="min-w-0">
                 <label className="block text-[11.5px] font-bold text-ink-3 mb-1.5 uppercase tracking-wider">Aadhaar Number</label>
                 {editingPII.aadhaarNumber || !form.aadhaarNumber ? (
                   <input type="text" value={form.aadhaarNumber} onChange={e => upd("aadhaarNumber", e.target.value.replace(/\D/g,"").slice(0,12))} placeholder="12-digit Aadhaar" maxLength={12} className={fieldCls} />
@@ -294,7 +302,7 @@ export default function ProfilePage() {
                   </div>
                 )}
               </div>
-              <div>
+              <div className="min-w-0">
                 <label className="block text-[11.5px] font-bold text-ink-3 mb-1.5 uppercase tracking-wider">PAN Number</label>
                 {editingPII.panNumber || !form.panNumber ? (
                   <input type="text" value={form.panNumber} onChange={e => upd("panNumber", e.target.value.toUpperCase().slice(0,10))} placeholder="e.g. ABCDE1234F" maxLength={10} className={fieldCls} />
@@ -324,10 +332,18 @@ export default function ProfilePage() {
                   <div key={n}>
                     {n === 2 && <div className="my-1" style={{ borderTop: "1px dashed rgba(26,26,26,0.1)" }} />}
                     <p className="text-[12px] font-bold text-ink-3 uppercase tracking-wider mb-3">Contact {n}</p>
-                    <div className="grid grid-cols-3 gap-3">
-                      <div><label className="block text-[11.5px] font-bold text-ink-3 mb-1.5 uppercase tracking-wider">Name</label><input type="text" value={form[nameKey]} onChange={e => upd(nameKey, e.target.value)} placeholder="Full name" className={fieldCls} /></div>
-                      <div><label className="block text-[11.5px] font-bold text-ink-3 mb-1.5 uppercase tracking-wider">Phone</label><input type="tel" value={form[phoneKey]} onChange={e => upd(phoneKey, e.target.value)} placeholder="+91…" className={fieldCls} /></div>
-                      <div><label className="block text-[11.5px] font-bold text-ink-3 mb-1.5 uppercase tracking-wider">Relation</label>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div className="min-w-0"><label className="block text-[11.5px] font-bold text-ink-3 mb-1.5 uppercase tracking-wider">Name</label><input type="text" value={form[nameKey]} onChange={e => upd(nameKey, e.target.value)} placeholder="Full name" className={fieldCls} /></div>
+                      <div className="min-w-0"><label className="block text-[11.5px] font-bold text-ink-3 mb-1.5 uppercase tracking-wider">Phone</label>
+                        {/* Fixed +91 prefix so the country code is never typed manually; input holds the local number only. */}
+                        <div className="flex items-center h-10 rounded-xl bg-bg border-2 border-ink/10 focus-within:border-indigo overflow-hidden">
+                          <span className="pl-3 pr-2 h-full flex items-center text-[13px] font-medium text-ink-3 select-none shrink-0" style={{ borderRight: "1px solid rgba(26,26,26,0.1)" }}>+91</span>
+                          <input type="tel" inputMode="numeric" value={stripIN(String(form[phoneKey]))}
+                            onChange={e => upd(phoneKey, combineIN(e.target.value.replace(/\D/g, "").slice(0, 10)))}
+                            placeholder="98765 43210" className="flex-1 min-w-0 h-full px-2 text-[13px] font-medium bg-transparent outline-none placeholder:text-ink-4" />
+                        </div>
+                      </div>
+                      <div className="min-w-0"><label className="block text-[11.5px] font-bold text-ink-3 mb-1.5 uppercase tracking-wider">Relation</label>
                         <select value={form[relKey]} onChange={e => upd(relKey, e.target.value)} className={selectCls}>
                           <option value="">Select…</option>
                           {RELATIONS.map(r => <option key={r} value={r}>{r}</option>)}

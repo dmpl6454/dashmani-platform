@@ -4,7 +4,7 @@ import { useState } from "react";
 import { apiFetch } from "@/lib/api";
 import useSWR from "swr";
 import { Topstrip } from "@/components/portal-shell";
-import { Bug, Plus, ChevronUp, CheckCircle } from "lucide-react";
+import { Bug, Plus, ChevronUp, ChevronDown, CheckCircle } from "lucide-react";
 
 const severityBadge: Record<string, string> = {
   LOW: "bg-indigo-soft text-indigo border-indigo/20",
@@ -103,16 +103,19 @@ export default function BugReportPage() {
               </div>
               <div>
                 <p className="text-[11.5px] font-bold text-ink-3 mb-1.5 uppercase tracking-wider">Severity</p>
-                <select
-                  value={form.severity}
-                  onChange={(e) => setForm({ ...form, severity: e.target.value })}
-                  className={inputClass}
-                >
-                  <option value="LOW">Low — Minor UI issue</option>
-                  <option value="MEDIUM">Medium — Feature not working properly</option>
-                  <option value="HIGH">High — Major feature broken</option>
-                  <option value="CRITICAL">Critical — System down / data loss</option>
-                </select>
+                <div className="relative">
+                  <select
+                    value={form.severity}
+                    onChange={(e) => setForm({ ...form, severity: e.target.value })}
+                    className={`${inputClass} pr-9 appearance-none truncate`}
+                  >
+                    <option value="LOW">Low — Minor UI issue</option>
+                    <option value="MEDIUM">Medium — Feature not working properly</option>
+                    <option value="HIGH">High — Major feature broken</option>
+                    <option value="CRITICAL">Critical — System down / data loss</option>
+                  </select>
+                  <ChevronDown size={16} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-ink-3" />
+                </div>
               </div>
               <div>
                 <p className="text-[11.5px] font-bold text-ink-3 mb-1.5 uppercase tracking-wider">Description *</p>

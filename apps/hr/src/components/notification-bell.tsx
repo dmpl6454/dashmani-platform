@@ -8,6 +8,7 @@ export function NotificationBell() {
   const [open, setOpen] = useState(false);
   const [selectedNotif, setSelectedNotif] = useState<any>(null);
   const ref = useRef<HTMLDivElement>(null);
+  const [rightOffset, setRightOffset] = useState(0);
   const { data: countData, mutate: mutateCount } = useUnreadCount();
   const { data: notifData, mutate: mutateNotifs } = useNotifications();
 
@@ -24,6 +25,34 @@ export function NotificationBell() {
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
+
+  // Keep the panel directly under the bell (vertical placement is pure CSS via
+  // `top-full`, so it's unaffected by the header's backdrop-filter containing
+  // block). We only nudge it horizontally: pin its right edge 12px inside the
+  // viewport — expressed as an offset relative to the bell wrapper — so on pages
+  // where an action button insets the bell, the panel doesn't crop off the left
+  // edge. A `0` offset (bell at the screen edge) keeps it aligned to the bell.
+  useEffect(() => {
+    if (!open) return;
+    const compute = () => {
+      const w = ref.current?.getBoundingClientRect();
+      if (!w) return;
+      const vw = window.innerWidth;
+      const width = Math.min(320, vw - 24); // must match the panel's rendered width
+      // Aligned to the bell (offset 0), the panel's left edge would be here:
+      const leftIfAligned = w.right - width;
+      // Only if that crops off-screen do we push right so the left edge is 12px in.
+      // Negative offset pushes the panel toward the viewport's right edge.
+      setRightOffset(leftIfAligned < 12 ? w.right - 12 - width : 0);
+    };
+    compute();
+    window.addEventListener("resize", compute);
+    window.addEventListener("scroll", compute, true);
+    return () => {
+      window.removeEventListener("resize", compute);
+      window.removeEventListener("scroll", compute, true);
+    };
+  }, [open]);
 
   async function openNotif(n: any) {
     setSelectedNotif(n);
@@ -68,7 +97,10 @@ export function NotificationBell() {
       </button>
 
       {open && (
-        <div className="absolute right-0 top-10 z-50 w-80 bg-white rounded-2xl shadow-[0_8px_32px_rgba(0,0,0,0.12)] border border-[#E8E0D0] overflow-hidden">
+        <div
+          style={{ right: rightOffset }}
+          className="absolute top-full mt-2 z-50 w-80 max-w-[calc(100vw-1.5rem)] bg-white rounded-2xl shadow-[0_8px_32px_rgba(0,0,0,0.12)] border border-[#E8E0D0] overflow-hidden"
+        >
           {selectedNotif ? (
             /* ── Detail view ── */
             <div>

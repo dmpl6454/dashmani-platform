@@ -38,8 +38,8 @@ export default function LeaderboardPage() {
                     {entry.employee.name?.[0]?.toUpperCase() || "?"}
                   </div>
                   <p className="text-[13.5px] font-bold text-ink">{entry.employee.name}</p>
-                  <div className="font-num text-[22px] font-semibold text-indigo mt-1">{entry.totalReports}</div>
-                  <div className="text-[11px] text-ink-3 font-medium">reports</div>
+                  <div className="font-num text-[22px] font-semibold text-indigo mt-1">{entry.totalLinks}</div>
+                  <div className="text-[11px] text-ink-3 font-medium">links</div>
                   <div className="flex items-center justify-center gap-1 mt-2 text-[11px] text-ink-3">
                     <Flame size={11} className="text-terra" />
                     <span className="font-semibold text-ink">{entry.currentStreak}</span> streak
@@ -58,17 +58,17 @@ export default function LeaderboardPage() {
             <div className="v3-card overflow-hidden">
               {entries.map((entry: any, i: number) => (
                 <div key={entry.employee.id} style={i < entries.length - 1 ? { borderBottom: "1px solid rgba(26,26,26,0.06)" } : {}}>
-                  <div className="px-5 py-3.5 flex items-center gap-4 v3-row">
-                    <span className={`font-num text-[18px] font-semibold w-7 text-center shrink-0 ${entry.rank <= 3 ? "text-indigo" : "text-ink-4"}`}>{entry.rank}</span>
+                  <div className="px-4 sm:px-5 py-3.5 flex items-center gap-3 sm:gap-4 v3-row">
+                    <span className={`font-num text-[18px] font-semibold w-6 sm:w-7 text-center shrink-0 ${entry.rank <= 3 ? "text-indigo" : "text-ink-4"}`}>{entry.rank}</span>
                     <div className="h-8 w-8 rounded-full grid place-items-center text-white text-[11px] font-bold shrink-0"
                          style={{ background: avatarGrad(entry.employee.name) }}>
                       {entry.employee.name?.[0]?.toUpperCase() || "?"}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="text-[13.5px] font-semibold text-ink">{entry.employee.name}</p>
-                      <p className="text-[11px] text-ink-3 font-medium">{entry.employee.email}</p>
+                      <p className="text-[13.5px] font-semibold text-ink truncate">{entry.employee.name}</p>
+                      <p className="text-[11px] text-ink-3 font-medium truncate">{entry.employee.email}</p>
                     </div>
-                    <div className="flex items-center gap-5 shrink-0 text-right">
+                    <div className="flex items-center gap-3 sm:gap-5 shrink-0 text-right">
                       <div className="flex items-center gap-1 text-[12px]">
                         <Flame size={12} className="text-terra" />
                         <span className="font-bold text-ink">{entry.currentStreak}</span>

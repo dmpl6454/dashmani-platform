@@ -60,9 +60,9 @@ export default function ExtraHoursPage() {
             <div className="v3-card p-5 anim-fade-up d1">
               <h3 className="text-[14px] font-bold text-ink mb-4">Log Extra Hours</h3>
               <form onSubmit={handleSubmit} className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div><label className="block text-[11.5px] font-bold text-ink-3 mb-1.5 uppercase tracking-wider">Date</label><input type="date" value={form.date} onChange={e => setForm(f => ({ ...f, date: e.target.value }))} required className={fieldCls} /></div>
-                  <div><label className="block text-[11.5px] font-bold text-ink-3 mb-1.5 uppercase tracking-wider">Hours</label><input type="number" step="0.5" min="0.5" max="12" value={form.hours} onChange={e => setForm(f => ({ ...f, hours: e.target.value }))} required placeholder="e.g. 2.5" className={fieldCls} /></div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="min-w-0"><label className="block text-[11.5px] font-bold text-ink-3 mb-1.5 uppercase tracking-wider">Date</label><input type="date" value={form.date} onChange={e => setForm(f => ({ ...f, date: e.target.value }))} required className={fieldCls} /></div>
+                  <div className="min-w-0"><label className="block text-[11.5px] font-bold text-ink-3 mb-1.5 uppercase tracking-wider">Hours</label><input type="number" step="0.5" min="0.5" max="12" value={form.hours} onChange={e => setForm(f => ({ ...f, hours: e.target.value }))} required placeholder="e.g. 2.5" className={fieldCls} /></div>
                 </div>
                 <div><label className="block text-[11.5px] font-bold text-ink-3 mb-1.5 uppercase tracking-wider">Reason</label>
                   <input value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} required placeholder="What did you work on?" className={fieldCls} />

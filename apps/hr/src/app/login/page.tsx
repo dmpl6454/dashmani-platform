@@ -494,6 +494,7 @@ function DayTimeline({ now }: { now: Date }) {
   const [active, setActive] = useState<number | null>(null);
   const [inView, setInView] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
+  const scrollerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!wrapRef.current) return;
@@ -505,6 +506,41 @@ function DayTimeline({ now }: { now: Date }) {
     io.observe(wrapRef.current);
     return () => io.disconnect();
   }, []);
+
+  // Scroll-linked horizontal reveal: on phones the rail is wider than the
+  // viewport. We map the page's vertical scroll progress to the rail's
+  // horizontal scroll — so scrolling DOWN pans the timeline from the first card
+  // through to the last. Anchored to the cards row itself: progress holds at 0
+  // (first card) until the cards settle into the upper-middle of the viewport,
+  // then pans to the last card over the next ~half viewport of scrolling, with
+  // the cards fully visible the whole way. On lg+ the rail fits, so maxScroll is
+  // 0 and this no-ops entirely.
+  useEffect(() => {
+    const scroller = scrollerRef.current;
+    const wrap = wrapRef.current;
+    if (!scroller || !wrap) return;
+    let raf = 0;
+    const update = () => {
+      raf = 0;
+      const maxScroll = scroller.scrollWidth - scroller.clientWidth;
+      if (maxScroll <= 1) return; // desktop / no overflow — leave it alone
+      const rect = scroller.getBoundingClientRect();
+      const vh = window.innerHeight || 1;
+      const start = vh * 0.5, end = vh * 0.05;
+      const progress = Math.min(1, Math.max(0, (start - rect.top) / (start - end)));
+      scroller.scrollLeft = progress * maxScroll;
+    };
+    const onScroll = () => { if (!raf) raf = requestAnimationFrame(update); };
+    update();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("resize", onScroll);
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      window.removeEventListener("resize", onScroll);
+      if (raf) cancelAnimationFrame(raf);
+    };
+  }, []);
+
 
   const minutesNow = now.getHours() * 60 + now.getMinutes();
   const dayStart = 9 * 60, dayEnd = 18 * 60;
@@ -519,15 +555,19 @@ function DayTimeline({ now }: { now: Date }) {
 
   return (
     <div ref={wrapRef} className={`mt-12 ${inView ? "tl-anim" : ""}`}>
-      <div className="tl-rail relative px-2">
-        {!offHours && (
-          <div className="absolute z-10 pointer-events-none" style={{ left: `calc(${nowPct}% - 1px)`, top: 0, bottom: 0 }}>
-            <div className="absolute top-[18px] -translate-x-1/2 w-[2.5px] h-7 bg-[#5D5FEF] rounded-full" style={{ boxShadow: "0 0 0 4px rgba(93,95,239,.15)" }} />
-            <div className="absolute top-[-26px] -translate-x-1/2 bg-[#1A1A1A] text-white text-[10px] font-black uppercase tracking-[0.14em] px-2 py-1 rounded-full font-mono whitespace-nowrap">NOW · {fmtTime(now)}</div>
-          </div>
-        )}
-        <div className="grid grid-cols-5 gap-3">
-          {DAY_STEPS.map((s, i) => {
+      {/* On phones the 5-step rail can't fit side-by-side without crushing each
+          card (text overflowed). Let it scroll horizontally on small screens while
+          keeping the full inline layout from lg up. */}
+      <div ref={scrollerRef} className="-mx-6 px-6 overflow-x-auto pb-3 lg:mx-0 lg:px-0 lg:pb-0 lg:overflow-visible [scrollbar-width:none] [-ms-overflow-style:none]">
+        <div className="tl-rail relative px-2 min-w-[820px] lg:min-w-0">
+          {!offHours && (
+            <div className="absolute z-10 pointer-events-none" style={{ left: `calc(${nowPct}% - 1px)`, top: 0, bottom: 0 }}>
+              <div className="absolute top-[18px] -translate-x-1/2 w-[2.5px] h-7 bg-[#5D5FEF] rounded-full" style={{ boxShadow: "0 0 0 4px rgba(93,95,239,.15)" }} />
+              <div className="absolute top-[-26px] -translate-x-1/2 bg-[#1A1A1A] text-white text-[10px] font-black uppercase tracking-[0.14em] px-2 py-1 rounded-full font-mono whitespace-nowrap">NOW · {fmtTime(now)}</div>
+            </div>
+          )}
+          <div className="grid grid-cols-5 gap-3">
+            {DAY_STEPS.map((s, i) => {
             const isPast = i < nowIdx;
             const isNow = i === nowIdx;
             return (
@@ -542,20 +582,24 @@ function DayTimeline({ now }: { now: Date }) {
                   <div className={`tl-node${isPast ? " done" : ""}${isNow ? " now" : ""}`} />
                 </div>
                 <div className="tl-card v3-card p-4 transition-all">
-                  <div className="flex items-center justify-between gap-2 mb-2">
+                  {/* Time pill + status grouped on the left with a gap — using
+                      justify-between pushed the DONE/UPCOMING label onto the card
+                      edge where it looked clipped on narrow phones. */}
+                  <div className="flex items-center gap-2 mb-3">
                     <div className={`px-2 py-0.5 rounded-md font-mono text-[10px] uppercase tracking-wider font-bold shrink-0 ${ACCENT_BG[s.accent]} ${ACCENT_TX[s.accent]}`} style={{ border: "1px solid rgba(26,26,26,.10)" }}>
                       {String(s.h).padStart(2, "0")}:{String(s.m).padStart(2, "0")}
                     </div>
-                    {isPast && <span className="text-[9.5px] font-bold uppercase tracking-wider text-[#4A7C52] flex items-center gap-1 shrink-0"><IcCheck />Done</span>}
-                    {isNow && <span className="text-[9.5px] font-bold uppercase tracking-wider text-[#5D5FEF] shrink-0">Live</span>}
-                    {i > nowIdx && <span className="text-[9.5px] font-bold uppercase tracking-wider text-[#9C947C] shrink-0">Upcoming</span>}
+                    {isPast && <span className="text-[9px] font-bold uppercase tracking-wider text-[#4A7C52] inline-flex items-center gap-1 shrink-0 whitespace-nowrap"><IcCheck />Done</span>}
+                    {isNow && <span className="text-[9px] font-bold uppercase tracking-wider text-[#5D5FEF] shrink-0 whitespace-nowrap">Live</span>}
+                    {i > nowIdx && <span className="text-[9px] font-bold uppercase tracking-wider text-[#9C947C] shrink-0 whitespace-nowrap">Upcoming</span>}
                   </div>
-                  <h3 className="font-display text-[15px] font-semibold text-[#1A1A1A] leading-tight">{s.title}</h3>
-                  <p className="text-[12px] text-[#6C6555] mt-1.5 leading-snug font-medium">{s.body}</p>
+                  <h3 className="font-display text-[15px] font-semibold text-[#1A1A1A] leading-snug min-h-[2.6em]">{s.title}</h3>
+                  <p className="text-[12px] text-[#6C6555] mt-2 leading-relaxed font-medium">{s.body}</p>
                 </div>
               </div>
             );
           })}
+          </div>
         </div>
       </div>
       <div className="v3-card-sm mt-6 p-4 px-5 flex items-center gap-4 flex-wrap justify-between">

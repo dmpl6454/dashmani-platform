@@ -76,6 +76,22 @@ function detectPlatformFromUrl(url: string): string | null {
 const inputClass = "w-full max-w-full min-w-0 border border-[#E8E0D0] bg-white rounded-lg px-4 py-2.5 text-sm text-[#1A1A1A] placeholder:text-[#B0B0B0] focus:outline-none focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547] transition-all duration-200";
 const selectClass = "w-full max-w-full min-w-0 border border-[#E8E0D0] bg-white rounded-lg px-4 py-2.5 text-sm text-[#1A1A1A] focus:outline-none focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547] transition-all duration-200 appearance-none";
 
+// Build a compact <option> label for an account. WHY: a <select>'s intrinsic width
+// is driven by its LONGEST option's text, and some accounts carry very long handles
+// (up to ~46 chars on prod, several polluted with `?igsh=...` tracking tokens). Even
+// with w-full/max-w-full/min-w-0 on the box, an extreme option label can force the
+// control wider than a ~390px phone viewport, pushing card content past the right
+// edge (which then gets clipped by the global overflow-x:hidden — unreachable). So we
+// strip any accidental query-string, drop a leading "@", and hard-cap the visible
+// label length. This is display-only — the stored handle/id is untouched.
+function accountOptionLabel(acc: any): string {
+  const raw = (acc?.handle || acc?.displayName || "").toString();
+  const clean = raw.split("?")[0].replace(/^@+/, "").trim();
+  const name = clean.length > 24 ? clean.slice(0, 23).trimEnd() + "…" : clean;
+  const platform = (acc?.platform || acc?.platformSlug || "").toString();
+  return platform ? `${name} (${platform})` : name;
+}
+
 // ─── Metrics row (shared) ─────────────────────────────────────────────────────
 
 function MetricsRow({ link, onChange }: {
@@ -248,8 +264,12 @@ export default function ReportPage() {
 
   // Smart Paste state
   const [pasteText, setPasteText] = useState("");
-  const [showPaste, setShowPaste] = useState(false);
-  const [pasteResult, setPasteResult] = useState<{ matched: number; unmatched: number } | null>(null);
+  // Default OPEN so the "Paste & Auto-Sort" feature is discoverable — it was
+  // collapsed by default, so many users never found it and pasted/typed rows one
+  // at a time or assumed auto-sort "didn't work". Revealing it costs nothing (it's
+  // just a textarea until used) and does not change any submit behavior.
+  const [showPaste, setShowPaste] = useState(true);
+  const [pasteResult, setPasteResult] = useState<{ matched: number; unmatched: number; dropped: number } | null>(null);
   const [defaultAccountId, setDefaultAccountId] = useState("");
 
   // Persistent post-submit summary shown ABOVE the submit button (no auto-dismiss,
@@ -531,11 +551,58 @@ export default function ReportPage() {
     return ((acc?.platformSlug || acc?.platform) || "").toLowerCase();
   }
 
-  // Smart paste: parse URLs, auto-match to accounts, append to list
+  // Smart paste: parse URLs, auto-match to accounts, append to list.
+  // LENIENT parsing (2026-07-09): the old filter used strict `new URL(l)`, which
+  // THREW on common real-world paste lines and silently DROPPED them — e.g. a bare
+  // `instagram.com/reel/x` (no scheme), a numbered `1. https://…`, or a line with a
+  // trailing comma. Users pasted 10 and saw 6 with no explanation. We now (a) strip
+  // a leading list marker, (b) retry with `https://` prepended when a scheme is
+  // missing, and (c) report any lines we still couldn't parse instead of dropping
+  // them silently.
+  function normalizePastedUrl(raw: string): string | null {
+    let s = raw.trim();
+    if (!s) return null;
+    // strip a leading list marker like "1." "1)" "- " "• "
+    s = s.replace(/^\s*(?:\d+[.)]|[-*•])\s+/, "").trim();
+    // strip a trailing comma/semicolon a user may have pasted between lines
+    s = s.replace(/[),;]+$/, "").trim();
+    // A URL can't contain a space — reject prose outright. THIS IS LOAD-BEARING:
+    // browsers' `new URL()` PERCENT-ENCODES spaces, so "https://not a link" parses
+    // as a valid URL in the browser (unlike Node). Without this guard the https://
+    // fallback below would turn junk prose lines into fake links. (Verified live in
+    // Chromium 2026-07-09.)
+    if (/\s/.test(s)) return null;
+    const tryParse = (candidate: string): string | null => {
+      try {
+        const u = new URL(candidate);
+        if (u.protocol !== "http:" && u.protocol !== "https:") return null;
+        // Require a dotted host (or localhost) — a bare word like "https://foo" has
+        // no TLD and isn't a real link the user meant to submit.
+        if (!u.hostname.includes(".") && u.hostname !== "localhost") return null;
+        return u.href;
+      } catch { return null; }
+    };
+    // As-is first (already a full URL). Else, only assume https:// for something
+    // that actually looks like a domain (has a dot before any slash) — so a bare
+    // `instagram.com/reel/x` recovers, but a stray word does not.
+    if (/^https?:\/\//i.test(s)) return tryParse(s);
+    return /^[^/\s]+\.[^/\s]+/.test(s) ? tryParse("https://" + s) : null;
+  }
+
   function handleSmartPaste() {
     const rawLines = pasteText.split("\n").map((l) => l.trim()).filter(Boolean);
-    const urls = rawLines.filter((l) => { try { new URL(l); return true; } catch { return false; } });
-    if (urls.length === 0) return;
+    const urls: string[] = [];
+    let dropped = 0;
+    for (const line of rawLines) {
+      const u = normalizePastedUrl(line);
+      if (u) urls.push(u);
+      else dropped++;
+    }
+    if (urls.length === 0) {
+      // Nothing usable — tell the user rather than doing nothing silently.
+      if (dropped > 0) setPasteResult({ matched: 0, unmatched: 0, dropped });
+      return;
+    }
 
     let matched = 0;
     let unmatched = 0;
@@ -581,15 +648,30 @@ export default function ReportPage() {
       return hasEmpty ? newLinks : [...prev, ...newLinks];
     });
 
-    setPasteResult({ matched, unmatched });
+    setPasteResult({ matched, unmatched, dropped });
     setPasteText("");
     setSubmitSummary(null); // new paste invalidates the last submit's summary
-    setTimeout(() => { setPasteResult(null); setShowPaste(false); }, 2500);
+    // Keep the panel OPEN (discoverability — Fix #4) and, if some lines couldn't be
+    // parsed, keep the result badge up so the user notices; otherwise clear the
+    // "N matched" badge after a moment. Never auto-collapse the panel out from under
+    // the user (the old 2.5s collapse made auto-sort feel like it "disappeared").
+    if (dropped === 0) {
+      setTimeout(() => setPasteResult(null), 4000);
+    }
 
     // Re-arm cross-day dedupe so newly pasted links get checked against past submissions.
     // Without this, links pasted after the initial dedupe pass slip through unchecked.
     crossDayDeduped.current = false;
   }
+
+  // How many pasted lines are usable links, using the SAME lenient parser as
+  // handleSmartPaste — so the "Add & Auto-Sort" button's enabled state and the
+  // "N URLs detected" counter agree with what a paste would actually add. (Using
+  // strict `new URL()` here while the paste is lenient would leave the button
+  // disabled for bare-domain lines the paste can recover.)
+  const detectedUrlCount = pasteText
+    .split("\n")
+    .reduce((n, l) => (normalizePastedUrl(l) ? n + 1 : n), 0);
 
   const validLinks = links.filter((l) => l.isScheduled || l.url.trim());
   const liveCount = validLinks.filter((l) => !l.isScheduled).length;
@@ -674,38 +756,28 @@ export default function ReportPage() {
         .catch(() => { /* non-critical */ });
       setDraftStatus("idle");
 
-      // Show the persistent at-submit summary whenever the server silently dropped
-      // duplicates — this is what stops "84 saved, no message" from reading as loss.
-      // When it fires we also clear the transient paste toast to avoid a double
-      // message, and we STAY on the page (even on a first submit) so the user
-      // actually reads it. Cross-day dedupe can drop links on a first submit too,
-      // so this is not exclusively a resubmit concern.
-      if (skipped > 0) {
-        setSubmitSummary({
-          saved: savedLive,
-          skipped,
-          inSubmission: reasons.inSubmission,
-          crossDay: reasons.crossDay,
-        });
-        setDedupeNotice(null);
-      }
-
-      if (existing) {
-        // Update (resubmit): stay on page with the in-memory links intact (they now
-        // equal what was just saved). Do NOT re-arm the restore effect here — the
-        // restore effect is keyed on [todayData], and the mutateToday() above just
-        // changed todayData. Re-arming it caused the restore to re-run and overwrite
-        // the live form (e.g. base 181 + freshly-pasted 22) with the stale server
-        // snapshot before the additions were ever saved — the "added links vanish on
-        // refresh" bug. Auto-save keeps working because its guard only needs
-        // draftRestoredRef.current === true, which it already is.
-      } else if (skipped > 0) {
-        // First submit, but dupes were dropped — stay so the user sees the summary
-        // explaining the lower count instead of being whisked to the dashboard.
-      } else {
-        // First submit, clean: go to dashboard
-        router.push("/dashboard");
-      }
+      // Always show a persistent on-page confirmation after a successful submit.
+      // WHY WE STAY ON THE PAGE (do NOT redirect to /dashboard): employees submit
+      // links here throughout the day and expect to remain on /report so they can
+      // keep adding/updating links and SEE their "Submitted today" panel update in
+      // place. A prior change redirected a clean first-submit to /dashboard, which
+      // people read as "it failed / it threw me away" (2026-07-09 report). The
+      // correct, historical behavior is: stay, and confirm clearly.
+      //   - skipped > 0  → detailed emerald summary explaining the lower count
+      //                    (this is what stops "84 saved, no message" reading as loss)
+      //   - skipped == 0 → plain "N links saved" confirmation so the save is obvious
+      setSubmitSummary({
+        saved: savedLive,
+        skipped,
+        inSubmission: reasons.inSubmission,
+        crossDay: reasons.crossDay,
+      });
+      setDedupeNotice(null);
+      // Never re-arm the restore effect here. It is keyed on [todayData], and the
+      // mutateToday() above just changed todayData; re-arming caused restore to
+      // re-run and overwrite the live form with the stale server snapshot before
+      // additions were saved — the 2026-06-04 "added links vanish on refresh" bug.
+      // Auto-save keeps working (its guard only needs draftRestoredRef.current === true).
     } catch (err: any) {
       setError(err.message);
       // Unpack per-field details from ApiError so we can highlight individual rows
@@ -865,16 +937,19 @@ export default function ReportPage() {
             </button>
 
             {accounts.length > 0 && (
-              <div className="flex items-center gap-2 w-full sm:w-auto">
+              <div className="flex items-center gap-2 w-full sm:w-auto min-w-0">
                 <label className="text-xs text-[#7A7A7A] shrink-0">Assign all to:</label>
+                {/* w-full max-w-full min-w-0 + truncated option labels keep this select
+                    from being forced past the viewport by a long account handle (the
+                    2026-07-09 mobile-overflow culprit). sm:w-56 caps it on desktop. */}
                 <select
                   value={defaultAccountId}
                   onChange={(e) => setDefaultAccountId(e.target.value)}
-                  className="border border-[#E8E0D0] bg-white rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-[#F5D547] transition-all flex-1 sm:flex-none min-w-0"
+                  className="border border-[#E8E0D0] bg-white rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-[#F5D547] transition-all w-full max-w-full min-w-0 sm:w-56"
                 >
                   <option value="">None (auto-detect by platform)</option>
                   {accounts.map((acc: any) => (
-                    <option key={acc.id} value={acc.id}>{acc.handle || acc.displayName} ({acc.platform})</option>
+                    <option key={acc.id} value={acc.id}>{accountOptionLabel(acc)}</option>
                   ))}
                 </select>
               </div>
@@ -897,15 +972,25 @@ export default function ReportPage() {
 
               {/* Result feedback */}
               {pasteResult && (
-                <div className="flex items-center gap-4 text-xs">
-                  <span className="flex items-center gap-1 text-green-600">
-                    <CheckCircle2 className="h-3.5 w-3.5" />
-                    {pasteResult.matched} auto-matched
-                  </span>
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
+                  {pasteResult.matched > 0 && (
+                    <span className="flex items-center gap-1 text-green-600">
+                      <CheckCircle2 className="h-3.5 w-3.5" />
+                      {pasteResult.matched} auto-matched
+                    </span>
+                  )}
                   {pasteResult.unmatched > 0 && (
                     <span className="flex items-center gap-1 text-orange-600">
                       <XCircle className="h-3.5 w-3.5" />
                       {pasteResult.unmatched} need manual account selection
+                    </span>
+                  )}
+                  {/* Honest notice: some pasted lines were NOT valid links and were
+                      skipped (not added). Never drop them silently. */}
+                  {pasteResult.dropped > 0 && (
+                    <span className="flex items-center gap-1 text-red-600">
+                      <AlertTriangle className="h-3.5 w-3.5" />
+                      {pasteResult.dropped} line{pasteResult.dropped !== 1 ? "s" : ""} skipped (not a valid link) — check &amp; re-paste
                     </span>
                   )}
                 </div>
@@ -915,17 +1000,14 @@ export default function ReportPage() {
                 <button
                   type="button"
                   onClick={handleSmartPaste}
-                  disabled={(() => { try { const u = pasteText.split("\n").filter((l) => { try { new URL(l.trim()); return true; } catch { return false; } }); return u.length === 0; } catch { return true; } })()}
+                  disabled={detectedUrlCount === 0}
                   className="bg-[#1A1A1A] text-white py-2 px-5 rounded-full text-sm font-semibold hover:bg-[#2B2B2B] disabled:opacity-40 transition-all shadow-sm hover:shadow-md flex items-center gap-2"
                 >
                   <Zap className="h-3.5 w-3.5" />
                   Add &amp; Auto-Sort
                 </button>
                 <span className="text-xs text-[#B0B0B0]">
-                  {(() => {
-                    const count = pasteText.split("\n").filter((l) => { try { new URL(l.trim()); return true; } catch { return false; } }).length;
-                    return count > 0 ? `${count} URL${count !== 1 ? "s" : ""} detected` : "Paste URLs above";
-                  })()}
+                  {detectedUrlCount > 0 ? `${detectedUrlCount} URL${detectedUrlCount !== 1 ? "s" : ""} detected` : "Paste URLs above"}
                 </span>
               </div>
             </div>
@@ -1034,7 +1116,7 @@ export default function ReportPage() {
                   >
                     <option value="">Select account...</option>
                     {accounts.map((acc: any) => (
-                      <option key={acc.id} value={acc.id}>{acc.handle || acc.displayName} ({acc.platform})</option>
+                      <option key={acc.id} value={acc.id}>{accountOptionLabel(acc)}</option>
                     ))}
                   </select>
                   {rowErr?.accountId && (
@@ -1129,10 +1211,11 @@ export default function ReportPage() {
             <div className="flex-1 min-w-0">
               <p className="text-sm text-emerald-800">
                 <span className="font-semibold">{submitSummary.saved} link{submitSummary.saved !== 1 ? "s" : ""} saved</span>
-                {submitSummary.skipped > 0 && (
-                  <> · {submitSummary.skipped} duplicate{submitSummary.skipped !== 1 ? "s" : ""} skipped</>
+                {submitSummary.skipped > 0 ? (
+                  <> · {submitSummary.skipped} duplicate{submitSummary.skipped !== 1 ? "s" : ""} skipped — no links were lost.</>
+                ) : (
+                  <> — your links are submitted. Add more below any time; they’ll appear in “Submitted today”.</>
                 )}
-                {" "}— no links were lost.
               </p>
               {submitSummary.skipped > 0 && (submitSummary.inSubmission > 0 || submitSummary.crossDay > 0) && (
                 <p className="text-xs text-emerald-700/90 mt-0.5">

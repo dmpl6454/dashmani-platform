@@ -427,6 +427,15 @@ export async function getReportById(reportId: string) {
   return formatReport(report);
 }
 
+// Bound the reports payload. WHY: this used to be an UNBOUNDED findMany + full link
+// hydration — the internal /reports page loaded every report + every one of ~37-40k
+// report_links into one JSON blob, OOM-crashing mobile browsers AND holding a pooled DB
+// connection for the whole heavy query (amplifying the 2026-07-08 pool starvation). The
+// page now loads a page at a time. Defaults: 50 reports/page. pageSize is clamped to a
+// hard max so a caller can't re-create the unbounded query via ?pageSize=99999.
+const DEFAULT_REPORTS_PAGE_SIZE = 50;
+const MAX_REPORTS_PAGE_SIZE = 100;
+
 export async function getAllReports(filters: AdminReportFilters) {
   const where: any = {};
 
@@ -442,13 +451,31 @@ export async function getAllReports(filters: AdminReportFilters) {
     where.links = { some: { accountId: filters.accountId } };
   }
 
-  const reports = await prisma.dailyReport.findMany({
-    where,
-    include: reportInclude,
-    orderBy: { date: "desc" },
-  });
+  const page = Math.max(1, Math.floor(filters.page ?? 1));
+  const pageSize = Math.min(
+    MAX_REPORTS_PAGE_SIZE,
+    Math.max(1, Math.floor(filters.pageSize ?? DEFAULT_REPORTS_PAGE_SIZE)),
+  );
+  const skip = (page - 1) * pageSize;
 
-  return reports.map(formatReport);
+  const [reports, total] = await Promise.all([
+    prisma.dailyReport.findMany({
+      where,
+      include: reportInclude,
+      orderBy: { date: "desc" },
+      take: pageSize,
+      skip,
+    }),
+    prisma.dailyReport.count({ where }),
+  ]);
+
+  return {
+    reports: reports.map(formatReport),
+    total,
+    page,
+    pageSize,
+    hasMore: skip + reports.length < total,
+  };
 }
 
 export async function getReportSummary(startDate?: string, endDate?: string) {

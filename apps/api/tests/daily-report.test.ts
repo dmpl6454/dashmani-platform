@@ -771,6 +771,40 @@ describe("Daily Report API", () => {
       const res = await request(app).get("/v1/admin/reports");
       expect(res.status).toBe(401);
     });
+
+    it("paginates: defaults to 50/page and reports meta", async () => {
+      // getAllReports used to be unbounded (incident 2026-07-08 — OOM'd mobile
+      // browsers + held pooled DB connections for the full unbounded query).
+      // Seed 55 reports (one per date, since DailyReport is unique per
+      // employee+date) to exercise the default page size.
+      for (let i = 0; i < 55; i++) {
+        const day = String((i % 28) + 1).padStart(2, "0");
+        const month = i < 28 ? "01" : "02";
+        await request(app)
+          .post("/v1/hr/reports")
+          .set("Authorization", `Bearer ${hrToken}`)
+          .send({
+            date: `2025-${month}-${day}`,
+            links: [{ accountId, url: `https://instagram.com/p/page-${i}`, platform: "instagram" }],
+          });
+      }
+
+      const page1 = await request(app)
+        .get("/v1/admin/reports")
+        .set("Authorization", `Bearer ${adminToken}`);
+
+      expect(page1.status).toBe(200);
+      expect(page1.body.data.length).toBe(50);
+      expect(page1.body.meta).toMatchObject({ page: 1, pageSize: 50, total: 55, hasMore: true });
+
+      const page2 = await request(app)
+        .get("/v1/admin/reports?page=2&pageSize=50")
+        .set("Authorization", `Bearer ${adminToken}`);
+
+      expect(page2.status).toBe(200);
+      expect(page2.body.data.length).toBe(5);
+      expect(page2.body.meta).toMatchObject({ page: 2, pageSize: 50, total: 55, hasMore: false });
+    });
   });
 
   describe("GET /v1/admin/reports/summary", () => {

@@ -490,24 +490,60 @@ export async function getReportSummary(startDate?: string, endDate?: string) {
   // Always fetch today's link counts independently of date range filter
   const todayDate = istMidnight(todayIST());
 
+  // MEMORY-SAFE aggregation (incident 2026-07-08/09): this function used to
+  // `findMany({ include: { links: { select: { platform } } } })` over the whole
+  // window with NO take — hydrating EVERY report_links row (84k+ on prod) into
+  // Node heap, which spiked the API to ~1.7GB and let the kernel OOM-killer reap
+  // a portal → 502s. We NEVER need the individual link rows here, only per-report
+  // platform COUNTS. So: (1) fetch reports WITHOUT links (tiny — one row per
+  // report, ~1.2k), then (2) get platform counts via a DB groupBy on report_links
+  // keyed by (reportId, platform) — one row per report×platform, an order of
+  // magnitude smaller than the raw link rows — and join in JS. Output shape is
+  // byte-identical to before; only the memory profile changes.
   const [reports, todayReports] = await Promise.all([
     prisma.dailyReport.findMany({
       where,
-      include: {
+      select: {
+        id: true,
+        employeeId: true,
+        date: true,
         employee: { select: { id: true, name: true, email: true, profileImageUrl: true } },
-        links: { select: { platform: true } },
       },
       orderBy: { date: "asc" },
     }),
     prisma.dailyReport.findMany({
       where: { date: todayDate },
       select: {
+        id: true,
         employeeId: true,
         employee: { select: { id: true, name: true, email: true, profileImageUrl: true } },
-        links: { select: { platform: true } },
       },
     }),
   ]);
+
+  // Per-(report, platform) link counts via DB groupBy — avoids loading link rows.
+  const allReportIds = [...reports.map((r) => r.id), ...todayReports.map((r) => r.id)];
+  const platformCounts = allReportIds.length
+    ? await prisma.reportLink.groupBy({
+        by: ["reportId", "platform"],
+        where: { reportId: { in: allReportIds } },
+        _count: { _all: true },
+      })
+    : [];
+  // reportId → array of { platform, count } (mirrors what report.links used to give,
+  // pre-collapsed to counts). Platform casing is normalized by callers below (toLowerCase).
+  const linksByReport = new Map<string, { platform: string; count: number }[]>();
+  for (const g of platformCounts) {
+    const arr = linksByReport.get(g.reportId) ?? [];
+    arr.push({ platform: g.platform, count: g._count._all });
+    linksByReport.set(g.reportId, arr);
+  }
+  // Total live+scheduled link count per report (sum across platforms) — replaces
+  // the old `report.links.length`.
+  const linkCountByReport = new Map<string, number>();
+  for (const [rid, arr] of linksByReport) {
+    linkCountByReport.set(rid, arr.reduce((s, x) => s + x.count, 0));
+  }
 
   // Build maps of employeeId → today's link count and platform breakdown.
   // Today's data is fetched independently of the date-range filter so the
@@ -516,7 +552,8 @@ export async function getReportSummary(startDate?: string, endDate?: string) {
   const todayPlatformMap = new Map<string, Record<string, number>>();
   const todayEmployeeMap = new Map<string, { id: string; name: string; email: string; profileImageUrl: string | null }>();
   for (const r of todayReports) {
-    todayLinksMap.set(r.employeeId, r.links.length);
+    const rLinks = linksByReport.get(r.id) ?? [];
+    todayLinksMap.set(r.employeeId, linkCountByReport.get(r.id) ?? 0);
     todayEmployeeMap.set(r.employeeId, {
       id: r.employeeId,
       name: r.employee.name,
@@ -524,9 +561,9 @@ export async function getReportSummary(startDate?: string, endDate?: string) {
       profileImageUrl: (r.employee as any).profileImageUrl ?? null,
     });
     const pMap: Record<string, number> = {};
-    for (const link of r.links) {
-      const p = ((link as any).platform || "unknown").toLowerCase();
-      pMap[p] = (pMap[p] || 0) + 1;
+    for (const link of rLinks) {
+      const p = (link.platform || "unknown").toLowerCase();
+      pMap[p] = (pMap[p] || 0) + link.count;
     }
     todayPlatformMap.set(r.employeeId, pMap);
   }
@@ -564,23 +601,25 @@ export async function getReportSummary(startDate?: string, endDate?: string) {
       });
     }
     const entry = summaryMap.get(key)!;
+    const reportLinks = linksByReport.get(report.id) ?? [];
+    const reportLinkCount = linkCountByReport.get(report.id) ?? 0;
     entry.reportCount += 1;
-    entry.totalLinks += report.links.length;
+    entry.totalLinks += reportLinkCount;
     entry.reportDates.push(report.date);
     if (!entry.lastSubmittedAt || report.date > entry.lastSubmittedAt) {
       entry.lastSubmittedAt = report.date;
     }
     totalReports += 1;
-    totalLinks += report.links.length;
+    totalLinks += reportLinkCount;
     const dateStr = dateToIST(new Date(report.date));
-    for (const link of report.links) {
-      const p = ((link as any).platform || "Unknown").toLowerCase();
-      platformMap[p] = (platformMap[p] || 0) + 1;
-      entry.empPlatformMap[p] = (entry.empPlatformMap[p] || 0) + 1;
+    for (const link of reportLinks) {
+      const p = (link.platform || "Unknown").toLowerCase();
+      platformMap[p] = (platformMap[p] || 0) + link.count;
+      entry.empPlatformMap[p] = (entry.empPlatformMap[p] || 0) + link.count;
       if (!platformDailyMap[p]) platformDailyMap[p] = {};
-      platformDailyMap[p][dateStr] = (platformDailyMap[p][dateStr] || 0) + 1;
+      platformDailyMap[p][dateStr] = (platformDailyMap[p][dateStr] || 0) + link.count;
       if (!entry.empPlatformDailyMap[p]) entry.empPlatformDailyMap[p] = {};
-      entry.empPlatformDailyMap[p][dateStr] = (entry.empPlatformDailyMap[p][dateStr] || 0) + 1;
+      entry.empPlatformDailyMap[p][dateStr] = (entry.empPlatformDailyMap[p][dateStr] || 0) + link.count;
     }
   }
 

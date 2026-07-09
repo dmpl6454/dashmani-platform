@@ -160,6 +160,10 @@ interface ReportCardProps {
 }
 
 const ReportCard = memo(function ReportCard({ report, isAdmin, deletingLinkId, onDeleteLink }: ReportCardProps) {
+  const [showAllLinks, setShowAllLinks] = useState(false);
+  const LINK_CAP = 20;
+  const allLinks = report.links ?? [];
+  const shownLinks = showAllLinks ? allLinks : allLinks.slice(0, LINK_CAP);
   return (
     <div
       className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0] transition-shadow duration-200 hover:shadow-[0_8px_32px_rgba(0,0,0,0.07)]"
@@ -197,7 +201,7 @@ const ReportCard = memo(function ReportCard({ report, isAdmin, deletingLinkId, o
         )}
 
         <div className="space-y-1 pl-[52px]">
-          {(report.links ?? []).map((link: any, i: number) => (
+          {shownLinks.map((link: any, i: number) => (
             <div key={link.id ?? i} className="flex items-center gap-2 group/link py-1 px-2 rounded-lg hover:bg-[#FEFCF7] transition-colors">
               <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide border ${platformBadgeClass(link.platform)}`}>
                 {link.platform ?? "—"}
@@ -238,6 +242,14 @@ const ReportCard = memo(function ReportCard({ report, isAdmin, deletingLinkId, o
               )}
             </div>
           ))}
+          {allLinks.length > LINK_CAP && (
+            <button
+              onClick={() => setShowAllLinks((v) => !v)}
+              className="mt-1 text-xs font-medium text-[#7A7A7A] hover:text-[#1A1A1A] underline"
+            >
+              {showAllLinks ? "Show fewer" : `Show all ${allLinks.length} links`}
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -254,6 +266,7 @@ export default function ReportsPage() {
   const [startDate, setStartDate] = useState(() => presetStart(30));
   const [endDate, setEndDate] = useState(() => todayISO());
   const [employeeId, setEmployeeId] = useState("");
+  const [reportsPage, setReportsPage] = useState(1);
   const [deletingLinkId, setDeletingLinkId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>("totalLinks");
@@ -281,8 +294,14 @@ export default function ReportsPage() {
   const { user } = useAuth();
   const isAdmin = user?.roles?.some((r) => r === "Admin" || r === "Super Admin") ?? false;
 
+  // Reset to page 1 whenever the filters change — a stale page number from a
+  // previous filter could otherwise point past the end of the new result set.
+  useEffect(() => {
+    setReportsPage(1);
+  }, [employeeId, startDate, endDate]);
+
   const { data: summaryData, isLoading: summaryLoading, mutate: mutateSummary } = useReportSummary(startDate, endDate);
-  const { data: reportsData, isLoading: reportsLoading, mutate: mutateReports } = useAdminReports({ employeeId, startDate, endDate });
+  const { data: reportsData, isLoading: reportsLoading, mutate: mutateReports } = useAdminReports({ employeeId, startDate, endDate, page: reportsPage, pageSize: 50 });
   const { data: insightsData, isLoading: insightsLoading } = useInsightsSummary(startDate, endDate, employeeId || undefined);
   const [ytAllTime, setYtAllTime] = useState(false);
   // Top-links panels: one hook per platform (all share the same window toggle).
@@ -296,6 +315,7 @@ export default function ReportsPage() {
 
   const summary = (summaryData as any)?.data;
   const reports = (reportsData as any)?.data ?? [];
+  const reportsMeta = (reportsData as any)?.meta;
   const employees = (employeesData as any)?.data ?? [];
 
   const handleOpenEmpModal = useCallback((emp: any) => {
@@ -830,7 +850,7 @@ export default function ReportsPage() {
           </h3>
           {!reportsLoading && reports.length > 0 && (
             <span className="text-xs text-[#B0B0B0] ml-auto">
-              {reports.length} report{reports.length !== 1 ? "s" : ""}
+              {reportsMeta?.total ?? reports.length} report{(reportsMeta?.total ?? reports.length) !== 1 ? "s" : ""}
             </span>
           )}
         </div>
@@ -845,17 +865,38 @@ export default function ReportsPage() {
             <span>No reports found.</span>
           </div>
         ) : (
-          <div className="space-y-4">
-            {reports.map((report: any) => (
-              <ReportCard
-                key={report.id}
-                report={report}
-                isAdmin={isAdmin}
-                deletingLinkId={deletingLinkId}
-                onDeleteLink={handleDeleteLink}
-              />
-            ))}
-          </div>
+          <>
+            <div className="space-y-4">
+              {reports.map((report: any) => (
+                <ReportCard
+                  key={report.id}
+                  report={report}
+                  isAdmin={isAdmin}
+                  deletingLinkId={deletingLinkId}
+                  onDeleteLink={handleDeleteLink}
+                />
+              ))}
+            </div>
+            {(reportsPage > 1 || reportsMeta?.hasMore) && (
+              <div className="flex items-center justify-center gap-3 pt-4">
+                <button
+                  onClick={() => setReportsPage((p) => Math.max(1, p - 1))}
+                  disabled={reportsPage <= 1 || reportsLoading}
+                  className="rounded-full px-5 py-2 text-sm font-medium bg-white border border-[#E8E0D0] text-[#1A1A1A] disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  Previous
+                </button>
+                <span className="text-xs text-[#7A7A7A]">Page {reportsPage}</span>
+                <button
+                  onClick={() => setReportsPage((p) => p + 1)}
+                  disabled={!reportsMeta?.hasMore || reportsLoading}
+                  className="rounded-full px-5 py-2 text-sm font-medium bg-[#1A1A1A] text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {reportsLoading ? "Loading…" : "Next"}
+                </button>
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>

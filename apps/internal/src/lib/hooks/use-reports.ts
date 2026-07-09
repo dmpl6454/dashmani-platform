@@ -6,12 +6,16 @@ export function useAdminReports(filters?: {
   startDate?: string;
   endDate?: string;
   accountId?: string;
+  page?: number;
+  pageSize?: number;
 }) {
   const params = new URLSearchParams();
   if (filters?.employeeId) params.set("employeeId", filters.employeeId);
   if (filters?.startDate) params.set("startDate", filters.startDate);
   if (filters?.endDate) params.set("endDate", filters.endDate);
   if (filters?.accountId) params.set("accountId", filters.accountId);
+  if (filters?.page) params.set("page", String(filters.page));
+  if (filters?.pageSize) params.set("pageSize", String(filters.pageSize));
   const query = params.toString() ? `?${params.toString()}` : "";
   return useSWR(`/admin/reports${query}`, (url) => apiFetch(url), {
     revalidateOnFocus: false,

@@ -832,6 +832,56 @@ describe("Daily Report API", () => {
       expect(entry.totalLinks).toBe(2);
     });
 
+    it("aggregates platform breakdown across platforms and days (groupBy rewrite)", async () => {
+      // getReportSummary was rewritten (2026-07-09) to derive per-report platform
+      // COUNTS via a DB groupBy instead of hydrating every report_links row into
+      // Node heap (the OOM/502 fix). This locks in that the aggregation output is
+      // byte-identical: correct per-platform counts, totalLinks, and reportCount
+      // across MULTIPLE platforms and MULTIPLE days for one employee.
+      await request(app)
+        .post("/v1/hr/reports")
+        .set("Authorization", `Bearer ${hrToken}`)
+        .send({
+          date: "2026-03-01",
+          links: [
+            { accountId, url: "https://instagram.com/p/m1", platform: "instagram" },
+            { accountId, url: "https://instagram.com/p/m2", platform: "instagram" },
+            { accountId, url: "https://facebook.com/reel/100", platform: "facebook" },
+          ],
+        });
+      await request(app)
+        .post("/v1/hr/reports")
+        .set("Authorization", `Bearer ${hrToken}`)
+        .send({
+          date: "2026-03-02",
+          links: [
+            { accountId, url: "https://youtube.com/watch?v=aaa", platform: "youtube" },
+            { accountId, url: "https://instagram.com/p/m3", platform: "instagram" },
+          ],
+        });
+
+      const res = await request(app)
+        .get("/v1/admin/reports/summary?startDate=2026-03-01&endDate=2026-03-02")
+        .set("Authorization", `Bearer ${adminToken}`);
+
+      expect(res.status).toBe(200);
+      const entry = res.body.data.employees.find((e: any) => e.id === employeeId);
+      expect(entry).toBeDefined();
+      expect(entry.reportCount).toBe(2);       // two distinct days
+      expect(entry.totalLinks).toBe(5);        // 3 + 2
+      // Per-employee platform breakdown: instagram 3, facebook 1, youtube 1
+      const pb: Record<string, number> = {};
+      for (const p of entry.platformBreakdown) pb[p.platform] = p.count;
+      expect(pb.instagram).toBe(3);
+      expect(pb.facebook).toBe(1);
+      expect(pb.youtube).toBe(1);
+      // Team-wide breakdown should reflect the same totals for this single employee
+      const teamPb: Record<string, number> = {};
+      for (const p of res.body.data.platformBreakdown) teamPb[p.platform] = p.count;
+      expect(teamPb.instagram).toBeGreaterThanOrEqual(3);
+      expect(res.body.data.totalLinks).toBeGreaterThanOrEqual(5);
+    });
+
     it("requires admin auth", async () => {
       const res = await request(app)
         .get("/v1/admin/reports/summary")

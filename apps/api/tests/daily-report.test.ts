@@ -5,6 +5,7 @@ import { createTestUser, createTestRole, generateToken } from "./helpers";
 import { prisma } from "@dashmani/db";
 import jwt from "jsonwebtoken";
 import { __setShareResolverForTesting } from "../src/services/daily-report.service";
+import { submitDailyReportSchema } from "@dashmani/shared";
 import "./setup";
 
 // Generate an HR token (type: "hr")
@@ -803,6 +804,34 @@ describe("Daily Report API", () => {
         .set("Authorization", `Bearer ${hrToken}`);
 
       expect(res.status).toBe(403);
+    });
+  });
+
+  describe("submitDailyReportSchema — oversized URL guard (btree 54000 fix)", () => {
+    const base = {
+      date: "2026-07-09",
+      links: [
+        {
+          accountId: "11111111-1111-1111-1111-111111111111",
+          url: "https://instagram.com/reel/" + "A".repeat(3000), // ~3027 bytes > 2704 btree limit
+          platform: "instagram",
+        },
+      ],
+    };
+
+    it("rejects a URL longer than 2048 chars with a structured field error (not a thrown 500)", () => {
+      const result = submitDailyReportSchema.safeParse(base);
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        const urlIssue = result.error.issues.find((i) => i.path.join(".") === "links.0.url");
+        expect(urlIssue).toBeTruthy();
+        expect(urlIssue!.message).toMatch(/too long/i);
+      }
+    });
+
+    it("accepts a normal-length URL", () => {
+      const ok = { ...base, links: [{ ...base.links[0], url: "https://instagram.com/reel/DaUlZhNoAbc" }] };
+      expect(submitDailyReportSchema.safeParse(ok).success).toBe(true);
     });
   });
 });

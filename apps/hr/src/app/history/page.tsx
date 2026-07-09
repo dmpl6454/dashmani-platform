@@ -17,8 +17,9 @@ const PLATFORM_CFG: Record<string, { bg: string; text: string }> = {
 function platCfg(p: string) { return PLATFORM_CFG[p?.toLowerCase()] ?? { bg: "bg-muted", text: "text-ink-3" }; }
 
 type RangeKey = "7d" | "30d" | "all";
-const RANGES: { label: string; key: RangeKey }[] = [
-  { label: "7 Days", key: "7d" }, { label: "30 Days", key: "30d" }, { label: "All Time", key: "all" },
+// `short` is used on mobile where the header row is tight; `label` on sm+ screens.
+const RANGES: { label: string; short: string; key: RangeKey }[] = [
+  { label: "7 Days", short: "7d", key: "7d" }, { label: "30 Days", short: "30d", key: "30d" }, { label: "All Time", short: "All", key: "all" },
 ];
 
 function localDateStr(d: Date) {
@@ -119,11 +120,12 @@ export default function HistoryPage() {
   return (
     <>
       <Topstrip title="Link History" sub={`${reports.length} reports`} right={
-        <div className="flex gap-1">
+        <div className="flex gap-1 shrink-0">
           {RANGES.map(r => (
             <button key={r.key} onClick={() => setRange(r.key)}
-              className={`h-8 px-3 rounded-full text-[12px] font-semibold border-2 transition-all ${range === r.key ? "bg-ink text-white border-ink" : "bg-surface text-ink-2 border-ink/12 hover:border-ink/25"}`}>
-              {r.label}
+              className={`h-8 px-2.5 sm:px-3 rounded-full text-[12px] font-semibold border-2 whitespace-nowrap shrink-0 transition-all ${range === r.key ? "bg-ink text-white border-ink" : "bg-surface text-ink-2 border-ink/12 hover:border-ink/25"}`}>
+              <span className="sm:hidden">{r.short}</span>
+              <span className="hidden sm:inline">{r.label}</span>
             </button>
           ))}
         </div>

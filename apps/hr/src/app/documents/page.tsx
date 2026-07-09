@@ -66,8 +66,8 @@ export default function DocumentsPage() {
           {/* Upload form */}
           <div className="v3-card p-5">
             <h3 className="text-[14px] font-bold text-ink mb-4 flex items-center gap-2"><Upload size={15} className="text-indigo" /> Upload Document</h3>
-            <div className="grid grid-cols-3 gap-4 items-end">
-              <div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 sm:items-end">
+              <div className="min-w-0">
                 <label className="block text-[11.5px] font-bold text-ink-3 mb-1.5 uppercase tracking-wider">Type</label>
                 <select value={docType} onChange={e => setDocType(e.target.value)}
                   className="w-full h-10 pl-3 pr-8 text-[13px] font-medium rounded-xl bg-bg border-2 border-ink/10 focus:border-indigo outline-none appearance-none">
@@ -75,14 +75,20 @@ export default function DocumentsPage() {
                   {DOCUMENT_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
                 </select>
               </div>
-              <div>
+              <div className="min-w-0">
                 <label className="block text-[11.5px] font-bold text-ink-3 mb-1.5 uppercase tracking-wider">File</label>
+                {/* Native file inputs clip their label in narrow cells and can't be centered;
+                    use a hidden input + a full-width, centered "Choose file" button instead. */}
+                <button type="button" onClick={() => fileRef.current?.click()}
+                  className="w-full h-10 px-3 text-[13px] font-medium rounded-xl bg-bg border-2 border-ink/10 hover:border-indigo focus:border-indigo transition-colors flex items-center justify-center gap-2 text-ink-3">
+                  <File size={13} className="shrink-0" />
+                  <span className="truncate">{file ? file.name : "Choose file"}</span>
+                </button>
                 <input ref={fileRef} type="file" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
-                  onChange={e => setFile(e.target.files?.[0] ?? null)}
-                  className="w-full h-10 px-3 text-[13px] font-medium rounded-xl bg-bg border-2 border-ink/10 focus:border-indigo outline-none file:border-0 file:bg-transparent file:text-[12px] file:text-ink-3" />
+                  onChange={e => setFile(e.target.files?.[0] ?? null)} className="hidden" />
               </div>
-              <div>
-                <label className="block text-[11.5px] font-bold text-ink-3 mb-1.5 uppercase tracking-wider select-none">&nbsp;</label>
+              <div className="min-w-0">
+                <label className="hidden sm:block text-[11.5px] font-bold text-ink-3 mb-1.5 uppercase tracking-wider select-none">&nbsp;</label>
                 <button onClick={handleUpload} disabled={uploading}
                   className="w-full btn-3d inline-flex items-center justify-center gap-2 h-10 rounded-xl bg-ink text-white text-[13px] font-semibold border-2 border-ink disabled:opacity-50">
                   {uploading ? <><div className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin" />Uploading…</> : <><Upload size={14} />Upload</>}

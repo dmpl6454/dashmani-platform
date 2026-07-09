@@ -130,15 +130,15 @@ export default function CalendarPage() {
 
         {/* Working Days Stat */}
         <div className="flex flex-wrap items-center gap-4 mb-6">
-          <div className="v3-card-sm flex items-center gap-3">
-            <div className="h-9 w-9 rounded-xl bg-indigo-soft flex items-center justify-center">
+          <div className="v3-card-sm p-3 flex items-center gap-3">
+            <div className="h-9 w-9 rounded-xl bg-indigo-soft flex items-center justify-center shrink-0">
               <Briefcase className="w-4 h-4 text-indigo" />
             </div>
-            <div>
-              <p className="text-xl font-num font-light text-ink">
+            <div className="leading-tight">
+              <p className="text-xl font-num font-light text-ink leading-none">
                 {calendar?.workingDays ?? "--"}
               </p>
-              <p className="text-[11px] text-ink-4 font-medium">Working Days</p>
+              <p className="text-[11px] text-ink-4 font-medium mt-1">Working Days</p>
             </div>
           </div>
         </div>

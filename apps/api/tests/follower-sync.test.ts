@@ -442,6 +442,58 @@ describe("syncAllFollowerCounts — Tier 3: public-API fallback", () => {
     expect(mockAccountUpdate).not.toHaveBeenCalled();
   });
 
+  it("rejects a walled/short mobile FB page even if it contains a plausible unanchored number, and falls through to the vanity-slug fallback", async () => {
+    // The mobile response is HTTP 200 (not a fetch failure) but SHORT — a
+    // walled/interstitial page — and its og:description contains a number with
+    // NO "likes/followers/people" anchor (e.g. an incidental year). This must
+    // never be parsed as a follower count: neither the missing-length guard
+    // nor the dropped unanchored fallback should let it through.
+    //
+    // extractHandle() strips the query string, so a "profile.php?id=<n>" URL
+    // still yields the slug "profile.php" and the (existing, untouched)
+    // vanity-slug fallback DOES fire against www.facebook.com/profile.php —
+    // that call is mocked to a clean 404 miss here so this test isolates only
+    // the numeric-ID branch's own guard, matching test 3's "clean miss" shape.
+    const account = makeAccount({
+      id: "acc-fb-walled",
+      handle: "",
+      profileUrl: "https://www.facebook.com/profile.php?id=555555555",
+      platformSlug: "facebook",
+    });
+    mockFindMany.mockResolvedValue([account]);
+    mockFbLookupKeys.mockReturnValue([]);
+
+    const walledHtml =
+      `<html><head><meta property="og:description" content="Log into Facebook to continue. Est. 2004"></head></html>`;
+    // Sanity check: the fixture is deliberately short (a real un-walled mobile
+    // profile page is tens of KB) and contains an unanchored number.
+    expect(walledHtml.length).toBeLessThan(20_000);
+
+    const fetchMock = vi.fn().mockImplementation(async (url: string) => {
+      if (String(url).includes("m.facebook.com/profile.php?id=555555555")) {
+        return { ok: true, status: 200, json: async () => ({}), text: async () => walledHtml };
+      }
+      // The vanity-slug fallback (www.facebook.com/profile.php) — a clean miss,
+      // out of scope for this test.
+      return { ok: false, status: 404, json: async () => ({}), text: async () => "" };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    // Must not throw.
+    await expect(syncAllFollowerCounts()).resolves.toBeDefined();
+
+    // Must have attempted the mobile numeric path.
+    const mobileCall = fetchMock.mock.calls.find(([url]) =>
+      String(url).includes("m.facebook.com/profile.php?id=555555555"),
+    );
+    expect(mobileCall).toBeTruthy();
+
+    // The incidental "2004" must NEVER be written as a follower count, and the
+    // vanity-slug fallback (mocked to a clean miss) has nothing either — so
+    // this must land as a clean miss, matching test 3's pattern.
+    expect(mockAccountUpdate).not.toHaveBeenCalled();
+  });
+
   // ── YouTube: public-API resolver ──────────────────────────────────────────
 
   it("resolves YouTube account via fetchYouTubeSubscriberCounts and writes the count", async () => {

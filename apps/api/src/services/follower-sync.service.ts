@@ -192,6 +192,13 @@ async function fetchPageHtml(url: string, userAgent?: string): Promise<string | 
   }
 }
 
+// A real m.facebook.com profile page (og:description + full mobile markup) runs
+// tens of KB. A walled/interstitial page (login wall, checkpoint, error shell)
+// can still be served with a 200 status but is much shorter — same lesson the
+// sibling scrapers already learned (facebook-scraper.ts's MIN_REEL_HTML_LEN,
+// snapchat-scraper.ts's MIN_PAGE_LEN): reject on body length BEFORE parsing.
+const MIN_MOBILE_FB_HTML_LEN = 20_000;
+
 async function fetchFacebookFollowers(profileUrl: string, handle: string): Promise<number | null> {
   // Live-verified 2026-07-10 (from the actual prod server, against real prod FB
   // pages): Facebook has tightened logged-out access and the www.facebook.com/
@@ -210,18 +217,23 @@ async function fetchFacebookFollowers(profileUrl: string, handle: string): Promi
       `https://m.facebook.com/profile.php?id=${id}&locale=en_US`,
       "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1",
     );
-    if (mobileHtml) {
+    // fetchPageHtml only checks res.ok — a walled/interstitial page can still
+    // return HTTP 200, so reject a short body BEFORE parsing (never trust length
+    // alone as a guarantee of real content, but a short body is never real content).
+    if (mobileHtml && mobileHtml.length >= MIN_MOBILE_FB_HTML_LEN) {
       const ogDesc = mobileHtml.match(/<meta\s+property="og:description"\s+content="([^"]+)"/i);
       if (ogDesc) {
         const decoded = devanagariToAscii(decodeHtmlEntities(ogDesc[1]));
-        // Mobile format is "Name. N,NNN likes · ..." — anchor to the count
-        // followed by "likes"/"followers"/"people" so a number embedded in the
-        // page name is never mistaken for the count. Fall back to the first
-        // number sequence if no anchored match, same defensive pattern as below.
+        // Mobile format is "Name. N,NNN likes · ..." — REQUIRE the count to be
+        // anchored to "likes"/"followers"/"people". Unlike the vanity-slug path
+        // below, this branch does NOT fall back to "first number sequence": an
+        // unanchored number (e.g. a year, a phone fragment, or any incidental
+        // digits on a walled/interstitial page) must never be mistaken for a
+        // follower count and persisted. If unanchored, fall through to the
+        // vanity-slug path below (the existing safety net), not to a guess.
         const anchoredMatch = decoded.match(/([\d,]+)\s*(?:likes|followers|people)/i);
-        const numMatch = anchoredMatch || decoded.match(/([\d,]+)/);
-        if (numMatch) {
-          const parsed = parseFollowerCount(numMatch[1]);
+        if (anchoredMatch) {
+          const parsed = parseFollowerCount(anchoredMatch[1]);
           if (parsed && parsed > 0) return parsed;
         }
       }

@@ -193,6 +193,41 @@ async function fetchPageHtml(url: string, userAgent?: string): Promise<string | 
 }
 
 async function fetchFacebookFollowers(profileUrl: string, handle: string): Promise<number | null> {
+  // Live-verified 2026-07-10 (from the actual prod server, against real prod FB
+  // pages): Facebook has tightened logged-out access and the www.facebook.com/
+  // <slug> vanity-URL Googlebot path now serves a login wall for many pages.
+  // BUT numeric-ID profiles (facebook.com/profile.php?id=<n>) have a still-
+  // working alternate: the lightweight MOBILE site (m.facebook.com) with a
+  // mobile Safari UA (not Googlebot) returns an un-walled page whose
+  // og:description carries the follower/like count. 150/155 real prod accounts
+  // resolved via this exact method. Try it FIRST for numeric-ID URLs; on any
+  // miss, fall through to the existing vanity-slug Googlebot path below (which
+  // is a harmless no-op fallback for a pure numeric ID with no slug).
+  const numericIdMatch = profileUrl.match(/profile\.php\?id=(\d+)/);
+  if (numericIdMatch) {
+    const id = numericIdMatch[1];
+    const mobileHtml = await fetchPageHtml(
+      `https://m.facebook.com/profile.php?id=${id}&locale=en_US`,
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1",
+    );
+    if (mobileHtml) {
+      const ogDesc = mobileHtml.match(/<meta\s+property="og:description"\s+content="([^"]+)"/i);
+      if (ogDesc) {
+        const decoded = devanagariToAscii(decodeHtmlEntities(ogDesc[1]));
+        // Mobile format is "Name. N,NNN likes · ..." — anchor to the count
+        // followed by "likes"/"followers"/"people" so a number embedded in the
+        // page name is never mistaken for the count. Fall back to the first
+        // number sequence if no anchored match, same defensive pattern as below.
+        const anchoredMatch = decoded.match(/([\d,]+)\s*(?:likes|followers|people)/i);
+        const numMatch = anchoredMatch || decoded.match(/([\d,]+)/);
+        if (numMatch) {
+          const parsed = parseFollowerCount(numMatch[1]);
+          if (parsed && parsed > 0) return parsed;
+        }
+      }
+    }
+  }
+
   // FB blocks default UAs and returns HTTP 400 on mbasic without a cookie.
   // Googlebot UA is the only reliable way to get the public, un-walled page.
   const slug = extractHandle(profileUrl, "facebook") || handle.replace(/^@/, "").split("?")[0];

@@ -311,6 +311,137 @@ describe("syncAllFollowerCounts — Tier 3: public-API fallback", () => {
     expect(mockFetchFbMap).toHaveBeenCalledOnce();
   });
 
+  // ── Facebook: un-walled mobile path for numeric-ID profile URLs ──────────
+  //
+  // Live-verified 2026-07-10: www.facebook.com/<slug> now serves a login wall
+  // for many pages, but m.facebook.com/profile.php?id=<n> (mobile Safari UA)
+  // still returns an un-walled page with the count in og:description.
+  // These tests drive fetchFacebookFollowers indirectly via syncAllFollowerCounts
+  // (it is not exported), with fbLookupKeys returning [] so the account falls
+  // through Tier-1's map-miss branch straight into the scraper.
+
+  it("resolves a numeric-ID FB profile via the un-walled m.facebook.com mobile path", async () => {
+    const account = makeAccount({
+      id: "acc-fb-numeric",
+      handle: "Comedy Park",
+      profileUrl: "https://www.facebook.com/profile.php?id=123456789",
+      platformSlug: "facebook",
+    });
+    mockFindMany.mockResolvedValue([account]);
+    mockFbLookupKeys.mockReturnValue([]); // no map match → falls to scraper
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({}),
+      text: async () =>
+        `<html><head><meta property="og:description" content="Comedy Park. 1,000,000 likes · 46 talking about this"></head></html>`,
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await syncAllFollowerCounts();
+
+    // Must have requested the mobile numeric-ID URL with the mobile Safari UA.
+    const mobileCall = fetchMock.mock.calls.find(([url]) =>
+      String(url).includes("m.facebook.com/profile.php?id=123456789"),
+    );
+    expect(mobileCall).toBeTruthy();
+    const [calledUrl, calledInit] = mobileCall as [string, RequestInit];
+    expect(calledUrl).toBe("https://m.facebook.com/profile.php?id=123456789&locale=en_US");
+    const headers = calledInit?.headers as Record<string, string>;
+    expect(headers["User-Agent"]).toBe(
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1",
+    );
+
+    expect(mockAccountUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "acc-fb-numeric" },
+        data: expect.objectContaining({ followerCount: 1000000 }),
+      }),
+    );
+    expect(result.updated).toBe(1);
+  });
+
+  it("does NOT hit the m.facebook.com numeric path for a vanity-slug profile URL, and still resolves via the existing www.facebook.com Googlebot path", async () => {
+    const account = makeAccount({
+      id: "acc-fb-vanity",
+      handle: "ComedyPark.co",
+      profileUrl: "https://www.facebook.com/ComedyPark.co",
+      platformSlug: "facebook",
+    });
+    mockFindMany.mockResolvedValue([account]);
+    mockFbLookupKeys.mockReturnValue([]); // no map match → falls to scraper
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({}),
+      text: async () =>
+        `<html><head><meta property="og:description" content="ComedyPark.co. 500,000 likes · 12 talking about this"></head></html>`,
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await syncAllFollowerCounts();
+
+    // The numeric mobile path must never be requested for a vanity-slug URL.
+    const hitNumericPath = fetchMock.mock.calls.some(([url]) =>
+      String(url).includes("profile.php?id="),
+    );
+    expect(hitNumericPath).toBe(false);
+
+    // The existing www.facebook.com Googlebot path is still used.
+    const slugCall = fetchMock.mock.calls.find(([url]) =>
+      String(url).includes("www.facebook.com/ComedyPark.co"),
+    );
+    expect(slugCall).toBeTruthy();
+    const [, calledInit] = slugCall as [string, RequestInit];
+    const headers = calledInit?.headers as Record<string, string>;
+    expect(headers["User-Agent"]).toBe(
+      "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
+    );
+
+    expect(mockAccountUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "acc-fb-vanity" },
+        data: expect.objectContaining({ followerCount: 500000 }),
+      }),
+    );
+    expect(result.updated).toBe(1);
+  });
+
+  it("falls through to the vanity-slug path (and returns null, not throwing) when the numeric-ID mobile fetch is dead", async () => {
+    // A pure numeric-ID URL with no slug at all — the mobile fetch fails, and
+    // the fallback vanity-slug path also has nothing to resolve against, so
+    // the overall result must be a clean miss (failed), never a throw.
+    const account = makeAccount({
+      id: "acc-fb-dead",
+      handle: "",
+      profileUrl: "https://www.facebook.com/profile.php?id=999999999",
+      platformSlug: "facebook",
+    });
+    mockFindMany.mockResolvedValue([account]);
+    mockFbLookupKeys.mockReturnValue([]);
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 404,
+      json: async () => ({}),
+      text: async () => "",
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    // Must not throw.
+    await expect(syncAllFollowerCounts()).resolves.toBeDefined();
+
+    // Must have attempted the mobile numeric path.
+    const mobileCall = fetchMock.mock.calls.find(([url]) =>
+      String(url).includes("m.facebook.com/profile.php?id=999999999"),
+    );
+    expect(mobileCall).toBeTruthy();
+
+    expect(mockAccountUpdate).not.toHaveBeenCalled();
+  });
+
   // ── YouTube: public-API resolver ──────────────────────────────────────────
 
   it("resolves YouTube account via fetchYouTubeSubscriberCounts and writes the count", async () => {

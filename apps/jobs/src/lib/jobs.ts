@@ -12,6 +12,8 @@
 // service-layer `select` (see CLAUDE.md "Public API endpoints must never expose
 // internal user UUIDs"), so these read-only fetches are safe to render publicly.
 
+import { jobSlug, isUuid } from "./slug";
+
 export const SITE_URL = "https://jobs.digitalsukoon.com";
 
 /**
@@ -89,6 +91,22 @@ export async function getJob(id: string): Promise<PublicJob | null> {
   }
 }
 
+/**
+ * Resolve a /[id] route param that may be EITHER a title slug ("revenue-head")
+ * or a raw job UUID. New shareable links use the slug; we still honour UUIDs so
+ * previously-shared links and Google-indexed UUID URLs keep working.
+ *
+ * The public /jobs list already returns full job objects, so a slug match needs
+ * no extra per-job request.
+ */
+export async function resolveJob(param: string): Promise<PublicJob | null> {
+  const decoded = decodeURIComponent(param);
+  if (isUuid(decoded)) return getJob(decoded);
+  const target = decoded.toLowerCase();
+  const jobs = await getJobs();
+  return jobs.find((job) => jobSlug(job) === target) || null;
+}
+
 /** Strip leading bullet/dash markers and collapse whitespace for clean schema text. */
 function cleanText(text?: string): string | undefined {
   if (!text) return undefined;
@@ -126,7 +144,7 @@ export function buildJobPostingSchema(job: PublicJob) {
       name: "Digital Sukoon",
       value: job.id,
     },
-    url: `${SITE_URL}/${job.id}`,
+    url: `${SITE_URL}/${jobSlug(job)}`,
     employmentType: EMPLOYMENT_TYPE[job.type] || "OTHER",
     hiringOrganization: {
       "@type": "Organization",

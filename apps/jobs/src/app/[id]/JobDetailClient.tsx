@@ -2,14 +2,11 @@
 
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
-import { useParams, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { apiFetch, apiUpload } from "@/lib/api";
-import { getDeptColor } from "@/lib/dept-colors";
-
-const TYPE_DISPLAY: Record<string, string> = {
-  FULL_TIME: "Full-time", PART_TIME: "Part-time", CONTRACT: "Contract",
-  INTERNSHIP: "Internship", FREELANCE: "Freelance",
-};
+import { jobSlug } from "@/lib/slug";
+import ShareButton from "@/components/ShareButton";
+import RoleDetailView from "@/components/RoleDetailView";
 
 interface Job {
   id: string; title: string; department?: string; location?: string;
@@ -17,22 +14,23 @@ interface Job {
   requirements?: string; responsibilities?: string; benefits?: string; createdAt?: string;
 }
 
-// Proper named component so React DevTools shows a sensible label.
-function Section({ title, text }: { title: string; text?: string }) {
-  if (!text) return null;
-  return (
-    <div style={{ marginBottom: 28 }}>
-      <h3>{title}</h3>
-      <p>{text}</p>
-    </div>
-  );
-}
-
 // `initialJob` is fetched on the server (see page.tsx) and seeded into state so the
 // first render — the one Googlebot indexes — already contains the full role content
 // instead of a "Loading…" spinner. The client still revalidates in the background.
-export default function JobDetailPage({ initialJob = null }: { initialJob?: Job | null }) {
-  const { id } = useParams();
+// `num`/`total` drive the "№ 01 / 03" position counter (computed on the server).
+export default function JobDetailPage({
+  initialJob = null,
+  num,
+  total,
+}: {
+  initialJob?: Job | null;
+  num?: number;
+  total?: number;
+}) {
+  // The route param is now the title slug (e.g. "revenue-head"), so it can't be used
+  // for API calls. All /jobs/:id requests use the real UUID from the server-resolved
+  // initialJob instead.
+  const jobId = initialJob?.id;
   const searchParams = useSearchParams();
   const applyDirect = searchParams.get("apply") === "true";
 
@@ -55,11 +53,15 @@ export default function JobDetailPage({ initialJob = null }: { initialJob?: Job 
   });
 
   useEffect(() => {
-    apiFetch<any>(`/jobs/${id}`)
+    if (!jobId) {
+      setLoading(false);
+      return;
+    }
+    apiFetch<any>(`/jobs/${jobId}`)
       .then((res) => setJob(res.data))
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [id]);
+  }, [jobId]);
 
   // Auto-scroll to form when coming from "Apply Now" deep-link.
   useEffect(() => {
@@ -83,7 +85,7 @@ export default function JobDetailPage({ initialJob = null }: { initialJob?: Job 
       if (form.linkedinUrl) fd.append("linkedinUrl", form.linkedinUrl);
       if (form.portfolioUrl) fd.append("portfolioUrl", form.portfolioUrl);
       if (resumeFile) fd.append("resume", resumeFile);
-      await apiUpload(`/jobs/${id}/apply`, fd);
+      await apiUpload(`/jobs/${jobId}/apply`, fd);
       setSubmitted(true);
     } catch (err: any) {
       setError(err.message || "Failed to submit application");
@@ -116,8 +118,6 @@ export default function JobDetailPage({ initialJob = null }: { initialJob?: Job 
     );
   }
 
-  const color = getDeptColor(job.department);
-
   return (
     <div className="ds-detail-page">
       <Link href="/" className="ds-back-link">
@@ -127,56 +127,35 @@ export default function JobDetailPage({ initialJob = null }: { initialJob?: Job 
         Back to all positions
       </Link>
 
-      {/* Header card */}
-      <div className="ds-jd-header" style={{ borderTop: `4px solid ${color}` }}>
-        {job.department && (
-          <div className="ds-jd-dept" style={{ color }}>
-            {job.department}
-          </div>
-        )}
-        <h1 className="ds-jd-title">{job.title}</h1>
-
-        {/* Meta chips — extracted to a reusable class to avoid copy-pasting the same 11-property inline object */}
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 24 }}>
-          <span className="ds-meta-chip">
-            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="8" cy="8" r="6"/><path d="M8 4.5V8l2.2 1.4"/></svg>
-            {TYPE_DISPLAY[job.type] || job.type}
-          </span>
-          {job.location && (
-            <span className="ds-meta-chip">
-              <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M8 14s-5-4.4-5-8.2A5 5 0 0 1 13 5.8C13 9.6 8 14 8 14Z"/><circle cx="8" cy="6" r="1.8"/></svg>
-              {job.location}
-            </span>
-          )}
-          {job.experience && (
-            <span className="ds-meta-chip">
-              <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M3 13V8m5 5V4m5 9V9"/></svg>
-              {job.experience}
-            </span>
-          )}
-        </div>
-
-        {!submitted && (
-          <button
-            onClick={() => {
-              setShowForm(true);
-              setTimeout(() => formRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 100);
-            }}
-            className="ds-btn primary"
-            style={{ fontSize: 15, padding: "14px 28px" }}
-          >
-            Apply for this role
-            <span className="arrow">→</span>
-          </button>
-        )}
-      </div>
-
-      {/* Description */}
-      <div className="ds-jd-body">
-        <Section title="About the Role" text={job.description} />
-        <Section title="Key Responsibilities" text={job.responsibilities} />
-        <Section title="Requirements" text={job.requirements} />
-        <Section title="Benefits" text={job.benefits} />
+      {/* Detail card — same rich layout that used to live in the homepage side-panel. */}
+      <div className="ds-role-detail ds-rd-standalone">
+        <RoleDetailView
+          job={job}
+          num={num}
+          total={total}
+          isApplied={submitted}
+          actions={
+            <>
+              {!submitted && (
+                <button
+                  className="ds-btn primary"
+                  type="button"
+                  onClick={() => {
+                    setShowForm(true);
+                    setTimeout(() => formRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 100);
+                  }}
+                  style={{ flex: 1, justifyContent: "space-between", padding: "14px 18px 14px 22px" }}
+                >
+                  Apply for this role
+                  <span className="arrow">→</span>
+                </button>
+              )}
+              {/* Sharing stays available even after applying — a visitor may still
+                  want to pass the role to someone else. */}
+              <ShareButton slug={jobSlug(job)} jobTitle={job.title} variant="labeled" />
+            </>
+          }
+        />
       </div>
 
       {/* Application form — wrapped in <form> so required/type="email" validation is active */}

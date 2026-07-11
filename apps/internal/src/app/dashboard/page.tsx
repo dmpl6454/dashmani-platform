@@ -3,10 +3,11 @@ import Link from "next/link";
 import { useAuth } from "@/lib/auth";
 import { useOverviewStats } from "@/lib/hooks/use-analytics";
 import { useGrowthOverview, fmtCompact, httpUrlOrNull, DeltaBadge, type TopMover } from "@/lib/hooks/use-growth";
+import { useLinksAnalytics, useTopLinks } from "@/lib/hooks/use-reports";
 import {
   Users, Building2, Clock, CheckCircle, FolderOpen, FileCheck, Send,
   UserPlus, ArrowRight, TrendingUp, Link2, Calendar, BarChart2, CalendarDays, X,
-  Share2, Globe, ClipboardList, ChevronDown, ExternalLink, Trophy,
+  Share2, Globe, ClipboardList, ChevronDown, ExternalLink, Trophy, Eye,
 } from "lucide-react";
 import { useState } from "react";
 import { usePageTitle } from "@/lib/hooks/use-page-title";
@@ -85,6 +86,18 @@ export default function DashboardPage() {
   const growthLive: number | undefined = g?.liveCount;
   const growthStale: number | undefined = g?.staleCount;
   const growthManual: number | undefined = g?.manualCount;
+
+  // Top Performers + Top Links — fixed 30-day window (compact glance cards).
+  const perfEnd = toISO(today);
+  const perfStart = toISO(new Date(today.getTime() - 29 * 86400000));
+  const { data: linksAnalyticsData, isLoading: topPerformersLoading } = useLinksAnalytics(perfStart, perfEnd);
+  const topSubmitters: { employeeId: string; name: string; totalLinks: number; reportCount: number }[] =
+    (linksAnalyticsData as any)?.data?.topSubmitters ?? [];
+  const topPerformers = topSubmitters.slice(0, 3);
+
+  const { data: topYouTubeData, isLoading: topLinksLoading } = useTopLinks("youtube", perfStart, perfEnd, 3);
+  const topYouTubeLinks: { linkId: string | null; url: string; employeeName: string; views: number | null }[] =
+    (topYouTubeData as any)?.data ?? [];
 
   const linksTrend: { date: string; count: number }[] = stats.linksTrend ?? [];
   const trendData = linksTrend.map((d) => ({
@@ -537,6 +550,120 @@ export default function DashboardPage() {
 
           <div className="flex justify-end">
             <Link href="/accounts/growth" className="flex items-center gap-1.5 text-xs font-semibold text-indigo hover:underline">
+              View all <ArrowRight className="h-3.5 w-3.5" />
+            </Link>
+          </div>
+        </div>
+
+        {/* Top Performers — left half */}
+        <div className="lg:col-span-2 v3-card p-5 space-y-4 v3-card-lift">
+          <div className="flex items-center gap-3">
+            <div className="h-10 w-10 rounded-xl bg-sage-soft flex items-center justify-center">
+              <Trophy className="h-5 w-5 text-sage" />
+            </div>
+            <div>
+              <p className="font-bold text-ink">Top Performers</p>
+              <p className="text-xs text-ink-4">Last 30 days · by links submitted</p>
+            </div>
+          </div>
+
+          {topPerformersLoading ? (
+            <div className="space-y-2 animate-pulse">
+              {[0, 1, 2].map((i) => <div key={i} className="h-8 bg-muted rounded-lg" />)}
+            </div>
+          ) : topPerformers.length === 0 ? (
+            <div className="py-6 text-center">
+              <p className="text-sm text-ink-4">No submissions in the last 30 days</p>
+            </div>
+          ) : (
+            <ul className="space-y-2">
+              {topPerformers.map((p, i) => (
+                <li key={p.employeeId} className="flex items-center gap-2">
+                  <span className="text-xs font-bold text-ink-4 w-4 shrink-0">{i + 1}</span>
+                  <Link
+                    href={`/reports/${p.employeeId}`}
+                    className="flex-1 min-w-0 text-xs font-semibold text-ink hover:underline truncate"
+                  >
+                    {p.name}
+                  </Link>
+                  <span className="text-[10px] text-ink-4 bg-ink/5 rounded-full px-2 py-0.5 shrink-0">
+                    {p.reportCount} report{p.reportCount !== 1 ? "s" : ""}
+                  </span>
+                  <span className="text-xs font-semibold text-sage shrink-0">{p.totalLinks} links</span>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          <div className="flex justify-end">
+            <Link href="/reports/leaderboard" className="flex items-center gap-1.5 text-xs font-semibold text-sage hover:underline">
+              View all <ArrowRight className="h-3.5 w-3.5" />
+            </Link>
+          </div>
+        </div>
+
+        {/* Top Links — right half. YouTube-only for the compact card; Instagram/Facebook
+            use different engagement mechanics (no clean shared ranking), so cramming all
+            three in one small card would misrepresent the comparison — see /reports for
+            the full per-platform breakdown. */}
+        <div className="lg:col-span-1 v3-card p-5 space-y-4 v3-card-lift">
+          <div className="flex items-center gap-3">
+            <div className="h-10 w-10 rounded-xl bg-terra-soft flex items-center justify-center">
+              <Eye className="h-5 w-5 text-terra" />
+            </div>
+            <div>
+              <p className="font-bold text-ink">Top Links</p>
+              <p className="text-xs text-ink-4">Last 30 days</p>
+            </div>
+          </div>
+
+          {topLinksLoading ? (
+            <div className="space-y-2 animate-pulse">
+              {[0, 1, 2].map((i) => <div key={i} className="h-8 bg-muted rounded-lg" />)}
+            </div>
+          ) : topYouTubeLinks.length === 0 ? (
+            <div className="py-6 text-center">
+              <p className="text-sm text-ink-4">No YouTube links in the last 30 days</p>
+            </div>
+          ) : (
+            <ul className="space-y-2">
+              {topYouTubeLinks.map((link, i) => {
+                const safeLinkUrl = httpUrlOrNull(link.url);
+                return (
+                  <li key={link.linkId ?? link.url} className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-ink-4 w-4 shrink-0">{i + 1}</span>
+                    {safeLinkUrl ? (
+                      <a
+                        href={safeLinkUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex-1 min-w-0 text-xs font-semibold text-ink hover:underline truncate"
+                        title={link.url}
+                      >
+                        {link.url}
+                      </a>
+                    ) : (
+                      <span
+                        className="flex-1 min-w-0 text-xs font-semibold text-ink truncate"
+                        title={link.url}
+                      >
+                        {link.url}
+                      </span>
+                    )}
+                    <span className="text-[10px] text-ink-4 truncate max-w-[5rem] shrink-0">{link.employeeName}</span>
+                    <span className="text-xs font-semibold text-terra shrink-0">{fmtCompact(link.views)}</span>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+
+          <p className="text-[10px] text-ink-4">
+            YouTube · by views — see full breakdown for Instagram &amp; Facebook
+          </p>
+
+          <div className="flex justify-end">
+            <Link href="/reports" className="flex items-center gap-1.5 text-xs font-semibold text-terra hover:underline">
               View all <ArrowRight className="h-3.5 w-3.5" />
             </Link>
           </div>

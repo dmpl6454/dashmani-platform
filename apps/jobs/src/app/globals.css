@@ -106,35 +106,35 @@
   align-items: center;
   gap: 6px;
 }
-.ds-nav-link {
-  color: var(--ink-soft);
+/* Nav items share the Get-job-alerts pill look: outlined white, ink on hover. */
+.ds-nav-link,
+.ds-nav-cta {
+  color: var(--ink);
+  background: #fff;
+  border: 1px solid var(--line);
   font-size: 14px;
   font-weight: 500;
+  line-height: 1;
   padding: 10px 16px;
   border-radius: 999px;
-  transition: background .15s ease, color .15s ease;
-}
-.ds-nav-link:hover { color: var(--ink); background: rgba(11, 15, 58, 0.05); }
-.ds-nav-cta {
-  background: var(--ink);
-  color: #fff;
-  padding: 10px 18px;
-  border-radius: 999px;
-  font-size: 14px;
-  font-weight: 500;
   display: inline-flex;
   align-items: center;
-  gap: 10px;
-  transition: background .15s ease;
+  gap: 7px;
+  transition: background .15s ease, color .15s ease, border-color .15s ease;
+}
+.ds-nav-link:hover,
+.ds-nav-cta:hover {
+  background: var(--ink);
+  color: var(--paper);
+  border-color: var(--ink);
 }
 .ds-nav-cta .pulse {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--accent-light);
+  background: var(--accent);
   animation: navPulse 2.4s ease-out infinite;
 }
-.ds-nav-cta:hover { background: var(--accent); }
 
 /* ───────── HERO ───────── */
 .ds-hero {
@@ -438,7 +438,7 @@
 .ds-roles { list-style: none; display: flex; flex-direction: column; gap: 4px; }
 .ds-role {
   display: grid;
-  grid-template-columns: 32px 6px minmax(0, 1fr) auto 28px;
+  grid-template-columns: 32px 6px minmax(0, 1fr) auto auto;
   align-items: center;
   column-gap: 16px;
   padding: 16px 14px 16px 10px;
@@ -531,6 +531,28 @@
   background: #fff;
 }
 .ds-role:hover .go { transform: translateX(2px); }
+/* Circular action buttons (share) + Apply CTA sit together at the row's end. */
+.ds-role-actions { display: inline-flex; align-items: center; gap: 8px; }
+/* Turn the button solid black when the cursor is directly on it. */
+.ds-role .go:hover { background: var(--ink); color: #fff; border-color: var(--ink); }
+/* Apply CTA pill — light by default, solid black on hover (same mechanism as .go). */
+.ds-role-apply {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 15px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  text-decoration: none;
+  transition: background .15s ease, color .15s ease, border-color .15s ease, transform .15s ease;
+}
+.ds-role-apply:hover { background: var(--ink); color: #fff; border-color: var(--ink); }
+.ds-role:hover .ds-role-apply { transform: translateX(2px); }
 .ds-role.active .go { background: var(--ink); color: #fff; border-color: var(--ink); }
 .ds-roles-empty {
   padding: 40px 24px;
@@ -551,6 +573,8 @@
   overflow: hidden;
   box-shadow: 0 18px 50px -32px rgba(11,15,58,0.4);
 }
+/* Standalone /[slug] page reuses the detail card, but not the panel's sticky behaviour. */
+.ds-rd-standalone { position: static; box-shadow: 0 18px 50px -32px rgba(11,15,58,0.35); }
 .ds-rd-stripe { height: 5px; width: 100%; background: var(--dept, var(--accent)); transition: background .35s ease; }
 .ds-rd-body { padding: 28px 30px; }
 .ds-rd-body.entering { animation: rdIn .4s cubic-bezier(0.2,0.8,0.2,1) both; }
@@ -850,6 +874,127 @@
 }
 .ds-field.error input,
 .ds-field.error textarea { border-color: #C4452C; background: rgba(196, 69, 44, 0.04); }
+
+/* ───────── JOB ALERTS ───────── */
+/* Trigger pill — sized to sit inline in the nav next to Jobs / Internship. */
+.ds-alerts-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 10px 16px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+  transition: background .15s ease, color .15s ease, border-color .15s ease;
+}
+.ds-alerts-pill:hover { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+.ds-alerts-pill svg { width: 15px; height: 15px; flex-shrink: 0; }
+/* On narrow screens keep only the bell so the nav doesn't overflow. */
+@media (max-width: 620px) {
+  .ds-alerts-pill .label { display: none; }
+  .ds-alerts-pill { padding: 9px; gap: 0; }
+}
+
+/* Pop-up modal */
+.ds-alerts-modal-root {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.ds-alerts-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(11, 15, 58, 0.42);
+  animation: dsAlertsFade .2s ease;
+}
+.ds-alerts {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-width: 460px;
+  margin: 0;
+  padding: 42px 34px 32px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  text-align: center;
+  box-shadow: 0 30px 80px -28px rgba(11, 15, 58, 0.5);
+  animation: dsAlertsPop .3s cubic-bezier(.2, .9, .3, 1.05);
+}
+.ds-alerts-close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--ink);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background .15s ease;
+}
+.ds-alerts-close:hover { background: var(--paper-deep); }
+.ds-alerts-close svg { width: 14px; height: 14px; }
+.ds-alerts .eyebrow { color: var(--muted); font-size: 12px; letter-spacing: 0.04em; }
+.ds-alerts h3 {
+  font-family: var(--font-bricolage, "Bricolage Grotesque"), sans-serif;
+  font-size: 25px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  margin: 10px 0 8px;
+}
+.ds-alerts > p { font-size: 15px; color: var(--muted); max-width: 42ch; margin: 0 auto; line-height: 1.6; }
+.ds-alerts form { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; margin-top: 22px; }
+.ds-alerts input {
+  font: inherit;
+  font-size: 14.5px;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 13px 16px;
+  outline: none;
+  transition: border-color .15s ease, background .15s ease, box-shadow .15s ease;
+}
+.ds-alerts input::placeholder { color: rgba(11, 15, 58, 0.32); }
+.ds-alerts input[type="email"] { flex: 1 1 200px; }
+.ds-alerts input:focus { border-color: var(--accent); background: #fff; box-shadow: 0 0 0 4px rgba(32, 39, 230, 0.12); }
+.ds-alerts form .ds-btn.primary { flex: 0 0 auto; }
+.ds-alerts-fine { margin-top: 14px; font-size: 12px; color: var(--muted); }
+.ds-alerts-error { margin-top: 12px; font-size: 13px; color: #C4452C; }
+.ds-alerts-success { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.ds-alerts-success .ck {
+  width: 46px; height: 46px; border-radius: 50%;
+  background: rgba(46, 143, 90, 0.12); color: #2E8F5A;
+  display: inline-flex; align-items: center; justify-content: center; font-size: 22px; margin-bottom: 4px;
+}
+.ds-alerts-success h3 { font-size: 22px; font-weight: 600; color: var(--ink); margin: 0; }
+.ds-alerts-success p { font-size: 14.5px; color: var(--muted); max-width: 42ch; margin: 0; line-height: 1.55; }
+
+@keyframes dsAlertsFade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes dsAlertsPop { from { opacity: 0; transform: scale(.94) translateY(12px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .ds-alerts, .ds-alerts-backdrop { animation: none; }
+}
+@media (max-width: 560px) {
+  .ds-alerts { padding: 38px 22px 24px; }
+  .ds-alerts input[type="email"] { flex: 1 1 100%; }
+  .ds-alerts form .ds-btn.primary { flex: 1 1 100%; justify-content: center; }
+}
 .ds-modal-actions {
   display: flex;
   gap: 12px;
@@ -1254,7 +1399,7 @@
   .ds-hero-aside { flex-direction: column; }
   .ds-index-head { flex-direction: column; align-items: flex-start; gap: 12px; }
   .ds-filters { flex-wrap: wrap; }
-  .ds-role { grid-template-columns: 28px 4px minmax(0,1fr) 26px; column-gap: 12px; }
+  .ds-role { grid-template-columns: 28px 4px minmax(0,1fr) auto; column-gap: 12px; }
   .ds-role .type-pill { display: none; }
   .ds-rd-body { padding: 22px; }
   .ds-rd-title { font-size: 26px; }

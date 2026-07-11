@@ -11,6 +11,7 @@
 // detail page ([id]/page.tsx).
 
 import { getJobs, buildJobPostingSchema, safeJsonLd, SITE_URL } from "@/lib/jobs";
+import { jobSlug } from "@/lib/slug";
 import JobsClient from "./JobsClient";
 
 // Revalidate the static HTML hourly (matches the API fetch revalidate in lib/jobs).
@@ -27,7 +28,7 @@ export default async function JobsHomePage() {
     itemListElement: jobs.map((job, i) => ({
       "@type": "ListItem",
       position: i + 1,
-      url: `${SITE_URL}/${job.id}`,
+      url: `${SITE_URL}/${jobSlug(job)}`,
       item: buildJobPostingSchema(job),
     })),
   };

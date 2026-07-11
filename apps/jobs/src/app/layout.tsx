@@ -7,6 +7,7 @@ import {
 } from "next/font/google";
 import "./globals.css";
 import { safeJsonLd } from "@/lib/jobs";
+import JobAlerts from "@/components/JobAlerts";
 
 // Self-hosted via next/font — no render-blocking external stylesheet.
 const dmSans = DM_Sans({
@@ -135,6 +136,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               </span>
             </a>
             <div className="ds-nav-right">
+              <JobAlerts />
               <a className="ds-nav-link" href="/#index">Jobs</a>
               <a className="ds-nav-cta" href="/internship">
                 <span className="pulse" />

@@ -5,7 +5,7 @@ import { useOverviewStats } from "@/lib/hooks/use-analytics";
 import {
   Users, Building2, Clock, CheckCircle, FolderOpen, FileCheck, Send,
   UserPlus, ArrowRight, TrendingUp, Link2, Calendar, BarChart2, CalendarDays, X,
-  Share2, Globe, ClipboardList,
+  Share2, Globe, ClipboardList, ChevronDown,
 } from "lucide-react";
 import { useState } from "react";
 import { usePageTitle } from "@/lib/hooks/use-page-title";
@@ -18,15 +18,19 @@ import {
 const statStrip: { key: string; label: string; icon: any; href: string }[] = [
   { key: "totalUsersCount",            label: "Employees",        icon: Users,        href: "/employees" },
   { key: "activeTeams",             label: "Teams",            icon: Building2,    href: "/teams" },
-  { key: "presentToday",            label: "Present",          icon: Clock,        href: "/attendance" },
-  { key: "tasksCompletedThisMonth", label: "Tasks Done",       icon: CheckCircle,  href: "/tasks" },
-  { key: "activeProjects",          label: "Projects",         icon: FolderOpen,   href: "/projects?status=ACTIVE" },
   { key: "pendingApprovals",        label: "Pending",          icon: FileCheck,    href: "/approvals" },
-  { key: "contentPublishedThisMonth", label: "Published",      icon: Send,         href: "/content?status=PUBLISHED" },
-  { key: "pendingEmployees",        label: "New Joiners",      icon: UserPlus,     href: "/employees/pending" },
   { key: "linksToday",              label: "Links Today",      icon: Link2,        href: "/reports" },
   { key: "linksThisMonth",          label: "Links / Month",    icon: Calendar,     href: "/reports/links" },
   { key: "submittedTodayCount",     label: "Submitted Today",  icon: BarChart2,    href: "/reports" },
+];
+
+// Lower-signal counts — collapsed under "More metrics" by default.
+const moreStats: { key: string; label: string; icon: any; href: string }[] = [
+  { key: "pendingEmployees",        label: "New Joiners",      icon: UserPlus,     href: "/employees/pending" },
+  { key: "contentPublishedThisMonth", label: "Published",      icon: Send,         href: "/content?status=PUBLISHED" },
+  { key: "activeProjects",          label: "Projects",         icon: FolderOpen,   href: "/projects?status=ACTIVE" },
+  { key: "tasksCompletedThisMonth", label: "Tasks Done",       icon: CheckCircle,  href: "/tasks" },
+  { key: "presentToday",            label: "Present",          icon: Clock,        href: "/attendance" },
 ];
 
 function CustomTooltip({ active, payload, label }: any) {
@@ -62,6 +66,7 @@ export default function DashboardPage() {
   const [linkStart, setLinkStart] = useState(defaultStart);
   const [linkEnd, setLinkEnd] = useState(defaultEnd);
   const [showDatePicker, setShowDatePicker] = useState(false);
+  const [moreMetricsOpen, setMoreMetricsOpen] = useState(false);
 
   const isCustomRange = linkStart !== defaultStart || linkEnd !== defaultEnd;
   const { data, isLoading } = useOverviewStats(linkStart, linkEnd, isCustomRange);
@@ -87,6 +92,47 @@ export default function DashboardPage() {
     ? "Last 14 days"
     : `${new Date(linkStart).toLocaleDateString("en-IN", { day: "numeric", month: "short" })} – ${new Date(linkEnd).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}`;
 
+  function renderStatCard({ key, label, icon: Icon, href }: typeof statStrip[number], i: number) {
+    const value = stats[key];
+    const isPending = key === "pendingApprovals" || key === "pendingEmployees";
+    const isLinks = key === "linksToday" || key === "linksThisMonth" || key === "submittedTodayCount";
+    let subtitle: string | null = null;
+    if (key === "submittedTodayCount") subtitle = `${submissionRate}% rate`;
+    if (key === "pendingApprovals" && !isLoading) {
+      const docs = stats.pendingDocuments ?? 0;
+      const pics = stats.pendingProfilePictures ?? 0;
+      const leaves = stats.pendingLeaveRequests ?? 0;
+      const parts: string[] = [];
+      if (docs)   parts.push(`${docs} doc${docs !== 1 ? "s" : ""}`);
+      if (pics)   parts.push(`${pics} pic${pics !== 1 ? "s" : ""}`);
+      if (leaves) parts.push(`${leaves} leave`);
+      subtitle = parts.join(" · ") || null;
+    }
+    return (
+      <Link
+        key={key}
+        href={href}
+        className="v3-card-sm p-3 flex flex-col gap-1 v3-card-lift"
+        style={{ animationDelay: `${i * 0.04}s` }}
+      >
+        <div className={`h-7 w-7 rounded-lg flex items-center justify-center ${
+          isPending ? "bg-attention/10" : isLinks ? "bg-terra-soft" : "bg-indigo-soft"
+        }`}>
+          <Icon className={`h-3.5 w-3.5 ${
+            isPending ? "text-attention" : isLinks ? "text-terra" : "text-indigo"
+          }`} />
+        </div>
+        <p className="font-num text-xl font-semibold text-ink leading-none">
+          {isLoading ? "—" : (value ?? 0)}
+        </p>
+        <p className="text-[10px] text-ink-4 font-medium leading-tight">{label}</p>
+        {subtitle && !isLoading && (
+          <p className={`text-[10px] font-semibold leading-tight ${isPending ? "text-attention" : "text-terra"}`}>{subtitle}</p>
+        )}
+      </Link>
+    );
+  }
+
   return (
     <div className="space-y-5 pop-in">
       {/* Page header */}
@@ -98,49 +144,10 @@ export default function DashboardPage() {
         <p className="text-sm text-ink-3 mt-0.5">Here's your organisation overview</p>
       </div>
 
-      {/* Stat strip — 11 cards (4 cols mobile → wrap). Each card links to the page
+      {/* Stat strip — promoted cards, always visible. Each card links to the page
           that is the source of truth for its count. */}
-      <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-11 gap-3 fade-up d2">
-        {statStrip.map(({ key, label, icon: Icon, href }, i) => {
-          const value = stats[key];
-          const isPending = key === "pendingApprovals" || key === "pendingEmployees";
-          const isLinks = key === "linksToday" || key === "linksThisMonth" || key === "submittedTodayCount";
-          let subtitle: string | null = null;
-          if (key === "submittedTodayCount") subtitle = `${submissionRate}% rate`;
-          if (key === "pendingApprovals" && !isLoading) {
-            const docs = stats.pendingDocuments ?? 0;
-            const pics = stats.pendingProfilePictures ?? 0;
-            const leaves = stats.pendingLeaveRequests ?? 0;
-            const parts: string[] = [];
-            if (docs)   parts.push(`${docs} doc${docs !== 1 ? "s" : ""}`);
-            if (pics)   parts.push(`${pics} pic${pics !== 1 ? "s" : ""}`);
-            if (leaves) parts.push(`${leaves} leave`);
-            subtitle = parts.join(" · ") || null;
-          }
-          return (
-            <Link
-              key={key}
-              href={href}
-              className="v3-card-sm p-3 flex flex-col gap-1 v3-card-lift"
-              style={{ animationDelay: `${i * 0.04}s` }}
-            >
-              <div className={`h-7 w-7 rounded-lg flex items-center justify-center ${
-                isPending ? "bg-attention/10" : isLinks ? "bg-terra-soft" : "bg-indigo-soft"
-              }`}>
-                <Icon className={`h-3.5 w-3.5 ${
-                  isPending ? "text-attention" : isLinks ? "text-terra" : "text-indigo"
-                }`} />
-              </div>
-              <p className="font-num text-xl font-semibold text-ink leading-none">
-                {isLoading ? "—" : (value ?? 0)}
-              </p>
-              <p className="text-[10px] text-ink-4 font-medium leading-tight">{label}</p>
-              {subtitle && !isLoading && (
-                <p className={`text-[10px] font-semibold leading-tight ${isPending ? "text-attention" : "text-terra"}`}>{subtitle}</p>
-              )}
-            </Link>
-          );
-        })}
+      <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-6 gap-3 fade-up d2">
+        {statStrip.map((card, i) => renderStatCard(card, i))}
       </div>
 
       {/* Bento grid */}
@@ -410,6 +417,25 @@ export default function DashboardPage() {
               View full reports <ArrowRight className="h-3.5 w-3.5" />
             </Link>
           </div>
+        </div>
+
+        {/* More metrics — collapsed by default, holds the lower-signal cards */}
+        <div className="lg:col-span-3 v3-card p-5 v3-card-lift">
+          <button
+            onClick={() => setMoreMetricsOpen((v) => !v)}
+            className="w-full flex items-center justify-between"
+            aria-expanded={moreMetricsOpen}
+          >
+            <p className="font-bold text-ink">More metrics ({moreStats.length})</p>
+            <ChevronDown
+              className={`h-4 w-4 text-ink-4 transition-transform motion-reduce:transition-none ${moreMetricsOpen ? "rotate-180" : ""}`}
+            />
+          </button>
+          {moreMetricsOpen && (
+            <div className="fade-up grid grid-cols-3 sm:grid-cols-5 lg:grid-cols-5 gap-3 mt-4">
+              {moreStats.map((card, i) => renderStatCard(card, i))}
+            </div>
+          )}
         </div>
 
       </div>

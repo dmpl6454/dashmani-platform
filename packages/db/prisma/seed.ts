@@ -14,7 +14,7 @@ async function main() {
         "attendance", "roles", "settings", "clients", "content",
         "messages", "billing", "analytics",
       ].flatMap((resource) =>
-        ["view", "create", "edit", "delete", "approve", "export"].map((action) => ({
+        ["view", "create", "edit", "delete", "approve", "export", "manage"].map((action) => ({
           resource, action, scope: "global",
         }))
       ),
@@ -27,7 +27,7 @@ async function main() {
         "employees", "teams", "tasks", "accounts", "reports",
         "attendance", "clients", "content", "messages", "analytics",
       ].flatMap((resource) =>
-        ["view", "create", "edit", "delete", "approve", "export"].map((action) => ({
+        ["view", "create", "edit", "delete", "approve", "export", "manage"].map((action) => ({
           resource, action, scope: "global",
         }))
       ),

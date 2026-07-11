@@ -12,6 +12,7 @@ import { recordGrowthSnapshot, getGrowthOverview, getAccountGrowth } from "../se
 import { getAllAccountsLinkStats } from "../services/account.service";
 import { generateReportsExport } from "../services/report-export.service";
 import { getLeaderboard, getTopLinksLeaderboard, getLeaderboardCoverage, getPlatformLeaderboards } from "../services/leaderboard.service";
+import { ENRICHMENT_ENABLED_KEY } from "../constants/enrichment";
 import {
   getPendingEmployees,
   approveEmployee,
@@ -575,6 +576,61 @@ router.get(
     try {
       const { getInsightsRunState } = await import("../services/insights-runner");
       return success(res, getInsightsRunState());
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// ===== Enrichment kill-switch (admin-controlled) =====
+// Entity extraction (Haiku/GPT/Gemini captioning → people/topic tags for Link
+// Search) is the ONLY paid-per-token step in the whole social-insights pipeline —
+// follower sync, engagement-metric polling, and caption harvesting are all free
+// Graph/scraper calls and must keep running regardless of this toggle. While the
+// org is low on API credits, an admin needs to pause just this spend from
+// /api-costs without a deploy. Backed by the same system_settings table/pattern
+// used by the insights-cursor rows above and the SOP-content settings endpoint.
+// The key itself lives in a shared constant (../constants/enrichment) so this
+// route and entity-extraction.cron.ts's gate can never drift apart on the literal.
+
+// GET /admin/enrichment/toggle — current state. Absent key (never set) = enabled,
+// matching runEntityExtraction()'s default-on behavior on a fresh deploy.
+router.get(
+  "/admin/enrichment/toggle",
+  authenticate,
+  requirePermission("reports", "view"),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const row = await prisma.systemSetting.findUnique({ where: { key: ENRICHMENT_ENABLED_KEY } });
+      return success(res, { enabled: row?.value !== "false" });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// PUT /admin/enrichment/toggle — admin flips the switch. Gated with
+// requirePermission("reports", "manage") — the same admin-write permission this
+// file already uses for other admin-only write actions (e.g. DELETE
+// /admin/reports/links/:linkId) — rather than duplicating the unexported
+// requireAdminRole() helper defined in admin-features.routes.ts.
+router.put(
+  "/admin/enrichment/toggle",
+  authenticate,
+  requirePermission("reports", "manage"),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { enabled } = req.body as { enabled?: unknown };
+      if (typeof enabled !== "boolean") {
+        return error(res, "VALIDATION_ERROR", "enabled must be a boolean", 400);
+      }
+      const value = enabled ? "true" : "false";
+      await prisma.systemSetting.upsert({
+        where: { key: ENRICHMENT_ENABLED_KEY },
+        create: { key: ENRICHMENT_ENABLED_KEY, value },
+        update: { value },
+      });
+      return success(res, { enabled });
     } catch (err) {
       next(err);
     }

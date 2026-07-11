@@ -8,6 +8,7 @@ import {
 } from "./social-insights/meta-followers";
 import { fetchYouTubeSubscriberCounts } from "./social-insights/youtube-followers";
 import { scrapeSnapchatFollowers, SC_SCRAPER_DELAY_MS } from "./social-insights/snapchat-scraper";
+import { fetchTwitterFollowerMap } from "./social-insights/twitter-followers";
 
 // DELAY_MS: 5s between scraper requests to avoid rate limiting.
 // Tests can set FOLLOWER_SYNC_DELAY_MS=0 to skip the delay.
@@ -192,7 +193,54 @@ async function fetchPageHtml(url: string, userAgent?: string): Promise<string | 
   }
 }
 
+// A real m.facebook.com profile page (og:description + full mobile markup) runs
+// tens of KB. A walled/interstitial page (login wall, checkpoint, error shell)
+// can still be served with a 200 status but is much shorter — same lesson the
+// sibling scrapers already learned (facebook-scraper.ts's MIN_REEL_HTML_LEN,
+// snapchat-scraper.ts's MIN_PAGE_LEN): reject on body length BEFORE parsing.
+const MIN_MOBILE_FB_HTML_LEN = 20_000;
+
 async function fetchFacebookFollowers(profileUrl: string, handle: string): Promise<number | null> {
+  // Live-verified 2026-07-10 (from the actual prod server, against real prod FB
+  // pages): Facebook has tightened logged-out access and the www.facebook.com/
+  // <slug> vanity-URL Googlebot path now serves a login wall for many pages.
+  // BUT numeric-ID profiles (facebook.com/profile.php?id=<n>) have a still-
+  // working alternate: the lightweight MOBILE site (m.facebook.com) with a
+  // mobile Safari UA (not Googlebot) returns an un-walled page whose
+  // og:description carries the follower/like count. 150/155 real prod accounts
+  // resolved via this exact method. Try it FIRST for numeric-ID URLs; on any
+  // miss, fall through to the existing vanity-slug Googlebot path below (which
+  // is a harmless no-op fallback for a pure numeric ID with no slug).
+  const numericIdMatch = profileUrl.match(/profile\.php\?id=(\d+)/);
+  if (numericIdMatch) {
+    const id = numericIdMatch[1];
+    const mobileHtml = await fetchPageHtml(
+      `https://m.facebook.com/profile.php?id=${id}&locale=en_US`,
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1",
+    );
+    // fetchPageHtml only checks res.ok — a walled/interstitial page can still
+    // return HTTP 200, so reject a short body BEFORE parsing (never trust length
+    // alone as a guarantee of real content, but a short body is never real content).
+    if (mobileHtml && mobileHtml.length >= MIN_MOBILE_FB_HTML_LEN) {
+      const ogDesc = mobileHtml.match(/<meta\s+property="og:description"\s+content="([^"]+)"/i);
+      if (ogDesc) {
+        const decoded = devanagariToAscii(decodeHtmlEntities(ogDesc[1]));
+        // Mobile format is "Name. N,NNN likes · ..." — REQUIRE the count to be
+        // anchored to "likes"/"followers"/"people". Unlike the vanity-slug path
+        // below, this branch does NOT fall back to "first number sequence": an
+        // unanchored number (e.g. a year, a phone fragment, or any incidental
+        // digits on a walled/interstitial page) must never be mistaken for a
+        // follower count and persisted. If unanchored, fall through to the
+        // vanity-slug path below (the existing safety net), not to a guess.
+        const anchoredMatch = decoded.match(/([\d,]+)\s*(?:likes|followers|people)/i);
+        if (anchoredMatch) {
+          const parsed = parseFollowerCount(anchoredMatch[1]);
+          if (parsed && parsed > 0) return parsed;
+        }
+      }
+    }
+  }
+
   // FB blocks default UAs and returns HTTP 400 on mbasic without a cookie.
   // Googlebot UA is the only reliable way to get the public, un-walled page.
   const slug = extractHandle(profileUrl, "facebook") || handle.replace(/^@/, "").split("?")[0];
@@ -321,6 +369,10 @@ export async function syncAllFollowerCounts() {
   // (the name-keyed map added in commit f967ac1 already covers display-name
   // accounts); no second network call is needed for FB.
   const unresolvedFb: typeof accounts = [];
+  // X/Twitter has no Tier-1 map at all (unlike IG/FB) — every "x" account
+  // goes straight to this bucket in the first pass, then Tier-3 resolves the
+  // whole batch via one guest-token GraphQL session.
+  const unresolvedTw: typeof accounts = [];
 
   // ── First pass: administered map, then scraper ────────────────────────────
 
@@ -395,8 +447,17 @@ export async function syncAllFollowerCounts() {
         progress.processed++;
         continue;
       }
+    } else if (slug === "x") {
+      // No Tier-1 map for X (unlike IG/FB) — every "x" account is deferred to
+      // the batched Tier-3 guest-token GraphQL pass below, which resolves the
+      // whole unresolvedTw bucket in one guest-token session. Do NOT resolve
+      // here; just collect and let the post-loop `followers === null` branch
+      // push this account onto unresolvedTw like IG/YT do.
+      unresolvedTw.push(account);
+      progress.processed++;
+      continue;
     } else {
-      // tiktok, linkedin, twitter, pinterest, telegram — manual entry only
+      // tiktok, linkedin, pinterest, telegram — manual entry only
       progress.skipped++;
       progress.processed++;
       continue;
@@ -504,6 +565,29 @@ export async function syncAllFollowerCounts() {
     }
   }
 
+  // — X/Twitter: anonymous guest-token GraphQL (UserByScreenName) ——————————
+  // Note: progress.processed is already incremented for X accounts in the
+  // first pass (where they are collected into unresolvedTw). Do NOT increment
+  // it again here. Mirrors the YouTube Tier-3 shape above.
+  if (unresolvedTw.length > 0) {
+    try {
+      const handles = unresolvedTw.map((a) => a.handle.replace(/^@/, "").split("?")[0].trim());
+      const twMap = await fetchTwitterFollowerMap(handles);
+      for (const account of unresolvedTw) {
+        const handle = account.handle.replace(/^@/, "").split("?")[0].trim().toLowerCase();
+        const followers = twMap.get(handle);
+        if (followers != null && followers > 0) {
+          await persistFollowerCount(account, followers);
+        } else {
+          progress.failed++;
+        }
+      }
+    } catch (e) {
+      console.error("[follower-sync] X/Twitter resolver failed — skipping X Tier-3:", e);
+      progress.failed += unresolvedTw.length;
+    }
+  }
+
   progress.state = "idle";
   progress.finishedAt = new Date().toISOString();
   return { total: progress.total, updated: progress.updated, failed: progress.failed, skipped: progress.skipped };
@@ -544,6 +628,21 @@ export async function syncSingleAccountFollowers(accountId: string) {
     const scHandle = account.handle.replace(/^@/, "").split("?")[0].trim();
     const result = await scrapeSnapchatFollowers(scHandle, fetch, account.profileUrl);
     followers = result.followers;
+  } else if (slug === "x") {
+    // fetchTwitterFollowerMap activates a fresh guest token per call — calling
+    // it here for a single handle is a little wasteful (one token activation
+    // for one lookup) but that's fine and consistent with how the other
+    // single-account branches above already work (direct network call, not
+    // batch-map reuse). Normalization MUST match the batch Tier-3 path in
+    // syncAllFollowerCounts exactly (strip leading @, drop query string, trim,
+    // then lowercase for the map lookup — the map itself is keyed lowercase in
+    // fetchTwitterFollowerMap) so a manual refresh resolves the same handle the
+    // hourly cron would.
+    const xHandle = account.handle.replace(/^@/, "").split("?")[0].trim();
+    if (xHandle) {
+      const twMap = await fetchTwitterFollowerMap([xHandle]);
+      followers = twMap.get(xHandle.toLowerCase()) ?? null;
+    }
   }
   // Other platforms: no automated sync; admin must enter the count manually.
 

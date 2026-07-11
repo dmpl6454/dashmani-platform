@@ -13,8 +13,10 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
 import { notFound } from "next/navigation";
-import { getJob, getJobs, buildJobPostingSchema, safeJsonLd, SITE_URL } from "@/lib/jobs";
+import { getJobs, resolveJob, buildJobPostingSchema, safeJsonLd, SITE_URL } from "@/lib/jobs";
+import { jobSlug } from "@/lib/slug";
 import JobDetailClient from "./JobDetailClient";
+import RoleDetailView from "@/components/RoleDetailView";
 
 // Revalidate the static HTML hourly (matches lib/jobs fetch revalidate).
 export const revalidate = 3600;
@@ -32,11 +34,13 @@ interface PageProps {
 
 export async function generateStaticParams() {
   const jobs = await getJobs();
-  return jobs.map((job) => ({ id: job.id }));
+  // Pre-render each role at its slug (e.g. "revenue-head"). UUID URLs still resolve
+  // on demand via dynamicParams + resolveJob, so old links don't break.
+  return jobs.map((job) => ({ id: jobSlug(job) }));
 }
 
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
-  const job = await getJob(params.id);
+  const job = await resolveJob(params.id);
   if (!job) {
     return { title: "Job not found", robots: { index: false, follow: true } };
   }
@@ -50,7 +54,7 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
       .replace(/\s+/g, " ")
       .trim()
       .slice(0, 155);
-  const url = `${SITE_URL}/${job.id}`;
+  const url = `${SITE_URL}/${jobSlug(job)}`;
 
   return {
     title,
@@ -72,13 +76,19 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
 }
 
 export default async function JobDetailPageWrapper({ params }: PageProps) {
-  const job = await getJob(params.id);
+  const job = await resolveJob(params.id);
 
   // No such role → real 404 (correct SEO signal, and avoids a soft-404 the old
   // client-only "Job not found" text would have produced).
   if (!job) notFound();
 
   const schema = buildJobPostingSchema(job);
+
+  // "№ N / total" position, matching the counter the old side-panel showed.
+  const allJobs = await getJobs();
+  const idx = allJobs.findIndex((j) => j.id === job.id);
+  const num = idx >= 0 ? idx + 1 : undefined;
+  const total = allJobs.length || undefined;
 
   return (
     <>
@@ -90,47 +100,29 @@ export default async function JobDetailPageWrapper({ params }: PageProps) {
           which requires a Suspense boundary when the page is statically prerendered.
           The fallback renders the role's static SEO content so the prerendered HTML
           (and thus Googlebot's view) still contains the full job text. */}
-      <Suspense fallback={<JobDetailFallback job={job} />}>
-        <JobDetailClient initialJob={job} />
+      <Suspense fallback={<JobDetailFallback job={job} num={num} total={total} />}>
+        <JobDetailClient initialJob={job} num={num} total={total} />
       </Suspense>
     </>
   );
 }
 
 // Server-rendered static view of the role — shown during the CSR bailout and baked
-// into the prerendered HTML so the page is never an empty shell for crawlers.
-function JobDetailFallback({ job }: { job: NonNullable<Awaited<ReturnType<typeof getJob>>> }) {
+// into the prerendered HTML so the page is never an empty shell for crawlers. Uses
+// the same RoleDetailView as the client so the crawler HTML matches the live design.
+function JobDetailFallback({
+  job,
+  num,
+  total,
+}: {
+  job: NonNullable<Awaited<ReturnType<typeof resolveJob>>>;
+  num?: number;
+  total?: number;
+}) {
   return (
     <div className="ds-detail-page">
-      <div className="ds-jd-header">
-        {job.department && <div className="ds-jd-dept">{job.department}</div>}
-        <h1 className="ds-jd-title">{job.title}</h1>
-      </div>
-      <div className="ds-jd-body">
-        {job.description && (
-          <div style={{ marginBottom: 28 }}>
-            <h3>About the Role</h3>
-            <p>{job.description}</p>
-          </div>
-        )}
-        {job.responsibilities && (
-          <div style={{ marginBottom: 28 }}>
-            <h3>Key Responsibilities</h3>
-            <p>{job.responsibilities}</p>
-          </div>
-        )}
-        {job.requirements && (
-          <div style={{ marginBottom: 28 }}>
-            <h3>Requirements</h3>
-            <p>{job.requirements}</p>
-          </div>
-        )}
-        {job.benefits && (
-          <div style={{ marginBottom: 28 }}>
-            <h3>Benefits</h3>
-            <p>{job.benefits}</p>
-          </div>
-        )}
+      <div className="ds-role-detail ds-rd-standalone">
+        <RoleDetailView job={job} num={num} total={total} />
       </div>
     </div>
   );

@@ -1,14 +1,15 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import {
-  ArrowLeft, Receipt, DollarSign, TrendingUp, Info, Activity, Server, AlertTriangle,
+  ArrowLeft, Receipt, DollarSign, TrendingUp, Info, Activity, Server, AlertTriangle, Power,
 } from "lucide-react";
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid,
 } from "recharts";
 import { useCostSheet, useOpenAiBilling, type ProviderCost, type OpenAiBilling } from "@/lib/hooks/use-cost-sheet";
 import { usePageTitle } from "@/lib/hooks/use-page-title";
+import { apiFetch } from "@/lib/api";
 
 const usd = (n: number) =>
   n >= 1 ? `$${n.toFixed(2)}` : n > 0 ? `$${n.toFixed(4)}` : "$0.00";
@@ -35,6 +36,53 @@ export default function ApiCostsPage() {
   const [days, setDays] = useState<number>(30);
   const { data, isLoading } = useCostSheet(days);
   const d = (data as any)?.data;
+
+  // Enrichment kill-switch — the ONLY paid-per-token step in the social-insights
+  // pipeline (follower sync, engagement-metric polling, and caption harvesting are
+  // all free Graph/scraper calls and keep running regardless). While the org is low
+  // on API credits, an admin can pause just this spend here, without a deploy.
+  const [enrichmentEnabled, setEnrichmentEnabled] = useState<boolean | null>(null);
+  const [enrichmentState, setEnrichmentState] = useState<"idle" | "loading" | "error">("idle");
+  const [enrichmentError, setEnrichmentError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    apiFetch<{ enabled: boolean }>("/admin/enrichment/toggle")
+      .then((res) => {
+        if (!cancelled) setEnrichmentEnabled((res as any)?.data?.enabled ?? true);
+      })
+      .catch((err: any) => {
+        // Without setting enrichmentState here, this catch used to fail SILENTLY:
+        // enrichmentEnabled stays null forever (switch permanently disabled via the
+        // `enrichmentEnabled === null` guard below) with no on-screen explanation.
+        // Reuse the same error-display block the PUT failure path already renders
+        // (enrichmentState === "error") instead of inventing a second one.
+        if (cancelled) return;
+        setEnrichmentError(err?.message || "Failed to load enrichment status. Reload the page to try again.");
+        setEnrichmentState("error");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function handleToggleEnrichment() {
+    if (enrichmentEnabled === null || enrichmentState === "loading") return;
+    const next = !enrichmentEnabled;
+    setEnrichmentState("loading");
+    setEnrichmentError("");
+    try {
+      const res = await apiFetch<{ enabled: boolean }>("/admin/enrichment/toggle", {
+        method: "PUT",
+        body: JSON.stringify({ enabled: next }),
+      });
+      setEnrichmentEnabled((res as any)?.data?.enabled ?? next);
+      setEnrichmentState("idle");
+    } catch (err: any) {
+      setEnrichmentError(err?.message || "Failed to update enrichment toggle.");
+      setEnrichmentState("error");
+    }
+  }
 
   // Authoritative OpenAI billed cost (Costs API) — the source of truth when the
   // admin key is configured. Combined across the shared key (both apps).
@@ -109,6 +157,42 @@ export default function ApiCostsPage() {
             </button>
           ))}
         </div>
+      </div>
+
+      {/* Enrichment kill-switch */}
+      <div className="v3-card p-5 flex items-start justify-between gap-4 flex-wrap">
+        <div className="flex items-start gap-2.5">
+          <div className="h-9 w-9 rounded-xl bg-terra-soft flex items-center justify-center shrink-0">
+            <Power className="h-4 w-4 text-terra" />
+          </div>
+          <div>
+            <p className="font-semibold text-ink text-sm">Caption enrichment (LLM entity tagging)</p>
+            <p className="text-xs text-ink-4 mt-0.5 max-w-xl">
+              Turn off to stop paid LLM calls immediately. Follower sync, engagement metrics, and
+              caption harvesting keep running — only entity tagging pauses.
+            </p>
+            {enrichmentState === "error" && (
+              <p className="text-xs text-attention mt-1">{enrichmentError}</p>
+            )}
+          </div>
+        </div>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={enrichmentEnabled ?? false}
+          aria-live="polite"
+          disabled={enrichmentEnabled === null || enrichmentState === "loading"}
+          onClick={handleToggleEnrichment}
+          className={`relative h-7 w-12 shrink-0 rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+            enrichmentEnabled ? "bg-sage" : "bg-ink/15"
+          }`}
+        >
+          <span
+            className={`absolute top-0.5 h-6 w-6 rounded-full bg-white shadow transition-transform ${
+              enrichmentEnabled ? "translate-x-5" : "translate-x-0.5"
+            }`}
+          />
+        </button>
       </div>
 
       {isLoading && !d && (

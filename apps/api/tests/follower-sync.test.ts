@@ -52,6 +52,10 @@ vi.mock("../src/services/social-insights/youtube-followers", () => ({
   fetchYouTubeSubscriberCounts: vi.fn(async () => []),
 }));
 
+vi.mock("../src/services/social-insights/twitter-followers", () => ({
+  fetchTwitterFollowerMap: vi.fn(async () => new Map()),
+}));
+
 // ── Import after mocks ───────────────────────────────────────────────────────
 
 import { prisma } from "@dashmani/db";
@@ -62,6 +66,7 @@ import {
   fbLookupKeys,
 } from "../src/services/social-insights/meta-followers";
 import { fetchYouTubeSubscriberCounts } from "../src/services/social-insights/youtube-followers";
+import { fetchTwitterFollowerMap } from "../src/services/social-insights/twitter-followers";
 import {
   syncAllFollowerCounts,
   syncSingleAccountFollowers,
@@ -81,6 +86,7 @@ const mockFetchFbMap = fetchFacebookFollowerMap as ReturnType<typeof vi.fn>;
 const mockFetchPublicIg = fetchPublicInstagramFollowerMap as ReturnType<typeof vi.fn>;
 const mockFbLookupKeys = fbLookupKeys as ReturnType<typeof vi.fn>;
 const mockFetchYt = fetchYouTubeSubscriberCounts as ReturnType<typeof vi.fn>;
+const mockFetchTw = fetchTwitterFollowerMap as ReturnType<typeof vi.fn>;
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -128,6 +134,7 @@ beforeEach(() => {
   // Default: public resolvers return nothing
   mockFetchPublicIg.mockResolvedValue(new Map());
   mockFetchYt.mockResolvedValue([]);
+  mockFetchTw.mockResolvedValue(new Map());
   mockFbLookupKeys.mockReturnValue([]);
 
   // Default: snapshot does NOT exist yet → create path
@@ -527,6 +534,71 @@ describe("syncAllFollowerCounts — Tier 3: public-API fallback", () => {
     expect(mockSnapshotCreate).toHaveBeenCalledOnce();
     expect(result.updated).toBe(1);
     expect(result.failed).toBe(0);
+  });
+
+  // ── X/Twitter: routed to its own Tier-3 path, not the manual-skip catch-all ──
+
+  it("resolves an X/Twitter account via fetchTwitterFollowerMap and writes the count (not silently skipped)", async () => {
+    const account = makeAccount({
+      id: "acc-x-1",
+      handle: "@SomeXHandle",
+      profileUrl: "https://x.com/SomeXHandle",
+      platformSlug: "x",
+    });
+    mockFindMany.mockResolvedValue([account]);
+
+    mockFetchTw.mockResolvedValue(new Map([["somexhandle", 92162226]]));
+
+    const result = await syncAllFollowerCounts();
+
+    expect(mockFetchTw).toHaveBeenCalledOnce();
+
+    expect(mockAccountUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "acc-x-1" },
+        data: expect.objectContaining({ followerCount: 92162226 }),
+      }),
+    );
+    expect(mockSnapshotCreate).toHaveBeenCalledOnce();
+    expect(result.updated).toBe(1);
+    expect(result.failed).toBe(0);
+    // Must NOT fall into the generic manual-entry skip bucket.
+    expect(result.skipped).toBe(0);
+  });
+
+  it("does not write and counts failed (not skipped) when the X/Twitter resolver has no entry for an account", async () => {
+    const account = makeAccount({
+      id: "acc-x-2",
+      handle: "@deadhandle",
+      profileUrl: "https://x.com/deadhandle",
+      platformSlug: "x",
+    });
+    mockFindMany.mockResolvedValue([account]);
+
+    mockFetchTw.mockResolvedValue(new Map()); // empty — handle not resolved
+
+    const result = await syncAllFollowerCounts();
+
+    expect(mockAccountUpdate).not.toHaveBeenCalled();
+    expect(result.updated).toBe(0);
+    expect(result.failed).toBe(1);
+  });
+
+  it("continues sync and does not abort when the X/Twitter resolver throws", async () => {
+    const account = makeAccount({
+      id: "acc-x-3",
+      handle: "@throwshandle",
+      profileUrl: "https://x.com/throwshandle",
+      platformSlug: "x",
+    });
+    mockFindMany.mockResolvedValue([account]);
+
+    mockFetchTw.mockRejectedValue(new Error("guest token activation failed"));
+
+    const result = await syncAllFollowerCounts();
+
+    expect(result.failed).toBe(1);
+    expect(mockAccountUpdate).not.toHaveBeenCalled();
   });
 
   // ── Fully unresolved account: no write, counts tracked ────────────────────

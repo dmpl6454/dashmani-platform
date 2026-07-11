@@ -36,6 +36,9 @@ export default defineConfig({
       // dedicated fallback tests flip FB_SCRAPER_ENABLED on AND inject a stub fetch.
       FB_SCRAPER_ENABLED: "0",
       FB_SCRAPER_DELAY_MS: "0",
+      // Set to 0 so the per-handle sleep() in twitter-followers.ts resolves
+      // immediately in tests, avoiding a 500ms-per-handle delay.
+      TWITTER_FOLLOWER_SYNC_DELAY_MS: "0",
     },
     setupFiles: ["./tests/setup.ts"],
     pool: "forks",

@@ -8,6 +8,7 @@ import {
 } from "./social-insights/meta-followers";
 import { fetchYouTubeSubscriberCounts } from "./social-insights/youtube-followers";
 import { scrapeSnapchatFollowers, SC_SCRAPER_DELAY_MS } from "./social-insights/snapchat-scraper";
+import { fetchTwitterFollowerMap } from "./social-insights/twitter-followers";
 
 // DELAY_MS: 5s between scraper requests to avoid rate limiting.
 // Tests can set FOLLOWER_SYNC_DELAY_MS=0 to skip the delay.
@@ -368,6 +369,10 @@ export async function syncAllFollowerCounts() {
   // (the name-keyed map added in commit f967ac1 already covers display-name
   // accounts); no second network call is needed for FB.
   const unresolvedFb: typeof accounts = [];
+  // X/Twitter has no Tier-1 map at all (unlike IG/FB) — every "x" account
+  // goes straight to this bucket in the first pass, then Tier-3 resolves the
+  // whole batch via one guest-token GraphQL session.
+  const unresolvedTw: typeof accounts = [];
 
   // ── First pass: administered map, then scraper ────────────────────────────
 
@@ -442,8 +447,17 @@ export async function syncAllFollowerCounts() {
         progress.processed++;
         continue;
       }
+    } else if (slug === "x") {
+      // No Tier-1 map for X (unlike IG/FB) — every "x" account is deferred to
+      // the batched Tier-3 guest-token GraphQL pass below, which resolves the
+      // whole unresolvedTw bucket in one guest-token session. Do NOT resolve
+      // here; just collect and let the post-loop `followers === null` branch
+      // push this account onto unresolvedTw like IG/YT do.
+      unresolvedTw.push(account);
+      progress.processed++;
+      continue;
     } else {
-      // tiktok, linkedin, twitter, pinterest, telegram — manual entry only
+      // tiktok, linkedin, pinterest, telegram — manual entry only
       progress.skipped++;
       progress.processed++;
       continue;
@@ -548,6 +562,29 @@ export async function syncAllFollowerCounts() {
     } catch (e) {
       console.error("[follower-sync] YouTube resolver failed — skipping YT Tier-3:", e);
       progress.failed += unresolvedYt.length;
+    }
+  }
+
+  // — X/Twitter: anonymous guest-token GraphQL (UserByScreenName) ——————————
+  // Note: progress.processed is already incremented for X accounts in the
+  // first pass (where they are collected into unresolvedTw). Do NOT increment
+  // it again here. Mirrors the YouTube Tier-3 shape above.
+  if (unresolvedTw.length > 0) {
+    try {
+      const handles = unresolvedTw.map((a) => a.handle.replace(/^@/, "").split("?")[0].trim());
+      const twMap = await fetchTwitterFollowerMap(handles);
+      for (const account of unresolvedTw) {
+        const handle = account.handle.replace(/^@/, "").split("?")[0].trim().toLowerCase();
+        const followers = twMap.get(handle);
+        if (followers != null && followers > 0) {
+          await persistFollowerCount(account, followers);
+        } else {
+          progress.failed++;
+        }
+      }
+    } catch (e) {
+      console.error("[follower-sync] X/Twitter resolver failed — skipping X Tier-3:", e);
+      progress.failed += unresolvedTw.length;
     }
   }
 

@@ -63,9 +63,9 @@ export default function NewProjectPage() {
                 {clients.map((c: any) => <option key={c.id} value={c.id}>{c.companyName}</option>)}
               </select>
             </div>
-            <div className="grid grid-cols-2 gap-4">
-              <Input label="Start Date" type="date" value={form.startDate} onChange={(e) => setForm({ ...form, startDate: e.target.value, endDate: form.endDate && form.endDate < e.target.value ? "" : form.endDate })} className="border border-[#E8E0D0] rounded-lg focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547]" />
-              <Input label="End Date" type="date" value={form.endDate} min={form.startDate || undefined} onChange={(e) => setForm({ ...form, endDate: e.target.value })} className="border border-[#E8E0D0] rounded-lg focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547]" />
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <Input label="Start Date" type="date" value={form.startDate} onChange={(e) => setForm({ ...form, startDate: e.target.value, endDate: form.endDate && form.endDate < e.target.value ? "" : form.endDate })} className="min-w-0 h-auto border border-[#E8E0D0] rounded-lg focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547]" />
+              <Input label="End Date" type="date" value={form.endDate} min={form.startDate || undefined} onChange={(e) => setForm({ ...form, endDate: e.target.value })} className="min-w-0 h-auto border border-[#E8E0D0] rounded-lg focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547]" />
             </div>
             <div className="flex gap-3">
               <Button type="submit" disabled={loading} className="bg-[#1A1A1A] text-white rounded-full hover:bg-[#2B2B2B]">{loading ? "Creating..." : "Create Project"}</Button>

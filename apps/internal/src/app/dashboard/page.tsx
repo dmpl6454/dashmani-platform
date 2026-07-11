@@ -6,8 +6,8 @@ import { useGrowthOverview, fmtCompact, httpUrlOrNull, DeltaBadge, type TopMover
 import { useLinksAnalytics, useTopLinks } from "@/lib/hooks/use-reports";
 import {
   Users, Building2, Clock, CheckCircle, FolderOpen, FileCheck, Send,
-  UserPlus, ArrowRight, TrendingUp, Link2, Calendar, BarChart2, CalendarDays, X,
-  Share2, Globe, ClipboardList, ChevronDown, ExternalLink, Trophy, Eye,
+  UserPlus, ArrowRight, Link2, Calendar, BarChart2, CalendarDays, X,
+  Share2, Globe, ChevronDown, ExternalLink, Trophy, Eye,
 } from "lucide-react";
 import { useState } from "react";
 import { usePageTitle } from "@/lib/hooks/use-page-title";
@@ -191,28 +191,6 @@ export default function DashboardPage() {
           <ArrowRight className="h-4 w-4 text-ink-4 opacity-0 group-hover:opacity-100 transition-opacity" />
         </Link>
 
-        <Link href="/projects" className="v3-card-sm p-5 flex items-center gap-4 v3-card-lift group">
-          <div className="h-12 w-12 rounded-xl border-2 border-ink/12 bg-sage-soft flex items-center justify-center">
-            <FolderOpen className="h-6 w-6 text-sage" />
-          </div>
-          <div className="flex-1 min-w-0">
-            <p className="font-bold text-ink">{isLoading ? "—" : (stats.activeProjects ?? 0)}</p>
-            <p className="text-xs text-ink-4">Active Projects</p>
-          </div>
-          <ArrowRight className="h-4 w-4 text-ink-4 opacity-0 group-hover:opacity-100 transition-opacity" />
-        </Link>
-
-        <Link href="/analytics" className="v3-card-sm p-5 flex items-center gap-4 v3-card-lift group">
-          <div className="h-12 w-12 rounded-xl border-2 border-ink/12 bg-terra-soft flex items-center justify-center">
-            <TrendingUp className="h-6 w-6 text-terra" />
-          </div>
-          <div className="flex-1 min-w-0">
-            <p className="font-bold text-ink">{isLoading ? "—" : (stats.contentPublishedThisMonth ?? 0)}</p>
-            <p className="text-xs text-ink-4">Published This Month</p>
-          </div>
-          <ArrowRight className="h-4 w-4 text-ink-4 opacity-0 group-hover:opacity-100 transition-opacity" />
-        </Link>
-
         {/* Accounts hub card */}
         <Link href="/accounts" className="v3-card-sm p-5 flex items-center gap-4 v3-card-lift group">
           <div className="h-12 w-12 rounded-xl border-2 border-ink/12 bg-indigo-soft flex items-center justify-center shrink-0">
@@ -233,18 +211,6 @@ export default function DashboardPage() {
           <div className="flex-1 min-w-0">
             <p className="font-bold text-ink">Assign Account</p>
             <p className="text-xs text-ink-4">Assign by employee — see who has what</p>
-          </div>
-          <ArrowRight className="h-4 w-4 text-ink-4 opacity-0 group-hover:opacity-100 transition-opacity" />
-        </Link>
-
-        {/* Daily Reports shortcut — written daily updates from all employees */}
-        <Link href="/daily-reports" className="v3-card-sm p-5 flex items-center gap-4 v3-card-lift group">
-          <div className="h-12 w-12 rounded-xl border-2 border-ink/12 bg-amber-100 flex items-center justify-center shrink-0">
-            <ClipboardList className="h-6 w-6 text-amber-600" />
-          </div>
-          <div className="flex-1 min-w-0">
-            <p className="font-bold text-ink">Daily Updates</p>
-            <p className="text-xs text-ink-4">See who wrote what today — notes, plans &amp; who hasn&apos;t submitted</p>
           </div>
           <ArrowRight className="h-4 w-4 text-ink-4 opacity-0 group-hover:opacity-100 transition-opacity" />
         </Link>

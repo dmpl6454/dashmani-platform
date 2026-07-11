@@ -5,9 +5,143 @@ import { useAuth } from "@/lib/auth";
 import { apiFetch, API_BASE } from "@/lib/api";
 import useSWR from "swr";
 import {
-  Bell, LogOut, Settings, CheckCheck, BellOff, Megaphone, Search,
+  Bell, LogOut, Settings, CheckCheck, BellOff, Megaphone, Search, Plus,
 } from "lucide-react";
 import { useState, useRef, useEffect } from "react";
+
+/* ── Compose-announcement modal (moved from dashboard — the only place it's used) ── */
+function QuickAnnounceModal({ onClose }: { onClose: () => void }) {
+  const [title,   setTitle]   = useState("");
+  const [message, setMessage] = useState("");
+  const [orgUnitId, setOrgUnitId] = useState<string>("");
+  const [sending, setSending] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [error,   setError]   = useState<string | null>(null);
+  const [done,    setDone]    = useState<number | null>(null);
+
+  const { data: teamsData } = useSWR("/teams", (url: string) => apiFetch<any>(url));
+  const teams: any[] = (teamsData as any)?.data ?? [];
+  const selectedTeam = orgUnitId ? teams.find((t: any) => t.id === orgUnitId) : null;
+
+  const inputCls = "w-full border-2 border-ink/15 bg-surface rounded-xl px-4 py-2.5 text-sm text-ink placeholder:text-ink-4 transition-colors";
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!title.trim() || !message.trim()) return;
+    setConfirming(true);
+  }
+
+  async function doSend() {
+    setSending(true);
+    setError(null);
+    try {
+      const body: any = { title: title.trim(), message: message.trim() };
+      if (orgUnitId) body.orgUnitId = orgUnitId;
+      const res = await apiFetch<any>("/admin/announcements", {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+      setDone(res?.data?.recipientCount ?? 0);
+    } catch (err: any) {
+      setError(err?.message || "Failed to send. Please try again.");
+      setConfirming(false);
+    } finally { setSending(false); }
+  }
+
+  if (done !== null) return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4">
+      <div className="v3-card shadow-pop p-8 text-center w-full max-w-sm">
+        <div className="h-14 w-14 rounded-xl border-2 border-ink bg-action flex items-center justify-center mx-auto mb-4">
+          <Megaphone className="h-7 w-7 text-ink" />
+        </div>
+        <p className="text-lg font-bold text-ink font-display">Announcement sent!</p>
+        <p className="text-sm text-ink-3 mt-1">Notified {done} employee{done !== 1 ? "s" : ""} via portal and email.</p>
+        <button onClick={onClose} className="mt-6 px-6 py-2.5 rounded-full bg-ink text-white text-sm font-bold btn-3d hover:bg-ink-2 transition-colors">
+          Done
+        </button>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4" onClick={onClose}>
+      <div className="v3-card shadow-pop w-full max-w-lg overflow-hidden pop-in" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-6 py-4 border-b-2 border-ink/10">
+          <h2 className="font-bold text-ink flex items-center gap-2">
+            <Megaphone size={18} className="text-action-deep" />
+            {confirming ? "Confirm broadcast" : "Broadcast Announcement"}
+          </h2>
+          <button onClick={onClose} className="h-7 w-7 flex items-center justify-center rounded-lg hover:bg-muted transition-colors text-ink-4 text-xl leading-none">×</button>
+        </div>
+
+        {confirming ? (
+          <div className="p-6 space-y-4">
+            <p className="text-sm text-ink-3">
+              {selectedTeam
+                ? `This will notify only members of "${selectedTeam.name}". You can't undo this.`
+                : "This will email every active employee and add a notification to their portal. You can't undo this."}
+            </p>
+            <div className="v3-card-inset p-4 space-y-2">
+              <p className="text-xs font-bold text-ink-4 uppercase tracking-wider">Preview</p>
+              <p className="text-sm font-semibold text-ink">{title}</p>
+              <p className="text-sm text-ink-3 whitespace-pre-wrap leading-relaxed">{message}</p>
+            </div>
+            {error && <p className="text-xs text-danger">{error}</p>}
+            <div className="flex items-center justify-end gap-3 pt-1">
+              <button type="button" onClick={() => setConfirming(false)} disabled={sending} className="px-5 py-2 rounded-full border-2 border-ink/15 text-sm text-ink-3 hover:bg-muted transition-colors disabled:opacity-50">
+                Back
+              </button>
+              <button type="button" onClick={doSend} disabled={sending} className="px-5 py-2.5 rounded-full bg-ink text-white text-sm font-bold btn-3d hover:bg-ink-2 transition-colors disabled:opacity-50 flex items-center gap-2">
+                <Megaphone size={15} />
+                {sending ? "Sending…" : "Yes, send to all"}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <form onSubmit={handleSubmit} className="p-6 space-y-4">
+            <div>
+              <label className="text-xs font-bold text-ink-4 uppercase tracking-wider mb-1.5 block">Send to</label>
+              <select
+                value={orgUnitId}
+                onChange={(e) => setOrgUnitId(e.target.value)}
+                className={inputCls}
+              >
+                <option value="">Everyone (all active employees)</option>
+                {teams.map((t: any) => (
+                  <option key={t.id} value={t.id}>Team: {t.name}</option>
+                ))}
+              </select>
+              <p className="text-xs text-ink-4 mt-1">
+                {selectedTeam ? `Only members of "${selectedTeam.name}" will be notified.` : "All active employees will be notified."}
+              </p>
+            </div>
+            <div>
+              <div className="flex justify-between mb-1.5">
+                <label className="text-xs font-bold text-ink-4 uppercase tracking-wider">Title</label>
+                <span className="text-xs text-ink-4">{title.length}/120</span>
+              </div>
+              <input type="text" value={title} onChange={(e) => setTitle(e.target.value.slice(0, 120))} placeholder="e.g., Office closed on Monday" required className={inputCls} />
+            </div>
+            <div>
+              <div className="flex justify-between mb-1.5">
+                <label className="text-xs font-bold text-ink-4 uppercase tracking-wider">Message</label>
+                <span className="text-xs text-ink-4">{message.length}/2000</span>
+              </div>
+              <textarea value={message} onChange={(e) => setMessage(e.target.value.slice(0, 2000))} placeholder="Write your message here..." required rows={5} className={`${inputCls} resize-none`} />
+            </div>
+            <div className="flex items-center justify-end gap-3 pt-1">
+              <button type="button" onClick={onClose} className="px-5 py-2 rounded-full border-2 border-ink/15 text-sm text-ink-3 hover:bg-muted transition-colors">Cancel</button>
+              <button type="submit" disabled={!title.trim() || !message.trim()} className="px-5 py-2.5 rounded-full bg-ink text-white text-sm font-bold btn-3d hover:bg-ink-2 transition-colors disabled:opacity-50 flex items-center gap-2">
+                <Megaphone size={15} />
+                Review &amp; send
+              </button>
+            </div>
+          </form>
+        )}
+      </div>
+    </div>
+  );
+}
 
 /* ── Avatar helper (monogram on cream, ink border) ── */
 function Avatar({ name, imageUrl, size = 7 }: { name?: string; imageUrl?: string; size?: number }) {
@@ -41,6 +175,7 @@ export function TopNav({ onOpenSearch }: { onOpenSearch?: () => void }) {
   const [userMenuOpen, setUserMenuOpen]   = useState(false);
   const [bellOpen, setBellOpen]           = useState(false);
   const [selectedNotif, setSelectedNotif] = useState<any>(null);
+  const [announceOpen, setAnnounceOpen]   = useState(false);
   const bellRef    = useRef<HTMLDivElement>(null);
   const userRef    = useRef<HTMLDivElement>(null);
 
@@ -136,6 +271,10 @@ export function TopNav({ onOpenSearch }: { onOpenSearch?: () => void }) {
   return (
     <header className="sticky top-0 z-40 h-[57px] flex items-center justify-between px-5 border-b-2 border-ink/10 bg-bg/90 backdrop-blur-md shrink-0">
 
+      {/* Page-level overlay, not part of the actions row — QuickAnnounceModal renders
+          fixed inset-0, so it belongs at the header root rather than nested in the flex row. */}
+      {announceOpen && <QuickAnnounceModal onClose={() => setAnnounceOpen(false)} />}
+
       {/* Left — breadcrumb */}
       <p className="text-sm font-semibold text-ink-3 select-none">{pageLabel}</p>
 
@@ -152,8 +291,8 @@ export function TopNav({ onOpenSearch }: { onOpenSearch?: () => void }) {
           <kbd className="ml-0.5">{isMac ? "⌘K" : "Ctrl K"}</kbd>
         </button>
 
-        {/* Announcements history shortcut — distinct from the dashboard "Send announcement"
-            CTA. Hidden on the announcements page itself to avoid pointing at the current page. */}
+        {/* Announcements history shortcut — distinct from the compose action below.
+            Hidden on the announcements page itself to avoid pointing at the current page. */}
         {pathname !== "/announcements" && (
           <Link
             href="/announcements"
@@ -164,6 +303,16 @@ export function TopNav({ onOpenSearch }: { onOpenSearch?: () => void }) {
             Announcements
           </Link>
         )}
+
+        {/* Compose — opens the broadcast modal directly from the header */}
+        <button
+          onClick={() => setAnnounceOpen(true)}
+          title="Send Announcement"
+          aria-label="Send Announcement"
+          className="h-8 w-8 flex items-center justify-center rounded-xl border-2 border-ink/12 text-ink-3 btn-3d hover:text-ink hover:bg-muted transition-colors"
+        >
+          <Plus className="h-3.5 w-3.5" />
+        </button>
 
         {/* Bell */}
         <div className="relative" ref={bellRef}>

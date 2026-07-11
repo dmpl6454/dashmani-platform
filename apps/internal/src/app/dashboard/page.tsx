@@ -2,16 +2,13 @@
 import Link from "next/link";
 import { useAuth } from "@/lib/auth";
 import { useOverviewStats } from "@/lib/hooks/use-analytics";
-import { useAnnouncements } from "@/lib/hooks/use-announcements";
 import {
   Users, Building2, Clock, CheckCircle, FolderOpen, FileCheck, Send,
-  UserPlus, ArrowRight, Megaphone, TrendingUp, Link2, Calendar, BarChart2, CalendarDays, X,
+  UserPlus, ArrowRight, TrendingUp, Link2, Calendar, BarChart2, CalendarDays, X,
   Share2, Globe, ClipboardList,
 } from "lucide-react";
 import { useState } from "react";
-import useSWR from "swr";
 import { usePageTitle } from "@/lib/hooks/use-page-title";
-import { apiFetch } from "@/lib/api";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
 } from "recharts";
@@ -31,139 +28,6 @@ const statStrip: { key: string; label: string; icon: any; href: string }[] = [
   { key: "linksThisMonth",          label: "Links / Month",    icon: Calendar,     href: "/reports/links" },
   { key: "submittedTodayCount",     label: "Submitted Today",  icon: BarChart2,    href: "/reports" },
 ];
-
-function QuickAnnounceModal({ onClose }: { onClose: () => void }) {
-  const [title,   setTitle]   = useState("");
-  const [message, setMessage] = useState("");
-  const [orgUnitId, setOrgUnitId] = useState<string>("");
-  const [sending, setSending] = useState(false);
-  const [confirming, setConfirming] = useState(false);
-  const [error,   setError]   = useState<string | null>(null);
-  const [done,    setDone]    = useState<number | null>(null);
-
-  const { data: teamsData } = useSWR("/teams", (url: string) => apiFetch<any>(url));
-  const teams: any[] = (teamsData as any)?.data ?? [];
-  const selectedTeam = orgUnitId ? teams.find((t: any) => t.id === orgUnitId) : null;
-
-  const inputCls = "w-full border-2 border-ink/15 bg-surface rounded-xl px-4 py-2.5 text-sm text-ink placeholder:text-ink-4 transition-colors";
-
-  function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!title.trim() || !message.trim()) return;
-    setConfirming(true);
-  }
-
-  async function doSend() {
-    setSending(true);
-    setError(null);
-    try {
-      const body: any = { title: title.trim(), message: message.trim() };
-      if (orgUnitId) body.orgUnitId = orgUnitId;
-      const res = await apiFetch<any>("/admin/announcements", {
-        method: "POST",
-        body: JSON.stringify(body),
-      });
-      setDone(res?.data?.recipientCount ?? 0);
-    } catch (err: any) {
-      setError(err?.message || "Failed to send. Please try again.");
-      setConfirming(false);
-    } finally { setSending(false); }
-  }
-
-  if (done !== null) return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4">
-      <div className="v3-card shadow-pop p-8 text-center w-full max-w-sm">
-        <div className="h-14 w-14 rounded-xl border-2 border-ink bg-action flex items-center justify-center mx-auto mb-4">
-          <Megaphone className="h-7 w-7 text-ink" />
-        </div>
-        <p className="text-lg font-bold text-ink font-display">Announcement sent!</p>
-        <p className="text-sm text-ink-3 mt-1">Notified {done} employee{done !== 1 ? "s" : ""} via portal and email.</p>
-        <button onClick={onClose} className="mt-6 px-6 py-2.5 rounded-full bg-ink text-white text-sm font-bold btn-3d hover:bg-ink-2 transition-colors">
-          Done
-        </button>
-      </div>
-    </div>
-  );
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4" onClick={onClose}>
-      <div className="v3-card shadow-pop w-full max-w-lg overflow-hidden pop-in" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-6 py-4 border-b-2 border-ink/10">
-          <h2 className="font-bold text-ink flex items-center gap-2">
-            <Megaphone size={18} className="text-action-deep" />
-            {confirming ? "Confirm broadcast" : "Broadcast Announcement"}
-          </h2>
-          <button onClick={onClose} className="h-7 w-7 flex items-center justify-center rounded-lg hover:bg-muted transition-colors text-ink-4 text-xl leading-none">×</button>
-        </div>
-
-        {confirming ? (
-          <div className="p-6 space-y-4">
-            <p className="text-sm text-ink-3">
-              {selectedTeam
-                ? `This will notify only members of "${selectedTeam.name}". You can't undo this.`
-                : "This will email every active employee and add a notification to their portal. You can't undo this."}
-            </p>
-            <div className="v3-card-inset p-4 space-y-2">
-              <p className="text-xs font-bold text-ink-4 uppercase tracking-wider">Preview</p>
-              <p className="text-sm font-semibold text-ink">{title}</p>
-              <p className="text-sm text-ink-3 whitespace-pre-wrap leading-relaxed">{message}</p>
-            </div>
-            {error && <p className="text-xs text-danger">{error}</p>}
-            <div className="flex items-center justify-end gap-3 pt-1">
-              <button type="button" onClick={() => setConfirming(false)} disabled={sending} className="px-5 py-2 rounded-full border-2 border-ink/15 text-sm text-ink-3 hover:bg-muted transition-colors disabled:opacity-50">
-                Back
-              </button>
-              <button type="button" onClick={doSend} disabled={sending} className="px-5 py-2.5 rounded-full bg-ink text-white text-sm font-bold btn-3d hover:bg-ink-2 transition-colors disabled:opacity-50 flex items-center gap-2">
-                <Megaphone size={15} />
-                {sending ? "Sending…" : "Yes, send to all"}
-              </button>
-            </div>
-          </div>
-        ) : (
-          <form onSubmit={handleSubmit} className="p-6 space-y-4">
-            <div>
-              <label className="text-xs font-bold text-ink-4 uppercase tracking-wider mb-1.5 block">Send to</label>
-              <select
-                value={orgUnitId}
-                onChange={(e) => setOrgUnitId(e.target.value)}
-                className={inputCls}
-              >
-                <option value="">Everyone (all active employees)</option>
-                {teams.map((t: any) => (
-                  <option key={t.id} value={t.id}>Team: {t.name}</option>
-                ))}
-              </select>
-              <p className="text-xs text-ink-4 mt-1">
-                {selectedTeam ? `Only members of "${selectedTeam.name}" will be notified.` : "All active employees will be notified."}
-              </p>
-            </div>
-            <div>
-              <div className="flex justify-between mb-1.5">
-                <label className="text-xs font-bold text-ink-4 uppercase tracking-wider">Title</label>
-                <span className="text-xs text-ink-4">{title.length}/120</span>
-              </div>
-              <input type="text" value={title} onChange={(e) => setTitle(e.target.value.slice(0, 120))} placeholder="e.g., Office closed on Monday" required className={inputCls} />
-            </div>
-            <div>
-              <div className="flex justify-between mb-1.5">
-                <label className="text-xs font-bold text-ink-4 uppercase tracking-wider">Message</label>
-                <span className="text-xs text-ink-4">{message.length}/2000</span>
-              </div>
-              <textarea value={message} onChange={(e) => setMessage(e.target.value.slice(0, 2000))} placeholder="Write your message here..." required rows={5} className={`${inputCls} resize-none`} />
-            </div>
-            <div className="flex items-center justify-end gap-3 pt-1">
-              <button type="button" onClick={onClose} className="px-5 py-2 rounded-full border-2 border-ink/15 text-sm text-ink-3 hover:bg-muted transition-colors">Cancel</button>
-              <button type="submit" disabled={!title.trim() || !message.trim()} className="px-5 py-2.5 rounded-full bg-ink text-white text-sm font-bold btn-3d hover:bg-ink-2 transition-colors disabled:opacity-50 flex items-center gap-2">
-                <Megaphone size={15} />
-                Review &amp; send
-              </button>
-            </div>
-          </form>
-        )}
-      </div>
-    </div>
-  );
-}
 
 function CustomTooltip({ active, payload, label }: any) {
   if (!active || !payload?.length) return null;
@@ -189,9 +53,7 @@ function toISO(d: Date) {
 export default function DashboardPage() {
   usePageTitle("Dashboard");
   const { user } = useAuth();
-  const { announcements } = useAnnouncements();
   const firstName = user?.name?.split(" ")[0] || "";
-  const [announceOpen, setAnnounceOpen] = useState(false);
   const today = new Date();
 
   // Links bento date range — default last 14 days
@@ -204,7 +66,6 @@ export default function DashboardPage() {
   const isCustomRange = linkStart !== defaultStart || linkEnd !== defaultEnd;
   const { data, isLoading } = useOverviewStats(linkStart, linkEnd, isCustomRange);
   const stats = (data as any)?.data || {};
-  const lastAnnouncement = announcements[0];
   const pendingEmployees = stats?.pendingEmployees ?? 0;
 
   const linksTrend: { date: string; count: number }[] = stats.linksTrend ?? [];
@@ -228,8 +89,6 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-5 pop-in">
-      {announceOpen && <QuickAnnounceModal onClose={() => setAnnounceOpen(false)} />}
-
       {/* Page header */}
       <div>
         <p className="text-xs font-bold text-ink-4 uppercase tracking-widest mb-1">Management Portal</p>
@@ -286,35 +145,6 @@ export default function DashboardPage() {
 
       {/* Bento grid */}
       <div className="bento grid-cols-1 lg:grid-cols-3 fade-up d3">
-
-        {/* Broadcast CTA — full width */}
-        {/* .v3-card (same utilities layer, declared later) beats bg-ink — inline style keeps the dark bg */}
-        <div className="lg:col-span-3 v3-card p-5 flex items-center justify-between gap-4 flex-wrap bg-ink v3-card-lift" style={{ borderColor: "#1A1A1A", background: "#1A1A1A" }}>
-          <div className="flex items-center gap-4">
-            <div className="h-11 w-11 rounded-xl bg-action flex items-center justify-center shrink-0">
-              <Megaphone className="h-5 w-5 text-ink" />
-            </div>
-            <div>
-              <p className="font-bold text-white text-base">Broadcast to All Employees</p>
-              <p className="text-xs text-white/50 mt-0.5">
-                {lastAnnouncement
-                  ? `Last: "${lastAnnouncement.title}" · ${new Date(lastAnnouncement.createdAt).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}`
-                  : "Send a message and email to every active employee instantly"}
-              </p>
-            </div>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Link href="/announcements" className="px-4 py-2 rounded-full border border-white/20 text-white/70 text-xs font-medium hover:bg-white/10 transition-colors">
-              View history
-            </Link>
-            <button
-              onClick={() => setAnnounceOpen(true)}
-              className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-action text-ink text-sm font-bold btn-3d hover:bg-action-deep transition-colors"
-            >
-              <Megaphone className="h-4 w-4" /> Send Announcement
-            </button>
-          </div>
-        </div>
 
         {/* Quick nav cards */}
         <Link href="/employees" className="v3-card-sm p-5 flex items-center gap-4 v3-card-lift group">

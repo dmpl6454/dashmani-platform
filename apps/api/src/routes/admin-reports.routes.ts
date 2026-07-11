@@ -12,6 +12,7 @@ import { recordGrowthSnapshot, getGrowthOverview, getAccountGrowth } from "../se
 import { getAllAccountsLinkStats } from "../services/account.service";
 import { generateReportsExport } from "../services/report-export.service";
 import { getLeaderboard, getTopLinksLeaderboard, getLeaderboardCoverage, getPlatformLeaderboards } from "../services/leaderboard.service";
+import { ENRICHMENT_ENABLED_KEY } from "../constants/enrichment";
 import {
   getPendingEmployees,
   approveEmployee,
@@ -589,7 +590,8 @@ router.get(
 // org is low on API credits, an admin needs to pause just this spend from
 // /api-costs without a deploy. Backed by the same system_settings table/pattern
 // used by the insights-cursor rows above and the SOP-content settings endpoint.
-const ENRICHMENT_TOGGLE_KEY = "enrichment.enabled";
+// The key itself lives in a shared constant (../constants/enrichment) so this
+// route and entity-extraction.cron.ts's gate can never drift apart on the literal.
 
 // GET /admin/enrichment/toggle — current state. Absent key (never set) = enabled,
 // matching runEntityExtraction()'s default-on behavior on a fresh deploy.
@@ -599,7 +601,7 @@ router.get(
   requirePermission("reports", "view"),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const row = await prisma.systemSetting.findUnique({ where: { key: ENRICHMENT_TOGGLE_KEY } });
+      const row = await prisma.systemSetting.findUnique({ where: { key: ENRICHMENT_ENABLED_KEY } });
       return success(res, { enabled: row?.value !== "false" });
     } catch (err) {
       next(err);
@@ -624,8 +626,8 @@ router.put(
       }
       const value = enabled ? "true" : "false";
       await prisma.systemSetting.upsert({
-        where: { key: ENRICHMENT_TOGGLE_KEY },
-        create: { key: ENRICHMENT_TOGGLE_KEY, value },
+        where: { key: ENRICHMENT_ENABLED_KEY },
+        create: { key: ENRICHMENT_ENABLED_KEY, value },
         update: { value },
       });
       return success(res, { enabled });

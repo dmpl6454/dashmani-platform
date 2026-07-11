@@ -40,6 +40,7 @@ vi.mock("../src/services/entity-extraction.service", () => ({
 }));
 
 import { runEntityExtraction } from "../src/cron/entity-extraction.cron";
+import { ENRICHMENT_ENABLED_KEY } from "../src/constants/enrichment";
 
 describe("runEntityExtraction — admin enrichment toggle gate", () => {
   const OLD_ENV = process.env;
@@ -52,11 +53,13 @@ describe("runEntityExtraction — admin enrichment toggle gate", () => {
   });
 
   it("skips the run — no linkContent query, no LLM call — when enrichment.enabled='false'", async () => {
-    findUniqueMock.mockResolvedValue({ key: "enrichment.enabled", value: "false" });
+    findUniqueMock.mockResolvedValue({ key: ENRICHMENT_ENABLED_KEY, value: "false" });
 
     await runEntityExtraction();
 
-    expect(findUniqueMock).toHaveBeenCalledWith({ where: { key: "enrichment.enabled" } });
+    // Asserts the cron reads the SAME shared constant the route imports (../src/constants/enrichment) —
+    // guards against the two call sites drifting onto different literal key strings.
+    expect(findUniqueMock).toHaveBeenCalledWith({ where: { key: ENRICHMENT_ENABLED_KEY } });
     expect(findManyMock).not.toHaveBeenCalled();
     expect(extractEntitiesFromContentMock).not.toHaveBeenCalled();
   });
@@ -74,7 +77,7 @@ describe("runEntityExtraction — admin enrichment toggle gate", () => {
   });
 
   it("runs normally when the key is explicitly 'true'", async () => {
-    findUniqueMock.mockResolvedValue({ key: "enrichment.enabled", value: "true" });
+    findUniqueMock.mockResolvedValue({ key: ENRICHMENT_ENABLED_KEY, value: "true" });
     findManyMock.mockResolvedValue([{ id: "c1", title: null, caption: "hello" }]);
     countMock.mockResolvedValue(1);
     extractEntitiesFromContentMock.mockResolvedValue({ ok: 1, empty: 0, error: 0, retry: 0 });

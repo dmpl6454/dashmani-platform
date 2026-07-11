@@ -52,7 +52,14 @@ export default function ApiCostsPage() {
         if (!cancelled) setEnrichmentEnabled((res as any)?.data?.enabled ?? true);
       })
       .catch((err: any) => {
-        if (!cancelled) setEnrichmentError(err?.message || "Failed to load enrichment status.");
+        // Without setting enrichmentState here, this catch used to fail SILENTLY:
+        // enrichmentEnabled stays null forever (switch permanently disabled via the
+        // `enrichmentEnabled === null` guard below) with no on-screen explanation.
+        // Reuse the same error-display block the PUT failure path already renders
+        // (enrichmentState === "error") instead of inventing a second one.
+        if (cancelled) return;
+        setEnrichmentError(err?.message || "Failed to load enrichment status. Reload the page to try again.");
+        setEnrichmentState("error");
       });
     return () => {
       cancelled = true;

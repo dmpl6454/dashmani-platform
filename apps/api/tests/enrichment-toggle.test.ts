@@ -3,12 +3,14 @@ import request from "supertest";
 import app from "../src/app";
 import { createTestUser, createTestRole, generateToken } from "./helpers";
 import { prisma } from "@dashmani/db";
+import { ENRICHMENT_ENABLED_KEY as KEY } from "../src/constants/enrichment";
 import "./setup";
 
 // system_settings is NOT truncated by tests/setup.ts's beforeEach TRUNCATE (unlike
 // most tables) — this file owns cleanup of the one key it writes, so a leftover
 // "enrichment.enabled" row from this suite can never leak into another test file.
-const KEY = "enrichment.enabled";
+// Imports the SAME constant the route/cron use, so this test can never test a
+// different key than the code actually reads/writes.
 
 describe("Enrichment toggle (admin kill-switch for LLM entity-extraction)", () => {
   let viewToken: string;

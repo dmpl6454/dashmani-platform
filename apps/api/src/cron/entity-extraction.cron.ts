@@ -1,5 +1,6 @@
 import { prisma } from "@dashmani/db";
 import { extractEntitiesFromContent } from "../services/entity-extraction.service";
+import { ENRICHMENT_ENABLED_KEY } from "../constants/enrichment";
 
 // Per-run cap. Default 1500 (was 500) to keep up with the new-link rate (~1.7k/day
 // IG+FB) AND chip at any backlog: 1500 × 4 runs/day = 6,000/day capacity. Override
@@ -21,7 +22,7 @@ export async function runEntityExtraction(): Promise<void> {
   // deploy to stop the spend immediately. Absent key or any value other than the
   // literal string "false" = enabled (unchanged default behavior on a fresh deploy
   // where the key has never been set).
-  const toggle = await prisma.systemSetting.findUnique({ where: { key: "enrichment.enabled" } });
+  const toggle = await prisma.systemSetting.findUnique({ where: { key: ENRICHMENT_ENABLED_KEY } });
   if (toggle?.value === "false") {
     console.log("[entity-extraction] disabled by admin toggle (enrichment.enabled=false) — skipping run");
     return;

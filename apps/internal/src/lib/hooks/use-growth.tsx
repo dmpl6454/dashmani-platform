@@ -1,5 +1,6 @@
 import useSWR from "swr";
 import { apiFetch } from "@/lib/api";
+import { TrendingUp, TrendingDown } from "lucide-react";
 
 export type SyncState = "LIVE" | "STALE" | "MANUAL";
 
@@ -61,5 +62,41 @@ export function useAccountGrowth(accountId: string | null, days = 30) {
     accountId ? `/admin/growth/${accountId}?days=${days}` : null,
     (url) => apiFetch(url),
     { revalidateOnFocus: false, dedupingInterval: 300_000 },
+  );
+}
+
+export function fmtCompact(n: number | null | undefined): string {
+  if (n == null) return "—";
+  const abs = Math.abs(n);
+  if (abs >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (abs >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return String(n);
+}
+
+// Only render a safe http(s) href — never javascript:/data: (profile_url is admin-entered free text).
+export function httpUrlOrNull(url: string | null | undefined): string | null {
+  if (!url) return null;
+  try {
+    const u = new URL(url);
+    return u.protocol === "https:" || u.protocol === "http:" ? u.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Signed compact delta with directional icon + color, using this app's named tokens. */
+export function DeltaBadge({ delta, deltaPct }: { delta: number | null | undefined; deltaPct?: number | null }) {
+  const d = delta ?? 0;
+  const up = d > 0;
+  const down = d < 0;
+  const color = up ? "text-success" : down ? "text-danger" : "text-ink-4";
+  const sign = d > 0 ? "+" : "";
+  return (
+    <span className={`inline-flex items-center gap-1 text-xs font-semibold ${color}`}>
+      {up && <TrendingUp className="h-3 w-3 shrink-0" />}
+      {down && <TrendingDown className="h-3 w-3 shrink-0" />}
+      {sign}{fmtCompact(d)}
+      {deltaPct != null && <span className="text-ink-4 font-normal">({sign}{deltaPct}%)</span>}
+    </span>
   );
 }

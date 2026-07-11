@@ -29,12 +29,18 @@
  *     profileUrl (facebook.com/profile.php?id=<n>), same convention used
  *     elsewhere in this codebase for FB profile URLs (see profile.php?id=
  *     regex in follower-sync.service.ts / account-growth.service.ts).
- *   • Not found → reported, skipped.
- *   • Found but already ARCHIVED → reported, skipped (idempotent no-op).
- *   • Found, status !== ARCHIVED, re-verification FAILS (followerCount > 0 or
- *     reportLinks > 0) → reported, skipped — NOT archived.
- *   • Found, status !== ARCHIVED, re-verification PASSES → confirmed-still-dead,
- *     archived in --apply mode (status update ONLY, never a delete).
+ *   • 0 matches → reported, skipped (not_found).
+ *   • 2+ matches → AMBIGUOUS. A 14-digit numeric ID colliding as a substring of
+ *     more than one row's profileUrl is unlikely but not impossible, and we
+ *     cannot tell which row is the intended target. Reported clearly (every
+ *     matching row's id/handle), SKIPPED entirely — NEVER archived. Fail-safe:
+ *     an ambiguous match must never result in a write.
+ *   • Exactly 1 match, already ARCHIVED → reported, skipped (idempotent no-op).
+ *   • Exactly 1 match, status !== ARCHIVED, re-verification FAILS (followerCount
+ *     > 0 or reportLinks > 0) → reported, skipped — NOT archived.
+ *   • Exactly 1 match, status !== ARCHIVED, re-verification PASSES →
+ *     confirmed-still-dead, archived in --apply mode (status update ONLY,
+ *     never a delete).
  *
  * Usage (run from packages/db so @dashmani/db auto-loads packages/db/.env):
  *   cd packages/db && npx tsx ../../scripts/archive-dead-fb-accounts.ts
@@ -68,6 +74,7 @@ interface AccountRow {
 
 type Outcome =
   | { fbId: string; kind: "not_found" }
+  | { fbId: string; kind: "ambiguous_match"; accounts: AccountRow[] }
   | { fbId: string; kind: "already_archived"; account: AccountRow }
   | { fbId: string; kind: "still_dead"; account: AccountRow }
   | { fbId: string; kind: "skipped_not_dead"; account: AccountRow; reason: string };
@@ -118,7 +125,7 @@ async function main(): Promise<void> {
   const outcomes: Outcome[] = [];
 
   for (const fbId of DEAD_FB_IDS) {
-    const account = await prisma.socialAccount.findFirst({
+    const matches = await prisma.socialAccount.findMany({
       where: { profileUrl: { contains: fbId } },
       select: {
         id: true,
@@ -130,12 +137,22 @@ async function main(): Promise<void> {
       },
     });
 
-    if (!account) {
+    if (matches.length === 0) {
       console.log(`  [NOT FOUND]      id=${fbId} — no social_accounts row matches this profileUrl`);
       outcomes.push({ fbId, kind: "not_found" });
       continue;
     }
 
+    if (matches.length > 1) {
+      console.log(`  [AMBIGUOUS]      id=${fbId} — ${matches.length} rows match this profileUrl substring, cannot tell which is the intended target — SKIPPING`);
+      for (const m of matches) {
+        console.log(`      candidate: account id=${m.id} handle="${m.handle}" (${m.displayName}) status=${m.status} profileUrl=${m.profileUrl}`);
+      }
+      outcomes.push({ fbId, kind: "ambiguous_match", accounts: matches });
+      continue;
+    }
+
+    const account = matches[0];
     const outcome = await reverify(fbId, account);
     outcomes.push(outcome);
 
@@ -154,6 +171,7 @@ async function main(): Promise<void> {
   console.log(`\nSummary: ${toArchive.length} of ${DEAD_FB_IDS.length} accounts confirmed still-dead and archivable.`);
   for (const o of outcomes) {
     if (o.kind === "not_found") console.log(`  - ${o.fbId}: not found`);
+    if (o.kind === "ambiguous_match") console.log(`  - ${o.fbId}: skipped (ambiguous — ${o.accounts.length} rows matched, refusing to guess)`);
     if (o.kind === "already_archived") console.log(`  - ${o.fbId}: already archived`);
     if (o.kind === "skipped_not_dead") console.log(`  - ${o.fbId}: skipped (${o.reason})`);
     if (o.kind === "still_dead") console.log(`  - ${o.fbId}: would archive (account id ${o.account.id})`);

@@ -188,8 +188,8 @@ export default function ApiCostsPage() {
           }`}
         >
           <span
-            className={`absolute top-0.5 h-6 w-6 rounded-full bg-white shadow transition-transform ${
-              enrichmentEnabled ? "translate-x-5" : "translate-x-0.5"
+            className={`absolute top-0.5 left-0.5 h-6 w-6 rounded-full bg-white shadow transition-transform ${
+              enrichmentEnabled ? "translate-x-5" : "translate-x-0"
             }`}
           />
         </button>

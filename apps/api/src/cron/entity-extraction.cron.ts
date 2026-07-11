@@ -14,6 +14,18 @@ export async function runEntityExtraction(): Promise<void> {
     console.log("[entity-extraction] no LLM provider configured (ANTHROPIC_API_KEY / OPENAI_API_KEY / GOOGLE_GEMINI_API_KEY) — skipping run");
     return;
   }
+  // Admin-controlled kill-switch: this is the ONLY paid-per-token step in the whole
+  // social-insights pipeline (follower sync, engagement-metric polling, and caption
+  // harvesting are all free Graph/scraper calls that must keep running). While the
+  // org is low on API credits, an admin can flip this off from /api-costs without a
+  // deploy to stop the spend immediately. Absent key or any value other than the
+  // literal string "false" = enabled (unchanged default behavior on a fresh deploy
+  // where the key has never been set).
+  const toggle = await prisma.systemSetting.findUnique({ where: { key: "enrichment.enabled" } });
+  if (toggle?.value === "false") {
+    console.log("[entity-extraction] disabled by admin toggle (enrichment.enabled=false) — skipping run");
+    return;
+  }
   // Idempotent selector: only rows with text fetched (status=ok) and not yet extracted.
   const rows = await prisma.linkContent.findMany({
     where: { status: "ok", extractedAt: null },

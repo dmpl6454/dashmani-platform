@@ -106,8 +106,8 @@ export default function JobAlerts() {
             {done ? (
               <div className="ds-alerts-success" aria-live="polite">
                 <span className="ck" aria-hidden="true">✓</span>
-                <h3>You&apos;re on the list</h3>
-                <p>We&apos;ll email you the moment a matching role opens. No spam, just openings.</p>
+                <h3>Thanks for your interest!</h3>
+                <p>Job alerts are coming soon — check back here for new roles in the meantime.</p>
               </div>
             ) : (
               <>

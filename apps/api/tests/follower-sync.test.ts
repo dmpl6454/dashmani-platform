@@ -952,4 +952,34 @@ describe("syncSingleAccountFollowers", () => {
       }),
     );
   });
+
+  it("resolves an X/Twitter account via fetchTwitterFollowerMap and persists it (manual refresh must not silently no-op)", async () => {
+    mockFindUnique.mockResolvedValue(
+      makeAccount({
+        id: "acc-x-refresh",
+        handle: "@SomeXHandle",
+        profileUrl: "https://x.com/SomeXHandle",
+        platformSlug: "x",
+      }),
+    );
+    // Map is keyed lowercase by fetchTwitterFollowerMap — the single-account
+    // path must normalize (strip @, lowercase) the same way the batch Tier-3
+    // path does before looking up.
+    mockFetchTw.mockResolvedValue(new Map([["somexhandle", 92162226]]));
+
+    const result = await syncSingleAccountFollowers("acc-x-refresh");
+
+    // The resolver must have been called with the normalized handle (no "@").
+    expect(mockFetchTw).toHaveBeenCalledWith(["SomeXHandle"]);
+
+    expect(result).toEqual(
+      expect.objectContaining({ accountId: "acc-x-refresh", followers: 92162226, updated: true }),
+    );
+    expect(mockAccountUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "acc-x-refresh" },
+        data: expect.objectContaining({ followerCount: 92162226 }),
+      }),
+    );
+  });
 });

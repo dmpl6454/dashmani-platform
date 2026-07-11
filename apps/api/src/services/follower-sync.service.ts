@@ -628,6 +628,21 @@ export async function syncSingleAccountFollowers(accountId: string) {
     const scHandle = account.handle.replace(/^@/, "").split("?")[0].trim();
     const result = await scrapeSnapchatFollowers(scHandle, fetch, account.profileUrl);
     followers = result.followers;
+  } else if (slug === "x") {
+    // fetchTwitterFollowerMap activates a fresh guest token per call — calling
+    // it here for a single handle is a little wasteful (one token activation
+    // for one lookup) but that's fine and consistent with how the other
+    // single-account branches above already work (direct network call, not
+    // batch-map reuse). Normalization MUST match the batch Tier-3 path in
+    // syncAllFollowerCounts exactly (strip leading @, drop query string, trim,
+    // then lowercase for the map lookup — the map itself is keyed lowercase in
+    // fetchTwitterFollowerMap) so a manual refresh resolves the same handle the
+    // hourly cron would.
+    const xHandle = account.handle.replace(/^@/, "").split("?")[0].trim();
+    if (xHandle) {
+      const twMap = await fetchTwitterFollowerMap([xHandle]);
+      followers = twMap.get(xHandle.toLowerCase()) ?? null;
+    }
   }
   // Other platforms: no automated sync; admin must enter the count manually.
 

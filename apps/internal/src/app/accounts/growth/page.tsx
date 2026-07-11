@@ -2,28 +2,11 @@
 import { useState } from "react";
 import Link from "next/link";
 import { ArrowLeft, TrendingUp, TrendingDown, Users, LineChart, Trophy, ExternalLink } from "lucide-react";
-import { useGrowthOverview, type SyncState, type GrowthAccount, type TopMover } from "@/lib/hooks/use-growth";
+import {
+  useGrowthOverview, fmtCompact, httpUrlOrNull, DeltaBadge,
+  type SyncState, type GrowthAccount, type TopMover,
+} from "@/lib/hooks/use-growth";
 import { usePageTitle } from "@/lib/hooks/use-page-title";
-
-function fmtCompact(n: number | null | undefined): string {
-  if (n == null) return "—";
-  const abs = Math.abs(n);
-  if (abs >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (abs >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-  return String(n);
-}
-
-// Return the URL only if it's a safe http(s) link — never render a javascript:/data:
-// URI as an href (stored-XSS guard; profile_url is admin-entered free text).
-function httpUrlOrNull(url: string | null | undefined): string | null {
-  if (!url) return null;
-  try {
-    const u = new URL(url);
-    return u.protocol === "https:" || u.protocol === "http:" ? u.toString() : null;
-  } catch {
-    return null;
-  }
-}
 
 // Open-the-real-channel external link. Renders nothing if there's no safe http(s) URL.
 // Used in All Accounts + both Top Movers lists. stopPropagation so it doesn't trigger
@@ -54,25 +37,6 @@ function pillClass(active: boolean) {
       ? "bg-[#1A1A1A] text-white border-[#1A1A1A]"
       : "text-[#7A7A7A] border-[#E8E0D0] hover:border-[#1A1A1A]"
   }`;
-}
-
-/** Signed compact delta with directional icon + color. */
-function DeltaBadge({ delta, deltaPct }: { delta: number | null | undefined; deltaPct?: number | null }) {
-  const d = delta ?? 0;
-  const up = d > 0;
-  const down = d < 0;
-  const color = up ? "text-[#3E9B4F]" : down ? "text-[#D14343]" : "text-[#7A7A7A]";
-  const sign = d > 0 ? "+" : "";
-  return (
-    <span className={`inline-flex items-center gap-1 text-xs font-semibold ${color}`}>
-      {up && <TrendingUp className="h-3.5 w-3.5 shrink-0" />}
-      {down && <TrendingDown className="h-3.5 w-3.5 shrink-0" />}
-      {sign}{fmtCompact(d)}
-      {deltaPct != null && (
-        <span className="text-[#B0B0B0] font-normal">({sign}{deltaPct}%)</span>
-      )}
-    </span>
-  );
 }
 
 /** Returns a short relative time string like "2h ago", "5d ago", "just now". */

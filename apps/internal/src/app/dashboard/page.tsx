@@ -2,10 +2,11 @@
 import Link from "next/link";
 import { useAuth } from "@/lib/auth";
 import { useOverviewStats } from "@/lib/hooks/use-analytics";
+import { useGrowthOverview, fmtCompact, httpUrlOrNull, DeltaBadge, type TopMover } from "@/lib/hooks/use-growth";
 import {
   Users, Building2, Clock, CheckCircle, FolderOpen, FileCheck, Send,
   UserPlus, ArrowRight, TrendingUp, Link2, Calendar, BarChart2, CalendarDays, X,
-  Share2, Globe, ClipboardList, ChevronDown,
+  Share2, Globe, ClipboardList, ChevronDown, ExternalLink, Trophy,
 } from "lucide-react";
 import { useState } from "react";
 import { usePageTitle } from "@/lib/hooks/use-page-title";
@@ -72,6 +73,18 @@ export default function DashboardPage() {
   const { data, isLoading } = useOverviewStats(linkStart, linkEnd, isCustomRange);
   const stats = (data as any)?.data || {};
   const pendingEmployees = stats?.pendingEmployees ?? 0;
+
+  // Account Growth + Top Movers — fixed 30-day window (the full picker lives on /accounts/growth)
+  const { data: growthData, isLoading: growthLoading } = useGrowthOverview(30);
+  const g = (growthData as any)?.data;
+  const growthAccountCount: number = g?.accountCount ?? 0;
+  const topMovers: TopMover[] = g?.topMovers ?? [];
+  const sortedTopMovers = [...topMovers]
+    .sort((a, b) => Math.abs(b.delta ?? 0) - Math.abs(a.delta ?? 0))
+    .slice(0, 5);
+  const growthLive: number | undefined = g?.liveCount;
+  const growthStale: number | undefined = g?.staleCount;
+  const growthManual: number | undefined = g?.manualCount;
 
   const linksTrend: { date: string; count: number }[] = stats.linksTrend ?? [];
   const trendData = linksTrend.map((d) => ({
@@ -415,6 +428,116 @@ export default function DashboardPage() {
               className="flex items-center gap-1.5 text-xs font-semibold text-terra hover:underline"
             >
               View full reports <ArrowRight className="h-3.5 w-3.5" />
+            </Link>
+          </div>
+        </div>
+
+        {/* Account Growth summary — left half */}
+        <div className="lg:col-span-2 v3-card p-5 space-y-4 v3-card-lift">
+          <div className="flex items-center justify-between flex-wrap gap-3">
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 rounded-xl bg-indigo-soft flex items-center justify-center">
+                <Users className="h-5 w-5 text-indigo" />
+              </div>
+              <div>
+                <p className="font-bold text-ink">Account Growth</p>
+                <p className="text-xs text-ink-4">Last 30 days</p>
+              </div>
+            </div>
+          </div>
+
+          {growthLoading ? (
+            <div className="space-y-3 animate-pulse">
+              <div className="h-8 w-32 bg-muted rounded-lg" />
+              <div className="h-4 w-40 bg-muted rounded-lg" />
+              <div className="h-3 w-56 bg-muted rounded-lg" />
+            </div>
+          ) : growthAccountCount === 0 ? (
+            <div className="py-6 text-center">
+              <p className="text-sm text-ink-4">No follower data yet</p>
+              <p className="text-xs text-ink-4 mt-1">Counts populate once accounts are tracked</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <div className="flex items-end gap-3 flex-wrap">
+                <p className="font-num text-3xl font-semibold text-ink leading-none">
+                  {fmtCompact(g?.totalFollowers)}
+                </p>
+                <DeltaBadge delta={g?.totalDelta} />
+              </div>
+              <p className="text-xs text-ink-4">{growthAccountCount} account{growthAccountCount !== 1 ? "s" : ""} tracked</p>
+              {(growthLive !== undefined || growthStale !== undefined || growthManual !== undefined) && (
+                <p className="text-[11px] text-ink-4">
+                  {growthLive ?? 0} live · {growthStale ?? 0} stale · {growthManual ?? 0} manual
+                </p>
+              )}
+            </div>
+          )}
+
+          <div className="flex justify-end">
+            <Link href="/accounts/growth" className="flex items-center gap-1.5 text-xs font-semibold text-indigo hover:underline">
+              View all <ArrowRight className="h-3.5 w-3.5" />
+            </Link>
+          </div>
+        </div>
+
+        {/* Top Movers — right half */}
+        <div className="lg:col-span-1 v3-card p-5 space-y-4 v3-card-lift">
+          <div className="flex items-center gap-3">
+            <div className="h-10 w-10 rounded-xl bg-indigo-soft flex items-center justify-center">
+              <Trophy className="h-5 w-5 text-indigo" />
+            </div>
+            <div>
+              <p className="font-bold text-ink">Top Movers</p>
+              <p className="text-xs text-ink-4">Biggest 30-day change</p>
+            </div>
+          </div>
+
+          {growthLoading ? (
+            <div className="space-y-2 animate-pulse">
+              {[0, 1, 2].map((i) => <div key={i} className="h-8 bg-muted rounded-lg" />)}
+            </div>
+          ) : sortedTopMovers.length === 0 ? (
+            <div className="py-6 text-center">
+              <p className="text-sm text-ink-4">No movers yet</p>
+            </div>
+          ) : (
+            <ul className="space-y-2">
+              {sortedTopMovers.map((m, i) => {
+                const safeUrl = httpUrlOrNull(m.profileUrl);
+                return (
+                  <li key={m.accountId} className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-ink-4 w-4 shrink-0">{i + 1}</span>
+                    <Link
+                      href={`/accounts/${m.accountId}`}
+                      className="flex-1 min-w-0 text-xs font-semibold text-ink hover:underline truncate"
+                    >
+                      {m.displayName}
+                    </Link>
+                    <span className="text-[10px] text-ink-4 bg-ink/5 rounded-full px-2 py-0.5 shrink-0">{m.platform}</span>
+                    {safeUrl && (
+                      <a
+                        href={safeUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        title="Open channel in a new tab"
+                        aria-label={`Open ${m.displayName} channel`}
+                        className="shrink-0 text-ink-4 hover:text-indigo transition-colors"
+                      >
+                        <ExternalLink className="h-3 w-3" />
+                      </a>
+                    )}
+                    <DeltaBadge delta={m.delta} deltaPct={m.deltaPct} />
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+
+          <div className="flex justify-end">
+            <Link href="/accounts/growth" className="flex items-center gap-1.5 text-xs font-semibold text-indigo hover:underline">
+              View all <ArrowRight className="h-3.5 w-3.5" />
             </Link>
           </div>
         </div>

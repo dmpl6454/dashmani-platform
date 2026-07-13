@@ -78,14 +78,33 @@ export default function DashboardPage() {
   const stats = (data as any)?.data || {};
   const pendingEmployees = stats?.pendingEmployees ?? 0;
 
-  // Account Growth + Top Movers — fixed 30-day window (the full picker lives on /accounts/growth)
-  const { data: growthData, isLoading: growthLoading } = useGrowthOverview(30);
+  // Account Growth + Top Movers share a window pill (re-fetches) and a platform pill
+  // (client-side filter of the same payload). Both independent, non-persisted.
+  const GROWTH_WINDOWS = [
+    { key: 7, label: "7d" },
+    { key: 30, label: "30d" },
+    { key: 90, label: "90d" },
+  ];
+  const [growthDays, setGrowthDays] = useState(30);
+  const [growthPlatform, setGrowthPlatform] = useState("all"); // "all" | platform key
+  const { data: growthData, isLoading: growthLoading } = useGrowthOverview(growthDays);
   const g = (growthData as any)?.data;
   const growthAccountCount: number = g?.accountCount ?? 0;
   const topMovers: TopMover[] = g?.topMovers ?? [];
-  const sortedTopMovers = [...topMovers]
+  const topMoversByPlatform: Record<string, TopMover[]> = g?.topMoversByPlatform ?? {};
+
+  // Platform options come from the payload's per-platform mover buckets (falls back to none).
+  const growthPlatformOptions = Object.keys(topMoversByPlatform);
+
+  // The mover list respects the platform pill: "all" uses combined topMovers,
+  // a specific platform uses that bucket. Both are already abs(delta)-sorted server-side.
+  const sortedTopMovers = (
+    growthPlatform === "all" ? topMovers : (topMoversByPlatform[growthPlatform] ?? [])
+  )
+    .slice()
     .sort((a, b) => Math.abs(b.delta ?? 0) - Math.abs(a.delta ?? 0))
     .slice(0, 5);
+
   const growthLive: number | undefined = g?.liveCount;
   const growthStale: number | undefined = g?.staleCount;
   const growthManual: number | undefined = g?.manualCount;
@@ -478,16 +497,28 @@ export default function DashboardPage() {
 
         {/* Account Growth summary — left half */}
         <div className="lg:col-span-2 v3-card p-5 space-y-4 v3-card-lift">
-          <div className="flex items-center justify-between flex-wrap gap-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-3">
               <div className="h-10 w-10 rounded-xl bg-indigo-soft flex items-center justify-center">
                 <Users className="h-5 w-5 text-indigo" />
               </div>
               <div>
                 <p className="font-bold text-ink">Account Growth</p>
-                <p className="text-xs text-ink-4">Last 30 days</p>
+                <p className="text-xs text-ink-4">Last {growthDays} days</p>
               </div>
             </div>
+            <PillGroup>
+              {GROWTH_WINDOWS.map((w) => (
+                <Pill
+                  key={w.key}
+                  accent="indigo"
+                  active={growthDays === w.key}
+                  onClick={() => setGrowthDays(w.key)}
+                >
+                  {w.label}
+                </Pill>
+              ))}
+            </PillGroup>
           </div>
 
           {growthLoading ? (

@@ -191,6 +191,10 @@ export default function DashboardPage() {
     links: d.count,
   }));
 
+  const { data: linkActivityAnalytics } = useLinksAnalytics(linkStart, linkEnd);
+  const linksPlatformBreakdown: { platform: string; count: number }[] =
+    (linkActivityAnalytics as any)?.data?.platformBreakdown ?? [];
+
   const totalEmployees = stats.totalUsersCount ?? 0;
   const submittedToday = stats.submittedTodayCount ?? 0;
   const submissionRate = stats.submissionRateToday ?? 0;
@@ -437,6 +441,24 @@ export default function DashboardPage() {
               </>
             )}
           </div>
+
+          {/* Platform breakdown for the selected range */}
+          {linksPlatformBreakdown.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2">
+              {linksPlatformBreakdown
+                .slice()
+                .sort((a, b) => b.count - a.count)
+                .map((p) => (
+                  <span
+                    key={p.platform}
+                    className="inline-flex items-center gap-1.5 text-[11px] font-medium text-ink-3 bg-muted rounded-full px-2.5 py-1"
+                  >
+                    <span className="capitalize">{p.platform}</span>
+                    <span className="font-num font-semibold text-ink">{fmtCompact(p.count)}</span>
+                  </span>
+                ))}
+            </div>
+          )}
 
           {/* Submission rate bar */}
           <div className="space-y-1.5">

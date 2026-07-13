@@ -1,6 +1,8 @@
 "use client";
 import Link from "next/link";
+import useSWR from "swr";
 import { useAuth } from "@/lib/auth";
+import { apiFetch } from "@/lib/api";
 import { useOverviewStats } from "@/lib/hooks/use-analytics";
 import { useGrowthOverview, fmtCompact, httpUrlOrNull, DeltaBadge, type TopMover } from "@/lib/hooks/use-growth";
 import { useLinksAnalytics, useTopLinks } from "@/lib/hooks/use-reports";
@@ -94,7 +96,58 @@ export default function DashboardPage() {
   const { data: linksAnalyticsData, isLoading: topPerformersLoading } = useLinksAnalytics(perfStart, perfEnd);
   const topSubmitters: { employeeId: string; name: string; totalLinks: number; reportCount: number }[] =
     (linksAnalyticsData as any)?.data?.topSubmitters ?? [];
-  const topPerformers = topSubmitters.slice(0, 3);
+
+  // Top Performers metric pill — independent, non-persisted.
+  // Links & Reports re-sort the analytics topSubmitters; Engagement reads the leaderboard.
+  const PERF_METRICS = [
+    { key: "links", label: "Links" },
+    { key: "reports", label: "Reports" },
+    { key: "engagement", label: "Engagement" },
+  ];
+  const [perfMetric, setPerfMetric] = useState("links");
+  const { data: leaderboardData } = useSWR(
+    `/admin/reports/leaderboard?startDate=${perfStart}&endDate=${perfEnd}`,
+    (url: string) => apiFetch<any>(url),
+    { revalidateOnFocus: false, dedupingInterval: 300_000 }
+  );
+  const leaderboardRows: any[] = (leaderboardData as any)?.data ?? [];
+
+  // Build the top-3 list for the selected metric. Each row is normalized to
+  // { employeeId, name, primary (the big colored number), secondary (the grey badge) }.
+  const topPerformers = (() => {
+    if (perfMetric === "engagement") {
+      return [...leaderboardRows]
+        .sort((a, b) => (b.totalEngagement ?? 0) - (a.totalEngagement ?? 0))
+        .slice(0, 3)
+        .map((r) => ({
+          employeeId: r.employee?.id ?? r.employeeId,
+          name: r.employee?.name ?? r.name ?? "—",
+          primary: `${fmtCompact(r.totalEngagement ?? 0)} eng`,
+          secondary: `${r.totalLinks ?? 0} links`,
+        }));
+    }
+    if (perfMetric === "reports") {
+      return [...topSubmitters]
+        .sort((a, b) => b.reportCount - a.reportCount)
+        .slice(0, 3)
+        .map((p) => ({
+          employeeId: p.employeeId,
+          name: p.name,
+          primary: `${p.reportCount} report${p.reportCount !== 1 ? "s" : ""}`,
+          secondary: `${p.totalLinks} links`,
+        }));
+    }
+    // links (default)
+    return [...topSubmitters]
+      .sort((a, b) => b.totalLinks - a.totalLinks)
+      .slice(0, 3)
+      .map((p) => ({
+        employeeId: p.employeeId,
+        name: p.name,
+        primary: `${p.totalLinks} links`,
+        secondary: `${p.reportCount} report${p.reportCount !== 1 ? "s" : ""}`,
+      }));
+  })();
 
   // Top Links platform pill — independent, non-persisted. YouTube ranks by views;
   // Instagram/Facebook rank by likes+comments (backend does this automatically).
@@ -535,14 +588,28 @@ export default function DashboardPage() {
 
         {/* Top Performers — left half */}
         <div className="lg:col-span-2 v3-card p-5 space-y-4 v3-card-lift">
-          <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-xl bg-sage-soft flex items-center justify-center">
-              <Trophy className="h-5 w-5 text-sage" />
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 rounded-xl bg-sage-soft flex items-center justify-center">
+                <Trophy className="h-5 w-5 text-sage" />
+              </div>
+              <div>
+                <p className="font-bold text-ink">Top Performers</p>
+                <p className="text-xs text-ink-4">Last 30 days</p>
+              </div>
             </div>
-            <div>
-              <p className="font-bold text-ink">Top Performers</p>
-              <p className="text-xs text-ink-4">Last 30 days · by links submitted</p>
-            </div>
+            <PillGroup>
+              {PERF_METRICS.map((m) => (
+                <Pill
+                  key={m.key}
+                  accent="sage"
+                  active={perfMetric === m.key}
+                  onClick={() => setPerfMetric(m.key)}
+                >
+                  {m.label}
+                </Pill>
+              ))}
+            </PillGroup>
           </div>
 
           {topPerformersLoading ? (
@@ -551,7 +618,7 @@ export default function DashboardPage() {
             </div>
           ) : topPerformers.length === 0 ? (
             <div className="py-6 text-center">
-              <p className="text-sm text-ink-4">No submissions in the last 30 days</p>
+              <p className="text-sm text-ink-4">No data in the last 30 days</p>
             </div>
           ) : (
             <ul className="space-y-2">
@@ -565,9 +632,9 @@ export default function DashboardPage() {
                     {p.name}
                   </Link>
                   <span className="text-[10px] text-ink-4 bg-ink/5 rounded-full px-2 py-0.5 shrink-0">
-                    {p.reportCount} report{p.reportCount !== 1 ? "s" : ""}
+                    {p.secondary}
                   </span>
-                  <span className="text-xs font-semibold text-sage shrink-0">{p.totalLinks} links</span>
+                  <span className="text-xs font-semibold text-sage shrink-0">{p.primary}</span>
                 </li>
               ))}
             </ul>

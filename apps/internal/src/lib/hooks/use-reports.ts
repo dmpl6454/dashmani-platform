@@ -59,7 +59,10 @@ export function useLinksAnalytics(startDate?: string, endDate?: string) {
   if (startDate) params.set("startDate", startDate);
   if (endDate) params.set("endDate", endDate);
   const query = params.toString() ? `?${params.toString()}` : "";
-  return useSWR(`/admin/reports/links-analytics${query}`, (url) => apiFetch(url));
+  return useSWR(`/admin/reports/links-analytics${query}`, (url) => apiFetch(url), {
+    revalidateOnFocus: false,
+    dedupingInterval: 60_000,
+  });
 }
 
 export function useLinksAllAccounts(startDate?: string, endDate?: string) {

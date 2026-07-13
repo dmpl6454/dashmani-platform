@@ -191,6 +191,9 @@ export default function DashboardPage() {
     links: d.count,
   }));
 
+  // Second, deliberate useLinksAnalytics call — Links Activity's OWN date-range picker
+  // (linkStart/linkEnd), NOT the fixed 30-day Top Performers window above (perfStart/perfEnd).
+  // Do not consolidate — these are genuinely different ranges, SWR keys them independently.
   const { data: linkActivityAnalytics } = useLinksAnalytics(linkStart, linkEnd);
   const linksPlatformBreakdown: { platform: string; count: number }[] =
     (linkActivityAnalytics as any)?.data?.platformBreakdown ?? [];

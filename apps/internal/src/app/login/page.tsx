@@ -709,7 +709,7 @@ function AuthStyles() {
         color: #5D5FEF; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
       }
       .auth-field-wrap.error .auth-field-label { color: #B83728; }
-      .auth-field-icon { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); color: #9C947C; transition: color .2s; pointer-events: none; }
+      .auth-field-icon { position: absolute; left: 14px; top: 17px; transform: none; color: #9C947C; transition: color .2s; pointer-events: none; }
       .auth-field-wrap.is-focused .auth-field-icon { color: #5D5FEF; }
       .auth-field-wrap.error .auth-field-icon { color: #B83728; }
 

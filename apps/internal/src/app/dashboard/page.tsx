@@ -14,6 +14,7 @@ import { usePageTitle } from "@/lib/hooks/use-page-title";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
 } from "recharts";
+import { Pill, PillGroup } from "./_pills";
 
 // Each card links to the page that is the source of truth for the count it shows,
 // so clicking "Pending: 5" lands on the page that actually displays those 5 items.
@@ -95,9 +96,20 @@ export default function DashboardPage() {
     (linksAnalyticsData as any)?.data?.topSubmitters ?? [];
   const topPerformers = topSubmitters.slice(0, 3);
 
-  const { data: topYouTubeData, isLoading: topLinksLoading } = useTopLinks("youtube", perfStart, perfEnd, 3);
-  const topYouTubeLinks: { linkId: string | null; url: string; employeeName: string; views: number | null }[] =
-    (topYouTubeData as any)?.data ?? [];
+  // Top Links platform pill — independent, non-persisted. YouTube ranks by views;
+  // Instagram/Facebook rank by likes+comments (backend does this automatically).
+  const TOP_LINK_PLATFORMS = [
+    { key: "youtube", label: "YouTube", metric: "views" as const },
+    { key: "instagram", label: "Instagram", metric: "engagement" as const },
+    { key: "facebook", label: "Facebook", metric: "engagement" as const },
+  ];
+  const [topLinkPlatform, setTopLinkPlatform] = useState("youtube");
+  const activeLinkPlatform = TOP_LINK_PLATFORMS.find((p) => p.key === topLinkPlatform) ?? TOP_LINK_PLATFORMS[0];
+  const { data: topLinksData, isLoading: topLinksLoading } = useTopLinks(topLinkPlatform, perfStart, perfEnd, 3);
+  const topLinksRows: {
+    linkId: string | null; url: string; employeeName: string;
+    views: number | null; likes: number | null; comments: number | null;
+  }[] = (topLinksData as any)?.data ?? [];
 
   const linksTrend: { date: string; count: number }[] = stats.linksTrend ?? [];
   const trendData = linksTrend.map((d) => ({
@@ -568,10 +580,9 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* Top Links — right half. YouTube-only for the compact card; Instagram/Facebook
-            use different engagement mechanics (no clean shared ranking), so cramming all
-            three in one small card would misrepresent the comparison — see /reports for
-            the full per-platform breakdown. */}
+        {/* Top Links — right half. Platform pill lets the user pick YouTube/Instagram/
+            Facebook; YouTube ranks by views, Instagram/Facebook by likes+comments
+            (backend sorts per-platform) — see /reports for the full breakdown. */}
         <div className="lg:col-span-1 v3-card p-5 space-y-4 v3-card-lift">
           <div className="flex items-center gap-3">
             <div className="h-10 w-10 rounded-xl bg-terra-soft flex items-center justify-center">
@@ -582,19 +593,36 @@ export default function DashboardPage() {
               <p className="text-xs text-ink-4">Last 30 days</p>
             </div>
           </div>
+          <PillGroup>
+            {TOP_LINK_PLATFORMS.map((p) => (
+              <Pill
+                key={p.key}
+                accent="terra"
+                active={topLinkPlatform === p.key}
+                onClick={() => setTopLinkPlatform(p.key)}
+              >
+                {p.label}
+              </Pill>
+            ))}
+          </PillGroup>
 
           {topLinksLoading ? (
             <div className="space-y-2 animate-pulse">
               {[0, 1, 2].map((i) => <div key={i} className="h-8 bg-muted rounded-lg" />)}
             </div>
-          ) : topYouTubeLinks.length === 0 ? (
+          ) : topLinksRows.length === 0 ? (
             <div className="py-6 text-center">
-              <p className="text-sm text-ink-4">No YouTube links in the last 30 days</p>
+              <p className="text-sm text-ink-4">No {activeLinkPlatform.label} links in the last 30 days</p>
             </div>
           ) : (
             <ul className="space-y-2">
-              {topYouTubeLinks.map((link, i) => {
+              {topLinksRows.map((link, i) => {
                 const safeLinkUrl = httpUrlOrNull(link.url);
+                // YouTube ranks by views; IG/FB by likes+comments (no reliable views).
+                const metricValue =
+                  activeLinkPlatform.metric === "views"
+                    ? link.views
+                    : (link.likes ?? 0) + (link.comments ?? 0);
                 return (
                   <li key={link.linkId ?? link.url} className="flex items-center gap-2">
                     <span className="text-xs font-bold text-ink-4 w-4 shrink-0">{i + 1}</span>
@@ -617,7 +645,7 @@ export default function DashboardPage() {
                       </span>
                     )}
                     <span className="text-[10px] text-ink-4 truncate max-w-[5rem] shrink-0">{link.employeeName}</span>
-                    <span className="text-xs font-semibold text-terra shrink-0">{fmtCompact(link.views)}</span>
+                    <span className="text-xs font-semibold text-terra shrink-0">{fmtCompact(metricValue)}</span>
                   </li>
                 );
               })}
@@ -625,7 +653,9 @@ export default function DashboardPage() {
           )}
 
           <p className="text-[10px] text-ink-4">
-            YouTube · by views — see full breakdown for Instagram &amp; Facebook
+            {activeLinkPlatform.metric === "views"
+              ? `${activeLinkPlatform.label} · by views`
+              : `${activeLinkPlatform.label} · by likes + comments`}
           </p>
 
           <div className="flex justify-end">

@@ -5,7 +5,7 @@ import { useAuth } from "@/lib/auth";
 import { apiFetch } from "@/lib/api";
 import { useOverviewStats } from "@/lib/hooks/use-analytics";
 import { useGrowthOverview, fmtCompact, httpUrlOrNull, DeltaBadge, type TopMover } from "@/lib/hooks/use-growth";
-import { useLinksAnalytics, useTopLinks } from "@/lib/hooks/use-reports";
+import { useLinksAnalytics, useTopLinks, usePlatformLeaderboards } from "@/lib/hooks/use-reports";
 import {
   Users, Building2, Clock, CheckCircle, FolderOpen, FileCheck, Send,
   UserPlus, ArrowRight, Link2, Calendar, BarChart2, CalendarDays, X,
@@ -133,12 +133,15 @@ export default function DashboardPage() {
   const topSubmitters: { employeeId: string; name: string; totalLinks: number; reportCount: number }[] =
     (linksAnalyticsData as any)?.data?.topSubmitters ?? [];
 
-  // Top Performers metric pill — independent, non-persisted.
-  // Links & Reports re-sort the analytics topSubmitters; Engagement reads the leaderboard.
+  // Top Performers metric pill — independent, non-persisted. Links & Engagement come from
+  // the leaderboard/analytics payloads; the three platform tabs rank the SAME fair way as
+  // /reports/leaderboard (YouTube/Facebook by views, Instagram by likes+comments).
   const PERF_METRICS = [
     { key: "links", label: "Links" },
-    { key: "reports", label: "Reports" },
     { key: "engagement", label: "Engagement" },
+    { key: "youtube", label: "YouTube" },
+    { key: "facebook", label: "Facebook" },
+    { key: "instagram", label: "Instagram" },
   ];
   const [perfMetric, setPerfMetric] = useState("links");
   const { data: leaderboardData } = useSWR(
@@ -148,8 +151,12 @@ export default function DashboardPage() {
   );
   const leaderboardRows: any[] = (leaderboardData as any)?.data ?? [];
 
-  // Build the top-3 list for the selected metric. Each row is normalized to
-  // { employeeId, name, primary (the big colored number), secondary (the grey badge) }.
+  // Per-platform boards (fetched once, cached 5 min). Keyed youtube/facebook/instagram.
+  const { data: platformLbData } = usePlatformLeaderboards(perfStart, perfEnd);
+  const platformBoards: Record<string, any[]> = (platformLbData as any)?.data ?? {};
+
+  // Build the top-3 list for the selected metric. Each row normalizes to
+  // { employeeId, name, primary (big colored number), secondary (grey badge) }.
   const topPerformers = (() => {
     if (perfMetric === "engagement") {
       return [...leaderboardRows]
@@ -162,16 +169,18 @@ export default function DashboardPage() {
           secondary: `${r.totalLinks ?? 0} links`,
         }));
     }
-    if (perfMetric === "reports") {
-      return [...topSubmitters]
-        .sort((a, b) => b.reportCount - a.reportCount)
-        .slice(0, 3)
-        .map((p) => ({
-          employeeId: p.employeeId,
-          name: p.name,
-          primary: `${p.reportCount} report${p.reportCount !== 1 ? "s" : ""}`,
-          secondary: `${p.totalLinks} links`,
-        }));
+    // Per-platform board (youtube | facebook | instagram): already ranked server-side.
+    if (perfMetric === "youtube" || perfMetric === "facebook" || perfMetric === "instagram") {
+      const board = platformBoards[perfMetric] ?? [];
+      const isViews = perfMetric !== "instagram"; // YT/FB rank by views; IG by likes+comments
+      return board.slice(0, 3).map((r: any) => ({
+        employeeId: r.employee?.id ?? "—",
+        name: r.employee?.name ?? "—",
+        primary: isViews
+          ? `${fmtCompact(r.views ?? 0)} views`
+          : `${fmtCompact((r.likes ?? 0) + (r.comments ?? 0))} eng`,
+        secondary: `${r.engagedLinkCount ?? 0} link${(r.engagedLinkCount ?? 0) !== 1 ? "s" : ""}`,
+      }));
     }
     // links (default)
     return [...topSubmitters]

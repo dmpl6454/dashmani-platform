@@ -111,6 +111,21 @@ export default function DashboardPage() {
   const growthStale: number | undefined = g?.staleCount;
   const growthManual: number | undefined = g?.manualCount;
 
+  // Per-platform follower split — summed client-side from accounts already in the payload
+  // (each carries { platform, latest }). Pure arithmetic, no new fetch/query. Sorted desc.
+  // `latest` is the account's current follower count; null-guarded to 0.
+  const growthAccounts: { platform: string; latest: number | null }[] = g?.accounts ?? [];
+  const growthByPlatform = (() => {
+    const map = new Map<string, number>();
+    for (const a of growthAccounts) {
+      map.set(a.platform, (map.get(a.platform) ?? 0) + (a.latest ?? 0));
+    }
+    return [...map.entries()]
+      .map(([platform, followers]) => ({ platform, followers }))
+      .sort((x, y) => y.followers - x.followers);
+  })();
+  const growthByPlatformMax = growthByPlatform[0]?.followers ?? 0;
+
   // Top Performers + Top Links — fixed 30-day window (compact glance cards).
   const perfEnd = toISO(today);
   const perfStart = toISO(new Date(today.getTime() - 29 * 86400000));
@@ -572,6 +587,29 @@ export default function DashboardPage() {
                 <p className="text-[11px] text-ink-4">
                   {growthLive ?? 0} live · {growthStale ?? 0} stale · {growthManual ?? 0} manual
                 </p>
+              )}
+
+              {/* Follower split by platform — fills the card, accurate (current-count sum). */}
+              {growthByPlatform.length > 0 && growthByPlatformMax > 0 && (
+                <div className="pt-1 space-y-2">
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-ink-4">Followers by platform</p>
+                  {growthByPlatform.map((row) => (
+                    <div key={row.platform} className="flex items-center gap-3">
+                      <span className="text-xs text-ink-3 capitalize w-20 shrink-0 truncate" title={row.platform}>
+                        {row.platform}
+                      </span>
+                      <div className="flex-1 h-2 rounded-full bg-ink/5 overflow-hidden">
+                        <div
+                          className="h-full rounded-full bg-indigo/70 transition-all duration-500"
+                          style={{ width: `${Math.max(2, Math.round((row.followers / growthByPlatformMax) * 100))}%` }}
+                        />
+                      </div>
+                      <span className="font-num text-xs font-semibold text-ink w-14 text-right shrink-0">
+                        {fmtCompact(row.followers)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
               )}
             </div>
           )}

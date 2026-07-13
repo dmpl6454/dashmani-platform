@@ -5,11 +5,11 @@ import { useAuth } from "@/lib/auth";
 import { apiFetch } from "@/lib/api";
 import { useOverviewStats } from "@/lib/hooks/use-analytics";
 import { useGrowthOverview, fmtCompact, httpUrlOrNull, DeltaBadge, type TopMover } from "@/lib/hooks/use-growth";
-import { useLinksAnalytics, useTopLinks, usePlatformLeaderboards } from "@/lib/hooks/use-reports";
+import { useLinksAnalytics, useTopLinks, usePlatformLeaderboards, useInsightsSummary } from "@/lib/hooks/use-reports";
 import {
   Users, Building2, Clock, CheckCircle, FolderOpen, FileCheck, Send,
   UserPlus, ArrowRight, Link2, Calendar, BarChart2, CalendarDays, X,
-  Share2, Globe, ChevronDown, ExternalLink, Trophy, Eye,
+  Share2, Globe, ChevronDown, ExternalLink, Trophy, Eye, TrendingUp,
 } from "lucide-react";
 import { useState } from "react";
 import { usePageTitle } from "@/lib/hooks/use-page-title";
@@ -132,6 +132,10 @@ export default function DashboardPage() {
   const { data: linksAnalyticsData, isLoading: topPerformersLoading } = useLinksAnalytics(perfStart, perfEnd);
   const topSubmitters: { employeeId: string; name: string; totalLinks: number; reportCount: number }[] =
     (linksAnalyticsData as any)?.data?.topSubmitters ?? [];
+  const teamRanks: { teamId: string; teamName: string; totalLinks: number; avgLinksPerMember: number }[] =
+    (linksAnalyticsData as any)?.data?.teamRanks ?? [];
+  const nonSubmitters: { employeeId: string; name: string }[] =
+    (linksAnalyticsData as any)?.data?.nonSubmitters ?? [];
 
   // Top Performers metric pill — independent, non-persisted. Links & Engagement come from
   // the leaderboard/analytics payloads; the three platform tabs rank the SAME fair way as
@@ -208,6 +212,17 @@ export default function DashboardPage() {
     linkId: string | null; url: string; employeeName: string;
     views: number | null; likes: number | null; comments: number | null;
   }[] = (topLinksData as any)?.data ?? [];
+
+  // Total engagement (30d) per platform — org-wide views/likes/comments. Reuses the same
+  // perfStart/perfEnd 30-day window; useInsightsSummary is cached 5 min (one call).
+  const { data: insightsData, isLoading: insightsLoading } = useInsightsSummary(perfStart, perfEnd);
+  const insights = (insightsData as any)?.data;
+  const insightsTotalViews: number = insights?.totalViews ?? 0;
+  const insightsTotalLikes: number = insights?.totalLikes ?? 0;
+  const insightsTotalComments: number = insights?.totalComments ?? 0;
+  const insightsByPlatform: {
+    platform: string; totalViews: number; totalLikes: number; totalComments: number; linkCount: number;
+  }[] = (insights?.byPlatform ?? []).filter((p: any) => (p.linkCount ?? 0) > 0);
 
   const linksTrend: { date: string; count: number }[] = stats.linksTrend ?? [];
   const trendData = linksTrend.map((d) => ({
@@ -855,6 +870,140 @@ export default function DashboardPage() {
           <div className="flex justify-end">
             <Link href="/reports" className="flex items-center gap-1.5 text-xs font-semibold text-terra hover:underline">
               View all <ArrowRight className="h-3.5 w-3.5" />
+            </Link>
+          </div>
+        </div>
+
+        {/* Team leaderboard + non-submitters (30d) — accountability. Full width, two columns.
+            Data reused from the Top Performers useLinksAnalytics payload (no extra fetch). */}
+        <div className="lg:col-span-3 v3-card p-5 space-y-4 v3-card-lift">
+          <div className="flex items-center gap-3">
+            <div className="h-10 w-10 rounded-xl bg-indigo-soft flex items-center justify-center">
+              <Users className="h-5 w-5 text-indigo" />
+            </div>
+            <div>
+              <p className="font-bold text-ink">Teams &amp; Accountability</p>
+              <p className="text-xs text-ink-4">Last 30 days</p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Team leaderboard */}
+            <div className="space-y-2">
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-ink-4">Top teams by links</p>
+              {topPerformersLoading ? (
+                <div className="space-y-2 animate-pulse">{[0,1,2].map((i) => <div key={i} className="h-7 bg-muted rounded-lg" />)}</div>
+              ) : teamRanks.length === 0 ? (
+                <p className="text-sm text-ink-4 py-2">No team data</p>
+              ) : (
+                <ul className="space-y-2">
+                  {teamRanks.slice(0, 5).map((t, i) => (
+                    <li key={t.teamId} className="flex items-center gap-2">
+                      <span className="text-xs font-bold text-ink-4 w-4 shrink-0">{i + 1}</span>
+                      <span className="flex-1 min-w-0 text-xs font-semibold text-ink truncate" title={t.teamName}>{t.teamName}</span>
+                      <span className="text-[10px] text-ink-4 bg-ink/5 rounded-full px-2 py-0.5 shrink-0">{t.avgLinksPerMember}/member</span>
+                      <span className="text-xs font-semibold text-indigo shrink-0">{fmtCompact(t.totalLinks)}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            {/* Non-submitters */}
+            <div className="space-y-2">
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-ink-4">
+                Haven't submitted {nonSubmitters.length > 0 ? `(${nonSubmitters.length})` : ""}
+              </p>
+              {topPerformersLoading ? (
+                <div className="space-y-2 animate-pulse">{[0,1,2].map((i) => <div key={i} className="h-7 bg-muted rounded-lg" />)}</div>
+              ) : nonSubmitters.length === 0 ? (
+                <p className="text-sm text-sage py-2">Everyone has submitted 🎉</p>
+              ) : (
+                <div className="flex flex-wrap gap-1.5">
+                  {nonSubmitters.slice(0, 12).map((e) => (
+                    <Link
+                      key={e.employeeId}
+                      href={`/reports/${e.employeeId}`}
+                      className="text-[11px] text-ink-3 bg-muted rounded-full px-2.5 py-1 hover:bg-ink/10 transition-colors truncate max-w-[10rem]"
+                      title={e.name}
+                    >
+                      {e.name}
+                    </Link>
+                  ))}
+                  {nonSubmitters.length > 12 && (
+                    <span className="text-[11px] text-ink-4 px-2.5 py-1">+{nonSubmitters.length - 12} more</span>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="flex justify-end">
+            <Link href="/reports/links" className="flex items-center gap-1.5 text-xs font-semibold text-indigo hover:underline">
+              View full analytics <ArrowRight className="h-3.5 w-3.5" />
+            </Link>
+          </div>
+        </div>
+
+        {/* Total Engagement (30d) — org-wide, per platform. Full width. */}
+        <div className="lg:col-span-3 v3-card p-5 space-y-4 v3-card-lift">
+          <div className="flex items-center gap-3">
+            <div className="h-10 w-10 rounded-xl bg-terra-soft flex items-center justify-center">
+              <TrendingUp className="h-5 w-5 text-terra" />
+            </div>
+            <div>
+              <p className="font-bold text-ink">Total Engagement</p>
+              <p className="text-xs text-ink-4">Last 30 days · views + likes + comments</p>
+            </div>
+          </div>
+
+          {insightsLoading ? (
+            <div className="grid grid-cols-3 gap-3 animate-pulse">
+              {[0, 1, 2].map((i) => <div key={i} className="h-14 bg-muted rounded-xl" />)}
+            </div>
+          ) : (
+            <>
+              {/* Headline totals */}
+              <div className="grid grid-cols-3 gap-3">
+                <div className="v3-card-inset p-3 text-center">
+                  <p className="font-num text-2xl font-semibold text-ink leading-none">{fmtCompact(insightsTotalViews)}</p>
+                  <p className="text-[10px] text-ink-4 mt-1">Views</p>
+                </div>
+                <div className="v3-card-inset p-3 text-center">
+                  <p className="font-num text-2xl font-semibold text-ink leading-none">{fmtCompact(insightsTotalLikes)}</p>
+                  <p className="text-[10px] text-ink-4 mt-1">Likes</p>
+                </div>
+                <div className="v3-card-inset p-3 text-center">
+                  <p className="font-num text-2xl font-semibold text-ink leading-none">{fmtCompact(insightsTotalComments)}</p>
+                  <p className="text-[10px] text-ink-4 mt-1">Comments</p>
+                </div>
+              </div>
+
+              {/* Per-platform breakdown */}
+              {insightsByPlatform.length > 0 ? (
+                <div className="space-y-2">
+                  {insightsByPlatform
+                    .slice()
+                    .sort((a, b) => (b.totalViews + b.totalLikes + b.totalComments) - (a.totalViews + a.totalLikes + a.totalComments))
+                    .map((p) => (
+                      <div key={p.platform} className="flex flex-wrap items-center gap-x-4 gap-y-1 py-1.5 border-t border-[#F0EAD8] first:border-t-0">
+                        <span className="text-xs font-semibold text-ink capitalize w-24 shrink-0">{p.platform}</span>
+                        <span className="text-[11px] text-ink-4">{fmtCompact(p.totalViews)} <span className="text-ink-3">views</span></span>
+                        <span className="text-[11px] text-ink-4">{fmtCompact(p.totalLikes)} <span className="text-ink-3">likes</span></span>
+                        <span className="text-[11px] text-ink-4">{fmtCompact(p.totalComments)} <span className="text-ink-3">comments</span></span>
+                        <span className="text-[11px] text-ink-4 ml-auto">{p.linkCount} link{p.linkCount !== 1 ? "s" : ""}</span>
+                      </div>
+                    ))}
+                </div>
+              ) : (
+                <p className="text-sm text-ink-4 text-center py-4">No engagement data in the last 30 days</p>
+              )}
+            </>
+          )}
+
+          <div className="flex justify-end">
+            <Link href="/reports" className="flex items-center gap-1.5 text-xs font-semibold text-terra hover:underline">
+              View full reports <ArrowRight className="h-3.5 w-3.5" />
             </Link>
           </div>
         </div>

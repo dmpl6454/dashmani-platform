@@ -78,8 +78,10 @@ export default function DashboardPage() {
   const stats = (data as any)?.data || {};
   const pendingEmployees = stats?.pendingEmployees ?? 0;
 
-  // Account Growth + Top Movers share a window pill (re-fetches) and a platform pill
-  // (client-side filter of the same payload). Both independent, non-persisted.
+  // Account Growth + Top Movers share a window pill (growthDays, re-fetches via
+  // useGrowthOverview). Top Movers additionally has its own platform pill
+  // (growthPlatform, a client-side filter of the same payload) that Account Growth
+  // does not have. Both pills are independent, non-persisted.
   const GROWTH_WINDOWS = [
     { key: 7, label: "7d" },
     { key: 30, label: "30d" },
@@ -564,9 +566,26 @@ export default function DashboardPage() {
             </div>
             <div>
               <p className="font-bold text-ink">Top Movers</p>
-              <p className="text-xs text-ink-4">Biggest 30-day change</p>
+              <p className="text-xs text-ink-4">Biggest {growthDays}-day change</p>
             </div>
           </div>
+          {growthPlatformOptions.length > 0 && (
+            <PillGroup>
+              <Pill accent="indigo" active={growthPlatform === "all"} onClick={() => setGrowthPlatform("all")}>
+                All
+              </Pill>
+              {growthPlatformOptions.map((plat) => (
+                <Pill
+                  key={plat}
+                  accent="indigo"
+                  active={growthPlatform === plat}
+                  onClick={() => setGrowthPlatform(plat)}
+                >
+                  {plat.charAt(0).toUpperCase() + plat.slice(1)}
+                </Pill>
+              ))}
+            </PillGroup>
+          )}
 
           {growthLoading ? (
             <div className="space-y-2 animate-pulse">
@@ -577,33 +596,38 @@ export default function DashboardPage() {
               <p className="text-sm text-ink-4">No movers yet</p>
             </div>
           ) : (
-            <ul className="space-y-2">
+            <ul className="space-y-2.5">
               {sortedTopMovers.map((m, i) => {
                 const safeUrl = httpUrlOrNull(m.profileUrl);
                 return (
-                  <li key={m.accountId} className="flex items-center gap-2">
-                    <span className="text-xs font-bold text-ink-4 w-4 shrink-0">{i + 1}</span>
-                    <Link
-                      href={`/accounts/${m.accountId}`}
-                      className="flex-1 min-w-0 text-xs font-semibold text-ink hover:underline truncate"
-                    >
-                      {m.displayName}
-                    </Link>
-                    <span className="text-[10px] text-ink-4 bg-ink/5 rounded-full px-2 py-0.5 shrink-0">{m.platform}</span>
-                    {safeUrl && (
-                      <a
-                        href={safeUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        onClick={(e) => e.stopPropagation()}
-                        title="Open channel in a new tab"
-                        aria-label={`Open ${m.displayName} channel`}
-                        className="shrink-0 text-ink-4 hover:text-indigo transition-colors"
+                  <li key={m.accountId} className="flex flex-col gap-1">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="text-xs font-bold text-ink-4 w-4 shrink-0">{i + 1}</span>
+                      <Link
+                        href={`/accounts/${m.accountId}`}
+                        className="flex-1 min-w-0 text-xs font-semibold text-ink hover:underline truncate"
+                        title={m.displayName}
                       >
-                        <ExternalLink className="h-3 w-3" />
-                      </a>
-                    )}
-                    <DeltaBadge delta={m.delta} deltaPct={m.deltaPct} />
+                        {m.displayName}
+                      </Link>
+                      {safeUrl && (
+                        <a
+                          href={safeUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          title="Open channel in a new tab"
+                          aria-label={`Open ${m.displayName} channel`}
+                          className="shrink-0 text-ink-4 hover:text-indigo transition-colors"
+                        >
+                          <ExternalLink className="h-3 w-3" />
+                        </a>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 pl-6">
+                      <span className="text-[10px] text-ink-4 bg-ink/5 rounded-full px-2 py-0.5 shrink-0">{m.platform}</span>
+                      <DeltaBadge delta={m.delta} deltaPct={m.deltaPct} />
+                    </div>
                   </li>
                 );
               })}

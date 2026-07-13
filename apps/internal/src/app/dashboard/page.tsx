@@ -1,6 +1,8 @@
 "use client";
 import Link from "next/link";
+import useSWR from "swr";
 import { useAuth } from "@/lib/auth";
+import { apiFetch } from "@/lib/api";
 import { useOverviewStats } from "@/lib/hooks/use-analytics";
 import { useGrowthOverview, fmtCompact, httpUrlOrNull, DeltaBadge, type TopMover } from "@/lib/hooks/use-growth";
 import { useLinksAnalytics, useTopLinks } from "@/lib/hooks/use-reports";
@@ -14,6 +16,7 @@ import { usePageTitle } from "@/lib/hooks/use-page-title";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
 } from "recharts";
+import { Pill, PillGroup } from "./_pills";
 
 // Each card links to the page that is the source of truth for the count it shows,
 // so clicking "Pending: 5" lands on the page that actually displays those 5 items.
@@ -75,14 +78,35 @@ export default function DashboardPage() {
   const stats = (data as any)?.data || {};
   const pendingEmployees = stats?.pendingEmployees ?? 0;
 
-  // Account Growth + Top Movers — fixed 30-day window (the full picker lives on /accounts/growth)
-  const { data: growthData, isLoading: growthLoading } = useGrowthOverview(30);
+  // Account Growth + Top Movers share a window pill (growthDays, re-fetches via
+  // useGrowthOverview). Top Movers additionally has its own platform pill
+  // (growthPlatform, a client-side filter of the same payload) that Account Growth
+  // does not have. Both pills are independent, non-persisted.
+  const GROWTH_WINDOWS = [
+    { key: 7, label: "7d" },
+    { key: 30, label: "30d" },
+    { key: 90, label: "90d" },
+  ];
+  const [growthDays, setGrowthDays] = useState(30);
+  const [growthPlatform, setGrowthPlatform] = useState("all"); // "all" | platform key
+  const { data: growthData, isLoading: growthLoading } = useGrowthOverview(growthDays);
   const g = (growthData as any)?.data;
   const growthAccountCount: number = g?.accountCount ?? 0;
   const topMovers: TopMover[] = g?.topMovers ?? [];
-  const sortedTopMovers = [...topMovers]
+  const topMoversByPlatform: Record<string, TopMover[]> = g?.topMoversByPlatform ?? {};
+
+  // Platform options come from the payload's per-platform mover buckets (falls back to none).
+  const growthPlatformOptions = Object.keys(topMoversByPlatform);
+
+  // The mover list respects the platform pill: "all" uses combined topMovers,
+  // a specific platform uses that bucket. Both are already abs(delta)-sorted server-side.
+  const sortedTopMovers = (
+    growthPlatform === "all" ? topMovers : (topMoversByPlatform[growthPlatform] ?? [])
+  )
+    .slice()
     .sort((a, b) => Math.abs(b.delta ?? 0) - Math.abs(a.delta ?? 0))
     .slice(0, 5);
+
   const growthLive: number | undefined = g?.liveCount;
   const growthStale: number | undefined = g?.staleCount;
   const growthManual: number | undefined = g?.manualCount;
@@ -93,17 +117,86 @@ export default function DashboardPage() {
   const { data: linksAnalyticsData, isLoading: topPerformersLoading } = useLinksAnalytics(perfStart, perfEnd);
   const topSubmitters: { employeeId: string; name: string; totalLinks: number; reportCount: number }[] =
     (linksAnalyticsData as any)?.data?.topSubmitters ?? [];
-  const topPerformers = topSubmitters.slice(0, 3);
 
-  const { data: topYouTubeData, isLoading: topLinksLoading } = useTopLinks("youtube", perfStart, perfEnd, 3);
-  const topYouTubeLinks: { linkId: string | null; url: string; employeeName: string; views: number | null }[] =
-    (topYouTubeData as any)?.data ?? [];
+  // Top Performers metric pill — independent, non-persisted.
+  // Links & Reports re-sort the analytics topSubmitters; Engagement reads the leaderboard.
+  const PERF_METRICS = [
+    { key: "links", label: "Links" },
+    { key: "reports", label: "Reports" },
+    { key: "engagement", label: "Engagement" },
+  ];
+  const [perfMetric, setPerfMetric] = useState("links");
+  const { data: leaderboardData } = useSWR(
+    `/admin/reports/leaderboard?startDate=${perfStart}&endDate=${perfEnd}`,
+    (url: string) => apiFetch<any>(url),
+    { revalidateOnFocus: false, dedupingInterval: 300_000 }
+  );
+  const leaderboardRows: any[] = (leaderboardData as any)?.data ?? [];
+
+  // Build the top-3 list for the selected metric. Each row is normalized to
+  // { employeeId, name, primary (the big colored number), secondary (the grey badge) }.
+  const topPerformers = (() => {
+    if (perfMetric === "engagement") {
+      return [...leaderboardRows]
+        .sort((a, b) => (b.totalEngagement ?? 0) - (a.totalEngagement ?? 0))
+        .slice(0, 3)
+        .map((r) => ({
+          employeeId: r.employee?.id ?? r.employeeId,
+          name: r.employee?.name ?? r.name ?? "—",
+          primary: `${fmtCompact(r.totalEngagement ?? 0)} eng`,
+          secondary: `${r.totalLinks ?? 0} links`,
+        }));
+    }
+    if (perfMetric === "reports") {
+      return [...topSubmitters]
+        .sort((a, b) => b.reportCount - a.reportCount)
+        .slice(0, 3)
+        .map((p) => ({
+          employeeId: p.employeeId,
+          name: p.name,
+          primary: `${p.reportCount} report${p.reportCount !== 1 ? "s" : ""}`,
+          secondary: `${p.totalLinks} links`,
+        }));
+    }
+    // links (default)
+    return [...topSubmitters]
+      .sort((a, b) => b.totalLinks - a.totalLinks)
+      .slice(0, 3)
+      .map((p) => ({
+        employeeId: p.employeeId,
+        name: p.name,
+        primary: `${p.totalLinks} links`,
+        secondary: `${p.reportCount} report${p.reportCount !== 1 ? "s" : ""}`,
+      }));
+  })();
+
+  // Top Links platform pill — independent, non-persisted. YouTube ranks by views;
+  // Instagram/Facebook rank by likes+comments (backend does this automatically).
+  const TOP_LINK_PLATFORMS = [
+    { key: "youtube", label: "YouTube", metric: "views" as const },
+    { key: "instagram", label: "Instagram", metric: "engagement" as const },
+    { key: "facebook", label: "Facebook", metric: "engagement" as const },
+  ];
+  const [topLinkPlatform, setTopLinkPlatform] = useState("youtube");
+  const activeLinkPlatform = TOP_LINK_PLATFORMS.find((p) => p.key === topLinkPlatform) ?? TOP_LINK_PLATFORMS[0];
+  const { data: topLinksData, isLoading: topLinksLoading } = useTopLinks(topLinkPlatform, perfStart, perfEnd, 3);
+  const topLinksRows: {
+    linkId: string | null; url: string; employeeName: string;
+    views: number | null; likes: number | null; comments: number | null;
+  }[] = (topLinksData as any)?.data ?? [];
 
   const linksTrend: { date: string; count: number }[] = stats.linksTrend ?? [];
   const trendData = linksTrend.map((d) => ({
     date: new Date(d.date).toLocaleDateString("en-IN", { day: "numeric", month: "short" }),
     links: d.count,
   }));
+
+  // Second, deliberate useLinksAnalytics call — Links Activity's OWN date-range picker
+  // (linkStart/linkEnd), NOT the fixed 30-day Top Performers window above (perfStart/perfEnd).
+  // Do not consolidate — these are genuinely different ranges, SWR keys them independently.
+  const { data: linkActivityAnalytics } = useLinksAnalytics(linkStart, linkEnd);
+  const linksPlatformBreakdown: { platform: string; count: number }[] =
+    (linkActivityAnalytics as any)?.data?.platformBreakdown ?? [];
 
   const totalEmployees = stats.totalUsersCount ?? 0;
   const submittedToday = stats.submittedTodayCount ?? 0;
@@ -352,6 +445,24 @@ export default function DashboardPage() {
             )}
           </div>
 
+          {/* Platform breakdown for the selected range */}
+          {linksPlatformBreakdown.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2">
+              {linksPlatformBreakdown
+                .slice()
+                .sort((a, b) => b.count - a.count)
+                .map((p) => (
+                  <span
+                    key={p.platform}
+                    className="inline-flex items-center gap-1.5 text-[11px] font-medium text-ink-3 bg-muted rounded-full px-2.5 py-1"
+                  >
+                    <span className="capitalize">{p.platform}</span>
+                    <span className="font-num font-semibold text-ink">{fmtCompact(p.count)}</span>
+                  </span>
+                ))}
+            </div>
+          )}
+
           {/* Submission rate bar */}
           <div className="space-y-1.5">
             <div className="flex items-center justify-between">
@@ -413,16 +524,28 @@ export default function DashboardPage() {
 
         {/* Account Growth summary — left half */}
         <div className="lg:col-span-2 v3-card p-5 space-y-4 v3-card-lift">
-          <div className="flex items-center justify-between flex-wrap gap-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-3">
               <div className="h-10 w-10 rounded-xl bg-indigo-soft flex items-center justify-center">
                 <Users className="h-5 w-5 text-indigo" />
               </div>
               <div>
                 <p className="font-bold text-ink">Account Growth</p>
-                <p className="text-xs text-ink-4">Last 30 days</p>
+                <p className="text-xs text-ink-4">Last {growthDays} days</p>
               </div>
             </div>
+            <PillGroup>
+              {GROWTH_WINDOWS.map((w) => (
+                <Pill
+                  key={w.key}
+                  accent="indigo"
+                  active={growthDays === w.key}
+                  onClick={() => setGrowthDays(w.key)}
+                >
+                  {w.label}
+                </Pill>
+              ))}
+            </PillGroup>
           </div>
 
           {growthLoading ? (
@@ -468,9 +591,26 @@ export default function DashboardPage() {
             </div>
             <div>
               <p className="font-bold text-ink">Top Movers</p>
-              <p className="text-xs text-ink-4">Biggest 30-day change</p>
+              <p className="text-xs text-ink-4">Biggest {growthDays}-day change</p>
             </div>
           </div>
+          {growthPlatformOptions.length > 0 && (
+            <PillGroup>
+              <Pill accent="indigo" active={growthPlatform === "all"} onClick={() => setGrowthPlatform("all")}>
+                All
+              </Pill>
+              {growthPlatformOptions.map((plat) => (
+                <Pill
+                  key={plat}
+                  accent="indigo"
+                  active={growthPlatform === plat}
+                  onClick={() => setGrowthPlatform(plat)}
+                >
+                  {plat.charAt(0).toUpperCase() + plat.slice(1)}
+                </Pill>
+              ))}
+            </PillGroup>
+          )}
 
           {growthLoading ? (
             <div className="space-y-2 animate-pulse">
@@ -481,33 +621,38 @@ export default function DashboardPage() {
               <p className="text-sm text-ink-4">No movers yet</p>
             </div>
           ) : (
-            <ul className="space-y-2">
+            <ul className="space-y-2.5">
               {sortedTopMovers.map((m, i) => {
                 const safeUrl = httpUrlOrNull(m.profileUrl);
                 return (
-                  <li key={m.accountId} className="flex items-center gap-2">
-                    <span className="text-xs font-bold text-ink-4 w-4 shrink-0">{i + 1}</span>
-                    <Link
-                      href={`/accounts/${m.accountId}`}
-                      className="flex-1 min-w-0 text-xs font-semibold text-ink hover:underline truncate"
-                    >
-                      {m.displayName}
-                    </Link>
-                    <span className="text-[10px] text-ink-4 bg-ink/5 rounded-full px-2 py-0.5 shrink-0">{m.platform}</span>
-                    {safeUrl && (
-                      <a
-                        href={safeUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        onClick={(e) => e.stopPropagation()}
-                        title="Open channel in a new tab"
-                        aria-label={`Open ${m.displayName} channel`}
-                        className="shrink-0 text-ink-4 hover:text-indigo transition-colors"
+                  <li key={m.accountId} className="flex flex-col gap-1">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="text-xs font-bold text-ink-4 w-4 shrink-0">{i + 1}</span>
+                      <Link
+                        href={`/accounts/${m.accountId}`}
+                        className="flex-1 min-w-0 text-xs font-semibold text-ink hover:underline truncate"
+                        title={m.displayName}
                       >
-                        <ExternalLink className="h-3 w-3" />
-                      </a>
-                    )}
-                    <DeltaBadge delta={m.delta} deltaPct={m.deltaPct} />
+                        {m.displayName}
+                      </Link>
+                      {safeUrl && (
+                        <a
+                          href={safeUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          title="Open channel in a new tab"
+                          aria-label={`Open ${m.displayName} channel`}
+                          className="shrink-0 text-ink-4 hover:text-indigo transition-colors"
+                        >
+                          <ExternalLink className="h-3 w-3" />
+                        </a>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 pl-6">
+                      <span className="text-[10px] text-ink-4 bg-ink/5 rounded-full px-2 py-0.5 shrink-0">{m.platform}</span>
+                      <DeltaBadge delta={m.delta} deltaPct={m.deltaPct} />
+                    </div>
                   </li>
                 );
               })}
@@ -523,14 +668,28 @@ export default function DashboardPage() {
 
         {/* Top Performers — left half */}
         <div className="lg:col-span-2 v3-card p-5 space-y-4 v3-card-lift">
-          <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-xl bg-sage-soft flex items-center justify-center">
-              <Trophy className="h-5 w-5 text-sage" />
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 rounded-xl bg-sage-soft flex items-center justify-center">
+                <Trophy className="h-5 w-5 text-sage" />
+              </div>
+              <div>
+                <p className="font-bold text-ink">Top Performers</p>
+                <p className="text-xs text-ink-4">Last 30 days</p>
+              </div>
             </div>
-            <div>
-              <p className="font-bold text-ink">Top Performers</p>
-              <p className="text-xs text-ink-4">Last 30 days · by links submitted</p>
-            </div>
+            <PillGroup>
+              {PERF_METRICS.map((m) => (
+                <Pill
+                  key={m.key}
+                  accent="sage"
+                  active={perfMetric === m.key}
+                  onClick={() => setPerfMetric(m.key)}
+                >
+                  {m.label}
+                </Pill>
+              ))}
+            </PillGroup>
           </div>
 
           {topPerformersLoading ? (
@@ -539,7 +698,7 @@ export default function DashboardPage() {
             </div>
           ) : topPerformers.length === 0 ? (
             <div className="py-6 text-center">
-              <p className="text-sm text-ink-4">No submissions in the last 30 days</p>
+              <p className="text-sm text-ink-4">No data in the last 30 days</p>
             </div>
           ) : (
             <ul className="space-y-2">
@@ -553,9 +712,9 @@ export default function DashboardPage() {
                     {p.name}
                   </Link>
                   <span className="text-[10px] text-ink-4 bg-ink/5 rounded-full px-2 py-0.5 shrink-0">
-                    {p.reportCount} report{p.reportCount !== 1 ? "s" : ""}
+                    {p.secondary}
                   </span>
-                  <span className="text-xs font-semibold text-sage shrink-0">{p.totalLinks} links</span>
+                  <span className="text-xs font-semibold text-sage shrink-0">{p.primary}</span>
                 </li>
               ))}
             </ul>
@@ -568,10 +727,9 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* Top Links — right half. YouTube-only for the compact card; Instagram/Facebook
-            use different engagement mechanics (no clean shared ranking), so cramming all
-            three in one small card would misrepresent the comparison — see /reports for
-            the full per-platform breakdown. */}
+        {/* Top Links — right half. Platform pill lets the user pick YouTube/Instagram/
+            Facebook; YouTube ranks by views, Instagram/Facebook by likes+comments
+            (backend sorts per-platform) — see /reports for the full breakdown. */}
         <div className="lg:col-span-1 v3-card p-5 space-y-4 v3-card-lift">
           <div className="flex items-center gap-3">
             <div className="h-10 w-10 rounded-xl bg-terra-soft flex items-center justify-center">
@@ -582,19 +740,36 @@ export default function DashboardPage() {
               <p className="text-xs text-ink-4">Last 30 days</p>
             </div>
           </div>
+          <PillGroup>
+            {TOP_LINK_PLATFORMS.map((p) => (
+              <Pill
+                key={p.key}
+                accent="terra"
+                active={topLinkPlatform === p.key}
+                onClick={() => setTopLinkPlatform(p.key)}
+              >
+                {p.label}
+              </Pill>
+            ))}
+          </PillGroup>
 
           {topLinksLoading ? (
             <div className="space-y-2 animate-pulse">
               {[0, 1, 2].map((i) => <div key={i} className="h-8 bg-muted rounded-lg" />)}
             </div>
-          ) : topYouTubeLinks.length === 0 ? (
+          ) : topLinksRows.length === 0 ? (
             <div className="py-6 text-center">
-              <p className="text-sm text-ink-4">No YouTube links in the last 30 days</p>
+              <p className="text-sm text-ink-4">No {activeLinkPlatform.label} links in the last 30 days</p>
             </div>
           ) : (
             <ul className="space-y-2">
-              {topYouTubeLinks.map((link, i) => {
+              {topLinksRows.map((link, i) => {
                 const safeLinkUrl = httpUrlOrNull(link.url);
+                // YouTube ranks by views; IG/FB by likes+comments (no reliable views).
+                const metricValue =
+                  activeLinkPlatform.metric === "views"
+                    ? link.views
+                    : (link.likes ?? 0) + (link.comments ?? 0);
                 return (
                   <li key={link.linkId ?? link.url} className="flex items-center gap-2">
                     <span className="text-xs font-bold text-ink-4 w-4 shrink-0">{i + 1}</span>
@@ -617,7 +792,7 @@ export default function DashboardPage() {
                       </span>
                     )}
                     <span className="text-[10px] text-ink-4 truncate max-w-[5rem] shrink-0">{link.employeeName}</span>
-                    <span className="text-xs font-semibold text-terra shrink-0">{fmtCompact(link.views)}</span>
+                    <span className="text-xs font-semibold text-terra shrink-0">{fmtCompact(metricValue)}</span>
                   </li>
                 );
               })}
@@ -625,7 +800,9 @@ export default function DashboardPage() {
           )}
 
           <p className="text-[10px] text-ink-4">
-            YouTube · by views — see full breakdown for Instagram &amp; Facebook
+            {activeLinkPlatform.metric === "views"
+              ? `${activeLinkPlatform.label} · by views`
+              : `${activeLinkPlatform.label} · by likes + comments`}
           </p>
 
           <div className="flex justify-end">

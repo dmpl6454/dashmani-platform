@@ -61,20 +61,28 @@ const EMPLOYMENT_TYPE: Record<string, string> = {
 // served from the static/ISR cache (fast + crawlable) rather than hitting the API
 // on every Googlebot request.
 const REVALIDATE_SECONDS = 3600;
+// Short TTL for the miss-path refresh (see resolveJob). Small so a newly-listed
+// role resolves within seconds, not the hour-long list cache.
+const FRESH_REVALIDATE_SECONDS = 10;
 
-/** Fetch all active public job listings for server rendering. Returns [] on failure
- *  so a transient API hiccup degrades to an empty page rather than a 500. */
-export async function getJobs(): Promise<PublicJob[]> {
+/** Low-level fetch of the public jobs list from a given URL with a caller-supplied
+ *  cache policy. Returns [] on failure so a transient API hiccup degrades to an
+ *  empty page rather than a 500. */
+async function fetchJobsList(url: string, init: RequestInit): Promise<PublicJob[]> {
   try {
-    const res = await fetch(`${API_URL}/jobs`, {
-      next: { revalidate: REVALIDATE_SECONDS },
-    });
+    const res = await fetch(url, init);
     if (!res.ok) return [];
     const data = await res.json();
     return (data?.data as PublicJob[]) || [];
   } catch {
     return [];
   }
+}
+
+/** Fetch all active public job listings for server rendering, served from the
+ *  hourly ISR cache (fast + crawlable). */
+export async function getJobs(): Promise<PublicJob[]> {
+  return fetchJobsList(`${API_URL}/jobs`, { next: { revalidate: REVALIDATE_SECONDS } });
 }
 
 /** Fetch a single public job by id for server rendering. Returns null if not found. */
@@ -103,8 +111,27 @@ export async function resolveJob(param: string): Promise<PublicJob | null> {
   const decoded = decodeURIComponent(param);
   if (isUuid(decoded)) return getJob(decoded);
   const target = decoded.toLowerCase();
-  const jobs = await getJobs();
-  return jobs.find((job) => jobSlug(job) === target) || null;
+
+  // Cached-first: the hourly ISR cache covers the overwhelming majority of hits
+  // (crawlers, shared links to existing roles) with no API round-trip.
+  const cached = await getJobs();
+  const hit = cached.find((job) => jobSlug(job) === target);
+  if (hit) return hit;
+
+  // Cache miss: a role listed since the hourly cache last refreshed is live on the
+  // homepage (client SWR hits the API directly) but absent from the stale server
+  // list — which made its "Apply now" / detail link 404. Retry against a distinct,
+  // short-TTL cache entry so a just-listed role resolves within seconds.
+  //
+  // Two constraints shape this:
+  //   • A distinct URL (cache-busting param) is required — refetching the same
+  //     /jobs URL just re-reads the stale hour-cached entry.
+  //   • A positive `revalidate` (NOT `cache: "no-store"`) is required — no-store
+  //     flips this ISR page from static to dynamic at runtime, which Next errors on.
+  const fresh = await fetchJobsList(`${API_URL}/jobs?_ds=fresh`, {
+    next: { revalidate: FRESH_REVALIDATE_SECONDS },
+  });
+  return fresh.find((job) => jobSlug(job) === target) || null;
 }
 
 /** Strip leading bullet/dash markers and collapse whitespace for clean schema text. */

@@ -1292,6 +1292,26 @@
 
 /* ───────── JOB DETAIL PAGE ───────── */
 .ds-detail-page { max-width: 880px; margin: 0 auto; padding: 48px 0 80px; }
+
+/* ── 404 / not-found ── */
+.ds-notfound { max-width: 540px; text-align: center; padding: 80px 0 104px; }
+.ds-notfound-code { color: var(--accent); margin-bottom: 18px; }
+.ds-notfound-title {
+  font-family: "Bricolage Grotesque", sans-serif;
+  font-weight: 600;
+  font-size: clamp(30px, 5vw, 46px);
+  letter-spacing: -0.022em;
+  color: var(--ink);
+  margin-bottom: 14px;
+  text-wrap: balance;
+}
+.ds-notfound-lede { color: var(--ink-soft); font-size: 16px; line-height: 1.6; margin-bottom: 30px; }
+.ds-notfound-actions { display: inline-flex; gap: 14px; flex-wrap: wrap; justify-content: center; }
+@media (max-width: 560px) {
+  .ds-notfound { padding: 52px 0 72px; }
+  .ds-notfound-actions { display: flex; width: 100%; }
+  .ds-notfound-actions .ds-btn { flex: 1 1 auto; justify-content: center; }
+}
 .ds-back-link {
   display: inline-flex;
   align-items: center;

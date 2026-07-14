@@ -8,6 +8,7 @@ import {
   Bell, LogOut, Settings, CheckCheck, BellOff, Megaphone, Search, Plus,
 } from "lucide-react";
 import { useState, useRef, useEffect } from "react";
+import { createPortal } from "react-dom";
 
 /* ── Compose-announcement modal (moved from dashboard — the only place it's used) ── */
 function QuickAnnounceModal({ onClose }: { onClose: () => void }) {
@@ -48,7 +49,15 @@ function QuickAnnounceModal({ onClose }: { onClose: () => void }) {
     } finally { setSending(false); }
   }
 
-  if (done !== null) return (
+  // Render the modal into a portal on <body>. The nav is this modal's DOM parent and
+  // was acting as the containing block for the `fixed inset-0` overlay, trapping it in
+  // the ~55px nav strip — so `inset-0` resolved to 0,0,0,0 but the box only spanned the
+  // nav, and the centered modal landed off-screen (header clipped at the top). Portalling
+  // to <body> makes the fixed overlay cover the real viewport. SSR-safe: the modal only
+  // renders after a client-side click, so `document` is always defined here.
+  if (typeof document === "undefined") return null;
+
+  if (done !== null) return createPortal((
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4">
       <div className="v3-card shadow-pop p-8 text-center w-full max-w-sm">
         <div className="h-14 w-14 rounded-xl border-2 border-ink bg-action flex items-center justify-center mx-auto mb-4">
@@ -61,9 +70,9 @@ function QuickAnnounceModal({ onClose }: { onClose: () => void }) {
         </button>
       </div>
     </div>
-  );
+  ), document.body);
 
-  return (
+  return createPortal((
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4" onClick={onClose}>
       <div className="v3-card shadow-pop w-full max-w-lg max-h-[calc(100dvh-2rem)] flex flex-col overflow-hidden pop-in" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-6 py-4 border-b-2 border-ink/10 shrink-0">
@@ -140,7 +149,7 @@ function QuickAnnounceModal({ onClose }: { onClose: () => void }) {
         )}
       </div>
     </div>
-  );
+  ), document.body);
 }
 
 /* ── Avatar helper (monogram on cream, ink border) ── */

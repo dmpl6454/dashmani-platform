@@ -2,6 +2,11 @@
 // client (ShareButton) code. Kept out of lib/jobs.ts so importing it into a client
 // component doesn't drag in the server-only fetch helpers.
 
+// Canonical public origin. Shared links, OG/canonical tags, and the sitemap all use
+// this so a shared URL is ALWAYS the public production address — never a localhost or
+// preview origin the sharer happens to be on. Overridable via env for other envs.
+export const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://jobs.digitalsukoon.com";
+
 /**
  * Turn a job title into a clean, URL-safe slug.
  *   "Revenue Head"        -> "revenue-head"

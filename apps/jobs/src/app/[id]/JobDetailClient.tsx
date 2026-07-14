@@ -254,14 +254,6 @@ export default function JobDetailPage({
         </div>
       )}
 
-      <div style={{ padding: "32px 0 8px", textAlign: "center" }}>
-        <p style={{ fontSize: 14, color: "var(--muted, #666)", lineHeight: 1.6 }}>
-          Questions about your application?{" "}
-          <a href="mailto:careers@digitalsukoon.com" style={{ fontWeight: 600, textDecoration: "underline", textUnderlineOffset: 2, color: "inherit" }}>
-            Email careers@digitalsukoon.com
-          </a>
-        </p>
-      </div>
     </div>
   );
 }

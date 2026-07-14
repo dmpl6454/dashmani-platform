@@ -88,6 +88,20 @@ export function useInsightsSummary(startDate?: string, endDate?: string, employe
   });
 }
 
+// Fair per-platform leaderboards (YouTube/Facebook by views, Instagram by likes+comments).
+// Backend: GET /admin/reports/platform-leaderboards → getPlatformLeaderboards().
+// Returns Record<platformKey, Array<{rank, employee:{id,name,...}, views, likes, comments, rankMetric}>>.
+export function usePlatformLeaderboards(startDate?: string, endDate?: string) {
+  const params = new URLSearchParams();
+  if (startDate) params.set("startDate", startDate);
+  if (endDate) params.set("endDate", endDate);
+  const query = params.toString() ? `?${params.toString()}` : "";
+  return useSWR(`/admin/reports/platform-leaderboards${query}`, (url) => apiFetch(url), {
+    revalidateOnFocus: false,
+    dedupingInterval: 300_000,
+  });
+}
+
 export function useTopYouTubeLinks(startDate?: string, endDate?: string, limit = 20) {
   const params = new URLSearchParams();
   if (startDate) params.set("startDate", startDate);

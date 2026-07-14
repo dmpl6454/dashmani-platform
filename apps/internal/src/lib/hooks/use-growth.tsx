@@ -96,7 +96,11 @@ export function DeltaBadge({ delta, deltaPct }: { delta: number | null | undefin
       {up && <TrendingUp className="h-3 w-3 shrink-0" />}
       {down && <TrendingDown className="h-3 w-3 shrink-0" />}
       {sign}{fmtCompact(d)}
-      {deltaPct != null && <span className="text-ink-4 font-normal">({sign}{deltaPct}%)</span>}
+      {deltaPct != null && (
+        <span className="text-ink-4 font-normal">
+          ({sign}{Math.abs(deltaPct) > 999 ? ">999" : deltaPct}%)
+        </span>
+      )}
     </span>
   );
 }

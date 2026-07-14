@@ -2,6 +2,19 @@ import { prisma } from "@dashmani/db";
 import { AppError } from "../middleware/error-handler";
 import { todayIST, istMidnight } from "@dashmani/shared";
 
+/**
+ * A follower delta is a DATA-CORRECTION ARTIFACT (not organic movement) when it's a
+ * ≥90% collapse (stale→real first-sync down-correction) OR a >200% surge in-window
+ * (a garbage tiny baseline like 2→59,000, or a resolver oscillating between a stale and
+ * real value, e.g. 10,900↔46,300). Both are measurement corrections, not real growth.
+ * Verified against live prod 2026-07-13: a >200% (i.e. >3×) weekly swing matched ONLY the
+ * two known artifacts ("89" +2,963,850%, "Total Filmi" +324.8%) and zero legitimate accounts.
+ */
+export function isFollowerCorrectionArtifact(deltaPct: number | null): boolean {
+  if (deltaPct == null) return false;
+  return deltaPct <= -90 || deltaPct > 200;
+}
+
 export interface GrowthSnapshotInput {
   followerCount: number;
   followingCount?: number;
@@ -333,7 +346,9 @@ export async function getGrowthOverview(days = 30): Promise<GrowthOverview> {
   // organic movement. Excluded from BOTH the headline Net Change AND Top Movers
   // (consistent), so the number reflects real follower change. The account's true
   // CURRENT value still counts toward totalFollowers — only its artifact DELTA is dropped.
-  const isCorrectionArtifact = (a: GrowthOverviewAccount) => a.deltaPct != null && a.deltaPct <= -90;
+  // See isFollowerCorrectionArtifact (module scope) — now also drops >200% in-window
+  // surges (garbage tiny baselines / oscillating resolver values), not just -90% collapses.
+  const isCorrectionArtifact = (a: GrowthOverviewAccount) => isFollowerCorrectionArtifact(a.deltaPct);
 
   const totalFollowers = overviewAccounts.reduce((sum, a) => sum + a.latest, 0);
   // Net Change excludes correction artifacts (e.g. a stale 1.04M→real 10,900 first-sync
@@ -376,8 +391,9 @@ export async function getGrowthOverview(days = 30): Promise<GrowthOverview> {
   // count (e.g. 10,900), the in-window delta computes as a ~-99% "drop" and wrongly tops
   // the movers board (same isCorrectionArtifact predicate defined above — applied to
   // both Net Change and Top Movers so the artifact is suppressed consistently).
-  // Positive swings are kept: a +Large% can be a genuinely small→viral account, and an
-  // upward correction is far rarer + less misleading than a fake catastrophic drop.
+  // >200% positive surges are ALSO dropped (widened 2026-07-13) — verified live that a
+  // >3x weekly swing is always a bad-baseline or oscillating-resolver artifact, never a
+  // genuine viral account (see isFollowerCorrectionArtifact for the two prod examples).
   const topMovers = [...overviewAccounts]
     .filter((a) => !isCorrectionArtifact(a))
     .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))

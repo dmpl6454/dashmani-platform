@@ -46,12 +46,18 @@ html, body {
    elements directly — never drop a focusable input/textarea/select below 16px.
    The [class] attribute selector raises specificity to (0,1,1) so we beat
    Tailwind's own !important utilities (e.g. `!text-xs`, `text-sm`) which
-   sit at (0,1,0) and would otherwise win the cascade. */
-@media (hover: none) and (pointer: coarse) {
-  input[class], textarea[class], select[class],
-  input, textarea, select {
-    font-size: 16px !important;
-  }
+   sit at (0,1,0) and would otherwise win the cascade.
+   Apply the 16px floor UNCONDITIONALLY (not gated behind (hover:none) and
+   (pointer:coarse)). iOS Safari's "Desktop Site" mode reports hover:hover /
+   pointer:fine, which turned the old coarse-pointer-gated floor OFF and re-armed
+   the focus-auto-zoom + horizontal-pan overflow on /report (verified in WebKit
+   2026-07-13: the media query evaluates false in Desktop Site mode, so inputs
+   fell back to 12–14px). A 16px floor on focusable controls is harmless on real
+   desktop (no browser auto-zooms; 16px inputs render fine), so ungating it fixes
+   iOS-in-Desktop-Site users at zero cost to everyone else. */
+input[class], textarea[class], select[class],
+input, textarea, select {
+  font-size: 16px !important;
 }
 
 /* ── Design system animations ── */

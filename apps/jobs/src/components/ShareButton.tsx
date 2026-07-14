@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
+import { SITE_URL } from "@/lib/slug";
 
 interface ShareButtonProps {
   /** URL segment to share — the job's title slug, e.g. "revenue-head". */
@@ -43,9 +44,9 @@ export default function ShareButton({
   }
 
   async function handleShare() {
-    // Build from the live origin so the link always targets the domain the visitor
-    // is actually on. The path is the readable title slug (e.g. /revenue-head).
-    const url = `${window.location.origin}/${slug}`;
+    // Always share the canonical public URL (never the sharer's localhost/preview
+    // origin). The path is the readable title slug (e.g. /revenue-head).
+    const url = `${SITE_URL}/${slug}`;
     const shareData: ShareData = {
       title: `${jobTitle} — Digital Sukoon Careers`,
       text: `Have a look at this role at Digital Sukoon: ${jobTitle}`,

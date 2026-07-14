@@ -33,6 +33,11 @@
   * { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
   /* overflow-x: clip has incomplete Safari < 16 support; hidden is the safe equivalent */
   html, body { background: var(--paper); color: var(--ink); font-family: var(--font-dm-sans, "DM Sans"), system-ui, sans-serif; overflow-x: hidden; }
+  /* In-page anchor clicks (nav "Jobs", "See open roles", "View all") glide to their
+     target instead of jumping. scroll-margin-top leaves a small buffer so the section
+     heading doesn't land flush against the viewport top. */
+  html { scroll-behavior: smooth; }
+  :target, #index { scroll-margin-top: 24px; }
   a { color: inherit; text-decoration: none; }
   button { font: inherit; border: 0; background: 0; cursor: pointer; color: inherit; }
 }
@@ -68,7 +73,13 @@
 .ds-page {
   min-height: 100vh;
   display: grid;
-  grid-template-rows: auto 1fr auto;
+  /* Rows size to content; the footer follows the page content directly. Any
+     viewport height beyond the content collects BELOW the footer (align-content:
+     start) rather than stretching a gap between the content and the footer — which
+     is what left an empty band on short pages / tall viewports. Purely flow-based,
+     so adding roles just grows the list; nothing is pinned or fixed-height. */
+  grid-template-rows: auto auto auto;
+  align-content: start;
   padding: 0 40px;
 }
 
@@ -128,13 +139,17 @@
   color: var(--paper);
   border-color: var(--ink);
 }
-.ds-nav-cta .pulse {
+/* Active-section dot — shown on whichever nav item matches the current page. */
+.ds-nav-right .pulse {
   width: 6px;
   height: 6px;
   border-radius: 50%;
   background: var(--accent);
   animation: navPulse 2.4s ease-out infinite;
 }
+/* Keep the dot visible (accent) when its pill is hovered/active and flips to ink. */
+.ds-nav-link:hover .pulse,
+.ds-nav-cta:hover .pulse { background: var(--paper); }
 
 /* ───────── HERO ───────── */
 .ds-hero {
@@ -344,7 +359,7 @@
 }
 
 /* ───────── ROLE INDEX ───────── */
-.ds-index { padding: 40px 0 64px; }
+.ds-index { padding: 40px 0 20px; }
 .ds-index-head {
   display: flex;
   align-items: center;
@@ -397,6 +412,8 @@
   align-items: start;
   margin-top: 24px;
 }
+.ds-search-row { display: flex; align-items: center; gap: 16px; margin-top: 18px; }
+.ds-search-row .ds-search { flex: 1; margin-top: 0; }
 .ds-search {
   display: flex;
   align-items: center;
@@ -994,6 +1011,34 @@
   .ds-alerts { padding: 38px 22px 24px; }
   .ds-alerts input[type="email"] { flex: 1 1 100%; }
   .ds-alerts form .ds-btn.primary { flex: 1 1 100%; justify-content: center; }
+
+  /* Nav: logo only + compact pills so the bar fits without the bell overlapping. */
+  .ds-nav { padding: 16px 0; }
+  .ds-brand .wordmark { display: none; }
+  .ds-nav-right { gap: 6px; }
+  .ds-nav-link, .ds-nav-cta { padding: 8px 13px; font-size: 13px; gap: 6px; }
+  .ds-alerts-pill { padding: 8px 10px; }
+
+  /* Hero: a touch smaller again on true phones. */
+  .ds-hero { padding: 28px 0 20px; }
+  .ds-hero-headline { font-size: clamp(32px, 8.8vw, 62px); }
+
+  /* Job rows: stack into a vertical card so nothing overlaps or overflows on a
+     narrow screen — role info on top, a full-width action row (share + Apply) below. */
+  .ds-role {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+    padding: 16px;
+    border-left: 3px solid var(--dept, var(--accent));
+    border-radius: 12px;
+  }
+  .ds-role .num,
+  .ds-role .dept-bar { display: none; }
+  .ds-role .info { width: 100%; }
+  .ds-role-actions { width: 100%; gap: 10px; }
+  .ds-role-actions .ds-role-apply { flex: 1; justify-content: center; padding: 11px 14px; font-size: 13px; }
 }
 .ds-modal-actions {
   display: flex;
@@ -1093,6 +1138,9 @@
   gap: 14px;
   text-align: center;
 }
+.ds-colophon-contact { color: var(--muted); font-size: 15px; line-height: 1.6; max-width: 52ch; }
+.ds-colophon-contact a { color: var(--ink); font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
+.ds-colophon-contact a:hover { color: var(--accent); }
 .ds-colophon .tag { color: var(--ink-soft); font-weight: 500; font-size: 15px; }
 .ds-colophon .footer-links {
   display: inline-flex;
@@ -1395,10 +1443,25 @@
 @media (max-width: 720px) {
   .ds-page { padding: 0 22px; }
   .ds-hero { padding: 36px 0 24px; }
-  .ds-hero-headline { font-size: clamp(44px, 12vw, 84px); }
-  .ds-hero-aside { flex-direction: column; }
+  /* Smaller so long words ("collaboration") fit the phone width instead of forcing
+     the whole page wider than the screen (which was clipping every section). */
+  .ds-hero-headline { font-size: clamp(34px, 8.6vw, 84px); }
+  .ds-hero-eyebrow { margin-bottom: 28px; }
+  /* Stack the aside as plain blocks — NOT a flex column. A flex column item won't
+     grow to contain a grid child whose height comes from aspect-ratio cells (a
+     Chromium intrinsic-size quirk), so the calendar overflowed its card and the
+     "Today" row spilled out below the white box. Block flow sizes the card to its
+     real content, keeping the calendar and "Today" row inside. */
+  .ds-hero-aside { display: block; }
+  .ds-hero-aside > * + * { margin-top: 14px; }
   .ds-index-head { flex-direction: column; align-items: flex-start; gap: 12px; }
-  .ds-filters { flex-wrap: wrap; }
+  .ds-index-head .ds-filters { width: 100%; }
+  /* Fit all four filters on ONE line with no scroll — each button shares the row
+     width and uses tighter padding/label so "Contract" is fully visible at a glance
+     instead of being cropped behind a horizontal scroll. */
+  .ds-filters { width: 100%; gap: 3px; padding: 3px; }
+  .ds-filters button { flex: 1 1 auto; min-width: 0; justify-content: center; padding: 8px 6px; font-size: 11.5px; gap: 3px; white-space: nowrap; }
+  .ds-search-row { flex-wrap: wrap; }
   .ds-role { grid-template-columns: 28px 4px minmax(0,1fr) auto; column-gap: 12px; }
   .ds-role .type-pill { display: none; }
   .ds-rd-body { padding: 22px; }
@@ -1450,5 +1513,6 @@
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
-  .ds-nav-cta .pulse { animation: none; }
+  html { scroll-behavior: auto; }
+  .ds-nav-right .pulse { animation: none; }
 }

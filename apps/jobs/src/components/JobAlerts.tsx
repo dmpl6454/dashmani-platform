@@ -111,7 +111,7 @@ export default function JobAlerts() {
               </div>
             ) : (
               <>
-                <span className="ds-mono eyebrow">§ Stay in the loop</span>
+                <span className="ds-mono eyebrow">Stay in the loop</span>
                 <h3>Get job alerts</h3>
                 <form onSubmit={handleSubmit} noValidate>
                   <input

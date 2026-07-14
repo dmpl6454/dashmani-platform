@@ -12,9 +12,9 @@
 // service-layer `select` (see CLAUDE.md "Public API endpoints must never expose
 // internal user UUIDs"), so these read-only fetches are safe to render publicly.
 
-import { jobSlug, isUuid } from "./slug";
+import { jobSlug, isUuid, SITE_URL } from "./slug";
 
-export const SITE_URL = "https://jobs.digitalsukoon.com";
+export { SITE_URL };
 
 /**
  * Serialize an object to a JSON string safe for inlining inside a <script> tag.

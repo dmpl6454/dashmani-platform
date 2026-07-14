@@ -8,6 +8,7 @@ import {
 import "./globals.css";
 import { safeJsonLd } from "@/lib/jobs";
 import JobAlerts from "@/components/JobAlerts";
+import NavLinks from "@/components/NavLinks";
 
 // Self-hosted via next/font — no render-blocking external stylesheet.
 const dmSans = DM_Sans({
@@ -137,11 +138,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             </a>
             <div className="ds-nav-right">
               <JobAlerts />
-              <a className="ds-nav-link" href="/#index">Jobs</a>
-              <a className="ds-nav-cta" href="/internship">
-                <span className="pulse" />
-                Internship
-              </a>
+              <NavLinks />
             </div>
           </nav>
 
@@ -150,6 +147,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
           {/* FOOTER */}
           <footer className="ds-colophon">
+            <p className="ds-colophon-contact">
+              Help{" "}
+              <a href="mailto:careers@digitalsukoon.com">careers@digitalsukoon.com</a>
+            </p>
             <p className="tag">Crafting digital experiences that matter.</p>
             <nav className="footer-links" aria-label="Footer navigation">
               <a href="/">All Jobs</a>

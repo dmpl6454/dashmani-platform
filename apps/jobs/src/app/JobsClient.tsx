@@ -7,6 +7,7 @@ import useSWR from "swr";
 import { apiFetch } from "@/lib/api";
 import { getDeptColor } from "@/lib/dept-colors";
 import { jobSlug } from "@/lib/slug";
+import { smoothScrollToId } from "@/lib/scroll";
 import ShareButton from "@/components/ShareButton";
 
 interface ApiJob {
@@ -224,7 +225,11 @@ export default function JobsPage({ initialJobs = [] }: { initialJobs?: ApiJob[] 
           </p>
 
           <div className="ds-hero-ctas">
-            <a className="ds-btn primary" href="#index">
+            <a
+              className="ds-btn primary"
+              href="#index"
+              onClick={(e) => { e.preventDefault(); smoothScrollToId("index"); }}
+            >
               See open roles
               <span className="arrow">→</span>
             </a>
@@ -257,7 +262,7 @@ export default function JobsPage({ initialJobs = [] }: { initialJobs?: ApiJob[] 
       <section className="ds-index" id="index">
         <div className="ds-index-head">
           <div className="title">
-            <span className="ds-mono">§ Now open</span>
+            <span className="ds-mono">Now open</span>
             {/* Show the real title whenever we have jobs (server-seeded via
                 initialJobs) so the indexable <h3> is never a "Loading…" placeholder
                 for crawlers. Only show the loading text on a genuine cold load. */}
@@ -284,23 +289,34 @@ export default function JobsPage({ initialJobs = [] }: { initialJobs?: ApiJob[] 
           </div>
         </div>
 
-        {/* Search */}
-        <div className="ds-search">
-          <span className="search-icon" aria-hidden="true">
-            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
-              <circle cx="7" cy="7" r="4.5" />
-              <path d="m10.5 10.5 3 3" />
-            </svg>
-          </span>
-          <input
-            ref={searchRef}
-            type="text"
-            placeholder="Search by role, department, or location…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            autoComplete="off"
-          />
-          <kbd className="ds-search-hint">⌘ K</kbd>
+        {/* Search + view-all */}
+        <div className="ds-search-row">
+          <div className="ds-search">
+            <span className="search-icon" aria-hidden="true">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+                <circle cx="7" cy="7" r="4.5" />
+                <path d="m10.5 10.5 3 3" />
+              </svg>
+            </span>
+            <input
+              ref={searchRef}
+              type="text"
+              placeholder="Search by role, department, or location…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              autoComplete="off"
+            />
+          </div>
+          {!isLoading && jobs.length > 0 && (
+            <a
+              className="ds-btn ghost"
+              href="#index"
+              onClick={(e) => { e.preventDefault(); smoothScrollToId("index"); }}
+              style={{ fontSize: 13, whiteSpace: "nowrap" }}
+            >
+              View all {jobs.length} →
+            </a>
+          )}
         </div>
 
         {/* Full-width role list — each row links to the role's own page */}
@@ -375,27 +391,8 @@ export default function JobsPage({ initialJobs = [] }: { initialJobs?: ApiJob[] 
             })
           )}
         </ol>
-
-        <div className="ds-index-foot">
-          <span>{coldLoad ? "Loading…" : ""}</span>
-          {!isLoading && jobs.length > 0 && (
-            <a className="ds-btn ghost" href="#index" style={{ fontSize: 13 }}>
-              View all {jobs.length} →
-            </a>
-          )}
-        </div>
       </section>
 
-      {/* ───── CONTACT BLOCK ───── */}
-      <section className="ds-contact-block" style={{ padding: "40px 24px", textAlign: "center", borderTop: "1px solid rgba(11,15,58,0.08)", maxWidth: 640, margin: "0 auto" }}>
-        <p style={{ fontSize: 15, color: "var(--muted, #666)", lineHeight: 1.6 }}>
-          Questions about your application?{" "}
-          <a href="mailto:careers@digitalsukoon.com" style={{ color: "var(--ink, #0b0f3a)", fontWeight: 600, textDecoration: "underline", textUnderlineOffset: 3 }}>
-            Email careers@digitalsukoon.com
-          </a>{" "}
-          and we&apos;ll get back to you.
-        </p>
-      </section>
     </>
   );
 }

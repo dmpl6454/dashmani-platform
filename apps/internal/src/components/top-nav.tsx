@@ -65,8 +65,8 @@ function QuickAnnounceModal({ onClose }: { onClose: () => void }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4" onClick={onClose}>
-      <div className="v3-card shadow-pop w-full max-w-lg overflow-hidden pop-in" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-6 py-4 border-b-2 border-ink/10">
+      <div className="v3-card shadow-pop w-full max-w-lg max-h-[calc(100dvh-2rem)] flex flex-col overflow-hidden pop-in" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-6 py-4 border-b-2 border-ink/10 shrink-0">
           <h2 className="font-bold text-ink flex items-center gap-2">
             <Megaphone size={18} className="text-action-deep" />
             {confirming ? "Confirm broadcast" : "Broadcast Announcement"}
@@ -75,7 +75,7 @@ function QuickAnnounceModal({ onClose }: { onClose: () => void }) {
         </div>
 
         {confirming ? (
-          <div className="p-6 space-y-4">
+          <div className="p-6 space-y-4 flex-1 min-h-0 overflow-y-auto">
             <p className="text-sm text-ink-3">
               {selectedTeam
                 ? `This will notify only members of "${selectedTeam.name}". You can't undo this.`
@@ -87,18 +87,18 @@ function QuickAnnounceModal({ onClose }: { onClose: () => void }) {
               <p className="text-sm text-ink-3 whitespace-pre-wrap leading-relaxed">{message}</p>
             </div>
             {error && <p className="text-xs text-danger">{error}</p>}
-            <div className="flex items-center justify-end gap-3 pt-1">
-              <button type="button" onClick={() => setConfirming(false)} disabled={sending} className="px-5 py-2 rounded-full border-2 border-ink/15 text-sm text-ink-3 hover:bg-muted transition-colors disabled:opacity-50">
+            <div className="flex flex-col gap-2.5 pt-1 sm:flex-row sm:items-center sm:justify-end sm:gap-3">
+              <button type="button" onClick={() => setConfirming(false)} disabled={sending} className="w-full sm:w-auto px-5 py-2 rounded-full border-2 border-ink/15 text-sm text-ink-3 hover:bg-muted transition-colors disabled:opacity-50">
                 Back
               </button>
-              <button type="button" onClick={doSend} disabled={sending} className="px-5 py-2.5 rounded-full bg-ink text-white text-sm font-bold btn-3d hover:bg-ink-2 transition-colors disabled:opacity-50 flex items-center gap-2">
-                <Megaphone size={15} />
+              <button type="button" onClick={doSend} disabled={sending} className="w-full sm:w-auto justify-center px-5 py-2 rounded-full bg-ink text-white text-sm font-bold btn-3d hover:bg-ink-2 transition-colors disabled:opacity-50 inline-flex items-center gap-2 whitespace-nowrap">
+                <Megaphone size={15} className="shrink-0" />
                 {sending ? "Sending…" : "Yes, send to all"}
               </button>
             </div>
           </div>
         ) : (
-          <form onSubmit={handleSubmit} className="p-6 space-y-4">
+          <form onSubmit={handleSubmit} className="p-6 space-y-4 flex-1 min-h-0 overflow-y-auto">
             <div>
               <label className="text-xs font-bold text-ink-4 uppercase tracking-wider mb-1.5 block">Send to</label>
               <select
@@ -129,10 +129,10 @@ function QuickAnnounceModal({ onClose }: { onClose: () => void }) {
               </div>
               <textarea value={message} onChange={(e) => setMessage(e.target.value.slice(0, 2000))} placeholder="Write your message here..." required rows={5} className={`${inputCls} resize-none`} />
             </div>
-            <div className="flex items-center justify-end gap-3 pt-1">
-              <button type="button" onClick={onClose} className="px-5 py-2 rounded-full border-2 border-ink/15 text-sm text-ink-3 hover:bg-muted transition-colors">Cancel</button>
-              <button type="submit" disabled={!title.trim() || !message.trim()} className="px-5 py-2.5 rounded-full bg-ink text-white text-sm font-bold btn-3d hover:bg-ink-2 transition-colors disabled:opacity-50 flex items-center gap-2">
-                <Megaphone size={15} />
+            <div className="flex flex-col gap-2.5 pt-1 sm:flex-row sm:items-center sm:justify-end sm:gap-3">
+              <button type="button" onClick={onClose} className="w-full sm:w-auto px-5 py-2 rounded-full border-2 border-ink/15 text-sm text-ink-3 hover:bg-muted transition-colors">Cancel</button>
+              <button type="submit" disabled={!title.trim() || !message.trim()} className="w-full sm:w-auto justify-center px-5 py-2 rounded-full bg-ink text-white text-sm font-bold btn-3d hover:bg-ink-2 transition-colors disabled:opacity-50 inline-flex items-center gap-2 whitespace-nowrap">
+                <Megaphone size={15} className="shrink-0" />
                 Review &amp; send
               </button>
             </div>

@@ -19,7 +19,7 @@ const num = (n: number) => n.toLocaleString();
 const PAID = new Set(["openai", "gemini", "anthropic"]);
 const PROVIDER_LABEL: Record<string, string> = {
   openai: "OpenAI", gemini: "Gemini", anthropic: "Anthropic (Claude)",
-  meta: "Meta Graph (IG/FB)", youtube: "YouTube Data",
+  meta: "Meta Graph (IG/FB)", youtube: "YouTube Data", deepseek: "DeepSeek",
 };
 // The ONLY active LLM going forward is Gemini (entity-extraction switched to
 // Gemini-only on 2026-06-29 — measured cheapest by far). OpenAI + Anthropic rows
@@ -81,6 +81,53 @@ export default function ApiCostsPage() {
     } catch (err: any) {
       setEnrichmentError(err?.message || "Failed to update enrichment toggle.");
       setEnrichmentState("error");
+    }
+  }
+
+  // Hard daily spend ceiling (DeepSeek extraction auto-pauses once today's spend
+  // hits this) — surfaced next to the kill-switch so an admin can throttle spend
+  // without turning enrichment off entirely.
+  const [ceiling, setCeiling] = useState<number | null>(null);
+  const [todaySpend, setTodaySpend] = useState<number | null>(null);
+  const [ceilingInput, setCeilingInput] = useState("");
+  const [ceilingState, setCeilingState] = useState<"idle" | "loading" | "error">("idle");
+  const [ceilingError, setCeilingError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    apiFetch<{ ceilingUsd: number; todaySpendUsd: number }>("/admin/extraction/spend-ceiling")
+      .then((res) => {
+        if (cancelled) return;
+        const data = (res as any)?.data;
+        setCeiling(data?.ceilingUsd ?? null);
+        setTodaySpend(data?.todaySpendUsd ?? null);
+        setCeilingInput(data?.ceilingUsd != null ? String(data.ceilingUsd) : "");
+      })
+      .catch((err: any) => {
+        if (cancelled) return;
+        setCeilingError(err?.message || "Failed to load spend ceiling. Reload the page to try again.");
+        setCeilingState("error");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function saveCeiling() {
+    const v = Number(ceilingInput);
+    if (!Number.isFinite(v) || v < 0) return;
+    setCeilingState("loading");
+    setCeilingError("");
+    try {
+      const res = await apiFetch<{ ceilingUsd: number }>("/admin/extraction/spend-ceiling", {
+        method: "PUT",
+        body: JSON.stringify({ ceilingUsd: v }),
+      });
+      setCeiling((res as any)?.data?.ceilingUsd ?? v);
+      setCeilingState("idle");
+    } catch (err: any) {
+      setCeilingError(err?.message || "Failed to update spend ceiling.");
+      setCeilingState("error");
     }
   }
 
@@ -193,6 +240,47 @@ export default function ApiCostsPage() {
             }`}
           />
         </button>
+      </div>
+
+      {/* Daily spend ceiling — hard auto-pause once today's DeepSeek spend hits this. */}
+      <div className="v3-card p-5 flex items-start justify-between gap-4 flex-wrap">
+        <div className="flex items-start gap-2.5">
+          <div className="h-9 w-9 rounded-xl bg-indigo-soft flex items-center justify-center shrink-0">
+            <AlertTriangle className="h-4 w-4 text-indigo" />
+          </div>
+          <div>
+            <p className="font-semibold text-ink text-sm">Daily spend ceiling (DeepSeek extraction)</p>
+            <p className="text-xs text-ink-4 mt-0.5 max-w-xl">
+              Today: <span className="font-medium text-ink">{todaySpend != null ? usd(todaySpend) : "…"}</span> of{" "}
+              <span className="font-medium text-ink">{ceiling != null ? usd(ceiling) : "…"}</span> — extraction
+              auto-pauses for the rest of the UTC day once today&rsquo;s spend hits the ceiling.
+            </p>
+            {ceilingState === "error" && (
+              <p className="text-xs text-attention mt-1">{ceilingError}</p>
+            )}
+          </div>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <label htmlFor="spend-ceiling-input" className="text-xs text-ink-4">
+            Ceiling (USD)
+          </label>
+          <input
+            id="spend-ceiling-input"
+            value={ceilingInput}
+            onChange={(e) => setCeilingInput(e.target.value)}
+            inputMode="decimal"
+            disabled={ceilingState === "loading"}
+            className="w-24 rounded-lg border-2 border-ink/10 px-2 py-1 text-sm text-ink disabled:opacity-50"
+          />
+          <button
+            type="button"
+            onClick={saveCeiling}
+            disabled={ceilingState === "loading"}
+            className="px-3 py-1.5 rounded-lg bg-ink text-white text-xs font-medium disabled:opacity-50"
+          >
+            {ceilingState === "loading" ? "Saving…" : "Save"}
+          </button>
+        </div>
       </div>
 
       {isLoading && !d && (

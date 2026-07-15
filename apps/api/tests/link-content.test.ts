@@ -16,6 +16,9 @@ describe("platformFromCanonicalKey", () => {
   it("classifies fb: prefix as facebook", () => {
     expect(platformFromCanonicalKey("fb:123")).toBe("facebook");
   });
+  it("classifies sc: prefix as snapchat", () => {
+    expect(platformFromCanonicalKey("sc:abcDEF12")).toBe("snapchat");
+  });
   it("falls back to other for a full-url key", () => {
     expect(platformFromCanonicalKey("https://x/y")).toBe("other");
   });

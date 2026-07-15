@@ -1367,6 +1367,14 @@ model LinkMetric {
   @@index([urlNormalized])
   @@index([linkId])
   @@index([platform, fetchedAt])
+  // Plain (employeeId, urlNormalized, fetchedAt DESC) index for the leaderboard/insights
+  // latest-per-(employee,url) DISTINCT ON lookup. Prisma's schema DSL cannot express a
+  // partial (WHERE status='ok') or covering (INCLUDE views/likes/comments/reportDate)
+  // index, so this plain version is what a fresh/local database gets. The TUNED
+  // partial+covering index (prod-measured 2790ms → 763ms) is built manually on
+  // production via raw SQL (CREATE INDEX CONCURRENTLY ... INCLUDE (...) WHERE
+  // status='ok') in a later task. Do NOT drop this entry.
+  @@index([employeeId, urlNormalized, fetchedAt(sort: Desc)])
   @@map("link_metrics")
 }
 

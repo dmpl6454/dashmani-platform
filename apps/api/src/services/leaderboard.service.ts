@@ -3,6 +3,23 @@ import { calcStreaks } from "../utils/streak";
 import { employeeWhere } from "./analytics.service";
 import { todayIST, istMidnight } from "@dashmani/shared";
 
+// Short TTL cache for the heavy leaderboard reads. These recompute a DISTINCT ON over
+// ~925k link_metrics rows + a report groupBy; without a cache, every SWR revalidation
+// (esp. the leaderboard page's 3 concurrent, focus-revalidating calls) re-ran them and
+// saturated the pool. 60s is long enough to absorb a focus/remount storm, short enough
+// that a fresh cron write shows within a minute. Keyed by fn+window so ranges don't collide.
+const LEADERBOARD_TTL_MS = 60 * 1000;
+const _lbCache = new Map<string, { value: unknown; builtAt: number }>();
+export function invalidateLeaderboardCache(): void { _lbCache.clear(); }
+async function memo<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  const hit = _lbCache.get(key);
+  const now = Date.now();
+  if (hit && now - hit.builtAt < LEADERBOARD_TTL_MS) return hit.value as T;
+  const value = await fn();
+  _lbCache.set(key, { value, builtAt: now });
+  return value;
+}
+
 // Real per-employee engagement, derived from the link_metrics snapshots (the SAME
 // authoritative source as the Top Links panels / getInsightsSummary), NOT from
 // report_links.likes/comments/shares — those columns are NEVER populated (verified
@@ -15,10 +32,11 @@ import { todayIST, istMidnight } from "@dashmani/shared";
 // engagement snapshot. OOM-safe: selects only the 5 columns needed, dedups in JS.
 //
 // ⚠️ Engagement coverage is platform-limited: YouTube exposes reliable views; IG/FB
-// expose likes+comments (no reliable views). Snapchat exposes NOTHING via API
-// (manual-only) — it contributes 0 engagement here, by design, and is surfaced as a
-// "not counted yet" note in the UI. So engagement is a fair cross-platform signal
-// (likes+comments work everywhere we have data) but is NOT a measure of Snapchat.
+// expose likes+comments (no reliable views); Snapchat Spotlight exposes reliable
+// views+comments (no likes) via the __NEXT_DATA__ scrape — see platformOfUrl below
+// and the per-platform Snapchat board in getPlatformLeaderboards. So engagement is a
+// fair cross-platform signal (likes+comments work everywhere we have data) and now
+// includes Snapchat views/comments on the platform-specific boards.
 interface EngagementAgg {
   views: number;
   likes: number;
@@ -29,36 +47,57 @@ async function getEngagementByEmployee(
   startDate?: string,
   endDate?: string,
 ): Promise<Map<string, EngagementAgg>> {
-  const where: Record<string, unknown> = { status: "ok" };
-  if (startDate || endDate) {
-    const range: Record<string, Date> = {};
-    if (startDate) range.gte = new Date(startDate);
-    if (endDate) range.lte = new Date(endDate);
-    where.reportDate = range;
-  }
+  // Latest snapshot per (employeeId, urlNormalized) done IN POSTGRES via DISTINCT ON
+  // (byte-identical to the old JS seen-Set dedup: same key, same latest-by-fetchedAt).
+  // Backed by the partial covering index (Task B1): Index Only Scan, no disk sort.
+  //
+  // ⚠️ NO 90-DAY DEFAULT: when no dates are passed this queries ALL-TIME, matching the
+  // OLD behavior exactly. This is deliberate, not an oversight — prod EXPLAIN ANALYZE
+  // with the tuned index shows ALL-TIME (763ms) is actually FASTER than a 90-day-windowed
+  // query (834ms) at this row count, so narrowing the window bought nothing and would
+  // have silently changed what several existing callers show (e.g. the HR portal's
+  // /hr/leaderboard page, which never sends date params and previously showed all-time
+  // engagement) without any UI indicating the narrower scope. The index alone is the
+  // fix; do not reintroduce a silent default window here.
+  //
+  // ⚠️ FORWARD-LOOKING: this all-time/windowed cost comparison is a snapshot at today's
+  // row count. An all-time DISTINCT ON's cost grows with total distinct (employee, url)
+  // pairs ever recorded, while a windowed query's cost stays roughly flat as the table
+  // ages. Re-measure this comparison if link_metrics grows materially past its current
+  // size (e.g. 2-5x) — the all-time query may eventually become the slower option again.
+  //
+  // NOTE: both bounds are computed in JS and ALWAYS passed as concrete Dates (a null
+  // start becomes the epoch, a null end becomes a far-future date). This keeps the
+  // $queryRaw a fully STATIC tagged template — the repo's proven pattern
+  // (link-search.service.ts) — with NO conditional `Prisma.sql`/`Prisma.empty` fragment
+  // (that helper isn't used anywhere in this repo yet, so we don't introduce it). Two
+  // fixed `${}` param bindings only.
+  const start = startDate ? new Date(startDate) : new Date("1970-01-01T00:00:00.000Z");
+  const end = endDate ? new Date(endDate) : new Date("2999-12-31T00:00:00.000Z");
 
-  const snapshots = await prisma.linkMetric.findMany({
-    where,
-    orderBy: { fetchedAt: "desc" },
-    select: { employeeId: true, urlNormalized: true, views: true, likes: true, comments: true },
-  });
+  const rows = await prisma.$queryRaw<
+    Array<{ employee_id: string; views: number | null; likes: number | null; comments: number | null }>
+  >`
+    SELECT employee_id, views, likes, comments
+    FROM (
+      SELECT DISTINCT ON (employee_id, url_normalized)
+        employee_id, views, likes, comments
+      FROM link_metrics
+      WHERE status = 'ok'
+        AND report_date >= ${start}
+        AND report_date <= ${end}
+      ORDER BY employee_id, url_normalized, fetched_at DESC
+    ) latest
+  `;
 
-  // Latest snapshot per (employeeId, urlNormalized) — newest fetchedAt already first.
-  const seen = new Set<string>();
   const byEmployee = new Map<string, EngagementAgg>();
-  for (const s of snapshots) {
-    if (!s.employeeId) continue;
-    const key = `${s.employeeId}::${s.urlNormalized}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    let agg = byEmployee.get(s.employeeId);
-    if (!agg) {
-      agg = { views: 0, likes: 0, comments: 0, linkCount: 0 };
-      byEmployee.set(s.employeeId, agg);
-    }
-    agg.views += s.views ?? 0;
-    agg.likes += s.likes ?? 0;
-    agg.comments += s.comments ?? 0;
+  for (const r of rows) {
+    if (!r.employee_id) continue;
+    let agg = byEmployee.get(r.employee_id);
+    if (!agg) { agg = { views: 0, likes: 0, comments: 0, linkCount: 0 }; byEmployee.set(r.employee_id, agg); }
+    agg.views += r.views ?? 0;
+    agg.likes += r.likes ?? 0;
+    agg.comments += r.comments ?? 0;
     agg.linkCount += 1;
   }
   return byEmployee;
@@ -67,10 +106,11 @@ async function getEngagementByEmployee(
 // Classify a link's platform from its normalized URL (same host rules as everywhere else).
 // Returns null for anything we don't rank per-platform (keeps unknown links out of the
 // per-platform boards; they still count in the combined raw-volume board).
-function platformOfUrl(url: string): "youtube" | "instagram" | "facebook" | null {
+function platformOfUrl(url: string): "youtube" | "instagram" | "facebook" | "snapchat" | null {
   if (/youtube\.com|youtu\.be/i.test(url)) return "youtube";
   if (/instagram\.com/i.test(url)) return "instagram";
   if (/facebook\.com|fb\.watch|fb\.me/i.test(url)) return "facebook";
+  if (/snapchat\.com/i.test(url)) return "snapchat";
   return null;
 }
 
@@ -81,41 +121,49 @@ function platformOfUrl(url: string): "youtube" | "instagram" | "facebook" | null
 async function getEngagementByEmployeePlatform(
   startDate?: string,
   endDate?: string,
-): Promise<Map<string, Map<"youtube" | "instagram" | "facebook", EngagementAgg>>> {
-  const where: Record<string, unknown> = { status: "ok" };
-  if (startDate || endDate) {
-    const range: Record<string, Date> = {};
-    if (startDate) range.gte = new Date(startDate);
-    if (endDate) range.lte = new Date(endDate);
-    where.reportDate = range;
-  }
-  const snapshots = await prisma.linkMetric.findMany({
-    where,
-    orderBy: { fetchedAt: "desc" },
-    select: { employeeId: true, urlNormalized: true, views: true, likes: true, comments: true },
-  });
-  const seen = new Set<string>();
-  const byEmp = new Map<string, Map<"youtube" | "instagram" | "facebook", EngagementAgg>>();
-  for (const s of snapshots) {
-    if (!s.employeeId) continue;
-    const key = `${s.employeeId}::${s.urlNormalized}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    const plat = platformOfUrl(s.urlNormalized ?? "");
+): Promise<Map<string, Map<"youtube" | "instagram" | "facebook" | "snapchat", EngagementAgg>>> {
+  // No 90-day default here either — see the matching note in getEngagementByEmployee.
+  // All-time is fast with the Task B1 index (763ms), so there's nothing to gain by
+  // narrowing the window, and doing so would silently change existing callers' output.
+  const start = startDate ? new Date(startDate) : new Date("1970-01-01T00:00:00.000Z");
+  const end = endDate ? new Date(endDate) : new Date("2999-12-31T00:00:00.000Z");
+
+  const rows = await prisma.$queryRaw<
+    Array<{ employee_id: string; url_normalized: string | null; views: number | null; likes: number | null; comments: number | null }>
+  >`
+    SELECT employee_id, url_normalized, views, likes, comments
+    FROM (
+      SELECT DISTINCT ON (employee_id, url_normalized)
+        employee_id, url_normalized, views, likes, comments
+      FROM link_metrics
+      WHERE status = 'ok'
+        AND report_date >= ${start}
+        AND report_date <= ${end}
+      ORDER BY employee_id, url_normalized, fetched_at DESC
+    ) latest
+  `;
+
+  const byEmp = new Map<string, Map<"youtube" | "instagram" | "facebook" | "snapchat", EngagementAgg>>();
+  for (const r of rows) {
+    if (!r.employee_id) continue;
+    const plat = platformOfUrl(r.url_normalized ?? "");
     if (!plat) continue;
-    let perPlat = byEmp.get(s.employeeId);
-    if (!perPlat) { perPlat = new Map(); byEmp.set(s.employeeId, perPlat); }
+    let perPlat = byEmp.get(r.employee_id);
+    if (!perPlat) { perPlat = new Map(); byEmp.set(r.employee_id, perPlat); }
     let agg = perPlat.get(plat);
     if (!agg) { agg = { views: 0, likes: 0, comments: 0, linkCount: 0 }; perPlat.set(plat, agg); }
-    agg.views += s.views ?? 0;
-    agg.likes += s.likes ?? 0;
-    agg.comments += s.comments ?? 0;
+    agg.views += r.views ?? 0;
+    agg.likes += r.likes ?? 0;
+    agg.comments += r.comments ?? 0;
     agg.linkCount += 1;
   }
   return byEmp;
 }
 
 export async function getLeaderboard(startDate?: string, endDate?: string) {
+  return memo(`leaderboard:${startDate ?? ""}:${endDate ?? ""}`, () => getLeaderboardUncached(startDate, endDate));
+}
+async function getLeaderboardUncached(startDate?: string, endDate?: string) {
   const where: any = {
     employee: employeeWhere,
   };
@@ -125,17 +173,27 @@ export async function getLeaderboard(startDate?: string, endDate?: string) {
     if (endDate) where.date.lte = new Date(endDate);
   }
 
-  const [reports, engagementByEmployee] = await Promise.all([
+  const [reports, linkCounts, engagementByEmployee] = await Promise.all([
+    // Reports WITHOUT hydrating links — dates drive all-time streaks/counts (unchanged).
     prisma.dailyReport.findMany({
       where,
-      include: {
-        links: true,
+      select: {
+        id: true,
+        employeeId: true,
+        date: true,
         employee: { select: { id: true, name: true, email: true, profileImageUrl: true } },
       },
       orderBy: { date: "asc" },
     }),
+    // Per-report link count via groupBy — replaces the 92k-row include:{links} hydration.
+    prisma.reportLink.groupBy({
+      by: ["reportId"],
+      where: { report: where },
+      _count: { _all: true },
+    }),
     getEngagementByEmployee(startDate, endDate),
   ]);
+  const linkCountByReport = new Map(linkCounts.map((g) => [g.reportId, g._count._all]));
 
   // Group by employee
   const employeeMap = new Map<
@@ -158,7 +216,7 @@ export async function getLeaderboard(startDate?: string, endDate?: string) {
     }
     const entry = employeeMap.get(empId)!;
     entry.reportDates.push(report.date);
-    entry.totalLinks += report.links.length;
+    entry.totalLinks += linkCountByReport.get(report.id) ?? 0;
   }
 
   const result = Array.from(employeeMap.values()).map(({ employee, reportDates, totalLinks }) => {
@@ -207,14 +265,17 @@ export async function getLeaderboard(startDate?: string, endDate?: string) {
 // "whose posts actually performed". Ranked by total engagement desc.
 //
 // ⚠️ Truthful coverage caveats surfaced to the UI:
-//  - YouTube → reliable views; IG/FB → likes+comments (no reliable views); these are
-//    summed into one engagement score so an IG/FB-heavy employee isn't unfairly
-//    under-ranked by a views-only metric.
-//  - Snapchat is NOT counted (no engagement API; manual-only) — to be added later.
+//  - YouTube → reliable views; IG/FB → likes+comments (no reliable views); Snapchat →
+//    views+comments (no likes — Spotlight exposes no public like metric). All are
+//    summed into one engagement score so no platform is unfairly under- or
+//    over-ranked by a metric it doesn't expose.
 //  - Only links we've enriched have engagement; the same firehose/opaque-link limits
 //    that cap Link Search coverage apply here (an employee's unreachable posts simply
 //    don't contribute). The UI notes this so the ranking isn't read as "complete".
 export async function getTopLinksLeaderboard(startDate?: string, endDate?: string) {
+  return memo(`top-links-lb:${startDate ?? ""}:${endDate ?? ""}`, () => getTopLinksLeaderboardUncached(startDate, endDate));
+}
+async function getTopLinksLeaderboardUncached(startDate?: string, endDate?: string) {
   // Resolve employee identity for everyone who has engagement, scoped to real
   // employees (excludes pure-admin accounts), matching the main leaderboard's filter.
   // Also fetch each employee's TOTAL submitted (non-scheduled) link count for the
@@ -402,20 +463,31 @@ export async function getLeaderboardCoverage(): Promise<{
 //   - Instagram exposes NO views (0 of 11k rows) — only likes+comments.
 //   - Facebook's raw numbers dwarf YouTube's (~30× views, ~190× likes on average).
 // So a combined score structurally favors Facebook/YouTube over Instagram. The FAIR fix
-// (no employee posts to all 3; ≤2 platforms each, so fragmentation is mild) is a SEPARATE
-// board per platform, each ranked by the metric that platform actually exposes:
+// (no employee posts to all platforms; ≤2 platforms each, so fragmentation is mild) is a
+// SEPARATE board per platform, each ranked by the metric that platform actually exposes:
 //   - youtube  → ranked by VIEWS (likes/comments shown for context)
 //   - facebook → ranked by VIEWS (FB has real views via the reel scraper; likes/comments shown)
 //   - instagram→ ranked by LIKES+COMMENTS (no views exist — the UI omits a Views column)
+//   - snapchat → ranked by VIEWS (Spotlight exposes views + comments + shares; NO likes)
 // The combined board is KEPT but relabeled in the UI as raw cross-platform volume (not a
 // fair ranking). Employees with zero engagement on a platform simply don't appear on it.
-export type PlatformBoardKey = "youtube" | "facebook" | "instagram";
+export type PlatformBoardKey = "youtube" | "facebook" | "instagram" | "snapchat";
 export async function getPlatformLeaderboards(startDate?: string, endDate?: string): Promise<
   Record<PlatformBoardKey, Array<{
     rank: number;
     employee: { id: string; name: string; email: string; profileImageUrl: string | null };
     views: number; likes: number; comments: number; engagedLinkCount: number;
     rankMetric: number; // the value this board is ranked by (views, or likes+comments for IG)
+  }>>
+> {
+  return memo(`platform-lb:${startDate ?? ""}:${endDate ?? ""}`, () => getPlatformLeaderboardsUncached(startDate, endDate));
+}
+async function getPlatformLeaderboardsUncached(startDate?: string, endDate?: string): Promise<
+  Record<PlatformBoardKey, Array<{
+    rank: number;
+    employee: { id: string; name: string; email: string; profileImageUrl: string | null };
+    views: number; likes: number; comments: number; engagedLinkCount: number;
+    rankMetric: number;
   }>>
 > {
   const [byEmpPlat, employees] = await Promise.all([
@@ -450,5 +522,6 @@ export async function getPlatformLeaderboards(startDate?: string, endDate?: stri
     youtube: build("youtube", (a) => a.views),
     facebook: build("facebook", (a) => a.views),
     instagram: build("instagram", (a) => a.likes + a.comments), // IG has no views
+    snapchat: build("snapchat", (a) => a.views), // Snapchat has views (no likes) — rank by views
   };
 }

@@ -92,7 +92,8 @@ function idPartFor(canonicalKeyValue: string): { contains?: string; equalsUrl?: 
   if (canonicalKeyValue.startsWith("yt:")) return { contains: canonicalKeyValue.slice(3) };
   if (canonicalKeyValue.startsWith("ig:")) return { contains: `/${canonicalKeyValue.slice(3)}` };
   if (canonicalKeyValue.startsWith("fb:")) return { contains: canonicalKeyValue.slice(3) };
-  // (No sc: branch — Snapchat isn't canonicalized; canonicalKey() never emits an sc: key.)
+  // Snapchat spotlight id lives in a /spotlight/<id> url path segment (resolved urls only).
+  if (canonicalKeyValue.startsWith("sc:")) return { contains: `/spotlight/${canonicalKeyValue.slice(3)}` };
   // Full-URL fallback key (already lowercased). Match the url exactly, case-insensitive.
   return { equalsUrl: canonicalKeyValue };
 }
@@ -156,6 +157,8 @@ async function buildCoverage(): Promise<LinkSearchResult["coverage"]> {
             THEN 'ig:' || substring(url from 'instagram\.com/(?:[^/]+/)?(?:p|reel|reels|tv)/([A-Za-z0-9_-]+)')
           WHEN url ~* 'facebook\.com/reel/[0-9]'
             THEN 'fb:' || substring(url from 'facebook\.com/reel/([0-9]+)')
+          WHEN url ~* 'snapchat\.com/spotlight/'
+            THEN 'sc:' || substring(url from 'snapchat\.com/spotlight/([A-Za-z0-9_-]{8,})')
           ELSE NULL
         END AS k
       FROM report_links
@@ -182,6 +185,8 @@ async function buildCoverage(): Promise<LinkSearchResult["coverage"]> {
             THEN 'ig:' || substring(url from 'instagram\.com/(?:[^/]+/)?(?:p|reel|reels|tv)/([A-Za-z0-9_-]+)')
           WHEN url ~* 'facebook\.com/reel/[0-9]'
             THEN 'fb:' || substring(url from 'facebook\.com/reel/([0-9]+)')
+          WHEN url ~* 'snapchat\.com/spotlight/'
+            THEN 'sc:' || substring(url from 'snapchat\.com/spotlight/([A-Za-z0-9_-]{8,})')
           ELSE NULL
         END AS k
       FROM report_links
@@ -224,6 +229,7 @@ async function buildCoverage(): Promise<LinkSearchResult["coverage"]> {
         WHEN rl.url ~* 'youtube\.com|youtu\.be' THEN 'youtube'
         WHEN rl.url ~* 'instagram\.com' THEN 'instagram'
         WHEN rl.url ~* 'facebook\.com|fb\.watch|fb\.me' THEN 'facebook'
+        WHEN rl.url ~* 'snapchat\.com' THEN 'snapchat'
         ELSE lower(coalesce(rl.platform, 'other'))
       END AS platform, count(*)::bigint AS cnt, min(dr.date) AS data_since
       FROM report_links rl JOIN daily_reports dr ON dr.id = rl.report_id

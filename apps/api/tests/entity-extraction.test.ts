@@ -468,6 +468,21 @@ describe("DeepSeek extraction (injected rawExtract)", () => {
     const res = await extractOne({ id: lc.id, title: "", caption: "nothing identifiable" }, sys, empty);
     expect(res).toBe("empty");
   });
+
+  it("a deepseek 503 is TRANSIENT → row stays pending (retry), status NOT demoted", async () => {
+    const lc = await prisma.linkContent.create({
+      data: { canonicalKey: "yt:ds503", platform: "youtube", title: "t", caption: "Salman Khan", status: "ok" },
+    });
+    const overloaded: RawExtractFn = async () => {
+      throw new Error("deepseek: HTTP 503 service unavailable");
+    };
+    const sys = buildSystemPromptWithEntities([]);
+    const res = await extractOne({ id: lc.id, title: "t", caption: "Salman Khan" }, sys, overloaded);
+    expect(res).toBe("retry"); // transient → retried next run
+    const row = await prisma.linkContent.findUnique({ where: { id: lc.id } });
+    expect(row?.status).toBe("ok"); // NEVER demoted
+    expect(row?.extractedAt).toBeNull(); // stays pending
+  });
 });
 
 describe("cache-prefix byte stability (protects the DeepSeek cache-hit assumption)", () => {

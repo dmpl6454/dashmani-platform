@@ -12,7 +12,7 @@
  *   cd packages/db && npx tsx ../../scripts/extract-entities.ts --apply --confirm-prod        # process ALL pending
  *   cd packages/db && npx tsx ../../scripts/extract-entities.ts --apply --confirm-prod --max=1000   # cap total processed
  *
- * Requires ANTHROPIC_API_KEY in the environment to actually extract (the dry-run still
+ * Requires DEEPSEEK_API_KEY in the environment to actually extract (the dry-run still
  * reports the pending count even without a key).
  */
 import { prisma } from "@dashmani/db";
@@ -30,11 +30,11 @@ const PENDING_WHERE = { status: "ok", extractedAt: null } as const;
 
 async function main() {
   const pending = await prisma.linkContent.count({ where: PENDING_WHERE });
-  const hasKey = !!process.env.ANTHROPIC_API_KEY;
+  const hasKey = !!process.env.DEEPSEEK_API_KEY;
 
   console.log("\n=== Stage 2 entity extraction backfill ===");
   console.log(`Pending (status='ok' AND extractedAt IS NULL): ${pending}`);
-  console.log(`ANTHROPIC_API_KEY present: ${hasKey ? "yes" : "NO"}`);
+  console.log(`DEEPSEEK_API_KEY present: ${hasKey ? "yes" : "NO"}`);
   if (MAX > 0) console.log(`Max cap: ${MAX}`);
 
   if (!APPLY) {
@@ -55,7 +55,7 @@ async function main() {
   }
 
   if (!hasKey) {
-    console.error("\n[ERROR] ANTHROPIC_API_KEY is not set — cannot extract. Aborting (no changes made).\n");
+    console.error("\n[ERROR] DEEPSEEK_API_KEY is not set — cannot extract. Aborting (no changes made).\n");
     process.exitCode = 1;
     return;
   }

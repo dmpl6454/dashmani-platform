@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { prisma } from "@dashmani/db";
-import { getLeaderboard, getTopLinksLeaderboard } from "../src/services/leaderboard.service";
+import { getLeaderboard, getTopLinksLeaderboard, getPlatformLeaderboards } from "../src/services/leaderboard.service";
 
 // ── DB-backed: verifies the 2026-06-29 fix that engagement comes from link_metrics
 // (the real snapshots) and NOT report_links.likes/comments/shares (always 0). Also
@@ -11,10 +11,14 @@ import { getLeaderboard, getTopLinksLeaderboard } from "../src/services/leaderbo
 // link_metrics cleanup (keyed by a ZZTEST url prefix).
 
 const URL_PREFIX = "https://zztest-lb.example/";
+// Snapchat rows must use a real snapchat.com host so platformOfUrl() classifies them —
+// tracked separately since they can't share URL_PREFIX's fake host.
+const SNAPCHAT_URL_PREFIX = "https://www.snapchat.com/spotlight/zztest-lb-";
 let dbAvailable = false;
 
 async function cleanup() {
   await prisma.linkMetric.deleteMany({ where: { url: { startsWith: URL_PREFIX } } });
+  await prisma.linkMetric.deleteMany({ where: { url: { startsWith: SNAPCHAT_URL_PREFIX } } });
   await prisma.dailyReport.deleteMany({ where: { employee: { email: { startsWith: "zztest-lb-" } } } });
   await prisma.socialAccount.deleteMany({ where: { handle: { startsWith: "zztest-lb-" } } });
   await prisma.platform.deleteMany({ where: { name: { startsWith: "ZZTEST_LB_" } } });
@@ -205,5 +209,52 @@ describe("leaderboard engagement (link_metrics-sourced)", () => {
     // Dave has no metrics → must NOT appear on the engagement-only board.
     const board = await getTopLinksLeaderboard();
     expect(board.find((r) => r.employee.id === dave.id)).toBeUndefined();
+  });
+});
+
+describe("getPlatformLeaderboards — Snapchat board (ranked by views)", () => {
+  it("includes a snapchat key and ranks employees by views desc", async () => {
+    if (!dbAvailable) return;
+    const finn = await seedEmployee("finn", "ZZ Finn");
+    const gale = await seedEmployee("gale", "ZZ Gale");
+
+    // Finn: higher Snapchat views → should rank #1.
+    // NOTE: platformOfUrl() classifies by the URL's host, not the `platform` column —
+    // the URL must actually contain "snapchat.com" for getEngagementByEmployeePlatform
+    // to bucket this row under "snapchat" (the URL_PREFIX zztest host doesn't count).
+    await snap({
+      employeeId: finn.id,
+      url: `${SNAPCHAT_URL_PREFIX}1`,
+      fetchedAt: new Date("2026-06-09"),
+      platform: "snapchat",
+      views: 500,
+      comments: 4,
+    });
+    // Gale: lower Snapchat views → should rank #2.
+    await snap({
+      employeeId: gale.id,
+      url: `${SNAPCHAT_URL_PREFIX}2`,
+      fetchedAt: new Date("2026-06-09"),
+      platform: "snapchat",
+      views: 100,
+      comments: 1,
+    });
+
+    const boards = await getPlatformLeaderboards();
+    expect(boards).toHaveProperty("snapchat");
+    expect(Array.isArray(boards.snapchat)).toBe(true);
+
+    const f = boards.snapchat.find((r) => r.employee.id === finn.id)!;
+    const g = boards.snapchat.find((r) => r.employee.id === gale.id)!;
+    expect(f).toBeDefined();
+    expect(g).toBeDefined();
+    expect(f.views).toBe(500);
+    expect(f.rankMetric).toBe(500);
+    expect(g.views).toBe(100);
+    expect(g.rankMetric).toBe(100);
+
+    // Higher-views employee ranks first.
+    expect(f.rank).toBeLessThan(g.rank);
+    expect(boards.snapchat[0].employee.id).toBe(finn.id);
   });
 });

@@ -15,10 +15,11 @@ import { todayIST, istMidnight } from "@dashmani/shared";
 // engagement snapshot. OOM-safe: selects only the 5 columns needed, dedups in JS.
 //
 // ⚠️ Engagement coverage is platform-limited: YouTube exposes reliable views; IG/FB
-// expose likes+comments (no reliable views). Snapchat exposes NOTHING via API
-// (manual-only) — it contributes 0 engagement here, by design, and is surfaced as a
-// "not counted yet" note in the UI. So engagement is a fair cross-platform signal
-// (likes+comments work everywhere we have data) but is NOT a measure of Snapchat.
+// expose likes+comments (no reliable views); Snapchat Spotlight exposes reliable
+// views+comments (no likes) via the __NEXT_DATA__ scrape — see platformOfUrl below
+// and the per-platform Snapchat board in getPlatformLeaderboards. So engagement is a
+// fair cross-platform signal (likes+comments work everywhere we have data) and now
+// includes Snapchat views/comments on the platform-specific boards.
 interface EngagementAgg {
   views: number;
   likes: number;
@@ -67,10 +68,11 @@ async function getEngagementByEmployee(
 // Classify a link's platform from its normalized URL (same host rules as everywhere else).
 // Returns null for anything we don't rank per-platform (keeps unknown links out of the
 // per-platform boards; they still count in the combined raw-volume board).
-function platformOfUrl(url: string): "youtube" | "instagram" | "facebook" | null {
+function platformOfUrl(url: string): "youtube" | "instagram" | "facebook" | "snapchat" | null {
   if (/youtube\.com|youtu\.be/i.test(url)) return "youtube";
   if (/instagram\.com/i.test(url)) return "instagram";
   if (/facebook\.com|fb\.watch|fb\.me/i.test(url)) return "facebook";
+  if (/snapchat\.com/i.test(url)) return "snapchat";
   return null;
 }
 
@@ -81,7 +83,7 @@ function platformOfUrl(url: string): "youtube" | "instagram" | "facebook" | null
 async function getEngagementByEmployeePlatform(
   startDate?: string,
   endDate?: string,
-): Promise<Map<string, Map<"youtube" | "instagram" | "facebook", EngagementAgg>>> {
+): Promise<Map<string, Map<"youtube" | "instagram" | "facebook" | "snapchat", EngagementAgg>>> {
   const where: Record<string, unknown> = { status: "ok" };
   if (startDate || endDate) {
     const range: Record<string, Date> = {};
@@ -95,7 +97,7 @@ async function getEngagementByEmployeePlatform(
     select: { employeeId: true, urlNormalized: true, views: true, likes: true, comments: true },
   });
   const seen = new Set<string>();
-  const byEmp = new Map<string, Map<"youtube" | "instagram" | "facebook", EngagementAgg>>();
+  const byEmp = new Map<string, Map<"youtube" | "instagram" | "facebook" | "snapchat", EngagementAgg>>();
   for (const s of snapshots) {
     if (!s.employeeId) continue;
     const key = `${s.employeeId}::${s.urlNormalized}`;
@@ -402,14 +404,15 @@ export async function getLeaderboardCoverage(): Promise<{
 //   - Instagram exposes NO views (0 of 11k rows) — only likes+comments.
 //   - Facebook's raw numbers dwarf YouTube's (~30× views, ~190× likes on average).
 // So a combined score structurally favors Facebook/YouTube over Instagram. The FAIR fix
-// (no employee posts to all 3; ≤2 platforms each, so fragmentation is mild) is a SEPARATE
-// board per platform, each ranked by the metric that platform actually exposes:
+// (no employee posts to all platforms; ≤2 platforms each, so fragmentation is mild) is a
+// SEPARATE board per platform, each ranked by the metric that platform actually exposes:
 //   - youtube  → ranked by VIEWS (likes/comments shown for context)
 //   - facebook → ranked by VIEWS (FB has real views via the reel scraper; likes/comments shown)
 //   - instagram→ ranked by LIKES+COMMENTS (no views exist — the UI omits a Views column)
+//   - snapchat → ranked by VIEWS (Spotlight exposes views + comments + shares; NO likes)
 // The combined board is KEPT but relabeled in the UI as raw cross-platform volume (not a
 // fair ranking). Employees with zero engagement on a platform simply don't appear on it.
-export type PlatformBoardKey = "youtube" | "facebook" | "instagram";
+export type PlatformBoardKey = "youtube" | "facebook" | "instagram" | "snapchat";
 export async function getPlatformLeaderboards(startDate?: string, endDate?: string): Promise<
   Record<PlatformBoardKey, Array<{
     rank: number;
@@ -450,5 +453,6 @@ export async function getPlatformLeaderboards(startDate?: string, endDate?: stri
     youtube: build("youtube", (a) => a.views),
     facebook: build("facebook", (a) => a.views),
     instagram: build("instagram", (a) => a.likes + a.comments), // IG has no views
+    snapchat: build("snapchat", (a) => a.views), // Snapchat has views (no likes) — rank by views
   };
 }

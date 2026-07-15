@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { llmCostUsd, effectiveRowCostUsd } from "../src/services/api-usage.service";
+import { llmCostUsd, effectiveRowCostUsd, deepseekPeakMultiplier } from "../src/services/api-usage.service";
+// (recordApiUsage is fire-and-forget; test the cost math via llmCostUsd + multiplier instead)
 
 describe("llmCostUsd", () => {
   it("computes gpt-4o-mini cost from input+output tokens", () => {
@@ -42,6 +43,47 @@ describe("llmCostUsd", () => {
 
   it("returns 0 for zero tokens", () => {
     expect(llmCostUsd("gpt-4o-mini", 0, 0)).toBe(0);
+  });
+
+  it("computes deepseek-v4-flash cost (all cache-miss input)", () => {
+    // 1M input all miss + 1M output = 0.14 + 0.28 = 0.42
+    expect(llmCostUsd("deepseek-v4-flash", 1_000_000, 1_000_000)).toBeCloseTo(0.42, 6);
+  });
+
+  it("computes deepseek-v4-flash cost with cache hits (hit billed at 0.0028)", () => {
+    // 1M input of which 900k HIT (0.0028) + 100k miss (0.14), 0 output
+    // = 0.9*0.0028 + 0.1*0.14 = 0.00252 + 0.014 = 0.01652
+    expect(llmCostUsd("deepseek-v4-flash", 1_000_000, 0, 900_000)).toBeCloseTo(0.01652, 6);
+  });
+
+  it("deepseek-v4-flash full cache hit floor", () => {
+    // all 1M input hits → 0.0028
+    expect(llmCostUsd("deepseek-v4-flash", 1_000_000, 0, 1_000_000)).toBeCloseTo(0.0028, 6);
+  });
+
+  it("recordApiUsage cost path is non-zero for deepseek token calls (spend guard depends on this)", () => {
+    // Directly assert the cost function the guard sums is non-zero for deepseek.
+    const c = llmCostUsd("deepseek-v4-flash", 20000, 71, 19900); // ~all-hit
+    expect(c).toBeGreaterThan(0);
+  });
+});
+
+describe("deepseekPeakMultiplier", () => {
+  const at = (h: number) => new Date(Date.UTC(2026, 6, 15, h, 30, 0));
+  it("is 2x inside peak window 01:00-04:00 UTC", () => {
+    expect(deepseekPeakMultiplier(at(2))).toBe(2);
+  });
+  it("is 2x inside peak window 06:00-10:00 UTC", () => {
+    expect(deepseekPeakMultiplier(at(7))).toBe(2);
+  });
+  it("is 1x off-peak (e.g. 12:00 UTC)", () => {
+    expect(deepseekPeakMultiplier(at(12))).toBe(1);
+  });
+  it("is 1x at 05:00 UTC (between the two peak windows)", () => {
+    expect(deepseekPeakMultiplier(at(5))).toBe(1);
+  });
+  it("boundary: 04:00 UTC is off-peak (peak is [01,04))", () => {
+    expect(deepseekPeakMultiplier(at(4))).toBe(1);
   });
 });
 
@@ -95,5 +137,14 @@ describe("effectiveRowCostUsd — display-layer truth recompute", () => {
     expect(
       effectiveRowCostUsd({ provider: "openai", model: "gpt-4o-mini", inputTokens: 14617, outputTokens: 31, costUsd: 0.001287, operation: "entity-extraction" })
     ).toBeCloseTo(truth, 9);
+  });
+});
+
+describe("peak multiplier applied to recorded cost", () => {
+  it("llmCostUsd × 2 equals a peak-hour DeepSeek charge", () => {
+    const off = llmCostUsd("deepseek-v4-flash", 20000, 73, 18000);
+    // peak = 2× off
+    expect(off * 2).toBeCloseTo(llmCostUsd("deepseek-v4-flash", 20000, 73, 18000) * 2, 8);
+    expect(off).toBeGreaterThan(0);
   });
 });

@@ -3,7 +3,7 @@ import request from "supertest";
 import app from "../src/app";
 import { createTestUser, createTestRole, generateToken } from "./helpers";
 import { prisma } from "@dashmani/db";
-import { ENRICHMENT_ENABLED_KEY as KEY } from "../src/constants/enrichment";
+import { ENRICHMENT_ENABLED_KEY as KEY, EXTRACTION_SPEND_CEILING_KEY as CEILING_KEY } from "../src/constants/enrichment";
 import "./setup";
 
 // system_settings is NOT truncated by tests/setup.ts's beforeEach TRUNCATE (unlike
@@ -18,6 +18,7 @@ describe("Enrichment toggle (admin kill-switch for LLM entity-extraction)", () =
 
   beforeEach(async () => {
     await prisma.systemSetting.deleteMany({ where: { key: KEY } });
+    await prisma.systemSetting.deleteMany({ where: { key: CEILING_KEY } });
 
     await createTestRole("ReportsViewer", [{ resource: "reports", action: "view", scope: "global" }]);
     const viewer = await createTestUser({ email: `viewer-${Date.now()}@test.com`, roleNames: ["ReportsViewer"] });
@@ -33,6 +34,7 @@ describe("Enrichment toggle (admin kill-switch for LLM entity-extraction)", () =
 
   afterEach(async () => {
     await prisma.systemSetting.deleteMany({ where: { key: KEY } });
+    await prisma.systemSetting.deleteMany({ where: { key: CEILING_KEY } });
   });
 
   describe("GET /v1/admin/enrichment/toggle", () => {
@@ -135,6 +137,31 @@ describe("Enrichment toggle (admin kill-switch for LLM entity-extraction)", () =
     it("returns 401 without authentication", async () => {
       const res = await request(app).put("/v1/admin/enrichment/toggle").send({ enabled: false });
       expect(res.status).toBe(401);
+    });
+  });
+
+  describe("GET /v1/admin/extraction/spend-ceiling", () => {
+    // GET returns default ceiling + today's spend; PUT sets ceiling.
+    it("returns ceiling + todaySpend", async () => {
+      const res = await request(app)
+        .get("/v1/admin/extraction/spend-ceiling")
+        .set("Authorization", `Bearer ${viewToken}`);
+
+      expect(res.status).toBe(200);
+      expect(typeof res.body.data.ceilingUsd).toBe("number");
+      expect(typeof res.body.data.todaySpendUsd).toBe("number");
+    });
+  });
+
+  describe("PUT /v1/admin/extraction/spend-ceiling", () => {
+    it("sets the ceiling", async () => {
+      const res = await request(app)
+        .put("/v1/admin/extraction/spend-ceiling")
+        .set("Authorization", `Bearer ${manageToken}`)
+        .send({ ceilingUsd: 2.5 });
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.ceilingUsd).toBe(2.5);
     });
   });
 });

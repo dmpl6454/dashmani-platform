@@ -86,13 +86,17 @@ export default function AdminLeaderboardPage() {
   if (endDate) params.set("endDate", endDate);
   const query = params.toString() ? `?${params.toString()}` : "";
 
-  const { data, isLoading } = useSWR(`/admin/reports/leaderboard${query}`, (url) => apiFetch(url));
+  const { data, isLoading } = useSWR(`/admin/reports/leaderboard${query}`, (url) => apiFetch(url), {
+    revalidateOnFocus: false,
+    dedupingInterval: 300_000,
+  });
   const entries: any[] = (data as any)?.data ?? [];
 
   // Top Links leaderboard — engagement ranking (views+likes+comments from link_metrics).
   const { data: tlData, isLoading: tlLoading } = useSWR(
     `/admin/reports/top-links-leaderboard${query}`,
     (url) => apiFetch(url),
+    { revalidateOnFocus: false, dedupingInterval: 300_000 },
   );
   const tlEntries: any[] = (tlData as any)?.data ?? [];
 
@@ -102,6 +106,7 @@ export default function AdminLeaderboardPage() {
   const { data: platData, isLoading: platLoading } = useSWR(
     `/admin/reports/platform-leaderboards${query}`,
     (url) => apiFetch(url),
+    { revalidateOnFocus: false, dedupingInterval: 300_000 },
   );
   const platBoards: Record<string, any[]> = (platData as any)?.data ?? {};
 

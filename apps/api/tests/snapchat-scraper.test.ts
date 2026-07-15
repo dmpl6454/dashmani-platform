@@ -171,6 +171,21 @@ describe("parseSnapchatSpotlightHtml", () => {
     expect(r.views).toBeNull();
   });
 
+  it("also maps a -1 sentinel on shares/comments to null, not just views", () => {
+    const html = spotlightFixture({ viewCount: "5", shareCount: "-1", commentCount: "-1", boostCount: "0", recommendCount: "0" });
+    const r = parseSnapchatSpotlightHtml(html);
+    expect(r.shares).toBeNull();
+    expect(r.comments).toBeNull();
+    expect(r.views).toBe(5);
+  });
+
+  it("treats an empty-string stat as null, not zero (Number('') === 0 trap)", () => {
+    const html = spotlightFixture({ viewCount: "", shareCount: "3", commentCount: "2", boostCount: "0", recommendCount: "0" });
+    const r = parseSnapchatSpotlightHtml(html);
+    expect(r.views).toBeNull();
+    expect(r.shares).toBe(3);
+  });
+
   it("likes is always null (Snapchat exposes no like metric for Spotlight)", () => {
     const html = spotlightFixture({ viewCount: "100", shareCount: "1", commentCount: "1", boostCount: "1", recommendCount: "1" });
     expect(parseSnapchatSpotlightHtml(html).likes).toBeNull();

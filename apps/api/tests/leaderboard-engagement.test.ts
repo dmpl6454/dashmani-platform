@@ -210,6 +210,53 @@ describe("leaderboard engagement (link_metrics-sourced)", () => {
     const board = await getTopLinksLeaderboard();
     expect(board.find((r) => r.employee.id === dave.id)).toBeUndefined();
   });
+
+  // Regression guard for Task B3 (getLeaderboard link-count via groupBy, replacing
+  // the include:{links} hydration). Two reports with a KNOWN, DIFFERENT number of
+  // links each — totalLinks must be the exact sum (2 + 3 = 5), and totalReports must
+  // independently reflect the report COUNT (2), not the link count. Passes against
+  // both the old `.links.length` sum and the new groupBy-map lookup — a true
+  // before/after equivalence check.
+  it("getLeaderboard sums totalLinks across multiple reports with differing link counts", async () => {
+    if (!dbAvailable) return;
+    const ivan = await seedEmployee("ivan", "ZZ Ivan");
+    const acct = await seedAccount();
+
+    // Report A: 2 links.
+    await prisma.dailyReport.create({
+      data: {
+        employeeId: ivan.id,
+        date: new Date("2026-06-01"),
+        links: {
+          create: [
+            { accountId: acct.id, url: `${URL_PREFIX}ivan-a1`, platform: "youtube" },
+            { accountId: acct.id, url: `${URL_PREFIX}ivan-a2`, platform: "youtube" },
+          ],
+        },
+      },
+    });
+    // Report B: 3 links.
+    await prisma.dailyReport.create({
+      data: {
+        employeeId: ivan.id,
+        date: new Date("2026-06-02"),
+        links: {
+          create: [
+            { accountId: acct.id, url: `${URL_PREFIX}ivan-b1`, platform: "youtube" },
+            { accountId: acct.id, url: `${URL_PREFIX}ivan-b2`, platform: "youtube" },
+            { accountId: acct.id, url: `${URL_PREFIX}ivan-b3`, platform: "youtube" },
+          ],
+        },
+      },
+    });
+
+    const lb = await getLeaderboard();
+    const i = lb.find((r) => r.employee.id === ivan.id)!;
+    expect(i).toBeDefined();
+    expect(i.totalLinks).toBe(5); // 2 + 3, summed across both reports
+    expect(i.totalReports).toBe(2); // report COUNT, not link count
+    expect(i.avgLinksPerReport).toBe(2.5); // 5 / 2
+  });
 });
 
 describe("leaderboard engagement dedup — latest-wins regression guard (DISTINCT ON rewrite)", () => {

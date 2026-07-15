@@ -3,6 +3,7 @@ import { prisma } from "@dashmani/db";
 import {
   parseExtraction,
   extractEntitiesFromContent,
+  extractOne,
   buildSystemPromptWithEntities,
   buildCaptionUserPrompt,
   type RawExtractFn,
@@ -431,5 +432,58 @@ describe("extractEntitiesFromContent (DB-backed)", () => {
     const entity = await prisma.entity.findUnique({ where: { canonicalName: NAME } });
     const joins = await prisma.linkContentEntity.findMany({ where: { entityId: entity!.id } });
     expect(joins).toHaveLength(2);
+  });
+});
+
+describe("DeepSeek extraction (injected rawExtract)", () => {
+  beforeEach(async () => {
+    await prisma.linkContentEntity.deleteMany();
+    await prisma.linkContent.deleteMany();
+    await prisma.entity.deleteMany();
+  });
+
+  it("extractOne persists entities from a DeepSeek-shaped reply", async () => {
+    const lc = await prisma.linkContent.create({
+      data: { canonicalKey: "yt:test1", platform: "youtube", title: "t", caption: "Salman Khan at event", status: "ok" },
+    });
+    // fake DeepSeek raw JSON reply (signature: (systemPrompt, caption, title) => raw)
+    const fakeRaw: RawExtractFn = async () =>
+      '[{"canonicalName":"Salman Khan","type":"PERSON","confidence":0.9,"isNew":true}]';
+    // 2nd arg is now the PREBUILT stable system prompt (a string), not the names array.
+    const sys = buildSystemPromptWithEntities([]);
+    const res = await extractOne({ id: lc.id, title: "t", caption: "Salman Khan at event" }, sys, fakeRaw);
+    expect(res).toBe("ok");
+    const ents = await prisma.entity.findMany();
+    expect(ents.map((e) => e.canonicalName)).toContain("Salman Khan");
+    const done = await prisma.linkContent.findUnique({ where: { id: lc.id } });
+    expect(done?.extractedAt).not.toBeNull();
+  });
+
+  it("extractOne with a stable systemPrompt still resolves (signature accepts 3 args)", async () => {
+    const lc = await prisma.linkContent.create({
+      data: { canonicalKey: "yt:test2", platform: "youtube", title: "", caption: "nothing identifiable", status: "ok" },
+    });
+    const empty: RawExtractFn = async (_sys, _cap, _title) => "[]";
+    const sys = buildSystemPromptWithEntities(["X"]);
+    const res = await extractOne({ id: lc.id, title: "", caption: "nothing identifiable" }, sys, empty);
+    expect(res).toBe("empty");
+  });
+});
+
+describe("cache-prefix byte stability (protects the DeepSeek cache-hit assumption)", () => {
+  it("two findMany-ordered entity lists serialize to identical prefix bytes", async () => {
+    await prisma.entity.deleteMany();
+    await prisma.entity.createMany({ data: [
+      { canonicalName: "Zeta One", type: "PERSON", aliases: ["zeta one"] },
+      { canonicalName: "Alpha Two", type: "PERSON", aliases: ["alpha two"] },
+      { canonicalName: "Mid Three", type: "PERSON", aliases: ["mid three"] },
+    ]});
+    const q = () => prisma.entity.findMany({ select: { canonicalName: true }, orderBy: { canonicalName: "asc" } }).then((r) => r.map((e) => e.canonicalName));
+    const a = buildSystemPromptWithEntities(await q());
+    const b = buildSystemPromptWithEntities(await q());
+    expect(a).toBe(b); // byte-identical → DeepSeek cache can hit
+    // and the order is deterministic (alphabetical), not insertion order
+    expect(a.indexOf("Alpha Two")).toBeLessThan(a.indexOf("Mid Three"));
+    expect(a.indexOf("Mid Three")).toBeLessThan(a.indexOf("Zeta One"));
   });
 });

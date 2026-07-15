@@ -64,14 +64,15 @@ export const snapchatProvider: InsightProvider = {
 
   async fetchBatch(targets: InsightTarget[]): Promise<Map<string, InsightFetchResult>> {
     const results = new Map<string, InsightFetchResult>();
-    snapScraperBlocked = false;
-    snapScraperConsecutiveWalls = 0;
-    lastHarvest = [];
 
     if (!snapScraperEnabled()) {
       for (const t of targets) results.set(t.linkId, { ok: false, status: "error", error: "SNAP_SCRAPER_ENABLED=0" });
       return results;
     }
+
+    snapScraperBlocked = false;
+    snapScraperConsecutiveWalls = 0;
+    lastHarvest = [];
 
     for (const t of targets) {
       if (snapScraperBlocked) {
@@ -124,6 +125,10 @@ export const snapchatProvider: InsightProvider = {
     return results;
   },
 
+  // Only covers targets actually scraped THIS run (whatever fetchBatch was
+  // just called with) — there's no feed-map paging here like Instagram/
+  // Facebook have, so this is not a full-corpus harvest and shouldn't be
+  // assumed to have the same scope/coverage as those providers.
   harvestContent(): HarvestedContent[] {
     return lastHarvest;
   },

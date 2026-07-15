@@ -1,7 +1,13 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { prisma } from "@dashmani/db";
 import { AppError } from "../middleware/error-handler";
-import { recordApiUsage } from "./api-usage.service";
+import { recordApiUsage, deepseekPeakMultiplier } from "./api-usage.service";
+// NOTE: "./extraction-spend.service" does not exist yet as of this commit — it is
+// created by Task 7 (hard spend-ceiling service) later in the same migration. This
+// import will resolve once Task 7 lands its file in this session; until then, any
+// build/typecheck of this file alone will fail to resolve this module (expected,
+// not a regression — see Task 5 Step 5 note in docs/superpowers/plans/2026-07-15-deepseek-extraction-migration.md).
+import { isSpendCeilingReached } from "./extraction-spend.service";
 
 // Primary extractor: Claude Haiku (tuned prompt). Fallback: OpenAI gpt-4o-mini.
 // WHY a fallback: the extraction LLM is a single point of failure — if the
@@ -16,6 +22,8 @@ const OPENAI_MODEL = "gpt-4o-mini";
 // Gemini fallback — LITE model ONLY (per the project owner's directive). gemini-2.5-
 // flash-lite is the current lite SKU (gemini-2.0-flash-lite was retired → 404).
 const GEMINI_MODEL = "gemini-2.5-flash-lite";
+// Active extraction model (2026-07-15): DeepSeek V4-Flash, NON-THINKING.
+const DEEPSEEK_MODEL = "deepseek-v4-flash";
 
 let _client: Anthropic | null = null;
 function getClient(): Anthropic | null {
@@ -46,7 +54,7 @@ function isTransientError(err: unknown): boolean {
   // Raw-fetch failures from openaiExtract / geminiExtract throw Error("<prov>: HTTP <code> …")
   // or an AbortError/TypeError on network failure. Treat 429/5xx + network as transient.
   const msg = err instanceof Error ? err.message : String(err);
-  if (/^(openai|gemini): HTTP (429|5\d\d)\b/.test(msg)) return true;
+  if (/^(openai|gemini|deepseek): HTTP (429|5\d\d)\b/.test(msg)) return true;
   if (err instanceof Error && (err.name === "AbortError" || err.name === "TimeoutError")) return true;
   if (/network|fetch failed|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN/i.test(msg)) return true;
   return false;
@@ -95,14 +103,14 @@ export function buildCaptionUserPrompt(caption: string, title: string): string {
 
 // Provider 1: Anthropic Haiku. Throws on any API error (rate-limit / out-of-credit /
 // network) so the caller can fall through to OpenAI.
-async function anthropicExtract(caption: string, title: string, knownNames: string[]): Promise<string> {
+async function anthropicExtract(systemPrompt: string, caption: string, title: string): Promise<string> {
   const client = getClient();
   if (!client) throw new Error("anthropic: ANTHROPIC_API_KEY not set");
   const msg = await client.messages.create({
     model: ANTHROPIC_MODEL,
     max_tokens: 1024,
-    system: buildSystemPrompt(),
-    messages: [{ role: "user", content: buildUserPrompt(caption, title, knownNames) }],
+    system: systemPrompt,
+    messages: [{ role: "user", content: buildCaptionUserPrompt(caption, title) }],
   });
   recordApiUsage({
     provider: "anthropic",
@@ -117,7 +125,7 @@ async function anthropicExtract(caption: string, title: string, knownNames: stri
 
 // Provider 2: OpenAI gpt-4o-mini via raw fetch (no SDK dependency on the 2GB box).
 // Throws on any non-200 / API error so the caller treats it as a failure (no demote).
-async function openaiExtract(caption: string, title: string, knownNames: string[]): Promise<string> {
+async function openaiExtract(systemPrompt: string, caption: string, title: string): Promise<string> {
   const key = process.env.OPENAI_API_KEY;
   if (!key) throw new Error("openai: OPENAI_API_KEY not set");
   const res = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -127,8 +135,8 @@ async function openaiExtract(caption: string, title: string, knownNames: string[
       model: OPENAI_MODEL,
       max_tokens: 1024,
       messages: [
-        { role: "system", content: buildSystemPrompt() },
-        { role: "user", content: buildUserPrompt(caption, title, knownNames) },
+        { role: "system", content: systemPrompt },
+        { role: "user", content: buildCaptionUserPrompt(caption, title) },
       ],
     }),
     signal: AbortSignal.timeout(30_000),
@@ -157,7 +165,7 @@ async function openaiExtract(caption: string, title: string, knownNames: string[
 // Provider 3: Google Gemini (LITE model only) via raw fetch. Throws on any non-200 /
 // API error so the caller treats it as a failure (no demote). Gemini sometimes 503s
 // under load — that's a transient error the caller will retry next run.
-async function geminiExtract(caption: string, title: string, knownNames: string[]): Promise<string> {
+async function geminiExtract(systemPrompt: string, caption: string, title: string): Promise<string> {
   const key = process.env.GOOGLE_GEMINI_API_KEY;
   if (!key) throw new Error("gemini: GOOGLE_GEMINI_API_KEY not set");
   const res = await fetch(
@@ -167,7 +175,7 @@ async function geminiExtract(caption: string, title: string, knownNames: string[
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         // Gemini has no separate system role; prepend the instructions to the prompt.
-        contents: [{ parts: [{ text: `${buildSystemPrompt()}\n\n${buildUserPrompt(caption, title, knownNames)}` }] }],
+        contents: [{ parts: [{ text: `${systemPrompt}\n\n${buildCaptionUserPrompt(caption, title)}` }] }],
         generationConfig: { maxOutputTokens: 1024 },
       }),
       signal: AbortSignal.timeout(30_000),
@@ -192,34 +200,66 @@ async function geminiExtract(caption: string, title: string, knownNames: string[
   return data.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
 }
 
-// Default extractor: a fallback CHAIN of configured providers.
-// Each provider is tried only if its key is set; on failure we fall through to the
-// next. Throws only if EVERY configured provider fails — and even then the caller
-// (extractOne) must NOT demote the caption's status (it just retries next cron).
-// This makes extraction resilient to ANY single provider being down/out-of-credit
-// (the 2026-06-26 incident: Anthropic ran out of credit and there was no fallback).
-const defaultRawExtract: RawExtractFn = async (caption, title, knownNames) => {
-  // Provider order — GEMINI-ONLY (owner directive 2026-06-29, after measuring live
-  // per-call economics on prod for the IDENTICAL ~15k-token extraction prompt):
-  //   Gemini gemini-2.5-flash-lite : $0.000451/call  (1×, the baseline)
-  //   OpenAI gpt-4o-mini           : $0.001287/call  (2.85× pricier)
-  //   Anthropic Haiku 4.5          : $0.014772/call  (32.75× pricier — no auto-cache)
-  // Entity extraction is a high-volume, tiny-output classification task (pull
-  // person/brand names out of a caption) — input price-per-million is the whole
-  // ballgame, and Gemini-lite wins decisively with no quality loss (verified live:
-  // it returns clean JSON for the same prompt). So OpenAI + Anthropic are REMOVED
-  // from the active chain — they were 2.85×/32.75× more expensive for zero benefit,
-  // and (as of 2026-06-29) both keys are out of credit anyway, so keeping them first
-  // only added a doomed pre-flight 429/400 round-trip (latency + noise) to every call.
-  // The openaiExtract / anthropicExtract functions are kept defined (tests + a quick
-  // re-add path) but are no longer wired in. To re-add a paid fallback for burst
-  // headroom, append it to this array.
+// ACTIVE PROVIDER: DeepSeek V4-Flash via raw fetch (OpenAI-format). NON-THINKING mode
+// (thinking:{type:"disabled"}) — the default is thinking, which would bloat output
+// tokens for a trivial classification task. The stable systemPrompt is sent as the
+// SYSTEM message so DeepSeek's on-disk cache hits it (~$0.0028/M vs $0.14/M miss).
+// Records usage with the REAL cache-hit count DeepSeek returns + the peak multiplier.
+async function deepseekExtract(systemPrompt: string, caption: string, title: string): Promise<string> {
+  const key = process.env.DEEPSEEK_API_KEY;
+  if (!key) throw new Error("deepseek: DEEPSEEK_API_KEY not set");
+  const res = await fetch("https://api.deepseek.com/chat/completions", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: DEEPSEEK_MODEL,
+      thinking: { type: "disabled" }, // REQUIRED: no reasoning tokens
+      max_tokens: 1024,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: buildCaptionUserPrompt(caption, title) },
+      ],
+    }),
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`deepseek: HTTP ${res.status} ${body.slice(0, 200)}`);
+  }
+  const data = (await res.json()) as {
+    choices?: Array<{ message?: { content?: string } }>;
+    usage?: { prompt_tokens?: number; completion_tokens?: number; prompt_cache_hit_tokens?: number };
+  };
+  recordApiUsage({
+    provider: "deepseek",
+    operation: "entity-extraction",
+    model: DEEPSEEK_MODEL,
+    inputTokens: data.usage?.prompt_tokens ?? 0,
+    outputTokens: data.usage?.completion_tokens ?? 0,
+    // DeepSeek: prompt_cache_hit_tokens are billed at the cheaper cachedPerM rate.
+    cachedInputTokens: data.usage?.prompt_cache_hit_tokens ?? 0,
+    // Peak/valley: 2× during UTC peak windows. Applied to the computed cost so the
+    // recorded figure matches the real bill regardless of when the cron ran.
+    costMultiplier: deepseekPeakMultiplier(new Date()),
+  });
+  return data.choices?.[0]?.message?.content ?? "";
+}
+
+// Active extraction chain: DEEPSEEK-ONLY (2026-07-15). DeepSeek V4-Flash non-thinking
+// with its on-disk cache is the cheapest option for our huge-repeating-prefix workload
+// ($0.0028/M cache-hit input, no storage fee) AND the sole funded provider. Gemini,
+// OpenAI, and Anthropic are removed from the ACTIVE chain — Gemini's prepaid balance is
+// depleted, and Gemini's cache needs a paid hourly-storage CachedContent object to hit,
+// whereas DeepSeek caches automatically for free. The other provider functions remain
+// defined (historical cost recompute + a one-line re-add path): to add a paid fallback,
+// append it to this array.
+const defaultRawExtract: RawExtractFn = async (systemPrompt, caption, title) => {
   const providers: Array<{ key: string | undefined; fn: () => Promise<string> }> = [
-    { key: process.env.GOOGLE_GEMINI_API_KEY, fn: () => geminiExtract(caption, title, knownNames) },
+    { key: process.env.DEEPSEEK_API_KEY, fn: () => deepseekExtract(systemPrompt, caption, title) },
   ].filter((p) => !!p.key);
 
   if (providers.length === 0) {
-    throw new AppError(500, "AI_NOT_CONFIGURED", "No extraction provider configured. Set GOOGLE_GEMINI_API_KEY.");
+    throw new AppError(500, "AI_NOT_CONFIGURED", "No extraction provider configured. Set DEEPSEEK_API_KEY.");
   }
 
   let lastErr: unknown;
@@ -228,13 +268,12 @@ const defaultRawExtract: RawExtractFn = async (caption, title, knownNames) => {
       return await providers[i].fn();
     } catch (err) {
       lastErr = err;
-      // Fall through to the next provider; if this was the last one, rethrow below.
       if (i < providers.length - 1) {
         console.warn(`[entity-extraction] provider ${i + 1}/${providers.length} failed, trying next:`, err instanceof Error ? err.message : err);
       }
     }
   }
-  throw lastErr; // all providers failed → extractOne classifies (transient → retry)
+  throw lastErr;
 };
 
 /**
@@ -391,12 +430,12 @@ async function markDone(id: string): Promise<void> {
  */
 export async function extractOne(
   row: { id: string; title: string | null; caption: string | null },
-  knownNames: string[],
+  systemPrompt: string,
   rawExtract: RawExtractFn = defaultRawExtract
 ): Promise<"ok" | "error" | "empty" | "retry"> {
   let raw: string;
   try {
-    raw = await rawExtract(row.caption ?? "", row.title ?? "", knownNames);
+    raw = await rawExtract(systemPrompt, row.caption ?? "", row.title ?? "");
   } catch (err) {
     if (isTransientError(err)) {
       // Both providers briefly unavailable. Leave the row pristine → retried next run.
@@ -426,24 +465,61 @@ export async function extractEntitiesFromContent(
   rows: Array<{ id: string; title: string | null; caption: string | null }>,
   rawExtract: RawExtractFn = defaultRawExtract
 ): Promise<{ ok: number; empty: number; error: number; retry: number }> {
-  let known = (await prisma.entity.findMany({ select: { canonicalName: true } })).map((e) => e.canonicalName);
+  // Build the stable system prefix ONCE at the start of the batch. This is the key to
+  // caching: the prefix stays byte-identical for the whole run, so DeepSeek's disk
+  // cache hits it on every call after the first. We DO refresh it, but only every
+  // PREFIX_REFRESH_EVERY successful new-entity creations — NOT after every call (the
+  // old behavior, which busted the cache). Since only ~5% of calls create a new
+  // entity and the entity universe is nearly saturated, the prefix is stable across
+  // long runs → ~90%+ cache-hit rate.
+  const PREFIX_REFRESH_EVERY = 50; // rebuild the prefix at most every 50 new entities
+  // ⚠️ ORDER BY IS LOAD-BEARING FOR THE CACHE (Major A, confirmed in adversarial review).
+  // DeepSeek's disk cache keys on the BYTE-IDENTICAL longest-common-prefix. The prefix is
+  // JSON.stringify(knownNames) in Postgres ROW ORDER. A findMany with NO orderBy returns
+  // rows in arbitrary heap order that CHANGES as rows are inserted / autovacuum runs — so
+  // the same entity set can serialize to DIFFERENT bytes run-to-run → the cache NEVER hits
+  // → every call bills at the $0.14/M MISS rate → the ~$2.50 backlog silently becomes
+  // ~$67-134. A deterministic sort makes the prefix stable so the cache actually hits.
+  // Do NOT remove the orderBy from either findMany.
+  let known = (await prisma.entity.findMany({ select: { canonicalName: true }, orderBy: { canonicalName: "asc" } })).map((e) => e.canonicalName);
+  let systemPrompt = buildSystemPromptWithEntities(known);
+  let newSinceRefresh = 0;
+  let sinceCeilingCheck = 0; // mid-batch spend re-check counter (see below)
   let ok = 0,
     empty = 0,
     error = 0,
     retry = 0;
   for (const row of rows) {
-    const res = await extractOne(row, known, rawExtract);
+    const res = await extractOne(row, systemPrompt, rawExtract);
     if (res === "ok") {
       ok++;
-      // refresh known names so later rows in the same batch can reuse newly-created entities
-      const fresh = await prisma.entity.findMany({ select: { canonicalName: true } });
-      known = fresh.map((e) => e.canonicalName);
+      newSinceRefresh++;
+      // Refresh the cacheable prefix only periodically — keeps the cache warm while
+      // still letting later rows reuse newly-created entities within the same batch.
+      if (newSinceRefresh >= PREFIX_REFRESH_EVERY) {
+        const fresh = await prisma.entity.findMany({ select: { canonicalName: true }, orderBy: { canonicalName: "asc" } });
+        known = fresh.map((e) => e.canonicalName);
+        systemPrompt = buildSystemPromptWithEntities(known);
+        newSinceRefresh = 0;
+      }
     } else if (res === "empty") {
       empty++;
     } else if (res === "retry") {
       retry++;
     } else {
       error++;
+    }
+    // MID-BATCH SPEND RE-CHECK (Minor hardening, confirmed in review): the cron gate
+    // checks the ceiling only ONCE at run start. A single large batch (cap up to 3000)
+    // with a silently-failing cache could overshoot the ceiling by several dollars before
+    // the NEXT cron run re-checks. Re-check every 100 rows and bail out of the batch early
+    // if today's spend has crossed the ceiling. Bounded, cheap (one aggregate per 100 rows).
+    if (++sinceCeilingCheck >= 100) {
+      sinceCeilingCheck = 0;
+      if (await isSpendCeilingReached()) {
+        console.warn(`[entity-extraction] spend ceiling reached mid-batch — stopping after ${ok + empty + error + retry} rows`);
+        break;
+      }
     }
   }
   return { ok, empty, error, retry };

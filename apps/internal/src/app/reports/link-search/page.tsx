@@ -225,11 +225,11 @@ export default function LinkSearchPage() {
         const searchable = coverage.searchable ?? coverage.enriched ?? 0;
         const submitted = coverage.submitted ?? coverage.total ?? 0;
         const bp = coverage.byPlatform ?? {};
-        // Per-platform rows in a stable, meaningful order. Snapchat is intentionally
-        // excluded: it isn't caption-searchable (share-redirect links → client-rendered
-        // profile pages, no public API), so it would only ever show "0 of N" and mislead.
-        const ORDER = ["youtube", "instagram", "facebook"] as const;
-        const LABEL: Record<string, string> = { youtube: "YouTube", instagram: "Instagram", facebook: "Facebook" };
+        // Per-platform rows in a stable, meaningful order. Snapchat is now included:
+        // resolved Spotlight urls ARE caption-searchable (Task 9, 2026-07-14) — only
+        // ephemeral Story links remain unsearchable (see the honest per-row note below).
+        const ORDER = ["youtube", "instagram", "facebook", "snapchat"] as const;
+        const LABEL: Record<string, string> = { youtube: "YouTube", instagram: "Instagram", facebook: "Facebook", snapchat: "Snapchat" };
         const rows = ORDER
           .filter((p) => bp[p])
           .map((p) => ({ p, ...bp[p]! }));
@@ -317,11 +317,16 @@ export default function LinkSearchPage() {
                         <span className="text-ink-4">· data since {fmtDate(dataSince)}</span>
                       )}
                       {p === "youtube" && <span className="text-ink-4">· captions: all dates</span>}
-                      {(p === "instagram" || p === "facebook") && since && (
+                      {(p === "instagram" || p === "facebook" || p === "snapchat") && since && (
                         <span className="text-ink-4">· captions since {fmtDate(since)}</span>
                       )}
                       {(pPending ?? 0) > 0 && (
                         <span className="text-ink-4">· {(pPending!).toLocaleString()} tagging</span>
+                      )}
+                      {p === "snapchat" && (
+                        <span className="text-ink-4">
+                          {" "}· only Spotlights are searchable — Stories have no public captions/stats
+                        </span>
                       )}
                     </li>
                   ))}

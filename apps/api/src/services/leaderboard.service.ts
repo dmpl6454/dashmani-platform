@@ -147,17 +147,27 @@ export async function getLeaderboard(startDate?: string, endDate?: string) {
     if (endDate) where.date.lte = new Date(endDate);
   }
 
-  const [reports, engagementByEmployee] = await Promise.all([
+  const [reports, linkCounts, engagementByEmployee] = await Promise.all([
+    // Reports WITHOUT hydrating links — dates drive all-time streaks/counts (unchanged).
     prisma.dailyReport.findMany({
       where,
-      include: {
-        links: true,
+      select: {
+        id: true,
+        employeeId: true,
+        date: true,
         employee: { select: { id: true, name: true, email: true, profileImageUrl: true } },
       },
       orderBy: { date: "asc" },
     }),
+    // Per-report link count via groupBy — replaces the 92k-row include:{links} hydration.
+    prisma.reportLink.groupBy({
+      by: ["reportId"],
+      where: { report: where },
+      _count: { _all: true },
+    }),
     getEngagementByEmployee(startDate, endDate),
   ]);
+  const linkCountByReport = new Map(linkCounts.map((g) => [g.reportId, g._count._all]));
 
   // Group by employee
   const employeeMap = new Map<
@@ -180,7 +190,7 @@ export async function getLeaderboard(startDate?: string, endDate?: string) {
     }
     const entry = employeeMap.get(empId)!;
     entry.reportDates.push(report.date);
-    entry.totalLinks += report.links.length;
+    entry.totalLinks += linkCountByReport.get(report.id) ?? 0;
   }
 
   const result = Array.from(employeeMap.values()).map(({ employee, reportDates, totalLinks }) => {

@@ -3,6 +3,23 @@ import { calcStreaks } from "../utils/streak";
 import { employeeWhere } from "./analytics.service";
 import { todayIST, istMidnight } from "@dashmani/shared";
 
+// Short TTL cache for the heavy leaderboard reads. These recompute a DISTINCT ON over
+// ~925k link_metrics rows + a report groupBy; without a cache, every SWR revalidation
+// (esp. the leaderboard page's 3 concurrent, focus-revalidating calls) re-ran them and
+// saturated the pool. 60s is long enough to absorb a focus/remount storm, short enough
+// that a fresh cron write shows within a minute. Keyed by fn+window so ranges don't collide.
+const LEADERBOARD_TTL_MS = 60 * 1000;
+const _lbCache = new Map<string, { value: unknown; builtAt: number }>();
+export function invalidateLeaderboardCache(): void { _lbCache.clear(); }
+async function memo<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  const hit = _lbCache.get(key);
+  const now = Date.now();
+  if (hit && now - hit.builtAt < LEADERBOARD_TTL_MS) return hit.value as T;
+  const value = await fn();
+  _lbCache.set(key, { value, builtAt: now });
+  return value;
+}
+
 // Real per-employee engagement, derived from the link_metrics snapshots (the SAME
 // authoritative source as the Top Links panels / getInsightsSummary), NOT from
 // report_links.likes/comments/shares — those columns are NEVER populated (verified
@@ -138,6 +155,9 @@ async function getEngagementByEmployeePlatform(
 }
 
 export async function getLeaderboard(startDate?: string, endDate?: string) {
+  return memo(`leaderboard:${startDate ?? ""}:${endDate ?? ""}`, () => getLeaderboardUncached(startDate, endDate));
+}
+async function getLeaderboardUncached(startDate?: string, endDate?: string) {
   const where: any = {
     employee: employeeWhere,
   };
@@ -247,6 +267,9 @@ export async function getLeaderboard(startDate?: string, endDate?: string) {
 //    that cap Link Search coverage apply here (an employee's unreachable posts simply
 //    don't contribute). The UI notes this so the ranking isn't read as "complete".
 export async function getTopLinksLeaderboard(startDate?: string, endDate?: string) {
+  return memo(`top-links-lb:${startDate ?? ""}:${endDate ?? ""}`, () => getTopLinksLeaderboardUncached(startDate, endDate));
+}
+async function getTopLinksLeaderboardUncached(startDate?: string, endDate?: string) {
   // Resolve employee identity for everyone who has engagement, scoped to real
   // employees (excludes pure-admin accounts), matching the main leaderboard's filter.
   // Also fetch each employee's TOTAL submitted (non-scheduled) link count for the
@@ -449,6 +472,16 @@ export async function getPlatformLeaderboards(startDate?: string, endDate?: stri
     employee: { id: string; name: string; email: string; profileImageUrl: string | null };
     views: number; likes: number; comments: number; engagedLinkCount: number;
     rankMetric: number; // the value this board is ranked by (views, or likes+comments for IG)
+  }>>
+> {
+  return memo(`platform-lb:${startDate ?? ""}:${endDate ?? ""}`, () => getPlatformLeaderboardsUncached(startDate, endDate));
+}
+async function getPlatformLeaderboardsUncached(startDate?: string, endDate?: string): Promise<
+  Record<PlatformBoardKey, Array<{
+    rank: number;
+    employee: { id: string; name: string; email: string; profileImageUrl: string | null };
+    views: number; likes: number; comments: number; engagedLinkCount: number;
+    rankMetric: number;
   }>>
 > {
   const [byEmpPlat, employees] = await Promise.all([

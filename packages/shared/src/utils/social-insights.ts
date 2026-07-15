@@ -1,7 +1,9 @@
-// Snapchat is deliberately NOT here: it has no server-readable post captions/engagement
-// (share-redirect links → client-rendered profile pages; no public organic API). Its
-// follower counts + submission-count Top Links work without an insight provider.
-export const SUPPORTED_INSIGHT_PLATFORMS = ["youtube", "instagram", "facebook"] as const;
+// Snapchat added 2026-07-14: Spotlight engagement (views/comments/shares) + captions
+// are scrapeable token-free from the public /spotlight/<id> page's __NEXT_DATA__ blob
+// (snapchat-scraper.ts). Links that are ephemeral Stories have no public stats and
+// show as not_found — surfaced honestly in the coverage note. See
+// docs/superpowers/plans/2026-07-14-snapchat-spotlight-insights.md.
+export const SUPPORTED_INSIGHT_PLATFORMS = ["youtube", "instagram", "facebook", "snapchat"] as const;
 export type SupportedInsightPlatform = (typeof SUPPORTED_INSIGHT_PLATFORMS)[number];
 
 export function getSupportedInsightPlatforms(): readonly string[] {

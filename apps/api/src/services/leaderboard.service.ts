@@ -32,16 +32,24 @@ async function getEngagementByEmployee(
 ): Promise<Map<string, EngagementAgg>> {
   // Latest snapshot per (employeeId, urlNormalized) done IN POSTGRES via DISTINCT ON
   // (byte-identical to the old JS seen-Set dedup: same key, same latest-by-fetchedAt).
-  // Backed by the partial covering index (Task B1): Index Only Scan, ~763ms vs the old
-  // 2790ms full scan + 37MB disk sort that shipped 307k rows to Node. Default window
-  // (last 90d) applies ONLY here — NOT to the streak/count query in getLeaderboard.
+  // Backed by the partial covering index (Task B1): Index Only Scan, no disk sort.
+  //
+  // ⚠️ NO 90-DAY DEFAULT: when no dates are passed this queries ALL-TIME, matching the
+  // OLD behavior exactly. This is deliberate, not an oversight — prod EXPLAIN ANALYZE
+  // with the tuned index shows ALL-TIME (763ms) is actually FASTER than a 90-day-windowed
+  // query (834ms) at this row count, so narrowing the window bought nothing and would
+  // have silently changed what several existing callers show (e.g. the HR portal's
+  // /hr/leaderboard page, which never sends date params and previously showed all-time
+  // engagement) without any UI indicating the narrower scope. The index alone is the
+  // fix; do not reintroduce a silent default window here.
   //
   // NOTE: both bounds are computed in JS and ALWAYS passed as concrete Dates (a null
-  // end becomes a far-future date). This keeps the $queryRaw a fully STATIC tagged
-  // template — the repo's proven pattern (link-search.service.ts) — with NO conditional
-  // `Prisma.sql`/`Prisma.empty` fragment (that helper isn't used anywhere in this repo
-  // yet, so we don't introduce it). Two fixed `${}` param bindings only.
-  const start = startDate ? new Date(startDate) : new Date(Date.now() - 90 * 86_400_000);
+  // start becomes the epoch, a null end becomes a far-future date). This keeps the
+  // $queryRaw a fully STATIC tagged template — the repo's proven pattern
+  // (link-search.service.ts) — with NO conditional `Prisma.sql`/`Prisma.empty` fragment
+  // (that helper isn't used anywhere in this repo yet, so we don't introduce it). Two
+  // fixed `${}` param bindings only.
+  const start = startDate ? new Date(startDate) : new Date("1970-01-01T00:00:00.000Z");
   const end = endDate ? new Date(endDate) : new Date("2999-12-31T00:00:00.000Z");
 
   const rows = await prisma.$queryRaw<
@@ -91,7 +99,10 @@ async function getEngagementByEmployeePlatform(
   startDate?: string,
   endDate?: string,
 ): Promise<Map<string, Map<"youtube" | "instagram" | "facebook" | "snapchat", EngagementAgg>>> {
-  const start = startDate ? new Date(startDate) : new Date(Date.now() - 90 * 86_400_000);
+  // No 90-day default here either — see the matching note in getEngagementByEmployee.
+  // All-time is fast with the Task B1 index (763ms), so there's nothing to gain by
+  // narrowing the window, and doing so would silently change existing callers' output.
+  const start = startDate ? new Date(startDate) : new Date("1970-01-01T00:00:00.000Z");
   const end = endDate ? new Date(endDate) : new Date("2999-12-31T00:00:00.000Z");
 
   const rows = await prisma.$queryRaw<

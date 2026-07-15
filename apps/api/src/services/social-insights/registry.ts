@@ -2,27 +2,21 @@ import type { InsightProvider } from "./types";
 import { youTubeProvider } from "./youtube.provider";
 import { instagramProvider } from "./instagram.provider";
 import { facebookProvider } from "./facebook.provider";
+import { snapchatProvider } from "./snapchat.provider";
 
 // ⚠️ ORDER IS THE 6h-CRON METRIC-SWEEP ORDER (getSupportedSlugs is only consumed by
 // social-insights.cron.ts). Priority: cheapest-and-most-reliable FIRST, slowest LAST.
 //   1. youtube   — ~2k links, fast Data API.
 //   2. facebook  — ~19k links via the public-reel scraper.
-//   3. instagram — ~38k links, the slow/rate-limit-prone sweep. IG is the safe one
-//      to run LAST (harvest fires early, engagement is Graph-administered-only).
+//   3. instagram — ~38k links, the slow/rate-limit-prone sweep.
+//   4. snapchat  — ~124 links via the public Spotlight scraper. Small + polite
+//      (300ms/link), so it's last; its budget can't starve the big providers.
 // Do NOT move Instagram before Facebook — that re-starves it (2026-06-26 outage).
-//
-// NOTE: Snapchat has NO insight provider. Its post captions/engagement are not
-// readable server-side — prod links are snapchat.com/t/<code> share redirects that
-// resolve to client-rendered profile pages (no caption/views in the HTML), and there
-// is no public organic API. A Spotlight scraper was removed (2026-06-30) after a live
-// Linode probe confirmed it produced nothing for the real /t/ link shape. The only
-// working Snapchat feature is follower-count sync (Account Growth) in
-// follower-sync.service.ts, which needs no insight provider. There is no Snapchat
-// "Top Links" — engagement is unreadable, so an engagement-ranked panel is impossible.
 const providers: InsightProvider[] = [
   youTubeProvider,
   facebookProvider,
   instagramProvider,
+  snapchatProvider,
 ];
 
 const providerMap = new Map<string, InsightProvider>(

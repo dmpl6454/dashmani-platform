@@ -59,11 +59,18 @@ export interface ExtractedEntity {
   isNew: boolean;
 }
 
-/** Raw LLM call: (caption, title, knownNames) → raw JSON string. Injectable for tests. */
-export type RawExtractFn = (caption: string, title: string, knownNames: string[]) => Promise<string>;
+/** Raw LLM call: (systemPrompt, caption, title) → raw JSON string. The systemPrompt is
+ *  the prebuilt STABLE prefix (instructions + entity list); keeping it as an argument
+ *  lets the caller hold it constant across a batch so provider caches hit. Injectable
+ *  for tests. */
+export type RawExtractFn = (systemPrompt: string, caption: string, title: string) => Promise<string>;
 
-// The shared extraction instructions (provider-agnostic).
-function buildSystemPrompt(): string {
+// The STABLE, CACHEABLE system prompt: shared instructions + the known-entities list.
+// This is byte-identical across every call in a batch (the list only changes when the
+// batch driver refreshes it), so DeepSeek's disk cache hits it after the first call.
+// KEEPING THE ENTITY LIST HERE (not in the per-call user message) is what makes caching
+// work — do NOT move it back into buildCaptionUserPrompt.
+export function buildSystemPromptWithEntities(knownNames: string[]): string {
   return [
     "You extract the real-world PEOPLE, public figures, brands, and notable topics that a social-media post is ABOUT.",
     "You are given a post's TITLE and CAPTION (often Hindi/Hinglish, emoji, hashtags) and a list of ALREADY-KNOWN canonical names.",
@@ -75,11 +82,15 @@ function buildSystemPrompt(): string {
     "- Do NOT invent people not implied by the text. If nothing identifiable, return [].",
     "Return ONLY a strict JSON array (no prose, no markdown fences) of objects:",
     '[{"canonicalName": "Salman Khan", "type": "PERSON", "confidence": 0.95, "isNew": false}]',
+    "",
+    `KNOWN canonical names: ${JSON.stringify(knownNames)}`,
   ].join("\n");
 }
 
-function buildUserPrompt(caption: string, title: string, knownNames: string[]): string {
-  return `KNOWN canonical names: ${JSON.stringify(knownNames)}\n\nTITLE: ${title || "(none)"}\nCAPTION: ${caption || "(none)"}`;
+// The VARYING user prompt: only the post's title + caption. Small (~30 tokens), changes
+// every call. Kept free of the entity list so the system prefix stays cacheable.
+export function buildCaptionUserPrompt(caption: string, title: string): string {
+  return `TITLE: ${title || "(none)"}\nCAPTION: ${caption || "(none)"}`;
 }
 
 // Provider 1: Anthropic Haiku. Throws on any API error (rate-limit / out-of-credit /

@@ -198,12 +198,13 @@ export default function DashboardPage() {
       }));
   })();
 
-  // Top Links platform pill — independent, non-persisted. YouTube ranks by views;
-  // Instagram/Facebook rank by likes+comments (backend does this automatically).
+  // Top Links platform pill — independent, non-persisted. YouTube/Snapchat rank by
+  // views; Instagram/Facebook rank by likes+comments (backend does this automatically).
   const TOP_LINK_PLATFORMS = [
     { key: "youtube", label: "YouTube", metric: "views" as const },
     { key: "instagram", label: "Instagram", metric: "engagement" as const },
     { key: "facebook", label: "Facebook", metric: "engagement" as const },
+    { key: "snapchat", label: "Snapchat", metric: "views" as const },
   ];
   const [topLinkPlatform, setTopLinkPlatform] = useState("youtube");
   const activeLinkPlatform = TOP_LINK_PLATFORMS.find((p) => p.key === topLinkPlatform) ?? TOP_LINK_PLATFORMS[0];

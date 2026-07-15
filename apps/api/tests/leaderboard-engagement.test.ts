@@ -1,6 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { prisma } from "@dashmani/db";
-import { getLeaderboard, getTopLinksLeaderboard } from "../src/services/leaderboard.service";
+import {
+  getLeaderboard,
+  getTopLinksLeaderboard,
+  getPlatformLeaderboards,
+  invalidateLeaderboardCache,
+} from "../src/services/leaderboard.service";
 
 // ── DB-backed: verifies the 2026-06-29 fix that engagement comes from link_metrics
 // (the real snapshots) and NOT report_links.likes/comments/shares (always 0). Also
@@ -11,10 +16,14 @@ import { getLeaderboard, getTopLinksLeaderboard } from "../src/services/leaderbo
 // link_metrics cleanup (keyed by a ZZTEST url prefix).
 
 const URL_PREFIX = "https://zztest-lb.example/";
+// Snapchat rows must use a real snapchat.com host so platformOfUrl() classifies them —
+// tracked separately since they can't share URL_PREFIX's fake host.
+const SNAPCHAT_URL_PREFIX = "https://www.snapchat.com/spotlight/zztest-lb-";
 let dbAvailable = false;
 
 async function cleanup() {
   await prisma.linkMetric.deleteMany({ where: { url: { startsWith: URL_PREFIX } } });
+  await prisma.linkMetric.deleteMany({ where: { url: { startsWith: SNAPCHAT_URL_PREFIX } } });
   await prisma.dailyReport.deleteMany({ where: { employee: { email: { startsWith: "zztest-lb-" } } } });
   await prisma.socialAccount.deleteMany({ where: { handle: { startsWith: "zztest-lb-" } } });
   await prisma.platform.deleteMany({ where: { name: { startsWith: "ZZTEST_LB_" } } });
@@ -41,6 +50,10 @@ beforeAll(async () => {
   }
 });
 beforeEach(async () => {
+  // Reset the module-singleton 60s TTL cache before EVERY test — otherwise a prior
+  // test's cached leaderboard result can be served to a later test that expects fresh
+  // data (the exact leak documented for link-search.service.ts's coverage cache).
+  invalidateLeaderboardCache();
   if (dbAvailable) await cleanup();
 });
 afterAll(async () => {
@@ -205,5 +218,137 @@ describe("leaderboard engagement (link_metrics-sourced)", () => {
     // Dave has no metrics → must NOT appear on the engagement-only board.
     const board = await getTopLinksLeaderboard();
     expect(board.find((r) => r.employee.id === dave.id)).toBeUndefined();
+  });
+
+  // Regression guard for Task B3 (getLeaderboard link-count via groupBy, replacing
+  // the include:{links} hydration). Two reports with a KNOWN, DIFFERENT number of
+  // links each — totalLinks must be the exact sum (2 + 3 = 5), and totalReports must
+  // independently reflect the report COUNT (2), not the link count. Passes against
+  // both the old `.links.length` sum and the new groupBy-map lookup — a true
+  // before/after equivalence check.
+  it("getLeaderboard sums totalLinks across multiple reports with differing link counts", async () => {
+    if (!dbAvailable) return;
+    const ivan = await seedEmployee("ivan", "ZZ Ivan");
+    const acct = await seedAccount();
+
+    // Report A: 2 links.
+    await prisma.dailyReport.create({
+      data: {
+        employeeId: ivan.id,
+        date: new Date("2026-06-01"),
+        links: {
+          create: [
+            { accountId: acct.id, url: `${URL_PREFIX}ivan-a1`, platform: "youtube" },
+            { accountId: acct.id, url: `${URL_PREFIX}ivan-a2`, platform: "youtube" },
+          ],
+        },
+      },
+    });
+    // Report B: 3 links.
+    await prisma.dailyReport.create({
+      data: {
+        employeeId: ivan.id,
+        date: new Date("2026-06-02"),
+        links: {
+          create: [
+            { accountId: acct.id, url: `${URL_PREFIX}ivan-b1`, platform: "youtube" },
+            { accountId: acct.id, url: `${URL_PREFIX}ivan-b2`, platform: "youtube" },
+            { accountId: acct.id, url: `${URL_PREFIX}ivan-b3`, platform: "youtube" },
+          ],
+        },
+      },
+    });
+
+    const lb = await getLeaderboard();
+    const i = lb.find((r) => r.employee.id === ivan.id)!;
+    expect(i).toBeDefined();
+    expect(i.totalLinks).toBe(5); // 2 + 3, summed across both reports
+    expect(i.totalReports).toBe(2); // report COUNT, not link count
+    expect(i.avgLinksPerReport).toBe(2.5); // 5 / 2
+  });
+});
+
+describe("leaderboard engagement dedup — latest-wins regression guard (DISTINCT ON rewrite)", () => {
+  // Proves the dedup semantics stay IDENTICAL whether computed via the OLD JS
+  // Set-based dedup (findMany + orderBy fetchedAt desc + seen-Set) or the NEW SQL
+  // DISTINCT ON query (Task B2). Two snapshots of the SAME (employeeId, urlNormalized)
+  // at DIFFERENT fetchedAt must collapse to the LATEST one's views — never summed.
+  // This test is expected to PASS against BOTH the pre-rewrite and post-rewrite code;
+  // it is a regression guard, not new-functionality TDD.
+  it("getLeaderboard reflects the LATEST snapshot's views, not the sum of both", async () => {
+    if (!dbAvailable) return;
+    const heidi = await seedEmployee("heidi", "ZZ Heidi");
+    const acct = await seedAccount();
+    // getLeaderboard's employeeMap is built by iterating dailyReport rows (not
+    // engagement snapshots directly) — an employee needs a report to appear at all.
+    await prisma.dailyReport.create({
+      data: {
+        employeeId: heidi.id,
+        date: new Date("2026-06-15"),
+        links: { create: [{ accountId: acct.id, url: `${URL_PREFIX}h1`, platform: "youtube" }] },
+      },
+    });
+
+    // Older snapshot: views=10. Newer snapshot (same url): views=50.
+    // If dedup were broken (e.g. summed instead of latest-wins), we'd see 60.
+    await snap({ employeeId: heidi.id, url: `${URL_PREFIX}h1`, fetchedAt: new Date("2026-06-01"), views: 10, likes: 1, comments: 0 });
+    await snap({ employeeId: heidi.id, url: `${URL_PREFIX}h1`, fetchedAt: new Date("2026-06-15"), views: 50, likes: 5, comments: 2 });
+
+    const lb = await getLeaderboard();
+    const h = lb.find((r) => r.employee.id === heidi.id)!;
+
+    expect(h.engagementViews).toBe(50); // latest wins
+    expect(h.engagementViews).not.toBe(60); // NOT summed (10+50)
+    expect(h.engagementLikes).toBe(5);
+    expect(h.engagementComments).toBe(2);
+    expect(h.totalEngagement).toBe(57); // 50+5+2, latest snapshot only
+    expect(h.engagedLinkCount).toBe(1); // one unique link, not two rows
+  });
+});
+
+describe("getPlatformLeaderboards — Snapchat board (ranked by views)", () => {
+  it("includes a snapchat key and ranks employees by views desc", async () => {
+    if (!dbAvailable) return;
+    const finn = await seedEmployee("finn", "ZZ Finn");
+    const gale = await seedEmployee("gale", "ZZ Gale");
+
+    // Finn: higher Snapchat views → should rank #1.
+    // NOTE: platformOfUrl() classifies by the URL's host, not the `platform` column —
+    // the URL must actually contain "snapchat.com" for getEngagementByEmployeePlatform
+    // to bucket this row under "snapchat" (the URL_PREFIX zztest host doesn't count).
+    await snap({
+      employeeId: finn.id,
+      url: `${SNAPCHAT_URL_PREFIX}1`,
+      fetchedAt: new Date("2026-06-09"),
+      platform: "snapchat",
+      views: 500,
+      comments: 4,
+    });
+    // Gale: lower Snapchat views → should rank #2.
+    await snap({
+      employeeId: gale.id,
+      url: `${SNAPCHAT_URL_PREFIX}2`,
+      fetchedAt: new Date("2026-06-09"),
+      platform: "snapchat",
+      views: 100,
+      comments: 1,
+    });
+
+    const boards = await getPlatformLeaderboards();
+    expect(boards).toHaveProperty("snapchat");
+    expect(Array.isArray(boards.snapchat)).toBe(true);
+
+    const f = boards.snapchat.find((r) => r.employee.id === finn.id)!;
+    const g = boards.snapchat.find((r) => r.employee.id === gale.id)!;
+    expect(f).toBeDefined();
+    expect(g).toBeDefined();
+    expect(f.views).toBe(500);
+    expect(f.rankMetric).toBe(500);
+    expect(g.views).toBe(100);
+    expect(g.rankMetric).toBe(100);
+
+    // Higher-views employee ranks first.
+    expect(f.rank).toBeLessThan(g.rank);
+    expect(boards.snapchat[0].employee.id).toBe(finn.id);
   });
 });

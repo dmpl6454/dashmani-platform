@@ -1276,7 +1276,8 @@ export default function ReportPage() {
       {!myInsightsLoading && (() => {
         const allInsights: any[] = (myInsightsData as any)?.data ?? [];
         // Show every link that has engagement metrics, across ALL supported
-        // platforms (YouTube + Instagram + Facebook are all covered now).
+        // platforms (YouTube, Instagram, Facebook, Snapchat — driven by
+        // SUPPORTED_INSIGHT_PLATFORMS, so this list never needs manual edits).
         // Sort by reach so the strongest posts lead.
         const withMetrics = allInsights
           .filter((l: any) => l.latest)
@@ -1291,7 +1292,7 @@ export default function ReportPage() {
               <div>
                 <h3 className="text-sm font-semibold text-[#1A1A1A]">Your link insights</h3>
                 <p className="text-[11px] text-[#7A7A7A] mt-0.5">
-                  Views, likes &amp; comments for your YouTube, Instagram and Facebook links.
+                  Engagement for your links across every supported platform.
                 </p>
               </div>
               <span className="text-[10px] text-[#B0B0B0] shrink-0 mt-0.5">Updates every 6h</span>

@@ -25,6 +25,7 @@ const PLATFORM_COLORS: Record<string, string> = {
   Facebook: "bg-[#FAE89E]",
   YouTube: "bg-[#E74C3C]",
   TikTok: "bg-[#1A1A1A]",
+  Snapchat: "bg-yellow-400",
 };
 
 export default function ContentAnalyticsPage() {

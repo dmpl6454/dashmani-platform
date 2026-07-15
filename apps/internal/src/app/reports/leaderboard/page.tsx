@@ -468,18 +468,21 @@ export default function AdminLeaderboardPage() {
       {/* Each platform ranked by the metric it actually exposes, so people are compared
           against peers on the same yardstick (no cross-platform metric/scale mixing). */}
       {([
-        { key: "youtube", label: "YouTube", rankBy: "Views", showViews: true },
-        { key: "facebook", label: "Facebook", rankBy: "Views", showViews: true },
-        { key: "instagram", label: "Instagram", rankBy: "Likes + Comments", showViews: false },
-        { key: "snapchat", label: "Snapchat", rankBy: "Views", showViews: true },
-      ] as const).map(({ key, label, rankBy, showViews }) => {
+        { key: "youtube", label: "YouTube", rankBy: "Views", showViews: true, showLikes: true },
+        { key: "facebook", label: "Facebook", rankBy: "Views", showViews: true, showLikes: true },
+        { key: "instagram", label: "Instagram", rankBy: "Likes + Comments", showViews: false, showLikes: true },
+        // Snapchat Spotlight exposes no public like metric (unlike the other 3 platforms) —
+        // showLikes:false hides the column entirely rather than rendering a fabricated "0"
+        // (fmtCompact treats null as 0, which would misleadingly read as "zero likes measured").
+        { key: "snapchat", label: "Snapchat", rankBy: "Views", showViews: true, showLikes: false },
+      ] as const).map(({ key, label, rankBy, showViews, showLikes }) => {
         const board = platBoards[key] ?? [];
         return (
           <div key={key} className="rounded-2xl border border-[#E8E0D0] bg-white overflow-hidden shadow-[0_2px_16px_rgba(0,0,0,0.05)]">
             <div className="px-6 py-4 border-b border-[#F0EAD8] flex items-center gap-2">
               <TrendingUp className="h-5 w-5 text-[#F5A623]" />
               <h3 className="font-semibold font-serif text-[#1A1A1A]">{label} Leaderboard</h3>
-              <span className="text-xs text-[#B0B0B0] font-normal">ranked by {rankBy}{!showViews && " (Instagram exposes no view count)"}</span>
+              <span className="text-xs text-[#B0B0B0] font-normal">ranked by {rankBy}{!showViews && " (Instagram exposes no view count)"}{!showLikes && " (Snapchat exposes no like count)"}</span>
             </div>
             {platLoading ? (
               <p className="py-8 text-center text-sm text-[#B0B0B0]">Loading...</p>
@@ -494,7 +497,7 @@ export default function AdminLeaderboardPage() {
                         <th className="text-left py-3 px-5 text-[#7A7A7A] text-xs font-medium w-16">Rank</th>
                         <th className="text-left py-3 px-4 text-[#7A7A7A] text-xs font-medium">Employee</th>
                         {showViews && <th className="text-right py-3 px-4 text-[#7A7A7A] text-xs font-medium">Views</th>}
-                        <th className="text-right py-3 px-4 text-[#7A7A7A] text-xs font-medium">Likes</th>
+                        {showLikes && <th className="text-right py-3 px-4 text-[#7A7A7A] text-xs font-medium">Likes</th>}
                         <th className="text-right py-3 px-4 text-[#7A7A7A] text-xs font-medium">Comments</th>
                         <th className="text-right py-3 px-4 text-[#7A7A7A] text-xs font-medium">Links</th>
                       </tr>
@@ -521,11 +524,13 @@ export default function AdminLeaderboardPage() {
                               </span>
                             </td>
                           )}
-                          <td className="py-3 px-4 text-right text-[#1A1A1A]">
-                            <span className="inline-flex items-center justify-end gap-1" title={`${(entry.likes ?? 0).toLocaleString()} likes`}>
-                              <Heart className="h-3.5 w-3.5 text-[#B0B0B0]" />{fmtCompact(entry.likes)}
-                            </span>
-                          </td>
+                          {showLikes && (
+                            <td className="py-3 px-4 text-right text-[#1A1A1A]">
+                              <span className="inline-flex items-center justify-end gap-1" title={`${(entry.likes ?? 0).toLocaleString()} likes`}>
+                                <Heart className="h-3.5 w-3.5 text-[#B0B0B0]" />{fmtCompact(entry.likes)}
+                              </span>
+                            </td>
+                          )}
                           <td className="py-3 px-4 text-right text-[#1A1A1A]">
                             <span className="inline-flex items-center justify-end gap-1" title={`${(entry.comments ?? 0).toLocaleString()} comments`}>
                               <MessageCircle className="h-3.5 w-3.5 text-[#B0B0B0]" />{fmtCompact(entry.comments)}
@@ -558,14 +563,18 @@ export default function AdminLeaderboardPage() {
                               },
                             ]
                           : []),
-                        {
-                          label: "Likes",
-                          value: (
-                            <span className="inline-flex items-center gap-1 justify-end">
-                              <Heart className="h-3.5 w-3.5 text-[#B0B0B0]" />{fmtCompact(entry.likes)}
-                            </span>
-                          ),
-                        },
+                        ...(showLikes
+                          ? [
+                              {
+                                label: "Likes",
+                                value: (
+                                  <span className="inline-flex items-center gap-1 justify-end">
+                                    <Heart className="h-3.5 w-3.5 text-[#B0B0B0]" />{fmtCompact(entry.likes)}
+                                  </span>
+                                ),
+                              },
+                            ]
+                          : []),
                         {
                           label: "Comments",
                           value: (

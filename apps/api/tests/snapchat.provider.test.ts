@@ -62,8 +62,10 @@ describe("snapchatProvider", () => {
     __setScraperFetchForTesting(walled as unknown as typeof fetch);
     const targets = Array.from({ length: 10 }, (_, i) => target(`l${i}`, `https://www.snapchat.com/spotlight/W7_id${i}0000`, `W7_id${i}0000`));
     await snapchatProvider.fetchBatch(targets);
-    // wall limit default 5 → after 5 walls it stops calling fetch for the rest.
-    expect(walled.mock.calls.length).toBeLessThanOrEqual(6);
+    // wall limit default 5 → after the 5th wall trips the block flag, the
+    // block check at the top of the loop skips every remaining target
+    // without another scraper call. Empirically verified: exactly 5 calls.
+    expect(walled.mock.calls.length).toBe(5);
   });
 
   it("harvestContent returns captions keyed sc:<id> for scraped spotlights", async () => {
@@ -73,6 +75,34 @@ describe("snapchatProvider", () => {
     await snapchatProvider.fetchBatch([target("l1", "https://www.snapchat.com/spotlight/W7_abc12345", "W7_abc12345")]);
     const harvested = snapchatProvider.harvestContent!();
     expect(harvested).toContainEqual({ canonicalKey: "sc:W7_abc12345", caption: "caption text", title: null });
+  });
+
+  it("isSupported() returns false when SNAP_SCRAPER_ENABLED=0", () => {
+    const prev = process.env.SNAP_SCRAPER_ENABLED;
+    process.env.SNAP_SCRAPER_ENABLED = "0";
+    try {
+      expect(snapchatProvider.isSupported()).toBe(false);
+    } finally {
+      if (prev === undefined) delete process.env.SNAP_SCRAPER_ENABLED;
+      else process.env.SNAP_SCRAPER_ENABLED = prev;
+    }
+  });
+
+  it("fetchBatch returns status 'error' for every target when SNAP_SCRAPER_ENABLED=0 (no fetch calls)", async () => {
+    const prev = process.env.SNAP_SCRAPER_ENABLED;
+    process.env.SNAP_SCRAPER_ENABLED = "0";
+    const fetchImpl = vi.fn();
+    __setScraperFetchForTesting(fetchImpl as unknown as typeof fetch);
+    try {
+      const res = await snapchatProvider.fetchBatch([
+        target("l1", "https://www.snapchat.com/spotlight/W7_abc12345", "W7_abc12345"),
+      ]);
+      expect(res.get("l1")!.status).toBe("error");
+      expect(fetchImpl).not.toHaveBeenCalled();
+    } finally {
+      if (prev === undefined) delete process.env.SNAP_SCRAPER_ENABLED;
+      else process.env.SNAP_SCRAPER_ENABLED = prev;
+    }
   });
 });
 

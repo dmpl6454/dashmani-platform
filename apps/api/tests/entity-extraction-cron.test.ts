@@ -21,6 +21,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const findUniqueMock = vi.fn();
 const findManyMock = vi.fn();
 const countMock = vi.fn();
+const aggregateMock = vi.fn();
 
 vi.mock("@dashmani/db", () => ({
   prisma: {
@@ -30,6 +31,9 @@ vi.mock("@dashmani/db", () => ({
     linkContent: {
       findMany: (...args: unknown[]) => findManyMock(...args),
       count: (...args: unknown[]) => countMock(...args),
+    },
+    apiUsage: {
+      aggregate: (...args: unknown[]) => aggregateMock(...args),
     },
   },
 }));
@@ -47,9 +51,13 @@ describe("runEntityExtraction — admin enrichment toggle gate", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    process.env = { ...OLD_ENV, ANTHROPIC_API_KEY: "test-key" };
+    process.env = { ...OLD_ENV, DEEPSEEK_API_KEY: "sk-test" };
     findManyMock.mockResolvedValue([]);
     countMock.mockResolvedValue(0);
+    aggregateMock.mockResolvedValue({ _sum: { costUsd: 0 } }); // today's deepseek spend = $0 → under ceiling
+    // findUniqueMock is used for BOTH the enrichment toggle key AND the spend-ceiling key.
+    // Default it to null (toggle enabled, ceiling defaults) unless a test overrides.
+    findUniqueMock.mockResolvedValue(null);
   });
 
   it("skips the run — no linkContent query, no LLM call — when enrichment.enabled='false'", async () => {
@@ -90,14 +98,27 @@ describe("runEntityExtraction — admin enrichment toggle gate", () => {
 
   it("still short-circuits on the pre-existing no-provider-configured gate even when the toggle is enabled", async () => {
     process.env = { ...OLD_ENV };
-    delete process.env.ANTHROPIC_API_KEY;
-    delete process.env.OPENAI_API_KEY;
-    delete process.env.GOOGLE_GEMINI_API_KEY;
+    delete process.env.DEEPSEEK_API_KEY;
 
     await runEntityExtraction();
 
     // Never even reaches the toggle check — the provider gate returns first.
     expect(findUniqueMock).not.toHaveBeenCalled();
     expect(findManyMock).not.toHaveBeenCalled();
+  });
+
+  it("skips the run when today's deepseek spend has reached the ceiling", async () => {
+    // DEEPSEEK_API_KEY is set in beforeEach. Toggle enabled (findUnique null for the toggle key).
+    // spend-ceiling key → "0.01"; today's spend aggregate → $5 (over ceiling).
+    findUniqueMock.mockImplementation(({ where }: { where: { key: string } }) =>
+      where.key === "extraction.spendCeilingUsd" ? { key: where.key, value: "0.01" } : null,
+    );
+    aggregateMock.mockResolvedValue({ _sum: { costUsd: 5 } }); // over the $0.01 ceiling
+
+    await runEntityExtraction();
+
+    // Ceiling reached → cron returns before querying pending rows or extracting.
+    expect(findManyMock).not.toHaveBeenCalled();
+    expect(extractEntitiesFromContentMock).not.toHaveBeenCalled();
   });
 });

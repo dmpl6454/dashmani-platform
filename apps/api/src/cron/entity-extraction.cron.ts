@@ -1,6 +1,7 @@
 import { prisma } from "@dashmani/db";
 import { extractEntitiesFromContent } from "../services/entity-extraction.service";
 import { ENRICHMENT_ENABLED_KEY } from "../constants/enrichment";
+import { isSpendCeilingReached, getTodayDeepseekSpendUsd, getSpendCeilingUsd } from "../services/extraction-spend.service";
 
 // Per-run cap. Default 1500 (was 500) to keep up with the new-link rate (~1.7k/day
 // IG+FB) AND chip at any backlog: 1500 × 4 runs/day = 6,000/day capacity. Override
@@ -9,10 +10,9 @@ const BATCH_CAP = Number(process.env.ENTITY_EXTRACTION_CAP) || 1500;
 
 export async function runEntityExtraction(): Promise<void> {
   const startedAt = Date.now();
-  // Run if ANY provider is configured — extraction falls back Anthropic→OpenAI→Gemini-lite,
-  // so a single out-of-credit/rate-limited provider no longer halts extraction.
-  if (!process.env.ANTHROPIC_API_KEY && !process.env.OPENAI_API_KEY && !process.env.GOOGLE_GEMINI_API_KEY) {
-    console.log("[entity-extraction] no LLM provider configured (ANTHROPIC_API_KEY / OPENAI_API_KEY / GOOGLE_GEMINI_API_KEY) — skipping run");
+  // DeepSeek is the sole extraction provider (2026-07-15). No key → nothing to do.
+  if (!process.env.DEEPSEEK_API_KEY) {
+    console.log("[entity-extraction] DEEPSEEK_API_KEY not set — skipping run");
     return;
   }
   // Admin-controlled kill-switch: this is the ONLY paid-per-token step in the whole
@@ -25,6 +25,15 @@ export async function runEntityExtraction(): Promise<void> {
   const toggle = await prisma.systemSetting.findUnique({ where: { key: ENRICHMENT_ENABLED_KEY } });
   if (toggle?.value === "false") {
     console.log("[entity-extraction] disabled by admin toggle (enrichment.enabled=false) — skipping run");
+    return;
+  }
+  // HARD OVERSPEND GUARD: skip if today's DeepSeek spend has hit the ceiling. This is
+  // independent of the prepaid balance — a self-enforced daily cap the admin controls
+  // from /api-costs. Prevents a cache-miss storm (e.g. during peak-price hours) from
+  // draining the balance.
+  if (await isSpendCeilingReached()) {
+    const [spend, ceiling] = await Promise.all([getTodayDeepseekSpendUsd(), getSpendCeilingUsd()]);
+    console.log(`[entity-extraction] daily spend ceiling reached ($${spend.toFixed(4)} >= $${ceiling}) — skipping run`);
     return;
   }
   // Idempotent selector: only rows with text fetched (status=ok) and not yet extracted.

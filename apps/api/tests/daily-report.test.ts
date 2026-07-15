@@ -4,7 +4,7 @@ import app from "../src/app";
 import { createTestUser, createTestRole, generateToken } from "./helpers";
 import { prisma } from "@dashmani/db";
 import jwt from "jsonwebtoken";
-import { __setShareResolverForTesting } from "../src/services/daily-report.service";
+import { __setShareResolverForTesting, __setSnapchatResolverForTesting } from "../src/services/daily-report.service";
 import { submitDailyReportSchema } from "@dashmani/shared";
 import "./setup";
 
@@ -228,6 +228,45 @@ describe("Daily Report API", () => {
         expect(seen).toHaveLength(0); // resolver never invoked for a non-/share/ url
       } finally {
         __setShareResolverForTesting(null);
+      }
+    });
+
+    it("submit-time Snapchat resolution REPLACES a snapchat.com/t/ share with its resolved clean /spotlight/ url", async () => {
+      __setSnapchatResolverForTesting(async () => "https://www.snapchat.com/spotlight/W7_resolved123");
+      try {
+        const res = await request(app)
+          .post("/v1/hr/reports")
+          .set("Authorization", `Bearer ${hrToken}`)
+          .send({
+            date: "2026-04-24",
+            links: [{ accountId, url: "https://snapchat.com/t/abc123XY", platform: "snapchat" }],
+          });
+
+        expect(res.status).toBe(201);
+        expect(res.body.data.links.length).toBe(1);
+        expect(res.body.data.links[0].url).toBe("https://www.snapchat.com/spotlight/W7_resolved123");
+      } finally {
+        __setSnapchatResolverForTesting(null);
+      }
+    });
+
+    it("submit-time Snapchat resolution keeps the original /t/ url when it resolves to a Story (resolver returns null)", async () => {
+      __setSnapchatResolverForTesting(async () => null);
+      try {
+        const shareUrl = "https://snapchat.com/t/abc123XY";
+        const res = await request(app)
+          .post("/v1/hr/reports")
+          .set("Authorization", `Bearer ${hrToken}`)
+          .send({
+            date: "2026-04-25",
+            links: [{ accountId, url: shareUrl, platform: "snapchat" }],
+          });
+
+        expect(res.status).toBe(201);
+        expect(res.body.data.links.length).toBe(1);
+        expect(res.body.data.links[0].url).toBe(shareUrl);
+      } finally {
+        __setSnapchatResolverForTesting(null);
       }
     });
 

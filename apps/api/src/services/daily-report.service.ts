@@ -4,8 +4,9 @@ import type { ReportLinkInput, DailyReportResponse, AdminReportFilters } from "@
 import { todayIST, istMidnight, dateToIST, canonicalKey } from "@dashmani/shared";
 import { calcStreaks } from "../utils/streak";
 import { resolveFacebookShareUrl } from "./social-insights/facebook.provider";
+import { resolveSnapchatShareUrl } from "./social-insights/snapchat.provider";
 
-// ── Submit-time opaque-Facebook resolution (injectable for tests) ─────────────
+// ── Submit-time opaque-share resolution (injectable for tests) ────────────────
 //
 // ~84% of our Facebook links are opaque `facebook.com/share/r/<code>` redirects
 // that carry a share TOKEN, not a post id — the Graph API can't query them, so
@@ -14,7 +15,10 @@ import { resolveFacebookShareUrl } from "./social-insights/facebook.provider";
 // to recover the clean numeric `/reel/<n>` URL and store THAT instead, so future
 // FB links come in queryable. This stops FB coverage from bleeding going forward;
 // the unrecoverable historical tail (pfbid redirects) is unchanged and the UI is
-// honest about it.
+// honest about it. The same pass ALSO resolves `snapchat.com/t/<code>` shares to
+// a clean `/spotlight/<id>` url for the same reason — an unresolved Snapchat share
+// is unsearchable/unscrapeable forever once stored, so resolving it at submit time
+// prevents that going forward.
 //
 // LOAD-BEARING SAFETY (the HR submit is the org's most-used path):
 //   • ADDITIVE — only REPLACES an opaque url with a clean one; never drops,
@@ -24,9 +28,10 @@ import { resolveFacebookShareUrl } from "./social-insights/facebook.provider";
 //     submit.
 //   • OUTSIDE the $transaction — the network probe runs before any DB tx opens,
 //     so a slow redirect never holds a transaction open.
-//   • DARK-SAFE — with no META token / no network, resolveFacebookShareUrl
-//     returns null and every url is left untouched.
-const SHARE_URL_RE = /facebook\.com\/share\//i;
+//   • DARK-SAFE — with no META token / no network, the resolvers return null and
+//     every url is left untouched.
+const FB_SHARE_URL_RE = /facebook\.com\/share\//i;
+const SNAP_SHARE_URL_RE = /snapchat\.com\/t\//i;
 const MAX_OPAQUE_RESOLVES_PER_SUBMIT = 50; // a huge paste never stalls submit
 const OPAQUE_RESOLVE_BUDGET_MS = 8_000; // overall wall-clock guard for the pass
 
@@ -44,6 +49,16 @@ export function __setShareResolverForTesting(fn: ShareResolver | null): void {
   resolveShareUrlImpl = fn ?? defaultShareResolver;
 }
 
+// Snapchat /t/ share resolver — same fail-open contract as the FB one. Resolves a
+// share redirect to a clean /spotlight/<id> url (or null for a Story). Injectable.
+type SnapResolver = (url: string, signal?: AbortSignal) => Promise<string | null>;
+const defaultSnapResolver: SnapResolver = (url, signal) =>
+  resolveSnapchatShareUrl(url, fetch, signal);
+let resolveSnapUrlImpl: SnapResolver = defaultSnapResolver;
+export function __setSnapchatResolverForTesting(fn: SnapResolver | null): void {
+  resolveSnapUrlImpl = fn ?? defaultSnapResolver;
+}
+
 // Best-effort, fail-open, additive replacement of opaque /share/ FB urls with
 // their clean redirect target. Mutates url strings in place on a SHALLOW COPY of
 // the input rows (callers pass the live links array); returns the same array so
@@ -56,36 +71,34 @@ async function resolveOpaqueShareLinks(links: ReportLinkInput[]): Promise<Report
   const batchController = new AbortController();
   let budgetTimer: ReturnType<typeof setTimeout> | undefined;
   try {
-    // Index only the de-dupable opaque /share/ links; cap how many we resolve.
-    const targets: Array<{ idx: number; url: string }> = [];
+    // Index every de-dupable opaque link (FB /share/ OR Snapchat /t/); cap the count.
+    const targets: Array<{ idx: number; url: string; kind: "fb" | "snap" }> = [];
     for (let i = 0; i < links.length; i++) {
       const l = links[i];
       if (l.isScheduled || !l.url || !l.url.trim()) continue;
-      if (SHARE_URL_RE.test(l.url) && targets.length < MAX_OPAQUE_RESOLVES_PER_SUBMIT) {
-        targets.push({ idx: i, url: l.url.trim() });
-      }
+      if (targets.length >= MAX_OPAQUE_RESOLVES_PER_SUBMIT) break;
+      if (FB_SHARE_URL_RE.test(l.url)) targets.push({ idx: i, url: l.url.trim(), kind: "fb" });
+      else if (SNAP_SHARE_URL_RE.test(l.url)) targets.push({ idx: i, url: l.url.trim(), kind: "snap" });
     }
     if (targets.length === 0) return links;
 
-    // Overall wall-clock guard: if the batch outruns the budget, abort the in-flight
-    // fetches, take whatever already resolved, and keep originals for the rest.
     const deadline = new Promise<"timeout">((resolve) => {
       budgetTimer = setTimeout(() => {
-        batchController.abort(); // cancel the still-pending redirect probes
+        batchController.abort();
         resolve("timeout");
       }, OPAQUE_RESOLVE_BUDGET_MS);
     });
     const work = Promise.allSettled(
-      targets.map((t) =>
-        resolveShareUrlImpl(t.url, batchController.signal).then((clean) => ({ idx: t.idx, clean })),
-      ),
+      targets.map((t) => {
+        const resolver = t.kind === "fb" ? resolveShareUrlImpl : resolveSnapUrlImpl;
+        return resolver(t.url, batchController.signal).then((clean) => ({ idx: t.idx, clean }));
+      }),
     );
     const outcome = await Promise.race([work, deadline]);
-    if (outcome === "timeout") return links; // budget blown → keep all originals
+    if (outcome === "timeout") return links;
 
     for (const settled of outcome) {
       if (settled.status === "fulfilled" && settled.value.clean) {
-        // REPLACE only — never drop. The cleaned url dedupes better downstream.
         links[settled.value.idx] = { ...links[settled.value.idx], url: settled.value.clean };
       }
     }

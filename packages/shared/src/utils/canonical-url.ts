@@ -1,4 +1,5 @@
 import { extractYouTubeVideoId } from "./youtube";
+import { extractSnapchatSpotlightId } from "./snapchat";
 
 /**
  * Canonical de-duplication key for a social-media link.
@@ -74,15 +75,20 @@ export function canonicalKey(rawUrl: string | null | undefined): string {
     // /share/r/…, /posts/…, /story.php, pfbid… → intentionally fall through.
   }
 
-  // ── Snapchat: intentionally NOT canonicalized ──────────────────────────────
-  // Prod Snapchat links are snapchat.com/t/<code> share redirects whose code is a
-  // tracking token, not a content id (like FB's opaque /share/ links). They resolve
-  // to client-rendered profile pages with no server-readable caption/engagement, and
-  // there's no public organic API — so there's no caption-search to feed a stable key.
-  // We let all Snapchat URLs fall through to the full-URL fallback below (same as the
-  // old behavior). A Spotlight/story canonical key was removed (2026-06-30) along with
-  // the dead insight provider. Follower counts + submission-count Top Links don't need
-  // a canonical key.
+  // ── Snapchat (Spotlight only) ──────────────────────────────────────────────
+  // A RESOLVED spotlight url (clean /spotlight/<id> or /p/<uuid>/spotlight/<id>)
+  // has a stable content id → key it sc:<id>. Case-sensitive (opaque base64url).
+  // Unresolved /t/<code> shares AND /p/<uuid>/<storyId> STORY urls have no stable
+  // spotlight id (extractSnapchatSpotlightId returns null) → they FALL THROUGH to
+  // the full-URL fallback below, exactly like opaque FB /share/ links. This is
+  // correct: a /t/ share is resolved to its clean spotlight url at submit time
+  // (resolveSnapchatShareUrl) so future links come in already keyable; the
+  // historical /t/ tail stays on the raw-url fallback (never over-collapsed).
+  if (host === "snapchat.com" || host.endsWith(".snapchat.com")) {
+    const id = extractSnapchatSpotlightId(s);
+    if (id) return `sc:${id}`; // spotlight id kept case-sensitive
+    // /t/ share + /p/<uuid>/<storyId> story → fall through (no stable key).
+  }
 
   // ── Fallback ─────────────────────────────────────────────────────────────
   // Exactly the old behavior for everything we don't explicitly recognize.

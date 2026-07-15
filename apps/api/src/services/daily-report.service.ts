@@ -72,6 +72,9 @@ async function resolveOpaqueShareLinks(links: ReportLinkInput[]): Promise<Report
   let budgetTimer: ReturnType<typeof setTimeout> | undefined;
   try {
     // Index every de-dupable opaque link (FB /share/ OR Snapchat /t/); cap the count.
+    // The cap is SHARED across both kinds (not 50 FB + 50 Snapchat) — a submit with
+    // many of one kind can leave later links of the other kind unresolved this pass.
+    // Still safe: unresolved links just keep their original opaque url (fail-open).
     const targets: Array<{ idx: number; url: string; kind: "fb" | "snap" }> = [];
     for (let i = 0; i < links.length; i++) {
       const l = links[i];

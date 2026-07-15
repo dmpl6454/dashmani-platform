@@ -471,6 +471,7 @@ export default function AdminLeaderboardPage() {
         { key: "youtube", label: "YouTube", rankBy: "Views", showViews: true },
         { key: "facebook", label: "Facebook", rankBy: "Views", showViews: true },
         { key: "instagram", label: "Instagram", rankBy: "Likes + Comments", showViews: false },
+        { key: "snapchat", label: "Snapchat", rankBy: "Views", showViews: true },
       ] as const).map(({ key, label, rankBy, showViews }) => {
         const board = platBoards[key] ?? [];
         return (

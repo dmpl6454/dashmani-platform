@@ -53,6 +53,8 @@ export type FetchFn = typeof fetch;
 
 // ── HTML parsers (exported for unit tests) ───────────────────────────────────
 
+import { recordApiUsage } from "../api-usage.service";
+
 // Decode numeric HTML entities like &#x38; → &
 function decodeEntities(s: string): string {
   return s
@@ -306,4 +308,126 @@ export async function scrapeSnapchatFollowers(
   // All candidates failed or returned no count.
   console.log(`[snapchat-scraper] ${handle}: no count found (${urls.length} URL(s) tried${sawWall ? ", saw wall/error" : ", all 404/miss"})`);
   return sawWall ? { followers: null, walled: true } : MISS;
+}
+
+// ── Snapchat public Spotlight ENGAGEMENT scraper ─────────────────────────────
+//
+// A logged-out GET of a public Spotlight page (with a Googlebot User-Agent)
+// returns the full page HTML — NO login wall — with engagement embedded in a
+// Next.js `__NEXT_DATA__` JSON blob. This is the SAME technique the Facebook reel
+// scraper uses (facebook-scraper.ts) and the follower scraper above uses. It reads
+// only public data, no credentials.
+//
+// VERIFIED LIVE FROM THE LINODE DATACENTER IP (2026-07-14):
+//   • https://www.snapchat.com/spotlight/<id> → HTTP 200, ~500KB HTML, no wall.
+//   • __NEXT_DATA__.props.pageProps.spotlightFeed.spotlightStories[0] IS the
+//     spotlight in the URL (verified: the URL's id appears in stories[0]). The
+//     other ~24 stories are RECOMMENDED-FEED NEIGHBORS (different creators). So
+//     we read stories[0] ONLY — never first-match viewCount across the page
+//     (that gives a neighbor's number, the same trap as FB play_count).
+//   • stories[0].metadata.engagementStats = { viewCount, shareCount, commentCount,
+//     boostCount, recommendCount } (all STRINGS). STABLE across refetches.
+//   • Ephemeral STORY pages (from /t/ shares that aren't spotlights) serve
+//     viewCount:"-1" — a sentinel, NOT a real count. We map -1 → null.
+//   • Snapchat exposes NO like metric for Spotlight → `likes` is ALWAYS null.
+//   • caption = videoMetadata.embeddedTextCaption (fallback: .description).
+//
+// FAIL-OPEN by contract: any non-200, login redirect, short body, missing blob,
+// parse error, or timeout returns nulls — the caller keeps whatever it had.
+
+// Googlebot UA — verified to return the server-rendered HTML with __NEXT_DATA__.
+const SPOTLIGHT_SCRAPER_UA =
+  "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)";
+const SPOTLIGHT_SCRAPER_TIMEOUT_MS = 12_000;
+// A real spotlight page is ~300-540KB. A login wall / error shell is far shorter.
+const MIN_SPOTLIGHT_HTML_LEN = 50_000;
+
+export interface ScrapedSnapEngagement {
+  views: number | null;
+  likes: number | null;     // ALWAYS null — Snapchat has no public Spotlight like metric.
+  comments: number | null;
+  shares: number | null;
+  caption: string | null;
+  // True when we were BLOCKED (login/checkpoint redirect or non-200), NOT "no data".
+  // The provider counts consecutive walls to trip its per-run short-circuit.
+  walled?: boolean;
+}
+
+const SPOTLIGHT_EMPTY: ScrapedSnapEngagement = { views: null, likes: null, comments: null, shares: null, caption: null };
+
+// Parse a string stat → a positive integer, mapping the -1 Story sentinel and any
+// non-positive / non-numeric value to null.
+function toCount(v: unknown): number | null {
+  if (typeof v !== "string" && typeof v !== "number") return null;
+  const n = Number(v);
+  if (!Number.isFinite(n) || n < 0) return null; // -1 sentinel → null
+  return n;
+}
+
+// Pull the __NEXT_DATA__ JSON blob and read spotlightStories[0]. Pure + synchronous.
+// Exported for unit tests with captured fixtures.
+export function parseSnapchatSpotlightHtml(html: string): ScrapedSnapEngagement {
+  if (!html || html.length < MIN_SPOTLIGHT_HTML_LEN) return { ...SPOTLIGHT_EMPTY };
+
+  const m = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
+  if (!m || !m[1]) return { ...SPOTLIGHT_EMPTY };
+
+  let data: any;
+  try {
+    data = JSON.parse(m[1]);
+  } catch {
+    return { ...SPOTLIGHT_EMPTY };
+  }
+
+  const stories = data?.props?.pageProps?.spotlightFeed?.spotlightStories;
+  if (!Array.isArray(stories) || stories.length === 0) return { ...SPOTLIGHT_EMPTY };
+
+  // TARGET IS ALWAYS index 0 (the URL's spotlight). Never scan neighbors.
+  const meta = stories[0]?.metadata ?? {};
+  const stats = meta.engagementStats ?? {};
+  const vmeta = meta.videoMetadata ?? {};
+
+  const caption =
+    (typeof vmeta.embeddedTextCaption === "string" && vmeta.embeddedTextCaption.trim()) ||
+    (typeof vmeta.description === "string" && vmeta.description.trim()) ||
+    null;
+
+  return {
+    views: toCount(stats.viewCount),
+    likes: null, // Snapchat has no public Spotlight like metric — honest null.
+    comments: toCount(stats.commentCount),
+    shares: toCount(stats.shareCount),
+    caption: caption || null,
+  };
+}
+
+// Fetch + parse one public Spotlight's engagement by its spotlight id. Fail-open:
+// returns all-null (walled:true on a block/error) on any non-200, login redirect,
+// short body, missing blob, parse miss, or timeout.
+export async function scrapeSnapchatSpotlightEngagement(
+  spotlightId: string,
+  fetchImpl: FetchFn = fetch
+): Promise<ScrapedSnapEngagement> {
+  if (!spotlightId || !/^[A-Za-z0-9_-]{8,}$/.test(spotlightId)) return { ...SPOTLIGHT_EMPTY };
+
+  // Cost Sheet: count each scrape attempt (free public fetch; $0). Fire-and-forget.
+  recordApiUsage({ provider: "meta", operation: "snap-spotlight-scraper", calls: 1, units: 1 });
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), SPOTLIGHT_SCRAPER_TIMEOUT_MS);
+  try {
+    const res = await fetchImpl(`https://www.snapchat.com/spotlight/${spotlightId}`, {
+      headers: { "User-Agent": SPOTLIGHT_SCRAPER_UA, "Accept-Language": "en-US,en;q=0.9" },
+      redirect: "follow",
+      signal: controller.signal,
+    });
+    if (!res.ok) return { ...SPOTLIGHT_EMPTY, walled: true };
+    if (/accounts\.snapchat\.com|\/login|\/checkpoint/i.test(res.url)) return { ...SPOTLIGHT_EMPTY, walled: true };
+    const html = await res.text();
+    return parseSnapchatSpotlightHtml(html);
+  } catch {
+    return { ...SPOTLIGHT_EMPTY, walled: true };
+  } finally {
+    clearTimeout(timer);
+  }
 }

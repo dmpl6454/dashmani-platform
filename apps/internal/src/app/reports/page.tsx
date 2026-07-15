@@ -8,8 +8,15 @@ import { useEmployees } from "@/lib/hooks/use-employees";
 import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { UserAvatar } from "@/components/user-avatar";
+import { PlatformIcon } from "@/lib/platform-icon";
 import { RangePills, presetStart, todayISO, rangeLabel } from "./_range";
 import { ExportButton } from "./_export";
+
+// Snapchat has no dedicated lucide-react brand icon; reuse the same SVG mapped
+// in PlatformIcon (already used elsewhere in the portal) for visual consistency.
+function SnapchatTopLinksIcon({ className }: { className?: string }) {
+  return <PlatformIcon slug="snapchat" className={className} />;
+}
 
 const PLATFORM_COLORS: Record<string, string> = {
   instagram: "bg-pink-100 text-pink-700",
@@ -310,6 +317,7 @@ export default function ReportsPage() {
   const { data: topYouTubeData, isLoading: topYouTubeLoading } = useTopLinks("youtube", topWindowStart, topWindowEnd, 20);
   const { data: topInstagramData, isLoading: topInstagramLoading } = useTopLinks("instagram", topWindowStart, topWindowEnd, 20);
   const { data: topFacebookData, isLoading: topFacebookLoading } = useTopLinks("facebook", topWindowStart, topWindowEnd, 20);
+  const { data: topSnapchatData, isLoading: topSnapchatLoading } = useTopLinks("snapchat", topWindowStart, topWindowEnd, 20);
   // limit:500 so the reports employee-filter dropdown lists all employees (API caps at 50 otherwise).
   const { data: employeesData } = useEmployees({ limit: 500 });
 
@@ -621,6 +629,18 @@ export default function ReportsPage() {
             data: (topFacebookData as any)?.data ?? [],
             loading: topFacebookLoading,
             note: "Facebook · likes + comments",
+          },
+          {
+            key: "snapchat" as const,
+            label: "Top Snapchat Spotlights",
+            Icon: SnapchatTopLinksIcon,
+            iconBg: "bg-yellow-50",
+            iconColor: "text-yellow-600",
+            metric: "views" as const, // Snapchat ranks by views (no likes metric exists)
+            showViews: true,
+            data: (topSnapchatData as any)?.data ?? [],
+            loading: topSnapchatLoading,
+            note: "Snapchat · views (no likes — not exposed by Spotlight)",
           },
         ];
 

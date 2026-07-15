@@ -12,7 +12,8 @@ import { recordGrowthSnapshot, getGrowthOverview, getAccountGrowth } from "../se
 import { getAllAccountsLinkStats } from "../services/account.service";
 import { generateReportsExport } from "../services/report-export.service";
 import { getLeaderboard, getTopLinksLeaderboard, getLeaderboardCoverage, getPlatformLeaderboards } from "../services/leaderboard.service";
-import { ENRICHMENT_ENABLED_KEY } from "../constants/enrichment";
+import { ENRICHMENT_ENABLED_KEY, EXTRACTION_SPEND_CEILING_KEY } from "../constants/enrichment";
+import { getTodayDeepseekSpendUsd, getSpendCeilingUsd } from "../services/extraction-spend.service";
 import {
   getPendingEmployees,
   approveEmployee,
@@ -631,6 +632,44 @@ router.put(
         update: { value },
       });
       return success(res, { enabled });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// GET /admin/extraction/spend-ceiling — current daily USD ceiling + today's spend.
+router.get(
+  "/admin/extraction/spend-ceiling",
+  authenticate,
+  requirePermission("reports", "view"),
+  async (_req: Request, res: Response, next: NextFunction) => {
+    try {
+      const [ceilingUsd, todaySpendUsd] = await Promise.all([getSpendCeilingUsd(), getTodayDeepseekSpendUsd()]);
+      return success(res, { ceilingUsd, todaySpendUsd });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// PUT /admin/extraction/spend-ceiling — admin sets the hard daily USD ceiling.
+router.put(
+  "/admin/extraction/spend-ceiling",
+  authenticate,
+  requirePermission("reports", "manage"),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { ceilingUsd } = req.body as { ceilingUsd?: unknown };
+      if (typeof ceilingUsd !== "number" || !Number.isFinite(ceilingUsd) || ceilingUsd < 0 || ceilingUsd > 1000) {
+        return error(res, "VALIDATION_ERROR", "ceilingUsd must be a number between 0 and 1000", 400);
+      }
+      await prisma.systemSetting.upsert({
+        where: { key: EXTRACTION_SPEND_CEILING_KEY },
+        create: { key: EXTRACTION_SPEND_CEILING_KEY, value: String(ceilingUsd) },
+        update: { value: String(ceilingUsd) },
+      });
+      return success(res, { ceilingUsd });
     } catch (err) {
       next(err);
     }

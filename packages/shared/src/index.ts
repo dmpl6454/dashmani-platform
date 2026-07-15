@@ -30,6 +30,7 @@ export * from "./utils/youtube";
 export * from "./utils/instagram";
 export * from "./utils/facebook";
 export * from "./utils/canonical-url";
+export * from "./utils/snapchat";
 
 // Validators
 export * as authValidators from "./validators/auth";

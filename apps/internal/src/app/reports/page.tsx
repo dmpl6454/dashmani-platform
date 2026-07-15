@@ -588,10 +588,12 @@ export default function ReportsPage() {
         </div>
       )}
 
-      {/* Top Links panels — YouTube, Instagram, Facebook. One shared window toggle
-          on the first rendered panel; each panel reuses the same /admin/reports/top-links
-          endpoint. YouTube ranks by views; Instagram/Facebook by likes+comments.
-          A platform with no links in the active window simply hides its panel. */}
+      {/* Top Links panels — YouTube, Instagram, Facebook, Snapchat. One shared window
+          toggle on the first rendered panel; each panel reuses the same /admin/reports/top-links
+          endpoint. YouTube/Facebook/Snapchat rank by views; Instagram by likes+comments
+          (Snapchat has no likes metric — its panel never renders one).
+          A platform with no links in the active window simply hides its panel
+          (Facebook is the one exception — it always renders, see below). */}
       {(() => {
         const PLATFORMS = [
           {

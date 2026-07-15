@@ -60,6 +60,12 @@ async function getEngagementByEmployee(
   // engagement) without any UI indicating the narrower scope. The index alone is the
   // fix; do not reintroduce a silent default window here.
   //
+  // ⚠️ FORWARD-LOOKING: this all-time/windowed cost comparison is a snapshot at today's
+  // row count. An all-time DISTINCT ON's cost grows with total distinct (employee, url)
+  // pairs ever recorded, while a windowed query's cost stays roughly flat as the table
+  // ages. Re-measure this comparison if link_metrics grows materially past its current
+  // size (e.g. 2-5x) — the all-time query may eventually become the slower option again.
+  //
   // NOTE: both bounds are computed in JS and ALWAYS passed as concrete Dates (a null
   // start becomes the epoch, a null end becomes a far-future date). This keeps the
   // $queryRaw a fully STATIC tagged template — the repo's proven pattern
@@ -259,10 +265,10 @@ async function getLeaderboardUncached(startDate?: string, endDate?: string) {
 // "whose posts actually performed". Ranked by total engagement desc.
 //
 // ⚠️ Truthful coverage caveats surfaced to the UI:
-//  - YouTube → reliable views; IG/FB → likes+comments (no reliable views); these are
-//    summed into one engagement score so an IG/FB-heavy employee isn't unfairly
-//    under-ranked by a views-only metric.
-//  - Snapchat is NOT counted (no engagement API; manual-only) — to be added later.
+//  - YouTube → reliable views; IG/FB → likes+comments (no reliable views); Snapchat →
+//    views+comments (no likes — Spotlight exposes no public like metric). All are
+//    summed into one engagement score so no platform is unfairly under- or
+//    over-ranked by a metric it doesn't expose.
 //  - Only links we've enriched have engagement; the same firehose/opaque-link limits
 //    that cap Link Search coverage apply here (an employee's unreachable posts simply
 //    don't contribute). The UI notes this so the ranking isn't read as "complete".

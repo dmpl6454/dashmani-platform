@@ -3,6 +3,8 @@ import { prisma } from "@dashmani/db";
 import {
   parseExtraction,
   extractEntitiesFromContent,
+  buildSystemPromptWithEntities,
+  buildCaptionUserPrompt,
   type RawExtractFn,
 } from "../src/services/entity-extraction.service";
 
@@ -101,6 +103,26 @@ describe("parseExtraction", () => {
     );
     expect(out).toHaveLength(1);
     expect(out[0].canonicalName).toBe("Keep Me");
+  });
+});
+
+describe("stable-prefix prompt structure (cache enabler)", () => {
+  it("system prompt embeds the known-entities list (the cacheable prefix)", () => {
+    const sys = buildSystemPromptWithEntities(["Salman Khan", "Shah Rukh Khan"]);
+    expect(sys).toContain("Salman Khan");
+    expect(sys).toContain("Shah Rukh Khan");
+    expect(sys).toContain("KNOWN canonical names");
+  });
+  it("system prompt is IDENTICAL for the same entity list (byte-stable → cacheable)", () => {
+    const a = buildSystemPromptWithEntities(["A", "B", "C"]);
+    const b = buildSystemPromptWithEntities(["A", "B", "C"]);
+    expect(a).toBe(b);
+  });
+  it("user prompt contains ONLY the varying caption/title, NOT the entity list", () => {
+    const u = buildCaptionUserPrompt("a caption", "a title");
+    expect(u).toContain("a caption");
+    expect(u).toContain("a title");
+    expect(u).not.toContain("KNOWN canonical names");
   });
 });
 

@@ -359,6 +359,7 @@ const SPOTLIGHT_EMPTY: ScrapedSnapEngagement = { views: null, likes: null, comme
 // non-positive / non-numeric value to null.
 function toCount(v: unknown): number | null {
   if (typeof v !== "string" && typeof v !== "number") return null;
+  if (typeof v === "string" && v.trim() === "") return null; // Number("") is 0, not "no data"
   const n = Number(v);
   if (!Number.isFinite(n) || n < 0) return null; // -1 sentinel → null
   return n;

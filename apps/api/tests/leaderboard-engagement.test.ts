@@ -1,6 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { prisma } from "@dashmani/db";
-import { getLeaderboard, getTopLinksLeaderboard, getPlatformLeaderboards } from "../src/services/leaderboard.service";
+import {
+  getLeaderboard,
+  getTopLinksLeaderboard,
+  getPlatformLeaderboards,
+  invalidateLeaderboardCache,
+} from "../src/services/leaderboard.service";
 
 // ── DB-backed: verifies the 2026-06-29 fix that engagement comes from link_metrics
 // (the real snapshots) and NOT report_links.likes/comments/shares (always 0). Also
@@ -45,6 +50,10 @@ beforeAll(async () => {
   }
 });
 beforeEach(async () => {
+  // Reset the module-singleton 60s TTL cache before EVERY test — otherwise a prior
+  // test's cached leaderboard result can be served to a later test that expects fresh
+  // data (the exact leak documented for link-search.service.ts's coverage cache).
+  invalidateLeaderboardCache();
   if (dbAvailable) await cleanup();
 });
 afterAll(async () => {

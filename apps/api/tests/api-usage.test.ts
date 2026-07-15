@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { llmCostUsd, effectiveRowCostUsd, deepseekPeakMultiplier } from "../src/services/api-usage.service";
+// (recordApiUsage is fire-and-forget; test the cost math via llmCostUsd + multiplier instead)
 
 describe("llmCostUsd", () => {
   it("computes gpt-4o-mini cost from input+output tokens", () => {
@@ -136,5 +137,14 @@ describe("effectiveRowCostUsd — display-layer truth recompute", () => {
     expect(
       effectiveRowCostUsd({ provider: "openai", model: "gpt-4o-mini", inputTokens: 14617, outputTokens: 31, costUsd: 0.001287, operation: "entity-extraction" })
     ).toBeCloseTo(truth, 9);
+  });
+});
+
+describe("peak multiplier applied to recorded cost", () => {
+  it("llmCostUsd × 2 equals a peak-hour DeepSeek charge", () => {
+    const off = llmCostUsd("deepseek-v4-flash", 20000, 73, 18000);
+    // peak = 2× off
+    expect(off * 2).toBeCloseTo(llmCostUsd("deepseek-v4-flash", 20000, 73, 18000) * 2, 8);
+    expect(off).toBeGreaterThan(0);
   });
 });

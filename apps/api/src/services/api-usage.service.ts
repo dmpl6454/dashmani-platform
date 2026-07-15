@@ -137,6 +137,8 @@ export interface RecordUsageInput {
   cachedInputTokens?: number | null;
   /** Override the computed cost (rarely needed). If omitted, computed from prices. */
   costUsd?: number;
+  /** Multiply the computed cost (e.g. DeepSeek 2× peak-hour surcharge). Default 1. */
+  costMultiplier?: number;
 }
 
 /**
@@ -154,6 +156,7 @@ export function recordApiUsage(input: RecordUsageInput): void {
   if (costUsd == null) {
     if (inputTokens != null || outputTokens != null) {
       costUsd = llmCostUsd(model, inputTokens ?? 0, outputTokens ?? 0, input.cachedInputTokens ?? 0);
+      if (input.costMultiplier && input.costMultiplier !== 1) costUsd *= input.costMultiplier;
     } else {
       const unitPrice = UNIT_PRICES[input.provider] ?? 0;
       costUsd = (input.units ?? 0) * unitPrice;

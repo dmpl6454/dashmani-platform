@@ -11,7 +11,19 @@
 
 import { prisma } from "@dashmani/db";
 
-export type UsageProvider = "openai" | "gemini" | "anthropic" | "meta" | "youtube";
+/**
+ * DeepSeek peak/valley multiplier. Peak hours (2× price) are UTC 01:00-04:00 and
+ * 06:00-10:00 (inclusive of the start hour, exclusive of the end hour). Off-peak = 1×.
+ * Applied to the standard rate in LLM_PRICES so recorded cost matches the real bill.
+ * Verified from the DeepSeek console notice (2026-07-15).
+ */
+export function deepseekPeakMultiplier(when: Date): number {
+  const h = when.getUTCHours();
+  const inPeak = (h >= 1 && h < 4) || (h >= 6 && h < 10);
+  return inPeak ? 2 : 1;
+}
+
+export type UsageProvider = "openai" | "gemini" | "anthropic" | "meta" | "youtube" | "deepseek";
 
 // ── Price table (USD). Keep current; edit here when a provider changes pricing. ──
 // LLM prices are per 1,000,000 tokens (input/output separately). Sourced from each
@@ -38,6 +50,15 @@ const LLM_PRICES: Record<string, { inPerM: number; cachedPerM: number; outPerM: 
   "claude-haiku-4-5": { inPerM: 1.0, cachedPerM: 1.0, outPerM: 5.0 },
   "claude-haiku-4-5-20251001": { inPerM: 1.0, cachedPerM: 1.0, outPerM: 5.0 },
   "claude-sonnet-4-20250514": { inPerM: 3.0, cachedPerM: 3.0, outPerM: 15.0 },
+  // DeepSeek V4-Flash (non-thinking) — the ACTIVE extraction provider (2026-07-15).
+  // Cache-hit input $0.0028/M, cache-miss $0.14/M, output $0.28/M — OFFICIAL, from
+  // api-docs.deepseek.com. Cache is on-disk, enabled by default, NO storage fee.
+  // cachedPerM = the cache-HIT rate; we pass prompt_cache_hit_tokens as cachedTokens.
+  // ⚠️ PEAK PRICING: DeepSeek charges 2× during UTC 01:00-04:00 and 06:00-10:00.
+  // The table below is the STANDARD (off-peak) rate; the 2× multiplier is applied at
+  // the call site (deepseekExtract) based on the request's UTC hour, so the recorded
+  // cost matches the real bill regardless of when the cron ran.
+  "deepseek-v4-flash": { inPerM: 0.14, cachedPerM: 0.0028, outPerM: 0.28 },
 };
 
 // Non-LLM per-unit prices (USD). Meta Graph + YouTube Data API are FREE within
@@ -51,6 +72,7 @@ const UNIT_PRICES: Record<UsageProvider, number> = {
   openai: 0,
   gemini: 0,
   anthropic: 0,
+  deepseek: 0, // dollar cost flows through LLM_PRICES/llmCostUsd; unit fallback unused for token calls
 };
 
 /**

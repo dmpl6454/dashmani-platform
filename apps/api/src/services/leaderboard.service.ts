@@ -30,36 +30,43 @@ async function getEngagementByEmployee(
   startDate?: string,
   endDate?: string,
 ): Promise<Map<string, EngagementAgg>> {
-  const where: Record<string, unknown> = { status: "ok" };
-  if (startDate || endDate) {
-    const range: Record<string, Date> = {};
-    if (startDate) range.gte = new Date(startDate);
-    if (endDate) range.lte = new Date(endDate);
-    where.reportDate = range;
-  }
+  // Latest snapshot per (employeeId, urlNormalized) done IN POSTGRES via DISTINCT ON
+  // (byte-identical to the old JS seen-Set dedup: same key, same latest-by-fetchedAt).
+  // Backed by the partial covering index (Task B1): Index Only Scan, ~763ms vs the old
+  // 2790ms full scan + 37MB disk sort that shipped 307k rows to Node. Default window
+  // (last 90d) applies ONLY here — NOT to the streak/count query in getLeaderboard.
+  //
+  // NOTE: both bounds are computed in JS and ALWAYS passed as concrete Dates (a null
+  // end becomes a far-future date). This keeps the $queryRaw a fully STATIC tagged
+  // template — the repo's proven pattern (link-search.service.ts) — with NO conditional
+  // `Prisma.sql`/`Prisma.empty` fragment (that helper isn't used anywhere in this repo
+  // yet, so we don't introduce it). Two fixed `${}` param bindings only.
+  const start = startDate ? new Date(startDate) : new Date(Date.now() - 90 * 86_400_000);
+  const end = endDate ? new Date(endDate) : new Date("2999-12-31T00:00:00.000Z");
 
-  const snapshots = await prisma.linkMetric.findMany({
-    where,
-    orderBy: { fetchedAt: "desc" },
-    select: { employeeId: true, urlNormalized: true, views: true, likes: true, comments: true },
-  });
+  const rows = await prisma.$queryRaw<
+    Array<{ employee_id: string; views: number | null; likes: number | null; comments: number | null }>
+  >`
+    SELECT employee_id, views, likes, comments
+    FROM (
+      SELECT DISTINCT ON (employee_id, url_normalized)
+        employee_id, views, likes, comments
+      FROM link_metrics
+      WHERE status = 'ok'
+        AND report_date >= ${start}
+        AND report_date <= ${end}
+      ORDER BY employee_id, url_normalized, fetched_at DESC
+    ) latest
+  `;
 
-  // Latest snapshot per (employeeId, urlNormalized) — newest fetchedAt already first.
-  const seen = new Set<string>();
   const byEmployee = new Map<string, EngagementAgg>();
-  for (const s of snapshots) {
-    if (!s.employeeId) continue;
-    const key = `${s.employeeId}::${s.urlNormalized}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    let agg = byEmployee.get(s.employeeId);
-    if (!agg) {
-      agg = { views: 0, likes: 0, comments: 0, linkCount: 0 };
-      byEmployee.set(s.employeeId, agg);
-    }
-    agg.views += s.views ?? 0;
-    agg.likes += s.likes ?? 0;
-    agg.comments += s.comments ?? 0;
+  for (const r of rows) {
+    if (!r.employee_id) continue;
+    let agg = byEmployee.get(r.employee_id);
+    if (!agg) { agg = { views: 0, likes: 0, comments: 0, linkCount: 0 }; byEmployee.set(r.employee_id, agg); }
+    agg.views += r.views ?? 0;
+    agg.likes += r.likes ?? 0;
+    agg.comments += r.comments ?? 0;
     agg.linkCount += 1;
   }
   return byEmployee;
@@ -84,34 +91,36 @@ async function getEngagementByEmployeePlatform(
   startDate?: string,
   endDate?: string,
 ): Promise<Map<string, Map<"youtube" | "instagram" | "facebook" | "snapchat", EngagementAgg>>> {
-  const where: Record<string, unknown> = { status: "ok" };
-  if (startDate || endDate) {
-    const range: Record<string, Date> = {};
-    if (startDate) range.gte = new Date(startDate);
-    if (endDate) range.lte = new Date(endDate);
-    where.reportDate = range;
-  }
-  const snapshots = await prisma.linkMetric.findMany({
-    where,
-    orderBy: { fetchedAt: "desc" },
-    select: { employeeId: true, urlNormalized: true, views: true, likes: true, comments: true },
-  });
-  const seen = new Set<string>();
+  const start = startDate ? new Date(startDate) : new Date(Date.now() - 90 * 86_400_000);
+  const end = endDate ? new Date(endDate) : new Date("2999-12-31T00:00:00.000Z");
+
+  const rows = await prisma.$queryRaw<
+    Array<{ employee_id: string; url_normalized: string | null; views: number | null; likes: number | null; comments: number | null }>
+  >`
+    SELECT employee_id, url_normalized, views, likes, comments
+    FROM (
+      SELECT DISTINCT ON (employee_id, url_normalized)
+        employee_id, url_normalized, views, likes, comments
+      FROM link_metrics
+      WHERE status = 'ok'
+        AND report_date >= ${start}
+        AND report_date <= ${end}
+      ORDER BY employee_id, url_normalized, fetched_at DESC
+    ) latest
+  `;
+
   const byEmp = new Map<string, Map<"youtube" | "instagram" | "facebook" | "snapchat", EngagementAgg>>();
-  for (const s of snapshots) {
-    if (!s.employeeId) continue;
-    const key = `${s.employeeId}::${s.urlNormalized}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    const plat = platformOfUrl(s.urlNormalized ?? "");
+  for (const r of rows) {
+    if (!r.employee_id) continue;
+    const plat = platformOfUrl(r.url_normalized ?? "");
     if (!plat) continue;
-    let perPlat = byEmp.get(s.employeeId);
-    if (!perPlat) { perPlat = new Map(); byEmp.set(s.employeeId, perPlat); }
+    let perPlat = byEmp.get(r.employee_id);
+    if (!perPlat) { perPlat = new Map(); byEmp.set(r.employee_id, perPlat); }
     let agg = perPlat.get(plat);
     if (!agg) { agg = { views: 0, likes: 0, comments: 0, linkCount: 0 }; perPlat.set(plat, agg); }
-    agg.views += s.views ?? 0;
-    agg.likes += s.likes ?? 0;
-    agg.comments += s.comments ?? 0;
+    agg.views += r.views ?? 0;
+    agg.likes += r.likes ?? 0;
+    agg.comments += r.comments ?? 0;
     agg.linkCount += 1;
   }
   return byEmp;

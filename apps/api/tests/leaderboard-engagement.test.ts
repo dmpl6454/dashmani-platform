@@ -212,6 +212,44 @@ describe("leaderboard engagement (link_metrics-sourced)", () => {
   });
 });
 
+describe("leaderboard engagement dedup — latest-wins regression guard (DISTINCT ON rewrite)", () => {
+  // Proves the dedup semantics stay IDENTICAL whether computed via the OLD JS
+  // Set-based dedup (findMany + orderBy fetchedAt desc + seen-Set) or the NEW SQL
+  // DISTINCT ON query (Task B2). Two snapshots of the SAME (employeeId, urlNormalized)
+  // at DIFFERENT fetchedAt must collapse to the LATEST one's views — never summed.
+  // This test is expected to PASS against BOTH the pre-rewrite and post-rewrite code;
+  // it is a regression guard, not new-functionality TDD.
+  it("getLeaderboard reflects the LATEST snapshot's views, not the sum of both", async () => {
+    if (!dbAvailable) return;
+    const heidi = await seedEmployee("heidi", "ZZ Heidi");
+    const acct = await seedAccount();
+    // getLeaderboard's employeeMap is built by iterating dailyReport rows (not
+    // engagement snapshots directly) — an employee needs a report to appear at all.
+    await prisma.dailyReport.create({
+      data: {
+        employeeId: heidi.id,
+        date: new Date("2026-06-15"),
+        links: { create: [{ accountId: acct.id, url: `${URL_PREFIX}h1`, platform: "youtube" }] },
+      },
+    });
+
+    // Older snapshot: views=10. Newer snapshot (same url): views=50.
+    // If dedup were broken (e.g. summed instead of latest-wins), we'd see 60.
+    await snap({ employeeId: heidi.id, url: `${URL_PREFIX}h1`, fetchedAt: new Date("2026-06-01"), views: 10, likes: 1, comments: 0 });
+    await snap({ employeeId: heidi.id, url: `${URL_PREFIX}h1`, fetchedAt: new Date("2026-06-15"), views: 50, likes: 5, comments: 2 });
+
+    const lb = await getLeaderboard();
+    const h = lb.find((r) => r.employee.id === heidi.id)!;
+
+    expect(h.engagementViews).toBe(50); // latest wins
+    expect(h.engagementViews).not.toBe(60); // NOT summed (10+50)
+    expect(h.engagementLikes).toBe(5);
+    expect(h.engagementComments).toBe(2);
+    expect(h.totalEngagement).toBe(57); // 50+5+2, latest snapshot only
+    expect(h.engagedLinkCount).toBe(1); // one unique link, not two rows
+  });
+});
+
 describe("getPlatformLeaderboards — Snapchat board (ranked by views)", () => {
   it("includes a snapchat key and ranks employees by views desc", async () => {
     if (!dbAvailable) return;

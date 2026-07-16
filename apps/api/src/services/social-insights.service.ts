@@ -1,6 +1,28 @@
 import { prisma } from "@dashmani/db";
 import { getSupportedInsightPlatforms, isPlatformInsightSupported } from "@dashmani/shared";
 
+// Short TTL cache for the heavy insights reads. getInsightsSummary + getTopLinksByPlatform
+// both recompute a DISTINCT ON over the link_metrics table (~2M+ rows); the admin /reports
+// page fires getInsightsSummary + 4× per-platform getTopLinksByPlatform on every load and
+// SWR revalidation. Without a cache those repeated calls each hold a pooled DB connection
+// while the query runs and — under concurrent load with the 6h social-insights cron — drain
+// the 10-connection pool, producing the P2024 "Timed out fetching a connection" errors that
+// surfaced as intermittent "unexpected error" / "failed to fetch" across the portals
+// (incident 2026-07-16). 60s is long enough to absorb a load/focus-revalidation storm, short
+// enough that a fresh cron write shows within a minute. Keyed by fn + window so ranges/
+// employees don't collide. Mirrors leaderboard.service.ts's _lbCache (same rationale).
+const INSIGHTS_TTL_MS = 60 * 1000;
+const _insightsCache = new Map<string, { value: unknown; builtAt: number }>();
+export function invalidateInsightsCache(): void { _insightsCache.clear(); }
+async function memoInsights<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  const hit = _insightsCache.get(key);
+  const now = Date.now();
+  if (hit && now - hit.builtAt < INSIGHTS_TTL_MS) return hit.value as T;
+  const value = await fn();
+  _insightsCache.set(key, { value, builtAt: now });
+  return value;
+}
+
 // ============ Types ============
 
 export interface InsightSnapshot {
@@ -92,44 +114,70 @@ export async function getInsightsSummary(params: {
   employeeId?: string;
 }): Promise<InsightsSummary> {
   const { startDate, endDate, employeeId } = params;
+  return memoInsights(
+    `summary:${startDate ?? ""}:${endDate ?? ""}:${employeeId ?? ""}`,
+    () => getInsightsSummaryUncached(startDate, endDate, employeeId),
+  );
+}
 
-  const where: Record<string, unknown> = {
-    status: "ok",
-  };
-  if (startDate) where.reportDate = { ...(where.reportDate as object | undefined), gte: new Date(startDate) };
-  if (endDate) where.reportDate = { ...(where.reportDate as object | undefined), lte: new Date(endDate) };
-  if (employeeId) where.employeeId = employeeId;
+// Row shape of the DISTINCT ON query below — the exact fields the aggregation +
+// topLinks mapping consume. `employee_name` is joined so we don't hydrate the whole
+// User relation.
+interface InsightRow {
+  link_id: string | null;
+  url_normalized: string;
+  url: string;
+  video_id: string | null;
+  platform: string;
+  employee_id: string;
+  employee_name: string;
+  fetched_at: Date;
+  views: number | null;
+  likes: number | null;
+  comments: number | null;
+}
 
-  // Get latest snapshot per (linkId, urlNormalized) — DISTINCT ON equivalent via group
-  // We fetch all ok snapshots in window then aggregate in JS to get "latest per link"
-  const snapshots = await prisma.linkMetric.findMany({
-    where,
-    orderBy: { fetchedAt: "desc" },
-    select: {
-      linkId: true,
-      urlNormalized: true,
-      url: true,
-      videoId: true,
-      platform: true,
-      employeeId: true,
-      fetchedAt: true,
-      views: true,
-      likes: true,
-      comments: true,
-      employee: { select: { id: true, name: true } },
-    },
-  });
+async function getInsightsSummaryUncached(
+  startDate?: string,
+  endDate?: string,
+  employeeId?: string,
+): Promise<InsightsSummary> {
+  // Latest snapshot per (employee_id, url_normalized) computed IN POSTGRES via DISTINCT ON.
+  // This is byte-identical to the OLD JS dedup (findMany orderBy fetchedAt desc + a seen-Set
+  // keyed on `${employeeId}::${urlNormalized}` keeping the first = newest per key) — same
+  // key, same latest-by-fetchedAt winner — but returns ONLY the deduped set instead of
+  // hydrating every ok row in the window into Node (~340k rows for 30d on prod: the OOM /
+  // pool-exhaustion culprit). The outer ORDER BY fetched_at DESC reproduces the order the
+  // old `latest[]` array had, so the downstream JS `.sort()` (stable in V8) sees inputs in
+  // the SAME order and its tie-break is preserved exactly.
+  //
+  // Bounds are ALWAYS passed as concrete Dates (null-start → epoch, null-end → far future)
+  // to keep this a fully STATIC tagged template — the repo's proven $queryRaw pattern
+  // (leaderboard.service.ts / link-search.service.ts), no conditional Prisma.sql fragments.
+  // employeeId is optional: when absent we bind a sentinel and the `(… OR ${bind} IS NULL)`
+  // makes the filter a no-op (still fully static, still two-plus fixed bindings).
+  const start = startDate ? new Date(startDate) : new Date("1970-01-01T00:00:00.000Z");
+  const end = endDate ? new Date(endDate) : new Date("2999-12-31T00:00:00.000Z");
+  const empFilter = employeeId ?? null;
 
-  // Dedupe to latest snapshot per unique (employeeId + urlNormalized)
-  const seen = new Set<string>();
-  const latest: typeof snapshots = [];
-  for (const s of snapshots) {
-    const key = `${s.employeeId}::${s.urlNormalized}`;
-    if (!seen.has(key)) {
-      seen.add(key);
-      latest.push(s);
-    }
-  }
+  const latest = await prisma.$queryRaw<InsightRow[]>`
+    SELECT link_id, url_normalized, url, video_id, platform, employee_id, employee_name,
+           fetched_at, views, likes, comments
+    FROM (
+      SELECT DISTINCT ON (lm.employee_id, lm.url_normalized)
+        lm.link_id, lm.url_normalized, lm.url, lm.video_id, lm.platform,
+        lm.employee_id, u.name AS employee_name, lm.fetched_at,
+        lm.views, lm.likes, lm.comments
+      FROM link_metrics lm
+      JOIN users u ON u.id = lm.employee_id
+      WHERE lm.status = 'ok'
+        AND lm.report_date >= ${start}
+        AND lm.report_date <= ${end}
+        AND (${empFilter}::text IS NULL OR lm.employee_id = ${empFilter})
+      ORDER BY lm.employee_id, lm.url_normalized, lm.fetched_at DESC
+    ) latest
+    ORDER BY fetched_at DESC
+  `;
 
   // Aggregate
   let totalViews = 0;
@@ -164,17 +212,17 @@ export async function getInsightsSummary(params: {
     .sort((a, b) => (b.views ?? 0) - (a.views ?? 0))
     .slice(0, 20)
     .map((s) => ({
-      linkId: s.linkId,
+      linkId: s.link_id,
       url: s.url,
-      urlNormalized: s.urlNormalized,
-      videoId: s.videoId,
+      urlNormalized: s.url_normalized,
+      videoId: s.video_id,
       platform: s.platform.toLowerCase(),
-      employeeId: s.employeeId,
-      employeeName: s.employee.name,
+      employeeId: s.employee_id,
+      employeeName: s.employee_name,
       views: s.views,
       likes: s.likes,
       comments: s.comments,
-      fetchedAt: s.fetchedAt,
+      fetchedAt: s.fetched_at,
     }));
 
   return {
@@ -212,39 +260,49 @@ export async function getTopLinksByPlatform(params: {
   const { startDate, endDate, limit = 20 } = params;
   // Default sort: YouTube by views, everything else by engagement.
   const sortBy: TopLinkSort = params.sortBy ?? (platform === "youtube" ? "views" : "engagement");
+  return memoInsights(
+    `toplinks:${platform}:${startDate ?? ""}:${endDate ?? ""}:${limit}:${sortBy}`,
+    () => getTopLinksByPlatformUncached(platform, sortBy, limit, startDate, endDate),
+  );
+}
 
-  const where: Record<string, unknown> = { platform, status: "ok" };
-  if (startDate) where.reportDate = { ...(where.reportDate as object | undefined), gte: new Date(startDate) };
-  if (endDate) where.reportDate = { ...(where.reportDate as object | undefined), lte: new Date(endDate) };
+async function getTopLinksByPlatformUncached(
+  platform: string,
+  sortBy: TopLinkSort,
+  limit: number,
+  startDate?: string,
+  endDate?: string,
+): Promise<TopLink[]> {
+  // Latest snapshot per (employee_id, url_normalized) for ONE platform, computed IN
+  // POSTGRES via DISTINCT ON — byte-identical to the OLD JS dedup (findMany orderBy
+  // fetchedAt desc + seen-Set) but returns only the deduped set instead of hydrating
+  // every ok row for the platform+window into Node (306k rows for yt/30d on prod — the
+  // pool-exhaustion culprit that starved /hr/accounts, notifications, and RBAC). The
+  // outer ORDER BY fetched_at DESC reproduces the old `latest[]` order, so the JS
+  // `.sort()` below (stable in V8) preserves the exact same tie-break. The final sort +
+  // slice stays in JS unchanged so the top-N ordering is IDENTICAL to today. Static
+  // tagged template with concrete Date bounds (repo pattern; no Prisma.sql fragments).
+  const start = startDate ? new Date(startDate) : new Date("1970-01-01T00:00:00.000Z");
+  const end = endDate ? new Date(endDate) : new Date("2999-12-31T00:00:00.000Z");
 
-  const snapshots = await prisma.linkMetric.findMany({
-    where,
-    orderBy: { fetchedAt: "desc" },
-    select: {
-      linkId: true,
-      url: true,
-      urlNormalized: true,
-      videoId: true,
-      platform: true,
-      employeeId: true,
-      fetchedAt: true,
-      views: true,
-      likes: true,
-      comments: true,
-      employee: { select: { id: true, name: true } },
-    },
-  });
-
-  // Dedupe to latest per (employeeId + urlNormalized)
-  const seen = new Set<string>();
-  const latest: typeof snapshots = [];
-  for (const s of snapshots) {
-    const key = `${s.employeeId}::${s.urlNormalized}`;
-    if (!seen.has(key)) {
-      seen.add(key);
-      latest.push(s);
-    }
-  }
+  const latest = await prisma.$queryRaw<InsightRow[]>`
+    SELECT link_id, url_normalized, url, video_id, platform, employee_id, employee_name,
+           fetched_at, views, likes, comments
+    FROM (
+      SELECT DISTINCT ON (lm.employee_id, lm.url_normalized)
+        lm.link_id, lm.url_normalized, lm.url, lm.video_id, lm.platform,
+        lm.employee_id, u.name AS employee_name, lm.fetched_at,
+        lm.views, lm.likes, lm.comments
+      FROM link_metrics lm
+      JOIN users u ON u.id = lm.employee_id
+      WHERE lm.status = 'ok'
+        AND lm.platform = ${platform}
+        AND lm.report_date >= ${start}
+        AND lm.report_date <= ${end}
+      ORDER BY lm.employee_id, lm.url_normalized, lm.fetched_at DESC
+    ) latest
+    ORDER BY fetched_at DESC
+  `;
 
   const score = (s: { views: number | null; likes: number | null; comments: number | null }) =>
     sortBy === "views" ? (s.views ?? 0) : (s.likes ?? 0) + (s.comments ?? 0);
@@ -253,17 +311,17 @@ export async function getTopLinksByPlatform(params: {
     .sort((a, b) => score(b) - score(a))
     .slice(0, limit)
     .map((s) => ({
-      linkId: s.linkId,
+      linkId: s.link_id,
       url: s.url,
-      urlNormalized: s.urlNormalized,
-      videoId: s.videoId,
+      urlNormalized: s.url_normalized,
+      videoId: s.video_id,
       platform,
-      employeeId: s.employeeId,
-      employeeName: s.employee.name,
+      employeeId: s.employee_id,
+      employeeName: s.employee_name,
       views: s.views,
       likes: s.likes,
       comments: s.comments,
-      fetchedAt: s.fetchedAt,
+      fetchedAt: s.fetched_at,
     }));
 }
 

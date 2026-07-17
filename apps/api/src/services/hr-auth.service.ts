@@ -338,7 +338,16 @@ export async function refreshHrToken(refreshToken: string) {
     throw new AppError(401, "INVALID_TOKEN", "User not found or inactive");
   }
 
-  await prisma.refreshToken.delete({ where: { id: stored.id } });
+  // Consume the one-time token RACE-SAFELY. Two concurrent refreshes with the same
+  // token (two tabs / a retry) both pass the findUnique above; a bare delete() throws
+  // P2025 for the loser → unhandled 500 (seen 16× live on /hr/auth/refresh 2026-07-17).
+  // deleteMany never throws on a missing row; count===0 means another request already
+  // rotated this token → the loser gets the SAME clean 401 as every other invalid-token
+  // path. Single-use semantics preserved: exactly one winner.
+  const consumed = await prisma.refreshToken.deleteMany({ where: { id: stored.id } });
+  if (consumed.count === 0) {
+    throw new AppError(401, "INVALID_TOKEN", "Refresh token already used");
+  }
 
   const roleNames = user.roles.map((ur) => ur.role.name);
   const payload: JwtPayload = {

@@ -182,6 +182,18 @@ export async function unassignEmployee(accountId: string, employeeId: string) {
 
 // ─── Link statistics ────────────────────────────────────────────────────────
 
+// Short TTL cache for the accounts-link-stats read behind GET /admin/reports/
+// links-by-account. It hydrates + JS-aggregates every report_link in the window
+// (~4s on prod for 30d) and the internal /reports page refetches it on every load
+// and SWR revalidation — it was the last uncached heavy read on that page after
+// the 2026-07-16 insights fix. Same 60s memo pattern as leaderboard.service.ts's
+// _lbCache and social-insights.service.ts's memoInsights; keyed by window so
+// different date ranges never collide. invalidate export = the mandatory test-side
+// reset (the documented cross-test cache-pollution class).
+const LINK_STATS_TTL_MS = 60 * 1000;
+const _linkStatsCache = new Map<string, { value: unknown; builtAt: number }>();
+export function invalidateAccountLinkStatsCache(): void { _linkStatsCache.clear(); }
+
 /**
  * Returns every social account that had at least one link submitted in the
  * given date range, ranked by total links descending.  Each entry includes a
@@ -189,6 +201,17 @@ export async function unassignEmployee(accountId: string, employeeId: string) {
  * for this channel".
  */
 export async function getAllAccountsLinkStats(startDate?: string, endDate?: string) {
+  const cacheKey = `linkstats:${startDate ?? ""}:${endDate ?? ""}`;
+  const hit = _linkStatsCache.get(cacheKey);
+  if (hit && Date.now() - hit.builtAt < LINK_STATS_TTL_MS) {
+    return hit.value as Awaited<ReturnType<typeof getAllAccountsLinkStatsUncached>>;
+  }
+  const value = await getAllAccountsLinkStatsUncached(startDate, endDate);
+  _linkStatsCache.set(cacheKey, { value, builtAt: Date.now() });
+  return value;
+}
+
+async function getAllAccountsLinkStatsUncached(startDate?: string, endDate?: string) {
   const now = new Date();
   const todayUTC = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
   const end = endDate ? new Date(endDate) : todayUTC;

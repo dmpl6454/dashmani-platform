@@ -307,6 +307,14 @@ npm run db:studio     # Open Prisma Studio GUI at http://localhost:5555
 # Tests (API only — Vitest)
 npm run test -w @dashmani/api
 npm run test:watch -w @dashmani/api
+# The apps/api suite is FULLY GREEN (551/551) as of 2026-07-18 (PR #106) — the old
+# "~36 pre-existing failures (content/analytics/task/team), not your bug" note is
+# OBSOLETE. Those were tests that silently rotted after deliberate 2026-05/06
+# product changes (Issue-8 required create fields; employeeWhere/countTeams/
+# client-analytics semantics; Top-Movers zero-delta intent flip e29df5a). Treat
+# ANY suite failure as a real signal now. When code and its own doc comment
+# disagree, `git log -L` BOTH sides before "fixing" either — the Group C near-miss
+# (almost reverted the deliberate include-zero-delta Top Movers behavior) is why.
 
 # Build all apps
 npm run build

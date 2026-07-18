@@ -3,6 +3,7 @@ import request from "supertest";
 import app from "../src/app";
 import { createTestUser, createTestRole, generateToken } from "./helpers";
 import { prisma } from "@dashmani/db";
+import { todayIST, istMidnight } from "@dashmani/shared";
 import jwt from "jsonwebtoken";
 import "./setup";
 
@@ -38,20 +39,31 @@ describe("Analytics API", () => {
       expect(res.body.data).toHaveProperty("contentScheduledUpcoming");
     });
 
-    it("counts active employees correctly", async () => {
-      await createTestUser({ name: "Employee A", email: "a@test.com" });
-      await createTestUser({ name: "Employee B", email: "b@test.com" });
+    it("counts active employees correctly (employeeWhere: non-admin role required)", async () => {
+      // The employeeWhere convention (2026-05-22): an "employee" is an ACTIVE,
+      // non-deleted user with AT LEAST ONE role that is not Super Admin/Admin.
+      // The pure-Admin beforeEach user and role-less users are deliberately
+      // excluded. This test asserted 3 (any users) for weeks after that
+      // deliberate change and silently failed.
+      await createTestRole("Employee", []);
+      await createTestUser({ name: "Employee A", email: "a@test.com", roleNames: ["Employee"] });
+      await createTestUser({ name: "Employee B", email: "b@test.com", roleNames: ["Employee"] });
+      await createTestUser({ name: "No Role User", email: "norole@test.com" }); // excluded — no role
 
       const res = await request(app)
         .get("/v1/analytics/overview")
         .set("Authorization", `Bearer ${adminToken}`);
 
       expect(res.status).toBe(200);
-      expect(res.body.data.totalEmployees).toBe(3);
+      expect(res.body.data.totalEmployees).toBe(2);
     });
 
-    it("counts active teams correctly", async () => {
-      await prisma.orgUnit.create({
+    it("counts TOP-LEVEL org units as active teams (countTeams — matches the /teams page)", async () => {
+      // countTeams() (2026-05-22, Issue 5) counts top-level org units
+      // (parentId null) regardless of type — that is exactly what the /teams
+      // page lists. Child units are not counted. The old assertion (TEAM-type
+      // only) predated that deliberate change and silently failed.
+      const design = await prisma.orgUnit.create({
         data: { name: "Design Team", type: "TEAM" },
       });
       await prisma.orgUnit.create({
@@ -60,13 +72,16 @@ describe("Analytics API", () => {
       await prisma.orgUnit.create({
         data: { name: "Marketing Dept", type: "DEPARTMENT" },
       });
+      await prisma.orgUnit.create({
+        data: { name: "Design Subteam", type: "TEAM", parentId: design.id }, // child — not counted
+      });
 
       const res = await request(app)
         .get("/v1/analytics/overview")
         .set("Authorization", `Bearer ${adminToken}`);
 
       expect(res.status).toBe(200);
-      expect(res.body.data.activeTeams).toBe(2);
+      expect(res.body.data.activeTeams).toBe(3);
     });
 
     it("counts tasks completed this month", async () => {
@@ -218,13 +233,17 @@ describe("Analytics API", () => {
 
   describe("GET /v1/analytics/attendance", () => {
     it("returns attendance analytics", async () => {
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
+      // totalEmployees uses employeeWhere (needs a non-admin role), and the
+      // service's "today" is the IST date-key (istMidnight(todayIST())) — a
+      // local-midnight Date would land on the wrong DATE row between 12:00 AM
+      // and 5:30 AM IST. Mirror both conventions exactly.
+      await createTestRole("Employee", []);
+      const emp = await createTestUser({ name: "Attending Emp", email: "attend@test.com", roleNames: ["Employee"] });
 
       await prisma.attendance.create({
         data: {
-          employeeId: adminId,
-          date: today,
+          employeeId: emp.id,
+          date: istMidnight(todayIST()),
           status: "PRESENT",
           checkIn: new Date(),
         },
@@ -235,7 +254,7 @@ describe("Analytics API", () => {
         .set("Authorization", `Bearer ${adminToken}`);
 
       expect(res.status).toBe(200);
-      expect(res.body.data.totalEmployees).toBeGreaterThan(0);
+      expect(res.body.data.totalEmployees).toBe(1);
       expect(res.body.data.presentToday).toBe(1);
       expect(res.body.data).toHaveProperty("attendanceRate");
       expect(res.body.data).toHaveProperty("dailyBreakdown");
@@ -258,18 +277,16 @@ describe("Analytics API", () => {
         data: { name: "Social Campaign", clientId: client.id, status: "ACTIVE" },
       });
 
-      const task1 = await prisma.task.create({
-        data: { title: "Design post", status: "DONE", completedAt: new Date(), createdById: adminId },
+      // GET /v1/client/analytics deliberately serves getClientContentAnalytics
+      // (the client portal /analytics page is CONTENT analytics — totalPosts,
+      // postsByStatus, projectSummaries…), NOT the old project/task shape
+      // (totalProjects/totalTasks). This test asserted the old shape for weeks
+      // after that deliberate switch and silently failed.
+      await prisma.contentPost.create({
+        data: { title: "Post One", projectId: project.id, createdById: adminId, status: "DRAFT" },
       });
-      const task2 = await prisma.task.create({
-        data: { title: "Write caption", status: "TODO", createdById: adminId },
-      });
-
-      await prisma.projectTask.createMany({
-        data: [
-          { projectId: project.id, taskId: task1.id },
-          { projectId: project.id, taskId: task2.id },
-        ],
+      await prisma.contentPost.create({
+        data: { title: "Post Two", projectId: project.id, createdById: adminId, status: "PENDING_APPROVAL" },
       });
 
       const clientToken = jwt.sign(
@@ -283,12 +300,13 @@ describe("Analytics API", () => {
         .set("Authorization", `Bearer ${clientToken}`);
 
       expect(res.status).toBe(200);
-      expect(res.body.data.totalProjects).toBe(1);
-      expect(res.body.data.activeProjects).toBe(1);
-      expect(res.body.data.totalTasks).toBe(2);
-      expect(res.body.data.completedTasks).toBe(1);
-      expect(res.body.data.overallCompletionPercent).toBe(50);
-      expect(res.body.data.projects[0].projectName).toBe("Social Campaign");
+      expect(res.body.data.totalPosts).toBe(2);
+      expect(res.body.data.postsByStatus.DRAFT).toBe(1);
+      expect(res.body.data.postsByStatus.PENDING_APPROVAL).toBe(1);
+      expect(res.body.data.projectSummaries).toHaveLength(1);
+      expect(res.body.data.projectSummaries[0].name).toBe("Social Campaign");
+      expect(res.body.data.projectSummaries[0].postCount).toBe(2);
+      expect(res.body.data.projectSummaries[0].pendingCount).toBe(1);
     });
 
     it("does not return other clients data", async () => {
@@ -310,11 +328,18 @@ describe("Analytics API", () => {
         },
       });
 
-      await prisma.project.create({
+      const projectA = await prisma.project.create({
         data: { name: "Project A", clientId: clientA.id, status: "ACTIVE" },
       });
-      await prisma.project.create({
+      const projectB = await prisma.project.create({
         data: { name: "Project B", clientId: clientB.id, status: "ACTIVE" },
+      });
+      // One post per client — client A must see ONLY their own in every field.
+      await prisma.contentPost.create({
+        data: { title: "A's Post", projectId: projectA.id, createdById: adminId },
+      });
+      await prisma.contentPost.create({
+        data: { title: "B's Post", projectId: projectB.id, createdById: adminId },
       });
 
       const tokenA = jwt.sign(
@@ -328,8 +353,11 @@ describe("Analytics API", () => {
         .set("Authorization", `Bearer ${tokenA}`);
 
       expect(res.status).toBe(200);
-      expect(res.body.data.totalProjects).toBe(1);
-      expect(res.body.data.projects[0].projectName).toBe("Project A");
+      // Content-analytics shape (see previous test) — the SECURITY intent is
+      // unchanged: nothing of client B may leak into client A's payload.
+      expect(res.body.data.totalPosts).toBe(1);
+      expect(res.body.data.projectSummaries).toHaveLength(1);
+      expect(res.body.data.projectSummaries[0].name).toBe("Project A");
     });
 
     it("requires client authentication", async () => {

@@ -15,6 +15,13 @@ describe("Content API", () => {
   let platformId: string;
   let accountId: string;
 
+  // accountId + scheduledAt became REQUIRED on content create (2026-05-22,
+  // "task/content required fields on create" — Issue 8). Generic payloads use
+  // SCHED (June — deliberately outside April so the calendar tests' April
+  // day-bucket assertions are never polluted). These tests silently failed for
+  // weeks because the fixtures predated that deliberate validation change.
+  const SCHED = "2026-06-01T10:00:00.000Z";
+
   beforeEach(async () => {
     // Create admin role with content + client permissions
     await createTestRole("Admin", [
@@ -75,6 +82,7 @@ describe("Content API", () => {
           caption: "Check out our summer deals!",
           projectId,
           accountId,
+          scheduledAt: SCHED,
           mediaUrls: ["https://example.com/image1.jpg"],
         });
 
@@ -95,6 +103,7 @@ describe("Content API", () => {
         .send({
           title: "Scheduled Post",
           projectId,
+          accountId,
           scheduledAt,
         });
 
@@ -109,6 +118,8 @@ describe("Content API", () => {
         .send({
           title: "Bad Project",
           projectId: "00000000-0000-0000-0000-000000000000",
+          accountId,
+          scheduledAt: SCHED,
         });
 
       expect(res.status).toBe(404);
@@ -120,11 +131,11 @@ describe("Content API", () => {
       await request(app)
         .post("/v1/content")
         .set("Authorization", `Bearer ${adminToken}`)
-        .send({ title: "Post A", projectId });
+        .send({ title: "Post A", projectId, accountId, scheduledAt: SCHED });
       await request(app)
         .post("/v1/content")
         .set("Authorization", `Bearer ${adminToken}`)
-        .send({ title: "Post B", projectId });
+        .send({ title: "Post B", projectId, accountId, scheduledAt: SCHED });
 
       const res = await request(app)
         .get("/v1/content")
@@ -138,7 +149,7 @@ describe("Content API", () => {
       await request(app)
         .post("/v1/content")
         .set("Authorization", `Bearer ${adminToken}`)
-        .send({ title: "Draft Post", projectId });
+        .send({ title: "Draft Post", projectId, accountId, scheduledAt: SCHED });
 
       const res = await request(app)
         .get("/v1/content?status=DRAFT")
@@ -152,7 +163,7 @@ describe("Content API", () => {
       await request(app)
         .post("/v1/content")
         .set("Authorization", `Bearer ${adminToken}`)
-        .send({ title: "Project Post", projectId });
+        .send({ title: "Project Post", projectId, accountId, scheduledAt: SCHED });
 
       const res = await request(app)
         .get(`/v1/content?projectId=${projectId}`)
@@ -166,11 +177,11 @@ describe("Content API", () => {
       await request(app)
         .post("/v1/content")
         .set("Authorization", `Bearer ${adminToken}`)
-        .send({ title: "Unique Findable Title", projectId });
+        .send({ title: "Unique Findable Title", projectId, accountId, scheduledAt: SCHED });
       await request(app)
         .post("/v1/content")
         .set("Authorization", `Bearer ${adminToken}`)
-        .send({ title: "Other Post", projectId });
+        .send({ title: "Other Post", projectId, accountId, scheduledAt: SCHED });
 
       const res = await request(app)
         .get("/v1/content?search=Findable")
@@ -187,7 +198,7 @@ describe("Content API", () => {
       const createRes = await request(app)
         .post("/v1/content")
         .set("Authorization", `Bearer ${adminToken}`)
-        .send({ title: "Detail Post", projectId, caption: "Some caption" });
+        .send({ title: "Detail Post", projectId, accountId, scheduledAt: SCHED, caption: "Some caption" });
 
       const res = await request(app)
         .get(`/v1/content/${createRes.body.data.id}`)
@@ -212,7 +223,7 @@ describe("Content API", () => {
       const createRes = await request(app)
         .post("/v1/content")
         .set("Authorization", `Bearer ${adminToken}`)
-        .send({ title: "Original Title", projectId });
+        .send({ title: "Original Title", projectId, accountId, scheduledAt: SCHED });
 
       const res = await request(app)
         .put(`/v1/content/${createRes.body.data.id}`)
@@ -230,7 +241,7 @@ describe("Content API", () => {
       const createRes = await request(app)
         .post("/v1/content")
         .set("Authorization", `Bearer ${adminToken}`)
-        .send({ title: "Approval Post", projectId });
+        .send({ title: "Approval Post", projectId, accountId, scheduledAt: SCHED });
 
       const res = await request(app)
         .put(`/v1/content/${createRes.body.data.id}/status`)
@@ -245,7 +256,7 @@ describe("Content API", () => {
       const createRes = await request(app)
         .post("/v1/content")
         .set("Authorization", `Bearer ${adminToken}`)
-        .send({ title: "Direct Schedule", projectId });
+        .send({ title: "Direct Schedule", projectId, accountId, scheduledAt: SCHED });
 
       const res = await request(app)
         .put(`/v1/content/${createRes.body.data.id}/status`)
@@ -260,7 +271,7 @@ describe("Content API", () => {
       const createRes = await request(app)
         .post("/v1/content")
         .set("Authorization", `Bearer ${adminToken}`)
-        .send({ title: "Publish Me", projectId });
+        .send({ title: "Publish Me", projectId, accountId, scheduledAt: SCHED });
 
       // DRAFT -> SCHEDULED
       await request(app)
@@ -283,7 +294,7 @@ describe("Content API", () => {
       const createRes = await request(app)
         .post("/v1/content")
         .set("Authorization", `Bearer ${adminToken}`)
-        .send({ title: "Invalid Transition", projectId });
+        .send({ title: "Invalid Transition", projectId, accountId, scheduledAt: SCHED });
 
       // DRAFT -> PUBLISHED is not valid (must go through SCHEDULED)
       const res = await request(app)
@@ -299,7 +310,7 @@ describe("Content API", () => {
       const createRes = await request(app)
         .post("/v1/content")
         .set("Authorization", `Bearer ${adminToken}`)
-        .send({ title: "Already Published", projectId });
+        .send({ title: "Already Published", projectId, accountId, scheduledAt: SCHED });
 
       // DRAFT -> SCHEDULED -> PUBLISHED
       await request(app)
@@ -327,7 +338,7 @@ describe("Content API", () => {
       const createRes = await request(app)
         .post("/v1/content")
         .set("Authorization", `Bearer ${adminToken}`)
-        .send({ title: "Delete Me", projectId });
+        .send({ title: "Delete Me", projectId, accountId, scheduledAt: SCHED });
 
       const res = await request(app)
         .delete(`/v1/content/${createRes.body.data.id}`)
@@ -340,7 +351,7 @@ describe("Content API", () => {
       const createRes = await request(app)
         .post("/v1/content")
         .set("Authorization", `Bearer ${adminToken}`)
-        .send({ title: "Published Post", projectId });
+        .send({ title: "Published Post", projectId, accountId, scheduledAt: SCHED });
 
       await request(app)
         .put(`/v1/content/${createRes.body.data.id}/status`)
@@ -368,6 +379,7 @@ describe("Content API", () => {
         .send({
           title: "April 10 Post",
           projectId,
+          accountId,
           scheduledAt: "2026-04-10T10:00:00.000Z",
         });
       await request(app)
@@ -376,6 +388,7 @@ describe("Content API", () => {
         .send({
           title: "April 10 Post 2",
           projectId,
+          accountId,
           scheduledAt: "2026-04-10T14:00:00.000Z",
         });
       await request(app)
@@ -384,6 +397,7 @@ describe("Content API", () => {
         .send({
           title: "April 20 Post",
           projectId,
+          accountId,
           scheduledAt: "2026-04-20T09:00:00.000Z",
         });
 
@@ -404,7 +418,7 @@ describe("Content API", () => {
       await request(app)
         .post("/v1/content")
         .set("Authorization", `Bearer ${adminToken}`)
-        .send({ title: "Client Visible Post", projectId });
+        .send({ title: "Client Visible Post", projectId, accountId, scheduledAt: SCHED });
 
       const res = await request(app)
         .get("/v1/client/content")
@@ -419,7 +433,7 @@ describe("Content API", () => {
       const createRes = await request(app)
         .post("/v1/content")
         .set("Authorization", `Bearer ${adminToken}`)
-        .send({ title: "Needs Approval", projectId });
+        .send({ title: "Needs Approval", projectId, accountId, scheduledAt: SCHED });
 
       // Move to PENDING_APPROVAL
       await request(app)
@@ -441,7 +455,7 @@ describe("Content API", () => {
       const createRes = await request(app)
         .post("/v1/content")
         .set("Authorization", `Bearer ${adminToken}`)
-        .send({ title: "Reject This", projectId });
+        .send({ title: "Reject This", projectId, accountId, scheduledAt: SCHED });
 
       await request(app)
         .put(`/v1/content/${createRes.body.data.id}/status`)
@@ -461,7 +475,7 @@ describe("Content API", () => {
       const createRes = await request(app)
         .post("/v1/content")
         .set("Authorization", `Bearer ${adminToken}`)
-        .send({ title: "Still Draft", projectId });
+        .send({ title: "Still Draft", projectId, accountId, scheduledAt: SCHED });
 
       const res = await request(app)
         .put(`/v1/client/content/${createRes.body.data.id}/respond`)
@@ -479,6 +493,7 @@ describe("Content API", () => {
         .send({
           title: "Client Calendar Post",
           projectId,
+          accountId,
           scheduledAt: "2026-04-15T10:00:00.000Z",
         });
 

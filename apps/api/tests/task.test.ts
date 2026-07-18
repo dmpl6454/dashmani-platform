@@ -2,11 +2,19 @@ import { describe, it, expect, beforeEach } from "vitest";
 import request from "supertest";
 import app from "../src/app";
 import { createTestUser, createTestRole, generateToken } from "./helpers";
+import { prisma } from "@dashmani/db";
 import "./setup";
 
 describe("Tasks API", () => {
   let adminToken: string;
   let adminId: string;
+  let accountId: string;
+
+  // accountId + dueDate became REQUIRED on task create (2026-05-22, "task/content
+  // required fields on create" — Issue 8). Every create payload spreads required()
+  // or the API correctly 400s. These tests silently failed for weeks because the
+  // fixtures predated that deliberate validation change.
+  const required = () => ({ accountId, dueDate: "2026-08-01" });
 
   beforeEach(async () => {
     await createTestRole("Admin", [
@@ -18,6 +26,15 @@ describe("Tasks API", () => {
     const admin = await createTestUser({ roleNames: ["Admin"] });
     adminId = admin.id;
     adminToken = generateToken(admin.id, admin.email, ["Admin"]);
+
+    const uniq = `${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+    const platform = await prisma.platform.create({
+      data: { name: `TaskTestPlat_${uniq}`, slug: `task-test-${uniq}` },
+    });
+    const account = await prisma.socialAccount.create({
+      data: { handle: "tasktest", displayName: "Task Test Account", platformId: platform.id },
+    });
+    accountId = account.id;
   });
 
   describe("POST /v1/tasks", () => {
@@ -29,6 +46,7 @@ describe("Tasks API", () => {
           title: "Design Instagram banner",
           description: "Create a banner for the summer campaign",
           priority: "HIGH",
+          ...required(),
         });
 
       expect(res.status).toBe(201);
@@ -47,10 +65,20 @@ describe("Tasks API", () => {
         .send({
           title: "Write copy",
           assigneeId: assignee.id,
+          ...required(),
         });
 
       expect(res.status).toBe(201);
       expect(res.body.data.assignee.id).toBe(assignee.id);
+    });
+
+    it("rejects a create without the required accountId + dueDate (Issue 8 validation)", async () => {
+      const res = await request(app)
+        .post("/v1/tasks")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .send({ title: "Missing required fields" });
+
+      expect(res.status).toBe(400);
     });
   });
 
@@ -59,11 +87,11 @@ describe("Tasks API", () => {
       await request(app)
         .post("/v1/tasks")
         .set("Authorization", `Bearer ${adminToken}`)
-        .send({ title: "Task A" });
+        .send({ title: "Task A", ...required() });
       await request(app)
         .post("/v1/tasks")
         .set("Authorization", `Bearer ${adminToken}`)
-        .send({ title: "Task B" });
+        .send({ title: "Task B", ...required() });
 
       const res = await request(app)
         .get("/v1/tasks")
@@ -77,7 +105,7 @@ describe("Tasks API", () => {
       await request(app)
         .post("/v1/tasks")
         .set("Authorization", `Bearer ${adminToken}`)
-        .send({ title: "Todo task" });
+        .send({ title: "Todo task", ...required() });
 
       const res = await request(app)
         .get("/v1/tasks?status=TODO")
@@ -93,7 +121,7 @@ describe("Tasks API", () => {
       const createRes = await request(app)
         .post("/v1/tasks")
         .set("Authorization", `Bearer ${adminToken}`)
-        .send({ title: "Start this" });
+        .send({ title: "Start this", ...required() });
 
       const res = await request(app)
         .put(`/v1/tasks/${createRes.body.data.id}/status`)
@@ -108,7 +136,7 @@ describe("Tasks API", () => {
       const createRes = await request(app)
         .post("/v1/tasks")
         .set("Authorization", `Bearer ${adminToken}`)
-        .send({ title: "Finish this" });
+        .send({ title: "Finish this", ...required() });
 
       const res = await request(app)
         .put(`/v1/tasks/${createRes.body.data.id}/status`)
@@ -123,12 +151,12 @@ describe("Tasks API", () => {
       const depRes = await request(app)
         .post("/v1/tasks")
         .set("Authorization", `Bearer ${adminToken}`)
-        .send({ title: "Blocker task" });
+        .send({ title: "Blocker task", ...required() });
 
       const taskRes = await request(app)
         .post("/v1/tasks")
         .set("Authorization", `Bearer ${adminToken}`)
-        .send({ title: "Blocked task", dependsOnId: depRes.body.data.id });
+        .send({ title: "Blocked task", dependsOnId: depRes.body.data.id, ...required() });
 
       const res = await request(app)
         .put(`/v1/tasks/${taskRes.body.data.id}/status`)
@@ -145,7 +173,7 @@ describe("Tasks API", () => {
       const createRes = await request(app)
         .post("/v1/tasks")
         .set("Authorization", `Bearer ${adminToken}`)
-        .send({ title: "Commentable task" });
+        .send({ title: "Commentable task", ...required() });
 
       const res = await request(app)
         .post(`/v1/tasks/${createRes.body.data.id}/comments`)
@@ -163,7 +191,7 @@ describe("Tasks API", () => {
       const createRes = await request(app)
         .post("/v1/tasks")
         .set("Authorization", `Bearer ${adminToken}`)
-        .send({ title: "Delete me" });
+        .send({ title: "Delete me", ...required() });
 
       const res = await request(app)
         .delete(`/v1/tasks/${createRes.body.data.id}`)
@@ -176,12 +204,12 @@ describe("Tasks API", () => {
       const depRes = await request(app)
         .post("/v1/tasks")
         .set("Authorization", `Bearer ${adminToken}`)
-        .send({ title: "Dependency" });
+        .send({ title: "Dependency", ...required() });
 
       await request(app)
         .post("/v1/tasks")
         .set("Authorization", `Bearer ${adminToken}`)
-        .send({ title: "Depends on it", dependsOnId: depRes.body.data.id });
+        .send({ title: "Depends on it", dependsOnId: depRes.body.data.id, ...required() });
 
       const res = await request(app)
         .delete(`/v1/tasks/${depRes.body.data.id}`)

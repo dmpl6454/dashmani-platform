@@ -13,3 +13,7 @@ coverage/
 .claude/worktrees/
 *.tsbuildinfo
 nul
+
+# Session verification artifacts (screenshots dropped at repo root + playwright traces)
+/.playwright-mcp/
+/*.png

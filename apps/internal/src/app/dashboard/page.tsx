@@ -138,14 +138,15 @@ export default function DashboardPage() {
     (linksAnalyticsData as any)?.data?.nonSubmitters ?? [];
 
   // Top Performers metric pill — independent, non-persisted. Links & Engagement come from
-  // the leaderboard/analytics payloads; the three platform tabs rank the SAME fair way as
-  // /reports/leaderboard (YouTube/Facebook by views, Instagram by likes+comments).
+  // the leaderboard/analytics payloads; the platform tabs rank the SAME fair way as
+  // /reports/leaderboard (YouTube/Facebook/Snapchat by views, Instagram by likes+comments).
   const PERF_METRICS = [
     { key: "links", label: "Links" },
     { key: "engagement", label: "Engagement" },
     { key: "youtube", label: "YouTube" },
     { key: "facebook", label: "Facebook" },
     { key: "instagram", label: "Instagram" },
+    { key: "snapchat", label: "Snapchat" },
   ];
   const [perfMetric, setPerfMetric] = useState("links");
   const { data: leaderboardData } = useSWR(
@@ -155,7 +156,7 @@ export default function DashboardPage() {
   );
   const leaderboardRows: any[] = (leaderboardData as any)?.data ?? [];
 
-  // Per-platform boards (fetched once, cached 5 min). Keyed youtube/facebook/instagram.
+  // Per-platform boards (fetched once, cached 5 min). Keyed youtube/facebook/instagram/snapchat.
   const { data: platformLbData } = usePlatformLeaderboards(perfStart, perfEnd);
   const platformBoards: Record<string, any[]> = (platformLbData as any)?.data ?? {};
 
@@ -173,10 +174,15 @@ export default function DashboardPage() {
           secondary: `${r.totalLinks ?? 0} links`,
         }));
     }
-    // Per-platform board (youtube | facebook | instagram): already ranked server-side.
-    if (perfMetric === "youtube" || perfMetric === "facebook" || perfMetric === "instagram") {
+    // Per-platform board (youtube | facebook | instagram | snapchat): already ranked server-side.
+    if (
+      perfMetric === "youtube" ||
+      perfMetric === "facebook" ||
+      perfMetric === "instagram" ||
+      perfMetric === "snapchat"
+    ) {
       const board = platformBoards[perfMetric] ?? [];
-      const isViews = perfMetric !== "instagram"; // YT/FB rank by views; IG by likes+comments
+      const isViews = perfMetric !== "instagram"; // YT/FB/Snapchat rank by views; IG by likes+comments
       return board.slice(0, 3).map((r: any) => ({
         employeeId: r.employee?.id ?? "—",
         name: r.employee?.name ?? "—",

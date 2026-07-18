@@ -19,6 +19,18 @@ const VID1 = "ZZTESTvid01"; // 11 chars [A-Za-z0-9_-]
 const VID2 = "ZZTESTvid02";
 const URL1 = `https://www.youtube.com/watch?v=${VID1}`;
 const URL2 = `https://youtu.be/${VID2}`;
+// A non-yt/ig/fb/sc URL → canonicalKey() falls back to the full lowercased URL.
+// Exercises the search path's case-insensitive url-equality branch.
+const FALLBACK_URL = "https://zztest-fallback.example/post/zztestvid03";
+const FALLBACK_KEY_PREFIX = "https://zztest-fallback.example/";
+// URL shapes the SQL derived-key CASE must recognize beyond the common ones —
+// the 2026-07-18 review caught these being silently dropped (yt /live/,
+// fb ?v=, resolved snapchat /p/<uuid>/spotlight/). Locks the CASE ⟷ JS parity.
+const LIVE_URL = "https://www.youtube.com/live/ZZTESTvid04";
+const FBV_URL = "https://www.facebook.com/watch/?v=987654321997";
+const FBV_KEY = "fb:987654321997";
+const SCP_URL = "https://www.snapchat.com/p/0a1b2c3d-e4f5-6789-abcd-ef0123456789/spotlight/ZZTESTsc0001";
+const SCP_KEY = "sc:ZZTESTsc0001";
 
 let dbAvailable = false;
 
@@ -32,7 +44,15 @@ async function cleanupEntities() {
       ],
     },
   });
-  await prisma.linkContent.deleteMany({ where: { canonicalKey: { startsWith: KEY_PREFIX } } });
+  await prisma.linkContent.deleteMany({
+    where: {
+      OR: [
+        { canonicalKey: { startsWith: KEY_PREFIX } },
+        { canonicalKey: { startsWith: FALLBACK_KEY_PREFIX } },
+        { canonicalKey: { in: [FBV_KEY, SCP_KEY] } },
+      ],
+    },
+  });
   await prisma.entity.deleteMany({ where: { canonicalName: { startsWith: NAME_PREFIX } } });
 }
 
@@ -242,7 +262,15 @@ describe("searchLinksByEntity — same vs unique (DB-backed)", () => {
     if (!dbAvailable) return;
 
     const NAME = `${NAME_PREFIX}Salman`;
+    const { accountA, emp1 } = await seedBase();
     await seedEntityWithContent(NAME); // 2 'ok' rows (VID1, VID2)
+    // 'searchable'/'enriched' count only captions matching a SUBMITTED link
+    // (the 2026-06-27 intersection semantics), so submit both URLs. URL1 is a
+    // watch?v= URL on purpose: it only derives in SQL with the doubled-backslash
+    // regex escapes (cooked-template fix, 2026-07-18) — this locks that in.
+    const day = new Date("2026-06-01T00:00:00.000Z");
+    await addLink({ employeeId: emp1.id, accountId: accountA.id, url: URL1, date: day });
+    await addLink({ employeeId: emp1.id, accountId: accountA.id, url: URL2, date: day });
     // an extra pending row in the same prefix space (not joined to anyone)
     await prisma.linkContent.create({
       data: { canonicalKey: `${KEY_PREFIX}99X`, platform: "youtube", status: "pending" },
@@ -395,7 +423,13 @@ describe("searchLinksByEntity — same vs unique (DB-backed)", () => {
   it("empty q → zero result but coverage still filled", async () => {
     if (!dbAvailable) return;
 
+    const { accountA, emp1 } = await seedBase();
     await seedEntityWithContent(`${NAME_PREFIX}Salman`); // 2 'ok' rows exist
+    // Submit both URLs so the 'ok' captions count as searchable/enriched under
+    // the 2026-06-27 intersection-with-submitted semantics.
+    const day = new Date("2026-06-01T00:00:00.000Z");
+    await addLink({ employeeId: emp1.id, accountId: accountA.id, url: URL1, date: day });
+    await addLink({ employeeId: emp1.id, accountId: accountA.id, url: URL2, date: day });
 
     const res = await searchLinksByEntity({ q: "" });
     expect(res.entity).toBeNull();
@@ -437,6 +471,61 @@ describe("searchLinksByEntity — same vs unique (DB-backed)", () => {
 
     const matchIg = await searchLinksByEntity({ q: NAME, platform: "instagram" });
     expect(matchIg.totalPosts).toBe(0);
+  });
+
+  it("full-URL-fallback keys (no yt:/ig:/fb:/sc: prefix) match by case-insensitive url equality", async () => {
+    if (!dbAvailable) return;
+
+    const { accountA, emp1 } = await seedBase();
+    const NAME = `${NAME_PREFIX}FallbackEnt`;
+    const entity = await prisma.entity.create({ data: { canonicalName: NAME, type: "PERSON", aliases: [] } });
+    const c = await prisma.linkContent.create({
+      data: { canonicalKey: canonicalKey(FALLBACK_URL), platform: "tiktok", status: "ok", extractedAt: new Date() },
+    });
+    await prisma.linkContentEntity.create({ data: { linkContentId: c.id, entityId: entity.id, confidence: 1 } });
+
+    // Submitted with DIFFERENT case than the stored key — the SQL derives NULL for this
+    // URL shape, so only the fallback equality branch can find it, case-insensitively.
+    const day = new Date("2026-06-01T00:00:00.000Z");
+    await addLink({
+      employeeId: emp1.id,
+      accountId: accountA.id,
+      url: "https://ZZTEST-Fallback.example/post/ZZTESTvid03",
+      date: day,
+      platform: "tiktok",
+    });
+
+    const res = await searchLinksByEntity({ q: NAME });
+    expect(res.totalPosts).toBe(1);
+    expect(res.uniquePosts).toBe(1);
+  });
+
+  it("derives the extended URL shapes: youtube /live/, facebook ?v=, resolved snapchat /p/…/spotlight/", async () => {
+    if (!dbAvailable) return;
+
+    const { accountA, emp1 } = await seedBase();
+    const NAME = `${NAME_PREFIX}ShapesEnt`;
+    const entity = await prisma.entity.create({ data: { canonicalName: NAME, type: "PERSON", aliases: [] } });
+    for (const url of [LIVE_URL, FBV_URL, SCP_URL]) {
+      const key = canonicalKey(url);
+      const c = await prisma.linkContent.create({
+        data: { canonicalKey: key, platform: "youtube", status: "ok", extractedAt: new Date() },
+      });
+      await prisma.linkContentEntity.create({ data: { linkContentId: c.id, entityId: entity.id, confidence: 1 } });
+    }
+    // Sanity: all three URL shapes must produce DERIVABLE (prefixed) keys in JS.
+    expect(canonicalKey(LIVE_URL)).toBe("yt:ZZTESTvid04");
+    expect(canonicalKey(FBV_URL)).toBe(FBV_KEY);
+    expect(canonicalKey(SCP_URL)).toBe(SCP_KEY);
+
+    const day = new Date("2026-06-01T00:00:00.000Z");
+    await addLink({ employeeId: emp1.id, accountId: accountA.id, url: LIVE_URL, date: day });
+    await addLink({ employeeId: emp1.id, accountId: accountA.id, url: FBV_URL, date: day, platform: "facebook" });
+    await addLink({ employeeId: emp1.id, accountId: accountA.id, url: SCP_URL, date: day, platform: "snapchat" });
+
+    const res = await searchLinksByEntity({ q: NAME });
+    expect(res.totalPosts).toBe(3);
+    expect(res.uniquePosts).toBe(3);
   });
 });
 

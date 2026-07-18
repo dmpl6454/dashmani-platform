@@ -642,7 +642,10 @@ export default function ReportsPage() {
             showViews: true,
             data: (topSnapchatData as any)?.data ?? [],
             loading: topSnapchatLoading,
-            note: "Snapchat · views (no likes — not exposed by Spotlight)",
+            // Null views are LEGITIMATE: Snapchat serves viewCount:"-1" (a sentinel meaning
+            // "not published") for many Spotlights — live-verified 10/10 on 2026-07-18.
+            // The dash is honest absence, not missing data. Don't "fix" it to 0.
+            note: "Snapchat · views where Spotlight publishes them (a dash means Snapchat doesn't expose a public view count for that post — not missing data) · no likes on Spotlight",
           },
         ];
 

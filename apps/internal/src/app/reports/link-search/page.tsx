@@ -1,12 +1,11 @@
 "use client";
-import { useState, useMemo, useRef, useEffect, useCallback } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 import Link from "next/link";
 import {
   ArrowLeft, Search, Link2, Layers, CopyMinus, Globe, Users,
-  Info, AlertTriangle, ExternalLink, X as CloseIcon, RefreshCw, Download,
+  Info, AlertTriangle, ExternalLink, X as CloseIcon, Download,
 } from "lucide-react";
 import { useLinkSearch, useEntitySuggestions } from "@/lib/hooks/use-link-search";
-import { useInsightsRefresh } from "@/lib/hooks/use-insights-refresh";
 import { usePageTitle } from "@/lib/hooks/use-page-title";
 import { apiFetchBlob, downloadBlob } from "@/lib/api";
 
@@ -24,12 +23,6 @@ function cap(s: string) {
 // render turned into "@@BollywoodChronicle". Strip any leading @'s, then prepend one.
 function fmtHandle(handle: string) {
   return `@${(handle || "").replace(/^@+/, "")}`;
-}
-
-function phaseLabel(phase: "idle" | "harvesting" | "extracting"): string {
-  if (phase === "harvesting") return "Reading Instagram & Facebook captions…";
-  if (phase === "extracting") return "Tagging people & topics…";
-  return "Starting…";
 }
 
 // Debounce a fast-changing value (search input) so we don't fire a query on every
@@ -74,14 +67,8 @@ export default function LinkSearchPage() {
     else if (t.length >= MIN_AUTOSEARCH_LEN) setSubmitted(t);
   }, [debouncedQ]);
 
-  const { data, isLoading, isValidating, mutate: mutateLinkSearch } = useLinkSearch(submitted);
+  const { data, isLoading, isValidating } = useLinkSearch(submitted);
   const { data: suggestions } = useEntitySuggestions(q);
-
-  // Stable callback — SWR's mutate is referentially stable, so this never
-  // changes identity and won't re-fire the hook's mount-probe effect on typing.
-  const onEnrichmentComplete = useCallback(() => { mutateLinkSearch(); }, [mutateLinkSearch]);
-  const { status: refreshStatus, phase: refreshPhase, triggerRefresh, dismiss: dismissRefresh } =
-    useInsightsRefresh({ onComplete: onEnrichmentComplete });
 
   // Close the suggestion dropdown on outside click.
   useEffect(() => {
@@ -234,74 +221,16 @@ export default function LinkSearchPage() {
           .filter((p) => bp[p])
           .map((p) => ({ p, ...bp[p]! }));
         const totalPending = coverage.pendingExtraction ?? 0;
-        const isRunning = refreshStatus === "running";
         return (
           <div className="space-y-2">
-            {/* Success banner */}
-            {refreshStatus === "success" && (
-              <div role="status" aria-live="polite" className="rounded-xl border border-sage/30 bg-sage/5 px-4 py-2.5 flex items-center gap-2">
-                <Info className="h-4 w-4 text-sage shrink-0" />
-                <p className="text-xs text-ink flex-1">
-                  Enrichment complete. New posts are now searchable.
-                </p>
-                <button
-                  type="button"
-                  onClick={dismissRefresh}
-                  className="text-ink-4 hover:text-ink transition-colors shrink-0"
-                  aria-label="Dismiss"
-                >
-                  <CloseIcon className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            )}
-
-            {/* Error banner */}
-            {refreshStatus === "error" && (
-              <div role="alert" aria-live="assertive" className="rounded-xl border border-terra/30 bg-terra/5 px-4 py-2.5 flex items-start gap-2">
-                <AlertTriangle className="h-4 w-4 text-terra shrink-0 mt-0.5" />
-                <p className="text-xs text-ink flex-1">
-                  Couldn&rsquo;t refresh just now — the Instagram/Facebook API may be rate-limited or temporarily unavailable.
-                  Your existing results are unaffected, and enrichment keeps running automatically. Try again in a few minutes.
-                </p>
-                <button
-                  type="button"
-                  onClick={dismissRefresh}
-                  className="text-ink-4 hover:text-ink transition-colors shrink-0"
-                  aria-label="Dismiss"
-                >
-                  <CloseIcon className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            )}
-
             {/* Coverage banner */}
             <div className="rounded-xl border border-indigo/20 bg-indigo-soft px-4 py-3 flex items-start gap-3">
               <Info className="h-4 w-4 text-indigo shrink-0 mt-0.5" />
               <div className="text-xs text-ink leading-relaxed space-y-1.5 w-full">
-                {/* Header row with refresh button */}
-                <div className="flex items-start justify-between gap-3">
-                  <p>
-                    Searching <span className="font-semibold">{searchable.toLocaleString()}</span> searchable
-                    {submitted > 0 && <> of <span className="font-semibold">{submitted.toLocaleString()}</span> submitted</>} links.
-                  </p>
-                  <button
-                    type="button"
-                    onClick={triggerRefresh}
-                    disabled={isRunning}
-                    className="shrink-0 flex items-center gap-1.5 rounded-lg border border-indigo/30 bg-white/60 px-2.5 py-1 text-[11px] font-medium text-indigo hover:bg-white/90 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
-                    aria-label="Refresh enrichment"
-                  >
-                    <RefreshCw className={`h-3 w-3 ${isRunning ? "animate-spin" : ""}`} />
-                    Refresh enrichment
-                  </button>
-                </div>
-
-                {/* Live phase text while running */}
-                {isRunning && (
-                  <p className="text-indigo font-medium" aria-live="polite">
-                    {phaseLabel(refreshPhase)}
-                  </p>
-                )}
+                <p>
+                  Searching <span className="font-semibold">{searchable.toLocaleString()}</span> searchable
+                  {submitted > 0 && <> of <span className="font-semibold">{submitted.toLocaleString()}</span> submitted</>} links.
+                </p>
 
                 <ul className="text-ink-4 space-y-1">
                   {rows.map(({ p, searchable: s, submitted: sub, since, dataSince, pendingExtraction: pPending }) => (
@@ -333,7 +262,7 @@ export default function LinkSearchPage() {
                 </ul>
                 {totalPending > 0 && (
                   <p className="text-ink-4 pt-0.5" aria-live="polite">
-                    {totalPending.toLocaleString()} captured {totalPending === 1 ? "caption is" : "captions are"} still being tagged with people &amp; topics — {totalPending === 1 ? "it" : "they"}&rsquo;ll be searchable by name within a few hours. (Use Refresh to check progress.)
+                    {totalPending.toLocaleString()} captured {totalPending === 1 ? "caption is" : "captions are"} still being tagged with people &amp; topics — {totalPending === 1 ? "it" : "they"}&rsquo;ll be searchable by name within a few hours.
                   </p>
                 )}
 
@@ -356,8 +285,7 @@ export default function LinkSearchPage() {
                 <p className="text-ink-4 pt-0.5">
                   Enrichment reads each post&rsquo;s caption and tags who&rsquo;s in it, so you can search by name. YouTube and
                   Facebook are read directly from each public post; Instagram is read from the accounts we manage. New posts
-                  become searchable automatically within a few hours — use Refresh to pull the latest now. A full pass usually
-                  takes a few minutes.
+                  become searchable automatically — enrichment runs in the background every couple of hours.
                 </p>
               </div>
             </div>

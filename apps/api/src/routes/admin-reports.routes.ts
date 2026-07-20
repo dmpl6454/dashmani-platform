@@ -551,37 +551,13 @@ router.get(
   },
 );
 
-// POST /admin/insights/refresh — trigger an on-demand enrichment pass (harvest + extract).
-// Returns 202 when a new run is started, 200 when one is already in flight.
-router.post(
-  "/admin/insights/refresh",
-  authenticate,
-  requirePermission("reports", "view"),
-  async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const { triggerInsightsRun, getInsightsRunState } = await import("../services/insights-runner");
-      const result = triggerInsightsRun("manual");
-      return success(res, { ...result, state: getInsightsRunState() }, undefined, result.started ? 202 : 200);
-    } catch (err) {
-      next(err);
-    }
-  },
-);
-
-// GET /admin/insights/status — poll the current enrichment run state.
-router.get(
-  "/admin/insights/status",
-  authenticate,
-  requirePermission("reports", "view"),
-  async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const { getInsightsRunState } = await import("../services/insights-runner");
-      return success(res, getInsightsRunState());
-    } catch (err) {
-      next(err);
-    }
-  },
-);
+// (The manual POST /admin/insights/refresh + GET /admin/insights/status pair and the
+// insights-runner singleton were REMOVED 2026-07-20 along with the Link Search
+// "Refresh enrichment" button: pressing it during a scheduled sweep contended for the
+// shared Meta rate budget and could legitimately spin for ~an hour (50-min hard-budget
+// grind when the FB harvest never fired). Enrichment is fully automatic — 2-hourly
+// sweeps + hourly extraction — so an on-demand trigger bought nothing. Don't re-add a
+// manual trigger without a fast-fail bound + an already-running guard.)
 
 // ===== Enrichment kill-switch (admin-controlled) =====
 // Entity extraction (Haiku/GPT/Gemini captioning → people/topic tags for Link

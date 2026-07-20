@@ -233,7 +233,7 @@ async function main(): Promise<void> {
   console.log(`  Unresolvable    : ${stats.unresolvable}`);
   console.log(`  Errors          : ${stats.errors}`);
   console.log(`  Skipped         : ${stats.skipped}`);
-  console.log("\nDone. Run the social-insights cron (or POST /admin/insights/refresh) to pick up newly-resolved links.\n");
+  console.log("\nDone. The scheduled social-insights cron will pick up newly-resolved links on its next run.\n");
 }
 
 main()

@@ -490,77 +490,10 @@ export async function getAttendanceAnalytics(params?: { startDate?: string; endD
 }
 
 // ===== Client Analytics =====
-
-export async function getClientAnalytics(clientId: string) {
-  const projects = await prisma.project.findMany({
-    where: { clientId },
-    select: {
-      id: true,
-      name: true,
-      status: true,
-      tasks: { select: { task: { select: { status: true } } } },
-      approvals: { where: { status: "PENDING" }, select: { id: true } },
-    },
-    orderBy: { createdAt: "desc" },
-  });
-
-  let totalTasks = 0;
-  let completedTasks = 0;
-  let pendingApprovals = 0;
-
-  const projectItems = await Promise.all(
-    projects.map(async (p) => {
-      const pTotalTasks = p.tasks.length;
-      const pCompletedTasks = p.tasks.filter((t) => t.task.status === "DONE").length;
-      const pPendingApprovals = p.approvals.length;
-
-      totalTasks += pTotalTasks;
-      completedTasks += pCompletedTasks;
-      pendingApprovals += pPendingApprovals;
-
-      let totalContent = 0;
-      let publishedContent = 0;
-      try {
-        totalContent = await (prisma as any).contentPost.count({
-          where: { projectId: p.id },
-        });
-        publishedContent = await (prisma as any).contentPost.count({
-          where: { projectId: p.id, status: "PUBLISHED" },
-        });
-      } catch {
-        // ContentPost model doesn't exist yet
-      }
-
-      return {
-        projectId: p.id,
-        projectName: p.name,
-        status: p.status,
-        totalTasks: pTotalTasks,
-        completedTasks: pCompletedTasks,
-        pendingApprovals: pPendingApprovals,
-        taskCompletionPercent: pTotalTasks > 0
-          ? Math.round((pCompletedTasks / pTotalTasks) * 100)
-          : 0,
-        totalContent,
-        publishedContent,
-      };
-    })
-  );
-
-  const activeProjects = projects.filter((p) => p.status === "ACTIVE").length;
-
-  return {
-    totalProjects: projects.length,
-    activeProjects,
-    totalTasks,
-    completedTasks,
-    pendingApprovals,
-    overallCompletionPercent: totalTasks > 0
-      ? Math.round((completedTasks / totalTasks) * 100)
-      : 0,
-    projects: projectItems,
-  };
-}
+// (getClientAnalytics was removed 2026-07-20: its only caller was a SHADOWED
+// duplicate GET /client/analytics in analytics.routes.ts — client.routes.ts
+// mounts first and serves the live endpoint via getClientContentAnalytics
+// below. The dead function carried a 2-queries-per-project N+1.)
 
 // ===== Client Content Analytics =====
 

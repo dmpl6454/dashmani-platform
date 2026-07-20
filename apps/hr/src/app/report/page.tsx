@@ -589,13 +589,50 @@ export default function ReportPage() {
     return /^[^/\s]+\.[^/\s]+/.test(s) ? tryParse("https://" + s) : null;
   }
 
+  // GLUED-URL SPLIT (2026-07-20): users paste two URLs with NO separator between
+  // them (e.g. copying from chat apps that strip the newline) — the line passes
+  // the no-whitespace guard and parses as ONE URL with the second stuck in its
+  // path. 55 such broken rows exist on prod (visible as the cron's "unexpected
+  // non-extractable URL … reel/DX_https://…" warnings) — unsearchable and
+  // metric-less. When a line contains 2+ literal scheme occurrences, split at
+  // each `https://` boundary and normalize every segment. Percent-encoded
+  // embedded URLs (youtube.com/redirect?q=https%3A%2F%2F…) contain no literal
+  // second scheme and are NOT split.
+  function parsePastedLine(line: string): string[] {
+    // Find every literal scheme occurrence, but treat one as a SPLIT point only
+    // when it is NOT preceded by ? = & — a scheme right after a query delimiter
+    // is a legit single URL wrapping another (e.g. `?u=https://…` redirect
+    // links), which must NOT be torn apart. (No regex lookbehind on purpose:
+    // an unsupported lookbehind throws at parse time on older iOS Safari and
+    // would take down the whole page.)
+    const splitPoints: number[] = [];
+    const schemeRe = /https?:\/\//gi;
+    let m: RegExpExecArray | null;
+    while ((m = schemeRe.exec(line)) !== null) {
+      const prev = m.index > 0 ? line[m.index - 1] : "";
+      if (m.index === 0 || (prev !== "?" && prev !== "=" && prev !== "&")) {
+        splitPoints.push(m.index);
+      }
+    }
+    if (splitPoints.length >= 2) {
+      const segments: string[] = [];
+      if (splitPoints[0] > 0) segments.push(line.slice(0, splitPoints[0]));
+      for (let i = 0; i < splitPoints.length; i++) {
+        segments.push(line.slice(splitPoints[i], splitPoints[i + 1] ?? line.length));
+      }
+      return segments.map((seg) => normalizePastedUrl(seg)).filter((u): u is string => !!u);
+    }
+    const u = normalizePastedUrl(line);
+    return u ? [u] : [];
+  }
+
   function handleSmartPaste() {
     const rawLines = pasteText.split("\n").map((l) => l.trim()).filter(Boolean);
     const urls: string[] = [];
     let dropped = 0;
     for (const line of rawLines) {
-      const u = normalizePastedUrl(line);
-      if (u) urls.push(u);
+      const found = parsePastedLine(line);
+      if (found.length > 0) urls.push(...found);
       else dropped++;
     }
     if (urls.length === 0) {
@@ -671,7 +708,7 @@ export default function ReportPage() {
   // disabled for bare-domain lines the paste can recover.)
   const detectedUrlCount = pasteText
     .split("\n")
-    .reduce((n, l) => (normalizePastedUrl(l) ? n + 1 : n), 0);
+    .reduce((n, l) => n + parsePastedLine(l.trim()).length, 0);
 
   const validLinks = links.filter((l) => l.isScheduled || l.url.trim());
   const liveCount = validLinks.filter((l) => !l.isScheduled).length;

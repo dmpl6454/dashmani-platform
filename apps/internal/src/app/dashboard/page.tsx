@@ -188,7 +188,7 @@ export default function DashboardPage() {
         name: r.employee?.name ?? "—",
         primary: isViews
           ? `${fmtCompact(r.views ?? 0)} views`
-          : `${fmtCompact((r.likes ?? 0) + (r.comments ?? 0))} eng`,
+          : `${fmtCompact((r.likes ?? 0) + (r.comments ?? 0))} likes+cmts`,
         secondary: `${r.engagedLinkCount ?? 0} link${(r.engagedLinkCount ?? 0) !== 1 ? "s" : ""}`,
       }));
     }
@@ -744,7 +744,15 @@ export default function DashboardPage() {
               </div>
               <div>
                 <p className="font-bold text-ink">Top Performers</p>
-                <p className="text-xs text-ink-4">Last 30 days</p>
+                {/* The metric caption must always say WHAT the number is — an unlabeled
+                    "2.6m" next to view-ranked tabs gets read as views. Instagram has no
+                    public view counts, so its board ranks by likes + comments. */}
+                <p className="text-xs text-ink-4">
+                  Last 30 days
+                  {perfMetric === "engagement" && " · views + likes + comments"}
+                  {perfMetric === "instagram" && " · by likes + comments (Instagram publishes no view counts)"}
+                  {(perfMetric === "youtube" || perfMetric === "facebook" || perfMetric === "snapchat") && " · by views"}
+                </p>
               </div>
             </div>
             <PillGroup>

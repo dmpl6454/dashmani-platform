@@ -12,7 +12,7 @@ const MEDALS = ["#1", "#2", "#3"];
 // Compact number formatter for engagement (1.2M, 45.3k, 980). Null-safe.
 const fmtCompact = (n: number | null | undefined): string => {
   const v = n ?? 0;
-  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
+  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}m`;
   if (v >= 1_000) return `${(v / 1_000).toFixed(1)}k`;
   return String(v);
 };

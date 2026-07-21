@@ -2,10 +2,15 @@
 # =============================================================
 # Digital Sukoon - Automated Backup Script
 # Weekly database backup + file backup
-# Setup: Add to crontab: 0 2 * * 0 /opt/dashmani-platform/scripts/backup.sh
+# Setup: Add to crontab: 0 2 * * 0 bash /opt/dashmani-platform/scripts/backup.sh
+#   (invoke via `bash` — deploys run `git reset --hard`, which resets file modes
+#    to what git records; if the exec bit ever regresses, direct invocation
+#    silently fails with "Permission denied" forever, which is exactly what
+#    happened May 24 – Jul 19 2026. The bit IS committed now, but `bash` makes
+#    the crontab immune either way.)
 # =============================================================
 
-set -e
+set -eo pipefail
 
 BACKUP_DIR="/opt/backups/dashmani"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
@@ -19,14 +24,27 @@ echo "[$TIMESTAMP] Starting backup..."
 
 # 1. Database backup
 echo "Backing up database..."
-source "$APP_DIR/apps/api/.env" 2>/dev/null || source "$APP_DIR/.env" 2>/dev/null || true
+# Extract DATABASE_URL by grep, NOT `source`: the prod URL carries unquoted
+# Prisma pool params (…?connection_limit=10&pool_timeout=20…) — sourcing that
+# line backgrounds the assignment at the '&' and loses the variable. libpq also
+# rejects those Prisma-only URI params outright, so strip the query string.
+DATABASE_URL=$(grep -hE '^DATABASE_URL=' "$APP_DIR/apps/api/.env" "$APP_DIR/.env" 2>/dev/null | head -1 | cut -d= -f2- || true)
+DATABASE_URL="${DATABASE_URL%\"}"; DATABASE_URL="${DATABASE_URL#\"}"
+DATABASE_URL="${DATABASE_URL%%\?*}"
 
 if [ -n "$DATABASE_URL" ]; then
-  pg_dump "$DATABASE_URL" --no-owner --no-privileges > "$BACKUP_DIR/db_$TIMESTAMP.sql"
-  gzip "$BACKUP_DIR/db_$TIMESTAMP.sql"
-  echo "Database backup: $BACKUP_DIR/db_$TIMESTAMP.sql.gz"
+  # Lowest CPU/IO priority — the weekly run is off-hours, but a manual run may
+  # happen while users are on the site; the dump must never compete with them.
+  nice -n 19 ionice -c3 pg_dump "$DATABASE_URL" --no-owner --no-privileges | nice -n 19 gzip > "$BACKUP_DIR/db_$TIMESTAMP.sql.gz"
+  DB_SIZE=$(stat -c%s "$BACKUP_DIR/db_$TIMESTAMP.sql.gz")
+  if [ "$DB_SIZE" -lt 1000000 ]; then
+    echo "ERROR: database dump suspiciously small ($DB_SIZE bytes) — FAILED"
+    exit 1
+  fi
+  echo "Database backup: $BACKUP_DIR/db_$TIMESTAMP.sql.gz ($DB_SIZE bytes)"
 else
-  echo "WARNING: DATABASE_URL not found, skipping database backup"
+  echo "ERROR: DATABASE_URL not found — database backup FAILED"
+  exit 1
 fi
 
 # 2. Uploads backup (profile pictures, documents, imports)
@@ -68,6 +86,9 @@ for prefix in db uploads config manifest; do
   ls -1t ${prefix}_*.* 2>/dev/null | tail -n +$((MAX_BACKUPS + 1)) | xargs -r rm -f
 done
 
-echo "[$TIMESTAMP] Backup complete!"
+# Greppable success marker — its ABSENCE in /var/log/dashmani-backup.log after a
+# Sunday 02:00 UTC run means the backup failed; check the log. (The 2026 failure
+# ran silent for 15 weeks because nothing asserted success.)
+echo "[$TIMESTAMP] BACKUP OK"
 echo "Backup location: $BACKUP_DIR"
 ls -lh "$BACKUP_DIR"/*_$TIMESTAMP* 2>/dev/null

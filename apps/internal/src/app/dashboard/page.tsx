@@ -170,7 +170,10 @@ export default function DashboardPage() {
         .map((r) => ({
           employeeId: r.employee?.id ?? r.employeeId,
           name: r.employee?.name ?? r.name ?? "—",
-          primary: `${fmtCompact(r.totalEngagement ?? 0)} eng`,
+          // No suffix — the panel caption directly above defines this number as
+          // "views + likes + comments (mostly views)"; the "eng" abbreviation
+          // repeatedly failed to explain itself to real users.
+          primary: fmtCompact(r.totalEngagement ?? 0),
           secondary: `${r.totalLinks ?? 0} links`,
         }));
     }
@@ -749,7 +752,7 @@ export default function DashboardPage() {
                     public view counts, so its board ranks by likes + comments. */}
                 <p className="text-xs text-ink-4">
                   Last 30 days
-                  {perfMetric === "engagement" && " · views + likes + comments"}
+                  {perfMetric === "engagement" && " · views + likes + comments (mostly views)"}
                   {perfMetric === "instagram" && " · by likes + comments (Instagram publishes no view counts)"}
                   {(perfMetric === "youtube" || perfMetric === "facebook" || perfMetric === "snapchat") && " · by views"}
                 </p>

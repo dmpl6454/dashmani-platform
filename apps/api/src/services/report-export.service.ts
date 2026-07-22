@@ -12,6 +12,7 @@ import {
   istDateTime,
   avgIstTimeOfDay,
   formatStatus,
+  canonicalKey,
 } from "@dashmani/shared";
 
 /**
@@ -75,6 +76,12 @@ export interface ExportInput {
   todayLinks: ExportLink[]; // literal current IST day, computed independently of window
   startKey: string; // window start YYYY-MM-DD IST
   endKey: string; // window end YYYY-MM-DD IST
+  // When set, the Channel Summary + Day-wise Breakdown are scoped to THIS employee
+  // only (the Reports page's employee-filter dropdown). The Cross-Employee
+  // Duplicates sheet still detects across all employees, then keeps only groups
+  // that include this employee. Undefined = team-wide export (unchanged).
+  employeeId?: string;
+  employeeName?: string; // for the filename when scoped
 }
 
 export interface SummaryRow {
@@ -112,6 +119,20 @@ export interface BreakdownRow {
   approx: string; // "Yes" | ""
 }
 
+// One row per submission of a link that ≥2 DIFFERENT employees posted in the
+// window. Rows are grouped (contiguous) by `groupNo`.
+export interface DuplicateRow {
+  groupNo: number; // 1-based, most-shared group first
+  employeesOnLink: number; // distinct employees who posted this same link
+  employee: string; // who posted THIS submission
+  submitTime: string; // HH:MM IST (firstSeenAt)
+  date: string; // YYYY-MM-DD IST (report date)
+  channel: string;
+  platform: string;
+  url: string;
+  reportSubmittedAt: string; // YYYY-MM-DD HH:MM IST
+}
+
 // ---------- normalization helpers ----------
 
 /** Title-case a platform name from any casing ("instagram" -> "Instagram"). */
@@ -131,8 +152,32 @@ function normalizePlatformName(name: string | null | undefined): string {
 export function buildExportRows(input: ExportInput): {
   summary: SummaryRow[];
   breakdown: BreakdownRow[];
+  duplicates: DuplicateRow[];
 } {
-  const { accounts, windowLinks, todayLinks } = input;
+  // Cross-employee duplicates are detected over the FULL team-wide link set —
+  // dup detection is inherently cross-employee, so it runs BEFORE any per-employee
+  // scoping (scoping to one employee then only keeps groups that include them).
+  const duplicates = buildDuplicateRows(input.windowLinks, input.employeeId);
+
+  // Employee scoping: when the Reports page has an employee selected, the Channel
+  // Summary + Day-wise Breakdown must contain ONLY that employee's activity. Team
+  // view (no employeeId) is byte-for-byte unchanged.
+  const scoped = !!input.employeeId;
+  const windowLinks = scoped
+    ? input.windowLinks.filter((l) => l.employeeId === input.employeeId)
+    : input.windowLinks;
+  const todayLinks = scoped
+    ? input.todayLinks.filter((l) => l.employeeId === input.employeeId)
+    : input.todayLinks;
+  let accounts = input.accounts;
+  if (scoped) {
+    // Only channels this employee actually posted to (in the window OR today) —
+    // a single-employee sheet listing all ~400 channels at zero is pure noise.
+    const touched = new Set<string>();
+    for (const l of windowLinks) if (l.accountId) touched.add(l.accountId);
+    for (const l of todayLinks) if (l.accountId) touched.add(l.accountId);
+    accounts = input.accounts.filter((a) => touched.has(a.id));
+  }
 
   // Index window links by accountId.
   const linksByAccount = new Map<string, ExportLink[]>();
@@ -235,7 +280,83 @@ export function buildExportRows(input: ExportInput): {
         a.submitTime.localeCompare(b.submitTime),
     );
 
-  return { summary, breakdown };
+  return { summary, breakdown, duplicates };
+}
+
+/**
+ * Cross-employee duplicate links: the SAME post (by canonicalKey) submitted by
+ * TWO OR MORE DIFFERENT employees within the window. Cross-employee dupes are
+ * ALLOWED by the platform (unlike same-employee cross-day dupes, which are
+ * dropped at submit time), so this surfaces them for visibility — it is not an
+ * error flag.
+ *
+ * Grouping uses `canonicalKey` — the exact same arbiter the submit-time dedupe
+ * uses — so "same link" means what the system means (two IG reels differing only
+ * by a `?igsh=` token are one link; opaque FB `/share/` links fall through to
+ * their raw URL so distinct shares are never merged). Links with no URL are
+ * skipped (nothing to key on).
+ *
+ * When `employeeId` is set, only groups that INCLUDE that employee are kept — each
+ * retained group still lists the OTHER employees who shared the link (name + time),
+ * which is the whole point of the sheet.
+ *
+ * Output: one row per submission, grouped contiguously by link with a 1-based
+ * `groupNo` ordered by group size (most-shared first). Within a group, rows are
+ * ordered by posting time ascending (first submitter first).
+ */
+export function buildDuplicateRows(
+  allWindowLinks: ExportLink[],
+  employeeId?: string,
+): DuplicateRow[] {
+  const groups = new Map<string, ExportLink[]>();
+  for (const l of allWindowLinks) {
+    const key = canonicalKey(l.url);
+    if (!key) continue; // no/empty URL → cannot dedupe
+    const arr = groups.get(key);
+    if (arr) arr.push(l);
+    else groups.set(key, [l]);
+  }
+
+  type Grp = { links: ExportLink[]; empCount: number; earliest: number };
+  const qualifying: Grp[] = [];
+  for (const links of groups.values()) {
+    const emps = new Set<string>();
+    for (const l of links) emps.add(l.employeeId);
+    if (emps.size < 2) continue; // must be ≥2 DIFFERENT employees
+    if (employeeId && !emps.has(employeeId)) continue; // scope to selected employee
+    let earliest = Infinity;
+    for (const l of links) earliest = Math.min(earliest, l.firstSeenAt.getTime());
+    qualifying.push({ links, empCount: emps.size, earliest });
+  }
+
+  // Most-shared groups first; then most submissions; then earliest overall (stable).
+  qualifying.sort(
+    (a, b) =>
+      b.empCount - a.empCount || b.links.length - a.links.length || a.earliest - b.earliest,
+  );
+
+  const rows: DuplicateRow[] = [];
+  let groupNo = 0;
+  for (const g of qualifying) {
+    groupNo++;
+    const ordered = [...g.links].sort(
+      (a, b) => a.firstSeenAt.getTime() - b.firstSeenAt.getTime(),
+    );
+    for (const l of ordered) {
+      rows.push({
+        groupNo,
+        employeesOnLink: g.empCount,
+        employee: l.employeeName,
+        submitTime: istTimeOfDay(l.firstSeenAt),
+        date: l.reportDateKey,
+        channel: l.channelName,
+        platform: l.platformName,
+        url: l.url ?? "",
+        reportSubmittedAt: istDateTime(l.reportSubmittedAt),
+      });
+    }
+  }
+  return rows;
 }
 
 function round1(n: number): number {
@@ -305,10 +426,19 @@ function mapDbLink(l: any): ExportLink {
   };
 }
 
-/** Fetches everything the export needs from the DB for the given window. */
+/**
+ * Fetches everything the export needs from the DB for the given window.
+ *
+ * NOTE ON employeeId: the DB fetch stays TEAM-WIDE even when an employee is
+ * selected. Cross-employee duplicate detection inherently needs every employee's
+ * links, and this matches the pre-existing export cost exactly (it was always
+ * team-wide). The per-employee scoping of the Summary/Breakdown sheets happens in
+ * the pure `buildExportRows` (filtered in memory), so nothing here narrows the query.
+ */
 export async function gatherReportExportData(
   startDate?: string,
   endDate?: string,
+  employeeId?: string,
 ): Promise<ExportInput> {
   const { start, end, startKey, endKey } = resolveWindow(startDate, endDate);
 
@@ -357,12 +487,24 @@ export async function gatherReportExportData(
       .map((e) => ({ id: e.id, name: e.name, phone: e.phone, email: e.email })),
   }));
 
+  // Resolve the selected employee's name (for the filename) only when scoped.
+  let employeeName: string | undefined;
+  if (employeeId) {
+    const emp = await prisma.user.findUnique({
+      where: { id: employeeId },
+      select: { name: true },
+    });
+    employeeName = emp?.name ?? undefined;
+  }
+
   return {
     accounts,
     windowLinks: windowLinksRaw.map(mapDbLink),
     todayLinks: todayLinksRaw.map(mapDbLink),
     startKey,
     endKey,
+    employeeId: employeeId || undefined,
+    employeeName,
   };
 }
 
@@ -400,6 +542,18 @@ const BREAKDOWN_HEADERS: { key: keyof BreakdownRow; label: string }[] = [
   { key: "views", label: "Views" },
   { key: "reportSubmittedAt", label: "Report Submitted At (IST)" },
   { key: "approx", label: "Approx Time?" },
+];
+
+const DUPLICATE_HEADERS: { key: keyof DuplicateRow; label: string }[] = [
+  { key: "groupNo", label: "Dup Group" },
+  { key: "employeesOnLink", label: "Employees Sharing" },
+  { key: "employee", label: "Posted By" },
+  { key: "submitTime", label: "Posting Time (IST)" },
+  { key: "date", label: "Date" },
+  { key: "channel", label: "Channel" },
+  { key: "platform", label: "Platform" },
+  { key: "url", label: "Link URL" },
+  { key: "reportSubmittedAt", label: "Report Submitted At (IST)" },
 ];
 
 // ---------- styling palette ----------
@@ -453,6 +607,7 @@ const RIGHT_ALIGN = new Set([
   "Likes",
   "Comments",
   "Views",
+  "Employees Sharing",
 ]);
 const CENTER_ALIGN = new Set([
   "Platform",
@@ -462,6 +617,7 @@ const CENTER_ALIGN = new Set([
   "Avg Posting Time (IST)",
   "Date",
   "Approx Time?",
+  "Dup Group",
 ]);
 
 /** Sensible per-column widths (in characters) keyed by header label. */
@@ -490,6 +646,9 @@ const COL_WIDTH: Record<string, number> = {
   "Link URL": 46,
   "Report Submitted At (IST)": 20,
   "Approx Time?": 12,
+  // Cross-Employee Duplicates
+  "Dup Group": 10,
+  "Employees Sharing": 16,
 };
 
 /**
@@ -500,7 +659,7 @@ const COL_WIDTH: Record<string, number> = {
 function styledSheet<T>(
   rows: T[],
   headers: { key: keyof T; label: string }[],
-  opts: { flagUnassigned?: boolean } = {},
+  opts: { flagUnassigned?: boolean; bandKey?: keyof T } = {},
 ): any {
   const aoa: any[][] = [headers.map((h) => h.label)];
   for (const r of rows) aoa.push(headers.map((h) => r[h.key]));
@@ -515,11 +674,23 @@ function styledSheet<T>(
     if (ws[ref]) ws[ref].s = headerStyle;
   }
 
-  // Body rows.
+  // Body rows. With `bandKey`, band by GROUPS — flip the cream/white band each
+  // time the key's value changes so grouped rows read as visual blocks; otherwise
+  // band every other row.
+  let bandParity = 0;
+  let prevBandVal: unknown = undefined;
   for (let i = 0; i < nRows; i++) {
     const r = i + 1; // +1 for header
-    const even = i % 2 === 1; // band every other body row
     const row = rows[i] as any;
+    let even: boolean;
+    if (opts.bandKey) {
+      const v = row[opts.bandKey as string];
+      if (i > 0 && v !== prevBandVal) bandParity ^= 1;
+      prevBandVal = v;
+      even = bandParity === 1;
+    } else {
+      even = i % 2 === 1; // band every other body row
+    }
     const isUnassigned =
       opts.flagUnassigned && row.assignmentState === "Unassigned";
     for (let c = 0; c < nCols; c++) {
@@ -566,7 +737,7 @@ export function buildReportsWorkbook(
   input: ExportInput,
   _generatedAt: Date,
 ): Buffer {
-  const { summary, breakdown } = buildExportRows(input);
+  const { summary, breakdown, duplicates } = buildExportRows(input);
 
   const wb = XLSX.utils.book_new();
 
@@ -580,6 +751,13 @@ export function buildReportsWorkbook(
     styledSheet(breakdown, BREAKDOWN_HEADERS),
     "Day-wise Breakdown",
   );
+  // Always present (even with zero rows → an empty sheet is itself the answer:
+  // "no cross-employee duplicates in this window"). Banded per dup group.
+  XLSX.utils.book_append_sheet(
+    wb,
+    styledSheet(duplicates, DUPLICATE_HEADERS, { bandKey: "groupNo" }),
+    "Cross-Employee Duplicates",
+  );
 
   return XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer;
 }
@@ -588,9 +766,19 @@ export function buildReportsWorkbook(
 export async function generateReportsExport(
   startDate?: string,
   endDate?: string,
+  employeeId?: string,
 ): Promise<{ buffer: Buffer; filename: string; startKey: string; endKey: string }> {
-  const input = await gatherReportExportData(startDate, endDate);
+  const input = await gatherReportExportData(startDate, endDate, employeeId);
   const buffer = buildReportsWorkbook(input, new Date());
-  const filename = `reports-export-${input.startKey}_${input.endKey}.xlsx`;
+  // Slug the employee name into the filename when the export is scoped, so the
+  // download is self-identifying (e.g. reports-export-kajal-yadav-2026-06-22_2026-07-22.xlsx).
+  const empSlug = input.employeeName
+    ? "-" +
+      input.employeeName
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "")
+    : "";
+  const filename = `reports-export${empSlug}-${input.startKey}_${input.endKey}.xlsx`;
   return { buffer, filename, startKey: input.startKey, endKey: input.endKey };
 }

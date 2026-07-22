@@ -304,10 +304,14 @@ describe("buildDuplicateRows — cross-employee duplicate links", () => {
 });
 
 describe("buildReportsWorkbook — serialization", () => {
-  it("produces a 2-sheet xlsx buffer with the simplified headers (no About, no Client)", () => {
+  it("produces a lean 2-sheet xlsx (Channel Summary + Cross-Employee Duplicates; NO Day-wise Breakdown — that moved to the streamed CSV)", () => {
     const input: ExportInput = {
       accounts: [acc({ id: "a1", displayName: "C", assignedEmployees: [{ id: "e1", name: "Emp One", phone: "1", email: "e1@x.com" }] })],
-      windowLinks: [link({ accountId: "a1", firstSeenAt: IST("04:30"), reportDateKey: "2026-06-01" })],
+      windowLinks: [
+        // two employees on the same link → a cross-employee dup so that sheet has a row
+        link({ accountId: "a1", employeeId: "e1", employeeName: "Emp One", url: "https://instagram.com/reel/AAA/", firstSeenAt: IST("04:30"), reportDateKey: "2026-06-01" }),
+        link({ accountId: "a1", employeeId: "e2", employeeName: "Emp Two", url: "https://instagram.com/reel/AAA/?igsh=x", firstSeenAt: IST("05:30"), reportDateKey: "2026-06-01" }),
+      ],
       todayLinks: [],
       startKey: "2026-05-03",
       endKey: "2026-06-01",
@@ -317,30 +321,35 @@ describe("buildReportsWorkbook — serialization", () => {
     expect(buf.length).toBeGreaterThan(0);
 
     const wb = XLSX.read(buf, { type: "buffer" });
-    // About sheet removed; Cross-Employee Duplicates sheet added → three sheets.
-    expect(wb.SheetNames).toEqual([
-      "Channel Summary",
-      "Day-wise Breakdown",
-      "Cross-Employee Duplicates",
-    ]);
+    // The huge per-link Day-wise Breakdown is GONE from the workbook (it OOM'd at
+    // scale; it now lives in the streamed All-Links CSV). Only the two small sheets remain.
+    expect(wb.SheetNames).toEqual(["Channel Summary", "Cross-Employee Duplicates"]);
+    expect(wb.SheetNames).not.toContain("Day-wise Breakdown");
 
-    const summaryAoa = XLSX.utils.sheet_to_json(wb.Sheets["Channel Summary"], { header: 1 }) as any[][];
-    const summaryHeader = summaryAoa[0];
-    // Renamed, plain-English headers present.
+    const summaryHeader = (XLSX.utils.sheet_to_json(wb.Sheets["Channel Summary"], { header: 1 }) as any[][])[0];
     expect(summaryHeader).toContain("Channel");
-    expect(summaryHeader).toContain("Links Today");
     expect(summaryHeader).toContain("Total Links");
-    expect(summaryHeader).toContain("Avg Posting Time (IST)");
-    expect(summaryHeader).toContain("Assigned To");
     expect(summaryHeader).toContain("Who Posted");
-    // Removed / old jargon must be gone.
-    expect(summaryHeader).not.toContain("Client");
-    expect(summaryHeader).not.toContain("Total Links (window)");
-    expect(summaryHeader).not.toContain("Page (Channel)");
 
-    const breakdownAoa = XLSX.utils.sheet_to_json(wb.Sheets["Day-wise Breakdown"], { header: 1 }) as any[][];
-    expect(breakdownAoa[0]).toContain("Link URL");
-    expect(breakdownAoa[0]).toContain("Posting Time (IST)");
-    expect(breakdownAoa[0]).toContain("Posted By");
+    const dupHeader = (XLSX.utils.sheet_to_json(wb.Sheets["Cross-Employee Duplicates"], { header: 1 }) as any[][])[0];
+    expect(dupHeader).toContain("Link URL");
+    expect(dupHeader).toContain("Posting Time (IST)");
+    expect(dupHeader).toContain("Employees Sharing");
+  });
+
+  it("buildExportRows skips the breakdown allocation when includeBreakdown:false", () => {
+    const input: ExportInput = {
+      accounts: [acc({ id: "a1", displayName: "C" })],
+      windowLinks: [link({ accountId: "a1", firstSeenAt: IST("04:30"), reportDateKey: "2026-06-01" })],
+      todayLinks: [],
+      startKey: "2026-06-01",
+      endKey: "2026-06-01",
+    };
+    // Default still builds the breakdown (back-compat for other callers/tests).
+    expect(buildExportRows(input).breakdown.length).toBe(1);
+    // The workbook path opts out — no breakdown rows allocated.
+    expect(buildExportRows(input, { includeBreakdown: false }).breakdown.length).toBe(0);
+    // Summary + duplicates are unaffected by the flag.
+    expect(buildExportRows(input, { includeBreakdown: false }).summary.length).toBe(1);
   });
 });

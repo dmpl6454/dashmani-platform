@@ -10,7 +10,7 @@ import { useAuth } from "@/lib/auth";
 import { UserAvatar } from "@/components/user-avatar";
 import { PlatformIcon } from "@/lib/platform-icon";
 import { RangePills, presetStart, todayISO, rangeLabel } from "./_range";
-import { ExportButton } from "./_export";
+import { ExportButton, AllLinksCsvButton } from "./_export";
 
 // Snapchat has no dedicated lucide-react brand icon; reuse the same SVG mapped
 // in PlatformIcon (already used elsewhere in the portal) for visual consistency.
@@ -452,6 +452,7 @@ export default function ReportsPage() {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <ExportButton startDate={startDate} endDate={endDate} employeeId={employeeId || undefined} variant="light" />
+          <AllLinksCsvButton startDate={startDate} endDate={endDate} employeeId={employeeId || undefined} variant="light" />
           <Link
             href="/reports/links"
             className="inline-flex items-center gap-2 bg-white border border-[#E8E0D0] text-[#1A1A1A] rounded-full px-4 py-2 text-sm font-medium hover:shadow-[0_4px_12px_rgba(0,0,0,0.08)] transition-shadow"

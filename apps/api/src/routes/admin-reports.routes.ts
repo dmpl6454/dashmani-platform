@@ -336,6 +336,42 @@ router.get(
   },
 );
 
+// GET /admin/reports/links.csv — STREAMED CSV of every submitted link (the raw
+// ledger: literal URL + date + IST posting time + channel + who + engagement) for
+// the window (+ optional employeeId). Unlike the .xlsx, this scales to any size —
+// it keyset-paginates + streams to the response (O(batch) memory). See
+// report-links-csv.service. MUST be declared before /:reportId.
+router.get(
+  "/admin/reports/links.csv",
+  authenticate,
+  requirePermission("reports", "view"),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { startDate, endDate, employeeId } = req.query as {
+        startDate?: string;
+        endDate?: string;
+        employeeId?: string;
+      };
+      const { streamReportLinksCsv, reportLinksCsvFilename } = await import(
+        "../services/report-links-csv.service"
+      );
+      const filename = await reportLinksCsvFilename({ startDate, endDate, employeeId });
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
+      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+      res.setHeader("Access-Control-Expose-Headers", "Content-Disposition");
+      res.setHeader("Cache-Control", "no-store");
+      await streamReportLinksCsv({ startDate, endDate, employeeId }, (chunk) => res.write(chunk));
+      res.end();
+    } catch (err) {
+      // If streaming already began the headers/body are partly sent — we can't send
+      // a JSON error envelope, so just terminate the (truncated) response. Otherwise
+      // defer to the error handler for a clean 500.
+      if (res.headersSent) res.end();
+      else next(err);
+    }
+  },
+);
+
 // GET /admin/reports/leaderboard — MUST be before /:reportId
 router.get(
   "/admin/reports/leaderboard",

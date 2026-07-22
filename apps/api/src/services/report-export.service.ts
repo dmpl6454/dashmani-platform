@@ -149,11 +149,20 @@ function normalizePlatformName(name: string | null | undefined): string {
  * Builds the summary + breakdown rows from already-fetched data. Pure: no DB,
  * no clock — `todayLinks` is passed in so "today" is decided by the caller.
  */
-export function buildExportRows(input: ExportInput): {
+export function buildExportRows(
+  input: ExportInput,
+  opts: { includeBreakdown?: boolean } = {},
+): {
   summary: SummaryRow[];
   breakdown: BreakdownRow[];
   duplicates: DuplicateRow[];
 } {
+  // The .xlsx workbook no longer renders the per-link Day-wise Breakdown (that
+  // 108k-row sheet OOM'd the box — it now lives in the streamed All-Links CSV).
+  // So the workbook path passes includeBreakdown:false to skip allocating the
+  // (potentially 100k+) breakdown row array entirely. Default true keeps the pure
+  // function's full output for tests / any other caller.
+  const includeBreakdown = opts.includeBreakdown !== false;
   // Cross-employee duplicates are detected over the FULL team-wide link set —
   // dup detection is inherently cross-employee, so it runs BEFORE any per-employee
   // scoping (scoping to one employee then only keeps groups that include them).
@@ -256,29 +265,31 @@ export function buildExportRows(input: ExportInput): {
     (a, b) => b.totalLinks - a.totalLinks || a.channel.localeCompare(b.channel),
   );
 
-  // ----- Breakdown sheet: one row per link -----
-  const breakdown: BreakdownRow[] = windowLinks
-    .map((l) => ({
-      date: l.reportDateKey,
-      submitTime: istTimeOfDay(l.firstSeenAt),
-      channel: l.channelName,
-      handle: l.channelHandle,
-      platform: l.platformName,
-      employee: l.employeeName,
-      url: l.url ?? "",
-      likes: l.likes ?? ("" as const),
-      comments: l.comments ?? ("" as const),
-      views: l.views ?? ("" as const),
-      reportSubmittedAt: istDateTime(l.reportSubmittedAt),
-      // Approx if the report's day predates the true-time cutover.
-      approx: l.reportDateKey < TRUE_TIME_SINCE ? "Yes" : "",
-    }))
-    .sort(
-      (a, b) =>
-        b.date.localeCompare(a.date) ||
-        a.channel.localeCompare(b.channel) ||
-        a.submitTime.localeCompare(b.submitTime),
-    );
+  // ----- Breakdown sheet: one row per link (skipped for the workbook path) -----
+  const breakdown: BreakdownRow[] = !includeBreakdown
+    ? []
+    : windowLinks
+        .map((l) => ({
+          date: l.reportDateKey,
+          submitTime: istTimeOfDay(l.firstSeenAt),
+          channel: l.channelName,
+          handle: l.channelHandle,
+          platform: l.platformName,
+          employee: l.employeeName,
+          url: l.url ?? "",
+          likes: l.likes ?? ("" as const),
+          comments: l.comments ?? ("" as const),
+          views: l.views ?? ("" as const),
+          reportSubmittedAt: istDateTime(l.reportSubmittedAt),
+          // Approx if the report's day predates the true-time cutover.
+          approx: l.reportDateKey < TRUE_TIME_SINCE ? "Yes" : "",
+        }))
+        .sort(
+          (a, b) =>
+            b.date.localeCompare(a.date) ||
+            a.channel.localeCompare(b.channel) ||
+            a.submitTime.localeCompare(b.submitTime),
+        );
 
   return { summary, breakdown, duplicates };
 }
@@ -366,7 +377,7 @@ function round1(n: number): number {
 // ---------- DB fetch ----------
 
 /** Resolves the [start, end] IST window; defaults to the last 30 IST days. */
-function resolveWindow(startDate?: string, endDate?: string): {
+export function resolveWindow(startDate?: string, endDate?: string): {
   start: Date;
   end: Date;
   startKey: string;
@@ -674,6 +685,20 @@ function styledSheet<T>(
     if (ws[ref]) ws[ref].s = headerStyle;
   }
 
+  // ⚠️ MEMORY: allocate each distinct style object ONCE and REFERENCE it from every
+  // cell that needs it, instead of `bodyStyle(...)` per cell. A per-cell allocation
+  // made a large sheet cost hundreds of MB of style objects (the 2026-07-22 export
+  // OOM: an unbounded per-cell allocation over 108k×N cells blew the 500MB pm2 cap).
+  // The variants here are few (align × banded-fill × the unassigned tint), so the
+  // cache holds a handful of shared objects referenced across all cells.
+  const styleCache = new Map<string, any>();
+  const cachedBodyStyle = (o: Parameters<typeof bodyStyle>[0]) => {
+    const key = `${o.even}|${o.align ?? ""}|${o.fill ?? ""}|${o.text ?? ""}|${o.bold ? 1 : 0}`;
+    let s = styleCache.get(key);
+    if (!s) { s = bodyStyle(o); styleCache.set(key, s); }
+    return s;
+  };
+
   // Body rows. With `bandKey`, band by GROUPS — flip the cream/white band each
   // time the key's value changes so grouped rows read as visual blocks; otherwise
   // band every other row.
@@ -702,7 +727,7 @@ function styledSheet<T>(
         : CENTER_ALIGN.has(label)
         ? "center"
         : "left";
-      ws[ref].s = bodyStyle({
+      ws[ref].s = cachedBodyStyle({
         even,
         align,
         fill: isUnassigned ? UNASSIGNED_FILL : undefined,
@@ -733,11 +758,29 @@ function styledSheet<T>(
  * is accepted (and currently unused) so the signature stays clock-injectable
  * and deterministic for tests.
  */
+// Defensive cap on the Cross-Employee Duplicates sheet so a pathological window can
+// never re-OOM the workbook. Realistic team-90d dup counts are a few thousand rows;
+// this cap (whole rows) is far above that. The full, uncapped link ledger — dupes
+// included — is always available via the streamed All-Links CSV, so a cap here never
+// hides data, it only bounds the styled-xlsx memory.
+const DUP_ROW_CAP = 25000;
+
 export function buildReportsWorkbook(
   input: ExportInput,
   _generatedAt: Date,
 ): Buffer {
-  const { summary, breakdown, duplicates } = buildExportRows(input);
+  // includeBreakdown:false — the per-link ledger moved to the streamed CSV (the
+  // 108k-row styled sheet was the OOM). The workbook is now only the small, always-
+  // fits Channel Summary + Cross-Employee Duplicates.
+  const { summary, duplicates } = buildExportRows(input, { includeBreakdown: false });
+
+  const cappedDuplicates =
+    duplicates.length > DUP_ROW_CAP ? duplicates.slice(0, DUP_ROW_CAP) : duplicates;
+  if (duplicates.length > DUP_ROW_CAP) {
+    console.warn(
+      `[reports-export] cross-employee duplicate rows ${duplicates.length} > cap ${DUP_ROW_CAP} — sheet truncated (full data in the All-Links CSV)`,
+    );
+  }
 
   const wb = XLSX.utils.book_new();
 
@@ -746,16 +789,11 @@ export function buildReportsWorkbook(
     styledSheet(summary, SUMMARY_HEADERS, { flagUnassigned: true }),
     "Channel Summary",
   );
-  XLSX.utils.book_append_sheet(
-    wb,
-    styledSheet(breakdown, BREAKDOWN_HEADERS),
-    "Day-wise Breakdown",
-  );
   // Always present (even with zero rows → an empty sheet is itself the answer:
   // "no cross-employee duplicates in this window"). Banded per dup group.
   XLSX.utils.book_append_sheet(
     wb,
-    styledSheet(duplicates, DUPLICATE_HEADERS, { bandKey: "groupNo" }),
+    styledSheet(cappedDuplicates, DUPLICATE_HEADERS, { bandKey: "groupNo" }),
     "Cross-Employee Duplicates",
   );
 

@@ -315,8 +315,12 @@ router.get(
   requirePermission("reports", "view"),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const { startDate, endDate } = req.query as { startDate?: string; endDate?: string };
-      const { buffer, filename } = await generateReportsExport(startDate, endDate);
+      const { startDate, endDate, employeeId } = req.query as {
+        startDate?: string;
+        endDate?: string;
+        employeeId?: string;
+      };
+      const { buffer, filename } = await generateReportsExport(startDate, endDate, employeeId);
       res.setHeader(
         "Content-Type",
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

@@ -322,8 +322,9 @@ describe("buildReportsWorkbook — serialization", () => {
 
     const wb = XLSX.read(buf, { type: "buffer" });
     // The huge per-link Day-wise Breakdown is GONE from the workbook (it OOM'd at
-    // scale; it now lives in the streamed All-Links CSV). Only the two small sheets remain.
-    expect(wb.SheetNames).toEqual(["Channel Summary", "Cross-Employee Duplicates"]);
+    // scale; it now lives in the streamed All-Links CSV). Only the two small sheets
+    // remain — and Cross-Employee Duplicates is FIRST so it's the tab you land on.
+    expect(wb.SheetNames).toEqual(["Cross-Employee Duplicates", "Channel Summary"]);
     expect(wb.SheetNames).not.toContain("Day-wise Breakdown");
 
     const summaryHeader = (XLSX.utils.sheet_to_json(wb.Sheets["Channel Summary"], { header: 1 }) as any[][])[0];

@@ -14,7 +14,7 @@
 // engagement. Honors the same window + employee filter as the on-screen page.
 
 import { prisma } from "@dashmani/db";
-import { dateToIST, istTimeOfDay, istDateTime } from "@dashmani/shared";
+import { dateToIST, istTimeOfDay, istDateTime, canonicalKey } from "@dashmani/shared";
 import { resolveWindow } from "./report-export.service";
 
 export const CSV_HEADERS = [
@@ -29,7 +29,14 @@ export const CSV_HEADERS = [
   "Comments",
   "Views",
   "Report Submitted At (IST)",
-  "Approx Time?",
+  // How many DIFFERENT employees posted this same link (by canonicalKey) in the
+  // window. 1 = only this person. ≥2 = a CROSS-EMPLOYEE duplicate (allowed, but
+  // flagged here so every shared link is visible inline on the full ledger). This
+  // is team-independent — it counts distinct employees, never team membership.
+  "Shared By (employees)",
+  // "Yes" when the row predates exact per-link timestamping (before 3 Jun 2026),
+  // so its posting time is an approximation. Blank = exact.
+  "Time Approx (pre-3 Jun)?",
 ] as const;
 
 // Links first submitted on/after this IST date have a TRUE per-URL firstSeenAt;
@@ -71,8 +78,15 @@ export interface CsvLinkRow {
   report: { date: Date; submittedAt: Date; employee: { name: string } | null };
 }
 
-/** Pure: one DB link row → one CSV line (with trailing CRLF). Unit-tested. */
-export function toCsvLine(r: CsvLinkRow): string {
+/**
+ * Pure: one DB link row → one CSV line (with trailing CRLF). Unit-tested.
+ *
+ * `sharedBy` is the number of DISTINCT employees who posted this same link (by
+ * canonicalKey) across the window — 1 for a link only this person posted, ≥2 for a
+ * cross-employee duplicate. It is computed by a bounded pre-pass (see
+ * `buildSharedByMap`) and passed in so this function stays pure & streamable.
+ */
+export function toCsvLine(r: CsvLinkRow, sharedBy = 1): string {
   const dateKey = dateToIST(r.report.date instanceof Date ? r.report.date : new Date(r.report.date));
   return (
     [
@@ -87,6 +101,7 @@ export function toCsvLine(r: CsvLinkRow): string {
       r.comments ?? "",
       r.views ?? "",
       istDateTime(r.report.submittedAt instanceof Date ? r.report.submittedAt : new Date(r.report.submittedAt)),
+      sharedBy,
       dateKey < TRUE_TIME_SINCE ? "Yes" : "",
     ]
       .map(csvCell)
@@ -95,6 +110,57 @@ export function toCsvLine(r: CsvLinkRow): string {
 }
 
 const CSV_BATCH = 5000;
+
+/**
+ * Bounded pre-pass: builds `canonicalKey → count of DISTINCT employees who posted
+ * it` over the whole window, so the streamed body can flag each row as a
+ * cross-employee duplicate WITHOUT holding the full ledger in memory.
+ *
+ * Memory-safe by construction: it selects only two tiny columns (`url` for
+ * canonicalKey + `report.employeeId`), keyset-paginates in the same 5k batches,
+ * and keeps only a `Map<string, Set<string>>` (a canonicalKey → employeeId-set).
+ * For ~108k links / ~50k keys that's a few MB of short strings — nowhere near the
+ * per-cell styled-object blow-up that OOM'd the .xlsx. Uses the SAME
+ * `canonicalKey()` arbiter as the xlsx duplicate sheet, so the flag matches it
+ * exactly (IG `?igsh=` tokens / FB trailing-slash variants collapse identically).
+ *
+ * Returns a plain count map (`canonicalKey → distinct-employee count`) so the hot
+ * body loop does a single O(1) lookup per row.
+ */
+export async function buildSharedByMap(where: {
+  report: { date: { gte: Date; lte: Date }; employeeId?: string };
+}): Promise<Map<string, number>> {
+  // NOTE: dup detection is inherently cross-employee, so the pre-pass is ALWAYS
+  // team-wide for the window — even when the CSV body is scoped to one employee.
+  // A link Anushka shares with Prashant must read "2" on Anushka's scoped export.
+  const teamWide = { report: { date: where.report.date } };
+  const keyToEmployees = new Map<string, Set<string>>();
+  let cursor: string | undefined;
+  for (;;) {
+    const rows = await prisma.reportLink.findMany({
+      where: teamWide,
+      select: { id: true, url: true, report: { select: { employeeId: true } } },
+      orderBy: { id: "asc" },
+      take: CSV_BATCH,
+      ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
+    });
+    if (rows.length === 0) break;
+    for (const r of rows) {
+      const key = canonicalKey(r.url);
+      if (!key) continue;
+      let set = keyToEmployees.get(key);
+      if (!set) { set = new Set(); keyToEmployees.set(key, set); }
+      set.add(r.report.employeeId);
+    }
+    cursor = rows[rows.length - 1].id;
+    if (rows.length < CSV_BATCH) break;
+  }
+  // Collapse to counts and drop the (larger) Set map so only the small count map
+  // is retained while the body streams.
+  const counts = new Map<string, number>();
+  for (const [k, set] of keyToEmployees) counts.set(k, set.size);
+  return counts;
+}
 
 const linkCsvSelect = {
   id: true,
@@ -125,6 +191,11 @@ export async function streamReportLinksCsv(
     },
   };
 
+  // Bounded pre-pass BEFORE any bytes are sent: a first-pass failure surfaces as a
+  // clean 500 (nothing written yet) rather than a truncated 200. Team-wide over the
+  // window so the shared-by count is correct even on an employee-scoped export.
+  const sharedByMap = await buildSharedByMap(where);
+
   let cursor: string | undefined;
   let count = 0;
   let headerWritten = false;
@@ -145,7 +216,11 @@ export async function streamReportLinksCsv(
     if (rows.length === 0) break;
 
     let chunk = "";
-    for (const r of rows) chunk += toCsvLine(r as unknown as CsvLinkRow);
+    for (const r of rows) {
+      const key = canonicalKey((r as unknown as CsvLinkRow).url);
+      const sharedBy = key ? sharedByMap.get(key) ?? 1 : 1;
+      chunk += toCsvLine(r as unknown as CsvLinkRow, sharedBy);
+    }
     write(chunk);
 
     count += rows.length;

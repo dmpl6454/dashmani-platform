@@ -552,7 +552,7 @@ const BREAKDOWN_HEADERS: { key: keyof BreakdownRow; label: string }[] = [
   { key: "comments", label: "Comments" },
   { key: "views", label: "Views" },
   { key: "reportSubmittedAt", label: "Report Submitted At (IST)" },
-  { key: "approx", label: "Approx Time?" },
+  { key: "approx", label: "Time Approx (pre-3 Jun)?" },
 ];
 
 const DUPLICATE_HEADERS: { key: keyof DuplicateRow; label: string }[] = [
@@ -576,6 +576,8 @@ const BORDER = "E6DFC9";
 const HEADER_TEXT = "FFFFFF";
 const UNASSIGNED_FILL = "FBE3D6"; // soft terracotta tint for unassigned channels
 const UNASSIGNED_TEXT = "9A3412";
+const HIGHLIGHT_FILL = "DCFCE7"; // soft emerald tint — draws the eye to a key column
+const HIGHLIGHT_TEXT = "065F46"; // deep emerald text for the highlighted count
 
 const thin = (color: string) => ({ style: "thin", color: { rgb: color } });
 const allBorders = (color = BORDER) => ({
@@ -627,7 +629,7 @@ const CENTER_ALIGN = new Set([
   "Posting Time (IST)",
   "Avg Posting Time (IST)",
   "Date",
-  "Approx Time?",
+  "Time Approx (pre-3 Jun)?",
   "Dup Group",
 ]);
 
@@ -656,7 +658,7 @@ const COL_WIDTH: Record<string, number> = {
   "Posted By": 20,
   "Link URL": 46,
   "Report Submitted At (IST)": 20,
-  "Approx Time?": 12,
+  "Time Approx (pre-3 Jun)?": 18,
   // Cross-Employee Duplicates
   "Dup Group": 10,
   "Employees Sharing": 16,
@@ -670,7 +672,13 @@ const COL_WIDTH: Record<string, number> = {
 function styledSheet<T>(
   rows: T[],
   headers: { key: keyof T; label: string }[],
-  opts: { flagUnassigned?: boolean; bandKey?: keyof T } = {},
+  opts: {
+    flagUnassigned?: boolean;
+    bandKey?: keyof T;
+    // Column labels to tint emerald so a key value (e.g. the shared-employee count)
+    // pops. Cheap: it just selects a different cached style, no per-cell allocation.
+    highlightColumns?: Set<string>;
+  } = {},
 ): any {
   const aoa: any[][] = [headers.map((h) => h.label)];
   for (const r of rows) aoa.push(headers.map((h) => r[h.key]));
@@ -727,12 +735,21 @@ function styledSheet<T>(
         : CENTER_ALIGN.has(label)
         ? "center"
         : "left";
+      const isHighlight = opts.highlightColumns?.has(label) ?? false;
       ws[ref].s = cachedBodyStyle({
         even,
         align,
-        fill: isUnassigned ? UNASSIGNED_FILL : undefined,
-        text: isUnassigned && label === "Assignment Status" ? UNASSIGNED_TEXT : undefined,
-        bold: isUnassigned && label === "Assignment Status",
+        fill: isUnassigned
+          ? UNASSIGNED_FILL
+          : isHighlight
+          ? HIGHLIGHT_FILL
+          : undefined,
+        text: isUnassigned && label === "Assignment Status"
+          ? UNASSIGNED_TEXT
+          : isHighlight
+          ? HIGHLIGHT_TEXT
+          : undefined,
+        bold: (isUnassigned && label === "Assignment Status") || isHighlight,
       });
     }
   }
@@ -784,17 +801,25 @@ export function buildReportsWorkbook(
 
   const wb = XLSX.utils.book_new();
 
+  // ⚠️ Cross-Employee Duplicates goes FIRST so it's the tab the viewer lands on —
+  // it's the whole reason for the export ("who else posted this link, and when").
+  // Landing on Channel Summary first is why users reported "I can't see the dupes"
+  // (2026-07-22) — the data was always present, just one tab over. Highlight the
+  // "Employees Sharing" count column so shared links pop; band per dup group.
+  // Always present (even with zero rows → an empty sheet is itself the answer:
+  // "no cross-employee duplicates in this window").
+  XLSX.utils.book_append_sheet(
+    wb,
+    styledSheet(cappedDuplicates, DUPLICATE_HEADERS, {
+      bandKey: "groupNo",
+      highlightColumns: new Set(["Employees Sharing"]),
+    }),
+    "Cross-Employee Duplicates",
+  );
   XLSX.utils.book_append_sheet(
     wb,
     styledSheet(summary, SUMMARY_HEADERS, { flagUnassigned: true }),
     "Channel Summary",
-  );
-  // Always present (even with zero rows → an empty sheet is itself the answer:
-  // "no cross-employee duplicates in this window"). Banded per dup group.
-  XLSX.utils.book_append_sheet(
-    wb,
-    styledSheet(cappedDuplicates, DUPLICATE_HEADERS, { bandKey: "groupNo" }),
-    "Cross-Employee Duplicates",
   );
 
   return XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer;

@@ -5,7 +5,7 @@ import { ArrowLeft, TrendingUp, TrendingDown, Link2, Users, Trophy, AlertCircle,
 import { useLinksAnalytics, useLinksAllAccounts, useTopYouTubeLinks } from "@/lib/hooks/use-reports";
 import { usePageTitle } from "@/lib/hooks/use-page-title";
 import { RangePills, presetStart, todayISO, rangeLabel } from "../_range";
-import { ExportButton } from "../_export";
+import { ExportButton, AllLinksCsvButton } from "../_export";
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip,
   ResponsiveContainer, CartesianGrid,
@@ -105,6 +105,7 @@ export default function LinksAnalyticsPage() {
         </div>
         <div className="flex items-center gap-3 flex-wrap">
           <ExportButton startDate={startDate} endDate={endDate} variant="light" />
+          <AllLinksCsvButton startDate={startDate} endDate={endDate} variant="light" />
           <RangePills
             startDate={startDate}
             endDate={endDate}

@@ -55,6 +55,7 @@ export interface LinkSearchResult {
     account: { id: string; handle: string; displayName: string };
     employee: { id: string; name: string };
     date: string;
+    firstSeenAt: string; // ISO — per-URL submit time (for the export's dup sheet)
     dupCount: number;
   }>;
   coverage: {
@@ -541,6 +542,7 @@ export async function searchLinksByEntity(params: {
           id: true,
           url: true,
           platform: true,
+          firstSeenAt: true,
           account: { select: { id: true, handle: true, displayName: true } },
           report: { select: { date: true, employee: { select: { id: true, name: true } } } },
         },
@@ -599,6 +601,7 @@ export async function searchLinksByEntity(params: {
       account: { id: r.account.id, handle: r.account.handle, displayName: r.account.displayName },
       employee: { id: r.report.employee.id, name: r.report.employee.name },
       date: r.report.date.toISOString().slice(0, 10),
+      firstSeenAt: r.firstSeenAt.toISOString(),
       dupCount: byKey.get(k) || 1,
     };
   });

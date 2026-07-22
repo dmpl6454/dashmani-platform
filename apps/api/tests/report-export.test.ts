@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   buildExportRows,
+  buildDuplicateRows,
   buildReportsWorkbook,
   type ExportInput,
   type ExportAccount,
@@ -196,6 +197,112 @@ describe("buildExportRows — accuracy", () => {
   });
 });
 
+describe("buildExportRows — employee scoping", () => {
+  const twoEmployeeInput = (): ExportInput => ({
+    accounts: [
+      acc({ id: "a1", displayName: "Chan One" }),
+      acc({ id: "a2", displayName: "Chan Two" }),
+    ],
+    windowLinks: [
+      link({ accountId: "a1", employeeId: "e1", employeeName: "Emp One", firstSeenAt: IST("04:30"), reportDateKey: "2026-06-01", channelName: "Chan One" }),
+      link({ accountId: "a1", employeeId: "e1", employeeName: "Emp One", firstSeenAt: IST("05:30"), reportDateKey: "2026-06-01", channelName: "Chan One" }),
+      link({ accountId: "a2", employeeId: "e2", employeeName: "Emp Two", firstSeenAt: IST("06:30"), reportDateKey: "2026-06-01", channelName: "Chan Two" }),
+    ],
+    todayLinks: [],
+    startKey: "2026-06-01",
+    endKey: "2026-06-01",
+  });
+
+  it("team view (no employeeId) includes ALL accounts + ALL employees' links", () => {
+    const { summary, breakdown } = buildExportRows(twoEmployeeInput());
+    expect(summary.length).toBe(2); // both channels
+    expect(breakdown.length).toBe(3); // all three links
+  });
+
+  it("scopes summary + breakdown to the selected employee only", () => {
+    const { summary, breakdown } = buildExportRows({ ...twoEmployeeInput(), employeeId: "e1" });
+    // Only the channel e1 posted to (Chan One), not Chan Two.
+    expect(summary.map((s) => s.channel)).toEqual(["Chan One"]);
+    expect(summary[0].totalLinks).toBe(2);
+    // Only e1's two links appear in the breakdown; e2's link is excluded.
+    expect(breakdown.length).toBe(2);
+    expect(breakdown.every((r) => r.employee === "Emp One")).toBe(true);
+  });
+
+  it("scoped export for an employee with no links yields empty summary + breakdown", () => {
+    const { summary, breakdown } = buildExportRows({ ...twoEmployeeInput(), employeeId: "e-nobody" });
+    expect(summary.length).toBe(0);
+    expect(breakdown.length).toBe(0);
+  });
+});
+
+describe("buildDuplicateRows — cross-employee duplicate links", () => {
+  it("groups the SAME link posted by two DIFFERENT employees; ignores unique + same-employee", () => {
+    const shared = "https://www.instagram.com/reel/ABC123/";
+    const links: ExportLink[] = [
+      link({ accountId: "a1", employeeId: "e1", employeeName: "Emp One", url: shared, firstSeenAt: IST("04:30"), reportDateKey: "2026-06-01" }),
+      link({ accountId: "a1", employeeId: "e2", employeeName: "Emp Two", url: shared, firstSeenAt: IST("06:30"), reportDateKey: "2026-06-01" }),
+      // unique to e1 → not a dupe
+      link({ accountId: "a1", employeeId: "e1", employeeName: "Emp One", url: "https://www.instagram.com/reel/UNIQUE1/", firstSeenAt: IST("05:00"), reportDateKey: "2026-06-01" }),
+    ];
+    const rows = buildDuplicateRows(links);
+    expect(rows.length).toBe(2); // only the two submissions of the shared link
+    expect(rows.every((r) => r.groupNo === 1)).toBe(true);
+    expect(rows.every((r) => r.employeesOnLink === 2)).toBe(true);
+    // first submitter first (time asc): Emp One (10:00 IST) before Emp Two (12:00 IST)
+    expect(rows.map((r) => r.employee)).toEqual(["Emp One", "Emp Two"]);
+    expect(rows[0].submitTime).toBe("10:00");
+    expect(rows[1].submitTime).toBe("12:00");
+  });
+
+  it("treats the same IG reel with different ?igsh tokens as ONE link (canonicalKey)", () => {
+    const links: ExportLink[] = [
+      link({ accountId: "a1", employeeId: "e1", employeeName: "Emp One", url: "https://www.instagram.com/reel/XYZ/?igsh=AAA", firstSeenAt: IST("04:30"), reportDateKey: "2026-06-01" }),
+      link({ accountId: "a1", employeeId: "e2", employeeName: "Emp Two", url: "https://www.instagram.com/reel/XYZ/?igsh=BBB", firstSeenAt: IST("05:30"), reportDateKey: "2026-06-01" }),
+    ];
+    const rows = buildDuplicateRows(links);
+    expect(rows.length).toBe(2);
+    expect(rows[0].employeesOnLink).toBe(2);
+  });
+
+  it("does NOT flag a link one employee posted twice (needs ≥2 distinct employees)", () => {
+    const url = "https://www.instagram.com/reel/SOLO/";
+    const links: ExportLink[] = [
+      link({ accountId: "a1", employeeId: "e1", employeeName: "Emp One", url, firstSeenAt: IST("04:30"), reportDateKey: "2026-06-01" }),
+      link({ accountId: "a1", employeeId: "e1", employeeName: "Emp One", url, firstSeenAt: IST("05:30"), reportDateKey: "2026-06-02" }),
+    ];
+    expect(buildDuplicateRows(links).length).toBe(0);
+  });
+
+  it("when scoped to an employee, keeps only dup groups that INCLUDE that employee", () => {
+    const linkA = "https://www.instagram.com/reel/AAA/"; // e1 + e2
+    const linkB = "https://www.instagram.com/reel/BBB/"; // e2 + e3
+    const links: ExportLink[] = [
+      link({ accountId: "a1", employeeId: "e1", employeeName: "Emp One", url: linkA, firstSeenAt: IST("04:30"), reportDateKey: "2026-06-01" }),
+      link({ accountId: "a1", employeeId: "e2", employeeName: "Emp Two", url: linkA, firstSeenAt: IST("05:30"), reportDateKey: "2026-06-01" }),
+      link({ accountId: "a1", employeeId: "e2", employeeName: "Emp Two", url: linkB, firstSeenAt: IST("06:30"), reportDateKey: "2026-06-01" }),
+      link({ accountId: "a1", employeeId: "e3", employeeName: "Emp Three", url: linkB, firstSeenAt: IST("07:30"), reportDateKey: "2026-06-01" }),
+    ];
+    // Unscoped: both groups.
+    const grpNos = new Set(buildDuplicateRows(links).map((r) => r.groupNo));
+    expect(grpNos.size).toBe(2);
+    // Scoped to e1: only linkA (which includes e1). linkB (e2+e3) is dropped.
+    const scoped = buildDuplicateRows(links, "e1");
+    expect(scoped.length).toBe(2); // both submissions of linkA
+    expect(new Set(scoped.map((r) => r.url))).toEqual(new Set([linkA]));
+    // …but linkA's group still shows the OTHER employee (Emp Two).
+    expect(new Set(scoped.map((r) => r.employee))).toEqual(new Set(["Emp One", "Emp Two"]));
+  });
+
+  it("skips links with no URL (nothing to key on)", () => {
+    const links: ExportLink[] = [
+      link({ accountId: "a1", employeeId: "e1", employeeName: "Emp One", url: null, firstSeenAt: IST("04:30"), reportDateKey: "2026-06-01" }),
+      link({ accountId: "a1", employeeId: "e2", employeeName: "Emp Two", url: null, firstSeenAt: IST("05:30"), reportDateKey: "2026-06-01" }),
+    ];
+    expect(buildDuplicateRows(links).length).toBe(0);
+  });
+});
+
 describe("buildReportsWorkbook — serialization", () => {
   it("produces a 2-sheet xlsx buffer with the simplified headers (no About, no Client)", () => {
     const input: ExportInput = {
@@ -210,8 +317,12 @@ describe("buildReportsWorkbook — serialization", () => {
     expect(buf.length).toBeGreaterThan(0);
 
     const wb = XLSX.read(buf, { type: "buffer" });
-    // About sheet removed → exactly two sheets.
-    expect(wb.SheetNames).toEqual(["Channel Summary", "Day-wise Breakdown"]);
+    // About sheet removed; Cross-Employee Duplicates sheet added → three sheets.
+    expect(wb.SheetNames).toEqual([
+      "Channel Summary",
+      "Day-wise Breakdown",
+      "Cross-Employee Duplicates",
+    ]);
 
     const summaryAoa = XLSX.utils.sheet_to_json(wb.Sheets["Channel Summary"], { header: 1 }) as any[][];
     const summaryHeader = summaryAoa[0];

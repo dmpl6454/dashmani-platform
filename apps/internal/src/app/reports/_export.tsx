@@ -4,18 +4,22 @@ import { Download, Loader2 } from "lucide-react";
 import { apiFetchBlob, downloadBlob } from "@/lib/api";
 
 /**
- * "Extract to Spreadsheet" button. Downloads a two-sheet .xlsx (Channel Summary
- * + Day-wise Breakdown) for the given window. Honors the page's selected pill —
- * pass the same startDate/endDate the page is filtering by. Server-generated,
- * so the heavy lifting and the data-accuracy guarantees live in the API.
+ * "Extract to Spreadsheet" button. Downloads a three-sheet .xlsx (Channel Summary
+ * + Day-wise Breakdown + Cross-Employee Duplicates) for the given window. Honors
+ * the page's selected pill AND employee dropdown — pass the same startDate/endDate
+ * and employeeId the page is filtering by, and the export scopes to that employee.
+ * Server-generated, so the heavy lifting and the data-accuracy guarantees live in
+ * the API.
  */
 export function ExportButton({
   startDate,
   endDate,
+  employeeId,
   variant = "light",
 }: {
   startDate: string;
   endDate: string;
+  employeeId?: string;
   variant?: "light" | "dark";
 }) {
   const [loading, setLoading] = useState(false);
@@ -29,6 +33,7 @@ export function ExportButton({
       const params = new URLSearchParams();
       if (startDate) params.set("startDate", startDate);
       if (endDate) params.set("endDate", endDate);
+      if (employeeId) params.set("employeeId", employeeId);
       const { blob, filename } = await apiFetchBlob(
         `/admin/reports/export.xlsx?${params.toString()}`,
       );
@@ -55,7 +60,7 @@ export function ExportButton({
         disabled={loading}
         aria-live="polite"
         className={`${base} ${skin}`}
-        title="Download an Excel workbook of channel summary + day-wise link breakdown for the selected window"
+        title="Download an Excel workbook (channel summary + day-wise breakdown + cross-employee duplicate links) for the selected window — scoped to the selected employee when one is chosen"
       >
         {loading ? (
           <Loader2 className="h-4 w-4 animate-spin" />

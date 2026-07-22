@@ -79,4 +79,23 @@ describe("toCsvLine — one DB link row → one CSV line", () => {
     // CSV parser relies on. Assert the quoted form is present.
     expect(line).toContain('"Doe, John"');
   });
+
+  it("emits the Shared By (employees) count in its own column (defaults to 1)", () => {
+    const sharedIdx = CSV_HEADERS.indexOf("Shared By (employees)");
+    expect(sharedIdx).toBeGreaterThan(-1);
+    // Default (only this person posted it): "1".
+    expect(toCsvLine(row).trimEnd().split(",")[sharedIdx]).toBe("1");
+    // Cross-employee duplicate (3 different employees posted the same link): "3".
+    expect(toCsvLine(row, 3).trimEnd().split(",")[sharedIdx]).toBe("3");
+  });
+
+  it("flags the pre-3-Jun approximate-time rows in the renamed column", () => {
+    const approxIdx = CSV_HEADERS.indexOf("Time Approx (pre-3 Jun)?");
+    expect(approxIdx).toBeGreaterThan(-1);
+    // The fixture row (2026-06-01) predates the 2026-06-03 exact-time cutover.
+    expect(toCsvLine(row).trimEnd().split(",")[approxIdx]).toBe("Yes");
+    // A post-cutover row is blank.
+    const post = { ...row, report: { ...row.report, date: new Date("2026-07-01T00:00:00.000Z") } };
+    expect(toCsvLine(post).trimEnd().split(",")[approxIdx]).toBe("");
+  });
 });

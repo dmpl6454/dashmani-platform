@@ -11,6 +11,7 @@ import { UserAvatar } from "@/components/user-avatar";
 import { PlatformIcon } from "@/lib/platform-icon";
 import { RangePills, presetStart, todayISO, rangeLabel } from "./_range";
 import { ExportButton, AllLinksCsvButton } from "./_export";
+import { TrueLinksPanel } from "./_true-links";
 
 // Snapchat has no dedicated lucide-react brand icon; reuse the same SVG mapped
 // in PlatformIcon (already used elsewhere in the portal) for visual consistency.
@@ -588,6 +589,17 @@ export default function ReportsPage() {
             })}
         </div>
       )}
+
+      {/* True Links — dedupe-aware stats + per-employee shared/unique leaderboard.
+          Own endpoint + hook (server-cached), so it loads independently and can
+          never slow or block the summary cards above. Honors the same window pills
+          and employee dropdown as everything else on the page. */}
+      <TrueLinksPanel
+        startDate={startDate}
+        endDate={endDate}
+        employeeId={employeeId || undefined}
+        windowLabel={windowLabel}
+      />
 
       {/* Top Links panels — YouTube, Instagram, Facebook, Snapchat. One shared window
           toggle on the first rendered panel; each panel reuses the same /admin/reports/top-links

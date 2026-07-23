@@ -388,6 +388,28 @@ router.get(
   },
 );
 
+// GET /admin/reports/true-links — dedupe-aware stats for the window: True Links
+// (distinct posts by canonicalKey), cross-employee duplicate counts, and a
+// per-employee shared/unique breakdown. All dedupe math runs in Postgres (one
+// scan, ~90 aggregate rows to Node — see true-links.service.ts) with a 60s TTL
+// cache, so it never competes with or slows the existing summary endpoints.
+// MUST be before /:reportId.
+router.get(
+  "/admin/reports/true-links",
+  authenticate,
+  requirePermission("reports", "view"),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { startDate, endDate } = req.query as { startDate?: string; endDate?: string };
+      const { getTrueLinksBreakdown } = await import("../services/true-links.service");
+      const breakdown = await getTrueLinksBreakdown(startDate, endDate);
+      return success(res, breakdown);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
 // GET /admin/reports/top-links-leaderboard — engagement ranking (views+likes+comments
 // from link_metrics). Separate from the main leaderboard. MUST be before /:reportId.
 router.get(

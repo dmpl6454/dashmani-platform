@@ -42,6 +42,29 @@ export function useReportSummary(startDate?: string, endDate?: string) {
   });
 }
 
+// True Links / cross-employee duplicates for the window. The endpoint always
+// returns the TEAM-WIDE breakdown (dup detection is inherently cross-employee);
+// when the page has an employee selected, the card derives that employee's view
+// from their byEmployee row client-side — no extra param, one cache entry per
+// window, and the server's 60s TTL cache stays maximally effective.
+export function useTrueLinks(startDate?: string, endDate?: string) {
+  const params = new URLSearchParams();
+  if (startDate) params.set("startDate", startDate);
+  if (endDate) params.set("endDate", endDate);
+  const query = params.toString() ? `?${params.toString()}` : "";
+  // Plausibility gate: typing a custom date fires onChange per COMMITTED segment,
+  // and a mid-edit year like "0002" would otherwise mint a fresh SWR key whose
+  // near-epoch window costs a full-table aggregation server-side. The platform
+  // has no data before 2025, so implausible windows simply don't fetch (SWR key
+  // null); the moment the typed date becomes real, the fetch fires as normal.
+  const plausible =
+    (!startDate || startDate >= "2025-01-01") && (!endDate || endDate >= "2025-01-01");
+  return useSWR(plausible ? `/admin/reports/true-links${query}` : null, (url) => apiFetch(url), {
+    revalidateOnFocus: false,
+    dedupingInterval: 60_000,
+  });
+}
+
 export function useEmployeeReportStats(employeeId?: string, startDate?: string, endDate?: string) {
   const params = new URLSearchParams();
   if (startDate) params.set("startDate", startDate);

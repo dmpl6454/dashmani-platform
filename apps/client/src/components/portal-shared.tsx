@@ -64,12 +64,86 @@ export function IconButton({ icon, label, size = "md", variant = "ghost", classN
   );
 }
 
+/* ── Pill system ──
+   Every rounded control in the portal is built from these, so heights, radii
+   and type sizes stay on one scale instead of drifting per page. Phones step
+   down a notch; the `sm:` half of each pair is the desktop size.
+
+     Tag          h-5 / h-6    read-only meta (overdue, counts)
+     FormatPill   h-5 / h-5    format + aspect
+     StatusBadge  h-5 / h-6    status
+     SegTabs      h-6 / h-7    view switches, inside a tinted track
+     FilterChip   h-8 / h-9    filter rows — matches Button size="sm" */
+
+type TagTone = "neutral" | "attention" | "success";
+
+export function Tag({ tone = "neutral", children, className = "" }: { tone?: TagTone; children: ReactNode; className?: string }) {
+  const tones: Record<TagTone, string> = {
+    neutral:   "bg-muted/80     text-ink-3    border-ink/10",
+    attention: "bg-attention-bg text-attention border-attention/20",
+    success:   "bg-success-bg   text-success  border-success/20",
+  };
+  return (
+    <span className={`inline-flex items-center gap-1 h-5 sm:h-6 px-2 sm:px-2.5 rounded-full text-[10px] sm:text-[11px] font-bold border shrink-0 whitespace-nowrap ${tones[tone]} ${className}`}>
+      {children}
+    </span>
+  );
+}
+
+export function FilterChip({ active, count, dot, onClick, children }: {
+  active: boolean; count?: number; dot?: boolean; onClick: () => void; children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={`h-8 sm:h-9 px-3 sm:px-4 inline-flex items-center gap-1.5 rounded-lg sm:rounded-xl text-[12.5px] sm:text-[13px] font-semibold border-2 transition-all whitespace-nowrap
+        ${active
+          ? "bg-ink text-white border-ink btn-3d"
+          : "bg-surface text-ink-2 border-ink/20 hover:border-ink/50 hover:text-ink"}`}
+    >
+      {children}
+      {typeof count === "number" && (
+        <span className={`text-[11px] tabular-nums ${active ? "text-white/60" : "text-ink-4"}`}>{count}</span>
+      )}
+      {dot && !active && <span className="h-1.5 w-1.5 rounded-full bg-attention" />}
+    </button>
+  );
+}
+
+export function SegTabs<T extends string>({ value, onChange, options, className = "" }: {
+  value: T; onChange: (v: T) => void; options: { value: T; label: string }[]; className?: string;
+}) {
+  return (
+    <div
+      className={`flex items-center gap-1 p-0.5 bg-muted rounded-lg sm:rounded-xl shrink-0 ${className}`}
+      style={{ border: "2px solid rgba(26,26,26,0.1)" }}
+      role="tablist"
+    >
+      {options.map((o) => (
+        <button
+          key={o.value}
+          type="button"
+          role="tab"
+          aria-selected={value === o.value}
+          onClick={() => onChange(o.value)}
+          className={`h-6 sm:h-7 px-2 sm:px-3 text-[11.5px] sm:text-[12.5px] font-semibold rounded-md sm:rounded-lg transition-all whitespace-nowrap
+            ${value === o.value ? "bg-surface text-ink shadow-hard-ink" : "text-ink-3 hover:text-ink"}`}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 /* ── StatusBadge ── */
 export function StatusBadge({ status, withDot = true, className = "" }: { status: StatusKey; withDot?: boolean; className?: string }) {
   const s = STATUS[status] || STATUS.DRAFT;
   const st = STATUS_STYLE[s.kind];
   return (
-    <span className={`inline-flex items-center gap-1.5 h-6 px-2.5 rounded-full text-[11.5px] font-semibold ${st.bg} ${st.text} border border-current/15 ${className}`}>
+    <span className={`inline-flex items-center gap-1 sm:gap-1.5 h-5 sm:h-6 px-2 sm:px-2.5 rounded-full text-[10.5px] sm:text-[11.5px] font-semibold whitespace-nowrap ${st.bg} ${st.text} border border-current/15 ${className}`}>
       {withDot && <span className={`h-1.5 w-1.5 rounded-full ${st.dot} shrink-0`} />}
       {s.label}
     </span>
@@ -113,9 +187,13 @@ export function FormatPill({ format, aspect, className = "" }: { format: string;
 /* ── AspectThumb ── */
 export function AspectThumb({ aspect = "1:1", format = "POST", size = "row", className = "" }: { aspect?: string | null; format?: string; size?: "row" | "tile" | "lg"; className?: string }) {
   const heights: Record<string, number> = { row: 36, tile: 64, lg: 96 };
-  const h = heights[size] || 36;
+  const box = heights[size] || 36;
   const [aw, ah] = (aspect || "1:1").split(":").map(Number);
-  const w = h * (aw / (ah || 1));
+  const ratio = (aw || 1) / (ah || 1);
+  // Fit inside a box×box square. Scaling only the width made 16:9 thumbs 64px
+  // wide, which overflowed the 36px column and sat on top of the post title.
+  const w = ratio >= 1 ? box : box * ratio;
+  const h = ratio >= 1 ? box / ratio : box;
   return (
     <div className={`ig-hatch rounded-md relative border border-ink/15 shrink-0 ${className}`} style={{ width: w, height: h }}>
       {format === "REEL" && (

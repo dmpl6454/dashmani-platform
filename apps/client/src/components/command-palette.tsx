@@ -5,6 +5,7 @@ import { FileText } from "lucide-react";
 import { Icon } from "./portal-icons";
 import { KbdRow } from "./portal-shared";
 import { useClientProjects } from "@/lib/hooks/use-projects";
+import { useInputDevice } from "@/lib/hooks/use-input-device";
 import { apiFetch } from "@/lib/api";
 
 interface PaletteItem {
@@ -48,6 +49,7 @@ export function CommandPalette() {
   const [query, setQuery] = useState("");
   const [focused, setFocused] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  const { hasKeyboard } = useInputDevice();
 
   const { data: projectsData } = useClientProjects();
   const projects: any[] = projectsData?.items ?? [];
@@ -128,13 +130,10 @@ export function CommandPalette() {
   if (!open) return null;
 
   return (
-    <div
-      className="fixed inset-0 z-[80] bg-ink/25 flex items-start justify-center pt-24 px-4 pop-in"
-      onClick={() => setOpen(false)}
-    >
-      <div className="v3-card w-full max-w-xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
+    <div className="palette-shell pop-in" onClick={() => setOpen(false)}>
+      <div className="v3-card palette-card" onClick={(e) => e.stopPropagation()}>
         {/* Input */}
-        <div className="flex items-center gap-3 px-4 h-14" style={{ borderBottom: "2px solid rgba(26,26,26,0.08)" }}>
+        <div className="flex items-center gap-3 px-4 h-14 shrink-0" style={{ borderBottom: "2px solid rgba(26,26,26,0.08)" }}>
           <Icon.Search size={18} className="text-ink-3 shrink-0" />
           <input
             ref={inputRef}
@@ -144,15 +143,26 @@ export function CommandPalette() {
             className="flex-1 bg-transparent text-[15px] font-semibold text-ink placeholder:text-ink-4 outline-none"
           />
           {query && (
-            <button onClick={() => setQuery("")} className="text-ink-3 hover:text-ink transition-colors">
+            <button onClick={() => setQuery("")} aria-label="Clear search" className="text-ink-3 hover:text-ink transition-colors">
               <Icon.X size={16} />
             </button>
           )}
-          <kbd className="shrink-0">Esc</kbd>
+          {hasKeyboard ? (
+            <kbd className="shrink-0">Esc</kbd>
+          ) : (
+            /* No Esc key and no scrim to tap on a sheet — give touch users a real close control. */
+            <button
+              onClick={() => setOpen(false)}
+              aria-label="Close search"
+              className="shrink-0 h-8 px-3 rounded-lg text-[12.5px] font-bold text-ink-2 bg-muted"
+            >
+              Close
+            </button>
+          )}
         </div>
 
         {/* Results */}
-        <div className="py-2 max-h-[360px] overflow-y-auto">
+        <div className="palette-results py-2">
           {items.length === 0 && query.trim() && (
             <div className="px-5 py-8 text-center text-[13px] text-ink-3 font-medium">
               No results for &ldquo;<span className="font-bold text-ink">{query}</span>&rdquo;
@@ -182,16 +192,18 @@ export function CommandPalette() {
                   <div className={`text-[13.5px] font-semibold truncate ${isFocused ? "text-indigo" : "text-ink"}`}>{it.label}</div>
                   {it.sub && <div className="text-[11px] text-ink-3 font-medium truncate">{it.sub}</div>}
                 </div>
-                {isFocused && <kbd className="shrink-0">↵</kbd>}
+                {isFocused && hasKeyboard && <kbd className="shrink-0">↵</kbd>}
               </button>
             );
           })}
         </div>
 
-        {/* Footer */}
-        <div className="px-4 py-2.5 flex items-center gap-4" style={{ borderTop: "2px solid rgba(26,26,26,0.07)", background: "rgba(243,238,216,0.4)" }}>
-          <KbdRow items={[{ k: "↑↓", label: "navigate" }, { k: "↵", label: "open" }, { k: "Esc", label: "close" }]} />
-        </div>
+        {/* Footer — keyboard affordances only, so it has nothing to say on touch */}
+        {hasKeyboard && (
+          <div className="px-4 py-2.5 flex items-center gap-4 shrink-0" style={{ borderTop: "2px solid rgba(26,26,26,0.07)", background: "rgba(243,238,216,0.4)" }}>
+            <KbdRow items={[{ k: "↑↓", label: "navigate" }, { k: "↵", label: "open" }, { k: "Esc", label: "close" }]} />
+          </div>
+        )}
       </div>
     </div>
   );

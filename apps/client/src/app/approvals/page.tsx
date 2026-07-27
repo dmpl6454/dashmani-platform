@@ -3,13 +3,14 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { mutate } from "swr";
 import { Topstrip } from "@/components/portal-topstrip";
-import { Button, AspectThumb, FormatPill, Avatar, Empty, KbdRow, Modal, PageError, IconButton } from "@/components/portal-shared";
+import { Button, AspectThumb, FormatPill, Avatar, Empty, KbdRow, Modal, PageError, IconButton, Tag } from "@/components/portal-shared";
 import { Icon } from "@/components/portal-icons";
 import { ReasonModal } from "@/components/reason-modal";
 import { IGFeedCard } from "@/components/ig-previews";
 import { Actions, fmt } from "@/lib/portal-store";
 import { useClientProjects } from "@/lib/hooks/use-projects";
 import { useClientPendingApprovals, PENDING_APPROVALS_KEY } from "@/lib/hooks/use-content";
+import { useIsCompact } from "@/lib/hooks/use-input-device";
 import { apiFetch } from "@/lib/api";
 
 export default function ApprovalsPage() {
@@ -18,6 +19,7 @@ export default function ApprovalsPage() {
   const pending: any[] = approvalsData ?? [];
   const { data: projectsData } = useClientProjects();
   const projects: any[] = projectsData?.items ?? [];
+  const compact = useIsCompact();
 
   const [focusId, setFocusId] = useState<string | undefined>(pending[0]?.id);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -118,14 +120,16 @@ export default function ApprovalsPage() {
       {/* Bulk action bar */}
       {selectedArray.length > 0 && (
         <div
-          className="sticky top-16 z-20 px-6 h-12 flex items-center gap-3 slide-right"
+          /* Wraps on a phone — four controls in one 390px row overflowed the page.
+             The sticky offset tracks the topstrip, which is h-14 there and h-16 up. */
+          className="sticky top-14 sm:top-16 z-20 px-4 sm:px-6 py-2 sm:py-0 sm:h-12 flex flex-wrap items-center gap-x-3 gap-y-2 slide-right"
           style={{ background: "#EDEDFD", borderBottom: "2px solid rgba(93,95,239,0.25)" }}
         >
           <span className="text-[13px] font-bold text-indigo">
             {selectedArray.length} selected
             {!bulkSafe && <span className="text-attention ml-2 font-medium"> · spans {selectedProjects.size} projects</span>}
           </span>
-          <div className="flex-1" />
+          <div className="hidden sm:block flex-1" />
           <Button variant="ghost" size="sm" onClick={() => setSelectedIds(new Set())}>Clear</Button>
           <Button variant="default" size="sm" onClick={() => setModal("bulk-revise")}>Request revision</Button>
           <Button variant="primary" size="sm" icon={<Icon.Check size={13} sw={2.5} />}
@@ -138,10 +142,10 @@ export default function ApprovalsPage() {
       )}
 
       {/* Split layout */}
-      <div className="flex-1 grid min-h-0" style={{ gridTemplateColumns: "clamp(260px, 30vw, 320px) 1fr" }}>
+      <div className="approvals-split flex-1 min-h-0">
 
         {/* List panel */}
-        <div className="overflow-y-auto bg-bg" style={{ borderRight: "2px solid rgba(26,26,26,0.08)" }}>
+        <div className="approvals-list overflow-y-auto bg-bg">
           {approvalsError && !isLoading ? (
             <div className="p-4"><PageError message="Could not load approvals." /></div>
           ) : isLoading ? (
@@ -166,6 +170,7 @@ export default function ApprovalsPage() {
                     onOpen={() => router.push(`/content/${p.id}`)}
                     divider={i < pending.length - 1}
                     delay={`d${Math.min(i + 1, 8)}`}
+                    compact={compact}
                   />
                 );
               })}
@@ -174,7 +179,7 @@ export default function ApprovalsPage() {
         </div>
 
         {/* Preview panel */}
-        <div className="overflow-y-auto" style={{ background: "rgba(243,238,216,0.3)" }}>
+        <div className="approvals-detail overflow-y-auto" style={{ background: "rgba(243,238,216,0.3)" }}>
           {focusPost ? (
             <ApprovalPreview
               post={focusPost}
@@ -232,15 +237,18 @@ export default function ApprovalsPage() {
   );
 }
 
-function ApprovalListRow({ post, project, selected, focused, onSelect, onFocus, onOpen, divider, delay }: {
+function ApprovalListRow({ post, project, selected, focused, onSelect, onFocus, onOpen, divider, delay, compact }: {
   post: any; project: any | null; selected: boolean; focused: boolean;
   onSelect: (e: React.MouseEvent) => void; onFocus: () => void; onOpen: () => void; divider: boolean; delay: string;
+  compact: boolean;
 }) {
   const overdue = post.overdue ?? (post.scheduledAt && new Date(post.scheduledAt) < new Date() && post.status === "PENDING_APPROVAL");
   const due = fmt.date(post.scheduledAt ?? post.scheduled);
   return (
     <li
-      onClick={onFocus}
+      /* With the preview pane collapsed there is nothing for focus to drive, so a
+         single tap has to open the post outright — otherwise tapping does nothing. */
+      onClick={compact ? onOpen : onFocus}
       onDoubleClick={onOpen}
       className={`cursor-pointer transition-all fade-up ${delay}
         ${focused  ? "border-l-[3px] border-indigo bg-indigo-soft/60" : ""}
@@ -263,6 +271,12 @@ function ApprovalListRow({ post, project, selected, focused, onSelect, onFocus, 
             </span>
           </div>
         </div>
+        {/* Only a navigating row gets the affordance */}
+        {compact && (
+          <span className="text-ink-4 shrink-0 self-center" aria-hidden>
+            <Icon.ChevRight size={15} />
+          </span>
+        )}
       </div>
     </li>
   );
@@ -288,11 +302,7 @@ function ApprovalPreview({ post, project, onOpen, onApprove, onRevise, onReject 
           </div>
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          {overdue && (
-            <span className="text-[11px] px-2.5 h-6 inline-flex items-center bg-attention-bg text-attention rounded-full font-bold border border-attention/20">
-              overdue
-            </span>
-          )}
+          {overdue && <Tag tone="attention">overdue</Tag>}
           <Button variant="ghost" size="sm" iconRight={<Icon.ArrowRight size={13} />} onClick={onOpen}>Open full</Button>
         </div>
       </div>

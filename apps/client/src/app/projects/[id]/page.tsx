@@ -126,7 +126,7 @@ export default function ProjectDetailPage() {
                       <span className="text-[11px] text-ink-3 truncate">{t.task.assignee.name}</span>
                     </div>
                   )}
-                  <StatusBadge status={remapStatus(t.task?.status)} className="!h-5 !text-[10.5px]" />
+                  <StatusBadge status={remapStatus(t.task?.status)} />
                 </div>
               ))}
             </div>
@@ -153,7 +153,7 @@ export default function ProjectDetailPage() {
                   {a.description && <div className="text-[11.5px] text-ink-3 truncate text-rowtight">{a.description}</div>}
                   <div className="text-[11px] text-ink-4 mt-0.5">By {a.requestedBy?.name}</div>
                 </div>
-                <StatusBadge status={remapStatus(a.status)} className="!h-5 !text-[10.5px]" />
+                <StatusBadge status={remapStatus(a.status)} />
               </div>
             ))}
           </div>

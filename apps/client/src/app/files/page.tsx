@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { Topstrip } from "@/components/portal-topstrip";
-import { IconButton, Empty, PageError, Skeleton, Button } from "@/components/portal-shared";
+import { IconButton, Empty, PageError, Skeleton, Button, SegTabs } from "@/components/portal-shared";
 import { Icon } from "@/components/portal-icons";
 import { useClientFiles } from "@/lib/hooks/use-files";
 import { useClientProjects } from "@/lib/hooks/use-projects";
@@ -122,23 +122,19 @@ export default function FilesPage() {
         sub={`${fileList.length} files across all projects`}
         right={
           <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1 p-0.5 bg-muted rounded-xl" style={{ border: "2px solid rgba(26,26,26,0.1)" }}>
-              {(["list", "grid"] as const).map((v) => (
-                <button key={v} onClick={() => setViewMode(v)}
-                  className={`h-7 px-3 text-[12.5px] font-semibold rounded-lg transition-all
-                    ${viewMode === v ? "bg-surface text-ink shadow-hard-ink" : "text-ink-3 hover:text-ink"}`}>
-                  {v === "list" ? "List" : "Grid"}
-                </button>
-              ))}
-            </div>
+            <SegTabs
+              value={viewMode}
+              onChange={setViewMode}
+              options={[{ value: "list", label: "List" }, { value: "grid", label: "Grid" }]}
+            />
           </div>
         }
       />
 
-      <div className="flex-1 flex min-h-0 overflow-hidden">
+      <div className="files-layout">
         {/* ── Folder sidebar ── */}
-        <div className="w-52 shrink-0 flex flex-col overflow-y-auto py-4 px-2" style={{ borderRight: "2px solid rgba(26,26,26,0.08)" }}>
-          <div className="px-2 mb-2">
+        <div className="files-sidebar py-4 px-2">
+          <div className="files-folders-label px-2 mb-2">
             <span className="text-[10px] uppercase tracking-widest font-bold text-ink-3">Folders</span>
           </div>
           <nav className="space-y-0.5">
@@ -158,7 +154,7 @@ export default function FilesPage() {
           </nav>
 
           {/* Storage indicator */}
-          <div className="mt-auto px-3 py-4">
+          <div className="files-storage mt-auto px-3 py-4">
             <div className="v3-card-sm p-3 space-y-2">
               <div className="text-[11px] uppercase tracking-wider font-bold text-ink-3">Storage</div>
               <div className="h-2 bg-muted rounded-full overflow-hidden" style={{ border: "1px solid rgba(26,26,26,0.1)" }}>
@@ -172,7 +168,7 @@ export default function FilesPage() {
         </div>
 
         {/* ── Main area ── */}
-        <div className="flex-1 overflow-y-auto px-6 py-5">
+        <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-5 min-w-0">
           {/* Drop zone */}
           <div
             onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
@@ -208,7 +204,7 @@ export default function FilesPage() {
               <select
                 value={uploadProjectId}
                 onChange={(e) => setUploadProjectId(e.target.value)}
-                className="h-8 px-2 bg-surface rounded-xl text-[12.5px] text-ink outline-none font-medium"
+                className="h-8 sm:h-9 px-2 sm:px-2.5 bg-surface rounded-lg sm:rounded-xl text-[12px] sm:text-[12.5px] text-ink outline-none font-medium"
                 style={{ border: "2px solid rgba(26,26,26,0.15)" }}
               >
                 <option value="">Select a project…</option>
@@ -224,7 +220,7 @@ export default function FilesPage() {
           )}
 
           {/* Summary + search */}
-          <div className="flex items-center gap-3 mb-4">
+          <div className="flex items-center gap-x-3 gap-y-1 flex-wrap mb-4">
             <span className="text-[13px] font-bold text-ink">{displayed.length} file{displayed.length !== 1 ? "s" : ""}</span>
             {totalMB > 0 && <span className="text-[12px] text-ink-3 font-medium">· {totalMB.toFixed(0)} MB total</span>}
             <div className="flex-1" />
@@ -236,7 +232,7 @@ export default function FilesPage() {
                 placeholder="Search files…"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="h-8 pl-8 pr-3 bg-surface rounded-xl text-[12.5px] text-ink placeholder:text-ink-4 outline-none font-medium"
+                className="h-8 sm:h-9 pl-8 pr-3 bg-surface rounded-lg sm:rounded-xl text-[12px] sm:text-[12.5px] text-ink placeholder:text-ink-4 outline-none font-medium"
                 style={{ border: "2px solid rgba(26,26,26,0.15)" }}
               />
             </div>
@@ -247,14 +243,14 @@ export default function FilesPage() {
           {!error && viewMode === "list" ? (
             <div className="v3-card overflow-x-auto fade-up d2">
               <div
-                className="grid px-5 h-11 bg-muted/40 text-[11px] uppercase tracking-wider font-bold text-ink-3 items-center"
-                style={{ gridTemplateColumns: "36px 1fr 100px 100px 120px 48px", borderBottom: "2px solid rgba(26,26,26,0.07)" }}
+                className="tbl-head row-files px-5 h-11 bg-muted/40 text-[11px] uppercase tracking-wider font-bold text-ink-3 items-center"
+                style={{ borderBottom: "2px solid rgba(26,26,26,0.07)" }}
               >
                 <span></span><span>Name</span><span>Type</span><span className="text-right">Size</span><span>Uploaded</span><span></span>
               </div>
 
               {isLoading && [...Array(4)].map((_, i) => (
-                <div key={i} className="grid px-5 items-center h-row" style={{ gridTemplateColumns: "36px 1fr 100px 100px 120px 48px", borderBottom: "1px solid rgba(26,26,26,0.06)" }}>
+                <div key={i} className="row-files px-5 items-center h-row" style={{ borderBottom: "1px solid rgba(26,26,26,0.06)" }}>
                   <Skeleton className="h-7 w-7" />
                   <Skeleton className="h-3.5 w-2/3" />
                   <Skeleton className="h-5 w-12" />
@@ -273,9 +269,8 @@ export default function FilesPage() {
                 return (
                   <div
                     key={file.id}
-                    className="grid px-5 items-center h-row v3-row cursor-pointer group fade-up"
+                    className="row-files px-5 items-center h-row v3-row cursor-pointer group fade-up"
                     style={{
-                      gridTemplateColumns: "36px 1fr 100px 100px 120px 48px",
                       animationDelay: `${(i + 3) * 0.05}s`,
                       ...(i < displayed.length - 1 ? { borderBottom: "1px solid rgba(26,26,26,0.06)" } : {}),
                     }}
@@ -295,7 +290,7 @@ export default function FilesPage() {
                     <span className="text-[12px] text-ink-3 font-medium">
                       {new Date(file.createdAt).toLocaleDateString("en", { month: "short", day: "numeric" })}
                     </span>
-                    <div className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-end gap-1">
+                    <div className="hover-reveal flex items-center justify-end gap-1">
                       <a href={file.url} target="_blank" rel="noopener noreferrer" download onClick={(e) => e.stopPropagation()}>
                         <IconButton size="sm" variant="ghost" icon={<Icon.ChevDown size={14} />} label="Download" />
                       </a>
@@ -348,7 +343,7 @@ export default function FilesPage() {
                     </a>
                     <button
                       onClick={() => handleDelete(file.id)}
-                      className="absolute top-2 right-2 h-6 w-6 flex items-center justify-center rounded-lg text-ink-4 hover:text-terra hover:bg-terra-soft transition-all opacity-0 group-hover:opacity-100"
+                      className="absolute top-2 right-2 h-6 w-6 flex items-center justify-center rounded-lg text-ink-4 hover:text-terra hover:bg-terra-soft transition-all hover-reveal"
                       aria-label="Delete file"
                     >
                       <Icon.X size={12} sw={2} />

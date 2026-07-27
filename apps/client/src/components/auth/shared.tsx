@@ -31,11 +31,12 @@ export function AuthField({
         id={id}
         type={realType}
         value={value}
+        placeholder=" "
         autoComplete={autoComplete}
         onChange={(e) => onChange(e.target.value)}
         onFocus={() => setFocused(true)}
         onBlur={() => { setFocused(false); onBlur?.(); }}
-        className={`auth-field ${error ? "error" : ""} ${success ? "success" : ""}`}
+        className={`auth-field ${error ? "error" : ""} ${success ? "success" : ""} ${isPw || success ? "has-adornment" : ""}`}
         aria-invalid={!!error}
         aria-describedby={error ? `${id}-err` : hint ? `${id}-hint` : undefined}
       />
@@ -45,7 +46,7 @@ export function AuthField({
           type="button"
           aria-label={showPass ? "Hide password" : "Show password"}
           onClick={onToggleShowPass}
-          className="absolute right-3 top-[22px] text-ink-3 hover:text-ink p-1 rounded-md transition-colors"
+          className="absolute right-2.5 top-[22px] text-ink-3 hover:text-ink p-1 rounded-md transition-colors"
         >
           {showPass ? <EyeOff size={16} /> : <Eye size={16} />}
         </button>
@@ -78,7 +79,6 @@ export function AuthStyles() {
       @keyframes auth-checkmark { 0% { stroke-dashoffset: 24; } 100% { stroke-dashoffset: 0; } }
       @keyframes auth-meshDrift { 0% { background-position: 0% 0%; } 50% { background-position: 100% 100%; } 100% { background-position: 0% 0%; } }
       @keyframes auth-drift { 0%,100% { transform: translateY(0) rotate(var(--r,0deg)); } 50% { transform: translateY(-7px) rotate(calc(var(--r,0deg) - .6deg)); } }
-      @keyframes auth-marquee { from { transform: translateX(0); } to { transform: translateX(-50%); } }
       @keyframes auth-underlineDraw { from { stroke-dashoffset: 240; } to { stroke-dashoffset: 0; } }
       @keyframes auth-rotate { from { transform: rotate(0); } to { transform: rotate(360deg); } }
       @keyframes auth-stampDrop {
@@ -115,9 +115,12 @@ export function AuthStyles() {
         background-image: radial-gradient(rgba(26,26,26,.10) 1px, transparent 1px);
         background-size: 22px 22px;
       }
+      /* NOTE: the xmlns is percent-encoded on purpose. A literal "//" here reads as a
+         line comment to the styled-jsx minifier, which truncates the url() mid-string —
+         the unterminated quote then swallows every rule below this one. */
       .grain {
         position: absolute; inset: 0; pointer-events: none; opacity: .35; mix-blend-mode: multiply;
-        background-image: url("data:image/svg+xml;utf8,<svg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.05 0 0 0 0 0.05 0 0 0 0 0.05 0 0 0 0.35 0'/></filter><rect width='100%' height='100%' filter='url(%23n)' opacity='0.35'/></svg>");
+        background-image: url("data:image/svg+xml;utf8,<svg viewBox='0 0 200 200' xmlns='http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.05 0 0 0 0 0.05 0 0 0 0 0.05 0 0 0 0.35 0'/></filter><rect width='100%' height='100%' filter='url(%23n)' opacity='0.35'/></svg>");
       }
 
       /* ── Card system ── */
@@ -141,24 +144,47 @@ export function AuthStyles() {
       /* ── Form field ── */
       .auth-field-wrap { position: relative; }
       .auth-field {
-        width: 100%; background: #FDFCF0; border: 1.5px solid #D4CBBA; border-radius: 14px;
-        padding: 22px 14px 8px 42px; font: 500 14px/1.2 'Plus Jakarta Sans', sans-serif; color: #1A1A1A;
+        width: 100%; min-width: 0; background: #FDFCF0; border: 1.5px solid #D4CBBA; border-radius: 14px;
+        padding: 22px 14px 8px 38px; font: 500 13.5px/1.2 'Plus Jakarta Sans', sans-serif; color: #1A1A1A;
         transition: border-color .2s cubic-bezier(0.22,1,0.36,1), box-shadow .2s cubic-bezier(0.22,1,0.36,1), background-color .2s cubic-bezier(0.22,1,0.36,1);
-        outline: none;
+        outline: none; text-overflow: ellipsis;
       }
+      /* Only reserve room on the right when the eye toggle or success tick is actually there */
+      .auth-field.has-adornment { padding-right: 36px; }
+      /* Placeholder exists only so :placeholder-shown can drive the floating label */
+      .auth-field::placeholder { color: transparent; }
       .auth-field:hover:not(:focus) { border-color: #9C947C; }
       .auth-field:focus { border-color: #5D5FEF; background: #FFFFFF; box-shadow: 0 0 0 3px rgba(93,95,239,0.28); }
       .auth-field.error { border-color: #B83728; background: #FDECEA; box-shadow: 0 0 0 3px rgba(184,55,40,.12); }
       .auth-field.success { border-color: #4A7C52; background: #EDF4EE; }
       .auth-field-label {
-        position: absolute; left: 42px; top: 13px; font-size: 13px; color: #6C6555; font-weight: 500;
+        position: absolute; left: 38px; top: 13px; font-size: 13px; color: #6C6555; font-weight: 500;
         pointer-events: none; transition: transform .2s cubic-bezier(0.22,1,0.36,1), color .2s, font-size .2s;
         transform-origin: left top;
       }
       .auth-field-wrap.is-focused .auth-field-label,
-      .auth-field-wrap.is-filled .auth-field-label {
+      .auth-field-wrap.is-filled .auth-field-label,
+      .auth-field:focus ~ .auth-field-label,
+      .auth-field:not(:placeholder-shown) ~ .auth-field-label {
         transform: translateY(-9px) scale(.78);
         color: #5D5FEF; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+      }
+      /* Browser autofill fires before React state updates — float the label anyway
+         and keep the cream field colour instead of the UA's blue wash. */
+      .auth-field:-webkit-autofill ~ .auth-field-label {
+        transform: translateY(-9px) scale(.78);
+        color: #5D5FEF; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+      }
+      .auth-field:-webkit-autofill,
+      .auth-field:-webkit-autofill:hover {
+        -webkit-text-fill-color: #1A1A1A;
+        -webkit-box-shadow: 0 0 0 1000px #FDFCF0 inset;
+        caret-color: #1A1A1A;
+      }
+      .auth-field:-webkit-autofill:focus {
+        -webkit-text-fill-color: #1A1A1A;
+        -webkit-box-shadow: 0 0 0 1000px #FFFFFF inset, 0 0 0 3px rgba(93,95,239,0.28);
+        caret-color: #1A1A1A;
       }
       .auth-field-wrap.error .auth-field-label { color: #B83728; }
       .auth-field-icon {
@@ -174,16 +200,26 @@ export function AuthStyles() {
         border: 1.5px solid rgba(26,26,26,0.09); border-radius: 999px; padding: 4px;
       }
       .seg-btn {
-        flex: 1; padding: 10px 14px; font-weight: 700; font-size: 13.5px;
+        /* flex-basis 0 + min-width 0 forces two exactly equal halves. Without
+           min-width:0 the longer label sets its own floor, the tabs end up
+           uneven, and the pill no longer lines up with either of them. */
+        flex: 1 1 0; min-width: 0; padding: 10px 14px; font-weight: 700; font-size: 13.5px;
         color: #3A3A3A; border-radius: 999px; cursor: pointer; position: relative; z-index: 2; transition: color .2s;
-        background: transparent; border: 0;
+        background: transparent; border: 0; text-align: center; white-space: nowrap;
+        overflow: hidden; text-overflow: ellipsis;
       }
       .seg-btn.active { color: #FFFFFF; }
+      /* Sized in CSS, not measured in JS. The old script read offsetWidth once on
+         mount — before the display fonts loaded — then kept that stale pixel
+         width while the labels reflowed underneath it, so the pill crept over
+         the neighbouring tab. */
       .seg-pill {
-        position: absolute; top: 4px; bottom: 4px; background: #1A1A1A; border-radius: 999px;
-        transition: transform .32s cubic-bezier(0.34,1.45,0.64,1), width .32s cubic-bezier(0.34,1.45,0.64,1);
+        position: absolute; top: 4px; bottom: 4px; left: 4px; width: calc(50% - 4px);
+        background: #1A1A1A; border-radius: 999px;
+        transition: transform .32s cubic-bezier(0.34,1.45,0.64,1);
         z-index: 1; box-shadow: 2px 2px 0 #5D5FEF;
       }
+      .seg[data-active="signup"] .seg-pill { transform: translateX(100%); }
 
       /* ── Strength meter ── */
       .meter { height: 4px; border-radius: 99px; background: #EDE7D2; overflow: hidden; display: flex; gap: 3px; }
@@ -247,9 +283,6 @@ export function AuthStyles() {
       .ripple-dot { position: relative; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #F5D547; vertical-align: middle; }
       .ripple-dot::after { content: ""; position: absolute; inset: 0; border-radius: 50%; background: #F5D547; animation: auth-ripple 2s ease-out infinite; }
 
-      /* ── Marquee ── */
-      .auth-marquee { display: flex; gap: 1.5rem; animation: auth-marquee 38s linear infinite; will-change: transform; }
-
       /* ── Reveal-on-scroll ── */
       .reveal { opacity: 0; transform: translateY(28px); transition: opacity .8s cubic-bezier(0.22,1,0.36,1), transform .8s cubic-bezier(0.22,1,0.36,1); }
       .reveal.in { opacity: 1; transform: translateY(0); }
@@ -259,7 +292,7 @@ export function AuthStyles() {
       .auth-page ::selection { background: #FFF3C4; color: #1A1A1A; }
 
       @media (prefers-reduced-motion: reduce) {
-        .float-a, .float-b, .float-c, .auth-spin-slow, .cream-mesh, .auth-marquee, .dot-pulse { animation: none !important; }
+        .float-a, .float-b, .float-c, .auth-spin-slow, .cream-mesh, .dot-pulse { animation: none !important; }
         .reveal { opacity: 1; transform: none; }
         *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
       }

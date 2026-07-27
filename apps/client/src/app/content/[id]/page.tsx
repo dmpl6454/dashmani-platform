@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { mutate } from "swr";
 import { Topstrip } from "@/components/portal-topstrip";
-import { Button, IconButton, StatusBadge, Avatar, Empty, KbdRow } from "@/components/portal-shared";
+import { Button, IconButton, StatusBadge, Avatar, Empty, KbdRow, SegTabs } from "@/components/portal-shared";
 import { Icon } from "@/components/portal-icons";
 import { ReasonModal } from "@/components/reason-modal";
 import { IGFeedCard, IGProfileGrid, IGStory } from "@/components/ig-previews";
@@ -127,15 +127,15 @@ export default function ContentDetailPage() {
           <div className="space-y-4">
             {/* Preview mode tabs */}
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-1 p-0.5 bg-muted rounded-xl" style={{ border: "2px solid rgba(26,26,26,0.1)" }}>
-                {(["feed", "profile", "story"] as const).map((m) => (
-                  <button key={m} onClick={() => setPreviewMode(m)}
-                    className={`h-7 px-3 text-[12.5px] font-semibold rounded-lg transition-all
-                      ${previewMode === m ? "bg-surface text-ink shadow-hard-ink" : "text-ink-3 hover:text-ink"}`}>
-                    {m.charAt(0).toUpperCase() + m.slice(1)}
-                  </button>
-                ))}
-              </div>
+              <SegTabs
+                value={previewMode}
+                onChange={setPreviewMode}
+                options={[
+                  { value: "feed",    label: "Feed" },
+                  { value: "profile", label: "Profile" },
+                  { value: "story",   label: "Story" },
+                ]}
+              />
               <div className="text-[12px] text-ink-3 font-medium flex items-center gap-1.5">
                 <Icon.Clock size={13} />
                 <span>Publishes <span className={`font-bold ${post.overdue ? "text-attention" : "text-ink-2"}`}>{fmt.date(post.scheduledAt ?? post.scheduled)}</span></span>

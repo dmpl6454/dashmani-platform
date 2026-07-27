@@ -46,7 +46,6 @@ export default function ClientLoginPage() {
   const [submitState, setSubmitState] = useState<"idle" | "loading" | "success">("idle");
   const [forgotOpen, setForgotOpen] = useState(false);
   const formRef = useRef<HTMLDivElement>(null);
-  const segRef = useRef<HTMLDivElement>(null);
 
   const emailValid = email.length > 0 && emailOk(email);
   const emailErr = emailBlurred && email && !emailOk(email) ? "Please enter a valid email" : null;
@@ -69,17 +68,6 @@ export default function ClientLoginPage() {
     }
   }
 
-  // Position segmented pill under "Sign in"
-  useEffect(() => {
-    if (!segRef.current) return;
-    const w = segRef.current.querySelector('[data-tab="signin"]') as HTMLElement | null;
-    const pill = segRef.current.querySelector(".seg-pill") as HTMLElement | null;
-    if (w && pill) {
-      pill.style.width = w.offsetWidth + "px";
-      pill.style.transform = `translateX(${w.offsetLeft - 4}px)`;
-    }
-  }, []);
-
   // Reveal-on-scroll
   useEffect(() => {
     const els = document.querySelectorAll(".reveal");
@@ -101,9 +89,9 @@ export default function ClientLoginPage() {
       <header className="relative z-20 max-w-[1340px] mx-auto px-6 lg:px-10 pt-6 flex items-center justify-between auth-fade-up d1">
         <Link href="/" className="flex items-center gap-3">
           <Mark size={34} />
-          <div className="leading-tight">
-            <p className="text-[13.5px] font-bold text-ink">Digital Sukoon</p>
-            <p className="text-[11px] text-ink-3 font-medium font-mono uppercase tracking-[0.16em] -mt-0.5">
+          <div className="flex flex-col justify-center gap-[3px]">
+            <p className="text-[13.5px] font-bold text-ink leading-none">Digital Sukoon</p>
+            <p className="text-[10px] text-ink-3 font-medium font-mono-auth uppercase tracking-[0.16em] leading-none whitespace-nowrap">
               Client review room
             </p>
           </div>
@@ -165,13 +153,14 @@ export default function ClientLoginPage() {
             >
               Open my review room <ArrowRight size={16} />
             </button>
-            <Link
-              href="/signup"
+            <button
+              type="button"
+              onClick={() => document.getElementById("how")?.scrollIntoView({ behavior: "smooth", block: "start" })}
               className="inline-flex items-center gap-2 px-5 py-3.5 rounded-full bg-white border-2 border-ink text-ink font-bold text-[14px] hover:bg-muted transition-colors"
               style={{ boxShadow: "3px 3px 0 #1A1A1A" }}
             >
-              I have an invite
-            </Link>
+              See how it works
+            </button>
           </div>
 
           <div className="flex flex-wrap items-center gap-x-5 gap-y-2 mt-7 auth-fade-up d8 text-[11.5px] text-ink-3 font-mono-auth uppercase tracking-[0.14em]">
@@ -186,8 +175,8 @@ export default function ClientLoginPage() {
           <div
             ref={formRef}
             id="auth"
-            className="v3-card-action p-6 sm:p-7 mt-10 auth-pop-in d9 relative"
-            style={{ maxWidth: "480px" }}
+            className="v3-card-action p-5 sm:p-7 mt-10 auth-pop-in d9 relative"
+            style={{ maxWidth: "560px" }}
           >
             <div
               className="absolute -top-3 -right-3 w-16 h-16 rounded-full bg-action border-2 border-ink grid place-items-center font-instr italic text-[15px] font-medium text-ink leading-none"
@@ -204,8 +193,8 @@ export default function ClientLoginPage() {
               </p>
             </div>
 
-            <div ref={segRef} className="seg mb-5" role="tablist" aria-label="Auth options">
-              <span className="seg-pill" style={{ width: "50%" }} aria-hidden />
+            <div className="seg mb-5" data-active="signin" role="tablist" aria-label="Auth options">
+              <span className="seg-pill" aria-hidden />
               <button
                 type="button"
                 data-tab="signin"
@@ -307,30 +296,6 @@ export default function ClientLoginPage() {
         </aside>
       </section>
 
-      {/* Marquee strip */}
-      <section
-        className="relative z-10 py-5 overflow-hidden mb-12"
-        style={{
-          borderTop: "2px solid rgba(26,26,26,.10)",
-          borderBottom: "2px solid rgba(26,26,26,.10)",
-          background: "#1A1A1A",
-        }}
-        aria-hidden
-      >
-        <div className="auth-marquee whitespace-nowrap">
-          {[0, 1].map((k) => (
-            <span key={k} className="flex items-center gap-12 pr-12 font-instr italic text-[28px] lg:text-[36px] text-white">
-              <span>approved</span><span className="text-action">✦</span>
-              <span>read-only by default</span><span className="text-action">✦</span>
-              <span>no reply-all</span><span className="text-action">✦</span>
-              <span>quietly opinionated</span><span className="text-action">✦</span>
-              <span className="font-display not-italic font-semibold tracking-tight">made in Mumbai &amp; Lisbon</span>
-              <span className="text-action">✦</span>
-            </span>
-          ))}
-        </div>
-      </section>
-
       {/* How it works */}
       <section id="how" className="relative z-10 max-w-[1200px] mx-auto px-6 lg:px-10 py-12 lg:py-16">
         <div className="reveal max-w-[760px]">
@@ -369,8 +334,8 @@ export default function ClientLoginPage() {
       {/* Stat strip */}
       <section className="relative z-10 max-w-[1200px] mx-auto px-6 lg:px-10 py-8">
         <div
-          className="reveal v3-card overflow-hidden bg-ink text-white grid grid-cols-2 md:grid-cols-4 gap-6 lg:gap-10 py-10 lg:py-12 px-6 lg:px-12 relative"
-          style={{ boxShadow: "5px 5px 0 #F5D547" }}
+          className="reveal v3-card overflow-hidden text-white grid grid-cols-2 md:grid-cols-4 gap-x-6 gap-y-9 lg:gap-x-10 py-10 lg:py-12 px-6 lg:px-12 relative"
+          style={{ background: "#1A1A1A", boxShadow: "5px 5px 0 #F5D547" }}
         >
           <div
             className="absolute -top-20 -right-10 w-[260px] h-[260px] rounded-full pointer-events-none"
@@ -384,9 +349,9 @@ export default function ClientLoginPage() {
             { v: "∞",      l: "content formats",      s: "Reels, stories, feeds" },
           ].map((s, i) => (
             <div key={i} className="reveal relative" style={{ transitionDelay: `${i * 120}ms` }}>
-              <p className="font-num text-[52px] lg:text-[68px] leading-none font-semibold tabular-nums">{s.v}</p>
-              <p className="text-[13.5px] mt-2 font-bold">{s.l}</p>
-              <p className="text-[11px] text-action font-mono-auth uppercase tracking-wider mt-1 font-bold">{s.s}</p>
+              <p className="font-num text-[32px] lg:text-[40px] leading-[1.05] font-semibold tabular-nums">{s.v}</p>
+              <p className="text-[13px] mt-3 font-bold leading-snug">{s.l}</p>
+              <p className="text-[10.5px] text-action font-mono-auth uppercase tracking-wider mt-1.5 font-bold leading-snug">{s.s}</p>
             </div>
           ))}
         </div>
@@ -395,12 +360,12 @@ export default function ClientLoginPage() {
       {/* Testimonial */}
       <section className="relative z-10 max-w-[900px] mx-auto px-6 py-14 lg:py-20">
         <div className="reveal">
-          <div className="text-ink-4/40 -mb-2"><Quote size={22} /></div>
+          <div className="text-ink-4/40 mb-3"><Quote size={20} /></div>
           <p
-            className="display-instr text-ink leading-[1.1] tracking-[-0.01em]"
-            style={{ fontSize: "clamp(28px,4.5vw,52px)" }}
+            className="display-instr text-ink leading-[1.32] tracking-[-0.01em] max-w-[720px]"
+            style={{ fontSize: "clamp(18px,2.3vw,26px)" }}
           >
-            "It feels less like a software portal and more like a beautifully laid out folio that's quietly waiting for me. I leave notes, the studio sees them, and we keep moving."
+            &ldquo;Our approvals used to live in two email threads and a WhatsApp group. Now the whole month — reels, carousels, captions — sits in one room, and I sign off from my phone between meetings. Nothing goes live without my yes.&rdquo;
           </p>
           <div className="mt-7 flex items-center gap-3">
             <div className="w-10 h-10 rounded-full bg-terra-soft border-2 border-terra/30 flex items-center justify-center font-bold text-terra text-[13px]">RM</div>

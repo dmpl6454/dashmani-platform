@@ -216,7 +216,7 @@ export default function DashboardPage() {
                         onClick={() => router.push("/projects")}
                         className="w-full px-5 h-12 flex items-center gap-3 v3-row text-left"
                       >
-                        <StatusBadge status={p.status as any} className="!h-5 !text-[10px]" />
+                        <StatusBadge status={p.status as any} />
                         <span className="flex-1 text-[13.5px] font-semibold text-ink truncate">{p.name}</span>
                         <Icon.ChevRight size={14} className="text-ink-4 shrink-0" />
                       </button>
@@ -285,7 +285,7 @@ function DashApprovalRow({ post, divider, delay }: { post: any; divider: boolean
           <span className={post.overdue ? "text-attention font-semibold" : ""}>{post.scheduled ? fmt.date(post.scheduled) : "—"}</span>
         </div>
       </div>
-      <div className="flex items-center gap-2 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
+      <div className="hover-reveal flex items-center gap-2 shrink-0">
         <Button variant="default" size="sm" disabled={busy} onClick={act("REVISION_REQUESTED")}>Revise</Button>
         <Button variant="primary" size="sm" icon={<Icon.Check size={13} sw={2.5} />} disabled={busy} onClick={act("APPROVED")}>Approve</Button>
       </div>

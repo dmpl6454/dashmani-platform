@@ -248,7 +248,7 @@ export default function ClientAnalyticsPage() {
                         <div className="flex items-center justify-between">
                           <span className="text-[13px] font-semibold text-ink truncate">{ps.name}</span>
                           <div className="flex items-center gap-2 shrink-0">
-                            {proj && <StatusBadge status={proj.status} className="!h-5 !text-[10px]" />}
+                            {proj && <StatusBadge status={proj.status} />}
                             {health != null && <span className="text-[13px] font-bold tabular-nums text-ink-2">{health}</span>}
                           </div>
                         </div>
@@ -271,8 +271,8 @@ export default function ClientAnalyticsPage() {
                 <span className="text-[11px] text-ink-3 font-medium">by activity</span>
               </div>
               <div
-                className="grid px-5 h-10 bg-muted/40 text-[11px] uppercase tracking-wider font-bold text-ink-3 items-center"
-                style={{ gridTemplateColumns: "1fr 80px 80px 120px", borderBottom: "1px solid rgba(26,26,26,0.07)" }}
+                className="tbl-head row-analytics px-5 h-10 bg-muted/40 text-[11px] uppercase tracking-wider font-bold text-ink-3 items-center"
+                style={{ borderBottom: "1px solid rgba(26,26,26,0.07)" }}
               >
                 <span>Project</span>
                 <span className="text-right">Posts</span>
@@ -288,8 +288,8 @@ export default function ClientAnalyticsPage() {
                 return (
                   <div
                     key={p.projectId}
-                    className="grid px-5 items-center h-row v3-row"
-                    style={{ gridTemplateColumns: "1fr 80px 80px 120px", ...(i < arr.length - 1 ? { borderBottom: "1px solid rgba(26,26,26,0.06)" } : {}) }}
+                    className="row-analytics px-5 items-center h-row v3-row"
+                    style={{ ...(i < arr.length - 1 ? { borderBottom: "1px solid rgba(26,26,26,0.06)" } : {}) }}
                   >
                     <span className="text-[13.5px] font-semibold text-ink truncate">{p.name}</span>
                     <span className="text-right text-[13px] font-bold tabular-nums text-ink">{p.postCount}</span>

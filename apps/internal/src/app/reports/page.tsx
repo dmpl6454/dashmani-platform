@@ -205,24 +205,36 @@ const ReportCard = memo(function ReportCard({ report, isAdmin, deletingLinkId, o
         {report.notes && (
           // break-words: notes are free text and occasionally contain an unbroken URL,
           // which has no spaces for the browser to wrap on and overflows the card.
-          <p className="text-sm text-[#7A7A7A] mb-4 italic pl-[52px] break-words">{report.notes}</p>
+          <p className="text-sm text-[#7A7A7A] mb-4 italic pl-0 sm:pl-[52px] break-words">{report.notes}</p>
         )}
 
-        <div className="space-y-1 pl-[52px]">
+        {/* pl-[52px] aligns the list under the avatar on desktop, but that is 52px of
+            a ~340px phone viewport spent on empty gutter — flush left on phones. */}
+        <div className="space-y-1 pl-0 sm:pl-[52px]">
           {shownLinks.map((link: any, i: number) => (
-            <div key={link.id ?? i} className="flex items-center gap-2 group/link py-1 px-2 rounded-lg hover:bg-[#FEFCF7] transition-colors">
+            /* Phones: the row wraps to two lines — badge + time on top, the link itself
+               full-width below. Everything except the URL was shrink-0, so on a narrow
+               row the URL truncated to nothing while the non-shrinkable items still
+               overflowed and painted over each other. sm+ keeps the single-line row. */
+            <div key={link.id ?? i} className="flex flex-wrap sm:flex-nowrap items-center gap-x-2 gap-y-0.5 group/link py-1 px-2 rounded-lg hover:bg-[#FEFCF7] transition-colors">
               <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide border ${platformBadgeClass(link.platform)}`}>
                 {link.platform ?? "—"}
               </span>
+              {/* basis-full + order-last put this on its own line on phones; sm:basis-0
+                  restores the original `flex-1` behaviour (grow:1 shrink:1 basis:0).
+                  overflow-hidden clips any child that still refuses to shrink, so a
+                  long name can never paint over the time again. */}
               <a
                 href={link.url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="flex-1 min-w-0 flex items-center gap-2 group/url"
+                className="order-last basis-full grow min-w-0 overflow-hidden flex items-center gap-2 group/url sm:order-none sm:basis-0"
                 title={link.url}
               >
                 {link.accountName && (
-                  <span className="text-xs font-medium text-[#1A1A1A] shrink-0 group-hover/url:text-[#F5D547] transition-colors">{link.accountName}</span>
+                  /* Was shrink-0, which is what pushed the name outside the anchor.
+                     It now truncates instead, capped so the URL keeps room on phones. */
+                  <span className="text-xs font-medium text-[#1A1A1A] min-w-0 max-w-[55%] truncate sm:max-w-none sm:shrink-0 group-hover/url:text-[#F5D547] transition-colors">{link.accountName}</span>
                 )}
                 <span className="text-[10px] text-[#B0B0B0] truncate group-hover/url:underline">{link.url}</span>
               </a>
@@ -230,7 +242,9 @@ const ReportCard = memo(function ReportCard({ report, isAdmin, deletingLinkId, o
                 <span className="text-xs text-[#B0B0B0] truncate max-w-[200px] hidden md:block">{link.description}</span>
               )}
               {report.submittedAt && (
-                <span className="text-[10px] text-[#B0B0B0] shrink-0 tabular-nums whitespace-nowrap">
+                /* ml-auto right-aligns the time on the phone's first line; on sm+ the
+                   anchor already absorbs the free space, so it resolves to zero. */
+                <span className="ml-auto text-[10px] text-[#B0B0B0] shrink-0 tabular-nums whitespace-nowrap">
                   {new Date(report.submittedAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}
                 </span>
               )}
@@ -702,7 +716,14 @@ export default function ReportsPage() {
                         </button>
                       </div>
                     )}
-                    <span className="ml-auto text-[10px] text-[#B0B0B0] shrink-0">
+                    {/* No shrink-0 here: a text flex item's base size is its max-content
+                        width (the whole string on one line), so flex-shrink:0 meant the
+                        box could never be narrowed and the text could never wrap — the
+                        161-char Snapchat note ran straight off the card edge while the
+                        short notes ("YouTube · views") happened to fit. Shrinking is now
+                        allowed, so long notes wrap onto their own line inside the card
+                        and short ones still sit right-aligned on the header line. */}
+                    <span className="ml-auto min-w-0 max-w-full text-[10px] text-[#B0B0B0] sm:text-right">
                       {p.note}
                       {(() => {
                         const rel = relativeUpdated(p.data);

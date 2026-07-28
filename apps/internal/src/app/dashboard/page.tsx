@@ -981,18 +981,25 @@ export default function DashboardPage() {
             </div>
           ) : (
             <>
-              {/* Headline totals */}
-              <div className="grid grid-cols-3 gap-3">
-                <div className="v3-card-inset p-3 text-center">
-                  <p className="font-num text-2xl font-semibold text-ink leading-none">{fmtCompact(insightsTotalViews)}</p>
+              {/* Headline totals.
+                  Three columns at every width, so each tile gets ~68px of content
+                  space on a 375px phone. A fixed text-2xl needs ~80px for a 6-char
+                  value like "669.9m" and overflowed the tile; the clamp scales the
+                  figure with the viewport and still caps at 24px on desktop, so it
+                  fits even a 7-char "2770.0m" (fmtCompact has no billions tier).
+                  min-w-0 + truncate are the backstop: a grid child defaults to
+                  min-width:auto, which lets content push past the track. */}
+              <div className="grid grid-cols-3 gap-2 sm:gap-3">
+                <div className="v3-card-inset p-2 sm:p-3 text-center min-w-0">
+                  <p className="font-num text-[clamp(0.95rem,3.6vw,1.5rem)] font-semibold text-ink leading-none truncate">{fmtCompact(insightsTotalViews)}</p>
                   <p className="text-[10px] text-ink-4 mt-1">Views</p>
                 </div>
-                <div className="v3-card-inset p-3 text-center">
-                  <p className="font-num text-2xl font-semibold text-ink leading-none">{fmtCompact(insightsTotalLikes)}</p>
+                <div className="v3-card-inset p-2 sm:p-3 text-center min-w-0">
+                  <p className="font-num text-[clamp(0.95rem,3.6vw,1.5rem)] font-semibold text-ink leading-none truncate">{fmtCompact(insightsTotalLikes)}</p>
                   <p className="text-[10px] text-ink-4 mt-1">Likes</p>
                 </div>
-                <div className="v3-card-inset p-3 text-center">
-                  <p className="font-num text-2xl font-semibold text-ink leading-none">{fmtCompact(insightsTotalComments)}</p>
+                <div className="v3-card-inset p-2 sm:p-3 text-center min-w-0">
+                  <p className="font-num text-[clamp(0.95rem,3.6vw,1.5rem)] font-semibold text-ink leading-none truncate">{fmtCompact(insightsTotalComments)}</p>
                   <p className="text-[10px] text-ink-4 mt-1">Comments</p>
                 </div>
               </div>
@@ -1005,7 +1012,11 @@ export default function DashboardPage() {
                     .sort((a, b) => (b.totalViews + b.totalLikes + b.totalComments) - (a.totalViews + a.totalLikes + a.totalComments))
                     .map((p) => (
                       <div key={p.platform} className="flex flex-wrap items-center gap-x-4 gap-y-1 py-1.5 border-t border-[#F0EAD8] first:border-t-0">
-                        <span className="text-xs font-semibold text-ink capitalize w-24 shrink-0">{p.platform}</span>
+                        {/* w-24 is 96px of a ~300px phone row, which squeezed the four
+                            metrics into a ragged wrap. Full width on phones gives the
+                            platform its own line and the metrics a clean one below;
+                            sm+ keeps the original inline label column. */}
+                        <span className="text-xs font-semibold text-ink capitalize w-full sm:w-24 shrink-0">{p.platform}</span>
                         <span className="text-[11px] text-ink-4">{fmtCompact(p.totalViews)} <span className="text-ink-3">views</span></span>
                         <span className="text-[11px] text-ink-4">{fmtCompact(p.totalLikes)} <span className="text-ink-3">likes</span></span>
                         <span className="text-[11px] text-ink-4">{fmtCompact(p.totalComments)} <span className="text-ink-3">comments</span></span>

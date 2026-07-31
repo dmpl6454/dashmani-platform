@@ -789,7 +789,32 @@ export default function ReportPage() {
 
       // Clear draft — what was just submitted is now in daily_reports.
       // Fire-and-forget — if DELETE fails the draft is stale but harmless.
-      apiFetch("/hr/reports/draft", { method: "DELETE" })
+      //
+      // Cancel any auto-save still pending FIRST — defence-in-depth for the ordering
+      // below. The 3s debounce is armed on every links/notes change and handleSubmit
+      // did not previously clear it, so in principle a timer armed just before the
+      // click can fire AFTER this DELETE and re-create the draft we just cleared; the
+      // resurrected draft (holding exactly what was already submitted) would then win
+      // the next page load's restore and reappear as unsaved work.
+      // HONEST CAVEAT: this ordering could NOT be reproduced under test (2026-07-29) —
+      // in every observed run the late PUT landed before the POST, so the DELETE
+      // cleaned it up, and the effect's own cleanup on [links, notes] appears to
+      // cancel the timer in practice. Keep this anyway: it is 3 lines, it cannot
+      // misfire (clearing a timer we are about to obsolete), and it makes the
+      // invariant explicit instead of emergent. Do not treat its presence as
+      // evidence the race was ever observed in production.
+      if (draftTimerRef.current) {
+        clearTimeout(draftTimerRef.current);
+        draftTimerRef.current = null;
+      }
+      // Pass ?date explicitly, reusing the SAME `today` this submit posted as its
+      // report date (line ~750). The server's fallback is IST-correct now too, but
+      // relying on it was the bug: it derived the key from the server clock, which
+      // runs in UTC on prod, so between 00:00 and 05:30 IST a successful submit
+      // cleared YESTERDAY's key and left today's draft behind. Reusing `today`
+      // rather than recomputing also means the draft we clear can never disagree
+      // with the report we just wrote, even if the clock rolls over mid-submit.
+      apiFetch(`/hr/reports/draft?date=${encodeURIComponent(today)}`, { method: "DELETE" })
         .catch(() => { /* non-critical */ });
       setDraftStatus("idle");
 

@@ -233,8 +233,20 @@ const ReportCard = memo(function ReportCard({ report, isAdmin, deletingLinkId, o
               >
                 {link.accountName && (
                   /* Was shrink-0, which is what pushed the name outside the anchor.
-                     It now truncates instead, capped so the URL keeps room on phones. */
-                  <span className="text-xs font-medium text-[#1A1A1A] min-w-0 max-w-[55%] truncate sm:max-w-none sm:shrink-0 group-hover/url:text-[#F5D547] transition-colors">{link.accountName}</span>
+                     Two separate things are going on, so note both:
+                       - `shrink-0` is REMOVED at every width (no sm:shrink-0). The
+                         anchor's overflow-hidden is not breakpoint-gated, so a
+                         non-shrinkable name at desktop could not ellipsize itself
+                         and the anchor hard-clipped its glyphs mid-letter instead.
+                         Being shrinkable means its own `truncate` fires and you get
+                         a proper "…".
+                       - `max-w-[55%]` stays PHONE-ONLY (sm:max-w-none). On a phone
+                         the anchor is a full-width line shared with the URL, so the
+                         cap guarantees the URL keeps room. At desktop there is
+                         usually space for the whole name, and capping it there
+                         would truncate names that fit perfectly well (measured: a
+                         345px name needlessly cut to 269px at an 800px viewport). */
+                  <span className="text-xs font-medium text-[#1A1A1A] min-w-0 max-w-[55%] truncate sm:max-w-none group-hover/url:text-[#F5D547] transition-colors">{link.accountName}</span>
                 )}
                 <span className="text-[10px] text-[#B0B0B0] truncate group-hover/url:underline">{link.url}</span>
               </a>

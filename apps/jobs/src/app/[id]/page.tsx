@@ -121,9 +121,7 @@ function JobDetailFallback({
 }) {
   return (
     <div className="ds-detail-page">
-      <div className="ds-role-detail ds-rd-standalone">
-        <RoleDetailView job={job} num={num} total={total} />
-      </div>
+      <RoleDetailView job={job} num={num} total={total} />
     </div>
   );
 }

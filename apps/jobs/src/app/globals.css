@@ -19,10 +19,10 @@
   --muted: rgba(11, 15, 58, 0.55);
   --line: rgba(11, 15, 58, 0.14);
   --line-soft: rgba(11, 15, 58, 0.07);
-  --accent: #2027E6;
-  --accent-deep: #131AB8;
-  --accent-light: #4F58FF;
-  --accent-tint: #DEE0FF;
+  --accent: #1338BE;
+  --accent-deep: #0D2A94;
+  --accent-light: #3A56D0;
+  --accent-tint: #DEE3FB;
   /* Error red — matches brand.error in tailwind.config.ts */
   --error: #C4452C;
 }
@@ -31,8 +31,20 @@
 @layer base {
   /* box-sizing: border-box is already set by Tailwind preflight — no need to repeat it */
   * { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
-  /* overflow-x: clip has incomplete Safari < 16 support; hidden is the safe equivalent */
-  html, body { background: var(--paper); color: var(--ink); font-family: var(--font-dm-sans, "DM Sans"), system-ui, sans-serif; overflow-x: hidden; }
+  /* `overflow-x: hidden` here turns html/body into a scroll container, which silently
+     breaks `position: sticky` for every descendant (the sticky apply card would scroll
+     off-screen instead of pinning). `overflow-x: clip` clips identically WITHOUT creating
+     a scroll container, so sticky keeps working. Declared below as a progressive
+     enhancement so pre-16 Safari still gets `hidden` as the safety net. */
+  /* Background lives on <html> ONLY — it becomes the canvas background, painted first.
+     If <body> also had an opaque background it would paint in step 3 of the CSS painting
+     order, i.e. AFTER negative-z-index children (step 2), which would completely hide the
+     fixed `z-index:-1` page backdrop (bubbles + gradient wash). Keep body transparent. */
+  html { background: var(--paper); }
+  html, body { color: var(--ink); font-family: var(--font-dm-sans, "DM Sans"), system-ui, sans-serif; overflow-x: hidden; }
+  @supports (overflow-x: clip) {
+    html, body { overflow-x: clip; }
+  }
   /* In-page anchor clicks (nav "Jobs", "See open roles", "View all") glide to their
      target instead of jumping. scroll-margin-top leaves a small buffer so the section
      heading doesn't land flush against the viewport top. */
@@ -56,14 +68,14 @@
 
 /* ───────── TYPOGRAPHY HELPERS ───────── */
 .ds-mono {
-  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-family: var(--font-jetbrains, "JetBrains Mono"), ui-monospace, monospace;
   font-weight: 500;
   letter-spacing: 0.02em;
   font-size: 11.5px;
   text-transform: uppercase;
 }
 .ds-serif {
-  font-family: "Instrument Serif", "Times New Roman", serif;
+  font-family: var(--font-instrument, "Instrument Serif"), "Times New Roman", serif;
   font-style: italic;
   font-weight: 400;
   letter-spacing: -0.01em;
@@ -79,8 +91,32 @@
      is what left an empty band on short pages / tall viewports. Purely flow-based,
      so adding roles just grows the list; nothing is pinned or fixed-height. */
   grid-template-rows: auto auto auto;
+  /* Without an explicit column track, an implicit `auto` column sizes to its content's
+     max-content width rather than clamping to the viewport — unlike flex/block, a grid
+     track is allowed to grow past its formatting context to fit a wide child (e.g. an
+     unwrapped hero headline line), ballooning the whole page wider than the screen.
+     minmax(0,1fr) clamps the track to the available width so children wrap instead. */
+  grid-template-columns: minmax(0, 1fr);
   align-content: start;
-  padding: 0 40px;
+  /* NO horizontal padding here. In the source design every root-level section is
+     full-bleed and applies its own gutter internally — that's what lets the hero's
+     grid / backdrop run edge-to-edge to the window. A padding on this wrapper would
+     inset the hero too and leave dead paper margins down both sides.
+     Shared gutter + content cap live in the --gutter / --shell vars below. */
+}
+
+/* Horizontal rhythm shared by every full-bleed section's inner content. */
+:root {
+  --gutter: clamp(20px, 4vw, 44px);
+  --shell: 1800px;
+}
+/* Applied to the inner content of a full-bleed section: centred, capped, guttered. */
+.ds-shell {
+  width: 100%;
+  max-width: var(--shell);
+  margin-inline: auto;
+  padding-inline: var(--gutter);
+  box-sizing: border-box;
 }
 
 /* ───────── NAV ───────── */
@@ -88,23 +124,30 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 20px 0;
-  border-bottom: 1px solid var(--line);
+  gap: 20px;
+  /* Full-bleed bar; the rule spans the window, content is guttered. */
+  padding: 16px var(--gutter);
+  /* Strong ink rule, per the source — not a faint hairline. Opaque background so the
+     fixed page backdrop's bubbles don't drift through the nav bar. */
+  border-bottom: 1.5px solid var(--ink);
+  background: var(--paper);
 }
 .ds-brand {
   display: inline-flex;
   align-items: center;
   gap: 14px;
 }
-.ds-brand .mark {
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
+/* The real brand mark (same shapes as the preloader), shown whole and static. */
+.ds-brand-mark {
+  height: 34px;
+  /* Artwork is 898.03 × 1024 → keep that ratio so the mark is never squashed. */
+  width: calc(34px * 898.03 / 1024);
   display: block;
-  object-fit: cover;
+  flex: none;
+  overflow: visible;
 }
 .ds-brand .wordmark .name {
-  font-family: "Bricolage Grotesque", sans-serif;
+  font-family: var(--font-bricolage, "Bricolage Grotesque"), sans-serif;
   font-weight: 700;
   font-size: 18px;
   letter-spacing: 0.04em;
@@ -151,63 +194,148 @@
 .ds-nav-link:hover .pulse,
 .ds-nav-cta:hover .pulse { background: var(--paper); }
 
+/* ───────── PAGE BACKDROP (fixed, behind everything, on every route) ───────── */
+/* Ported from the two root-level `position:fixed; z-index:-1` layers in the source
+   design, which sit ABOVE the nav in the markup and so show through on every view —
+   not just the hero. Rendered by PageBackdrop.tsx, mounted in layout.tsx. */
+.ds-page-ag,
+.ds-page-wash {
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  z-index: -1;
+  pointer-events: none;
+  overflow: hidden;
+}
+.ds-page-ag-near,
+.ds-page-ag-far { position: absolute; inset: 0; }
+.ds-page-ag-near {
+  transform: translate3d(calc(var(--agx, 0) * 14px), calc(var(--agy, 0) * 10px), 0);
+  transition: transform .9s cubic-bezier(.22, .61, .36, 1);
+}
+.ds-page-ag-far {
+  transform: translate3d(calc(var(--agx, 0) * -34px), calc(var(--agy, 0) * -22px), 0);
+  transition: transform .7s cubic-bezier(.22, .61, .36, 1);
+}
+.ds-page-ag span {
+  position: absolute;
+  bottom: -14vh;
+  border-radius: 999px;
+  animation-name: ds-antigrav;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+}
+/* Radial vignette + edge gradients that tint the page's borders faintly blue. */
+.ds-page-wash {
+  background: radial-gradient(ellipse 78% 82% at 50% 50%, rgba(244, 244, 255, 0) 0%, rgba(244, 244, 255, 0) 60%, rgba(19, 56, 190, 0.02) 90%, rgba(19, 56, 190, 0.035) 100%);
+}
+.ds-page-wash .x,
+.ds-page-wash .y { position: absolute; inset: 0; }
+.ds-page-wash .x {
+  background: linear-gradient(90deg, rgba(19, 56, 190, 0.04) 0%, rgba(19, 56, 190, 0) 20%, rgba(19, 56, 190, 0) 80%, rgba(19, 56, 190, 0.04) 100%);
+}
+.ds-page-wash .y {
+  background: linear-gradient(180deg, rgba(19, 56, 190, 0.03) 0%, rgba(19, 56, 190, 0) 16%, rgba(19, 56, 190, 0) 84%, rgba(19, 56, 190, 0.03) 100%);
+}
+@media (prefers-reduced-motion: reduce) {
+  .ds-page-ag * { animation-play-state: paused !important; }
+  /* Skip the horizontal view-transition slides entirely rather than pausing them
+     (a paused entrance would freeze the section off to one side). */
+  .ds-detail-page, .ds-index { animation: none !important; }
+}
+
 /* ───────── HERO ───────── */
 .ds-hero {
-  padding: 56px 0 28px;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 320px;
-  column-gap: 56px;
-  align-items: start;
-}
-.ds-hero-eyebrow {
-  display: inline-flex;
+  position: relative;
+  min-height: calc(100vh - 68px);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 14px;
-  color: var(--muted);
-  margin-bottom: 44px;
+  justify-content: center;
+  text-align: center;
 }
-.ds-hero-eyebrow .pip {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--accent);
+.ds-hero-inner {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: calc(100vh - 68px);
+  width: 100%;
+  /* Scales with the viewport instead of capping at a fixed column, so wide/ultrawide
+     screens don't end up with the hero content squeezed into a narrow strip while
+     the full-bleed background does all the work of filling the window. */
+  max-width: min(1800px, 94vw);
+  padding: clamp(12px, 2vh, 28px) clamp(20px, 4vw, 44px) clamp(26px, 4vh, 56px);
+  box-sizing: border-box;
 }
-.ds-hero-eyebrow .issue-num { color: var(--ink); }
 .ds-hero-headline {
-  font-family: "Bricolage Grotesque", sans-serif;
-  font-weight: 600;
-  font-size: clamp(56px, 7.6vw, 124px);
-  line-height: 0.96;
-  letter-spacing: -0.035em;
+  font-family: var(--font-bricolage, "Bricolage Grotesque"), sans-serif;
+  font-weight: 800;
+  font-size: clamp(30px, min(5vw, 6.4vh), 60px);
+  line-height: 1.2;
+  letter-spacing: -0.02em;
   color: var(--ink);
-  text-wrap: pretty;
-  max-width: 16ch;
+  margin: 0;
+  width: 100%;
+  text-align: center;
+}
+.ds-hero-headline span {
+  display: block;
+  animation: ds-line-in 1.4s cubic-bezier(.22, .61, .36, 1) both;
 }
 .ds-hero-headline em {
-  font-family: "Instrument Serif", serif;
+  display: block;
+  animation: ds-line-in 1.4s cubic-bezier(.22, .61, .36, 1) both;
+  font-family: var(--font-instrument, "Instrument Serif"), serif;
   font-style: italic;
   font-weight: 400;
   color: var(--accent);
-  letter-spacing: -0.02em;
-  background-image: linear-gradient(var(--accent), var(--accent));
-  background-repeat: no-repeat;
-  background-position: 0 92%;
-  background-size: 100% 2px;
-  padding-bottom: 0.04em;
+  padding-bottom: 0.28em;
 }
+.ds-hero-underline {
+  width: min(460px, 70%);
+  margin: clamp(6px, 1.2vh, 14px) 0 0;
+  display: block;
+  transform-origin: left center;
+  animation: ds-underline-draw 1.1s cubic-bezier(.22, .61, .36, 1) 1.35s both;
+}
+.ds-hero-underline path { stroke: var(--ink); }
 .ds-hero-lede {
-  font-size: 17px;
-  line-height: 1.55;
+  font-size: 15px;
+  line-height: 1.65;
   color: var(--ink-soft);
-  max-width: 46ch;
-  margin: 40px 0 32px;
+  width: 100%;
+  max-width: 60ch;
+  margin: clamp(14px, 2.6vh, 36px) 0 0;
+  opacity: 0.75;
 }
-.ds-hero-lede .pull { color: var(--ink); font-weight: 500; }
 .ds-hero-ctas {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 22px;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px;
+  margin-top: clamp(16px, 2.6vh, 30px);
+  animation: ds-line-in 1.4s cubic-bezier(.22, .61, .36, 1) 1.5s both;
 }
+.ds-hero-ctas .ds-btn.primary { padding: 13px 26px; font-size: 14.5px; }
+/* Frosted-glass CTA — used only for the hero's secondary action. */
+.ds-btn.glass {
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.42);
+  backdrop-filter: blur(14px) saturate(1.5);
+  -webkit-backdrop-filter: blur(14px) saturate(1.5);
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  box-shadow: 0 8px 26px rgba(11, 15, 58, 0.10), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  padding: 13px 24px;
+  border-radius: 999px;
+}
+.ds-btn.glass:hover { background: rgba(255, 255, 255, 0.62); }
 
 /* ───────── BUTTONS ───────── */
 .ds-btn {
@@ -245,259 +373,247 @@
 }
 .ds-btn.ghost:hover { color: var(--accent); border-bottom-color: var(--accent); }
 
-/* ───────── HERO ASIDE ───────── */
-.ds-hero-aside {
-  align-self: stretch;
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  padding-top: 6px;
+/* ───────── HERO BACKDROP (grid / noise text / antigravity dots) ───────── */
+/* All layered behind .ds-hero-inner (z-index:1) inside the hero, painted by HeroCanvas.tsx. */
+.ds-hero-grid {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+  --cell: 76px;
 }
-.ds-aside-card {
-  background: var(--card);
-  border: 1px solid var(--line-soft);
-  border-radius: 18px;
-  padding: 20px 22px;
+.ds-hero-grid-lines {
+  position: absolute;
+  left: -10%;
+  top: -10%;
+  width: 130%;
+  height: 130%;
+  background-image:
+    linear-gradient(to right, rgba(11, 15, 58, 0.08) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(11, 15, 58, 0.08) 1px, transparent 1px);
+  background-size: var(--cell) var(--cell);
+  animation: ds-grid-pan 34s linear infinite;
 }
-.ds-aside-card .label {
-  color: var(--muted);
-  margin-bottom: 14px;
-  display: block;
+/* Individual grid cells that fade in/out on staggered clocks, panning in lockstep
+   with the lines above (same ds-grid-pan animation on the wrapper) so the glow
+   stays pinned to the lattice instead of drifting relative to it. */
+.ds-hero-cellglow {
+  position: absolute;
+  left: -10%;
+  top: -10%;
+  width: 130%;
+  height: 130%;
+  animation: ds-grid-pan 34s linear infinite;
 }
-.ds-calendar {
-  display: grid;
-  grid-template-columns: repeat(7, 1fr);
-  gap: 4px;
-  font-family: "JetBrains Mono", monospace;
+.ds-hero-cellglow span {
+  position: absolute;
+  width: var(--cell);
+  height: var(--cell);
+  opacity: 0;
+  animation: ds-cell-glow ease-in-out infinite;
+}
+.ds-hero-noise { position: absolute; inset: 0; overflow: hidden; }
+.ds-hero-noise span {
+  position: absolute;
+  font-family: var(--font-jetbrains, "JetBrains Mono"), monospace;
   font-size: 11px;
-  color: var(--ink-soft);
-}
-.ds-calendar .dow {
-  color: var(--muted);
-  text-align: center;
-  padding: 4px 0;
-  font-size: 9.5px;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.16em;
   text-transform: uppercase;
-}
-.ds-calendar .d {
-  aspect-ratio: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 6px;
-  color: var(--ink-soft);
-}
-.ds-calendar .d.dim { color: rgba(11, 15, 58, 0.22); }
-.ds-calendar .d.event-start { background: var(--ink); color: var(--paper); font-weight: 500; }
-.ds-calendar .d.event { background: rgba(11, 15, 58, 0.08); color: var(--ink); }
-.ds-calendar .d.event-end { background: var(--accent); color: var(--paper); font-weight: 500; }
-.ds-calendar .d.today { outline: 2px solid var(--accent); outline-offset: -2px; color: var(--accent); font-weight: 600; }
-.ds-aside-card .event-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-top: 14px;
-  padding-top: 14px;
-  border-top: 1px dashed var(--line);
-  font-size: 12.5px;
-}
-.ds-aside-card .event-row .name {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
+  white-space: nowrap;
   color: var(--ink);
-  font-weight: 500;
+  animation: ds-settle 1.9s cubic-bezier(.16, 1, .3, 1) both, ds-noise-drift 18s ease-in-out infinite;
 }
-.ds-aside-card .event-row .name .dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
+.ds-hero-fade {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse 58% 46% at 50% 44%, var(--paper) 0%, rgba(244, 244, 255, 0.72) 46%, rgba(244, 244, 255, 0.26) 76%, rgba(244, 244, 255, 0) 100%);
 }
-.ds-aside-card .event-row .name .dot.start { background: var(--ink); }
-.ds-aside-card .event-row .name .dot.end { background: var(--accent); }
-.ds-aside-card .event-row .date {
-  font-family: "JetBrains Mono", monospace;
-  font-size: 11px;
-  color: var(--muted);
+.ds-hero-fade-edges {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to bottom, var(--paper) 0%, rgba(244, 244, 255, 0) 22%, rgba(244, 244, 255, 0) 74%, var(--paper) 100%);
 }
-.ds-aside-pill {
-  background: var(--ink);
-  color: var(--paper);
-  border-radius: 18px;
-  padding: 18px 20px;
+/* Cube-monument + cursor-trail canvases sit above the backdrop, below the copy. */
+.ds-hero-canvas-wrap {
+  position: relative;
+  width: min(1800px, 94vw);
+  flex: 1 1 auto;
+  min-height: 110px;
+  max-height: 600px;
+  margin: -10px 0 clamp(10px, 2vh, 24px);
+  pointer-events: none;
 }
-.ds-aside-pill .label {
-  font-family: "JetBrains Mono", monospace;
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: rgba(244, 244, 255, 0.6);
-  margin-bottom: 14px;
-  display: block;
+.ds-hero-canvas-wrap canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+/* Held at their animation's opening frame (off-screen / invisible) until the loader is
+   gone (JobsClient flips [data-hero-play] once <HeroLoader> calls onDone) — otherwise
+   these finite entrance animations finish playing entirely behind the loader and the
+   hero reveals already "settled", with no visible motion. */
+[data-hero-play="paused"] .ds-hero-grid-lines,
+[data-hero-play="paused"] .ds-hero-cellglow,
+[data-hero-play="paused"] .ds-hero-cellglow span,
+[data-hero-play="paused"] .ds-hero-noise span,
+[data-hero-play="paused"] .ds-hero-headline span,
+[data-hero-play="paused"] .ds-hero-headline em,
+[data-hero-play="paused"] .ds-hero-underline,
+[data-hero-play="paused"] .ds-hero-ctas {
+  animation-play-state: paused;
 }
-.ds-aside-pill .count {
-  font-family: "Bricolage Grotesque", sans-serif;
-  font-weight: 600;
-  font-size: 44px;
-  letter-spacing: -0.03em;
-  line-height: 1;
-  color: var(--paper);
+@media (prefers-reduced-motion: reduce) {
+  .ds-hero-grid-lines, .ds-hero-cellglow, .ds-hero-cellglow span, .ds-hero-noise span { animation-play-state: paused !important; }
 }
-.ds-aside-pill .count em {
-  font-family: "Instrument Serif", serif;
-  font-style: italic;
-  color: var(--accent-light);
-  font-weight: 400;
-}
-.ds-aside-pill .caption {
-  margin-top: 10px;
-  font-size: 13px;
-  line-height: 1.45;
-  color: rgba(244, 244, 255, 0.72);
-  max-width: 24ch;
+/* Source hides the floating "noise" text below 900px (not 720px). */
+@media (max-width: 900px) {
+  .ds-hero-noise { display: none; }
 }
 
 /* ───────── ROLE INDEX ───────── */
-.ds-index { padding: 40px 0 20px; }
+.ds-index {
+  width: 100%;
+  max-width: var(--shell);
+  margin-inline: auto;
+  padding: 60px var(--gutter) 24px;
+  box-sizing: border-box;
+  /* Enters from the left — the return leg of the list ⇄ apply transition. Deliberately
+     scoped to this section rather than the whole list view: the hero contains the
+     fixed-position loader, and a transform on its ancestor would become that loader's
+     containing block and mispositions it. */
+  animation: ds-slide-in-left .45s cubic-bezier(.22, .61, .36, 1);
+}
 .ds-index-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding-bottom: 18px;
-  border-bottom: 1px solid var(--line);
   flex-wrap: wrap;
   gap: 16px;
+  margin-bottom: 24px;
 }
-.ds-index-head .title {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 16px;
-  flex-wrap: wrap;
-}
-.ds-index-head .title .ds-mono { color: var(--muted); }
-.ds-index-head .title h3 {
-  font-family: "Bricolage Grotesque", sans-serif;
-  font-weight: 600;
-  font-size: 24px;
-  letter-spacing: -0.022em;
+.ds-index-title {
+  font-family: var(--font-bricolage, "Bricolage Grotesque"), sans-serif;
+  font-weight: 800;
+  font-size: 40px;
+  letter-spacing: -0.02em;
   color: var(--ink);
+  margin: 0;
 }
-.ds-filters {
-  display: inline-flex;
-  gap: 4px;
-  font-size: 12.5px;
-  background: rgba(11, 15, 58, 0.04);
-  padding: 4px;
-  border-radius: 999px;
+.ds-index-title .count { opacity: 0.4; }
+.ds-index-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 320px;
+  max-width: 100%;
 }
-.ds-filters button {
-  padding: 7px 14px;
+.ds-index-search svg {
+  position: absolute;
+  left: 15px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 16px;
+  height: 16px;
+  opacity: 0.55;
+  pointer-events: none;
+}
+.ds-index-search input {
+  width: 100%;
+  font-family: var(--font-dm-sans, "DM Sans"), sans-serif;
+  font-size: 15px;
+  padding: 12px 18px 12px 42px;
+  border: 1.5px solid var(--ink);
   border-radius: 999px;
-  color: var(--ink-soft);
-  transition: background .15s ease, color .15s ease;
-  font-weight: 500;
+  background: var(--surface, #fff);
+  color: var(--ink);
+  outline: none;
+  box-sizing: border-box;
+  transition: box-shadow .15s ease;
+}
+.ds-index-search input:focus { box-shadow: 0 0 0 4px rgba(19, 56, 190, 0.12); }
+.ds-index-search input::placeholder { color: rgba(11, 15, 58, 0.4); }
+.ds-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.ds-chips button {
+  font-family: var(--font-jetbrains, "JetBrains Mono"), monospace;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 9px 15px;
+  border-radius: 999px;
+  border: 1.5px solid var(--border-30, rgba(11, 15, 58, 0.3));
+  background: transparent;
+  color: var(--ink);
+  transition: background .2s ease, color .2s ease, border-color .2s ease;
   display: inline-flex;
   align-items: center;
   gap: 6px;
 }
-.ds-filters button span { color: var(--muted); font-weight: 400; }
-.ds-filters button:hover { color: var(--ink); }
-.ds-filters button.on { background: var(--ink); color: #fff; }
-.ds-filters button.on span { color: rgba(255,255,255,0.6); }
-.ds-index-body {
-  display: grid;
-  grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
-  gap: 36px;
-  align-items: start;
-  margin-top: 24px;
+.ds-chips button span { opacity: 0.55; }
+.ds-chips button:hover { border-color: var(--ink); }
+.ds-chips button.on {
+  background: var(--ink);
+  color: var(--paper);
+  border-color: var(--ink);
 }
-.ds-search-row { display: flex; align-items: center; gap: 16px; margin-top: 18px; }
-.ds-search-row .ds-search { flex: 1; margin-top: 0; }
-.ds-search {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 14px 18px;
-  background: #fff;
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  margin-top: 18px;
-  transition: border-color .15s ease, box-shadow .15s ease;
-}
-.ds-search:focus-within {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 4px rgba(32, 39, 230, 0.10);
-}
-.ds-search .search-icon { color: var(--muted); display: inline-flex; flex-shrink: 0; }
-.ds-search .search-icon svg { width: 16px; height: 16px; }
-.ds-search input {
-  flex: 1;
-  border: 0;
-  outline: 0;
-  background: transparent;
-  font: inherit;
-  font-size: 14.5px;
-  color: var(--ink);
-}
-.ds-search input::placeholder { color: rgba(11,15,58,0.35); }
-.ds-search-hint {
-  font-family: "JetBrains Mono", monospace;
-  font-size: 10.5px;
-  color: var(--muted);
-  padding: 3px 7px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: var(--paper);
-}
+.ds-chips button.on span { opacity: 0.6; }
 
-/* ───────── ROLE ROWS ───────── */
-.ds-roles { list-style: none; display: flex; flex-direction: column; gap: 4px; }
+/* ───────── ROLE ROWS (flat editorial list) ───────── */
+.ds-roles { list-style: none; display: flex; flex-direction: column; }
 .ds-role {
-  display: grid;
-  grid-template-columns: 32px 6px minmax(0, 1fr) auto auto;
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  column-gap: 16px;
-  padding: 16px 14px 16px 10px;
+  gap: 14px 20px;
+  margin: 0 -18px;
+  padding: 22px 18px;
+  border-top: 1.5px solid var(--line-soft);
   border-radius: 14px;
-  border: 1px solid transparent;
   cursor: pointer;
-  transition: background .18s ease, border-color .18s ease, box-shadow .25s ease;
+  transition: box-shadow .35s cubic-bezier(.4,0,.2,1);
+  box-shadow: 0 0 0 0 rgba(19,56,190,0);
 }
-.ds-role:hover { background: rgba(11, 15, 58, 0.03); }
-.ds-role.active {
-  background: #fff;
-  border-color: var(--line);
-  box-shadow: 0 12px 28px -22px rgba(11,15,58,0.4);
+/* Hover = ink outline ring ONLY. The source declares a `--bg` custom property here but
+   never consumes it in any background declaration, so the row's fill must not change —
+   the page backdrop stays visible straight through the row. */
+.ds-role:hover, .ds-role.active {
+  box-shadow: 0 0 0 1.5px var(--ink);
 }
-.ds-role .num {
-  font-family: "JetBrains Mono", monospace;
-  font-size: 11.5px;
+.ds-role .dept-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--font-jetbrains, "JetBrains Mono"), monospace;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
   color: var(--muted);
-  letter-spacing: 0.04em;
+  flex: 0 0 170px;
 }
-.ds-role.active .num { color: var(--ink); }
-.ds-role .dept-bar {
-  width: 3px;
-  height: 24px;
-  border-radius: 999px;
-  background: var(--dept, var(--accent));
-  opacity: 0.35;
-  transition: opacity .2s ease, height .2s ease;
-  justify-self: center;
-}
-.ds-role:hover .dept-bar { opacity: 0.7; }
-.ds-role.active .dept-bar { opacity: 1; height: 40px; }
-.ds-role .info { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
-.ds-role .row1 { display: inline-flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
-.ds-role .row1 .title {
-  font-family: "Bricolage Grotesque", sans-serif;
-  font-weight: 500;
-  font-size: 19.5px;
-  letter-spacing: -0.018em;
+.ds-role .dept-swatch { width: 11px; height: 11px; border-radius: 3px; flex: none; background: var(--dept, var(--accent)); }
+.ds-role .info { flex: 1 1 260px; min-width: 220px; }
+.ds-role .title-wrap { position: relative; display: inline-block; }
+.ds-role .title {
+  font-family: var(--font-bricolage, "Bricolage Grotesque"), sans-serif;
+  font-weight: 700;
+  font-size: 22px;
+  letter-spacing: -0.01em;
+  line-height: 1.1;
   color: var(--ink);
 }
-.ds-role.active .row1 .title { font-weight: 600; }
+.ds-role .title-underline {
+  position: absolute;
+  left: 0; bottom: -3px;
+  height: 2px;
+  background: var(--ink);
+  width: 0%;
+  transition: width .4s cubic-bezier(.4,0,.2,1);
+  border-radius: 2px;
+}
+.ds-role:hover .title-underline, .ds-role.active .title-underline { width: 100%; }
+.ds-role .blurb { font-size: 14px; color: var(--muted); margin-top: 8px; }
 .ds-role .tag {
   padding: 2.5px 8px;
   border-radius: 999px;
@@ -506,78 +622,94 @@
   font-size: 10.5px;
   font-weight: 500;
   letter-spacing: 0.02em;
+  margin-left: 10px;
+  vertical-align: middle;
 }
-.ds-role .row2 {
-  font-size: 12.5px;
-  color: var(--muted);
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
+.ds-role .location {
+  font-family: var(--font-jetbrains, "JetBrains Mono"), monospace;
+  font-size: 12px;
+  color: var(--ink-soft);
+  opacity: 0.75;
+  flex: 0 0 140px;
 }
-.ds-role .row2 .dept { color: var(--dept, var(--accent)); font-weight: 500; }
-.ds-role .row2 .sep { width: 3px; height: 3px; border-radius: 50%; background: var(--line); display: inline-block; }
 .ds-role .type-pill {
-  font-family: "JetBrains Mono", monospace;
-  font-size: 10px;
+  font-family: var(--font-jetbrains, "JetBrains Mono"), monospace;
+  font-size: 11px;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--muted);
-  padding: 4px 8px;
-  border: 1px solid var(--line);
+  color: var(--ink);
+  border: 1.5px solid var(--ink);
   border-radius: 999px;
+  padding: 5px 11px;
+  flex: 0 0 auto;
   white-space: nowrap;
 }
 .ds-role.applied .type-pill {
   background: rgba(46, 143, 90, 0.10);
   color: #1F6E45;
-  border-color: rgba(46, 143, 90, 0.25);
+  border-color: rgba(46, 143, 90, 0.35);
   font-weight: 600;
+}
+/* Share + Apply reveal on hover (desktop); always visible on touch, since hover never fires there. */
+.ds-role-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  opacity: 0;
+  transform: translateY(6px);
+  transition: opacity .3s ease, transform .3s ease;
+}
+.ds-role:hover .ds-role-actions, .ds-role.active .ds-role-actions,
+.ds-role:focus-within .ds-role-actions { opacity: 1; transform: translateY(0); }
+@media (hover: none) {
+  .ds-role-actions { opacity: 1; transform: none; }
 }
 .ds-role .go {
   width: 28px;
   height: 28px;
-  border-radius: 50%;
-  border: 1px solid var(--line);
+  border-radius: 999px;
+  border: 1.5px solid var(--border-25, rgba(11,15,58,0.25));
   color: var(--ink);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   font-size: 12px;
-  transition: background .15s ease, color .15s ease, transform .15s ease;
-  background: #fff;
+  transition: background .2s ease, color .2s ease, border-color .2s ease;
+  /* Transparent so it reads as part of the row (which has no fill of its own) instead of
+     a floating white disc over the page backdrop. NOTE: this is a deliberate deviation —
+     the source sets `background: var(--surface)` (= #FFFFFF) on this one button. */
+  background: transparent;
+  flex: 0 0 28px;
 }
-.ds-role:hover .go { transform: translateX(2px); }
-/* Circular action buttons (share) + Apply CTA sit together at the row's end. */
-.ds-role-actions { display: inline-flex; align-items: center; gap: 8px; }
-/* Turn the button solid black when the cursor is directly on it. */
-.ds-role .go:hover { background: var(--ink); color: #fff; border-color: var(--ink); }
-/* Apply CTA pill — light by default, solid black on hover (same mechanism as .go). */
+.ds-role .go:hover { background: var(--ink); color: var(--paper); border-color: var(--ink); }
 .ds-role-apply {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 15px;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
   border-radius: 999px;
-  border: 1px solid var(--line);
-  background: #fff;
+  border: 1.5px solid var(--ink);
+  background: transparent;
   color: var(--ink);
-  font-size: 13px;
-  font-weight: 600;
-  white-space: nowrap;
-  text-decoration: none;
-  transition: background .15s ease, color .15s ease, border-color .15s ease, transform .15s ease;
-}
-.ds-role-apply:hover { background: var(--ink); color: #fff; border-color: var(--ink); }
-.ds-role:hover .ds-role-apply { transform: translateX(2px); }
-.ds-role.active .go { background: var(--ink); color: #fff; border-color: var(--ink); }
-.ds-roles-empty {
-  padding: 40px 24px;
-  text-align: center;
-  color: var(--muted);
-  background: rgba(11, 15, 58, 0.03);
-  border-radius: 14px;
   font-size: 14px;
+  text-decoration: none;
+  transition: background .2s ease, color .2s ease;
+  flex: 0 0 28px;
+}
+.ds-role-apply:hover { background: var(--ink); color: var(--paper); }
+.ds-roles-empty {
+  padding: 36px 0;
+  text-align: center;
+}
+.ds-roles-empty img { display: block; width: 180px; height: auto; margin: 0 auto 14px; }
+.ds-roles-empty .msg { font-family: var(--font-jetbrains, "JetBrains Mono"), monospace; font-size: 14px; color: var(--muted); }
+@media (max-width: 720px) {
+  .ds-role { margin: 0; padding: 16px; border-radius: 12px; border-top: none; border-left: 3px solid var(--dept, var(--accent)); flex-direction: column; align-items: stretch; }
+  .ds-role .dept-tag { flex: none; }
+  .ds-role .location { flex: none; }
+  .ds-role-actions { width: 100%; margin-left: 0; justify-content: flex-end; }
 }
 
 /* ───────── DETAIL PANEL ───────── */
@@ -590,104 +722,97 @@
   overflow: hidden;
   box-shadow: 0 18px 50px -32px rgba(11,15,58,0.4);
 }
-/* Standalone /[slug] page reuses the detail card, but not the panel's sticky behaviour. */
-.ds-rd-standalone { position: static; box-shadow: 0 18px 50px -32px rgba(11,15,58,0.35); }
-.ds-rd-stripe { height: 5px; width: 100%; background: var(--dept, var(--accent)); transition: background .35s ease; }
-.ds-rd-body { padding: 28px 30px; }
 .ds-rd-body.entering { animation: rdIn .4s cubic-bezier(0.2,0.8,0.2,1) both; }
-.ds-rd-header {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  margin-bottom: 10px;
+/* Role header + copy render straight onto the page background (no card), so the fixed
+   backdrop shows through — matching the source design. */
+.ds-rd-head { margin-top: 26px; }
+/* The resume vector is absolutely positioned above the apply card (the grid's right
+   column), so it reaches up into this header's row. Reserve the strip it occupies so a
+   long role title wraps instead of running underneath it. The vector is 150px wide and
+   centred on the right column, i.e. its left edge sits at 75% - 75px of the content
+   width, so clearing it needs 25% + 75px, plus a little slack. Only applies while the
+   vector is actually shown (it's hidden below 860px). */
+@media (min-width: 861px) {
+  .ds-rd-head { padding-right: calc(25% + 90px); }
 }
+.ds-rd-copy { max-width: 62ch; }
 .ds-rd-dept {
-  font-family: "JetBrains Mono", monospace;
-  font-size: 11px;
-  letter-spacing: 0.1em;
+  font-family: var(--font-jetbrains, "JetBrains Mono"), monospace;
+  font-size: 12px;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--dept, var(--accent));
-  font-weight: 500;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
-.ds-rd-dept::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
-.ds-rd-num { font-family: "JetBrains Mono", monospace; font-size: 11px; color: var(--muted); }
-.ds-rd-title {
-  font-family: "Bricolage Grotesque", sans-serif;
-  font-weight: 600;
-  font-size: 34px;
-  line-height: 1.05;
-  letter-spacing: -0.028em;
-  color: var(--ink);
-  margin: 8px 0 18px;
-}
-.ds-rd-activity {
   display: flex;
   align-items: center;
-  gap: 16px;
-  margin: -4px 0 18px;
-  font-size: 12px;
-  color: var(--muted);
-  font-family: "JetBrains Mono", monospace;
-  letter-spacing: 0.02em;
+  gap: 10px;
+  margin: 0 0 12px;
 }
-.ds-rd-activity .dot {
-  display: inline-block;
-  width: 6px; height: 6px;
-  border-radius: 50%;
-  background: #2F7F5A;
-  margin-right: 7px;
-  vertical-align: 1px;
-  animation: navPulse 2.4s ease-out infinite;
+.ds-rd-dept::before { content: ""; width: 9px; height: 9px; border-radius: 3px; background: currentColor; flex: none; }
+.ds-rd-title {
+  font-family: var(--font-bricolage, "Bricolage Grotesque"), sans-serif;
+  font-weight: 800;
+  font-size: clamp(34px, 4.4vw, 56px);
+  line-height: 1.03;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+  margin: 0;
+  max-width: 100%;
 }
-.ds-rd-meta { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 22px; }
+.ds-rd-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+  margin-top: 18px;
+}
 .ds-rd-meta .chip {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  padding: 7px 12px 7px 11px;
-  border-radius: 999px;
-  background: rgba(11, 15, 58, 0.05);
-  font-size: 12.5px;
-  color: var(--ink);
-  font-weight: 500;
-}
-.ds-rd-meta .chip svg { width: 13px; height: 13px; color: var(--muted); flex-shrink: 0; }
-.ds-rd-summary {
-  font-size: 15.5px;
-  line-height: 1.6;
-  color: var(--ink-soft);
-  margin-bottom: 24px;
-  padding-bottom: 22px;
-  border-bottom: 1px dashed var(--line);
-}
-.ds-rd-block { margin-bottom: 22px; }
-.ds-rd-block h5 {
-  font-family: "JetBrains Mono", monospace;
-  font-size: 10.5px;
-  letter-spacing: 0.12em;
+  font-family: var(--font-jetbrains, "JetBrains Mono"), monospace;
+  font-size: 11px;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--muted);
-  margin-bottom: 14px;
-  font-weight: 500;
+  padding: 6px 13px;
+  border-radius: 999px;
+  border: 1.5px solid var(--border-25, rgba(11, 15, 58, 0.25));
+  color: var(--ink);
+  opacity: 0.75;
 }
-.ds-rd-block ul { list-style: none; display: flex; flex-direction: column; gap: 10px; }
+.ds-rd-meta .chip.strong { border-color: var(--ink); opacity: 1; }
+.ds-rd-meta .chip.plain { border: none; padding: 6px 2px; opacity: 0.5; }
+.ds-rd-summary {
+  font-size: 17px;
+  line-height: 1.65;
+  color: var(--ink);
+  opacity: 0.85;
+  margin: 0 0 34px;
+}
+.ds-rd-block { margin-bottom: 34px; }
+.ds-rd-block:last-child { margin-bottom: 0; }
+.ds-rd-block h5 {
+  font-family: var(--font-jetbrains, "JetBrains Mono"), monospace;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink);
+  opacity: 0.55;
+  margin-bottom: 14px;
+  font-weight: 400;
+}
+.ds-rd-block ul { list-style: none; display: flex; flex-direction: column; gap: 11px; }
+/* Em-dash marker, per the source (not a coloured tick rule). */
 .ds-rd-block li {
-  font-size: 14.5px;
+  font-size: 15.5px;
   line-height: 1.5;
   color: var(--ink);
-  padding-left: 22px;
+  opacity: 0.85;
+  padding-left: 20px;
   position: relative;
 }
 .ds-rd-block li::before {
-  content: "";
+  content: "—";
   position: absolute;
-  left: 2px; top: 10px;
-  width: 9px; height: 1px;
-  background: var(--dept, var(--accent));
-  opacity: 0.7;
+  left: 0; top: 0;
+  opacity: 0.4;
 }
 .ds-rd-actions {
   display: flex;
@@ -802,7 +927,7 @@
   border-bottom: 1px solid var(--line);
 }
 .ds-modal-eyebrow {
-  font-family: "JetBrains Mono", monospace;
+  font-family: var(--font-jetbrains, "JetBrains Mono"), monospace;
   font-size: 11px;
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -814,7 +939,7 @@
 }
 .ds-modal-eyebrow::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .ds-modal-head h3 {
-  font-family: "Bricolage Grotesque", sans-serif;
+  font-family: var(--font-bricolage, "Bricolage Grotesque"), sans-serif;
   font-weight: 600;
   font-size: 26px;
   letter-spacing: -0.025em;
@@ -840,7 +965,7 @@
   animation: pop .5s cubic-bezier(0.34, 1.56, 0.64, 1) both;
 }
 .ds-modal-success h4 {
-  font-family: "Bricolage Grotesque", sans-serif;
+  font-family: var(--font-bricolage, "Bricolage Grotesque"), sans-serif;
   font-weight: 600;
   font-size: 24px;
   letter-spacing: -0.025em;
@@ -848,7 +973,7 @@
   margin-bottom: 8px;
 }
 .ds-modal-success p { color: var(--ink-soft); font-size: 14px; line-height: 1.55; max-width: 42ch; margin: 0 auto; }
-.ds-modal-success .ref { font-family: "JetBrains Mono", monospace; font-size: 11.5px; color: var(--muted); margin-top: 16px; }
+.ds-modal-success .ref { font-family: var(--font-jetbrains, "JetBrains Mono"), monospace; font-size: 11.5px; color: var(--muted); margin-top: 16px; }
 
 /* ───────── FORM ───────── */
 .ds-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px 20px; margin-bottom: 22px; }
@@ -878,7 +1003,7 @@
 .ds-field textarea:focus {
   border-color: var(--accent);
   background: #fff;
-  box-shadow: 0 0 0 4px rgba(32, 39, 230, 0.12);
+  box-shadow: 0 0 0 4px rgba(19, 56, 190, 0.12);
 }
 .ds-field select {
   appearance: none;
@@ -989,7 +1114,7 @@
 }
 .ds-alerts input::placeholder { color: rgba(11, 15, 58, 0.32); }
 .ds-alerts input[type="email"] { flex: 1 1 200px; }
-.ds-alerts input:focus { border-color: var(--accent); background: #fff; box-shadow: 0 0 0 4px rgba(32, 39, 230, 0.12); }
+.ds-alerts input:focus { border-color: var(--accent); background: #fff; box-shadow: 0 0 0 4px rgba(19, 56, 190, 0.12); }
 .ds-alerts form .ds-btn.primary { flex: 0 0 auto; }
 .ds-alerts-fine { margin-top: 14px; font-size: 12px; color: var(--muted); }
 .ds-alerts-error { margin-top: 12px; font-size: 13px; color: #C4452C; }
@@ -1090,7 +1215,7 @@
   transition: background .15s ease, border-color .15s ease;
 }
 .ds-file-btn:hover { background: var(--paper-deep); border-color: var(--accent); }
-.ds-file-name { font-size: 13px; color: var(--muted); font-family: "JetBrains Mono", monospace; }
+.ds-file-name { font-size: 13px; color: var(--muted); font-family: var(--font-jetbrains, "JetBrains Mono"), monospace; }
 .ds-file-name.has-file { color: var(--ink); }
 
 /* ───────── TOAST ───────── */
@@ -1129,35 +1254,46 @@
 }
 
 /* ───────── FOOTER ───────── */
-.ds-colophon {
-  border-top: 1px solid var(--line);
-  padding: 36px 0;
+/* Strong ink rule + two left/right-aligned rows, per the source design. */
+.ds-colophon { border-top: 1.5px solid var(--ink); }
+.ds-colophon-row {
   display: flex;
-  flex-direction: column;
+  flex-wrap: wrap;
+  justify-content: space-between;
   align-items: center;
-  gap: 14px;
-  text-align: center;
+  gap: 16px;
+  width: 100%;
+  max-width: var(--shell);
+  margin-inline: auto;
+  padding: 40px var(--gutter) 20px;
+  box-sizing: border-box;
 }
-.ds-colophon-contact { color: var(--muted); font-size: 15px; line-height: 1.6; max-width: 52ch; }
-.ds-colophon-contact a { color: var(--ink); font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
-.ds-colophon-contact a:hover { color: var(--accent); }
-.ds-colophon .tag { color: var(--ink-soft); font-weight: 500; font-size: 15px; }
-.ds-colophon .footer-links {
-  display: inline-flex;
-  align-items: center;
-  gap: 14px;
-  font-size: 13.5px;
+.ds-colophon-row.fine {
+  gap: 12px;
+  padding: 8px var(--gutter) 36px;
+  font-family: var(--font-jetbrains, "JetBrains Mono"), monospace;
+  font-size: 11px;
+  opacity: 0.55;
 }
-.ds-colophon .footer-links a { color: var(--ink); font-weight: 500; transition: color .15s ease; }
-.ds-colophon .footer-links a:hover { color: var(--accent); }
-.ds-colophon .footer-links .sep { width: 4px; height: 4px; border-radius: 50%; background: var(--accent); display: inline-block; opacity: 0.7; }
-.ds-colophon .copyright { color: var(--muted); font-size: 12.5px; }
+.ds-colophon .tag {
+  font-family: var(--font-bricolage, "Bricolage Grotesque"), sans-serif;
+  font-weight: 700;
+  font-size: 17px;
+  color: var(--ink);
+  margin: 0;
+}
+.ds-colophon .contact { display: flex; align-items: center; gap: 8px; }
+.ds-colophon .contact img { display: block; width: 22px; height: auto; }
+.ds-colophon .contact a { opacity: 1; text-decoration: none; }
+.ds-colophon .contact a:hover { text-decoration: underline; text-underline-offset: 3px; }
 
 /* ───────── INTERNSHIP PAGE ───────── */
 .ds-intern-view {
-  max-width: 960px;
-  margin: 0 auto;
-  padding: 56px 0;
+  width: 100%;
+  max-width: var(--shell);
+  margin-inline: auto;
+  padding: 56px var(--gutter);
+  box-sizing: border-box;
   animation: pageIn .45s cubic-bezier(0.2,0.8,0.2,1) both;
 }
 .ds-program-pill {
@@ -1166,7 +1302,7 @@
   border-radius: 999px;
   background: var(--accent-tint);
   color: var(--accent-deep);
-  font-family: "JetBrains Mono", monospace;
+  font-family: var(--font-jetbrains, "JetBrains Mono"), monospace;
   font-size: 11px;
   font-weight: 500;
   letter-spacing: 0.14em;
@@ -1175,7 +1311,7 @@
 }
 .ds-intern-hero { text-align: center; margin-bottom: 44px; }
 .ds-intern-hero h2 {
-  font-family: "Bricolage Grotesque", sans-serif;
+  font-family: var(--font-bricolage, "Bricolage Grotesque"), sans-serif;
   font-weight: 600;
   font-size: clamp(36px, 5.4vw, 64px);
   letter-spacing: -0.03em;
@@ -1192,7 +1328,7 @@
   padding: 24px 22px 22px;
   transition: transform .2s ease, box-shadow .2s ease, border-color .2s ease;
 }
-.ds-benefit:hover { transform: translateY(-2px); border-color: var(--accent); box-shadow: 0 14px 32px -22px rgba(32, 39, 230, 0.4); }
+.ds-benefit:hover { transform: translateY(-2px); border-color: var(--accent); box-shadow: 0 14px 32px -22px rgba(19, 56, 190, 0.4); }
 .ds-benefit-icon {
   display: inline-flex;
   align-items: center;
@@ -1205,7 +1341,7 @@
 }
 .ds-benefit-icon svg { width: 20px; height: 20px; }
 .ds-benefit h4 {
-  font-family: "Bricolage Grotesque", sans-serif;
+  font-family: var(--font-bricolage, "Bricolage Grotesque"), sans-serif;
   font-weight: 600;
   font-size: 18px;
   letter-spacing: -0.018em;
@@ -1231,7 +1367,7 @@
   flex-wrap: wrap;
 }
 .ds-apply-form-head h3 {
-  font-family: "Bricolage Grotesque", sans-serif;
+  font-family: var(--font-bricolage, "Bricolage Grotesque"), sans-serif;
   font-weight: 600;
   font-size: 28px;
   letter-spacing: -0.025em;
@@ -1270,7 +1406,7 @@
   animation: pop .5s cubic-bezier(0.34, 1.56, 0.64, 1) both;
 }
 .ds-form-success h3 {
-  font-family: "Bricolage Grotesque", sans-serif;
+  font-family: var(--font-bricolage, "Bricolage Grotesque"), sans-serif;
   font-weight: 600;
   font-size: 30px;
   letter-spacing: -0.025em;
@@ -1291,13 +1427,129 @@
 .ds-form-success .back-link:hover { color: var(--accent); border-bottom-color: var(--accent); }
 
 /* ───────── JOB DETAIL PAGE ───────── */
-.ds-detail-page { max-width: 880px; margin: 0 auto; padding: 48px 0 80px; }
+.ds-detail-page {
+  width: 100%;
+  max-width: var(--shell);
+  margin-inline: auto;
+  padding: 40px var(--gutter) 90px;
+  box-sizing: border-box;
+  /* Enters from the right (forward navigation from the list). No fill-mode, so the
+     element's own `transform: none` is restored once the animation ends — a persisted
+     `translateX(0)` would leave a transform on the sticky apply card's ancestor. */
+  animation: ds-slide-in-right .45s cubic-bezier(.22, .61, .36, 1);
+}
+/* Description + apply form side by side, matching the source design — collapses to
+   a single stacked column automatically once a track can't fit its 340px minimum,
+   no media query needed. */
+.ds-jd-layout {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  gap: 56px;
+  align-items: start;
+  margin-top: 44px;
+}
+.ds-jd-aside { position: sticky; top: 24px; }
+.ds-jd-illustration {
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 100%;
+  max-width: 150px;
+  margin-bottom: 14px;
+  pointer-events: none;
+}
+.ds-jd-illustration img { display: block; width: 100%; height: auto; }
+/* Source hides this vector once the layout stacks — it has nowhere to sit above the
+   card without colliding with the role card above it. */
+@media (max-width: 860px) {
+  .ds-jd-illustration { display: none; }
+}
+.ds-jd-eyebrow {
+  font-family: var(--font-jetbrains, "JetBrains Mono"), monospace;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.55;
+  margin-bottom: 18px;
+}
+.ds-jd-fields { display: flex; flex-direction: column; gap: 16px; margin-bottom: 22px; }
+/* Scoped to the apply card only — the shared .ds-field look elsewhere (internship
+   form) is untouched. Matches the source design's narrower sidebar-card styling:
+   mono uppercase labels, lighter borders, tighter radius. */
+.ds-jd-aside .ds-field .label {
+  font-family: var(--font-jetbrains, "JetBrains Mono"), monospace;
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ink);
+  opacity: 0.6;
+}
+.ds-jd-aside .ds-field input,
+.ds-jd-aside .ds-field textarea {
+  border: 1.5px solid var(--border-25, rgba(11, 15, 58, 0.25));
+  border-radius: 10px;
+  padding: 12px 14px;
+  background: var(--surface, #fff);
+}
+.ds-jd-aside .ds-field input:focus,
+.ds-jd-aside .ds-field textarea:focus {
+  border-color: var(--ink);
+  background: var(--surface, #fff);
+  box-shadow: none;
+}
+.ds-jd-resume-drop {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1.5px dashed var(--border-25, rgba(11, 15, 58, 0.25));
+  border-radius: 10px;
+  padding: 12px 14px;
+  position: relative;
+  transition: border-color .15s ease;
+}
+.ds-jd-resume-drop.drag-active { border-color: var(--ink); }
+.ds-jd-resume-drop input[type="file"] { position: absolute; inset: 0; opacity: 0; cursor: pointer; z-index: 1; }
+.ds-jd-resume-drop .name {
+  font-size: 14px;
+  opacity: 0.7;
+  pointer-events: none;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ds-jd-resume-drop .remove {
+  position: relative;
+  z-index: 2;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  border: 1.5px solid rgba(11, 15, 58, 0.35);
+  background: var(--surface, #fff);
+  color: var(--ink);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+.ds-jd-resume-drop .remove:hover { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+.ds-jd-form-card .ds-intern-submit {
+  font-family: var(--font-bricolage, "Bricolage Grotesque"), sans-serif;
+  font-weight: 800;
+}
 
 /* ── 404 / not-found ── */
 .ds-notfound { max-width: 540px; text-align: center; padding: 80px 0 104px; }
 .ds-notfound-code { color: var(--accent); margin-bottom: 18px; }
 .ds-notfound-title {
-  font-family: "Bricolage Grotesque", sans-serif;
+  font-family: var(--font-bricolage, "Bricolage Grotesque"), sans-serif;
   font-weight: 600;
   font-size: clamp(30px, 5vw, 46px);
   letter-spacing: -0.022em;
@@ -1333,7 +1585,7 @@
   box-shadow: 0 18px 50px -32px rgba(11,15,58,0.3);
 }
 .ds-jd-dept {
-  font-family: "JetBrains Mono", monospace;
+  font-family: var(--font-jetbrains, "JetBrains Mono"), monospace;
   font-size: 11px;
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -1345,7 +1597,7 @@
 }
 .ds-jd-dept::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .ds-jd-title {
-  font-family: "Bricolage Grotesque", sans-serif;
+  font-family: var(--font-bricolage, "Bricolage Grotesque"), sans-serif;
   font-weight: 600;
   font-size: clamp(28px, 4vw, 44px);
   letter-spacing: -0.03em;
@@ -1361,7 +1613,7 @@
   margin-bottom: 16px;
 }
 .ds-jd-body h3 {
-  font-family: "Bricolage Grotesque", sans-serif;
+  font-family: var(--font-bricolage, "Bricolage Grotesque"), sans-serif;
   font-weight: 600;
   font-size: 20px;
   letter-spacing: -0.02em;
@@ -1379,21 +1631,11 @@
   margin-bottom: 14px;
 }
 .ds-jd-form-card {
-  background: #fff;
-  border: 1px solid var(--line);
-  border-radius: 22px;
-  padding: 32px 36px;
-  box-shadow: 0 18px 50px -32px rgba(11,15,58,0.3);
-}
-.ds-jd-form-card h2 {
-  font-family: "Bricolage Grotesque", sans-serif;
-  font-weight: 600;
-  font-size: 26px;
-  letter-spacing: -0.025em;
-  color: var(--ink);
-  margin-bottom: 22px;
-  padding-bottom: 18px;
-  border-bottom: 1px solid var(--line);
+  position: relative;
+  background: var(--surface, #fff);
+  border: 1.5px solid var(--ink);
+  border-radius: 20px;
+  padding: 30px;
 }
 .ds-success-banner {
   text-align: center;
@@ -1412,7 +1654,7 @@
   animation: pop .5s cubic-bezier(0.34, 1.56, 0.64, 1) both;
 }
 .ds-success-banner h3 {
-  font-family: "Bricolage Grotesque", sans-serif;
+  font-family: var(--font-bricolage, "Bricolage Grotesque"), sans-serif;
   font-weight: 600;
   font-size: 26px;
   letter-spacing: -0.025em;
@@ -1439,6 +1681,19 @@
   from { opacity: 0; transform: translateY(8px); }
   to   { opacity: 1; transform: translateY(0); }
 }
+/* View transitions between the role list and the apply interface. Forward navigation
+   (list → apply) enters from the right; going back enters from the left, so the pair
+   reads as one horizontal push. NOTE: the source design fades both views VERTICALLY
+   (translateY(28px)) — its `ds-slide-in-left` keyframe is a misnomer and has no
+   horizontal motion. This horizontal version is a deliberate change on request. */
+@keyframes ds-slide-in-right {
+  from { opacity: 0; transform: translateX(56px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+@keyframes ds-slide-in-left {
+  from { opacity: 0; transform: translateX(-56px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
 @keyframes backdropIn {
   from { opacity: 0; }
   to   { opacity: 1; }
@@ -1451,39 +1706,35 @@
   from { opacity: 0; transform: translateY(20px); }
   to   { opacity: 1; transform: translateY(0); }
 }
+@keyframes ds-grid-pan { from { transform: translate3d(0,0,0); } to { transform: translate3d(-76px,-76px,0); } }
+@keyframes ds-cell-glow { 0%, 100% { opacity: 0; } 12% { opacity: 1; } 34% { opacity: 1; } 52% { opacity: 0; } }
+@keyframes ds-settle {
+  0% { opacity: 0; transform: translate(var(--dx,0),var(--dy,0)) rotate(var(--r,0)) scale(1.35); }
+  18% { opacity: 0.85; }
+  72% { opacity: 0.5; }
+  100% { opacity: 0.16; transform: translate(0,0) rotate(0deg) scale(1); }
+}
+@keyframes ds-noise-drift { 0%, 100% { translate: 0 0; } 50% { translate: 0 -5px; } }
+@keyframes ds-line-in { from { opacity: 0; filter: blur(6px); transform: translateY(16px); } 60% { opacity: 0.72; } to { opacity: 1; filter: blur(0); transform: translateY(0); } }
+@keyframes ds-underline-draw { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+@keyframes ds-antigrav {
+  0% { opacity: 0; transform: translate3d(0,0,0); }
+  12% { opacity: 1; }
+  50% { transform: translate3d(var(--sway,0),-60vh,0); }
+  88% { opacity: 1; }
+  100% { opacity: 0; transform: translate3d(0,-122vh,0); }
+}
 
 /* ───────── RESPONSIVE ───────── */
 @media (max-width: 1080px) {
-  .ds-hero { grid-template-columns: 1fr; row-gap: 36px; }
-  .ds-hero-aside { flex-direction: row; flex-wrap: wrap; }
-  .ds-aside-card, .ds-aside-pill { flex: 1 1 280px; }
-  .ds-index-body { grid-template-columns: 1fr; }
   .ds-role-detail { position: relative; top: 0; }
 }
 @media (max-width: 720px) {
-  .ds-page { padding: 0 22px; }
+  /* --gutter already tightens to 20px via its clamp; no .ds-page padding to override. */
   .ds-hero { padding: 36px 0 24px; }
-  /* Smaller so long words ("collaboration") fit the phone width instead of forcing
-     the whole page wider than the screen (which was clipping every section). */
-  .ds-hero-headline { font-size: clamp(34px, 8.6vw, 84px); }
-  .ds-hero-eyebrow { margin-bottom: 28px; }
-  /* Stack the aside as plain blocks — NOT a flex column. A flex column item won't
-     grow to contain a grid child whose height comes from aspect-ratio cells (a
-     Chromium intrinsic-size quirk), so the calendar overflowed its card and the
-     "Today" row spilled out below the white box. Block flow sizes the card to its
-     real content, keeping the calendar and "Today" row inside. */
-  .ds-hero-aside { display: block; }
-  .ds-hero-aside > * + * { margin-top: 14px; }
   .ds-index-head { flex-direction: column; align-items: flex-start; gap: 12px; }
-  .ds-index-head .ds-filters { width: 100%; }
-  /* Fit all four filters on ONE line with no scroll — each button shares the row
-     width and uses tighter padding/label so "Contract" is fully visible at a glance
-     instead of being cropped behind a horizontal scroll. */
-  .ds-filters { width: 100%; gap: 3px; padding: 3px; }
-  .ds-filters button { flex: 1 1 auto; min-width: 0; justify-content: center; padding: 8px 6px; font-size: 11.5px; gap: 3px; white-space: nowrap; }
-  .ds-search-row { flex-wrap: wrap; }
-  .ds-role { grid-template-columns: 28px 4px minmax(0,1fr) auto; column-gap: 12px; }
-  .ds-role .type-pill { display: none; }
+  .ds-index-title { font-size: 30px; }
+  .ds-index-search { width: 100%; }
   .ds-rd-body { padding: 22px; }
   .ds-rd-title { font-size: 26px; }
   .ds-benefit-cards { grid-template-columns: 1fr; }

@@ -9,6 +9,8 @@ import "./globals.css";
 import { safeJsonLd } from "@/lib/jobs";
 import JobAlerts from "@/components/JobAlerts";
 import NavLinks from "@/components/NavLinks";
+import PageBackdrop from "@/components/PageBackdrop";
+import BrandMark from "@/components/BrandMark";
 
 // Self-hosted via next/font — no render-blocking external stylesheet.
 const dmSans = DM_Sans({
@@ -18,11 +20,18 @@ const dmSans = DM_Sans({
   weight: ["400", "500", "600", "700"],
 });
 
+// Loaded as the full variable font (not discrete static weights) — Bricolage
+// Grotesque carries an optical-size (opsz) axis alongside weight, and it's the
+// opsz axis that gives large display text its chunky, rounded, slightly quirky
+// character. Pinning to static weight instances also pins opsz to a small
+// default, which reads as a much plainer bold grotesque at headline sizes.
+// The variable font lets the browser auto-select opsz per font-size (the CSS
+// default `font-optical-sizing: auto`), which is what the source design relies on.
 const bricolage = Bricolage_Grotesque({
   subsets: ["latin"],
   variable: "--font-bricolage",
   display: "swap",
-  weight: ["400", "500", "600", "700"],
+  weight: "variable",
 });
 
 const instrumentSerif = Instrument_Serif({
@@ -37,7 +46,7 @@ const jetbrainsMono = JetBrains_Mono({
   subsets: ["latin"],
   variable: "--font-jetbrains",
   display: "swap",
-  weight: ["400", "500"],
+  weight: ["400", "500", "700"],
 });
 
 const SITE_URL = "https://jobs.digitalsukoon.com";
@@ -125,13 +134,23 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           type="application/ld+json"
           dangerouslySetInnerHTML={{ __html: safeJsonLd([orgSchema, siteSchema]) }}
         />
+        {/* Records the URL this document was actually loaded at, before React hydrates.
+            Runs exactly once per document (never on client-side navigation), so the hero
+            preloader can tell "someone opened/refreshed the homepage" apart from "someone
+            navigated back to the homepage from a role page" — the latter must not replay
+            it. A module-scoped variable can't answer this: if the visitor lands on a role
+            page first, the homepage's module isn't evaluated until the back-navigation,
+            by which point location.pathname already reads "/". */}
+        <script dangerouslySetInnerHTML={{ __html: "window.__dsEntryPath=location.pathname" }} />
       </head>
       <body>
+        {/* Fixed decorative layers behind every page (bubbles + gradient wash). */}
+        <PageBackdrop />
         <div className="ds-page">
           {/* NAV */}
           <nav className="ds-nav">
             <a className="ds-brand" href="/" aria-label="Digital Sukoon Careers">
-              <img className="mark" src="/logo.svg" alt="Digital Sukoon" width={32} height={32} />
+              <BrandMark />
               <span className="wordmark">
                 <span className="name">Digital Sukoon</span>
               </span>
@@ -145,23 +164,18 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           {/* PAGE CONTENT */}
           <main>{children}</main>
 
-          {/* FOOTER */}
+          {/* FOOTER — two rows, left/right aligned, per the source design. */}
           <footer className="ds-colophon">
-            <p className="ds-colophon-contact">
-              Help{" "}
-              <a href="mailto:careers@digitalsukoon.com">careers@digitalsukoon.com</a>
-            </p>
-            <p className="tag">Crafting digital experiences that matter.</p>
-            <nav className="footer-links" aria-label="Footer navigation">
-              <a href="/">All Jobs</a>
-              <span className="sep" />
-              <a href="/internship">Internship</a>
-              <span className="sep" />
-              <a href="https://digitalsukoon.com" target="_blank" rel="noopener noreferrer">
-                digitalsukoon.com
-              </a>
-            </nav>
-            <p className="copyright">© {new Date().getFullYear()} Digital Sukoon</p>
+            <div className="ds-colophon-row">
+              <p className="tag">Crafting digital experiences that matter.</p>
+            </div>
+            <div className="ds-colophon-row fine">
+              <span className="contact">
+                <img src="/illustrations/contact-us.svg" alt="" aria-hidden="true" width={22} height={11} />
+                Help · <a href="mailto:careers@digitalsukoon.com">careers@digitalsukoon.com</a>
+              </span>
+              <span>© {new Date().getFullYear()} Digital Sukoon</span>
+            </div>
           </footer>
         </div>
       </body>

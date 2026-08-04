@@ -63,7 +63,7 @@ export default function InternshipPage() {
               Your internship application is in. We&apos;ll review it and get back within five working days.
               Keep an eye on your inbox.
             </p>
-            <a className="back-link" href="/">Back to open roles →</a>
+            <a className="back-link" href="/#index">Back to open roles →</a>
           </div>
         </div>
       </div>
@@ -74,6 +74,12 @@ export default function InternshipPage() {
     <div className="ds-intern-view">
       {/* Hero */}
       <header className="ds-intern-hero">
+        <img
+          src="/illustrations/graduation.svg"
+          alt=""
+          aria-hidden="true"
+          style={{ display: "block", width: "100%", maxWidth: 460, height: "auto", margin: "0 auto 26px" }}
+        />
         <span className="ds-program-pill">Internship Program</span>
         <h2>6-Month Internship</h2>
         <p>

@@ -4,7 +4,7 @@
  * literals) so they're easy to audit and update in one place.
  */
 export const DEPT_COLORS: Record<string, string> = {
-  design: "#2027E6",
+  design: "#1338BE",
   social: "#C9882A",
   content: "#2F7F5A",
   video: "#6D4DC9",

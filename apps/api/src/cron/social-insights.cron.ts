@@ -68,6 +68,7 @@ async function buildTieredQueue(
   slug: string,
   where: Record<string, unknown>,
   freshCutoff: Date,
+  since: Date,
 ): Promise<{
   rows: SweepRow[];
   tierCursorKeys: { unresolved: string; settled: string };
@@ -85,9 +86,17 @@ async function buildTieredQueue(
     settled: `insights-cursor:${slug}:settled`,
   };
 
+  // ⚠️ Both tier queries REPLACE `report.date` rather than intersecting it, so each must
+  // re-assert the POLL_WINDOW_DAYS lower bound (`since`) itself. Without the explicit
+  // `gte: since` on the older query below, the older tier would reach back past the
+  // intended polling window and drag in links the sweep is not supposed to touch.
+  const reportBase = where.report as Record<string, unknown>;
+
   // Tier A — fresh. No cursor: always polled from the start of every run.
+  // Upper-bounded implicitly by "now"; lower bound is the fresh cutoff, which is always
+  // inside `since` (FRESH_DAYS < POLL_WINDOW_DAYS), so this stays within the window.
   const fresh = await prisma.reportLink.findMany({
-    where: { ...where, report: { ...(where.report as object), date: { gte: freshCutoff } } },
+    where: { ...where, report: { ...reportBase, date: { gte: freshCutoff } } },
     orderBy: { id: "asc" },
     select,
   });
@@ -97,7 +106,8 @@ async function buildTieredQueue(
   // treated as unresolved (never polled, not_found, rate_limited, error).
   const olderWhere = {
     ...where,
-    report: { ...(where.report as object), date: { lt: freshCutoff } },
+    // BOTH bounds: older than fresh, but still inside the polling window.
+    report: { ...reportBase, date: { gte: since, lt: freshCutoff } },
   };
 
   const okIdRows = await prisma.$queryRaw<Array<{ link_id: string }>>`
@@ -237,7 +247,7 @@ export async function runSocialInsightsRefresh(opts?: { harvestOnly?: boolean })
       let pendingTiers: Map<string, "fresh" | "unresolved" | "settled"> | null = null;
       try {
         const freshCutoff = new Date(Date.now() - FRESH_DAYS * 86_400_000);
-        const tiered = await buildTieredQueue(slug, baseWhere, freshCutoff);
+        const tiered = await buildTieredQueue(slug, baseWhere, freshCutoff, since);
         rows = tiered.rows;
         tierCursorKeys = tiered.tierCursorKeys;
         pendingTiers = tiered.tiers;

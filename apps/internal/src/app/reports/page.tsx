@@ -453,6 +453,23 @@ export default function ReportsPage() {
     return `Updated ${days}d ago`;
   }
 
+  // Per-ROW staleness marker. WHY per-row and not just the panel-level "Updated N ago"
+  // above: the sweep polls each link independently (fresh links every run, the older tail
+  // on a rotating cursor), so one panel can mix a 1-hour-old row with a 3-week-old one.
+  // A single panel-level max would then read "Updated 1h ago" and actively UNDERSTATE how
+  // stale the lower rows are — worse than showing nothing. Returns null for anything
+  // fresher than the threshold so healthy rows stay visually clean.
+  const STALE_ROW_HOURS = 48;
+  function rowStaleness(fetchedAt?: string | Date | null): string | null {
+    if (!fetchedAt) return null;
+    const t = new Date(fetchedAt).getTime();
+    if (Number.isNaN(t)) return null;
+    const hrs = (Date.now() - t) / 3_600_000;
+    if (hrs < STALE_ROW_HOURS) return null;
+    const days = Math.round(hrs / 24);
+    return `${days}d old`;
+  }
+
   const statCards = [
     firstCard,
     { title: "Total Reports", value: viewTotalReports, icon: FileText, iconColor: "text-purple-600", bgColor: "bg-purple-50 shadow-[0_2px_8px_rgba(147,51,234,0.12)]", sub: windowLabel },
@@ -780,6 +797,20 @@ export default function ReportsPage() {
                             >
                               {link.url}
                             </a>
+                            {/* Staleness marker: this row's metrics were last refreshed
+                                N days ago. Only rendered past STALE_ROW_HOURS, so fresh
+                                rows stay clean and an old number can't masquerade as live. */}
+                            {(() => {
+                              const stale = rowStaleness(link.fetchedAt);
+                              return stale ? (
+                                <span
+                                  className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5 shrink-0"
+                                  title={`Metrics last refreshed ${stale}. This link is waiting its turn in the background refresh queue.`}
+                                >
+                                  {stale}
+                                </span>
+                              ) : null;
+                            })()}
                             {/* forces the wrap onto line 2 on phones; absent from the sm grid */}
                             <span aria-hidden className="basis-full h-0 sm:hidden" />
                             <span className="text-xs text-[#7A7A7A] truncate flex-1 min-w-0 sm:flex-none">{link.employeeName}</span>

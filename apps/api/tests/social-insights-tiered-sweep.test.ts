@@ -9,18 +9,18 @@
  * their uuids sorted first.
  *
  * FIRST FIX ATTEMPT WAS WRONG and these tests encode why. It concatenated the tiers
- * (`[...fresh, ...unresolved, ...settled]`) and left `fresh` cursorless on the assumption
+ * (`[...fresh, ...older]`) and left `fresh` cursorless on the assumption
  * that fresh would be fully covered every run. At prod scale it is not: the IG provider
  * rebuilds its whole feed map inside EVERY fetchBatch, so real throughput is hundreds of
  * links per run while IG's fresh tier alone is ~6.8k. Consequences:
- *   - the budget expired inside `fresh` on every run, so tiers B and C got ZERO polls
+ *   - the budget expired inside `fresh` on every run, so the older tier got ZERO polls
  *     forever — strictly worse than the single cursor it replaced;
  *   - with no fresh cursor, the same lowest-uuid prefix was re-polled forever and every
  *     link past it was PERMANENTLY EXCLUDED;
  *   - cursor persistence wrote "" when a tier was never reached, which is indistinguishable
  *     from "tier completed", destroying real stored progress.
  *
- * CURRENT DESIGN: weighted round-robin interleave (fresh:unresolved:settled = 6:3:1), every
+ * CURRENT DESIGN: weighted round-robin interleave (fresh:older = 6:4), every
  * tier has its own cursor, and cursor persistence resolves three distinct outcomes
  * (not-reached / partial / complete).
  *
@@ -160,7 +160,7 @@ beforeEach(() => {
   polledOrder.length = 0;
   systemSettingFindUnique.mockResolvedValue(null); // no cursors set
   systemSettingUpsert.mockResolvedValue({});
-  queryRawMock.mockResolvedValue([]); // no settled ids
+  queryRawMock.mockResolvedValue([]);
 });
 
 describe("tiered priority sweep — ordering", () => {
@@ -175,44 +175,29 @@ describe("tiered priority sweep — ordering", () => {
     expect(polledOrder).toContain("a-old");
   });
 
-  it("orders the older tail unresolved-before-settled", async () => {
-    // 'b-settled' has a latest `ok` metric; 'c-unresolved' does not. Even though
-    // 'b-settled' sorts first by id, the unresolved link must come first — it is the
-    // coverage gap, whereas the settled one is already in the rankings.
-    wireLinks({ older: [link("b-settled", 40), link("c-unresolved", 40)] });
-    queryRawMock.mockResolvedValue([{ link_id: "b-settled" }]);
-
-    await runSocialInsightsRefresh();
-
-    expect(polledOrder.indexOf("c-unresolved")).toBeLessThan(polledOrder.indexOf("b-settled"));
-  });
-
   it("INTERLEAVES tiers by weight rather than concatenating them", async () => {
-    // The critical regression guard. With weights fresh:unresolved:settled = 6:3:1, the
-    // first cycle must be 6 fresh then 3 unresolved then 1 settled — NOT all 20 fresh
-    // first. Concatenation is what starved tiers B and C at prod scale.
+    // The critical regression guard. With weights fresh:older = 6:4, the first cycle must
+    // be 6 fresh then 4 older — NOT all 20 fresh first. Concatenation is what starved the
+    // older tier completely at prod scale, because the budget never left `fresh`.
     const fresh = Array.from({ length: 20 }, (_, i) => link(`f${String(i).padStart(2, "0")}`, 1));
-    const unresolved = Array.from({ length: 20 }, (_, i) => link(`u${String(i).padStart(2, "0")}`, 40));
-    const settled = Array.from({ length: 20 }, (_, i) => link(`s${String(i).padStart(2, "0")}`, 40));
-    wireLinks({ fresh, older: [...settled, ...unresolved] });
-    queryRawMock.mockResolvedValue(settled.map((r) => ({ link_id: r.id })));
+    const older = Array.from({ length: 20 }, (_, i) => link(`o${String(i).padStart(2, "0")}`, 40));
+    wireLinks({ fresh, older });
 
     await runSocialInsightsRefresh();
 
-    const tierOf = (id: string) => id[0]; // f / u / s
-    const firstCycle = polledOrder.slice(0, 10).map(tierOf);
-    expect(firstCycle).toEqual(["f", "f", "f", "f", "f", "f", "u", "u", "u", "s"]);
+    const firstCycle = polledOrder.slice(0, 10).map((id) => id[0]);
+    expect(firstCycle).toEqual(["f", "f", "f", "f", "f", "f", "o", "o", "o", "o"]);
   });
 
   it("consumes each tier in id-ascending order (the cursor prefix property)", async () => {
     // Cursor resume is only valid if the polled portion of a tier is a PREFIX of it.
     const fresh = Array.from({ length: 8 }, (_, i) => link(`f${i}`, 1));
-    const unresolved = Array.from({ length: 8 }, (_, i) => link(`u${i}`, 40));
-    wireLinks({ fresh, older: unresolved });
+    const older = Array.from({ length: 8 }, (_, i) => link(`o${i}`, 40));
+    wireLinks({ fresh, older });
 
     await runSocialInsightsRefresh();
 
-    for (const prefix of ["f", "u"]) {
+    for (const prefix of ["f", "o"]) {
       const seq = polledOrder.filter((id) => id.startsWith(prefix));
       expect(seq).toEqual([...seq].sort());
     }
@@ -220,11 +205,10 @@ describe("tiered priority sweep — ordering", () => {
 });
 
 describe("tiered priority sweep — no exclusion", () => {
-  it("NEVER excludes a link — fresh, unresolved and settled are all polled", async () => {
+  it("NEVER excludes a link — every link in the window is polled", async () => {
     // The load-bearing invariant. Tiers re-order; they must not blacklist. A not_found
     // link recovers 94.4% of the time on FB / 18.2% on IG.
     wireLinks({ fresh: [link("f1", 1)], older: [link("o1", 40), link("o2", 40)] });
-    queryRawMock.mockResolvedValue([{ link_id: "o1" }]); // o1 settled, o2 unresolved
 
     await runSocialInsightsRefresh();
 
@@ -241,7 +225,7 @@ describe("tiered priority sweep — cursors", () => {
     await runSocialInsightsRefresh();
 
     expect(upsertedKeys()).toContain(cursorKey("fresh"));
-    expect(upsertedKeys()).toContain(cursorKey("unresolved"));
+    expect(upsertedKeys()).toContain(cursorKey("older"));
   });
 
   it("resets a tier's cursor to empty when that tier was fully polled", async () => {
@@ -256,19 +240,18 @@ describe("tiered priority sweep — cursors", () => {
     // Outcome 1. Writing "" here was a silent data-loss bug: "budget ran out before this
     // tier" became indistinguishable from "this tier finished a full pass", resetting real
     // stored progress to the head and reintroducing the F3 starvation bug.
-    // Here the unresolved/settled tiers are EMPTY, so they are never polled.
+    // Here the older tier is EMPTY, so it is never polled.
     wireLinks({ fresh: [link("f1", 1)] });
 
     await runSocialInsightsRefresh();
 
     expect(upsertedKeys()).toContain(cursorKey("fresh"));
-    expect(upsertedKeys()).not.toContain(cursorKey("unresolved"));
-    expect(upsertedKeys()).not.toContain(cursorKey("settled"));
+    expect(upsertedKeys()).not.toContain(cursorKey("older"));
   });
 
   it("resumes an older tier past its persisted cursor", async () => {
     systemSettingFindUnique.mockImplementation((args: any) =>
-      args.where.key === cursorKey("unresolved")
+      args.where.key === cursorKey("older")
         ? Promise.resolve({ key: args.where.key, value: "o1" })
         : Promise.resolve(null),
     );
@@ -283,7 +266,7 @@ describe("tiered priority sweep — cursors", () => {
 
   it("wraps a tier to the start when its cursor is past the end", async () => {
     systemSettingFindUnique.mockImplementation((args: any) =>
-      args.where.key === cursorKey("unresolved")
+      args.where.key === cursorKey("older")
         ? Promise.resolve({ key: args.where.key, value: "zzzz" })
         : Promise.resolve(null),
     );
@@ -296,24 +279,38 @@ describe("tiered priority sweep — cursors", () => {
 });
 
 describe("tiered priority sweep — fail-open", () => {
+  // A tier-build failure must degrade freshness, never stop the sweep. The tier build's
+  // only fallible step is its two reportLink.findMany calls, so the fresh-tier query is
+  // what we make throw. (An earlier revision classified the older tail with a $queryRaw
+  // over link_metrics and this test threw from there; that query was removed because at
+  // prod scale it seq-scanned a 1266MB table four times per run for almost no benefit.)
+  function wireTierBuildFailure(fallbackRows: ReturnType<typeof link>[]) {
+    reportLinkFindMany.mockImplementation((args: Record<string, any>) => {
+      const d = args?.where?.report?.date ?? {};
+      const daysBack = d.gte ? (Date.now() - new Date(d.gte).getTime()) / DAY : 0;
+      // Fresh-tier query (short lookback, no upper bound) → throw, tripping the fallback.
+      if (d.lt === undefined && d.gte !== undefined && daysBack <= FRESH_VS_WINDOW_THRESHOLD_DAYS) {
+        return Promise.reject(new Error("db exploded"));
+      }
+      return Promise.resolve(fallbackRows);
+    });
+  }
+
   it("falls back to the legacy single queue if the tier build throws", async () => {
-    // A tier-build failure must degrade freshness, never stop the sweep. The $queryRaw
-    // that classifies settled ids is the throwing step.
-    queryRawMock.mockRejectedValue(new Error("db exploded"));
-    wireLinks({ fresh: [link("fresh1", 1)], fallback: [link("legacy1", 40)] });
+    wireTierBuildFailure([link("legacy1", 40)]);
 
     await runSocialInsightsRefresh();
 
     expect(polledOrder).toContain("legacy1");
   });
 
-  it("still writes the legacy cursor (not tier cursors) on the fallback path", async () => {
-    queryRawMock.mockRejectedValue(new Error("db exploded"));
-    wireLinks({ fresh: [link("fresh1", 1)], fallback: [link("legacy1", 40)] });
+  it("writes the legacy cursor, not tier cursors, on the fallback path", async () => {
+    wireTierBuildFailure([link("legacy1", 40)]);
 
     await runSocialInsightsRefresh();
 
     expect(upsertedKeys()).toContain("insights-cursor:instagram");
     expect(upsertedKeys()).not.toContain(cursorKey("fresh"));
+    expect(upsertedKeys()).not.toContain(cursorKey("older"));
   });
 });

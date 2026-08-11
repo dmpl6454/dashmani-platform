@@ -788,29 +788,42 @@ export default function ReportsPage() {
                         {p.data.map((link: any, i: number) => (
                           <li key={`${link.linkId ?? link.url}-${i}`} className={`px-4 sm:px-6 py-3 flex flex-wrap items-center gap-x-3 gap-y-1.5 sm:grid ${cols} sm:gap-3`}>
                             <span className="text-xs font-medium text-[#B0B0B0]">{i + 1}</span>
-                            <a
-                              href={link.url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-xs text-[#1A1A1A] hover:underline truncate min-w-0 flex-1 sm:flex-none"
-                              title={link.url}
-                            >
-                              {link.url}
-                            </a>
-                            {/* Staleness marker: this row's metrics were last refreshed
-                                N days ago. Only rendered past STALE_ROW_HOURS, so fresh
-                                rows stay clean and an old number can't masquerade as live. */}
-                            {(() => {
-                              const stale = rowStaleness(link.fetchedAt);
-                              return stale ? (
-                                <span
-                                  className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5 shrink-0"
-                                  title={`Metrics last refreshed ${stale}. This link is waiting its turn in the background refresh queue.`}
-                                >
-                                  {stale}
-                                </span>
-                              ) : null;
-                            })()}
+                            {/* ⚠️ The URL and the staleness chip share ONE grid cell — the chip
+                                must NOT be a direct child of the <li>. At sm+ the row is
+                                `sm:grid ${cols}` with exactly as many tracks as it has children
+                                (the phone wrap spacer below is `sm:hidden`, so it generates no
+                                box and is not a grid item). Adding a bare chip as another child
+                                shifts every following cell one track right: measured in a
+                                headless browser against the compiled stylesheet, the employee
+                                name landed under "Views", views under "Likes", and Comments
+                                wrapped onto an implicit second row under "#". Wrapping both in a
+                                single span keeps the child count — and the header alignment —
+                                exactly as it was. */}
+                            <span className="flex items-center gap-2 min-w-0 flex-1 sm:flex-none">
+                              <a
+                                href={link.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-xs text-[#1A1A1A] hover:underline truncate min-w-0"
+                                title={link.url}
+                              >
+                                {link.url}
+                              </a>
+                              {/* Staleness marker: this row's metrics were last refreshed
+                                  N days ago. Only rendered past STALE_ROW_HOURS, so fresh
+                                  rows stay clean and an old number can't masquerade as live. */}
+                              {(() => {
+                                const stale = rowStaleness(link.fetchedAt);
+                                return stale ? (
+                                  <span
+                                    className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5 shrink-0"
+                                    title={`Metrics last refreshed ${stale.replace(" old", "")} ago. This link is waiting its turn in the background refresh queue.`}
+                                  >
+                                    {stale}
+                                  </span>
+                                ) : null;
+                              })()}
+                            </span>
                             {/* forces the wrap onto line 2 on phones; absent from the sm grid */}
                             <span aria-hidden className="basis-full h-0 sm:hidden" />
                             <span className="text-xs text-[#7A7A7A] truncate flex-1 min-w-0 sm:flex-none">{link.employeeName}</span>

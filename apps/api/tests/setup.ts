@@ -33,6 +33,41 @@ const TRUNCATE_SQL = `
  * The file's original comment already noted these "async audit log writes that may land
  * between transaction steps"; this handles the deadlock that race actually produces.
  */
+/**
+ * Wait until no OTHER backend on this database is running a query.
+ *
+ * ⚠️ This is the half that actually prevents the deadlock rather than recovering from it.
+ * Retrying the TRUNCATE only helps when TRUNCATE is the side Postgres chooses to kill; when
+ * it picks the other side, the victim is the in-flight fire-and-forget INSERT — and if that
+ * INSERT belonged to the test currently running, THAT test fails and no amount of retrying
+ * here can save it. Draining first means the lock-order inversion never forms.
+ *
+ * Prisma pools several connections, so an unawaited audit-log / recordApiUsage /
+ * dispatchNotification write from the previous test is typically still active on a different
+ * backend when the next test's beforeEach fires. Idle pooled connections are state='idle' and
+ * are correctly ignored — only genuinely running statements block us.
+ *
+ * Bounded to ~1s total: this is best-effort, and truncateAll()'s retry remains the backstop.
+ */
+async function waitForQuiesce(maxWaitMs = 1000, stepMs = 25): Promise<void> {
+  const deadline = Date.now() + maxWaitMs;
+  while (Date.now() < deadline) {
+    try {
+      const rows = await prisma.$queryRaw<Array<{ n: number }>>`
+        SELECT count(*)::int AS n
+        FROM pg_stat_activity
+        WHERE datname = current_database()
+          AND pid <> pg_backend_pid()
+          AND state = 'active'
+      `;
+      if (!rows[0] || rows[0].n === 0) return;
+    } catch {
+      return; // pg_stat_activity unavailable → fall through to the retrying TRUNCATE
+    }
+    await new Promise((r) => setTimeout(r, stepMs));
+  }
+}
+
 async function truncateAll(attempts = 5): Promise<void> {
   for (let attempt = 1; ; attempt++) {
     try {
@@ -52,6 +87,8 @@ async function truncateAll(attempts = 5): Promise<void> {
 }
 
 beforeEach(async () => {
+  // Drain first (prevents the deadlock forming), then truncate (retries if one forms anyway).
+  await waitForQuiesce();
   await truncateAll();
 });
 

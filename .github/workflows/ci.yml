@@ -48,7 +48,22 @@ jobs:
 
     env:
       # Matches docker-compose.yml / .env.example defaults so local and CI agree.
-      DATABASE_URL: postgresql://user:password@localhost:5432/dashmani
+      #
+      # ⚠️ connection_limit=1 is deliberate and load-bearing for the test run.
+      # Several service paths write FIRE-AND-FORGET (audit logs, recordApiUsage,
+      # dispatchNotification). With a multi-connection pool, one of those INSERTs can still
+      # be in flight on another backend when the next test's beforeEach issues its TRUNCATE,
+      # producing a real lock-order inversion (the INSERT holds a RowExclusiveLock and wants
+      # a table TRUNCATE already locked, while TRUNCATE wants that table) — Postgres kills
+      # one side with SQLSTATE 40P01 and a random leaderboard test fails. Draining
+      # pg_stat_activity first helps but cannot close it, because the straggler is often a
+      # JS continuation that issues its query AFTER the drain check.
+      #
+      # Pinning the pool to a single connection makes those queries strictly sequential, so
+      # the inversion cannot form at all. `withConnectionPool()` in packages/db only fills in
+      # defaults for params the URL does not already specify, so this explicit value wins.
+      # It affects the test run only — production keeps connection_limit=10.
+      DATABASE_URL: postgresql://user:password@localhost:5432/dashmani?connection_limit=1
       JWT_SECRET: ci-test-secret
       JWT_REFRESH_SECRET: ci-test-secret-refresh
       SEED_ADMIN_PASSWORD: Admin@123456

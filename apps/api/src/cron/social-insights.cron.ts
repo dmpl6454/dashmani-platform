@@ -16,6 +16,9 @@ const SWEEP_BUDGET_MS = Number(process.env.INSIGHTS_SWEEP_BUDGET_MS) || 25 * 60 
 // almost nothing (the 2026-07-03 IG "~25-day refresh cycle" bug). Defaults to
 // SWEEP_BUDGET_MS so behavior is unchanged unless explicitly tuned in prod .env.
 const METRIC_BUDGET_MS = Number(process.env.INSIGHTS_METRIC_BUDGET_MS) || SWEEP_BUDGET_MS;
+// A link is "fresh" if its report_date is within this many days. Fresh links are polled
+// FIRST on every run, ahead of the cursor-rotated tail — see buildTieredQueue below.
+const FRESH_DAYS = Number(process.env.INSIGHTS_FRESH_DAYS) || 7;
 
 function chunk<T>(arr: T[], size: number): T[][] {
   const out: T[][] = [];
@@ -23,6 +26,198 @@ function chunk<T>(arr: T[], size: number): T[][] {
     out.push(arr.slice(i, i + size));
   }
   return out;
+}
+
+type TierName = "fresh" | "older";
+const TIER_ORDER: readonly TierName[] = ["fresh", "older"] as const;
+
+// How many links each tier contributes per interleave cycle. Fresh dominates, but the
+// older tail gets a guaranteed share of EVERY run.
+//
+// ⚠️ WHY INTERLEAVE INSTEAD OF CONCATENATE — this is the load-bearing part of the design.
+// The obvious shape is `[...fresh, ...older]`, and it is WRONG. The sweep stops when its
+// wall-clock budget expires, so with strict concatenation the older tier only gets polled
+// if the whole fresh tier fits inside one run's budget. At prod scale it does not: measured
+// throughput is in the hundreds of links per run (instagram.provider.ts rebuilds its whole
+// feed map inside EVERY 50-link fetchBatch) while IG's fresh tier alone is ~6.8k links.
+// Concatenation therefore spent 100% of every run inside `fresh`, the older tier received
+// ZERO polls forever, and — because `fresh` was originally cursorless — the same lowest-uuid
+// prefix was re-polled every run while everything past it was PERMANENTLY EXCLUDED. That is
+// strictly worse than the single-cursor queue this replaced. Interleaving makes each tier's
+// share of a run independent of the other.
+const TIER_WEIGHTS: Record<TierName, number> = {
+  fresh: Number(process.env.INSIGHTS_WEIGHT_FRESH) || 6,
+  older: Number(process.env.INSIGHTS_WEIGHT_OLDER) || 4,
+};
+
+/**
+ * Weighted round-robin merge of the tier lists.
+ *
+ * Each cycle takes up to TIER_WEIGHTS[t] links from tier t, in TIER_ORDER, until every list
+ * is drained. Per-tier ORDER IS PRESERVED (each list is consumed strictly front to back),
+ * which is what lets the sweep treat the polled portion of a tier as a prefix and derive
+ * that tier's cursor from the last link it polled.
+ *
+ * Exhausted tiers are simply skipped, so a small tier does not hold back the other and the
+ * leftover budget naturally flows to whichever still has links.
+ */
+function interleaveTiers(lists: Record<TierName, SweepRow[]>): SweepRow[] {
+  const idx: Record<TierName, number> = { fresh: 0, older: 0 };
+  const out: SweepRow[] = [];
+  const total = TIER_ORDER.reduce((n, t) => n + lists[t].length, 0);
+
+  while (out.length < total) {
+    let movedThisCycle = false;
+    for (const t of TIER_ORDER) {
+      const take = Math.max(1, TIER_WEIGHTS[t]);
+      for (let k = 0; k < take && idx[t] < lists[t].length; k++) {
+        out.push(lists[t][idx[t]++]);
+        movedThisCycle = true;
+      }
+    }
+    // Math.max(1, ...) already prevents this, but a stuck cycle must never hang the cron.
+    if (!movedThisCycle) break;
+  }
+  return out;
+}
+
+// Row shape shared by every tier query and by the legacy single-queue fallback.
+interface SweepRow {
+  id: string;
+  url: string | null;
+  platform: string;
+  report: { employeeId: string; date: Date };
+}
+
+// ── TIERED PRIORITY SWEEP (2026-08-08) ────────────────────────────────────────────
+// WHY: the sweep used ONE `id ASC` queue + one resume cursor. `id ASC` is content-blind, so
+// a 90-day queue of ~90k IG links was walked in an arbitrary fixed order under a 25-min
+// budget — a full wrap took DAYS, which is exactly the measured ~21-day median metric age on
+// Instagram (~6.3 days on Facebook). Links with millions of views were either missing from
+// Top Links or ranked on three-week-old numbers.
+//
+// Measured on prod 2026-08-08: of the ~90k IG links in the window, 52,910 are OLD posts
+// whose latest status is `not_found` (the documented Meta feed-window ceiling — no
+// fetch-by-id, only newest-first feed paging). They occupied ~90% of the queue and were
+// polled AHEAD of today's posts purely because their uuids sorted first.
+//
+// The fix is ORDERING, not budget: same call volume, same batch size, same per-provider
+// budget — just spent on the links that matter first. Two tiers, interleaved 6:4:
+//   fresh — report_date within FRESH_DAYS. The links whose numbers are still moving and
+//           which users actually look at in Top Links.
+//   older — the rest of the polling window, rotating behind them.
+//
+// ⚠️ BOTH TIERS ROTATE ON THEIR OWN CURSOR AND NOTHING IS EVER PERMANENTLY EXCLUDED.
+// A blanket "skip not_found" blacklist was explicitly REJECTED after measuring recovery:
+// links that ever returned not_found later returned ok for 94.4% of Facebook
+// (12,251/12,979) and 18.2% of Instagram (12,891/70,724) — FB not_found is overwhelmingly a
+// transient rate-limit/scraper wall. Blacklisting would have silently deleted ~24k
+// resolvable links from the rankings. Tiers only RE-ORDER.
+//
+// ⚠️ WHY THERE IS NO THIRD "settled vs unresolved" TIER. An earlier revision split the older
+// tail by whether each link's LATEST metric was `ok`, to retry the coverage gap first. That
+// required a `DISTINCT ON (link_id)` over link_metrics per provider per run, and link_metrics
+// is 3.99M rows / 1266MB on prod: measured 9.8s with ~142MB of temp spill and ~1.25GB of heap
+// reads for one slug, ~5GB of churn per run across four — which evicts the 418MB
+// link_metrics_emp_url_fetched_ok_v2_idx that the /reports fast path depends on staying warm
+// (the whole basis of PR #104's 14.5s -> 1.3s index-only scan). Cheaper query shapes still
+// seq-scanned (4.0s best case). And it bought almost nothing: the older tail is already
+// ~85% unresolved on the platforms that matter (FB 23,578 unresolved vs 4,453 settled; IG
+// 44,662 vs 7,820) and 100% settled on YouTube, so a 3:1 weighting actually gave settled
+// links MORE than their natural share. Dropping the split removes the only added DB cost of
+// this change entirely. ⚠️ Do not reintroduce it without an index that serves it.
+async function buildTieredQueue(
+  slug: string,
+  where: Record<string, unknown>,
+  freshCutoff: Date,
+  since: Date,
+): Promise<{
+  rows: SweepRow[];
+  tierCursorKeys: Record<TierName, string>;
+  tiers: Map<string, TierName>;
+  /** Per-tier rotated lists, in the order they will be consumed. The sweep needs the LENGTH
+   *  of each to tell "tier finished" from "tier never reached" when persisting cursors —
+   *  those two cases must be handled differently (see the persistence block). */
+  tierLists: Record<TierName, SweepRow[]>;
+}> {
+  const select = {
+    id: true,
+    url: true,
+    platform: true,
+    report: { select: { employeeId: true, date: true } },
+  } as const;
+
+  const tierCursorKeys: Record<TierName, string> = {
+    fresh: `insights-cursor:${slug}:fresh`,
+    older: `insights-cursor:${slug}:older`,
+  };
+
+  // ⚠️ Both tier queries REPLACE `report.date` rather than intersecting it, so each must
+  // re-assert the POLL_WINDOW_DAYS lower bound (`since`) itself. Without the explicit
+  // `gte: since` on the older query, that tier would reach back past the intended polling
+  // window and drag in links the sweep is not supposed to touch. Verified the two together
+  // partition the window exactly: no gap, no overlap.
+  const reportBase = where.report as Record<string, unknown>;
+
+  const [freshCursor, olderCursor] = await Promise.all([
+    readCursor(tierCursorKeys.fresh),
+    readCursor(tierCursorKeys.older),
+  ]);
+
+  // ⚠️ Fresh has its OWN CURSOR and is NOT special-cased as "always from the start". An
+  // earlier revision left it cursorless on the theory that it would be fully covered every
+  // run; at prod throughput it is not, so that re-polled one prefix forever and permanently
+  // excluded the rest.
+  const [fresh, older] = await Promise.all([
+    prisma.reportLink.findMany({
+      where: { ...where, report: { ...reportBase, date: { gte: freshCutoff } } },
+      orderBy: { id: "asc" },
+      select,
+    }),
+    prisma.reportLink.findMany({
+      where: { ...where, report: { ...reportBase, date: { gte: since, lt: freshCutoff } } },
+      orderBy: { id: "asc" },
+      select,
+    }),
+  ]);
+
+  // Rotate each tier past its own cursor, wrapping to the start when exhausted so a run
+  // always finds work (mirrors the original single-cursor wrap semantics).
+  const rotate = (list: SweepRow[], cursor: string): SweepRow[] => {
+    if (!cursor) return list;
+    const idx = list.findIndex((r) => r.id > cursor);
+    return idx === -1 ? list : list.slice(idx);
+  };
+
+  const tierLists: Record<TierName, SweepRow[]> = {
+    fresh: rotate(fresh, freshCursor),
+    older: rotate(older, olderCursor),
+  };
+
+  const rows = interleaveTiers(tierLists);
+
+  // Tier membership, so the sweep can advance the CORRECT cursor per processed link (each
+  // tier is ordered id-asc independently, so one global monotonic cursor would be wrong).
+  const tiers = new Map<string, TierName>();
+  for (const t of TIER_ORDER) for (const r of tierLists[t]) tiers.set(r.id, t);
+
+  console.log(
+    `[social-insights/${slug}] tiered queue (interleaved ${TIER_WEIGHTS.fresh}:` +
+      `${TIER_WEIGHTS.older}): ${tierLists.fresh.length} fresh (<${FRESH_DAYS}d) + ` +
+      `${tierLists.older.length} older`,
+  );
+
+  return { rows, tierCursorKeys, tiers, tierLists };
+}
+
+
+async function readCursor(key: string): Promise<string> {
+  try {
+    const row = await prisma.systemSetting.findUnique({ where: { key } });
+    return row?.value ?? "";
+  } catch {
+    return "";
+  }
 }
 
 export async function runSocialInsightsRefresh(opts?: { harvestOnly?: boolean }): Promise<void> {
@@ -79,33 +274,55 @@ export async function runSocialInsightsRefresh(opts?: { harvestOnly?: boolean })
         cursor = row?.value ?? "";
       } catch { /* default to start */ }
 
+      const baseWhere = {
+        OR: [
+          { platform: { equals: slug, mode: "insensitive" as const } },
+          ...hostClauses,
+        ],
+        url: { not: null },
+        isScheduled: false,
+        report: { date: { gte: since } },
+      };
+
+      // Tiered priority queue (fresh and older, interleaved). Fail-open: if the tier
+      // build throws for any reason we fall back to the original single-cursor `id ASC`
+      // queue, so a failure here degrades freshness but never stops the sweep.
+      let tierCursorKeys: Record<TierName, string> | null = null;
+      let pendingTiers: Map<string, TierName> | null = null;
+      let pendingTierLists: Record<TierName, SweepRow[]> | null = null;
       try {
-        rows = await prisma.reportLink.findMany({
-          where: {
-            OR: [
-              { platform: { equals: slug, mode: "insensitive" } },
-              ...hostClauses,
-            ],
-            url: { not: null },
-            isScheduled: false,
-            report: { date: { gte: since } },
-            ...(cursor ? { id: { gt: cursor } } : {}),
-          },
-          orderBy: { id: "asc" }, // deterministic order → cursor can resume
-          select: {
-            id: true,
-            url: true,
-            platform: true,
-            report: { select: { employeeId: true, date: true } },
-          },
-        });
-      } catch (err) {
-        console.error(`[social-insights/${slug}] failed to query links:`, err);
-        continue;
+        const freshCutoff = new Date(Date.now() - FRESH_DAYS * 86_400_000);
+        const tiered = await buildTieredQueue(slug, baseWhere, freshCutoff, since);
+        rows = tiered.rows;
+        tierCursorKeys = tiered.tierCursorKeys;
+        pendingTiers = tiered.tiers;
+        pendingTierLists = tiered.tierLists;
+      } catch (tierErr) {
+        console.error(
+          `[social-insights/${slug}] tiered queue build failed — falling back to single-cursor sweep:`,
+          tierErr,
+        );
+        try {
+          rows = await prisma.reportLink.findMany({
+            where: { ...baseWhere, ...(cursor ? { id: { gt: cursor } } : {}) },
+            orderBy: { id: "asc" }, // deterministic order → cursor can resume
+            select: {
+              id: true,
+              url: true,
+              platform: true,
+              report: { select: { employeeId: true, date: true } },
+            },
+          });
+        } catch (err) {
+          console.error(`[social-insights/${slug}] failed to query links:`, err);
+          continue;
+        }
       }
       // If resuming past the cursor returned nothing, we've reached the end of the tail
       // → wrap: reset cursor and re-query from the start so this run still does work.
-      if (rows.length === 0 && cursor) {
+      // Legacy single-cursor wrap. Only reachable on the FALLBACK path — buildTieredQueue
+      // wraps each tier internally, so when tiers are active this is a no-op.
+      if (!tierCursorKeys && rows.length === 0 && cursor) {
         cursor = "";
         try {
           await prisma.systemSetting.upsert({ where: { key: cursorKey }, create: { key: cursorKey, value: "" }, update: { value: "" } });
@@ -209,6 +426,16 @@ export async function runSocialInsightsRefresh(opts?: { harvestOnly?: boolean })
       // RESET to the start (full pass done). targets are id-asc, so the last is the max.
       let lastProcessedLinkId = "";
       let sweepBrokeEarly = false;
+      // Per-tier high-water marks. ⚠️ Each tier is ordered id-asc INDEPENDENTLY and they are
+      // interleaved, so ids do not increase monotonically along the target list — a single
+      // `lastProcessedLinkId` would write a fresh-tier id into the older tier's cursor and
+      // rotate it to a bogus position. Track the max processed id per tier instead.
+      const tierOf = pendingTiers ?? new Map<string, TierName>();
+      // Last id polled per tier, plus how many of that tier's links were polled. The COUNT
+      // is what distinguishes "this tier finished" from "this tier was never reached" —
+      // conflating them wipes a tier's stored progress (see the persistence block below).
+      const tierHighWater: Record<TierName, string> = { fresh: "", older: "" };
+      const tierPolled: Record<TierName, number> = { fresh: 0, older: 0 };
       // Per-provider metric-sweep wall-clock budget. WHY: the sweep is sequential
       // across providers; a slow/rate-limited provider (e.g. Instagram's ~38k-link
       // sweep) could consume the whole run and the loop would never ADVANCE to the
@@ -254,7 +481,16 @@ export async function runSocialInsightsRefresh(opts?: { harvestOnly?: boolean })
               const r = results.get(t.linkId);
               if (!r) continue;
               polled++;
-              lastProcessedLinkId = t.linkId; // targets are id-asc → advances monotonically
+              lastProcessedLinkId = t.linkId; // fallback path: targets are id-asc
+              // Tiered path: advance THIS link's own tier high-water mark and count.
+              // Every tier (including fresh) has a cursor, so no tier is skipped here.
+              // interleaveTiers consumes each tier front-to-back, so the polled portion of
+              // a tier is always a prefix of it and its max id is a valid resume point.
+              const tier = tierOf.get(t.linkId);
+              if (tier) {
+                tierPolled[tier]++;
+                if (t.linkId > tierHighWater[tier]) tierHighWater[tier] = t.linkId;
+              }
 
               try {
                 await prisma.linkMetric.create({
@@ -397,12 +633,40 @@ export async function runSocialInsightsRefresh(opts?: { harvestOnly?: boolean })
         // last processed link next run; if it ran to completion, RESET so the next run
         // wraps to the start (a fresh full pass). harvestOnly runs never touch the cursor.
         try {
-          const nextCursor = sweepBrokeEarly && lastProcessedLinkId ? lastProcessedLinkId : "";
-          await prisma.systemSetting.upsert({
-            where: { key: cursorKey },
-            create: { key: cursorKey, value: nextCursor },
-            update: { value: nextCursor },
-          });
+          if (tierCursorKeys) {
+            // Tiered path: each tier's cursor is resolved INDEPENDENTLY from three
+            // distinct outcomes. Collapsing any two of them corrupts that tier's
+            // rotation:
+            //   1. polled NONE of this tier  -> LEAVE THE STORED CURSOR UNTOUCHED.
+            //      ⚠️ An earlier revision wrote "" here, which is a silent data-loss bug:
+            //      "the budget ran out before reaching this tier" became indistinguishable
+            //      from "this tier completed a full pass", so a tier that had genuine
+            //      stored progress (say two thirds through 50k older links) was reset
+            //      to the head on any run that never got to it. It then re-polled the same
+            //      prefix forever and the remainder was never reached — reintroducing the
+            //      exact F3 starvation bug the rotating cursor was added to fix.
+            //   2. polled ALL of this tier   -> reset to "" (full pass done, wrap next run).
+            //   3. polled SOME of this tier  -> resume after the last id polled.
+            for (const tier of TIER_ORDER) {
+              const listLen = pendingTierLists ? pendingTierLists[tier].length : 0;
+              const done = tierPolled[tier];
+              if (done === 0) continue; // outcome 1 — never reached, preserve progress
+              const next = done >= listLen ? "" : tierHighWater[tier]; // 2 or 3
+              const key = tierCursorKeys[tier];
+              await prisma.systemSetting.upsert({
+                where: { key },
+                create: { key, value: next },
+                update: { value: next },
+              });
+            }
+          } else {
+            const nextCursor = sweepBrokeEarly && lastProcessedLinkId ? lastProcessedLinkId : "";
+            await prisma.systemSetting.upsert({
+              where: { key: cursorKey },
+              create: { key: cursorKey, value: nextCursor },
+              update: { value: nextCursor },
+            });
+          }
         } catch (cursorErr) {
           console.error(`[social-insights/${slug}] failed to persist cursor:`, cursorErr);
         }

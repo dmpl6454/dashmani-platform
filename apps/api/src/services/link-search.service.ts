@@ -1,5 +1,4 @@
 import { prisma } from "@dashmani/db";
-import type { Prisma } from "@dashmani/db";
 import { canonicalKey } from "@dashmani/shared";
 
 /**
@@ -12,19 +11,31 @@ import { canonicalKey } from "@dashmani/shared";
  * duplicates, channel breakdown, the full posts list, and coverage. We NEVER
  * dedupe rows away — same-vs-unique is the whole point.
  *
- * ⚠️ OOM SAFETY (the load-bearing design constraint):
- * Prod has ~30k report_links on a 2GB box. We must never load the whole table
- * into Node. `canonicalKey()` is a JS function Postgres can't run, and
- * report_links has no canonicalKey column, so we can't join on the key directly.
- * Instead we push a COARSE prefilter into Postgres: for each of the entity's
- * (tens-to-hundreds of) canonicalKeys we derive the URL substring it must
- * contain (`yt:ID` → url contains `ID`; `ig:CODE` → url contains `/CODE`;
- * `fb:NUM` → url contains `NUM`; full-url-fallback → url equals that string,
- * case-insensitive) and build `where: { OR: [...contains] }`. The candidate set
- * that comes back ≈ the entity's posts (a few hundred), NOT the whole table.
- * Then in JS we recompute `canonicalKey(row.url)` on just those candidates and
- * keep only exact matches — the `contains` is the prefilter, the JS key is the
- * exact arbiter. This is correct AND bounded because the candidate set is tiny.
+ * ⚠️ OOM + CPU SAFETY (the load-bearing design constraints):
+ * Prod has ~100k report_links on a 2GB / 1-vCPU box. We must never load the
+ * whole table into Node, AND the Postgres prefilter must stay O(rows), not
+ * O(keys × rows). `canonicalKey()` is a JS function Postgres can't run and
+ * report_links has no canonicalKey column — so we DERIVE the key in SQL: the
+ * same CASE/regexp expression the coverage CTEs below use (producing the exact
+ * yt:/ig:/fb:/sc: shapes canonicalKey() emits) is computed per report_links row
+ * and hash-joined against the entity's canonicalKey set. One pass over the
+ * table regardless of how many keys the entity has (~2.5s live at 100k rows).
+ * ⚠️ The OLD approach — one `url ILIKE '%<id>%'` OR-arm per key — was
+ * O(keys × rows): at 1,568 keys ("Tamannaah Bhatia", 2026-07-18) it ran 2+
+ * minutes, 504'd the gateway, and pinned a pool connection + the vCPU. Do NOT
+ * reintroduce a per-key contains/ILIKE prefilter. Full-URL-fallback keys (no
+ * known prefix — SQL derives NULL for them) are matched by exact
+ * case-insensitive url equality in a second, tiny query. Then in JS we
+ * recompute `canonicalKey(row.url)` on the candidates and keep only exact
+ * matches — SQL is the prefilter, the JS key is the exact arbiter, unchanged.
+ *
+ * ⚠️ ESCAPING: Prisma's $queryRaw tagged template uses the COOKED string —
+ * JavaScript consumes one level of backslash. Every regex backslash in these
+ * templates MUST be written doubled (`\\.` / `\\?`) so Postgres receives
+ * `\.` / `\?`. Single-backslash `watch\?v=` reached Postgres as `watch?v=`
+ * (?" quantifies the h) and silently never matched a watch?v= URL — a live
+ * prod bug in the coverage CTEs until 2026-07-18. Do not "clean up" the
+ * double backslashes.
  */
 
 const CANDIDATE_TAKE = 5000; // hard cap on the bounded candidate fetch
@@ -44,6 +55,7 @@ export interface LinkSearchResult {
     account: { id: string; handle: string; displayName: string };
     employee: { id: string; name: string };
     date: string;
+    firstSeenAt: string; // ISO — per-URL submit time (for the export's dup sheet)
     dupCount: number;
   }>;
   coverage: {
@@ -82,21 +94,10 @@ export interface LinkSearchResult {
   truncated?: boolean;
 }
 
-/**
- * The URL substring that a report_links.url MUST contain for a given
- * canonicalKey. Used to build the bounded Postgres prefilter. Returns null for
- * the full-url-fallback case (handled separately as an exact, case-insensitive
- * url equality so we don't substring-match arbitrary URLs).
- */
-function idPartFor(canonicalKeyValue: string): { contains?: string; equalsUrl?: string } {
-  if (canonicalKeyValue.startsWith("yt:")) return { contains: canonicalKeyValue.slice(3) };
-  if (canonicalKeyValue.startsWith("ig:")) return { contains: `/${canonicalKeyValue.slice(3)}` };
-  if (canonicalKeyValue.startsWith("fb:")) return { contains: canonicalKeyValue.slice(3) };
-  // Snapchat spotlight id lives in a /spotlight/<id> url path segment (resolved urls only).
-  if (canonicalKeyValue.startsWith("sc:")) return { contains: `/spotlight/${canonicalKeyValue.slice(3)}` };
-  // Full-URL fallback key (already lowercased). Match the url exactly, case-insensitive.
-  return { equalsUrl: canonicalKeyValue };
-}
+// Keys with these prefixes are derivable from a report_links.url IN SQL (the
+// coverage-CTE CASE below produces the same shapes); anything else is a
+// full-URL-fallback key matched by exact case-insensitive url equality.
+const DERIVABLE_KEY_PREFIX = /^(?:yt|ig|fb|sc):/;
 
 type CoverageBucket = LinkSearchResult["coverage"]["byPlatform"][string];
 
@@ -142,8 +143,15 @@ async function buildCoverage(): Promise<LinkSearchResult["coverage"]> {
   // We derive each report_links URL's canonicalKey-equivalent id in SQL (the same
   // shapes canonicalKey() produces: yt:<id>, ig:<shortcode>, fb:<numeric>) and
   // intersect with link_content.canonicalKey. Opaque/unparseable URLs derive to
-  // NULL and correctly don't match. The per-post search path is unchanged — this
-  // only fixes the aggregate COVERAGE banner.
+  // NULL and correctly don't match.
+  // ⚠️ The CASE below MUST mirror the JS extractors — extractYouTubeVideoId
+  // (youtu.be/<id>, any ?v=/&v= param, /shorts|embed|live|e/<id>), canonicalKey's
+  // Facebook branch (?v=<digits> FIRST, then /reel|videos|video/<digits>), and
+  // extractSnapchatSpotlightId (/spotlight/<id> ANYWHERE in the path, incl. the
+  // resolved /p/<uuid>/spotlight/<id> form). The 2026-07-18 review caught the
+  // original narrower CASE silently dropping /live/, fb ?v= and /p/…/spotlight/
+  // links. If canonicalKey() learns a new shape, update ALL THREE copies of this
+  // CASE (two coverage CTEs + the searchLinksByEntity derived-key join).
   // The derived submitted-key CTE is reused by both the searchable and the
   // pending-extraction intersections, so define it once as a SQL fragment.
   // (Inlined into each query below — Prisma $queryRaw doesn't share CTEs across calls.)
@@ -151,14 +159,20 @@ async function buildCoverage(): Promise<LinkSearchResult["coverage"]> {
     WITH submitted_keys AS (
       SELECT DISTINCT
         CASE
-          WHEN url ~* 'youtube\.com/watch\?v=|youtube\.com/shorts/|youtu\.be/|youtube\.com/embed/'
-            THEN 'yt:' || substring(url from '(?:v=|/shorts/|youtu\.be/|/embed/)([A-Za-z0-9_-]{6,})')
-          WHEN url ~* 'instagram\.com/(?:[^/]+/)?(?:p|reel|reels|tv)/'
-            THEN 'ig:' || substring(url from 'instagram\.com/(?:[^/]+/)?(?:p|reel|reels|tv)/([A-Za-z0-9_-]+)')
-          WHEN url ~* 'facebook\.com/reel/[0-9]'
-            THEN 'fb:' || substring(url from 'facebook\.com/reel/([0-9]+)')
-          WHEN url ~* 'snapchat\.com/spotlight/'
-            THEN 'sc:' || substring(url from 'snapchat\.com/spotlight/([A-Za-z0-9_-]{8,})')
+          WHEN url ~* 'youtu\\.be/'
+            THEN 'yt:' || substring(url from 'youtu\\.be/([A-Za-z0-9_-]{6,})')
+          WHEN url ~* 'youtube\\.com/[^[:space:]]*[?&]v='
+            THEN 'yt:' || substring(url from '[?&]v=([A-Za-z0-9_-]{6,})')
+          WHEN url ~* 'youtube\\.com/(?:shorts|embed|live|e)/'
+            THEN 'yt:' || substring(url from 'youtube\\.com/(?:shorts|embed|live|e)/([A-Za-z0-9_-]{6,})')
+          WHEN url ~* 'instagram\\.com/(?:[^/]+/)?(?:p|reel|reels|tv)/'
+            THEN 'ig:' || substring(url from 'instagram\\.com/(?:[^/]+/)?(?:p|reel|reels|tv)/([A-Za-z0-9_-]+)')
+          WHEN url ~* '(?:facebook\\.com|fb\\.watch)/[^[:space:]]*[?&]v=[0-9]'
+            THEN 'fb:' || substring(url from '[?&]v=([0-9]+)')
+          WHEN url ~* 'facebook\\.com/(?:reel|videos|video)/[0-9]'
+            THEN 'fb:' || substring(url from 'facebook\\.com/(?:reel|videos|video)/([0-9]+)')
+          WHEN url ~* 'snapchat\\.com/[^[:space:]]*spotlight/'
+            THEN 'sc:' || substring(url from '/spotlight/([A-Za-z0-9_-]{8,})')
           ELSE NULL
         END AS k
       FROM report_links
@@ -179,14 +193,20 @@ async function buildCoverage(): Promise<LinkSearchResult["coverage"]> {
     WITH submitted_keys AS (
       SELECT DISTINCT
         CASE
-          WHEN url ~* 'youtube\.com/watch\?v=|youtube\.com/shorts/|youtu\.be/|youtube\.com/embed/'
-            THEN 'yt:' || substring(url from '(?:v=|/shorts/|youtu\.be/|/embed/)([A-Za-z0-9_-]{6,})')
-          WHEN url ~* 'instagram\.com/(?:[^/]+/)?(?:p|reel|reels|tv)/'
-            THEN 'ig:' || substring(url from 'instagram\.com/(?:[^/]+/)?(?:p|reel|reels|tv)/([A-Za-z0-9_-]+)')
-          WHEN url ~* 'facebook\.com/reel/[0-9]'
-            THEN 'fb:' || substring(url from 'facebook\.com/reel/([0-9]+)')
-          WHEN url ~* 'snapchat\.com/spotlight/'
-            THEN 'sc:' || substring(url from 'snapchat\.com/spotlight/([A-Za-z0-9_-]{8,})')
+          WHEN url ~* 'youtu\\.be/'
+            THEN 'yt:' || substring(url from 'youtu\\.be/([A-Za-z0-9_-]{6,})')
+          WHEN url ~* 'youtube\\.com/[^[:space:]]*[?&]v='
+            THEN 'yt:' || substring(url from '[?&]v=([A-Za-z0-9_-]{6,})')
+          WHEN url ~* 'youtube\\.com/(?:shorts|embed|live|e)/'
+            THEN 'yt:' || substring(url from 'youtube\\.com/(?:shorts|embed|live|e)/([A-Za-z0-9_-]{6,})')
+          WHEN url ~* 'instagram\\.com/(?:[^/]+/)?(?:p|reel|reels|tv)/'
+            THEN 'ig:' || substring(url from 'instagram\\.com/(?:[^/]+/)?(?:p|reel|reels|tv)/([A-Za-z0-9_-]+)')
+          WHEN url ~* '(?:facebook\\.com|fb\\.watch)/[^[:space:]]*[?&]v=[0-9]'
+            THEN 'fb:' || substring(url from '[?&]v=([0-9]+)')
+          WHEN url ~* 'facebook\\.com/(?:reel|videos|video)/[0-9]'
+            THEN 'fb:' || substring(url from 'facebook\\.com/(?:reel|videos|video)/([0-9]+)')
+          WHEN url ~* 'snapchat\\.com/[^[:space:]]*spotlight/'
+            THEN 'sc:' || substring(url from '/spotlight/([A-Za-z0-9_-]{8,})')
           ELSE NULL
         END AS k
       FROM report_links
@@ -226,10 +246,10 @@ async function buildCoverage(): Promise<LinkSearchResult["coverage"]> {
     // enrichment start. The banner shows both, honestly labelled.
     prisma.$queryRaw<Array<{ platform: string; cnt: bigint; data_since: Date | null }>>`
       SELECT CASE
-        WHEN rl.url ~* 'youtube\.com|youtu\.be' THEN 'youtube'
-        WHEN rl.url ~* 'instagram\.com' THEN 'instagram'
-        WHEN rl.url ~* 'facebook\.com|fb\.watch|fb\.me' THEN 'facebook'
-        WHEN rl.url ~* 'snapchat\.com' THEN 'snapchat'
+        WHEN rl.url ~* 'youtube\\.com|youtu\\.be' THEN 'youtube'
+        WHEN rl.url ~* 'instagram\\.com' THEN 'instagram'
+        WHEN rl.url ~* 'facebook\\.com|fb\\.watch|fb\\.me' THEN 'facebook'
+        WHEN rl.url ~* 'snapchat\\.com' THEN 'snapchat'
         ELSE lower(coalesce(rl.platform, 'other'))
       END AS platform, count(*)::bigint AS cnt, min(dr.date) AS data_since
       FROM report_links rl JOIN daily_reports dr ON dr.id = rl.report_id
@@ -442,46 +462,92 @@ export async function searchLinksByEntity(params: {
     return emptyResult(coverage, { entity: entityOut });
   }
 
-  // ── Build the BOUNDED Postgres prefilter from the entity's keys ───────────
-  // This `where` is constrained to the entity's canonicalKeys — the candidate
-  // set Postgres returns ≈ the entity's posts, not the whole report_links table.
-  const orFilters: Prisma.ReportLinkWhereInput[] = [];
-  for (const key of keys) {
-    const part = idPartFor(key);
-    if (part.contains) orFilters.push({ url: { contains: part.contains, mode: "insensitive" } });
-    else if (part.equalsUrl) orFilters.push({ url: { equals: part.equalsUrl, mode: "insensitive" } });
-  }
+  // ── Bounded candidate fetch via a DERIVED-KEY equality join ───────────────
+  // Derive each report_links URL's canonicalKey-equivalent id IN SQL (the exact
+  // CASE the coverage CTEs above use) and hash-join it against the entity's key
+  // set — ONE pass over report_links no matter how many keys the entity has.
+  // (See the file-header warning: the old per-key ILIKE OR-prefilter was
+  // O(keys × rows) and ran minutes for big entities. Never reintroduce it.)
+  // Platform/date filters use the repo's static-template sentinel pattern:
+  // always-bound values, `(${bind} IS NULL OR …)` no-ops when absent.
+  const platformFilter = params.platform ?? null;
+  const fromDate = params.from
+    ? new Date(`${params.from}T00:00:00.000Z`)
+    : new Date("1970-01-01T00:00:00.000Z");
+  const toDate = params.to
+    ? new Date(`${params.to}T23:59:59.999Z`)
+    : new Date("2999-12-31T00:00:00.000Z");
 
-  const where: Prisma.ReportLinkWhereInput = {
-    url: { not: null },
-    OR: orFilters,
-  };
-  if (params.platform) {
-    // platform on report_links is a free-text column; match case-insensitively.
-    where.platform = { equals: params.platform, mode: "insensitive" };
-  }
-  // Optional inclusive day-level window on the parent report's date.
-  // daily_reports.date is @db.Date. We keep this simple: from/to are interpreted
-  // as inclusive day bounds (gte from-midnight, lte to-end-of-day). Default is no window.
-  if (params.from || params.to) {
-    const dateFilter: Prisma.DateTimeFilter = {};
-    if (params.from) dateFilter.gte = new Date(`${params.from}T00:00:00.000Z`);
-    if (params.to) dateFilter.lte = new Date(`${params.to}T23:59:59.999Z`);
-    where.report = { date: dateFilter };
-  }
+  const derivedIdRows = await prisma.$queryRaw<Array<{ id: string }>>`
+    SELECT rl.id
+    FROM report_links rl
+    JOIN daily_reports dr ON dr.id = rl.report_id
+    JOIN (
+      SELECT DISTINCT lc."canonicalKey" AS k
+      FROM link_content_entities lce
+      JOIN link_content lc ON lc.id = lce.link_content_id
+      WHERE lce.entity_id = ${entity.id}
+    ) ek ON ek.k = (
+      CASE
+        WHEN rl.url ~* 'youtu\\.be/'
+          THEN 'yt:' || substring(rl.url from 'youtu\\.be/([A-Za-z0-9_-]{6,})')
+        WHEN rl.url ~* 'youtube\\.com/[^[:space:]]*[?&]v='
+          THEN 'yt:' || substring(rl.url from '[?&]v=([A-Za-z0-9_-]{6,})')
+        WHEN rl.url ~* 'youtube\\.com/(?:shorts|embed|live|e)/'
+          THEN 'yt:' || substring(rl.url from 'youtube\\.com/(?:shorts|embed|live|e)/([A-Za-z0-9_-]{6,})')
+        WHEN rl.url ~* 'instagram\\.com/(?:[^/]+/)?(?:p|reel|reels|tv)/'
+          THEN 'ig:' || substring(rl.url from 'instagram\\.com/(?:[^/]+/)?(?:p|reel|reels|tv)/([A-Za-z0-9_-]+)')
+        WHEN rl.url ~* '(?:facebook\\.com|fb\\.watch)/[^[:space:]]*[?&]v=[0-9]'
+          THEN 'fb:' || substring(rl.url from '[?&]v=([0-9]+)')
+        WHEN rl.url ~* 'facebook\\.com/(?:reel|videos|video)/[0-9]'
+          THEN 'fb:' || substring(rl.url from 'facebook\\.com/(?:reel|videos|video)/([0-9]+)')
+        WHEN rl.url ~* 'snapchat\\.com/[^[:space:]]*spotlight/'
+          THEN 'sc:' || substring(rl.url from '/spotlight/([A-Za-z0-9_-]{8,})')
+        ELSE NULL
+      END
+    )
+    WHERE rl.url IS NOT NULL
+      AND (${platformFilter}::text IS NULL OR lower(rl.platform) = lower(${platformFilter}))
+      AND dr.date >= ${fromDate}
+      AND dr.date <= ${toDate}
+    LIMIT ${CANDIDATE_TAKE + 1}
+  `;
 
-  // Fetch the bounded candidate set (cap at CANDIDATE_TAKE; flag if it overflows).
-  const candidates = await prisma.reportLink.findMany({
-    where,
-    take: CANDIDATE_TAKE + 1, // +1 to detect overflow without a second count
-    select: {
-      id: true,
-      url: true,
-      platform: true,
-      account: { select: { id: true, handle: true, displayName: true } },
-      report: { select: { date: true, employee: { select: { id: true, name: true } } } },
-    },
-  });
+  // Full-URL-fallback keys (SQL derives NULL for these) — exact equality, tiny set.
+  const fallbackUrls = keys.filter((k) => !DERIVABLE_KEY_PREFIX.test(k)).map((k) => k.toLowerCase());
+  const fallbackIdRows = fallbackUrls.length
+    ? await prisma.$queryRaw<Array<{ id: string }>>`
+        SELECT rl.id
+        FROM report_links rl
+        JOIN daily_reports dr ON dr.id = rl.report_id
+        WHERE rl.url IS NOT NULL
+          AND lower(rl.url) = ANY(${fallbackUrls})
+          AND (${platformFilter}::text IS NULL OR lower(rl.platform) = lower(${platformFilter}))
+          AND dr.date >= ${fromDate}
+          AND dr.date <= ${toDate}
+        LIMIT ${CANDIDATE_TAKE + 1}
+      `
+    : [];
+
+  const candidateIds = Array.from(
+    new Set([...derivedIdRows, ...fallbackIdRows].map((r) => r.id)),
+  ).slice(0, CANDIDATE_TAKE + 1);
+
+  // Hydrate ONLY the candidate ids (primary-key lookup) with the same relation
+  // shape as before — the downstream arbiter/grouping code is unchanged.
+  const candidates = candidateIds.length
+    ? await prisma.reportLink.findMany({
+        where: { id: { in: candidateIds } },
+        select: {
+          id: true,
+          url: true,
+          platform: true,
+          firstSeenAt: true,
+          account: { select: { id: true, handle: true, displayName: true } },
+          report: { select: { date: true, employee: { select: { id: true, name: true } } } },
+        },
+      })
+    : [];
 
   let truncated = false;
   let rows = candidates;
@@ -535,6 +601,7 @@ export async function searchLinksByEntity(params: {
       account: { id: r.account.id, handle: r.account.handle, displayName: r.account.displayName },
       employee: { id: r.report.employee.id, name: r.report.employee.name },
       date: r.report.date.toISOString().slice(0, 10),
+      firstSeenAt: r.firstSeenAt.toISOString(),
       dupCount: byKey.get(k) || 1,
     };
   });

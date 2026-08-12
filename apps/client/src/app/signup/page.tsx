@@ -29,21 +29,9 @@ function SignupForm() {
   const [showConfirm, setShowConfirm] = useState(false);
   const [error, setError] = useState("");
   const [submitState, setSubmitState] = useState<"idle" | "loading" | "success">("idle");
-  const segRef = useRef<HTMLDivElement>(null);
 
   const score = pwScore(password);
   const pwErr = pwBlurred && password && score < 2 ? "Make it harder to guess" : null;
-
-  // Position segmented pill under "I have an invite" (right side)
-  useEffect(() => {
-    if (!segRef.current) return;
-    const w = segRef.current.querySelector('[data-tab="signup"]') as HTMLElement | null;
-    const pill = segRef.current.querySelector(".seg-pill") as HTMLElement | null;
-    if (w && pill) {
-      pill.style.width = w.offsetWidth + "px";
-      pill.style.transform = `translateX(${w.offsetLeft - 4}px)`;
-    }
-  }, []);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -136,8 +124,8 @@ function SignupForm() {
                 </p>
               </div>
 
-              <div ref={segRef} className="seg mb-5" role="tablist" aria-label="Auth options">
-                <span className="seg-pill" style={{ width: "50%" }} aria-hidden />
+              <div className="seg mb-5" data-active="signup" role="tablist" aria-label="Auth options">
+                <span className="seg-pill" aria-hidden />
                 <Link
                   href="/login"
                   data-tab="signin"

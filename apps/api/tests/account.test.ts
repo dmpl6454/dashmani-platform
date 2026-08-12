@@ -52,7 +52,9 @@ describe("Accounts API", () => {
         });
 
       expect(res.status).toBe(201);
-      expect(res.body.data.handle).toBe("@digitalsukoon");
+      // sanitizeAccountHandle strips the leading "@" at the write boundary (the
+      // 2026-06-27 "@@ handle" fix) — the stored/returned handle is bare.
+      expect(res.body.data.handle).toBe("digitalsukoon");
       expect(res.body.data.platform.slug).toBe("instagram");
     });
 

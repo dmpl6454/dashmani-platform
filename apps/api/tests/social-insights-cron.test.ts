@@ -33,6 +33,11 @@ vi.mock("@dashmani/db", () => ({
     linkMetric: {
       create: vi.fn(() => Promise.resolve({})),
     },
+    // Used by buildTieredQueue to find links whose LATEST metric is `ok` (the
+    // "settled" tier). Must be mocked or the tier build throws and the cron
+    // silently falls back to the legacy single-cursor queue — which would make
+    // this budget-clock regression test pass for the wrong reason.
+    $queryRaw: vi.fn(() => Promise.resolve([])),
     $executeRaw: vi.fn(() => Promise.resolve(0)),
   },
 }));

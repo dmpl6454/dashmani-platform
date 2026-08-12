@@ -137,22 +137,39 @@ interface InsightRow {
   comments: number | null;
 }
 
+// Per-platform aggregate row of the SQL GROUP BY below. Sums come back as BigInt
+// (::bigint) — converted with Number() (totals are ~10^10, far under 2^53).
+interface PlatformAggRow {
+  platform: string;
+  link_count: bigint;
+  views: bigint;
+  likes: bigint;
+  comments: bigint;
+}
+
 async function getInsightsSummaryUncached(
   startDate?: string,
   endDate?: string,
   employeeId?: string,
 ): Promise<InsightsSummary> {
-  // Latest snapshot per (employee_id, url_normalized) computed IN POSTGRES via DISTINCT ON.
-  // This is byte-identical to the OLD JS dedup (findMany orderBy fetchedAt desc + a seen-Set
-  // keyed on `${employeeId}::${urlNormalized}` keeping the first = newest per key) — same
-  // key, same latest-by-fetchedAt winner — but returns ONLY the deduped set instead of
-  // hydrating every ok row in the window into Node (~340k rows for 30d on prod: the OOM /
-  // pool-exhaustion culprit). The outer ORDER BY fetched_at DESC reproduces the order the
-  // old `latest[]` array had, so the downstream JS `.sort()` (stable in V8) sees inputs in
-  // the SAME order and its tie-break is preserved exactly.
+  // Latest snapshot per (employee_id, url_normalized) via DISTINCT ON, but BOTH the
+  // aggregation AND the top-20 selection now happen IN POSTGRES. The previous shape
+  // deduped in SQL yet still returned the ENTIRE deduped set (~41k rows all-time) into
+  // Node to sum + sort in JS — measured 14-16s per call on prod, dominated by a parallel
+  // seq scan + a ~92MB on-disk merge sort, because selecting url/link_id/video_id per row
+  // makes the covering index unusable. Split into two queries that each stay inside
+  // link_metrics_emp_url_fetched_ok_v2_idx (employee_id, url_normalized, fetched_at DESC)
+  // INCLUDE (views, likes, comments, report_date, platform) WHERE status='ok':
+  //   1) aggregate: DISTINCT ON over covered columns only → GROUP BY platform (~1.3s
+  //      index-only, measured live);
+  //   2) top-20: DISTINCT ON over covered columns → ORDER BY views LIMIT 20, then a
+  //      LATERAL join-back fetches the full row for ONLY the 20 winners (~0.5s live).
+  // The LATERAL repeats the same status/window predicates so its winner is the SAME row
+  // DISTINCT ON picked. ORDER BY COALESCE(views,0) DESC, fetched_at DESC reproduces the
+  // old JS stable-sort tie-break (equal views → newer fetched_at first) exactly.
   //
   // Bounds are ALWAYS passed as concrete Dates (null-start → epoch, null-end → far future)
-  // to keep this a fully STATIC tagged template — the repo's proven $queryRaw pattern
+  // to keep these fully STATIC tagged templates — the repo's proven $queryRaw pattern
   // (leaderboard.service.ts / link-search.service.ts), no conditional Prisma.sql fragments.
   // employeeId is optional: when absent we bind a sentinel and the `(… OR ${bind} IS NULL)`
   // makes the filter a no-op (still fully static, still two-plus fixed bindings).
@@ -160,70 +177,94 @@ async function getInsightsSummaryUncached(
   const end = endDate ? new Date(endDate) : new Date("2999-12-31T00:00:00.000Z");
   const empFilter = employeeId ?? null;
 
-  const latest = await prisma.$queryRaw<InsightRow[]>`
-    SELECT link_id, url_normalized, url, video_id, platform, employee_id, employee_name,
-           fetched_at, views, likes, comments
-    FROM (
+  // Queries run sequentially on purpose: one pooled connection at a time, so a burst of
+  // uncached windows can't hold two pool slots per request (the 2026-07-16 incident class).
+  const agg = await prisma.$queryRaw<PlatformAggRow[]>`
+    WITH latest AS (
       SELECT DISTINCT ON (lm.employee_id, lm.url_normalized)
-        lm.link_id, lm.url_normalized, lm.url, lm.video_id, lm.platform,
-        lm.employee_id, u.name AS employee_name, lm.fetched_at,
-        lm.views, lm.likes, lm.comments
+        lm.platform, lm.views, lm.likes, lm.comments
       FROM link_metrics lm
-      JOIN users u ON u.id = lm.employee_id
       WHERE lm.status = 'ok'
         AND lm.report_date >= ${start}
         AND lm.report_date <= ${end}
         AND (${empFilter}::text IS NULL OR lm.employee_id = ${empFilter})
       ORDER BY lm.employee_id, lm.url_normalized, lm.fetched_at DESC
-    ) latest
-    ORDER BY fetched_at DESC
+    )
+    SELECT lower(platform) AS platform,
+           count(*)::bigint AS link_count,
+           sum(coalesce(views, 0))::bigint AS views,
+           sum(coalesce(likes, 0))::bigint AS likes,
+           sum(coalesce(comments, 0))::bigint AS comments
+    FROM latest
+    GROUP BY lower(platform)
+    ORDER BY count(*) DESC
   `;
 
-  // Aggregate
+  const topRows = await prisma.$queryRaw<InsightRow[]>`
+    WITH winners AS (
+      SELECT DISTINCT ON (lm.employee_id, lm.url_normalized)
+        lm.employee_id, lm.url_normalized, lm.fetched_at, lm.views
+      FROM link_metrics lm
+      WHERE lm.status = 'ok'
+        AND lm.report_date >= ${start}
+        AND lm.report_date <= ${end}
+        AND (${empFilter}::text IS NULL OR lm.employee_id = ${empFilter})
+      ORDER BY lm.employee_id, lm.url_normalized, lm.fetched_at DESC
+    ),
+    top_n AS (
+      SELECT * FROM winners ORDER BY COALESCE(views, 0) DESC, fetched_at DESC LIMIT 20
+    )
+    SELECT f.link_id, f.url_normalized, f.url, f.video_id, f.platform,
+           f.employee_id, u.name AS employee_name, f.fetched_at,
+           f.views, f.likes, f.comments
+    FROM top_n t
+    JOIN LATERAL (
+      SELECT lm2.link_id, lm2.url_normalized, lm2.url, lm2.video_id, lm2.platform,
+             lm2.employee_id, lm2.fetched_at, lm2.views, lm2.likes, lm2.comments
+      FROM link_metrics lm2
+      WHERE lm2.employee_id = t.employee_id
+        AND lm2.url_normalized = t.url_normalized
+        AND lm2.status = 'ok'
+        AND lm2.report_date >= ${start}
+        AND lm2.report_date <= ${end}
+      ORDER BY lm2.fetched_at DESC
+      LIMIT 1
+    ) f ON true
+    JOIN users u ON u.id = f.employee_id
+    ORDER BY COALESCE(f.views, 0) DESC, f.fetched_at DESC
+  `;
+
   let totalViews = 0;
   let totalLikes = 0;
   let totalComments = 0;
-  const platformMap = new Map<string, PlatformStat>();
+  const byPlatform: PlatformStat[] = agg.map((r) => {
+    const stat: PlatformStat = {
+      platform: r.platform,
+      totalViews: Number(r.views),
+      totalLikes: Number(r.likes),
+      totalComments: Number(r.comments),
+      linkCount: Number(r.link_count),
+      supported: isPlatformInsightSupported(r.platform),
+    };
+    totalViews += stat.totalViews;
+    totalLikes += stat.totalLikes;
+    totalComments += stat.totalComments;
+    return stat;
+  });
 
-  for (const s of latest) {
-    totalViews += s.views ?? 0;
-    totalLikes += s.likes ?? 0;
-    totalComments += s.comments ?? 0;
-
-    const p = s.platform.toLowerCase();
-    if (!platformMap.has(p)) {
-      platformMap.set(p, {
-        platform: p,
-        totalViews: 0,
-        totalLikes: 0,
-        totalComments: 0,
-        linkCount: 0,
-        supported: isPlatformInsightSupported(p),
-      });
-    }
-    const ps = platformMap.get(p)!;
-    ps.totalViews += s.views ?? 0;
-    ps.totalLikes += s.likes ?? 0;
-    ps.totalComments += s.comments ?? 0;
-    ps.linkCount += 1;
-  }
-
-  const topLinks: TopLink[] = latest
-    .sort((a, b) => (b.views ?? 0) - (a.views ?? 0))
-    .slice(0, 20)
-    .map((s) => ({
-      linkId: s.link_id,
-      url: s.url,
-      urlNormalized: s.url_normalized,
-      videoId: s.video_id,
-      platform: s.platform.toLowerCase(),
-      employeeId: s.employee_id,
-      employeeName: s.employee_name,
-      views: s.views,
-      likes: s.likes,
-      comments: s.comments,
-      fetchedAt: s.fetched_at,
-    }));
+  const topLinks: TopLink[] = topRows.map((s) => ({
+    linkId: s.link_id,
+    url: s.url,
+    urlNormalized: s.url_normalized,
+    videoId: s.video_id,
+    platform: s.platform.toLowerCase(),
+    employeeId: s.employee_id,
+    employeeName: s.employee_name,
+    views: s.views,
+    likes: s.likes,
+    comments: s.comments,
+    fetchedAt: s.fetched_at,
+  }));
 
   return {
     totalViews,
@@ -231,7 +272,7 @@ async function getInsightsSummaryUncached(
     totalComments,
     supportedPlatforms: getSupportedInsightPlatforms(),
     topLinks,
-    byPlatform: Array.from(platformMap.values()),
+    byPlatform,
   };
 }
 
@@ -257,7 +298,16 @@ export async function getTopLinksByPlatform(params: {
   sortBy?: TopLinkSort;
 }): Promise<TopLink[]> {
   const platform = params.platform.toLowerCase();
-  const { startDate, endDate, limit = 20 } = params;
+  const { startDate, endDate } = params;
+  // Clamp limit before it reaches the SQL LIMIT binding: routes do
+  // `parseInt(query.limit)` with no guard, and a NaN/negative/huge value must
+  // degrade to the default instead of a Postgres bind error (old code sliced in
+  // JS, which tolerated NaN silently). 1..100, default 20.
+  const rawLimit = params.limit;
+  const limit =
+    typeof rawLimit === "number" && Number.isFinite(rawLimit) && rawLimit >= 1
+      ? Math.min(Math.floor(rawLimit), 100)
+      : 20;
   // Default sort: YouTube by views, everything else by engagement.
   const sortBy: TopLinkSort = params.sortBy ?? (platform === "youtube" ? "views" : "engagement");
   return memoInsights(
@@ -273,44 +323,95 @@ async function getTopLinksByPlatformUncached(
   startDate?: string,
   endDate?: string,
 ): Promise<TopLink[]> {
-  // Latest snapshot per (employee_id, url_normalized) for ONE platform, computed IN
-  // POSTGRES via DISTINCT ON — byte-identical to the OLD JS dedup (findMany orderBy
-  // fetchedAt desc + seen-Set) but returns only the deduped set instead of hydrating
-  // every ok row for the platform+window into Node (306k rows for yt/30d on prod — the
-  // pool-exhaustion culprit that starved /hr/accounts, notifications, and RBAC). The
-  // outer ORDER BY fetched_at DESC reproduces the old `latest[]` order, so the JS
-  // `.sort()` below (stable in V8) preserves the exact same tie-break. The final sort +
-  // slice stays in JS unchanged so the top-N ordering is IDENTICAL to today. Static
-  // tagged template with concrete Date bounds (repo pattern; no Prisma.sql fragments).
+  // Latest snapshot per (employee_id, url_normalized) for ONE platform via DISTINCT ON,
+  // with the top-N selection ALSO in Postgres. The previous shape deduped in SQL but
+  // returned the whole deduped platform set (~tens of thousands of rows all-time) into
+  // Node to score + sort + slice in JS — measured 11-12s per call on prod (parallel seq
+  // scan + on-disk sort; selecting url/link_id/video_id per row defeats the covering
+  // index). Now: winners CTE over ONLY covered columns (index-only via
+  // link_metrics_emp_url_fetched_ok_v2_idx — platform is in its INCLUDE list), scored +
+  // LIMITed in SQL, then a LATERAL join-back fetches full rows for just the N winners.
+  // The LATERAL repeats the same status/platform/window predicates so its winner is the
+  // SAME row DISTINCT ON picked. ORDER BY score DESC, fetched_at DESC reproduces the old
+  // JS stable-sort tie-break (equal score → newer fetched_at first) exactly. Two static
+  // tagged templates (one per sort metric) keep the repo's no-conditional-fragments rule.
   const start = startDate ? new Date(startDate) : new Date("1970-01-01T00:00:00.000Z");
   const end = endDate ? new Date(endDate) : new Date("2999-12-31T00:00:00.000Z");
 
-  const latest = await prisma.$queryRaw<InsightRow[]>`
-    SELECT link_id, url_normalized, url, video_id, platform, employee_id, employee_name,
-           fetched_at, views, likes, comments
-    FROM (
+  const latest =
+    sortBy === "views"
+      ? await prisma.$queryRaw<InsightRow[]>`
+    WITH winners AS (
       SELECT DISTINCT ON (lm.employee_id, lm.url_normalized)
-        lm.link_id, lm.url_normalized, lm.url, lm.video_id, lm.platform,
-        lm.employee_id, u.name AS employee_name, lm.fetched_at,
-        lm.views, lm.likes, lm.comments
+        lm.employee_id, lm.url_normalized, lm.fetched_at, lm.views, lm.likes, lm.comments
       FROM link_metrics lm
-      JOIN users u ON u.id = lm.employee_id
       WHERE lm.status = 'ok'
         AND lm.platform = ${platform}
         AND lm.report_date >= ${start}
         AND lm.report_date <= ${end}
       ORDER BY lm.employee_id, lm.url_normalized, lm.fetched_at DESC
-    ) latest
-    ORDER BY fetched_at DESC
+    ),
+    top_n AS (
+      SELECT * FROM winners ORDER BY COALESCE(views, 0) DESC, fetched_at DESC LIMIT ${limit}
+    )
+    SELECT f.link_id, f.url_normalized, f.url, f.video_id, f.platform,
+           f.employee_id, u.name AS employee_name, f.fetched_at,
+           f.views, f.likes, f.comments
+    FROM top_n t
+    JOIN LATERAL (
+      SELECT lm2.link_id, lm2.url_normalized, lm2.url, lm2.video_id, lm2.platform,
+             lm2.employee_id, lm2.fetched_at, lm2.views, lm2.likes, lm2.comments
+      FROM link_metrics lm2
+      WHERE lm2.employee_id = t.employee_id
+        AND lm2.url_normalized = t.url_normalized
+        AND lm2.status = 'ok'
+        AND lm2.platform = ${platform}
+        AND lm2.report_date >= ${start}
+        AND lm2.report_date <= ${end}
+      ORDER BY lm2.fetched_at DESC
+      LIMIT 1
+    ) f ON true
+    JOIN users u ON u.id = f.employee_id
+    ORDER BY COALESCE(f.views, 0) DESC, f.fetched_at DESC
+  `
+      : await prisma.$queryRaw<InsightRow[]>`
+    WITH winners AS (
+      SELECT DISTINCT ON (lm.employee_id, lm.url_normalized)
+        lm.employee_id, lm.url_normalized, lm.fetched_at, lm.views, lm.likes, lm.comments
+      FROM link_metrics lm
+      WHERE lm.status = 'ok'
+        AND lm.platform = ${platform}
+        AND lm.report_date >= ${start}
+        AND lm.report_date <= ${end}
+      ORDER BY lm.employee_id, lm.url_normalized, lm.fetched_at DESC
+    ),
+    top_n AS (
+      SELECT * FROM winners
+      ORDER BY COALESCE(likes, 0) + COALESCE(comments, 0) DESC, fetched_at DESC
+      LIMIT ${limit}
+    )
+    SELECT f.link_id, f.url_normalized, f.url, f.video_id, f.platform,
+           f.employee_id, u.name AS employee_name, f.fetched_at,
+           f.views, f.likes, f.comments
+    FROM top_n t
+    JOIN LATERAL (
+      SELECT lm2.link_id, lm2.url_normalized, lm2.url, lm2.video_id, lm2.platform,
+             lm2.employee_id, lm2.fetched_at, lm2.views, lm2.likes, lm2.comments
+      FROM link_metrics lm2
+      WHERE lm2.employee_id = t.employee_id
+        AND lm2.url_normalized = t.url_normalized
+        AND lm2.status = 'ok'
+        AND lm2.platform = ${platform}
+        AND lm2.report_date >= ${start}
+        AND lm2.report_date <= ${end}
+      ORDER BY lm2.fetched_at DESC
+      LIMIT 1
+    ) f ON true
+    JOIN users u ON u.id = f.employee_id
+    ORDER BY COALESCE(f.likes, 0) + COALESCE(f.comments, 0) DESC, f.fetched_at DESC
   `;
 
-  const score = (s: { views: number | null; likes: number | null; comments: number | null }) =>
-    sortBy === "views" ? (s.views ?? 0) : (s.likes ?? 0) + (s.comments ?? 0);
-
-  return latest
-    .sort((a, b) => score(b) - score(a))
-    .slice(0, limit)
-    .map((s) => ({
+  return latest.map((s) => ({
       linkId: s.link_id,
       url: s.url,
       urlNormalized: s.url_normalized,

@@ -226,8 +226,10 @@ export interface GrowthOverview {
   }>;
   /**
    * Top 5 movers per platform, keyed by platform name.
-   * Only platforms with at least one account whose abs(delta) > 0 are included.
-   * Within each group, sorted by abs(delta) desc (same ordering as topMovers).
+   * EVERY platform with accounts is included — even when all its deltas are 0 —
+   * so manually-entered platforms (e.g. Snapchat pre-scraper) still show their
+   * top accounts by follower count (deliberate change 2026-06-30, `e29df5a`).
+   * Within each group, sorted by abs(delta) desc, then latest follower count desc.
    */
   topMoversByPlatform: Record<
     string,

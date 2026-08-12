@@ -1,0 +1,135 @@
+name: CI
+
+# WHY THIS EXISTS
+# `deploy.yml` triggers on push to `main` and immediately SSHes into the Linode box to run
+# scripts/deploy.sh — so merging a PR IS deploying to production. Until this workflow was
+# added there was NO automated gate anywhere: no typecheck, no build, no test ran on a pull
+# request. A type error or a broken test reached prod and was only discovered when
+# `turbo build` failed ON the server, which (per CLAUDE.md) can leave pm2 serving stale code
+# for one app while the others rebuild.
+#
+# This runs on pull requests so a PR can be verified BEFORE it is merged/deployed.
+#
+# ⚠️ It deliberately does NOT gate deploy.yml. Making deploy `needs: ci` would be the
+# stronger setup, but it changes the deploy pipeline's behavior (a flaky or queued CI run
+# would block an urgent deploy). That is a separate, deliberate decision for the owner —
+# see the CI note in CLAUDE.md.
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+# A newer push to the same PR supersedes the older run.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: user
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: dashmani
+        ports:
+          - 5432:5432
+        # Wait until the DB actually accepts connections — without this, `db push` races
+        # the container start and fails intermittently.
+        options: >-
+          --health-cmd "pg_isready -U user -d dashmani"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      # Matches docker-compose.yml / .env.example defaults so local and CI agree.
+      #
+      # ⚠️ connection_limit=1 is deliberate and load-bearing for the test run.
+      # Several service paths write FIRE-AND-FORGET (audit logs, recordApiUsage,
+      # dispatchNotification). With a multi-connection pool, one of those INSERTs can still
+      # be in flight on another backend when the next test's beforeEach issues its TRUNCATE,
+      # producing a real lock-order inversion (the INSERT holds a RowExclusiveLock and wants
+      # a table TRUNCATE already locked, while TRUNCATE wants that table) — Postgres kills
+      # one side with SQLSTATE 40P01 and a random leaderboard test fails. Draining
+      # pg_stat_activity first helps but cannot close it, because the straggler is often a
+      # JS continuation that issues its query AFTER the drain check.
+      #
+      # Pinning the pool to a single connection makes those queries strictly sequential, so
+      # the inversion cannot form at all. `withConnectionPool()` in packages/db only fills in
+      # defaults for params the URL does not already specify, so this explicit value wins.
+      # It affects the test run only — production keeps connection_limit=10.
+      DATABASE_URL: postgresql://user:password@localhost:5432/dashmani?connection_limit=1
+      JWT_SECRET: ci-test-secret
+      JWT_REFRESH_SECRET: ci-test-secret-refresh
+      SEED_ADMIN_PASSWORD: Admin@123456
+      NEXT_PUBLIC_API_URL: http://localhost:4000/v1
+      INTERNAL_APP_URL: http://localhost:3000
+      HR_APP_URL: http://localhost:3002
+      # Next.js production builds already skip ESLint (next.config.js
+      # eslint.ignoreDuringBuilds); keep builds from being slowed by telemetry.
+      NEXT_TELEMETRY_DISABLED: "1"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # The Prisma client is a build-time codegen artifact that every workspace's types
+      # depend on. Without it, tsc reports phantom "Property X does not exist on type
+      # PrismaClient" errors. Needs no live database.
+      - name: Generate Prisma client
+        run: npm run db:generate
+
+      # Write the .env files the Prisma CLI and the API read at runtime. They are
+      # gitignored, so a fresh clone has none.
+      - name: Write env files
+        run: |
+          for target in .env apps/api/.env packages/db/.env; do
+            mkdir -p "$(dirname "$target")"
+            {
+              echo "DATABASE_URL=$DATABASE_URL"
+              echo "JWT_SECRET=$JWT_SECRET"
+              echo "JWT_REFRESH_SECRET=$JWT_REFRESH_SECRET"
+              echo "SEED_ADMIN_PASSWORD=$SEED_ADMIN_PASSWORD"
+            } > "$target"
+          done
+          for app in client internal hr jobs; do
+            echo "NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL" > "apps/$app/.env.local"
+          done
+
+      # apps/api has no compile step (it runs via tsx), so its types are never checked by
+      # `turbo build`. Check it explicitly — this is where the API bugs would hide.
+      - name: Typecheck API
+        run: npx tsc --noEmit -p apps/api/tsconfig.json
+
+      # packages/shared and packages/ui are typechecked as part of `npm run build`
+      # (turbo's build task has dependsOn: ["^build"], so dependencies build first).
+
+      # Builds all five apps. This is what typechecks the four Next.js frontends and is
+      # the same command the server runs on deploy — so a green build here means the
+      # deploy's build step will not be the thing that fails.
+      - name: Build all apps
+        run: npm run build
+
+      - name: Push schema to test database
+        run: npm run db:push
+
+      # ⚠️ Run from apps/api, never the repo root. There is no root vitest.config.*, so a
+      # root-level run globs stale test copies under .claude/worktrees/ and executes them
+      # in parallel against one Postgres, fabricating failures. apps/api/vitest.config.ts
+      # sets pool:forks + singleFork:true, which is mandatory because the DB-backed suites
+      # share a database and create fixed-email rows.
+      - name: Run API test suite
+        working-directory: apps/api
+        run: npx vitest run --reporter=verbose

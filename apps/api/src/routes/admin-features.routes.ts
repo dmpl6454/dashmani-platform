@@ -1317,27 +1317,48 @@ router.post("/admin/users/accept-invite", async (req: Request, res: Response, ne
     }
 
     const passwordHash = await hashPassword(password);
-    const user = await prisma.user.create({
-      data: { name, email: invite.email, passwordHash, status: "ACTIVE" },
+
+    // Consume-once + create ATOMICALLY. Two concurrent accepts of the same
+    // token both used to pass the usedAt check above, then both hit
+    // user.create — the loser got a P2002 unique-email violation → 500.
+    // The atomic updateMany({ usedAt: null }) consume means exactly ONE
+    // request wins; the loser gets a clean 400. Same one-time-consume rule as
+    // the refresh-token fix (PR #101: deleteMany/updateMany + count check,
+    // never a bare update/delete) and the client acceptInvite $transaction.
+    const txnResult = await prisma.$transaction(async (tx) => {
+      const consumed = await tx.adminInvite.updateMany({
+        where: { id: invite.id, usedAt: null },
+        data: { usedAt: new Date() },
+      });
+      if (consumed.count === 0) return null; // lost the race — token already consumed
+
+      const user = await tx.user.create({
+        data: { name, email: invite.email, passwordHash, status: "ACTIVE" },
+      });
+
+      let assignedRoleIds: string[] = invite.roleIds ?? [];
+      if (assignedRoleIds.length === 0) {
+        const employeeRole = await tx.role.findUnique({ where: { name: "Employee" } });
+        if (employeeRole) assignedRoleIds = [employeeRole.id];
+      }
+      if (assignedRoleIds.length > 0) {
+        await tx.userRole.createMany({
+          data: assignedRoleIds.map((roleId: string) => ({ userId: user.id, roleId })),
+          skipDuplicates: true,
+        });
+      }
+
+      if (invite.designation) {
+        await tx.employeeProfile.create({ data: { userId: user.id, designation: invite.designation } });
+      }
+
+      return { user, assignedRoleIds };
     });
 
-    let assignedRoleIds: string[] = invite.roleIds ?? [];
-    if (assignedRoleIds.length === 0) {
-      const employeeRole = await prisma.role.findUnique({ where: { name: "Employee" } });
-      if (employeeRole) assignedRoleIds = [employeeRole.id];
+    if (!txnResult) {
+      return res.status(400).json({ success: false, error: { code: "INVALID_TOKEN", message: "Invalid or expired invite link" } });
     }
-    if (assignedRoleIds.length > 0) {
-      await prisma.userRole.createMany({
-        data: assignedRoleIds.map((roleId: string) => ({ userId: user.id, roleId })),
-        skipDuplicates: true,
-      });
-    }
-
-    if (invite.designation) {
-      await prisma.employeeProfile.create({ data: { userId: user.id, designation: invite.designation } });
-    }
-
-    await prisma.adminInvite.update({ where: { id: invite.id }, data: { usedAt: new Date() } });
+    const { user, assignedRoleIds } = txnResult;
 
     const roleNames = (await prisma.role.findMany({ where: { id: { in: assignedRoleIds } } })).map((r) => r.name);
 

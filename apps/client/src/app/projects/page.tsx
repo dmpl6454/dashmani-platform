@@ -2,7 +2,7 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Topstrip } from "@/components/portal-topstrip";
-import { Button, StatusBadge, Avatar, Empty, PageError, Skeleton } from "@/components/portal-shared";
+import { Button, StatusBadge, Avatar, Empty, PageError, Skeleton, FilterChip, Tag } from "@/components/portal-shared";
 import { Icon } from "@/components/portal-icons";
 import { useClientProjects } from "@/lib/hooks/use-projects";
 import { useClientAnalytics } from "@/lib/hooks/use-analytics";
@@ -70,41 +70,40 @@ export default function ProjectsPage() {
         title="Projects"
         sub={`${projects.length} total`}
         right={
-          <Button variant="ink" size="sm" icon={<Icon.Plus size={14} sw={2.5} />} onClick={() => setBriefOpen(true)}>
+          <Button
+            variant="ink"
+            size="sm"
+            className="!h-8 !px-2.5 sm:!px-3.5 !text-[12px] sm:!text-[13px]"
+            icon={<Icon.Plus size={14} sw={2.5} />}
+            onClick={() => setBriefOpen(true)}
+          >
             New brief
           </Button>
         }
       />
       <NewBriefModal open={briefOpen} onClose={() => setBriefOpen(false)} />
 
-      <div className="px-6 py-6 max-w-[1200px] mx-auto w-full flex-1 overflow-y-auto">
+      <div className="px-4 sm:px-6 py-6 max-w-[1200px] mx-auto w-full flex-1 overflow-y-auto">
         {/* Filter + sort row */}
         <div className="flex items-center gap-2 mb-5 flex-wrap slide-right">
           {FILTERS.map((f) => (
-            <button
+            <FilterChip
               key={f.id}
+              active={filter === f.id}
+              count={counts[f.id]}
+              dot={f.id === "attention" && counts.attention > 0}
               onClick={() => setFilter(f.id)}
-              className={`h-9 px-4 inline-flex items-center gap-1.5 rounded-xl text-[13px] font-semibold border-2 transition-all
-                ${filter === f.id
-                  ? "bg-ink text-white border-ink btn-3d"
-                  : "bg-surface text-ink-2 border-ink/20 hover:border-ink/50 hover:text-ink"}`}
             >
               {f.label}
-              <span className={`text-[11px] tabular-nums ${filter === f.id ? "text-white/60" : "text-ink-4"}`}>
-                {counts[f.id]}
-              </span>
-              {f.id === "attention" && counts.attention > 0 && filter !== f.id && (
-                <span className="h-1.5 w-1.5 rounded-full bg-attention" />
-              )}
-            </button>
+            </FilterChip>
           ))}
           <div className="flex-1" />
-          <div className="inline-flex items-center gap-2 text-[12.5px] text-ink-3 font-medium">
+          <div className="inline-flex items-center gap-2 text-[12px] sm:text-[12.5px] text-ink-3 font-medium">
             <span>Sort:</span>
             <select
               value={sortKey}
               onChange={(e) => setSortKey(e.target.value as SortKey)}
-              className="h-9 pl-3 pr-7 bg-surface rounded-xl text-[12.5px] text-ink font-semibold appearance-none cursor-pointer"
+              className="h-8 sm:h-9 pl-2.5 sm:pl-3 pr-7 bg-surface rounded-lg sm:rounded-xl text-[12px] sm:text-[12.5px] text-ink font-semibold appearance-none cursor-pointer"
               style={{ border: "2px solid rgba(26,26,26,0.2)" }}
             >
               <option value="due">Due date</option>
@@ -117,8 +116,8 @@ export default function ProjectsPage() {
         {/* Table */}
         <div className="v3-card overflow-hidden fade-up d2">
           <div
-            className="grid items-center gap-3 px-5 h-11 bg-muted/40 text-[11px] uppercase tracking-wider font-bold text-ink-3"
-            style={{ gridTemplateColumns: "1fr 110px 80px 60px 70px 100px 20px", borderBottom: "2px solid rgba(26,26,26,0.07)" }}
+            className="tbl-head row-projects items-center gap-3 px-5 h-11 bg-muted/40 text-[11px] uppercase tracking-wider font-bold text-ink-3"
+            style={{ borderBottom: "2px solid rgba(26,26,26,0.07)" }}
           >
             <span>Project</span>
             <span>Status</span>
@@ -134,7 +133,7 @@ export default function ProjectsPage() {
           )}
 
           {isLoading && [...Array(4)].map((_, i) => (
-            <div key={i} className="grid items-center gap-3 px-5 h-row" style={{ gridTemplateColumns: "1fr 110px 80px 60px 70px 100px 20px", borderBottom: "1px solid rgba(26,26,26,0.06)" }}>
+            <div key={i} className="row-projects items-center gap-3 px-5 h-row" style={{ borderBottom: "1px solid rgba(26,26,26,0.06)" }}>
               <Skeleton className="h-3.5 w-2/3" />
               <Skeleton className="h-5 w-16" />
               <Skeleton className="h-5 w-14" />
@@ -167,6 +166,15 @@ export default function ProjectsPage() {
   );
 }
 
+/** Column heading inlined into a cell — the real <thead> is hidden once rows stack. */
+function ColLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="md:hidden mr-1.5 text-[10px] uppercase tracking-wider text-ink-4 font-bold shrink-0">
+      {children}
+    </span>
+  );
+}
+
 function ProjectRow({ project: p, divider, pending, delay, onOpen }: {
   project: any; divider: boolean; pending: number; delay: string; onOpen: () => void;
 }) {
@@ -178,32 +186,29 @@ function ProjectRow({ project: p, divider, pending, delay, onOpen }: {
   return (
     <div
       onClick={onOpen}
-      className={`group grid items-center gap-3 px-5 h-row v3-row cursor-pointer transition-colors fade-up ${delay}`}
-      style={{
-        gridTemplateColumns: "1fr 110px 80px 60px 70px 100px 20px",
-        ...(divider ? { borderBottom: "1px solid rgba(26,26,26,0.06)" } : {}),
-      }}
+      className={`group row-projects items-center gap-3 px-5 h-row v3-row cursor-pointer transition-colors fade-up ${delay}`}
+      style={divider ? { borderBottom: "1px solid rgba(26,26,26,0.06)" } : undefined}
     >
       <div className="min-w-0 flex items-center gap-2">
         <span className="text-[13.5px] font-semibold text-ink truncate">{p.name}</span>
-        {overdue && (
-          <span className="text-[10px] px-2 h-5 inline-flex items-center bg-attention-bg text-attention rounded-full font-bold border border-attention/20 shrink-0">
-            overdue
-          </span>
-        )}
+        {overdue && <Tag tone="attention">overdue</Tag>}
       </div>
-      <div><StatusBadge status={p.status as StatusKey} className="!h-5 !text-[10px]" /></div>
+      <div><StatusBadge status={p.status as StatusKey} /></div>
       <div className="flex items-center gap-1.5 text-[12.5px] text-ink-2 font-semibold">
         <Avatar initial={owner !== "—" ? owner[0].toUpperCase() : "?"} size="xs" />
         <span className="truncate">{owner}</span>
       </div>
-      <div className="text-right text-[13px] text-ink-2 tabular-nums font-semibold">—</div>
+      <div className="text-right text-[13px] text-ink-2 tabular-nums font-semibold">
+        <ColLabel>Posts</ColLabel>—
+      </div>
       <div className="text-right">
+        <ColLabel>Pending</ColLabel>
         {pending > 0
           ? <span className="text-attention font-bold text-[13px]">{pending}</span>
           : <span className="text-ink-4 text-[13px]">—</span>}
       </div>
       <div className="flex items-center gap-2 justify-end">
+        <ColLabel>Health</ColLabel>
         {health != null ? (
           <>
             <div className="flex-1 h-2 rounded-full bg-muted overflow-hidden" style={{ border: "1px solid rgba(26,26,26,0.08)" }}>

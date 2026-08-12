@@ -305,7 +305,7 @@ export default function EmployeePerformancePage() {
                   <div className="text-right">
                     <p className="text-xs text-[#7A7A7A]">{r.linkCount} links</p>
                     {r.totalEngagement > 0 && (
-                      <p className="text-[10px] text-[#B0B0B0]">{r.totalEngagement} eng.</p>
+                      <p className="text-[10px] text-[#B0B0B0]">{r.totalEngagement.toLocaleString()} views+likes+cmts</p>
                     )}
                   </div>
                 </div>

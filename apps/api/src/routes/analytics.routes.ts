@@ -89,20 +89,11 @@ router.get(
   }
 );
 
-// ===== Client Analytics Endpoint =====
-
-router.get(
-  "/client/analytics",
-  authenticateClient,
-  async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const clientId = (req as any).client.id;
-      const stats = await analyticsService.getClientAnalytics(clientId);
-      return success(res, stats);
-    } catch (err) {
-      next(err);
-    }
-  }
-);
+// ⚠️ Do NOT re-add a GET /client/analytics here. client.routes.ts mounts FIRST
+// (see routes/index.ts) and serves /client/analytics via
+// getClientContentAnalytics — a duplicate here is SHADOWED DEAD CODE (the same
+// trap as the shadowed HR /hr/reports handlers removed in PR #33). The old
+// duplicate that lived here called getClientAnalytics, which carried an
+// unbounded 2-queries-per-project N+1 — both removed 2026-07-20.
 
 export default router;

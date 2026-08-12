@@ -212,8 +212,14 @@ describe("Account Growth API", () => {
       expect(res.body.data.accountCount).toBe(2);
     });
 
-    it("topMoversByPlatform omits platforms where all accounts have zero delta", async () => {
-      // Create a Facebook platform + account with zero delta (first == latest, no snapshots).
+    it("topMoversByPlatform INCLUDES zero-delta platforms (manual platforms must still appear — 2026-06-30 e29df5a)", async () => {
+      // Deliberate behavior change 2026-06-30 ("add Snapchat to Top Movers by
+      // Platform"): platforms whose accounts all have delta=0 (e.g. manually-
+      // entered follower counts, no snapshots yet) are INCLUDED, showing their
+      // top accounts by follower count. The original 2026-06-25 contract omitted
+      // them; this test asserted that and silently failed for weeks after the
+      // intent changed. Do not "fix" the service to omit zero-delta platforms —
+      // that would make manual platforms (Snapchat pre-scraper) vanish again.
       const fbPlatform = await prisma.platform.create({
         data: { name: "Facebook", slug: "facebook" },
       });
@@ -228,9 +234,11 @@ describe("Account Growth API", () => {
 
       expect(res.status).toBe(200);
       const d = res.body.data;
-      // Facebook account has delta=0 → must NOT appear in topMoversByPlatform.
-      expect(d.topMoversByPlatform).not.toHaveProperty("Facebook");
-      // Instagram accounts still appear (non-zero deltas).
+      // Zero-delta Facebook account IS present, with an honest delta of 0.
+      expect(d.topMoversByPlatform).toHaveProperty("Facebook");
+      expect(d.topMoversByPlatform.Facebook[0].displayName).toBe("FBPage");
+      expect(d.topMoversByPlatform.Facebook[0].delta).toBe(0);
+      // Platforms with real movers appear too, unchanged.
       expect(d.topMoversByPlatform).toHaveProperty("Instagram");
     });
 

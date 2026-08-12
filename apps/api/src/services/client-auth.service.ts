@@ -65,8 +65,13 @@ export async function clientRefresh(refreshToken: string) {
     throw new AppError(401, "INVALID_TOKEN", "Client not found or inactive");
   }
 
-  // Rotate token
-  await prisma.clientRefreshToken.delete({ where: { id: stored.id } });
+  // Rotate token — race-safe one-time consume (see hr-auth.service.ts refreshHrToken):
+  // a bare delete() 500s the loser of two concurrent refreshes with the same token
+  // (P2025); deleteMany + count check turns that into the standard clean 401.
+  const consumed = await prisma.clientRefreshToken.deleteMany({ where: { id: stored.id } });
+  if (consumed.count === 0) {
+    throw new AppError(401, "INVALID_TOKEN", "Refresh token already used");
+  }
 
   const newAccessToken = jwt.sign(
     { userId: client.id, email: client.email, roles: [], type: "client" as const },

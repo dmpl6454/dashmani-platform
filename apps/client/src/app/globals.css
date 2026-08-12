@@ -187,3 +187,152 @@ kbd {
 
 /* ── Shadow hard-ink for segmented controls ── */
 .shadow-hard-ink { box-shadow: 3px 3px 0 rgba(26,26,26,0.14); }
+
+/* ── Command palette ──
+   Must stay below .v3-card: both are single-class selectors, so .palette-card
+   only wins the border/radius/shadow override by being declared later. */
+/* No dimmed backdrop — the card's ink border and shadow separate it from the
+   page on their own. The shell still spans the viewport (transparent, but it
+   hit-tests) so tapping outside the card closes the palette. */
+.palette-shell {
+  position: fixed; inset: 0; z-index: 80;
+  display: flex; align-items: flex-start; justify-content: center;
+  padding: 96px 16px 16px;
+}
+.palette-card {
+  width: 100%; max-width: 36rem; max-height: 100%; overflow: hidden;
+  display: flex; flex-direction: column;
+}
+.palette-results { overflow-y: auto; max-height: 360px; }
+
+/* ── Responsive data tables ──
+   Column tracks live here rather than in an inline style, because an inline
+   grid-template-columns beats any stylesheet rule and could not be restacked.
+   These sit after @tailwind utilities, so they also override h-row/text-right
+   on small screens. */
+.row-projects {
+  display: grid;
+  grid-template-columns: 1fr 110px 80px 60px 70px 100px 20px;
+}
+.row-content {
+  display: grid;
+  grid-template-columns: 36px 1fr 120px 140px 96px;
+}
+
+@media (max-width: 767px) {
+  /* Phone: 440px of fixed columns can't fit, so each row becomes a stacked
+     card. Cells keep their DOM order and are placed by area. */
+  .row-projects {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) 20px;
+    grid-template-areas:
+      "name   name    name   chev"
+      "status owner   owner  owner"
+      "posts  pending health health";
+    height: auto; row-gap: 9px; padding-top: 13px; padding-bottom: 13px;
+    align-items: center;
+  }
+  .row-projects > :nth-child(1) { grid-area: name; }
+  .row-projects > :nth-child(2) { grid-area: status; }
+  .row-projects > :nth-child(3) { grid-area: owner; }
+  .row-projects > :nth-child(4) { grid-area: posts;   text-align: left; }
+  .row-projects > :nth-child(5) { grid-area: pending; text-align: left; }
+  .row-projects > :nth-child(6) { grid-area: health;  justify-content: flex-start; }
+  .row-projects > :nth-child(7) { grid-area: chev; align-self: start; }
+
+  .row-content {
+    grid-template-columns: 36px minmax(0, 1fr) auto;
+    grid-template-areas:
+      "thumb title   title"
+      "thumb project status"
+      "thumb sched   status";
+    height: auto; row-gap: 4px; padding-top: 13px; padding-bottom: 13px;
+    align-items: center;
+  }
+  .row-content > :nth-child(1) { grid-area: thumb; align-self: start; }
+  /* Title spans the full width — sharing its line with the status badge left
+     it about 110px and truncated most titles to two words. */
+  .row-content > :nth-child(2) { grid-area: title; }
+  .row-content > :nth-child(3) { grid-area: project; }
+  .row-content > :nth-child(4) { grid-area: sched; }
+  .row-content > :nth-child(5) { grid-area: status; align-self: center; justify-self: end; }
+}
+
+.row-files {
+  display: grid;
+  grid-template-columns: 36px 1fr 100px 100px 120px 48px;
+}
+.row-analytics {
+  display: grid;
+  grid-template-columns: 1fr 80px 80px 120px;
+}
+
+@media (max-width: 767px) {
+  .row-files {
+    grid-template-columns: 36px minmax(0, 1fr) auto;
+    grid-template-areas:
+      "icon name name"
+      "icon meta act"
+      "icon when act";
+    height: auto; row-gap: 3px; padding-top: 11px; padding-bottom: 11px;
+    align-items: center;
+  }
+  .row-files > :nth-child(1) { grid-area: icon; align-self: start; }
+  .row-files > :nth-child(2) { grid-area: name; }
+  .row-files > :nth-child(3) { grid-area: meta; }
+  .row-files > :nth-child(4) { grid-area: meta; justify-self: end; }
+  .row-files > :nth-child(5) { grid-area: when; }
+  .row-files > :nth-child(6) { grid-area: act; justify-self: end; }
+
+  .row-analytics {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "name    name"
+      "posts   pending"
+      "health  health";
+    height: auto; row-gap: 6px; padding-top: 11px; padding-bottom: 11px;
+  }
+  .row-analytics > :nth-child(1) { grid-area: name; }
+  .row-analytics > :nth-child(2) { grid-area: posts;   text-align: left; }
+  .row-analytics > :nth-child(3) { grid-area: pending; text-align: left; }
+  .row-analytics > :nth-child(4) { grid-area: health;  padding-left: 0; }
+}
+
+/* Column headings label a layout that no longer exists once rows stack.
+   Declared after .row-* so display:none wins on phones. */
+.tbl-head { display: grid; }
+@media (max-width: 767px) { .tbl-head { display: none; } }
+
+/* Controls that fade in on row hover. A touch device never hovers, so there
+   they must be visible from the start or they can't be reached at all. */
+.hover-reveal { opacity: 0; transition: opacity .15s ease; }
+.group:hover .hover-reveal,
+.group:focus-within .hover-reveal { opacity: 1; }
+@media (hover: none) { .hover-reveal { opacity: 1; } }
+
+/* ── Split panes ──
+   Approvals and Files are master/detail layouts sized for a desktop. Left as
+   fixed columns they ran their second pane off the side of a phone. */
+.approvals-split { display: grid; grid-template-columns: clamp(260px, 30vw, 320px) 1fr; }
+.approvals-list { border-right: 2px solid rgba(26,26,26,0.08); }
+
+.files-layout  { display: flex; flex: 1 1 0%; min-height: 0; overflow: hidden; }
+.files-sidebar { width: 13rem; flex-shrink: 0; display: flex; flex-direction: column; overflow-y: auto; border-right: 2px solid rgba(26,26,26,0.08); }
+
+@media (max-width: 767px) {
+  /* One pane. Tapping a row already opens the full post, so the detail
+     pane has nothing to add on a phone. */
+  .approvals-split { grid-template-columns: 1fr; }
+  .approvals-list { border-right: 0; }
+  .approvals-detail { display: none; }
+
+  /* Folders become a horizontal strip above the files instead of a column. */
+  .files-layout  { flex-direction: column; overflow: visible; }
+  .files-sidebar {
+    width: 100%; overflow: visible;
+    border-right: 0; border-bottom: 2px solid rgba(26,26,26,0.08);
+    padding: 10px 12px;
+  }
+  .files-sidebar nav { display: flex; gap: 6px; overflow-x: auto; }
+  .files-sidebar nav > button { width: auto; height: 32px; flex: 0 0 auto; gap: 6px; }
+  .files-folders-label, .files-storage { display: none; }
+}

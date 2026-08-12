@@ -10,7 +10,8 @@ import { useAuth } from "@/lib/auth";
 import { UserAvatar } from "@/components/user-avatar";
 import { PlatformIcon } from "@/lib/platform-icon";
 import { RangePills, presetStart, todayISO, rangeLabel } from "./_range";
-import { ExportButton } from "./_export";
+import { ExportButton, AllLinksCsvButton } from "./_export";
+import { TrueLinksPanel } from "./_true-links";
 
 // Snapchat has no dedicated lucide-react brand icon; reuse the same SVG mapped
 // in PlatformIcon (already used elsewhere in the portal) for visual consistency.
@@ -204,24 +205,48 @@ const ReportCard = memo(function ReportCard({ report, isAdmin, deletingLinkId, o
         {report.notes && (
           // break-words: notes are free text and occasionally contain an unbroken URL,
           // which has no spaces for the browser to wrap on and overflows the card.
-          <p className="text-sm text-[#7A7A7A] mb-4 italic pl-[52px] break-words">{report.notes}</p>
+          <p className="text-sm text-[#7A7A7A] mb-4 italic pl-0 sm:pl-[52px] break-words">{report.notes}</p>
         )}
 
-        <div className="space-y-1 pl-[52px]">
+        {/* pl-[52px] aligns the list under the avatar on desktop, but that is 52px of
+            a ~340px phone viewport spent on empty gutter — flush left on phones. */}
+        <div className="space-y-1 pl-0 sm:pl-[52px]">
           {shownLinks.map((link: any, i: number) => (
-            <div key={link.id ?? i} className="flex items-center gap-2 group/link py-1 px-2 rounded-lg hover:bg-[#FEFCF7] transition-colors">
+            /* Phones: the row wraps to two lines — badge + time on top, the link itself
+               full-width below. Everything except the URL was shrink-0, so on a narrow
+               row the URL truncated to nothing while the non-shrinkable items still
+               overflowed and painted over each other. sm+ keeps the single-line row. */
+            <div key={link.id ?? i} className="flex flex-wrap sm:flex-nowrap items-center gap-x-2 gap-y-0.5 group/link py-1 px-2 rounded-lg hover:bg-[#FEFCF7] transition-colors">
               <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide border ${platformBadgeClass(link.platform)}`}>
                 {link.platform ?? "—"}
               </span>
+              {/* basis-full + order-last put this on its own line on phones; sm:basis-0
+                  restores the original `flex-1` behaviour (grow:1 shrink:1 basis:0).
+                  overflow-hidden clips any child that still refuses to shrink, so a
+                  long name can never paint over the time again. */}
               <a
                 href={link.url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="flex-1 min-w-0 flex items-center gap-2 group/url"
+                className="order-last basis-full grow min-w-0 overflow-hidden flex items-center gap-2 group/url sm:order-none sm:basis-0"
                 title={link.url}
               >
                 {link.accountName && (
-                  <span className="text-xs font-medium text-[#1A1A1A] shrink-0 group-hover/url:text-[#F5D547] transition-colors">{link.accountName}</span>
+                  /* Was shrink-0, which is what pushed the name outside the anchor.
+                     Two separate things are going on, so note both:
+                       - `shrink-0` is REMOVED at every width (no sm:shrink-0). The
+                         anchor's overflow-hidden is not breakpoint-gated, so a
+                         non-shrinkable name at desktop could not ellipsize itself
+                         and the anchor hard-clipped its glyphs mid-letter instead.
+                         Being shrinkable means its own `truncate` fires and you get
+                         a proper "…".
+                       - `max-w-[55%]` stays PHONE-ONLY (sm:max-w-none). On a phone
+                         the anchor is a full-width line shared with the URL, so the
+                         cap guarantees the URL keeps room. At desktop there is
+                         usually space for the whole name, and capping it there
+                         would truncate names that fit perfectly well (measured: a
+                         345px name needlessly cut to 269px at an 800px viewport). */
+                  <span className="text-xs font-medium text-[#1A1A1A] min-w-0 max-w-[55%] truncate sm:max-w-none group-hover/url:text-[#F5D547] transition-colors">{link.accountName}</span>
                 )}
                 <span className="text-[10px] text-[#B0B0B0] truncate group-hover/url:underline">{link.url}</span>
               </a>
@@ -229,7 +254,9 @@ const ReportCard = memo(function ReportCard({ report, isAdmin, deletingLinkId, o
                 <span className="text-xs text-[#B0B0B0] truncate max-w-[200px] hidden md:block">{link.description}</span>
               )}
               {report.submittedAt && (
-                <span className="text-[10px] text-[#B0B0B0] shrink-0 tabular-nums whitespace-nowrap">
+                /* ml-auto right-aligns the time on the phone's first line; on sm+ the
+                   anchor already absorbs the free space, so it resolves to zero. */
+                <span className="ml-auto text-[10px] text-[#B0B0B0] shrink-0 tabular-nums whitespace-nowrap">
                   {new Date(report.submittedAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}
                 </span>
               )}
@@ -403,8 +430,8 @@ export default function ReportsPage() {
   const hasInsights = !insightsLoading && engagementViews > 0;
   function fmtCompact(n: number | null | undefined): string {
     if (n == null) return "—";
-    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-    if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}m`;
+    if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
     return String(n);
   }
 
@@ -424,6 +451,23 @@ export default function ReportsPage() {
     if (hrs < 48) return `Updated ${hrs}h ago`;
     const days = Math.round(hrs / 24);
     return `Updated ${days}d ago`;
+  }
+
+  // Per-ROW staleness marker. WHY per-row and not just the panel-level "Updated N ago"
+  // above: the sweep polls each link independently (fresh links every run, the older tail
+  // on a rotating cursor), so one panel can mix a 1-hour-old row with a 3-week-old one.
+  // A single panel-level max would then read "Updated 1h ago" and actively UNDERSTATE how
+  // stale the lower rows are — worse than showing nothing. Returns null for anything
+  // fresher than the threshold so healthy rows stay visually clean.
+  const STALE_ROW_HOURS = 48;
+  function rowStaleness(fetchedAt?: string | Date | null): string | null {
+    if (!fetchedAt) return null;
+    const t = new Date(fetchedAt).getTime();
+    if (Number.isNaN(t)) return null;
+    const hrs = (Date.now() - t) / 3_600_000;
+    if (hrs < STALE_ROW_HOURS) return null;
+    const days = Math.round(hrs / 24);
+    return `${days}d old`;
   }
 
   const statCards = [
@@ -451,7 +495,8 @@ export default function ReportsPage() {
           <p className="text-sm text-[#7A7A7A] mt-1">Employee daily link submission reports</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <ExportButton startDate={startDate} endDate={endDate} variant="light" />
+          <ExportButton startDate={startDate} endDate={endDate} employeeId={employeeId || undefined} variant="light" />
+          <AllLinksCsvButton startDate={startDate} endDate={endDate} employeeId={employeeId || undefined} variant="light" />
           <Link
             href="/reports/links"
             className="inline-flex items-center gap-2 bg-white border border-[#E8E0D0] text-[#1A1A1A] rounded-full px-4 py-2 text-sm font-medium hover:shadow-[0_4px_12px_rgba(0,0,0,0.08)] transition-shadow"
@@ -588,6 +633,17 @@ export default function ReportsPage() {
         </div>
       )}
 
+      {/* True Links — dedupe-aware stats + per-employee shared/unique leaderboard.
+          Own endpoint + hook (server-cached), so it loads independently and can
+          never slow or block the summary cards above. Honors the same window pills
+          and employee dropdown as everything else on the page. */}
+      <TrueLinksPanel
+        startDate={startDate}
+        endDate={endDate}
+        employeeId={employeeId || undefined}
+        windowLabel={windowLabel}
+      />
+
       {/* Top Links panels — YouTube, Instagram, Facebook, Snapchat. One shared window
           toggle on the first rendered panel; each panel reuses the same /admin/reports/top-links
           endpoint. YouTube/Facebook/Snapchat rank by views; Instagram by likes+comments
@@ -642,7 +698,10 @@ export default function ReportsPage() {
             showViews: true,
             data: (topSnapchatData as any)?.data ?? [],
             loading: topSnapchatLoading,
-            note: "Snapchat · views (no likes — not exposed by Spotlight)",
+            // Null views are LEGITIMATE: Snapchat serves viewCount:"-1" (a sentinel meaning
+            // "not published") for many Spotlights — live-verified 10/10 on 2026-07-18.
+            // The dash is honest absence, not missing data. Don't "fix" it to 0.
+            note: "Snapchat · views where Spotlight publishes them (a dash means Snapchat doesn't expose a public view count for that post — not missing data) · no likes on Spotlight",
           },
         ];
 
@@ -686,7 +745,14 @@ export default function ReportsPage() {
                         </button>
                       </div>
                     )}
-                    <span className="ml-auto text-[10px] text-[#B0B0B0] shrink-0">
+                    {/* No shrink-0 here: a text flex item's base size is its max-content
+                        width (the whole string on one line), so flex-shrink:0 meant the
+                        box could never be narrowed and the text could never wrap — the
+                        161-char Snapchat note ran straight off the card edge while the
+                        short notes ("YouTube · views") happened to fit. Shrinking is now
+                        allowed, so long notes wrap onto their own line inside the card
+                        and short ones still sit right-aligned on the header line. */}
+                    <span className="ml-auto min-w-0 max-w-full text-[10px] text-[#B0B0B0] sm:text-right">
                       {p.note}
                       {(() => {
                         const rel = relativeUpdated(p.data);
@@ -722,15 +788,42 @@ export default function ReportsPage() {
                         {p.data.map((link: any, i: number) => (
                           <li key={`${link.linkId ?? link.url}-${i}`} className={`px-4 sm:px-6 py-3 flex flex-wrap items-center gap-x-3 gap-y-1.5 sm:grid ${cols} sm:gap-3`}>
                             <span className="text-xs font-medium text-[#B0B0B0]">{i + 1}</span>
-                            <a
-                              href={link.url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-xs text-[#1A1A1A] hover:underline truncate min-w-0 flex-1 sm:flex-none"
-                              title={link.url}
-                            >
-                              {link.url}
-                            </a>
+                            {/* ⚠️ The URL and the staleness chip share ONE grid cell — the chip
+                                must NOT be a direct child of the <li>. At sm+ the row is
+                                `sm:grid ${cols}` with exactly as many tracks as it has children
+                                (the phone wrap spacer below is `sm:hidden`, so it generates no
+                                box and is not a grid item). Adding a bare chip as another child
+                                shifts every following cell one track right: measured in a
+                                headless browser against the compiled stylesheet, the employee
+                                name landed under "Views", views under "Likes", and Comments
+                                wrapped onto an implicit second row under "#". Wrapping both in a
+                                single span keeps the child count — and the header alignment —
+                                exactly as it was. */}
+                            <span className="flex items-center gap-2 min-w-0 flex-1 sm:flex-none">
+                              <a
+                                href={link.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-xs text-[#1A1A1A] hover:underline truncate min-w-0"
+                                title={link.url}
+                              >
+                                {link.url}
+                              </a>
+                              {/* Staleness marker: this row's metrics were last refreshed
+                                  N days ago. Only rendered past STALE_ROW_HOURS, so fresh
+                                  rows stay clean and an old number can't masquerade as live. */}
+                              {(() => {
+                                const stale = rowStaleness(link.fetchedAt);
+                                return stale ? (
+                                  <span
+                                    className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5 shrink-0"
+                                    title={`Metrics last refreshed ${stale.replace(" old", "")} ago. This link is waiting its turn in the background refresh queue.`}
+                                  >
+                                    {stale}
+                                  </span>
+                                ) : null;
+                              })()}
+                            </span>
                             {/* forces the wrap onto line 2 on phones; absent from the sm grid */}
                             <span aria-hidden className="basis-full h-0 sm:hidden" />
                             <span className="text-xs text-[#7A7A7A] truncate flex-1 min-w-0 sm:flex-none">{link.employeeName}</span>

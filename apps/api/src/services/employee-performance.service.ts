@@ -21,26 +21,73 @@ export async function getEmployeePerformance(employeeId: string) {
     throw new Error("Employee not found");
   }
 
-  // Fetch all reports with links
+  // ⚠️ MEMORY-SAFE SHAPE (2026-07-20). The old code did ONE findMany hydrating
+  // EVERY report WITH every link + nested account + platform — the exact
+  // unbounded-include class behind the 2026-07-09 kernel-OOM (getReportSummary).
+  // For the heaviest employee that was ~14k nested link rows per request to
+  // return a small aggregate. Now: reports WITHOUT links (a few hundred tiny
+  // rows), per-report link counts/sums via ONE DB groupBy, the platform
+  // breakdown via ONE SQL aggregation, and full link hydration ONLY for the 10
+  // recent reports (bounded). Output is byte-identical. Do NOT reintroduce an
+  // unbounded `include: { links: ... }` here — see the same rule in
+  // daily-report.service.ts getReportSummary.
   const reports = await prisma.dailyReport.findMany({
     where: { employeeId },
-    include: {
-      links: {
-        include: {
-          account: { include: { platform: true } },
-        },
-      },
-    },
+    select: { id: true, date: true, notes: true },
     orderBy: { date: "desc" },
   });
 
+  // Per-report link count + metric sums (replaces per-link JS accumulation).
+  const perReport = await prisma.reportLink.groupBy({
+    by: ["reportId"],
+    where: { report: { employeeId } },
+    _count: { _all: true },
+    _sum: { likes: true, comments: true, shares: true, views: true },
+  });
+  const linkCountByReport = new Map<string, number>();
+  let totalLinks = 0;
+  let totalLikes = 0, totalComments = 0, totalShares = 0, totalViews = 0;
+  for (const g of perReport) {
+    linkCountByReport.set(g.reportId, g._count._all);
+    totalLinks += g._count._all;
+    totalLikes += g._sum.likes ?? 0;
+    totalComments += g._sum.comments ?? 0;
+    totalShares += g._sum.shares ?? 0;
+    totalViews += g._sum.views ?? 0;
+  }
+
   // Basic stats
   const totalReports = reports.length;
-  const totalLinks = reports.reduce((sum, r) => sum + r.links.length, 0);
-  let totalLikes = 0, totalComments = 0, totalShares = 0, totalViews = 0;
 
-  // Platform breakdown
+  // Platform breakdown — same fallback chain as the old per-link JS
+  // (account.platform name/slug, else the free-text link platform, else Other),
+  // aggregated in Postgres instead of over hydrated rows.
+  const platformRows = await prisma.$queryRaw<
+    Array<{ slug: string; name: string; links: bigint; engagement: bigint }>
+  >`
+    SELECT
+      COALESCE(p.slug, LOWER(rl.platform), 'other') AS slug,
+      COALESCE(p.name, rl.platform, 'Other') AS name,
+      count(*)::bigint AS links,
+      sum(coalesce(rl.likes, 0) + coalesce(rl.comments, 0) + coalesce(rl.shares, 0))::bigint AS engagement
+    FROM report_links rl
+    JOIN daily_reports dr ON dr.id = rl.report_id
+    LEFT JOIN social_accounts sa ON sa.id = rl.account_id
+    LEFT JOIN platforms p ON p.id = sa.platform_id
+    WHERE dr.employee_id = ${employeeId}
+    GROUP BY 1, 2
+    ORDER BY count(*) DESC
+  `;
   const platformMap = new Map<string, { name: string; links: number; engagement: number }>();
+  for (const row of platformRows) {
+    const existing = platformMap.get(row.slug);
+    if (existing) {
+      existing.links += Number(row.links);
+      existing.engagement += Number(row.engagement);
+    } else {
+      platformMap.set(row.slug, { name: row.name, links: Number(row.links), engagement: Number(row.engagement) });
+    }
+  }
 
   // Weekly trend (last 12 weeks)
   const weeklyTrend: { week: string; reports: number; links: number }[] = [];
@@ -62,7 +109,7 @@ export async function getEmployeePerformance(employeeId: string) {
     weeklyTrend.push({
       week: weekLabel,
       reports: weekReports.length,
-      links: weekReports.reduce((s, r) => s + r.links.length, 0),
+      links: weekReports.reduce((s, r) => s + (linkCountByReport.get(r.id) ?? 0), 0),
     });
   }
 
@@ -77,7 +124,7 @@ export async function getEmployeePerformance(employeeId: string) {
     const dateStr = r.date instanceof Date
       ? r.date.toISOString().split("T")[0]
       : String(r.date).split("T")[0];
-    reportDateMap.set(dateStr, r.links.length);
+    reportDateMap.set(dateStr, linkCountByReport.get(r.id) ?? 0);
   }
 
   for (let i = 0; i < 90; i++) {
@@ -90,24 +137,7 @@ export async function getEmployeePerformance(employeeId: string) {
     });
   }
 
-  // Process all links
-  for (const report of reports) {
-    for (const link of report.links) {
-      totalLikes += link.likes ?? 0;
-      totalComments += link.comments ?? 0;
-      totalShares += link.shares ?? 0;
-      totalViews += link.views ?? 0;
-
-      const platformName = link.account?.platform?.name ?? link.platform ?? "Other";
-      const platformSlug = link.account?.platform?.slug ?? link.platform?.toLowerCase() ?? "other";
-      if (!platformMap.has(platformSlug)) {
-        platformMap.set(platformSlug, { name: platformName, links: 0, engagement: 0 });
-      }
-      const p = platformMap.get(platformSlug)!;
-      p.links += 1;
-      p.engagement += (link.likes ?? 0) + (link.comments ?? 0) + (link.shares ?? 0);
-    }
-  }
+  // (Per-link totals + platform breakdown are computed in the DB above.)
 
   // Streaks
   const today = new Date();
@@ -153,10 +183,23 @@ export async function getEmployeePerformance(employeeId: string) {
   const thisMonthReports = reports.filter((r) => new Date(r.date) >= monthStart).length;
   const thisMonthLinks = reports
     .filter((r) => new Date(r.date) >= monthStart)
-    .reduce((s, r) => s + r.links.length, 0);
+    .reduce((s, r) => s + (linkCountByReport.get(r.id) ?? 0), 0);
 
-  // Recent reports (last 10)
-  const recentReports = reports.slice(0, 10).map((r) => ({
+  // Recent reports (last 10) — the ONLY place links are hydrated, bounded to 10
+  // reports (the platforms list + per-report engagement need per-link rows).
+  const recentWithLinks = await prisma.dailyReport.findMany({
+    where: { employeeId },
+    include: {
+      links: {
+        include: {
+          account: { include: { platform: true } },
+        },
+      },
+    },
+    orderBy: { date: "desc" },
+    take: 10,
+  });
+  const recentReports = recentWithLinks.map((r) => ({
     id: r.id,
     date: r.date instanceof Date ? r.date.toISOString().split("T")[0] : String(r.date).split("T")[0],
     notes: r.notes,

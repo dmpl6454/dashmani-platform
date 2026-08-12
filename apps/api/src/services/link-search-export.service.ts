@@ -1,11 +1,12 @@
 // Link Search → Spreadsheet export.
 //
 // Produces a styled .xlsx workbook for ONE searched person/topic ("celeb"):
-//   1. "Posts"  — one row per submitted link for that entity (the raw ledger):
-//                 date, platform, channel (handle + name), submitted-by employee,
-//                 the post URL, a same-post group id, and a "Duplicate?" flag.
-//   2. "About"  — the entity, totals (total / unique / duplicate posts, channels),
-//                 generated-at, and the honest coverage caveat.
+//   1. "Posts"                    — one row per submitted link for that entity (the raw
+//                                   ledger): date, platform, channel, submitted-by employee,
+//                                   the post URL, a same-post group id, and a "Duplicate?" flag.
+//   2. "Cross-Employee Duplicates"— posts about this entity that TWO+ DIFFERENT employees
+//                                   submitted (allowed), grouped per post with name + time.
+//   3. "About"                    — the entity, totals, generated-at, and the coverage caveat.
 //
 // Reuses searchLinksByEntity() so the export reconciles EXACTLY with what the
 // Link Search screen shows (same posts, same same-vs-unique semantics — we never
@@ -14,7 +15,10 @@
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const XLSX = require("xlsx-js-style");
+import { istTimeOfDay } from "@dashmani/shared";
 import { searchLinksByEntity, type LinkSearchResult } from "./link-search.service";
+
+type SearchPost = LinkSearchResult["posts"][number];
 
 // ── Palette (matches reports-export so the two workbooks look consistent) ──────
 const INK = "1A1A1A";
@@ -116,6 +120,133 @@ function styledSheet(rows: PostRow[]): any {
   return ws;
 }
 
+// ── Cross-Employee Duplicates sheet ───────────────────────────────────────────
+// Same feature as the Reports export's dup sheet, but scoped to the ONE searched
+// entity: posts (about this person) that ≥2 DIFFERENT employees submitted. This is
+// the CROSS-employee subset — narrower than the "Posts" sheet's "Duplicate?" flag,
+// which marks ANY same-post repeat (incl. one employee re-sharing). Grouping is by
+// canonicalKey (already computed on each post). One row per submission, grouped
+// contiguously (banded) with a 1-based groupNo, ordered most-shared first and, within
+// a group, earliest submit time first — so the reviewer sees who posted it and when.
+
+interface DupRow {
+  groupNo: number;
+  employeesOnLink: number;
+  employee: string;
+  submitTime: string;
+  date: string;
+  channel: string;
+  platform: string;
+  url: string;
+}
+
+const DUP_HEADERS: { key: keyof DupRow; label: string }[] = [
+  { key: "groupNo", label: "Dup Group" },
+  { key: "employeesOnLink", label: "Employees Sharing" },
+  { key: "employee", label: "Submitted By" },
+  { key: "submitTime", label: "Posting Time (IST)" },
+  { key: "date", label: "Date" },
+  { key: "channel", label: "Channel" },
+  { key: "platform", label: "Platform" },
+  { key: "url", label: "Link URL" },
+];
+
+const DUP_COL_WIDTH: Record<string, number> = {
+  "Dup Group": 10,
+  "Employees Sharing": 16,
+  "Submitted By": 22,
+  "Posting Time (IST)": 16,
+  Date: 12,
+  Channel: 24,
+  Platform: 12,
+  "Link URL": 52,
+};
+const DUP_CENTER = new Set(["Dup Group", "Posting Time (IST)", "Date", "Platform"]);
+const DUP_RIGHT = new Set(["Employees Sharing"]);
+
+/** Posts (for one entity) that ≥2 DIFFERENT employees submitted, as grouped rows. */
+export function buildEntityDuplicateRows(posts: SearchPost[]): DupRow[] {
+  const groups = new Map<string, SearchPost[]>();
+  for (const p of posts) {
+    if (!p.canonicalKey) continue;
+    const arr = groups.get(p.canonicalKey);
+    if (arr) arr.push(p);
+    else groups.set(p.canonicalKey, [p]);
+  }
+
+  type Grp = { posts: SearchPost[]; empCount: number; earliest: number };
+  const qualifying: Grp[] = [];
+  for (const ps of groups.values()) {
+    const emps = new Set<string>();
+    for (const p of ps) emps.add(p.employee.id);
+    if (emps.size < 2) continue; // must be ≥2 DIFFERENT employees
+    let earliest = Infinity;
+    for (const p of ps) earliest = Math.min(earliest, new Date(p.firstSeenAt).getTime());
+    qualifying.push({ posts: ps, empCount: emps.size, earliest });
+  }
+  qualifying.sort(
+    (a, b) => b.empCount - a.empCount || b.posts.length - a.posts.length || a.earliest - b.earliest,
+  );
+
+  const rows: DupRow[] = [];
+  let groupNo = 0;
+  for (const g of qualifying) {
+    groupNo++;
+    const ordered = [...g.posts].sort(
+      (a, b) => new Date(a.firstSeenAt).getTime() - new Date(b.firstSeenAt).getTime(),
+    );
+    for (const p of ordered) {
+      rows.push({
+        groupNo,
+        employeesOnLink: g.empCount,
+        employee: p.employee.name,
+        submitTime: istTimeOfDay(new Date(p.firstSeenAt)),
+        date: p.date,
+        channel: p.account.displayName || p.account.handle,
+        platform: p.platform,
+        url: p.url,
+      });
+    }
+  }
+  return rows;
+}
+
+/** Styled dup sheet, banded per group (each group flips the cream/white band). */
+function dupSheet(rows: DupRow[]): any {
+  const aoa: any[][] = [DUP_HEADERS.map((h) => h.label)];
+  for (const r of rows) aoa.push(DUP_HEADERS.map((h) => r[h.key]));
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  const nCols = DUP_HEADERS.length;
+  const nRows = rows.length;
+
+  for (let c = 0; c < nCols; c++) {
+    const ref = XLSX.utils.encode_cell({ r: 0, c });
+    if (ws[ref]) ws[ref].s = headerStyle;
+  }
+  let bandParity = 0;
+  let prevGroup: number | undefined = undefined;
+  for (let i = 0; i < nRows; i++) {
+    const r = i + 1;
+    const g = rows[i].groupNo;
+    if (i > 0 && g !== prevGroup) bandParity ^= 1;
+    prevGroup = g;
+    const even = bandParity === 1;
+    for (let c = 0; c < nCols; c++) {
+      const ref = XLSX.utils.encode_cell({ r, c });
+      if (!ws[ref]) ws[ref] = { t: "s", v: "" };
+      const label = DUP_HEADERS[c].label;
+      const align = DUP_RIGHT.has(label) ? "right" : DUP_CENTER.has(label) ? "center" : "left";
+      ws[ref].s = bodyStyle({ even, align });
+    }
+  }
+  ws["!cols"] = DUP_HEADERS.map((h) => ({ wch: DUP_COL_WIDTH[h.label] ?? 16 }));
+  ws["!rows"] = [{ hpt: 22 }];
+  if (nRows > 0) {
+    ws["!autofilter"] = { ref: `A1:${XLSX.utils.encode_cell({ r: nRows, c: nCols - 1 })}` };
+  }
+  return ws;
+}
+
 // "About" sheet: entity + totals + generated-at + the honest coverage caveat.
 function aboutSheet(result: LinkSearchResult, q: string, generatedAt: Date): any {
   const cov = result.coverage;
@@ -172,8 +303,13 @@ export function buildLinkSearchWorkbook(result: LinkSearchResult, q: string, gen
   // Sort newest-first, then group same posts together for readability.
   rows.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : a.group < b.group ? -1 : 1));
 
+  // Cross-employee duplicates for this entity (posts ≥2 different employees submitted).
+  const dupRows = buildEntityDuplicateRows(result.posts);
+
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, styledSheet(rows), "Posts");
+  // Always present (empty ⇒ "no cross-employee duplicates for this person").
+  XLSX.utils.book_append_sheet(wb, dupSheet(dupRows), "Cross-Employee Duplicates");
   XLSX.utils.book_append_sheet(wb, aboutSheet(result, q, generatedAt), "About");
   return XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer;
 }

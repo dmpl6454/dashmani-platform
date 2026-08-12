@@ -81,7 +81,13 @@ export async function refresh(refreshToken: string) {
     throw new AppError(401, "INVALID_TOKEN", "User not found or inactive");
   }
 
-  await prisma.refreshToken.delete({ where: { id: stored.id } });
+  // Race-safe one-time consume — see the matching note in hr-auth.service.ts
+  // refreshHrToken: a bare delete() 500s the loser of two concurrent refreshes (P2025);
+  // deleteMany + count check turns that into the standard clean 401.
+  const consumed = await prisma.refreshToken.deleteMany({ where: { id: stored.id } });
+  if (consumed.count === 0) {
+    throw new AppError(401, "INVALID_TOKEN", "Refresh token already used");
+  }
 
   const roleNames = user.roles.map((ur) => ur.role.name);
   const payload: JwtPayload = {

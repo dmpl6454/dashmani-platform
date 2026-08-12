@@ -49,6 +49,111 @@ export interface RoleDetailJob {
   _count?: { applications: number };
 }
 
+// Split into header + body because the source design puts the header (dept · №, title,
+// meta chips) at FULL page width, above the two-column grid, and only the description +
+// lists inside the grid's left column. Neither part sits in a card — they render straight
+// onto the page background, so the fixed backdrop (bubbles / gradient wash) shows through.
+
+/** Full-width header block: dept · № counter, title, meta chips. */
+export function RoleDetailHeader({
+  job,
+  num,
+  total,
+}: {
+  job: RoleDetailJob;
+  num?: number;
+  total?: number;
+}) {
+  const color = getDeptColor(job.department);
+  return (
+    <div className="ds-rd-head">
+      <div className="ds-rd-dept" style={{ color }}>
+        {job.department || "Open Role"}
+        {num && total ? ` · № ${pad2(num)} / ${pad2(total)}` : null}
+      </div>
+
+      {/* h1 — this is the page's primary heading on the standalone route */}
+      <h1 className="ds-rd-title">{job.title}</h1>
+
+      <div className="ds-rd-meta">
+        <span className="chip strong">{TYPE_DISPLAY[job.type] || job.type}</span>
+        {job.location && <span className="chip">{job.location}</span>}
+        {job.experience && <span className="chip">{job.experience}</span>}
+        <span className="chip plain">{timeAgo(job.createdAt)}</span>
+        {job._count?.applications ? (
+          <span className="chip plain">{job._count.applications} applied</span>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+/** Description + duties/requirements/benefits lists — the grid's left column. */
+export function RoleDetailBody({
+  job,
+  isApplied = false,
+  actions,
+}: {
+  job: RoleDetailJob;
+  isApplied?: boolean;
+  /** Action buttons (Apply / Share …) rendered in the footer action row. */
+  actions?: ReactNode;
+}) {
+  const color = getDeptColor(job.department);
+  const doingLines = parseLines(job.responsibilities);
+  const lookingLines = parseLines(job.requirements);
+  const benefitLines = parseLines(job.benefits);
+
+  return (
+    <div className="ds-rd-copy">
+      {isApplied && (
+        <div className="ds-rd-applied-banner">
+          <span className="ck">✓</span>
+          <span>Application submitted — we&apos;ll be in touch.</span>
+        </div>
+      )}
+
+      <p className="ds-rd-summary">{job.description}</p>
+
+      {doingLines.length > 0 && (
+        <div className="ds-rd-block" style={{ "--dept": color } as React.CSSProperties}>
+          <h5>What you&apos;ll do</h5>
+          <ul>
+            {doingLines.map((line, i) => (
+              <li key={i}>{line}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {lookingLines.length > 0 && (
+        <div className="ds-rd-block" style={{ "--dept": color } as React.CSSProperties}>
+          <h5>What we&apos;re looking for</h5>
+          <ul>
+            {lookingLines.map((line, i) => (
+              <li key={i}>{line}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {benefitLines.length > 0 && (
+        <div className="ds-rd-block" style={{ "--dept": color } as React.CSSProperties}>
+          <h5>Benefits</h5>
+          <ul>
+            {benefitLines.map((line, i) => (
+              <li key={i}>{line}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {actions && <div className="ds-rd-actions">{actions}</div>}
+    </div>
+  );
+}
+
+/** Header + body together — used by the server-rendered SEO fallback. */
 export default function RoleDetailView({
   job,
   num,
@@ -61,111 +166,12 @@ export default function RoleDetailView({
   num?: number;
   total?: number;
   isApplied?: boolean;
-  /** Action buttons (Apply / Share …) rendered in the footer action row. */
   actions?: ReactNode;
 }) {
-  const color = getDeptColor(job.department);
-  const doingLines = parseLines(job.responsibilities);
-  const lookingLines = parseLines(job.requirements);
-  const benefitLines = parseLines(job.benefits);
-
   return (
     <>
-      <div className="ds-rd-stripe" style={{ background: color }} />
-      <div className="ds-rd-body">
-        <div className="ds-rd-header">
-          <span className="ds-rd-dept" style={{ color }}>
-            {job.department || "Open Role"}
-          </span>
-          {num && total ? (
-            <span className="ds-rd-num">
-              № {pad2(num)} / {pad2(total)}
-            </span>
-          ) : null}
-        </div>
-
-        {/* h1 — this is the page's primary heading on the standalone route */}
-        <h1 className="ds-rd-title">{job.title}</h1>
-
-        <div className="ds-rd-activity">
-          <span>
-            <span className="dot" />
-            {timeAgo(job.createdAt)}
-          </span>
-          {job._count?.applications ? <span>· {job._count.applications} applied</span> : null}
-        </div>
-
-        <div className="ds-rd-meta">
-          <span className="chip">
-            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
-              <circle cx="8" cy="8" r="6" />
-              <path d="M8 4.5V8l2.2 1.4" />
-            </svg>
-            {TYPE_DISPLAY[job.type] || job.type}
-          </span>
-          {job.location && (
-            <span className="chip">
-              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
-                <path d="M8 14s-5-4.4-5-8.2A5 5 0 0 1 13 5.8C13 9.6 8 14 8 14Z" />
-                <circle cx="8" cy="6" r="1.8" />
-              </svg>
-              {job.location}
-            </span>
-          )}
-          {job.experience && (
-            <span className="chip">
-              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
-                <path d="M3 13V8m5 5V4m5 9V9" />
-              </svg>
-              {job.experience}
-            </span>
-          )}
-        </div>
-
-        {isApplied && (
-          <div className="ds-rd-applied-banner">
-            <span className="ck">✓</span>
-            <span>Application submitted — we&apos;ll be in touch.</span>
-          </div>
-        )}
-
-        <p className="ds-rd-summary">{job.description}</p>
-
-        {doingLines.length > 0 && (
-          <div className="ds-rd-block" style={{ "--dept": color } as React.CSSProperties}>
-            <h5>What you&apos;ll do</h5>
-            <ul>
-              {doingLines.map((line, i) => (
-                <li key={i}>{line}</li>
-              ))}
-            </ul>
-          </div>
-        )}
-
-        {lookingLines.length > 0 && (
-          <div className="ds-rd-block" style={{ "--dept": color } as React.CSSProperties}>
-            <h5>What we&apos;re looking for</h5>
-            <ul>
-              {lookingLines.map((line, i) => (
-                <li key={i}>{line}</li>
-              ))}
-            </ul>
-          </div>
-        )}
-
-        {benefitLines.length > 0 && (
-          <div className="ds-rd-block" style={{ "--dept": color } as React.CSSProperties}>
-            <h5>Benefits</h5>
-            <ul>
-              {benefitLines.map((line, i) => (
-                <li key={i}>{line}</li>
-              ))}
-            </ul>
-          </div>
-        )}
-
-        {actions && <div className="ds-rd-actions">{actions}</div>}
-      </div>
+      <RoleDetailHeader job={job} num={num} total={total} />
+      <RoleDetailBody job={job} isApplied={isApplied} actions={actions} />
     </>
   );
 }

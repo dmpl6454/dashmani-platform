@@ -138,14 +138,15 @@ export default function DashboardPage() {
     (linksAnalyticsData as any)?.data?.nonSubmitters ?? [];
 
   // Top Performers metric pill — independent, non-persisted. Links & Engagement come from
-  // the leaderboard/analytics payloads; the three platform tabs rank the SAME fair way as
-  // /reports/leaderboard (YouTube/Facebook by views, Instagram by likes+comments).
+  // the leaderboard/analytics payloads; the platform tabs rank the SAME fair way as
+  // /reports/leaderboard (YouTube/Facebook/Snapchat by views, Instagram by likes+comments).
   const PERF_METRICS = [
     { key: "links", label: "Links" },
     { key: "engagement", label: "Engagement" },
     { key: "youtube", label: "YouTube" },
     { key: "facebook", label: "Facebook" },
     { key: "instagram", label: "Instagram" },
+    { key: "snapchat", label: "Snapchat" },
   ];
   const [perfMetric, setPerfMetric] = useState("links");
   const { data: leaderboardData } = useSWR(
@@ -155,7 +156,7 @@ export default function DashboardPage() {
   );
   const leaderboardRows: any[] = (leaderboardData as any)?.data ?? [];
 
-  // Per-platform boards (fetched once, cached 5 min). Keyed youtube/facebook/instagram.
+  // Per-platform boards (fetched once, cached 5 min). Keyed youtube/facebook/instagram/snapchat.
   const { data: platformLbData } = usePlatformLeaderboards(perfStart, perfEnd);
   const platformBoards: Record<string, any[]> = (platformLbData as any)?.data ?? {};
 
@@ -169,20 +170,28 @@ export default function DashboardPage() {
         .map((r) => ({
           employeeId: r.employee?.id ?? r.employeeId,
           name: r.employee?.name ?? r.name ?? "—",
-          primary: `${fmtCompact(r.totalEngagement ?? 0)} eng`,
+          // No suffix — the panel caption directly above defines this number as
+          // "views + likes + comments (mostly views)"; the "eng" abbreviation
+          // repeatedly failed to explain itself to real users.
+          primary: fmtCompact(r.totalEngagement ?? 0),
           secondary: `${r.totalLinks ?? 0} links`,
         }));
     }
-    // Per-platform board (youtube | facebook | instagram): already ranked server-side.
-    if (perfMetric === "youtube" || perfMetric === "facebook" || perfMetric === "instagram") {
+    // Per-platform board (youtube | facebook | instagram | snapchat): already ranked server-side.
+    if (
+      perfMetric === "youtube" ||
+      perfMetric === "facebook" ||
+      perfMetric === "instagram" ||
+      perfMetric === "snapchat"
+    ) {
       const board = platformBoards[perfMetric] ?? [];
-      const isViews = perfMetric !== "instagram"; // YT/FB rank by views; IG by likes+comments
+      const isViews = perfMetric !== "instagram"; // YT/FB/Snapchat rank by views; IG by likes+comments
       return board.slice(0, 3).map((r: any) => ({
         employeeId: r.employee?.id ?? "—",
         name: r.employee?.name ?? "—",
         primary: isViews
           ? `${fmtCompact(r.views ?? 0)} views`
-          : `${fmtCompact((r.likes ?? 0) + (r.comments ?? 0))} eng`,
+          : `${fmtCompact((r.likes ?? 0) + (r.comments ?? 0))} likes+cmts`,
         secondary: `${r.engagedLinkCount ?? 0} link${(r.engagedLinkCount ?? 0) !== 1 ? "s" : ""}`,
       }));
     }
@@ -738,7 +747,15 @@ export default function DashboardPage() {
               </div>
               <div>
                 <p className="font-bold text-ink">Top Performers</p>
-                <p className="text-xs text-ink-4">Last 30 days</p>
+                {/* The metric caption must always say WHAT the number is — an unlabeled
+                    "2.6m" next to view-ranked tabs gets read as views. Instagram has no
+                    public view counts, so its board ranks by likes + comments. */}
+                <p className="text-xs text-ink-4">
+                  Last 30 days
+                  {perfMetric === "engagement" && " · views + likes + comments (mostly views)"}
+                  {perfMetric === "instagram" && " · by likes + comments (Instagram publishes no view counts)"}
+                  {(perfMetric === "youtube" || perfMetric === "facebook" || perfMetric === "snapchat") && " · by views"}
+                </p>
               </div>
             </div>
             <PillGroup>
@@ -964,18 +981,25 @@ export default function DashboardPage() {
             </div>
           ) : (
             <>
-              {/* Headline totals */}
-              <div className="grid grid-cols-3 gap-3">
-                <div className="v3-card-inset p-3 text-center">
-                  <p className="font-num text-2xl font-semibold text-ink leading-none">{fmtCompact(insightsTotalViews)}</p>
+              {/* Headline totals.
+                  Three columns at every width, so each tile gets ~68px of content
+                  space on a 375px phone. A fixed text-2xl needs ~80px for a 6-char
+                  value like "669.9m" and overflowed the tile; the clamp scales the
+                  figure with the viewport and still caps at 24px on desktop, so it
+                  fits even a 7-char "2770.0m" (fmtCompact has no billions tier).
+                  min-w-0 + truncate are the backstop: a grid child defaults to
+                  min-width:auto, which lets content push past the track. */}
+              <div className="grid grid-cols-3 gap-2 sm:gap-3">
+                <div className="v3-card-inset p-2 sm:p-3 text-center min-w-0">
+                  <p className="font-num text-[clamp(0.95rem,3.6vw,1.5rem)] font-semibold text-ink leading-none truncate">{fmtCompact(insightsTotalViews)}</p>
                   <p className="text-[10px] text-ink-4 mt-1">Views</p>
                 </div>
-                <div className="v3-card-inset p-3 text-center">
-                  <p className="font-num text-2xl font-semibold text-ink leading-none">{fmtCompact(insightsTotalLikes)}</p>
+                <div className="v3-card-inset p-2 sm:p-3 text-center min-w-0">
+                  <p className="font-num text-[clamp(0.95rem,3.6vw,1.5rem)] font-semibold text-ink leading-none truncate">{fmtCompact(insightsTotalLikes)}</p>
                   <p className="text-[10px] text-ink-4 mt-1">Likes</p>
                 </div>
-                <div className="v3-card-inset p-3 text-center">
-                  <p className="font-num text-2xl font-semibold text-ink leading-none">{fmtCompact(insightsTotalComments)}</p>
+                <div className="v3-card-inset p-2 sm:p-3 text-center min-w-0">
+                  <p className="font-num text-[clamp(0.95rem,3.6vw,1.5rem)] font-semibold text-ink leading-none truncate">{fmtCompact(insightsTotalComments)}</p>
                   <p className="text-[10px] text-ink-4 mt-1">Comments</p>
                 </div>
               </div>
@@ -988,7 +1012,11 @@ export default function DashboardPage() {
                     .sort((a, b) => (b.totalViews + b.totalLikes + b.totalComments) - (a.totalViews + a.totalLikes + a.totalComments))
                     .map((p) => (
                       <div key={p.platform} className="flex flex-wrap items-center gap-x-4 gap-y-1 py-1.5 border-t border-[#F0EAD8] first:border-t-0">
-                        <span className="text-xs font-semibold text-ink capitalize w-24 shrink-0">{p.platform}</span>
+                        {/* w-24 is 96px of a ~300px phone row, which squeezed the four
+                            metrics into a ragged wrap. Full width on phones gives the
+                            platform its own line and the metrics a clean one below;
+                            sm+ keeps the original inline label column. */}
+                        <span className="text-xs font-semibold text-ink capitalize w-full sm:w-24 shrink-0">{p.platform}</span>
                         <span className="text-[11px] text-ink-4">{fmtCompact(p.totalViews)} <span className="text-ink-3">views</span></span>
                         <span className="text-[11px] text-ink-4">{fmtCompact(p.totalLikes)} <span className="text-ink-3">likes</span></span>
                         <span className="text-[11px] text-ink-4">{fmtCompact(p.totalComments)} <span className="text-ink-3">comments</span></span>

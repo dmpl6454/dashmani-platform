@@ -1,14 +1,41 @@
 "use client";
 
 import { useState, useEffect, useRef, useMemo } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import useSWR from "swr";
 import { apiFetch } from "@/lib/api";
-import { getDeptColor } from "@/lib/dept-colors";
 import { jobSlug } from "@/lib/slug";
 import { smoothScrollToId } from "@/lib/scroll";
-import ShareButton from "@/components/ShareButton";
+import HeroLoader from "@/components/HeroLoader";
+import { HeroBackdrop, useHeroFX } from "@/components/HeroCanvas";
+import RoleRow from "@/components/RoleRow";
+
+// The loader must play once per real page load (first visit / refresh) and NEVER on a
+// client-side navigation back to "/".
+//
+// This flag lives on `window`, deliberately NOT at module scope. A module-level variable
+// resets whenever the module is first evaluated — and if the visitor lands directly on a
+// role page (a shared job link), this module hasn't loaded yet, so navigating back to "/"
+// evaluates it fresh with the flag false and the loader replays. `window` is created once
+// per document: it survives every soft navigation but resets on a genuine reload, which
+// is exactly the lifetime we want. Not sessionStorage — that would persist across
+// refreshes and suppress the loader when it should play.
+declare global {
+  interface Window {
+    __dsJobsLoaderPlayed?: boolean;
+    /** Set by an inline script in layout.tsx, once per document, before hydration. */
+    __dsEntryPath?: string;
+  }
+}
+
+function shouldShowLoader(): boolean {
+  // Server render: this component only renders for "/", so the prerendered HTML always
+  // includes the loader. The client's first render on a real "/" load agrees, so there's
+  // no hydration mismatch. Soft navigations render client-only, with no HTML to match.
+  if (typeof window === "undefined") return true;
+  if (window.__dsJobsLoaderPlayed) return false;
+  return window.__dsEntryPath === "/";
+}
 
 interface ApiJob {
   id: string;
@@ -48,27 +75,6 @@ const PARAM_TO_FILTER: Record<string, string> = {
   contract: "Contract",
 };
 
-function timeAgo(dateStr?: string): string {
-  if (!dateStr) return "Recently posted";
-  const days = Math.floor((Date.now() - new Date(dateStr).getTime()) / 86400000);
-  if (days <= 0) return "Posted today";
-  if (days === 1) return "Posted yesterday";
-  if (days < 7) return `Posted ${days}d ago`;
-  if (days < 30) return `Posted ${Math.round(days / 7)}w ago`;
-  return `Posted ${Math.round(days / 30)}mo ago`;
-}
-
-function pad2(n: number) {
-  return String(n).padStart(2, "0");
-}
-
-const NUM_WORDS = ["zero","one","two","three","four","five","six","seven","eight","nine","ten",
-  "eleven","twelve","thirteen","fourteen","fifteen","sixteen","seventeen","eighteen","nineteen","twenty"];
-
-function numWord(n: number): string {
-  return NUM_WORDS[n] ?? String(n);
-}
-
 // `initialJobs` is fetched on the server (see page.tsx) and seeded into SWR's cache
 // so the FIRST render — the one Googlebot indexes — already contains every job as
 // real HTML. SWR then revalidates in the background for live data on the client.
@@ -78,6 +84,22 @@ function numWord(n: number): string {
 // longer an inline detail panel or apply modal here.
 export default function JobsPage({ initialJobs = [] }: { initialJobs?: ApiJob[] }) {
   const router = useRouter();
+  const heroRef = useRef<HTMLElement>(null);
+  // Background motion (grid pan, floating "noise" text, antigravity dots, and the cube
+  // canvas's own rAF-driven entrance) stays paused until the loader is gone — otherwise
+  // those animations play out entirely hidden behind the loader and the hero appears
+  // frozen/already-settled the moment it reveals. If the loader already played once
+  // this page load, skip straight to "running" instead of waiting on a loader that
+  // won't render.
+  const [showLoader] = useState(shouldShowLoader);
+  const [heroPlaying, setHeroPlaying] = useState(() => !shouldShowLoader());
+  const fx = useHeroFX(heroRef, heroPlaying);
+
+  // Mark it played as soon as it mounts, not on completion — so navigating away
+  // mid-animation and returning still doesn't replay it.
+  useEffect(() => {
+    if (showLoader) window.__dsJobsLoaderPlayed = true;
+  }, [showLoader]);
   const { data, isLoading } = useSWR(
     "/jobs",
     (url: string) => apiFetch<any>(url),
@@ -187,41 +209,40 @@ export default function JobsPage({ initialJobs = [] }: { initialJobs?: ApiJob[] 
     router.push(`/${jobSlug(job)}`);
   }
 
-  // Index title text
-  function indexTitle() {
-    const n = visibleJobs.length;
-    if (search && filter === "all") {
-      if (n === 0) return "No matches.";
-      return `${n === 1 ? "One match" : `${numWord(n).charAt(0).toUpperCase() + numWord(n).slice(1)} matches`} for "${search}".`;
-    }
-    if (filter === "all") {
-      const total = jobs.length;
-      if (total === 0) return "No open positions.";
-      return `${numWord(total).charAt(0).toUpperCase() + numWord(total).slice(1)} position${total !== 1 ? "s" : ""}, one studio.`;
-    }
-    return `${numWord(n).charAt(0).toUpperCase() + numWord(n).slice(1)} ${filter.toLowerCase()} ${n === 1 ? "role" : "roles"}.`;
-  }
-
   return (
     <>
+      {showLoader && (
+        <HeroLoader
+          onDone={() => {
+            setHeroPlaying(true);
+          }}
+        />
+      )}
+
       {/* ───── HERO ───── */}
-      <section className="ds-hero">
-        <div className="hero-main">
-          <div className="ds-hero-eyebrow ds-mono">
-            <span className="issue-num">Open Call</span>
-            <span className="pip" />
-            <span>{jobs.length} position{jobs.length !== 1 ? "s" : ""}</span>
+      <section className="ds-hero" ref={heroRef} data-hero-play={heroPlaying ? "running" : "paused"}>
+        <HeroBackdrop trailCanvasRef={fx.trailCanvasRef} />
+
+        <div className="ds-hero-inner">
+          <div className="ds-hero-canvas-wrap" aria-hidden="true">
+            <canvas ref={fx.cubeCanvasRef} />
           </div>
 
           <h1 className="ds-hero-headline">
-            We&apos;re building a team<br />
-            that values craft,<br />
-            calm, and real collaboration.
+            <span style={{ animationDelay: ".1s" }}>We&apos;re building a workplace</span>
+            <span style={{ animationDelay: ".32s" }}>that feels less like a scramble</span>
+            <em style={{ animationDelay: ".56s" }}>and more like a plan.</em>
           </h1>
 
+          <svg className="ds-hero-underline" viewBox="0 0 460 26" fill="none" aria-hidden="true">
+            <path d="M6 15 C 120 4, 330 2, 454 9" strokeWidth={2.4} strokeLinecap="round" />
+            <path d="M24 19 C 150 26, 300 8, 436 17" strokeWidth={1.4} strokeLinecap="round" />
+          </svg>
+
           <p className="ds-hero-lede">
-            <span className="pull">Digital Sukoon is a calm, full-service marketing studio in Mumbai.</span>
-            {" "}We&apos;re growing the team across multiple disciplines — full-time, internship, and contract. No agency burnout. Real work, real hours, real care for the craft.
+            Digital Sukoon is a full-service digital marketing studio in Mumbai, building
+            campaigns for brands since 2015. We&apos;re growing the team across multiple
+            disciplines — full-time, internship, and contract.
           </p>
 
           <div className="ds-hero-ctas">
@@ -233,90 +254,53 @@ export default function JobsPage({ initialJobs = [] }: { initialJobs?: ApiJob[] 
               See open roles
               <span className="arrow">→</span>
             </a>
-            <a className="ds-btn ghost" href="https://digitalsukoon.com" target="_blank" rel="noopener noreferrer">
+            <a className="ds-btn glass" href="https://digitalsukoon.com" target="_blank" rel="noopener noreferrer">
               Visit our studio
             </a>
           </div>
         </div>
-
-        <aside className="ds-hero-aside" aria-label="Open call summary">
-          {/* Cohort intake pill — count comes from the API */}
-          <div className="ds-aside-pill">
-            <span className="label">Cohort intake</span>
-            <div className="count">
-              {coldLoad ? "—" : pad2(jobs.length)}
-              <em>&nbsp;position{jobs.length !== 1 ? "s" : ""}</em>
-            </div>
-            <p className="caption">
-              {ftCount > 0 ? `${numWord(ftCount)} full-time` : ""}
-              {internCount > 0 ? `${ftCount > 0 ? ", " : ""}${numWord(internCount)} internship` : ""}
-              {contractCount > 0 ? `${(ftCount > 0 || internCount > 0) ? ", " : ""}${numWord(contractCount)} contract` : ""}
-              {jobs.length === 0 ? "Check back soon for openings." : ""}
-            </p>
-          </div>
-          <MiniCalendar jobs={jobs} />
-        </aside>
       </section>
 
       {/* ───── ROLE INDEX ───── */}
       <section className="ds-index" id="index">
         <div className="ds-index-head">
-          <div className="title">
-            <span className="ds-mono">Now open</span>
-            {/* Show the real title whenever we have jobs (server-seeded via
-                initialJobs) so the indexable <h3> is never a "Loading…" placeholder
-                for crawlers. Only show the loading text on a genuine cold load. */}
-            <h3>{coldLoad ? "Loading positions…" : indexTitle()}</h3>
-          </div>
-          {/* Filter buttons — regular toggle buttons, not a tab pattern */}
-          <div className="ds-filters">
-            {[
-              { key: "all", label: "All", count: jobs.length },
-              { key: "Full-time", label: "Full-time", count: ftCount },
-              { key: "Internship", label: "Internship", count: internCount },
-              { key: "Contract", label: "Contract", count: contractCount },
-            ].map(({ key, label, count }) => (
-              <button
-                key={key}
-                className={filter === key ? "on" : ""}
-                onClick={() => setFilter(key)}
-                type="button"
-                aria-pressed={filter === key}
-              >
-                {label} <span>· {count}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Search + view-all */}
-        <div className="ds-search-row">
-          <div className="ds-search">
-            <span className="search-icon" aria-hidden="true">
-              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
-                <circle cx="7" cy="7" r="4.5" />
-                <path d="m10.5 10.5 3 3" />
-              </svg>
-            </span>
+          <h2 className="ds-index-title">
+            Open roles <span className="count">({coldLoad ? "…" : visibleJobs.length})</span>
+          </h2>
+          <div className="ds-index-search">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+              <circle cx="11" cy="11" r="7" />
+              <line x1="21" y1="21" x2="16.5" y2="16.5" />
+            </svg>
             <input
               ref={searchRef}
               type="text"
-              placeholder="Search by role, department, or location…"
+              placeholder="Search roles, teams, locations…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               autoComplete="off"
             />
           </div>
-          {!isLoading && jobs.length > 0 && (
-            <a
-              className="ds-btn ghost"
-              href="#index"
-              onClick={(e) => { e.preventDefault(); smoothScrollToId("index"); }}
-              style={{ fontSize: 13, whiteSpace: "nowrap" }}
+        </div>
+
+        {/* Filter chips — regular toggle buttons, not a tab pattern */}
+        <div className="ds-chips">
+          {[
+            { key: "all", label: "All roles", count: jobs.length },
+            { key: "Full-time", label: "Full-time", count: ftCount },
+            { key: "Internship", label: "Internship", count: internCount },
+            { key: "Contract", label: "Contract", count: contractCount },
+          ].map(({ key, label, count }) => (
+            <button
+              key={key}
+              className={filter === key ? "on" : ""}
+              onClick={() => setFilter(key)}
+              type="button"
+              aria-pressed={filter === key}
             >
-              View all {jobs.length} →
-            </a>
-          )}
+              {label} <span>{count}</span>
+            </button>
+          ))}
         </div>
 
         {/* Full-width role list — each row links to the role's own page */}
@@ -327,140 +311,22 @@ export default function JobsPage({ initialJobs = [] }: { initialJobs?: ApiJob[] 
             ))
           ) : visibleJobs.length === 0 ? (
             <li className="ds-roles-empty">
-              No roles match your search. Try a different keyword or clear the filter.
+              <img src="/illustrations/no-data.svg" alt="" aria-hidden="true" />
+              <div className="msg">No roles match that search — try another word.</div>
             </li>
           ) : (
-            visibleJobs.map((job, idx) => {
-              const color = getDeptColor(job.department);
-              const isApplied = appliedIds.has(job.id);
-              return (
-                <li
-                  key={job.id}
-                  className={`ds-role ${isApplied ? "applied" : ""}`}
-                  style={{ "--dept": color } as React.CSSProperties}
-                  onClick={() => openJob(job)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      openJob(job);
-                    }
-                  }}
-                  tabIndex={0}
-                  role="link"
-                  aria-label={`${job.title}${job.department ? `, ${job.department}` : ""}${job.location ? `, ${job.location}` : ""}${isApplied ? ", already applied" : ""}`}
-                >
-                  <span className="num">{pad2(idx + 1)}</span>
-                  <span className="dept-bar" />
-                  <div className="info">
-                    <div className="row1">
-                      <span className="title">{job.title}</span>
-                      {job.type === "INTERNSHIP" && <span className="tag">Internship</span>}
-                    </div>
-                    <div className="row2">
-                      {job.department && <span className="dept">{job.department}</span>}
-                      {job.department && job.location && <span className="sep" />}
-                      {job.location && <span>{job.location}</span>}
-                      {job.createdAt && (
-                        <>
-                          <span className="sep" />
-                          <span>{timeAgo(job.createdAt)}</span>
-                        </>
-                      )}
-                    </div>
-                  </div>
-                  <span className="type-pill">
-                    {isApplied ? "Applied" : TYPE_DISPLAY[job.type] || job.type}
-                  </span>
-                  <span className="ds-role-actions">
-                    {/* Share this specific role straight from the list row. */}
-                    <ShareButton slug={jobSlug(job)} jobTitle={job.title} variant="icon" className="go" />
-                    {/* Apply CTA — deep-links to the role page with the form open.
-                        stopPropagation so it doesn't double-fire with the row's own
-                        navigation; it's a real link for middle-click / open-in-new-tab. */}
-                    <Link
-                      href={`/${jobSlug(job)}?apply=true`}
-                      className="ds-role-apply"
-                      aria-label={`Apply for the ${job.title} role`}
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      Apply now
-                    </Link>
-                  </span>
-                </li>
-              );
-            })
+            visibleJobs.map((job) => (
+              <RoleRow
+                key={job.id}
+                job={job}
+                isApplied={appliedIds.has(job.id)}
+                onOpen={() => openJob(job)}
+              />
+            ))
           )}
         </ol>
       </section>
 
     </>
-  );
-}
-
-// ───── MINI CALENDAR ─────
-// Renders the current month dynamically — no hardcoded dates.
-// Highlights today and any jobs posted this calendar month.
-function MiniCalendar({ jobs }: { jobs: ApiJob[] }) {
-  const [today, setToday] = useState<Date | null>(null);
-
-  // Set on the client only to avoid SSR/hydration mismatch (new Date() differs server vs client).
-  useEffect(() => { setToday(new Date()); }, []);
-
-  if (!today) return null;
-
-  const year = today.getFullYear();
-  const month = today.getMonth();
-  const monthLabel = today.toLocaleString("en-IN", { month: "long", year: "numeric" });
-  const todayDate = today.getDate();
-
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
-  const daysInPrevMonth = new Date(year, month, 0).getDate();
-  // Monday-first grid: convert JS Sunday-0 to Monday-0
-  const startPad = (new Date(year, month, 1).getDay() + 6) % 7;
-
-  // Highlight days in this month where a job was posted
-  const eventDays = new Set(
-    jobs
-      .map(j => j.createdAt ? new Date(j.createdAt) : null)
-      .filter((d): d is Date => d !== null && d.getFullYear() === year && d.getMonth() === month)
-      .map(d => d.getDate())
-  );
-
-  const cells: { d: number; cls: string }[] = [];
-  for (let i = startPad - 1; i >= 0; i--) {
-    cells.push({ d: daysInPrevMonth - i, cls: "dim" });
-  }
-  for (let d = 1; d <= daysInMonth; d++) {
-    cells.push({ d, cls: d === todayDate ? "today" : eventDays.has(d) ? "event" : "" });
-  }
-  const nextPad = cells.length % 7 === 0 ? 0 : 7 - (cells.length % 7);
-  for (let d = 1; d <= nextPad; d++) {
-    cells.push({ d, cls: "dim" });
-  }
-
-  return (
-    <div className="ds-aside-card">
-      <span className="label ds-mono">{monthLabel}</span>
-      <div className="ds-calendar" aria-hidden="true">
-        {["M","T","W","T","F","S","S"].map((d, i) => (
-          <span key={i} className="dow">{d}</span>
-        ))}
-        {cells.map((c, i) => (
-          <span key={i} className={`d ${c.cls}`}>{c.d}</span>
-        ))}
-      </div>
-      <div className="event-row">
-        <span className="name"><span className="dot end" />Today</span>
-        <span className="date">
-          {today.toLocaleDateString("en-IN", { day: "2-digit", month: "short" })}
-        </span>
-      </div>
-      {eventDays.size > 0 && (
-        <div className="event-row">
-          <span className="name"><span className="dot start" />Posted this month</span>
-          <span className="date">{eventDays.size} role{eventDays.size !== 1 ? "s" : ""}</span>
-        </div>
-      )}
-    </div>
   );
 }

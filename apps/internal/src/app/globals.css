@@ -53,6 +53,49 @@
   }
 }
 
+/* iOS Safari sizes native date/time controls from their own shadow DOM, so
+   Tailwind's `w-full` (width:100%) does not actually constrain them — the
+   control keeps an intrinsic minimum width and spills out of its container.
+   The 16px floor above compounds it: those fields are styled `text-sm` (14px)
+   and iOS scales the native segments with font-size, so they need ~14% more
+   width than the layout budgeted. That is what breaks the two-up Check In /
+   Check Out grid in the attendance modal on iPhone while Android — which
+   honours the box — looks correct.
+
+   Resetting the native appearance makes iOS lay the field out as an ordinary
+   box that respects width, min-width:0 clears the intrinsic floor, and
+   max-width:100% is the hard guarantee that it can never exceed its container.
+   Do NOT "fix" this by lowering the 16px floor above — that reintroduces the
+   iOS auto-zoom bug from PR #85.
+
+   The two halves are gated DIFFERENTLY on purpose:
+
+   (a) The containment (min-width/max-width) is UNCONDITIONAL. It was originally
+       inside the coarse-pointer query, but apps/hr/src/app/globals.css records a
+       WebKit verification (2026-07-13) that iOS Safari's "Desktop Site" mode
+       reports hover:hover / pointer:fine — so that query evaluates FALSE and the
+       rule would never fire for exactly some of the iPhone users it targets. HR
+       ungated its 16px floor for this same reason. Capping a date/time field at
+       its container width is harmless on real desktop (no browser needs one to be
+       wider than its box), so ungating costs nothing and closes that gap.
+
+   (b) appearance:none STAYS touch-scoped, because unlike (a) it changes native
+       rendering. Desktop Chrome/Firefox size these controls correctly already, so
+       there is no reason to touch their native picker chrome. */
+input[type="date"], input[type="time"], input[type="datetime-local"],
+input[type="month"], input[type="week"] {
+  min-width: 0;
+  max-width: 100%;
+}
+
+@media (hover: none) and (pointer: coarse) {
+  input[type="date"], input[type="time"], input[type="datetime-local"],
+  input[type="month"], input[type="week"] {
+    -webkit-appearance: none;
+    appearance: none;
+  }
+}
+
 @layer utilities {
   /* Typography */
   .font-display { font-family: 'Fraunces', Georgia, serif; }

@@ -315,8 +315,12 @@ router.get(
   requirePermission("reports", "view"),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const { startDate, endDate } = req.query as { startDate?: string; endDate?: string };
-      const { buffer, filename } = await generateReportsExport(startDate, endDate);
+      const { startDate, endDate, employeeId } = req.query as {
+        startDate?: string;
+        endDate?: string;
+        employeeId?: string;
+      };
+      const { buffer, filename } = await generateReportsExport(startDate, endDate, employeeId);
       res.setHeader(
         "Content-Type",
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -332,6 +336,42 @@ router.get(
   },
 );
 
+// GET /admin/reports/links.csv — STREAMED CSV of every submitted link (the raw
+// ledger: literal URL + date + IST posting time + channel + who + engagement) for
+// the window (+ optional employeeId). Unlike the .xlsx, this scales to any size —
+// it keyset-paginates + streams to the response (O(batch) memory). See
+// report-links-csv.service. MUST be declared before /:reportId.
+router.get(
+  "/admin/reports/links.csv",
+  authenticate,
+  requirePermission("reports", "view"),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { startDate, endDate, employeeId } = req.query as {
+        startDate?: string;
+        endDate?: string;
+        employeeId?: string;
+      };
+      const { streamReportLinksCsv, reportLinksCsvFilename } = await import(
+        "../services/report-links-csv.service"
+      );
+      const filename = await reportLinksCsvFilename({ startDate, endDate, employeeId });
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
+      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+      res.setHeader("Access-Control-Expose-Headers", "Content-Disposition");
+      res.setHeader("Cache-Control", "no-store");
+      await streamReportLinksCsv({ startDate, endDate, employeeId }, (chunk) => res.write(chunk));
+      res.end();
+    } catch (err) {
+      // If streaming already began the headers/body are partly sent — we can't send
+      // a JSON error envelope, so just terminate the (truncated) response. Otherwise
+      // defer to the error handler for a clean 500.
+      if (res.headersSent) res.end();
+      else next(err);
+    }
+  },
+);
+
 // GET /admin/reports/leaderboard — MUST be before /:reportId
 router.get(
   "/admin/reports/leaderboard",
@@ -342,6 +382,28 @@ router.get(
       const { startDate, endDate } = req.query as { startDate?: string; endDate?: string };
       const leaderboard = await getLeaderboard(startDate, endDate);
       return success(res, leaderboard);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// GET /admin/reports/true-links — dedupe-aware stats for the window: True Links
+// (distinct posts by canonicalKey), cross-employee duplicate counts, and a
+// per-employee shared/unique breakdown. All dedupe math runs in Postgres (one
+// scan, ~90 aggregate rows to Node — see true-links.service.ts) with a 60s TTL
+// cache, so it never competes with or slows the existing summary endpoints.
+// MUST be before /:reportId.
+router.get(
+  "/admin/reports/true-links",
+  authenticate,
+  requirePermission("reports", "view"),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { startDate, endDate } = req.query as { startDate?: string; endDate?: string };
+      const { getTrueLinksBreakdown } = await import("../services/true-links.service");
+      const breakdown = await getTrueLinksBreakdown(startDate, endDate);
+      return success(res, breakdown);
     } catch (err) {
       next(err);
     }
@@ -551,37 +613,13 @@ router.get(
   },
 );
 
-// POST /admin/insights/refresh — trigger an on-demand enrichment pass (harvest + extract).
-// Returns 202 when a new run is started, 200 when one is already in flight.
-router.post(
-  "/admin/insights/refresh",
-  authenticate,
-  requirePermission("reports", "view"),
-  async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const { triggerInsightsRun, getInsightsRunState } = await import("../services/insights-runner");
-      const result = triggerInsightsRun("manual");
-      return success(res, { ...result, state: getInsightsRunState() }, undefined, result.started ? 202 : 200);
-    } catch (err) {
-      next(err);
-    }
-  },
-);
-
-// GET /admin/insights/status — poll the current enrichment run state.
-router.get(
-  "/admin/insights/status",
-  authenticate,
-  requirePermission("reports", "view"),
-  async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const { getInsightsRunState } = await import("../services/insights-runner");
-      return success(res, getInsightsRunState());
-    } catch (err) {
-      next(err);
-    }
-  },
-);
+// (The manual POST /admin/insights/refresh + GET /admin/insights/status pair and the
+// insights-runner singleton were REMOVED 2026-07-20 along with the Link Search
+// "Refresh enrichment" button: pressing it during a scheduled sweep contended for the
+// shared Meta rate budget and could legitimately spin for ~an hour (50-min hard-budget
+// grind when the FB harvest never fired). Enrichment is fully automatic — 2-hourly
+// sweeps + hourly extraction — so an on-demand trigger bought nothing. Don't re-add a
+// manual trigger without a fast-fail bound + an already-running guard.)
 
 // ===== Enrichment kill-switch (admin-controlled) =====
 // Entity extraction (Haiku/GPT/Gemini captioning → people/topic tags for Link

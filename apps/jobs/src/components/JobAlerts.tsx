@@ -18,14 +18,15 @@ export default function JobAlerts() {
   const emailRef = useRef<HTMLInputElement>(null);
   const pathname = usePathname();
 
-  // Greet visitors: auto-open shortly after landing on the homepage — but only
-  // once per browser session, so it doesn't nag on every refresh or navigation,
+  // Greet visitors: auto-open once they start scrolling past the hero — not on a
+  // fixed timer, so it never interrupts someone still reading the hero or mid-loader.
+  // Only once per browser session, so it doesn't nag on every refresh or navigation,
   // and never on a shared role link (where the visitor came to apply).
   //
-  // The "seen" flag is written when the pop-up actually opens (inside the timer),
-  // NOT when the effect first runs — otherwise React StrictMode's dev double-invoke
-  // (setup → cleanup → setup) would set the flag on the first pass and make the
-  // second pass bail, so it would never open.
+  // The "seen" flag is written when the pop-up actually opens (inside the scroll
+  // handler), NOT when the effect first runs — otherwise React StrictMode's dev
+  // double-invoke (setup → cleanup → setup) would set the flag on the first pass
+  // and make the second pass bail, so it would never open.
   useEffect(() => {
     if (pathname !== "/") return;
     try {
@@ -33,16 +34,20 @@ export default function JobAlerts() {
     } catch {
       return; // sessionStorage unavailable (private mode) — skip auto-open.
     }
-    const t = window.setTimeout(() => {
+    const SCROLL_THRESHOLD = 80; // past the hero, not just a stray wheel tick
+    const onScroll = () => {
+      if (window.scrollY < SCROLL_THRESHOLD) return;
       try {
         if (sessionStorage.getItem("ds-alerts-autoopened")) return;
         sessionStorage.setItem("ds-alerts-autoopened", "1");
       } catch {
         return;
       }
+      window.removeEventListener("scroll", onScroll);
       setOpen(true);
-    }, 500);
-    return () => window.clearTimeout(t);
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
   }, [pathname]);
 
   // While the pop-up is open: focus the field, lock body scroll, close on Escape.

@@ -203,9 +203,11 @@ router.get("/hr/team", authenticateHr, async (req: Request, res: Response, next:
 // Returns null data when no draft exists — never 404.
 router.get("/hr/reports/draft", authenticateHr, async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const d = new Date();
-    const dateKey = req.query.date as string
-      || `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+    // todayIST(), not new Date() + getFullYear/getMonth/getDate: the server runs in
+    // UTC (verified on prod — getTimezoneOffset() === 0), so the local-date form
+    // returns YESTERDAY's key between 00:00 and 05:30 IST and would read the wrong
+    // day's draft. Drafts are keyed on an IST date, so the fallback must be IST too.
+    const dateKey = (req.query.date as string) || todayIST();
     const draft = await prisma.reportDraft.findUnique({
       where: { employeeId_dateKey: { employeeId: req.user!.userId, dateKey } },
       select: { notes: true, linksJson: true, savedAt: true },
@@ -255,9 +257,12 @@ router.put("/hr/reports/draft", authenticateHr, async (req: Request, res: Respon
 // DELETE /hr/reports/draft?date=YYYY-MM-DD — explicitly clear a draft
 router.delete("/hr/reports/draft", authenticateHr, async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const d = new Date();
-    const dateKey = req.query.date as string
-      || `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+    // Same IST rule as the GET above — and it mattered more here. This fallback was
+    // load-bearing because the post-submit clear in apps/hr/src/app/report/page.tsx
+    // sent no ?date, so between 00:00 and 05:30 IST a successful submit deleted
+    // YESTERDAY's draft key and left today's draft behind as stale. The client now
+    // passes ?date explicitly; this keeps the fallback correct for any other caller.
+    const dateKey = (req.query.date as string) || todayIST();
     await prisma.reportDraft.deleteMany({
       where: { employeeId: req.user!.userId, dateKey },
     });

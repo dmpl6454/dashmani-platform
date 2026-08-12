@@ -2,7 +2,7 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Topstrip } from "@/components/portal-topstrip";
-import { StatusBadge, FormatPill, AspectThumb, Empty, PageError, Button, Skeleton } from "@/components/portal-shared";
+import { StatusBadge, FormatPill, AspectThumb, Empty, PageError, Button, Skeleton, FilterChip, SegTabs } from "@/components/portal-shared";
 import { Icon } from "@/components/portal-icons";
 import { fmt } from "@/lib/portal-store";
 import { useClientContent } from "@/lib/hooks/use-content";
@@ -75,40 +75,28 @@ export default function ContentPage() {
         onProjectFilter={setProjectFilter}
         projects={projects}
         right={
-          <div className="flex items-center gap-1 p-0.5 bg-muted rounded-xl" style={{ border: "2px solid rgba(26,26,26,0.1)" }}>
-            {(["list", "calendar"] as const).map((v) => (
-              <button
-                key={v}
-                onClick={() => setView(v)}
-                className={`h-7 px-3 text-[12.5px] font-semibold rounded-lg transition-all
-                  ${view === v ? "bg-surface text-ink shadow-hard-ink" : "text-ink-3 hover:text-ink"}`}
-              >
-                {v === "list" ? "List" : "Calendar"}
-              </button>
-            ))}
-          </div>
+          <SegTabs
+            value={view}
+            onChange={setView}
+            options={[{ value: "list", label: "List" }, { value: "calendar", label: "Calendar" }]}
+          />
         }
       />
       <NewBriefModal open={briefOpen} onClose={() => setBriefOpen(false)} defaultProjectId={projectFilter ?? undefined} />
 
-      <div className="px-6 py-6 max-w-[1200px] mx-auto w-full flex-1 overflow-y-auto">
+      <div className="px-4 sm:px-6 py-6 max-w-[1200px] mx-auto w-full flex-1 overflow-y-auto">
         {/* Filter chips */}
         <div className="flex items-center gap-2 flex-wrap mb-5 slide-right">
           {CHIPS.map((c) => (
-            <button
+            <FilterChip
               key={c.id}
+              active={filter === c.id}
+              count={c.count}
+              dot={c.dot}
               onClick={() => setFilter(c.id)}
-              className={`h-9 px-4 inline-flex items-center gap-1.5 rounded-xl text-[13px] font-semibold border-2 transition-all
-                ${filter === c.id
-                  ? "bg-ink text-white border-ink btn-3d"
-                  : "bg-surface text-ink-2 border-ink/20 hover:border-ink/50 hover:text-ink"}`}
             >
               {c.label}
-              {typeof c.count === "number" && (
-                <span className={`text-[11px] tabular-nums ${filter === c.id ? "text-white/60" : "text-ink-4"}`}>{c.count}</span>
-              )}
-              {c.dot && filter !== c.id && <span className="h-1.5 w-1.5 rounded-full bg-attention" />}
-            </button>
+            </FilterChip>
           ))}
           <div className="flex-1" />
           <Button variant="ink" size="sm" icon={<Icon.Plus size={14} sw={2.5} />} onClick={() => setBriefOpen(true)}>
@@ -119,8 +107,8 @@ export default function ContentPage() {
         {view === "list" ? (
           <div className="v3-card overflow-hidden fade-up d2">
             <div
-              className="grid items-center gap-3 px-5 h-11 bg-muted/40 text-[11px] uppercase tracking-wider font-bold text-ink-3"
-              style={{ gridTemplateColumns: "36px 1fr 120px 140px 96px", borderBottom: "2px solid rgba(26,26,26,0.07)" }}
+              className="tbl-head row-content items-center gap-3 px-5 h-11 bg-muted/40 text-[11px] uppercase tracking-wider font-bold text-ink-3"
+              style={{ borderBottom: "2px solid rgba(26,26,26,0.07)" }}
             >
               <span></span><span>Post</span><span>Project</span><span>Scheduled</span><span className="text-right">Status</span>
             </div>
@@ -130,7 +118,7 @@ export default function ContentPage() {
             )}
 
             {isLoading && [...Array(4)].map((_, i) => (
-              <div key={i} className="grid items-center gap-3 px-5 h-row" style={{ gridTemplateColumns: "36px 1fr 120px 140px 96px", borderBottom: "1px solid rgba(26,26,26,0.06)" }}>
+              <div key={i} className="row-content items-center gap-3 px-5 h-row" style={{ borderBottom: "1px solid rgba(26,26,26,0.06)" }}>
                 <Skeleton className="h-7 w-7" />
                 <Skeleton className="h-3.5 w-2/3" />
                 <Skeleton className="h-3 w-16" />
@@ -171,11 +159,8 @@ function ContentRow({ post: p, divider, onOpen, delay }: { post: any; divider: b
   return (
     <div
       onClick={onOpen}
-      className={`group grid items-center gap-3 px-5 h-row v3-row cursor-pointer fade-up ${delay}`}
-      style={{
-        gridTemplateColumns: "36px 1fr 120px 140px 96px",
-        ...(divider ? { borderBottom: "1px solid rgba(26,26,26,0.06)" } : {}),
-      }}
+      className={`group row-content items-center gap-3 px-5 h-row v3-row cursor-pointer fade-up ${delay}`}
+      style={divider ? { borderBottom: "1px solid rgba(26,26,26,0.06)" } : undefined}
     >
       <AspectThumb aspect={p.aspectRatio || "1:1"} format={p.format} />
       <div className="min-w-0 flex items-center gap-2">
@@ -186,7 +171,7 @@ function ContentRow({ post: p, divider, onOpen, delay }: { post: any; divider: b
       <span className={`text-[12.5px] tabular-nums font-medium ${overdue ? "text-attention font-semibold" : "text-ink-2"}`}>
         {fmt.date(p.scheduledAt)}
       </span>
-      <div className="text-right"><StatusBadge status={p.status} className="!h-5 !text-[10px]" /></div>
+      <div className="text-right"><StatusBadge status={p.status} /></div>
     </div>
   );
 }

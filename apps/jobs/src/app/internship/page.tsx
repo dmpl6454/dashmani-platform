@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef } from "react";
+import Link from "next/link";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/v1";
 
@@ -63,7 +64,8 @@ export default function InternshipPage() {
               Your internship application is in. We&apos;ll review it and get back within five working days.
               Keep an eye on your inbox.
             </p>
-            <a className="back-link" href="/#index">Back to open roles →</a>
+            {/* next/link, not <a> — see NavLinks.tsx: a full load re-arms the hero preloader. */}
+            <Link className="back-link" href="/#index">Back to open roles →</Link>
           </div>
         </div>
       </div>

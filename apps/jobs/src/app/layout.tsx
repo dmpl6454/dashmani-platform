@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import Link from "next/link";
 import {
   DM_Sans,
   Bricolage_Grotesque,
@@ -149,12 +150,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <div className="ds-page">
           {/* NAV */}
           <nav className="ds-nav">
-            <a className="ds-brand" href="/" aria-label="Digital Sukoon Careers">
+            {/* next/link, not <a> — a raw anchor full-loads the document and re-arms
+                the hero preloader flags (see NavLinks.tsx for the full explanation). */}
+            <Link className="ds-brand" href="/" aria-label="Digital Sukoon Careers">
               <BrandMark />
               <span className="wordmark">
                 <span className="name">Digital Sukoon</span>
               </span>
-            </a>
+            </Link>
             <div className="ds-nav-right">
               <JobAlerts />
               <NavLinks />

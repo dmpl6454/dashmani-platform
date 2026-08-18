@@ -13,6 +13,12 @@ export interface GrowthAccount {
   deltaPct: number | null;
   /** Added when API ships the enriched response */
   syncState?: SyncState;
+  /**
+   * Provenance of the follower number: "api" (official platform API),
+   * "scraper" (public-page parse), null (hand-entered). Optional because an
+   * API response from before this field shipped simply omits it.
+   */
+  syncSource?: "api" | "scraper" | null;
   lastSyncedAt?: string | null;
   /** Public profile URL for an open-channel link (optional; absent on older API responses) */
   profileUrl?: string | null;

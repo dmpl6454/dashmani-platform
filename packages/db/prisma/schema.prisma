@@ -295,6 +295,12 @@ model SocialAccount {
   profileUrl      String?       @map("profile_url")
   followerCount   Int           @default(0) @map("follower_count")
   lastSyncedAt    DateTime?     @map("last_synced_at")
+  /// HOW the current followerCount was obtained: "api" (official platform API —
+  /// Meta Graph / YouTube Data API), "scraper" (public-page parse), or null =
+  /// never auto-synced (hand-entered). Distinct from lastSyncedAt, which only
+  /// says WHEN. A scraper number can be fresh yet less trustworthy than an API
+  /// one, so freshness and provenance are shown as separate pills in the UI.
+  syncSource      String?       @map("sync_source")
   createdAt       DateTime      @default(now()) @map("created_at")
   updatedAt       DateTime      @updatedAt @map("updated_at")
 

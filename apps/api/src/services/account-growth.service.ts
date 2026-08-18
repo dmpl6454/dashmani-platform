@@ -191,6 +191,13 @@ export interface GrowthOverviewAccount {
   lastSyncedAt: string | null;
   /** LIVE = synced within 48h; STALE = synced but older than 48h; MANUAL = never synced. */
   syncState: SyncState;
+  /**
+   * WHERE the number came from — "api" (official platform API: Meta Graph /
+   * YouTube Data API), "scraper" (public-page parse), or null (hand-entered).
+   * Orthogonal to syncState, which is only about FRESHNESS: a scraper value can
+   * be an hour old (LIVE) yet less authoritative than an API one.
+   */
+  syncSource: "api" | "scraper" | null;
 }
 
 export interface GrowthOverview {
@@ -215,6 +222,20 @@ export interface GrowthOverview {
   staleFollowers: number;
   /** Sum of latest follower counts for MANUAL accounts. */
   manualFollowers: number;
+  /** Accounts whose current number came from an official platform API. */
+  apiSourceCount: number;
+  /** Accounts whose current number came from a public-page scraper. */
+  scraperSourceCount: number;
+  /** Accounts with no recorded auto-sync source (hand-entered). */
+  manualSourceCount: number;
+  /**
+   * Total followers at the START of the window (sum of each account's baseline).
+   * WINDOW-DEPENDENT — this is what makes the headline card respond to 7d/30d/90d:
+   * the UI can show "285.9m now, was 281.2m 30 days ago". Correction artifacts are
+   * NOT excluded here (unlike totalDelta) because this is a raw historical sum, not
+   * a growth claim; use totalDelta for the movement figure.
+   */
+  baselineFollowers: number;
   accounts: GrowthOverviewAccount[];
   topMovers: Array<{
     accountId: string;
@@ -286,10 +307,27 @@ export async function getGrowthOverview(days = 30): Promise<GrowthOverview> {
   const overviewAccounts: GrowthOverviewAccount[] = dedupedAccounts.map((account) => {
     const snaps = account.growthSnapshots; // already date-asc, windowed
 
-    // first/latest fall back to the account's live followerCount when there are
-    // no in-window snapshots.
+    // `first` is the window BASELINE — the earliest snapshot inside the window
+    // (falling back to the live count when the window has no history, which makes
+    // delta 0 rather than inventing movement).
     const first = snaps.length > 0 ? snaps[0].followerCount : account.followerCount;
-    const latest = snaps.length > 0 ? snaps[snaps.length - 1].followerCount : account.followerCount;
+
+    // `latest` is the account's CURRENT count. Deliberately NOT "the last snapshot
+    // in the window": an account whose most recent snapshot predates the window
+    // start (e.g. sync gaps — 326 accounts have 7d snapshots vs 357 at 90d) would
+    // otherwise contribute a stale figure to what is presented as a current total,
+    // and two accounts could be summed from different points in time. The live
+    // `followerCount` column is always the freshest value the sync wrote, so it is
+    // the correct source for "now" at every window width.
+    //
+    // Consequence (intended): totalFollowers is window-INVARIANT, while `delta`
+    // (= now − window baseline) moves with the filter. That is the honest reading —
+    // "how many followers we have" is not a function of the chosen window; "how
+    // much we grew" is. We still take max() so a snapshot newer than the column
+    // (possible mid-sync, since the snapshot upsert and the column write are two
+    // statements) is never discarded.
+    const newestSnap = snaps.length > 0 ? snaps[snaps.length - 1].followerCount : 0;
+    const latest = Math.max(account.followerCount, newestSnap);
     const delta = latest - first;
     const deltaPct = first > 0 ? Math.round((delta / first) * 100) : null;
 
@@ -339,6 +377,11 @@ export async function getGrowthOverview(days = 30): Promise<GrowthOverview> {
       })),
       lastSyncedAt: account.lastSyncedAt ? account.lastSyncedAt.toISOString() : null,
       syncState,
+      // Only "api"/"scraper" are ever written; anything else (legacy rows written
+      // before the column existed, or a value from a future resolver) reads as
+      // null → the UI shows no source pill rather than an unexplained label.
+      syncSource:
+        account.syncSource === "api" || account.syncSource === "scraper" ? account.syncSource : null,
     };
   });
 
@@ -377,6 +420,12 @@ export async function getGrowthOverview(days = 30): Promise<GrowthOverview> {
   const manualFollowers = overviewAccounts
     .filter((a) => a.syncState === "MANUAL")
     .reduce((sum, a) => sum + a.latest, 0);
+
+  const baselineFollowers = overviewAccounts.reduce((sum, a) => sum + a.first, 0);
+
+  const apiSourceCount = overviewAccounts.filter((a) => a.syncSource === "api").length;
+  const scraperSourceCount = overviewAccounts.filter((a) => a.syncSource === "scraper").length;
+  const manualSourceCount = overviewAccounts.filter((a) => a.syncSource === null).length;
 
   const moverShape = (a: GrowthOverviewAccount) => ({
     accountId: a.accountId,
@@ -435,6 +484,10 @@ export async function getGrowthOverview(days = 30): Promise<GrowthOverview> {
     liveFollowers,
     staleFollowers,
     manualFollowers,
+    apiSourceCount,
+    scraperSourceCount,
+    manualSourceCount,
+    baselineFollowers,
     accounts: overviewAccounts,
     topMovers,
     topMoversByPlatform,

@@ -578,8 +578,17 @@
 /* Hover = ink outline ring ONLY. The source declares a `--bg` custom property here but
    never consumes it in any background declaration, so the row's fill must not change —
    the page backdrop stays visible straight through the row. */
+/* Fast IN, gentle OUT. The duration declared on this rule governs the transition *into*
+   the hovered state; the base rule's .35s still governs the fade back out on un-hover.
+   Why: when a row scrolls under a stationary cursor, `:hover` matches it immediately and
+   reliably — measured 100% of reps at every delay from 0ms up, so hit-testing was never
+   the problem. The ring was simply too slow to appear: at .35s it measured 0.15px of its
+   1.5px at 60ms and 0.78px at 130ms, i.e. still invisible, so scrolling a list past the
+   pointer read as "the boundary line never appears". At .12s it reaches 1.09px by 60ms
+   and the full 1.5px by 130ms. Deliberate hover keeps its unhurried fade-out. */
 .ds-role:hover, .ds-role.active {
   box-shadow: 0 0 0 1.5px var(--ink);
+  transition-duration: .12s;
 }
 .ds-role .dept-tag {
   display: inline-flex;

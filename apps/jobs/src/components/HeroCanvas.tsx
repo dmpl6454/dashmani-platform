@@ -242,8 +242,29 @@ export function useHeroFX(heroRef: RefObject<HTMLElement>, playing: boolean) {
     let mx = -1e4, my = -1e4, cmx = -1e4, cmy = -1e4;
     let dvx = 0, dvy = 0, idleT = 0, active = false;
     let vmx = -1e4, vmy = -1e4, ripple = 0;
+    // Last known pointer position in VIEWPORT coords. `mx/my` (hero-relative) and
+    // `cmx/cmy` (cube-canvas-relative) go stale the moment the page scrolls without the
+    // mouse moving: the hero slides under a stationary cursor and no mousemove fires, so
+    // there is nothing to recompute them from. Keeping the raw client coords lets us
+    // re-derive both on scroll. See `applyPointer`.
+    let lastCX = -1e4, lastCY = -1e4;
     let raf: number | null = null;
     let lastTime = performance.now();
+    // Repaint budgeting for the cube layer. Redrawing ~200 gradient-filled cubes plus the
+    // beams and sparks is the single most expensive thing on this page, and it competes
+    // directly with scrolling: painting it on every rAF tick measured a p95 frame time of
+    // 14-21ms and 5-7 dropped frames per scroll pass, against 7.1ms and zero when the
+    // layer was static. Two limits fix that without going back to a frozen hero:
+    //   1. cap it to ~30fps — the bob/beam/spark motion is slow and subtle enough that
+    //      halving its rate is imperceptible, and rAF can run far above 60Hz anyway;
+    //   2. skip it entirely while a scroll is in flight AND the cursor is outside the
+    //      hero, i.e. someone reading the listings. When the cursor IS in the hero the
+    //      full rate is kept, because that is exactly the cursor-follows-scroll behaviour
+    //      the hero is supposed to have.
+    const CUBE_FRAME_MS = 33;
+    const SCROLL_QUIET_MS = 140;
+    let cubeAccum = CUBE_FRAME_MS; // paint on the very first tick
+    let lastScrollAt = -1e9;
 
     // ── cursor-trail icons ──
     const RING = 152, BAND = 62, CLEAR = 52;
@@ -363,7 +384,6 @@ export function useHeroFX(heroRef: RefObject<HTMLElement>, playing: boolean) {
       cubeCv.width = Math.round(CW * dpr);
       cubeCv.height = Math.round(CH * dpr);
       cctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      cubesBusy = true;
       seedFloaters();
     };
 
@@ -372,7 +392,6 @@ export function useHeroFX(heroRef: RefObject<HTMLElement>, playing: boolean) {
       const w = Math.min(CW / 23, CH / 14.2), d = w * 0.9, cw = w * 0.94, ch = cw * 0.5;
       const cx = CW / 2, cy = CH * 0.5 + w * 1.25;
       if (w !== gW) { gW = w; gcw = cw; gch = ch; gcd = cw * 0.9; GR = buildGrads(cw, ch, gcd); }
-      let anyLifted = false;
       for (const fl of floaters) {
         const e = still ? 1 : Math.max(0, Math.min(1, (t - fl.delay) / 1.1));
         if (e <= 0) continue;
@@ -408,7 +427,6 @@ export function useHeroFX(heroRef: RefObject<HTMLElement>, playing: boolean) {
           c.lift += (target - c.lift) * (target > c.lift ? 0.16 : 0.075);
           if (Math.abs(c.lift) < 0.02) c.lift = 0;
         }
-        if (c.lift > 0.02) anyLifted = true;
         const hot = Math.max(0, Math.min(1, c.lift / (w * 0.7)));
         const y = y0 - c.lift;
         const cd = gcd * c.h;
@@ -458,10 +476,8 @@ export function useHeroFX(heroRef: RefObject<HTMLElement>, playing: boolean) {
         }
       }
       cctx.globalAlpha = 1;
-      cubesBusy = still ? false : t < 4.2 || anyLifted || cmx > -1e3;
     };
 
-    let cubesBusy = true;
     let trailDirty = false;
 
     const paintTrail = (dt: number) => {
@@ -551,21 +567,54 @@ export function useHeroFX(heroRef: RefObject<HTMLElement>, playing: boolean) {
     };
     size();
 
-    const onMove = (e: MouseEvent) => {
-      const r = hero.getBoundingClientRect();
-      const cr = cubeCv.getBoundingClientRect();
-      cmx = e.clientX - cr.left;
-      cmy = e.clientY - cr.top;
-      const nx = e.clientX - r.left, ny = e.clientY - r.top;
-      if (mx > -1e3) { dvx = nx - mx; dvy = ny - my; }
-      mx = nx; my = ny; idleT = 0; active = true;
-    };
-    const onLeave = () => {
+    // Drop all pointer-driven state. `forget` additionally discards the remembered
+    // viewport position — used when the cursor leaves the document entirely, where
+    // scrolling the hero back under it must NOT re-light the trail, because we no longer
+    // know where the cursor is.
+    const clearPointer = (forget: boolean) => {
       active = false;
       mx = -1e4; my = -1e4; cmx = -1e4; cmy = -1e4; vmx = -1e4; vmy = -1e4;
+      if (forget) { lastCX = -1e4; lastCY = -1e4; }
     };
-    hero.addEventListener("mousemove", onMove, { passive: true });
-    hero.addEventListener("mouseleave", onLeave, { passive: true });
+
+    // Re-derive the hero-relative pointer coords from the remembered viewport position.
+    // `track` distinguishes the two callers: a real mousemove (true — also feeds cursor
+    // velocity and resets the idle timer that drives the ripple) from a scroll (false —
+    // the pointer itself has NOT moved, only its position relative to the hero, so it
+    // must not register as activity).
+    //
+    // Whether the pointer counts as "in the hero" is decided by testing the live hero
+    // rect, not by mouseenter/mouseleave: scrolling drags the hero across a stationary
+    // cursor without firing either event, which is the whole bug this fixes.
+    const applyPointer = (track: boolean) => {
+      if (lastCX < -1e3) return;
+      const r = hero.getBoundingClientRect();
+      const inside =
+        lastCX >= r.left && lastCX <= r.right && lastCY >= r.top && lastCY <= r.bottom;
+      if (!inside) { clearPointer(false); return; }
+      const cr = cubeCv.getBoundingClientRect();
+      cmx = lastCX - cr.left;
+      cmy = lastCY - cr.top;
+      const nx = lastCX - r.left, ny = lastCY - r.top;
+      if (track && mx > -1e3) { dvx = nx - mx; dvy = ny - my; }
+      mx = nx; my = ny;
+      if (track) { idleT = 0; active = true; }
+    };
+
+    const onMove = (e: MouseEvent) => {
+      lastCX = e.clientX; lastCY = e.clientY;
+      applyPointer(true);
+    };
+    const onScroll = () => {
+      lastScrollAt = performance.now();
+      applyPointer(false);
+    };
+    const onDocLeave = () => clearPointer(true);
+    // Bound to the window rather than the hero element: the hero can scroll out from
+    // under a stationary pointer, so containment is resolved in applyPointer instead.
+    window.addEventListener("mousemove", onMove, { passive: true });
+    window.addEventListener("scroll", onScroll, { passive: true });
+    document.addEventListener("mouseleave", onDocLeave, { passive: true });
     let resizeT: ReturnType<typeof setTimeout>;
     const onResize = () => { clearTimeout(resizeT); resizeT = setTimeout(size, 180); };
     window.addEventListener("resize", onResize);
@@ -577,7 +626,26 @@ export function useHeroFX(heroRef: RefObject<HTMLElement>, playing: boolean) {
       dvx *= 0.86; dvy *= 0.86;
       if (active) idleT += dt;
       paintTrail(dt);
-      if (cubesBusy || mx > -1e3) paintCubes(false);
+      // The cube monument is not a cursor effect — it has continuous ambient motion of
+      // its own (per-cube bob, the eight energy beams, the rising spark dots), so it must
+      // keep being redrawn rather than held on one frame. This used to be gated on a
+      // `cubesBusy` flag that went false once the entrance settled and nothing was
+      // lifted, which froze the monument the moment the cursor left the hero and made the
+      // whole section look dead. It now repaints continuously, but rate-limited — see
+      // CUBE_FRAME_MS / SCROLL_QUIET_MS above for why. prefers-reduced-motion still paints
+      // exactly one static frame.
+      //
+      // ⚠️ Do not rely on the IntersectionObserver below as the perf guard: the hero is
+      // taller (~832px) than this page's entire scroll range (~779px), so it is never
+      // fully out of view and that observer effectively never fires here. The rate limits
+      // are what actually keep this off the scroll critical path.
+      cubeAccum += dt;
+      const scrolling = now - lastScrollAt < SCROLL_QUIET_MS;
+      const pointerInHero = mx > -1e3;
+      if (cubeAccum >= CUBE_FRAME_MS && !(scrolling && !pointerInHero)) {
+        cubeAccum = 0;
+        paintCubes(false);
+      }
       raf = requestAnimationFrame(tick);
     };
 
@@ -595,7 +663,7 @@ export function useHeroFX(heroRef: RefObject<HTMLElement>, playing: boolean) {
           (entries) => {
             const vis = entries.some((e) => e.isIntersecting);
             if (!vis && raf) { cancelAnimationFrame(raf); raf = null; }
-            else if (vis && !raf) { lastTime = performance.now(); cubesBusy = true; raf = requestAnimationFrame(tick); }
+            else if (vis && !raf) { lastTime = performance.now(); raf = requestAnimationFrame(tick); }
           },
           { threshold: 0 },
         );
@@ -608,8 +676,9 @@ export function useHeroFX(heroRef: RefObject<HTMLElement>, playing: boolean) {
       if (io) io.disconnect();
       clearTimeout(resizeT);
       window.removeEventListener("resize", onResize);
-      hero.removeEventListener("mousemove", onMove);
-      hero.removeEventListener("mouseleave", onLeave);
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("scroll", onScroll);
+      document.removeEventListener("mouseleave", onDocLeave);
     };
   }, [heroRef, playing]);
 

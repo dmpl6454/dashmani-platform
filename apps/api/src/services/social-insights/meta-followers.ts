@@ -128,8 +128,20 @@ export async function fetchInstagramFollowerMap(): Promise<Map<string, IgFollowe
       }
 
       // Rate-limited → stop, return whatever we have (empty here). Any other failure → break.
-      if (res.rateLimited) return map;
-      if (!res.ok || !res.data) break;
+      // Both are fail-open, and both MUST log — see the FB map's note below: a silent
+      // empty map is indistinguishable from "everything synced fine".
+      if (res.rateLimited) {
+        console.warn(
+          `[follower-sync] IG page discovery RATE-LIMITED on page ${guard} — ${igUserIds.length} IG id(s) found so far.`,
+        );
+        return map;
+      }
+      if (!res.ok || !res.data) {
+        console.warn(
+          `[follower-sync] IG page discovery FAILED on page ${guard} (ok=${res.ok}) — ${igUserIds.length} IG id(s) found so far.`,
+        );
+        break;
+      }
 
       for (const page of res.data.data ?? []) {
         const igId = page.instagram_business_account?.id;
@@ -162,7 +174,13 @@ export async function fetchInstagramFollowerMap(): Promise<Map<string, IgFollowe
     }
 
     // Rate-limited mid-step-2 → stop, return the partial map. Other failures → skip this id.
-    if (res.rateLimited) return map;
+    if (res.rateLimited) {
+      console.warn(
+        `[follower-sync] IG profile fetch RATE-LIMITED — returning partial map with ${map.size} key(s) ` +
+          `(${igUserIds.length} IG account(s) discovered).`,
+      );
+      return map;
+    }
     if (!res.ok || !res.data) continue;
 
     const username = res.data.username;
@@ -177,6 +195,14 @@ export async function fetchInstagramFollowerMap(): Promise<Map<string, IgFollowe
       map.set(username.toLowerCase(), counts);
       map.set(igId, counts);
     }
+  }
+
+  if (map.size === 0) {
+    console.warn(
+      "[follower-sync] IG follower map is EMPTY — no administered IG account resolved. " +
+        "Tier-3 (business_discovery) is gated on this map being non-empty, so IG accounts " +
+        "will go unsynced this run (check the Meta token / rate limit).",
+    );
   }
 
   return map;
@@ -521,8 +547,27 @@ export async function fetchFacebookFollowerMap(): Promise<Map<string, FbFollower
       clearTimeout(timer);
     }
 
-    if (res.rateLimited) break;
-    if (!res.ok || !res.data) break;
+    // ⚠️ Both of these breaks are FAIL-OPEN by design (an empty/partial map just
+    // sends accounts to the scraper tier), but a fail-open path that cannot say it
+    // failed open is indistinguishable from success. On 2026-08-18 every one of 243
+    // FB accounts silently took the 5s-sleep scraper path — the map had come back
+    // empty under a `(#4)` app-level rate limit and NOTHING logged it. Same class as
+    // the IG `discovery returned 0 accounts` warn added after the 2026-06-25 outage;
+    // this sibling function never got it. Keep these warns.
+    if (res.rateLimited) {
+      console.warn(
+        `[follower-sync] FB page discovery RATE-LIMITED on page ${guard} — map has ${map.size} key(s); ` +
+          `administered Pages will fall through to the scraper this run.`,
+      );
+      break;
+    }
+    if (!res.ok || !res.data) {
+      console.warn(
+        `[follower-sync] FB page discovery FAILED on page ${guard} (ok=${res.ok}) — map has ${map.size} key(s); ` +
+          `administered Pages will fall through to the scraper this run.`,
+      );
+      break;
+    }
 
     for (const pg of res.data.data ?? []) {
       // Only administered Pages (with tasks) expose follower data we can trust.
@@ -546,6 +591,15 @@ export async function fetchFacebookFollowerMap(): Promise<Map<string, FbFollower
 
     path = res.data.paging?.next ?? null;
     params = undefined;
+  }
+
+  // A zero-key map means EVERY administered Page will be scraped instead of read
+  // exactly from the Graph. That is a coverage cliff, not a normal state — say so.
+  if (map.size === 0) {
+    console.warn(
+      "[follower-sync] FB follower map is EMPTY — no administered Page resolved. " +
+        "Every FB account will use the scraper this run (check the Meta token / rate limit).",
+    );
   }
 
   return map;

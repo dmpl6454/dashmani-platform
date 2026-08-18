@@ -66,6 +66,63 @@ export function getSyncProgress(): SyncProgress {
   return { ...progress };
 }
 
+/**
+ * How long a run may stay "running" before the next caller is allowed to take over.
+ *
+ * ⚠️ WHY THIS EXISTS (2026-08-18 outage): the overlap guard below is a plain boolean
+ * — `if (progress.state === "running") return`. On 2026-08-15 a run hung mid-flight
+ * (a Meta call that never settled), `progress.state` stayed "running" FOREVER, and
+ * every subsequent hourly tick silently no-opped. Instagram and YouTube went 3+ days
+ * with ZERO syncs while the process sat "online"; only a deploy restart cleared it.
+ * A boolean guard with no escape converts ONE hung run into a PERMANENT outage.
+ *
+ * 2h is deliberately well ABOVE a healthy run (the full sweep is minutes, and the
+ * slowest observed real run is ~40 min at 5s/scraped-account) but well BELOW the
+ * point where the gap is user-visible. Set it too low and a legitimately slow run
+ * gets a concurrent partner — the exact overlap the guard exists to prevent.
+ */
+const STALE_RUN_MS = 2 * 60 * 60 * 1000; // 2 hours
+
+/**
+ * Cursor persistence for the rotating IG Tier-3 slice, stored in `system_settings`
+ * (the same table + shape the insights cron uses for its per-tier cursors).
+ *
+ * Both helpers are FAIL-OPEN and never throw: a cursor is an optimisation for
+ * FAIRNESS, not correctness. If the read fails we start from the head (some
+ * accounts get re-attempted, none are lost); if the write fails the next run
+ * simply re-attempts the same slice. Neither may be allowed to abort a sync.
+ */
+async function readSyncCursor(key: string): Promise<string> {
+  try {
+    const row = await prisma.systemSetting.findUnique({ where: { key } });
+    return row?.value ?? "";
+  } catch {
+    return "";
+  }
+}
+
+async function writeSyncCursor(key: string, value: string): Promise<void> {
+  try {
+    await prisma.systemSetting.upsert({
+      where: { key },
+      create: { key, value },
+      update: { value },
+    });
+  } catch {
+    /* fail-open: rotation resumes from the previous cursor next run */
+  }
+}
+
+/** True when a "running" run started long enough ago to be considered abandoned. */
+function isStaleRun(p: SyncProgress): boolean {
+  if (p.state !== "running" || !p.startedAt) return false;
+  const started = Date.parse(p.startedAt);
+  // An unparseable timestamp is itself corruption — treat it as stale rather than
+  // letting a bad value wedge the sync forever (the failure mode we are fixing).
+  if (Number.isNaN(started)) return true;
+  return Date.now() - started > STALE_RUN_MS;
+}
+
 function parseYouTubeSubscribers(text: string): number | null {
   // "553 thousand subscribers" → 553000, "1.08 million" → 1080000
   const match = text.match(/([\d,.]+)\s*(thousand|million|billion|lakh|crore)?/i);
@@ -306,10 +363,34 @@ async function fetchFacebookFollowers(profileUrl: string, handle: string): Promi
 // counts manually for those.
 
 export async function syncAllFollowerCounts() {
-  // Don't allow overlapping runs
+  // Don't allow overlapping runs — but NEVER let a wedged run block forever.
+  // See STALE_RUN_MS: a hung run used to pin state="running" permanently, silently
+  // killing every future hourly tick until someone restarted the process.
   if (progress.state === "running") {
-    return progress;
+    if (!isStaleRun(progress)) return progress;
+    console.warn(
+      `[follower-sync] WATCHDOG: previous run has been "running" since ${progress.startedAt} ` +
+        `(> ${STALE_RUN_MS / 60000} min) and is presumed dead at ${progress.processed}/${progress.total} ` +
+        `processed. Taking over. If this repeats, a provider call is hanging without a timeout.`,
+    );
+    // Fall through and start a fresh run. The abandoned run's async work may still
+    // be in flight; that is acceptable — every write goes through persistFollowerCount,
+    // which is an idempotent upsert on (accountId, date), so a late straggler can only
+    // re-write the same row with an equal-or-newer count. It can never corrupt state.
   }
+
+  // ⚠️ CLAIM THE GUARD SYNCHRONOUSLY, BEFORE THE FIRST `await`.
+  // The check above and the full `progress = {...}` reset below are separated by
+  // several awaits (two Graph map builds + findMany). Marking "running" only at
+  // that reset left a check-then-act (TOCTOU) window in which a second concurrent
+  // call saw state="idle" and started a duplicate sync — two runs writing the same
+  // accounts and double-spending the shared Meta budget. Every `await` is a yield
+  // point; being single-threaded does not make this atomic. Setting state here
+  // makes the claim atomic with respect to other callers, since no other code can
+  // interleave before the first await.
+  progress.state = "running";
+  progress.startedAt = new Date().toISOString();
+  progress.finishedAt = null;
 
   igRateLimited = false;
 
@@ -330,7 +411,11 @@ export async function syncAllFollowerCounts() {
 
   progress = {
     state: "running",
-    startedAt: new Date().toISOString(),
+    // KEEP the startedAt stamped at the top of the run, don't restamp it here.
+    // The watchdog measures staleness from it, and the slow part we most need to
+    // detect (the Graph map builds) happens BEFORE this point — restamping would
+    // hide exactly the hang we are trying to catch.
+    startedAt: progress.startedAt ?? new Date().toISOString(),
     finishedAt: null,
     total: accounts.length,
     processed: 0,
@@ -521,9 +606,37 @@ export async function syncAllFollowerCounts() {
   //   • Cap the handles slice at 30 — belt-and-suspenders for a large unresolved
   //     tail even when Tier-1 partially succeeded. Accounts beyond the cap are
   //     DEFERRED to a future run, NOT counted as failed (not attempted this run).
+  //   • ⚠️ ROTATE that slice across runs (added 2026-08-18). It used to be a bare
+  //     `slice(0, 30)` over an arbitrarily-ordered array, so the SAME first 30
+  //     handles were retried every hour forever and the remaining tail — ~78 of
+  //     ~110 external IG accounts on prod — was NEVER attempted even once. Those
+  //     accounts showed as "manual" on Account Growth purely because the resolver
+  //     never reached them. Same class as the PR #130 cursorless-tier starvation.
+  //     The cursor is a HIGH-WATER MARK over a STABLE ORDER (by id): resume after
+  //     the last id attempted, wrap at the end. That guarantees every account is
+  //     reached within ceil(n / 30) runs — a property a random or offset-based
+  //     pick cannot promise.
   const IG_TIER3_MAX_HANDLES = 30;
+  const IG_TIER3_CURSOR_KEY = "follower-sync-cursor:ig-tier3";
   if (unresolvedIg.length > 0 && igFollowerMap.size > 0) {
-    const attempted = unresolvedIg.slice(0, IG_TIER3_MAX_HANDLES);
+    // Stable order so the cursor means the same thing from run to run.
+    const ordered = [...unresolvedIg].sort((a, b) => a.id.localeCompare(b.id));
+    const cursor = await readSyncCursor(IG_TIER3_CURSOR_KEY);
+    // Resume strictly AFTER the last-attempted id. An unknown/stale cursor (the
+    // account was resolved or deleted since) yields -1 → start from the head,
+    // which is the correct fallback rather than skipping the whole run.
+    const startIdx = cursor ? ordered.findIndex((a) => a.id > cursor) : 0;
+    const from = startIdx < 0 ? 0 : startIdx;
+    // Wrap around the end so a cursor near the tail still fills its full quota
+    // instead of attempting a handful and idling.
+    const attempted =
+      ordered.length <= IG_TIER3_MAX_HANDLES
+        ? ordered
+        : [...ordered.slice(from), ...ordered.slice(0, from)].slice(0, IG_TIER3_MAX_HANDLES);
+    console.log(
+      `[follower-sync] IG Tier-3: attempting ${attempted.length} of ${ordered.length} unresolved ` +
+        `(rotating from index ${from}${cursor ? `, after id ${cursor}` : ", head"}).`,
+    );
     try {
       const handles = attempted
         .map((a) => a.handle.replace(/^@/, "").split("?")[0].split("/")[0].trim())
@@ -546,6 +659,15 @@ export async function syncAllFollowerCounts() {
       console.error("[follower-sync] Public IG resolver failed — skipping IG Tier-3:", e);
       // Only the attempted slice is counted as failed; the deferred tail is not.
       progress.failed += attempted.length;
+    } finally {
+      // ⚠️ Advance the cursor in `finally` — on SUCCESS *and* on FAILURE. If it only
+      // advanced on success, a batch that fails every run (a handle Meta always
+      // rejects, a transient outage) would pin the cursor and re-attempt the same 30
+      // forever — re-creating the exact starvation this rotation exists to fix.
+      // Rotation must be driven by "attempted", never by "succeeded".
+      if (attempted.length > 0) {
+        await writeSyncCursor(IG_TIER3_CURSOR_KEY, attempted[attempted.length - 1].id);
+      }
     }
   }
 

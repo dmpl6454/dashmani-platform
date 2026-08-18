@@ -22,6 +22,22 @@ function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+/**
+ * Provenance of a follower count, persisted to SocialAccount.syncSource.
+ *
+ *   "api"     — an official platform API: Meta Graph (administered Pages/IG
+ *               accounts, and IG business_discovery for public pro accounts) or
+ *               the YouTube Data API. Exact, ToS-sanctioned numbers.
+ *   "scraper" — parsed from a public page (Googlebot-UA FB/Snapchat scrapers,
+ *               X guest-token). Best-effort: correct in practice but the source
+ *               can change shape or wall us at any time.
+ *
+ * Accounts never auto-synced keep syncSource = null and read as hand-entered.
+ * ⚠️ Keep this in step with the UI's SourceBadge — the pill is the only place
+ * an admin can tell an exact number from a best-effort one.
+ */
+export type FollowerSyncSource = "api" | "scraper";
+
 // In-memory progress so the UI can poll for a "syncing… X/Y" status
 type SyncProgress = {
   state: "idle" | "running";
@@ -335,12 +351,13 @@ export async function syncAllFollowerCounts() {
   async function persistFollowerCount(
     account: { id: string; handle: string; platform: { slug: string } },
     followers: number,
+    source: FollowerSyncSource,
   ) {
     if (followers <= 0) return;
-    console.log(`[follower-sync] ${account.platform.slug}/${account.handle}: ${followers}`);
+    console.log(`[follower-sync] ${account.platform.slug}/${account.handle}: ${followers} (${source})`);
     await prisma.socialAccount.update({
       where: { id: account.id },
-      data: { followerCount: followers, lastSyncedAt: new Date() },
+      data: { followerCount: followers, lastSyncedAt: new Date(), syncSource: source },
     });
     const existing = await prisma.accountGrowthSnapshot.findUnique({
       where: { accountId_date: { accountId: account.id, date: today } },
@@ -379,6 +396,11 @@ export async function syncAllFollowerCounts() {
   for (const account of accounts) {
     const slug = account.platform.slug;
     let followers: number | null = null;
+    // Provenance of whatever `followers` ends up holding. Set by each branch at
+    // the moment it resolves — the FB branch in particular can land on either
+    // the Graph map or the scraper, so it MUST be assigned per-resolution and
+    // never inferred from the platform afterwards.
+    let source: FollowerSyncSource = "api";
 
     if (slug === "instagram") {
       let username = account.handle.replace(/^@/, "").split("?")[0].split("/")[0].trim();
@@ -420,9 +442,12 @@ export async function syncAllFollowerCounts() {
           if (entry) break;
         }
         if (entry) {
-          followers = entry.followers;
+          followers = entry.followers; // administered Page via Graph → exact
         } else {
+          // Not an administered Page: the Googlebot-UA public-page scraper is the
+          // ONLY path (no Graph read exists for Pages we don't administer).
           followers = await fetchFacebookFollowers(account.profileUrl || "", account.handle);
+          source = "scraper";
           await sleep(DELAY_MS);
         }
       }
@@ -438,6 +463,7 @@ export async function syncAllFollowerCounts() {
       const result = await scrapeSnapchatFollowers(scHandle, fetch, account.profileUrl);
       if (result.followers && result.followers > 0) {
         followers = result.followers;
+        source = "scraper"; // Snapchat has no follower API at all
       }
       await sleep(SC_SCRAPER_DELAY_MS);
       if (followers === null) {
@@ -464,7 +490,7 @@ export async function syncAllFollowerCounts() {
     }
 
     if (followers !== null && followers > 0) {
-      await persistFollowerCount(account, followers);
+      await persistFollowerCount(account, followers, source);
     } else {
       // Collect for the Tier-3 pass; don't increment failed yet.
       if (slug === "instagram") unresolvedIg.push(account);
@@ -509,7 +535,9 @@ export async function syncAllFollowerCounts() {
         const handle = account.handle.replace(/^@/, "").split("?")[0].split("/")[0].trim().toLowerCase();
         const entry = publicIgMap.get(handle);
         if (entry && entry.followers > 0) {
-          await persistFollowerCount(account, entry.followers);
+          // business_discovery is the official Graph edge (public pro accounts),
+          // so this is an exact API number even though we don't administer it.
+          await persistFollowerCount(account, entry.followers, "api");
         } else {
           progress.failed++;
         }
@@ -533,7 +561,7 @@ export async function syncAllFollowerCounts() {
       if (entry) break;
     }
     if (entry && entry.followers > 0) {
-      await persistFollowerCount(account, entry.followers);
+      await persistFollowerCount(account, entry.followers, "api"); // administered Page map
     } else {
       progress.failed++;
     }
@@ -554,7 +582,7 @@ export async function syncAllFollowerCounts() {
       for (const account of unresolvedYt) {
         const subscribers = ytMap.get(account.id);
         if (subscribers != null && subscribers > 0) {
-          await persistFollowerCount(account, subscribers);
+          await persistFollowerCount(account, subscribers, "api"); // YouTube Data API v3
         } else {
           progress.failed++;
         }
@@ -577,7 +605,9 @@ export async function syncAllFollowerCounts() {
         const handle = account.handle.replace(/^@/, "").split("?")[0].trim().toLowerCase();
         const followers = twMap.get(handle);
         if (followers != null && followers > 0) {
-          await persistFollowerCount(account, followers);
+          // Guest-token GraphQL — an unauthenticated public read, not an official
+          // API product (X has no free follower API), so it counts as scraping.
+          await persistFollowerCount(account, followers, "scraper");
         } else {
           progress.failed++;
         }
@@ -609,6 +639,12 @@ export async function syncSingleAccountFollowers(accountId: string) {
 
   let followers: number | null = null;
   const slug = account.platform.slug;
+  // This interactive path deliberately avoids building the Graph maps (see below),
+  // so IG/FB/Snapchat/X all resolve via scrapers here. Only YouTube uses a real
+  // API. Each branch sets this so the pill reflects how THIS refresh resolved —
+  // a manual refresh can legitimately downgrade an account's badge from api to
+  // scraper, which is honest: that IS where the displayed number came from.
+  let source: FollowerSyncSource = "scraper";
 
   // Single-account refresh uses the scraper directly — building the full Graph
   // account map (all ~38 IG / ~87 FB) to read ONE account would waste the shared
@@ -619,7 +655,10 @@ export async function syncSingleAccountFollowers(accountId: string) {
     const username = account.handle.replace(/^@/, "") || account.profileUrl?.match(/instagram\.com\/([^/?]+)/)?.[1];
     if (username) followers = await fetchInstagramFollowers(username);
   } else if (slug === "youtube") {
-    if (account.profileUrl) followers = await fetchYouTubeSubscribers(account.profileUrl);
+    if (account.profileUrl) {
+      followers = await fetchYouTubeSubscribers(account.profileUrl);
+      if (followers !== null) source = "api"; // YouTube Data API v3
+    }
   } else if (slug === "facebook") {
     followers = await fetchFacebookFollowers(account.profileUrl || "", account.handle);
   } else if (slug === "snapchat") {
@@ -649,7 +688,7 @@ export async function syncSingleAccountFollowers(accountId: string) {
   if (followers !== null && followers > 0) {
     await prisma.socialAccount.update({
       where: { id: accountId },
-      data: { followerCount: followers, lastSyncedAt: new Date() },
+      data: { followerCount: followers, lastSyncedAt: new Date(), syncSource: source },
     });
 
     // IST midnight — consistent with account-growth.service.ts / the batch sync.

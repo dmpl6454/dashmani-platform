@@ -103,6 +103,40 @@ function SyncBadge({
   );
 }
 
+/**
+ * Where the follower number came from — a separate axis from SyncBadge's freshness.
+ *
+ *   API     = an official platform API (Meta Graph, YouTube Data API). Exact.
+ *   Scraper = parsed from the public page. Accurate in practice, but best-effort.
+ *   (null)  = never auto-synced; SyncBadge already says "Manual", so we render
+ *             nothing rather than stack two greys saying the same thing.
+ *
+ * Deliberately styled as a soft FILLED chip while SyncBadge is an OUTLINED
+ * dot-chip: two pills on one row need different silhouettes, or they read as one
+ * control. Neither colour is a warning — a scraper number is not an error.
+ */
+function SourceBadge({ source }: { source: "api" | "scraper" | null | undefined }) {
+  if (source !== "api" && source !== "scraper") return null;
+
+  const isApi = source === "api";
+  const label = isApi ? "API" : "Scraper";
+  const cls = isApi
+    ? "bg-[#EAF0FB] text-[#2F5FAE] border-[#CBDCF5]"
+    : "bg-[#F3EEF8] text-[#6B4E9B] border-[#DFD2EC]";
+  const titleText = isApi
+    ? "API — read directly from the platform's official API (Meta Graph / YouTube Data API). Exact figure."
+    : "Scraper — parsed from the account's public page because no API covers it. Accurate in practice, but best-effort and can break if the page changes.";
+
+  return (
+    <span
+      title={titleText}
+      className={`inline-flex items-center text-[10px] font-medium border rounded-full px-1.5 py-0.5 leading-none whitespace-nowrap ${cls}`}
+    >
+      {label}
+    </span>
+  );
+}
+
 export default function AccountGrowthPage() {
   usePageTitle("Account Growth");
 
@@ -161,6 +195,12 @@ export default function AccountGrowthPage() {
   // Coverage counts — only present when API ships the enriched response
   const liveCount: number | undefined = d?.liveCount;
   const staleCount: number | undefined = d?.staleCount;
+  // Undefined (not 0) when the API predates these fields, so an older response
+  // renders the card exactly as before instead of claiming "0 API".
+  const baselineFollowers: number | undefined = d?.baselineFollowers;
+  const apiSourceCount: number | undefined = d?.apiSourceCount;
+  const scraperSourceCount: number | undefined = d?.scraperSourceCount;
+  const manualSourceCount: number | undefined = d?.manualSourceCount;
   const manualCount: number | undefined = d?.manualCount;
   const gainers: number | undefined = d?.gainers;
   const decliners: number | undefined = d?.decliners;
@@ -186,6 +226,11 @@ export default function AccountGrowthPage() {
             <span className="text-[#3E9B4F] font-medium"> Live</span> = synced within the last 48h ·
             <span className="text-[#C2861D] font-medium"> Stale</span> = synced longer ago (number may be out of date) ·
             <span className="text-[#7A7A7A] font-medium"> Manual</span> = entered by hand / no public API to sync from.
+          </p>
+          <p className="text-xs text-[#B0B0B0] mt-1 max-w-2xl leading-snug">
+            The second pill says <span className="font-medium text-[#7A7A7A]">where the number came from</span>:
+            <span className="text-[#2F5FAE] font-medium"> API</span> = read from the platform&apos;s official API (exact) ·
+            <span className="text-[#6B4E9B] font-medium"> Scraper</span> = parsed from the public page because no API covers that account (accurate in practice, best-effort).
           </p>
         </div>
         <div className="flex items-center gap-1.5">
@@ -231,12 +276,37 @@ export default function AccountGrowthPage() {
                 <Users className="h-3.5 w-3.5 text-[#5B4BF5]" />
               </div>
               <p className="font-num text-2xl font-semibold text-[#1A1A1A] leading-none pt-1">{fmtCompact(totalFollowers)}</p>
-              <p className="text-xs text-[#7A7A7A]">Total Followers</p>
+              {/* The big number is CURRENT (window-invariant by definition — how many
+                  followers we have is not a function of the chosen window). The
+                  window is made visible by the "was X · N days ago" line below it,
+                  so the card demonstrably responds to the filter instead of looking
+                  frozen. */}
+              <p className="text-xs text-[#7A7A7A]" title="Sum of every tracked account's most recent follower count — a current total. The 7d/30d/90d filter drives the 'was …' comparison below, plus Net Change, Gainers/Decliners and Top Movers.">
+                Total Followers <span className="text-[#B0B0B0]">(current)</span>
+              </p>
+              {baselineFollowers !== undefined && baselineFollowers > 0 && (
+                <p className="text-[10px] text-[#7A7A7A] leading-snug">
+                  was {fmtCompact(baselineFollowers)} · {days}d ago
+                  {totalFollowers !== baselineFollowers && (
+                    <span className={totalFollowers > baselineFollowers ? "text-[#3E9B4F]" : "text-[#C0504D]"}>
+                      {" "}({totalFollowers > baselineFollowers ? "+" : ""}
+                      {fmtCompact(totalFollowers - baselineFollowers)})
+                    </span>
+                  )}
+                </p>
+              )}
               {liveCount !== undefined && (
                 <p className="text-[10px] text-[#7A7A7A] leading-snug">
                   {liveCount} of {accountCount} live-synced
                   {staleCount ? ` · ${staleCount} stale` : ""}
                   {manualCount ? ` · ${manualCount} manual` : ""}
+                </p>
+              )}
+              {apiSourceCount !== undefined && (
+                <p className="text-[10px] text-[#B0B0B0] leading-snug">
+                  Source: {apiSourceCount} API
+                  {scraperSourceCount ? ` · ${scraperSourceCount} scraper` : ""}
+                  {manualSourceCount ? ` · ${manualSourceCount} manual` : ""}
                 </p>
               )}
             </div>
@@ -411,7 +481,13 @@ export default function AccountGrowthPage() {
                         </Link>
                         <ChannelLink url={a.profileUrl} name={a.displayName} />
                       </div>
-                      <SyncBadge state={a.syncState} lastSyncedAt={a.lastSyncedAt} />
+                      {/* Both pills live INSIDE the existing name cell — this <li>
+                          is a fixed-track sm:grid, so a bare extra child would
+                          shift every following cell one track right (PR #130). */}
+                      <div className="flex flex-wrap items-center gap-1">
+                        <SyncBadge state={a.syncState} lastSyncedAt={a.lastSyncedAt} />
+                        <SourceBadge source={a.syncSource} />
+                      </div>
                     </div>
                     <span className="text-[10px] text-[#7A7A7A] bg-[rgba(0,0,0,0.05)] rounded-full px-2 py-0.5 w-fit truncate">{a.platform}</span>
                     <span className="text-xs font-semibold text-[#1A1A1A] text-right">{fmtCompact(a.latest)}</span>

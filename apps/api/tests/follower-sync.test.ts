@@ -31,6 +31,11 @@ vi.mock("@dashmani/db", () => ({
       update: vi.fn(),
       create: vi.fn(),
     },
+    // Backs the rotating IG Tier-3 cursor (readSyncCursor / writeSyncCursor).
+    systemSetting: {
+      findUnique: vi.fn(),
+      upsert: vi.fn(),
+    },
   },
 }));
 
@@ -70,6 +75,7 @@ import { fetchTwitterFollowerMap } from "../src/services/social-insights/twitter
 import {
   syncAllFollowerCounts,
   syncSingleAccountFollowers,
+  getSyncProgress,
 } from "../src/services/follower-sync.service";
 
 // ── Typed mock helpers ───────────────────────────────────────────────────────
@@ -80,6 +86,8 @@ const mockAccountUpdate = prisma.socialAccount.update as ReturnType<typeof vi.fn
 const mockSnapshotFindUnique = prisma.accountGrowthSnapshot.findUnique as ReturnType<typeof vi.fn>;
 const mockSnapshotCreate = prisma.accountGrowthSnapshot.create as ReturnType<typeof vi.fn>;
 const mockSnapshotUpdate = prisma.accountGrowthSnapshot.update as ReturnType<typeof vi.fn>;
+const mockSettingFindUnique = prisma.systemSetting.findUnique as ReturnType<typeof vi.fn>;
+const mockSettingUpsert = prisma.systemSetting.upsert as ReturnType<typeof vi.fn>;
 
 const mockFetchIgMap = fetchInstagramFollowerMap as ReturnType<typeof vi.fn>;
 const mockFetchFbMap = fetchFacebookFollowerMap as ReturnType<typeof vi.fn>;
@@ -141,6 +149,10 @@ beforeEach(() => {
   mockSnapshotFindUnique.mockResolvedValue(null);
   mockSnapshotCreate.mockResolvedValue({});
   mockSnapshotUpdate.mockResolvedValue({});
+
+  // Default: no stored IG Tier-3 cursor → rotation starts at the head.
+  mockSettingFindUnique.mockResolvedValue(null);
+  mockSettingUpsert.mockResolvedValue({});
   mockAccountUpdate.mockResolvedValue({});
 });
 
@@ -981,5 +993,208 @@ describe("syncSingleAccountFollowers", () => {
         data: expect.objectContaining({ followerCount: 92162226 }),
       }),
     );
+  });
+});
+
+// ── IG Tier-3 rotation (2026-08-18) ──────────────────────────────────────────
+//
+// Regression cover for the starvation bug: the slice used to be a bare
+// `slice(0, 30)` over an arbitrary order, so the SAME first 30 handles were
+// retried every run and the tail (~78 of ~110 accounts on prod) was NEVER
+// attempted. These tests lock the rotation contract, not the implementation.
+
+describe("IG Tier-3 rotation", () => {
+  // 70 unresolved IG accounts with sortable ids (ig-00 … ig-69).
+  const manyIg = Array.from({ length: 70 }, (_, i) =>
+    makeAccount({
+      id: `ig-${String(i).padStart(2, "0")}`,
+      handle: `handle${String(i).padStart(2, "0")}`,
+      profileUrl: `https://instagram.com/handle${String(i).padStart(2, "0")}`,
+      platformSlug: "instagram",
+    }),
+  );
+
+  beforeEach(() => {
+    mockFindMany.mockResolvedValue(manyIg);
+    // Tier-1 map must be NON-EMPTY or Tier-3 is deliberately skipped entirely.
+    mockFetchIgMap.mockResolvedValue(new Map([["someadministered", { followers: 1, following: null, posts: null }]]));
+  });
+
+  it("attempts only the capped slice, starting at the head when no cursor is stored", async () => {
+    await syncAllFollowerCounts();
+
+    expect(mockFetchPublicIg).toHaveBeenCalledTimes(1);
+    const handles = mockFetchPublicIg.mock.calls[0][0] as string[];
+    expect(handles).toHaveLength(30);
+    expect(handles[0]).toBe("handle00");
+    expect(handles[29]).toBe("handle29");
+  });
+
+  it("resumes AFTER the stored cursor instead of replaying the head", async () => {
+    mockSettingFindUnique.mockResolvedValue({ key: "follower-sync-cursor:ig-tier3", value: "ig-29" });
+
+    await syncAllFollowerCounts();
+
+    const handles = mockFetchPublicIg.mock.calls[0][0] as string[];
+    // The whole point: the second run must reach accounts the first never touched.
+    expect(handles[0]).toBe("handle30");
+    expect(handles).toHaveLength(30);
+    expect(handles).not.toContain("handle00");
+  });
+
+  it("wraps past the end so a tail cursor still fills a full quota", async () => {
+    // 10 accounts remain after ig-59; the slice must wrap to pick up 20 more.
+    mockSettingFindUnique.mockResolvedValue({ key: "follower-sync-cursor:ig-tier3", value: "ig-59" });
+
+    await syncAllFollowerCounts();
+
+    const handles = mockFetchPublicIg.mock.calls[0][0] as string[];
+    expect(handles).toHaveLength(30);
+    expect(handles[0]).toBe("handle60");
+    expect(handles[9]).toBe("handle69");
+    expect(handles[10]).toBe("handle00"); // wrapped
+  });
+
+  it("advances the cursor to the LAST attempted id", async () => {
+    await syncAllFollowerCounts();
+
+    expect(mockSettingUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { key: "follower-sync-cursor:ig-tier3" },
+        update: { value: "ig-29" },
+      }),
+    );
+  });
+
+  it("advances the cursor even when the resolver THROWS", async () => {
+    // ⚠️ The load-bearing case. If the cursor only advanced on success, a batch that
+    // fails every run would pin it and re-attempt the same 30 forever — exactly the
+    // starvation this rotation exists to remove. Rotation follows "attempted".
+    mockFetchPublicIg.mockRejectedValue(new Error("Meta is down"));
+
+    await expect(syncAllFollowerCounts()).resolves.toBeDefined();
+
+    expect(mockSettingUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { key: "follower-sync-cursor:ig-tier3" },
+        update: { value: "ig-29" },
+      }),
+    );
+  });
+
+  it("covers every account across consecutive runs (no permanent exclusion)", async () => {
+    // Simulate the cursor persisting between runs and assert full coverage —
+    // the property the old bare slice(0,30) violated.
+    let stored = "";
+    mockSettingFindUnique.mockImplementation(async () => (stored ? { value: stored } : null));
+    mockSettingUpsert.mockImplementation(async ({ update }: any) => {
+      stored = update.value;
+      return {};
+    });
+
+    const seen = new Set<string>();
+    for (let run = 0; run < 3; run++) {
+      mockFetchPublicIg.mockClear();
+      await syncAllFollowerCounts();
+      (mockFetchPublicIg.mock.calls[0][0] as string[]).forEach((h) => seen.add(h));
+    }
+
+    // ceil(70 / 30) = 3 runs is enough to touch all 70.
+    expect(seen.size).toBe(70);
+  });
+
+  it("skips Tier-3 entirely when the Tier-1 map is empty (rate-limited token)", async () => {
+    mockFetchIgMap.mockResolvedValue(new Map());
+
+    await syncAllFollowerCounts();
+
+    // Firing 30 business_discovery calls at an already-limited token would starve
+    // the shared Meta budget the harvest cron depends on.
+    expect(mockFetchPublicIg).not.toHaveBeenCalled();
+  });
+});
+
+// ── Stuck-run watchdog (2026-08-18) ──────────────────────────────────────────
+//
+// Regression cover for the outage: a hung run pinned progress.state="running"
+// forever, so every later hourly tick no-opped and IG/YT went 3+ days unsynced
+// while the process sat "online". The guard must still prevent REAL overlap.
+
+describe("stuck-run watchdog", () => {
+  const oneIg = [
+    makeAccount({ id: "ig-a", handle: "a", profileUrl: "https://instagram.com/a", platformSlug: "instagram" }),
+  ];
+
+  // `progress` is module-level mutable state, so a run left "running" by one test
+  // leaks into the next (the documented cross-test-pollution class). Drain it here
+  // so each test starts from a genuine idle, regardless of execution order.
+  beforeEach(async () => {
+    mockFindMany.mockResolvedValue([]);
+    const realNow = Date.now;
+    Date.now = () => realNow() + 24 * 60 * 60 * 1000; // force any wedged run stale
+    try {
+      await syncAllFollowerCounts();
+    } finally {
+      Date.now = realNow;
+    }
+    vi.clearAllMocks();
+    mockSettingFindUnique.mockResolvedValue(null);
+    mockSettingUpsert.mockResolvedValue({});
+    mockFetchIgMap.mockResolvedValue(new Map());
+    mockFetchFbMap.mockResolvedValue(new Map());
+    mockFetchPublicIg.mockResolvedValue(new Map());
+    mockFetchYt.mockResolvedValue([]);
+    mockFetchTw.mockResolvedValue(new Map());
+    mockFbLookupKeys.mockReturnValue([]);
+  });
+
+  it("still blocks a genuinely concurrent run (the guard's real job)", async () => {
+    // Count only the calls this test makes (the drain in beforeEach also calls it).
+    mockFindMany.mockClear();
+    mockFindMany.mockImplementation(async () => {
+      // Hold the first run open long enough to fire a second one underneath it.
+      await new Promise((r) => setTimeout(r, 50));
+      return oneIg;
+    });
+
+    const first = syncAllFollowerCounts();
+    // Yield so `first` reaches its findMany await and has state="running".
+    await new Promise((r) => setTimeout(r, 10));
+    await syncAllFollowerCounts();
+
+    // The second call bailed out WITHOUT starting a sync — the guard's real job.
+    // (A blocked call returns the in-flight `progress`; a completed run returns a
+    // summary object, so assert on the side effect, not the return shape.)
+    expect(mockFindMany.mock.calls.length).toBe(1);
+
+    await first;
+  });
+
+  it("takes over a run wedged in 'running' for longer than the stale threshold", async () => {
+    // Wedge a run: findMany never settles, so state stays "running" forever —
+    // precisely the Aug-15 failure. Nothing rejects; the promise is abandoned.
+    let releaseWedged: (v: unknown) => void = () => {};
+    mockFindMany.mockImplementationOnce(
+      () => new Promise((resolve) => { releaseWedged = resolve; }),
+    );
+    void syncAllFollowerCounts();
+    await new Promise((r) => setTimeout(r, 10));
+    expect(mockFindMany).toHaveBeenCalledTimes(1);
+
+    // Without the watchdog this second call no-ops forever. Advance past the 2h
+    // threshold via the clock rather than waiting.
+    const realNow = Date.now;
+    Date.now = () => realNow() + 3 * 60 * 60 * 1000;
+    try {
+      mockFindMany.mockResolvedValue(oneIg);
+      await syncAllFollowerCounts();
+      // A fresh run actually executed (second findMany) and ran to completion,
+      // which is what the wedged state used to make impossible.
+      expect(mockFindMany.mock.calls.length).toBeGreaterThanOrEqual(2);
+      expect(getSyncProgress().state).toBe("idle");
+    } finally {
+      Date.now = realNow;
+      releaseWedged(oneIg);
+    }
   });
 });

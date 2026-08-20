@@ -26,6 +26,7 @@ import {
   persistConnection,
   pruneExpiredOauthStates,
 } from "../services/meta-oauth/meta-oauth.service";
+import { discoverConnectionAssets } from "../services/meta-oauth/meta-discovery.service";
 import { scrubSecrets } from "../utils/token-crypto";
 
 const router = Router();
@@ -185,8 +186,14 @@ router.get(
         debug: outcome.debug,
       });
 
-      // Discovery is ~61 Graph calls — FIRE AND FORGET, never awaited here.
-      // (Wired in the next PR; the connection is already usable/inspectable.)
+      // Discovery is ~60 Graph calls — FIRE AND FORGET, NEVER awaited here.
+      // Awaiting it would spend 150s+ AFTER the one-time state row is already
+      // consumed, so a slow Meta would produce a 504 with the state burned and no
+      // recoverable path for the admin. The redirect happens immediately; assets
+      // appear on the page a few seconds later.
+      void discoverConnectionAssets(saved.id).catch((e) =>
+        console.error("[meta-oauth] post-connect discovery failed:", scrubSecrets(String(e))),
+      );
 
       const params = new URLSearchParams({ meta: "connected", conn: saved.id });
       if (saved.partialScope) params.set("partial", "1");

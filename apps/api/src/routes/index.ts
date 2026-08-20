@@ -20,6 +20,7 @@ import hrFeaturesRoutes from "./hr-features.routes";
 import publicJobsRoutes from "./public-jobs.routes";
 import publicStatsRoutes from "./public-stats.routes";
 import metaOauthRoutes from "./meta-oauth.routes";
+import metaRoutes from "./meta.routes";
 
 const router = Router();
 
@@ -40,6 +41,7 @@ router.use(hrRoutes);
 // Meta OAuth mounts BEFORE the admin routers: /admin/meta/oauth/start must not
 // be captured by any parameterised /admin/:x route declared later.
 router.use(metaOauthRoutes);
+router.use(metaRoutes);
 router.use(adminReportsRoutes);
 router.use(notificationRoutes);
 router.use(adminFeaturesRoutes);

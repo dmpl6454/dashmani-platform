@@ -143,8 +143,16 @@ function num(name: string, dflt: number, min = 1): number {
 export const metaTuning = {
   /** Graph calls one discovery pass may spend before parking its cursor. */
   discoveryCallBudget: () => num("META_DISCOVERY_CALL_BUDGET", 80),
-  /** Graph calls one steady-state posts run may spend. */
-  postsCallBudget: () => num("META_POSTS_CALL_BUDGET", 180),
+  /**
+   * Graph calls one steady-state posts run may spend.
+   *
+   * 400 because the estate is larger than first assumed: the owner's grant reaches
+   * 120 assets (72 Pages + 48 IG), and the feed pass alone needs one call each. A
+   * 180 budget could not even complete phase 1, so most channels would never be
+   * polled. 400 covers the feed pass (~120) with ~280 left for per-post insights,
+   * and the fetcher still refuses past the ceiling so this cannot run away.
+   */
+  postsCallBudget: () => num("META_POSTS_CALL_BUDGET", 400),
   /** Graph calls one interactive single-asset refresh may spend. */
   refreshCallBudget: () => num("META_REFRESH_CALL_BUDGET", 12),
   /** Don't re-fetch a post's insights more often than this. */

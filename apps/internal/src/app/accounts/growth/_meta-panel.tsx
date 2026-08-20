@@ -278,15 +278,24 @@ export function MetaPanel() {
           ))}
           {(summary.nullCounts.views > 0 || summary.pendingCount > 0) && (
             <p className="col-span-2 sm:col-span-4 text-[11px] text-[#B0B0B0] leading-snug">
-              {/* Honesty about what the totals do and don't cover. */}
-              {summary.nullCounts.views > 0 && (
+              {/* ⚠️ These are TWO DIFFERENT FACTS and must never be merged into one
+                  sentence. "Still being measured" = we have not asked Meta yet (a
+                  timing statement about us). "Meta publishes no value" = we asked and
+                  got nothing (a statement about Meta). Conflating them makes the page
+                  assert something false about Meta — which it briefly did. */}
+              {summary.pendingCount > 0 && (
                 <>
-                  {summary.nullCounts.views.toLocaleString()} post(s) have no view count published
-                  by Meta, so they contribute nothing to the Views total.
+                  Views are still being collected for{" "}
+                  {summary.pendingCount.toLocaleString()} of {summary.postCount.toLocaleString()}{" "}
+                  post(s) — likes and comments are already complete.{" "}
                 </>
               )}
-              {summary.pendingCount > 0 && (
-                <> {summary.pendingCount.toLocaleString()} post(s) are still being measured.</>
+              {summary.nullCounts.views > 0 && (
+                <>
+                  {summary.nullCounts.views.toLocaleString()} measured post(s) have no view count
+                  published by Meta (it only reports views on video), so they add nothing to the
+                  Views total.
+                </>
               )}
             </p>
           )}

@@ -139,14 +139,39 @@ function deriveMatchId(kind: "FACEBOOK_PAGE" | "INSTAGRAM_ACCOUNT", permalink: s
  * Sync one asset: one feed page, then bounded per-post insights.
  * Never throws.
  */
+type SyncAsset = {
+  id: string;
+  kind: "FACEBOOK_PAGE" | "INSTAGRAM_ACCOUNT";
+  metaId: string;
+  name: string;
+  pageTokenEnc: string | null;
+};
+
+/** Resolve the right token for an asset, or null with the reason recorded. */
+async function tokenForAsset(
+  asset: SyncAsset,
+  userToken: string,
+  out: PostsSyncOutcome,
+): Promise<string | null> {
+  if (asset.kind === "INSTAGRAM_ACCOUNT") return userToken;
+  if (!asset.pageTokenEnc) {
+    out.errors.push(`${asset.name}: no page token (re-run discovery)`);
+    return null;
+  }
+  try {
+    return decryptToken(asset.pageTokenEnc);
+  } catch (e) {
+    out.errors.push(`${asset.name}: page token undecryptable — re-authorise`);
+    await prisma.metaAsset.update({
+      where: { id: asset.id },
+      data: { lastPostSyncStatus: "error", lastPostSyncError: scrubSecrets(String(e)) },
+    });
+    return null;
+  }
+}
+
 async function syncAsset(
-  asset: {
-    id: string;
-    kind: "FACEBOOK_PAGE" | "INSTAGRAM_ACCOUNT";
-    metaId: string;
-    name: string;
-    pageTokenEnc: string | null;
-  },
+  asset: SyncAsset,
   userToken: string,
   budget: CallBudget,
   out: PostsSyncOutcome,
@@ -155,23 +180,8 @@ async function syncAsset(
 
   // IG reads with the USER token (every existing IG path in this repo does);
   // FB reads with the Page token, which arrived inline at discovery.
-  let token = userToken;
-  if (!isIg) {
-    if (!asset.pageTokenEnc) {
-      out.errors.push(`${asset.name}: no page token (re-run discovery)`);
-      return;
-    }
-    try {
-      token = decryptToken(asset.pageTokenEnc);
-    } catch (e) {
-      out.errors.push(`${asset.name}: page token undecryptable — re-authorise`);
-      await prisma.metaAsset.update({
-        where: { id: asset.id },
-        data: { lastPostSyncStatus: "error", lastPostSyncError: scrubSecrets(String(e)) },
-      });
-      return;
-    }
-  }
+  const token = await tokenForAsset(asset, userToken, out);
+  if (!token) return;
 
   // ── Feed: one page ────────────────────────────────────────────────────────
   const feed = isIg
@@ -247,6 +257,37 @@ async function syncAsset(
     });
     out.postsUpserted++;
   }
+
+  await prisma.metaAsset.update({
+    where: { id: asset.id },
+    data: {
+      lastPostSyncAt: new Date(),
+      lastPostSyncStatus: out.rateLimited ? "rate_limited" : "ok",
+      lastPostSyncError: null,
+    },
+  });
+}
+
+/**
+ * PHASE 2 — per-post insights for ONE asset.
+ *
+ * ⚠️ Split out from the feed pass deliberately. Running feed+insights together per
+ * asset meant the call budget was consumed by the FIRST few assets and the remaining
+ * ~115 were never polled at all, so most channels showed nothing after a run. Now the
+ * runner does a cheap feed pass across EVERY asset first (one call each, and for IG
+ * that alone yields likes+comments inline), then spends whatever budget is left on
+ * insights — so every channel has visible data after one run, and the expensive
+ * metrics fill in across runs.
+ */
+async function syncAssetInsights(
+  asset: SyncAsset,
+  userToken: string,
+  budget: CallBudget,
+  out: PostsSyncOutcome,
+): Promise<void> {
+  const isIg = asset.kind === "INSTAGRAM_ACCOUNT";
+  const token = await tokenForAsset(asset, userToken, out);
+  if (!token) return;
 
   // ── Insights: bounded, pending-first, TTL-gated ───────────────────────────
   const ttlHours = metaTuning.insightsRefreshHours();
@@ -425,9 +466,31 @@ export async function runMetaPostsSync(opts?: {
       select: { id: true, kind: true, metaId: true, name: true, pageTokenEnc: true },
     });
 
+    // ── PHASE 1 — cheap feed pass across EVERY selected asset ───────────────
+    //
+    // ⚠️ THIS ORDERING IS LOAD-BEARING. Doing feed+insights per asset meant the
+    // budget was exhausted by the first few assets and the remaining ~115 were
+    // never polled at all, so most channels showed nothing after a run. One feed
+    // call per asset is cheap (120 assets = 120 calls) and for Instagram it alone
+    // yields like_count + comments_count inline — so every channel has visible
+    // data after ONE run. Reserve a slice of the budget for it explicitly.
+    const feedReserve = Math.min(assets.length, Math.floor(budget.max * 0.7));
     for (const asset of assets) {
-      if (budget.used >= budget.max || out.rateLimited) break;
+      if (out.rateLimited) break;
+      if (budget.used >= feedReserve) break;
       await syncAsset(asset as never, userToken, budget, out);
+    }
+
+    // ── PHASE 2 — spend whatever is left on per-post insights ────────────────
+    // Least-recently-synced first so coverage ROTATES across runs instead of
+    // re-polling the same head of the list forever (the PR #130 starvation lesson).
+    for (const asset of assets) {
+      if (out.rateLimited) break;
+      if (budget.used >= budget.max) {
+        out.metricsPending++;
+        break;
+      }
+      await syncAssetInsights(asset as never, userToken, budget, out);
     }
 
     await prisma.metaConnection.update({

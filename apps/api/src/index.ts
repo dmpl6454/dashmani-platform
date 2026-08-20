@@ -1,6 +1,9 @@
 import "./env";
 import app from "./app";
 import { syncAllFollowerCounts } from "./services/follower-sync.service";
+import { runMetaPostsSync } from "./services/meta-oauth/meta-posts.service";
+import { metaOauthConfigured, metaTuning } from "./services/meta-oauth/meta-config";
+import { scrubSecrets } from "./utils/token-crypto";
 import { runSocialInsightsRefresh } from "./cron/social-insights.cron";
 import { runEntityExtraction } from "./cron/entity-extraction.cron";
 import { runIgCaptionBackfill } from "./cron/ig-caption-backfill.cron";
@@ -68,4 +71,25 @@ app.listen(PORT, () => {
     runIgBackfill();
     setInterval(runIgBackfill, 60 * 60 * 1000);
   }, 5 * 60 * 1000);
+
+  // Meta OAuth posts sync — DARK unless the five META_OAUTH_* vars are set AND at
+  // least one connection exists, so this is a no-op on any box without a connection.
+  //
+  // First run offset 12 min so it never coincides with the startup follower-sync,
+  // social-insights or ig-caption-backfill bursts. Those all draw on the OLD app's
+  // ~200-call/hr Meta budget; this uses the NEW app's separate budget, but the box
+  // itself is 1 vCPU and staggering keeps CPU/pool contention low.
+  const runMetaPosts = () => {
+    if (!metaOauthConfigured()) return;
+    runMetaPostsSync().catch((err) =>
+      console.error("[meta-posts] error:", scrubSecrets(String(err))),
+    );
+  };
+  setTimeout(
+    () => {
+      runMetaPosts();
+      setInterval(runMetaPosts, metaTuning.postsIntervalMs());
+    },
+    12 * 60 * 1000,
+  );
 });

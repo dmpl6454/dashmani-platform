@@ -7,6 +7,7 @@ import {
   type SyncState, type GrowthAccount, type TopMover,
 } from "@/lib/hooks/use-growth";
 import { usePageTitle } from "@/lib/hooks/use-page-title";
+import { MetaPanel } from "./_meta-panel";
 
 // Open-the-real-channel external link. Renders nothing if there's no safe http(s) URL.
 // Used in All Accounts + both Top Movers lists. stopPropagation so it doesn't trigger
@@ -349,6 +350,12 @@ export default function AccountGrowthPage() {
               </div>
             )}
           </div>
+
+          {/* Facebook & Instagram, read through an admin's own Meta OAuth grant.
+              Placed ABOVE Top Movers because it is now the authoritative source for
+              Meta numbers; the follower-growth blocks below still cover YouTube,
+              Snapchat and X, whose pipelines are unchanged by this work. */}
+          <MetaPanel />
 
           {/* Top Movers */}
           {topMovers.length > 0 && (

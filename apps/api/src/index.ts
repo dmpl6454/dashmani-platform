@@ -7,6 +7,7 @@ import { scrubSecrets } from "./utils/token-crypto";
 import { runSocialInsightsRefresh } from "./cron/social-insights.cron";
 import { runEntityExtraction } from "./cron/entity-extraction.cron";
 import { runIgCaptionBackfill } from "./cron/ig-caption-backfill.cron";
+import { runMetaTokenHealth } from "./cron/meta-token-health.cron";
 
 // ── Process-level crash backstops (defense-in-depth) ────────────────────────────
 // The 2026-07-08 outage was an unhandled promise rejection (a P2024 pool timeout in an
@@ -91,5 +92,24 @@ app.listen(PORT, () => {
       setInterval(runMetaPosts, metaTuning.postsIntervalMs());
     },
     12 * 60 * 1000,
+  );
+
+  // Meta token health — DAILY, and DB-only unless a grant is actually near expiry.
+  // Meta's data_access_expires_at (~90d) is the clock that matters: when it lapses,
+  // reads just start failing. Without this the first symptom would be a page that
+  // quietly stops updating — the silent-decay class this codebase keeps getting bitten
+  // by. Offset 20 min to stay clear of every other startup burst.
+  const runTokenHealth = () => {
+    if (!metaOauthConfigured()) return;
+    runMetaTokenHealth().catch((err) =>
+      console.error("[meta-token-health] error:", scrubSecrets(String(err))),
+    );
+  };
+  setTimeout(
+    () => {
+      runTokenHealth();
+      setInterval(runTokenHealth, 24 * 60 * 60 * 1000);
+    },
+    20 * 60 * 1000,
   );
 });

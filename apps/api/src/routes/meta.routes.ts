@@ -192,8 +192,18 @@ router.get(
       }),
       prisma.metaPost.count({ where: { asset: { disconnectedAt: null } } }),
       prisma.metaPost.count({ where: { asset: { disconnectedAt: null }, metricsStatus: "pending" } }),
-      prisma.metaPost.count({ where: { asset: { disconnectedAt: null }, views: null } }),
-      prisma.metaPost.count({ where: { asset: { disconnectedAt: null }, likes: null } }),
+      // ⚠️ MUST exclude `pending`, or the two counts conflate two different facts.
+      // A pending post has views=NULL because we HAVE NOT ASKED YET — reporting it as
+      // "Meta publishes no view count" is a false statement about Meta. Only a post we
+      // actually measured and got nothing for belongs in that sentence. (Observed live:
+      // both numbers rendered as an identical 2,533 and the copy claimed Meta published
+      // nothing for all of them, when in truth none had been polled.)
+      prisma.metaPost.count({
+        where: { asset: { disconnectedAt: null }, views: null, metricsStatus: { not: "pending" } },
+      }),
+      prisma.metaPost.count({
+        where: { asset: { disconnectedAt: null }, likes: null, metricsStatus: { not: "pending" } },
+      }),
     ]);
     return res.json({
       success: true,

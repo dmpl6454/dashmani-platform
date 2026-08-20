@@ -19,6 +19,7 @@ import adminFeaturesRoutes from "./admin-features.routes";
 import hrFeaturesRoutes from "./hr-features.routes";
 import publicJobsRoutes from "./public-jobs.routes";
 import publicStatsRoutes from "./public-stats.routes";
+import metaOauthRoutes from "./meta-oauth.routes";
 
 const router = Router();
 
@@ -36,6 +37,9 @@ router.use(contentRoutes);
 router.use(analyticsRoutes);
 router.use(hrAuthRoutes);
 router.use(hrRoutes);
+// Meta OAuth mounts BEFORE the admin routers: /admin/meta/oauth/start must not
+// be captured by any parameterised /admin/:x route declared later.
+router.use(metaOauthRoutes);
 router.use(adminReportsRoutes);
 router.use(notificationRoutes);
 router.use(adminFeaturesRoutes);

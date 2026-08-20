@@ -39,6 +39,12 @@ export default defineConfig({
       // Set to 0 so the per-handle sleep() in twitter-followers.ts resolves
       // immediately in tests, avoiding a 500ms-per-handle delay.
       TWITTER_FOLLOWER_SYNC_DELAY_MS: "0",
+      // A dummy encryption key so token-crypto can round-trip in tests.
+      // ⚠️ ONLY this one. The other META_OAUTH_* vars are deliberately LEFT UNSET so
+      // metaOauthConfigured() is false by default and no test can accidentally
+      // construct a live authorize URL or attempt a real token exchange. Tests that
+      // need the configured path set those vars explicitly and restore them after.
+      META_TOKEN_ENC_KEY: "test-only-meta-token-encryption-key-do-not-ship",
     },
     setupFiles: ["./tests/setup.ts"],
     pool: "forks",

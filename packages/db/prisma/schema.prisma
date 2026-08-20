@@ -10,60 +10,62 @@ datasource db {
 // ============ AUTH & RBAC ============
 
 model User {
-  id             String   @id @default(uuid())
-  name           String
-  email          String   @unique
-  passwordHash   String   @map("password_hash")
-  phone          String?
-  profileImageUrl String? @map("profile_image_url")
-  status         UserStatus @default(ONBOARDING)
-  orgUnitId      String?  @map("org_unit_id")
-  deletedAt      DateTime? @map("deleted_at")
-  createdAt      DateTime @default(now()) @map("created_at")
-  updatedAt      DateTime @updatedAt @map("updated_at")
+  id              String     @id @default(uuid())
+  name            String
+  email           String     @unique
+  passwordHash    String     @map("password_hash")
+  phone           String?
+  profileImageUrl String?    @map("profile_image_url")
+  status          UserStatus @default(ONBOARDING)
+  orgUnitId       String?    @map("org_unit_id")
+  deletedAt       DateTime?  @map("deleted_at")
+  createdAt       DateTime   @default(now()) @map("created_at")
+  updatedAt       DateTime   @updatedAt @map("updated_at")
 
   // orgUnit = the user's PRIMARY team (denormalized for single-team read paths:
   // leaderboard, announcements, analytics). teamMemberships is the full set —
   // a user can belong to multiple teams. Primary is always one of the memberships.
-  orgUnit        OrgUnit?  @relation(fields: [orgUnitId], references: [id])
-  teamMemberships TeamMembership[]
-  roles          UserRole[]
-  attendanceRecords Attendance[]
-  leaveRequests  LeaveRequest[] @relation("LeaveRequester")
-  leaveApprovals LeaveRequest[] @relation("LeaveApprover")
-  auditLogs      AuditLog[]
-  refreshTokens  RefreshToken[]
-  assignedAccounts   AccountAssignment[] @relation("AccountAssignee")
-  accountAssignments AccountAssignment[] @relation("AccountAssigner")
-  assignedTasks      Task[]              @relation("TaskAssignee")
-  createdTasks       Task[]              @relation("TaskCreator")
-  taskComments       TaskComment[]       @relation("CommentAuthor")
-  postComments       PostComment[]       @relation("PostCommentAuthor")
-  uploadedFiles      ProjectFile[] @relation("FileUploader")
-  approvalRequests   Approval[]    @relation("ApprovalRequester")
-  contentPosts       ContentPost[] @relation("ContentCreator")
+  orgUnit            OrgUnit?                @relation(fields: [orgUnitId], references: [id])
+  teamMemberships    TeamMembership[]
+  roles              UserRole[]
+  attendanceRecords  Attendance[]
+  leaveRequests      LeaveRequest[]          @relation("LeaveRequester")
+  leaveApprovals     LeaveRequest[]          @relation("LeaveApprover")
+  auditLogs          AuditLog[]
+  refreshTokens      RefreshToken[]
+  assignedAccounts   AccountAssignment[]     @relation("AccountAssignee")
+  accountAssignments AccountAssignment[]     @relation("AccountAssigner")
+  assignedTasks      Task[]                  @relation("TaskAssignee")
+  createdTasks       Task[]                  @relation("TaskCreator")
+  taskComments       TaskComment[]           @relation("CommentAuthor")
+  postComments       PostComment[]           @relation("PostCommentAuthor")
+  uploadedFiles      ProjectFile[]           @relation("FileUploader")
+  approvalRequests   Approval[]              @relation("ApprovalRequester")
+  contentPosts       ContentPost[]           @relation("ContentCreator")
   otpTokens          OtpToken[]
   dailyReports       DailyReport[]
   notifications      Notification[]
-  announcementsSent  Announcement[] @relation("AnnouncementsSent")
+  announcementsSent  Announcement[]          @relation("AnnouncementsSent")
   profile            EmployeeProfile?
-  salarySlips        SalarySlip[]      @relation("SalarySlipEmployee")
-  documents          EmployeeDocument[] @relation("DocumentEmployee")
+  salarySlips        SalarySlip[]            @relation("SalarySlipEmployee")
+  documents          EmployeeDocument[]      @relation("DocumentEmployee")
   profilePicRequests ProfilePictureRequest[] @relation("ProfilePicEmployee")
-  offerLetters       OfferLetter[]     @relation("OfferLetterEmployee")
-  contracts          EmploymentContract[] @relation("ContractEmployee")
-  extraWorkHours     ExtraWorkHour[]     @relation("ExtraWorkEmployee")
-  incentives         Incentive[]         @relation("IncentiveEmployee")
-  reviewsReceived    PerformanceReview[] @relation("ReviewEmployee")
-  reviewsGiven       PerformanceReview[] @relation("ReviewReviewer")
-  bugReports         BugReport[]         @relation("BugReporter")
-  expenseClaims      ExpenseClaim[]      @relation("ExpenseEmployee")
-  presentations      Presentation[]      @relation("PresentationEmployee")
-  assignedDevices    AssignedDevice[]    @relation("DeviceEmployee")
-  dailyPOAs          DailyPOA[]          @relation("POAEmployee")
-  complaints         Complaint[]         @relation("ComplaintEmployee")
+  offerLetters       OfferLetter[]           @relation("OfferLetterEmployee")
+  contracts          EmploymentContract[]    @relation("ContractEmployee")
+  extraWorkHours     ExtraWorkHour[]         @relation("ExtraWorkEmployee")
+  incentives         Incentive[]             @relation("IncentiveEmployee")
+  reviewsReceived    PerformanceReview[]     @relation("ReviewEmployee")
+  reviewsGiven       PerformanceReview[]     @relation("ReviewReviewer")
+  bugReports         BugReport[]             @relation("BugReporter")
+  expenseClaims      ExpenseClaim[]          @relation("ExpenseEmployee")
+  presentations      Presentation[]          @relation("PresentationEmployee")
+  assignedDevices    AssignedDevice[]        @relation("DeviceEmployee")
+  dailyPOAs          DailyPOA[]              @relation("POAEmployee")
+  complaints         Complaint[]             @relation("ComplaintEmployee")
   linkMetrics        LinkMetric[]
   reportDrafts       ReportDraft[]
+  metaConnections    MetaConnection[]        @relation("MetaConnectionsCreated")
+  metaOauthStates    MetaOAuthState[]
 
   @@map("users")
 }
@@ -82,8 +84,8 @@ model Role {
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
-  users        UserRole[]
-  permissions  RolePermission[]
+  users       UserRole[]
+  permissions RolePermission[]
 
   @@map("roles")
 }
@@ -92,8 +94,8 @@ model UserRole {
   userId String @map("user_id")
   roleId String @map("role_id")
 
-  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  role   Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
 
   @@id([userId, roleId])
   @@map("user_roles")
@@ -106,7 +108,7 @@ model RolePermission {
   action   String
   scope    String
 
-  role     Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
 
   @@unique([roleId, resource, action, scope])
   @@map("role_permissions")
@@ -119,7 +121,7 @@ model RefreshToken {
   expiresAt DateTime @map("expires_at")
   createdAt DateTime @default(now()) @map("created_at")
 
-  user      User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("refresh_tokens")
 }
@@ -135,8 +137,8 @@ model OrgUnit {
   createdAt DateTime    @default(now()) @map("created_at")
   updatedAt DateTime    @updatedAt @map("updated_at")
 
-  parent        OrgUnit?       @relation("OrgHierarchy", fields: [parentId], references: [id])
-  children      OrgUnit[]      @relation("OrgHierarchy")
+  parent        OrgUnit?         @relation("OrgHierarchy", fields: [parentId], references: [id])
+  children      OrgUnit[]        @relation("OrgHierarchy")
   // members = users whose PRIMARY team is this unit (back-relation of User.orgUnit).
   // memberships = the full multi-team join (a user appears here for every team they're in).
   members       User[]
@@ -161,8 +163,8 @@ model TeamMembership {
   isPrimary Boolean  @default(false) @map("is_primary")
   createdAt DateTime @default(now()) @map("created_at")
 
-  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  orgUnit   OrgUnit @relation(fields: [orgUnitId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  orgUnit OrgUnit @relation(fields: [orgUnitId], references: [id], onDelete: Cascade)
 
   @@unique([userId, orgUnitId])
   @@index([orgUnitId])
@@ -184,7 +186,7 @@ model Attendance {
   createdAt     DateTime         @default(now()) @map("created_at")
   updatedAt     DateTime         @updatedAt @map("updated_at")
 
-  employee      User @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  employee User @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
   @@unique([employeeId, date])
   @@index([employeeId, date])
@@ -200,24 +202,24 @@ enum AttendanceStatus {
 }
 
 model LeaveRequest {
-  id               String      @id @default(uuid())
-  employeeId       String      @map("employee_id")
-  startDate        DateTime    @map("start_date") @db.Date
-  endDate          DateTime    @map("end_date") @db.Date
-  type             LeaveType
-  reason           String
-  status           LeaveStatus @default(PENDING)
-  approvedBy       String?     @map("approved_by")
-  approvedAt       DateTime?   @map("approved_at")
-  attachmentUrl    String?     @map("attachment_url")
-  attachmentName   String?     @map("attachment_name")
-  attachmentMime   String?     @map("attachment_mime")
-  attachmentSize   Int?        @map("attachment_size")
-  createdAt        DateTime    @default(now()) @map("created_at")
-  updatedAt        DateTime    @updatedAt @map("updated_at")
+  id             String      @id @default(uuid())
+  employeeId     String      @map("employee_id")
+  startDate      DateTime    @map("start_date") @db.Date
+  endDate        DateTime    @map("end_date") @db.Date
+  type           LeaveType
+  reason         String
+  status         LeaveStatus @default(PENDING)
+  approvedBy     String?     @map("approved_by")
+  approvedAt     DateTime?   @map("approved_at")
+  attachmentUrl  String?     @map("attachment_url")
+  attachmentName String?     @map("attachment_name")
+  attachmentMime String?     @map("attachment_mime")
+  attachmentSize Int?        @map("attachment_size")
+  createdAt      DateTime    @default(now()) @map("created_at")
+  updatedAt      DateTime    @updatedAt @map("updated_at")
 
-  employee    User  @relation("LeaveRequester", fields: [employeeId], references: [id], onDelete: Cascade)
-  approver    User? @relation("LeaveApprover", fields: [approvedBy], references: [id], onDelete: SetNull)
+  employee User  @relation("LeaveRequester", fields: [employeeId], references: [id], onDelete: Cascade)
+  approver User? @relation("LeaveApprover", fields: [approvedBy], references: [id], onDelete: SetNull)
 
   @@map("leave_requests")
 }
@@ -264,7 +266,7 @@ model AuditLog {
   ipAddress  String?  @map("ip_address")
   createdAt  DateTime @default(now()) @map("created_at")
 
-  user       User @relation(fields: [userId], references: [id])
+  user User @relation(fields: [userId], references: [id])
 
   @@index([userId, createdAt])
   @@index([resource, resourceId])
@@ -280,37 +282,38 @@ model Platform {
   iconUrl   String?  @map("icon_url")
   createdAt DateTime @default(now()) @map("created_at")
 
-  accounts  SocialAccount[]
+  accounts SocialAccount[]
 
   @@map("platforms")
 }
 
 model SocialAccount {
-  id              String        @id @default(uuid())
-  handle          String
-  displayName     String        @map("display_name")
-  platformId      String        @map("platform_id")
-  clientName      String?       @map("client_name")
-  status          AccountStatus @default(ACTIVE)
-  profileUrl      String?       @map("profile_url")
-  followerCount   Int           @default(0) @map("follower_count")
-  lastSyncedAt    DateTime?     @map("last_synced_at")
+  id            String        @id @default(uuid())
+  handle        String
+  displayName   String        @map("display_name")
+  platformId    String        @map("platform_id")
+  clientName    String?       @map("client_name")
+  status        AccountStatus @default(ACTIVE)
+  profileUrl    String?       @map("profile_url")
+  followerCount Int           @default(0) @map("follower_count")
+  lastSyncedAt  DateTime?     @map("last_synced_at")
+  metaAssets    MetaAsset[]
   /// HOW the current followerCount was obtained: "api" (official platform API —
   /// Meta Graph / YouTube Data API), "scraper" (public-page parse), or null =
   /// never auto-synced (hand-entered). Distinct from lastSyncedAt, which only
   /// says WHEN. A scraper number can be fresh yet less trustworthy than an API
   /// one, so freshness and provenance are shown as separate pills in the UI.
-  syncSource      String?       @map("sync_source")
-  createdAt       DateTime      @default(now()) @map("created_at")
-  updatedAt       DateTime      @updatedAt @map("updated_at")
+  syncSource    String?       @map("sync_source")
+  createdAt     DateTime      @default(now()) @map("created_at")
+  updatedAt     DateTime      @updatedAt @map("updated_at")
 
-  platform        Platform @relation(fields: [platformId], references: [id])
+  platform        Platform                @relation(fields: [platformId], references: [id])
   assignments     AccountAssignment[]
   tasks           Task[]
-  projectAccounts    ProjectAccount[]
+  projectAccounts ProjectAccount[]
   contentPosts    ContentPost[]
-  reportLinks          ReportLink[]
-  growthSnapshots      AccountGrowthSnapshot[]
+  reportLinks     ReportLink[]
+  growthSnapshots AccountGrowthSnapshot[]
 
   @@unique([handle, platformId])
   @@map("social_accounts")
@@ -323,17 +326,17 @@ enum AccountStatus {
 }
 
 model AccountAssignment {
-  id           String   @id @default(uuid())
-  accountId    String   @map("account_id")
-  employeeId   String   @map("employee_id")
-  assignedBy   String   @map("assigned_by")
-  assignedAt   DateTime @default(now()) @map("assigned_at")
+  id           String    @id @default(uuid())
+  accountId    String    @map("account_id")
+  employeeId   String    @map("employee_id")
+  assignedBy   String    @map("assigned_by")
+  assignedAt   DateTime  @default(now()) @map("assigned_at")
   unassignedAt DateTime? @map("unassigned_at")
   reason       String?
 
-  account      SocialAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  employee     User          @relation("AccountAssignee", fields: [employeeId], references: [id], onDelete: Cascade)
-  assigner     User          @relation("AccountAssigner", fields: [assignedBy], references: [id], onDelete: Restrict)
+  account  SocialAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  employee User          @relation("AccountAssignee", fields: [employeeId], references: [id], onDelete: Cascade)
+  assigner User          @relation("AccountAssigner", fields: [assignedBy], references: [id], onDelete: Restrict)
 
   @@index([accountId])
   @@index([employeeId])
@@ -343,27 +346,27 @@ model AccountAssignment {
 // ============ TASKS ============
 
 model Task {
-  id            String       @id @default(uuid())
-  title         String
-  description   String?
-  status        TaskStatus   @default(TODO)
-  priority      TaskPriority @default(MEDIUM)
-  assigneeId    String?      @map("assignee_id")
-  createdById   String       @map("created_by_id")
-  accountId     String?      @map("account_id")
-  dueDate       DateTime?    @map("due_date")
-  completedAt   DateTime?    @map("completed_at")
-  dependsOnId   String?      @map("depends_on_id")
-  createdAt     DateTime     @default(now()) @map("created_at")
-  updatedAt     DateTime     @updatedAt @map("updated_at")
+  id          String       @id @default(uuid())
+  title       String
+  description String?
+  status      TaskStatus   @default(TODO)
+  priority    TaskPriority @default(MEDIUM)
+  assigneeId  String?      @map("assignee_id")
+  createdById String       @map("created_by_id")
+  accountId   String?      @map("account_id")
+  dueDate     DateTime?    @map("due_date")
+  completedAt DateTime?    @map("completed_at")
+  dependsOnId String?      @map("depends_on_id")
+  createdAt   DateTime     @default(now()) @map("created_at")
+  updatedAt   DateTime     @updatedAt @map("updated_at")
 
-  assignee      User?          @relation("TaskAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
-  createdBy     User           @relation("TaskCreator", fields: [createdById], references: [id], onDelete: Restrict)
-  account       SocialAccount? @relation(fields: [accountId], references: [id])
-  dependsOn     Task?          @relation("TaskDependency", fields: [dependsOnId], references: [id])
-  dependedOnBy  Task[]         @relation("TaskDependency")
-  comments      TaskComment[]
-  projectTasks       ProjectTask[]
+  assignee     User?          @relation("TaskAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  createdBy    User           @relation("TaskCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  account      SocialAccount? @relation(fields: [accountId], references: [id])
+  dependsOn    Task?          @relation("TaskDependency", fields: [dependsOnId], references: [id])
+  dependedOnBy Task[]         @relation("TaskDependency")
+  comments     TaskComment[]
+  projectTasks ProjectTask[]
 
   @@index([assigneeId])
   @@index([status])
@@ -394,8 +397,8 @@ model TaskComment {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  task      Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  author    User @relation("CommentAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+  task   Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  author User @relation("CommentAuthor", fields: [authorId], references: [id], onDelete: Cascade)
 
   @@index([taskId])
   @@map("task_comments")
@@ -404,20 +407,20 @@ model TaskComment {
 // ============ CLIENTS ============
 
 model Client {
-  id             String       @id @default(uuid())
-  companyName    String       @map("company_name")
-  contactName    String       @map("contact_name")
-  email          String       @unique
-  passwordHash   String       @map("password_hash")
-  phone          String?
-  logoUrl        String?      @map("logo_url")
-  status         ClientStatus @default(ACTIVE)
-  createdAt      DateTime     @default(now()) @map("created_at")
-  updatedAt      DateTime     @updatedAt @map("updated_at")
+  id           String       @id @default(uuid())
+  companyName  String       @map("company_name")
+  contactName  String       @map("contact_name")
+  email        String       @unique
+  passwordHash String       @map("password_hash")
+  phone        String?
+  logoUrl      String?      @map("logo_url")
+  status       ClientStatus @default(ACTIVE)
+  createdAt    DateTime     @default(now()) @map("created_at")
+  updatedAt    DateTime     @updatedAt @map("updated_at")
 
-  projects       Project[]
-  refreshTokens  ClientRefreshToken[]
-  otpTokens      OtpToken[]
+  projects      Project[]
+  refreshTokens ClientRefreshToken[]
+  otpTokens     OtpToken[]
 
   @@map("clients")
 }
@@ -459,7 +462,7 @@ model ClientRefreshToken {
   expiresAt DateTime @map("expires_at")
   createdAt DateTime @default(now()) @map("created_at")
 
-  client    Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
 
   @@map("client_refresh_tokens")
 }
@@ -478,11 +481,11 @@ model Project {
   createdAt   DateTime      @default(now()) @map("created_at")
   updatedAt   DateTime      @updatedAt @map("updated_at")
 
-  client      Client     @relation(fields: [clientId], references: [id])
-  accounts    ProjectAccount[]
-  tasks       ProjectTask[]
-  files       ProjectFile[]
-  approvals   Approval[]
+  client       Client           @relation(fields: [clientId], references: [id])
+  accounts     ProjectAccount[]
+  tasks        ProjectTask[]
+  files        ProjectFile[]
+  approvals    Approval[]
   contentPosts ContentPost[]
 
   @@index([clientId])
@@ -501,8 +504,8 @@ model ProjectAccount {
   projectId String @map("project_id")
   accountId String @map("account_id")
 
-  project   Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  account   SocialAccount @relation(fields: [accountId], references: [id])
+  project Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  account SocialAccount @relation(fields: [accountId], references: [id])
 
   @@unique([projectId, accountId])
   @@map("project_accounts")
@@ -513,42 +516,42 @@ model ProjectTask {
   projectId String @map("project_id")
   taskId    String @map("task_id")
 
-  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  task      Task    @relation(fields: [taskId], references: [id])
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  task    Task    @relation(fields: [taskId], references: [id])
 
   @@unique([projectId, taskId])
   @@map("project_tasks")
 }
 
 model ProjectFile {
-  id          String   @id @default(uuid())
-  projectId   String   @map("project_id")
-  name        String
-  url         String
-  size        Int      @default(0)
-  mimeType    String?  @map("mime_type")
-  uploadedById String  @map("uploaded_by_id")
-  createdAt   DateTime @default(now()) @map("created_at")
+  id           String   @id @default(uuid())
+  projectId    String   @map("project_id")
+  name         String
+  url          String
+  size         Int      @default(0)
+  mimeType     String?  @map("mime_type")
+  uploadedById String   @map("uploaded_by_id")
+  createdAt    DateTime @default(now()) @map("created_at")
 
-  project     Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  uploadedBy  User    @relation("FileUploader", fields: [uploadedById], references: [id])
+  project    Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  uploadedBy User    @relation("FileUploader", fields: [uploadedById], references: [id])
 
   @@index([projectId])
   @@map("project_files")
 }
 
 model Approval {
-  id          String         @id @default(uuid())
-  projectId   String         @map("project_id")
-  title       String
-  description String?
-  fileUrl     String?        @map("file_url")
-  status      ApprovalStatus @default(PENDING)
-  requestedById String       @map("requested_by_id")
-  respondedAt DateTime?      @map("responded_at")
-  clientNote  String?        @map("client_note")
-  createdAt   DateTime       @default(now()) @map("created_at")
-  updatedAt   DateTime       @updatedAt @map("updated_at")
+  id            String         @id @default(uuid())
+  projectId     String         @map("project_id")
+  title         String
+  description   String?
+  fileUrl       String?        @map("file_url")
+  status        ApprovalStatus @default(PENDING)
+  requestedById String         @map("requested_by_id")
+  respondedAt   DateTime?      @map("responded_at")
+  clientNote    String?        @map("client_note")
+  createdAt     DateTime       @default(now()) @map("created_at")
+  updatedAt     DateTime       @updatedAt @map("updated_at")
 
   project     Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
   requestedBy User    @relation("ApprovalRequester", fields: [requestedById], references: [id])
@@ -568,26 +571,26 @@ enum ApprovalStatus {
 // ============ CONTENT ============
 
 model ContentPost {
-  id            String        @id @default(uuid())
-  title         String
-  caption       String?       @db.Text
-  mediaUrls     String[]      @map("media_urls")
-  projectId     String        @map("project_id")
-  accountId     String?       @map("account_id")
-  status        ContentStatus @default(DRAFT)
-  format        String?
-  aspectRatio   String?       @map("aspect_ratio")
-  hashtags      String[]      @default([])
-  scheduledAt   DateTime?     @map("scheduled_at")
-  publishedAt   DateTime?     @map("published_at")
-  createdById   String        @map("created_by_id")
-  createdAt     DateTime      @default(now()) @map("created_at")
-  updatedAt     DateTime      @updatedAt @map("updated_at")
+  id          String        @id @default(uuid())
+  title       String
+  caption     String?       @db.Text
+  mediaUrls   String[]      @map("media_urls")
+  projectId   String        @map("project_id")
+  accountId   String?       @map("account_id")
+  status      ContentStatus @default(DRAFT)
+  format      String?
+  aspectRatio String?       @map("aspect_ratio")
+  hashtags    String[]      @default([])
+  scheduledAt DateTime?     @map("scheduled_at")
+  publishedAt DateTime?     @map("published_at")
+  createdById String        @map("created_by_id")
+  createdAt   DateTime      @default(now()) @map("created_at")
+  updatedAt   DateTime      @updatedAt @map("updated_at")
 
-  project       Project       @relation(fields: [projectId], references: [id])
-  account       SocialAccount? @relation(fields: [accountId], references: [id])
-  createdBy     User          @relation("ContentCreator", fields: [createdById], references: [id])
-  comments      PostComment[]
+  project   Project        @relation(fields: [projectId], references: [id])
+  account   SocialAccount? @relation(fields: [accountId], references: [id])
+  createdBy User           @relation("ContentCreator", fields: [createdById], references: [id])
+  comments  PostComment[]
 
   @@index([projectId])
   @@index([accountId])
@@ -607,14 +610,14 @@ enum ContentStatus {
 }
 
 model PostComment {
-  id        String      @id @default(uuid())
-  postId    String      @map("post_id")
-  authorId  String      @map("author_id")
-  body      String      @db.Text
-  createdAt DateTime    @default(now())
+  id        String   @id @default(uuid())
+  postId    String   @map("post_id")
+  authorId  String   @map("author_id")
+  body      String   @db.Text
+  createdAt DateTime @default(now())
 
-  post      ContentPost @relation(fields: [postId], references: [id], onDelete: Cascade)
-  author    User        @relation("PostCommentAuthor", fields: [authorId], references: [id])
+  post   ContentPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  author User        @relation("PostCommentAuthor", fields: [authorId], references: [id])
 
   @@map("post_comments")
 }
@@ -622,32 +625,32 @@ model PostComment {
 // ============ EMPLOYEE PROFILE ============
 
 model EmployeeProfile {
-  id                     String   @id @default(uuid())
-  userId                 String   @unique @map("user_id")
+  id                     String    @id @default(uuid())
+  userId                 String    @unique @map("user_id")
   designation            String?
-  jobDescription         String?  @map("job_description") @db.Text
+  jobDescription         String?   @map("job_description") @db.Text
   salary                 Float?
-  bankAccountHolderName  String?  @map("bank_account_holder_name")
-  bankAccountNumber      String?  @map("bank_account_number")
-  bankName               String?  @map("bank_name")
-  bankBranch             String?  @map("bank_branch")
-  ifscCode               String?  @map("ifsc_code")
-  mailingAddress         String?  @map("mailing_address") @db.Text
-  aadhaarNumber          String?  @map("aadhaar_number")
-  panNumber              String?  @map("pan_number")
-  familyContact1Name     String?  @map("family_contact1_name")
-  familyContact1Phone    String?  @map("family_contact1_phone")
-  familyContact1Relation String?  @map("family_contact1_relation")
-  familyContact2Name     String?  @map("family_contact2_name")
-  familyContact2Phone    String?  @map("family_contact2_phone")
-  familyContact2Relation String?  @map("family_contact2_relation")
+  bankAccountHolderName  String?   @map("bank_account_holder_name")
+  bankAccountNumber      String?   @map("bank_account_number")
+  bankName               String?   @map("bank_name")
+  bankBranch             String?   @map("bank_branch")
+  ifscCode               String?   @map("ifsc_code")
+  mailingAddress         String?   @map("mailing_address") @db.Text
+  aadhaarNumber          String?   @map("aadhaar_number")
+  panNumber              String?   @map("pan_number")
+  familyContact1Name     String?   @map("family_contact1_name")
+  familyContact1Phone    String?   @map("family_contact1_phone")
+  familyContact1Relation String?   @map("family_contact1_relation")
+  familyContact2Name     String?   @map("family_contact2_name")
+  familyContact2Phone    String?   @map("family_contact2_phone")
+  familyContact2Relation String?   @map("family_contact2_relation")
   joiningDate            DateTime? @map("joining_date") @db.Date
   joiningDateApproved    Boolean   @default(false) @map("joining_date_approved")
   sopAcceptedAt          DateTime? @map("sop_accepted_at")
-  createdAt              DateTime @default(now()) @map("created_at")
-  updatedAt              DateTime @updatedAt @map("updated_at")
+  createdAt              DateTime  @default(now()) @map("created_at")
+  updatedAt              DateTime  @updatedAt @map("updated_at")
 
-  user                   User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("employee_profiles")
 }
@@ -665,8 +668,8 @@ model OtpToken {
   verified  Boolean    @default(false)
   createdAt DateTime   @default(now()) @map("created_at")
 
-  user      User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
-  client    Client? @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  user   User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  client Client? @relation(fields: [clientId], references: [id], onDelete: Cascade)
 
   @@index([userId, otp])
   @@index([clientId, otp])
@@ -692,8 +695,8 @@ model DailyReport {
   createdAt     DateTime @default(now()) @map("created_at")
   updatedAt     DateTime @updatedAt @map("updated_at")
 
-  employee      User         @relation(fields: [employeeId], references: [id], onDelete: Cascade)
-  links         ReportLink[]
+  employee User         @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  links    ReportLink[]
 
   @@unique([employeeId, date])
   @@index([employeeId, date])
@@ -701,30 +704,30 @@ model DailyReport {
 }
 
 model ReportLink {
-  id           String   @id @default(uuid())
-  reportId     String   @map("report_id")
-  accountId    String   @map("account_id")
+  id           String    @id @default(uuid())
+  reportId     String    @map("report_id")
+  accountId    String    @map("account_id")
   url          String?
   platform     String
   description  String?
-  mediaUrl     String?  @map("media_url")
+  mediaUrl     String?   @map("media_url")
   likes        Int?
   comments     Int?
   shares       Int?
   views        Int?
-  isScheduled  Boolean  @default(false) @map("is_scheduled")
+  isScheduled  Boolean   @default(false) @map("is_scheduled")
   scheduledFor DateTime? @map("scheduled_for")
-  createdAt    DateTime @default(now()) @map("created_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
   // When this exact URL was FIRST submitted within its report's day. Unlike
   // createdAt (which is rewritten on every resubmit because submission uses
   // delete-and-recreate), firstSeenAt is preserved per-URL across edits — see
   // submitDailyReport(). This is the only trustworthy "when was it posted" time.
   // Historical rows are backfilled to createdAt (best available proxy).
-  firstSeenAt  DateTime @default(now()) @map("first_seen_at")
+  firstSeenAt  DateTime  @default(now()) @map("first_seen_at")
 
-  report       DailyReport   @relation(fields: [reportId], references: [id], onDelete: Cascade)
-  account      SocialAccount @relation(fields: [accountId], references: [id])
-  metrics      LinkMetric[]
+  report  DailyReport   @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  account SocialAccount @relation(fields: [accountId], references: [id])
+  metrics LinkMetric[]
 
   @@index([reportId])
   @@index([accountId])
@@ -743,9 +746,25 @@ model AccountGrowthSnapshot {
   engagementRate Float?   @map("engagement_rate")
   createdAt      DateTime @default(now()) @map("created_at")
 
-  account        SocialAccount @relation(fields: [accountId], references: [id])
+  /// Provenance of THIS snapshot's followerCount:
+  ///   "meta_oauth"  — a connected meta_assets row (the ONLY accepted Meta source)
+  ///   "youtube_api" — YouTube Data API
+  ///   "scraper"     — Snapchat / X public-page parse, or the retired pre-2026-08 Meta scrapers
+  ///   "manual"      — hand-entered / xlsx import
+  ///   NULL          — written before this column existed; not classifiable
+  ///
+  /// ⚠️ LOAD-BEARING: for platform.slug IN ('instagram','facebook') the growth service
+  /// reads ONLY source='meta_oauth' rows. Without this, the per-account follower chart
+  /// splices pre-cutover SCRAPER points onto post-cutover OAUTH points and the step
+  /// change between two different measurement systems RENDERS AS GROWTH. The existing
+  /// isFollowerCorrectionArtifact(±90%/+200%) guard only catches extremes — a real
+  /// 4.2m→4.6m correction sails straight through it.
+  source String? @map("source")
+
+  account SocialAccount @relation(fields: [accountId], references: [id])
 
   @@unique([accountId, date])
+  @@index([accountId, source, date])
   @@index([accountId, date])
   @@map("account_growth_snapshots")
 }
@@ -760,7 +779,7 @@ model Notification {
   metadata  Json?
   createdAt DateTime         @default(now()) @map("created_at")
 
-  user      User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, read])
   @@index([createdAt])
@@ -799,8 +818,8 @@ model Announcement {
   orgUnitId      String?  @map("org_unit_id")
   createdAt      DateTime @default(now()) @map("created_at")
 
-  sentBy         User     @relation("AnnouncementsSent", fields: [sentById], references: [id])
-  orgUnit        OrgUnit? @relation(fields: [orgUnitId], references: [id], onDelete: SetNull)
+  sentBy  User     @relation("AnnouncementsSent", fields: [sentById], references: [id])
+  orgUnit OrgUnit? @relation(fields: [orgUnitId], references: [id], onDelete: SetNull)
 
   @@index([createdAt])
   @@map("announcements")
@@ -809,30 +828,30 @@ model Announcement {
 // ============ SALARY SLIPS ============
 
 model SalarySlip {
-  id              String          @id @default(uuid())
-  employeeId      String          @map("employee_id")
-  month           Int
-  year            Int
-  basicSalary     Float           @map("basic_salary")
-  hra             Float           @default(0)
-  conveyance      Float           @default(0)
-  medicalAllowance Float          @default(0) @map("medical_allowance")
-  specialAllowance Float          @default(0) @map("special_allowance")
-  otherEarnings   Float           @default(0) @map("other_earnings")
-  pf              Float           @default(0)
-  esi             Float           @default(0)
-  tax             Float           @default(0)
-  otherDeductions Float           @default(0) @map("other_deductions")
-  netSalary       Float           @map("net_salary")
-  status          SalarySlipStatus @default(DRAFT)
-  generatedBy     String?         @map("generated_by")
-  approvedBy      String?         @map("approved_by")
-  approvedAt      DateTime?       @map("approved_at")
-  remarks         String?
-  createdAt       DateTime        @default(now()) @map("created_at")
-  updatedAt       DateTime        @updatedAt @map("updated_at")
+  id               String           @id @default(uuid())
+  employeeId       String           @map("employee_id")
+  month            Int
+  year             Int
+  basicSalary      Float            @map("basic_salary")
+  hra              Float            @default(0)
+  conveyance       Float            @default(0)
+  medicalAllowance Float            @default(0) @map("medical_allowance")
+  specialAllowance Float            @default(0) @map("special_allowance")
+  otherEarnings    Float            @default(0) @map("other_earnings")
+  pf               Float            @default(0)
+  esi              Float            @default(0)
+  tax              Float            @default(0)
+  otherDeductions  Float            @default(0) @map("other_deductions")
+  netSalary        Float            @map("net_salary")
+  status           SalarySlipStatus @default(DRAFT)
+  generatedBy      String?          @map("generated_by")
+  approvedBy       String?          @map("approved_by")
+  approvedAt       DateTime?        @map("approved_at")
+  remarks          String?
+  createdAt        DateTime         @default(now()) @map("created_at")
+  updatedAt        DateTime         @updatedAt @map("updated_at")
 
-  employee        User @relation("SalarySlipEmployee", fields: [employeeId], references: [id], onDelete: Cascade)
+  employee User @relation("SalarySlipEmployee", fields: [employeeId], references: [id], onDelete: Cascade)
 
   @@unique([employeeId, month, year])
   @@index([employeeId])
@@ -850,21 +869,21 @@ enum SalarySlipStatus {
 // ============ EMPLOYEE DOCUMENTS ============
 
 model EmployeeDocument {
-  id            String         @id @default(uuid())
-  employeeId    String         @map("employee_id")
-  documentType  DocumentType   @map("document_type")
-  fileName      String         @map("file_name")
-  filePath      String         @map("file_path")
-  fileSize      Int            @map("file_size")
-  mimeType      String         @map("mime_type")
-  status        DocumentStatus @default(PENDING)
-  reviewedBy    String?        @map("reviewed_by")
-  reviewedAt    DateTime?      @map("reviewed_at")
-  reviewNotes   String?        @map("review_notes")
-  createdAt     DateTime       @default(now()) @map("created_at")
-  updatedAt     DateTime       @updatedAt @map("updated_at")
+  id           String         @id @default(uuid())
+  employeeId   String         @map("employee_id")
+  documentType DocumentType   @map("document_type")
+  fileName     String         @map("file_name")
+  filePath     String         @map("file_path")
+  fileSize     Int            @map("file_size")
+  mimeType     String         @map("mime_type")
+  status       DocumentStatus @default(PENDING)
+  reviewedBy   String?        @map("reviewed_by")
+  reviewedAt   DateTime?      @map("reviewed_at")
+  reviewNotes  String?        @map("review_notes")
+  createdAt    DateTime       @default(now()) @map("created_at")
+  updatedAt    DateTime       @updatedAt @map("updated_at")
 
-  employee      User @relation("DocumentEmployee", fields: [employeeId], references: [id], onDelete: Cascade)
+  employee User @relation("DocumentEmployee", fields: [employeeId], references: [id], onDelete: Cascade)
 
   @@index([employeeId])
   @@index([status])
@@ -892,15 +911,15 @@ enum DocumentStatus {
 // ============ PROFILE PICTURE REQUESTS ============
 
 model ProfilePictureRequest {
-  id            String                  @id @default(uuid())
-  employeeId    String                  @map("employee_id")
-  filePath      String                  @map("file_path")
-  status        ProfilePictureStatus    @default(PENDING)
-  approvedBy    String?                 @map("approved_by")
-  approvedAt    DateTime?               @map("approved_at")
-  createdAt     DateTime                @default(now()) @map("created_at")
+  id         String               @id @default(uuid())
+  employeeId String               @map("employee_id")
+  filePath   String               @map("file_path")
+  status     ProfilePictureStatus @default(PENDING)
+  approvedBy String?              @map("approved_by")
+  approvedAt DateTime?            @map("approved_at")
+  createdAt  DateTime             @default(now()) @map("created_at")
 
-  employee      User @relation("ProfilePicEmployee", fields: [employeeId], references: [id], onDelete: Cascade)
+  employee User @relation("ProfilePicEmployee", fields: [employeeId], references: [id], onDelete: Cascade)
 
   @@index([employeeId])
   @@index([status])
@@ -930,7 +949,7 @@ model OfferLetter {
   generatedBy     String   @map("generated_by")
   createdAt       DateTime @default(now()) @map("created_at")
 
-  employee        User @relation("OfferLetterEmployee", fields: [employeeId], references: [id], onDelete: Cascade)
+  employee User @relation("OfferLetterEmployee", fields: [employeeId], references: [id], onDelete: Cascade)
 
   @@index([employeeId])
   @@map("offer_letters")
@@ -939,19 +958,19 @@ model OfferLetter {
 // ============ EMPLOYMENT CONTRACTS ============
 
 model EmploymentContract {
-  id              String   @id @default(uuid())
-  employeeId      String   @map("employee_id")
-  contractDate    DateTime @map("contract_date") @db.Date
+  id              String    @id @default(uuid())
+  employeeId      String    @map("employee_id")
+  contractDate    DateTime  @map("contract_date") @db.Date
   designation     String
   department      String?
   salary          Float
-  probationMonths Int      @default(3) @map("probation_months")
-  noticePeriod    Int      @default(30) @map("notice_period")
+  probationMonths Int       @default(3) @map("probation_months")
+  noticePeriod    Int       @default(30) @map("notice_period")
   agreedAt        DateTime? @map("agreed_at")
-  agreedFromIp    String?  @map("agreed_from_ip")
-  createdAt       DateTime @default(now()) @map("created_at")
+  agreedFromIp    String?   @map("agreed_from_ip")
+  createdAt       DateTime  @default(now()) @map("created_at")
 
-  employee        User @relation("ContractEmployee", fields: [employeeId], references: [id], onDelete: Cascade)
+  employee User @relation("ContractEmployee", fields: [employeeId], references: [id], onDelete: Cascade)
 
   @@index([employeeId])
   @@map("employment_contracts")
@@ -981,18 +1000,18 @@ enum HolidayType {
 // ============ EXTRA WORK HOURS & INCENTIVES ============
 
 model ExtraWorkHour {
-  id            String   @id @default(uuid())
-  employeeId    String   @map("employee_id")
-  date          DateTime @db.Date
-  hours         Float
-  description   String?  @db.Text
-  status        ApprovalState @default(PENDING)
-  approvedBy    String?  @map("approved_by")
-  approvedAt    DateTime? @map("approved_at")
-  createdAt     DateTime @default(now()) @map("created_at")
-  updatedAt     DateTime @updatedAt @map("updated_at")
+  id          String        @id @default(uuid())
+  employeeId  String        @map("employee_id")
+  date        DateTime      @db.Date
+  hours       Float
+  description String?       @db.Text
+  status      ApprovalState @default(PENDING)
+  approvedBy  String?       @map("approved_by")
+  approvedAt  DateTime?     @map("approved_at")
+  createdAt   DateTime      @default(now()) @map("created_at")
+  updatedAt   DateTime      @updatedAt @map("updated_at")
 
-  employee      User @relation("ExtraWorkEmployee", fields: [employeeId], references: [id], onDelete: Cascade)
+  employee User @relation("ExtraWorkEmployee", fields: [employeeId], references: [id], onDelete: Cascade)
 
   @@index([employeeId])
   @@index([status])
@@ -1000,16 +1019,16 @@ model ExtraWorkHour {
 }
 
 model Incentive {
-  id            String        @id @default(uuid())
-  employeeId    String        @map("employee_id")
-  amount        Float
-  reason        String
-  month         Int?
-  year          Int?
-  awardedBy     String        @map("awarded_by")
-  createdAt     DateTime      @default(now()) @map("created_at")
+  id         String   @id @default(uuid())
+  employeeId String   @map("employee_id")
+  amount     Float
+  reason     String
+  month      Int?
+  year       Int?
+  awardedBy  String   @map("awarded_by")
+  createdAt  DateTime @default(now()) @map("created_at")
 
-  employee      User @relation("IncentiveEmployee", fields: [employeeId], references: [id], onDelete: Cascade)
+  employee User @relation("IncentiveEmployee", fields: [employeeId], references: [id], onDelete: Cascade)
 
   @@index([employeeId])
   @@map("incentives")
@@ -1024,20 +1043,20 @@ enum ApprovalState {
 // ============ PERFORMANCE REVIEWS ============
 
 model PerformanceReview {
-  id            String   @id @default(uuid())
-  employeeId    String   @map("employee_id")
-  reviewerId    String   @map("reviewer_id")
-  period        String
-  rating        Int
-  strengths     String?  @db.Text
-  improvements  String?  @db.Text
-  comments      String?  @db.Text
-  goals         String?  @db.Text
-  createdAt     DateTime @default(now()) @map("created_at")
-  updatedAt     DateTime @updatedAt @map("updated_at")
+  id           String   @id @default(uuid())
+  employeeId   String   @map("employee_id")
+  reviewerId   String   @map("reviewer_id")
+  period       String
+  rating       Int
+  strengths    String?  @db.Text
+  improvements String?  @db.Text
+  comments     String?  @db.Text
+  goals        String?  @db.Text
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
 
-  employee      User @relation("ReviewEmployee", fields: [employeeId], references: [id], onDelete: Cascade)
-  reviewer      User @relation("ReviewReviewer", fields: [reviewerId], references: [id], onDelete: Restrict)
+  employee User @relation("ReviewEmployee", fields: [employeeId], references: [id], onDelete: Cascade)
+  reviewer User @relation("ReviewReviewer", fields: [reviewerId], references: [id], onDelete: Restrict)
 
   @@index([employeeId])
   @@map("performance_reviews")
@@ -1046,20 +1065,20 @@ model PerformanceReview {
 // ============ BUG REPORTS ============
 
 model BugReport {
-  id            String        @id @default(uuid())
-  reportedBy    String        @map("reported_by")
-  title         String
-  description   String        @db.Text
-  page          String?
-  severity      BugSeverity   @default(MEDIUM)
-  status        BugStatus     @default(OPEN)
-  screenshot    String?
-  resolution    String?       @db.Text
-  resolvedAt    DateTime?     @map("resolved_at")
-  createdAt     DateTime      @default(now()) @map("created_at")
-  updatedAt     DateTime      @updatedAt @map("updated_at")
+  id          String      @id @default(uuid())
+  reportedBy  String      @map("reported_by")
+  title       String
+  description String      @db.Text
+  page        String?
+  severity    BugSeverity @default(MEDIUM)
+  status      BugStatus   @default(OPEN)
+  screenshot  String?
+  resolution  String?     @db.Text
+  resolvedAt  DateTime?   @map("resolved_at")
+  createdAt   DateTime    @default(now()) @map("created_at")
+  updatedAt   DateTime    @updatedAt @map("updated_at")
 
-  reporter      User @relation("BugReporter", fields: [reportedBy], references: [id], onDelete: Cascade)
+  reporter User @relation("BugReporter", fields: [reportedBy], references: [id], onDelete: Cascade)
 
   @@index([status])
   @@index([reportedBy])
@@ -1084,16 +1103,16 @@ enum BugStatus {
 // ============ PRESENTATIONS ============
 
 model Presentation {
-  id            String   @id @default(uuid())
-  employeeId    String   @map("employee_id")
-  title         String
-  markdown      String   @db.Text
-  theme         String   @default("default")
-  htmlPath      String?  @map("html_path")
-  createdAt     DateTime @default(now()) @map("created_at")
-  updatedAt     DateTime @updatedAt @map("updated_at")
+  id         String   @id @default(uuid())
+  employeeId String   @map("employee_id")
+  title      String
+  markdown   String   @db.Text
+  theme      String   @default("default")
+  htmlPath   String?  @map("html_path")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
 
-  employee      User @relation("PresentationEmployee", fields: [employeeId], references: [id], onDelete: Cascade)
+  employee User @relation("PresentationEmployee", fields: [employeeId], references: [id], onDelete: Cascade)
 
   @@index([employeeId])
   @@map("presentations")
@@ -1102,21 +1121,21 @@ model Presentation {
 // ============ EXPENSE CLAIMS ============
 
 model ExpenseClaim {
-  id            String        @id @default(uuid())
-  employeeId    String        @map("employee_id")
-  title         String
-  amount        Float
-  category      String        @default("OTHER")
-  description   String?       @db.Text
-  receiptUrl    String?       @map("receipt_url")
-  status        ApprovalState @default(PENDING)
-  reviewedBy    String?       @map("reviewed_by")
-  reviewedAt    DateTime?     @map("reviewed_at")
-  reviewNotes   String?       @map("review_notes") @db.Text
-  createdAt     DateTime      @default(now()) @map("created_at")
-  updatedAt     DateTime      @updatedAt @map("updated_at")
+  id          String        @id @default(uuid())
+  employeeId  String        @map("employee_id")
+  title       String
+  amount      Float
+  category    String        @default("OTHER")
+  description String?       @db.Text
+  receiptUrl  String?       @map("receipt_url")
+  status      ApprovalState @default(PENDING)
+  reviewedBy  String?       @map("reviewed_by")
+  reviewedAt  DateTime?     @map("reviewed_at")
+  reviewNotes String?       @map("review_notes") @db.Text
+  createdAt   DateTime      @default(now()) @map("created_at")
+  updatedAt   DateTime      @updatedAt @map("updated_at")
 
-  employee      User @relation("ExpenseEmployee", fields: [employeeId], references: [id], onDelete: Cascade)
+  employee User @relation("ExpenseEmployee", fields: [employeeId], references: [id], onDelete: Cascade)
 
   @@index([employeeId])
   @@index([status])
@@ -1126,21 +1145,21 @@ model ExpenseClaim {
 // ============ ASSIGNED DEVICES ============
 
 model AssignedDevice {
-  id            String       @id @default(uuid())
-  employeeId    String       @map("employee_id")
-  type          DeviceType
-  brand         String
-  model         String
-  serialNumber  String?      @map("serial_number")
-  assetTag      String?      @map("asset_tag")
-  condition     String       @default("Good")
-  notes         String?      @db.Text
-  assignedAt    DateTime     @default(now()) @map("assigned_at")
-  returnedAt    DateTime?    @map("returned_at")
-  createdAt     DateTime     @default(now()) @map("created_at")
-  updatedAt     DateTime     @updatedAt @map("updated_at")
+  id           String     @id @default(uuid())
+  employeeId   String     @map("employee_id")
+  type         DeviceType
+  brand        String
+  model        String
+  serialNumber String?    @map("serial_number")
+  assetTag     String?    @map("asset_tag")
+  condition    String     @default("Good")
+  notes        String?    @db.Text
+  assignedAt   DateTime   @default(now()) @map("assigned_at")
+  returnedAt   DateTime?  @map("returned_at")
+  createdAt    DateTime   @default(now()) @map("created_at")
+  updatedAt    DateTime   @updatedAt @map("updated_at")
 
-  employee      User @relation("DeviceEmployee", fields: [employeeId], references: [id], onDelete: Cascade)
+  employee User @relation("DeviceEmployee", fields: [employeeId], references: [id], onDelete: Cascade)
 
   @@index([employeeId])
   @@map("assigned_devices")
@@ -1160,17 +1179,17 @@ enum DeviceType {
 // ============ DAILY POA (Plan of Action) ============
 
 model DailyPOA {
-  id            String   @id @default(uuid())
-  employeeId    String   @map("employee_id")
-  date          DateTime @db.Date
-  tasks         String   @db.Text
-  achievements  String?  @db.Text
-  blockers      String?  @db.Text
-  tomorrowPlan  String?  @map("tomorrow_plan") @db.Text
-  createdAt     DateTime @default(now()) @map("created_at")
-  updatedAt     DateTime @updatedAt @map("updated_at")
+  id           String   @id @default(uuid())
+  employeeId   String   @map("employee_id")
+  date         DateTime @db.Date
+  tasks        String   @db.Text
+  achievements String?  @db.Text
+  blockers     String?  @db.Text
+  tomorrowPlan String?  @map("tomorrow_plan") @db.Text
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
 
-  employee      User @relation("POAEmployee", fields: [employeeId], references: [id], onDelete: Cascade)
+  employee User @relation("POAEmployee", fields: [employeeId], references: [id], onDelete: Cascade)
 
   @@unique([employeeId, date], name: "employeeId_date")
   @@index([employeeId])
@@ -1192,7 +1211,7 @@ model Complaint {
   createdAt     DateTime        @default(now()) @map("created_at")
   updatedAt     DateTime        @updatedAt @map("updated_at")
 
-  employee      User @relation("ComplaintEmployee", fields: [employeeId], references: [id], onDelete: Cascade)
+  employee User @relation("ComplaintEmployee", fields: [employeeId], references: [id], onDelete: Cascade)
 
   @@index([employeeId])
   @@index([status])
@@ -1209,25 +1228,25 @@ enum ComplaintStatus {
 // ============ INTERNSHIP APPLICATIONS ============
 
 model InternshipApplication {
-  id              String             @id @default(uuid())
-  name            String
-  email           String
-  phone           String?
-  college         String?
-  course          String?
-  startDate       DateTime?          @map("start_date") @db.Date
-  duration        String             @default("6 months")
-  department      String?
-  skills          String?            @db.Text
-  portfolio       String?
-  linkedin        String?
-  coverLetter     String?            @map("cover_letter") @db.Text
-  resumeUrl       String?            @map("resume_url")
-  status          ApplicationStatus  @default(RECEIVED)
-  reviewNotes     String?            @map("review_notes") @db.Text
-  reviewedBy      String?            @map("reviewed_by")
-  createdAt       DateTime           @default(now()) @map("created_at")
-  updatedAt       DateTime           @updatedAt @map("updated_at")
+  id          String            @id @default(uuid())
+  name        String
+  email       String
+  phone       String?
+  college     String?
+  course      String?
+  startDate   DateTime?         @map("start_date") @db.Date
+  duration    String            @default("6 months")
+  department  String?
+  skills      String?           @db.Text
+  portfolio   String?
+  linkedin    String?
+  coverLetter String?           @map("cover_letter") @db.Text
+  resumeUrl   String?           @map("resume_url")
+  status      ApplicationStatus @default(RECEIVED)
+  reviewNotes String?           @map("review_notes") @db.Text
+  reviewedBy  String?           @map("reviewed_by")
+  createdAt   DateTime          @default(now()) @map("created_at")
+  updatedAt   DateTime          @updatedAt @map("updated_at")
 
   @@index([status])
   @@map("internship_applications")
@@ -1236,47 +1255,47 @@ model InternshipApplication {
 // ============ JOB LISTINGS ============
 
 model JobListing {
-  id              String        @id @default(uuid())
-  title           String
-  department      String?
-  location        String?
-  type            JobType       @default(FULL_TIME)
-  experience      String?
-  salary          String?
-  description     String        @db.Text
-  requirements    String?       @db.Text
-  responsibilities String?      @db.Text
-  benefits        String?       @db.Text
-  status          JobListingStatus @default(ACTIVE)
-  createdBy       String        @map("created_by")
-  createdAt       DateTime      @default(now()) @map("created_at")
-  updatedAt       DateTime      @updatedAt @map("updated_at")
+  id               String           @id @default(uuid())
+  title            String
+  department       String?
+  location         String?
+  type             JobType          @default(FULL_TIME)
+  experience       String?
+  salary           String?
+  description      String           @db.Text
+  requirements     String?          @db.Text
+  responsibilities String?          @db.Text
+  benefits         String?          @db.Text
+  status           JobListingStatus @default(ACTIVE)
+  createdBy        String           @map("created_by")
+  createdAt        DateTime         @default(now()) @map("created_at")
+  updatedAt        DateTime         @updatedAt @map("updated_at")
 
-  applications    JobApplication[]
+  applications JobApplication[]
 
   @@index([status])
   @@map("job_listings")
 }
 
 model JobApplication {
-  id              String              @id @default(uuid())
-  jobId           String              @map("job_id")
-  applicantName   String              @map("applicant_name")
-  applicantEmail  String              @map("applicant_email")
-  applicantPhone  String?             @map("applicant_phone")
-  resumeUrl       String?             @map("resume_url")
-  coverLetter     String?             @map("cover_letter") @db.Text
-  experience      String?
-  currentCompany  String?             @map("current_company")
-  linkedinUrl     String?             @map("linkedin_url")
-  portfolioUrl    String?             @map("portfolio_url")
-  status          ApplicationStatus   @default(RECEIVED)
-  notes           String?             @db.Text
-  reviewedBy      String?             @map("reviewed_by")
-  createdAt       DateTime            @default(now()) @map("created_at")
-  updatedAt       DateTime            @updatedAt @map("updated_at")
+  id             String            @id @default(uuid())
+  jobId          String            @map("job_id")
+  applicantName  String            @map("applicant_name")
+  applicantEmail String            @map("applicant_email")
+  applicantPhone String?           @map("applicant_phone")
+  resumeUrl      String?           @map("resume_url")
+  coverLetter    String?           @map("cover_letter") @db.Text
+  experience     String?
+  currentCompany String?           @map("current_company")
+  linkedinUrl    String?           @map("linkedin_url")
+  portfolioUrl   String?           @map("portfolio_url")
+  status         ApplicationStatus @default(RECEIVED)
+  notes          String?           @db.Text
+  reviewedBy     String?           @map("reviewed_by")
+  createdAt      DateTime          @default(now()) @map("created_at")
+  updatedAt      DateTime          @updatedAt @map("updated_at")
 
-  job             JobListing @relation(fields: [jobId], references: [id])
+  job JobListing @relation(fields: [jobId], references: [id])
 
   @@index([jobId])
   @@index([status])
@@ -1325,15 +1344,15 @@ model SystemSetting {
 // Cleared on successful submit. Independent of daily_reports / report_links —
 // touching this table never affects submitted data.
 model ReportDraft {
-  id          String   @id @default(uuid())
-  employeeId  String   @map("employee_id")
-  dateKey     String   @map("date_key")   // "YYYY-MM-DD" in IST
-  notes       String?  @db.Text
-  linksJson   String   @db.Text @map("links_json") // JSON array of LinkEntry[]
-  savedAt     DateTime @default(now()) @map("saved_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
+  id         String   @id @default(uuid())
+  employeeId String   @map("employee_id")
+  dateKey    String   @map("date_key") // "YYYY-MM-DD" in IST
+  notes      String?  @db.Text
+  linksJson  String   @map("links_json") @db.Text // JSON array of LinkEntry[]
+  savedAt    DateTime @default(now()) @map("saved_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
 
-  employee    User @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  employee User @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
   @@unique([employeeId, dateKey])
   @@index([employeeId, dateKey])
@@ -1343,31 +1362,31 @@ model ReportDraft {
 // ============ SOCIAL INSIGHTS ============
 
 model LinkMetric {
-  id            String   @id @default(uuid())
+  id String @id @default(uuid())
 
   // Nullable FK — survives ReportLink delete-and-recreate on resubmit (SetNull).
   // Re-heal query in cron re-links orphaned snapshots to new ReportLink rows.
-  linkId        String?  @map("link_id")
+  linkId String? @map("link_id")
 
   // Denormalised so analytics work even when linkId is null
   employeeId    String   @map("employee_id")
-  reportDate    DateTime @db.Date @map("report_date")
+  reportDate    DateTime @map("report_date") @db.Date
   url           String
   urlNormalized String   @map("url_normalized")
   platform      String
   videoId       String?  @map("video_id")
 
   // Snapshot values
-  fetchedAt     DateTime @default(now()) @map("fetched_at")
-  status        String   // "ok" | "not_found" | "private" | "error"
-  views         Int?
-  likes         Int?
-  comments      Int?
-  shares        Int?
-  errorMessage  String?  @map("error_message")
+  fetchedAt    DateTime @default(now()) @map("fetched_at")
+  status       String // "ok" | "not_found" | "private" | "error"
+  views        Int?
+  likes        Int?
+  comments     Int?
+  shares       Int?
+  errorMessage String?  @map("error_message")
 
-  link          ReportLink? @relation(fields: [linkId], references: [id], onDelete: SetNull)
-  employee      User        @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  link     ReportLink? @relation(fields: [linkId], references: [id], onDelete: SetNull)
+  employee User        @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
   @@index([employeeId, reportDate])
   @@index([urlNormalized])
@@ -1392,13 +1411,13 @@ model LinkMetric {
 
 model Entity {
   id            String   @id @default(uuid())
-  canonicalName String                       // "Salman Khan"
-  type          String   @default("PERSON")  // PERSON | TOPIC | BRAND | OTHER
-  aliases       String[]                      // ["bhaijaan","sallu","beingsalmankhan","सलमान"] — stored LOWERCASE
+  canonicalName String // "Salman Khan"
+  type          String   @default("PERSON") // PERSON | TOPIC | BRAND | OTHER
+  aliases       String[] // ["bhaijaan","sallu","beingsalmankhan","सलमान"] — stored LOWERCASE
   createdAt     DateTime @default(now()) @map("created_at")
-  updatedAt     DateTime @updatedAt      @map("updated_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
 
-  links         LinkContentEntity[]
+  links LinkContentEntity[]
 
   @@unique([canonicalName])
   @@index([type])
@@ -1407,17 +1426,17 @@ model Entity {
 
 model LinkContent {
   id           String    @id @default(uuid())
-  canonicalKey String                          // ig:CxYz / yt:dQw4 / fb:123 / full-url fallback
-  platform     String                          // classified by URL, not the dirty platform column
-  title        String?   @db.Text              // YouTube title
-  caption      String?   @db.Text              // IG/FB caption (and YouTube description)
-  status       String    @default("pending")   // pending | ok | not_found | private | unsupported | error
-  extractedAt  DateTime? @map("extracted_at")  // null until stage 2 runs; set when entities extracted
-  fetchedAt    DateTime? @map("fetched_at")    // when caption/title last fetched
+  canonicalKey String // ig:CxYz / yt:dQw4 / fb:123 / full-url fallback
+  platform     String // classified by URL, not the dirty platform column
+  title        String?   @db.Text // YouTube title
+  caption      String?   @db.Text // IG/FB caption (and YouTube description)
+  status       String    @default("pending") // pending | ok | not_found | private | unsupported | error
+  extractedAt  DateTime? @map("extracted_at") // null until stage 2 runs; set when entities extracted
+  fetchedAt    DateTime? @map("fetched_at") // when caption/title last fetched
   createdAt    DateTime  @default(now()) @map("created_at")
-  updatedAt    DateTime  @updatedAt      @map("updated_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
 
-  entities     LinkContentEntity[]
+  entities LinkContentEntity[]
 
   @@unique([canonicalKey])
   @@index([status])
@@ -1426,13 +1445,13 @@ model LinkContent {
 }
 
 model LinkContentEntity {
-  id            String      @id @default(uuid())
-  linkContentId String      @map("link_content_id")
-  entityId      String      @map("entity_id")
-  confidence    Float       @default(1.0)
+  id            String @id @default(uuid())
+  linkContentId String @map("link_content_id")
+  entityId      String @map("entity_id")
+  confidence    Float  @default(1.0)
 
-  content       LinkContent @relation(fields: [linkContentId], references: [id], onDelete: Cascade)
-  entity        Entity      @relation(fields: [entityId],      references: [id], onDelete: Cascade)
+  content LinkContent @relation(fields: [linkContentId], references: [id], onDelete: Cascade)
+  entity  Entity      @relation(fields: [entityId], references: [id], onDelete: Cascade)
 
   @@unique([linkContentId, entityId])
   @@index([entityId])
@@ -1470,4 +1489,209 @@ model ApiUsage {
   @@index([provider, createdAt])
   @@index([createdAt])
   @@map("api_usage")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Meta OAuth — "Post Automation 2" (app 298449321694397)
+//
+// ⚠️ This is a DELIBERATE SIBLING of the older System-User integration, not a
+// replacement. The legacy app (998903906094758 "Dashmani Insights", read via
+// META_SYSTEM_USER_TOKEN) still powers Top Links / Link Search insights and is
+// untouched by any of this. The two apps' credentials must NEVER be mixed —
+// pairing one app's id with the other's secret fails with an opaque (#1).
+//
+// Provenance rule this subsystem enforces: a Meta follower/post number is either
+// sourced from a CONNECTED asset below, or it is rendered as "—". There is no
+// third source and no scraper fallback.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// One-time CSRF nonce that ALSO carries the admin-session binding.
+///
+/// ⚠️ WHY THIS TABLE EXISTS: this API has no cookies anywhere and auth tokens live
+/// in localStorage, which a top-level redirect back from Meta cannot read. So this
+/// row IS the only link between "the admin who started the flow" and "the browser
+/// that came back". Consumed with updateMany({usedAt:null}) + a count check —
+/// never a bare update()/delete(). That one-time-consume rule is the exact bug
+/// that bit all three auth services (PR #101) and the admin invite flow (PR #108).
+model MetaOAuthState {
+  state        String    @id
+  userId       String    @map("user_id")
+  mode         String    @default("connect")
+  connectionId String?   @map("connection_id")
+  usedAt       DateTime? @map("used_at")
+  expiresAt    DateTime  @map("expires_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([expiresAt])
+  @@map("meta_oauth_states")
+}
+
+model MetaConnection {
+  id            String  @id @default(uuid())
+  /// debug_token data.user_id — WHICH Facebook account granted this.
+  metaUserId    String  @unique @map("meta_user_id")
+  metaUserName  String? @map("meta_user_name")
+  /// The internal admin who ran the flow, taken from the consumed state row.
+  /// Restrict (not Cascade): archiving an employee must never silently delete a
+  /// live Meta connection and orphan every asset hanging off it.
+  connectedById String  @map("connected_by_id")
+
+  /// enc:v1:… AES-256-GCM. Used ONLY to read /me/accounts and IG nodes.
+  /// ⚠️ NEVER logged, NEVER written to AuditLog, NEVER in any API response.
+  /// NULL once revoked.
+  userTokenEnc String? @map("user_token_enc") @db.Text
+
+  grantedScopes  String @default("") @map("granted_scopes")
+  granularScopes Json?  @map("granular_scopes")
+
+  /// debug_token expires_at; 0 ("never expires") is stored as NULL.
+  tokenExpiresAt      DateTime? @map("token_expires_at")
+  /// debug_token data_access_expires_at — the REAL ~90-day clock.
+  /// ⚠️ NEVER compute this as now()+90d; always read it from debug_token.
+  dataAccessExpiresAt DateTime? @map("data_access_expires_at")
+
+  /// The Graph version this grant was established on. Recorded so a Meta
+  /// auto-upgrade after a version sunset is diagnosable rather than mysterious.
+  graphVersion String @default("v21.0") @map("graph_version")
+
+  status MetaConnectionStatus @default(ACTIVE)
+
+  /// pending | pages | ig_nodes | done — discovery is budgeted and RESUMABLE
+  /// because a first pass over an 87-Page estate costs ~61 Graph calls.
+  discoveryState  String  @default("pending") @map("discovery_state")
+  discoveryCursor String? @map("discovery_cursor")
+
+  /// Which read paths actually work, learned by live probe. Never holds secrets.
+  capabilities Json?
+
+  lastVerifiedAt DateTime? @map("last_verified_at")
+  lastSyncedAt   DateTime? @map("last_synced_at")
+  /// Secret-scrubbed before write; surfaced verbatim in the admin ops strip.
+  lastError      String?   @map("last_error") @db.Text
+  revokedAt      DateTime? @map("revoked_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  connectedBy User        @relation("MetaConnectionsCreated", fields: [connectedById], references: [id], onDelete: Restrict)
+  assets      MetaAsset[]
+
+  @@index([status])
+  @@map("meta_connections")
+}
+
+enum MetaConnectionStatus {
+  ACTIVE
+  PARTIAL_SCOPE
+  NEEDS_REAUTH_SOON
+  NEEDS_REAUTH
+  RATE_LIMITED
+  REVOKED
+}
+
+model MetaAsset {
+  id            String        @id @default(uuid())
+  connectionId  String        @map("connection_id")
+  kind          MetaAssetKind
+  /// FB Page id, or IG Business account id. Meta-assigned and stable.
+  metaId        String        @map("meta_id")
+  name          String
+  username      String?
+  /// IG only: the Page it hangs off. IG assets carry NO token of their own, so
+  /// the same Page secret is never written into two rows.
+  parentPageId  String?       @map("parent_page_id")
+  /// FACEBOOK_PAGE only. enc:v1:… Page token, which arrives inline on
+  /// /me/accounts — there is NO separate mint call (facebook.provider.ts's
+  /// header comment saying otherwise is stale and costs a wasted call per Page).
+  pageTokenEnc  String?       @map("page_token_enc") @db.Text
+  tasks         String[]      @default([])
+  followerCount Int?          @map("follower_count")
+  postCount     Int?          @map("post_count")
+  pictureUrl    String?       @map("picture_url")
+
+  /// Soft link into the channel registry. Nullable + SetNull: an asset is
+  /// perfectly valid with no match, and archiving a channel must never cascade
+  /// into deleting a live connection.
+  socialAccountId String? @map("social_account_id")
+
+  selected Boolean @default(true)
+
+  /// Which read path + which insight metric names work FOR THIS ASSET, keyed by
+  /// post class (IG: media_product_type; FB: video|other).
+  /// ⚠️ Keyed PER POST CLASS, not per connection: one invalid metric 400s the
+  /// entire /insights call, and the valid set genuinely differs between
+  /// REELS / FEED / IMAGE / CAROUSEL.
+  metricCapabilities Json? @map("metric_capabilities")
+
+  lastPostSyncAt     DateTime? @map("last_post_sync_at")
+  lastPostSyncStatus String?   @map("last_post_sync_status")
+  lastPostSyncError  String?   @map("last_post_sync_error")
+  disconnectedAt     DateTime? @map("disconnected_at")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+
+  connection    MetaConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  socialAccount SocialAccount? @relation(fields: [socialAccountId], references: [id], onDelete: SetNull)
+  posts         MetaPost[]
+
+  @@unique([connectionId, kind, metaId])
+  @@index([selected, kind])
+  @@index([socialAccountId])
+  @@map("meta_assets")
+}
+
+enum MetaAssetKind {
+  FACEBOOK_PAGE
+  INSTAGRAM_ACCOUNT
+}
+
+/// ⚠️ LATEST-STATE-PER-POST, upserted on (assetId, metaPostId). NOT a time series.
+/// link_metrics grew to 3.99M rows / 1266MB precisely because it APPENDS per poll,
+/// and a DISTINCT ON over it measured 9.8s/1.25GB while evicting the covering index
+/// that /reports depends on. This table is bounded instead: (selected assets ×
+/// posts inside META_POST_RETENTION_DAYS), trimmed by one bounded deleteMany per run.
+model MetaPost {
+  id               String    @id @default(uuid())
+  assetId          String    @map("asset_id")
+  /// FB: the "{pageId}_{postId}" COMPOSITE — the ONLY id /insights accepts.
+  /// IG: the numeric media id.
+  metaPostId       String    @map("meta_post_id")
+  /// The id canonicalKey() would derive (FB permalink reel id, IG shortcode).
+  /// Indexed for a POSSIBLE future correlation; this design NEVER joins on it.
+  matchId          String?   @map("match_id")
+  permalink        String?
+  caption          String?   @db.Text
+  mediaType        String?   @map("media_type")
+  mediaProductType String?   @map("media_product_type")
+  postedAt         DateTime? @map("posted_at")
+
+  /// NULL = "Meta publishes no such number for this post type".
+  /// ⚠️ NEVER coerce to 0 — that is the documented fabricated-zero bug class
+  /// (the Snapchat showLikes incident), where a genuinely-absent metric was
+  /// rendered as a real zero and read as "this post got no likes".
+  views    Int?
+  likes    Int?
+  comments Int?
+  shares   Int?
+  saves    Int?
+  reach    Int?
+
+  /// pending | ok | partial | unavailable | rate_limited | error
+  /// ⚠️ "pending" (stored, not yet measured) MUST render differently from
+  /// "unavailable" (measured, Meta publishes nothing).
+  metricsStatus    String    @default("pending") @map("metrics_status")
+  metricsFetchedAt DateTime? @map("metrics_fetched_at")
+  metricsError     String?   @map("metrics_error")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  asset MetaAsset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@unique([assetId, metaPostId])
+  @@index([assetId, postedAt(sort: Desc)])
+  @@index([assetId, metricsStatus, postedAt])
+  @@index([postedAt(sort: Desc)])
+  @@index([matchId])
+  @@map("meta_posts")
 }

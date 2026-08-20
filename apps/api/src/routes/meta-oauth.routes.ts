@@ -141,12 +141,31 @@ router.get(
       const code = typeof q.code === "string" ? q.code : "";
       const state = typeof q.state === "string" ? q.state : "";
       if (!code || !state) {
+        console.warn(
+          `[meta-oauth] callback missing ${!code ? "code" : "state"} — nothing to exchange.`,
+        );
         return redirectBack("?meta=error&reason=state");
       }
 
       // Atomic one-time consume. Unknown / reused / expired all land here.
       const consumed = await consumeMetaOauthState(state);
       if (!consumed) {
+        // ⚠️ Say WHY. The first real connect attempt on prod (2026-08-20) failed here
+        // and required DB forensics to explain, because this branch was silent. The
+        // three causes are operationally very different: expired = "take less time /
+        // raise the TTL", used = "a duplicate or replayed callback", unknown = "the
+        // state was never issued by this server".
+        const row = await prisma.metaOAuthState
+          .findUnique({ where: { state }, select: { usedAt: true, expiresAt: true } })
+          .catch(() => null);
+        const why = !row
+          ? "unknown state (never issued here)"
+          : row.usedAt
+            ? `already used at ${row.usedAt.toISOString()} (duplicate/replayed callback)`
+            : `EXPIRED at ${row.expiresAt.toISOString()} (callback arrived ${Math.round(
+                (Date.now() - row.expiresAt.getTime()) / 1000,
+              )}s late)`;
+        console.warn(`[meta-oauth] callback rejected: ${why}`);
         return redirectBack("?meta=error&reason=state");
       }
 

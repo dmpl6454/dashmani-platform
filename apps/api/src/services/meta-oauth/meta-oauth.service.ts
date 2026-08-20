@@ -22,8 +22,21 @@ import {
 } from "./meta-config";
 import { encryptToken, scrubSecrets } from "../../utils/token-crypto";
 
-/** How long a pending authorization may sit before its state row is dead. */
-const STATE_TTL_MS = 10 * 60 * 1000;
+/**
+ * How long a pending authorization may sit before its state row is dead.
+ *
+ * ⚠️ 60 MINUTES, NOT 10. Measured on prod 2026-08-20: a first real connect attempt
+ * failed because the callback arrived 68 SECONDS after a 10-minute state expired.
+ * The window has to cover the whole HUMAN flow, not just the redirect: reading the
+ * prompt, logging into Facebook (possibly 2FA), and working through the Page/IG
+ * picker on an estate with dozens of Pages. 10 minutes looks generous next to a
+ * machine round-trip and is far too tight next to a person.
+ *
+ * This is still a one-time, single-use, CSRF-bound nonce — the TTL is a cleanup
+ * bound, not the security property. Replay is prevented by the atomic
+ * updateMany({usedAt:null}) consume, which is unaffected by TTL length.
+ */
+const STATE_TTL_MS = 60 * 60 * 1000;
 
 export interface StartResult {
   authorizeUrl: string;

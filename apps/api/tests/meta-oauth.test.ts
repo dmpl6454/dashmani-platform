@@ -168,6 +168,18 @@ describe("startMetaOauth — authorize URL", () => {
     expect(row!.expiresAt.getTime()).toBeGreaterThan(Date.now());
   });
 
+  it("gives the human flow at least 45 minutes to complete", async () => {
+    // ⚠️ REGRESSION GUARD. The first real prod connect (2026-08-20) failed because a
+    // 10-minute TTL expired 68s before the callback arrived: the window must cover
+    // reading the prompt + a Facebook login (possibly 2FA) + a Page/IG picker over
+    // dozens of Pages, not just a machine round-trip.
+    configureMeta();
+    const user = await seedAdmin("zzmeta-ttl@example.com");
+    const { expiresAt } = await startMetaOauth({ userId: user.id });
+    const minutes = (expiresAt.getTime() - Date.now()) / 60_000;
+    expect(minutes).toBeGreaterThan(45);
+  });
+
   it("generates unguessable, unique states", async () => {
     configureMeta();
     const user = await seedAdmin("zzmeta-uniq@example.com");

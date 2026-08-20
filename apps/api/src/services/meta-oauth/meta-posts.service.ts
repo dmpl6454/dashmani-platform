@@ -33,15 +33,19 @@ const FEED_LIMIT = 25;
 const IG_METRICS = ["reach", "views", "saved", "total_interactions", "shares"] as const;
 
 /**
- * FB insights in TWO batches — never merged.
- * One post type's invalid metric 400s the WHOLE call, so views are asked for
- * separately from engagement.
+ * The ONLY FB metric still fetched per-post.
+ *
+ * The engagement batch (post_reactions_by_type_total + post_activity_by_action_type)
+ * was REMOVED 2026-08-20: likes/comments/shares now arrive inline on the feed via the
+ * summary fields, so that call was pure waste. Keeping it also meant each FB post cost
+ * two calls, which let Facebook consume the whole insights budget and starve Instagram
+ * on the first prod run.
+ *
+ * ⚠️ Do NOT re-add an engagement batch here without first checking whether the feed's
+ * summary fields still work — if they ever stop, the fallback belongs in the FEED
+ * error path, not as an unconditional second call per post.
  */
 const FB_METRICS_VIEWS = ["post_video_views"] as const;
-const FB_METRICS_ENGAGEMENT = [
-  "post_reactions_by_type_total",
-  "post_activity_by_action_type",
-] as const;
 
 interface IgMediaResponse {
   data?: Array<{
@@ -58,12 +62,31 @@ interface IgMediaResponse {
   paging?: { next?: string };
 }
 
+/**
+ * ⚠️ THE SUMMARY FIELDS ARE THE ~20× COST LEVER — verified live 2026-08-20 under the
+ * "Post Automation 2" app, which has pages_read_engagement at Advanced Access.
+ *
+ * These same fields returned `(#10) requires pages_read_engagement` under the OLDER
+ * "Dashmani Insights" app, which is why every prior note in this repo says FB
+ * engagement is only reachable via per-post /insights. That is TRUE FOR THAT APP and
+ * FALSE for this one. Live proof (Bollywood Society, 3 posts): likes 30/243/117,
+ * comments 0/9/4, shares 1/1/4 — all inline on /published_posts.
+ *
+ * Consequence: FB likes/comments/shares now cost ZERO extra calls, exactly like IG's
+ * inline like_count. Per-post /insights is then only needed for `post_video_views`,
+ * which genuinely has no inline equivalent.
+ *
+ * ⚠️ `shares` is ABSENT (not 0) when a post has none, so it must map to null.
+ */
 interface FbPostsResponse {
   data?: Array<{
     id?: string;
     message?: string;
     permalink_url?: string;
     created_time?: string;
+    likes?: { summary?: { total_count?: number } };
+    comments?: { summary?: { total_count?: number } };
+    shares?: { count?: number };
   }>;
   paging?: { next?: string };
 }
@@ -88,7 +111,14 @@ function numOrNull(v: unknown): number | null {
   return typeof v === "number" && Number.isFinite(v) ? v : null;
 }
 
-/** Sum a reactions-by-type map ({like: 3, love: 1} → 4). Absent ⇒ null, not 0. */
+/**
+ * Sum a reactions-by-type map ({like: 3, love: 1} → 4). Absent ⇒ null, not 0.
+ *
+ * Currently UNUSED — the feed's summary fields supply likes directly. Retained
+ * deliberately (with activityKey below) because it is the documented fallback shape
+ * if Meta ever revokes the summary fields for this app, and re-deriving it from the
+ * Graph docs would cost another live-probing session.
+ */
 function sumReactions(v: unknown): number | null {
   if (v && typeof v === "object" && !Array.isArray(v)) {
     let total = 0;
@@ -198,7 +228,13 @@ async function syncAsset(
       )
     : await oauthGraphFetch<FbPostsResponse>(
         `${asset.metaId}/published_posts`,
-        { fields: "id,message,permalink_url,created_time", limit: FEED_LIMIT },
+        {
+          // Summary fields ride along FREE — see the FbPostsResponse note above.
+          fields:
+            "id,message,permalink_url,created_time," +
+            "likes.summary(true).limit(0),comments.summary(true).limit(0),shares",
+          limit: FEED_LIMIT,
+        },
         token,
         { label: "posts-fb-feed", budget },
       );
@@ -243,10 +279,18 @@ async function syncAsset(
       mediaProductType: (r.media_product_type as string | undefined) ?? null,
       postedAt: postedAt && !Number.isNaN(postedAt.getTime()) ? postedAt : null,
       matchId: deriveMatchId(asset.kind, permalink ?? null, r.shortcode as string | undefined),
-      // IG hands us likes+comments for free. FB does not on this edge, so they stay
-      // null until the insights pass fills them (or stay null honestly).
-      likes: isIg ? numOrNull(r.like_count) : undefined,
-      comments: isIg ? numOrNull(r.comments_count) : undefined,
+      // BOTH platforms now hand us engagement inline — IG via like_count/comments_count,
+      // FB via the likes/comments summary fields (Advanced Access, verified live).
+      // So a row is never blank on either platform, and /insights is reserved for
+      // views alone.
+      likes: isIg
+        ? numOrNull(r.like_count)
+        : numOrNull((r.likes as { summary?: { total_count?: number } } | undefined)?.summary?.total_count),
+      comments: isIg
+        ? numOrNull(r.comments_count)
+        : numOrNull((r.comments as { summary?: { total_count?: number } } | undefined)?.summary?.total_count),
+      // FB only: `shares` is ABSENT rather than 0 when there are none ⇒ honest null.
+      ...(isIg ? {} : { shares: numOrNull((r.shares as { count?: number } | undefined)?.count) }),
     };
 
     await prisma.metaPost.upsert({
@@ -305,7 +349,13 @@ async function syncAssetInsights(
     // Pending first, then newest — so a post never sits permanently unmeasured
     // just because it fell outside one run's slice.
     orderBy: [{ metricsStatus: "asc" }, { postedAt: "desc" }],
-    take: 25,
+    // ⚠️ 8, not 25. A Facebook post costs TWO insights calls, so a 25-post slice is
+    // up to 50 calls — one asset could take a fifth of the whole run's budget and
+    // only ~7 of 120 channels would ever be measured. A smaller slice spreads the
+    // same budget across ~4x more channels per run; the pending-first ordering here
+    // plus the pending-count asset ordering above means the remainder is picked up
+    // on subsequent runs rather than dropped.
+    take: 8,
     select: { id: true, metaPostId: true, mediaProductType: true },
   });
 
@@ -354,7 +404,9 @@ async function syncAssetInsights(
       });
       out.metricsUpdated++;
     } else {
-      // FB: two batches, never merged.
+      // FB: ONLY views now. likes/comments/shares already arrived inline on the feed,
+      // so the second (engagement) batch was pure waste — removing it halves the FB
+      // insights cost and doubles how many posts one budget can measure.
       const viewsRes = await oauthGraphFetch<InsightsResponse>(
         `${post.metaPostId}/insights`,
         { metric: FB_METRICS_VIEWS.join(",") },
@@ -365,40 +417,29 @@ async function syncAssetInsights(
         out.rateLimited = true;
         break;
       }
-      if (budget.used >= budget.max) {
-        out.metricsPending++;
-        break;
-      }
-      const engRes = await oauthGraphFetch<InsightsResponse>(
-        `${post.metaPostId}/insights`,
-        { metric: FB_METRICS_ENGAGEMENT.join(",") },
-        token,
-        { label: "posts-fb-insights-engagement", budget },
-      );
-      if (engRes.rateLimited) {
-        out.rateLimited = true;
-        break;
-      }
-
+      // ⚠️ NO second (engagement) batch any more. likes/comments/shares now arrive
+      // INLINE on the feed via the summary fields, so asking /insights for
+      // post_reactions_by_type_total + post_activity_by_action_type was pure waste:
+      // it doubled the per-post cost and, on the first prod run, let Facebook consume
+      // the entire insights budget while Instagram got none. Views are the only FB
+      // metric with no inline equivalent.
+      //
+      // Deliberately NOT overwriting likes/comments/shares here — the feed pass owns
+      // them, and the insights map returns {} for most reels, which would blank out
+      // good inline values.
       const vm = insightMap(viewsRes.data);
-      const em = insightMap(engRes.data);
-      const activity = em.get("post_activity_by_action_type");
-      const anyOk = viewsRes.ok || engRes.ok;
-
       await prisma.metaPost.update({
         where: { id: post.id },
         data: {
           views: numOrNull(vm.get("post_video_views")),
-          likes:
-            sumReactions(em.get("post_reactions_by_type_total")) ?? activityKey(activity, "like"),
-          comments: activityKey(activity, "comment"),
-          shares: activityKey(activity, "share"),
-          metricsStatus: anyOk ? (viewsRes.ok && engRes.ok ? "ok" : "partial") : "unavailable",
+          // `unavailable` = we asked and Meta publishes nothing (e.g. a photo post
+          // has no video views); distinct from `pending` = not asked yet.
+          metricsStatus: viewsRes.ok ? "ok" : viewsRes.errorCode === 100 ? "unavailable" : "error",
           metricsFetchedAt: new Date(),
-          metricsError: anyOk ? null : scrubSecrets(engRes.error ?? viewsRes.error ?? "insights failed"),
+          metricsError: viewsRes.ok ? null : scrubSecrets(viewsRes.error ?? "insights failed"),
         },
       });
-      if (anyOk) out.metricsUpdated++;
+      if (viewsRes.ok) out.metricsUpdated++;
     }
   }
 
@@ -482,9 +523,45 @@ export async function runMetaPostsSync(opts?: {
     }
 
     // ── PHASE 2 — spend whatever is left on per-post insights ────────────────
-    // Least-recently-synced first so coverage ROTATES across runs instead of
-    // re-polling the same head of the list forever (the PR #130 starvation lesson).
-    for (const asset of assets) {
+    //
+    // ⚠️ INTERLEAVED BY PLATFORM, NOT SEQUENTIAL. Measured on the first real prod
+    // run (120 assets, budget 400): iterating the flat list gave Facebook the ENTIRE
+    // insights budget and Instagram got ZERO — FB assets sort first AND each FB post
+    // costs TWO insights calls (views and engagement must be separate batches), so
+    // 140 FB posts consumed all 280 remaining calls. Result: IG had 0 views/reach on
+    // every run, permanently, which is the exact starvation shape PR #130 fixed for
+    // the link sweep.
+    //
+    // Alternating platforms makes each one's share independent of the other's cost,
+    // so neither can shut the other out however the list happens to be ordered.
+    // ⚠️ ROTATION ACROSS RUNS. Phase 1 stamps lastPostSyncAt on EVERY asset, so
+    // re-using that ordering here would hand insights to the same head of the list
+    // on every run and the tail would never be measured. Instead, prioritise assets
+    // that actually still have unmeasured posts (most pending first) — an asset drops
+    // down the list as it gets measured, so coverage rotates on its own.
+    let pendingByAsset = new Map<string, number>();
+    try {
+      const grouped = await prisma.metaPost.groupBy({
+        by: ["assetId"],
+        where: { assetId: { in: assets.map((a) => a.id) }, metricsStatus: "pending" },
+        _count: { _all: true },
+      });
+      pendingByAsset = new Map(grouped.map((g) => [g.assetId, g._count._all]));
+    } catch {
+      /* prioritisation is an optimisation; a failure must not stop the run */
+    }
+    const byPendingDesc = (a: { id: string }, b: { id: string }) =>
+      (pendingByAsset.get(b.id) ?? 0) - (pendingByAsset.get(a.id) ?? 0);
+
+    const fbAssets = assets.filter((a) => a.kind === "FACEBOOK_PAGE").sort(byPendingDesc);
+    const igAssets = assets.filter((a) => a.kind === "INSTAGRAM_ACCOUNT").sort(byPendingDesc);
+    const interleaved: typeof assets = [];
+    for (let i = 0; i < Math.max(fbAssets.length, igAssets.length); i++) {
+      if (i < igAssets.length) interleaved.push(igAssets[i]);
+      if (i < fbAssets.length) interleaved.push(fbAssets[i]);
+    }
+
+    for (const asset of interleaved) {
       if (out.rateLimited) break;
       if (budget.used >= budget.max) {
         out.metricsPending++;

@@ -1648,6 +1648,15 @@ model MetaAsset {
   /// Why the last channel-metrics fetch failed, if it did (secret-scrubbed).
   metricsError     String?   @map("metrics_error")
 
+  /// When demographics were last ATTEMPTED for this asset — not when rows landed.
+  ///
+  /// ⚠️ Rotation must key on the ATTEMPT, not on the child rows. Meta withholds
+  /// demographics entirely for accounts below its privacy threshold (2 of 48 live),
+  /// so those accounts never gain a row — and a rotation keyed on row timestamps
+  /// therefore reads them as "never fetched" and puts them at the head of the queue
+  /// FOREVER, re-spending 12 calls each on a guaranteed empty every single day.
+  demographicsFetchedAt DateTime? @map("demographics_fetched_at")
+
   lastPostSyncAt     DateTime? @map("last_post_sync_at")
   lastPostSyncStatus String?   @map("last_post_sync_status")
   lastPostSyncError  String?   @map("last_post_sync_error")

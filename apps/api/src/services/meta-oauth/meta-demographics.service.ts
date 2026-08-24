@@ -99,15 +99,14 @@ export async function runMetaDemographicsSync(opts?: {
         disconnectedAt: null,
         ...(opts?.assetId ? { id: opts.assetId } : {}),
       },
-      select: { id: true, metaId: true, name: true, demographics: { select: { fetchedAt: true }, take: 1 } },
-    });
-
-    // Least-recently-fetched first — never-fetched accounts lead. Sorted here
-    // rather than in SQL because the timestamp lives on the child rows.
-    assets.sort((a, b) => {
-      const at = a.demographics[0]?.fetchedAt?.getTime() ?? 0;
-      const bt = b.demographics[0]?.fetchedAt?.getTime() ?? 0;
-      return at - bt;
+      // ⚠️ Ordered by the ATTEMPT timestamp, not by child rows. Meta withholds
+      // demographics for accounts below its privacy threshold, and those accounts
+      // never gain a row — so a rotation keyed on row timestamps would read them as
+      // "never fetched" and park them at the head of the queue forever, re-spending
+      // 12 calls each on a guaranteed empty every day. Nulls first, so a genuinely
+      // new account still goes first exactly once.
+      orderBy: [{ demographicsFetchedAt: { sort: "asc", nulls: "first" } }],
+      select: { id: true, metaId: true, name: true },
     });
 
     for (const asset of assets) {
@@ -115,6 +114,7 @@ export async function runMetaDemographicsSync(opts?: {
       if (duplicateAssetIds.has(asset.id)) continue;
       const fetchedAt = new Date();
       let wroteAny = false;
+      let attempted = false;
 
       for (const { metric, audience } of AUDIENCES) {
         for (const dimension of DIMENSIONS) {
@@ -134,6 +134,7 @@ export async function runMetaDemographicsSync(opts?: {
           );
 
           if (res.rateLimited) { out.rateLimited = true; break; }
+          attempted = true;
           if (!res.ok) continue; // withheld or unavailable — not an error worth surfacing
 
           const results = res.data?.data?.[0]?.total_value?.breakdowns?.[0]?.results ?? [];
@@ -165,6 +166,15 @@ export async function runMetaDemographicsSync(opts?: {
         if (out.rateLimited) break;
       }
 
+      // Stamp the attempt even when Meta returned nothing, so the queue advances.
+      // Skipped when rate-limited: that is the one case where we did NOT get an
+      // answer, and pretending we did would push the account to the back for a day.
+      if (attempted && !out.rateLimited) {
+        await prisma.metaAsset.update({
+          where: { id: asset.id },
+          data: { demographicsFetchedAt: fetchedAt },
+        }).catch(() => { /* housekeeping — never fail a run over it */ });
+      }
       if (wroteAny) out.accountsUpdated++;
     }
   }

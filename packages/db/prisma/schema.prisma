@@ -1658,6 +1658,7 @@ model MetaAsset {
   connection    MetaConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
   socialAccount SocialAccount? @relation(fields: [socialAccountId], references: [id], onDelete: SetNull)
   posts         MetaPost[]
+  windowMetrics MetaAssetMetric[]
 
   @@unique([connectionId, kind, metaId])
   @@index([selected, kind])
@@ -1668,6 +1669,47 @@ model MetaAsset {
 enum MetaAssetKind {
   FACEBOOK_PAGE
   INSTAGRAM_ACCOUNT
+}
+
+/// Channel metrics for ONE time window. Latest state per (asset, window) — an
+/// upsert, never an append, for the same reason MetaPost is (see its note).
+///
+/// ⚠️ THE WINDOW SET IS DICTATED BY META, NOT BY US, and cannot be widened by
+/// adding rows here. Live-probed 2026-08-24:
+///
+///   Facebook  `period` accepts day | week | days_28 | month. There is no 90-day
+///             period, and `lifetime` returns 0 / undefined for these metrics.
+///   Instagram total_value accepts an arbitrary since/until but HARD-FAILS past
+///             30 days: "(#100) There cannot be more than 30 days (2592000 s)
+///             between since and until."
+///
+/// So day / week / days_28 are the only windows BOTH platforms can answer
+/// natively. A longer window cannot be assembled by stitching shorter ones,
+/// because reach counts UNIQUE people: adding two 28-day reaches double-counts
+/// everyone present in both. Views and engagements would survive that treatment;
+/// reach would silently inflate, which is the same trap that produced a 56%
+/// overstatement when daily reach was summed. Offer only what Meta measures.
+model MetaAssetMetric {
+  id      String    @id @default(uuid())
+  assetId String    @map("asset_id")
+  asset   MetaAsset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  /// "day" | "week" | "days_28" — Facebook's own vocabulary, mapped to an
+  /// equivalent since/until on Instagram.
+  window String
+
+  views        BigInt?
+  reach        BigInt?
+  engagements  BigInt?
+  profileViews BigInt? @map("profile_views")
+  reactions    BigInt?
+
+  fetchedAt DateTime? @map("fetched_at")
+  error     String?
+
+  @@unique([assetId, window])
+  @@index([window])
+  @@map("meta_asset_metrics")
 }
 
 /// ⚠️ LATEST-STATE-PER-POST, upserted on (assetId, metaPostId). NOT a time series.

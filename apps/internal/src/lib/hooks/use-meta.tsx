@@ -174,21 +174,46 @@ export interface MetaChannel {
   storedPosts: number;
 }
 
+/**
+ * The time windows Meta can actually answer, with the labels we show.
+ *
+ * ⚠️ THIS LIST IS NOT EXTENSIBLE BY US. Facebook's `period` accepts only
+ * day/week/days_28/month, and Instagram rejects any since/until span over 30
+ * days outright. There is no 90-day option and one cannot be built by adding
+ * shorter windows together, because reach counts UNIQUE people — summing two
+ * 28-day reaches double-counts everyone who appears in both.
+ */
+export const CHANNEL_WINDOWS = [
+  { key: "day", label: "24h", suffix: "24h" },
+  { key: "week", label: "7d", suffix: "7d" },
+  { key: "days_28", label: "28d", suffix: "28d" },
+] as const;
+
+export type ChannelWindowKey = (typeof CHANNEL_WINDOWS)[number]["key"];
+
+export function windowSuffix(key: ChannelWindowKey): string {
+  return CHANNEL_WINDOWS.find((w) => w.key === key)?.suffix ?? "28d";
+}
+
 export function useMetaChannels(params?: {
   platform?: "facebook" | "instagram";
   q?: string;
   sort?: string;
+  window?: ChannelWindowKey;
 }) {
   const qs = new URLSearchParams();
   if (params?.platform) qs.set("platform", params.platform);
   if (params?.q) qs.set("q", params.q);
   if (params?.sort) qs.set("sort", params.sort);
+  if (params?.window) qs.set("window", params.window);
   const { data, error, isLoading, mutate } = useSWR(
     `/admin/meta/channels?${qs.toString()}`,
     (url: string) =>
       apiFetch<Envelope<{
         items: MetaChannel[];
         channelCount: number;
+        /** Which window the figures describe — echoed so the UI can never mislabel them. */
+        window: ChannelWindowKey;
         totals: { followers: number; views: number; engagements: number; reach: number };
         contributing: { views: number; engagements: number; reach: number };
       }>>(url).then((r) => r.data),

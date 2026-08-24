@@ -48,10 +48,29 @@ import { todayIST, istMidnight } from "@dashmani/shared";
 import { oauthGraphFetch, makeBudget, type CallBudget } from "./oauth-graph";
 import { decryptToken, scrubSecrets } from "../../utils/token-crypto";
 
-/** 28-day window: long enough to be stable, short enough to reflect "now". */
-const FB_PERIOD = "days_28";
+/**
+ * The windows the page can offer — dictated by Meta, not by us.
+ *
+ * ⚠️ Live-probed 2026-08-24. Facebook `period` accepts day | week | days_28 |
+ * month (no 90-day period; `lifetime` returns 0/undefined for these metrics).
+ * Instagram takes an arbitrary since/until but hard-fails past 30 days:
+ *   (#100) There cannot be more than 30 days (2592000 s) between since and until.
+ *
+ * day / week / days_28 is the intersection — the only set BOTH platforms answer
+ * natively. ⚠️ A longer window CANNOT be assembled from shorter ones: reach counts
+ * UNIQUE people, so adding two 28-day reaches double-counts everyone in both.
+ * Views and engagements would tolerate it; reach would silently inflate, which is
+ * exactly the trap that produced a 56% overstatement when daily reach was summed.
+ */
+export const CHANNEL_WINDOWS = ["day", "week", "days_28"] as const;
+export type ChannelWindow = (typeof CHANNEL_WINDOWS)[number];
+
+/** IG equivalent of each Facebook period, as a since/until span in days. */
+const IG_WINDOW_DAYS: Record<ChannelWindow, number> = { day: 1, week: 7, days_28: 28 };
+
+/** The window whose figures also populate the legacy meta_assets.*_28d columns. */
+const DEFAULT_WINDOW: ChannelWindow = "days_28";
 const IG_PERIOD = "day";
-const IG_WINDOW_DAYS = 28;
 
 const FB_METRICS = [
   // ⚠️ page_media_view, NOT page_video_views. The latter counts VIDEO plays only,
@@ -181,7 +200,9 @@ export async function runMetaChannelSync(opts?: {
     select: { id: true, userTokenEnc: true },
   });
 
-  const budget: CallBudget = makeBudget(opts?.budgetMax ?? 300);
+  // 3 windows x ~120 assets = ~360. Was 300, which is enough for one window only
+  // and would have silently truncated the third window on most of the estate.
+  const budget: CallBudget = makeBudget(opts?.budgetMax ?? 500);
 
   for (const conn of connections) {
     if (!conn.userTokenEnc) continue;
@@ -228,73 +249,78 @@ export async function runMetaChannelSync(opts?: {
         }
       }
 
-      const since = Math.floor((Date.now() - IG_WINDOW_DAYS * 86_400_000) / 1000);
-      const res = await oauthGraphFetch<InsightsResponse>(
-        `${asset.metaId}/insights`,
-        isIg
-          ? {
-              metric: IG_METRICS.join(","),
-              // Required, and also the ONLY correct source for reach — see IG_METRICS.
-              metric_type: "total_value",
-              period: IG_PERIOD,
-              since,
-              until: Math.floor(Date.now() / 1000),
-            }
-          : { metric: FB_METRICS.join(","), period: FB_PERIOD },
-        token,
-        { label: isIg ? "channel-ig-insights" : "channel-fb-insights", budget },
-      );
+      // ── One insights call PER WINDOW ────────────────────────────────────
+      //
+      // Three calls per asset rather than one. Meta accepts only a single
+      // `period` per request and offers no way to batch them, so a window
+      // selector genuinely costs 3x — ~360 calls across 120 assets, which the
+      // budget covers. The alternative (fetch a daily series and aggregate) is
+      // not open to us: it would work for views and engagements and quietly
+      // corrupt reach.
+      let sawRateLimit = false;
+      let defaultWindowData: InsightsResponse | undefined;
+      let defaultWindowOk = false;
 
-      if (res.rateLimited) { out.rateLimited = true; break; }
+      for (const win of CHANNEL_WINDOWS) {
+        if (budget.used >= budget.max) break;
+        const untilTs = Math.floor(Date.now() / 1000);
+        const sinceTs = untilTs - IG_WINDOW_DAYS[win] * 86_400;
 
-      if (!res.ok) {
+        const res = await oauthGraphFetch<InsightsResponse>(
+          `${asset.metaId}/insights`,
+          isIg
+            ? {
+                metric: IG_METRICS.join(","),
+                // Required, and also the ONLY correct source for reach — see IG_METRICS.
+                metric_type: "total_value",
+                period: IG_PERIOD,
+                since: sinceTs,
+                until: untilTs,
+              }
+            : { metric: FB_METRICS.join(","), period: win },
+          token,
+          { label: isIg ? `channel-ig-insights-${win}` : `channel-fb-insights-${win}`, budget },
+        );
+
+        if (res.rateLimited) { sawRateLimit = true; break; }
+
+        if (!res.ok) {
+          await upsertWindowMetric(asset.id, win, null, scrubSecrets(res.error ?? "channel insights failed"));
+          if (win === DEFAULT_WINDOW) out.errors.push(`${asset.name}: ${res.error ?? "insights failed"}`);
+          continue;
+        }
+
+        await upsertWindowMetric(asset.id, win, readMetrics(res.data, isIg), null);
+        if (win === DEFAULT_WINDOW) { defaultWindowData = res.data; defaultWindowOk = true; }
+      }
+
+      if (sawRateLimit) { out.rateLimited = true; break; }
+
+      // Mirror the default window onto the legacy meta_assets.*_28d columns so
+      // every existing reader keeps working unchanged.
+      if (!defaultWindowOk) {
         await prisma.metaAsset.update({
           where: { id: asset.id },
-          data: {
-            metricsFetchedAt: new Date(),
-            metricsError: scrubSecrets(res.error ?? "channel insights failed"),
-          },
+          data: { metricsFetchedAt: new Date(), metricsError: "channel insights failed" },
         });
-        out.errors.push(`${asset.name}: ${res.error ?? "insights failed"}`);
         continue;
       }
 
-      const d = res.data;
-      /** IG total_value: one pre-aggregated number per metric. */
-      const igTotal = (name: string): number | null => {
-        const row = d?.data?.find((x) => x.name === name);
-        return intOrNull(row?.total_value?.value);
-      };
-
+      const d = defaultWindowData;
+      const m = readMetrics(d, isIg);
       await prisma.metaAsset.update({
         where: { id: asset.id },
-        data: isIg
-          ? {
-              views28d: bigintOrNull(igTotal("views")),
-              reach28d: bigintOrNull(igTotal("reach")),
-              engagements28d: bigintOrNull(igTotal("total_interactions")),
-              profileViews28d: bigintOrNull(igTotal("profile_views")),
-              reactions28d: bigintOrNull(igTotal("likes")),
-              metricsFetchedAt: new Date(),
-              metricsError: null,
-            }
-          : {
-              views28d: bigintOrNull(reduceSeries(seriesFor(d, "page_media_view"), "last")),
-              engagements28d: bigintOrNull(reduceSeries(seriesFor(d, "page_post_engagements"), "last")),
-              profileViews28d: bigintOrNull(reduceSeries(seriesFor(d, "page_views_total"), "last")),
-              // Real unique reach. Was hard-coded null on the belief that Facebook
-              // exposes no whole-Page reach; that was a stale conclusion about the
-              // RETIRED metric name, not about the data. See the header note.
-              reach28d: bigintOrNull(
-                reduceSeries(seriesFor(d, "page_total_media_view_unique"), "last"),
-              ),
-              reactions28d: bigintOrNull(
-                reduceSeries(seriesFor(d, "page_actions_post_reactions_total"), "last"),
-              ),
-              metricsFetchedAt: new Date(),
-              metricsError: null,
-            },
+        data: {
+          views28d: bigintOrNull(m.views),
+          reach28d: bigintOrNull(m.reach),
+          engagements28d: bigintOrNull(m.engagements),
+          profileViews28d: bigintOrNull(m.profileViews),
+          reactions28d: bigintOrNull(m.reactions),
+          metricsFetchedAt: new Date(),
+          metricsError: null,
+        },
       });
+
       // ── Write the AUTHORITATIVE follower count back to the channel registry ──
       //
       // ⚠️ WHY THIS EXISTS. Account Growth was rendering STALE SCRAPED follower
@@ -350,6 +376,76 @@ export async function runMetaChannelSync(opts?: {
 
 function bigintOrNull(n: number | null): bigint | null {
   return n === null ? null : BigInt(n);
+}
+
+interface ChannelMetrics {
+  views: number | null;
+  reach: number | null;
+  engagements: number | null;
+  profileViews: number | null;
+  reactions: number | null;
+}
+
+/**
+ * Map one /insights response to our five channel figures.
+ *
+ * The two platforms answer in different SHAPES, not just under different names:
+ * Instagram returns a single pre-aggregated `total_value` per metric, Facebook a
+ * series that must be reduced with "last" (its days_28/week/day values are each a
+ * ROLLING TOTAL stamped per day — summing them multiplies the truth).
+ */
+function readMetrics(d: InsightsResponse | undefined, isIg: boolean): ChannelMetrics {
+  if (isIg) {
+    const total = (name: string): number | null =>
+      intOrNull(d?.data?.find((x) => x.name === name)?.total_value?.value);
+    return {
+      views: total("views"),
+      reach: total("reach"),
+      engagements: total("total_interactions"),
+      profileViews: total("profile_views"),
+      reactions: total("likes"),
+    };
+  }
+  return {
+    views: reduceSeries(seriesFor(d, "page_media_view"), "last"),
+    reach: reduceSeries(seriesFor(d, "page_total_media_view_unique"), "last"),
+    engagements: reduceSeries(seriesFor(d, "page_post_engagements"), "last"),
+    profileViews: reduceSeries(seriesFor(d, "page_views_total"), "last"),
+    reactions: reduceSeries(seriesFor(d, "page_actions_post_reactions_total"), "last"),
+  };
+}
+
+/**
+ * Store one window's figures. Upsert on (assetId, window) — latest state, never
+ * an append. A failed window records its error and keeps whatever it last held,
+ * so one bad window cannot blank a channel that the other two measured fine.
+ */
+async function upsertWindowMetric(
+  assetId: string,
+  window: ChannelWindow,
+  m: ChannelMetrics | null,
+  error: string | null,
+): Promise<void> {
+  const data = m
+    ? {
+        views: bigintOrNull(m.views),
+        reach: bigintOrNull(m.reach),
+        engagements: bigintOrNull(m.engagements),
+        profileViews: bigintOrNull(m.profileViews),
+        reactions: bigintOrNull(m.reactions),
+        fetchedAt: new Date(),
+        error: null,
+      }
+    : { fetchedAt: new Date(), error };
+  try {
+    await prisma.metaAssetMetric.upsert({
+      where: { assetId_window: { assetId, window } },
+      create: { assetId, window, ...data },
+      update: data,
+    });
+  } catch (e) {
+    console.warn(`[meta-channels] window write failed ${assetId}/${window}: ${scrubSecrets(String(e))}`);
+  }
 }
 
 /**

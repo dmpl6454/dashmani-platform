@@ -18,7 +18,7 @@ import { asyncHandler } from "../utils/async-handler";
 import { metaOauthConfigured, metaOauthMissingEnv, metaTuning } from "../services/meta-oauth/meta-config";
 import { discoverConnectionAssets } from "../services/meta-oauth/meta-discovery.service";
 import { runMetaPostsSync } from "../services/meta-oauth/meta-posts.service";
-import { runMetaChannelSync, CHANNEL_WINDOWS, type ChannelWindow } from "../services/meta-oauth/meta-channels.service";
+import { runMetaChannelSync, resolveContestedOwners, CHANNEL_WINDOWS, type ChannelWindow } from "../services/meta-oauth/meta-channels.service";
 import { scrubSecrets } from "../utils/token-crypto";
 
 const router = Router();
@@ -411,8 +411,15 @@ router.get(
           baseline.set(sn.accountId, { date: sn.date, followers: sn.followerCount });
         }
       }
+      // ⚠️ A channel row can be claimed by two different Pages that share a name
+      // (three such collisions on prod). Its follower history belongs to ONE of
+      // them, so only that one gets a delta — otherwise the 5.2m "The Candid
+      // Couch" Page would display a change computed from the 132k Page's history.
+      const owners = await resolveContestedOwners();
       for (const r of rows) {
         if (!r.socialAccountId || r.followerCount === null) continue;
+        const owner = owners.get(r.socialAccountId);
+        if (owner !== undefined && owner !== r.id) continue;
         const b = baseline.get(r.socialAccountId);
         // Same-day baseline ⇒ no span ⇒ no delta (see the note above).
         if (!b || b.date.getTime() >= todayKey.getTime()) continue;

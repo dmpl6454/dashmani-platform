@@ -468,7 +468,17 @@ async function syncAssetInsights(
         where: { id: post.id },
         data: {
           views: numOrNull(vm.get("post_media_view")),
-          reach: numOrNull(vm.get("post_total_media_view_unique")),
+          // ⚠️ POST-LEVEL reach is only stored when positive. Facebook returns a
+          // literal 0 for it on almost every post — measured across 188 freshly
+          // synced posts, every single one came back 0, including one with 298,346
+          // views. A post cannot be seen 298,346 times by nobody, so that 0 is a
+          // placeholder for "not published", not a measurement. Meta is still
+          // rolling this metric out at post level (it reads correctly at PAGE level,
+          // where page_total_media_view_unique returns real figures on all 72 Pages).
+          // Storing the 0 would put a false number in the database for any later
+          // reader to pick up — the fabricated-zero class. Revisit once Meta
+          // populates it; the metric name is already correct.
+          reach: (() => { const r = numOrNull(vm.get("post_total_media_view_unique")); return r && r > 0 ? r : null; })(),
           // `unavailable` = we asked and Meta publishes nothing; distinct from
           // `pending` = not asked yet.
           metricsStatus: viewsRes.ok ? "ok" : viewsRes.errorCode === 100 ? "unavailable" : "error",

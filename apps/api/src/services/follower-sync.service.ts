@@ -36,8 +36,15 @@ function sleep(ms: number) {
  * the older System-User app.
  *
  * Escape hatch: META_SCRAPERS_ENABLED=1 restores the previous behaviour.
+ *
+ * ⚠️ Read PER CALL, not once at module load. A module-scope `const` here made the
+ * escape hatch unverifiable — the tests that cover the scraper path could not turn
+ * it on, because the value was already baked in by the time they ran. Reading it
+ * at the call site costs nothing and means the flag can actually be exercised.
  */
-const META_SCRAPERS_ENABLED = (process.env.META_SCRAPERS_ENABLED ?? "") === "1";
+function metaScrapersEnabled(): boolean {
+  return (process.env.META_SCRAPERS_ENABLED ?? "") === "1";
+}
 
 /**
  * Provenance of a follower count, persisted to SocialAccount.syncSource.
@@ -549,7 +556,7 @@ export async function syncAllFollowerCounts() {
         }
         if (entry) {
           followers = entry.followers; // administered Page via Graph → exact
-        } else if (META_SCRAPERS_ENABLED) {
+        } else if (metaScrapersEnabled()) {
           // Legacy path, DISABLED BY DEFAULT since 2026-08-24 (owner decision).
           // Account Growth now shows only API-verified channels, so a scraped
           // Facebook number has no consumer — it would just be unverifiable data

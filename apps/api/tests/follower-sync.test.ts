@@ -332,6 +332,12 @@ describe("syncAllFollowerCounts — Tier 3: public-API fallback", () => {
 
   // ── Facebook: un-walled mobile path for numeric-ID profile URLs ──────────
   //
+  // ⚠️ These four drive the FACEBOOK SCRAPER, which is DISABLED BY DEFAULT since
+  // 2026-08-24 (Account Growth shows only API-verified channels, so a scraped
+  // Facebook number has no consumer). They therefore turn the documented escape
+  // hatch on explicitly. Keeping them alive matters: the scraper is still the
+  // fallback if the owner ever re-enables it, and an untested disabled path rots.
+  //
   // Live-verified 2026-07-10: www.facebook.com/<slug> now serves a login wall
   // for many pages, but m.facebook.com/profile.php?id=<n> (mobile Safari UA)
   // still returns an un-walled page with the count in og:description.
@@ -339,7 +345,16 @@ describe("syncAllFollowerCounts — Tier 3: public-API fallback", () => {
   // (it is not exported), with fbLookupKeys returning [] so the account falls
   // through Tier-1's map-miss branch straight into the scraper.
 
-  it("resolves a numeric-ID FB profile via the un-walled m.facebook.com mobile path", async () => {
+  const withFbScraper = (fn: () => Promise<void>) => async () => {
+    const prev = process.env.META_SCRAPERS_ENABLED;
+    process.env.META_SCRAPERS_ENABLED = "1";
+    try { await fn(); } finally {
+      if (prev === undefined) delete process.env.META_SCRAPERS_ENABLED;
+      else process.env.META_SCRAPERS_ENABLED = prev;
+    }
+  };
+
+  it("resolves a numeric-ID FB profile via the un-walled m.facebook.com mobile path", withFbScraper(async () => {
     const account = makeAccount({
       id: "acc-fb-numeric",
       handle: "Comedy Park",
@@ -379,9 +394,9 @@ describe("syncAllFollowerCounts — Tier 3: public-API fallback", () => {
       }),
     );
     expect(result.updated).toBe(1);
-  });
+  }));
 
-  it("does NOT hit the m.facebook.com numeric path for a vanity-slug profile URL, and still resolves via the existing www.facebook.com Googlebot path", async () => {
+  it("does NOT hit the m.facebook.com numeric path for a vanity-slug profile URL, and still resolves via the existing www.facebook.com Googlebot path", withFbScraper(async () => {
     const account = makeAccount({
       id: "acc-fb-vanity",
       handle: "ComedyPark.co",
@@ -426,9 +441,9 @@ describe("syncAllFollowerCounts — Tier 3: public-API fallback", () => {
       }),
     );
     expect(result.updated).toBe(1);
-  });
+  }));
 
-  it("falls through to the vanity-slug path (and returns null, not throwing) when the numeric-ID mobile fetch is dead", async () => {
+  it("falls through to the vanity-slug path (and returns null, not throwing) when the numeric-ID mobile fetch is dead", withFbScraper(async () => {
     // A pure numeric-ID URL with no slug at all — the mobile fetch fails, and
     // the fallback vanity-slug path also has nothing to resolve against, so
     // the overall result must be a clean miss (failed), never a throw.
@@ -459,9 +474,9 @@ describe("syncAllFollowerCounts — Tier 3: public-API fallback", () => {
     expect(mobileCall).toBeTruthy();
 
     expect(mockAccountUpdate).not.toHaveBeenCalled();
-  });
+  }));
 
-  it("rejects a walled/short mobile FB page even if it contains a plausible unanchored number, and falls through to the vanity-slug fallback", async () => {
+  it("rejects a walled/short mobile FB page even if it contains a plausible unanchored number, and falls through to the vanity-slug fallback", withFbScraper(async () => {
     // The mobile response is HTTP 200 (not a fetch failure) but SHORT — a
     // walled/interstitial page — and its og:description contains a number with
     // NO "likes/followers/people" anchor (e.g. an incidental year). This must
@@ -511,7 +526,7 @@ describe("syncAllFollowerCounts — Tier 3: public-API fallback", () => {
     // vanity-slug fallback (mocked to a clean miss) has nothing either — so
     // this must land as a clean miss, matching test 3's pattern.
     expect(mockAccountUpdate).not.toHaveBeenCalled();
-  });
+  }));
 
   // ── YouTube: public-API resolver ──────────────────────────────────────────
 
@@ -764,7 +779,9 @@ describe("syncAllFollowerCounts — Tier 3: public-API fallback", () => {
     expect(mockSnapshotUpdate).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: "snap-existing-1" },
-        data: { followerCount: 777000 },
+        // `source` is stamped so a later reader can tell an exact API figure from
+        // a best-effort scrape. YouTube resolves through the Data API => "api".
+        data: { followerCount: 777000, source: "api" },
       }),
     );
     expect(mockSnapshotCreate).not.toHaveBeenCalled();

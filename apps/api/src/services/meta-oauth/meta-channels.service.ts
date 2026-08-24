@@ -35,7 +35,6 @@ import { decryptToken, scrubSecrets } from "../../utils/token-crypto";
 
 /** 28-day window: long enough to be stable, short enough to reflect "now". */
 const FB_PERIOD = "days_28";
-/** IG account insights reject days_28 on several metrics; 28 daily points summed. */
 const IG_PERIOD = "day";
 const IG_WINDOW_DAYS = 28;
 
@@ -46,11 +45,39 @@ const FB_METRICS = [
   "page_actions_post_reactions_total",
 ] as const;
 
-/** Kept minimal and known-good; each extra metric risks 400-ing the whole call. */
-const IG_METRICS = ["reach", "views", "profile_views", "total_interactions", "likes"] as const;
+/**
+ * IG account metrics — ALL fetched with `metric_type=total_value`.
+ *
+ * ⚠️ TWO BUGS LIVE HERE, both found only by running it against real accounts:
+ *
+ * 1. Without `metric_type=total_value` Meta rejects the whole call:
+ *      (#100) The following metrics (views,profile_views,total_interactions,likes)
+ *      should be specified with parameter metric_type=total_value
+ *    That failed all 48 Instagram accounts on the first run.
+ *
+ * 2. ⚠️⚠️ `reach` MUST come from total_value too — it must NOT be summed from a
+ *    daily series. Reach counts UNIQUE people, so adding up 28 daily values
+ *    double-counts anyone who visited on more than one day. Measured on one real
+ *    account: summing daily reach gave 10,187,906 while the true 28-day figure is
+ *    6,509,641 — a 56% overstatement that would have looked entirely plausible.
+ *    Never reintroduce a sum over a unique-user metric.
+ */
+const IG_METRICS = [
+  "reach",
+  "views",
+  "profile_views",
+  "total_interactions",
+  "likes",
+] as const;
 
 interface InsightsResponse {
-  data?: Array<{ name?: string; values?: Array<{ value?: unknown }> }>;
+  data?: Array<{
+    name?: string;
+    /** FB (and IG time-series) shape. */
+    values?: Array<{ value?: unknown }>;
+    /** IG `metric_type=total_value` shape — a single pre-aggregated figure. */
+    total_value?: { value?: unknown };
+  }>;
 }
 
 export interface ChannelSyncOutcome {
@@ -80,12 +107,16 @@ function sumMap(v: unknown): number | null {
 }
 
 /**
- * Reduce an insights series to ONE number.
+ * Reduce an insights series to ONE number. FACEBOOK ONLY — Instagram uses
+ * `metric_type=total_value` and never comes through here.
  *
- * FB `days_28` returns a rolling total per day — the LAST point is the current
- * 28-day figure, so summing would multiply it ~28x. IG `day` returns genuine
- * per-day values, which must be SUMMED to get a 28-day total. Getting this
- * backwards silently inflates or deflates every number on the page.
+ * ⚠️ FB `days_28` returns a ROLLING 28-DAY TOTAL stamped once per day, so the
+ * correct answer is the LAST point. Summing the series would multiply the real
+ * figure by ~28 and every headline number on the page would be nonsense.
+ *
+ * The "sum" mode is retained for a genuine per-day series, but note it must NEVER
+ * be applied to a unique-user metric such as reach: adding daily uniques
+ * double-counts repeat visitors (measured 10,187,906 summed vs a true 6,509,641).
  */
 function reduceSeries(values: Array<{ value?: unknown }> | undefined, mode: "last" | "sum"): number | null {
   if (!values || values.length === 0) return null;
@@ -172,7 +203,14 @@ export async function runMetaChannelSync(opts?: {
       const res = await oauthGraphFetch<InsightsResponse>(
         `${asset.metaId}/insights`,
         isIg
-          ? { metric: IG_METRICS.join(","), period: IG_PERIOD, since, until: Math.floor(Date.now() / 1000) }
+          ? {
+              metric: IG_METRICS.join(","),
+              // Required, and also the ONLY correct source for reach — see IG_METRICS.
+              metric_type: "total_value",
+              period: IG_PERIOD,
+              since,
+              until: Math.floor(Date.now() / 1000),
+            }
           : { metric: FB_METRICS.join(","), period: FB_PERIOD },
         token,
         { label: isIg ? "channel-ig-insights" : "channel-fb-insights", budget },
@@ -192,19 +230,22 @@ export async function runMetaChannelSync(opts?: {
         continue;
       }
 
-      // FB days_28 is a rolling total (take the LAST point); IG day is per-day (SUM).
-      const mode = isIg ? "sum" : ("last" as const);
       const d = res.data;
+      /** IG total_value: one pre-aggregated number per metric. */
+      const igTotal = (name: string): number | null => {
+        const row = d?.data?.find((x) => x.name === name);
+        return intOrNull(row?.total_value?.value);
+      };
 
       await prisma.metaAsset.update({
         where: { id: asset.id },
         data: isIg
           ? {
-              views28d: bigintOrNull(reduceSeries(seriesFor(d, "views"), mode)),
-              reach28d: bigintOrNull(reduceSeries(seriesFor(d, "reach"), mode)),
-              engagements28d: bigintOrNull(reduceSeries(seriesFor(d, "total_interactions"), mode)),
-              profileViews28d: bigintOrNull(reduceSeries(seriesFor(d, "profile_views"), mode)),
-              reactions28d: bigintOrNull(reduceSeries(seriesFor(d, "likes"), mode)),
+              views28d: bigintOrNull(igTotal("views")),
+              reach28d: bigintOrNull(igTotal("reach")),
+              engagements28d: bigintOrNull(igTotal("total_interactions")),
+              profileViews28d: bigintOrNull(igTotal("profile_views")),
+              reactions28d: bigintOrNull(igTotal("likes")),
               metricsFetchedAt: new Date(),
               metricsError: null,
             }

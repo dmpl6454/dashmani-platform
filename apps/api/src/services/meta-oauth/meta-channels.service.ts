@@ -263,7 +263,23 @@ export async function runMetaChannelSync(opts?: {
 
       for (const win of CHANNEL_WINDOWS) {
         if (budget.used >= budget.max) break;
-        const untilTs = Math.floor(Date.now() / 1000);
+
+        // ⚠️ INSTAGRAM WINDOWS MUST END AT A UTC DAY BOUNDARY, NOT AT "NOW".
+        //
+        // IG's total_value buckets by whole UTC day, so a range ending mid-day
+        // returns only the fraction of today that has been tallied — and it looks
+        // like a real answer. Measured 2026-08-24 07:14 UTC on Paparazzi:
+        //
+        //   since=now-24h, until=now       ->    314 views   (WRONG: today so far)
+        //   last COMPLETE UTC day          -> 809,371 views  (right)
+        //   7 days (reference)             -> 6,670,450
+        //
+        // Shipping the first form would have put "7 views" next to a channel doing
+        // 6.6m a week. Ending on the last completed day also matches Facebook,
+        // whose series already stops at a closed boundary (probed: the newest point
+        // is end_time 2026-08-23T07:00:00Z, never a partial today), so the two
+        // platforms describe the same span instead of silently differing by a day.
+        const untilTs = Math.floor(Date.now() / 86_400_000) * 86_400;
         const sinceTs = untilTs - IG_WINDOW_DAYS[win] * 86_400;
 
         const res = await oauthGraphFetch<InsightsResponse>(

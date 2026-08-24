@@ -328,6 +328,8 @@ export async function runMetaChannelSync(opts?: {
   // headroom; too tight and the last assets silently lose whichever call is last.
   const budget: CallBudget = makeBudget(opts?.budgetMax ?? 780);
   const contestedOwners = await resolveContestedOwners();
+  // Never poll the same Meta object twice because two admins both administer it.
+  const duplicateAssetIds = await resolveDuplicateAssetIds();
 
   for (const conn of connections) {
     if (!conn.userTokenEnc) continue;
@@ -356,6 +358,7 @@ export async function runMetaChannelSync(opts?: {
 
     for (const asset of assets) {
       if (out.rateLimited || budget.used >= budget.max) break;
+      if (duplicateAssetIds.has(asset.id)) continue;
       const isIg = asset.kind === "INSTAGRAM_ACCOUNT";
       const assetSocialAccountId = asset.socialAccountId;
       const assetFollowerCount = asset.followerCount;
@@ -577,6 +580,58 @@ export async function runMetaChannelSync(opts?: {
  * Returns socialAccountId -> owning assetId, ONLY for accounts that are contested.
  * An account with a single asset is not in the map and needs no check.
  */
+/**
+ * Assets that are the SAME Meta object reached through a different connection.
+ *
+ * ⚠️ CONNECTING A SECOND ADMIN IS ADDITIVE, NOT A REPLACEMENT. MetaConnection is
+ * unique on `metaUserId`, so the same Facebook user reconnecting UPDATES their row
+ * in place, but a DIFFERENT person creates a SECOND live connection and both are
+ * synced. MetaAsset is unique on `(connectionId, kind, metaId)` — per connection —
+ * so a Page both admins administer is stored TWICE, once under each.
+ *
+ * Left alone that has two consequences, neither of them visible as an error:
+ *   • the Page appears twice in Connected channels and is DOUBLE-COUNTED in the
+ *     views / reach / engagement / revenue totals;
+ *   • the sync polls it once per connection, doubling its share of the call budget
+ *     — and the budget silently truncates, so other channels lose data instead.
+ *
+ * One row wins, deterministically: most followers, then the earliest connection,
+ * then id, so it never flips between runs. The loser is hidden from the table and
+ * skipped by the sync; nothing is deleted, and if the winning connection is later
+ * revoked the other simply takes over.
+ *
+ * Returns the asset ids to SUPPRESS. Empty while only one connection exists.
+ */
+export async function resolveDuplicateAssetIds(): Promise<Set<string>> {
+  const rows = await prisma.metaAsset.findMany({
+    where: { disconnectedAt: null },
+    select: { id: true, kind: true, metaId: true, followerCount: true, name: true, createdAt: true },
+  });
+  const byObject = new Map<string, typeof rows>();
+  for (const r of rows) {
+    const key = `${r.kind}:${r.metaId}`;
+    const list = byObject.get(key) ?? [];
+    list.push(r);
+    byObject.set(key, list);
+  }
+  const suppress = new Set<string>();
+  for (const [key, list] of byObject) {
+    if (list.length < 2) continue;
+    list.sort(
+      (a, b) =>
+        (b.followerCount ?? 0) - (a.followerCount ?? 0) ||
+        a.createdAt.getTime() - b.createdAt.getTime() ||
+        a.id.localeCompare(b.id),
+    );
+    for (const dupe of list.slice(1)) suppress.add(dupe.id);
+    console.warn(
+      `[meta-channels] ${key} ("${list[0].name}") is reachable through ${list.length} connections; ` +
+        `keeping one and suppressing ${list.length - 1} so it is not double-counted.`,
+    );
+  }
+  return suppress;
+}
+
 export async function resolveContestedOwners(): Promise<Map<string, string>> {
   const rows = await prisma.metaAsset.findMany({
     where: { disconnectedAt: null, socialAccountId: { not: null } },

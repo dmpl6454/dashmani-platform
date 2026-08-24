@@ -165,6 +165,15 @@ export interface MetaChannel {
   followerDelta: number | null;
   /** Approximate earnings for the period, in cents. Facebook only; Instagram has no such metric. */
   earningsCents: number | null;
+  /** Gross churn behind the net follower change. Both platforms. */
+  follows: number | null;
+  unfollows: number | null;
+  /** Facebook only. */
+  videoViewTimeMs: number | null;
+  /** Instagram only — Facebook publishes no page-level equivalent. */
+  saves: number | null;
+  shares: number | null;
+  accountsEngaged: number | null;
   posts: number | null;
   views28d: number | null;
   engagements28d: number | null;
@@ -270,6 +279,34 @@ export function fmtMoney(cents: number | null | undefined): string {
   const usd = cents / 100;
   if (Math.abs(usd) >= 1000) return `$${Math.round(usd).toLocaleString()}`;
   return `$${usd.toFixed(2)}`;
+}
+
+export interface MetaDemographics {
+  supported: boolean;
+  reason?: string;
+  pending?: boolean;
+  /** audience -> dimension -> buckets, already sorted value-desc by the API. */
+  audiences: Record<string, Record<string, Array<{ bucket: string; value: number }>>>;
+  fetchedAt: string | null;
+}
+
+/** Audience demographics for ONE channel. Only fetched when the row is expanded. */
+export function useMetaDemographics(assetId: string | null) {
+  const { data, error, isLoading } = useSWR(
+    assetId ? `/admin/meta/channels/${assetId}/demographics` : null,
+    (url: string) => apiFetch<Envelope<MetaDemographics>>(url).then((r) => r.data),
+    opts,
+  );
+  return { data, error, isLoading };
+}
+
+/** Milliseconds of watch time as human hours. "—" when absent, never 0h for null. */
+export function fmtWatchTime(ms: number | null | undefined): string {
+  if (ms === null || ms === undefined || !Number.isFinite(ms)) return "—";
+  const hours = ms / 3_600_000;
+  if (hours >= 1000) return `${fmtMetric(Math.round(hours))} h`;
+  if (hours >= 1) return `${hours.toFixed(1)} h`;
+  return `${Math.round(ms / 60000)} min`;
 }
 
 export function fmtMetric(n: number | null | undefined): string {

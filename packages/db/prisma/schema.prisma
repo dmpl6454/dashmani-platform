@@ -1659,6 +1659,7 @@ model MetaAsset {
   socialAccount SocialAccount? @relation(fields: [socialAccountId], references: [id], onDelete: SetNull)
   posts         MetaPost[]
   windowMetrics MetaAssetMetric[]
+  demographics  MetaAssetDemographic[]
 
   @@unique([connectionId, kind, metaId])
   @@index([selected, kind])
@@ -1669,6 +1670,40 @@ model MetaAsset {
 enum MetaAssetKind {
   FACEBOOK_PAGE
   INSTAGRAM_ACCOUNT
+}
+
+/// Who an Instagram audience IS — the distribution behind the scalars.
+///
+/// ⚠️ INSTAGRAM ONLY. Facebook's whole fan-demographic family (page_fans_country,
+/// page_fans_city, page_fans_locale …) was retired with the rest of the 2025/26
+/// deprecation and returns (#100).
+///
+/// Replace-on-write per (asset, audience, dimension): buckets come and go as a
+/// country drops out of the top set, and an upsert alone would leave the departed
+/// one behind forever, quietly inflating every total drawn from this table.
+///
+/// Refreshed on its OWN daily cadence, not with the 3-hourly channel sync: a full
+/// pass is 3 audiences x 4 dimensions x ~48 accounts = ~576 calls, which would
+/// more than double the 672-call sync and starve it. Demographics move slowly, so
+/// daily with rotation is ample.
+model MetaAssetDemographic {
+  id      String    @id @default(uuid())
+  assetId String    @map("asset_id")
+  asset   MetaAsset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  /// "follower" | "engaged" | "reached"
+  audience String
+  /// "country" | "city" | "age" | "gender"
+  dimension String
+  /// The bucket label as Meta returns it — "BD", "Mumbai, Maharashtra", "25-34", "M".
+  bucket String
+  value  Int
+
+  fetchedAt DateTime @map("fetched_at")
+
+  @@unique([assetId, audience, dimension, bucket])
+  @@index([assetId, audience, dimension])
+  @@map("meta_asset_demographics")
 }
 
 /// Channel metrics for ONE time window. Latest state per (asset, window) — an
@@ -1713,6 +1748,27 @@ model MetaAssetMetric {
   /// gives FOLLOWER (follows) and NON_FOLLOWER (unfollows); net = follows − unfollows.
   /// Null for the 24h window, which Meta will not break down.
   followerDelta Int? @map("follower_delta")
+
+  /// Gross new follows in the window, and the churn behind the net number.
+  ///
+  /// ⚠️ These are GROSS, not net. Facebook: page_daily_follows_unique /
+  /// page_daily_unfollows_unique. Instagram: the FOLLOWER / NON_FOLLOWER buckets
+  /// of follows_and_unfollows, which the follower-change fetch already reads — so
+  /// storing them costs nothing extra. Net change stays in `followerDelta`;
+  /// showing only net hides that two channels with the same +50k can have wildly
+  /// different churn underneath.
+  follows   Int?
+  unfollows Int?
+
+  /// FACEBOOK only — page_video_view_time, in MILLISECONDS. BigInt because a
+  /// large Page clears 5.9e12 ms in 28 days, far past a 32-bit column.
+  videoViewTimeMs BigInt? @map("video_view_time_ms")
+
+  /// INSTAGRAM only. Saves and shares are the strongest reach-intent signals on
+  /// Instagram and neither has a Facebook page-level equivalent.
+  saves           Int?
+  shares          Int?
+  accountsEngaged Int? @map("accounts_engaged")
 
   /// Approximate earnings for this window, in CENTS (integer — never a float,
   /// money must not accumulate binary rounding error).

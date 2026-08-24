@@ -83,6 +83,12 @@ const FB_METRICS = [
   "page_post_engagements",
   "page_views_total",
   "page_actions_post_reactions_total",
+  // Churn behind the net follower number, and watch time. All three verified on
+  // 72/72 Pages, so they batch safely — but see the (#2) note on earnings for why
+  // "it worked on one Page" is never enough to justify adding a metric here.
+  "page_daily_follows_unique",
+  "page_daily_unfollows_unique",
+  "page_video_view_time",
   // Authoritative follower count, and it rides along in the SAME batched call —
   // so keeping followers truthful costs zero extra requests.
   "page_follows",
@@ -136,6 +142,12 @@ const IG_METRICS = [
   "profile_views",
   "total_interactions",
   "likes",
+  // Saves and shares are the strongest reach-intent signals Instagram publishes
+  // and neither has a Facebook page-level equivalent. accounts_engaged is the
+  // unique-people counterpart to total_interactions. Verified on 48/48 accounts.
+  "saves",
+  "shares",
+  "accounts_engaged",
 ] as const;
 
 /**
@@ -174,7 +186,7 @@ async function fetchIgNetFollowerChange(
   sinceTs: number,
   untilTs: number,
   budget: CallBudget,
-): Promise<number | null> {
+): Promise<{ net: number; follows: number; unfollows: number } | null> {
   const res = await oauthGraphFetch<{
     data?: Array<{ total_value?: { breakdowns?: Array<{ results?: Array<{ dimension_values?: string[]; value?: unknown }> }> } }>;
   }>(
@@ -200,7 +212,9 @@ async function fetchIgNetFollowerChange(
   const unfollows = pick("NON_FOLLOWER");
   // Both buckets or nothing — half an answer would be a fabricated number.
   if (follows === null || unfollows === null) return null;
-  return Math.round(follows - unfollows);
+  // The gross halves are returned too: they arrive in this same response, so
+  // surfacing the churn behind the net change costs nothing.
+  return { net: Math.round(follows - unfollows), follows: Math.round(follows), unfollows: Math.round(unfollows) };
 }
 
 interface InsightsResponse {
@@ -455,15 +469,21 @@ export async function runMetaChannelSync(opts?: {
         }
 
         let igDelta: number | null = null;
+        let igFollows: number | null = null;
+        let igUnfollows: number | null = null;
         if (isIg && win !== "day" && budget.used < budget.max) {
-          igDelta = await fetchIgNetFollowerChange(asset.metaId, token, sinceTs, untilTs, budget);
+          const fu = await fetchIgNetFollowerChange(asset.metaId, token, sinceTs, untilTs, budget);
+          if (fu) { igDelta = fu.net; igFollows = fu.follows; igUnfollows = fu.unfollows; }
         }
 
         // What the numbers DESCRIBE, as distinct from when we fetched them.
         // Instagram was asked for an explicit until, so we already know its end.
         const periodEnd = isIg ? new Date(untilTs * 1000) : readPeriodEnd(res.data);
 
-        await upsertWindowMetric(asset.id, win, readMetrics(res.data, isIg), null, igDelta, earningsCents, periodEnd);
+        const metrics = readMetrics(res.data, isIg);
+        if (isIg) { metrics.follows = igFollows; metrics.unfollows = igUnfollows; }
+
+        await upsertWindowMetric(asset.id, win, metrics, null, igDelta, earningsCents, periodEnd);
         if (win === DEFAULT_WINDOW) { defaultWindowData = res.data; defaultWindowOk = true; }
       }
 
@@ -668,6 +688,12 @@ interface ChannelMetrics {
   engagements: number | null;
   profileViews: number | null;
   reactions: number | null;
+  follows: number | null;
+  unfollows: number | null;
+  videoViewTimeMs: number | null;
+  saves: number | null;
+  shares: number | null;
+  accountsEngaged: number | null;
 }
 
 /**
@@ -688,6 +714,14 @@ function readMetrics(d: InsightsResponse | undefined, isIg: boolean): ChannelMet
       engagements: total("total_interactions"),
       profileViews: total("profile_views"),
       reactions: total("likes"),
+      saves: total("saves"),
+      shares: total("shares"),
+      accountsEngaged: total("accounts_engaged"),
+      // Instagram's follows/unfollows come from follows_and_unfollows, which the
+      // follower-change fetch already reads — filled in by the caller.
+      follows: null,
+      unfollows: null,
+      videoViewTimeMs: null, // no Instagram equivalent
     };
   }
   return {
@@ -696,6 +730,12 @@ function readMetrics(d: InsightsResponse | undefined, isIg: boolean): ChannelMet
     engagements: reduceSeries(seriesFor(d, "page_post_engagements"), "last"),
     profileViews: reduceSeries(seriesFor(d, "page_views_total"), "last"),
     reactions: reduceSeries(seriesFor(d, "page_actions_post_reactions_total"), "last"),
+    follows: reduceSeries(seriesFor(d, "page_daily_follows_unique"), "last"),
+    unfollows: reduceSeries(seriesFor(d, "page_daily_unfollows_unique"), "last"),
+    videoViewTimeMs: reduceSeries(seriesFor(d, "page_video_view_time"), "last"),
+    saves: null,   // Facebook publishes no page-level saves
+    shares: null,  // nor page-level shares
+    accountsEngaged: null,
   };
 }
 
@@ -720,6 +760,12 @@ async function upsertWindowMetric(
         engagements: bigintOrNull(m.engagements),
         profileViews: bigintOrNull(m.profileViews),
         reactions: bigintOrNull(m.reactions),
+        follows: m.follows,
+        unfollows: m.unfollows,
+        videoViewTimeMs: bigintOrNull(m.videoViewTimeMs),
+        saves: m.saves,
+        shares: m.shares,
+        accountsEngaged: m.accountsEngaged,
         followerDelta,
         earningsCents,
         periodEnd,

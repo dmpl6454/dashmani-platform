@@ -415,7 +415,10 @@ export function MetaPanel() {
           widens over a longer period because the same person sees more posts.
           <strong className="font-medium text-[#7A7A7A]"> Followers</strong> is a live
           total and does not move with the period; the small figure beneath it is the change
-          across the selected one, shown once enough API history exists.
+          across the selected one. Facebook reports its true daily follower count, so that
+          change is measured directly. Instagram publishes no such history — its change is
+          Meta&apos;s own follows-minus-unfollows for the period, which is very close but not
+          identical, and is unavailable over 24 hours.
           Click a channel to see its recent posts. 24h / 7d / 28d are the only periods
           offered because they are the only ones Meta measures directly — Instagram
           refuses any range over 30 days, and a longer one cannot be added up from

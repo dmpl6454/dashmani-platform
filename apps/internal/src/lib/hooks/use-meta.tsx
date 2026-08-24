@@ -35,6 +35,12 @@ export interface MetaConnection {
   lastSyncedAt: string | null;
   lastError: string | null;
   assetCount?: number;
+  /**
+   * The connection the page presents as "the" account. Any others exist as token
+   * redundancy (a Facebook token expires and dies on password change) and are
+   * kept out of the way rather than shown as separate accounts to manage.
+   */
+  primary?: boolean;
 }
 
 export interface MetaAsset {

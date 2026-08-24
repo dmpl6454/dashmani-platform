@@ -20,7 +20,7 @@ import {
 import {
   useMetaConnections, useMetaChannels, useMetaPosts,
   startMetaConnect, triggerMetaDiscovery, triggerMetaSync, disconnectMeta,
-  fmtMetric, fmtMoney, fmtWatchTime, useMetaDemographics, CHANNEL_WINDOWS, windowSuffix, type MetaChannel, type ChannelWindowKey,
+  fmtMetric, fmtMoney, fmtWatchTime, useMetaDemographics, CHANNEL_WINDOWS, windowSuffix, type MetaChannel, type MetaConnection, type ChannelWindowKey,
 } from "@/lib/hooks/use-meta";
 
 type SortKey = "followers" | "views" | "engagements" | "name";
@@ -180,6 +180,49 @@ function ChannelExtras({ c, sfx }: { c: MetaChannel; sfx: string }) {
   );
 }
 
+/** One connected Meta account. Rendered for the primary, and for backups on demand. */
+function ConnectionRow({
+  c, busy, run,
+}: {
+  c: MetaConnection;
+  busy: string | null;
+  run: (key: string, fn: () => Promise<unknown>) => Promise<void>;
+}) {
+  return (
+    <div className="px-5 py-2.5 border-b border-[#F6F2EA] flex flex-wrap items-center gap-x-3 gap-y-1.5">
+            <div className="min-w-0 flex items-center gap-2">
+              <span className="text-sm font-medium text-[#1A1A1A] truncate">
+                {c.metaUserName ?? `Meta user ${c.metaUserId}`}
+              </span>
+              <StatusChip status={c.status} daysLeft={c.dataAccessDaysLeft} />
+            </div>
+            <div className="text-[11px] text-[#7A7A7A] flex items-center gap-2 sm:ml-auto">
+              {c.discoveryState !== "done" && <span className="italic">finding channels…</span>}
+              <span>{c.assetCount ?? 0} channels</span>
+              <button onClick={() => run(`disc-${c.id}`, () => triggerMetaDiscovery(c.id))}
+                disabled={busy !== null} className="underline hover:text-[#1A1A1A] disabled:opacity-50">
+                {busy === `disc-${c.id}` ? "refreshing…" : "refresh channels"}
+              </button>
+              <button
+                onClick={() => {
+                  if (window.confirm("Disconnect this Meta account? Stored data is kept, but nothing new will be fetched."))
+                    void run(`del-${c.id}`, () => disconnectMeta(c.id));
+                }}
+                disabled={busy !== null}
+                className="inline-flex items-center gap-1 text-[#C0504D] underline hover:opacity-80 disabled:opacity-50">
+                <Unlink className="h-3 w-3" />disconnect
+              </button>
+            </div>
+            {c.missingScopes.length > 0 && (
+              <p className="basis-full text-[11px] text-[#C2861D]">
+                Declined permissions: {c.missingScopes.join(", ")} — reconnect to grant them.
+              </p>
+            )}
+            {c.lastError && <p className="basis-full text-[11px] text-[#C0504D] break-words">{c.lastError}</p>}
+          </div>
+  );
+}
+
 /** Recent posts for ONE channel — a drill-down, never the headline. */
 function ChannelPosts({ assetId }: { assetId: string }) {
   const { data, isLoading } = useMetaPosts({ assetId });
@@ -247,6 +290,7 @@ export function MetaPanel() {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [showBackups, setShowBackups] = useState(false);
   const [win, setWin] = useState<ChannelWindowKey>("days_28");
 
   const { data: ch, mutate: mutateCh } = useMetaChannels({
@@ -264,6 +308,11 @@ export function MetaPanel() {
 
   const connections = conns?.connections ?? [];
   const live = connections.filter((c) => c.status !== "REVOKED");
+  // The API marks the primary (the grant supplying the most channels). Falling back
+  // to the first keeps this correct against an older API response that predates the
+  // flag, rather than rendering no account at all.
+  const primaryConn = live.find((c) => c.primary) ?? live[0] ?? null;
+  const backupConns = live.filter((c) => c.id !== primaryConn?.id);
   const configured = conns?.configured ?? false;
   const channels = ch?.items ?? [];
 
@@ -349,39 +398,31 @@ export function MetaPanel() {
         </div>
       )}
 
-      {live.map((c) => (
-        <div key={c.id} className="px-5 py-2.5 border-b border-[#F6F2EA] flex flex-wrap items-center gap-x-3 gap-y-1.5">
-          <div className="min-w-0 flex items-center gap-2">
-            <span className="text-sm font-medium text-[#1A1A1A] truncate">
-              {c.metaUserName ?? `Meta user ${c.metaUserId}`}
-            </span>
-            <StatusChip status={c.status} daysLeft={c.dataAccessDaysLeft} />
-          </div>
-          <div className="text-[11px] text-[#7A7A7A] flex items-center gap-2 sm:ml-auto">
-            {c.discoveryState !== "done" && <span className="italic">finding channels…</span>}
-            <span>{c.assetCount ?? 0} channels</span>
-            <button onClick={() => run(`disc-${c.id}`, () => triggerMetaDiscovery(c.id))}
-              disabled={busy !== null} className="underline hover:text-[#1A1A1A] disabled:opacity-50">
-              {busy === `disc-${c.id}` ? "refreshing…" : "refresh channels"}
-            </button>
-            <button
-              onClick={() => {
-                if (window.confirm("Disconnect this Meta account? Stored data is kept, but nothing new will be fetched."))
-                  void run(`del-${c.id}`, () => disconnectMeta(c.id));
-              }}
-              disabled={busy !== null}
-              className="inline-flex items-center gap-1 text-[#C0504D] underline hover:opacity-80 disabled:opacity-50">
-              <Unlink className="h-3 w-3" />disconnect
-            </button>
-          </div>
-          {c.missingScopes.length > 0 && (
-            <p className="basis-full text-[11px] text-[#C2861D]">
-              Declined permissions: {c.missingScopes.join(", ")} — reconnect to grant them.
-            </p>
-          )}
-          {c.lastError && <p className="basis-full text-[11px] text-[#C0504D] break-words">{c.lastError}</p>}
+      {/* ⚠️ ONE ACCOUNT, NOT A LIST. Extra connections are token redundancy — a
+          Facebook token expires (~90 days) and dies on a password change, so a
+          single grant makes one person's password a single point of failure for
+          this whole page. They are kept, but folded away: an admin should see the
+          account, not a fleet to administer. Underneath, duplicate channels are
+          already suppressed so a second grant costs no extra API calls. */}
+      {primaryConn && <ConnectionRow c={primaryConn} busy={busy} run={run} />}
+
+      {backupConns.length > 0 && (
+        <div className="px-5 py-2 border-b border-[#F6F2EA]">
+          <button
+            onClick={() => setShowBackups((v) => !v)}
+            aria-expanded={showBackups}
+            className="text-[11px] text-[#7A7A7A] hover:text-[#1A1A1A] underline"
+          >
+            {showBackups ? "Hide" : "Show"} {backupConns.length} backup connection
+            {backupConns.length > 1 ? "s" : ""}
+          </button>
+          <span className="ml-2 text-[10px] text-[#B0B0B0]">
+            kept so access survives a password change or someone leaving — they add no
+            duplicate channels and no extra API calls
+          </span>
         </div>
-      ))}
+      )}
+      {showBackups && backupConns.map((c) => <ConnectionRow key={c.id} c={c} busy={busy} run={run} />)}
 
       {live.length > 0 && t && (
         <div className="px-5 py-4 grid grid-cols-2 sm:grid-cols-4 gap-3 border-b border-[#F0EAE0]">

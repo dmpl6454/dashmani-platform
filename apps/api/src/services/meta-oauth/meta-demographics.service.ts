@@ -25,6 +25,7 @@
 
 import { prisma } from "@dashmani/db";
 import { oauthGraphFetch, makeBudget, type CallBudget } from "./oauth-graph";
+import { resolveDuplicateAssetIds } from "./meta-channels.service";
 import { decryptToken, scrubSecrets } from "../../utils/token-crypto";
 
 /** Meta's own names, mapped to the short labels we store and render. */
@@ -74,6 +75,12 @@ export async function runMetaDemographicsSync(opts?: {
   // 12 calls per account, so ~33 accounts a run — full coverage every ~1.5 days.
   const budget: CallBudget = makeBudget(opts?.budgetMax ?? 400);
 
+  // ⚠️ An Instagram account reachable through two admin connections exists once per
+  // connection. At 12 calls per account a duplicate is the single most expensive
+  // thing in this pass, and it would push real accounts past the budget into the
+  // next day's run.
+  const duplicateAssetIds = await resolveDuplicateAssetIds();
+
   for (const conn of connections) {
     if (!conn.userTokenEnc) continue;
     let userToken: string;
@@ -105,6 +112,7 @@ export async function runMetaDemographicsSync(opts?: {
 
     for (const asset of assets) {
       if (out.rateLimited || budget.used >= budget.max) break;
+      if (duplicateAssetIds.has(asset.id)) continue;
       const fetchedAt = new Date();
       let wroteAny = false;
 

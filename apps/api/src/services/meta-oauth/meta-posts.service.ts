@@ -24,6 +24,7 @@
 
 import { prisma } from "@dashmani/db";
 import { oauthGraphFetch, makeBudget, type CallBudget } from "./oauth-graph";
+import { resolveDuplicateAssetIds } from "./meta-channels.service";
 import { decryptToken, scrubSecrets } from "../../utils/token-crypto";
 import { metaTuning } from "./meta-config";
 
@@ -531,6 +532,13 @@ export async function runMetaPostsSync(opts?: {
     select: { id: true, userTokenEnc: true },
   });
 
+  // ⚠️ A Page two admins both administer exists once PER CONNECTION, so without
+  // this it would be fed-and-measured twice out of one budget — and the budget
+  // truncates silently, so the duplicate does not cost itself, it costs OTHER
+  // channels their data. The channel sync has had this guard since it was
+  // written; posts did not, which is the gap this closes.
+  const duplicateAssetIds = await resolveDuplicateAssetIds();
+
   for (const conn of connections) {
     if (!conn.userTokenEnc) continue;
     let userToken: string;
@@ -541,7 +549,7 @@ export async function runMetaPostsSync(opts?: {
       continue;
     }
 
-    const assets = await prisma.metaAsset.findMany({
+    const allAssets = await prisma.metaAsset.findMany({
       where: {
         connectionId: conn.id,
         selected: true,
@@ -553,6 +561,12 @@ export async function runMetaPostsSync(opts?: {
       orderBy: [{ lastPostSyncAt: { sort: "asc", nulls: "first" } }],
       select: { id: true, kind: true, metaId: true, name: true, pageTokenEnc: true },
     });
+
+    // Drop duplicates BEFORE the budget is apportioned — feedReserve is a share of
+    // assets.length, so leaving them in would shrink every real channel's slice.
+    const assets = duplicateAssetIds.size > 0
+      ? allAssets.filter((a) => !duplicateAssetIds.has(a.id))
+      : allAssets;
 
     // ── PHASE 1 — cheap feed pass across EVERY selected asset ───────────────
     //

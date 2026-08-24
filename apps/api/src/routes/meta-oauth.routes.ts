@@ -244,6 +244,26 @@ router.get(
 
     const { serializeConnection } = await import("../services/meta-oauth/meta-oauth.service");
 
+    // ── Which connection is PRIMARY ────────────────────────────────────────
+    //
+    // Additional connections exist as TOKEN REDUNDANCY, not as extra accounts to
+    // manage: a Facebook user token expires (~90 days) and dies on password
+    // change, so a single connection makes one person's password a single point
+    // of failure for the whole page. But an admin should not have to reason about
+    // that — the page presents ONE account and keeps the rest quietly in reserve.
+    //
+    // Primary = the connection actually supplying the most channels; ties broken
+    // by earliest connection, then id, so it is stable and never flips between
+    // requests. Deliberately NOT "most recent": a newcomer who administers three
+    // Pages must not displace the grant that carries a hundred.
+    const ranked = [...rows].sort(
+      (a, b) =>
+        b._count.assets - a._count.assets ||
+        a.createdAt.getTime() - b.createdAt.getTime() ||
+        a.id.localeCompare(b.id),
+    );
+    const primaryId = ranked[0]?.id ?? null;
+
     return res.json({
       success: true,
       data: {
@@ -252,6 +272,7 @@ router.get(
         connections: rows.map((r) => ({
           ...serializeConnection(r as never),
           assetCount: r._count.assets,
+          primary: r.id === primaryId,
         })),
       },
     });

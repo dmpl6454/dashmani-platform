@@ -207,7 +207,7 @@ interface InsightsResponse {
   data?: Array<{
     name?: string;
     /** FB (and IG time-series) shape. */
-    values?: Array<{ value?: unknown }>;
+    values?: Array<{ value?: unknown; end_time?: string }>;
     /** IG `metric_type=total_value` shape — a single pre-aggregated figure. */
     total_value?: { value?: unknown };
   }>;
@@ -281,6 +281,23 @@ function readEarningsCents(res: InsightsResponse | undefined): number | null {
   for (let i = values.length - 1; i >= 0; i--) {
     const v = values[i]?.value;
     if (typeof v === "number" && Number.isFinite(v) && v >= 0) return Math.round(v * 100);
+  }
+  return null;
+}
+
+/**
+ * The end of the period Meta published, from its own `end_time` stamp.
+ * Facebook only. Instagram is asked for an explicit since/until, so the caller
+ * already knows its boundary.
+ */
+function readPeriodEnd(res: InsightsResponse | undefined): Date | null {
+  for (const d of res?.data ?? []) {
+    const vals = d.values ?? [];
+    const et = (vals[vals.length - 1] as { end_time?: string } | undefined)?.end_time;
+    if (typeof et === "string") {
+      const parsed = new Date(et);
+      if (!Number.isNaN(parsed.getTime())) return parsed;
+    }
   }
   return null;
 }
@@ -439,7 +456,11 @@ export async function runMetaChannelSync(opts?: {
           igDelta = await fetchIgNetFollowerChange(asset.metaId, token, sinceTs, untilTs, budget);
         }
 
-        await upsertWindowMetric(asset.id, win, readMetrics(res.data, isIg), null, igDelta, earningsCents);
+        // What the numbers DESCRIBE, as distinct from when we fetched them.
+        // Instagram was asked for an explicit until, so we already know its end.
+        const periodEnd = isIg ? new Date(untilTs * 1000) : readPeriodEnd(res.data);
+
+        await upsertWindowMetric(asset.id, win, readMetrics(res.data, isIg), null, igDelta, earningsCents, periodEnd);
         if (win === DEFAULT_WINDOW) { defaultWindowData = res.data; defaultWindowOk = true; }
       }
 
@@ -635,6 +656,7 @@ async function upsertWindowMetric(
   error: string | null,
   followerDelta: number | null = null,
   earningsCents: number | null = null,
+  periodEnd: Date | null = null,
 ): Promise<void> {
   const data = m
     ? {
@@ -645,6 +667,7 @@ async function upsertWindowMetric(
         reactions: bigintOrNull(m.reactions),
         followerDelta,
         earningsCents,
+        periodEnd,
         fetchedAt: new Date(),
         error: null,
       }

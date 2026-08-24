@@ -438,7 +438,7 @@ router.get(
      * would label 28 days of activity as "today" — a wrong number presented
      * confidently, which is worse than an honest blank.
      */
-    const win = (r: { windowMetrics: Array<{ views: bigint | null; reach: bigint | null; engagements: bigint | null; profileViews: bigint | null; reactions: bigint | null; followerDelta: number | null; earningsCents: number | null; fetchedAt: Date | null; error: string | null }> }) =>
+    const win = (r: { windowMetrics: Array<{ views: bigint | null; reach: bigint | null; engagements: bigint | null; profileViews: bigint | null; reactions: bigint | null; followerDelta: number | null; earningsCents: number | null; fetchedAt: Date | null; periodEnd: Date | null; error: string | null }> }) =>
       r.windowMetrics[0];
 
     // Totals sum ONLY non-null values, and we report how many channels actually
@@ -489,7 +489,9 @@ router.get(
          * rather than something that looks wrong.
          */
         dataThrough: rows.reduce<string | null>((acc, r) => {
-          const f = win(r)?.fetchedAt;
+          // ⚠️ periodEnd, NOT fetchedAt. The fetch time says when we asked; only
+          // Meta's own end_time says what the numbers describe.
+          const f = win(r)?.periodEnd;
           if (!f) return acc;
           const iso = f.toISOString();
           return acc === null || iso > acc ? iso : acc;

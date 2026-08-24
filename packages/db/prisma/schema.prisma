@@ -1724,7 +1724,18 @@ model MetaAssetMetric {
   /// returned zero, which for an unmonetised Page is a true answer.
   earningsCents Int? @map("earnings_cents")
 
+  /// When WE fetched. Not the same thing as what the numbers describe.
   fetchedAt DateTime? @map("fetched_at")
+
+  /// The end of the period Meta actually published — its `end_time`.
+  ///
+  /// ⚠️ THIS IS NOT `fetchedAt`, AND CONFLATING THEM MISLEADS. Facebook closes a
+  /// period at the Page's local midnight, so a sync running at 10:02 today
+  /// returns figures stamped 2026-08-23T07:00:00Z. Showing the fetch time would
+  /// tell a reader the data is current through today, which is exactly the wrong
+  /// impression and the reason Meta's own app appears to disagree with us.
+  periodEnd DateTime? @map("period_end")
+
   error     String?
 
   @@unique([assetId, window])

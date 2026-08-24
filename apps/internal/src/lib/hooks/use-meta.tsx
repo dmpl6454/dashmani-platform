@@ -161,6 +161,8 @@ export interface MetaChannel {
   username: string | null;
   pictureUrl: string | null;
   followers: number | null;
+  /** Follower change across the selected period. null = no API history spans it yet. */
+  followerDelta: number | null;
   posts: number | null;
   views28d: number | null;
   engagements28d: number | null;

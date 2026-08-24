@@ -375,6 +375,51 @@ router.get(
       },
     });
 
+    // ── Follower change over the selected period ──────────────────────────
+    //
+    // ⚠️ API-SOURCED SNAPSHOTS ONLY. Account Growth is a verified-data-only
+    // surface (owner decision 2026-08-24), and a delta measured against a
+    // scraped baseline would put unverifiable numbers back on the page through
+    // the back door — including the display-string staircases where the scraper
+    // was reading Facebook's rounded "14M" text.
+    //
+    // ⚠️ AND IT RETURNS NULL, NEVER 0, WHEN THERE IS NO HISTORY SPANNING THE
+    // WINDOW. API follower history begins 2026-08-24, so today the only snapshot
+    // is today's — and "current minus current" is 0. Rendering that 0 would
+    // assert "this channel did not grow in 28 days", which we do not know. The
+    // baseline must be from a date strictly BEFORE today for a delta to exist;
+    // otherwise it is absent and shows as a dash. This activates on its own:
+    // 24h tomorrow, 7d in a week, 28d in four weeks.
+    const windowDays = window === "day" ? 1 : window === "week" ? 7 : 28;
+    const followerDelta = new Map<string, number>();
+    const accountIds = rows.map((r) => r.socialAccountId).filter((x): x is string => x !== null);
+    if (accountIds.length > 0) {
+      const since = new Date(Date.now() - windowDays * 86_400_000);
+      since.setUTCHours(0, 0, 0, 0);
+      const todayKey = new Date();
+      todayKey.setUTCHours(0, 0, 0, 0);
+
+      const snaps = await prisma.accountGrowthSnapshot.findMany({
+        where: { accountId: { in: accountIds }, source: "api", date: { gte: since } },
+        orderBy: { date: "asc" },
+        select: { accountId: true, date: true, followerCount: true },
+      });
+      // Earliest in-window point per account (rows arrive date-ascending).
+      const baseline = new Map<string, { date: Date; followers: number }>();
+      for (const sn of snaps) {
+        if (!baseline.has(sn.accountId)) {
+          baseline.set(sn.accountId, { date: sn.date, followers: sn.followerCount });
+        }
+      }
+      for (const r of rows) {
+        if (!r.socialAccountId || r.followerCount === null) continue;
+        const b = baseline.get(r.socialAccountId);
+        // Same-day baseline ⇒ no span ⇒ no delta (see the note above).
+        if (!b || b.date.getTime() >= todayKey.getTime()) continue;
+        followerDelta.set(r.id, r.followerCount - b.followers);
+      }
+    }
+
     const n = (v: bigint | null | undefined) => (v === null || v === undefined ? null : Number(v));
 
     /**
@@ -428,6 +473,8 @@ router.get(
           username: r.username,
           pictureUrl: r.pictureUrl,
           followers: r.followerCount,
+          /** Change in followers across the selected period; null when no API history spans it. */
+          followerDelta: followerDelta.has(r.id) ? followerDelta.get(r.id)! : null,
           posts: r.postCount ?? r._count.posts ?? null,
           // Field names kept as *28d for wire compatibility; the VALUES follow the
           // requested window. `window` below says which one, so a client can never

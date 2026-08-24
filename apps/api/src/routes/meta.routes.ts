@@ -438,7 +438,7 @@ router.get(
      * would label 28 days of activity as "today" — a wrong number presented
      * confidently, which is worse than an honest blank.
      */
-    const win = (r: { windowMetrics: Array<{ views: bigint | null; reach: bigint | null; engagements: bigint | null; profileViews: bigint | null; reactions: bigint | null; fetchedAt: Date | null; error: string | null }> }) =>
+    const win = (r: { windowMetrics: Array<{ views: bigint | null; reach: bigint | null; engagements: bigint | null; profileViews: bigint | null; reactions: bigint | null; followerDelta: number | null; fetchedAt: Date | null; error: string | null }> }) =>
       r.windowMetrics[0];
 
     // Totals sum ONLY non-null values, and we report how many channels actually
@@ -481,7 +481,20 @@ router.get(
           pictureUrl: r.pictureUrl,
           followers: r.followerCount,
           /** Change in followers across the selected period; null when no API history spans it. */
-          followerDelta: followerDelta.has(r.id) ? followerDelta.get(r.id)! : null,
+          // Snapshot-measured first (exact: we watched the number change), then
+          // the platform's own accounting for the period.
+          //
+          // ⚠️ Only Instagram ever needs the fallback. Facebook's page_follows
+          // gives true daily totals, which the backfill turned into real
+          // snapshots; Instagram publishes no total-over-time metric at all, so
+          // its change comes from follows_and_unfollows (follows − unfollows).
+          // That is Meta's own accounting rather than a measured difference, and
+          // it is close but not identical to the profile count — so as soon as our
+          // own snapshots span the window (7d in a week, 28d in four), the exact
+          // figure above wins automatically and this fallback stops being used.
+          followerDelta: followerDelta.has(r.id)
+            ? followerDelta.get(r.id)!
+            : (win(r)?.followerDelta ?? null),
           posts: r.postCount ?? r._count.posts ?? null,
           // Field names kept as *28d for wire compatibility; the VALUES follow the
           // requested window. `window` below says which one, so a client can never

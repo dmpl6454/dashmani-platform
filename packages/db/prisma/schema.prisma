@@ -1704,6 +1704,16 @@ model MetaAssetMetric {
   profileViews BigInt? @map("profile_views")
   reactions    BigInt?
 
+  /// Follower change across this window, measured by the platform.
+  ///
+  /// ⚠️ INSTAGRAM ONLY, and signed (it can be negative). Facebook does not need
+  /// it: page_follows gives the true daily total, so its change comes from the
+  /// snapshot series. Instagram has no total-over-time metric at all — the only
+  /// route to a change is follows_and_unfollows, whose follow_type breakdown
+  /// gives FOLLOWER (follows) and NON_FOLLOWER (unfollows); net = follows − unfollows.
+  /// Null for the 24h window, which Meta will not break down.
+  followerDelta Int? @map("follower_delta")
+
   fetchedAt DateTime? @map("fetched_at")
   error     String?
 

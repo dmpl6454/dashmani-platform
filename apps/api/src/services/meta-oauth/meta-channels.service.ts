@@ -113,6 +113,71 @@ const IG_METRICS = [
   "likes",
 ] as const;
 
+/**
+ * Instagram's follower change for a period — the only route Meta offers.
+ *
+ * ⚠️ INSTAGRAM PUBLISHES NO TOTAL-FOLLOWERS-OVER-TIME METRIC AT ALL. Facebook's
+ * `page_follows` returns the true daily total; Instagram's nearest equivalent,
+ * `follower_count`, is DAILY GROSS NEW FOLLOWS — never negative (0 of 348 daily
+ * points across 12 accounts), capped to "the last 30 days" with no walking back,
+ * and blind to unfollows. Reconstructing totals by subtracting it is not merely
+ * imprecise, it gets the DIRECTION wrong: on an 18-day window it disagreed in
+ * sign with the real change on 5 of 8 accounts.
+ *
+ * `follows_and_unfollows` closes it. Its `follow_type` breakdown returns
+ * FOLLOWER and NON_FOLLOWER, and those are follows and UNFOLLOWS — proven by the
+ * fact that over the same 14 days the FOLLOWER bucket (6,554) equals
+ * `follower_count` summed (6,554) exactly. So net = follows − unfollows.
+ *
+ * ⚠️ An earlier note in this repo claimed this metric was unusable because a
+ * negative net "implied Paparazzi lost followers while it was growing". Paparazzi
+ * was NOT growing — its own snapshots fell 7,178,021 → 7,164,810 over the same
+ * period. The metric was right and the reasoning was wrong.
+ *
+ * Verified against real snapshots on 12 accounts: the SIGN is correct on every
+ * one, and the residual is under ~1% of follower count (the per-change percentage
+ * looks larger only where the change itself is tiny). 44/44 accounts answer.
+ *
+ * ⚠️ Meta refuses the breakdown for a 1-day span ("missing buckets"), so the 24h
+ * window has no Instagram delta and must render as a dash rather than a zero.
+ * ⚠️ Hard 30-day cap per request (31 days errors), though unlike `follower_count`
+ * older 30-day windows ARE walkable if longer history is ever wanted.
+ */
+async function fetchIgNetFollowerChange(
+  igId: string,
+  token: string,
+  sinceTs: number,
+  untilTs: number,
+  budget: CallBudget,
+): Promise<number | null> {
+  const res = await oauthGraphFetch<{
+    data?: Array<{ total_value?: { breakdowns?: Array<{ results?: Array<{ dimension_values?: string[]; value?: unknown }> }> } }>;
+  }>(
+    `${igId}/insights`,
+    {
+      metric: "follows_and_unfollows",
+      metric_type: "total_value",
+      breakdown: "follow_type",
+      period: "day",
+      since: sinceTs,
+      until: untilTs,
+    },
+    token,
+    { label: "channel-ig-follower-delta", budget },
+  );
+  if (!res.ok || !res.data) return null;
+  const results = res.data.data?.[0]?.total_value?.breakdowns?.[0]?.results ?? [];
+  const pick = (key: string): number | null => {
+    const v = results.find((r) => r.dimension_values?.[0] === key)?.value;
+    return typeof v === "number" && Number.isFinite(v) ? v : null;
+  };
+  const follows = pick("FOLLOWER");
+  const unfollows = pick("NON_FOLLOWER");
+  // Both buckets or nothing — half an answer would be a fabricated number.
+  if (follows === null || unfollows === null) return null;
+  return Math.round(follows - unfollows);
+}
+
 interface InsightsResponse {
   data?: Array<{
     name?: string;
@@ -200,9 +265,11 @@ export async function runMetaChannelSync(opts?: {
     select: { id: true, userTokenEnc: true },
   });
 
-  // 3 windows x ~120 assets = ~360. Was 300, which is enough for one window only
-  // and would have silently truncated the third window on most of the estate.
-  const budget: CallBudget = makeBudget(opts?.budgetMax ?? 500);
+  // 3 windows x ~120 assets = ~360, plus one follower-change call per Instagram
+  // account for the 7d and 28d windows (~48 x 2 = 96) => ~456. Was 500, which
+  // left no headroom, so the last few Instagram accounts would have silently lost
+  // their delta.
+  const budget: CallBudget = makeBudget(opts?.budgetMax ?? 650);
   const contestedOwners = await resolveContestedOwners();
 
   for (const conn of connections) {
@@ -307,7 +374,15 @@ export async function runMetaChannelSync(opts?: {
           continue;
         }
 
-        await upsertWindowMetric(asset.id, win, readMetrics(res.data, isIg), null);
+        // Instagram's follower change for this window. Skipped for "day" — Meta
+        // will not break a single day down — and skipped when the budget is spent,
+        // in which case it stays null rather than becoming a misleading 0.
+        let igDelta: number | null = null;
+        if (isIg && win !== "day" && budget.used < budget.max) {
+          igDelta = await fetchIgNetFollowerChange(asset.metaId, token, sinceTs, untilTs, budget);
+        }
+
+        await upsertWindowMetric(asset.id, win, readMetrics(res.data, isIg), null, igDelta);
         if (win === DEFAULT_WINDOW) { defaultWindowData = res.data; defaultWindowOk = true; }
       }
 
@@ -501,6 +576,7 @@ async function upsertWindowMetric(
   window: ChannelWindow,
   m: ChannelMetrics | null,
   error: string | null,
+  followerDelta: number | null = null,
 ): Promise<void> {
   const data = m
     ? {
@@ -509,6 +585,7 @@ async function upsertWindowMetric(
         engagements: bigintOrNull(m.engagements),
         profileViews: bigintOrNull(m.profileViews),
         reactions: bigintOrNull(m.reactions),
+        followerDelta,
         fetchedAt: new Date(),
         error: null,
       }

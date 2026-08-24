@@ -154,13 +154,28 @@ function ChannelExtras({ c, sfx }: { c: MetaChannel; sfx: string }) {
       : [{ label: `Watch time · ${sfx}`, value: fmtWatchTime(c.videoViewTimeMs) }]),
   ];
   return (
-    <div className="px-6 py-3 bg-[#FCFBF8] grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-      {stats.map((s) => (
-        <div key={s.label} className="min-w-0">
-          <p className="font-num text-sm font-semibold text-[#1A1A1A] truncate">{s.value}</p>
-          <p className="text-[10px] text-[#7A7A7A] leading-tight">{s.label}</p>
-        </div>
-      ))}
+    <div className="px-6 py-3 bg-[#FCFBF8]">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+        {stats.map((s) => (
+          <div key={s.label} className="min-w-0">
+            <p className="font-num text-sm font-semibold text-[#1A1A1A] truncate">{s.value}</p>
+            <p className="text-[10px] text-[#7A7A7A] leading-tight">{s.label}</p>
+          </div>
+        ))}
+      </div>
+      {/* ⚠️ Pre-empt the obvious arithmetic: new follows minus unfollows does NOT
+          equal the follower change shown in the table, and someone will check.
+          Measured on one Page: 783,736 - 107,088 = +676,648 against a measured
+          +617,430. They are two different Meta measurements — gross churn counters
+          versus the true daily follower total — not two views of one number. */}
+      {c.follows !== null && c.unfollows !== null && (
+        <p className="mt-2 text-[10px] text-[#B0B0B0] leading-snug">
+          New follows and unfollows are Meta&apos;s gross counters. They will not subtract
+          exactly to the follower change above — that is measured from the follower count
+          itself, which is the more reliable of the two. Treat these as the churn behind the
+          net, not as its arithmetic.
+        </p>
+      )}
     </div>
   );
 }

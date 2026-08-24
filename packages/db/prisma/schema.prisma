@@ -1714,6 +1714,16 @@ model MetaAssetMetric {
   /// Null for the 24h window, which Meta will not break down.
   followerDelta Int? @map("follower_delta")
 
+  /// Approximate earnings for this window, in CENTS (integer — never a float,
+  /// money must not accumulate binary rounding error).
+  ///
+  /// ⚠️ FACEBOOK ONLY. Instagram exposes no earnings metric at all: its insights
+  /// enumeration rejects both monetization names outright. Source is
+  /// `monetization_approximate_earnings`, which is the same figure the Meta app
+  /// labels "Approximate earnings". Null means Meta returned nothing; 0 means it
+  /// returned zero, which for an unmonetised Page is a true answer.
+  earningsCents Int? @map("earnings_cents")
+
   fetchedAt DateTime? @map("fetched_at")
   error     String?
 

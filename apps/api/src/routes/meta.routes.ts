@@ -438,20 +438,26 @@ router.get(
      * would label 28 days of activity as "today" — a wrong number presented
      * confidently, which is worse than an honest blank.
      */
-    const win = (r: { windowMetrics: Array<{ views: bigint | null; reach: bigint | null; engagements: bigint | null; profileViews: bigint | null; reactions: bigint | null; followerDelta: number | null; fetchedAt: Date | null; error: string | null }> }) =>
+    const win = (r: { windowMetrics: Array<{ views: bigint | null; reach: bigint | null; engagements: bigint | null; profileViews: bigint | null; reactions: bigint | null; followerDelta: number | null; earningsCents: number | null; fetchedAt: Date | null; error: string | null }> }) =>
       r.windowMetrics[0];
 
     // Totals sum ONLY non-null values, and we report how many channels actually
     // contributed — otherwise a total looks like it covers all 120 when it may
     // cover 40, which is the "confident but wrong" failure this page must avoid.
-    const totals = { followers: 0, views: 0, engagements: 0, reach: 0 };
-    const contributing = { views: 0, engagements: 0, reach: 0 };
+    const totals = { followers: 0, views: 0, engagements: 0, reach: 0, earningsCents: 0 };
+    const contributing = { views: 0, engagements: 0, reach: 0, earnings: 0 };
     for (const r of rows) {
       const w = win(r);
       totals.followers += r.followerCount ?? 0;
       if (w?.views != null) { totals.views += Number(w.views); contributing.views++; }
       if (w?.engagements != null) { totals.engagements += Number(w.engagements); contributing.engagements++; }
       if (w?.reach != null) { totals.reach += Number(w.reach); contributing.reach++; }
+      // Only Pages that actually earn count towards "reporting" — 39 of 72 are at
+      // a true zero, and counting them would imply coverage we do not have.
+      if (w?.earningsCents != null) {
+        totals.earningsCents += w.earningsCents;
+        if (w.earningsCents > 0) contributing.earnings++;
+      }
     }
 
     // Sort by a windowed metric in JS (see the orderBy note). Nulls last, so a
@@ -472,6 +478,22 @@ router.get(
       data: {
         window,
         windows: CHANNEL_WINDOWS,
+        /**
+         * The newest moment Meta has published for this window.
+         *
+         * ⚠️ Facebook only publishes CLOSED periods: the newest point is stamped at
+         * the Page's local midnight, so a figure fetched this afternoon still
+         * describes a window that ended yesterday. Meta's own app adds today so
+         * far, which is why its numbers run slightly ahead of ours and read as a
+         * mismatch. Exposing the boundary turns that into something explicable
+         * rather than something that looks wrong.
+         */
+        dataThrough: rows.reduce<string | null>((acc, r) => {
+          const f = win(r)?.fetchedAt;
+          if (!f) return acc;
+          const iso = f.toISOString();
+          return acc === null || iso > acc ? iso : acc;
+        }, null),
         items: rows.map((r) => ({
           id: r.id,
           platform: r.kind === "FACEBOOK_PAGE" ? "facebook" : "instagram",
@@ -495,6 +517,8 @@ router.get(
           followerDelta: followerDelta.has(r.id)
             ? followerDelta.get(r.id)!
             : (win(r)?.followerDelta ?? null),
+          /** Approximate earnings for the window, in cents. Facebook only. */
+          earningsCents: win(r)?.earningsCents ?? null,
           posts: r.postCount ?? r._count.posts ?? null,
           // Field names kept as *28d for wire compatibility; the VALUES follow the
           // requested window. `window` below says which one, so a client can never

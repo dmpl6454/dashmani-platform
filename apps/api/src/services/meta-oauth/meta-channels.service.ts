@@ -89,6 +89,22 @@ const FB_METRICS = [
 ] as const;
 
 /**
+ * Approximate earnings — the same figure the Meta app labels "Approximate
+ * earnings". Batched with the rest, so revenue costs ZERO extra requests.
+ *
+ * ⚠️ HELD SEPARATELY, AND THAT IS THE POINT. One invalid metric fails the WHOLE
+ * /insights call, so folding this into FB_METRICS would mean a Page that cannot
+ * report earnings loses its views, reach and engagement too. Instead the batch is
+ * tried WITH it and, on failure, retried WITHOUT — full data always wins over
+ * revenue. Probed 2026-08-24: 72/72 Pages accepted it (33 earning, 39 at zero,
+ * 0 denied), so the retry should be rare; it exists for the Page added tomorrow.
+ *
+ * ⚠️ FACEBOOK ONLY. Instagram's insights enumeration rejects both monetization
+ * metric names outright — there is no IG earnings figure to fetch.
+ */
+const FB_EARNINGS_METRIC = "monetization_approximate_earnings";
+
+/**
  * IG account metrics — ALL fetched with `metric_type=total_value`.
  *
  * ⚠️ TWO BUGS LIVE HERE, both found only by running it against real accounts:
@@ -246,6 +262,20 @@ function reduceSeries(values: Array<{ value?: unknown }> | undefined, mode: "las
   return seen ? total : null;
 }
 
+/**
+ * Last published earnings value, in cents. Decimal-preserving by design — see the
+ * call site. Returns null when Meta published nothing.
+ */
+function readEarningsCents(res: InsightsResponse | undefined): number | null {
+  const values = res?.data?.find((d) => d.name === FB_EARNINGS_METRIC)?.values;
+  if (!values || values.length === 0) return null;
+  for (let i = values.length - 1; i >= 0; i--) {
+    const v = values[i]?.value;
+    if (typeof v === "number" && Number.isFinite(v) && v >= 0) return Math.round(v * 100);
+  }
+  return null;
+}
+
 function seriesFor(res: InsightsResponse | undefined, name: string) {
   return res?.data?.find((d) => d.name === name)?.values;
 }
@@ -361,10 +391,23 @@ export async function runMetaChannelSync(opts?: {
                 since: sinceTs,
                 until: untilTs,
               }
-            : { metric: FB_METRICS.join(","), period: win },
+            : { metric: [...FB_METRICS, FB_EARNINGS_METRIC].join(","), period: win },
           token,
           { label: isIg ? `channel-ig-insights-${win}` : `channel-fb-insights-${win}`, budget },
         );
+
+        // Earnings is the only metric here that a Page might not be allowed to
+        // report. If the batch failed, drop it and retry — never let revenue cost
+        // a channel its views.
+        if (!isIg && !res.ok && !res.rateLimited && budget.used < budget.max) {
+          const retry = await oauthGraphFetch<InsightsResponse>(
+            `${asset.metaId}/insights`,
+            { metric: FB_METRICS.join(","), period: win },
+            token,
+            { label: `channel-fb-insights-${win}-noearnings`, budget },
+          );
+          if (retry.ok) { res.ok = true; res.data = retry.data; res.error = undefined; }
+        }
 
         if (res.rateLimited) { sawRateLimit = true; break; }
 
@@ -377,12 +420,21 @@ export async function runMetaChannelSync(opts?: {
         // Instagram's follower change for this window. Skipped for "day" — Meta
         // will not break a single day down — and skipped when the budget is spent,
         // in which case it stays null rather than becoming a misleading 0.
+        // Meta returns approximate earnings as a plain USD number. Store CENTS —
+        // money must never be carried as a float.
+        //
+        // ⚠️ NOT via reduceSeries: it funnels through intOrNull, which rounds to a
+        // whole number, so $4,346.92 would be read as $4,347 and the cents lost
+        // before they were ever stored. Every other metric here is a count, where
+        // rounding is harmless; money is the one place it is not.
+        const earningsCents = isIg ? null : readEarningsCents(res.data);
+
         let igDelta: number | null = null;
         if (isIg && win !== "day" && budget.used < budget.max) {
           igDelta = await fetchIgNetFollowerChange(asset.metaId, token, sinceTs, untilTs, budget);
         }
 
-        await upsertWindowMetric(asset.id, win, readMetrics(res.data, isIg), null, igDelta);
+        await upsertWindowMetric(asset.id, win, readMetrics(res.data, isIg), null, igDelta, earningsCents);
         if (win === DEFAULT_WINDOW) { defaultWindowData = res.data; defaultWindowOk = true; }
       }
 
@@ -577,6 +629,7 @@ async function upsertWindowMetric(
   m: ChannelMetrics | null,
   error: string | null,
   followerDelta: number | null = null,
+  earningsCents: number | null = null,
 ): Promise<void> {
   const data = m
     ? {
@@ -586,6 +639,7 @@ async function upsertWindowMetric(
         profileViews: bigintOrNull(m.profileViews),
         reactions: bigintOrNull(m.reactions),
         followerDelta,
+        earningsCents,
         fetchedAt: new Date(),
         error: null,
       }

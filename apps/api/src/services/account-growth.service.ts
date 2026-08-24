@@ -357,11 +357,25 @@ export async function getGrowthOverview(days = 30): Promise<GrowthOverview> {
     // Consequence (intended): totalFollowers is window-INVARIANT, while `delta`
     // (= now − window baseline) moves with the filter. That is the honest reading —
     // "how many followers we have" is not a function of the chosen window; "how
-    // much we grew" is. We still take max() so a snapshot newer than the column
-    // (possible mid-sync, since the snapshot upsert and the column write are two
-    // statements) is never discarded.
+    // much we grew" is.
+    //
+    // ⚠️ THE max() IS SCOPED TO NON-API ACCOUNTS ON PURPOSE.
+    // It exists for a narrow race: the snapshot upsert and the followerCount write
+    // are two statements, so mid-sync a snapshot can be newer than the column, and
+    // max() keeps the fresher number. But "pick the larger" is only a safe proxy
+    // for "pick the newer" while both sides come from the same measurement method.
+    // Once an account is API-measured, a leftover scraped snapshot that OVER-counts
+    // wins forever and the corrected figure can never surface. Measured on prod
+    // 2026-08-24: MRP Reels rendered 3,618,496 — a stale scrape — against a true
+    // API 1,077,958, and Bollywood Insider 1,925,521 against 527,862. Both were
+    // visible on the page as ordinary rows with no hint they were wrong.
+    //
+    // For an API-sourced account the column IS the authority, so take it directly.
     const newestSnap = snaps.length > 0 ? snaps[snaps.length - 1].followerCount : 0;
-    const latest = Math.max(account.followerCount, newestSnap);
+    const latest =
+      account.syncSource === "api"
+        ? account.followerCount
+        : Math.max(account.followerCount, newestSnap);
     const delta = latest - first;
     const deltaPct = first > 0 ? Math.round((delta / first) * 100) : null;
 

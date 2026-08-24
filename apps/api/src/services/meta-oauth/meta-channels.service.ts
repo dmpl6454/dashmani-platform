@@ -13,11 +13,25 @@
  * ⚠️ METRIC NAMES ARE VERSION-SENSITIVE AND THE DOCS LIE. All of the below was
  * live-probed on v21.0 (2026-08-24) against real Pages/accounts.
  *
- *   FACEBOOK — WORKS:  page_post_engagements, page_views_total, page_video_views,
- *                      page_actions_post_reactions_total, page_follows
- *              DEAD:   page_impressions, page_impressions_unique, page_fans,
- *                      page_fan_adds, page_fan_removes, page_content_activity,
- *                      page_posts_impressions   → all (#100)
+ *   FACEBOOK — WORKS:  page_media_view, page_total_media_view_unique,
+ *                      page_post_engagements, page_views_total, page_follows,
+ *                      page_actions_post_reactions_total, page_daily_follows_unique
+ *              DEAD:   page_impressions, page_impressions_unique, page_reach,
+ *                      page_organic_reach, page_fans, page_engaged_users,
+ *                      page_posts_impressions, page_content_activity  → all (#100)
+ *
+ * ⚠️ META RETIRED "IMPRESSIONS" AND "REACH" PLATFORM-WIDE — they were not
+ * restricted, they were REPLACED. Impressions metrics were deprecated from
+ * 2025-11-15 and the remaining Page Insights reach metrics from 2026-06-15, on
+ * EVERY API version (v21 and v23 were probed side by side and behave
+ * identically, so pinning a newer version buys nothing). The successors:
+ *
+ *      page_impressions        →  page_media_view              (views)
+ *      page_impressions_unique →  page_total_media_view_unique (reach)
+ *
+ * Both were live-probed across six real Pages on 2026-08-24: present on all six,
+ * zero errors. This is why "Facebook publishes no whole-Page reach" — which this
+ * file used to assert — was wrong: the metric exists, under a new name.
  *
  *   INSTAGRAM — the API enumerates its own valid set when sent a bogus metric:
  *              reach, follower_count, website_clicks, profile_views,
@@ -30,6 +44,7 @@
  */
 
 import { prisma } from "@dashmani/db";
+import { todayIST, istMidnight } from "@dashmani/shared";
 import { oauthGraphFetch, makeBudget, type CallBudget } from "./oauth-graph";
 import { decryptToken, scrubSecrets } from "../../utils/token-crypto";
 
@@ -39,7 +54,13 @@ const IG_PERIOD = "day";
 const IG_WINDOW_DAYS = 28;
 
 const FB_METRICS = [
-  "page_video_views",
+  // ⚠️ page_media_view, NOT page_video_views. The latter counts VIDEO plays only,
+  // so it under-reports every Page by ~2-3x once photos and links are included
+  // (measured: Bollywood Society 1,395,695,382 vs 501,540,051). It is also the
+  // pre-deprecation metric; page_media_view is Meta's designated successor.
+  "page_media_view",
+  // Reach. Successor to the retired page_impressions_unique.
+  "page_total_media_view_unique",
   "page_post_engagements",
   "page_views_total",
   "page_actions_post_reactions_total",
@@ -258,12 +279,15 @@ export async function runMetaChannelSync(opts?: {
               metricsError: null,
             }
           : {
-              views28d: bigintOrNull(reduceSeries(seriesFor(d, "page_video_views"), "last")),
+              views28d: bigintOrNull(reduceSeries(seriesFor(d, "page_media_view"), "last")),
               engagements28d: bigintOrNull(reduceSeries(seriesFor(d, "page_post_engagements"), "last")),
               profileViews28d: bigintOrNull(reduceSeries(seriesFor(d, "page_views_total"), "last")),
-              // FB publishes no whole-page unique reach — deliberately left NULL
-              // rather than substituting impressions, which would be a different fact.
-              reach28d: null,
+              // Real unique reach. Was hard-coded null on the belief that Facebook
+              // exposes no whole-Page reach; that was a stale conclusion about the
+              // RETIRED metric name, not about the data. See the header note.
+              reach28d: bigintOrNull(
+                reduceSeries(seriesFor(d, "page_total_media_view_unique"), "last"),
+              ),
               reactions28d: bigintOrNull(
                 reduceSeries(seriesFor(d, "page_actions_post_reactions_total"), "last"),
               ),
@@ -308,6 +332,7 @@ export async function runMetaChannelSync(opts?: {
             lastSyncedAt: new Date(),
           },
         });
+        await writeApiSnapshot(assetSocialAccountId, authoritative);
       }
 
       out.assetsUpdated++;
@@ -325,4 +350,43 @@ export async function runMetaChannelSync(opts?: {
 
 function bigintOrNull(n: number | null): bigint | null {
   return n === null ? null : BigInt(n);
+}
+
+/**
+ * Record today's API follower count in the growth series.
+ *
+ * ⚠️ WITHOUT THIS, ACCOUNT GROWTH SILENTLY FREEZES FOR EVERY META CHANNEL.
+ * The hourly scraper used to be the only writer of account_growth_snapshots.
+ * Once Meta scraping was switched off, nothing wrote them — so Net Change, the
+ * baseline ("was X · 30d ago") and Top Movers would have kept comparing today
+ * against a history that stopped advancing, drifting further from reality every
+ * day while looking perfectly healthy.
+ *
+ * It also repairs a live wrong number. The channel sync corrects
+ * social_accounts.follower_count from the API but used to leave the snapshot
+ * holding the old scraped figure, so the two disagreed and every delta was
+ * measured across that seam. Measured on prod 2026-08-24: Bollywood Society sat
+ * at 14,000,000 in the series against a true 14,781,280, and the page reported
+ * that 781,280-follower bookkeeping gap as "+781.3k growth" in Top Movers.
+ *
+ * `source: "api"` is written so a later reader can tell a measured point from a
+ * scraped one. The column existed but no writer ever populated it.
+ *
+ * Idempotent: upsert on (accountId, date) at IST midnight, matching
+ * follower-sync and account-growth so repeated runs converge on one row per day
+ * rather than fighting each other. Never throws — a growth-history write must
+ * not be able to fail a metrics run.
+ */
+async function writeApiSnapshot(accountId: string, followers: number): Promise<void> {
+  if (followers <= 0) return;
+  const date = istMidnight(todayIST());
+  try {
+    await prisma.accountGrowthSnapshot.upsert({
+      where: { accountId_date: { accountId, date } },
+      create: { accountId, date, followerCount: followers, source: "api" },
+      update: { followerCount: followers, source: "api" },
+    });
+  } catch (e) {
+    console.warn(`[meta-channels] snapshot write failed for ${accountId}: ${scrubSecrets(String(e))}`);
+  }
 }

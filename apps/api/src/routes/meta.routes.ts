@@ -18,7 +18,7 @@ import { asyncHandler } from "../utils/async-handler";
 import { metaOauthConfigured, metaOauthMissingEnv, metaTuning } from "../services/meta-oauth/meta-config";
 import { discoverConnectionAssets } from "../services/meta-oauth/meta-discovery.service";
 import { runMetaPostsSync } from "../services/meta-oauth/meta-posts.service";
-import { runMetaChannelSync, resolveContestedOwners, CHANNEL_WINDOWS, type ChannelWindow } from "../services/meta-oauth/meta-channels.service";
+import { runMetaChannelSync, resolveContestedOwners, resolveDuplicateAssetIds, CHANNEL_WINDOWS, type ChannelWindow } from "../services/meta-oauth/meta-channels.service";
 import { scrubSecrets } from "../utils/token-crypto";
 
 const router = Router();
@@ -358,7 +358,12 @@ router.get(
     const orderBy: Prisma.MetaAssetOrderByWithRelationInput =
       sort === "name" ? { name: "asc" } : { followerCount: { sort: "desc", nulls: "last" } };
 
-    const rows = await prisma.metaAsset.findMany({
+    // A Page reachable through two admin connections is stored once per
+    // connection. Show it once, or the table lists it twice and every total
+    // double-counts it. See resolveDuplicateAssetIds.
+    const duplicateAssetIds = await resolveDuplicateAssetIds();
+
+    const allRows = await prisma.metaAsset.findMany({
       where,
       orderBy,
       take: 200,
@@ -374,6 +379,10 @@ router.get(
         _count: { select: { posts: true } },
       },
     });
+
+    const rows = duplicateAssetIds.size > 0
+      ? allRows.filter((r) => !duplicateAssetIds.has(r.id))
+      : allRows;
 
     // ── Follower change over the selected period ──────────────────────────
     //

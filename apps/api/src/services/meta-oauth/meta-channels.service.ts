@@ -203,6 +203,7 @@ export async function runMetaChannelSync(opts?: {
   // 3 windows x ~120 assets = ~360. Was 300, which is enough for one window only
   // and would have silently truncated the third window on most of the estate.
   const budget: CallBudget = makeBudget(opts?.budgetMax ?? 500);
+  const contestedOwners = await resolveContestedOwners();
 
   for (const conn of connections) {
     if (!conn.userTokenEnc) continue;
@@ -365,7 +366,12 @@ export async function runMetaChannelSync(opts?: {
       // far more likely to be an API quirk than a Page genuinely losing every
       // follower, and the existing follower-sync applies the same rule.
       const authoritative = freshFollowers ?? assetFollowerCount;
-      if (assetSocialAccountId && authoritative !== null && authoritative > 0) {
+      // Only the owning asset writes to a contested channel row — see resolveContestedOwners.
+      const ownsChannelRow =
+        !assetSocialAccountId ||
+        !contestedOwners.has(assetSocialAccountId) ||
+        contestedOwners.get(assetSocialAccountId) === asset.id;
+      if (ownsChannelRow && assetSocialAccountId && authoritative !== null && authoritative > 0) {
         await prisma.socialAccount.update({
           where: { id: assetSocialAccountId },
           data: {
@@ -388,6 +394,60 @@ export async function runMetaChannelSync(opts?: {
       (out.errors.length ? ` errors=${out.errors.length}` : ""),
   );
   return out;
+}
+
+/**
+ * Which asset "owns" each linked channel row.
+ *
+ * ⚠️ A SocialAccount CAN BE CLAIMED BY MORE THAN ONE CONNECTED ASSET. Discovery
+ * links assets to channel rows by name, so two genuinely different Facebook Pages
+ * that share a name land on the same row. Measured on prod 2026-08-24 — three
+ * collisions across six assets:
+ *
+ *   Bollywood Insider    1,925,388  and    527,857
+ *   The Candid Couch     5,235,735  and    131,975
+ *   Mad About Marketing    352,407  and          0
+ *
+ * Without this, the follower write-back is LAST-WRITER-WINS over an iteration
+ * order that changes every run (assets are ordered by metricsFetchedAt), so the
+ * stored count can flip between two real-but-different Pages — and because every
+ * run also writes a growth snapshot, the series would show enormous alternating
+ * gains and losses that never happened. It also silently picked the SMALLER page
+ * in two of the three cases.
+ *
+ * One asset owns the row: the one with the most followers, which is deterministic
+ * and is in practice the main Page. The others still appear as their own rows in
+ * Connected channels with their own figures — nothing is hidden. They simply do
+ * not write back, and they carry no follower delta, because the channel row's
+ * history is not theirs to claim.
+ *
+ * Returns socialAccountId -> owning assetId, ONLY for accounts that are contested.
+ * An account with a single asset is not in the map and needs no check.
+ */
+export async function resolveContestedOwners(): Promise<Map<string, string>> {
+  const rows = await prisma.metaAsset.findMany({
+    where: { disconnectedAt: null, socialAccountId: { not: null } },
+    select: { id: true, socialAccountId: true, followerCount: true, name: true },
+  });
+  const byAccount = new Map<string, Array<{ id: string; followers: number; name: string }>>();
+  for (const r of rows) {
+    const list = byAccount.get(r.socialAccountId!) ?? [];
+    list.push({ id: r.id, followers: r.followerCount ?? 0, name: r.name });
+    byAccount.set(r.socialAccountId!, list);
+  }
+  const owners = new Map<string, string>();
+  for (const [accountId, list] of byAccount) {
+    if (list.length < 2) continue;
+    // Deterministic: most followers, then id, so ties never flip between runs.
+    list.sort((a, b) => b.followers - a.followers || a.id.localeCompare(b.id));
+    owners.set(accountId, list[0].id);
+    console.warn(
+      `[meta-channels] channel row ${accountId} is claimed by ${list.length} connected assets ` +
+        `(${list.map((x) => `${x.name}=${x.followers}`).join(", ")}). ` +
+        `"${list[0].name}" owns it; the others keep their own figures but do not write back.`,
+    );
+  }
+  return owners;
 }
 
 function bigintOrNull(n: number | null): bigint | null {

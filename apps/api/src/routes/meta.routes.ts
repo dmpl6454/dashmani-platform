@@ -316,6 +316,65 @@ router.get(
 );
 
 /**
+ * GET /admin/meta/channels/:assetId/demographics — WHO one channel's audience is.
+ *
+ * Instagram only; a Facebook page returns an empty set with a reason rather than
+ * a 404, so the UI can say why instead of looking broken. Meta also withholds
+ * these entirely for accounts below its privacy threshold, which is likewise an
+ * empty set and not an error.
+ */
+router.get(
+  "/admin/meta/channels/:assetId/demographics",
+  ...adminGate,
+  asyncHandler(async (req: Request, res: Response) => {
+    const asset = await prisma.metaAsset.findFirst({
+      where: { id: req.params.assetId, disconnectedAt: null },
+      select: { id: true, kind: true, name: true },
+    });
+    if (!asset) return res.status(404).json({ success: false, error: { message: "Channel not found" } });
+
+    if (asset.kind !== MetaAssetKind.INSTAGRAM_ACCOUNT) {
+      return res.json({
+        success: true,
+        data: {
+          supported: false,
+          reason: "Facebook retired its audience-demographics metrics; Meta publishes them for Instagram only.",
+          audiences: {}, fetchedAt: null,
+        },
+      });
+    }
+
+    const rows = await prisma.metaAssetDemographic.findMany({
+      where: { assetId: asset.id },
+      orderBy: [{ audience: "asc" }, { dimension: "asc" }, { value: "desc" }],
+      select: { audience: true, dimension: true, bucket: true, value: true, fetchedAt: true },
+    });
+
+    // audience -> dimension -> [{bucket, value}], already value-desc from SQL.
+    const audiences: Record<string, Record<string, Array<{ bucket: string; value: number }>>> = {};
+    let fetchedAt: string | null = null;
+    for (const r of rows) {
+      (audiences[r.audience] ??= {})[r.dimension] ??= [];
+      audiences[r.audience][r.dimension].push({ bucket: r.bucket, value: r.value });
+      const iso = r.fetchedAt.toISOString();
+      if (fetchedAt === null || iso > fetchedAt) fetchedAt = iso;
+    }
+
+    return res.json({
+      success: true,
+      data: {
+        supported: true,
+        // Distinguishes "not collected yet" from "Meta withholds it for this
+        // account" — both are empty, and conflating them hides a real gap.
+        pending: rows.length === 0,
+        audiences,
+        fetchedAt,
+      },
+    });
+  }),
+);
+
+/**
  * GET /admin/meta/channels — THE primary Account Growth view.
  *
  * One row per connected Page / IG account with its WHOLE-CHANNEL metrics. This is
@@ -447,7 +506,7 @@ router.get(
      * would label 28 days of activity as "today" — a wrong number presented
      * confidently, which is worse than an honest blank.
      */
-    const win = (r: { windowMetrics: Array<{ views: bigint | null; reach: bigint | null; engagements: bigint | null; profileViews: bigint | null; reactions: bigint | null; followerDelta: number | null; earningsCents: number | null; fetchedAt: Date | null; periodEnd: Date | null; error: string | null }> }) =>
+    const win = (r: { windowMetrics: Array<{ views: bigint | null; reach: bigint | null; engagements: bigint | null; profileViews: bigint | null; reactions: bigint | null; followerDelta: number | null; earningsCents: number | null; follows: number | null; unfollows: number | null; videoViewTimeMs: bigint | null; saves: number | null; shares: number | null; accountsEngaged: number | null; fetchedAt: Date | null; periodEnd: Date | null; error: string | null }> }) =>
       r.windowMetrics[0];
 
     // Totals sum ONLY non-null values, and we report how many channels actually
@@ -538,6 +597,15 @@ router.get(
             : (win(r)?.followerDelta ?? null),
           /** Approximate earnings for the window, in cents. Facebook only. */
           earningsCents: win(r)?.earningsCents ?? null,
+          /** Gross churn behind the net follower change. Both platforms. */
+          follows: win(r)?.follows ?? null,
+          unfollows: win(r)?.unfollows ?? null,
+          /** Facebook only. */
+          videoViewTimeMs: n(win(r)?.videoViewTimeMs),
+          /** Instagram only — no Facebook page-level equivalent. */
+          saves: win(r)?.saves ?? null,
+          shares: win(r)?.shares ?? null,
+          accountsEngaged: win(r)?.accountsEngaged ?? null,
           posts: r.postCount ?? r._count.posts ?? null,
           // Field names kept as *28d for wire compatibility; the VALUES follow the
           // requested window. `window` below says which one, so a client can never

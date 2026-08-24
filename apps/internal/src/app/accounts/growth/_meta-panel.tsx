@@ -20,7 +20,7 @@ import {
 import {
   useMetaConnections, useMetaChannels, useMetaPosts,
   startMetaConnect, triggerMetaDiscovery, triggerMetaSync, disconnectMeta,
-  fmtMetric, fmtMoney, CHANNEL_WINDOWS, windowSuffix, type MetaChannel, type ChannelWindowKey,
+  fmtMetric, fmtMoney, fmtWatchTime, useMetaDemographics, CHANNEL_WINDOWS, windowSuffix, type MetaChannel, type ChannelWindowKey,
 } from "@/lib/hooks/use-meta";
 
 type SortKey = "followers" | "views" | "engagements" | "name";
@@ -46,6 +46,122 @@ function StatusChip({ status, daysLeft }: { status: string; daysLeft: number | n
       className={`inline-flex items-center text-[11px] font-medium border rounded-full px-2 py-0.5 leading-none whitespace-nowrap ${m.cls}`}>
       {m.label}
     </span>
+  );
+}
+
+const DIMENSION_LABEL: Record<string, string> = {
+  country: "Top countries", city: "Top cities", age: "Age", gender: "Gender",
+};
+const AUDIENCE_LABEL: Record<string, string> = {
+  follower: "Followers", engaged: "Engaged", reached: "Reached",
+};
+
+/**
+ * WHO this channel's audience is. Instagram only — Facebook retired its
+ * fan-demographic metrics, and the API says so rather than 404ing, so the panel
+ * can explain instead of looking broken.
+ */
+function ChannelAudience({ assetId }: { assetId: string }) {
+  const { data, isLoading } = useMetaDemographics(assetId);
+  const [audience, setAudience] = useState<string>("follower");
+  if (isLoading) return <p className="px-6 py-3 text-[11px] text-[#B0B0B0]">Loading audience…</p>;
+  if (!data) return null;
+
+  if (!data.supported) {
+    return <p className="px-6 py-3 text-[11px] text-[#B0B0B0]">{data.reason}</p>;
+  }
+  if (data.pending) {
+    return (
+      <p className="px-6 py-3 text-[11px] text-[#B0B0B0]">
+        Audience breakdown refreshes once a day and hasn&apos;t been collected for this channel
+        yet. Meta also withholds it entirely for accounts below its privacy threshold.
+      </p>
+    );
+  }
+
+  const dims = data.audiences[audience] ?? {};
+  const available = Object.keys(data.audiences);
+
+  return (
+    <div className="px-6 py-3 bg-[#FCFBF8] border-t border-[#F0EAE0]">
+      <div className="flex flex-wrap items-center gap-1.5 mb-2">
+        <span className="text-[10px] text-[#B0B0B0] mr-0.5">Audience</span>
+        {available.map((a) => (
+          <button
+            key={a}
+            onClick={() => setAudience(a)}
+            aria-pressed={audience === a}
+            className={`text-[10px] rounded-full px-2 py-0.5 border ${
+              audience === a
+                ? "bg-[#5B4BF5] text-white border-[#5B4BF5]"
+                : "border-[#DCDCDC] text-[#7A7A7A] hover:bg-white"}`}
+          >
+            {AUDIENCE_LABEL[a] ?? a}
+          </button>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-x-6 gap-y-3">
+        {(["country", "city", "age", "gender"] as const).map((dim) => {
+          const rows = dims[dim] ?? [];
+          if (rows.length === 0) return null;
+          // Percentages are of the buckets Meta returned, which is a top-N set and
+          // not the whole audience — so the label says "of shown", never "of all".
+          const shown = rows.slice(0, dim === "age" || dim === "gender" ? 8 : 6);
+          const total = rows.reduce((sum, r) => sum + r.value, 0) || 1;
+          return (
+            <div key={dim} className="min-w-0">
+              <p className="text-[10px] text-[#7A7A7A] font-medium mb-1">{DIMENSION_LABEL[dim]}</p>
+              {shown.map((r) => (
+                <div key={r.bucket} className="mb-1">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="text-[11px] text-[#1A1A1A] truncate">{r.bucket}</span>
+                    <span className="text-[10px] text-[#7A7A7A] shrink-0 tabular-nums">
+                      {Math.round((r.value / total) * 100)}%
+                    </span>
+                  </div>
+                  <div className="h-1 rounded-full bg-[#EFEAE0] overflow-hidden">
+                    <div
+                      className="h-full rounded-full bg-[#5B4BF5]"
+                      style={{ width: `${Math.max(2, Math.round((r.value / total) * 100))}%` }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          );
+        })}
+      </div>
+      <p className="mt-2 text-[10px] text-[#B0B0B0] leading-snug">
+        Share of the buckets Meta returns for this channel, which is a top set rather than the
+        whole audience — so these read as relative weight, not an exact census. Refreshed daily.
+      </p>
+    </div>
+  );
+}
+
+/** Account-level figures that would bloat the table but matter on one channel. */
+function ChannelExtras({ c, sfx }: { c: MetaChannel; sfx: string }) {
+  const stats: Array<{ label: string; value: string }> = [
+    { label: `New follows · ${sfx}`, value: fmtMetric(c.follows) },
+    { label: `Unfollows · ${sfx}`, value: fmtMetric(c.unfollows) },
+    ...(c.platform === "instagram"
+      ? [
+          { label: `Saves · ${sfx}`, value: fmtMetric(c.saves) },
+          { label: `Shares · ${sfx}`, value: fmtMetric(c.shares) },
+          { label: `Accounts engaged · ${sfx}`, value: fmtMetric(c.accountsEngaged) },
+        ]
+      : [{ label: `Watch time · ${sfx}`, value: fmtWatchTime(c.videoViewTimeMs) }]),
+  ];
+  return (
+    <div className="px-6 py-3 bg-[#FCFBF8] grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+      {stats.map((s) => (
+        <div key={s.label} className="min-w-0">
+          <p className="font-num text-sm font-semibold text-[#1A1A1A] truncate">{s.value}</p>
+          <p className="text-[10px] text-[#7A7A7A] leading-tight">{s.label}</p>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -396,7 +512,11 @@ export function MetaPanel() {
                       </tr>
                       {open && (
                         <tr>
-                          <td colSpan={8} className="p-0"><ChannelPosts assetId={c.id} /></td>
+                          <td colSpan={8} className="p-0">
+                            <ChannelExtras c={c} sfx={sfx} />
+                            <ChannelAudience assetId={c.id} />
+                            <ChannelPosts assetId={c.id} />
+                          </td>
                         </tr>
                       )}
                     </Fragment>

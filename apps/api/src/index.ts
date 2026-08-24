@@ -3,6 +3,7 @@ import app from "./app";
 import { syncAllFollowerCounts } from "./services/follower-sync.service";
 import { runMetaPostsSync } from "./services/meta-oauth/meta-posts.service";
 import { runMetaChannelSync } from "./services/meta-oauth/meta-channels.service";
+import { runMetaDemographicsSync } from "./services/meta-oauth/meta-demographics.service";
 import { metaOauthConfigured, metaTuning } from "./services/meta-oauth/meta-config";
 import { scrubSecrets } from "./utils/token-crypto";
 import { runSocialInsightsRefresh } from "./cron/social-insights.cron";
@@ -96,6 +97,25 @@ app.listen(PORT, () => {
       setInterval(runMetaPosts, metaTuning.postsIntervalMs());
     },
     12 * 60 * 1000,
+  );
+
+  // Instagram audience demographics — DAILY, deliberately separate from the
+  // 3-hourly sync above. A full pass is ~576 calls and would nearly double that
+  // sync's 672, starving the headline metrics. Demographics move slowly, and the
+  // service rotates least-recently-fetched first so coverage completes across
+  // runs. Offset 40 min so it never lands on the same tick as the channel sync.
+  const runMetaDemographics = () => {
+    if (!metaOauthConfigured()) return;
+    runMetaDemographicsSync().catch((err) =>
+      console.error("[meta-demographics] error:", scrubSecrets(String(err))),
+    );
+  };
+  setTimeout(
+    () => {
+      runMetaDemographics();
+      setInterval(runMetaDemographics, 24 * 60 * 60 * 1000);
+    },
+    40 * 60 * 1000,
   );
 
   // Meta token health — DAILY, and DB-only unless a grant is actually near expiry.

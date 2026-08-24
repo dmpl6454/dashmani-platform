@@ -43,6 +43,9 @@ const FB_METRICS = [
   "page_post_engagements",
   "page_views_total",
   "page_actions_post_reactions_total",
+  // Authoritative follower count, and it rides along in the SAME batched call —
+  // so keeping followers truthful costs zero extra requests.
+  "page_follows",
 ] as const;
 
 /**
@@ -178,12 +181,17 @@ export async function runMetaChannelSync(opts?: {
       },
       // Least-recently-refreshed first so coverage rotates if the budget runs out.
       orderBy: [{ metricsFetchedAt: { sort: "asc", nulls: "first" } }],
-      select: { id: true, kind: true, metaId: true, name: true, pageTokenEnc: true },
+      select: {
+        id: true, kind: true, metaId: true, name: true, pageTokenEnc: true,
+        socialAccountId: true, followerCount: true,
+      },
     });
 
     for (const asset of assets) {
       if (out.rateLimited || budget.used >= budget.max) break;
       const isIg = asset.kind === "INSTAGRAM_ACCOUNT";
+      const assetSocialAccountId = asset.socialAccountId;
+      const assetFollowerCount = asset.followerCount;
 
       let token = userToken;
       if (!isIg) {
@@ -263,6 +271,45 @@ export async function runMetaChannelSync(opts?: {
               metricsError: null,
             },
       });
+      // ── Write the AUTHORITATIVE follower count back to the channel registry ──
+      //
+      // ⚠️ WHY THIS EXISTS. Account Growth was rendering STALE SCRAPED follower
+      // counts for channels we are connected to and have exact API figures for.
+      // Measured on prod 2026-08-24: MRP Reels showed 3,618,496 against a true
+      // 1,078,045 (3.4x too high), C4B Reels showed 4 against 183,485, and
+      // Bollywood Society showed a suspiciously round 14,000,000 against
+      // 14,677,412. The row was correctly included as a connected channel, but the
+      // NUMBER still came from the old scraper.
+      //
+      // The connected asset is the single source of truth, so it wins.
+      const freshFollowers = isIg
+        ? null // IG followers come from discovery's profile read, not the insights edge
+        : intOrNull(reduceSeries(seriesFor(d, "page_follows"), "last"));
+
+      if (freshFollowers !== null && freshFollowers > 0) {
+        await prisma.metaAsset.update({
+          where: { id: asset.id },
+          data: { followerCount: freshFollowers },
+        });
+      }
+
+      // Push it onto the linked SocialAccount so the page (and the accounts list)
+      // stop showing scraper values for channels we can measure exactly.
+      // ⚠️ Guarded on > 0 — never overwrite a real number with a zero. A 0 here is
+      // far more likely to be an API quirk than a Page genuinely losing every
+      // follower, and the existing follower-sync applies the same rule.
+      const authoritative = freshFollowers ?? assetFollowerCount;
+      if (assetSocialAccountId && authoritative !== null && authoritative > 0) {
+        await prisma.socialAccount.update({
+          where: { id: assetSocialAccountId },
+          data: {
+            followerCount: authoritative,
+            syncSource: "api",
+            lastSyncedAt: new Date(),
+          },
+        });
+      }
+
       out.assetsUpdated++;
     }
   }

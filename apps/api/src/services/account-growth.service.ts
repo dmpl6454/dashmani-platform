@@ -271,8 +271,42 @@ export async function getGrowthOverview(days = 30): Promise<GrowthOverview> {
   const since = new Date(istMidnight(todayIST()).getTime() - days * 86400000);
 
   // ACTIVE accounts only — SocialAccount has no deletedAt; it gates on status.
+  // ⚠️ VERIFIED SOURCES ONLY — owner decision 2026-08-24.
+  //
+  // Account Growth is its OWN ENTITY: it shows only channels whose numbers came from
+  // an official API, never a scraper and never the legacy System-User app. Concretely
+  // an account qualifies when EITHER:
+  //   (a) it is linked to a live connected Meta asset (the "Post Automation 2" OAuth
+  //       grant — Facebook Pages and Instagram accounts the admin administers), or
+  //   (b) it is a NON-Meta platform synced through an official API (YouTube Data API,
+  //       syncSource="api").
+  //
+  // Everything else — the 217 scraper-fed FB Pages, Snapchat/X scrapes, hand-entered
+  // values — is EXCLUDED. Dropping channels the connected account cannot reach is the
+  // INTENDED outcome, not a regression: a page that mixes verified API figures with
+  // unverifiable scraped ones is worse than a smaller honest one.
+  //
+  // ⚠️ Researched before accepting this as a hard limit (Meta docs, 2026-08-24):
+  // "Page Public Content Access" DOES let an app read Pages it does not administer,
+  // but only "business metadata, public comments and posts" via /page/feed,
+  // /page-post and /page-post/comments — it does NOT cover Page Insights. So even
+  // with that feature App-Reviewed, a non-administered Page could never supply the
+  // page_video_views / page_post_engagements / page_views_total figures this page is
+  // built from. The exclusion is a property of Meta's product, not of our setup.
+  //
+  // ⚠️ Scope: ONLY this page. Top Links and Link Search legitimately still use the
+  // older System-User app and are untouched.
   const accounts = await prisma.socialAccount.findMany({
-    where: { status: "ACTIVE" },
+    where: {
+      status: "ACTIVE",
+      OR: [
+        { metaAssets: { some: { disconnectedAt: null } } },
+        {
+          syncSource: "api",
+          platform: { slug: { notIn: ["facebook", "instagram"] } },
+        },
+      ],
+    },
     include: {
       platform: true,
       growthSnapshots: {

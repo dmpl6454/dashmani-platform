@@ -488,13 +488,21 @@ router.get(
          * mismatch. Exposing the boundary turns that into something explicable
          * rather than something that looks wrong.
          */
+        // ⚠️ periodEnd, NOT fetchedAt. The fetch time says when we asked; only
+        // Meta's own end_time says what the numbers describe.
+        //
+        // ⚠️ And the EARLIEST boundary, not the latest. Facebook closes at the
+        // Page's local midnight (2026-08-23T07:00Z) while Instagram is asked for
+        // an explicit midnight-UTC until (2026-08-24T00:00Z). Taking the max would
+        // advertise Instagram's freshness for a table that is mostly Facebook —
+        // claiming currency the figures do not have, which is the exact failure
+        // this line was added to prevent. The earliest boundary is the point
+        // through which EVERY figure shown is complete.
         dataThrough: rows.reduce<string | null>((acc, r) => {
-          // ⚠️ periodEnd, NOT fetchedAt. The fetch time says when we asked; only
-          // Meta's own end_time says what the numbers describe.
           const f = win(r)?.periodEnd;
           if (!f) return acc;
           const iso = f.toISOString();
-          return acc === null || iso > acc ? iso : acc;
+          return acc === null || iso < acc ? iso : acc;
         }, null),
         items: rows.map((r) => ({
           id: r.id,

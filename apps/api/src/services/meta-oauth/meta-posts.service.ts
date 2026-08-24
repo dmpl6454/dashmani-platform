@@ -11,9 +11,11 @@
  *            a call budget, a staleness TTL, and pending-first prioritisation.
  *
  * ⚠️ METRIC NAMES ARE VERSION-SENSITIVE AND THE DOCS LIE.
- * Live-probed on v21.0: IG `impressions` is DEPRECATED (v22+) and FB `post_impressions`
- * / `post_views` / `post_engaged_users` DO NOT EXIST. The live equivalents are IG
- * `views` and FB `post_video_views`. Never re-add the dead names.
+ * Live-probed on v21.0 AND v23.0 (identical behaviour, so pinning a newer version
+ * buys nothing): IG `impressions` is deprecated, and FB `post_impressions`,
+ * `post_impressions_unique`, `post_views`, `post_reach` and `post_engaged_users` all
+ * return (#100). The live equivalents are IG `views` and FB `post_media_view` /
+ * `post_total_media_view_unique`. Never re-add the dead names.
  *
  * ⚠️ A metric Meta does not publish is stored as NULL and rendered as an em-dash.
  * NEVER coerce to 0 — that is the fabricated-zero bug class from the Snapchat
@@ -45,7 +47,27 @@ const IG_METRICS = ["reach", "views", "saved", "total_interactions", "shares"] a
  * summary fields still work — if they ever stop, the fallback belongs in the FEED
  * error path, not as an unconditional second call per post.
  */
-const FB_METRICS_VIEWS = ["post_video_views"] as const;
+/**
+ * ⚠️ post_media_view, NOT post_video_views.
+ *
+ * post_video_views counts VIDEO PLAYS only and is the pre-deprecation metric.
+ * Meta retired the impressions/views family on 2025-11-15 (with the rest
+ * following 2026-06-15) and named these successors:
+ *
+ *      post_impressions        →  post_media_view              (views)
+ *      post_impressions_unique →  post_total_media_view_unique (reach)
+ *
+ * Probed live on three real posts, 2026-08-24:
+ *
+ *      post_media_view    3263   1107   2596
+ *      post_video_views      0      0    931   ← what we were storing
+ *
+ * That is why 1,543 of the 1,663 measured Facebook posts on prod held a views
+ * value of exactly 0. Those zeros were not "this post got no views" — they were
+ * a video-only metric answering about content it does not describe, rendered as
+ * a real zero. Both names live in ONE batched call, so reach is free.
+ */
+const FB_METRICS_VIEWS = ["post_media_view", "post_total_media_view_unique"] as const;
 
 interface IgMediaResponse {
   data?: Array<{
@@ -73,8 +95,9 @@ interface IgMediaResponse {
  * comments 0/9/4, shares 1/1/4 — all inline on /published_posts.
  *
  * Consequence: FB likes/comments/shares now cost ZERO extra calls, exactly like IG's
- * inline like_count. Per-post /insights is then only needed for `post_video_views`,
- * which genuinely has no inline equivalent.
+ * inline like_count. Per-post /insights is then only needed for views and reach,
+ * which genuinely have no inline equivalent — Instagram does not expose a `views`
+ * field on the media object either (probed 2026-08-24: silently omitted).
  *
  * ⚠️ `shares` is ABSENT (not 0) when a post has none, so it must map to null.
  */
@@ -346,9 +369,22 @@ async function syncAssetInsights(
         { metricsFetchedAt: { lt: staleBefore } },
       ],
     },
-    // Pending first, then newest — so a post never sits permanently unmeasured
-    // just because it fell outside one run's slice.
-    orderBy: [{ metricsStatus: "asc" }, { postedAt: "desc" }],
+    // ⚠️ NEWEST FIRST — and note what this replaced. The previous ordering was
+    // `[{ metricsStatus: "asc" }, { postedAt: "desc" }]` with a comment claiming
+    // "pending first". It did the opposite: metricsStatus sorts as a STRING, and
+    // ascending over the four live values gives
+    //     "error" < "ok" < "pending" < "unavailable"
+    // so already-measured posts were re-measured ahead of posts that had never
+    // been measured at all. With a slice of 8 against thousands of posts, the
+    // never-measured tail could not drain: 4,608 of 6,271 Facebook posts on prod
+    // (73%) still had no views value.
+    //
+    // Newest-first is also the right priority on its own terms. Per-post insights
+    // cost one call each and the busiest Pages publish ~1,200 posts per 28 days,
+    // so full coverage is not purchasable at any budget we have. Recent posts are
+    // what the drill-down shows and what an admin is asking about; the channel
+    // totals already account for every post, measured or not.
+    orderBy: [{ postedAt: "desc" }],
     // ⚠️ 8, not 25. A Facebook post costs TWO insights calls, so a 25-post slice is
     // up to 50 calls — one asset could take a fifth of the whole run's budget and
     // only ~7 of 120 channels would ever be measured. A smaller slice spreads the
@@ -431,9 +467,10 @@ async function syncAssetInsights(
       await prisma.metaPost.update({
         where: { id: post.id },
         data: {
-          views: numOrNull(vm.get("post_video_views")),
-          // `unavailable` = we asked and Meta publishes nothing (e.g. a photo post
-          // has no video views); distinct from `pending` = not asked yet.
+          views: numOrNull(vm.get("post_media_view")),
+          reach: numOrNull(vm.get("post_total_media_view_unique")),
+          // `unavailable` = we asked and Meta publishes nothing; distinct from
+          // `pending` = not asked yet.
           metricsStatus: viewsRes.ok ? "ok" : viewsRes.errorCode === 100 ? "unavailable" : "error",
           metricsFetchedAt: new Date(),
           metricsError: viewsRes.ok ? null : scrubSecrets(viewsRes.error ?? "insights failed"),

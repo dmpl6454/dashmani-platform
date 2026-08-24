@@ -61,7 +61,7 @@ function ChannelPosts({ assetId }: { assetId: string }) {
       <table className="w-full">
         <thead>
           <tr className="text-[10px] text-[#B0B0B0]">
-            <th className="text-left font-medium py-1">Recent post</th>
+            <th className="text-left font-medium py-1">Most recent posts</th>
             <th className="text-right font-medium py-1 w-16">Views</th>
             <th className="text-right font-medium py-1 w-16">Likes</th>
             <th className="text-right font-medium py-1 w-20">Comments</th>
@@ -98,6 +98,12 @@ function ChannelPosts({ assetId }: { assetId: string }) {
           ))}
         </tbody>
       </table>
+      <p className="py-2 text-[10px] text-[#B0B0B0] leading-snug">
+        The most recent posts we have measured — not every post from the last 28 days. A
+        per-post figure costs one Meta request and the busiest channels publish over a
+        thousand posts a month, so measurement is spent newest-first. The channel totals
+        above already count every post, measured or not.
+      </p>
     </div>
   );
 }
@@ -346,10 +352,13 @@ export function MetaPanel() {
 
       {live.length > 0 && (
         <p className="px-5 py-3 text-[11px] text-[#B0B0B0] leading-snug border-t border-[#F0EAE0]">
-          Figures cover the last 28 days and come straight from Meta. A dash means Meta
+          Figures cover the last 28 days and come straight from Meta — every channel here
+          is one the connected account administers, so nothing on this page is scraped or
+          hand-entered. Views and reach use Meta&apos;s current metrics, which replaced
+          impressions when Meta retired that family across the API. A dash means Meta
           publishes no value for that metric on that platform — not a zero and not missing
-          data: Facebook exposes no whole-Page reach, and profile views mean Page views on
-          Facebook and profile visits on Instagram. Click a channel to see its recent posts.
+          data. Profile views mean Page views on Facebook and profile visits on Instagram.
+          Click a channel to see its recent posts.
         </p>
       )}
     </section>

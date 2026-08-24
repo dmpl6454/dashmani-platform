@@ -464,14 +464,18 @@ export async function syncAllFollowerCounts() {
     const existing = await prisma.accountGrowthSnapshot.findUnique({
       where: { accountId_date: { accountId: account.id, date: today } },
     });
+    // Stamp HOW the point was measured. The column existed but no writer ever
+    // populated it, so every historical snapshot reads as NULL and a reader cannot
+    // tell an exact API figure from a best-effort scrape. Recording it lets a
+    // later reader refuse to measure growth across a change of method.
     if (existing) {
       await prisma.accountGrowthSnapshot.update({
         where: { id: existing.id },
-        data: { followerCount: followers },
+        data: { followerCount: followers, source },
       });
     } else {
       await prisma.accountGrowthSnapshot.create({
-        data: { accountId: account.id, date: today, followerCount: followers },
+        data: { accountId: account.id, date: today, followerCount: followers, source },
       });
     }
     progress.updated++;

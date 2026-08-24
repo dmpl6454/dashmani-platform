@@ -2,6 +2,7 @@ import "./env";
 import app from "./app";
 import { syncAllFollowerCounts } from "./services/follower-sync.service";
 import { runMetaPostsSync } from "./services/meta-oauth/meta-posts.service";
+import { runMetaChannelSync } from "./services/meta-oauth/meta-channels.service";
 import { metaOauthConfigured, metaTuning } from "./services/meta-oauth/meta-config";
 import { scrubSecrets } from "./utils/token-crypto";
 import { runSocialInsightsRefresh } from "./cron/social-insights.cron";
@@ -82,9 +83,12 @@ app.listen(PORT, () => {
   // itself is 1 vCPU and staggering keeps CPU/pool contention low.
   const runMetaPosts = () => {
     if (!metaOauthConfigured()) return;
-    runMetaPostsSync().catch((err) =>
-      console.error("[meta-posts] error:", scrubSecrets(String(err))),
-    );
+    // CHANNEL metrics first — they are the headline data on Account Growth and cost
+    // ~1 call each, so they must never be starved by the far more expensive
+    // per-post pass that follows.
+    runMetaChannelSync()
+      .then(() => runMetaPostsSync())
+      .catch((err) => console.error("[meta-sync] error:", scrubSecrets(String(err))));
   };
   setTimeout(
     () => {

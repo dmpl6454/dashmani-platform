@@ -1624,6 +1624,30 @@ model MetaAsset {
   /// REELS / FEED / IMAGE / CAROUSEL.
   metricCapabilities Json? @map("metric_capabilities")
 
+  // ── CHANNEL-LEVEL METRICS (the primary thing Account Growth renders) ──────
+  //
+  // The page is a CHANNEL monitor, not a post feed: an admin wants "how is each
+  // Page/IG account doing", not 10,000 individual posts. These are whole-account
+  // figures from the page/account insights edges, refreshed per run.
+  //
+  // ⚠️ All nullable and rendered as "—" when absent. Metric availability differs
+  // per platform and per account, and a fabricated 0 would read as a real result.
+  // Live-probed 2026-08-24 on v21.0; dead names are listed in the service.
+  /// FB page_video_views | IG views. Whole-account, last 28d.
+  views28d         BigInt?   @map("views_28d")
+  /// FB page_post_engagements | IG total_interactions. Last 28d.
+  engagements28d   BigInt?   @map("engagements_28d")
+  /// FB page_views_total | IG profile_views. Last 28d.
+  profileViews28d  BigInt?   @map("profile_views_28d")
+  /// IG only (FB publishes no comparable unique-reach metric). Last 28d.
+  reach28d         BigInt?   @map("reach_28d")
+  /// FB page_actions_post_reactions_total summed | IG likes. Last 28d.
+  reactions28d     BigInt?   @map("reactions_28d")
+  /// When the channel-level metrics above were last refreshed.
+  metricsFetchedAt DateTime? @map("metrics_fetched_at")
+  /// Why the last channel-metrics fetch failed, if it did (secret-scrubbed).
+  metricsError     String?   @map("metrics_error")
+
   lastPostSyncAt     DateTime? @map("last_post_sync_at")
   lastPostSyncStatus String?   @map("last_post_sync_status")
   lastPostSyncError  String?   @map("last_post_sync_error")

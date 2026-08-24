@@ -1,125 +1,132 @@
 "use client";
 
 /**
- * Meta-connected panel for /accounts/growth.
+ * Connected Meta channels — the primary Account Growth surface.
  *
- * Replaces scraper-derived Meta reporting with data read through an admin's own
- * Meta OAuth grant. Every state is named and rendered explicitly — not-configured,
- * not-connected, discovering, connected-with-posts, partial-scope, needs-reauth —
- * because a blank panel is indistinguishable from a broken one.
+ * ⚠️ THIS IS A CHANNEL MONITOR, NOT A POST FEED. An earlier version led with a
+ * flat list of individual posts across 120 channels, which answered a question
+ * nobody asked ("what was posted?") instead of the one they did ("how is each
+ * channel doing?"). Posts are now a per-channel drill-down only.
  *
- * ⚠️ A metric Meta does not publish renders as an em-dash via fmtMetric(), never 0.
- * ⚠️ "Measuring" (stored, not yet polled) is shown DIFFERENTLY from "—" (measured,
- *    Meta publishes nothing). Collapsing those two is what makes a page lie.
+ * ⚠️ A metric Meta does not publish renders as an em-dash, never 0 — and the
+ * footnote names which ones those are per platform, so a dash is never mistaken
+ * for missing data or a real zero.
  */
 
-import { useState } from "react";
-import { RefreshCw, Link2, Unlink, AlertTriangle, ExternalLink, Loader2 } from "lucide-react";
+import { Fragment, useState } from "react";
 import {
-  useMetaConnections,
-  useMetaAssets,
-  useMetaPosts,
-  useMetaPostsSummary,
-  startMetaConnect,
-  triggerMetaDiscovery,
-  triggerMetaSync,
-  disconnectMeta,
-  fmtMetric,
-  type MetaPost,
+  RefreshCw, Link2, Unlink, AlertTriangle, ExternalLink, Loader2, ChevronDown, ChevronRight,
+} from "lucide-react";
+import {
+  useMetaConnections, useMetaChannels, useMetaPosts,
+  startMetaConnect, triggerMetaDiscovery, triggerMetaSync, disconnectMeta,
+  fmtMetric, type MetaChannel,
 } from "@/lib/hooks/use-meta";
+
+type SortKey = "followers" | "views" | "engagements" | "name";
 
 function StatusChip({ status, daysLeft }: { status: string; daysLeft: number | null }) {
   const map: Record<string, { cls: string; label: string; title: string }> = {
-    ACTIVE: {
-      cls: "text-[#3E9B4F] border-[#C6E8CB] bg-[#F2FAF3]",
-      label: "Connected",
-      title: "Reading live data through your Meta grant.",
-    },
-    PARTIAL_SCOPE: {
-      cls: "text-[#C2861D] border-[#F3D9A4] bg-[#FDF8EC]",
-      label: "Partial permissions",
-      title: "A required permission was declined. Reconnect to grant it.",
-    },
-    NEEDS_REAUTH_SOON: {
-      cls: "text-[#C2861D] border-[#F3D9A4] bg-[#FDF8EC]",
+    ACTIVE: { cls: "text-[#3E9B4F] border-[#C6E8CB] bg-[#F2FAF3]", label: "Connected",
+      title: "Reading live data through your Meta authorisation." },
+    PARTIAL_SCOPE: { cls: "text-[#C2861D] border-[#F3D9A4] bg-[#FDF8EC]", label: "Partial permissions",
+      title: "A required permission was declined. Reconnect to grant it." },
+    NEEDS_REAUTH_SOON: { cls: "text-[#C2861D] border-[#F3D9A4] bg-[#FDF8EC]",
       label: daysLeft != null ? `Expires in ${daysLeft}d` : "Expiring soon",
-      title: "Meta data access lapses ~90 days after authorising. Reconnect to extend.",
-    },
-    NEEDS_REAUTH: {
-      cls: "text-[#C0504D] border-[#F3C7C6] bg-[#FDF1F1]",
-      label: "Reconnect needed",
-      title: "The grant is no longer valid — reconnect to resume.",
-    },
-    RATE_LIMITED: {
-      cls: "text-[#C2861D] border-[#F3D9A4] bg-[#FDF8EC]",
-      label: "Rate limited",
-      title: "Meta is throttling us. This clears itself on the next run.",
-    },
-    REVOKED: {
-      cls: "text-[#7A7A7A] border-[#DCDCDC] bg-[#F7F7F7]",
-      label: "Disconnected",
-      title: "This connection was revoked.",
-    },
+      title: "Meta data access lapses ~90 days after authorising. Reconnect to extend." },
+    NEEDS_REAUTH: { cls: "text-[#C0504D] border-[#F3C7C6] bg-[#FDF1F1]", label: "Reconnect needed",
+      title: "The grant is no longer valid — reconnect to resume." },
+    RATE_LIMITED: { cls: "text-[#C2861D] border-[#F3D9A4] bg-[#FDF8EC]", label: "Rate limited",
+      title: "Meta is throttling us; this clears itself on the next run." },
+    REVOKED: { cls: "text-[#7A7A7A] border-[#DCDCDC] bg-[#F7F7F7]", label: "Disconnected", title: "Revoked." },
   };
   const m = map[status] ?? map.REVOKED;
   return (
-    <span
-      title={m.title}
-      className={`inline-flex items-center text-[11px] font-medium border rounded-full px-2 py-0.5 leading-none whitespace-nowrap ${m.cls}`}
-    >
+    <span title={m.title}
+      className={`inline-flex items-center text-[11px] font-medium border rounded-full px-2 py-0.5 leading-none whitespace-nowrap ${m.cls}`}>
       {m.label}
     </span>
   );
 }
 
-/** One metric cell. Distinguishes not-yet-measured from genuinely-absent. */
-function MetricCell({ value, pending }: { value: number | null; pending: boolean }) {
-  if (value === null && pending) {
-    return (
-      <span
-        className="text-[11px] text-[#B0B0B0] italic"
-        title="Stored, but its engagement numbers have not been fetched yet. They appear after the next sync."
-      >
-        measuring
-      </span>
-    );
-  }
+/** Recent posts for ONE channel — a drill-down, never the headline. */
+function ChannelPosts({ assetId }: { assetId: string }) {
+  const { data, isLoading } = useMetaPosts({ assetId });
+  if (isLoading) return <p className="px-6 py-3 text-[11px] text-[#B0B0B0]">Loading posts…</p>;
+  const items = data?.items ?? [];
+  if (items.length === 0)
+    return <p className="px-6 py-3 text-[11px] text-[#B0B0B0]">No posts stored for this channel yet.</p>;
   return (
-    <span
-      className="text-xs font-semibold text-[#1A1A1A]"
-      title={value === null ? "Meta publishes no value for this metric on this post type." : undefined}
-    >
-      {fmtMetric(value)}
-    </span>
+    <div className="px-6 py-2 bg-[#FCFBF8]">
+      <table className="w-full">
+        <thead>
+          <tr className="text-[10px] text-[#B0B0B0]">
+            <th className="text-left font-medium py-1">Recent post</th>
+            <th className="text-right font-medium py-1 w-16">Views</th>
+            <th className="text-right font-medium py-1 w-16">Likes</th>
+            <th className="text-right font-medium py-1 w-20">Comments</th>
+            <th className="text-right font-medium py-1 w-20">Posted</th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.slice(0, 8).map((p) => (
+            <tr key={p.id} className="border-t border-[#F0EAE0]">
+              <td className="py-1 pr-2 max-w-0">
+                <div className="flex items-center gap-1 min-w-0">
+                  <span className="text-[11px] text-[#1A1A1A] truncate">
+                    {p.caption?.trim() || <span className="text-[#B0B0B0]">(no caption)</span>}
+                  </span>
+                  {p.permalink && (
+                    <a href={p.permalink} target="_blank" rel="noopener noreferrer"
+                      className="shrink-0 text-[#B0B0B0] hover:text-[#1A1A1A]">
+                      <ExternalLink className="h-3 w-3" />
+                    </a>
+                  )}
+                </div>
+              </td>
+              <td className="py-1 text-right text-[11px]">
+                {p.metricsStatus === "pending" && p.views === null
+                  ? <span className="italic text-[#B0B0B0]">measuring</span>
+                  : fmtMetric(p.views)}
+              </td>
+              <td className="py-1 text-right text-[11px]">{fmtMetric(p.likes)}</td>
+              <td className="py-1 text-right text-[11px]">{fmtMetric(p.comments)}</td>
+              <td className="py-1 text-right text-[10px] text-[#7A7A7A] whitespace-nowrap">
+                {p.postedAt ? new Date(p.postedAt).toLocaleDateString() : "—"}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
 export function MetaPanel() {
   const { data: conns, isLoading: connLoading, mutate: mutateConns } = useMetaConnections();
   const [platform, setPlatform] = useState<"all" | "facebook" | "instagram">("all");
+  const [sort, setSort] = useState<SortKey>("followers");
+  const [q, setQ] = useState("");
+  const [expanded, setExpanded] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
-  const kind = platform === "all" ? undefined : platform;
-  const { data: assets, mutate: mutateAssets } = useMetaAssets({ kind });
-  const { data: posts, mutate: mutatePosts } = useMetaPosts({ kind });
-  const { data: summary, mutate: mutateSummary } = useMetaPostsSummary();
+  const { data: ch, mutate: mutateCh } = useMetaChannels({
+    platform: platform === "all" ? undefined : platform,
+    q: q.trim() || undefined,
+    sort,
+  });
 
   const connections = conns?.connections ?? [];
   const live = connections.filter((c) => c.status !== "REVOKED");
   const configured = conns?.configured ?? false;
+  const channels = ch?.items ?? [];
 
   async function connect(mode: "connect" | "reconnect", connectionId?: string) {
-    setErr(null);
-    setBusy("connect");
+    setErr(null); setBusy("connect");
     try {
-      const { authorizeUrl } = await startMetaConnect({
-        mode,
-        connectionId,
-        rerequest: mode === "reconnect",
-      });
-      // Full-page navigation: Meta refuses to render its consent dialog in an iframe.
-      window.location.href = authorizeUrl;
+      const { authorizeUrl } = await startMetaConnect({ mode, connectionId, rerequest: mode === "reconnect" });
+      window.location.href = authorizeUrl; // Meta refuses to render consent in an iframe
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Could not start the Meta connection.");
       setBusy(null);
@@ -127,67 +134,53 @@ export function MetaPanel() {
   }
 
   async function run(label: string, fn: () => Promise<unknown>) {
-    setErr(null);
-    setBusy(label);
+    setErr(null); setBusy(label);
     try {
       await fn();
-      // Give the fire-and-forget background job a moment before re-reading.
-      await new Promise((r) => setTimeout(r, 2500));
-      await Promise.all([mutateConns(), mutateAssets(), mutatePosts(), mutateSummary()]);
+      await new Promise((r) => setTimeout(r, 3000)); // fire-and-forget job needs a beat
+      await Promise.all([mutateConns(), mutateCh()]);
     } catch (e) {
       setErr(e instanceof Error ? e.message : "That action failed.");
-    } finally {
-      setBusy(null);
-    }
+    } finally { setBusy(null); }
   }
 
-  // ── State: server not configured ───────────────────────────────────────────
   if (!connLoading && !configured) {
     return (
       <section className="bg-white rounded-2xl border border-[#E8E0D0] shadow-[0_2px_16px_rgba(0,0,0,0.05)] p-5 space-y-2">
         <h2 className="font-serif text-lg text-[#1A1A1A]">Facebook &amp; Instagram</h2>
         <p className="text-sm text-[#7A7A7A]">
-          Meta connection isn&apos;t configured on the server yet, so no Facebook or Instagram
-          data can be shown here.
+          Meta connection isn&apos;t configured on the server, so no Facebook or Instagram data can be shown.
         </p>
         {(conns?.missingEnv?.length ?? 0) > 0 && (
-          <p className="text-[11px] text-[#B0B0B0]">
-            Missing configuration: {conns!.missingEnv.join(", ")}
-          </p>
+          <p className="text-[11px] text-[#B0B0B0]">Missing: {conns!.missingEnv.join(", ")}</p>
         )}
       </section>
     );
   }
 
+  const t = ch?.totals;
+  const contrib = ch?.contributing;
+
   return (
     <section className="bg-white rounded-2xl border border-[#E8E0D0] shadow-[0_2px_16px_rgba(0,0,0,0.05)] overflow-hidden">
       <div className="px-5 py-4 border-b border-[#F0EAE0] flex flex-wrap items-center gap-x-3 gap-y-2">
         <div className="min-w-0">
-          <h2 className="font-serif text-lg text-[#1A1A1A]">Facebook &amp; Instagram</h2>
+          <h2 className="font-serif text-lg text-[#1A1A1A]">Connected channels</h2>
           <p className="text-xs text-[#7A7A7A] mt-0.5">
-            Read directly from Meta through your own authorisation — no scraping.
+            Facebook Pages &amp; Instagram accounts, read directly from Meta — no scraping.
           </p>
         </div>
         <div className="flex items-center gap-1.5 sm:ml-auto">
           {live.length > 0 && (
-            <button
-              onClick={() => run("sync", () => triggerMetaSync())}
-              disabled={busy !== null}
-              className="inline-flex items-center gap-1.5 text-xs font-medium border border-[#DCDCDC] rounded-full px-3 py-1.5 hover:bg-[#FAFAFA] disabled:opacity-50"
-            >
-              {busy === "sync" ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <RefreshCw className="h-3.5 w-3.5" />
-              )}
-              Refresh posts
+            <button onClick={() => run("sync", () => triggerMetaSync())} disabled={busy !== null}
+              className="inline-flex items-center gap-1.5 text-xs font-medium border border-[#DCDCDC] rounded-full px-3 py-1.5 hover:bg-[#FAFAFA] disabled:opacity-50">
+              {busy === "sync" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+              Refresh
             </button>
           )}
-          <button
-            onClick={() => connect(live.length > 0 ? "reconnect" : "connect", live[0]?.id)}
+          <button onClick={() => connect(live.length > 0 ? "reconnect" : "connect", live[0]?.id)}
             disabled={busy !== null}
-            className="inline-flex items-center gap-1.5 text-xs font-medium rounded-full px-3 py-1.5 bg-[#1877F2] text-white hover:bg-[#166FE5] disabled:opacity-50"
-          >
+            className="inline-flex items-center gap-1.5 text-xs font-medium rounded-full px-3 py-1.5 bg-[#1877F2] text-white hover:bg-[#166FE5] disabled:opacity-50">
             <Link2 className="h-3.5 w-3.5" />
             {live.length > 0 ? "Reconnect" : "Connect with Facebook"}
           </button>
@@ -196,26 +189,23 @@ export function MetaPanel() {
 
       {err && (
         <div className="mx-5 mt-4 flex items-start gap-2 text-xs text-[#C0504D] bg-[#FDF1F1] border border-[#F3C7C6] rounded-lg px-3 py-2">
-          <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-          <span className="min-w-0">{err}</span>
+          <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" /><span className="min-w-0">{err}</span>
         </div>
       )}
 
-      {/* ── State: not connected ─────────────────────────────────────────── */}
       {!connLoading && live.length === 0 && (
         <div className="px-5 py-8 text-center space-y-2">
           <p className="text-sm text-[#1A1A1A] font-medium">No Meta account connected yet</p>
           <p className="text-xs text-[#7A7A7A] max-w-md mx-auto leading-relaxed">
-            Connect the Facebook account that manages your Pages. We&apos;ll read the Pages and
-            Instagram accounts it administers, then show each post&apos;s views, likes and
-            comments here. Read-only — we never post anything.
+            Connect the Facebook account that manages your Pages. We&apos;ll list every Page and
+            Instagram account it administers, with each channel&apos;s followers, views and
+            engagement. Read-only — we never post anything.
           </p>
         </div>
       )}
 
-      {/* ── Connections ──────────────────────────────────────────────────── */}
       {live.map((c) => (
-        <div key={c.id} className="px-5 py-3 border-b border-[#F6F2EA] flex flex-wrap items-center gap-x-3 gap-y-1.5">
+        <div key={c.id} className="px-5 py-2.5 border-b border-[#F6F2EA] flex flex-wrap items-center gap-x-3 gap-y-1.5">
           <div className="min-w-0 flex items-center gap-2">
             <span className="text-sm font-medium text-[#1A1A1A] truncate">
               {c.metaUserName ?? `Meta user ${c.metaUserId}`}
@@ -223,30 +213,20 @@ export function MetaPanel() {
             <StatusChip status={c.status} daysLeft={c.dataAccessDaysLeft} />
           </div>
           <div className="text-[11px] text-[#7A7A7A] flex items-center gap-2 sm:ml-auto">
-            {c.discoveryState !== "done" && (
-              <span className="italic" title="Finding the Pages and Instagram accounts you administer.">
-                finding channels…
-              </span>
-            )}
-            <span>{c.assetCount ?? 0} channel(s)</span>
-            <button
-              onClick={() => run(`disc-${c.id}`, () => triggerMetaDiscovery(c.id))}
-              disabled={busy !== null}
-              className="underline hover:text-[#1A1A1A] disabled:opacity-50"
-            >
+            {c.discoveryState !== "done" && <span className="italic">finding channels…</span>}
+            <span>{c.assetCount ?? 0} channels</span>
+            <button onClick={() => run(`disc-${c.id}`, () => triggerMetaDiscovery(c.id))}
+              disabled={busy !== null} className="underline hover:text-[#1A1A1A] disabled:opacity-50">
               {busy === `disc-${c.id}` ? "refreshing…" : "refresh channels"}
             </button>
             <button
               onClick={() => {
-                if (window.confirm("Disconnect this Meta account? Stored posts are kept, but no new data will be fetched.")) {
+                if (window.confirm("Disconnect this Meta account? Stored data is kept, but nothing new will be fetched."))
                   void run(`del-${c.id}`, () => disconnectMeta(c.id));
-                }
               }}
               disabled={busy !== null}
-              className="inline-flex items-center gap-1 text-[#C0504D] underline hover:opacity-80 disabled:opacity-50"
-            >
-              <Unlink className="h-3 w-3" />
-              disconnect
+              className="inline-flex items-center gap-1 text-[#C0504D] underline hover:opacity-80 disabled:opacity-50">
+              <Unlink className="h-3 w-3" />disconnect
             </button>
           </div>
           {c.missingScopes.length > 0 && (
@@ -254,158 +234,108 @@ export function MetaPanel() {
               Declined permissions: {c.missingScopes.join(", ")} — reconnect to grant them.
             </p>
           )}
-          {c.lastError && (
-            <p className="basis-full text-[11px] text-[#C0504D] break-words">{c.lastError}</p>
-          )}
+          {c.lastError && <p className="basis-full text-[11px] text-[#C0504D] break-words">{c.lastError}</p>}
         </div>
       ))}
 
-      {/* ── Totals ───────────────────────────────────────────────────────── */}
-      {live.length > 0 && summary && (
+      {live.length > 0 && t && (
         <div className="px-5 py-4 grid grid-cols-2 sm:grid-cols-4 gap-3 border-b border-[#F0EAE0]">
           {[
-            { label: "Posts", value: summary.postCount, raw: true },
-            { label: "Views", value: summary.totals.views },
-            { label: "Likes", value: summary.totals.likes },
-            { label: "Comments", value: summary.totals.comments },
+            { label: "Channels", value: ch!.channelCount, raw: true, note: null as string | null },
+            { label: "Followers", value: t.followers, raw: false, note: null },
+            { label: "Views · 28d", value: t.views, raw: false,
+              note: contrib && contrib.views < ch!.channelCount ? `${contrib.views}/${ch!.channelCount} channels reporting` : null },
+            { label: "Engagements · 28d", value: t.engagements, raw: false,
+              note: contrib && contrib.engagements < ch!.channelCount ? `${contrib.engagements}/${ch!.channelCount} reporting` : null },
           ].map((s) => (
             <div key={s.label} className="min-w-0">
               <p className="font-num text-xl font-semibold text-[#1A1A1A] truncate">
                 {s.raw ? s.value.toLocaleString() : fmtMetric(s.value)}
               </p>
               <p className="text-xs text-[#7A7A7A]">{s.label}</p>
+              {/* Say what a total does NOT cover, rather than implying completeness. */}
+              {s.note && <p className="text-[10px] text-[#B0B0B0] leading-tight">{s.note}</p>}
             </div>
           ))}
-          {(summary.nullCounts.views > 0 || summary.pendingCount > 0) && (
-            <p className="col-span-2 sm:col-span-4 text-[11px] text-[#B0B0B0] leading-snug">
-              {/* ⚠️ These are TWO DIFFERENT FACTS and must never be merged into one
-                  sentence. "Still being measured" = we have not asked Meta yet (a
-                  timing statement about us). "Meta publishes no value" = we asked and
-                  got nothing (a statement about Meta). Conflating them makes the page
-                  assert something false about Meta — which it briefly did. */}
-              {summary.pendingCount > 0 && (
-                <>
-                  Views are still being collected for{" "}
-                  {summary.pendingCount.toLocaleString()} of {summary.postCount.toLocaleString()}{" "}
-                  post(s) — likes and comments are already complete.{" "}
-                </>
-              )}
-              {summary.nullCounts.views > 0 && (
-                <>
-                  {summary.nullCounts.views.toLocaleString()} measured post(s) have no view count
-                  published by Meta (it only reports views on video), so they add nothing to the
-                  Views total.
-                </>
-              )}
-            </p>
-          )}
         </div>
       )}
 
-      {/* ── Channels ─────────────────────────────────────────────────────── */}
-      {live.length > 0 && (assets?.items?.length ?? 0) > 0 && (
-        <div className="px-5 py-3 border-b border-[#F0EAE0]">
-          <div className="flex items-center gap-1.5 mb-2">
-            {(["all", "facebook", "instagram"] as const).map((p) => (
-              <button
-                key={p}
-                onClick={() => setPlatform(p)}
-                className={`text-[11px] rounded-full px-2.5 py-1 border ${
-                  platform === p
-                    ? "bg-[#1A1A1A] text-white border-[#1A1A1A]"
-                    : "border-[#DCDCDC] text-[#7A7A7A] hover:bg-[#FAFAFA]"
-                }`}
-              >
-                {p === "all" ? "All" : p === "facebook" ? "Facebook" : "Instagram"}
-              </button>
-            ))}
-            <span className="text-[11px] text-[#B0B0B0] ml-auto">
-              {assets!.items.length} of {assets!.total} channel(s)
-            </span>
-          </div>
-          <div className="flex flex-wrap gap-1.5">
-            {assets!.items.slice(0, 40).map((a) => (
-              <span
-                key={a.id}
-                title={`${a.platform} · ${fmtMetric(a.followerCount)} followers · ${a.postCountStored} stored post(s)`}
-                className="inline-flex items-center gap-1 text-[11px] border border-[#E8E0D0] rounded-full px-2 py-0.5 bg-[#FCFBF8]"
-              >
-                <span className={a.platform === "facebook" ? "text-[#1877F2]" : "text-[#C13584]"}>
-                  {a.platform === "facebook" ? "f" : "ig"}
-                </span>
-                <span className="truncate max-w-[160px] text-[#1A1A1A]">
-                  {a.username ?? a.name}
-                </span>
-                <span className="text-[#B0B0B0]">{fmtMetric(a.followerCount)}</span>
-              </span>
-            ))}
-          </div>
+      {live.length > 0 && (
+        <div className="px-5 py-2.5 border-b border-[#F0EAE0] flex flex-wrap items-center gap-2">
+          {(["all", "facebook", "instagram"] as const).map((p) => (
+            <button key={p} onClick={() => setPlatform(p)}
+              className={`text-[11px] rounded-full px-2.5 py-1 border ${
+                platform === p ? "bg-[#1A1A1A] text-white border-[#1A1A1A]"
+                : "border-[#DCDCDC] text-[#7A7A7A] hover:bg-[#FAFAFA]"}`}>
+              {p === "all" ? "All" : p === "facebook" ? "Facebook" : "Instagram"}
+            </button>
+          ))}
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search channels…"
+            className="text-[11px] border border-[#DCDCDC] rounded-full px-3 py-1 w-40 focus:outline-none focus:border-[#B0B0B0]" />
+          <select value={sort} onChange={(e) => setSort(e.target.value as SortKey)}
+            className="text-[11px] border border-[#DCDCDC] rounded-full px-2 py-1 bg-white">
+            <option value="followers">Sort: Followers</option>
+            <option value="views">Sort: Views 28d</option>
+            <option value="engagements">Sort: Engagements 28d</option>
+            <option value="name">Sort: Name</option>
+          </select>
+          <span className="text-[11px] text-[#B0B0B0] ml-auto">{channels.length} channel(s)</span>
         </div>
       )}
 
-      {/* ── Posts table ──────────────────────────────────────────────────── */}
       {live.length > 0 && (
         <div className="overflow-x-auto">
-          {(posts?.items?.length ?? 0) === 0 ? (
+          {channels.length === 0 ? (
             <p className="px-5 py-8 text-center text-xs text-[#7A7A7A]">
-              {assets?.items?.length
-                ? "No posts fetched yet. Use “Refresh posts” — the first run can take a minute."
-                : "Waiting for your channels to be discovered…"}
+              {ch ? "No channels match that filter." : "Waiting for your channels to be discovered…"}
             </p>
           ) : (
-            <table className="w-full min-w-[720px]">
+            <table className="w-full min-w-[820px]">
               <thead>
                 <tr className="text-[11px] text-[#7A7A7A] border-b border-[#F0EAE0]">
-                  <th className="text-left font-medium px-5 py-2">Post</th>
-                  <th className="text-left font-medium px-2 py-2">Channel</th>
-                  <th className="text-right font-medium px-2 py-2">Views</th>
-                  <th className="text-right font-medium px-2 py-2">Likes</th>
-                  <th className="text-right font-medium px-2 py-2">Comments</th>
-                  <th className="text-right font-medium px-2 py-2">Shares</th>
-                  <th className="text-right font-medium px-5 py-2">Posted</th>
+                  <th className="text-left font-medium px-5 py-2">Channel</th>
+                  <th className="text-right font-medium px-2 py-2">Followers</th>
+                  <th className="text-right font-medium px-2 py-2">Views 28d</th>
+                  <th className="text-right font-medium px-2 py-2">Engagements 28d</th>
+                  <th className="text-right font-medium px-2 py-2">Reach 28d</th>
+                  <th className="text-right font-medium px-2 py-2">Profile views</th>
+                  <th className="text-right font-medium px-5 py-2">Posts</th>
                 </tr>
               </thead>
               <tbody>
-                {posts!.items.map((p: MetaPost) => {
-                  const pending = p.metricsStatus === "pending";
+                {channels.map((c: MetaChannel) => {
+                  const open = expanded === c.id;
                   return (
-                    <tr key={p.id} className="border-b border-[#F8F5EF] hover:bg-[#FCFBF8]">
-                      <td className="px-5 py-2 max-w-[280px]">
-                        <div className="flex items-center gap-1.5 min-w-0">
-                          <span
-                            className={`text-[10px] shrink-0 ${
-                              p.platform === "facebook" ? "text-[#1877F2]" : "text-[#C13584]"
-                            }`}
-                          >
-                            {p.platform === "facebook" ? "f" : "ig"}
-                          </span>
-                          <span className="text-xs text-[#1A1A1A] truncate">
-                            {p.caption?.trim() || <span className="text-[#B0B0B0]">(no caption)</span>}
-                          </span>
-                          {p.permalink && (
-                            <a
-                              href={p.permalink}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="shrink-0 text-[#7A7A7A] hover:text-[#1A1A1A]"
-                              title="Open on Meta"
-                            >
-                              <ExternalLink className="h-3 w-3" />
-                            </a>
-                          )}
-                        </div>
-                      </td>
-                      <td className="px-2 py-2 text-[11px] text-[#7A7A7A] truncate max-w-[120px]">
-                        {p.asset.username ?? p.asset.name}
-                      </td>
-                      <td className="px-2 py-2 text-right"><MetricCell value={p.views} pending={pending} /></td>
-                      <td className="px-2 py-2 text-right"><MetricCell value={p.likes} pending={pending} /></td>
-                      <td className="px-2 py-2 text-right"><MetricCell value={p.comments} pending={pending} /></td>
-                      <td className="px-2 py-2 text-right"><MetricCell value={p.shares} pending={pending} /></td>
-                      <td className="px-5 py-2 text-right text-[11px] text-[#7A7A7A] whitespace-nowrap">
-                        {p.postedAt ? new Date(p.postedAt).toLocaleDateString() : "—"}
-                      </td>
-                    </tr>
+                    <Fragment key={c.id}>
+                      <tr onClick={() => setExpanded(open ? null : c.id)}
+                        className="border-b border-[#F8F5EF] hover:bg-[#FCFBF8] cursor-pointer">
+                        <td className="px-5 py-2">
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            {open ? <ChevronDown className="h-3 w-3 text-[#B0B0B0] shrink-0" />
+                                  : <ChevronRight className="h-3 w-3 text-[#B0B0B0] shrink-0" />}
+                            <span className={`text-[10px] shrink-0 ${c.platform === "facebook" ? "text-[#1877F2]" : "text-[#C13584]"}`}>
+                              {c.platform === "facebook" ? "f" : "ig"}
+                            </span>
+                            <span className="text-xs font-medium text-[#1A1A1A] truncate max-w-[220px]">{c.name}</span>
+                            {c.username && <span className="text-[10px] text-[#B0B0B0] truncate">@{c.username}</span>}
+                            {c.metricsError && (
+                              <span title={c.metricsError}><AlertTriangle className="h-3 w-3 text-[#C2861D] shrink-0" /></span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-2 py-2 text-right text-xs font-semibold text-[#1A1A1A]">{fmtMetric(c.followers)}</td>
+                        <td className="px-2 py-2 text-right text-xs">{fmtMetric(c.views28d)}</td>
+                        <td className="px-2 py-2 text-right text-xs">{fmtMetric(c.engagements28d)}</td>
+                        <td className="px-2 py-2 text-right text-xs">{fmtMetric(c.reach28d)}</td>
+                        <td className="px-2 py-2 text-right text-xs">{fmtMetric(c.profileViews28d)}</td>
+                        <td className="px-5 py-2 text-right text-xs text-[#7A7A7A]">{fmtMetric(c.posts)}</td>
+                      </tr>
+                      {open && (
+                        <tr>
+                          <td colSpan={7} className="p-0"><ChannelPosts assetId={c.id} /></td>
+                        </tr>
+                      )}
+                    </Fragment>
                   );
                 })}
               </tbody>
@@ -416,9 +346,10 @@ export function MetaPanel() {
 
       {live.length > 0 && (
         <p className="px-5 py-3 text-[11px] text-[#B0B0B0] leading-snug border-t border-[#F0EAE0]">
-          A dash means Meta publishes no value for that metric on that post type — it is not a
-          zero and not missing data. Instagram does not expose a public share count for every
-          format, and Facebook only reports views on video posts.
+          Figures cover the last 28 days and come straight from Meta. A dash means Meta
+          publishes no value for that metric on that platform — not a zero and not missing
+          data: Facebook exposes no whole-Page reach, and profile views mean Page views on
+          Facebook and profile visits on Instagram. Click a channel to see its recent posts.
         </p>
       )}
     </section>

@@ -18,6 +18,7 @@ import { asyncHandler } from "../utils/async-handler";
 import { metaOauthConfigured, metaOauthMissingEnv, metaTuning } from "../services/meta-oauth/meta-config";
 import { discoverConnectionAssets } from "../services/meta-oauth/meta-discovery.service";
 import { runMetaPostsSync } from "../services/meta-oauth/meta-posts.service";
+import { runMetaChannelSync } from "../services/meta-oauth/meta-channels.service";
 import { scrubSecrets } from "../utils/token-crypto";
 
 const router = Router();
@@ -272,11 +273,16 @@ router.post(
       return res.status(202).json({ success: true, data: { accepted: false, reason: "already_running" } });
     }
     inFlight.add(key);
-    void runMetaPostsSync({
-      assetId: body.assetId,
-      connectionId: body.connectionId,
-      budgetMax: body.assetId ? metaTuning.refreshCallBudget() : undefined,
-    })
+    // Channels FIRST — they are the headline data and cost ~1 call each, so they
+    // must never be starved by the far more expensive per-post pass behind them.
+    void runMetaChannelSync({ assetId: body.assetId })
+      .then(() =>
+        runMetaPostsSync({
+          assetId: body.assetId,
+          connectionId: body.connectionId,
+          budgetMax: body.assetId ? metaTuning.refreshCallBudget() : undefined,
+        }),
+      )
       .catch((e) => console.error("[meta-posts] failed:", scrubSecrets(String(e))))
       .finally(() => inFlight.delete(key));
     return res.status(202).json({ success: true, data: { accepted: true } });
@@ -304,6 +310,99 @@ router.get(
         connections, assets, selectedAssets: selected,
         posts, pendingMetrics: pending,
         intervalMs: metaTuning.postsIntervalMs(),
+      },
+    });
+  }),
+);
+
+/**
+ * GET /admin/meta/channels — THE primary Account Growth view.
+ *
+ * One row per connected Page / IG account with its WHOLE-CHANNEL metrics. This is
+ * what an admin monitors; individual posts are a drill-down, not the headline.
+ * BigInt columns are serialised to Number for JSON (values are far below 2^53).
+ */
+router.get(
+  "/admin/meta/channels",
+  ...adminGate,
+  asyncHandler(async (req: Request, res: Response) => {
+    const kind: MetaAssetKind | undefined =
+      req.query.platform === "facebook" ? MetaAssetKind.FACEBOOK_PAGE
+      : req.query.platform === "instagram" ? MetaAssetKind.INSTAGRAM_ACCOUNT
+      : undefined;
+    const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
+    const sort = typeof req.query.sort === "string" ? req.query.sort : "followers";
+
+    const where: Prisma.MetaAssetWhereInput = {
+      disconnectedAt: null,
+      ...(kind ? { kind } : {}),
+      ...(q
+        ? { OR: [{ name: { contains: q, mode: "insensitive" as const } }, { username: { contains: q, mode: "insensitive" as const } }] }
+        : {}),
+    };
+
+    const orderBy: Prisma.MetaAssetOrderByWithRelationInput =
+      sort === "views" ? { views28d: { sort: "desc", nulls: "last" } }
+      : sort === "engagements" ? { engagements28d: { sort: "desc", nulls: "last" } }
+      : sort === "name" ? { name: "asc" }
+      : { followerCount: { sort: "desc", nulls: "last" } };
+
+    const rows = await prisma.metaAsset.findMany({
+      where,
+      orderBy,
+      take: 200,
+      select: {
+        id: true, kind: true, metaId: true, name: true, username: true,
+        followerCount: true, postCount: true, pictureUrl: true, selected: true,
+        socialAccountId: true,
+        views28d: true, engagements28d: true, profileViews28d: true,
+        reach28d: true, reactions28d: true,
+        metricsFetchedAt: true, metricsError: true,
+        lastPostSyncAt: true,
+        _count: { select: { posts: true } },
+      },
+    });
+
+    const n = (v: bigint | null) => (v === null ? null : Number(v));
+
+    // Totals sum ONLY non-null values, and we report how many channels actually
+    // contributed — otherwise a total looks like it covers all 120 when it may
+    // cover 40, which is the "confident but wrong" failure this page must avoid.
+    const totals = { followers: 0, views: 0, engagements: 0, reach: 0 };
+    const contributing = { views: 0, engagements: 0, reach: 0 };
+    for (const r of rows) {
+      totals.followers += r.followerCount ?? 0;
+      if (r.views28d !== null) { totals.views += Number(r.views28d); contributing.views++; }
+      if (r.engagements28d !== null) { totals.engagements += Number(r.engagements28d); contributing.engagements++; }
+      if (r.reach28d !== null) { totals.reach += Number(r.reach28d); contributing.reach++; }
+    }
+
+    return res.json({
+      success: true,
+      data: {
+        items: rows.map((r) => ({
+          id: r.id,
+          platform: r.kind === "FACEBOOK_PAGE" ? "facebook" : "instagram",
+          metaId: r.metaId,
+          name: r.name,
+          username: r.username,
+          pictureUrl: r.pictureUrl,
+          followers: r.followerCount,
+          posts: r.postCount ?? r._count.posts ?? null,
+          views28d: n(r.views28d),
+          engagements28d: n(r.engagements28d),
+          profileViews28d: n(r.profileViews28d),
+          reach28d: n(r.reach28d),
+          reactions28d: n(r.reactions28d),
+          metricsFetchedAt: r.metricsFetchedAt ? r.metricsFetchedAt.toISOString() : null,
+          metricsError: r.metricsError,
+          selected: r.selected,
+          linkedToChannel: r.socialAccountId !== null,
+          storedPosts: r._count.posts,
+        })),
+        channelCount: rows.length,
+        totals,
+        contributing,
       },
     });
   }),

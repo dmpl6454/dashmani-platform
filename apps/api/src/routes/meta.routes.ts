@@ -18,7 +18,7 @@ import { asyncHandler } from "../utils/async-handler";
 import { metaOauthConfigured, metaOauthMissingEnv, metaTuning } from "../services/meta-oauth/meta-config";
 import { discoverConnectionAssets } from "../services/meta-oauth/meta-discovery.service";
 import { runMetaPostsSync } from "../services/meta-oauth/meta-posts.service";
-import { runMetaChannelSync } from "../services/meta-oauth/meta-channels.service";
+import { runMetaChannelSync, CHANNEL_WINDOWS, type ChannelWindow } from "../services/meta-oauth/meta-channels.service";
 import { scrubSecrets } from "../utils/token-crypto";
 
 const router = Router();
@@ -333,6 +333,15 @@ router.get(
     const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
     const sort = typeof req.query.sort === "string" ? req.query.sort : "followers";
 
+    // Time window. Only what Meta measures natively — see CHANNEL_WINDOWS. An
+    // unknown value falls back to the default rather than 400ing, so a stale
+    // bookmark degrades to the normal view instead of an error page.
+    const requested = typeof req.query.window === "string" ? req.query.window : "";
+    const window: ChannelWindow =
+      (CHANNEL_WINDOWS as readonly string[]).includes(requested)
+        ? (requested as ChannelWindow)
+        : "days_28";
+
     const where: Prisma.MetaAssetWhereInput = {
       disconnectedAt: null,
       ...(kind ? { kind } : {}),
@@ -341,11 +350,13 @@ router.get(
         : {}),
     };
 
+    // ⚠️ Only followers/name can be ordered in SQL. views and engagements now live
+    // on a per-window relation, and Prisma cannot ORDER BY a filtered to-many
+    // relation's column — so those two are sorted in JS below, over the same
+    // bounded 200-row page. Ordering here by the fixed *_28d columns would be
+    // worse than useless: it would silently sort a 1-day view by 28-day numbers.
     const orderBy: Prisma.MetaAssetOrderByWithRelationInput =
-      sort === "views" ? { views28d: { sort: "desc", nulls: "last" } }
-      : sort === "engagements" ? { engagements28d: { sort: "desc", nulls: "last" } }
-      : sort === "name" ? { name: "asc" }
-      : { followerCount: { sort: "desc", nulls: "last" } };
+      sort === "name" ? { name: "asc" } : { followerCount: { sort: "desc", nulls: "last" } };
 
     const rows = await prisma.metaAsset.findMany({
       where,
@@ -359,11 +370,24 @@ router.get(
         reach28d: true, reactions28d: true,
         metricsFetchedAt: true, metricsError: true,
         lastPostSyncAt: true,
+        windowMetrics: { where: { window }, take: 1 },
         _count: { select: { posts: true } },
       },
     });
 
-    const n = (v: bigint | null) => (v === null ? null : Number(v));
+    const n = (v: bigint | null | undefined) => (v === null || v === undefined ? null : Number(v));
+
+    /**
+     * Figures for the requested window.
+     *
+     * ⚠️ NO FALLBACK TO ANOTHER WINDOW. If the selected window has no row yet
+     * (a channel connected since the last sync, or a window that errored), every
+     * metric is null and renders as an em-dash. Substituting the 28-day numbers
+     * would label 28 days of activity as "today" — a wrong number presented
+     * confidently, which is worse than an honest blank.
+     */
+    const win = (r: { windowMetrics: Array<{ views: bigint | null; reach: bigint | null; engagements: bigint | null; profileViews: bigint | null; reactions: bigint | null; fetchedAt: Date | null; error: string | null }> }) =>
+      r.windowMetrics[0];
 
     // Totals sum ONLY non-null values, and we report how many channels actually
     // contributed — otherwise a total looks like it covers all 120 when it may
@@ -371,15 +395,31 @@ router.get(
     const totals = { followers: 0, views: 0, engagements: 0, reach: 0 };
     const contributing = { views: 0, engagements: 0, reach: 0 };
     for (const r of rows) {
+      const w = win(r);
       totals.followers += r.followerCount ?? 0;
-      if (r.views28d !== null) { totals.views += Number(r.views28d); contributing.views++; }
-      if (r.engagements28d !== null) { totals.engagements += Number(r.engagements28d); contributing.engagements++; }
-      if (r.reach28d !== null) { totals.reach += Number(r.reach28d); contributing.reach++; }
+      if (w?.views != null) { totals.views += Number(w.views); contributing.views++; }
+      if (w?.engagements != null) { totals.engagements += Number(w.engagements); contributing.engagements++; }
+      if (w?.reach != null) { totals.reach += Number(w.reach); contributing.reach++; }
+    }
+
+    // Sort by a windowed metric in JS (see the orderBy note). Nulls last, so a
+    // channel Meta has not measured never outranks one it has.
+    if (sort === "views" || sort === "engagements") {
+      const key = sort === "views" ? ("views" as const) : ("engagements" as const);
+      rows.sort((a, b) => {
+        const av = win(a)?.[key], bv = win(b)?.[key];
+        if (av == null && bv == null) return 0;
+        if (av == null) return 1;
+        if (bv == null) return -1;
+        return Number(bv) - Number(av);
+      });
     }
 
     return res.json({
       success: true,
       data: {
+        window,
+        windows: CHANNEL_WINDOWS,
         items: rows.map((r) => ({
           id: r.id,
           platform: r.kind === "FACEBOOK_PAGE" ? "facebook" : "instagram",
@@ -389,13 +429,18 @@ router.get(
           pictureUrl: r.pictureUrl,
           followers: r.followerCount,
           posts: r.postCount ?? r._count.posts ?? null,
-          views28d: n(r.views28d),
-          engagements28d: n(r.engagements28d),
-          profileViews28d: n(r.profileViews28d),
-          reach28d: n(r.reach28d),
-          reactions28d: n(r.reactions28d),
-          metricsFetchedAt: r.metricsFetchedAt ? r.metricsFetchedAt.toISOString() : null,
-          metricsError: r.metricsError,
+          // Field names kept as *28d for wire compatibility; the VALUES follow the
+          // requested window. `window` below says which one, so a client can never
+          // mistake a 1-day figure for a 28-day one.
+          views28d: n(win(r)?.views),
+          engagements28d: n(win(r)?.engagements),
+          profileViews28d: n(win(r)?.profileViews),
+          reach28d: n(win(r)?.reach),
+          reactions28d: n(win(r)?.reactions),
+          metricsFetchedAt: win(r)?.fetchedAt
+            ? win(r)!.fetchedAt!.toISOString()
+            : r.metricsFetchedAt ? r.metricsFetchedAt.toISOString() : null,
+          metricsError: win(r)?.error ?? r.metricsError,
           selected: r.selected,
           linkedToChannel: r.socialAccountId !== null,
           storedPosts: r._count.posts,

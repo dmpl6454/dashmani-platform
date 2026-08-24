@@ -20,7 +20,7 @@ import {
 import {
   useMetaConnections, useMetaChannels, useMetaPosts,
   startMetaConnect, triggerMetaDiscovery, triggerMetaSync, disconnectMeta,
-  fmtMetric, type MetaChannel,
+  fmtMetric, CHANNEL_WINDOWS, windowSuffix, type MetaChannel, type ChannelWindowKey,
 } from "@/lib/hooks/use-meta";
 
 type SortKey = "followers" | "views" | "engagements" | "name";
@@ -116,12 +116,20 @@ export function MetaPanel() {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [win, setWin] = useState<ChannelWindowKey>("days_28");
 
   const { data: ch, mutate: mutateCh } = useMetaChannels({
     platform: platform === "all" ? undefined : platform,
     q: q.trim() || undefined,
     sort,
+    window: win,
   });
+
+  // Label every windowed figure from the window the SERVER says it returned, not
+  // from local state — mid-fetch those disagree, and a "24h" heading over 28-day
+  // numbers is exactly the kind of confident-but-wrong labelling this page exists
+  // to avoid.
+  const sfx = windowSuffix(ch?.window ?? win);
 
   const connections = conns?.connections ?? [];
   const live = connections.filter((c) => c.status !== "REVOKED");
@@ -249,9 +257,9 @@ export function MetaPanel() {
           {[
             { label: "Channels", value: ch!.channelCount, raw: true, note: null as string | null },
             { label: "Followers", value: t.followers, raw: false, note: null },
-            { label: "Views · 28d", value: t.views, raw: false,
+            { label: `Views · ${sfx}`, value: t.views, raw: false,
               note: contrib && contrib.views < ch!.channelCount ? `${contrib.views}/${ch!.channelCount} channels reporting` : null },
-            { label: "Engagements · 28d", value: t.engagements, raw: false,
+            { label: `Engagements · ${sfx}`, value: t.engagements, raw: false,
               note: contrib && contrib.engagements < ch!.channelCount ? `${contrib.engagements}/${ch!.channelCount} reporting` : null },
           ].map((s) => (
             <div key={s.label} className="min-w-0">
@@ -268,6 +276,27 @@ export function MetaPanel() {
 
       {live.length > 0 && (
         <div className="px-5 py-2.5 border-b border-[#F0EAE0] flex flex-wrap items-center gap-2">
+          <div
+            className="flex items-center gap-1 mr-1"
+            role="group"
+            aria-label="Time window for views, reach and engagement"
+          >
+            <span className="text-[11px] text-[#B0B0B0] mr-0.5">Period</span>
+            {CHANNEL_WINDOWS.map((w) => (
+              <button
+                key={w.key}
+                onClick={() => setWin(w.key)}
+                aria-pressed={win === w.key}
+                className={`text-[11px] rounded-full px-2.5 py-1 border ${
+                  win === w.key
+                    ? "bg-[#5B4BF5] text-white border-[#5B4BF5]"
+                    : "border-[#DCDCDC] text-[#7A7A7A] hover:bg-[#FAFAFA]"}`}
+              >
+                {w.label}
+              </button>
+            ))}
+          </div>
+          <span className="hidden sm:block h-4 w-px bg-[#E8E0D0]" />
           {(["all", "facebook", "instagram"] as const).map((p) => (
             <button key={p} onClick={() => setPlatform(p)}
               className={`text-[11px] rounded-full px-2.5 py-1 border ${
@@ -281,8 +310,8 @@ export function MetaPanel() {
           <select value={sort} onChange={(e) => setSort(e.target.value as SortKey)}
             className="text-[11px] border border-[#DCDCDC] rounded-full px-2 py-1 bg-white">
             <option value="followers">Sort: Followers</option>
-            <option value="views">Sort: Views 28d</option>
-            <option value="engagements">Sort: Engagements 28d</option>
+            <option value="views">Sort: Views</option>
+            <option value="engagements">Sort: Engagements</option>
             <option value="name">Sort: Name</option>
           </select>
           <span className="text-[11px] text-[#B0B0B0] ml-auto">{channels.length} channel(s)</span>
@@ -301,9 +330,9 @@ export function MetaPanel() {
                 <tr className="text-[11px] text-[#7A7A7A] border-b border-[#F0EAE0]">
                   <th className="text-left font-medium px-5 py-2">Channel</th>
                   <th className="text-right font-medium px-2 py-2">Followers</th>
-                  <th className="text-right font-medium px-2 py-2">Views 28d</th>
-                  <th className="text-right font-medium px-2 py-2">Engagements 28d</th>
-                  <th className="text-right font-medium px-2 py-2">Reach 28d</th>
+                  <th className="text-right font-medium px-2 py-2">Views {sfx}</th>
+                  <th className="text-right font-medium px-2 py-2">Engagements {sfx}</th>
+                  <th className="text-right font-medium px-2 py-2">Reach {sfx}</th>
                   <th className="text-right font-medium px-2 py-2">Profile views</th>
                   <th className="text-right font-medium px-5 py-2">Posts</th>
                 </tr>
@@ -352,13 +381,16 @@ export function MetaPanel() {
 
       {live.length > 0 && (
         <p className="px-5 py-3 text-[11px] text-[#B0B0B0] leading-snug border-t border-[#F0EAE0]">
-          Figures cover the last 28 days and come straight from Meta — every channel here
+          Figures cover the selected period and come straight from Meta — every channel here
           is one the connected account administers, so nothing on this page is scraped or
           hand-entered. Views and reach use Meta&apos;s current metrics, which replaced
           impressions when Meta retired that family across the API. A dash means Meta
           publishes no value for that metric on that platform — not a zero and not missing
           data. Profile views mean Page views on Facebook and profile visits on Instagram.
-          Click a channel to see its recent posts.
+          Click a channel to see its recent posts. 24h / 7d / 28d are the only periods
+          offered because they are the only ones Meta measures directly — Instagram
+          refuses any range over 30 days, and a longer one cannot be added up from
+          shorter ones without double-counting reach, which counts unique people.
         </p>
       )}
     </section>

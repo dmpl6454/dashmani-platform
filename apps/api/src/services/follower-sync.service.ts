@@ -23,6 +23,23 @@ function sleep(ms: number) {
 }
 
 /**
+ * Meta (Facebook/Instagram) SCRAPERS — OFF by default since 2026-08-24.
+ *
+ * Owner decision: Account Growth is a connected-account-only surface, so a scraped
+ * Meta follower count has no consumer. Leaving the scrapers on would keep writing
+ * unverifiable numbers into the DB and burn ~5s of sleep per account per hour for
+ * data nothing renders.
+ *
+ * ⚠️ This does NOT affect YouTube (official Data API), Snapchat or X — those keep
+ * their existing behaviour and still feed the accounts list.
+ * ⚠️ It also does NOT touch Top Links / Link Search, which legitimately still use
+ * the older System-User app.
+ *
+ * Escape hatch: META_SCRAPERS_ENABLED=1 restores the previous behaviour.
+ */
+const META_SCRAPERS_ENABLED = (process.env.META_SCRAPERS_ENABLED ?? "") === "1";
+
+/**
  * Provenance of a follower count, persisted to SocialAccount.syncSource.
  *
  *   "api"     — an official platform API: Meta Graph (administered Pages/IG
@@ -528,12 +545,22 @@ export async function syncAllFollowerCounts() {
         }
         if (entry) {
           followers = entry.followers; // administered Page via Graph → exact
-        } else {
-          // Not an administered Page: the Googlebot-UA public-page scraper is the
-          // ONLY path (no Graph read exists for Pages we don't administer).
+        } else if (META_SCRAPERS_ENABLED) {
+          // Legacy path, DISABLED BY DEFAULT since 2026-08-24 (owner decision).
+          // Account Growth now shows only API-verified channels, so a scraped
+          // Facebook number has no consumer — it would just be unverifiable data
+          // written to the DB and 5s of sleep per account for nothing.
+          // Set META_SCRAPERS_ENABLED=1 to restore the old behaviour.
           followers = await fetchFacebookFollowers(account.profileUrl || "", account.handle);
           source = "scraper";
           await sleep(DELAY_MS);
+        } else {
+          // Not administered and scraping is off ⇒ leave the stored value untouched.
+          // We do NOT zero it: the number is not false, it is simply unverifiable,
+          // and other surfaces (the accounts list) still display it.
+          progress.skipped++;
+          progress.processed++;
+          continue;
         }
       }
     } else if (slug === "snapchat") {

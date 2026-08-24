@@ -145,6 +145,58 @@ export function useMetaPostsSummary() {
   return { data, error, isLoading, mutate };
 }
 
+
+/**
+ * A CONNECTED CHANNEL — the primary row on Account Growth.
+ *
+ * ⚠️ Every metric is nullable on purpose. Availability differs per platform and per
+ * account (Facebook publishes no whole-page unique reach at all), so a null means
+ * "Meta does not publish this", NOT zero.
+ */
+export interface MetaChannel {
+  id: string;
+  platform: "facebook" | "instagram";
+  metaId: string;
+  name: string;
+  username: string | null;
+  pictureUrl: string | null;
+  followers: number | null;
+  posts: number | null;
+  views28d: number | null;
+  engagements28d: number | null;
+  profileViews28d: number | null;
+  reach28d: number | null;
+  reactions28d: number | null;
+  metricsFetchedAt: string | null;
+  metricsError: string | null;
+  selected: boolean;
+  linkedToChannel: boolean;
+  storedPosts: number;
+}
+
+export function useMetaChannels(params?: {
+  platform?: "facebook" | "instagram";
+  q?: string;
+  sort?: string;
+}) {
+  const qs = new URLSearchParams();
+  if (params?.platform) qs.set("platform", params.platform);
+  if (params?.q) qs.set("q", params.q);
+  if (params?.sort) qs.set("sort", params.sort);
+  const { data, error, isLoading, mutate } = useSWR(
+    `/admin/meta/channels?${qs.toString()}`,
+    (url: string) =>
+      apiFetch<Envelope<{
+        items: MetaChannel[];
+        channelCount: number;
+        totals: { followers: number; views: number; engagements: number; reach: number };
+        contributing: { views: number; engagements: number; reach: number };
+      }>>(url).then((r) => r.data),
+    opts,
+  );
+  return { data, error, isLoading, mutate };
+}
+
 /** Start the consent flow. Returns the URL to send the browser to. */
 export async function startMetaConnect(body?: { mode?: "connect" | "reconnect"; connectionId?: string; rerequest?: boolean }) {
   const res = await apiFetch<Envelope<{ authorizeUrl: string; state: string; expiresAt: string }>>(

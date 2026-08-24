@@ -12,6 +12,29 @@ function dateOnlyDaysAgo(days: number): Date {
   return new Date(d.getTime() - days * 86400000);
 }
 
+/**
+ * Account Growth shows ONLY channels whose numbers came from an official API
+ * (owner decision 2026-08-24): a live connected Meta asset, or a non-Meta
+ * platform synced through its own API. A plain SocialAccount row no longer
+ * qualifies, so every account these tests seed has to be made connected — the
+ * same condition production checks, rather than a test-only bypass.
+ */
+async function connectAccount(accountId: string, metaId: string): Promise<void> {
+  const admin = await createTestUser({ roleNames: ["Admin"], email: `conn-${metaId}@zz.test` });
+  const conn = await prisma.metaConnection.create({
+    data: { metaUserId: `mu-${metaId}`, connectedById: admin.id, status: "ACTIVE" },
+  });
+  await prisma.metaAsset.create({
+    data: {
+      connectionId: conn.id,
+      kind: "FACEBOOK_PAGE",
+      metaId,
+      name: `asset-${metaId}`,
+      socialAccountId: accountId,
+    },
+  });
+}
+
 describe("Account Growth API", () => {
   let adminToken: string;
   let platformId: string;
@@ -35,12 +58,14 @@ describe("Account Growth API", () => {
     const accountA = await prisma.socialAccount.create({
       data: { handle: "@gainer", displayName: "Gainer", platformId, status: "ACTIVE", followerCount: 1200 },
     });
+      await connectAccount(accountA.id, "gainer");
     accountAId = accountA.id;
 
     // Account B — losing: 5000 → 4900 (delta -100, -2%), latest 4900
     const accountB = await prisma.socialAccount.create({
       data: { handle: "@loser", displayName: "Loser", platformId, status: "ACTIVE", followerCount: 4900 },
     });
+      await connectAccount(accountB.id, "loser");
     accountBId = accountB.id;
 
     // Seed snapshots a few days ago (within the 30d window, avoiding IST "today" edge flakiness).
@@ -114,6 +139,7 @@ describe("Account Growth API", () => {
       const corrected = await prisma.socialAccount.create({
         data: { handle: "@corrected", displayName: "Corrected", platformId, status: "ACTIVE", followerCount: 10900 },
       });
+      await connectAccount(corrected.id, "corrected");
       await prisma.accountGrowthSnapshot.createMany({
         data: [
           { accountId: corrected.id, date: dateOnlyDaysAgo(10), followerCount: 1040000 },
@@ -146,9 +172,11 @@ describe("Account Growth API", () => {
       const a = await prisma.socialAccount.create({
         data: { handle: "@dupe1", displayName: "Dupe Page", platformId, status: "ACTIVE", followerCount: 1000000, profileUrl: "https://www.facebook.com/dupepage/" },
       });
+      await connectAccount(a.id, "dupe1");
       const b = await prisma.socialAccount.create({
         data: { handle: "@dupe2", displayName: "Dupe Page (clone)", platformId, status: "ACTIVE", followerCount: 1000000, profileUrl: "https://facebook.com/dupepage?mibextid=ABC123" },
       });
+      await connectAccount(b.id, "dupe2");
 
       const res = await request(app).get("/v1/admin/growth").set("Authorization", `Bearer ${adminToken}`);
       expect(res.status).toBe(200);
@@ -167,9 +195,11 @@ describe("Account Growth API", () => {
       const p1 = await prisma.socialAccount.create({
         data: { handle: "@pid1", displayName: "PID One", platformId, status: "ACTIVE", followerCount: 100, profileUrl: "https://facebook.com/profile.php?id=111" },
       });
+      await connectAccount(p1.id, "pid1");
       const p2 = await prisma.socialAccount.create({
         data: { handle: "@pid2", displayName: "PID Two", platformId, status: "ACTIVE", followerCount: 200, profileUrl: "https://facebook.com/profile.php?id=222" },
       });
+      await connectAccount(p2.id, "pid2");
       const res = await request(app).get("/v1/admin/growth").set("Authorization", `Bearer ${adminToken}`);
       const ids = new Set(res.body.data.accounts.map((x: any) => x.accountId));
       expect(ids.has(p1.id)).toBe(true);
@@ -182,9 +212,11 @@ describe("Account Growth API", () => {
       const evil = await prisma.socialAccount.create({
         data: { handle: "@evil", displayName: "Evil", platformId, status: "ACTIVE", followerCount: 10, profileUrl: "javascript:alert(document.cookie)" },
       });
+      await connectAccount(evil.id, "evil");
       const good = await prisma.socialAccount.create({
         data: { handle: "@good", displayName: "Good", platformId, status: "ACTIVE", followerCount: 10, profileUrl: "https://instagram.com/good" },
       });
+      await connectAccount(good.id, "good");
 
       const res = await request(app).get("/v1/admin/growth").set("Authorization", `Bearer ${adminToken}`);
       expect(res.status).toBe(200);
@@ -224,9 +256,10 @@ describe("Account Growth API", () => {
         data: { name: "Facebook", slug: "facebook" },
       });
       // No snapshots → first and latest both fall back to followerCount (2000), delta = 0.
-      await prisma.socialAccount.create({
+      const fbAccount = await prisma.socialAccount.create({
         data: { handle: "@fbpage", displayName: "FBPage", platformId: fbPlatform.id, status: "ACTIVE", followerCount: 2000 },
       });
+      await connectAccount(fbAccount.id, "fbpage");
 
       const res = await request(app)
         .get("/v1/admin/growth")
@@ -344,6 +377,8 @@ describe("Account Growth API", () => {
           lastSyncedAt: null,
         },
       });
+      // Connected (so it is in scope) but never synced — which is what MANUAL means.
+      await connectAccount(accountC.id, "manual");
 
       const res = await request(app)
         .get("/v1/admin/growth")

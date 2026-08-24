@@ -163,6 +163,8 @@ export interface MetaChannel {
   followers: number | null;
   /** Follower change across the selected period. null = no API history spans it yet. */
   followerDelta: number | null;
+  /** Approximate earnings for the period, in cents. Facebook only; Instagram has no such metric. */
+  earningsCents: number | null;
   posts: number | null;
   views28d: number | null;
   engagements28d: number | null;
@@ -216,8 +218,10 @@ export function useMetaChannels(params?: {
         channelCount: number;
         /** Which window the figures describe — echoed so the UI can never mislabel them. */
         window: ChannelWindowKey;
-        totals: { followers: number; views: number; engagements: number; reach: number };
-        contributing: { views: number; engagements: number; reach: number };
+        /** Newest moment Meta has published — Facebook closes periods at local midnight. */
+        dataThrough: string | null;
+        totals: { followers: number; views: number; engagements: number; reach: number; earningsCents: number };
+        contributing: { views: number; engagements: number; reach: number; earnings: number };
       }>>(url).then((r) => r.data),
     opts,
   );
@@ -260,6 +264,14 @@ export async function setAssetSelected(assetId: string, selected: boolean) {
  * "0 likes" reads as a fact about the post, when the truth is Meta publishes no
  * number for it. A rendered 0 here always means loaded-and-truly-zero.
  */
+/** Money, from integer cents. Never a bare 0 dressed up as "no data". */
+export function fmtMoney(cents: number | null | undefined): string {
+  if (cents === null || cents === undefined || !Number.isFinite(cents)) return "—";
+  const usd = cents / 100;
+  if (Math.abs(usd) >= 1000) return `$${Math.round(usd).toLocaleString()}`;
+  return `$${usd.toFixed(2)}`;
+}
+
 export function fmtMetric(n: number | null | undefined): string {
   if (n === null || n === undefined) return "—";
   if (!Number.isFinite(n)) return "—";

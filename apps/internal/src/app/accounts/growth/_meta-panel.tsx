@@ -20,7 +20,7 @@ import {
 import {
   useMetaConnections, useMetaChannels, useMetaPosts,
   startMetaConnect, triggerMetaDiscovery, triggerMetaSync, disconnectMeta,
-  fmtMetric, CHANNEL_WINDOWS, windowSuffix, type MetaChannel, type ChannelWindowKey,
+  fmtMetric, fmtMoney, CHANNEL_WINDOWS, windowSuffix, type MetaChannel, type ChannelWindowKey,
 } from "@/lib/hooks/use-meta";
 
 type SortKey = "followers" | "views" | "engagements" | "name";
@@ -261,10 +261,12 @@ export function MetaPanel() {
               note: contrib && contrib.views < ch!.channelCount ? `${contrib.views}/${ch!.channelCount} channels reporting` : null },
             { label: `Engagements · ${sfx}`, value: t.engagements, raw: false,
               note: contrib && contrib.engagements < ch!.channelCount ? `${contrib.engagements}/${ch!.channelCount} reporting` : null },
+            { label: `Revenue · ${sfx}`, value: t.earningsCents, raw: false, money: true,
+              note: contrib ? `${contrib.earnings} channel(s) earning · Facebook only` : null },
           ].map((s) => (
             <div key={s.label} className="min-w-0">
               <p className="font-num text-xl font-semibold text-[#1A1A1A] truncate">
-                {s.raw ? s.value.toLocaleString() : fmtMetric(s.value)}
+                {s.raw ? s.value.toLocaleString() : "money" in s && s.money ? fmtMoney(s.value) : fmtMetric(s.value)}
               </p>
               <p className="text-xs text-[#7A7A7A]">{s.label}</p>
               {/* Say what a total does NOT cover, rather than implying completeness. */}
@@ -338,6 +340,12 @@ export function MetaPanel() {
                   <th className="text-right font-medium px-2 py-2">Views {sfx}</th>
                   <th className="text-right font-medium px-2 py-2">Engagements {sfx}</th>
                   <th className="text-right font-medium px-2 py-2">Reach {sfx}</th>
+                  <th
+                    className="text-right font-medium px-2 py-2"
+                    title="Approximate earnings for the period, as Meta reports them. Facebook only — Instagram publishes no earnings metric."
+                  >
+                    Revenue {sfx}
+                  </th>
                   <th className="text-right font-medium px-2 py-2">Profile views</th>
                   <th className="text-right font-medium px-5 py-2">Posts</th>
                 </tr>
@@ -382,12 +390,13 @@ export function MetaPanel() {
                         <td className="px-2 py-2 text-right text-xs">{fmtMetric(c.views28d)}</td>
                         <td className="px-2 py-2 text-right text-xs">{fmtMetric(c.engagements28d)}</td>
                         <td className="px-2 py-2 text-right text-xs">{fmtMetric(c.reach28d)}</td>
+                        <td className="px-2 py-2 text-right text-xs">{fmtMoney(c.earningsCents)}</td>
                         <td className="px-2 py-2 text-right text-xs">{fmtMetric(c.profileViews28d)}</td>
                         <td className="px-5 py-2 text-right text-xs text-[#7A7A7A]">{fmtMetric(c.posts)}</td>
                       </tr>
                       {open && (
                         <tr>
-                          <td colSpan={7} className="p-0"><ChannelPosts assetId={c.id} /></td>
+                          <td colSpan={8} className="p-0"><ChannelPosts assetId={c.id} /></td>
                         </tr>
                       )}
                     </Fragment>
@@ -419,6 +428,16 @@ export function MetaPanel() {
           change is measured directly. Instagram publishes no such history — its change is
           Meta&apos;s own follows-minus-unfollows for the period, which is very close but not
           identical, and is unavailable over 24 hours.
+          {ch?.dataThrough && (
+            <>
+              <strong className="font-medium text-[#7A7A7A]">Figures run through{" "}
+              {new Date(ch.dataThrough).toLocaleDateString(undefined, { day: "numeric", month: "short" })}</strong>
+              . Facebook only publishes complete days, so a period fetched today still ends at
+              the Page&apos;s last local midnight. Meta&apos;s own app adds today so far, which is
+              why its numbers read slightly higher — the same window, one day further on, not a
+              different measurement.{" "}
+            </>
+          )}
           Click a channel to see its recent posts. 24h / 7d / 28d are the only periods
           offered because they are the only ones Meta measures directly — Instagram
           refuses any range over 30 days, and a longer one cannot be added up from

@@ -329,7 +329,12 @@ export function MetaPanel() {
               <thead>
                 <tr className="text-[11px] text-[#7A7A7A] border-b border-[#F0EAE0]">
                   <th className="text-left font-medium px-5 py-2">Channel</th>
-                  <th className="text-right font-medium px-2 py-2">Followers</th>
+                  <th
+                    className="text-right font-medium px-2 py-2"
+                    title="A live total, not a period figure — how many followers the channel has right now. The period filter drives Views, Engagements and Reach."
+                  >
+                    Followers <span className="text-[#B0B0B0] font-normal">(now)</span>
+                  </th>
                   <th className="text-right font-medium px-2 py-2">Views {sfx}</th>
                   <th className="text-right font-medium px-2 py-2">Engagements {sfx}</th>
                   <th className="text-right font-medium px-2 py-2">Reach {sfx}</th>
@@ -358,7 +363,22 @@ export function MetaPanel() {
                             )}
                           </div>
                         </td>
-                        <td className="px-2 py-2 text-right text-xs font-semibold text-[#1A1A1A]">{fmtMetric(c.followers)}</td>
+                        <td className="px-2 py-2 text-right text-xs font-semibold text-[#1A1A1A]">
+                          {fmtMetric(c.followers)}
+                          {/* Only rendered when an API baseline actually spans the period.
+                              A 0 here would claim "no growth" when the truth is "no history
+                              yet" — so absence stays absent. */}
+                          {c.followerDelta !== null && c.followerDelta !== undefined && (
+                            <span
+                              className={`block font-normal text-[10px] ${
+                                c.followerDelta > 0 ? "text-[#3E9B4F]"
+                                : c.followerDelta < 0 ? "text-[#C0504D]"
+                                : "text-[#B0B0B0]"}`}
+                            >
+                              {c.followerDelta > 0 ? "+" : ""}{fmtMetric(c.followerDelta)} · {sfx}
+                            </span>
+                          )}
+                        </td>
                         <td className="px-2 py-2 text-right text-xs">{fmtMetric(c.views28d)}</td>
                         <td className="px-2 py-2 text-right text-xs">{fmtMetric(c.engagements28d)}</td>
                         <td className="px-2 py-2 text-right text-xs">{fmtMetric(c.reach28d)}</td>
@@ -387,6 +407,15 @@ export function MetaPanel() {
           impressions when Meta retired that family across the API. A dash means Meta
           publishes no value for that metric on that platform — not a zero and not missing
           data. Profile views mean Page views on Facebook and profile visits on Instagram.
+          <strong className="font-medium text-[#7A7A7A]">Views</strong> counts how many
+          times content was shown or played, including repeat views by the same person.
+          <strong className="font-medium text-[#7A7A7A]"> Reach</strong> counts how many
+          distinct accounts saw it at least once — Meta&apos;s own name for it is now
+          &ldquo;viewers&rdquo;. So views is normally the larger of the two, and the gap
+          widens over a longer period because the same person sees more posts.
+          <strong className="font-medium text-[#7A7A7A]"> Followers</strong> is a live
+          total and does not move with the period; the small figure beneath it is the change
+          across the selected one, shown once enough API history exists.
           Click a channel to see its recent posts. 24h / 7d / 28d are the only periods
           offered because they are the only ones Meta measures directly — Instagram
           refuses any range over 30 days, and a longer one cannot be added up from

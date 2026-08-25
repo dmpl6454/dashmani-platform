@@ -79,7 +79,12 @@ export default function DashboardPage() {
   const pendingEmployees = stats?.pendingEmployees ?? 0;
 
   // Account Growth + Top Movers share a window pill (growthDays, re-fetches via
-  // useGrowthOverview). Top Movers additionally has its own platform pill
+  // useGrowthOverview). ⚠️ Both cover CONNECTED META CHANNELS ONLY — the service
+  // filters to live Meta assets, so the platform pills below resolve to Facebook and
+  // Instagram and nothing else. YouTube was dropped deliberately: its numbers come
+  // through the legacy follower-sync pipeline, not the OAuth connection these cards
+  // represent.
+  // Top Movers additionally has its own platform pill
   // (growthPlatform, a client-side filter of the same payload) that Account Growth
   // does not have. Both pills are independent, non-persisted.
   const GROWTH_WINDOWS = [
@@ -580,7 +585,9 @@ export default function DashboardPage() {
               </div>
               <div>
                 <p className="font-bold text-ink">Account Growth</p>
-                <p className="text-xs text-ink-4">Last {growthDays} days</p>
+                <p className="text-xs text-ink-4">
+                  Connected Meta channels · last {growthDays} days
+                </p>
               </div>
             </div>
             <PillGroup>
@@ -663,7 +670,9 @@ export default function DashboardPage() {
             </div>
             <div>
               <p className="font-bold text-ink">Top Movers</p>
-              <p className="text-xs text-ink-4">Biggest {growthDays}-day change</p>
+              <p className="text-xs text-ink-4">
+                Connected Meta channels · biggest {growthDays}-day change
+              </p>
             </div>
           </div>
           {growthPlatformOptions.length > 0 && (

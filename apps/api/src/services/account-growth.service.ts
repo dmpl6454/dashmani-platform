@@ -271,20 +271,29 @@ export async function getGrowthOverview(days = 30): Promise<GrowthOverview> {
   const since = new Date(istMidnight(todayIST()).getTime() - days * 86400000);
 
   // ACTIVE accounts only — SocialAccount has no deletedAt; it gates on status.
-  // ⚠️ VERIFIED SOURCES ONLY — owner decision 2026-08-24.
+  // ⚠️ CONNECTED META CHANNELS ONLY — owner decision 2026-08-25.
   //
-  // Account Growth is its OWN ENTITY: it shows only channels whose numbers came from
-  // an official API, never a scraper and never the legacy System-User app. Concretely
-  // an account qualifies when EITHER:
-  //   (a) it is linked to a live connected Meta asset (the "Post Automation 2" OAuth
-  //       grant — Facebook Pages and Instagram accounts the admin administers), or
-  //   (b) it is a NON-Meta platform synced through an official API (YouTube Data API,
-  //       syncSource="api").
+  // An account qualifies on exactly ONE condition: it is linked to a live connected
+  // Meta asset (the "Post Automation 2" OAuth grant — Facebook Pages and Instagram
+  // accounts the admin administers). Nothing else.
   //
-  // Everything else — the 217 scraper-fed FB Pages, Snapchat/X scrapes, hand-entered
-  // values — is EXCLUDED. Dropping channels the connected account cannot reach is the
-  // INTENDED outcome, not a regression: a page that mixes verified API figures with
-  // unverifiable scraped ones is worse than a smaller honest one.
+  // ⚠️ YOUTUBE WAS PREVIOUSLY INCLUDED HERE AND IS DELIBERATELY GONE. It qualified
+  // under an earlier "any official API" rule, but its numbers come through
+  // follower-sync — the SAME legacy pipeline that reaches Meta via the old
+  // System-User app — not through the OAuth connection this surface represents. So a
+  // card headed by the connected account was quietly blending in 19 channels the
+  // connected account has nothing to do with, and Top Movers offered a YouTube tab
+  // beside two Meta ones. Both now describe one thing.
+  //
+  // Everything else stays excluded too: scraper-fed FB Pages, Snapchat/X scrapes,
+  // hand-entered values. Dropping channels the connected account cannot reach is the
+  // INTENDED outcome, not a regression: a surface that mixes verified API figures
+  // with unverifiable ones is worse than a smaller honest one.
+  //
+  // ⚠️ SCOPE OF THIS FUNCTION: it now backs ONLY the dashboard's Account Growth and
+  // Top Movers cards — the /accounts/growth page stopped consuming it when it became
+  // the Connected-channels monitor. getAccountGrowth() (one account, used by the
+  // account detail page and HR) is a DIFFERENT function and is unaffected.
   //
   // ⚠️ Researched before accepting this as a hard limit (Meta docs, 2026-08-24):
   // "Page Public Content Access" DOES let an app read Pages it does not administer,
@@ -299,13 +308,7 @@ export async function getGrowthOverview(days = 30): Promise<GrowthOverview> {
   const accounts = await prisma.socialAccount.findMany({
     where: {
       status: "ACTIVE",
-      OR: [
-        { metaAssets: { some: { disconnectedAt: null } } },
-        {
-          syncSource: "api",
-          platform: { slug: { notIn: ["facebook", "instagram"] } },
-        },
-      ],
+      metaAssets: { some: { disconnectedAt: null } },
     },
     include: {
       platform: true,

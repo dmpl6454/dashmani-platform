@@ -440,4 +440,65 @@ describe("Account Growth API", () => {
       expect(res.status).toBe(404);
     });
   });
+  describe("scope — connected Meta channels only", () => {
+    /**
+     * ⚠️ These lock an EXCLUSION, which is the kind of behaviour nothing notices
+     * regressing: re-adding a platform here does not break a page, it just quietly
+     * inflates the dashboard's headline with channels the connected Meta account has
+     * nothing to do with. That is exactly how YouTube ended up in it.
+     */
+    it("excludes a YouTube account even when it is API-synced", async () => {
+      const yt = await prisma.platform.create({ data: { name: "YouTube", slug: "youtube" } });
+      const chan = await prisma.socialAccount.create({
+        data: {
+          handle: "@ytchannel", displayName: "YT Channel", platformId: yt.id,
+          status: "ACTIVE", followerCount: 10_000_000,
+          // Synced through the official YouTube Data API — but via follower-sync, the
+          // legacy pipeline, not the OAuth connection these cards represent.
+          syncSource: "api", lastSyncedAt: new Date(),
+        },
+      });
+
+      const res = await request(app)
+        .get("/v1/admin/growth")
+        .set("Authorization", `Bearer ${adminToken}`);
+
+      expect(res.status).toBe(200);
+      const names = res.body.data.accounts.map((a: { displayName: string }) => a.displayName);
+      expect(names).not.toContain("YT Channel");
+      // And it must not be quietly counted into the headline either.
+      expect(res.body.data.totalFollowers).toBeLessThan(10_000_000);
+      expect(Object.keys(res.body.data.topMoversByPlatform ?? {})).not.toContain("youtube");
+      expect(chan.id).toBeTruthy();
+    });
+
+    it("excludes a Meta account that is NOT linked to a live connected asset", async () => {
+      const lone = await prisma.socialAccount.create({
+        data: {
+          handle: "@unconnected", displayName: "Unconnected Page", platformId,
+          status: "ACTIVE", followerCount: 9_000_000, syncSource: "scraper",
+        },
+      });
+      const res = await request(app)
+        .get("/v1/admin/growth")
+        .set("Authorization", `Bearer ${adminToken}`);
+
+      const names = res.body.data.accounts.map((a: { displayName: string }) => a.displayName);
+      expect(names).not.toContain("Unconnected Page");
+      expect(lone.id).toBeTruthy();
+    });
+
+    it("drops a channel once its connected asset is disconnected", async () => {
+      const before = await request(app).get("/v1/admin/growth").set("Authorization", `Bearer ${adminToken}`);
+      expect(before.body.data.accounts.map((a: { displayName: string }) => a.displayName)).toContain("Gainer");
+
+      await prisma.metaAsset.updateMany({
+        where: { socialAccountId: accountAId },
+        data: { disconnectedAt: new Date() },
+      });
+
+      const after = await request(app).get("/v1/admin/growth").set("Authorization", `Bearer ${adminToken}`);
+      expect(after.body.data.accounts.map((a: { displayName: string }) => a.displayName)).not.toContain("Gainer");
+    });
+  });
 });

@@ -32,6 +32,11 @@ import { metaTuning } from "./meta-config";
  *  in a cron is what made an earlier feed build take ~20 min and starve everything. */
 const FEED_LIMIT = 25;
 
+/** Share of the budget reserved for the phase-1 feed pass. */
+const FEED_RESERVE_SHARE = 0.7;
+/** Calls left for phase-2 per-post insights once every asset's feed is covered. */
+const POST_INSIGHTS_ALLOWANCE = 300;
+
 /** IG per-post insight metrics, in one batched call. */
 const IG_METRICS = ["reach", "views", "saved", "total_interactions", "shares"] as const;
 
@@ -521,7 +526,28 @@ export async function runMetaPostsSync(opts?: {
     errors: [],
   };
 
-  const budget = makeBudget(opts?.budgetMax ?? metaTuning.postsCallBudget());
+  // ⚠️ DERIVED FROM THE ESTATE, with the FEED PASS as the floor.
+  //
+  // Phase 1 spends one call per asset and is what guarantees every channel has
+  // visible data after a single run; phase 2 spends whatever is left on per-post
+  // insights. A flat budget therefore fails in a specific way as the estate grows:
+  // the feed pass eats it and insights get nothing. At 264 assets against the old
+  // flat 400 the log read `assets=257 calls=400/400 metrics=136` — the feed pass
+  // alone consumed most of it.
+  //
+  // So: one call per asset, plus a fixed insights allowance on top. Per-post
+  // insights can never cover everything (the busiest Page publishes 1,200+ posts a
+  // month), so that half stays a bounded rotation by design — but the feed pass
+  // must always fit, because that is the part that must not degrade.
+  const liveAssetCount = await prisma.metaAsset.count({
+    where: { selected: true, disconnectedAt: null,
+             connection: { revokedAt: null, status: { notIn: ["REVOKED"] } } },
+  });
+  const derivedPostsBudget = Math.max(
+    metaTuning.postsCallBudget(),
+    Math.ceil(liveAssetCount / FEED_RESERVE_SHARE) + POST_INSIGHTS_ALLOWANCE,
+  );
+  const budget = makeBudget(opts?.budgetMax ?? derivedPostsBudget);
 
   const connections = await prisma.metaConnection.findMany({
     where: {
@@ -576,7 +602,7 @@ export async function runMetaPostsSync(opts?: {
     // call per asset is cheap (120 assets = 120 calls) and for Instagram it alone
     // yields like_count + comments_count inline — so every channel has visible
     // data after ONE run. Reserve a slice of the budget for it explicitly.
-    const feedReserve = Math.min(assets.length, Math.floor(budget.max * 0.7));
+    const feedReserve = Math.min(assets.length, Math.floor(budget.max * FEED_RESERVE_SHARE));
     for (const asset of assets) {
       if (out.rateLimited) break;
       if (budget.used >= feedReserve) break;

@@ -72,8 +72,17 @@ export async function runMetaDemographicsSync(opts?: {
     select: { id: true, userTokenEnc: true },
   });
 
-  // 12 calls per account, so ~33 accounts a run — full coverage every ~1.5 days.
-  const budget: CallBudget = makeBudget(opts?.budgetMax ?? 400);
+  // ⚠️ DERIVED FROM THE ESTATE. 12 calls per Instagram account (3 audiences x 4
+  // dimensions). A flat 400 covered ~33 accounts a run, which was full coverage in
+  // ~1.5 days at 48 accounts — but would quietly stretch to a week at 250. Sizing
+  // to the estate keeps a full pass to roughly one run; the rotation below still
+  // protects the tail if a run is cut short.
+  const igAccountCount = await prisma.metaAsset.count({
+    where: { kind: "INSTAGRAM_ACCOUNT", selected: true, disconnectedAt: null,
+             connection: { revokedAt: null, status: { notIn: ["REVOKED"] } } },
+  });
+  const derivedBudget = Math.max(120, Math.ceil(igAccountCount * 12 * 1.1));
+  const budget: CallBudget = makeBudget(opts?.budgetMax ?? derivedBudget);
 
   // ⚠️ An Instagram account reachable through two admin connections exists once per
   // connection. At 12 calls per account a duplicate is the single most expensive

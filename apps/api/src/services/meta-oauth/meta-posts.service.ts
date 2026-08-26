@@ -32,6 +32,9 @@ import { metaTuning } from "./meta-config";
  *  in a cron is what made an earlier feed build take ~20 min and starve everything. */
 const FEED_LIMIT = 25;
 
+/** Smaller page used when a busy Page rejects FEED_LIMIT as too much data. */
+const FEED_RETRY_LIMIT = 5;
+
 /** Share of the budget reserved for the phase-1 feed pass. */
 const FEED_RESERVE_SHARE = 0.7;
 /** Calls left for phase-2 per-post insights once every asset's feed is covered. */
@@ -268,7 +271,38 @@ async function syncAsset(
         { label: "posts-fb-feed", budget },
       );
 
-  if (feed.rateLimited) {
+  // ⚠️ Retry once at a smaller page. Meta answers a busy Page with "Please reduce
+  // the amount of data you're asking for, then retry your request" — seen on 1 of
+  // 473 assets at FEED_LIMIT=25. Without a retry that asset simply never gets
+  // posts, and the only symptom is one row quietly missing its feed forever. Same
+  // shape as the discovery loops, which already retry smaller.
+  let feedResult = feed;
+  if (!feedResult.ok && !feedResult.rateLimited) {
+    feedResult = isIg
+      ? await oauthGraphFetch<IgMediaResponse>(
+          `${asset.metaId}/media`,
+          {
+            fields:
+              "id,shortcode,permalink,caption,like_count,comments_count,media_type,media_product_type,timestamp",
+            limit: FEED_RETRY_LIMIT,
+          },
+          token,
+          { label: "posts-ig-feed-retry", budget },
+        )
+      : await oauthGraphFetch<FbPostsResponse>(
+          `${asset.metaId}/published_posts`,
+          {
+            fields:
+              "id,message,permalink_url,created_time," +
+              "likes.summary(true).limit(0),comments.summary(true).limit(0),shares",
+            limit: FEED_RETRY_LIMIT,
+          },
+          token,
+          { label: "posts-fb-feed-retry", budget },
+        );
+  }
+
+  if (feedResult.rateLimited) {
     out.rateLimited = true;
     await prisma.metaAsset.update({
       where: { id: asset.id },
@@ -276,13 +310,13 @@ async function syncAsset(
     });
     return;
   }
-  if (!feed.ok || !feed.data) {
-    out.errors.push(`${asset.name}: feed failed — ${feed.error ?? "unknown"}`);
+  if (!feedResult.ok || !feedResult.data) {
+    out.errors.push(`${asset.name}: feed failed — ${feedResult.error ?? "unknown"}`);
     await prisma.metaAsset.update({
       where: { id: asset.id },
       data: {
         lastPostSyncStatus: "error",
-        lastPostSyncError: scrubSecrets(feed.error ?? "feed failed"),
+        lastPostSyncError: scrubSecrets(feedResult.error ?? "feed failed"),
         lastPostSyncAt: new Date(),
       },
     });
@@ -290,7 +324,7 @@ async function syncAsset(
   }
 
   out.assetsPolled++;
-  const rows = (feed.data as { data?: unknown[] }).data ?? [];
+  const rows = (feedResult.data as { data?: unknown[] }).data ?? [];
 
   for (const raw of rows) {
     const r = raw as Record<string, unknown>;

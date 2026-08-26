@@ -142,7 +142,17 @@ function num(name: string, dflt: number, min = 1): number {
 
 export const metaTuning = {
   /** Graph calls one discovery pass may spend before parking its cursor. */
-  discoveryCallBudget: () => num("META_DISCOVERY_CALL_BUDGET", 80),
+  /**
+   * ⚠️ 80 was not enough for a real estate and truncated it silently. Discovery
+   * costs roughly: pages/100 + pages/50 + ONE CALL PER INSTAGRAM ACCOUNT for its
+   * profile. At 369 Pages / 104 IG that is ~112 calls, so an 80-call budget ran
+   * out mid-way and simply stopped, reporting success.
+   *
+   * Discovery is occasional (on connect, and on "refresh channels") rather than a
+   * recurring cron, so a generous ceiling costs nothing in steady state. This is a
+   * runaway backstop, not a tuning knob.
+   */
+  discoveryCallBudget: () => num("META_DISCOVERY_CALL_BUDGET", 2000),
   /**
    * Graph calls one steady-state posts run may spend.
    *

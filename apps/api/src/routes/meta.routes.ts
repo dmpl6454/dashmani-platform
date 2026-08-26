@@ -422,10 +422,22 @@ router.get(
     // double-counts it. See resolveDuplicateAssetIds.
     const duplicateAssetIds = await resolveDuplicateAssetIds();
 
+    // ⚠️ NO `take` HERE — DELIBERATELY UNBOUNDED, AND SAFE ON THIS TABLE.
+    //
+    // It used to cap at 200: a defensive bound written when the estate was 120
+    // channels. It was never reached, so it read as harmless — until an admin
+    // connected with 264 Pages and the page silently showed 200 of them while the
+    // footer confidently reported "200 channel(s)". Nothing errored. A bound that
+    // is only correct while the data stays small is a bug waiting for growth.
+    //
+    // Unbounded is safe HERE specifically, which is the distinction the repo's
+    // "never an unbounded findMany" rule turns on: meta_assets holds one row per
+    // Page/account a human administers — hundreds — not an append-only event log.
+    // That rule exists for link_metrics, which reached 3.99M rows / 1266MB by
+    // appending per poll. Different shapes, different treatment.
     const allRows = await prisma.metaAsset.findMany({
       where,
       orderBy,
-      take: 200,
       select: {
         id: true, kind: true, metaId: true, name: true, username: true,
         followerCount: true, postCount: true, pictureUrl: true, selected: true,
@@ -442,6 +454,15 @@ router.get(
     const rows = duplicateAssetIds.size > 0
       ? allRows.filter((r) => !duplicateAssetIds.has(r.id))
       : allRows;
+
+    // Not a cap — a tripwire. If this fires, add pagination deliberately rather
+    // than rediscovering a truncation from a screenshot.
+    if (rows.length > 2000) {
+      console.warn(
+        `[meta] /admin/meta/channels returned ${rows.length} channels in one response — ` +
+          `large enough to be worth paginating.`,
+      );
+    }
 
     // ── Follower change over the selected period ──────────────────────────
     //

@@ -16,16 +16,41 @@ import { decryptToken, encryptToken, scrubSecrets } from "../../utils/token-cryp
 import { metaTuning } from "./meta-config";
 
 /** Pages per discovery page. Small on purpose — see the IG note below. */
-const PAGE_LIMIT = 25;
+/**
+ * ⚠️ THESE FOUR CONSTANTS SILENTLY TRUNCATED A REAL ESTATE. Sized when an admin
+ * had ~90 Pages, they became hard ceilings the moment someone connected with more:
+ *
+ *   MAX_PAGE_PAGES(10) x PAGE_LIMIT(25) = 250 Facebook Pages — and an admin with
+ *   369 stored EXACTLY 250. Not a coincidence: the ceiling was the answer.
+ *   MAX_IG_PAGES(25) x IG_PAGE_LIMIT(5)  = only the first 125 Pages scanned for a
+ *   linked Instagram account, so 14 of 104 were found.
+ *
+ * Nothing errored. Discovery reported success and the page showed a confident,
+ * incomplete number. Page sizes are now the largest Meta answers comfortably
+ * within DISCOVERY_TIMEOUT_MS (measured on 369 real Pages: FB fields at limit=100
+ * = 9.5s, IG nodes at limit=50 = 4.4s, against a 25s timeout), and the page guards
+ * are high enough to be a runaway backstop rather than a limit anyone reaches.
+ */
+const PAGE_LIMIT = 100;
 /**
  * ⚠️ IG node discovery MUST use limit=5.
  * Measured live: asking Meta to resolve instagram_business_account for 100 Pages in
  * one page returns HTTP 500 after ~30s; limit=5 returns 200 in ~2.6s. 18 paged calls
  * beats 87 per-Page calls. Do not raise this.
  */
-const IG_PAGE_LIMIT = 5;
-const MAX_PAGE_PAGES = 10;
-const MAX_IG_PAGES = 25;
+/**
+ * ⚠️ 50, not 100, and deliberately conservative. This repo has a documented
+ * incident where `me/accounts?fields=instagram_business_account&limit=100` HTTP
+ * 500'd after ~25-30s on the OLD app's token. That was a different app and token,
+ * and limit=100 measured 200 OK in 8.4s here — but a metric that fails only on
+ * large accounts is exactly the shape that hides until it matters, so this takes
+ * the measured-safe middle (4.4s) and retries smaller on failure.
+ */
+const IG_PAGE_LIMIT = 50;
+// Runaway backstops, not limits. At the page sizes above these cover 10,000
+// Facebook Pages and 5,000 Instagram lookups — far past any real admin.
+const MAX_PAGE_PAGES = 100;
+const MAX_IG_PAGES = 100;
 /** Discovery needs longer than the 10s default — this is an explicit per-call value. */
 const DISCOVERY_TIMEOUT_MS = 25_000;
 
@@ -292,12 +317,24 @@ export async function discoverConnectionAssets(
       igGuard++;
       // Annotated for the same TS7022 reason as the Pages loop above: igUrl is
       // reassigned from res.data.paging.next, so inference would be circular.
-      const res: OauthGraphResult<IgNodesResponse> = await oauthGraphFetch<IgNodesResponse>(
+      let res: OauthGraphResult<IgNodesResponse> = await oauthGraphFetch<IgNodesResponse>(
         igUrl,
         igParams ?? {},
         token,
         { label: "discover-ig-nodes", budget: b, timeoutMs: DISCOVERY_TIMEOUT_MS },
       );
+
+      // Retry once at a small page size. Mirrors the Pages loop: a large page can
+      // fail on size alone (the documented limit=100 HTTP 500), and giving up would
+      // silently drop every Instagram account past this point.
+      if (!res.ok && !res.rateLimited && !res.authInvalid) {
+        res = await oauthGraphFetch<IgNodesResponse>(
+          igUrl,
+          { ...(igParams ?? { fields: "instagram_business_account" }), limit: 5 },
+          token,
+          { label: "discover-ig-nodes-retry", budget: b, timeoutMs: DISCOVERY_TIMEOUT_MS },
+        );
+      }
       if (res.rateLimited) {
         out.rateLimited = true;
         break;

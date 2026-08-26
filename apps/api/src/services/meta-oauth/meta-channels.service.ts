@@ -335,12 +335,36 @@ export async function runMetaChannelSync(opts?: {
     select: { id: true, userTokenEnc: true },
   });
 
-  // 3 windows x ~120 assets = ~360 regular, plus one EARNINGS call per Facebook
-  // page per window (72 x 3 = 216, unavoidable — monetization metrics cannot be
-  // batched with regular ones), plus one follower-change call per Instagram
-  // account for the 7d and 28d windows (48 x 2 = 96). ~672, so 780 leaves real
-  // headroom; too tight and the last assets silently lose whichever call is last.
-  const budget: CallBudget = makeBudget(opts?.budgetMax ?? 780);
+  // ⚠️ THE BUDGET IS DERIVED FROM THE ESTATE, NEVER HARDCODED.
+  //
+  // It used to be a flat 780, sized empirically when the estate was 120 assets
+  // (~672 calls). An admin then connected with 264 and every run logged
+  // `assets=132 calls=780/780` — exactly half the channels polled, the rest left
+  // to the next run. Rotation meant nothing was permanently lost, but freshness
+  // silently halved and nothing said so. A constant tuned to today's data becomes
+  // a ceiling the moment the data grows.
+  //
+  // Exact cost per asset, from the call sites below:
+  //   Facebook  3 windows x (1 regular + 1 earnings)              = 6
+  //   Instagram 3 windows x 1 regular, + follower-change on 7d/28d = 5
+  const [fbCount, igCount] = await Promise.all([
+    prisma.metaAsset.count({
+      where: { kind: "FACEBOOK_PAGE", selected: true, disconnectedAt: null,
+               connection: { revokedAt: null, status: { notIn: ["REVOKED"] } } },
+    }),
+    prisma.metaAsset.count({
+      where: { kind: "INSTAGRAM_ACCOUNT", selected: true, disconnectedAt: null,
+               connection: { revokedAt: null, status: { notIn: ["REVOKED"] } } },
+    }),
+  ]);
+  // +10% so a retry or a newly discovered channel does not push the last asset off
+  // the end, and a floor so a tiny/empty estate still has room to work.
+  const derivedBudget = Math.max(200, Math.ceil((fbCount * 6 + igCount * 5) * 1.1));
+  const budget: CallBudget = makeBudget(opts?.budgetMax ?? derivedBudget);
+  console.log(
+    `[meta-channels] estate fb=${fbCount} ig=${igCount} -> budget ${budget.max}` +
+      (opts?.budgetMax ? " (overridden)" : ""),
+  );
   const contestedOwners = await resolveContestedOwners();
   // Never poll the same Meta object twice because two admins both administer it.
   const duplicateAssetIds = await resolveDuplicateAssetIds();

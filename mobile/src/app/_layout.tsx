@@ -18,7 +18,9 @@ export default function RootLayout() {
         }}
       >
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+        <Stack.Screen name="(admin)" options={{ headerShown: false }} />
         <Stack.Screen name="login" options={{ headerShown: false }} />
+        {/* Employee stack screens */}
         <Stack.Screen name="task/[id]" options={{ title: "Task" }} />
         <Stack.Screen name="attendance" options={{ title: "Attendance" }} />
         <Stack.Screen name="salary-slips" options={{ title: "Salary Slips" }} />
@@ -34,6 +36,21 @@ export default function RootLayout() {
         <Stack.Screen name="complaints" options={{ title: "Complaints" }} />
         <Stack.Screen name="bug-report" options={{ title: "Report a Bug" }} />
         <Stack.Screen name="change-password" options={{ title: "Change Password" }} />
+        {/* Admin stack screens */}
+        <Stack.Screen name="admin-employees" options={{ title: "Employees" }} />
+        <Stack.Screen name="admin-employee/[id]" options={{ title: "Employee Reports" }} />
+        <Stack.Screen name="admin-tasks" options={{ title: "Tasks" }} />
+        <Stack.Screen name="admin-accounts" options={{ title: "Social Accounts" }} />
+        <Stack.Screen name="admin-teams" options={{ title: "Teams" }} />
+        <Stack.Screen name="admin-holidays" options={{ title: "Holidays" }} />
+        <Stack.Screen name="admin-salary-slips" options={{ title: "Salary Slips" }} />
+        <Stack.Screen name="admin-complaints" options={{ title: "Complaints" }} />
+        <Stack.Screen name="admin-bug-reports" options={{ title: "Bug Reports" }} />
+        <Stack.Screen name="admin-jobs" options={{ title: "Jobs & Applications" }} />
+        <Stack.Screen name="admin-announcements" options={{ title: "Announcements" }} />
+        <Stack.Screen name="admin-leaderboard" options={{ title: "Leaderboard" }} />
+        <Stack.Screen name="admin-notifications" options={{ title: "Notifications" }} />
+        <Stack.Screen name="admin-attendance" options={{ title: "Attendance" }} />
       </Stack>
     </AuthProvider>
   );

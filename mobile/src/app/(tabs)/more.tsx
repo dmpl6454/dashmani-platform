@@ -7,13 +7,22 @@ import { Screen, Card, SectionTitle, Row, Button } from "@/components/ui";
 
 export default function MoreScreen() {
   const router = useRouter();
-  const { user, logout } = useAuth();
+  const { user, logout, switchMode } = useAuth();
 
   const confirmLogout = () => {
     Alert.alert("Sign out", "Are you sure you want to sign out?", [
       { text: "Cancel", style: "cancel" },
       { text: "Sign Out", style: "destructive", onPress: () => logout() },
     ]);
+  };
+
+  const toAdminPortal = async () => {
+    const hasAdminSession = await switchMode("admin");
+    if (hasAdminSession) {
+      router.replace("/(admin)");
+    } else {
+      router.replace("/login?mode=admin");
+    }
   };
 
   return (
@@ -48,6 +57,12 @@ export default function MoreScreen() {
         <Row icon="megaphone-outline" title="Complaints" subtitle="Raise a workplace concern" onPress={() => router.push("/complaints")} />
         <Row icon="bug-outline" title="Report a Bug" subtitle="Something broken in the portal?" onPress={() => router.push("/bug-report")} />
         <Row icon="key-outline" title="Change Password" onPress={() => router.push("/change-password")} />
+        <Row
+          icon="swap-horizontal-outline"
+          title="Switch to Admin Portal"
+          subtitle="For admins — team reports & approvals"
+          onPress={toAdminPortal}
+        />
       </Card>
 
       <Button title="Sign Out" onPress={confirmLogout} variant="danger" style={{ marginTop: spacing.md }} />

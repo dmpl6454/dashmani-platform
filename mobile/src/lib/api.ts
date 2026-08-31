@@ -6,10 +6,16 @@ export const API_URL = "https://api.digitalsukoon.com/v1";
 /** Base URL without /v1 — used for static file URLs like /uploads/ */
 export const API_BASE = API_URL.replace(/\/v1\/?$/, "");
 
+/** Which portal the session belongs to — mirrors the two web portals:
+ *  "hr"    → hr.digitalsukoon.com     (employee portal, /hr/* endpoints)
+ *  "admin" → portal.digitalsukoon.com (internal portal, /admin/* + RBAC endpoints)
+ */
+export type PortalMode = "hr" | "admin";
+
 const KEYS = {
-  access: "hrAccessToken",
-  refresh: "hrRefreshToken",
-  user: "hrUser",
+  mode: "portalMode",
+  hr: { access: "hrAccessToken", refresh: "hrRefreshToken", user: "hrUser" },
+  admin: { access: "accessToken", refresh: "refreshToken", user: "adminUser" },
 };
 
 // Storage adapter: SecureStore is native-only — on web fall back to localStorage
@@ -68,51 +74,79 @@ export type SessionUser = {
   id: string;
   name: string;
   email: string | null;
-  phone: string | null;
+  phone?: string | null;
   profileImageUrl: string | null;
   roles: string[];
 };
 
-export async function getStoredUser(): Promise<SessionUser | null> {
+// ---- Mode ----
+let modeCache: PortalMode | null = null;
+
+export async function getMode(): Promise<PortalMode> {
+  if (modeCache) return modeCache;
+  const m = await store.get(KEYS.mode);
+  modeCache = m === "admin" ? "admin" : "hr";
+  return modeCache;
+}
+
+export async function setMode(mode: PortalMode) {
+  modeCache = mode;
+  await store.set(KEYS.mode, mode);
+}
+
+function keysFor(mode: PortalMode) {
+  return mode === "admin" ? KEYS.admin : KEYS.hr;
+}
+
+// ---- Session ----
+export async function getStoredUser(mode?: PortalMode): Promise<SessionUser | null> {
+  const m = mode ?? (await getMode());
   try {
-    const raw = await store.get(KEYS.user);
+    const raw = await store.get(keysFor(m).user);
     return raw ? (JSON.parse(raw) as SessionUser) : null;
   } catch {
     return null;
   }
 }
 
-export async function storeSession(accessToken: string, refreshToken: string, user?: SessionUser) {
-  await store.set(KEYS.access, accessToken);
-  await store.set(KEYS.refresh, refreshToken);
-  if (user) await store.set(KEYS.user, JSON.stringify(user));
+export async function storeSession(mode: PortalMode, accessToken: string, refreshToken: string, user?: SessionUser) {
+  const k = keysFor(mode);
+  await store.set(k.access, accessToken);
+  await store.set(k.refresh, refreshToken);
+  if (user) await store.set(k.user, JSON.stringify(user));
 }
 
-export async function clearSession() {
-  await store.remove(KEYS.access);
-  await store.remove(KEYS.refresh);
-  await store.remove(KEYS.user);
+export async function clearSession(mode?: PortalMode) {
+  const m = mode ?? (await getMode());
+  const k = keysFor(m);
+  await store.remove(k.access);
+  await store.remove(k.refresh);
+  await store.remove(k.user);
 }
 
-export async function hasSession(): Promise<boolean> {
-  const t = await store.get(KEYS.access);
+export async function hasSession(mode?: PortalMode): Promise<boolean> {
+  const m = mode ?? (await getMode());
+  const t = await store.get(keysFor(m).access);
   return !!t;
 }
 
-// ---- Single-flight token refresh ----
+// ---- Single-flight token refresh (per portal) ----
 // Refresh tokens are SINGLE-USE on the server (rotated on every refresh).
 // If several requests 401 at once, only ONE refresh call may fire — the rest
 // must await the same promise, or the losers would burn the rotated token
 // and log the user out (the exact parallel-401 bug fixed on web, PR #138).
-let refreshInFlight: Promise<boolean> | null = null;
+const refreshInFlight: Partial<Record<PortalMode, Promise<boolean> | null>> = {};
 
-async function tryRefresh(): Promise<boolean> {
-  if (refreshInFlight) return refreshInFlight;
-  refreshInFlight = (async () => {
+async function tryRefresh(mode: PortalMode): Promise<boolean> {
+  const existing = refreshInFlight[mode];
+  if (existing) return existing;
+  const p = (async () => {
     try {
-      const refreshToken = await store.get(KEYS.refresh);
+      const k = keysFor(mode);
+      const refreshToken = await store.get(k.refresh);
       if (!refreshToken) return false;
-      const res = await fetch(`${API_URL}/hr/auth/refresh`, {
+      const endpoint = mode === "admin" ? "/auth/refresh" : "/hr/auth/refresh";
+      const res = await fetch(`${API_URL}${endpoint}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ refreshToken }),
@@ -120,18 +154,18 @@ async function tryRefresh(): Promise<boolean> {
       if (!res.ok) return false;
       const data = await res.json();
       if (!data?.success || !data?.data?.accessToken) return false;
-      await storeSession(data.data.accessToken, data.data.refreshToken ?? refreshToken, data.data.user);
+      await storeSession(mode, data.data.accessToken, data.data.refreshToken ?? refreshToken, data.data.user);
       return true;
     } catch {
       return false;
     } finally {
-      // allow the next expiry to refresh again
       setTimeout(() => {
-        refreshInFlight = null;
+        refreshInFlight[mode] = null;
       }, 0);
     }
   })();
-  return refreshInFlight;
+  refreshInFlight[mode] = p;
+  return p;
 }
 
 /** Set by AuthProvider — called when the session is unrecoverable (refresh failed). */
@@ -141,7 +175,8 @@ export function setSessionExpiredHandler(fn: () => void) {
 }
 
 export async function apiFetch<T = any>(path: string, options: RequestInit = {}, _retried = false): Promise<T> {
-  const token = await store.get(KEYS.access);
+  const mode = await getMode();
+  const token = await store.get(keysFor(mode).access);
 
   let res: Response;
   try {
@@ -158,9 +193,9 @@ export async function apiFetch<T = any>(path: string, options: RequestInit = {},
   }
 
   if (res.status === 401 && !_retried) {
-    const ok = await tryRefresh();
+    const ok = await tryRefresh(mode);
     if (ok) return apiFetch<T>(path, options, true);
-    await clearSession();
+    await clearSession(mode);
     onSessionExpired?.();
     throw new ApiError("Session expired. Please sign in again.", "UNAUTHORIZED");
   }
@@ -186,13 +221,16 @@ export async function apiFetch<T = any>(path: string, options: RequestInit = {},
 }
 
 // ---- Auth calls ----
-export async function loginWithPassword(identifier: string, password: string) {
+export async function loginWithPassword(mode: PortalMode, identifier: string, password: string) {
+  const endpoint = mode === "admin" ? "/auth/login" : "/hr/auth/login";
+  const body =
+    mode === "admin" ? { email: identifier, password } : { identifier, password };
   let res: Response;
   try {
-    res = await fetch(`${API_URL}/hr/auth/login`, {
+    res = await fetch(`${API_URL}${endpoint}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ identifier, password }),
+      body: JSON.stringify(body),
     });
   } catch {
     throw new ApiError("Couldn't reach the server. Check your connection and try again.", "NETWORK_ERROR");
@@ -202,14 +240,35 @@ export async function loginWithPassword(identifier: string, password: string) {
     throw new ApiError(data?.error?.message || "Invalid credentials", data?.error?.code, data?.error?.details);
   }
   const { accessToken, refreshToken, user } = data.data;
-  await storeSession(accessToken, refreshToken, user);
-  return user as SessionUser;
+  const sessionUser: SessionUser = {
+    id: user.id,
+    name: user.name,
+    email: user.email ?? null,
+    phone: user.phone ?? null,
+    profileImageUrl: user.profileImageUrl ?? null,
+    roles: Array.isArray(user.roles)
+      ? user.roles.map((r: any) => (typeof r === "string" ? r : r?.role?.name ?? r?.name ?? "")).filter(Boolean)
+      : [],
+  };
+  await storeSession(mode, accessToken, refreshToken, sessionUser);
+  await setMode(mode);
+  return sessionUser;
 }
 
 // ---- Date helpers (IST — matches server-side todayIST) ----
 export function todayIST(): string {
   const now = new Date();
   const ist = new Date(now.getTime() + (330 + now.getTimezoneOffset()) * 60000);
+  const y = ist.getFullYear();
+  const m = String(ist.getMonth() + 1).padStart(2, "0");
+  const d = String(ist.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+/** N days before today (IST), as YYYY-MM-DD */
+export function daysAgoIST(n: number): string {
+  const now = new Date();
+  const ist = new Date(now.getTime() + (330 + now.getTimezoneOffset()) * 60000 - n * 86400000);
   const y = ist.getFullYear();
   const m = String(ist.getMonth() + 1).padStart(2, "0");
   const d = String(ist.getDate()).padStart(2, "0");
@@ -238,4 +297,12 @@ export const MONTHS = [
 export function fmtMoney(n: number | null | undefined): string {
   if (n == null) return "—";
   return "₹" + n.toLocaleString("en-IN");
+}
+
+export function fmtCompact(n: number | null | undefined): string {
+  if (n == null) return "—";
+  if (n >= 1e9) return (n / 1e9).toFixed(1) + "b";
+  if (n >= 1e6) return (n / 1e6).toFixed(1) + "m";
+  if (n >= 1e3) return (n / 1e3).toFixed(1) + "k";
+  return String(n);
 }

@@ -1,12 +1,12 @@
 import { prisma } from "@dashmani/db";
 import { comparePassword, hashPassword } from "../utils/password";
-import { signAccessToken, signRefreshToken, verifyRefreshToken } from "../utils/jwt";
+import { signAccessToken, signRefreshToken, verifyRefreshToken, REFRESH_TTL_DAYS, REMEMBER_TTL_DAYS } from "../utils/jwt";
 import { AppError } from "../middleware/error-handler";
 import type { JwtPayload } from "@dashmani/shared";
 import { sendEmail } from "./email.service";
 import crypto from "crypto";
 
-export async function login(email: string, password: string) {
+export async function login(email: string, password: string, rememberMe = false) {
   const normalizedEmailValue = email.trim().toLowerCase();
   const user = await prisma.user.findFirst({
     where: { email: { equals: normalizedEmailValue, mode: "insensitive" }, deletedAt: null },
@@ -36,14 +36,17 @@ export async function login(email: string, password: string) {
   };
 
   const accessToken = signAccessToken(payload);
-  const refreshToken = signRefreshToken({ userId: user.id });
+  // "Keep me signed in" = a 30d refresh token instead of 7d. The choice rides
+  // in the token itself so rotation preserves it (see signRefreshToken).
+  const refreshToken = signRefreshToken({ userId: user.id, ...(rememberMe ? { remember: true } : {}) });
+  const ttlDays = rememberMe ? REMEMBER_TTL_DAYS : REFRESH_TTL_DAYS;
 
   const hashedToken = crypto.createHash("sha256").update(refreshToken).digest("hex");
   await prisma.refreshToken.create({
     data: {
       userId: user.id,
       token: hashedToken,
-      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      expiresAt: new Date(Date.now() + ttlDays * 24 * 60 * 60 * 1000),
     },
   });
 
@@ -61,7 +64,16 @@ export async function login(email: string, password: string) {
 }
 
 export async function refresh(refreshToken: string) {
-  const decoded = verifyRefreshToken(refreshToken);
+  // A malformed/foreign token must be a clean 401, not a 500 — jwt.verify
+  // throws JsonWebTokenError for garbage, and an unhandled throw here surfaced
+  // as "POST /auth/refresh 500" for any browser holding a stale token from an
+  // old secret or another environment.
+  let decoded: ReturnType<typeof verifyRefreshToken>;
+  try {
+    decoded = verifyRefreshToken(refreshToken);
+  } catch {
+    throw new AppError(401, "INVALID_TOKEN", "Invalid or expired refresh token");
+  }
   const hashedToken = crypto.createHash("sha256").update(refreshToken).digest("hex");
 
   const stored = await prisma.refreshToken.findUnique({
@@ -98,14 +110,19 @@ export async function refresh(refreshToken: string) {
   };
 
   const newAccessToken = signAccessToken(payload);
-  const newRefreshToken = signRefreshToken({ userId: user.id });
+  // Rotation preserves "keep me signed in": the remember claim came in on the
+  // consumed token, so the successor keeps the same 30d horizon rather than
+  // silently shrinking to 7d on first refresh.
+  const remember = decoded.remember === true;
+  const newRefreshToken = signRefreshToken({ userId: user.id, ...(remember ? { remember: true } : {}) });
+  const newTtlDays = remember ? REMEMBER_TTL_DAYS : REFRESH_TTL_DAYS;
 
   const newHashedToken = crypto.createHash("sha256").update(newRefreshToken).digest("hex");
   await prisma.refreshToken.create({
     data: {
       userId: user.id,
       token: newHashedToken,
-      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      expiresAt: new Date(Date.now() + newTtlDays * 24 * 60 * 60 * 1000),
     },
   });
 

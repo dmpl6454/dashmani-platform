@@ -173,6 +173,10 @@ export interface MetaChannel {
    *  window, because API follower history only reaches back so far. Label the
    *  chip from THIS, never from the window. */
   followerDeltaDays?: number | null;
+  /** Range mode only: days inside the selected range with stored history. */
+  coveredDays?: number | null;
+  /** Range mode only: total days in the selected range. */
+  rangeDays?: number | null;
   /** Approximate earnings for the period, in cents. Facebook only; Instagram has no such metric. */
   earningsCents: number | null;
   /** Gross churn behind the net follower change. Both platforms. */
@@ -207,7 +211,12 @@ export interface MetaChannel {
  * 28-day reaches double-counts everyone who appears in both.
  */
 export const CHANNEL_WINDOWS = [
-  { key: "day", label: "24h", suffix: "24h" },
+  // ⚠️ "Yesterday", not "24h". Meta only publishes CLOSED periods, so the day
+  // window has always been the last COMPLETED day — Facebook stamps it at the
+  // Page's local midnight, Instagram at UTC midnight. Labelling it "24h"
+  // implied a rolling last-24-hours it never was, and prompted "where is
+  // yesterday's data?" — it was here all along, mislabelled.
+  { key: "day", label: "Yesterday", suffix: "1d" },
   { key: "week", label: "7d", suffix: "7d" },
   { key: "days_28", label: "28d", suffix: "28d" },
 ] as const;
@@ -223,24 +232,42 @@ export function useMetaChannels(params?: {
   q?: string;
   sort?: string;
   window?: ChannelWindowKey;
-}) {
+  /** Custom range (YYYY-MM-DD, inclusive). When set, figures come from stored
+   *  daily history: exact sums for flow metrics, reach deliberately null. */
+  start?: string;
+  end?: string;
+  /** List REMOVED channels (selected:false) instead of monitored ones. */
+  hidden?: boolean;
+} | null) {
   const qs = new URLSearchParams();
   if (params?.platform) qs.set("platform", params.platform);
   if (params?.q) qs.set("q", params.q);
   if (params?.sort) qs.set("sort", params.sort);
   if (params?.window) qs.set("window", params.window);
+  if (params?.start) qs.set("start", params.start);
+  if (params?.end) qs.set("end", params.end);
+  if (params?.hidden) qs.set("hidden", "1");
   const { data, error, isLoading, mutate } = useSWR(
-    `/admin/meta/channels?${qs.toString()}`,
+    params === null ? null : `/admin/meta/channels?${qs.toString()}`,
     (url: string) =>
       apiFetch<Envelope<{
         items: MetaChannel[];
         channelCount: number;
         /** Which window the figures describe — echoed so the UI can never mislabel them. */
-        window: ChannelWindowKey;
+        window: ChannelWindowKey | "custom";
+        /** Present in range mode: the span the figures cover. */
+        range?: { start: string; end: string; days: number };
         /** Newest moment Meta has published — Facebook closes periods at local midnight. */
         dataThrough: string | null;
         totals: { followers: number; views: number; engagements: number; reach: number; earningsCents: number };
         contributing: { views: number; engagements: number; reach: number; earnings: number };
+        /** The equal-length span immediately before — the trend baseline. The UI
+         *  must hide trend chips when coverageShare < ~0.95: a percentage against
+         *  a half-covered baseline fabricates growth. */
+        previousTotals?: {
+          views: number; engagements: number; earningsCents: number;
+          coverageShare: number; start: string; end: string;
+        } | null;
       }>>(url).then((r) => r.data),
     opts,
   );
@@ -254,6 +281,18 @@ export async function startMetaConnect(body?: { mode?: "connect" | "reconnect"; 
     { method: "POST", body: JSON.stringify(body ?? {}) },
   );
   return res.data;
+}
+
+/**
+ * Remove channels from monitoring (or restore them). Removal is selected:false —
+ * the sync stops spending Graph calls on them, every view and total drops them,
+ * history is kept, and Restore is one click. Never a delete.
+ */
+export async function setAssetsSelectedBulk(ids: string[], selected: boolean) {
+  return apiFetch<Envelope<{ updated: number; selected: boolean }>>("/admin/meta/assets/bulk", {
+    method: "PATCH",
+    body: JSON.stringify({ ids, selected }),
+  });
 }
 
 export async function triggerMetaDiscovery(connectionId: string) {

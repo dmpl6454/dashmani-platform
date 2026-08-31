@@ -9,7 +9,7 @@ import { PortalMode } from "@/lib/api";
 import { colors, radius, spacing } from "@/lib/theme";
 import { Button, Field, ErrorBanner } from "@/components/ui";
 
-// Seedance 2.5 cinematic loop — liquid-glass ribbons in brand violet/gold.
+// Seedance 2.5 cinematic loop — liquid-glass ribbons in brand orange/pink/gold.
 const LOGIN_BG = require("../../assets/visuals/login-bg.mp4");
 const LOGO = require("../../assets/images/logo-mark.png");
 

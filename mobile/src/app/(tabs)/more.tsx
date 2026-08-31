@@ -41,6 +41,9 @@ export default function MoreScreen() {
         <Row icon="trophy-outline" title="Leaderboard" subtitle="Team performance ranking" onPress={() => router.push("/leaderboard")} />
         <Row icon="people-outline" title="My Team" subtitle="Team dashboard (leads)" onPress={() => router.push("/team")} />
         <Row icon="sunny-outline" title="Holidays" subtitle="Company holiday calendar" onPress={() => router.push("/holidays")} />
+        <Row icon="calendar-number-outline" title="Calendar" subtitle="Month view — holidays & your leaves" onPress={() => router.push("/calendar")} />
+        <Row icon="documents-outline" title="Report History" subtitle="Your past daily reports" onPress={() => router.push("/history")} />
+        <Row icon="clipboard-outline" title="Plan of Action" subtitle="Today's POA + past plans" onPress={() => router.push("/plan")} />
       </Card>
 
       <SectionTitle>Requests & Claims</SectionTitle>
@@ -51,11 +54,22 @@ export default function MoreScreen() {
         <Row icon="star-outline" title="Performance Reviews" subtitle="Your review history" onPress={() => router.push("/reviews")} />
       </Card>
 
+      <SectionTitle>Documents & Letters</SectionTitle>
+      <Card>
+        <Row icon="folder-open-outline" title="My Documents" subtitle="Uploaded documents & review status" onPress={() => router.push("/documents")} />
+        <Row icon="mail-open-outline" title="Offer Letters" subtitle="Offer & appointment letters" onPress={() => router.push("/offer-letters")} />
+        <Row icon="document-lock-outline" title="Employment Contract" subtitle="View & digitally agree" onPress={() => router.push("/contract")} />
+        <Row icon="easel-outline" title="Presentations" subtitle="Your saved decks" onPress={() => router.push("/presentations")} />
+        <Row icon="calendar-outline" title="Joining Date" subtitle="Set & track approval" onPress={() => router.push("/joining-date")} />
+      </Card>
+
       <SectionTitle>Support</SectionTitle>
       <Card>
         <Row icon="notifications-outline" title="Notifications" onPress={() => router.push("/notifications")} />
         <Row icon="megaphone-outline" title="Complaints" subtitle="Raise a workplace concern" onPress={() => router.push("/complaints")} />
         <Row icon="bug-outline" title="Report a Bug" subtitle="Something broken in the portal?" onPress={() => router.push("/bug-report")} />
+        <Row icon="book-outline" title="SOP" subtitle="Standard Operating Procedure" onPress={() => router.push("/sop")} />
+        <Row icon="business-outline" title="Company" subtitle="About Dashmani Media" onPress={() => router.push("/company")} />
         <Row icon="key-outline" title="Change Password" onPress={() => router.push("/change-password")} />
         <Row
           icon="swap-horizontal-outline"

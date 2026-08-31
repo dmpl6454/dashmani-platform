@@ -4,7 +4,7 @@ import { apiFetch, fmtDate, fmtMoney } from "@/lib/api";
 import { colors, spacing, formatStatus } from "@/lib/theme";
 import { Screen, Card, StatusPill, Button, Chips, Empty, Loading, ErrorBanner, SuccessBanner, useApi } from "@/components/ui";
 
-const TABS = ["LEAVES", "EXPENSES", "EXTRA_HOURS", "NEW_EMPLOYEES"] as const;
+const TABS = ["LEAVES", "EXPENSES", "EXTRA_HOURS", "NEW_EMPLOYEES", "DOCUMENTS", "JOINING"] as const;
 type Tab = (typeof TABS)[number];
 
 export default function AdminApprovals() {
@@ -17,6 +17,14 @@ export default function AdminApprovals() {
     if (tab === "LEAVES") return apiFetch("/admin/leave-requests?status=PENDING");
     if (tab === "EXPENSES") return apiFetch("/admin/expenses?status=PENDING");
     if (tab === "EXTRA_HOURS") return apiFetch("/admin/extra-hours/pending");
+    if (tab === "DOCUMENTS") {
+      const docs = await apiFetch<any[]>("/admin/documents");
+      return (docs ?? []).filter((d: any) => (d.status ?? "PENDING") === "PENDING");
+    }
+    if (tab === "JOINING") {
+      const rows = await apiFetch<any[]>("/admin/joining-dates");
+      return (rows ?? []).filter((r: any) => !r.joiningDateApproved);
+    }
     return apiFetch("/admin/employees/pending");
   }, [tab]);
 
@@ -54,7 +62,7 @@ export default function AdminApprovals() {
           setError(null);
           setSuccessMsg(null);
         }}
-        labels={{ LEAVES: "Leaves", EXPENSES: "Expenses", EXTRA_HOURS: "Extra Hrs", NEW_EMPLOYEES: "New Joiners" }}
+        labels={{ LEAVES: "Leaves", EXPENSES: "Expenses", EXTRA_HOURS: "Extra Hrs", NEW_EMPLOYEES: "New Joiners", DOCUMENTS: "Documents", JOINING: "Join Dates" }}
       />
       <ErrorBanner message={error} />
       <SuccessBanner message={successMsg} />
@@ -172,6 +180,61 @@ export default function AdminApprovals() {
                         )
                       }
                       style={{ flex: 1 }}
+                    />
+                  </View>
+                </>
+              )}
+
+              {tab === "DOCUMENTS" && (
+                <>
+                  <View style={styles.headRow}>
+                    <Text style={styles.who}>{item.employee?.name ?? "Employee"}</Text>
+                    <StatusPill status={item.status ?? "PENDING"} />
+                  </View>
+                  <Text style={styles.line}>{item.fileName}</Text>
+                  <Text style={styles.reason}>Uploaded {fmtDate(item.createdAt)}</Text>
+                  <View style={styles.actions}>
+                    <Button
+                      title="Approve"
+                      small
+                      loading={busy}
+                      onPress={() =>
+                        act("Document approved", () => apiFetch("/admin/documents/bulk-review", { method: "POST", body: JSON.stringify({ ids: [item.id], action: "APPROVE" }) }), item.id)
+                      }
+                      style={{ flex: 1, backgroundColor: colors.green }}
+                    />
+                    <Button
+                      title="Reject"
+                      small
+                      variant="danger"
+                      disabled={busy}
+                      onPress={() =>
+                        confirmReject("document", () =>
+                          act("Document rejected", () => apiFetch("/admin/documents/bulk-review", { method: "POST", body: JSON.stringify({ ids: [item.id], action: "REJECT" }) }), item.id),
+                        )
+                      }
+                      style={{ flex: 1 }}
+                    />
+                  </View>
+                </>
+              )}
+
+              {tab === "JOINING" && (
+                <>
+                  <View style={styles.headRow}>
+                    <Text style={styles.who}>{item.user?.name ?? "Employee"}</Text>
+                    <Text style={styles.amount}>{fmtDate(item.joiningDate)}</Text>
+                  </View>
+                  <Text style={styles.reason}>{item.user?.email ?? ""}</Text>
+                  <View style={styles.actions}>
+                    <Button
+                      title="Approve Joining Date"
+                      small
+                      loading={busy}
+                      onPress={() =>
+                        act("Joining date approved", () => apiFetch(`/admin/joining-dates/${item.user?.id ?? item.userId}/approve`, { method: "POST" }), item.id)
+                      }
+                      style={{ flex: 1, backgroundColor: colors.green }}
                     />
                   </View>
                 </>

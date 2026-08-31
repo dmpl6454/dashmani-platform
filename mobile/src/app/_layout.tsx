@@ -36,6 +36,16 @@ export default function RootLayout() {
         <Stack.Screen name="complaints" options={{ title: "Complaints" }} />
         <Stack.Screen name="bug-report" options={{ title: "Report a Bug" }} />
         <Stack.Screen name="change-password" options={{ title: "Change Password" }} />
+        <Stack.Screen name="calendar" options={{ title: "Calendar" }} />
+        <Stack.Screen name="history" options={{ title: "Report History" }} />
+        <Stack.Screen name="plan" options={{ title: "Plan of Action" }} />
+        <Stack.Screen name="sop" options={{ title: "SOP" }} />
+        <Stack.Screen name="documents" options={{ title: "My Documents" }} />
+        <Stack.Screen name="contract" options={{ title: "Employment Contract" }} />
+        <Stack.Screen name="offer-letters" options={{ title: "Offer Letters" }} />
+        <Stack.Screen name="presentations" options={{ title: "Presentations" }} />
+        <Stack.Screen name="joining-date" options={{ title: "Joining Date" }} />
+        <Stack.Screen name="company" options={{ title: "Company" }} />
         {/* Admin stack screens */}
         <Stack.Screen name="admin-employees" options={{ title: "Employees" }} />
         <Stack.Screen name="admin-employee/[id]" options={{ title: "Employee Reports" }} />
@@ -52,6 +62,16 @@ export default function RootLayout() {
         <Stack.Screen name="admin-leaderboard" options={{ title: "Leaderboard" }} />
         <Stack.Screen name="admin-notifications" options={{ title: "Notifications" }} />
         <Stack.Screen name="admin-attendance" options={{ title: "Attendance" }} />
+        <Stack.Screen name="admin-analytics" options={{ title: "Analytics" }} />
+        <Stack.Screen name="admin-projects" options={{ title: "Projects" }} />
+        <Stack.Screen name="admin-clients" options={{ title: "Clients" }} />
+        <Stack.Screen name="admin-content" options={{ title: "Content" }} />
+        <Stack.Screen name="admin-devices" options={{ title: "Devices" }} />
+        <Stack.Screen name="admin-internships" options={{ title: "Internships" }} />
+        <Stack.Screen name="admin-workload" options={{ title: "Workload" }} />
+        <Stack.Screen name="admin-ai" options={{ title: "AI Assistant" }} />
+        <Stack.Screen name="admin-top-links" options={{ title: "Top Links" }} />
+        <Stack.Screen name="admin-link-search" options={{ title: "Link Search" }} />
       </Stack>
     </AuthProvider>
   );

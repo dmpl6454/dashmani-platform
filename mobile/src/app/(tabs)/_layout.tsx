@@ -11,10 +11,10 @@ export default function TabsLayout() {
 
   useEffect(() => {
     if (loading) return;
-    if (!user) {
-      router.replace("/login");
-    } else if (mode === "admin") {
+    if (mode === "admin") {
       router.replace("/(admin)");
+    } else if (!user) {
+      router.replace("/login?mode=hr");
     }
   }, [loading, user, mode]);
 

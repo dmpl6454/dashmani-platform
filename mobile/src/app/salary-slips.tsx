@@ -93,7 +93,7 @@ const styles = StyleSheet.create({
   net: { fontSize: 13, color: colors.purple, marginTop: 2, fontWeight: "600" },
   scrim: { flex: 1, backgroundColor: "rgba(0,0,0,0.4)", justifyContent: "flex-end" },
   sheet: {
-    backgroundColor: "#fff",
+    backgroundColor: colors.cardHigh,
     borderTopLeftRadius: radius.xl,
     borderTopRightRadius: radius.xl,
     padding: spacing.lg,

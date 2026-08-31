@@ -114,7 +114,7 @@ const styles = StyleSheet.create({
   responseText: { fontSize: 13, color: colors.ink, marginTop: 2 },
   scrim: { flex: 1, backgroundColor: "rgba(0,0,0,0.4)", justifyContent: "flex-end" },
   sheet: {
-    backgroundColor: "#fff",
+    backgroundColor: colors.cardHigh,
     borderTopLeftRadius: radius.xl,
     borderTopRightRadius: radius.xl,
     padding: spacing.lg,

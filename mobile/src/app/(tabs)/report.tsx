@@ -393,7 +393,7 @@ const styles = StyleSheet.create({
     height: 42,
     fontSize: 16,
     color: colors.ink,
-    backgroundColor: "#fff",
+    backgroundColor: colors.cardHigh,
   },
   accountTag: { fontSize: 11, color: colors.purple, marginTop: 4, marginLeft: 2 },
   trash: { padding: 8, marginTop: 4 },
@@ -401,7 +401,7 @@ const styles = StyleSheet.create({
   footNote: { fontSize: 11, color: colors.sub, textAlign: "center", marginTop: spacing.sm },
   modalScrim: { flex: 1, backgroundColor: "rgba(0,0,0,0.4)", justifyContent: "flex-end" },
   modalSheet: {
-    backgroundColor: "#fff",
+    backgroundColor: colors.cardHigh,
     borderTopLeftRadius: radius.xl,
     borderTopRightRadius: radius.xl,
     padding: spacing.lg,

@@ -1,11 +1,14 @@
 import React from "react";
-import { View, Text, StyleSheet, Pressable } from "react-native";
+import { View, Text, StyleSheet, Pressable, ImageBackground } from "react-native";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
+import { LinearGradient } from "expo-linear-gradient";
 import { useAuth } from "@/lib/auth";
 import { apiFetch, fmtCompact } from "@/lib/api";
 import { colors, radius, spacing } from "@/lib/theme";
 import { Screen, Card, SectionTitle, Stat, useApi } from "@/components/ui";
+
+const HERO = require("../../../assets/visuals/hero-admin.jpg");
 
 export default function AdminDashboard() {
   const { user } = useAuth();
@@ -24,17 +27,24 @@ export default function AdminDashboard() {
 
   return (
     <Screen onRefresh={refresh} refreshing={refreshing}>
-      <View style={styles.header}>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.greeting}>{greeting},</Text>
-          <Text style={styles.name} numberOfLines={1}>
-            {user?.name}
-          </Text>
+      <ImageBackground source={HERO} style={styles.hero} imageStyle={styles.heroImg}>
+        <LinearGradient
+          colors={["rgba(10,9,19,0.10)", "rgba(10,9,19,0.55)", "rgba(10,9,19,0.92)"]}
+          style={StyleSheet.absoluteFill}
+        />
+        <View style={styles.header}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.greeting}>{greeting},</Text>
+            <Text style={styles.name} numberOfLines={1}>
+              {user?.name}
+            </Text>
+            <Text style={styles.heroTag}>ADMIN CONTROL CENTER</Text>
+          </View>
+          <Pressable onPress={() => router.push("/admin-notifications")} style={styles.bell}>
+            <Ionicons name="notifications-outline" size={22} color={colors.ink} />
+          </Pressable>
         </View>
-        <Pressable onPress={() => router.push("/admin-notifications")} style={styles.bell}>
-          <Ionicons name="notifications-outline" size={22} color={colors.ink} />
-        </Pressable>
-      </View>
+      </ImageBackground>
 
       {/* Pending approvals callout */}
       {(data?.pendingApprovals ?? 0) > 0 && (
@@ -93,14 +103,23 @@ export default function AdminDashboard() {
 }
 
 const styles = StyleSheet.create({
-  header: { flexDirection: "row", alignItems: "center", marginBottom: spacing.lg },
+  hero: {
+    borderRadius: radius.xl,
+    overflow: "hidden",
+    marginBottom: spacing.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  heroImg: { borderRadius: radius.xl },
+  header: { flexDirection: "row", alignItems: "flex-end", padding: spacing.lg, paddingTop: 64 },
+  heroTag: { fontSize: 9, fontWeight: "800", color: colors.yellow, letterSpacing: 2, marginTop: 4 },
   greeting: { fontSize: 13, color: colors.sub },
   name: { fontSize: 18, fontWeight: "800", color: colors.ink },
   bell: {
     width: 42,
     height: 42,
     borderRadius: radius.full,
-    backgroundColor: "#fff",
+    backgroundColor: colors.cardHigh,
     borderWidth: 1,
     borderColor: colors.border,
     alignItems: "center",
@@ -113,7 +132,7 @@ const styles = StyleSheet.create({
   quickTile: {
     width: "47%",
     flexGrow: 1,
-    backgroundColor: "#fff",
+    backgroundColor: colors.cardHigh,
     borderWidth: 1,
     borderColor: colors.border,
     borderRadius: radius.lg,

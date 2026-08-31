@@ -1,11 +1,14 @@
 import React from "react";
-import { View, Text, StyleSheet, Pressable, Image } from "react-native";
+import { View, Text, StyleSheet, Pressable, Image, ImageBackground } from "react-native";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
+import { LinearGradient } from "expo-linear-gradient";
 import { useAuth } from "@/lib/auth";
 import { apiFetch, API_BASE, fmtDate, todayIST } from "@/lib/api";
 import { colors, radius, spacing } from "@/lib/theme";
 import { Screen, Card, SectionTitle, Stat, Empty, useApi } from "@/components/ui";
+
+const HERO = require("../../../assets/visuals/hero-employee.jpg");
 
 type Attendance =
   | { isEmployee: false }
@@ -59,8 +62,13 @@ export default function HomeScreen() {
 
   return (
     <Screen onRefresh={refresh} refreshing={refreshing}>
-      {/* Header */}
-      <View style={styles.header}>
+      {/* Header — Seedance hero */}
+      <ImageBackground source={HERO} style={styles.hero} imageStyle={styles.heroImg}>
+        <LinearGradient
+          colors={["rgba(10,9,19,0.10)", "rgba(10,9,19,0.55)", "rgba(10,9,19,0.92)"]}
+          style={StyleSheet.absoluteFill}
+        />
+        <View style={styles.header}>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 12, flex: 1 }}>
           {avatarUrl ? (
             <Image source={{ uri: avatarUrl }} style={styles.avatar} />
@@ -84,7 +92,8 @@ export default function HomeScreen() {
             </View>
           )}
         </Pressable>
-      </View>
+        </View>
+      </ImageBackground>
 
       {/* Today's report status */}
       <Pressable onPress={() => router.push("/(tabs)/report")}>
@@ -184,7 +193,15 @@ export default function HomeScreen() {
 }
 
 const styles = StyleSheet.create({
-  header: { flexDirection: "row", alignItems: "center", marginBottom: spacing.lg },
+  hero: {
+    borderRadius: radius.xl,
+    overflow: "hidden",
+    marginBottom: spacing.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  heroImg: { borderRadius: radius.xl },
+  header: { flexDirection: "row", alignItems: "flex-end", padding: spacing.lg, paddingTop: 64 },
   avatar: { width: 46, height: 46, borderRadius: radius.full },
   avatarFallback: { backgroundColor: colors.purple, alignItems: "center", justifyContent: "center" },
   avatarLetter: { color: "#fff", fontSize: 20, fontWeight: "800" },
@@ -194,7 +211,7 @@ const styles = StyleSheet.create({
     width: 42,
     height: 42,
     borderRadius: radius.full,
-    backgroundColor: "#fff",
+    backgroundColor: colors.cardHigh,
     borderWidth: 1,
     borderColor: colors.border,
     alignItems: "center",

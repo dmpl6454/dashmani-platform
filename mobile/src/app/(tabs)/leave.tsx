@@ -167,7 +167,7 @@ const styles = StyleSheet.create({
   reqReason: { fontSize: 12, color: colors.faint, marginTop: 2 },
   modalScrim: { flex: 1, backgroundColor: "rgba(0,0,0,0.4)", justifyContent: "flex-end" },
   modalSheet: {
-    backgroundColor: "#fff",
+    backgroundColor: colors.cardHigh,
     borderTopLeftRadius: radius.xl,
     borderTopRightRadius: radius.xl,
     padding: spacing.lg,

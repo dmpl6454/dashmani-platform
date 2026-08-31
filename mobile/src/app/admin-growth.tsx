@@ -186,7 +186,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
     borderRadius: radius.md,
-    backgroundColor: "#fff",
+    backgroundColor: colors.cardHigh,
     paddingHorizontal: 12,
     height: 44,
     fontSize: 15,
@@ -196,7 +196,7 @@ const styles = StyleSheet.create({
   tileRow: { flexDirection: "row", gap: 8, marginBottom: 8 },
   tile: {
     flex: 1,
-    backgroundColor: "#fff",
+    backgroundColor: colors.cardHigh,
     borderWidth: 1,
     borderColor: colors.border,
     borderRadius: radius.md,

@@ -13,6 +13,7 @@ import {
   KeyboardTypeOptions,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { LinearGradient } from "expo-linear-gradient";
 import { colors, radius, spacing, statusColor, formatStatus } from "@/lib/theme";
 
 // ---------- Screen ----------
@@ -30,7 +31,7 @@ export function Screen({
   return (
     <ScrollView
       style={{ flex: 1, backgroundColor: colors.bg }}
-      contentContainerStyle={{ padding: padded ? spacing.lg : 0, paddingBottom: 48 }}
+      contentContainerStyle={{ padding: padded ? spacing.lg : 0, paddingBottom: 120 }}
       refreshControl={
         onRefresh ? <RefreshControl refreshing={!!refreshing} onRefresh={onRefresh} tintColor={colors.purple} /> : undefined
       }
@@ -84,25 +85,39 @@ export function Button({
   style?: ViewStyle;
   small?: boolean;
 }) {
-  const bg =
-    variant === "primary" ? colors.ink : variant === "danger" ? colors.red : variant === "secondary" ? colors.yellow : "transparent";
-  const fg = variant === "secondary" ? colors.ink : variant === "ghost" ? colors.ink : "#fff";
+  const fg = variant === "secondary" ? colors.inkOnAccent : "#fff";
+  const inner = loading ? (
+    <ActivityIndicator color={fg} size="small" />
+  ) : (
+    <Text style={[styles.btnText, small && { fontSize: 13 }, { color: variant === "ghost" ? colors.ink : fg }]}>{title}</Text>
+  );
   return (
     <Pressable
       onPress={onPress}
       disabled={disabled || loading}
-      style={({ pressed }) => [
-        styles.btn,
-        small && styles.btnSmall,
-        { backgroundColor: bg, opacity: disabled || loading ? 0.5 : pressed ? 0.85 : 1 },
-        variant === "ghost" && { borderWidth: 1, borderColor: colors.border },
-        style,
-      ]}
+      style={({ pressed }) => [{ opacity: disabled || loading ? 0.5 : pressed ? 0.85 : 1 }, style]}
     >
-      {loading ? (
-        <ActivityIndicator color={fg} size="small" />
+      {variant === "primary" ? (
+        <LinearGradient
+          colors={colors.gradient}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={[styles.btn, small && styles.btnSmall]}
+        >
+          {inner}
+        </LinearGradient>
       ) : (
-        <Text style={[styles.btnText, small && { fontSize: 13 }, { color: fg }]}>{title}</Text>
+        <View
+          style={[
+            styles.btn,
+            small && styles.btnSmall,
+            variant === "secondary" && { backgroundColor: colors.yellow },
+            variant === "danger" && { backgroundColor: "rgba(248,113,113,0.9)" },
+            variant === "ghost" && { backgroundColor: "rgba(255,255,255,0.04)", borderWidth: 1, borderColor: colors.borderStrong },
+          ]}
+        >
+          {inner}
+        </View>
       )}
     </Pressable>
   );
@@ -169,7 +184,7 @@ export function Chips<T extends string>({
           <Pressable
             key={opt}
             onPress={() => onChange(opt)}
-            style={[styles.chip, active && { backgroundColor: colors.ink, borderColor: colors.ink }]}
+            style={[styles.chip, active && { backgroundColor: colors.purple, borderColor: colors.purple }]}
           >
             <Text style={[styles.chipText, active && { color: "#fff" }]}>{labels?.[opt] ?? formatStatus(opt)}</Text>
           </Pressable>
@@ -314,6 +329,10 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     padding: spacing.lg,
     marginBottom: spacing.md,
+    shadowColor: "#000",
+    shadowOpacity: 0.35,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
   },
   sectionRow: {
     flexDirection: "row",
@@ -342,9 +361,9 @@ const styles = StyleSheet.create({
   fieldLabel: { fontSize: 13, fontWeight: "600", color: colors.ink, marginBottom: 6 },
   input: {
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: colors.borderStrong,
     borderRadius: radius.md,
-    backgroundColor: "#fff",
+    backgroundColor: colors.cardHigh,
     paddingHorizontal: 12,
     height: 46,
     fontSize: 15,
@@ -357,8 +376,8 @@ const styles = StyleSheet.create({
     paddingVertical: 7,
     borderRadius: radius.full,
     borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: "#fff",
+    borderColor: colors.borderStrong,
+    backgroundColor: "rgba(255,255,255,0.04)",
   },
   chipText: { fontSize: 13, fontWeight: "600", color: colors.ink },
   empty: { alignItems: "center", paddingVertical: 32, gap: 8 },

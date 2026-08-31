@@ -76,7 +76,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  avatarLetter: { fontSize: 15, fontWeight: "800", color: colors.ink },
+  avatarLetter: { fontSize: 15, fontWeight: "800", color: colors.inkOnAccent },
   memberName: { fontSize: 14, fontWeight: "600", color: colors.ink },
   memberEmail: { fontSize: 12, color: colors.sub },
   todayFlag: { fontSize: 12, fontWeight: "700" },

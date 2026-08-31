@@ -45,7 +45,7 @@
 
 import { prisma } from "@dashmani/db";
 import { todayIST, istMidnight } from "@dashmani/shared";
-import { oauthGraphFetch, makeBudget, type CallBudget } from "./oauth-graph";
+import { oauthGraphFetch, makeBudget, isTransientGraphFailure, type CallBudget } from "./oauth-graph";
 import { decryptToken, scrubSecrets } from "../../utils/token-crypto";
 
 /**
@@ -235,6 +235,24 @@ export interface ChannelSyncOutcome {
 }
 
 /** Coerce to a non-negative integer, preserving "absent" as null. */
+/**
+ * Pause before the single retry of a transient Graph failure.
+ *
+ * ⚠️ WHAT IS PROVEN AND WHAT IS NOT. The live probe (see isTransientGraphFailure)
+ * proved the failure is TIME-VARYING: 26 of 26 failed calls succeeded on an
+ * identical replay. It did NOT prove that a retry milliseconds later recovers —
+ * 48 consecutive probe calls on healthy Pages produced zero failures, so there
+ * was nothing to retry against. A short pause is therefore cheap insurance
+ * rather than a measured requirement: if the blip is a per-request backend
+ * hiccup an immediate retry would have worked anyway, and if it is a brief
+ * server-side condition this is what makes the retry land after it.
+ *
+ * Cost is bounded and trivial — ~26 failures a run at 400ms is ~10s added to a
+ * multi-minute job, and the budget check still gates the retry itself.
+ */
+const RETRY_DELAY_MS = 400;
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 function intOrNull(v: unknown): number | null {
   if (typeof v !== "number" || !Number.isFinite(v)) return null;
   return Math.max(0, Math.round(v));
@@ -448,21 +466,32 @@ export async function runMetaChannelSync(opts?: {
         const untilTs = Math.floor(Date.now() / 86_400_000) * 86_400;
         const sinceTs = untilTs - IG_WINDOW_DAYS[win] * 86_400;
 
-        const res = await oauthGraphFetch<InsightsResponse>(
-          `${asset.metaId}/insights`,
-          isIg
-            ? {
-                metric: IG_METRICS.join(","),
-                // Required, and also the ONLY correct source for reach — see IG_METRICS.
-                metric_type: "total_value",
-                period: IG_PERIOD,
-                since: sinceTs,
-                until: untilTs,
-              }
-            : { metric: FB_METRICS.join(","), period: win },
-          token,
-          { label: isIg ? `channel-ig-insights-${win}` : `channel-fb-insights-${win}`, budget },
+        const insightsParams = isIg
+          ? {
+              metric: IG_METRICS.join(","),
+              // Required, and also the ONLY correct source for reach — see IG_METRICS.
+              metric_type: "total_value",
+              period: IG_PERIOD,
+              since: sinceTs,
+              until: untilTs,
+            }
+          : { metric: FB_METRICS.join(","), period: win };
+        const insightsLabel = isIg ? `channel-ig-insights-${win}` : `channel-fb-insights-${win}`;
+
+        let res = await oauthGraphFetch<InsightsResponse>(
+          `${asset.metaId}/insights`, insightsParams, token, { label: insightsLabel, budget },
         );
+        // ONE bounded retry, transient (#1/#2) failures only. ~1% of calls per
+        // run fail with Meta's "retry your request later" — without this, each
+        // one stamps a visible error on a window whose figures are fine, for up
+        // to 3h until the next sync. The +10% budget headroom exists for exactly
+        // this. Deterministic failures (permissions, 2FA) are NOT retried.
+        if (isTransientGraphFailure(res) && budget.used < budget.max) {
+          await sleep(RETRY_DELAY_MS);
+          res = await oauthGraphFetch<InsightsResponse>(
+            `${asset.metaId}/insights`, insightsParams, token, { label: `${insightsLabel}-retry`, budget },
+          );
+        }
 
         if (res.rateLimited) { sawRateLimit = true; break; }
 
@@ -480,12 +509,23 @@ export async function runMetaChannelSync(opts?: {
         // so it is fetched after them and simply stays null if it does not answer.
         let earningsCents: number | null = null;
         if (!isIg && budget.used < budget.max) {
-          const er = await oauthGraphFetch<InsightsResponse>(
+          let er = await oauthGraphFetch<InsightsResponse>(
             `${asset.metaId}/insights`,
             { metric: FB_EARNINGS_METRIC, period: win },
             token,
             { label: `channel-fb-earnings-${win}`, budget },
           );
+          // Same bounded retry as the main insights call — a transient miss here
+          // silently nulls the window's revenue until the next sync.
+          if (isTransientGraphFailure(er) && budget.used < budget.max) {
+            await sleep(RETRY_DELAY_MS);
+            er = await oauthGraphFetch<InsightsResponse>(
+              `${asset.metaId}/insights`,
+              { metric: FB_EARNINGS_METRIC, period: win },
+              token,
+              { label: `channel-fb-earnings-${win}-retry`, budget },
+            );
+          }
           if (er.rateLimited) { sawRateLimit = true; break; }
           // Meta returns a plain USD number. Store CENTS — money must never be
           // carried as a float.

@@ -82,7 +82,7 @@ const styles = StyleSheet.create({
   desc: { fontSize: 13, color: colors.ink, marginTop: 8, lineHeight: 19 },
   tapHint: { fontSize: 10, color: colors.faint, marginTop: 8 },
   scrim: { flex: 1, backgroundColor: "rgba(0,0,0,0.4)", justifyContent: "center", padding: spacing.xl },
-  sheet: { backgroundColor: "#fff", borderRadius: radius.xl, padding: spacing.lg },
+  sheet: { backgroundColor: colors.cardHigh, borderRadius: radius.xl, padding: spacing.lg },
   sheetTitle: { fontSize: 18, fontWeight: "800", color: colors.ink, marginBottom: 12 },
   optRow: { paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
 });

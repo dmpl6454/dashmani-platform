@@ -109,7 +109,7 @@ const styles = StyleSheet.create({
   meta: { fontSize: 12, color: colors.sub, marginTop: 3 },
   tapHint: { fontSize: 10, color: colors.faint, marginTop: 6 },
   scrim: { flex: 1, backgroundColor: "rgba(0,0,0,0.4)", justifyContent: "center", padding: spacing.xl },
-  sheet: { backgroundColor: "#fff", borderRadius: radius.xl, padding: spacing.lg, maxHeight: "80%" },
+  sheet: { backgroundColor: colors.cardHigh, borderRadius: radius.xl, padding: spacing.lg, maxHeight: "80%" },
   sheetTitle: { fontSize: 18, fontWeight: "800", color: colors.ink },
   sheetSub: { fontSize: 13, color: colors.sub, marginTop: 4, marginBottom: 8 },
   optRow: { paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },

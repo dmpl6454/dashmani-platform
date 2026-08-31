@@ -72,7 +72,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
     borderRadius: radius.md,
-    backgroundColor: "#fff",
+    backgroundColor: colors.cardHigh,
     paddingHorizontal: 12,
     height: 44,
     fontSize: 15,

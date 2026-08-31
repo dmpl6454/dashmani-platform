@@ -237,7 +237,7 @@ const styles = StyleSheet.create({
   tapHint: { fontSize: 10, color: colors.faint, marginTop: 6 },
   scrim: { flex: 1, backgroundColor: "rgba(0,0,0,0.4)", justifyContent: "flex-end" },
   sheet: {
-    backgroundColor: "#fff",
+    backgroundColor: colors.cardHigh,
     borderTopLeftRadius: radius.xl,
     borderTopRightRadius: radius.xl,
     padding: spacing.lg,
@@ -251,7 +251,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
     borderRadius: radius.md,
-    backgroundColor: "#fff",
+    backgroundColor: colors.cardHigh,
     paddingHorizontal: 12,
     height: 46,
     justifyContent: "center",

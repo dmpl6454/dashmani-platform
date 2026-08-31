@@ -80,7 +80,7 @@ const styles = StyleSheet.create({
   rank: { width: 36, fontSize: 14, fontWeight: "800", color: colors.sub, textAlign: "center" },
   avatar: { width: 36, height: 36, borderRadius: radius.full },
   avatarFallback: { backgroundColor: colors.yellow, alignItems: "center", justifyContent: "center" },
-  avatarLetter: { fontSize: 15, fontWeight: "800", color: colors.ink },
+  avatarLetter: { fontSize: 15, fontWeight: "800", color: colors.inkOnAccent },
   name: { fontSize: 14, fontWeight: "700", color: colors.ink },
   meta: { fontSize: 12, color: colors.sub, marginTop: 1 },
   streak: { alignItems: "center" },

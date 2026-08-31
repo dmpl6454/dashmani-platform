@@ -19,6 +19,7 @@ export default function AdminManage() {
       <Card>
         <Row icon="checkbox-outline" title="Tasks" subtitle="Assign & track tasks" onPress={() => router.push("/admin-tasks")} />
         <Row icon="at-outline" title="Social Accounts" subtitle="Channels & assignments" onPress={() => router.push("/admin-accounts")} />
+        <Row icon="trending-up-outline" title="Account Growth" subtitle="Connected Meta channels — views, reach & revenue" onPress={() => router.push("/admin-growth")} />
         <Row icon="trophy-outline" title="Leaderboard" subtitle="Report performance ranking" onPress={() => router.push("/admin-leaderboard")} />
         <Row icon="sunny-outline" title="Holidays" subtitle="Manage the holiday calendar" onPress={() => router.push("/admin-holidays")} />
       </Card>

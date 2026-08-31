@@ -211,6 +211,13 @@ export interface MetaChannel {
  * 28-day reaches double-counts everyone who appears in both.
  */
 export const CHANNEL_WINDOWS = [
+  // ⚠️ "Today (so far)" is INSTAGRAM-ONLY and deliberately partial: IG can be
+  // asked for midnight-UTC→now, refreshed by the ~3-hourly sync. Facebook's
+  // API publishes only COMPLETED days — a partial today exists in Meta's own
+  // app but not in the API — so FB cells render dashes here and its today
+  // appears tomorrow under Yesterday. Better an honest dash than yesterday's
+  // number dressed up as today's.
+  { key: "today", label: "Today (so far)", suffix: "today" },
   // ⚠️ "Yesterday", not "24h". Meta only publishes CLOSED periods, so the day
   // window has always been the last COMPLETED day — Facebook stamps it at the
   // Page's local midnight, Instagram at UTC midnight. Labelling it "24h"

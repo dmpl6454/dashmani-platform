@@ -243,6 +243,33 @@ describe("GET /admin/meta/channels — range mode + removal", () => {
     expect(a.followerDelta).toBeNull();
   });
 
+  it("window=today serves the IG partial row and never paints FB with the asset-level error", async () => {
+    // FB asset carries a stale default-window error; IG asset has a today row.
+    await prisma.metaAsset.update({
+      where: { id: assetA },
+      data: { metricsError: "channel insights failed" },
+    });
+    await prisma.metaAssetMetric.create({
+      data: { assetId: assetB, window: "today", views: 42n, fetchedAt: new Date() },
+    });
+
+    const res = await get("/v1/admin/meta/channels?window=today");
+    expect(res.status).toBe(200);
+    expect(res.body.data.window).toBe("today");
+    // ⚠️ No trend baseline for a partial day — comparing it against any complete
+    // prior day fabricates a decline that is really just the clock.
+    expect(res.body.data.previousTotals).toBeNull();
+
+    const b = res.body.data.items.find((i: { id: string }) => i.id === assetB);
+    expect(b.views28d).toBe(42);
+
+    const a = res.body.data.items.find((i: { id: string }) => i.id === assetA);
+    expect(a.views28d).toBeNull();
+    // ⚠️ FB has no today row BY DESIGN — falling back to the asset-level error
+    // here would mark every healthy Facebook channel in the Today view.
+    expect(a.metricsError).toBeNull();
+  });
+
   it("dashboard growth qualification excludes removed channels", async () => {
     // Link the HIDDEN asset to its own channel row: it must not qualify.
     const platform = await prisma.platform.findFirstOrThrow({ where: { slug: "facebook" } });

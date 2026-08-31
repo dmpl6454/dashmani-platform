@@ -402,3 +402,54 @@ describe("GET /admin/meta/channels — followerDeltaDays reports the real span",
     expect(row.followerDeltaDays).toBe(5);
   });
 });
+
+describe("channel sync — Instagram Today (so far)", () => {
+  beforeEach(async () => {
+    await createTestRole("Admin", [{ resource: "reports", action: "manage", scope: "global" }]);
+    mockedFetch.mockReset();
+  });
+
+  it("writes a partial today row for Instagram and NEVER one for Facebook", async () => {
+    const fb = await seedConnectedFbAsset();
+    const conn = await prisma.metaConnection.findFirstOrThrow({ where: { metaUserId: "mu-err-test" } });
+    const ig = await prisma.metaAsset.create({
+      data: { connectionId: conn.id, kind: "INSTAGRAM_ACCOUNT", metaId: "ig-today", name: "Iggy", selected: true },
+    });
+
+    mockedFetch.mockImplementation(async (_path, params) => {
+      const p = params as Record<string, unknown>;
+      const metric = String(p.metric ?? "");
+      if (metric.includes("follows_and_unfollows")) {
+        return { ok: true as const, rateLimited: false, authInvalid: false, status: 200, usage: null, data: { data: [] } };
+      }
+      if (p.metric_type === "total_value") {
+        return { ok: true as const, rateLimited: false, authInvalid: false, status: 200, usage: null,
+          data: { data: [{ name: "views", total_value: { value: 77 } }, { name: "reach", total_value: { value: 33 } }] } };
+      }
+      return okFor(p);
+    });
+
+    await runMetaChannelSync();
+
+    const igToday = await prisma.metaAssetMetric.findUnique({
+      where: { assetId_window: { assetId: ig.id, window: "today" } },
+    });
+    // ⚠️ The sync skips the today fetch in the first 10 minutes of a UTC day
+    // (nothing to tally; until==since errors) — a test running then must
+    // expect absence, not flake.
+    const early = Math.floor(Date.now() / 1000) % 86_400 < 600;
+    if (early) {
+      expect(igToday).toBeNull();
+    } else {
+      expect(Number(igToday?.views)).toBe(77);
+      expect(igToday?.error).toBeNull();
+    }
+
+    // Facebook must never get a today row — its API has no partial today, and a
+    // fabricated one would dress yesterday's numbers up as today's.
+    const fbToday = await prisma.metaAssetMetric.findUnique({
+      where: { assetId_window: { assetId: fb.id, window: "today" } },
+    });
+    expect(fbToday).toBeNull();
+  });
+});

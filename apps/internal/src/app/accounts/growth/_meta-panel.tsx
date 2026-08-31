@@ -544,7 +544,11 @@ export function MetaPanel() {
         // ⚠️ 5 tiles, so the column counts must divide cleanly or one orphans onto
         // a row of its own — which is what `sm:grid-cols-4` was doing to Revenue.
         // 2 / 3 / 5 gives 2+2+1, 3+2 and a single row of 5.
-        <div className="px-5 py-5 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-x-4 gap-y-5 border-b border-[#F0EAE0]">
+        // ⚠️ Five across only at `xl`, not `lg`. The sidebar eats ~340px, so at
+        // 1024px the content strip is ~684px and five columns leave ~120px each —
+        // measured, the value ellipsised at that width. Three columns there keep
+        // the tiles wide enough; five only once there is genuinely room.
+        <div className="px-5 py-5 grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 gap-x-4 gap-y-5 border-b border-[#F0EAE0]">
           {[
             { label: "Channels", value: ch!.channelCount, raw: true, note: null as string | null },
             { label: "Followers", value: t.followers, raw: false, note: null },
@@ -561,14 +565,18 @@ export function MetaPanel() {
               // items that happen to sit near each other. Only at `lg`, where all
               // five are guaranteed to share one row — at narrower widths the grid
               // wraps and a leading border would land mid-row and look like a bug.
-              className="min-w-0 lg:border-l lg:border-[#F0EAE0] lg:pl-4 lg:first:border-l-0 lg:first:pl-0"
+              className="min-w-0 xl:border-l xl:border-[#F0EAE0] xl:pl-4 xl:first:border-l-0 xl:first:pl-0"
             >
               <p
-                // ⚠️ clamp, not a fixed size. A fixed `text-2xl`-and-up overflowed
-                // its tile at 375px in the documented dashboard incident; this
-                // scales from 24px on a phone to 34px on a desktop and still
+                // ⚠️ clamp, not a fixed size — a fixed `text-2xl`-and-up overflowed
+                // its tile at 375px in the documented dashboard incident.
+                //
+                // ⚠️ The coefficient is 2.2vw, not 3.4vw, because `vw` is the WINDOW
+                // and the sidebar takes ~340px of it. At 3.4vw the value hit 34px at
+                // 1024px and ellipsised in a ~120px tile — measured, not guessed.
+                // 24px phone -> 28px at 1280 -> 32px on a wide desktop, and it still
                 // truncates rather than painting over its neighbour.
-                className="font-num text-[clamp(1.5rem,3.4vw,2.125rem)] font-semibold tracking-tight leading-none text-[#1A1A1A] truncate"
+                className="font-num text-[clamp(1.5rem,2.2vw,2rem)] font-semibold tracking-tight leading-none text-[#1A1A1A] truncate"
               >
                 {s.raw
                   ? s.value.toLocaleString()

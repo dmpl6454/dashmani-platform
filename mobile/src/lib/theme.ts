@@ -2,7 +2,7 @@
 // TWO schemes, resolved from the system appearance at app launch:
 //   light → white ground, colorful logo-gradient accents
 //   dark  → night-black ground, the same gradients glowing on black
-// The aurora (orange → pink → violet → blue, straight from the logo) powers
+// The warm brand sweep (orange → pink, straight from the logo) powers
 // primary actions, identity surfaces and accent moments in BOTH schemes.
 //
 // ⚠️ `ink` is the PRIMARY TEXT color. Never use it as a background. Text on a
@@ -12,11 +12,14 @@ import { Appearance } from "react-native";
 const scheme = Appearance.getColorScheme?.() ?? "dark";
 export const isDark = scheme !== "light";
 
-// Brand hues lifted from the logo
+// Brand hues lifted from the logo. ⚠️ Purple/violet is deliberately EXCLUDED
+// from the UI palette (owner decision) — the tint is the logo PINK, gradients
+// run warm orange → pink, and pink→blue blends are avoided because their
+// midpoint reads as purple.
 const BRAND = {
   orange: "#F9A64A",
   pink: "#F0568C",
-  violet: "#8B5CF6",
+  pinkDeep: "#D92E6E",
   blue: "#64AEF0",
 };
 
@@ -32,9 +35,10 @@ const dark = {
   barBg: "rgba(16,16,18,0.94)",
   segActiveBg: "#636366",
   inkOnAccent: "#0B0B0F",
-  purple: "#7C6CFF",
-  purpleDark: "#5B4BF5",
-  purpleSoft: "rgba(124,108,255,0.18)",
+  // ⚠️ token names kept for compatibility — these are the PINK tint now
+  purple: "#F0568C",
+  purpleDark: "#D92E6E",
+  purpleSoft: "rgba(240,86,140,0.16)",
   green: "#30D158",
   greenSoft: "rgba(48,209,88,0.15)",
   red: "#FF453A",
@@ -61,9 +65,10 @@ const light = {
   barBg: "rgba(255,255,255,0.94)",
   segActiveBg: "#FFFFFF",
   inkOnAccent: "#0B0B0F",
-  purple: "#6A55F2", // brand violet, darkened for white-bg contrast
-  purpleDark: "#5B4BF5",
-  purpleSoft: "rgba(106,85,242,0.12)",
+  // ⚠️ token names kept for compatibility — these are the PINK tint now
+  purple: "#DB2E6E", // logo pink, deepened for white-bg contrast
+  purpleDark: "#C02059",
+  purpleSoft: "rgba(219,46,110,0.11)",
   green: "#34C759",
   greenSoft: "rgba(52,199,89,0.14)",
   red: "#FF3B30",
@@ -82,10 +87,11 @@ const palette = isDark ? dark : light;
 
 export const colors = {
   ...palette,
-  /** Primary action gradient — logo pink → violet, both schemes */
-  gradient: [BRAND.pink, BRAND.violet] as [string, string],
-  /** Full logo aurora — identity surfaces, hero accents, celebratory moments */
-  gradientBrand: [BRAND.orange, BRAND.pink, "#A06AF0", BRAND.blue] as [string, string, string, string],
+  /** Primary action gradient — logo orange → pink (no violet stop), both schemes */
+  gradient: [BRAND.orange, BRAND.pink] as [string, string],
+  /** Warm brand sweep — identity accents. The full aurora lives only in the
+   *  actual logo artwork; UI gradients stay purple-free. */
+  gradientBrand: [BRAND.orange, BRAND.pink, BRAND.pinkDeep, BRAND.pink] as [string, string, string, string],
   gradientGold: ["#FFC066", BRAND.orange] as [string, string],
 };
 

@@ -10,7 +10,7 @@ export default function AdminManage() {
       <SectionTitle>People</SectionTitle>
       <Card>
         <Row icon="people-outline" iconColor="#0A84FF" title="Employees" subtitle="Directory, status & roles" onPress={() => router.push("/admin-employees")} />
-        <Row icon="git-branch-outline" iconColor="#BF5AF2" title="Teams" subtitle="Org units & members" onPress={() => router.push("/admin-teams")} />
+        <Row icon="git-branch-outline" iconColor="#F0568C" title="Teams" subtitle="Org units & members" onPress={() => router.push("/admin-teams")} />
         <Row icon="time-outline" iconColor="#FF9F0A" title="Attendance" subtitle="Team attendance records" onPress={() => router.push("/admin-attendance")} />
         <Row icon="cash-outline" iconColor="#30D158" title="Salary Slips" subtitle="Review & approve payslips" onPress={() => router.push("/admin-salary-slips")} />
       </Card>
@@ -30,7 +30,7 @@ export default function AdminManage() {
       <Card>
         <Row icon="flame-outline" iconColor="#FF9F0A" title="Top Links" subtitle="Best performing posts per platform" onPress={() => router.push("/admin-top-links")} />
         <Row icon="search-outline" iconColor="#8E8E93" title="Link Search" subtitle="Find posts by celebrity, brand or topic" onPress={() => router.push("/admin-link-search")} />
-        <Row icon="sparkles-outline" iconColor="#BF5AF2" title="AI Assistant" subtitle="Draft, summarize, plan — powered by Claude" onPress={() => router.push("/admin-ai")} />
+        <Row icon="sparkles-outline" iconColor="#F0568C" title="AI Assistant" subtitle="Draft, summarize, plan — powered by Claude" onPress={() => router.push("/admin-ai")} />
       </Card>
 
       <SectionTitle>Clients & Delivery</SectionTitle>

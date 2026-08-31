@@ -43,7 +43,7 @@ export default function MoreScreen() {
         <Row icon="sunny-outline" iconColor="#FF9F0A" title="Holidays" subtitle="Company holiday calendar" onPress={() => router.push("/holidays")} />
         <Row icon="calendar-number-outline" iconColor="#FF453A" title="Calendar" subtitle="Month view — holidays & your leaves" onPress={() => router.push("/calendar")} />
         <Row icon="documents-outline" iconColor="#64D2FF" title="Report History" subtitle="Your past daily reports" onPress={() => router.push("/history")} />
-        <Row icon="clipboard-outline" iconColor="#BF5AF2" title="Plan of Action" subtitle="Today's POA + past plans" onPress={() => router.push("/plan")} />
+        <Row icon="clipboard-outline" iconColor="#F0568C" title="Plan of Action" subtitle="Today's POA + past plans" onPress={() => router.push("/plan")} />
       </Card>
 
       <SectionTitle>Requests & Claims</SectionTitle>
@@ -59,7 +59,7 @@ export default function MoreScreen() {
         <Row icon="folder-open-outline" iconColor="#64D2FF" title="My Documents" subtitle="Uploaded documents & review status" onPress={() => router.push("/documents")} />
         <Row icon="mail-open-outline" iconColor="#0A84FF" title="Offer Letters" subtitle="Offer & appointment letters" onPress={() => router.push("/offer-letters")} />
         <Row icon="document-lock-outline" iconColor="#8E8E93" title="Employment Contract" subtitle="View & digitally agree" onPress={() => router.push("/contract")} />
-        <Row icon="easel-outline" iconColor="#BF5AF2" title="Presentations" subtitle="Your saved decks" onPress={() => router.push("/presentations")} />
+        <Row icon="easel-outline" iconColor="#F0568C" title="Presentations" subtitle="Your saved decks" onPress={() => router.push("/presentations")} />
         <Row icon="calendar-outline" iconColor="#FF453A" title="Joining Date" subtitle="Set & track approval" onPress={() => router.push("/joining-date")} />
       </Card>
 
@@ -68,7 +68,7 @@ export default function MoreScreen() {
         <Row icon="notifications-outline" iconColor="#FF453A" title="Notifications" onPress={() => router.push("/notifications")} />
         <Row icon="megaphone-outline" iconColor="#FF9F0A" title="Complaints" subtitle="Raise a workplace concern" onPress={() => router.push("/complaints")} />
         <Row icon="bug-outline" iconColor="#FF453A" title="Report a Bug" subtitle="Something broken in the portal?" onPress={() => router.push("/bug-report")} />
-        <Row icon="book-outline" iconColor="#BF5AF2" title="SOP" subtitle="Standard Operating Procedure" onPress={() => router.push("/sop")} />
+        <Row icon="book-outline" iconColor="#F0568C" title="SOP" subtitle="Standard Operating Procedure" onPress={() => router.push("/sop")} />
         <Row icon="business-outline" iconColor="#8E8E93" title="Company" subtitle="About Dashmani Media" onPress={() => router.push("/company")} />
         <Row icon="key-outline" iconColor="#8E8E93" title="Change Password" onPress={() => router.push("/change-password")} />
         <Row

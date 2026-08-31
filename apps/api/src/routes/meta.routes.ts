@@ -472,15 +472,42 @@ router.get(
     // the back door — including the display-string staircases where the scraper
     // was reading Facebook's rounded "14M" text.
     //
-    // ⚠️ AND IT RETURNS NULL, NEVER 0, WHEN THERE IS NO HISTORY SPANNING THE
-    // WINDOW. API follower history begins 2026-08-24, so today the only snapshot
-    // is today's — and "current minus current" is 0. Rendering that 0 would
-    // assert "this channel did not grow in 28 days", which we do not know. The
-    // baseline must be from a date strictly BEFORE today for a delta to exist;
-    // otherwise it is absent and shows as a dash. This activates on its own:
-    // 24h tomorrow, 7d in a week, 28d in four weeks.
+    // ⚠️ AND IT RETURNS NULL, NEVER 0, WHEN THERE IS NO USABLE BASELINE. API
+    // follower history begins 2026-08-24 for most channels, so at first the only
+    // snapshot was today's — and "current minus current" is 0. Rendering that 0
+    // would assert "this channel did not grow in 28 days", which we do not know.
+    // The baseline must be from a date strictly BEFORE today for a delta to
+    // exist; otherwise it is absent and shows as a dash.
+    //
+    // ⚠️ THE BASELINE STILL NEED NOT REACH THE WINDOW START, AND THAT USED TO BE
+    // REPORTED AS IF IT DID. An earlier version of this comment promised the
+    // delta would "activate on its own — 24h tomorrow, 7d in a week, 28d in four
+    // weeks", implying a figure appears only once history spans the window. The
+    // code never enforced that: it takes the earliest snapshot INSIDE the window
+    // and requires only that it precede today, so a channel with 5 days of
+    // history produced a 5-day change that the UI labelled "· 28d". Rather than
+    // suppress those (71% of the 28-day column on prod), the real span is now
+    // reported as followerDeltaDays and the UI labels each row with it.
     const windowDays = window === "day" ? 1 : window === "week" ? 7 : 28;
     const followerDelta = new Map<string, number>();
+    /**
+     * How many days the delta above ACTUALLY covers.
+     *
+     * ⚠️ IT IS OFTEN NOT `windowDays`, AND LABELLING IT AS SUCH IS A LIE THE PAGE
+     * WAS TELLING. The baseline is the earliest snapshot inside the window, and the
+     * only guard is "it must precede today" — nothing requires it to sit at the
+     * window START. API follower history began 2026-08-24 for most channels (only
+     * the 53 backfilled Facebook Pages reach further), so measured on prod
+     * 2026-08-31: at the 28-day window 105 of 148 channels had a baseline spanning
+     * as little as 5 days, every one of them rendered "· 28d". That systematically
+     * UNDERSTATES growth while looking authoritative.
+     *
+     * Reporting the true span lets the UI label it honestly and keeps the figure,
+     * which is better than the documented alternative of suppressing it (that would
+     * blank 71% of the 28-day column until history accrues). Where the platform's
+     * own accounting figure is used instead, the span IS exactly the window.
+     */
+    const followerDeltaDays = new Map<string, number>();
     const accountIds = rows.map((r) => r.socialAccountId).filter((x): x is string => x !== null);
     if (accountIds.length > 0) {
       const since = new Date(Date.now() - windowDays * 86_400_000);
@@ -500,19 +527,55 @@ router.get(
           baseline.set(sn.accountId, { date: sn.date, followers: sn.followerCount });
         }
       }
-      // ⚠️ A channel row can be claimed by two different Pages that share a name
-      // (three such collisions on prod). Its follower history belongs to ONE of
-      // them, so only that one gets a delta — otherwise the 5.2m "The Candid
-      // Couch" Page would display a change computed from the 132k Page's history.
+      // ⚠️⚠️ A CONTESTED CHANNEL ROW GETS NO SNAPSHOT-MEASURED DELTA AT ALL —
+      // NOT EVEN FOR THE OWNING ASSET. This is stricter than it used to be, and
+      // the extra strictness is load-bearing.
+      //
+      // Two different Pages can share a name, so discovery links both to ONE
+      // social_accounts row (16 such rows on prod as of 2026-08-31, up from the
+      // 3 first recorded). resolveContestedOwners() picks one owner so only it
+      // writes the follower count back — but the SNAPSHOT SERIES IS KEYED ON THE
+      // CHANNEL ROW, is shared by both Pages, and predates that rule. It also has
+      // a second writer that never respected it: follower-sync's Facebook map is
+      // keyed by page NAME, so for two same-named Pages it resolves to whichever
+      // one won the map build and writes that number under source:"api".
+      //
+      // The result is a series that SWITCHES PAGES MID-HISTORY. Measured on prod
+      // for "The Candid Couch": 5,235,935 … 5,234,930 through 2026-08-26, then
+      // 131,886 … 131,830 from 2026-08-27 on.
+      //
+      // The delta then subtracts one Page's history from the OTHER Page's current
+      // count — r.followerCount is per-ASSET (5,233,880, the owner) while the
+      // baseline is per-CHANNEL-ROW (131,842) — and reports
+      // +5,102,038 as 24h growth. That is the single largest "gain" on the page
+      // and it never happened.
+      //
+      // ⚠️ THIS IS INVISIBLE TO A QUERY THAT ONLY DIFFS THE SNAPSHOT SERIES: those
+      // rows move by ~12/day. The fabrication is created by MIXING the two
+      // sources, so you only see it by computing the delta the way this route
+      // does. Measured split at 24h: 16 contested rows contributed +5,100,699
+      // while the 148 clean rows moved +11,269 in total.
+      //
+      // A shared history cannot be attributed, so no number derived from it is
+      // trustworthy for EITHER Page. Suppressing it falls through to the
+      // platform's own per-ASSET accounting below (win(r).followerDelta), which
+      // is immune because it is not keyed on the channel row — and where that is
+      // absent the row renders an em-dash. An honest blank beats a confident
+      // 5.1m fiction.
       const owners = await resolveContestedOwners();
       for (const r of rows) {
         if (!r.socialAccountId || r.followerCount === null) continue;
-        const owner = owners.get(r.socialAccountId);
-        if (owner !== undefined && owner !== r.id) continue;
+        // owners only contains accounts claimed by >=2 live assets, so .has()
+        // IS the "this channel row is contested" test.
+        if (owners.has(r.socialAccountId)) continue;
         const b = baseline.get(r.socialAccountId);
         // Same-day baseline ⇒ no span ⇒ no delta (see the note above).
         if (!b || b.date.getTime() >= todayKey.getTime()) continue;
         followerDelta.set(r.id, r.followerCount - b.followers);
+        followerDeltaDays.set(
+          r.id,
+          Math.max(1, Math.round((todayKey.getTime() - b.date.getTime()) / 86_400_000)),
+        );
       }
     }
 
@@ -616,6 +679,14 @@ router.get(
           followerDelta: followerDelta.has(r.id)
             ? followerDelta.get(r.id)!
             : (win(r)?.followerDelta ?? null),
+          /**
+           * The span the delta above really covers, in days — so the UI can label
+           * it truthfully instead of asserting the selected window. Null whenever
+           * followerDelta is null. The accounting fallback is exactly windowed.
+           */
+          followerDeltaDays: followerDelta.has(r.id)
+            ? (followerDeltaDays.get(r.id) ?? null)
+            : (win(r)?.followerDelta != null ? windowDays : null),
           /** Approximate earnings for the window, in cents. Facebook only. */
           earningsCents: win(r)?.earningsCents ?? null,
           /** Gross churn behind the net follower change. Both platforms. */
@@ -639,7 +710,12 @@ router.get(
           metricsFetchedAt: win(r)?.fetchedAt
             ? win(r)!.fetchedAt!.toISOString()
             : r.metricsFetchedAt ? r.metricsFetchedAt.toISOString() : null,
-          metricsError: win(r)?.error ?? r.metricsError,
+          // ⚠️ Ternary, NOT `??`. A HEALTHY window row has error: null, and `??`
+          // falls through null — so the asset-level error (stamped when the
+          // days_28 fetch failed) used to paint a warning on the 7d/24h views
+          // whose own rows were fine. The asset-level error is a fallback for
+          // "no row for this window at all", nothing more.
+          metricsError: win(r) ? win(r).error : r.metricsError,
           selected: r.selected,
           linkedToChannel: r.socialAccountId !== null,
           storedPosts: r._count.posts,

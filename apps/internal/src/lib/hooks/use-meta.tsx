@@ -169,6 +169,10 @@ export interface MetaChannel {
   followers: number | null;
   /** Follower change across the selected period. null = no API history spans it yet. */
   followerDelta: number | null;
+  /** Days the followerDelta actually spans — often SHORTER than the selected
+   *  window, because API follower history only reaches back so far. Label the
+   *  chip from THIS, never from the window. */
+  followerDeltaDays?: number | null;
   /** Approximate earnings for the period, in cents. Facebook only; Instagram has no such metric. */
   earningsCents: number | null;
   /** Gross churn behind the net follower change. Both platforms. */

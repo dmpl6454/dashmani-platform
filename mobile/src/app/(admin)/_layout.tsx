@@ -5,20 +5,20 @@ import { useAuth } from "@/lib/auth";
 import { colors } from "@/lib/theme";
 import { Loading } from "@/components/ui";
 
-export default function TabsLayout() {
+export default function AdminTabsLayout() {
   const { user, mode, loading } = useAuth();
   const router = useRouter();
 
   useEffect(() => {
     if (loading) return;
     if (!user) {
-      router.replace("/login");
-    } else if (mode === "admin") {
-      router.replace("/(admin)");
+      router.replace("/login?mode=admin");
+    } else if (mode === "hr") {
+      router.replace("/(tabs)");
     }
   }, [loading, user, mode]);
 
-  if (loading || !user || mode === "admin") return <Loading />;
+  if (loading || !user || mode === "hr") return <Loading />;
 
   return (
     <Tabs
@@ -35,29 +35,29 @@ export default function TabsLayout() {
       <Tabs.Screen
         name="index"
         options={{
-          title: "Home",
-          tabBarIcon: ({ color, size }) => <Ionicons name="home" size={size} color={color} />,
+          title: "Dashboard",
+          tabBarIcon: ({ color, size }) => <Ionicons name="speedometer" size={size} color={color} />,
         }}
       />
       <Tabs.Screen
-        name="report"
+        name="reports"
         options={{
-          title: "Daily Report",
-          tabBarIcon: ({ color, size }) => <Ionicons name="link" size={size} color={color} />,
+          title: "Reports",
+          tabBarIcon: ({ color, size }) => <Ionicons name="bar-chart" size={size} color={color} />,
         }}
       />
       <Tabs.Screen
-        name="tasks"
+        name="approvals"
         options={{
-          title: "Tasks",
-          tabBarIcon: ({ color, size }) => <Ionicons name="checkbox" size={size} color={color} />,
+          title: "Approvals",
+          tabBarIcon: ({ color, size }) => <Ionicons name="checkmark-done" size={size} color={color} />,
         }}
       />
       <Tabs.Screen
-        name="leave"
+        name="manage"
         options={{
-          title: "Leave",
-          tabBarIcon: ({ color, size }) => <Ionicons name="calendar" size={size} color={color} />,
+          title: "Manage",
+          tabBarIcon: ({ color, size }) => <Ionicons name="albums" size={size} color={color} />,
         }}
       />
       <Tabs.Screen

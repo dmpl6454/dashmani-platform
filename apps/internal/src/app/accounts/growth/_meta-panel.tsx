@@ -13,9 +13,10 @@
  * for missing data or a real zero.
  */
 
-import { Fragment, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import {
   RefreshCw, Link2, Unlink, AlertTriangle, ExternalLink, Loader2, ChevronDown, ChevronRight,
+  Eye, EyeOff, Download,
 } from "lucide-react";
 import {
   useMetaConnections, useMetaChannels, useMetaPosts,
@@ -24,6 +25,28 @@ import {
 } from "@/lib/hooks/use-meta";
 
 type SortKey = "followers" | "views" | "engagements" | "name";
+
+/** Per-browser preference for masking revenue while presenting. */
+const REVENUE_HIDDEN_KEY = "meta-growth:hide-revenue";
+
+/**
+ * One CSV field, RFC-4180 quoted and guarded against formula injection.
+ *
+ * ⚠️ The leading-apostrophe guard is not cosmetic: a channel literally named
+ * "=WEBSERVICE(...)" would otherwise EXECUTE when the file is opened in Excel or
+ * Sheets. Channel names are attacker-influenced in the sense that we do not
+ * control them — Meta does. Mirrors csvCell in report-links-csv.service.ts.
+ */
+function csvCell(v: unknown): string {
+  let str = v == null ? "" : String(v);
+  if (/^[=+\-@\t\r]/.test(str)) str = "'" + str;
+  return /[",\n\r]/.test(str) ? `"${str.replace(/"/g, '""')}"` : str;
+}
+
+/** Money as a plain decimal for spreadsheets — never "$1.2k", which cannot be summed. */
+function csvMoney(cents: number | null | undefined): string {
+  return cents === null || cents === undefined ? "" : (cents / 100).toFixed(2);
+}
 
 function StatusChip({ status, daysLeft }: { status: string; daysLeft: number | null }) {
   const map: Record<string, { cls: string; label: string; title: string }> = {
@@ -292,6 +315,77 @@ export function MetaPanel() {
   const [err, setErr] = useState<string | null>(null);
   const [showBackups, setShowBackups] = useState(false);
   const [win, setWin] = useState<ChannelWindowKey>("days_28");
+  const [earningOnly, setEarningOnly] = useState(false);
+  // Revenue is the one figure someone may not want on screen while presenting or
+  // screen-sharing. Remembered per browser so it does not reset on every visit —
+  // ⚠️ wrapped in try/catch because localStorage throws outright in some contexts
+  // (private windows, blocked site data), and a preference must never break the page.
+  const [hideRevenue, setHideRevenue] = useState(false);
+  useEffect(() => {
+    try {
+      setHideRevenue(window.localStorage.getItem(REVENUE_HIDDEN_KEY) === "1");
+    } catch { /* no stored preference is a perfectly good default */ }
+  }, []);
+  /**
+   * Download the table as CSV.
+   *
+   * ⚠️ Built from `channels` — the SAME array the table renders — so it inherently
+   * matches whatever the viewer is looking at: period, platform, search, sort and
+   * the earning-only filter, with no second code path that could drift out of step
+   * with the display. The alternative (a server export re-deriving the query) is
+   * exactly how an export starts disagreeing with the screen.
+   *
+   * Revenue is always included even when hidden on screen: hiding is a
+   * presentation choice for the room, not a redaction of the file the user asked
+   * for. The filename records the period and the active filters so a downloaded
+   * file is still self-describing a month later.
+   */
+  const downloadCsv = () => {
+    const header = [
+      "Channel", "Handle", "Platform", "Followers", `Follower change (${sfx})`,
+      `Views (${sfx})`, `Engagements (${sfx})`, `Reach (${sfx})`, `Revenue USD (${sfx})`,
+      "Profile views", "Posts", `New follows (${sfx})`, `Unfollows (${sfx})`,
+      `Saves (${sfx})`, `Shares (${sfx})`, `Accounts engaged (${sfx})`,
+      "Data through",
+    ];
+    const rows = channels.map((c) => [
+      c.name, c.username ? `@${c.username}` : "", c.platform,
+      c.followers ?? "", c.followerDelta ?? "",
+      c.views28d ?? "", c.engagements28d ?? "", c.reach28d ?? "", csvMoney(c.earningsCents),
+      c.profileViews28d ?? "", c.posts ?? "",
+      c.follows ?? "", c.unfollows ?? "",
+      c.saves ?? "", c.shares ?? "", c.accountsEngaged ?? "",
+      ch?.dataThrough ? new Date(ch.dataThrough).toISOString().slice(0, 10) : "",
+    ]);
+
+    // \uFEFF so Excel opens UTF-8 correctly — without it channel names with
+    // non-Latin characters render as mojibake.
+    const csv = "\uFEFF" + [header, ...rows].map((r) => r.map(csvCell).join(",")).join("\r\n");
+    const parts = [
+      "meta-channels", sfx,
+      platform !== "all" ? platform : null,
+      earningOnly ? "earning-only" : null,
+      q.trim() ? "search" : null,
+      new Date().toISOString().slice(0, 10),
+    ].filter(Boolean);
+
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8;" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${parts.join("-")}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const toggleRevenue = () => {
+    setHideRevenue((prev) => {
+      const next = !prev;
+      try { window.localStorage.setItem(REVENUE_HIDDEN_KEY, next ? "1" : "0"); } catch { /* ignore */ }
+      return next;
+    });
+  };
 
   const { data: ch, mutate: mutateCh } = useMetaChannels({
     platform: platform === "all" ? undefined : platform,
@@ -314,7 +408,13 @@ export function MetaPanel() {
   const primaryConn = live.find((c) => c.primary) ?? live[0] ?? null;
   const backupConns = live.filter((c) => c.id !== primaryConn?.id);
   const configured = conns?.configured ?? false;
-  const channels = ch?.items ?? [];
+  const allChannels = ch?.items ?? [];
+  // ⚠️ `> 0`, not `!= null`. A channel Meta reports as earning exactly $0 is NOT
+  // "making revenue", and null means Instagram (no earnings metric at all) — both
+  // must fall out of this filter or it answers a different question than its label.
+  const channels = earningOnly
+    ? allChannels.filter((c) => (c.earningsCents ?? 0) > 0)
+    : allChannels;
 
   async function connect(mode: "connect" | "reconnect", connectionId?: string) {
     setErr(null); setBusy("connect");
@@ -438,7 +538,11 @@ export function MetaPanel() {
           ].map((s) => (
             <div key={s.label} className="min-w-0">
               <p className="font-num text-xl font-semibold text-[#1A1A1A] truncate">
-                {s.raw ? s.value.toLocaleString() : "money" in s && s.money ? fmtMoney(s.value) : fmtMetric(s.value)}
+                {s.raw
+                  ? s.value.toLocaleString()
+                  : "money" in s && s.money
+                    ? (hideRevenue ? "•••••" : fmtMoney(s.value))
+                    : fmtMetric(s.value)}
               </p>
               <p className="text-xs text-[#7A7A7A]">{s.label}</p>
               {/* Say what a total does NOT cover, rather than implying completeness. */}
@@ -488,7 +592,44 @@ export function MetaPanel() {
             <option value="engagements">Sort: Engagements</option>
             <option value="name">Sort: Name</option>
           </select>
-          <span className="text-[11px] text-[#B0B0B0] ml-auto">{channels.length} channel(s)</span>
+          <button
+            onClick={() => setEarningOnly((v) => !v)}
+            aria-pressed={earningOnly}
+            title="Show only channels Meta reports earnings above zero for. Instagram has no earnings metric, so this is Facebook only."
+            className={`text-[11px] rounded-full px-2.5 py-1 border ${
+              earningOnly
+                ? "bg-[#1A1A1A] text-white border-[#1A1A1A]"
+                : "border-[#DCDCDC] text-[#7A7A7A] hover:bg-[#FAFAFA]"}`}
+          >
+            Earning only
+          </button>
+
+          <button
+            onClick={toggleRevenue}
+            aria-pressed={hideRevenue}
+            title={hideRevenue ? "Show revenue figures" : "Hide revenue figures — useful when screen-sharing. Remembered on this browser."}
+            className="inline-flex items-center gap-1 text-[11px] rounded-full px-2.5 py-1 border border-[#DCDCDC] text-[#7A7A7A] hover:bg-[#FAFAFA]"
+          >
+            {hideRevenue ? <Eye className="h-3 w-3" /> : <EyeOff className="h-3 w-3" />}
+            {hideRevenue ? "Show revenue" : "Hide revenue"}
+          </button>
+
+          <button
+            onClick={downloadCsv}
+            disabled={channels.length === 0}
+            title="Download exactly what is shown — same period, platform, search, sort and filters."
+            className="inline-flex items-center gap-1 text-[11px] rounded-full px-2.5 py-1 border border-[#DCDCDC] text-[#7A7A7A] hover:bg-[#FAFAFA] disabled:opacity-40"
+          >
+            <Download className="h-3 w-3" />
+            CSV
+          </button>
+
+          <span className="text-[11px] text-[#B0B0B0] ml-auto">
+            {channels.length} channel(s)
+            {earningOnly && allChannels.length !== channels.length && (
+              <span className="text-[#B0B0B0]"> of {allChannels.length}</span>
+            )}
+          </span>
         </div>
       )}
 
@@ -562,7 +703,9 @@ export function MetaPanel() {
                         <td className="px-2 py-2 text-right text-xs">{fmtMetric(c.views28d)}</td>
                         <td className="px-2 py-2 text-right text-xs">{fmtMetric(c.engagements28d)}</td>
                         <td className="px-2 py-2 text-right text-xs">{fmtMetric(c.reach28d)}</td>
-                        <td className="px-2 py-2 text-right text-xs">{fmtMoney(c.earningsCents)}</td>
+                        <td className="px-2 py-2 text-right text-xs">
+                          {hideRevenue ? <span className="text-[#B0B0B0]">•••</span> : fmtMoney(c.earningsCents)}
+                        </td>
                         <td className="px-2 py-2 text-right text-xs">{fmtMetric(c.profileViews28d)}</td>
                         <td className="px-5 py-2 text-right text-xs text-[#7A7A7A]">{fmtMetric(c.posts)}</td>
                       </tr>

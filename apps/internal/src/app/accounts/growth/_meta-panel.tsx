@@ -432,6 +432,7 @@ export function MetaPanel() {
     ? allChannels.filter((c) => (c.earningsCents ?? 0) > 0)
     : allChannels;
 
+
   async function connect(mode: "connect" | "reconnect", connectionId?: string) {
     setErr(null); setBusy("connect");
     try {
@@ -551,7 +552,25 @@ export function MetaPanel() {
         <div className="px-5 py-5 grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 gap-x-4 gap-y-5 border-b border-[#F0EAE0]">
           {[
             { label: "Channels", value: ch!.channelCount, raw: true, note: null as string | null },
-            { label: "Followers", value: t.followers, raw: false, note: null },
+            // ⚠️ THE ONE TILE THAT DOES NOT MOVE WITH THE PERIOD, AND THAT IS CORRECT.
+            // Followers is a STOCK ("how many right now"), not a flow, so it is
+            // window-invariant BY CONSTRUCTION — the total is SUM(follower_count),
+            // a column with no window dimension. Reported as "faulty data" three
+            // times now, so the label, the tooltip and the note all say so
+            // explicitly rather than leaving the reader to infer it.
+            //
+            // ⚠️ DO NOT "FIX" THIS BY SUMMING THE PER-PERIOD FOLLOWER DELTA HERE.
+            // That was tried and measured against prod: the sum is dominated by
+            // artefacts, not growth. Contested channel rows contributed
+            // +5,100,699 of a +5,113,403 24h "gain" (now suppressed in the route),
+            // and what survives still mixes snapshot-measured Facebook deltas with
+            // Instagram's accounting figure and inherits manual->API correction
+            // seams. A single headline number cannot be honest about that mixture.
+            // The per-channel change belongs in the table, where each figure keeps
+            // its own provenance.
+            { label: "Followers (now)", value: t.followers, raw: false,
+              title: "A live total, not a period figure — how many followers these channels have right now, so it reads the same on 24h, 7d and 28d by design. The period filter drives Views, Engagements, Reach and Revenue; each channel's change across the period is in the table below.",
+              note: "same on every period — per-channel change is in the table" },
             { label: `Views · ${sfx}`, value: t.views, raw: false,
               note: contrib && contrib.views < ch!.channelCount ? `${contrib.views}/${ch!.channelCount} channels reporting` : null },
             { label: `Engagements · ${sfx}`, value: t.engagements, raw: false,
@@ -561,6 +580,14 @@ export function MetaPanel() {
           ].map((s) => (
             <div
               key={s.label}
+              // ⚠️ Read s.title DIRECTLY — do NOT wrap it in `"title" in s`.
+              // TypeScript normalises an array literal of object literals by
+              // adding each missing key to the other members as optional, so
+              // s.title is already safe to read. An `in` guard instead narrows the
+              // key to `unknown`, which makes a MISSPELLING compile silently —
+              // trading the one piece of compile-time protection this
+              // heterogeneous literal has for nothing.
+              title={s.title}
               // A hairline between tiles reads as deliberate structure rather than
               // items that happen to sit near each other. Only at `lg`, where all
               // five are guaranteed to share one row — at narrower widths the grid
@@ -721,8 +748,25 @@ export function MetaPanel() {
                             </span>
                             <span className="text-xs font-medium text-[#1A1A1A] truncate max-w-[220px]">{c.name}</span>
                             {c.username && <span className="text-[10px] text-[#B0B0B0] truncate">@{c.username}</span>}
+                            {/* The mark means "the LATEST refresh attempt failed" — any
+                                figures shown are the last successful fetch, which the sync
+                                deliberately keeps (upsertWindowMetric writes only
+                                {fetchedAt, error} on failure, so prior values survive). Say
+                                that, or the triangle reads as "this row's data is wrong",
+                                which is the opposite of what it means.
+                                ⚠️ It must NOT promise the problem will clear itself. Most of
+                                these are Meta's transient (#2), which the sync now retries and
+                                which does clear — but a permission failure (the connected
+                                account lost admin rights on the Page) is permanent and no
+                                number of retries fixes it. Telling that reader "it retries
+                                automatically" would send them away from the one action that
+                                actually resolves it. So: state the re-attempt, and say what
+                                PERSISTENCE means. True in both cases, and true for a window
+                                that has never once succeeded — hence "any figures shown". */}
                             {c.metricsError && (
-                              <span title={c.metricsError}><AlertTriangle className="h-3 w-3 text-[#C2861D] shrink-0" /></span>
+                              <span title={`This channel's most recent ${sfx} refresh failed, so any figures shown are from the last successful sync. The next sync re-attempts it (roughly every 3 hours); if the mark persists across syncs, the connected Meta account has most likely lost admin access to this channel and someone needs to restore it. Meta's reply: ${c.metricsError}`}>
+                                <AlertTriangle className="h-3 w-3 text-[#C2861D] shrink-0" />
+                              </span>
                             )}
                           </div>
                         </td>
@@ -738,7 +782,19 @@ export function MetaPanel() {
                                 : c.followerDelta < 0 ? "text-[#C0504D]"
                                 : "text-[#B0B0B0]"}`}
                             >
-                              {c.followerDelta > 0 ? "+" : ""}{fmtMetric(c.followerDelta)} · {sfx}
+                              {/* ⚠️ Labelled from the delta's OWN span, not from the
+                                  selected window. Most channels' API follower history
+                                  starts later than a 28-day window reaches, so this
+                                  row may genuinely be a 5-day change — saying "28d"
+                                  would understate growth while sounding authoritative.
+                                  Falls back to the window only if the API omits the
+                                  span (an older response). */}
+                              {c.followerDelta > 0 ? "+" : ""}{fmtMetric(c.followerDelta)} ·{" "}
+                              {c.followerDeltaDays == null
+                                ? sfx
+                                : c.followerDeltaDays === 1
+                                  ? "24h"
+                                  : `${c.followerDeltaDays}d`}
                             </span>
                           )}
                         </td>

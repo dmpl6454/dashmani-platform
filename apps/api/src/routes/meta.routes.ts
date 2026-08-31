@@ -573,9 +573,15 @@ router.get(
         prevRowDays += t.coveredDays;
         prevAssets++;
       }
+      // ⚠️ `assets` is part of the honesty contract: coverageShare only says the
+      // baseline's OWN days are complete — it cannot see that the baseline might
+      // cover 2 channels while the current range covers 400 (exactly the state a
+      // partial backfill produces). The client hides the chip unless the
+      // baseline's asset count is ~the current range's contributing count.
       const previousTotals = prevAssets > 0
         ? { views: prevViews, engagements: prevEng, earningsCents: prevEarn,
             coverageShare: Math.min(1, prevRowDays / (prevAssets * span)),
+            assets: prevAssets,
             start: prev.start, end: prev.end }
         : null;
 
@@ -808,7 +814,7 @@ router.get(
     // The UI additionally hides them below ~95% baseline coverage, because a
     // percentage computed against a half-covered baseline fabricates growth.
     let previousTotals:
-      | { views: number; engagements: number; earningsCents: number; coverageShare: number; start: string; end: string }
+      | { views: number; engagements: number; earningsCents: number; coverageShare: number; assets: number; start: string; end: string }
       | null = null;
     try {
       const todayMs = Date.parse(new Date().toISOString().slice(0, 10) + "T00:00:00Z");
@@ -828,6 +834,7 @@ router.get(
         previousTotals = {
           views: v, engagements: e, earningsCents: c,
           coverageShare: Math.min(1, rowDays / (assets * windowDays)),
+          assets,
           start: prev.start, end: prev.end,
         };
       }

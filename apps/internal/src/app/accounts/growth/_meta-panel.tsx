@@ -516,7 +516,7 @@ export function MetaPanel() {
     : windowSuffix((ch?.window as ChannelWindowKey | undefined) ?? win);
   const periodDays = isRangeMode
     ? (ch?.range?.days ?? null)
-    : ch?.window === "day" ? 1 : ch?.window === "week" ? 7 : 28;
+    : ch?.window === "day" || ch?.window === "today" ? 1 : ch?.window === "week" ? 7 : 28;
 
   const connections = conns?.connections ?? [];
   const live = connections.filter((c) => c.status !== "REVOKED");
@@ -1258,8 +1258,12 @@ export function MetaPanel() {
             </>
           )}
           Click a channel to see its recent posts.{" "}
-          <strong className="font-medium text-[#7A7A7A]">Periods:</strong> Yesterday / 7d / 28d
-          are Meta&apos;s own live windows (the only ones it measures directly). Months and
+          <strong className="font-medium text-[#7A7A7A]">Periods:</strong>{" "}
+          <strong className="font-medium text-[#7A7A7A]">Today (so far)</strong> is
+          Instagram-only and refreshed every few hours — Facebook&apos;s API publishes only
+          completed days, so its cells show dashes there and its today appears tomorrow
+          under Yesterday. Yesterday / 7d / 28d are Meta&apos;s own live windows (the only
+          ones it measures directly). Months and
           custom ranges are exact sums of stored per-day history — precise for views,
           engagements, profile views and revenue, which add up day by day. Reach is the
           exception on those: it counts unique people, days cannot be added without

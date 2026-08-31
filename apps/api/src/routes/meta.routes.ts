@@ -432,10 +432,17 @@ router.get(
     // unknown value falls back to the default rather than 400ing, so a stale
     // bookmark degrades to the normal view instead of an error page.
     const requested = typeof req.query.window === "string" ? req.query.window : "";
-    const window: ChannelWindow =
-      (CHANNEL_WINDOWS as readonly string[]).includes(requested)
-        ? (requested as ChannelWindow)
-        : "days_28";
+    // "today" is a synthetic window: Instagram-only partial-day figures written
+    // by the sync (see the today-so-far block in meta-channels.service.ts).
+    // Facebook has no row there BY DESIGN — its API publishes only completed
+    // days — so its cells render dashes rather than yesterday's numbers dressed
+    // up as today's.
+    const window: ChannelWindow | "today" =
+      requested === "today"
+        ? "today"
+        : (CHANNEL_WINDOWS as readonly string[]).includes(requested)
+          ? (requested as ChannelWindow)
+          : "days_28";
 
     // ── Custom range (?start=YYYY-MM-DD&end=YYYY-MM-DD) ───────────────────
     //
@@ -671,7 +678,7 @@ router.get(
     // history produced a 5-day change that the UI labelled "· 28d". Rather than
     // suppress those (71% of the 28-day column on prod), the real span is now
     // reported as followerDeltaDays and the UI labels each row with it.
-    const windowDays = window === "day" ? 1 : window === "week" ? 7 : 28;
+    const windowDays = window === "day" || window === "today" ? 1 : window === "week" ? 7 : 28;
     const followerDelta = new Map<string, number>();
     /**
      * How many days the delta above ACTUALLY covers.
@@ -817,6 +824,9 @@ router.get(
       | { views: number; engagements: number; earningsCents: number; coverageShare: number; assets: number; start: string; end: string }
       | null = null;
     try {
+      // ⚠️ No trend baseline for "today": comparing a partial day against any
+      // complete prior day fabricates a decline that is really just the clock.
+      if (window === "today") throw new Error("skip");
       const todayMs = Date.parse(new Date().toISOString().slice(0, 10) + "T00:00:00Z");
       const curEnd = new Date(todayMs - 86_400_000).toISOString().slice(0, 10);
       const curStart = new Date(todayMs - windowDays * 86_400_000).toISOString().slice(0, 10);
@@ -932,7 +942,11 @@ router.get(
           // days_28 fetch failed) used to paint a warning on the 7d/24h views
           // whose own rows were fine. The asset-level error is a fallback for
           // "no row for this window at all", nothing more.
-          metricsError: win(r) ? win(r).error : r.metricsError,
+          // ⚠️ And NO fallback at all in today mode: Facebook legitimately has
+          // no today row (its API publishes only completed days), and painting
+          // the default-window error on every FB row here would mark 369
+          // healthy channels.
+          metricsError: win(r) ? win(r).error : window === "today" ? null : r.metricsError,
           selected: r.selected,
           linkedToChannel: r.socialAccountId !== null,
           storedPosts: r._count.posts,

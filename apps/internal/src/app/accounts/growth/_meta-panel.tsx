@@ -29,17 +29,25 @@ type SortKey = "followers" | "views" | "engagements" | "name";
 /** Per-browser preference for masking revenue while presenting. */
 const REVENUE_HIDDEN_KEY = "meta-growth:hide-revenue";
 
+/** A plain signed integer or decimal — the only shape a spreadsheet must read as a number. */
+const NUMERIC = /^-?\d+(\.\d+)?$/;
+
 /**
  * One CSV field, RFC-4180 quoted and guarded against formula injection.
  *
  * ⚠️ The leading-apostrophe guard is not cosmetic: a channel literally named
- * "=WEBSERVICE(...)" would otherwise EXECUTE when the file is opened in Excel or
- * Sheets. Channel names are attacker-influenced in the sense that we do not
- * control them — Meta does. Mirrors csvCell in report-links-csv.service.ts.
+ * "=WEBSERVICE(...)" would EXECUTE when the file is opened in Excel or Sheets, and
+ * we do not control channel names — Meta does.
+ *
+ * ⚠️ BUT IT MUST NOT TOUCH NUMBERS, and the first version did. `-` is a formula
+ * trigger, so every NEGATIVE follower change came out as `'-3273`: text, not a
+ * number. It could not be summed, sorted or charted, and the apostrophe was
+ * visible in the sheet. A number can never be a formula, so numerics are written
+ * bare and only genuine text is guarded.
  */
 function csvCell(v: unknown): string {
   let str = v == null ? "" : String(v);
-  if (/^[=+\-@\t\r]/.test(str)) str = "'" + str;
+  if (!NUMERIC.test(str) && /^[=+\-@\t\r]/.test(str)) str = "'" + str;
   return /[",\n\r]/.test(str) ? `"${str.replace(/"/g, '""')}"` : str;
 }
 
@@ -342,14 +350,22 @@ export function MetaPanel() {
    */
   const downloadCsv = () => {
     const header = [
-      "Channel", "Handle", "Platform", "Followers", `Follower change (${sfx})`,
+      "Channel", "Handle", "Platform", "Followers",
+      // ⚠️ Spell out the convention. A bare signed number is right for a
+      // spreadsheet (it sums and sorts), but "-3273" next to a blank next to
+      // "328717" is not self-explanatory, and the reader should not have to guess.
+      `Follower change (${sfx}) [+ gained / - lost / blank = no history yet]`,
       `Views (${sfx})`, `Engagements (${sfx})`, `Reach (${sfx})`, `Revenue USD (${sfx})`,
       "Profile views", "Posts", `New follows (${sfx})`, `Unfollows (${sfx})`,
       `Saves (${sfx})`, `Shares (${sfx})`, `Accounts engaged (${sfx})`,
       "Data through",
     ];
     const rows = channels.map((c) => [
-      c.name, c.username ? `@${c.username}` : "", c.platform,
+      // ⚠️ No leading "@". It is a formula trigger, so every handle came out as
+      // `'@name` with a visible apostrophe. Dropping it removes the trigger
+      // entirely rather than neutralising it, and a column headed "Handle" does
+      // not need the sigil to be unambiguous.
+      c.name, c.username ?? "", c.platform,
       c.followers ?? "", c.followerDelta ?? "",
       c.views28d ?? "", c.engagements28d ?? "", c.reach28d ?? "", csvMoney(c.earningsCents),
       c.profileViews28d ?? "", c.posts ?? "",

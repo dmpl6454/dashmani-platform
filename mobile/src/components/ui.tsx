@@ -260,16 +260,42 @@ export function SuccessBanner({ message }: { message: string | null }) {
 }
 
 // ---------- Stat (Health-app style: large numeral with tabular figures) ----------
-export function Stat({ label, value, accent }: { label: string; value: string | number; accent?: string }) {
-  return (
-    <View style={[styles.stat, continuous]}>
+export function Stat({
+  label,
+  value,
+  accent,
+  onPress,
+}: {
+  label: string;
+  value: string | number;
+  accent?: string;
+  onPress?: () => void;
+}) {
+  const body = (
+    <>
       <Text style={[styles.statValue, accent ? { color: accent } : null]} numberOfLines={1} adjustsFontSizeToFit>
         {value}
       </Text>
       <Text style={styles.statLabel} numberOfLines={1}>
         {label}
       </Text>
-    </View>
+    </>
+  );
+  if (onPress)
+    return (
+      <Pressable onPress={onPress} style={({ pressed }) => [styles.stat, continuous, pressed && { opacity: 0.7 }]}>
+        {body}
+      </Pressable>
+    );
+  return <View style={[styles.stat, continuous]}>{body}</View>;
+}
+
+// ---------- SeeAll (App Store-style section link) ----------
+export function SeeAll({ onPress, label = "See All" }: { onPress: () => void; label?: string }) {
+  return (
+    <Pressable onPress={onPress} hitSlop={8} style={({ pressed }) => (pressed ? { opacity: 0.6 } : null)}>
+      <Text style={{ fontSize: 13, color: colors.purple, fontWeight: "500" }}>{label}</Text>
+    </Pressable>
   );
 }
 

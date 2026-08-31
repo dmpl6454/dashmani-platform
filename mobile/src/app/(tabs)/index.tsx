@@ -6,7 +6,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import { useAuth } from "@/lib/auth";
 import { apiFetch, API_BASE, fmtDate, todayIST } from "@/lib/api";
 import { colors, radius, spacing } from "@/lib/theme";
-import { Screen, Card, SectionTitle, Stat, Empty, useApi } from "@/components/ui";
+import { Screen, Card, SectionTitle, Stat, SeeAll, Empty, useApi } from "@/components/ui";
 
 const HERO = require("../../../assets/visuals/hero-employee.jpg");
 
@@ -121,19 +121,15 @@ export default function HomeScreen() {
       {isEmployee && (
         <>
           <SectionTitle
-            right={
-              <Pressable onPress={() => router.push("/attendance")}>
-                <Text style={styles.link}>Details</Text>
-              </Pressable>
-            }
+            right={<SeeAll onPress={() => router.push("/attendance")} label="Details" />}
           >
             Attendance · This Month
           </SectionTitle>
           <View style={styles.statRow}>
-            <Stat label="Present" value={(att as any).present} accent={colors.green} />
-            <Stat label="Absent" value={(att as any).absent} accent={colors.red} />
-            <Stat label="Late" value={(att as any).late} accent={colors.amber} />
-            <Stat label="Rate" value={`${(att as any).rate}%`} accent={colors.purple} />
+            <Stat label="Present" value={(att as any).present} accent={colors.green} onPress={() => router.push("/attendance")} />
+            <Stat label="Absent" value={(att as any).absent} accent={colors.red} onPress={() => router.push("/attendance")} />
+            <Stat label="Late" value={(att as any).late} accent={colors.amber} onPress={() => router.push("/attendance")} />
+            <Stat label="Rate" value={`${(att as any).rate}%`} accent={colors.purple} onPress={() => router.push("/attendance")} />
           </View>
         </>
       )}
@@ -142,29 +138,21 @@ export default function HomeScreen() {
       {data?.leaveBalance && (
         <>
           <SectionTitle
-            right={
-              <Pressable onPress={() => router.push("/(tabs)/leave")}>
-                <Text style={styles.link}>Apply</Text>
-              </Pressable>
-            }
+            right={<SeeAll onPress={() => router.push("/(tabs)/leave")} label="Apply" />}
           >
             Leave Balance
           </SectionTitle>
           <View style={styles.statRow}>
-            <Stat label="Casual" value={data.leaveBalance.casual?.balance ?? "—"} />
-            <Stat label="Sick" value={data.leaveBalance.sick?.balance ?? "—"} />
-            <Stat label="Earned" value={data.leaveBalance.earned?.balance ?? "—"} />
+            <Stat label="Casual" value={data.leaveBalance.casual?.balance ?? "—"} onPress={() => router.push("/(tabs)/leave")} />
+            <Stat label="Sick" value={data.leaveBalance.sick?.balance ?? "—"} onPress={() => router.push("/(tabs)/leave")} />
+            <Stat label="Earned" value={data.leaveBalance.earned?.balance ?? "—"} onPress={() => router.push("/(tabs)/leave")} />
           </View>
         </>
       )}
 
       {/* Upcoming holidays */}
       <SectionTitle
-        right={
-          <Pressable onPress={() => router.push("/holidays")}>
-            <Text style={styles.link}>All</Text>
-          </Pressable>
-        }
+        right={<SeeAll onPress={() => router.push("/holidays")} label="See All" />}
       >
         Upcoming Holidays
       </SectionTitle>

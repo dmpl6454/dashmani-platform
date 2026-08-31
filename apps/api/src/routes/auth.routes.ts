@@ -13,7 +13,7 @@ const router = Router();
 
 router.post("/auth/login", validate(authValidators.loginSchema), async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const result = await authService.login(req.body.email, req.body.password);
+    const result = await authService.login(req.body.email, req.body.password, req.body.rememberMe === true);
     return success(res, result);
   } catch (err) {
     next(err);

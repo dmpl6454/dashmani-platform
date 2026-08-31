@@ -19,6 +19,7 @@ import { metaOauthConfigured, metaOauthMissingEnv, metaTuning } from "../service
 import { discoverConnectionAssets } from "../services/meta-oauth/meta-discovery.service";
 import { runMetaPostsSync } from "../services/meta-oauth/meta-posts.service";
 import { runMetaChannelSync, resolveContestedOwners, resolveDuplicateAssetIds, CHANNEL_WINDOWS, type ChannelWindow } from "../services/meta-oauth/meta-channels.service";
+import { getRangeTotals, getRangeFollowerDeltas, previousRange, rangeDayCount } from "../services/meta-oauth/meta-range.service";
 import { scrubSecrets } from "../utils/token-crypto";
 
 const router = Router();
@@ -86,6 +87,41 @@ router.get(
         page, limit, total, hasMore: page * limit < total,
       },
     });
+  }),
+);
+
+/**
+ * PATCH /admin/meta/assets/bulk — remove (or restore) MANY channels at once.
+ *
+ * "Remove" is selected=false, deliberately NOT a delete: the sync already skips
+ * unselected assets (channel metrics, posts, demographics all filter
+ * selected:true), the channels view hides them, and their history is preserved
+ * so restoring is one click. A hard delete would destroy stored metrics for a
+ * decision that is often exploratory.
+ *
+ * ⚠️ DECLARED BEFORE /admin/meta/assets/:id — Express matches in order, and
+ * declaring it after would route "bulk" into :id (the documented route-ordering
+ * trap that once ate the insight routes).
+ */
+router.patch(
+  "/admin/meta/assets/bulk",
+  ...adminGate,
+  asyncHandler(async (req: Request, res: Response) => {
+    const body = (req.body ?? {}) as { ids?: unknown; selected?: unknown };
+    const ids = Array.isArray(body.ids)
+      ? body.ids.filter((x): x is string => typeof x === "string").slice(0, 1000)
+      : [];
+    if (ids.length === 0 || typeof body.selected !== "boolean") {
+      return res.status(400).json({
+        success: false,
+        error: { code: "BAD_REQUEST", message: "Provide ids: string[] and selected: boolean" },
+      });
+    }
+    const result = await prisma.metaAsset.updateMany({
+      where: { id: { in: ids }, disconnectedAt: null },
+      data: { selected: body.selected },
+    });
+    return res.json({ success: true, data: { updated: result.count, selected: body.selected } });
   }),
 );
 
@@ -401,8 +437,38 @@ router.get(
         ? (requested as ChannelWindow)
         : "days_28";
 
+    // ── Custom range (?start=YYYY-MM-DD&end=YYYY-MM-DD) ───────────────────
+    //
+    // Serves calendar months and arbitrary spans from meta_asset_daily instead
+    // of live Graph windows — see meta-range.service.ts for why Meta cannot
+    // answer these live. Invalid dates are a clean 400, never a Prisma 500
+    // (the documented mid-typed "0002" date-param class).
+    const qStart = typeof req.query.start === "string" ? req.query.start : "";
+    const qEnd = typeof req.query.end === "string" ? req.query.end : "";
+    const isRange = qStart !== "" || qEnd !== "";
+    const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
+    if (isRange) {
+      const todayIso = new Date().toISOString().slice(0, 10);
+      const bad =
+        !ISO_DAY.test(qStart) || !ISO_DAY.test(qEnd) ||
+        Number.isNaN(Date.parse(`${qStart}T00:00:00Z`)) || Number.isNaN(Date.parse(`${qEnd}T00:00:00Z`)) ||
+        qStart > qEnd || qEnd > todayIso || rangeDayCount(qStart, qEnd) > 731;
+      if (bad) {
+        return res.status(400).json({
+          success: false,
+          error: { code: "BAD_RANGE", message: "start/end must be YYYY-MM-DD, start <= end <= today, span <= 731 days" },
+        });
+      }
+    }
+
+    // Removed channels (?hidden=1) are managed in their own view; the default
+    // view shows ONLY monitored channels, so their figures also drop out of
+    // every total the moment they are removed.
+    const showHidden = req.query.hidden === "1";
+
     const where: Prisma.MetaAssetWhereInput = {
       disconnectedAt: null,
+      selected: showHidden ? false : true,
       ...(kind ? { kind } : {}),
       ...(q
         ? { OR: [{ name: { contains: q, mode: "insensitive" as const } }, { username: { contains: q, mode: "insensitive" as const } }] }
@@ -462,6 +528,117 @@ router.get(
         `[meta] /admin/meta/channels returned ${rows.length} channels in one response — ` +
           `large enough to be worth paginating.`,
       );
+    }
+
+    // ── RANGE MODE — calendar months / custom spans, from stored daily rows ──
+    //
+    // Everything here is a SUM of per-day flows, which is exact. reach and
+    // accountsEngaged are null BY DESIGN (unique people cannot be summed), and
+    // coveredDays/rangeDays disclose partial history instead of presenting a
+    // partial sum as the whole. metricsError is null here: the warning mark
+    // describes live-window refresh health, which stored history does not have.
+    if (isRange) {
+      const span = rangeDayCount(qStart, qEnd);
+      const prev = previousRange(qStart, qEnd);
+      const [sums, prevSums, fDeltas] = await Promise.all([
+        getRangeTotals(qStart, qEnd),
+        getRangeTotals(prev.start, prev.end),
+        getRangeFollowerDeltas(qStart, qEnd),
+      ]);
+
+      const totals = { followers: 0, views: 0, engagements: 0, reach: 0, earningsCents: 0 };
+      const contributing = { views: 0, engagements: 0, reach: 0, earnings: 0 };
+      let dataThrough: string | null = null;
+      for (const r of rows) {
+        totals.followers += r.followerCount ?? 0;
+        const t = sums.get(r.id);
+        if (t?.views != null) { totals.views += t.views; contributing.views++; }
+        if (t?.engagements != null) { totals.engagements += t.engagements; contributing.engagements++; }
+        if (t?.earningsCents != null) {
+          totals.earningsCents += t.earningsCents;
+          if (t.earningsCents > 0) contributing.earnings++;
+        }
+        if (t?.latestDay && (dataThrough === null || t.latestDay > dataThrough)) dataThrough = t.latestDay;
+      }
+
+      // Trend baseline: the equal-length span immediately before. coverageShare
+      // tells the UI how complete that baseline is — a chip computed against a
+      // half-covered baseline would fabricate growth, so the UI hides it below
+      // ~95% coverage rather than showing a confident wrong percentage.
+      let prevViews = 0, prevEng = 0, prevEarn = 0, prevRowDays = 0, prevAssets = 0;
+      for (const t of prevSums.values()) {
+        if (t.views != null) prevViews += t.views;
+        if (t.engagements != null) prevEng += t.engagements;
+        if (t.earningsCents != null) prevEarn += t.earningsCents;
+        prevRowDays += t.coveredDays;
+        prevAssets++;
+      }
+      const previousTotals = prevAssets > 0
+        ? { views: prevViews, engagements: prevEng, earningsCents: prevEarn,
+            coverageShare: Math.min(1, prevRowDays / (prevAssets * span)),
+            start: prev.start, end: prev.end }
+        : null;
+
+      if (sort === "views" || sort === "engagements") {
+        const key = sort === "views" ? ("views" as const) : ("engagements" as const);
+        rows.sort((a, b) => {
+          const av = sums.get(a.id)?.[key];
+          const bv = sums.get(b.id)?.[key];
+          if (av == null && bv == null) return 0;
+          if (av == null) return 1;
+          if (bv == null) return -1;
+          return bv - av;
+        });
+      }
+
+      return res.json({
+        success: true,
+        data: {
+          window: "custom",
+          windows: CHANNEL_WINDOWS,
+          range: { start: qStart, end: qEnd, days: span },
+          dataThrough: dataThrough ? `${dataThrough}T00:00:00.000Z` : null,
+          items: rows.map((r) => {
+            const t = sums.get(r.id);
+            const fd = fDeltas.get(r.id);
+            return {
+              id: r.id,
+              platform: r.kind === "FACEBOOK_PAGE" ? "facebook" : "instagram",
+              metaId: r.metaId,
+              name: r.name,
+              username: r.username,
+              pictureUrl: r.pictureUrl,
+              followers: r.followerCount,
+              followerDelta: fd?.delta ?? null,
+              followerDeltaDays: fd?.days ?? null,
+              earningsCents: t?.earningsCents ?? null,
+              follows: t?.follows ?? null,
+              unfollows: t?.unfollows ?? null,
+              videoViewTimeMs: t?.videoViewTimeMs ?? null,
+              accountsEngaged: null,
+              saves: t?.saves ?? null,
+              shares: t?.shares ?? null,
+              posts: r.postCount ?? r._count.posts ?? null,
+              views28d: t?.views ?? null,
+              engagements28d: t?.engagements ?? null,
+              profileViews28d: t?.profileViews ?? null,
+              reach28d: null,
+              reactions28d: t?.reactions ?? null,
+              metricsFetchedAt: null,
+              metricsError: null,
+              selected: r.selected,
+              linkedToChannel: r.socialAccountId !== null,
+              storedPosts: r._count.posts,
+              coveredDays: t?.coveredDays ?? 0,
+              rangeDays: span,
+            };
+          }),
+          channelCount: rows.length,
+          totals,
+          contributing,
+          previousTotals,
+        },
+      });
     }
 
     // ── Follower change over the selected period ──────────────────────────
@@ -625,6 +802,39 @@ router.get(
       });
     }
 
+    // Trend baseline for the tiles: the equal-length span immediately BEFORE
+    // this native window, summed from stored daily history. Pure decoration —
+    // a failure here must never fail the page, and null simply hides the chips.
+    // The UI additionally hides them below ~95% baseline coverage, because a
+    // percentage computed against a half-covered baseline fabricates growth.
+    let previousTotals:
+      | { views: number; engagements: number; earningsCents: number; coverageShare: number; start: string; end: string }
+      | null = null;
+    try {
+      const todayMs = Date.parse(new Date().toISOString().slice(0, 10) + "T00:00:00Z");
+      const curEnd = new Date(todayMs - 86_400_000).toISOString().slice(0, 10);
+      const curStart = new Date(todayMs - windowDays * 86_400_000).toISOString().slice(0, 10);
+      const prev = previousRange(curStart, curEnd);
+      const prevSums = await getRangeTotals(prev.start, prev.end);
+      let v = 0, e = 0, c = 0, rowDays = 0, assets = 0;
+      for (const t of prevSums.values()) {
+        if (t.views != null) v += t.views;
+        if (t.engagements != null) e += t.engagements;
+        if (t.earningsCents != null) c += t.earningsCents;
+        rowDays += t.coveredDays;
+        assets++;
+      }
+      if (assets > 0) {
+        previousTotals = {
+          views: v, engagements: e, earningsCents: c,
+          coverageShare: Math.min(1, rowDays / (assets * windowDays)),
+          start: prev.start, end: prev.end,
+        };
+      }
+    } catch {
+      previousTotals = null;
+    }
+
     return res.json({
       success: true,
       data: {
@@ -723,6 +933,7 @@ router.get(
         channelCount: rows.length,
         totals,
         contributing,
+        previousTotals,
       },
     });
   }),

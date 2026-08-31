@@ -1669,6 +1669,7 @@ model MetaAsset {
   posts         MetaPost[]
   windowMetrics MetaAssetMetric[]
   demographics  MetaAssetDemographic[]
+  daily         MetaAssetDaily[]
 
   @@unique([connectionId, kind, metaId])
   @@index([selected, kind])
@@ -1806,6 +1807,57 @@ model MetaAssetMetric {
   @@unique([assetId, window])
   @@index([window])
   @@map("meta_asset_metrics")
+}
+
+/// ONE DAY of channel metrics for one asset — the store that makes calendar
+/// months and arbitrary date ranges answerable without new Graph calls.
+///
+/// ⚠️ WHY THIS EXISTS. Meta's native windows are day | week | days_28 only
+/// (period=month is a ROLLING 30-day window stamped daily, NOT calendar months —
+/// live-probed 2026-08-31), and Instagram hard-caps since/until spans at 30 days.
+/// So a calendar month or a user-chosen range can never be fetched live in one
+/// call. Daily values CAN: summing days is exact for flow metrics (views,
+/// engagements, profile views, reactions, follows, unfollows, watch time,
+/// earnings).
+///
+/// ⚠️ REACH IS STORED PER-DAY BUT MUST NEVER BE SUMMED ACROSS DAYS. It counts
+/// UNIQUE people; adding days double-counts everyone who returned (the measured
+/// 56% overstatement class). Range queries return reach as NULL — an em-dash on
+/// the page — because Meta publishes no unique-people figure for custom spans.
+///
+/// `date` = the calendar day the value DESCRIBES (Facebook: end_time date minus
+/// one day, page-local; Instagram: the since date, UTC). Writers: the 3-hourly
+/// channel sync persists its day-window fetch here at zero extra API cost, and
+/// scripts/backfill-meta-daily.ts loads history (FB ~2 years, IG 90 days — IG
+/// has no daily series API, so history costs one call per asset-day; probed
+/// 2026-08-31, Meta's own error caps IG at "the last 2 years" with sentinel -1s
+/// appearing past ~1 year, which map to NULL, never stored).
+model MetaAssetDaily {
+  id      String    @id @default(uuid())
+  assetId String    @map("asset_id")
+  asset   MetaAsset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  /// The day the values describe, date-only.
+  date DateTime @db.Date
+
+  views        BigInt?
+  /// Daily unique viewers — valid AS A DAY, poisonous summed. See model doc.
+  reach        BigInt?
+  engagements  BigInt?
+  profileViews BigInt? @map("profile_views")
+  reactions    BigInt?
+  follows      Int?
+  unfollows    Int?
+  videoViewTimeMs BigInt? @map("video_view_time_ms")
+  saves           Int?
+  shares          Int?
+  accountsEngaged Int?    @map("accounts_engaged")
+  /// Integer cents — money never rides a float. Facebook only.
+  earningsCents   Int?    @map("earnings_cents")
+
+  @@unique([assetId, date])
+  @@index([date])
+  @@map("meta_asset_daily")
 }
 
 /// ⚠️ LATEST-STATE-PER-POST, upserted on (assetId, metaPostId). NOT a time series.

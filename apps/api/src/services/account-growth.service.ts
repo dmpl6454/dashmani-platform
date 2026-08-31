@@ -308,7 +308,9 @@ export async function getGrowthOverview(days = 30): Promise<GrowthOverview> {
   const accounts = await prisma.socialAccount.findMany({
     where: {
       status: "ACTIVE",
-      metaAssets: { some: { disconnectedAt: null } },
+      // selected:false = an admin removed the channel from monitoring — it must
+      // vanish from the dashboard cards too, not just from /accounts/growth.
+      metaAssets: { some: { disconnectedAt: null, selected: true } },
     },
     include: {
       platform: true,

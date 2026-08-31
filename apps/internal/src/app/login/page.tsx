@@ -40,6 +40,9 @@ function useCounter(target: number, duration = 1400) {
 
 export default function LoginPage() {
   const { login } = useAuth();
+  // Wired for real this time — the previous "Keep me signed in" checkbox was
+  // removed in 2026-05 precisely because it did nothing.
+  const [rememberMe, setRememberMe] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [emailBlurred, setEmailBlurred] = useState(false);
@@ -66,7 +69,7 @@ export default function LoginPage() {
     }
     setSubmitState("loading");
     try {
-      await login(email, password);
+      await login(email, password, rememberMe);
       setSubmitState("success");
     } catch (err: any) {
       setError(err.message || "Login failed");
@@ -216,7 +219,16 @@ export default function LoginPage() {
                 onToggleShowPass={() => setShowPass((s) => !s)}
               />
 
-              <div className="flex items-center justify-end text-[12.5px]">
+              <div className="flex items-center justify-between text-[12.5px]">
+                <label className="flex items-center gap-2 text-ink-3 font-medium cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={rememberMe}
+                    onChange={(e) => setRememberMe(e.target.checked)}
+                    className="h-3.5 w-3.5 rounded border-ink-4/40 accent-indigo"
+                  />
+                  Keep me signed in for 30 days
+                </label>
                 <button
                   type="button"
                   onClick={() => setForgotOpen(true)}

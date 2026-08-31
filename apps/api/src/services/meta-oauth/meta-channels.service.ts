@@ -508,6 +508,7 @@ export async function runMetaChannelSync(opts?: {
         // ride along. Failing it must never cost the channel its other metrics,
         // so it is fetched after them and simply stays null if it does not answer.
         let earningsCents: number | null = null;
+        let dayEarningsData: InsightsResponse | undefined;
         if (!isIg && budget.used < budget.max) {
           let er = await oauthGraphFetch<InsightsResponse>(
             `${asset.metaId}/insights`,
@@ -529,7 +530,10 @@ export async function runMetaChannelSync(opts?: {
           if (er.rateLimited) { sawRateLimit = true; break; }
           // Meta returns a plain USD number. Store CENTS — money must never be
           // carried as a float.
-          if (er.ok) earningsCents = readEarningsCents(er.data);
+          if (er.ok) {
+            earningsCents = readEarningsCents(er.data);
+            if (win === "day") dayEarningsData = er.data;
+          }
         }
 
         let igDelta: number | null = null;
@@ -548,6 +552,25 @@ export async function runMetaChannelSync(opts?: {
         if (isIg) { metrics.follows = igFollows; metrics.unfollows = igUnfollows; }
 
         await upsertWindowMetric(asset.id, win, metrics, null, igDelta, earningsCents, periodEnd);
+
+        // ── The day window doubles as the FREE writer of per-day history ──
+        //
+        // Calendar months and custom ranges are served from meta_asset_daily,
+        // and this is where those rows come from at ZERO extra API cost: the
+        // day fetch already carries per-day values (Facebook returns 2-3 daily
+        // points; Instagram's since/until IS one day). Guarded so a history
+        // write can never affect the sync — same contract as writeApiSnapshot.
+        if (win === "day") {
+          try {
+            const rows = isIg
+              ? (() => { const r = igDailyRowFromTotals(res.data, sinceTs); return r ? [r] : []; })()
+              : fbDailyRowsFromSeries(res.data, dayEarningsData);
+            if (rows.length > 0) await persistDailyRows(asset.id, rows);
+          } catch (e) {
+            console.warn(`[meta-daily] persist failed for ${asset.name}: ${scrubSecrets(String(e))}`);
+          }
+        }
+
         if (win === DEFAULT_WINDOW) { defaultWindowData = res.data; defaultWindowOk = true; }
       }
 
@@ -689,7 +712,7 @@ export async function runMetaChannelSync(opts?: {
 export async function resolveDuplicateAssetIds(): Promise<Set<string>> {
   const rows = await prisma.metaAsset.findMany({
     where: { disconnectedAt: null },
-    select: { id: true, kind: true, metaId: true, followerCount: true, name: true, createdAt: true },
+    select: { id: true, kind: true, metaId: true, followerCount: true, name: true, createdAt: true, selected: true },
   });
   const byObject = new Map<string, typeof rows>();
   for (const r of rows) {
@@ -703,6 +726,12 @@ export async function resolveDuplicateAssetIds(): Promise<Set<string>> {
     if (list.length < 2) continue;
     list.sort(
       (a, b) =>
+        // ⚠️ A MONITORED copy must always beat a REMOVED one. Without this, a
+        // hidden (selected:false) duplicate could win on follower count — the
+        // sync then skips the winner (it only polls selected assets) AND
+        // dedupe suppresses the visible copy, so the channel silently vanishes
+        // from the page and goes stale, when the admin only removed one copy.
+        Number(b.selected) - Number(a.selected) ||
         (b.followerCount ?? 0) - (a.followerCount ?? 0) ||
         a.createdAt.getTime() - b.createdAt.getTime() ||
         a.id.localeCompare(b.id),
@@ -801,6 +830,177 @@ function readMetrics(d: InsightsResponse | undefined, isIg: boolean): ChannelMet
     shares: null,  // nor page-level shares
     accountsEngaged: null,
   };
+}
+
+/** One day of channel figures, keyed by the calendar day it DESCRIBES. */
+export interface DailyRow {
+  date: string; // YYYY-MM-DD
+  views: number | null;
+  reach: number | null;
+  engagements: number | null;
+  profileViews: number | null;
+  reactions: number | null;
+  follows: number | null;
+  unfollows: number | null;
+  videoViewTimeMs: number | null;
+  saves: number | null;
+  shares: number | null;
+  accountsEngaged: number | null;
+  earningsCents: number | null;
+}
+
+/**
+ * A daily value, or null. Negative values are SENTINELS, not data — Instagram
+ * returns -1 for metrics it will not publish for old spans (live-probed
+ * 2026-08-31: total_interactions=-1, likes=-1 at ~545 days back). Storing a -1
+ * would poison every range sum that touches it; the fabricated-negative class.
+ */
+function dailyNum(v: unknown): number | null {
+  return typeof v === "number" && Number.isFinite(v) && v >= 0 ? Math.round(v) : null;
+}
+
+/**
+ * The day a Facebook daily point DESCRIBES.
+ *
+ * ⚠️ end_time is the moment the day CLOSED (the Page-local midnight after it),
+ * stamped e.g. 2026-06-03T07:00:00Z for the day that was June 2 in the Page's
+ * timezone — so the covered day is end_time's date MINUS ONE. Keying by end_time
+ * directly would shift every range sum a day late and silently exclude the last
+ * day of any [start, end] filter.
+ */
+function fbDayCovered(endTime: unknown): string | null {
+  const d = String(endTime ?? "").slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return null;
+  const t = new Date(`${d}T00:00:00Z`);
+  t.setUTCDate(t.getUTCDate() - 1);
+  return t.toISOString().slice(0, 10);
+}
+
+const FB_DAILY_FIELD: Record<string, keyof Omit<DailyRow, "date">> = {
+  page_media_view: "views",
+  page_total_media_view_unique: "reach",
+  page_post_engagements: "engagements",
+  page_views_total: "profileViews",
+  page_actions_post_reactions_total: "reactions",
+  page_daily_follows_unique: "follows",
+  page_daily_unfollows_unique: "unfollows",
+  page_video_view_time: "videoViewTimeMs",
+  // page_follows is a STOCK (the running follower total) — it belongs to
+  // account_growth_snapshots, never to a flow-metrics day row.
+};
+
+function emptyDailyRow(date: string): DailyRow {
+  return { date, views: null, reach: null, engagements: null, profileViews: null,
+    reactions: null, follows: null, unfollows: null, videoViewTimeMs: null,
+    saves: null, shares: null, accountsEngaged: null, earningsCents: null };
+}
+
+/**
+ * Explode a Facebook period=day response (plus its separate earnings response —
+ * see FB_EARNINGS_METRIC for why they can never share a call) into per-day rows.
+ * Pure; exported for the backfill script and tests.
+ */
+export function fbDailyRowsFromSeries(
+  d: InsightsResponse | undefined,
+  earnings?: InsightsResponse,
+): DailyRow[] {
+  const byDate = new Map<string, DailyRow>();
+  const rowFor = (date: string) => {
+    let r = byDate.get(date);
+    if (!r) { r = emptyDailyRow(date); byDate.set(date, r); }
+    return r;
+  };
+  for (const series of d?.data ?? []) {
+    const field = series.name ? FB_DAILY_FIELD[series.name] : undefined;
+    if (!field) continue;
+    for (const v of series.values ?? []) {
+      const date = fbDayCovered(v.end_time);
+      if (!date) continue;
+      const n = dailyNum(v.value);
+      if (n !== null) (rowFor(date)[field] as number | null) = n;
+    }
+  }
+  for (const v of earnings?.data?.find((x) => x.name === FB_EARNINGS_METRIC)?.values ?? []) {
+    const date = fbDayCovered(v.end_time);
+    if (!date) continue;
+    const usd = typeof v.value === "number" && Number.isFinite(v.value) && v.value >= 0 ? v.value : null;
+    // ⚠️ Cents BEFORE rounding — $4,346.92 rounded as dollars loses the cents
+    // before they are ever written (the documented earnings-rounding trap).
+    if (usd !== null) rowFor(date).earningsCents = Math.round(usd * 100);
+  }
+  return [...byDate.values()].filter(
+    (r) => Object.entries(r).some(([k, val]) => k !== "date" && val !== null),
+  );
+}
+
+/**
+ * One Instagram day from a total_value response whose since/until spanned
+ * exactly that day. The day described is the SINCE date (IG buckets by UTC day).
+ * Pure; exported for the backfill script and tests.
+ */
+export function igDailyRowFromTotals(d: InsightsResponse | undefined, sinceTs: number): DailyRow | null {
+  // ⚠️ Raw values, NOT readMetrics(): its intOrNull() clamps with Math.max(0, …),
+  // which converts Instagram's -1 "withheld" sentinel into a confident zero —
+  // the fabricated-zero class, and stored history would carry it forever.
+  // dailyNum() maps every negative to null instead. (The clamp is harmless for
+  // the live windows, which never reach the ~1-year-old spans where sentinels
+  // appear.)
+  const raw = (name: string): unknown => d?.data?.find((x) => x.name === name)?.total_value?.value;
+  const row: DailyRow = {
+    date: new Date(sinceTs * 1000).toISOString().slice(0, 10),
+    views: dailyNum(raw("views")),
+    reach: dailyNum(raw("reach")),
+    engagements: dailyNum(raw("total_interactions")),
+    profileViews: dailyNum(raw("profile_views")),
+    reactions: dailyNum(raw("likes")),
+    follows: null,
+    unfollows: null,
+    videoViewTimeMs: null,
+    saves: dailyNum(raw("saves")),
+    shares: dailyNum(raw("shares")),
+    accountsEngaged: dailyNum(raw("accounts_engaged")),
+    earningsCents: null, // Instagram publishes no earnings metric at all
+  };
+  const hasAny = Object.entries(row).some(([k, val]) => k !== "date" && val !== null);
+  return hasAny ? row : null;
+}
+
+/**
+ * Persist day rows. Fail-open with a loud warn — a daily-history write must
+ * never be able to fail the metrics sync (same contract as writeApiSnapshot),
+ * but a SILENT fail-open is indistinguishable from success, which is the
+ * documented follower-map-builder incident class.
+ */
+export async function persistDailyRows(assetId: string, rows: DailyRow[]): Promise<number> {
+  let written = 0;
+  for (const r of rows) {
+    const date = new Date(`${r.date}T00:00:00Z`);
+    const data = {
+      views: bigintOrNull(r.views),
+      reach: bigintOrNull(r.reach),
+      engagements: bigintOrNull(r.engagements),
+      profileViews: bigintOrNull(r.profileViews),
+      reactions: bigintOrNull(r.reactions),
+      follows: r.follows,
+      unfollows: r.unfollows,
+      videoViewTimeMs: bigintOrNull(r.videoViewTimeMs),
+      saves: r.saves,
+      shares: r.shares,
+      accountsEngaged: r.accountsEngaged,
+      earningsCents: r.earningsCents,
+    };
+    try {
+      await prisma.metaAssetDaily.upsert({
+        where: { assetId_date: { assetId, date } },
+        create: { assetId, date, ...data },
+        update: data,
+      });
+      written++;
+    } catch (e) {
+      console.warn(`[meta-daily] write failed ${assetId}/${r.date}: ${scrubSecrets(String(e))}`);
+    }
+  }
+  return written;
 }
 
 /**

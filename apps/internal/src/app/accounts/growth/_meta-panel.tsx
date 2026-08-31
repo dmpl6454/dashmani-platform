@@ -583,7 +583,14 @@ export function MetaPanel() {
   // ⚠️ Gated on baseline coverage: a percentage computed against a half-covered
   // baseline fabricates growth, so below 95% the chips simply do not render.
   const prevTotals = ch?.previousTotals ?? null;
-  const trendOk = !!prevTotals && prevTotals.coverageShare >= 0.95;
+  // Two independent honesty gates: the baseline's own days must be ~complete,
+  // AND it must cover ~the same channel set as the current range — mid-backfill,
+  // a fully-self-consistent 2-channel baseline is still no basis for an estate
+  // trend against a 400-channel present.
+  const trendOk =
+    !!prevTotals &&
+    prevTotals.coverageShare >= 0.95 &&
+    (prevTotals.assets ?? 0) >= Math.max(1, Math.floor((ch?.contributing?.views ?? 0) * 0.9));
   const trendPct = (cur: number, prevVal: number): number | null =>
     trendOk && prevVal > 0 ? ((cur - prevVal) / prevVal) * 100 : null;
 
@@ -872,7 +879,7 @@ export function MetaPanel() {
               onClick={() => setCustomOpen((v) => !v)}
               aria-expanded={customOpen}
               className={`text-[11px] rounded-full px-2.5 py-1 border ${
-                customOpen || (range && !range.label.includes(" "))
+                customOpen
                   ? "border-[#5B4BF5] text-[#5B4BF5]"
                   : "border-[#DCDCDC] text-[#7A7A7A] hover:bg-[#FAFAFA]"}`}
             >

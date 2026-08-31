@@ -266,7 +266,12 @@ export function useMetaChannels(params?: {
          *  a half-covered baseline fabricates growth. */
         previousTotals?: {
           views: number; engagements: number; earningsCents: number;
-          coverageShare: number; start: string; end: string;
+          coverageShare: number;
+          /** How many assets the baseline covers — the chip must hide when this
+           *  is far below the current range's contributing count, or a 2-channel
+           *  baseline gets compared against a 400-channel present. */
+          assets?: number;
+          start: string; end: string;
         } | null;
       }>>(url).then((r) => r.data),
     opts,

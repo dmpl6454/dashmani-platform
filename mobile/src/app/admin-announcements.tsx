@@ -12,7 +12,7 @@ export default function AdminAnnouncements() {
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
-  const { data, loading, refreshing, refresh, reload } = useApi<any[]>(() => apiFetch("/admin/announcements"));
+  const { data, loading, refreshing, refresh, reload } = useApi<any>(() => apiFetch("/admin/announcements"));
 
   const send = () => {
     setError(null);
@@ -47,7 +47,8 @@ export default function AdminAnnouncements() {
   };
 
   if (loading) return <Loading />;
-  const items = data ?? [];
+  // API returns a paginated envelope {items, total, page, limit}
+  const items: any[] = Array.isArray(data) ? data : data?.items ?? [];
 
   return (
     <Screen onRefresh={refresh} refreshing={refreshing}>

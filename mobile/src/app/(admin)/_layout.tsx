@@ -11,10 +11,13 @@ export default function AdminTabsLayout() {
 
   useEffect(() => {
     if (loading) return;
-    if (!user) {
-      router.replace("/login?mode=admin");
-    } else if (mode === "hr") {
+    // Mode handoff FIRST: when the active portal flips, the other group owns
+    // the redirect (otherwise this guard races and sends a logged-out switch
+    // to the WRONG login mode).
+    if (mode === "hr") {
       router.replace("/(tabs)");
+    } else if (!user) {
+      router.replace("/login?mode=admin");
     }
   }, [loading, user, mode]);
 

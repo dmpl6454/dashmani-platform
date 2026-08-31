@@ -541,7 +541,10 @@ export function MetaPanel() {
       {showBackups && backupConns.map((c) => <ConnectionRow key={c.id} c={c} busy={busy} run={run} />)}
 
       {live.length > 0 && t && (
-        <div className="px-5 py-4 grid grid-cols-2 sm:grid-cols-4 gap-3 border-b border-[#F0EAE0]">
+        // ⚠️ 5 tiles, so the column counts must divide cleanly or one orphans onto
+        // a row of its own — which is what `sm:grid-cols-4` was doing to Revenue.
+        // 2 / 3 / 5 gives 2+2+1, 3+2 and a single row of 5.
+        <div className="px-5 py-5 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-x-4 gap-y-5 border-b border-[#F0EAE0]">
           {[
             { label: "Channels", value: ch!.channelCount, raw: true, note: null as string | null },
             { label: "Followers", value: t.followers, raw: false, note: null },
@@ -552,17 +555,32 @@ export function MetaPanel() {
             { label: `Revenue · ${sfx}`, value: t.earningsCents, raw: false, money: true,
               note: contrib ? `${contrib.earnings} channel(s) earning · Facebook only` : null },
           ].map((s) => (
-            <div key={s.label} className="min-w-0">
-              <p className="font-num text-xl font-semibold text-[#1A1A1A] truncate">
+            <div
+              key={s.label}
+              // A hairline between tiles reads as deliberate structure rather than
+              // items that happen to sit near each other. Only at `lg`, where all
+              // five are guaranteed to share one row — at narrower widths the grid
+              // wraps and a leading border would land mid-row and look like a bug.
+              className="min-w-0 lg:border-l lg:border-[#F0EAE0] lg:pl-4 lg:first:border-l-0 lg:first:pl-0"
+            >
+              <p
+                // ⚠️ clamp, not a fixed size. A fixed `text-2xl`-and-up overflowed
+                // its tile at 375px in the documented dashboard incident; this
+                // scales from 24px on a phone to 34px on a desktop and still
+                // truncates rather than painting over its neighbour.
+                className="font-num text-[clamp(1.5rem,3.4vw,2.125rem)] font-semibold tracking-tight leading-none text-[#1A1A1A] truncate"
+              >
                 {s.raw
                   ? s.value.toLocaleString()
                   : "money" in s && s.money
                     ? (hideRevenue ? "•••••" : fmtMoney(s.value))
                     : fmtMetric(s.value)}
               </p>
-              <p className="text-xs text-[#7A7A7A]">{s.label}</p>
+              <p className="mt-2 text-[10px] font-medium uppercase tracking-[0.08em] text-[#8A8A8A] truncate">
+                {s.label}
+              </p>
               {/* Say what a total does NOT cover, rather than implying completeness. */}
-              {s.note && <p className="text-[10px] text-[#B0B0B0] leading-tight">{s.note}</p>}
+              {s.note && <p className="mt-0.5 text-[10px] text-[#B0B0B0] leading-tight">{s.note}</p>}
             </div>
           ))}
         </div>

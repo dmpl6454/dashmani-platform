@@ -36,7 +36,7 @@ export default function OfferLettersScreen() {
 }
 
 const styles = StyleSheet.create({
-  type: { fontSize: 15, fontWeight: "800", color: colors.purple, marginBottom: 8 },
+  type: { fontSize: 15, fontWeight: "700", color: colors.purple, marginBottom: 8 },
   row: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 6, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
   label: { fontSize: 13, color: colors.sub },
   value: { fontSize: 13, fontWeight: "600", color: colors.ink },

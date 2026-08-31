@@ -46,7 +46,7 @@ export default function IncentivesScreen() {
 
 const styles = StyleSheet.create({
   totalLabel: { fontSize: 12, color: colors.green, fontWeight: "600" },
-  totalValue: { fontSize: 26, fontWeight: "800", color: colors.green, marginTop: 2 },
+  totalValue: { fontSize: 26, fontWeight: "700", color: colors.green, marginTop: 2 },
   row: {
     flexDirection: "row",
     alignItems: "center",
@@ -57,5 +57,5 @@ const styles = StyleSheet.create({
   },
   reason: { fontSize: 14, fontWeight: "600", color: colors.ink },
   sub: { fontSize: 12, color: colors.sub, marginTop: 2 },
-  amount: { fontSize: 15, fontWeight: "800", color: colors.green },
+  amount: { fontSize: 15, fontWeight: "700", color: colors.green },
 });

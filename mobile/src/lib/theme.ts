@@ -1,59 +1,76 @@
-// Dashmani "Midnight Glass" design system — cinematic dark theme.
-// Deep-space indigo ground, liquid-glass surfaces, gold + violet light accents
-// (matches the Seedance-generated hero visuals in assets/visuals/).
+// Dashmani design system — Apple HIG-inspired dark theme.
+// iOS system grays, typography-first hierarchy, ONE tint, color used sparingly
+// and semantically. The brand aurora lives in the logo/login/heroes only —
+// never smeared across controls.
 //
-// ⚠️ Token semantics: `ink` is the PRIMARY TEXT color (light on dark). Never use
-// it as a background. Text sitting on a solid gold/light accent surface must use
-// `inkOnAccent` (always-dark) instead.
+// ⚠️ `ink` is the PRIMARY TEXT color (label). Never use it as a background.
+// Text on a solid tint/gold surface uses `inkOnAccent`.
 export const colors = {
-  bg: "#0A0913", // deep space
-  card: "#14121F", // elevated glass panel
-  cardHigh: "#1B1830", // higher elevation (modals, inputs)
-  ink: "#F2F0FA", // primary text
-  sub: "#9A94B8", // secondary text
-  faint: "#5C5776", // tertiary / placeholders
-  border: "rgba(255,255,255,0.07)",
-  borderStrong: "rgba(255,255,255,0.14)",
-  /** Always-dark text for use ON gold/light accent surfaces */
-  inkOnAccent: "#131118",
-  // Brand aurora (from the Dashmani Media logo): orange → pink → purple → blue
-  yellow: "#F9A64A", // brand orange (token name kept for compatibility)
-  yellowSoft: "rgba(249,166,74,0.14)",
-  pink: "#F0568C",
-  pinkSoft: "rgba(240,86,140,0.14)",
-  purple: "#8B7CFF", // brightened for dark-bg contrast
+  // iOS dark system grouped backgrounds
+  bg: "#000000",
+  card: "#1C1C1E", // secondarySystemGroupedBackground
+  cardHigh: "#2C2C2E", // tertiary — inputs, sheets
+  // labels
+  ink: "#FFFFFF",
+  sub: "rgba(235,235,245,0.6)", // secondaryLabel
+  faint: "rgba(235,235,245,0.3)", // tertiaryLabel
+  // hairlines
+  border: "rgba(84,84,88,0.36)", // separator (non-opaque)
+  borderStrong: "rgba(84,84,88,0.65)",
+  inkOnAccent: "#0B0B0F",
+  // THE tint — brand violet, used like iOS systemBlue
+  purple: "#7C6CFF",
   purpleDark: "#5B4BF5",
-  purpleSoft: "rgba(139,124,255,0.16)",
-  green: "#4ADE80",
-  greenSoft: "rgba(74,222,128,0.13)",
-  red: "#F87171",
-  redSoft: "rgba(248,113,113,0.13)",
-  amber: "#FBBF24",
-  amberSoft: "rgba(251,191,36,0.13)",
-  blue: "#60A5FA",
-  blueSoft: "rgba(96,165,250,0.13)",
-  /** Primary action gradient (buttons, active states) — brand pink → violet */
-  gradient: ["#F0568C", "#8B5CF6"] as [string, string],
-  /** Full brand aurora — logo badge, hero accents */
+  purpleSoft: "rgba(124,108,255,0.16)",
+  // semantic system colors (iOS dark values)
+  green: "#30D158",
+  greenSoft: "rgba(48,209,88,0.14)",
+  red: "#FF453A",
+  redSoft: "rgba(255,69,58,0.14)",
+  amber: "#FFD60A",
+  amberSoft: "rgba(255,214,10,0.12)",
+  blue: "#0A84FF",
+  blueSoft: "rgba(10,132,255,0.14)",
+  // brand (logo) hues — reserved for identity surfaces
+  yellow: "#FF9F0A", // system orange stands in for brand gold accents
+  yellowSoft: "rgba(255,159,10,0.13)",
+  pink: "#FF375F",
+  pinkSoft: "rgba(255,55,95,0.13)",
+  /** Primary action fill — a single solid tint, like an iOS filled button */
+  gradient: ["#7C6CFF", "#6A59F2"] as [string, string],
+  /** Brand aurora — logo badge / identity moments ONLY */
   gradientBrand: ["#F9A64A", "#F0568C", "#A06AF0", "#64AEF0"] as [string, string, string, string],
-  /** Gold gradient (secondary/celebratory) */
-  gradientGold: ["#F9BE6E", "#F9A64A"] as [string, string],
+  gradientGold: ["#FFB340", "#FF9F0A"] as [string, string],
+};
+
+// Apple type scale (SF Pro renders natively on iOS)
+export const type = {
+  largeTitle: { fontSize: 32, fontWeight: "700" as const, letterSpacing: 0.2 },
+  title2: { fontSize: 22, fontWeight: "700" as const },
+  title3: { fontSize: 20, fontWeight: "600" as const },
+  headline: { fontSize: 17, fontWeight: "600" as const },
+  body: { fontSize: 17, fontWeight: "400" as const },
+  callout: { fontSize: 16, fontWeight: "400" as const },
+  subhead: { fontSize: 15, fontWeight: "400" as const },
+  footnote: { fontSize: 13, fontWeight: "400" as const },
+  caption: { fontSize: 12, fontWeight: "400" as const },
 };
 
 export const spacing = { xs: 4, sm: 8, md: 12, lg: 16, xl: 24, xxl: 32 };
 
-export const radius = { sm: 10, md: 14, lg: 18, xl: 26, full: 999 };
+// iOS continuous-corner radii — grouped cards are 12, controls 10
+export const radius = { sm: 8, md: 10, lg: 12, xl: 20, full: 999 };
 
-/** Soft glow shadow for elevated glass surfaces */
+/** Kept for API compatibility — subtle now. */
 export const glow = {
-  shadowColor: "#8B7CFF",
-  shadowOpacity: 0.18,
-  shadowRadius: 16,
-  shadowOffset: { width: 0, height: 6 },
-  elevation: 6,
+  shadowColor: "#000",
+  shadowOpacity: 0.3,
+  shadowRadius: 10,
+  shadowOffset: { width: 0, height: 4 },
+  elevation: 3,
 };
 
-/** Status → pill colors, shared across leaves/tasks/expenses/etc. */
+/** Status → restrained tinted pill (13pt medium on 12–14% tint). */
 export function statusColor(status: string): { bg: string; fg: string } {
   const s = (status || "").toUpperCase();
   if (["APPROVED", "DONE", "PAID", "RESOLVED", "ACTIVE", "PRESENT", "SENT", "HIRED", "ACCEPTED"].includes(s))

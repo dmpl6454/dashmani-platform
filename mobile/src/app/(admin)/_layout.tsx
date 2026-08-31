@@ -1,4 +1,5 @@
 import React, { useEffect } from "react";
+import { StyleSheet } from "react-native";
 import { Tabs, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "@/lib/auth";
@@ -32,25 +33,13 @@ export default function AdminTabsLayout() {
         tabBarActiveTintColor: colors.purple,
         tabBarInactiveTintColor: colors.faint,
         tabBarStyle: {
-          position: "absolute",
-          bottom: 14,
-          left: 14,
-          right: 14,
-          height: 64,
-          borderRadius: 24,
-          backgroundColor: "rgba(20,18,31,0.96)",
-          borderTopWidth: 0,
-          borderWidth: 1,
-          borderColor: colors.border,
-          paddingBottom: 10,
-          paddingTop: 8,
-          shadowColor: "#000",
-          shadowOpacity: 0.5,
-          shadowRadius: 18,
-          shadowOffset: { width: 0, height: 8 },
-          elevation: 12,
+          backgroundColor: "rgba(18,18,20,0.94)",
+          borderTopWidth: StyleSheet.hairlineWidth,
+          borderTopColor: colors.borderStrong,
+          height: 84,
+          paddingTop: 6,
         },
-        tabBarLabelStyle: { fontSize: 10, fontWeight: "600" },
+        tabBarLabelStyle: { fontSize: 10, fontWeight: "500" },
         sceneStyle: { backgroundColor: colors.bg },
       }}
     >

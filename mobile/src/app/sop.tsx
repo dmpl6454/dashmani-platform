@@ -72,6 +72,6 @@ export default function SopScreen() {
 
 const styles = StyleSheet.create({
   statusText: { fontSize: 14, fontWeight: "600", color: colors.ink, flex: 1 },
-  secTitle: { fontSize: 15, fontWeight: "800", color: colors.ink, marginBottom: 6 },
+  secTitle: { fontSize: 15, fontWeight: "700", color: colors.ink, marginBottom: 6 },
   secBody: { fontSize: 13, color: colors.sub, lineHeight: 20 },
 });

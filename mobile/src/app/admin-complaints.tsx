@@ -121,6 +121,6 @@ const styles = StyleSheet.create({
     paddingBottom: spacing.xxl,
   },
   handle: { width: 40, height: 4, borderRadius: 2, backgroundColor: colors.border, alignSelf: "center", marginBottom: 12 },
-  sheetTitle: { fontSize: 18, fontWeight: "800", color: colors.ink },
+  sheetTitle: { fontSize: 18, fontWeight: "700", color: colors.ink },
   sheetSub: { fontSize: 13, color: colors.sub, marginVertical: 8 },
 });

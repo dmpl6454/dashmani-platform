@@ -85,10 +85,10 @@ export default function AdminTopLinks() {
 const styles = StyleSheet.create({
   statRow: { flexDirection: "row", gap: 8, marginBottom: spacing.sm },
   row: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
-  rank: { width: 24, fontSize: 12, fontWeight: "800", color: colors.faint, textAlign: "center" },
+  rank: { width: 24, fontSize: 12, fontWeight: "700", color: colors.faint, textAlign: "center" },
   url: { fontSize: 12, color: colors.purple },
   meta: { fontSize: 11, color: colors.sub, marginTop: 2 },
-  views: { fontSize: 13, fontWeight: "800", color: colors.ink },
+  views: { fontSize: 13, fontWeight: "700", color: colors.ink },
   engage: { fontSize: 11, color: colors.sub, marginTop: 1 },
   note: { fontSize: 11, color: colors.faint, marginTop: 4, textAlign: "center" },
 });

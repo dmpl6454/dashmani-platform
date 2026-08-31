@@ -101,7 +101,7 @@ const styles = StyleSheet.create({
     maxHeight: "80%",
   },
   handle: { width: 40, height: 4, borderRadius: 2, backgroundColor: colors.border, alignSelf: "center", marginBottom: 12 },
-  sheetTitle: { fontSize: 18, fontWeight: "800", color: colors.ink, marginBottom: 8 },
+  sheetTitle: { fontSize: 18, fontWeight: "700", color: colors.ink, marginBottom: 8 },
   section: { fontSize: 13, fontWeight: "700", color: colors.sub, marginTop: 14, marginBottom: 4, textTransform: "uppercase" },
   lineRow: {
     flexDirection: "row",
@@ -113,7 +113,7 @@ const styles = StyleSheet.create({
   lineLabel: { fontSize: 14, color: colors.ink },
   lineVal: { fontSize: 14, fontWeight: "600", color: colors.ink },
   netRow: { borderBottomWidth: 0, marginTop: 8, backgroundColor: colors.yellowSoft, borderRadius: radius.sm, paddingHorizontal: 10 },
-  netLabel: { fontSize: 15, fontWeight: "800", color: colors.ink },
-  netVal: { fontSize: 16, fontWeight: "800", color: colors.ink },
+  netLabel: { fontSize: 15, fontWeight: "700", color: colors.ink },
+  netVal: { fontSize: 16, fontWeight: "700", color: colors.ink },
   remarks: { fontSize: 12, color: colors.sub, marginTop: 10 },
 });

@@ -58,7 +58,7 @@ export default function TeamScreen() {
 }
 
 const styles = StyleSheet.create({
-  teamName: { fontSize: 18, fontWeight: "800", color: colors.ink },
+  teamName: { fontSize: 18, fontWeight: "700", color: colors.ink },
   teamSub: { fontSize: 13, color: colors.sub, marginTop: 2 },
   memberRow: {
     flexDirection: "row",
@@ -76,7 +76,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  avatarLetter: { fontSize: 15, fontWeight: "800", color: colors.inkOnAccent },
+  avatarLetter: { fontSize: 15, fontWeight: "700", color: colors.inkOnAccent },
   memberName: { fontSize: 14, fontWeight: "600", color: colors.ink },
   memberEmail: { fontSize: 12, color: colors.sub },
   todayFlag: { fontSize: 12, fontWeight: "700" },

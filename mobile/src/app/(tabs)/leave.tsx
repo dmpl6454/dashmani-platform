@@ -150,7 +150,7 @@ const styles = StyleSheet.create({
     padding: spacing.md,
     alignItems: "center",
   },
-  balanceValue: { fontSize: 24, fontWeight: "800", color: colors.purple },
+  balanceValue: { fontSize: 24, fontWeight: "700", color: colors.purple },
   balanceLabel: { fontSize: 12, fontWeight: "600", color: colors.ink, marginTop: 2 },
   balanceUsed: { fontSize: 10, color: colors.sub, marginTop: 2 },
   unpaidNote: { fontSize: 12, color: colors.sub, marginTop: 8 },
@@ -174,6 +174,6 @@ const styles = StyleSheet.create({
     paddingBottom: spacing.xxl,
   },
   modalHandle: { width: 40, height: 4, borderRadius: 2, backgroundColor: colors.border, alignSelf: "center", marginBottom: 12 },
-  modalTitle: { fontSize: 18, fontWeight: "800", color: colors.ink, marginBottom: 12 },
+  modalTitle: { fontSize: 18, fontWeight: "700", color: colors.ink, marginBottom: 12 },
   fieldLabel: { fontSize: 13, fontWeight: "600", color: colors.ink, marginBottom: 6 },
 });

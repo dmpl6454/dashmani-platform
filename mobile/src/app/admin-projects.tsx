@@ -37,7 +37,7 @@ export default function AdminProjects() {
 }
 
 const styles = StyleSheet.create({
-  name: { fontSize: 15, fontWeight: "800", color: colors.ink },
+  name: { fontSize: 15, fontWeight: "700", color: colors.ink },
   sub: { fontSize: 12, color: colors.purple, marginTop: 3 },
   desc: { fontSize: 13, color: colors.sub, marginTop: 6 },
   meta: { fontSize: 12, color: colors.faint, marginTop: 6 },

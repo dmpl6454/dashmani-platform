@@ -8,13 +8,15 @@ import {
   ActivityIndicator,
   ScrollView,
   RefreshControl,
+  Platform,
   ViewStyle,
-  TextStyle,
   KeyboardTypeOptions,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { LinearGradient } from "expo-linear-gradient";
-import { colors, radius, spacing, statusColor, formatStatus } from "@/lib/theme";
+import { colors, radius, spacing, type, statusColor, formatStatus } from "@/lib/theme";
+
+// iOS continuous ("squircle") corners where supported
+const continuous = Platform.OS === "ios" ? ({ borderCurve: "continuous" } as any) : null;
 
 // ---------- Screen ----------
 export function Screen({
@@ -33,7 +35,7 @@ export function Screen({
       style={{ flex: 1, backgroundColor: colors.bg }}
       contentContainerStyle={{ padding: padded ? spacing.lg : 0, paddingBottom: 120 }}
       refreshControl={
-        onRefresh ? <RefreshControl refreshing={!!refreshing} onRefresh={onRefresh} tintColor={colors.purple} /> : undefined
+        onRefresh ? <RefreshControl refreshing={!!refreshing} onRefresh={onRefresh} tintColor={colors.sub} /> : undefined
       }
       keyboardShouldPersistTaps="handled"
     >
@@ -42,22 +44,28 @@ export function Screen({
   );
 }
 
-// ---------- Card ----------
+// ---------- Card (inset grouped container — no border, bg contrast only) ----------
 export function Card({ children, style }: { children: React.ReactNode; style?: ViewStyle }) {
-  return <View style={[styles.card, style]}>{children}</View>;
+  return <View style={[styles.card, continuous, style]}>{children}</View>;
 }
 
-// ---------- Section title ----------
+// ---------- Section title (iOS grouped-list header: 13pt uppercase secondary) ----------
 export function SectionTitle({ children, right }: { children: React.ReactNode; right?: React.ReactNode }) {
   return (
     <View style={styles.sectionRow}>
-      <Text style={styles.sectionTitle}>{children}</Text>
+      <Text style={styles.sectionTitle}>
+        {typeof children === "string"
+          ? children.toUpperCase()
+          : Array.isArray(children)
+            ? children.map((c) => (typeof c === "string" || typeof c === "number" ? String(c).toUpperCase() : c))
+            : children}
+      </Text>
       {right}
     </View>
   );
 }
 
-// ---------- Status pill ----------
+// ---------- Status pill (restrained: 12pt medium on 12% tint) ----------
 export function StatusPill({ status }: { status: string }) {
   const c = statusColor(status);
   return (
@@ -67,7 +75,7 @@ export function StatusPill({ status }: { status: string }) {
   );
 }
 
-// ---------- Button ----------
+// ---------- Button (iOS filled / tinted / plain) ----------
 export function Button({
   title,
   onPress,
@@ -85,39 +93,32 @@ export function Button({
   style?: ViewStyle;
   small?: boolean;
 }) {
-  const fg = variant === "secondary" ? colors.inkOnAccent : "#fff";
-  const inner = loading ? (
-    <ActivityIndicator color={fg} size="small" />
-  ) : (
-    <Text style={[styles.btnText, small && { fontSize: 13 }, { color: variant === "ghost" ? colors.ink : fg }]}>{title}</Text>
-  );
+  const bg =
+    variant === "primary"
+      ? colors.purple
+      : variant === "danger"
+        ? colors.redSoft
+        : variant === "secondary"
+          ? colors.purpleSoft
+          : colors.card;
+  const fg =
+    variant === "primary" ? "#fff" : variant === "danger" ? colors.red : variant === "secondary" ? colors.purple : colors.ink;
   return (
     <Pressable
       onPress={onPress}
       disabled={disabled || loading}
-      style={({ pressed }) => [{ opacity: disabled || loading ? 0.5 : pressed ? 0.85 : 1 }, style]}
+      style={({ pressed }) => [
+        styles.btn,
+        continuous,
+        small && styles.btnSmall,
+        { backgroundColor: bg, opacity: disabled || loading ? 0.4 : pressed ? 0.7 : 1 },
+        style,
+      ]}
     >
-      {variant === "primary" ? (
-        <LinearGradient
-          colors={colors.gradient}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={[styles.btn, small && styles.btnSmall]}
-        >
-          {inner}
-        </LinearGradient>
+      {loading ? (
+        <ActivityIndicator color={fg} size="small" />
       ) : (
-        <View
-          style={[
-            styles.btn,
-            small && styles.btnSmall,
-            variant === "secondary" && { backgroundColor: colors.yellow },
-            variant === "danger" && { backgroundColor: "rgba(248,113,113,0.9)" },
-            variant === "ghost" && { backgroundColor: "rgba(255,255,255,0.04)", borderWidth: 1, borderColor: colors.borderStrong },
-          ]}
-        >
-          {inner}
-        </View>
+        <Text style={[styles.btnText, small && { fontSize: 15 }, { color: fg }]}>{title}</Text>
       )}
     </Pressable>
   );
@@ -157,14 +158,19 @@ export function Field({
         multiline={multiline}
         keyboardType={keyboardType}
         autoCapitalize={autoCapitalize}
-        style={[styles.input, multiline && { height: 88, textAlignVertical: "top" }, error ? { borderColor: colors.red } : null]}
+        style={[
+          styles.input,
+          continuous,
+          multiline && { height: 92, textAlignVertical: "top", paddingTop: 12 },
+          error ? { borderWidth: 1, borderColor: colors.red } : null,
+        ]}
       />
       {error ? <Text style={styles.fieldError}>{error}</Text> : null}
     </View>
   );
 }
 
-// ---------- Segmented picker (chips) ----------
+// ---------- Segmented control (iOS style; >4 options → quiet scrollable pills) ----------
 export function Chips<T extends string>({
   options,
   value,
@@ -176,21 +182,40 @@ export function Chips<T extends string>({
   onChange: (v: T) => void;
   labels?: Partial<Record<T, string>>;
 }) {
+  if (options.length <= 4) {
+    return (
+      <View style={[styles.segTrack, continuous]}>
+        {options.map((opt) => {
+          const active = opt === value;
+          return (
+            <Pressable key={opt} onPress={() => onChange(opt)} style={[styles.segItem, continuous, active && styles.segItemActive]}>
+              <Text style={[styles.segText, active && styles.segTextActive]} numberOfLines={1}>
+                {labels?.[opt] ?? formatStatus(opt)}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+    );
+  }
   return (
-    <View style={styles.chipsRow}>
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      style={{ marginBottom: spacing.md, flexGrow: 0 }}
+      contentContainerStyle={{ gap: 8 }}
+    >
       {options.map((opt) => {
         const active = opt === value;
         return (
-          <Pressable
-            key={opt}
-            onPress={() => onChange(opt)}
-            style={[styles.chip, active && { backgroundColor: colors.purple, borderColor: colors.purple }]}
-          >
-            <Text style={[styles.chipText, active && { color: "#fff" }]}>{labels?.[opt] ?? formatStatus(opt)}</Text>
+          <Pressable key={opt} onPress={() => onChange(opt)} style={[styles.chip, continuous, active && { backgroundColor: colors.purple }]}>
+            <Text style={[styles.chipText, active && { color: "#fff", fontWeight: "600" }]}>
+              {labels?.[opt] ?? formatStatus(opt)}
+            </Text>
           </Pressable>
         );
       })}
-    </View>
+    </ScrollView>
   );
 }
 
@@ -198,7 +223,7 @@ export function Chips<T extends string>({
 export function Empty({ icon = "file-tray-outline", text }: { icon?: any; text: string }) {
   return (
     <View style={styles.empty}>
-      <Ionicons name={icon} size={32} color={colors.faint} />
+      <Ionicons name={icon} size={26} color={colors.faint} />
       <Text style={styles.emptyText}>{text}</Text>
     </View>
   );
@@ -208,37 +233,36 @@ export function Empty({ icon = "file-tray-outline", text }: { icon?: any; text: 
 export function Loading() {
   return (
     <View style={styles.loading}>
-      <ActivityIndicator size="large" color={colors.purple} />
+      <ActivityIndicator size="small" color={colors.sub} />
     </View>
   );
 }
 
-// ---------- Error banner ----------
+// ---------- Banners ----------
 export function ErrorBanner({ message }: { message: string | null }) {
   if (!message) return null;
   return (
-    <View style={styles.errorBanner}>
+    <View style={[styles.banner, continuous, { backgroundColor: colors.redSoft }]}>
       <Ionicons name="alert-circle" size={16} color={colors.red} />
-      <Text style={styles.errorBannerText}>{message}</Text>
+      <Text style={[styles.bannerText, { color: colors.red }]}>{message}</Text>
     </View>
   );
 }
 
-// ---------- Success banner ----------
 export function SuccessBanner({ message }: { message: string | null }) {
   if (!message) return null;
   return (
-    <View style={[styles.errorBanner, { backgroundColor: colors.greenSoft }]}>
+    <View style={[styles.banner, continuous, { backgroundColor: colors.greenSoft }]}>
       <Ionicons name="checkmark-circle" size={16} color={colors.green} />
-      <Text style={[styles.errorBannerText, { color: colors.green }]}>{message}</Text>
+      <Text style={[styles.bannerText, { color: colors.green }]}>{message}</Text>
     </View>
   );
 }
 
-// ---------- Stat tile ----------
+// ---------- Stat (Health-app style: large numeral with tabular figures) ----------
 export function Stat({ label, value, accent }: { label: string; value: string | number; accent?: string }) {
   return (
-    <View style={styles.stat}>
+    <View style={[styles.stat, continuous]}>
       <Text style={[styles.statValue, accent ? { color: accent } : null]} numberOfLines={1} adjustsFontSizeToFit>
         {value}
       </Text>
@@ -249,51 +273,75 @@ export function Stat({ label, value, accent }: { label: string; value: string | 
   );
 }
 
-// ---------- Row (list item) ----------
+// ---------- Row (Settings-style: 29pt icon tile, chevron, inset hairline) ----------
 export function Row({
   title,
   subtitle,
   right,
   onPress,
   icon,
+  iconColor,
 }: {
   title: string;
   subtitle?: string;
   right?: React.ReactNode;
   onPress?: () => void;
   icon?: any;
+  iconColor?: string;
 }) {
   const content = (
     <View style={styles.row}>
       {icon ? (
-        <View style={styles.rowIcon}>
-          <Ionicons name={icon} size={18} color={colors.purple} />
+        <View style={[styles.rowIcon, continuous, iconColor ? { backgroundColor: iconColor } : null]}>
+          <Ionicons name={String(icon).replace("-outline", "") as any} size={16} color="#fff" />
         </View>
       ) : null}
-      <View style={{ flex: 1, minWidth: 0 }}>
-        <Text style={styles.rowTitle} numberOfLines={1}>
-          {title}
-        </Text>
-        {subtitle ? (
-          <Text style={styles.rowSub} numberOfLines={2}>
-            {subtitle}
+      <View style={styles.rowBody}>
+        <View style={{ flex: 1, minWidth: 0, paddingRight: 8 }}>
+          <Text style={styles.rowTitle} numberOfLines={1}>
+            {title}
           </Text>
-        ) : null}
+          {subtitle ? (
+            <Text style={styles.rowSub} numberOfLines={1}>
+              {subtitle}
+            </Text>
+          ) : null}
+        </View>
+        {right}
+        {onPress ? <Ionicons name="chevron-forward" size={15} color={colors.faint} /> : null}
       </View>
-      {right}
-      {onPress ? <Ionicons name="chevron-forward" size={16} color={colors.faint} style={{ marginLeft: 4 }} /> : null}
     </View>
   );
   if (onPress)
     return (
-      <Pressable onPress={onPress} style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}>
+      <Pressable onPress={onPress} style={({ pressed }) => (pressed ? { backgroundColor: "rgba(255,255,255,0.04)" } : null)}>
         {content}
       </Pressable>
     );
   return content;
 }
 
-// ---------- useApi hook (fetch-on-mount + pull-to-refresh) ----------
+// ---------- TrendBars (quiet inline bar chart, Health-style) ----------
+export function TrendBars({ data, height = 56, tint }: { data: number[]; height?: number; tint?: string }) {
+  const max = Math.max(...data, 1);
+  return (
+    <View style={{ flexDirection: "row", alignItems: "flex-end", gap: 3, height }}>
+      {data.map((v, i) => (
+        <View
+          key={i}
+          style={{
+            flex: 1,
+            height: Math.max(3, (v / max) * height),
+            borderRadius: 2,
+            backgroundColor: i === data.length - 1 ? (tint ?? colors.purple) : colors.cardHigh,
+          }}
+        />
+      ))}
+    </View>
+  );
+}
+
+// ---------- useApi hook ----------
 export function useApi<T>(fetcher: () => Promise<T>, deps: any[] = []) {
   const [data, setData] = useState<T | null>(null);
   const [loading, setLoading] = useState(true);
@@ -325,101 +373,116 @@ const styles = StyleSheet.create({
   card: {
     backgroundColor: colors.card,
     borderRadius: radius.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
     padding: spacing.lg,
-    marginBottom: spacing.md,
-    shadowColor: "#000",
-    shadowOpacity: 0.35,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 6 },
+    marginBottom: spacing.lg,
   },
   sectionRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: spacing.sm,
-    marginTop: spacing.sm,
+    marginBottom: 8,
+    marginTop: 4,
+    paddingHorizontal: 4,
   },
-  sectionTitle: { fontSize: 15, fontWeight: "700", color: colors.ink },
+  sectionTitle: { fontSize: 13, color: colors.sub, letterSpacing: 0.3 },
   pill: {
-    paddingHorizontal: 10,
+    paddingHorizontal: 9,
     paddingVertical: 3,
     borderRadius: radius.full,
     alignSelf: "flex-start",
   },
-  pillText: { fontSize: 11, fontWeight: "600" },
+  pillText: { fontSize: 12, fontWeight: "500" },
   btn: {
-    height: 48,
-    borderRadius: radius.md,
+    height: 50,
+    borderRadius: radius.lg,
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: spacing.lg,
   },
-  btnSmall: { height: 36, paddingHorizontal: spacing.md },
-  btnText: { fontSize: 15, fontWeight: "600" },
-  fieldLabel: { fontSize: 13, fontWeight: "600", color: colors.ink, marginBottom: 6 },
+  btnSmall: { height: 38, paddingHorizontal: spacing.md, borderRadius: radius.md },
+  btnText: { fontSize: 17, fontWeight: "600" },
+  fieldLabel: { fontSize: 13, color: colors.sub, marginBottom: 6, paddingLeft: 2 },
   input: {
-    borderWidth: 1,
-    borderColor: colors.borderStrong,
     borderRadius: radius.md,
     backgroundColor: colors.cardHigh,
-    paddingHorizontal: 12,
+    paddingHorizontal: 14,
     height: 46,
-    fontSize: 15,
+    fontSize: 17,
     color: colors.ink,
   },
-  fieldError: { color: colors.red, fontSize: 12, marginTop: 4 },
-  chipsRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: spacing.md },
-  chip: {
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: radius.full,
-    borderWidth: 1,
-    borderColor: colors.borderStrong,
-    backgroundColor: "rgba(255,255,255,0.04)",
+  fieldError: { color: colors.red, fontSize: 13, marginTop: 5, paddingLeft: 2 },
+  segTrack: {
+    flexDirection: "row",
+    backgroundColor: colors.cardHigh,
+    borderRadius: radius.md,
+    padding: 2,
+    marginBottom: spacing.md,
   },
-  chipText: { fontSize: 13, fontWeight: "600", color: colors.ink },
-  empty: { alignItems: "center", paddingVertical: 32, gap: 8 },
-  emptyText: { color: colors.sub, fontSize: 14 },
-  loading: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: colors.bg },
-  errorBanner: {
+  segItem: {
+    flex: 1,
+    height: 32,
+    borderRadius: radius.md - 2,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 4,
+  },
+  segItemActive: {
+    backgroundColor: "#636366",
+    shadowColor: "#000",
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
+  },
+  segText: { fontSize: 13, fontWeight: "500", color: colors.sub },
+  segTextActive: { color: colors.ink, fontWeight: "600" },
+  chip: {
+    paddingHorizontal: 14,
+    height: 32,
+    justifyContent: "center",
+    borderRadius: radius.full,
+    backgroundColor: colors.card,
+  },
+  chipText: { fontSize: 14, color: colors.sub },
+  empty: { alignItems: "center", paddingVertical: 30, gap: 8 },
+  emptyText: { fontSize: 15, color: colors.faint },
+  loading: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: colors.bg, minHeight: 160 },
+  banner: {
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
-    backgroundColor: colors.redSoft,
     borderRadius: radius.md,
     padding: 12,
     marginBottom: spacing.md,
   },
-  errorBannerText: { color: colors.red, fontSize: 13, flex: 1 },
+  bannerText: { fontSize: 14, flex: 1 },
   stat: {
     flex: 1,
     backgroundColor: colors.card,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-    padding: spacing.md,
+    borderRadius: radius.lg,
+    paddingVertical: 14,
+    paddingHorizontal: 8,
     alignItems: "center",
   },
-  statValue: { fontSize: 20, fontWeight: "800", color: colors.ink },
-  statLabel: { fontSize: 11, color: colors.sub, marginTop: 2 },
-  row: {
+  statValue: { fontSize: 24, fontWeight: "600", color: colors.ink, fontVariant: ["tabular-nums"] },
+  statLabel: { fontSize: 12, color: colors.sub, marginTop: 3 },
+  row: { flexDirection: "row", alignItems: "center", minHeight: 46 },
+  rowIcon: {
+    width: 29,
+    height: 29,
+    borderRadius: 7,
+    backgroundColor: colors.purple,
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 12,
+  },
+  rowBody: {
+    flex: 1,
     flexDirection: "row",
     alignItems: "center",
-    gap: 10,
-    paddingVertical: 12,
+    paddingVertical: 11,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: colors.border,
   },
-  rowIcon: {
-    width: 34,
-    height: 34,
-    borderRadius: radius.sm,
-    backgroundColor: colors.purpleSoft,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  rowTitle: { fontSize: 14, fontWeight: "600", color: colors.ink },
-  rowSub: { fontSize: 12, color: colors.sub, marginTop: 2 },
+  rowTitle: { fontSize: 16, color: colors.ink },
+  rowSub: { fontSize: 13, color: colors.sub, marginTop: 1 },
 });

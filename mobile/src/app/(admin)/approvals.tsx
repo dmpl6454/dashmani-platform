@@ -284,7 +284,7 @@ export default function AdminApprovals() {
 const styles = StyleSheet.create({
   headRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
   who: { fontSize: 15, fontWeight: "700", color: colors.ink, flex: 1 },
-  amount: { fontSize: 16, fontWeight: "800", color: colors.purple },
+  amount: { fontSize: 16, fontWeight: "700", color: colors.purple },
   line: { fontSize: 13, color: colors.ink, marginTop: 6 },
   reason: { fontSize: 12, color: colors.sub, marginTop: 4 },
   actions: { flexDirection: "row", gap: 10, marginTop: spacing.md },

@@ -76,7 +76,7 @@ export default function AdminAi() {
 
 const styles = StyleSheet.create({
   empty: { alignItems: "center", paddingVertical: 60, gap: 8, paddingHorizontal: 24 },
-  emptyTitle: { fontSize: 18, fontWeight: "800", color: colors.ink },
+  emptyTitle: { fontSize: 18, fontWeight: "700", color: colors.ink },
   emptyText: { fontSize: 13, color: colors.sub, textAlign: "center", lineHeight: 19 },
   bubble: { maxWidth: "86%", borderRadius: radius.lg, padding: 12, marginBottom: 10 },
   userBubble: { alignSelf: "flex-end", backgroundColor: colors.purple },

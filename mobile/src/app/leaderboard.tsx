@@ -29,7 +29,7 @@ export default function LeaderboardScreen() {
                 ? e.employee.profileImageUrl
                 : `${API_BASE}${e.employee.profileImageUrl}`
               : null;
-            const medal = e.rank === 1 ? "🥇" : e.rank === 2 ? "🥈" : e.rank === 3 ? "🥉" : null;
+            const top3 = e.rank <= 3;
             return (
               <View
                 key={e.employee?.id ?? i}
@@ -39,7 +39,7 @@ export default function LeaderboardScreen() {
                   i === rows.length - 1 && { borderBottomWidth: 0 },
                 ]}
               >
-                <Text style={styles.rank}>{medal ?? `#${e.rank}`}</Text>
+                <Text style={[styles.rank, top3 && { color: colors.yellow }]}>{e.rank}</Text>
                 {img ? (
                   <Image source={{ uri: img }} style={styles.avatar} />
                 ) : (
@@ -56,8 +56,8 @@ export default function LeaderboardScreen() {
                   </Text>
                 </View>
                 <View style={styles.streak}>
-                  <Text style={styles.streakVal}>{e.currentStreak ?? 0}🔥</Text>
-                  <Text style={styles.streakLabel}>streak</Text>
+                  <Text style={styles.streakVal}>{e.currentStreak ?? 0}</Text>
+                  <Text style={styles.streakLabel}>day streak</Text>
                 </View>
               </View>
             );
@@ -77,10 +77,10 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: colors.border,
   },
-  rank: { width: 36, fontSize: 14, fontWeight: "800", color: colors.sub, textAlign: "center" },
+  rank: { width: 30, fontSize: 15, fontWeight: "600", color: colors.faint, textAlign: "center", fontVariant: ["tabular-nums"] },
   avatar: { width: 36, height: 36, borderRadius: radius.full },
   avatarFallback: { backgroundColor: colors.yellow, alignItems: "center", justifyContent: "center" },
-  avatarLetter: { fontSize: 15, fontWeight: "800", color: colors.inkOnAccent },
+  avatarLetter: { fontSize: 15, fontWeight: "700", color: colors.inkOnAccent },
   name: { fontSize: 14, fontWeight: "700", color: colors.ink },
   meta: { fontSize: 12, color: colors.sub, marginTop: 1 },
   streak: { alignItems: "center" },

@@ -1,3 +1,4 @@
+import { Platform } from "react-native";
 import * as SecureStore from "expo-secure-store";
 
 // Production API. Point at http://<your-mac-ip>:4000/v1 for local dev.
@@ -9,6 +10,47 @@ const KEYS = {
   access: "hrAccessToken",
   refresh: "hrRefreshToken",
   user: "hrUser",
+};
+
+// Storage adapter: SecureStore is native-only — on web fall back to localStorage
+// (wrapped in try/catch: private windows / blocked site data throw on access).
+const store = {
+  async get(key: string): Promise<string | null> {
+    if (Platform.OS === "web") {
+      try {
+        return typeof localStorage !== "undefined" ? localStorage.getItem(key) : null;
+      } catch {
+        return null;
+      }
+    }
+    try {
+      return await SecureStore.getItemAsync(key);
+    } catch {
+      return null;
+    }
+  },
+  async set(key: string, value: string): Promise<void> {
+    if (Platform.OS === "web") {
+      try {
+        if (typeof localStorage !== "undefined") localStorage.setItem(key, value);
+      } catch {}
+      return;
+    }
+    try {
+      await SecureStore.setItemAsync(key, value);
+    } catch {}
+  },
+  async remove(key: string): Promise<void> {
+    if (Platform.OS === "web") {
+      try {
+        if (typeof localStorage !== "undefined") localStorage.removeItem(key);
+      } catch {}
+      return;
+    }
+    try {
+      await SecureStore.deleteItemAsync(key);
+    } catch {}
+  },
 };
 
 export class ApiError extends Error {
@@ -33,7 +75,7 @@ export type SessionUser = {
 
 export async function getStoredUser(): Promise<SessionUser | null> {
   try {
-    const raw = await SecureStore.getItemAsync(KEYS.user);
+    const raw = await store.get(KEYS.user);
     return raw ? (JSON.parse(raw) as SessionUser) : null;
   } catch {
     return null;
@@ -41,19 +83,19 @@ export async function getStoredUser(): Promise<SessionUser | null> {
 }
 
 export async function storeSession(accessToken: string, refreshToken: string, user?: SessionUser) {
-  await SecureStore.setItemAsync(KEYS.access, accessToken);
-  await SecureStore.setItemAsync(KEYS.refresh, refreshToken);
-  if (user) await SecureStore.setItemAsync(KEYS.user, JSON.stringify(user));
+  await store.set(KEYS.access, accessToken);
+  await store.set(KEYS.refresh, refreshToken);
+  if (user) await store.set(KEYS.user, JSON.stringify(user));
 }
 
 export async function clearSession() {
-  await SecureStore.deleteItemAsync(KEYS.access);
-  await SecureStore.deleteItemAsync(KEYS.refresh);
-  await SecureStore.deleteItemAsync(KEYS.user);
+  await store.remove(KEYS.access);
+  await store.remove(KEYS.refresh);
+  await store.remove(KEYS.user);
 }
 
 export async function hasSession(): Promise<boolean> {
-  const t = await SecureStore.getItemAsync(KEYS.access);
+  const t = await store.get(KEYS.access);
   return !!t;
 }
 
@@ -68,7 +110,7 @@ async function tryRefresh(): Promise<boolean> {
   if (refreshInFlight) return refreshInFlight;
   refreshInFlight = (async () => {
     try {
-      const refreshToken = await SecureStore.getItemAsync(KEYS.refresh);
+      const refreshToken = await store.get(KEYS.refresh);
       if (!refreshToken) return false;
       const res = await fetch(`${API_URL}/hr/auth/refresh`, {
         method: "POST",
@@ -99,7 +141,7 @@ export function setSessionExpiredHandler(fn: () => void) {
 }
 
 export async function apiFetch<T = any>(path: string, options: RequestInit = {}, _retried = false): Promise<T> {
-  const token = await SecureStore.getItemAsync(KEYS.access);
+  const token = await store.get(KEYS.access);
 
   let res: Response;
   try {

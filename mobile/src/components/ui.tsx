@@ -13,6 +13,7 @@ import {
   KeyboardTypeOptions,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { LinearGradient } from "expo-linear-gradient";
 import { colors, radius, spacing, type, statusColor, formatStatus } from "@/lib/theme";
 
 // iOS continuous ("squircle") corners where supported
@@ -94,31 +95,31 @@ export function Button({
   small?: boolean;
 }) {
   const bg =
-    variant === "primary"
-      ? colors.purple
-      : variant === "danger"
-        ? colors.redSoft
-        : variant === "secondary"
-          ? colors.purpleSoft
-          : colors.card;
+    variant === "danger" ? colors.redSoft : variant === "secondary" ? colors.purpleSoft : colors.card;
   const fg =
     variant === "primary" ? "#fff" : variant === "danger" ? colors.red : variant === "secondary" ? colors.purple : colors.ink;
+  const inner = loading ? (
+    <ActivityIndicator color={fg} size="small" />
+  ) : (
+    <Text style={[styles.btnText, small && { fontSize: 15 }, { color: fg }]}>{title}</Text>
+  );
   return (
     <Pressable
       onPress={onPress}
       disabled={disabled || loading}
-      style={({ pressed }) => [
-        styles.btn,
-        continuous,
-        small && styles.btnSmall,
-        { backgroundColor: bg, opacity: disabled || loading ? 0.4 : pressed ? 0.7 : 1 },
-        style,
-      ]}
+      style={({ pressed }) => [{ opacity: disabled || loading ? 0.4 : pressed ? 0.75 : 1 }, style]}
     >
-      {loading ? (
-        <ActivityIndicator color={fg} size="small" />
+      {variant === "primary" ? (
+        <LinearGradient
+          colors={colors.gradient}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 0.6 }}
+          style={[styles.btn, continuous, small && styles.btnSmall]}
+        >
+          {inner}
+        </LinearGradient>
       ) : (
-        <Text style={[styles.btnText, small && { fontSize: 15 }, { color: fg }]}>{title}</Text>
+        <View style={[styles.btn, continuous, small && styles.btnSmall, { backgroundColor: bg }]}>{inner}</View>
       )}
     </Pressable>
   );
@@ -359,7 +360,7 @@ export function TrendBars({ data, height = 56, tint }: { data: number[]; height?
             flex: 1,
             height: Math.max(3, (v / max) * height),
             borderRadius: 2,
-            backgroundColor: i === data.length - 1 ? (tint ?? colors.purple) : colors.cardHigh,
+            backgroundColor: i === data.length - 1 ? (tint ?? colors.purple) : colors.purpleSoft,
           }}
         />
       ))}
@@ -453,7 +454,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 4,
   },
   segItemActive: {
-    backgroundColor: "#636366",
+    backgroundColor: colors.segActiveBg,
     shadowColor: "#000",
     shadowOpacity: 0.25,
     shadowRadius: 4,

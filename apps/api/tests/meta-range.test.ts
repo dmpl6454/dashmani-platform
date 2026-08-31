@@ -178,7 +178,7 @@ describe("GET /admin/meta/channels — range mode + removal", () => {
 
     expect(d.totals.views).toBe(65);
     expect(d.totals.reach).toBe(0); // nothing contributes; the UI renders the tile from items
-    expect(d.previousTotals).toMatchObject({ views: 30, earningsCents: 150, coverageShare: 1 });
+    expect(d.previousTotals).toMatchObject({ views: 30, earningsCents: 150, coverageShare: 1, assets: 1 });
   });
 
   it("rejects a bad range with a clean 400, never a 500", async () => {

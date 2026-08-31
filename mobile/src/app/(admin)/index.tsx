@@ -18,7 +18,7 @@ export default function AdminDashboard() {
   const quick = [
     { icon: "people", label: "Employees", to: "/admin-employees", tint: colors.purpleSoft, fg: colors.purple },
     { icon: "checkbox", label: "Tasks", to: "/admin-tasks", tint: colors.yellowSoft, fg: colors.amber },
-    { icon: "at", label: "Accounts", to: "/admin-accounts", tint: colors.blueSoft, fg: colors.blue },
+    { icon: "trending-up", label: "Account Growth", to: "/admin-growth", tint: colors.blueSoft, fg: colors.blue },
     { icon: "trophy", label: "Leaderboard", to: "/admin-leaderboard", tint: colors.greenSoft, fg: colors.green },
   ] as const;
 

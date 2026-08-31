@@ -41,6 +41,7 @@ export default function RootLayout() {
         <Stack.Screen name="admin-employee/[id]" options={{ title: "Employee Reports" }} />
         <Stack.Screen name="admin-tasks" options={{ title: "Tasks" }} />
         <Stack.Screen name="admin-accounts" options={{ title: "Social Accounts" }} />
+        <Stack.Screen name="admin-growth" options={{ title: "Account Growth" }} />
         <Stack.Screen name="admin-teams" options={{ title: "Teams" }} />
         <Stack.Screen name="admin-holidays" options={{ title: "Holidays" }} />
         <Stack.Screen name="admin-salary-slips" options={{ title: "Salary Slips" }} />

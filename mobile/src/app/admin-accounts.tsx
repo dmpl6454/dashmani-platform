@@ -2,14 +2,21 @@ import React, { useState } from "react";
 import { View, Text, StyleSheet, TextInput } from "react-native";
 import { apiFetch, fmtCompact } from "@/lib/api";
 import { colors, radius, spacing } from "@/lib/theme";
-import { Screen, Card, Empty, Loading, ErrorBanner, useApi } from "@/components/ui";
+import { Screen, Card, SectionTitle, Chips, Empty, Loading, ErrorBanner, useApi } from "@/components/ui";
 
 export default function AdminAccounts() {
   const [search, setSearch] = useState("");
+  const [platformId, setPlatformId] = useState<string>("all");
+  const { data: platforms } = useApi<any[]>(() => apiFetch("/platforms"));
   const { data, loading, refreshing, error, refresh } = useApi<any[]>(
-    () => apiFetch(`/accounts?pageSize=100${search.trim() ? `&search=${encodeURIComponent(search.trim())}` : ""}`),
-    [search],
+    () =>
+      apiFetch(
+        `/accounts?pageSize=100${search.trim() ? `&search=${encodeURIComponent(search.trim())}` : ""}${platformId !== "all" ? `&platformId=${platformId}` : ""}`,
+      ),
+    [search, platformId],
   );
+  const platformOptions = ["all", ...(platforms ?? []).map((p: any) => p.id)];
+  const platformLabels: Record<string, string> = { all: "All", ...Object.fromEntries((platforms ?? []).map((p: any) => [p.id, p.name])) };
 
   const items = data ?? [];
 
@@ -23,6 +30,10 @@ export default function AdminAccounts() {
         autoCapitalize="none"
         style={styles.search}
       />
+      {platformOptions.length > 2 && (
+        <Chips options={platformOptions as any} value={platformId} onChange={setPlatformId} labels={platformLabels as any} />
+      )}
+      <SectionTitle>{`${items.length} account(s)`}</SectionTitle>
       <ErrorBanner message={error} />
       {loading ? (
         <Loading />
@@ -90,6 +101,6 @@ const styles = StyleSheet.create({
   name: { fontSize: 14, fontWeight: "700", color: colors.ink },
   sub: { fontSize: 12, color: colors.sub, marginTop: 1 },
   assignees: { fontSize: 11, color: colors.purple, marginTop: 2 },
-  followers: { fontSize: 15, fontWeight: "800", color: colors.ink },
+  followers: { fontSize: 15, fontWeight: "700", color: colors.ink },
   followersLabel: { fontSize: 10, color: colors.sub },
 });

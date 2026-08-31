@@ -14,6 +14,10 @@ export default function AdminTasks() {
   const [filter, setFilter] = useState<(typeof FILTERS)[number]>("ALL");
   const [showCreate, setShowCreate] = useState(false);
   const [statusFor, setStatusFor] = useState<any | null>(null);
+  const [commentsFor, setCommentsFor] = useState<any | null>(null);
+  const [comments, setComments] = useState<any[] | null>(null);
+  const [newComment, setNewComment] = useState("");
+  const [postingComment, setPostingComment] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
@@ -76,6 +80,33 @@ export default function AdminTasks() {
     }
   };
 
+  const openComments = async (task: any) => {
+    setCommentsFor(task);
+    setComments(null);
+    try {
+      setComments(await apiFetch<any[]>(`/tasks/${task.id}/comments`));
+    } catch {
+      setComments([]);
+    }
+  };
+
+  const postComment = async () => {
+    if (!newComment.trim() || !commentsFor) return;
+    setPostingComment(true);
+    try {
+      const created = await apiFetch<any>(`/tasks/${commentsFor.id}/comments`, {
+        method: "POST",
+        body: JSON.stringify({ content: newComment.trim() }),
+      });
+      setComments((c) => [...(c ?? []), created]);
+      setNewComment("");
+    } catch (e: any) {
+      setError(e?.message || "Could not post comment");
+    } finally {
+      setPostingComment(false);
+    }
+  };
+
   const accLabel = (id?: string) => {
     const a = (accounts ?? []).find((x: any) => x.id === id);
     return a ? `${a.displayName || a.handle}` : "Pick account *";
@@ -127,7 +158,12 @@ export default function AdminTasks() {
                   </Text>
                 ) : null}
               </View>
-              <Text style={styles.tapHint}>Tap the status pill to change it</Text>
+              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 8 }}>
+                <Text style={styles.tapHint}>Tap the status pill to change it</Text>
+                <Pressable onPress={() => openComments(t)} hitSlop={8}>
+                  <Text style={styles.commentsLink}>Comments</Text>
+                </Pressable>
+              </View>
             </Card>
           );
         })
@@ -207,6 +243,36 @@ export default function AdminTasks() {
         </View>
       </Modal>
 
+      {/* Comments */}
+      <Modal visible={!!commentsFor} animationType="slide" transparent onRequestClose={() => setCommentsFor(null)}>
+        <View style={styles.scrim}>
+          <View style={styles.sheet}>
+            <View style={styles.handle} />
+            <Text style={styles.sheetTitle} numberOfLines={1}>{commentsFor?.title}</Text>
+            <ScrollView style={{ maxHeight: 320 }}>
+              {comments === null ? (
+                <Text style={styles.commentMeta}>Loading…</Text>
+              ) : comments.length === 0 ? (
+                <Text style={styles.commentMeta}>No comments yet</Text>
+              ) : (
+                comments.map((c: any) => (
+                  <View key={c.id} style={styles.commentRow}>
+                    <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+                      <Text style={styles.commentAuthor}>{c.author?.name ?? "Unknown"}</Text>
+                      <Text style={styles.commentMeta}>{fmtDate(c.createdAt)}</Text>
+                    </View>
+                    <Text style={styles.commentBody}>{c.body ?? c.content ?? ""}</Text>
+                  </View>
+                ))
+              )}
+            </ScrollView>
+            <Field value={newComment} onChangeText={setNewComment} placeholder="Add a comment…" autoCapitalize="sentences" />
+            <Button title="Post" onPress={postComment} loading={postingComment} disabled={!newComment.trim()} small />
+            <Button title="Close" onPress={() => setCommentsFor(null)} variant="ghost" small style={{ marginTop: spacing.sm }} />
+          </View>
+        </View>
+      </Modal>
+
       {/* Status changer */}
       <Modal visible={!!statusFor} animationType="fade" transparent onRequestClose={() => setStatusFor(null)}>
         <View style={[styles.scrim, { justifyContent: "center", padding: spacing.xl }]}>
@@ -234,7 +300,12 @@ const styles = StyleSheet.create({
   meta: { fontSize: 12, color: colors.sub },
   prBadge: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: radius.full },
   prText: { fontSize: 10, fontWeight: "700" },
-  tapHint: { fontSize: 10, color: colors.faint, marginTop: 6 },
+  tapHint: { fontSize: 10, color: colors.faint },
+  commentsLink: { fontSize: 13, color: colors.purple, fontWeight: "500" },
+  commentRow: { paddingVertical: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
+  commentAuthor: { fontSize: 13, fontWeight: "600", color: colors.ink },
+  commentMeta: { fontSize: 12, color: colors.faint },
+  commentBody: { fontSize: 13, color: colors.ink, marginTop: 3, lineHeight: 18 },
   scrim: { flex: 1, backgroundColor: "rgba(0,0,0,0.4)", justifyContent: "flex-end" },
   sheet: {
     backgroundColor: colors.cardHigh,
@@ -245,7 +316,7 @@ const styles = StyleSheet.create({
     maxHeight: "88%",
   },
   handle: { width: 40, height: 4, borderRadius: 2, backgroundColor: colors.border, alignSelf: "center", marginBottom: 12 },
-  sheetTitle: { fontSize: 18, fontWeight: "800", color: colors.ink, marginBottom: 12 },
+  sheetTitle: { fontSize: 18, fontWeight: "700", color: colors.ink, marginBottom: 12 },
   fieldLabel: { fontSize: 13, fontWeight: "600", color: colors.ink, marginBottom: 6 },
   pickerBtn: {
     borderWidth: 1,

@@ -38,8 +38,8 @@ export default function AdminMore() {
 
       <SectionTitle>Shortcuts</SectionTitle>
       <Card>
-        <Row icon="notifications-outline" title="Notifications" onPress={() => router.push("/admin-notifications")} />
-        <Row icon="swap-horizontal-outline" title="Switch to Employee Portal" subtitle="Your own reports, leave & tasks" onPress={toEmployeePortal} />
+        <Row icon="notifications-outline" iconColor="#FF453A" title="Notifications" onPress={() => router.push("/admin-notifications")} />
+        <Row icon="swap-horizontal-outline" iconColor="#30D158" title="Switch to Employee Portal" subtitle="Your own reports, leave & tasks" onPress={toEmployeePortal} />
       </Card>
 
       <Button title="Sign Out" onPress={confirmLogout} variant="danger" style={{ marginTop: spacing.md }} />
@@ -49,7 +49,7 @@ export default function AdminMore() {
 }
 
 const styles = StyleSheet.create({
-  userName: { fontSize: 18, fontWeight: "800", color: colors.ink },
+  userName: { fontSize: 18, fontWeight: "700", color: colors.ink },
   userEmail: { fontSize: 13, color: colors.sub, marginTop: 2 },
   userRoles: { fontSize: 12, color: colors.purple, marginTop: 6, fontWeight: "600" },
   portalBadge: {
@@ -60,6 +60,6 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
     marginTop: 10,
   },
-  portalBadgeText: { fontSize: 10, fontWeight: "800", color: colors.purpleDark, letterSpacing: 1 },
+  portalBadgeText: { fontSize: 10, fontWeight: "700", color: colors.purpleDark, letterSpacing: 1 },
   version: { fontSize: 11, color: colors.faint, textAlign: "center", marginTop: spacing.lg },
 });

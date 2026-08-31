@@ -203,7 +203,7 @@ const styles = StyleSheet.create({
     padding: spacing.md,
     alignItems: "center",
   },
-  tileValue: { fontSize: 18, fontWeight: "800", color: colors.ink },
+  tileValue: { fontSize: 18, fontWeight: "700", color: colors.ink },
   tileLabel: { fontSize: 10, color: colors.sub, marginTop: 2, textAlign: "center" },
   dataThrough: { fontSize: 11, color: colors.faint, marginBottom: spacing.sm },
   row: {
@@ -221,7 +221,7 @@ const styles = StyleSheet.create({
   metaRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 3, flexWrap: "wrap" },
   followers: { fontSize: 11, fontWeight: "600", color: colors.ink },
   delta: { fontSize: 11, fontWeight: "700" },
-  views: { fontSize: 14, fontWeight: "800", color: colors.purple },
+  views: { fontSize: 14, fontWeight: "700", color: colors.purple },
   eng: { fontSize: 12, fontWeight: "700", color: colors.ink, marginTop: 2 },
   viewsLabel: { fontSize: 9, color: colors.sub },
   note: { fontSize: 11, color: colors.faint, marginTop: 4, lineHeight: 16 },

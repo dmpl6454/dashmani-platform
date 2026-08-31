@@ -164,5 +164,5 @@ const styles = StyleSheet.create({
   projRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 9, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
   projName: { fontSize: 14, fontWeight: "700", color: colors.ink },
   projSub: { fontSize: 12, color: colors.sub, marginTop: 1 },
-  projPct: { fontSize: 14, fontWeight: "800", color: colors.purple },
+  projPct: { fontSize: 14, fontWeight: "700", color: colors.purple },
 });

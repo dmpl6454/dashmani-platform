@@ -43,7 +43,7 @@ export default function AdminTeams() {
 }
 
 const styles = StyleSheet.create({
-  name: { fontSize: 16, fontWeight: "800", color: colors.ink },
+  name: { fontSize: 16, fontWeight: "700", color: colors.ink },
   countBadge: {
     backgroundColor: colors.purpleSoft,
     borderRadius: radius.full,

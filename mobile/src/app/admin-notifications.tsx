@@ -50,7 +50,7 @@ export default function AdminNotifications() {
               <View style={[styles.row, i === items.length - 1 && { borderBottomWidth: 0 }]}>
                 {!n.read && <View style={styles.dot} />}
                 <View style={{ flex: 1, minWidth: 0 }}>
-                  <Text style={[styles.title, !n.read && { fontWeight: "800" }]}>{n.title}</Text>
+                  <Text style={[styles.title, !n.read && { fontWeight: "700" }]}>{n.title}</Text>
                   <Text style={styles.message}>{n.message}</Text>
                   <Text style={styles.time}>{fmtDateTime(n.createdAt)}</Text>
                 </View>

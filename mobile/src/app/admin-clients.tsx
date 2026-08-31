@@ -41,7 +41,7 @@ export default function AdminClients() {
 const styles = StyleSheet.create({
   row: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 11, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
   avatar: { width: 38, height: 38, borderRadius: radius.md, backgroundColor: colors.blueSoft, alignItems: "center", justifyContent: "center" },
-  avatarLetter: { fontSize: 16, fontWeight: "800", color: colors.blue },
+  avatarLetter: { fontSize: 16, fontWeight: "700", color: colors.blue },
   name: { fontSize: 14, fontWeight: "700", color: colors.ink },
   sub: { fontSize: 12, color: colors.sub, marginTop: 1 },
   meta: { fontSize: 11, color: colors.faint, marginTop: 1 },

@@ -25,6 +25,18 @@ export default function AdminReports() {
     .slice()
     .sort((a: any, b: any) => (b.totalLinks ?? 0) - (a.totalLinks ?? 0));
 
+  // Team platform mix — aggregated from each employee's platformBreakdown
+  const platformMix: Array<[string, number]> = (() => {
+    const map: Record<string, number> = {};
+    for (const e of data?.employees ?? []) {
+      for (const pb of e.platformBreakdown ?? []) {
+        const k = String(pb.platform ?? "?").toLowerCase();
+        map[k] = (map[k] || 0) + (pb.count ?? pb.linkCount ?? 0);
+      }
+    }
+    return Object.entries(map).sort((a, b) => b[1] - a[1]).slice(0, 6);
+  })();
+
   return (
     <Screen onRefresh={refresh} refreshing={refreshing}>
       <Chips options={WINDOWS} value={win} onChange={setWin} labels={{ "24h": "24h", "7d": "7 days", "30d": "30 days", "90d": "90 days" }} />
@@ -39,6 +51,26 @@ export default function AdminReports() {
             <Stat label="Reports" value={data?.totalReports ?? 0} accent={colors.purple} />
             <Stat label="Links" value={fmtCompact(data?.totalLinks ?? 0)} accent={colors.green} />
           </View>
+
+          {platformMix.length > 0 && (
+            <>
+              <SectionTitle>Platform Mix</SectionTitle>
+              <Card>
+                {platformMix.map(([platform, count]) => {
+                  const max = platformMix[0][1] || 1;
+                  return (
+                    <View key={platform} style={styles.mixRow}>
+                      <Text style={styles.mixLabel} numberOfLines={1}>{platform}</Text>
+                      <View style={styles.mixTrack}>
+                        <View style={[styles.mixFill, { width: `${Math.max(4, Math.round((count / max) * 100))}%` }]} />
+                      </View>
+                      <Text style={styles.mixValue}>{fmtCompact(count)}</Text>
+                    </View>
+                  );
+                })}
+              </Card>
+            </>
+          )}
 
           <SectionTitle>Employee Summary ({employees.length})</SectionTitle>
           <Card>
@@ -87,8 +119,13 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.border,
   },
   rank: { width: 24, fontSize: 12, fontWeight: "700", color: colors.faint, textAlign: "center" },
+  mixRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 6 },
+  mixLabel: { width: 84, fontSize: 13, color: colors.ink, textTransform: "capitalize" },
+  mixTrack: { flex: 1, height: 6, borderRadius: 3, backgroundColor: colors.cardHigh, overflow: "hidden" },
+  mixFill: { height: 6, borderRadius: 3, backgroundColor: colors.purple },
+  mixValue: { width: 48, fontSize: 12, color: colors.sub, textAlign: "right", fontVariant: ["tabular-nums"] },
   empName: { fontSize: 14, fontWeight: "700", color: colors.ink },
   empMeta: { fontSize: 12, color: colors.sub, marginTop: 1 },
-  links: { fontSize: 16, fontWeight: "800", color: colors.purple },
+  links: { fontSize: 16, fontWeight: "700", color: colors.purple },
   linksLabel: { fontSize: 10, color: colors.sub },
 });

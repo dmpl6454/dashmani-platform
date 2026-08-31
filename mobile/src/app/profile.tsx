@@ -132,8 +132,8 @@ export default function ProfileScreen() {
 const styles = StyleSheet.create({
   avatar: { width: 84, height: 84, borderRadius: radius.full },
   avatarFallback: { backgroundColor: colors.purple, alignItems: "center", justifyContent: "center" },
-  avatarLetter: { color: "#fff", fontSize: 34, fontWeight: "800" },
-  name: { fontSize: 20, fontWeight: "800", color: colors.ink, marginTop: 10 },
+  avatarLetter: { color: "#fff", fontSize: 34, fontWeight: "700" },
+  name: { fontSize: 20, fontWeight: "700", color: colors.ink, marginTop: 10 },
   designation: { fontSize: 13, color: colors.sub, marginTop: 2 },
   edit: { color: colors.purple, fontWeight: "600", fontSize: 13 },
   infoRow: {

@@ -61,7 +61,7 @@ export default function ReviewsScreen() {
 }
 
 const styles = StyleSheet.create({
-  period: { fontSize: 15, fontWeight: "800", color: colors.ink },
+  period: { fontSize: 15, fontWeight: "700", color: colors.ink },
   block: { marginTop: 10 },
   blockLabel: { fontSize: 11, fontWeight: "700", color: colors.sub, textTransform: "uppercase" },
   blockText: { fontSize: 13, color: colors.ink, marginTop: 3, lineHeight: 18 },

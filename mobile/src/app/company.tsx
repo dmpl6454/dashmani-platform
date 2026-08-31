@@ -26,7 +26,7 @@ export default function CompanyScreen() {
 }
 
 const styles = StyleSheet.create({
-  name: { fontSize: 17, fontWeight: "800", color: colors.ink },
+  name: { fontSize: 17, fontWeight: "700", color: colors.ink },
   brand: { fontSize: 13, color: colors.sub, marginTop: 6, lineHeight: 19 },
   body: { fontSize: 13, color: colors.sub, lineHeight: 20, marginBottom: 6 },
 });

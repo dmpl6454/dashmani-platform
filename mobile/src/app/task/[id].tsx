@@ -112,7 +112,7 @@ export default function TaskDetailScreen() {
 }
 
 const styles = StyleSheet.create({
-  title: { fontSize: 18, fontWeight: "800", color: colors.ink },
+  title: { fontSize: 18, fontWeight: "700", color: colors.ink },
   desc: { fontSize: 14, color: colors.ink, marginTop: 10, lineHeight: 20 },
   metaBlock: { marginTop: 12, gap: 4 },
   meta: { fontSize: 13, color: colors.sub },

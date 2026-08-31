@@ -109,7 +109,7 @@ export default function CalendarScreen() {
 const styles = StyleSheet.create({
   nav: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: spacing.md },
   navBtn: { width: 38, height: 38, borderRadius: radius.full, backgroundColor: colors.cardHigh, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: colors.border },
-  month: { fontSize: 17, fontWeight: "800", color: colors.ink },
+  month: { fontSize: 17, fontWeight: "700", color: colors.ink },
   grid: { flexDirection: "row", flexWrap: "wrap" },
   dow: { width: `${100 / 7}%`, textAlign: "center", fontSize: 11, fontWeight: "700", color: colors.sub, marginBottom: 6 },
   cell: { width: `${100 / 7}%`, aspectRatio: 1, alignItems: "center", justifyContent: "center", borderRadius: radius.sm },
@@ -119,7 +119,7 @@ const styles = StyleSheet.create({
   legend: { fontSize: 13, color: colors.ink },
   workdays: { fontSize: 12, color: colors.sub, marginTop: 6 },
   holRow: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
-  holDate: { width: 30, fontSize: 16, fontWeight: "800", color: colors.yellow, textAlign: "center" },
+  holDate: { width: 30, fontSize: 16, fontWeight: "700", color: colors.yellow, textAlign: "center" },
   holName: { fontSize: 14, fontWeight: "600", color: colors.ink },
   holType: { fontSize: 11, color: colors.sub },
 });

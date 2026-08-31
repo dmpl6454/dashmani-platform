@@ -141,7 +141,7 @@ const styles = StyleSheet.create({
     shadowRadius: 26,
     shadowOffset: { width: 0, height: 0 },
   },
-  title: { fontSize: 30, fontWeight: "900", color: colors.ink, letterSpacing: 0.5 },
+  title: { fontSize: 30, fontWeight: "700", color: colors.ink, letterSpacing: 0.5 },
   subtitle: { fontSize: 13, color: colors.sub, marginTop: 4 },
   toggleRow: { flexDirection: "row", gap: 8, justifyContent: "center", marginBottom: spacing.lg },
   toggle: {

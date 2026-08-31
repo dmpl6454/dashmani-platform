@@ -129,7 +129,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  day: { fontSize: 16, fontWeight: "800", color: colors.ink },
+  day: { fontSize: 16, fontWeight: "700", color: colors.ink },
   mon: { fontSize: 10, color: colors.sub },
   name: { fontSize: 14, fontWeight: "700", color: colors.ink },
   sub: { fontSize: 12, color: colors.sub, marginTop: 1 },

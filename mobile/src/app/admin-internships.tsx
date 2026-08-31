@@ -70,6 +70,6 @@ const styles = StyleSheet.create({
   meta: { fontSize: 11, color: colors.faint, marginTop: 2 },
   scrim: { flex: 1, backgroundColor: "rgba(0,0,0,0.4)", justifyContent: "center", padding: spacing.xl },
   sheet: { backgroundColor: colors.cardHigh, borderRadius: radius.xl, padding: spacing.lg },
-  sheetTitle: { fontSize: 18, fontWeight: "800", color: colors.ink, marginBottom: 12 },
+  sheetTitle: { fontSize: 18, fontWeight: "700", color: colors.ink, marginBottom: 12 },
   optRow: { paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
 });

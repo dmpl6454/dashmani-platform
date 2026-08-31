@@ -100,7 +100,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  avatarLetter: { fontSize: 16, fontWeight: "800", color: colors.inkOnAccent },
+  avatarLetter: { fontSize: 16, fontWeight: "700", color: colors.inkOnAccent },
   name: { fontSize: 14, fontWeight: "700", color: colors.ink },
   sub: { fontSize: 12, color: colors.sub, marginTop: 1 },
   roles: { fontSize: 11, color: colors.purple, marginTop: 1 },

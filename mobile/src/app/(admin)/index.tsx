@@ -6,14 +6,23 @@ import { LinearGradient } from "expo-linear-gradient";
 import { useAuth } from "@/lib/auth";
 import { apiFetch, fmtCompact } from "@/lib/api";
 import { colors, radius, spacing } from "@/lib/theme";
-import { Screen, Card, SectionTitle, Stat, useApi } from "@/components/ui";
+import { Screen, Card, SectionTitle, Stat, TrendBars, useApi } from "@/components/ui";
 
 const HERO = require("../../../assets/visuals/hero-admin.jpg");
 
 export default function AdminDashboard() {
   const { user } = useAuth();
   const router = useRouter();
-  const { data, refreshing, refresh } = useApi<any>(() => apiFetch("/analytics/overview"));
+  const { data, refreshing, refresh } = useApi<any>(async () => {
+    const [overview, poa] = await Promise.allSettled([
+      apiFetch<any>("/analytics/overview"),
+      apiFetch<any>("/admin/daily-reports/status"),
+    ]);
+    return {
+      ...(overview.status === "fulfilled" ? overview.value : {}),
+      poaStatus: poa.status === "fulfilled" ? poa.value : null,
+    };
+  });
 
   const hour = new Date().getHours();
   const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
@@ -38,7 +47,7 @@ export default function AdminDashboard() {
             <Text style={styles.name} numberOfLines={1}>
               {user?.name}
             </Text>
-            <Text style={styles.heroTag}>ADMIN CONTROL CENTER</Text>
+            <Text style={styles.heroTag}>ADMIN</Text>
           </View>
           <Pressable onPress={() => router.push("/admin-notifications")} style={styles.bell}>
             <Ionicons name="notifications-outline" size={22} color={colors.ink} />
@@ -79,6 +88,43 @@ export default function AdminDashboard() {
         <Stat label="This Week" value={fmtCompact(data?.linksThisWeek)} />
         <Stat label="This Month" value={fmtCompact(data?.linksThisMonth)} />
       </View>
+      {Array.isArray(data?.linksTrend) && data.linksTrend.length > 1 && (
+        <Card>
+          <TrendBars data={data.linksTrend.map((t: any) => t.count ?? 0)} />
+          <View style={styles.trendFoot}>
+            <Text style={styles.trendLabel}>{String(data.linksTrend[0]?.date).slice(5)}</Text>
+            <Text style={styles.trendLabel}>Links · last {data.linksTrend.length} days</Text>
+            <Text style={styles.trendLabel}>{String(data.linksTrend[data.linksTrend.length - 1]?.date).slice(5)}</Text>
+          </View>
+        </Card>
+      )}
+
+      {data?.poaStatus ? (
+        <>
+          <SectionTitle>Today's Plans (POA)</SectionTitle>
+          <Card>
+            <View style={{ flexDirection: "row", alignItems: "baseline", gap: 6 }}>
+              <Text style={styles.poaCount}>{data.poaStatus.submittedCount ?? 0}</Text>
+              <Text style={styles.poaOf}>
+                of {(data.poaStatus.submittedCount ?? 0) + (data.poaStatus.nonSubmitters?.length ?? 0)} submitted
+              </Text>
+            </View>
+            {(data.poaStatus.nonSubmitters ?? []).length > 0 && (
+              <Text style={styles.poaMissing} numberOfLines={2}>
+                Missing: {(data.poaStatus.nonSubmitters ?? []).slice(0, 6).map((e: any) => e.name).join(", ")}
+                {(data.poaStatus.nonSubmitters ?? []).length > 6 ? ` +${data.poaStatus.nonSubmitters.length - 6} more` : ""}
+              </Text>
+            )}
+          </Card>
+        </>
+      ) : null}
+
+      <SectionTitle>Content</SectionTitle>
+      <View style={styles.statRow}>
+        <Stat label="Published (mo)" value={data?.contentPublishedThisMonth ?? "—"} accent={colors.green} />
+        <Stat label="Scheduled" value={data?.contentScheduledUpcoming ?? "—"} />
+        <Stat label="Pending Docs" value={data?.pendingDocuments ?? "—"} />
+      </View>
 
       <SectionTitle>Workspace</SectionTitle>
       <View style={styles.statRow}>
@@ -112,9 +158,9 @@ const styles = StyleSheet.create({
   },
   heroImg: { borderRadius: radius.xl },
   header: { flexDirection: "row", alignItems: "flex-end", padding: spacing.lg, paddingTop: 64 },
-  heroTag: { fontSize: 9, fontWeight: "800", color: colors.yellow, letterSpacing: 2, marginTop: 4 },
+  heroTag: { fontSize: 11, fontWeight: "500", color: colors.sub, letterSpacing: 1.2, marginTop: 4 },
   greeting: { fontSize: 13, color: colors.sub },
-  name: { fontSize: 18, fontWeight: "800", color: colors.ink },
+  name: { fontSize: 18, fontWeight: "700", color: colors.ink },
   bell: {
     width: 42,
     height: 42,
@@ -128,6 +174,11 @@ const styles = StyleSheet.create({
   calloutTitle: { fontSize: 15, fontWeight: "700", color: colors.ink },
   calloutSub: { fontSize: 12, color: colors.sub, marginTop: 2 },
   statRow: { flexDirection: "row", gap: 8, marginBottom: spacing.md },
+  trendFoot: { flexDirection: "row", justifyContent: "space-between", marginTop: 8 },
+  trendLabel: { fontSize: 11, color: colors.faint },
+  poaCount: { fontSize: 28, fontWeight: "600", color: colors.ink, fontVariant: ["tabular-nums"] },
+  poaOf: { fontSize: 14, color: colors.sub },
+  poaMissing: { fontSize: 13, color: colors.sub, marginTop: 8 },
   quickGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
   quickTile: {
     width: "47%",

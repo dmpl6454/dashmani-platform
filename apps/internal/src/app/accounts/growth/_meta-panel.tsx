@@ -13,18 +13,16 @@
  * for missing data or a real zero.
  */
 
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import {
   RefreshCw, Link2, Unlink, AlertTriangle, ExternalLink, Loader2, ChevronDown, ChevronRight,
   Eye, EyeOff, Download,
 } from "lucide-react";
 import {
   useMetaConnections, useMetaChannels, useMetaPosts,
-  startMetaConnect, triggerMetaDiscovery, triggerMetaSync, disconnectMeta,
+  startMetaConnect, triggerMetaDiscovery, triggerMetaSync, disconnectMeta, setAssetsSelectedBulk,
   fmtMetric, fmtMoney, fmtWatchTime, useMetaDemographics, CHANNEL_WINDOWS, windowSuffix, type MetaChannel, type MetaConnection, type ChannelWindowKey,
 } from "@/lib/hooks/use-meta";
-
-type SortKey = "followers" | "views" | "engagements" | "name";
 
 /** Per-browser preference for masking revenue while presenting. */
 const REVENUE_HIDDEN_KEY = "meta-growth:hide-revenue";
@@ -313,11 +311,103 @@ function ChannelPosts({ assetId }: { assetId: string }) {
   );
 }
 
+/** Columns the table can sort by. */
+type ColKey =
+  | "name" | "followers" | "delta" | "views" | "engagements"
+  | "reach" | "revenue" | "profileViews" | "posts";
+
+function colValue(c: MetaChannel, k: ColKey): number | string | null {
+  switch (k) {
+    case "name": return c.name;
+    case "followers": return c.followers;
+    case "delta": return c.followerDelta ?? null;
+    case "views": return c.views28d;
+    case "engagements": return c.engagements28d;
+    case "reach": return c.reach28d;
+    case "revenue": return c.earningsCents;
+    case "profileViews": return c.profileViews28d;
+    case "posts": return c.posts;
+  }
+}
+
+/**
+ * Clickable, direction-toggling column header.
+ *
+ * ⚠️ Nulls sort LAST in BOTH directions — a channel Meta has not measured must
+ * never outrank one it has (the repo-wide null-ordering convention), and an
+ * ascending sort that leads with a wall of dashes reads as broken.
+ */
+function SortTh({ label, colKey, sort, onSort, align = "right", pad = "px-2", title }: {
+  label: React.ReactNode;
+  colKey: ColKey;
+  sort: { key: ColKey; dir: "asc" | "desc" };
+  onSort: (k: ColKey) => void;
+  align?: "left" | "right";
+  pad?: string;
+  title?: string;
+}) {
+  const active = sort.key === colKey;
+  return (
+    <th className={`${align === "left" ? "text-left" : "text-right"} font-medium ${pad} py-2`} title={title}>
+      <button
+        onClick={() => onSort(colKey)}
+        aria-pressed={active}
+        className={`inline-flex items-center gap-0.5 hover:text-[#1A1A1A] ${active ? "text-[#1A1A1A]" : ""}`}
+      >
+        {label}
+        {/* fixed-width slot so headers don't shift as the arrow moves between columns */}
+        <span className="inline-block w-2.5 text-[9px] leading-none text-[#5B4BF5]">
+          {active ? (sort.dir === "desc" ? "\u25BC" : "\u25B2") : ""}
+        </span>
+      </button>
+    </th>
+  );
+}
+
+const isoDayUTC = (d: Date) => d.toISOString().slice(0, 10);
+const yesterdayIso = () => isoDayUTC(new Date(Date.now() - 86_400_000));
+
+/**
+ * A calendar month as an inclusive [start, end] range, capped at yesterday —
+ * daily history only exists for COMPLETED days, and a range that includes today
+ * would count a day that is still accumulating. Returns null for a month with
+ * no completed days yet (i.e. "this month" on the 1st).
+ */
+function monthRange(ym: string): { start: string; end: string; label: string } | null {
+  if (!/^\d{4}-\d{2}$/.test(ym)) return null;
+  const [y, m] = ym.split("-").map(Number);
+  const start = `${ym}-01`;
+  const lastDay = isoDayUTC(new Date(Date.UTC(y, m, 0)));
+  const yday = yesterdayIso();
+  if (start > yday) return null;
+  const end = lastDay < yday ? lastDay : yday;
+  const label = new Date(`${start}T00:00:00Z`).toLocaleDateString(undefined, { month: "short", year: "numeric", timeZone: "UTC" })
+    + (end < lastDay ? " (to date)" : "");
+  return { start, end, label };
+}
+
+function customLabel(start: string, end: string): string {
+  const f = (d: string) => new Date(`${d}T00:00:00Z`).toLocaleDateString(undefined, { day: "numeric", month: "short", timeZone: "UTC" });
+  return `${f(start)} – ${f(end)}`;
+}
+
 export function MetaPanel() {
   const { data: conns, isLoading: connLoading, mutate: mutateConns } = useMetaConnections();
   const [platform, setPlatform] = useState<"all" | "facebook" | "instagram">("all");
-  const [sort, setSort] = useState<SortKey>("followers");
+  // Header-click sorting (client-side over the loaded rows — all ~500 are
+  // already here, and the CSV inherits whatever order is on screen).
+  const [tableSort, setTableSort] = useState<{ key: ColKey; dir: "asc" | "desc" }>({ key: "followers", dir: "desc" });
   const [q, setQ] = useState("");
+  // Custom range / calendar month. null = the native window pills drive the view.
+  const [range, setRange] = useState<{ start: string; end: string; label: string } | null>(null);
+  const [customOpen, setCustomOpen] = useState(false);
+  const [customStart, setCustomStart] = useState("");
+  const [customEnd, setCustomEnd] = useState("");
+  const [monthPick, setMonthPick] = useState("");
+  // Manage mode: checkboxes for removing channels from monitoring.
+  const [manageMode, setManageMode] = useState(false);
+  const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
+  const [showRemoved, setShowRemoved] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -349,7 +439,7 @@ export function MetaPanel() {
    * file is still self-describing a month later.
    */
   const downloadCsv = () => {
-    const header = [
+    const header: string[] = [
       "Channel", "Handle", "Platform", "Followers",
       // ⚠️ Spell out the convention. A bare signed number is right for a
       // spreadsheet (it sums and sorts), but "-3273" next to a blank next to
@@ -360,7 +450,9 @@ export function MetaPanel() {
       `Saves (${sfx})`, `Shares (${sfx})`, `Accounts engaged (${sfx})`,
       "Data through",
     ];
-    const rows = channels.map((c) => [
+    const coverageCols = isRangeMode ? ["Days covered", "Range days"] : [];
+    header.push(...coverageCols);
+    const rows = sortedChannels.map((c) => [
       // ⚠️ No leading "@". It is a formula trigger, so every handle came out as
       // `'@name` with a visible apostrophe. Dropping it removes the trigger
       // entirely rather than neutralising it, and a column headed "Handle" does
@@ -372,13 +464,14 @@ export function MetaPanel() {
       c.follows ?? "", c.unfollows ?? "",
       c.saves ?? "", c.shares ?? "", c.accountsEngaged ?? "",
       ch?.dataThrough ? new Date(ch.dataThrough).toISOString().slice(0, 10) : "",
+      ...(isRangeMode ? [c.coveredDays ?? "", c.rangeDays ?? ""] : []),
     ]);
 
     // \uFEFF so Excel opens UTF-8 correctly — without it channel names with
     // non-Latin characters render as mojibake.
     const csv = "\uFEFF" + [header, ...rows].map((r) => r.map(csvCell).join(",")).join("\r\n");
     const parts = [
-      "meta-channels", sfx,
+      "meta-channels", isRangeMode && ch?.range ? `${ch.range.start}_${ch.range.end}` : sfx,
       platform !== "all" ? platform : null,
       earningOnly ? "earning-only" : null,
       q.trim() ? "search" : null,
@@ -406,15 +499,24 @@ export function MetaPanel() {
   const { data: ch, mutate: mutateCh } = useMetaChannels({
     platform: platform === "all" ? undefined : platform,
     q: q.trim() || undefined,
-    sort,
     window: win,
+    ...(range ? { start: range.start, end: range.end } : {}),
   });
+  // The removed-channels list is fetched only while its section is open — null
+  // key skips the request entirely.
+  const { data: hiddenCh, mutate: mutateHidden } = useMetaChannels(showRemoved ? { hidden: true } : null);
 
   // Label every windowed figure from the window the SERVER says it returned, not
-  // from local state — mid-fetch those disagree, and a "24h" heading over 28-day
-  // numbers is exactly the kind of confident-but-wrong labelling this page exists
-  // to avoid.
-  const sfx = windowSuffix(ch?.window ?? win);
+  // from local state — mid-fetch those disagree, and a "Yesterday" heading over
+  // 28-day numbers is exactly the kind of confident-but-wrong labelling this
+  // page exists to avoid. In range mode the label is the range itself.
+  const isRangeMode = ch?.window === "custom";
+  const sfx = isRangeMode
+    ? (range?.label ?? (ch?.range ? customLabel(ch.range.start, ch.range.end) : "range"))
+    : windowSuffix((ch?.window as ChannelWindowKey | undefined) ?? win);
+  const periodDays = isRangeMode
+    ? (ch?.range?.days ?? null)
+    : ch?.window === "day" ? 1 : ch?.window === "week" ? 7 : 28;
 
   const connections = conns?.connections ?? [];
   const live = connections.filter((c) => c.status !== "REVOKED");
@@ -432,6 +534,59 @@ export function MetaPanel() {
     ? allChannels.filter((c) => (c.earningsCents ?? 0) > 0)
     : allChannels;
 
+  const sortedChannels = useMemo(() => {
+    const { key, dir } = tableSort;
+    const arr = [...channels];
+    arr.sort((a, b) => {
+      const av = colValue(a, key);
+      const bv = colValue(b, key);
+      if (key === "name") {
+        return dir === "asc"
+          ? String(av).localeCompare(String(bv))
+          : String(bv).localeCompare(String(av));
+      }
+      // Nulls last in BOTH directions — see SortTh.
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      return dir === "asc" ? (av as number) - (bv as number) : (bv as number) - (av as number);
+    });
+    return arr;
+  }, [channels, tableSort]);
+
+  const onSort = (k: ColKey) =>
+    setTableSort((cur) =>
+      cur.key === k
+        ? { key: k, dir: cur.dir === "desc" ? "asc" : "desc" }
+        : { key: k, dir: k === "name" ? "asc" : "desc" });
+
+  /**
+   * The Followers tile's period change: the sum of per-channel deltas whose
+   * history spans (>=90% of) the selected period.
+   *
+   * ⚠️ THE GUARDS ARE WHAT MAKE THIS SUM HONEST — an unguarded version was
+   * measured against prod and rejected: contested channel rows contributed
+   * +5,100,699 of a +5,113,403 24h "gain" (the server now excludes them from
+   * deltas entirely), and short-history channels contributed 5-day changes
+   * labelled as 28-day ones (the server now reports each delta's true span,
+   * which is what the full-span filter here checks). What survives is a sum of
+   * same-period, same-kind measurements, with the count disclosed so a partial
+   * estate never reads as the whole.
+   */
+  const fullSpanMin = periodDays ? Math.max(1, Math.ceil(periodDays * 0.9)) : null;
+  const spanRows = fullSpanMin === null
+    ? []
+    : allChannels.filter((c) => c.followerDelta != null && c.followerDeltaDays != null && c.followerDeltaDays >= fullSpanMin);
+  const followerChange = spanRows.reduce((a, c) => a + (c.followerDelta as number), 0);
+
+  // Trend chips (views / engagements / revenue vs the equal-length prior span).
+  // ⚠️ Gated on baseline coverage: a percentage computed against a half-covered
+  // baseline fabricates growth, so below 95% the chips simply do not render.
+  const prevTotals = ch?.previousTotals ?? null;
+  const trendOk = !!prevTotals && prevTotals.coverageShare >= 0.95;
+  const trendPct = (cur: number, prevVal: number): number | null =>
+    trendOk && prevVal > 0 ? ((cur - prevVal) / prevVal) * 100 : null;
+
 
   async function connect(mode: "connect" | "reconnect", connectionId?: string) {
     setErr(null); setBusy("connect");
@@ -442,6 +597,20 @@ export function MetaPanel() {
       setErr(e instanceof Error ? e.message : "Could not start the Meta connection.");
       setBusy(null);
     }
+  }
+
+  /** Remove the checked channels from monitoring, or restore a removed set. */
+  async function setSelectedBulk(ids: string[], selected: boolean, confirmText?: string) {
+    if (ids.length === 0) return;
+    if (confirmText && !window.confirm(confirmText)) return;
+    setErr(null); setBusy(selected ? "restore" : "remove");
+    try {
+      await setAssetsSelectedBulk(ids, selected);
+      setCheckedIds(new Set());
+      await Promise.all([mutateCh(), mutateHidden(), mutateConns()]);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Updating channels failed.");
+    } finally { setBusy(null); }
   }
 
   async function run(label: string, fn: () => Promise<unknown>) {
@@ -552,30 +721,35 @@ export function MetaPanel() {
         <div className="px-5 py-5 grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 gap-x-4 gap-y-5 border-b border-[#F0EAE0]">
           {[
             { label: "Channels", value: ch!.channelCount, raw: true, note: null as string | null },
-            // ⚠️ THE ONE TILE THAT DOES NOT MOVE WITH THE PERIOD, AND THAT IS CORRECT.
-            // Followers is a STOCK ("how many right now"), not a flow, so it is
-            // window-invariant BY CONSTRUCTION — the total is SUM(follower_count),
-            // a column with no window dimension. Reported as "faulty data" three
-            // times now, so the label, the tooltip and the note all say so
-            // explicitly rather than leaving the reader to infer it.
+            // ⚠️ THE HEADLINE OF THIS TILE DOES NOT MOVE WITH THE PERIOD, AND THAT
+            // IS CORRECT. Followers is a STOCK ("how many right now"), not a flow —
+            // the total is SUM(follower_count), a column with no window dimension.
+            // Reported as "faulty data" three times, so the label, tooltip and note
+            // all say so explicitly.
             //
-            // ⚠️ DO NOT "FIX" THIS BY SUMMING THE PER-PERIOD FOLLOWER DELTA HERE.
-            // That was tried and measured against prod: the sum is dominated by
-            // artefacts, not growth. Contested channel rows contributed
-            // +5,100,699 of a +5,113,403 24h "gain" (now suppressed in the route),
-            // and what survives still mixes snapshot-measured Facebook deltas with
-            // Instagram's accounting figure and inherits manual->API correction
-            // seams. A single headline number cannot be honest about that mixture.
-            // The per-channel change belongs in the table, where each figure keeps
-            // its own provenance.
+            // The NOTE is what moves with the period: the summed change across
+            // channels with FULL-PERIOD history. An unguarded sum was measured on
+            // prod and rejected (contested rows fabricated +5.1m of a +5.11m
+            // "gain"; 5-day spans were labelled 28d) — the server now excludes
+            // contested rows from deltas and reports each delta's true span, and
+            // the full-span filter plus the disclosed count are what make this sum
+            // honest. Do NOT remove either guard.
             { label: "Followers (now)", value: t.followers, raw: false,
-              title: "A live total, not a period figure — how many followers these channels have right now, so it reads the same on 24h, 7d and 28d by design. The period filter drives Views, Engagements, Reach and Revenue; each channel's change across the period is in the table below.",
-              note: "same on every period — per-channel change is in the table" },
+              title: "A live total, not a period figure — how many followers these channels have right now, so the headline reads the same on every period by design. The change line beneath it follows the selected period, summed over channels whose API follower history spans that whole period.",
+              note: spanRows.length > 0
+                ? `${followerChange >= 0 ? "+" : ""}${fmtMetric(followerChange)} · ${sfx} · ${spanRows.length} of ${ch!.channelCount} channels with full-period history`
+                : "headline is a live total — per-channel change is in the table",
+              noteTone: spanRows.length > 0 ? (followerChange > 0 ? "up" : followerChange < 0 ? "down" : null) : null },
             { label: `Views · ${sfx}`, value: t.views, raw: false,
+              trend: trendPct(t.views, prevTotals?.views ?? 0),
               note: contrib && contrib.views < ch!.channelCount ? `${contrib.views}/${ch!.channelCount} channels reporting` : null },
             { label: `Engagements · ${sfx}`, value: t.engagements, raw: false,
+              trend: trendPct(t.engagements, prevTotals?.engagements ?? 0),
               note: contrib && contrib.engagements < ch!.channelCount ? `${contrib.engagements}/${ch!.channelCount} reporting` : null },
             { label: `Revenue · ${sfx}`, value: t.earningsCents, raw: false, money: true,
+              // ⚠️ No trend while revenue is masked — "▲ 12%" leaks the very
+              // motion someone hid the amounts to avoid showing on a call.
+              trend: hideRevenue ? null : trendPct(t.earningsCents, prevTotals?.earningsCents ?? 0),
               note: contrib ? `${contrib.earnings} channel(s) earning · Facebook only` : null },
           ].map((s) => (
             <div
@@ -614,8 +788,23 @@ export function MetaPanel() {
               <p className="mt-2 text-[10px] font-medium uppercase tracking-[0.08em] text-[#8A8A8A] truncate">
                 {s.label}
               </p>
+              {/* Trend vs the equal-length prior span — rendered only when the
+                  baseline is >=95% covered (see trendOk) so a chip can never be
+                  computed against half a baseline. */}
+              {typeof s.trend === "number" && (
+                <p className={`mt-1 text-[10px] font-medium ${s.trend >= 0 ? "text-[#3E9B4F]" : "text-[#C0504D]"}`}>
+                  {s.trend >= 0 ? "\u25B2" : "\u25BC"} {Math.abs(s.trend).toFixed(1)}% vs prior {isRangeMode && periodDays ? `${periodDays}d` : sfx}
+                </p>
+              )}
               {/* Say what a total does NOT cover, rather than implying completeness. */}
-              {s.note && <p className="mt-0.5 text-[10px] text-[#B0B0B0] leading-tight">{s.note}</p>}
+              {s.note && (
+                <p className={`mt-0.5 text-[10px] leading-tight ${
+                  s.noteTone === "up" ? "text-[#3E9B4F]"
+                  : s.noteTone === "down" ? "text-[#C0504D]"
+                  : "text-[#B0B0B0]"}`}>
+                  {s.note}
+                </p>
+              )}
             </div>
           ))}
         </div>
@@ -624,24 +813,71 @@ export function MetaPanel() {
       {live.length > 0 && (
         <div className="px-5 py-2.5 border-b border-[#F0EAE0] flex flex-wrap items-center gap-2">
           <div
-            className="flex items-center gap-1 mr-1"
+            className="flex flex-wrap items-center gap-1 mr-1"
             role="group"
-            aria-label="Time window for views, reach and engagement"
+            aria-label="Reporting period"
           >
             <span className="text-[11px] text-[#B0B0B0] mr-0.5">Period</span>
             {CHANNEL_WINDOWS.map((w) => (
               <button
                 key={w.key}
-                onClick={() => setWin(w.key)}
-                aria-pressed={win === w.key}
+                onClick={() => { setRange(null); setCustomOpen(false); setWin(w.key); }}
+                aria-pressed={!range && win === w.key}
                 className={`text-[11px] rounded-full px-2.5 py-1 border ${
-                  win === w.key
+                  !range && win === w.key
                     ? "bg-[#5B4BF5] text-white border-[#5B4BF5]"
                     : "border-[#DCDCDC] text-[#7A7A7A] hover:bg-[#FAFAFA]"}`}
               >
                 {w.label}
               </button>
             ))}
+            {/* Calendar months and custom spans are exact SUMS of stored daily
+                history (reach excepted — see the footer). Native pills stay live
+                Meta windows; these two families deliberately coexist. */}
+            {(["this", "last"] as const).map((which) => {
+              const now = new Date();
+              const ym = which === "this"
+                ? `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`
+                : isoDayUTC(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1))).slice(0, 7);
+              const r = monthRange(ym);
+              if (!r) return null; // "This month" on the 1st: no completed days yet
+              const active = range?.start === r.start && range?.end === r.end;
+              return (
+                <button
+                  key={which}
+                  onClick={() => { setCustomOpen(false); setRange(r); }}
+                  aria-pressed={active}
+                  className={`text-[11px] rounded-full px-2.5 py-1 border ${
+                    active
+                      ? "bg-[#5B4BF5] text-white border-[#5B4BF5]"
+                      : "border-[#DCDCDC] text-[#7A7A7A] hover:bg-[#FAFAFA]"}`}
+                >
+                  {which === "this" ? "This month" : "Last month"}
+                </button>
+              );
+            })}
+            <input
+              type="month"
+              value={monthPick}
+              max={yesterdayIso().slice(0, 7)}
+              onChange={(e) => {
+                setMonthPick(e.target.value);
+                const r = monthRange(e.target.value);
+                if (r) { setCustomOpen(false); setRange(r); }
+              }}
+              title="Pick any calendar month"
+              className="text-[11px] border border-[#DCDCDC] rounded-full px-2 py-0.5 bg-white text-[#7A7A7A]"
+            />
+            <button
+              onClick={() => setCustomOpen((v) => !v)}
+              aria-expanded={customOpen}
+              className={`text-[11px] rounded-full px-2.5 py-1 border ${
+                customOpen || (range && !range.label.includes(" "))
+                  ? "border-[#5B4BF5] text-[#5B4BF5]"
+                  : "border-[#DCDCDC] text-[#7A7A7A] hover:bg-[#FAFAFA]"}`}
+            >
+              Custom…
+            </button>
           </div>
           <span className="hidden sm:block h-4 w-px bg-[#E8E0D0]" />
           {(["all", "facebook", "instagram"] as const).map((p) => (
@@ -654,13 +890,23 @@ export function MetaPanel() {
           ))}
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search channels…"
             className="text-[11px] border border-[#DCDCDC] rounded-full px-3 py-1 w-40 focus:outline-none focus:border-[#B0B0B0]" />
-          <select value={sort} onChange={(e) => setSort(e.target.value as SortKey)}
-            className="text-[11px] border border-[#DCDCDC] rounded-full px-2 py-1 bg-white">
-            <option value="followers">Sort: Followers</option>
-            <option value="views">Sort: Views</option>
-            <option value="engagements">Sort: Engagements</option>
-            <option value="name">Sort: Name</option>
-          </select>
+          <button
+            onClick={() => { setManageMode((v) => !v); setCheckedIds(new Set()); }}
+            aria-pressed={manageMode}
+            title="Select channels to remove from monitoring. Removed channels stop syncing and drop out of every figure; restore them anytime."
+            className={`text-[11px] rounded-full px-2.5 py-1 border ${
+              manageMode ? "bg-[#1A1A1A] text-white border-[#1A1A1A]"
+              : "border-[#DCDCDC] text-[#7A7A7A] hover:bg-[#FAFAFA]"}`}
+          >
+            {manageMode ? "Done" : "Manage"}
+          </button>
+          <button
+            onClick={() => setShowRemoved((v) => !v)}
+            aria-expanded={showRemoved}
+            className="text-[11px] rounded-full px-2.5 py-1 border border-[#DCDCDC] text-[#7A7A7A] hover:bg-[#FAFAFA]"
+          >
+            Removed channels
+          </button>
           <button
             onClick={() => setEarningOnly((v) => !v)}
             aria-pressed={earningOnly}
@@ -702,6 +948,108 @@ export function MetaPanel() {
         </div>
       )}
 
+      {live.length > 0 && customOpen && (
+        <div className="px-5 py-2 border-b border-[#F6F2EA] flex flex-wrap items-center gap-2 text-[11px]">
+          <span className="text-[#7A7A7A]">From</span>
+          <input type="date" value={customStart} max={yesterdayIso()}
+            onChange={(e) => setCustomStart(e.target.value)}
+            className="border border-[#DCDCDC] rounded-lg px-2 py-1" />
+          <span className="text-[#7A7A7A]">to</span>
+          <input type="date" value={customEnd} max={yesterdayIso()}
+            onChange={(e) => setCustomEnd(e.target.value)}
+            className="border border-[#DCDCDC] rounded-lg px-2 py-1" />
+          <button
+            disabled={!customStart || !customEnd || customStart > customEnd}
+            onClick={() => {
+              setRange({ start: customStart, end: customEnd, label: customLabel(customStart, customEnd) });
+              setCustomOpen(false);
+            }}
+            className="rounded-full px-3 py-1 bg-[#5B4BF5] text-white disabled:opacity-40"
+          >
+            Apply
+          </button>
+          <span className="text-[10px] text-[#B0B0B0]">
+            completed days only — history reaches back as far as each channel&apos;s stored daily data
+          </span>
+        </div>
+      )}
+
+      {live.length > 0 && isRangeMode && (
+        <div className="px-5 py-2 border-b border-[#F6F2EA] text-[10px] text-[#7A7A7A] leading-snug">
+          Exact sums of stored daily history for <strong className="font-medium">{sfx}</strong>
+          {ch?.dataThrough && <> · data through {new Date(ch.dataThrough).toLocaleDateString(undefined, { day: "numeric", month: "short", timeZone: "UTC" })}</>}.
+          Reach shows a dash here: it counts unique people, days cannot be added without
+          double-counting, and Meta publishes no unique-people figure for a custom span.
+          A <span className="text-[#C2861D]">n/Nd</span> chip beside a channel means its stored
+          history covers only part of the range — its sums cover those days only.
+        </div>
+      )}
+
+      {live.length > 0 && manageMode && (
+        <div className="px-5 py-2 border-b border-[#F0EAE0] bg-[#FDF8EC] flex flex-wrap items-center gap-2 text-[11px]">
+          <span className="text-[#7A7A7A]">{checkedIds.size} selected</span>
+          <button
+            disabled={checkedIds.size === 0 || busy !== null}
+            onClick={() => setSelectedBulk(
+              [...checkedIds], false,
+              `Remove ${checkedIds.size} channel(s) from monitoring?\n\nThey stop syncing (no more Meta API calls are spent on them) and disappear from every figure on this page and the dashboard. Their history is kept and you can restore them anytime under "Removed channels".`,
+            )}
+            className="rounded-full px-3 py-1 bg-[#C0504D] text-white disabled:opacity-40"
+          >
+            {busy === "remove" ? "Removing…" : "Remove from monitoring"}
+          </button>
+          <span className="text-[10px] text-[#B0B0B0]">
+            not a delete — removed channels stop syncing and can be restored anytime
+          </span>
+        </div>
+      )}
+
+      {live.length > 0 && showRemoved && (
+        <div className="px-5 py-3 border-b border-[#F0EAE0] bg-[#FCFBF8]">
+          <div className="flex items-center justify-between mb-1.5">
+            <p className="text-xs font-medium text-[#1A1A1A]">
+              Removed channels{hiddenCh ? ` (${hiddenCh.channelCount})` : ""}
+            </p>
+            {(hiddenCh?.items?.length ?? 0) > 0 && (
+              <button
+                disabled={busy !== null}
+                onClick={() => setSelectedBulk(hiddenCh!.items.map((c) => c.id), true)}
+                className="text-[11px] text-[#5B4BF5] hover:underline disabled:opacity-40"
+              >
+                Restore all
+              </button>
+            )}
+          </div>
+          {!hiddenCh ? (
+            <p className="text-[11px] text-[#B0B0B0]">Loading…</p>
+          ) : hiddenCh.items.length === 0 ? (
+            <p className="text-[11px] text-[#B0B0B0]">
+              Nothing here — removing a channel (via Manage) hides it from every figure and
+              stops spending Meta API calls on it, without deleting its history.
+            </p>
+          ) : (
+            <ul className="space-y-1">
+              {hiddenCh.items.map((c) => (
+                <li key={c.id} className="flex items-center gap-2 text-xs">
+                  <span className={`text-[10px] shrink-0 ${c.platform === "facebook" ? "text-[#1877F2]" : "text-[#C13584]"}`}>
+                    {c.platform === "facebook" ? "f" : "ig"}
+                  </span>
+                  <span className="truncate max-w-[260px] text-[#1A1A1A]">{c.name}</span>
+                  <span className="text-[10px] text-[#B0B0B0]">{fmtMetric(c.followers)} followers</span>
+                  <button
+                    disabled={busy !== null}
+                    onClick={() => setSelectedBulk([c.id], true)}
+                    className="ml-auto text-[11px] text-[#5B4BF5] hover:underline disabled:opacity-40"
+                  >
+                    Restore
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
       {live.length > 0 && (
         <div className="overflow-x-auto">
           {channels.length === 0 ? (
@@ -711,34 +1059,65 @@ export function MetaPanel() {
           ) : (
             <table className="w-full min-w-[820px]">
               <thead>
+                {/* ⚠️ Column COUNT is dynamic (the Manage checkbox column), so the
+                    expanded row's colSpan below must track it — a stale colSpan
+                    silently misaligns every cell (the documented drill-down trap). */}
                 <tr className="text-[11px] text-[#7A7A7A] border-b border-[#F0EAE0]">
-                  <th className="text-left font-medium px-5 py-2">Channel</th>
-                  <th
-                    className="text-right font-medium px-2 py-2"
+                  {manageMode && (
+                    <th className="pl-4 pr-1 py-2 text-left">
+                      <input
+                        type="checkbox"
+                        aria-label="Select all listed channels"
+                        checked={sortedChannels.length > 0 && sortedChannels.every((c) => checkedIds.has(c.id))}
+                        onChange={(e) => setCheckedIds(e.target.checked ? new Set(sortedChannels.map((c) => c.id)) : new Set())}
+                        className="h-3.5 w-3.5 accent-[#5B4BF5]"
+                      />
+                    </th>
+                  )}
+                  <SortTh label="Channel" colKey="name" sort={tableSort} onSort={onSort} align="left" pad="px-5" />
+                  <SortTh
+                    colKey="followers" sort={tableSort} onSort={onSort}
                     title="A live total, not a period figure — how many followers the channel has right now. The period filter drives Views, Engagements and Reach."
-                  >
-                    Followers <span className="text-[#B0B0B0] font-normal">(now)</span>
-                  </th>
-                  <th className="text-right font-medium px-2 py-2">Views {sfx}</th>
-                  <th className="text-right font-medium px-2 py-2">Engagements {sfx}</th>
-                  <th className="text-right font-medium px-2 py-2">Reach {sfx}</th>
-                  <th
-                    className="text-right font-medium px-2 py-2"
+                    label={<>Followers <span className="text-[#B0B0B0] font-normal">(now)</span></>}
+                  />
+                  <SortTh label={`Views ${sfx}`} colKey="views" sort={tableSort} onSort={onSort} />
+                  <SortTh label={`Engagements ${sfx}`} colKey="engagements" sort={tableSort} onSort={onSort} />
+                  <SortTh
+                    label={`Reach ${sfx}`} colKey="reach" sort={tableSort} onSort={onSort}
+                    title={isRangeMode
+                      ? "No reach for a custom range: reach counts unique people, days cannot be added without double-counting, and Meta publishes no unique-people figure for arbitrary spans."
+                      : "Distinct accounts that saw content at least once — Meta now calls this \u201cviewers\u201d."}
+                  />
+                  <SortTh
+                    label={`Revenue ${sfx}`} colKey="revenue" sort={tableSort} onSort={onSort}
                     title="Approximate earnings for the period, as Meta reports them. Facebook only — Instagram publishes no earnings metric."
-                  >
-                    Revenue {sfx}
-                  </th>
-                  <th className="text-right font-medium px-2 py-2">Profile views</th>
-                  <th className="text-right font-medium px-5 py-2">Posts</th>
+                  />
+                  <SortTh label="Profile views" colKey="profileViews" sort={tableSort} onSort={onSort} />
+                  <SortTh label="Posts" colKey="posts" sort={tableSort} onSort={onSort} pad="px-5" />
                 </tr>
               </thead>
               <tbody>
-                {channels.map((c: MetaChannel) => {
+                {sortedChannels.map((c: MetaChannel) => {
                   const open = expanded === c.id;
                   return (
                     <Fragment key={c.id}>
                       <tr onClick={() => setExpanded(open ? null : c.id)}
                         className="border-b border-[#F8F5EF] hover:bg-[#FCFBF8] cursor-pointer">
+                        {manageMode && (
+                          <td className="pl-4 pr-1 py-2" onClick={(e) => e.stopPropagation()}>
+                            <input
+                              type="checkbox"
+                              aria-label={`Select ${c.name}`}
+                              checked={checkedIds.has(c.id)}
+                              onChange={(e) => setCheckedIds((cur) => {
+                                const next = new Set(cur);
+                                if (e.target.checked) next.add(c.id); else next.delete(c.id);
+                                return next;
+                              })}
+                              className="h-3.5 w-3.5 accent-[#5B4BF5]"
+                            />
+                          </td>
+                        )}
                         <td className="px-5 py-2">
                           <div className="flex items-center gap-1.5 min-w-0">
                             {open ? <ChevronDown className="h-3 w-3 text-[#B0B0B0] shrink-0" />
@@ -748,6 +1127,19 @@ export function MetaPanel() {
                             </span>
                             <span className="text-xs font-medium text-[#1A1A1A] truncate max-w-[220px]">{c.name}</span>
                             {c.username && <span className="text-[10px] text-[#B0B0B0] truncate">@{c.username}</span>}
+                            {/* Partial-coverage disclosure: this channel's stored daily
+                                history spans only part of the selected range, so its sums
+                                cover those days only. Bounded text (max 8 chars), so
+                                shrink-0 is safe here — the documented trap is shrink-0 on
+                                UNBOUNDED text. */}
+                            {isRangeMode && c.rangeDays != null && (c.coveredDays ?? 0) < c.rangeDays && (
+                              <span
+                                title={`Stored history covers ${c.coveredDays ?? 0} of the ${c.rangeDays} days in this range. The missing days predate this channel's daily history, so its figures here are sums over the covered days only.`}
+                                className="text-[9px] text-[#C2861D] border border-[#F3D9A4] bg-[#FDF8EC] rounded-full px-1.5 py-px shrink-0"
+                              >
+                                {c.coveredDays ?? 0}/{c.rangeDays}d
+                              </span>
+                            )}
                             {/* The mark means "the LATEST refresh attempt failed" — any
                                 figures shown are the last successful fetch, which the sync
                                 deliberately keeps (upsertWindowMetric writes only
@@ -809,7 +1201,10 @@ export function MetaPanel() {
                       </tr>
                       {open && (
                         <tr>
-                          <td colSpan={8} className="p-0">
+                          {/* ⚠️ colSpan tracks the DYNAMIC column count — Manage adds a
+                              checkbox column, and a stale colSpan silently misaligns
+                              every cell below it (the documented drill-down trap). */}
+                          <td colSpan={manageMode ? 9 : 8} className="p-0">
                             <ChannelExtras c={c} sfx={sfx} />
                             <ChannelAudience assetId={c.id} />
                             <ChannelPosts assetId={c.id} />
@@ -855,10 +1250,17 @@ export function MetaPanel() {
               different measurement.{" "}
             </>
           )}
-          Click a channel to see its recent posts. 24h / 7d / 28d are the only periods
-          offered because they are the only ones Meta measures directly — Instagram
-          refuses any range over 30 days, and a longer one cannot be added up from
-          shorter ones without double-counting reach, which counts unique people.
+          Click a channel to see its recent posts.{" "}
+          <strong className="font-medium text-[#7A7A7A]">Periods:</strong> Yesterday / 7d / 28d
+          are Meta&apos;s own live windows (the only ones it measures directly). Months and
+          custom ranges are exact sums of stored per-day history — precise for views,
+          engagements, profile views and revenue, which add up day by day. Reach is the
+          exception on those: it counts unique people, days cannot be added without
+          double-counting repeat visitors, and Meta publishes no unique-people figure for an
+          arbitrary span — so a custom range honestly shows a dash instead. Daily history
+          reaches back as far as Meta serves it (about two years for Facebook, about a year
+          for Instagram, less for newer metrics); channels whose history covers only part of
+          a selected range carry a coverage chip saying exactly how much.
         </p>
       )}
     </section>

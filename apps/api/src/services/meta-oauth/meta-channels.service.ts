@@ -363,8 +363,8 @@ export async function runMetaChannelSync(opts?: {
   // a ceiling the moment the data grows.
   //
   // Exact cost per asset, from the call sites below:
-  //   Facebook  3 windows x (1 regular + 1 earnings)              = 6
-  //   Instagram 3 windows x 1 regular, + follower-change on 7d/28d = 5
+  //   Facebook  3 windows x (1 regular + 1 earnings)                        = 6
+  //   Instagram 3 windows + today-so-far, + follower-change on 7d/28d       = 6
   const [fbCount, igCount] = await Promise.all([
     prisma.metaAsset.count({
       where: { kind: "FACEBOOK_PAGE", selected: true, disconnectedAt: null,
@@ -377,7 +377,7 @@ export async function runMetaChannelSync(opts?: {
   ]);
   // +10% so a retry or a newly discovered channel does not push the last asset off
   // the end, and a floor so a tiny/empty estate still has room to work.
-  const derivedBudget = Math.max(200, Math.ceil((fbCount * 6 + igCount * 5) * 1.1));
+  const derivedBudget = Math.max(200, Math.ceil((fbCount * 6 + igCount * 6) * 1.1));
   const budget: CallBudget = makeBudget(opts?.budgetMax ?? derivedBudget);
   console.log(
     `[meta-channels] estate fb=${fbCount} ig=${igCount} -> budget ${budget.max}` +
@@ -572,6 +572,51 @@ export async function runMetaChannelSync(opts?: {
         }
 
         if (win === DEFAULT_WINDOW) { defaultWindowData = res.data; defaultWindowOk = true; }
+      }
+
+      // ── "Today (so far)" — INSTAGRAM ONLY, and deliberately partial ──────
+      //
+      // ⚠️ This is the ONE sanctioned exception to "IG windows must end at a UTC
+      // day boundary". The standard windows end on the last COMPLETED day
+      // because a partial bucket labelled "24h" read as a full day (the
+      // measured 314-views-vs-809k trap). Here the partial day IS the product,
+      // and the UI labels it "Today (so far)".
+      //
+      // ⚠️ FACEBOOK IS SKIPPED, NOT FAILED: its insights series stops at a
+      // closed boundary (probed — the newest point is the Page's last local
+      // midnight; a partial today simply does not exist in the API, only in
+      // Meta's own app). No row is written, the UI renders dashes, and the
+      // footnote says today's Facebook appears tomorrow under Yesterday.
+      if (isIg && !sawRateLimit && budget.used < budget.max) {
+        const nowTs = Math.floor(Date.now() / 1000);
+        const todayStartTs = Math.floor(nowTs / 86_400) * 86_400;
+        // Right after UTC midnight there is nothing to tally yet — an
+        // until==since request would just error. Absent row = honest dashes.
+        if (nowTs - todayStartTs >= 600) {
+          const todayParams = {
+            metric: IG_METRICS.join(","),
+            metric_type: "total_value",
+            period: IG_PERIOD,
+            since: todayStartTs,
+            until: nowTs,
+          };
+          let tres = await oauthGraphFetch<InsightsResponse>(
+            `${asset.metaId}/insights`, todayParams, token, { label: "channel-ig-insights-today", budget },
+          );
+          if (isTransientGraphFailure(tres) && budget.used < budget.max) {
+            await sleep(RETRY_DELAY_MS);
+            tres = await oauthGraphFetch<InsightsResponse>(
+              `${asset.metaId}/insights`, todayParams, token, { label: "channel-ig-insights-today-retry", budget },
+            );
+          }
+          if (tres.rateLimited) {
+            sawRateLimit = true;
+          } else if (tres.ok) {
+            await upsertWindowMetric(asset.id, "today", readMetrics(tres.data, true), null, null, null, new Date(nowTs * 1000));
+          } else {
+            await upsertWindowMetric(asset.id, "today", null, scrubSecrets(tres.error ?? "today insights failed"));
+          }
+        }
       }
 
       if (sawRateLimit) { out.rateLimited = true; break; }
@@ -1010,7 +1055,7 @@ export async function persistDailyRows(assetId: string, rows: DailyRow[]): Promi
  */
 async function upsertWindowMetric(
   assetId: string,
-  window: ChannelWindow,
+  window: ChannelWindow | "today",
   m: ChannelMetrics | null,
   error: string | null,
   followerDelta: number | null = null,

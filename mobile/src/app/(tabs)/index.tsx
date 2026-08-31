@@ -85,7 +85,7 @@ export default function HomeScreen() {
           </View>
         </View>
         <Pressable onPress={() => router.push("/notifications")} style={styles.bell}>
-          <Ionicons name="notifications-outline" size={22} color={colors.ink} />
+          <Ionicons name="notifications-outline" size={22} color="#FFFFFF" />
           {(data?.unread ?? 0) > 0 && (
             <View style={styles.badge}>
               <Text style={styles.badgeText}>{data!.unread > 9 ? "9+" : data!.unread}</Text>
@@ -193,8 +193,8 @@ const styles = StyleSheet.create({
   avatar: { width: 46, height: 46, borderRadius: radius.full },
   avatarFallback: { backgroundColor: colors.purple, alignItems: "center", justifyContent: "center" },
   avatarLetter: { color: "#fff", fontSize: 20, fontWeight: "700" },
-  greeting: { fontSize: 13, color: colors.sub },
-  name: { fontSize: 18, fontWeight: "700", color: colors.ink },
+  greeting: { fontSize: 13, color: "rgba(255,255,255,0.75)" },
+  name: { fontSize: 18, fontWeight: "700", color: "#FFFFFF" },
   bell: {
     width: 42,
     height: 42,

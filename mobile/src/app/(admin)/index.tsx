@@ -13,7 +13,7 @@ const HERO = require("../../../assets/visuals/hero-admin.jpg");
 /** Meta earnings arrive in USD cents. */
 function fmtUsd(cents: number | null | undefined): string {
   if (cents == null) return "—";
-  return "$" + (cents / 100).toLocaleString("en-US", { maximumFractionDigits: 0 });
+  return "$" + fmtCompact(Math.round(cents / 100));
 }
 
 const num = (v: any): number =>
@@ -93,7 +93,7 @@ export default function AdminDashboard() {
             <Text style={styles.heroTag}>ADMIN</Text>
           </View>
           <Pressable onPress={() => router.push("/admin-notifications")} style={styles.bell}>
-            <Ionicons name="notifications-outline" size={22} color={colors.ink} />
+            <Ionicons name="notifications-outline" size={22} color="#FFFFFF" />
           </Pressable>
         </View>
       </ImageBackground>
@@ -311,9 +311,10 @@ const styles = StyleSheet.create({
   },
   heroImg: { borderRadius: radius.xl },
   header: { flexDirection: "row", alignItems: "flex-end", padding: spacing.lg, paddingTop: 64 },
-  greeting: { fontSize: 13, color: colors.sub },
-  name: { fontSize: 20, fontWeight: "700", color: colors.ink },
-  heroTag: { fontSize: 11, fontWeight: "500", color: colors.sub, letterSpacing: 1.2, marginTop: 4 },
+  // Hero copy sits on a dark media image — always white, both schemes
+  greeting: { fontSize: 13, color: "rgba(255,255,255,0.75)" },
+  name: { fontSize: 20, fontWeight: "700", color: "#FFFFFF" },
+  heroTag: { fontSize: 11, fontWeight: "500", color: "rgba(255,255,255,0.65)", letterSpacing: 1.2, marginTop: 4 },
   bell: {
     width: 42,
     height: 42,

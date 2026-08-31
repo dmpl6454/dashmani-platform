@@ -30,7 +30,7 @@ export default function TabsLayout() {
         tabBarActiveTintColor: colors.purple,
         tabBarInactiveTintColor: colors.faint,
         tabBarStyle: {
-          backgroundColor: "rgba(18,18,20,0.94)",
+          backgroundColor: colors.barBg,
           borderTopWidth: StyleSheet.hairlineWidth,
           borderTopColor: colors.borderStrong,
           height: 84,

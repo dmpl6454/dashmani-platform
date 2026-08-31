@@ -187,11 +187,16 @@ export async function apiFetch<T = any>(path: string, options: RequestInit = {},
 
 // ---- Auth calls ----
 export async function loginWithPassword(identifier: string, password: string) {
-  const res = await fetch(`${API_URL}/hr/auth/login`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ identifier, password }),
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${API_URL}/hr/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ identifier, password }),
+    });
+  } catch {
+    throw new ApiError("Couldn't reach the server. Check your connection and try again.", "NETWORK_ERROR");
+  }
   const data = await res.json().catch(() => null);
   if (!data?.success) {
     throw new ApiError(data?.error?.message || "Invalid credentials", data?.error?.code, data?.error?.details);

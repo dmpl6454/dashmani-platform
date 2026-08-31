@@ -125,6 +125,43 @@ function parseUsage(headers: Headers): MetaUsage {
   return null;
 }
 
+/**
+ * Meta's "try again" family: errorCode 1 (unknown error) and 2 ("An unexpected
+ * error has occurred. Please retry your request later."). Measured on prod
+ * 2026-08-31: ~1% of the ~2,700 channel-sync calls per run fail with (#2), and
+ * the failing set churns between runs — transient by observation, not just by
+ * Meta's wording.
+ *
+ * ⚠️ DELIBERATELY NARROW. Not rate limits (backing off is the correct response,
+ * not retrying), not auth failures (deterministic until a human acts), not
+ * status-0 transport timeouts (retrying those doubles worst-case wall-clock for
+ * a whole run during an outage). Callers use this to gate ONE bounded retry —
+ * the repo has a documented incident (monetization batching) where a retry that
+ * fired unconditionally wasted 216 calls/run against a deterministic failure.
+ *
+ * ⚠️ THAT INCIDENT IS WHY THIS IS A PREDICATE AND NOT A BARE `!res.ok`.
+ * FB_EARNINGS_METRIC's own doc block warns a (#2) "reads like a transient blip
+ * and is not" — there, an invalid metric COMBINATION returned (#2) on every
+ * call. So (#2) does not itself mean transient; it means Meta declined to say
+ * why. What separates the two cases is measurable, and was measured:
+ *
+ *   LIVE PROBE, prod, 2026-08-31 — replayed all 29 (asset, window) pairs then
+ *   carrying an error, with byte-identical params and tokens:
+ *     26 of 26 (#2) failures SUCCEEDED on replay -> time-varying, not the request
+ *      3 of  3 permission failures failed again  -> deterministic, correctly excluded
+ *
+ * ⚠️ THE DISTINGUISHING TEST IS UNIFORMITY, NOT THE CODE. A deterministic (#2)
+ * fails for EVERY asset sharing that param shape; these failed for a scattered
+ * ~1% while 460+ assets used the identical shape in the same run. If a (#2) ever
+ * fails uniformly across the estate, it is the monetization case again — fix the
+ * request, do not retry it.
+ */
+export function isTransientGraphFailure(
+  res: Pick<OauthGraphResult, "ok" | "rateLimited" | "authInvalid" | "errorCode">,
+): boolean {
+  return !res.ok && !res.rateLimited && !res.authInvalid && (res.errorCode === 1 || res.errorCode === 2);
+}
+
 /** Pull the enumerated values out of a `(#100) … must be one of the following
  *  values: a, b, c` message. */
 function parseAllowedValues(message: string | undefined): string[] | undefined {

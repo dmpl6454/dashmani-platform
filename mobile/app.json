@@ -9,7 +9,11 @@
     "userInterfaceStyle": "automatic",
     "ios": {
       "bundleIdentifier": "com.dashmani.employee",
-      "supportsTablet": true
+      "supportsTablet": true,
+      "buildNumber": "1",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {

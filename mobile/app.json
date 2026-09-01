@@ -47,6 +47,12 @@
     "experiments": {
       "typedRoutes": false,
       "reactCompiler": false
+    },
+    "owner": "dashmani-media",
+    "extra": {
+      "eas": {
+        "projectId": "a05a12d1-9457-4567-b3c3-64d5fe33bdbe"
+      }
     }
   }
 }

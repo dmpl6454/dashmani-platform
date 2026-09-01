@@ -24,10 +24,35 @@ npx expo start
 
 Then install **Expo Go** from the App Store on your iPhone and scan the QR code (phone and Mac must be on the same Wi-Fi). For a different network use `npx expo start --tunnel`.
 
-## Ship a real build
+## Ship to TestFlight (no Mac needed — EAS cloud build)
 
-- **iOS Simulator / device build**: requires Xcode — `npx expo run:ios`
-- **App Store / TestFlight without a local Xcode**: `npx eas build --platform ios` (EAS cloud build; needs an Expo account + Apple Developer account)
+One-time, from ANY machine with Node 20+:
+
+```bash
+git clone https://github.com/dmpl6454/dashmani-platform.git
+cd dashmani-platform/mobile
+npm install
+npx eas-cli login        # your Expo account (free — sign up at expo.dev)
+npx eas-cli build --platform ios --profile production
+```
+
+The build command will ask to log in with your **Apple Developer** account
+once and then auto-manages certificates & provisioning profiles. The build
+runs in Expo's cloud (~15 min).
+
+When it finishes:
+
+```bash
+npx eas-cli submit --platform ios --latest
+```
+
+…uploads the build to **App Store Connect → TestFlight**. Install the
+TestFlight app on your iPhone, add yourself as an internal tester, and the
+Dashmani app installs like a real app (DM icon, splash, the works).
+
+Ship updates later with the same two commands — `autoIncrement` bumps the
+build number for you. For JS-only changes you can use `eas update` instead
+(over-the-air, no review).
 
 ## Structure
 

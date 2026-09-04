@@ -60,7 +60,7 @@ build number for you. For JS-only changes you can use `eas update` instead
 src/
   lib/api.ts       — API client, token refresh, IST date helpers
   lib/auth.tsx     — AuthProvider (SecureStore session)
-  lib/theme.ts     — brand colors (yellow #F5D547 / purple #5B4BF5 / ink)
+  lib/theme.ts     — brand palette (logo pink/orange, light+dark schemes, NO purple)
   components/ui.tsx — Card, Button, Field, Chips, StatusPill, useApi …
   app/             — expo-router screens (tabs + stack)
 ```

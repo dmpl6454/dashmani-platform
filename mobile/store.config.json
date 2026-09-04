@@ -1,0 +1,57 @@
+{
+  "configVersion": 0,
+  "apple": {
+    "info": {
+      "en-US": {
+        "title": "Dashmani Media",
+        "subtitle": "Team workspace & growth",
+        "description": "Dashmani Media is the official workspace app for the Dashmani Media (Digital Sukoon) team — everything from the employee and admin portals, in your pocket.\n\nFOR EVERY TEAM MEMBER\n• Submit your daily work report in seconds — smart paste extracts every link automatically\n• Apply for leave, work-from-home or comp-off and track approvals live\n• Check attendance, salary slips, holidays and the team leaderboard\n• Manage tasks assigned to you, with comments and status updates\n• Plan of Action, documents, contracts, offer letters and more\n\nFOR ADMINS\n• A command-center home: pending approvals, team activity, links trend, top performers and open items — every block one tap from its detail\n• Account Growth: views, engagements, followers and revenue across hundreds of connected social channels\n• Approve leaves, expenses, extra hours, documents and joining dates on the go\n• Reports with platform mix and per-employee drill-downs, task assignment, announcements, hiring pipeline and more\n\nSign-in uses your company-issued account. Accounts are provisioned by Dashmani Media — there is no public registration.",
+        "keywords": [
+          "dashmani",
+          "digital sukoon",
+          "employee",
+          "workspace",
+          "attendance",
+          "leave",
+          "reports",
+          "team"
+        ],
+        "marketingUrl": "https://jobs.digitalsukoon.com",
+        "supportUrl": "https://jobs.digitalsukoon.com",
+        "privacyPolicyUrl": "https://jobs.digitalsukoon.com/privacy"
+      }
+    },
+    "categories": ["BUSINESS", "PRODUCTIVITY"],
+    "copyright": "2026 Dashmani Media Private Limited",
+    "advisory": {
+      "alcoholTobaccoOrDrugUseOrReferences": "NONE",
+      "contests": "NONE",
+      "gamblingSimulated": "NONE",
+      "horrorOrFearThemes": "NONE",
+      "matureOrSuggestiveThemes": "NONE",
+      "medicalOrTreatmentInformation": "NONE",
+      "profanityOrCrudeHumor": "NONE",
+      "sexualContentGraphicAndNudity": "NONE",
+      "sexualContentOrNudity": "NONE",
+      "violenceCartoonOrFantasy": "NONE",
+      "violenceRealistic": "NONE",
+      "violenceRealisticProlongedGraphicOrSadistic": "NONE",
+      "gambling": false,
+      "unrestrictedWebAccess": false,
+      "kidsAgeBand": null
+    },
+    "review": {
+      "firstName": "Sudhanshu",
+      "lastName": "Kumar",
+      "email": "sudhanshu@digitalsukoon.com",
+      "phone": "+918879300866",
+      "demoUsername": "appreview@digitalsukoon.com",
+      "demoPassword": "ReviewDM#2026",
+      "demoRequired": true,
+      "notes": "Dashmani Media is the internal workforce app for employees and administrators of Dashmani Media Private Limited (brand: Digital Sukoon), a media company. Accounts are provisioned by the employer; the app has no public sign-up and creates no accounts, so in-app account deletion does not apply (data/account removal is handled by HR — see the privacy policy). Use the provided demo account on the EMPLOYEE toggle of the login screen to review: it exercises daily report submission, leave application, attendance, tasks, salary slips, calendar and more against our live system. The Admin toggle is for company administrators only. The app uses only standard HTTPS encryption (ITSAppUsesNonExemptEncryption=false). Location permission is optional and only used, with consent, to stamp daily report submissions."
+    },
+    "release": {
+      "automaticRelease": true
+    }
+  }
+}

@@ -94,7 +94,10 @@ that started the cascade. Owner decision pending on moving them.
 - `ds-sales-agent` ×2 and `ds-sales-worker` `pm2 stop`ped (owner-authorized): free memory 142 → 296MB,
   swap 1.2GB → 0.83GB. Reversible with `pm2 start ds-sales-agent ds-sales-worker`. `scripts/deploy.sh`
   changed from `pm2 restart all` to naming the platform's five processes, because `restart all` revives
-  stopped apps and would have undone this on the very next deploy.
+  stopped apps and would have undone this on the very next deploy. ⚠️ The first version used ONE multi-name
+  call and pm2 cycled EVERY process in id order (stopped ds-sales included — they came back online during
+  the PR #140 deploy); it now loops one `pm2 restart <name>` per app, which is verified to touch only
+  that process.
 
 ## Still open
 

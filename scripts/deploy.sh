@@ -38,11 +38,16 @@ npx turbo build --concurrency=1
 unset NODE_OPTIONS
 
 echo "==> Restarting processes"
-# Name the platform's own processes rather than `pm2 restart all`. The box hosts other
-# tenants' pm2 apps (2026-09-08: ds-sales-agent/worker, deliberately stopped after they
-# starved the API into an OOM kill) and `restart all` REVIVES stopped apps — a platform
-# deploy must never restart, or resurrect, processes that are not the platform's.
-pm2 restart api internal client hr jobs
+# Restart the platform's own processes ONE NAME PER INVOCATION — never `pm2 restart all`,
+# and never one multi-name call. The box hosts other tenants' pm2 apps (2026-09-08:
+# ds-sales-agent/worker, deliberately stopped after they starved the API into an OOM kill)
+# and `restart all` REVIVES stopped apps. ⚠️ So does a multi-name call: on this box
+# `pm2 restart api internal client hr jobs` cycled EVERY process in id order, stopped ones
+# included (pm2.log 2026-09-08 15:43) — it behaved exactly like `all`. A single-name
+# `pm2 restart <name>` touches only that process (verified).
+for app in api internal client hr jobs; do
+  pm2 restart "$app"
+done
 pm2 save
 
 echo "==> Deploy complete"

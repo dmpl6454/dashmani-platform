@@ -38,18 +38,55 @@ app.listen(PORT, () => {
   runFollowerSync();
   setInterval(runFollowerSync, 60 * 60 * 1000);
 
-  // Run social insights refresh once on startup, then on INSIGHTS_INTERVAL_MS (default
-  // 6h, unchanged). Prod raises cadence via .env (e.g. 2h) to shrink the IG/FB per-link
-  // refresh latency — the metric sweep is cursor-based, so more runs cover more of the
-  // ~35k IG / ~11k FB tail per day. Bounded ≥2h in practice to stay under the shared
-  // ~200-call/hr Meta budget (follower-sync + ig-caption-backfill also draw from it) and
-  // to keep the Facebook public-reel scraper polite. See the 2026-07-03 freshness plan.
-  const INSIGHTS_INTERVAL_MS = Number(process.env.INSIGHTS_INTERVAL_MS) || 6 * 60 * 60 * 1000;
-  const runInsights = () => {
-    runSocialInsightsRefresh().catch((err) => console.error("[social-insights] error:", err));
-  };
-  runInsights();
-  setInterval(runInsights, INSIGHTS_INTERVAL_MS);
+  // Run social insights refresh after a BOOT DELAY, then on INSIGHTS_INTERVAL_MS (default
+  // 6h). Prod raises cadence via .env (e.g. 2h) to shrink the IG/FB per-link refresh
+  // latency — the metric sweep is cursor-based, so more runs cover more of the ~35k IG /
+  // ~11k FB tail per day. Bounded ≥2h in practice to stay under the shared ~200-call/hr
+  // Meta budget (follower-sync + ig-caption-backfill also draw from it) and to keep the
+  // Facebook public-reel scraper polite. See the 2026-07-03 freshness plan.
+  //
+  // ⚠️ 2026-09-08 incident: the sweep used to start IMMEDIATELY on boot. A pathological
+  // provider batch then pinned the main thread within ~4 minutes of EVERY restart, so a
+  // restart could not restore service — the tier cursors persist only after a provider
+  // completes, so each boot replayed the identical poison queue. Three guards now:
+  //   1. INSIGHTS_BOOT_DELAY_MS (default 10 min) guarantees every restart a window of a
+  //      responsive API before the sweep touches a provider.
+  //   2. INSIGHTS_ENABLED=0 is a real operator kill switch. Before this the only way to
+  //      stop the sweep was to unset META_SYSTEM_USER_TOKEN / YOUTUBE_API_KEY, which also
+  //      disables follower-sync and the IG caption backfill.
+  //   3. The interval is clamped to Node's setInterval ceiling (2^31-1 ms). Above it Node
+  //      coerces the delay to 1 ms — a "lengthen the interval" edit would become a
+  //      1 ms sweep storm.
+  // runSocialInsightsRefresh() itself also refuses to overlap a still-running sweep (see
+  // the cron) — a 2h timer used to stack sweeps on top of one another indefinitely.
+  const INSIGHTS_ENABLED = process.env.INSIGHTS_ENABLED !== "0";
+  const MAX_TIMER_MS = 2_147_483_647;
+  let INSIGHTS_INTERVAL_MS = Number(process.env.INSIGHTS_INTERVAL_MS) || 6 * 60 * 60 * 1000;
+  if (INSIGHTS_INTERVAL_MS > MAX_TIMER_MS) {
+    console.warn(
+      `[social-insights] INSIGHTS_INTERVAL_MS=${INSIGHTS_INTERVAL_MS} exceeds the setInterval ceiling — clamping to ${MAX_TIMER_MS}ms`
+    );
+    INSIGHTS_INTERVAL_MS = MAX_TIMER_MS;
+  }
+  const bootDelayRaw = process.env.INSIGHTS_BOOT_DELAY_MS;
+  const INSIGHTS_BOOT_DELAY_MS =
+    bootDelayRaw !== undefined && bootDelayRaw !== "" && Number.isFinite(Number(bootDelayRaw)) && Number(bootDelayRaw) >= 0
+      ? Math.min(Number(bootDelayRaw), MAX_TIMER_MS)
+      : 10 * 60 * 1000;
+  if (!INSIGHTS_ENABLED) {
+    console.warn("[social-insights] DISABLED via INSIGHTS_ENABLED=0 — the metric sweep will not run in this process");
+  } else {
+    const runInsights = () => {
+      runSocialInsightsRefresh().catch((err) => console.error("[social-insights] error:", err));
+    };
+    console.log(
+      `[social-insights] first sweep in ${Math.round(INSIGHTS_BOOT_DELAY_MS / 60_000)} min, then every ${Math.round(INSIGHTS_INTERVAL_MS / 60_000)} min`
+    );
+    setTimeout(() => {
+      runInsights();
+      setInterval(runInsights, INSIGHTS_INTERVAL_MS);
+    }, INSIGHTS_BOOT_DELAY_MS);
+  }
 
   // Run entity extraction once on startup, then HOURLY (independent of insights).
   // Hourly (was 6h) gives ~12,000 captions/day of tagging throughput — enough to keep

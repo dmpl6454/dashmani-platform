@@ -399,12 +399,26 @@ async function buildPostMap(): Promise<Map<string, FbPostEntry>> {
   return map;
 }
 
-// The map built by the most recent fetchBatch run, cached so harvestContent() can
-// expose every paged post's caption without re-paging. Reset each run.
+// The map built by the most recent COMPLETE fetchBatch build, cached so (a) harvestContent()
+// can expose every paged post's caption without re-paging and (b) the following batches of
+// the SAME sweep reuse it instead of re-paging every administered Page.
+//
+// ⚠️ 2026-09-08 incident: before this, fetchBatch rebuilt the whole map on EVERY 50-link
+// batch — 100-500 Graph calls and a fresh ~11k-entry Map per batch, for a sweep of ~2.6k
+// links. That is what made a Facebook phase eat its full budget, tripped Meta's app-level
+// rate limit (500 "errors" in one run), and churned ~100MB of allocations per batch. The
+// cron always ASSUMED the map was cached after the first batch (its harvest-after-first-
+// batch logic depends on it); now it actually is. FEED_MAP_TTL_MS bounds staleness: a post
+// published mid-sweep is picked up by the next sweep (≤2h later) — the cadence the tiered
+// queue already assumes. A build that was rate-limited is harvested (its captions are real)
+// but NEVER reused for lookups, because it may be partial.
+const FEED_MAP_TTL_MS = Number(process.env.FB_FEED_MAP_TTL_MS) || 20 * 60 * 1000;
 let lastBuiltMap: Map<string, FbPostEntry> = new Map();
+let lastBuiltAt = 0; // 0 = never built / not reusable
 
 export function __resetFbMapForTesting(): void {
   lastBuiltMap = new Map();
+  lastBuiltAt = 0;
 }
 
 export const facebookProvider: InsightProvider = {
@@ -432,19 +446,27 @@ export const facebookProvider: InsightProvider = {
     fbRateLimited = false;
     fbScraperBlocked = false;
     fbScraperConsecutiveWalls = 0;
-    lastBuiltMap = new Map();
 
-    // Build the numericId→{caption, pageToken} map once for this run.
+    // Reuse the map built earlier in this sweep (FEED_MAP_TTL_MS above); rebuild only when
+    // there is none, it is stale, or the last build was rate-limited (possibly partial).
     let map: Map<string, FbPostEntry>;
-    try {
-      map = await buildPostMap();
-      lastBuiltMap = map; // cache for harvestContent() (same run, no re-paging)
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      for (const t of targets) {
-        results.set(t.linkId, { ok: false, status: "error", error: msg });
+    const reusable = lastBuiltMap.size > 0 && lastBuiltAt > 0 && Date.now() - lastBuiltAt < FEED_MAP_TTL_MS;
+    if (reusable) {
+      map = lastBuiltMap;
+    } else {
+      lastBuiltMap = new Map();
+      lastBuiltAt = 0;
+      try {
+        map = await buildPostMap();
+        lastBuiltMap = map; // cache for harvestContent() (same run, no re-paging)
+        lastBuiltAt = fbRateLimited ? 0 : Date.now(); // a throttled (partial) build is harvestable but never reused
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        for (const t of targets) {
+          results.set(t.linkId, { ok: false, status: "error", error: msg });
+        }
+        return results;
       }
-      return results;
     }
 
     if (fbRateLimited) {

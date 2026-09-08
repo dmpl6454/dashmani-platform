@@ -251,10 +251,19 @@ async function buildShortcodeMap(): Promise<Map<string, IgMediaItem>> {
 // expose the FULL set of paged posts without re-paging the Graph API. Reset at the
 // start of each fetchBatch run. Module-level (mirrors igRateLimited) — the cron
 // calls fetchBatch then harvestContent sequentially in one run.
+// ⚠️ 2026-09-08 incident: fetchBatch used to rebuild this map on EVERY 50-link batch (the
+// cron's "cached after the first batch" comment was false) — 100-800 Graph calls and a
+// fresh ~15k-entry Map per batch, 6-17× the call volume of building once, and the reason a
+// sweep could not finish inside its 2h interval. Now reused for FEED_MAP_TTL_MS within a
+// sweep; a throttled (possibly partial) build is harvested but never reused for lookups.
+// See facebook.provider.ts for the fuller note — the two providers share this shape.
+const FEED_MAP_TTL_MS = Number(process.env.IG_FEED_MAP_TTL_MS) || 20 * 60 * 1000;
 let lastBuiltMap: Map<string, IgMediaItem> = new Map();
+let lastBuiltAt = 0; // 0 = never built / not reusable
 
 export function __resetIgMapForTesting(): void {
   lastBuiltMap = new Map();
+  lastBuiltAt = 0;
 }
 
 export const instagramProvider: InsightProvider = {
@@ -282,19 +291,26 @@ export const instagramProvider: InsightProvider = {
     // Reset the run-scoped rate-limit flag.
     igRateLimited = false;
 
-    // Build the shortcode→media map once for this run. Reset the cache first so a
-    // failed/rate-limited build can't let harvestContent() return stale data.
-    lastBuiltMap = new Map();
+    // Reuse the map built earlier in this sweep (FEED_MAP_TTL_MS above); rebuild only when
+    // there is none, it is stale, or the last build was rate-limited (possibly partial).
     let map: Map<string, IgMediaItem>;
-    try {
-      map = await buildShortcodeMap();
-      lastBuiltMap = map; // cache for harvestContent() (same run, no re-paging)
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      for (const t of targets) {
-        results.set(t.linkId, { ok: false, status: "error", error: msg });
+    const reusable = lastBuiltMap.size > 0 && lastBuiltAt > 0 && Date.now() - lastBuiltAt < FEED_MAP_TTL_MS;
+    if (reusable) {
+      map = lastBuiltMap;
+    } else {
+      lastBuiltMap = new Map();
+      lastBuiltAt = 0;
+      try {
+        map = await buildShortcodeMap();
+        lastBuiltMap = map; // cache for harvestContent() (same run, no re-paging)
+        lastBuiltAt = igRateLimited ? 0 : Date.now(); // a throttled (partial) build is harvestable but never reused
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        for (const t of targets) {
+          results.set(t.linkId, { ok: false, status: "error", error: msg });
+        }
+        return results;
       }
-      return results;
     }
 
     // If we got rate-limited while building the map, every target is rate_limited.

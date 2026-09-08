@@ -760,3 +760,123 @@ describe("resolveFacebookShareUrl", () => {
     expect(observedAborted).toBe(true);
   });
 });
+
+// ── 2026-09-08: the feed map is built ONCE per sweep, not once per 50-link batch ──────
+describe("feed-map reuse within a sweep (2026-09-08 incident)", () => {
+  const igGraph = () =>
+    vi.fn(async (path: string) => {
+      if (path === "me/accounts") return ok({ data: [{ instagram_business_account: { id: "ig-100" } }] });
+      if (path === "ig-100/media") {
+        return ok({
+          data: [
+            { id: "m1", shortcode: "AAA", caption: "c", like_count: 1, comments_count: 1, media_type: "VIDEO", timestamp: new Date().toISOString() },
+          ],
+        });
+      }
+      throw new Error(`unexpected graph path: ${path}`);
+    });
+
+  it("instagram: consecutive fetchBatch calls reuse the map — no re-paging", async () => {
+    process.env.META_SYSTEM_USER_TOKEN = FAKE_TOKEN;
+    const graph = igGraph();
+    setIgGraphFetch(graph as unknown as GraphFetchFn);
+
+    await instagramProvider.fetchBatch([target("l1", "https://instagram.com/reel/AAA/", "AAA")]);
+    expect(graph).toHaveBeenCalledTimes(2); // 1 accounts + 1 media
+
+    const res = await instagramProvider.fetchBatch([target("l2", "https://instagram.com/reel/AAA/", "AAA")]);
+    expect(res.get("l2")).toMatchObject({ ok: true, status: "ok", likes: 1 });
+    expect(graph).toHaveBeenCalledTimes(2); // STILL 2 — the second batch reused the map
+
+    // harvestContent still sees the reused map (the cron's early harvest depends on this)
+    expect(instagramProvider.harvestContent?.().length).toBe(1);
+
+    __resetIgMapForTesting(); // what a fresh sweep looks like
+    await instagramProvider.fetchBatch([target("l3", "https://instagram.com/reel/AAA/", "AAA")]);
+    expect(graph).toHaveBeenCalledTimes(4);
+  });
+
+  it("instagram: a rate-limited (possibly partial) build is NEVER reused — the next batch rebuilds", async () => {
+    process.env.META_SYSTEM_USER_TOKEN = FAKE_TOKEN;
+    let throttle = true;
+    const graph = vi.fn(async (path: string) => {
+      if (throttle) return { ok: false, rateLimited: true, status: 429, error: { code: 4, message: "throttled" } } as unknown as GraphFetchResult<unknown>;
+      return igGraph()(path);
+    });
+    setIgGraphFetch(graph as unknown as GraphFetchFn);
+
+    const first = await instagramProvider.fetchBatch([target("l1", "https://instagram.com/reel/AAA/", "AAA")]);
+    expect(first.get("l1")).toMatchObject({ ok: false, status: "rate_limited" });
+    const callsAfterThrottled = graph.mock.calls.length;
+
+    throttle = false;
+    const second = await instagramProvider.fetchBatch([target("l2", "https://instagram.com/reel/AAA/", "AAA")]);
+    expect(second.get("l2")).toMatchObject({ ok: true, status: "ok" });
+    expect(graph.mock.calls.length).toBeGreaterThan(callsAfterThrottled); // rebuilt, did not trust the throttled map
+  });
+});
+
+describe("feed-map reuse within a sweep — facebook (2026-09-08 incident)", () => {
+  // Minimal owned-Page stub: one ADMIN page whose feed carries our target reel.
+  const fbGraph = () =>
+    vi.fn(async (path: string, params?: Record<string, unknown>) => {
+      if (path === "me/accounts")
+        return ok({ data: [{ id: "pg-admin", access_token: "PAGE_TOKEN_A", tasks: ["ANALYZE"] }] });
+      if (path === "pg-admin/published_posts")
+        return ok({
+          data: [
+            { id: "pg-admin_990888777", permalink_url: "https://www.facebook.com/reel/555000111", message: "Bhumi at the event", created_time: new Date().toISOString() },
+          ],
+        });
+      if (path === "pg-admin_990888777/insights") {
+        const metric = String(params?.metric ?? "");
+        if (metric.includes("post_video_views")) return ok({ data: [{ name: "post_video_views", values: [{ value: 107 }] }] });
+        return ok({
+          data: [
+            { name: "post_reactions_by_type_total", values: [{ value: { like: 9 } }] },
+            { name: "post_activity_by_action_type", values: [{ value: { like: 9, share: 1 } }] },
+          ],
+        });
+      }
+      throw new Error(`unexpected fb path ${path}`);
+    });
+  const feedCalls = (g: ReturnType<typeof fbGraph>) =>
+    g.mock.calls.filter(([p]) => p === "me/accounts" || p === "pg-admin/published_posts").length;
+
+  it("consecutive fetchBatch calls reuse the Page-feed map — discovery + feed paging happen once", async () => {
+    process.env.META_SYSTEM_USER_TOKEN = FAKE_TOKEN;
+    const graph = fbGraph();
+    setFbGraphFetch(graph as unknown as GraphFetchFn);
+
+    const first = await facebookProvider.fetchBatch([target("l1", "https://facebook.com/reel/555000111", "555000111")]);
+    expect(first.get("l1")).toMatchObject({ ok: true, status: "ok", views: 107 });
+    expect(feedCalls(graph)).toBe(2); // me/accounts + published_posts
+
+    const second = await facebookProvider.fetchBatch([target("l2", "https://facebook.com/reel/555000111", "555000111")]);
+    expect(second.get("l2")).toMatchObject({ ok: true, status: "ok", views: 107 });
+    expect(feedCalls(graph)).toBe(2); // STILL 2 — map reused; only per-post /insights ran again
+
+    __resetFbMapForTesting(); // a fresh sweep
+    await facebookProvider.fetchBatch([target("l3", "https://facebook.com/reel/555000111", "555000111")]);
+    expect(feedCalls(graph)).toBe(4);
+  });
+
+  it("a rate-limited discovery is NEVER reused — the next batch rebuilds", async () => {
+    process.env.META_SYSTEM_USER_TOKEN = FAKE_TOKEN;
+    let throttle = true;
+    const healthy = fbGraph();
+    const graph = vi.fn(async (path: string, params?: Record<string, unknown>) => {
+      if (throttle) return { ok: false, rateLimited: true, status: 429, error: { code: 4, message: "throttled" } } as unknown as GraphFetchResult<unknown>;
+      return healthy(path, params);
+    });
+    setFbGraphFetch(graph as unknown as GraphFetchFn);
+
+    const first = await facebookProvider.fetchBatch([target("l1", "https://facebook.com/reel/555000111", "555000111")]);
+    expect(first.get("l1")).toMatchObject({ ok: false, status: "rate_limited" });
+
+    throttle = false;
+    const second = await facebookProvider.fetchBatch([target("l2", "https://facebook.com/reel/555000111", "555000111")]);
+    expect(second.get("l2")).toMatchObject({ ok: true, status: "ok", views: 107 });
+    expect(feedCalls(healthy)).toBe(2); // rebuilt after the throttled attempt
+  });
+});

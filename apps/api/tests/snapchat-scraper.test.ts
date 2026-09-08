@@ -236,3 +236,62 @@ describe("scrapeSnapchatSpotlightEngagement (fail-open)", () => {
     expect(r.walled).toBe(true);
   });
 });
+
+// ── 2026-09-08: parsers must be LINEAR on hostile input ───────────────────────
+// A `<meta`/`<script` literal inside a multi-MB inline blob with almost no `>` made the
+// old regexes re-scan the tail on every backtrack step (O(n²): >10s at 3MB, unbounded
+// beyond). This parser runs on the API's main thread inside follower-sync; one such page
+// froze the whole API for 5h44m. Each case below is that shape at ~3MB and must finish
+// in well under a second — and the normal shapes must still parse.
+describe("Snapchat parsers are linear on hostile input (2026-09-08 main-thread hang)", () => {
+  const MB = 1024 * 1024;
+  const timed = <T>(fn: () => T): { value: T; ms: number } => {
+    const t0 = performance.now();
+    const value = fn();
+    return { value, ms: performance.now() - t0 };
+  };
+
+  it("profile: og:description <meta with NO closing > for 3MB", () => {
+    const html = '<html><meta property="og:description" content="' + "x".repeat(3 * MB);
+    const r = timed(() => parseSnapchatProfileHtml(html));
+    expect(r.value).toBeNull();
+    expect(r.ms).toBeLessThan(1500);
+  });
+
+  it("profile: 10,000 ld+json <script openers with no closers", () => {
+    const html = "<html>" + '<script type="application/ld+json">'.repeat(10_000) + "y".repeat(2 * MB);
+    const r = timed(() => parseSnapchatProfileHtml(html));
+    expect(r.value).toBeNull();
+    expect(r.ms).toBeLessThan(1500);
+  });
+
+  it("profile: __NEXT_DATA__ opener with no closer in 3MB", () => {
+    const html = '<html><script id="__NEXT_DATA__" type="application/json">{"a":' + "z".repeat(3 * MB);
+    const r = timed(() => parseSnapchatProfileHtml(html));
+    expect(r.value).toBeNull();
+    expect(r.ms).toBeLessThan(1500);
+  });
+
+  it("spotlight: __NEXT_DATA__ opener with no closer in 3MB", () => {
+    const html = '<html><script id="__NEXT_DATA__" type="application/json">{"a":' + "z".repeat(3 * MB);
+    const r = timed(() => parseSnapchatSpotlightHtml(html));
+    expect(r.value.views).toBeNull();
+    expect(r.ms).toBeLessThan(1500);
+  });
+
+  it("profile: still reads og:description in EITHER attribute order (case-insensitive)", () => {
+    const pad = "<!-- " + "p".repeat(12_000) + " -->";
+    const a = `<html><head>${pad}<meta property="og:description" content="12.5K Subscribers"/></head></html>`;
+    const b = `<html><head>${pad}<META content="12.5K Subscribers" PROPERTY="og:description"/></head></html>`;
+    expect(parseSnapchatProfileHtml(a)).toBe(12500);
+    expect(parseSnapchatProfileHtml(b)).toBe(12500);
+  });
+
+  it("profile: a `property=\"og:description\"` literal buried in JSON (no enclosing <meta>) is ignored, not scanned quadratically", () => {
+    const json = '{"txt":"property=\\"og:description\\" ' + "q".repeat(3 * MB) + '"}';
+    const html = `<html><script id="__NEXT_DATA__" type="application/json">${json}</script></html>`;
+    const r = timed(() => parseSnapchatProfileHtml(html));
+    expect(r.value).toBeNull();
+    expect(r.ms).toBeLessThan(1500);
+  });
+});

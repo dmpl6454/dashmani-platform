@@ -107,6 +107,14 @@ function parseOgTitleCount(ogTitleDecoded: string, keywords: string[]): number |
   return null;
 }
 
+// A regex capture is a V8 SlicedString that pins its ENTIRE parent page in memory: a
+// 67-char caption captured from a 1.6MB reel page keeps the whole 1.6MB alive for as long
+// as the caption lives (the batch's results map, then the caller). Measured 2026-09-08:
+// 200 retained captions = 320MB; flattened, 3MB. Copy through a Buffer to break the link.
+function flatCopy(s: string): string {
+  return Buffer.from(s, "utf8").toString("utf8");
+}
+
 // Pull the best caption from the reel HTML. og:description is the post body (richest,
 // name-bearing); og:title is "<views> views · <n> reactions | <caption>" or just the
 // Page name. So: prefer a meaningful og:description; else the og:title's post-`|` tail.
@@ -115,7 +123,7 @@ function parseFbCaption(html: string): string | null {
   const ogTitle = (html.match(/<meta property="og:title" content="([^"]*)"/) || [])[1] || "";
 
   const desc = decodeEntities(ogDesc).trim();
-  if (desc.length > 3) return desc;
+  if (desc.length > 3) return flatCopy(desc);
 
   // Fall back to og:title. Strip a leading "N views · M reactions | " engagement
   // prefix if present (keep only the caption after the last " | ").
@@ -124,7 +132,7 @@ function parseFbCaption(html: string): string | null {
     const tail = title.split(" | ").slice(1).join(" | ").trim();
     if (tail.length > 0) title = tail;
   }
-  return title.length > 3 ? title : null;
+  return title.length > 3 ? flatCopy(title) : null;
 }
 
 // Parse engagement + caption out of a reel page's HTML. Exported for unit tests with

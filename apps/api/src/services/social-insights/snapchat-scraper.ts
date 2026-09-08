@@ -85,6 +85,48 @@ function parseSnapCount(raw: string): number | null {
   return Math.round(n);
 }
 
+// ── Linear (non-backtracking) HTML extraction ─────────────────────────────────
+// ⚠️ 2026-09-08 incident: this file used to locate <script>/<meta> blocks with regexes
+// such as /<script …[^>]*>([\s\S]*?)<\/script>/ and
+// /<meta[^>]+property="og:description"[^>]+content="([^"]+)"/i. Those are O(n²) on
+// hostile-but-plausible input: a `<meta` or `<script` literal inside a multi-MB inline
+// blob with few `>` characters makes the engine re-scan the whole tail on every backtrack
+// step — measured >10s on a 3MB input and unbounded beyond. Snapchat pages ARE a Next.js
+// shell around a multi-MB __NEXT_DATA__ blob, and this parser runs on the API's MAIN
+// THREAD inside follower-sync (boot + hourly). One such page pins the event loop for hours
+// and the whole API stops answering. Everything below is indexOf-based — strictly linear.
+const MAX_PARSE_LEN = 4 * 1024 * 1024; // defense-in-depth cap; a profile page is ~100KB-1MB
+const MAX_TAG_LEN = 4096; // a real <meta …> / <script …> opening tag is far shorter
+
+/** Body of the first `<script …>` whose opening tag starts with `openTagPrefix` at/after `from`. */
+function scriptBodyAfter(html: string, openTagPrefix: string, from = 0): { body: string; end: number } | null {
+  const start = html.indexOf(openTagPrefix, from);
+  if (start === -1) return null;
+  const gt = html.indexOf(">", start);
+  if (gt === -1 || gt - start > MAX_TAG_LEN) return null;
+  const end = html.indexOf("</script>", gt + 1);
+  if (end === -1) return null;
+  return { body: html.slice(gt + 1, end), end: end + "</script>".length };
+}
+
+/** `content="…"` of the first `<meta …>` carrying `property="<prop>"`, in either attribute order. */
+function metaContent(html: string, prop: string): string | null {
+  const lower = html.toLowerCase(); // one linear pass; case-insensitive search without /i backtracking
+  const needle = `property="${prop.toLowerCase()}"`;
+  let from = 0;
+  for (let guard = 0; guard < 64; guard++) {
+    const at = lower.indexOf(needle, from);
+    if (at === -1) return null;
+    from = at + needle.length;
+    const tagStart = lower.lastIndexOf("<meta", at);
+    const tagEnd = lower.indexOf(">", at);
+    if (tagStart === -1 || tagEnd === -1 || tagEnd - tagStart > MAX_TAG_LEN) continue; // not a sane <meta> tag
+    const m = html.slice(tagStart, tagEnd).match(/content="([^"]+)"/i); // ≤4KB input — bounded
+    if (m) return m[1];
+  }
+  return null;
+}
+
 /**
  * Parse a subscriber count out of a Snapchat public-profile HTML page.
  * Exported for unit tests with fixture HTML — pure + synchronous.
@@ -97,13 +139,15 @@ function parseSnapCount(raw: string): number | null {
  */
 export function parseSnapchatProfileHtml(html: string): number | null {
   if (!html || html.length < MIN_PAGE_LEN) return null;
+  if (html.length > MAX_PARSE_LEN) html = html.slice(0, MAX_PARSE_LEN); // see MAX_PARSE_LEN
 
   // ── Strategy 1: __NEXT_DATA__ / inline JSON ───────────────────────────────
   // Snapchat's Next.js shell embeds page props as window.__NEXT_DATA__
-  const nextData = html.match(/<script id="__NEXT_DATA__"[^>]*>({[\s\S]*?})<\/script>/);
-  if (nextData) {
+  const nextData = scriptBodyAfter(html, '<script id="__NEXT_DATA__"');
+  const nextJson = nextData ? nextData.body.trim() : "";
+  if (nextJson.startsWith("{") && nextJson.endsWith("}")) {
     try {
-      const parsed = JSON.parse(nextData[1]);
+      const parsed = JSON.parse(nextJson);
       // Traverse common paths: pageProps.userProfile.subscriberCount etc.
       const candidates = [
         parsed?.props?.pageProps?.userProfile?.subscriberCount,
@@ -146,10 +190,12 @@ export function parseSnapchatProfileHtml(html: string): number | null {
     }
     return null;
   };
-  const ldBlocks = html.matchAll(/<script type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/g);
-  for (const block of ldBlocks) {
+  for (let from = 0, guard = 0; guard < 64; guard++) {
+    const block = scriptBodyAfter(html, '<script type="application/ld+json"', from);
+    if (!block) break;
+    from = block.end;
     try {
-      const ld = JSON.parse(block[1]);
+      const ld = JSON.parse(block.body);
       // Check both top-level and mainEntity (the real page nests the stat there).
       const fromTop = followCountFromStats(ld?.interactionStatistic);
       if (fromTop) return fromTop;
@@ -169,10 +215,9 @@ export function parseSnapchatProfileHtml(html: string): number | null {
 
   // ── Strategy 3: og:description ───────────────────────────────────────────
   // Snapchat often puts "N Subscribers" in the og:description meta tag.
-  const ogDesc = html.match(/<meta[^>]+property="og:description"[^>]+content="([^"]+)"/i)
-    ?? html.match(/<meta[^>]+content="([^"]+)"[^>]+property="og:description"/i);
-  if (ogDesc) {
-    const desc = decodeEntities(ogDesc[1]);
+  const ogDescRaw = metaContent(html, "og:description");
+  if (ogDescRaw) {
+    const desc = decodeEntities(ogDescRaw);
     const m = desc.match(/([\d,.]+[KkMmBb]?)\s*[Ss]ubscribers?/);
     if (m) {
       const n = parseSnapCount(m[1]);
@@ -370,12 +415,12 @@ function toCount(v: unknown): number | null {
 export function parseSnapchatSpotlightHtml(html: string): ScrapedSnapEngagement {
   if (!html || html.length < MIN_SPOTLIGHT_HTML_LEN) return { ...SPOTLIGHT_EMPTY };
 
-  const m = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
-  if (!m || !m[1]) return { ...SPOTLIGHT_EMPTY };
+  const block = scriptBodyAfter(html.length > MAX_PARSE_LEN ? html.slice(0, MAX_PARSE_LEN) : html, '<script id="__NEXT_DATA__"');
+  if (!block || !block.body) return { ...SPOTLIGHT_EMPTY };
 
   let data: any;
   try {
-    data = JSON.parse(m[1]);
+    data = JSON.parse(block.body);
   } catch {
     return { ...SPOTLIGHT_EMPTY };
   }

@@ -220,7 +220,52 @@ async function readCursor(key: string): Promise<string> {
   }
 }
 
+// ── Overlap guard (2026-09-08 outage) ─────────────────────────────────────────────
+// The sweep is driven by a bare setInterval (index.ts). Before this guard a sweep that
+// ran longer than the interval got a concurrent sibling on every tick: on 2026-09-08 the
+// 06:27 run stalled in the Instagram phase, 08:27 stacked on it, and after an OOM restart
+// the boot-time run stacked again. Each sibling holds its own feed maps and link queues
+// (~100-150 MB each) and draws Graph calls from the same ~200-call/hr Meta budget. (The
+// "500 errors" Facebook logged that morning were Meta rate-limits counted as errors —
+// caused by the provider rebuilding its whole feed map on every 50-link batch, not by
+// stacking; stacking made it worse.) Rules, mirroring follower-sync's guard:
+//   * claim SYNCHRONOUSLY before the first `await` — a check-then-claim across an await
+//     is the TOCTOU window the follower-sync watchdog work (PR #134) had to close;
+//   * release in `finally`, so a throwing run cannot wedge the sweep forever;
+//   * on a concurrent tick: log loudly and SKIP. Never "take over" — a takeover cannot
+//     stop the old JS, it only adds a second sweep. A wedged process is pm2's / the
+//     watchdog's job; the STALE warning below makes it visible in pm2 logs.
+let inFlightRun: { startedAt: number } | null = null;
+/** An in-flight run older than this is almost certainly wedged; say so loudly. */
+export const INSIGHTS_STALE_RUN_MS = 4 * 60 * 60 * 1000;
+/** Test-only: module-level guard state must not leak between tests. */
+export function resetSocialInsightsRunStateForTests(): void {
+  inFlightRun = null;
+}
+
 export async function runSocialInsightsRefresh(opts?: { harvestOnly?: boolean }): Promise<void> {
+  if (inFlightRun) {
+    const ageMs = Date.now() - inFlightRun.startedAt;
+    const ageMin = Math.round(ageMs / 60_000);
+    console.warn(
+      `[social-insights] previous run still in progress since ${new Date(inFlightRun.startedAt).toISOString()} (${ageMin} min) — skipping this tick`
+    );
+    if (ageMs > INSIGHTS_STALE_RUN_MS) {
+      console.warn(
+        `[social-insights] ⚠️ STALE run: in flight for ${ageMin} min (> ${Math.round(INSIGHTS_STALE_RUN_MS / 60_000)} min). A provider batch has likely saturated the event loop — expect the API to be unresponsive; restart the process.`
+      );
+    }
+    return;
+  }
+  inFlightRun = { startedAt: Date.now() }; // claimed before the first await
+  try {
+    await runSocialInsightsRefreshInner(opts);
+  } finally {
+    inFlightRun = null;
+  }
+}
+
+async function runSocialInsightsRefreshInner(opts?: { harvestOnly?: boolean }): Promise<void> {
   const harvestOnly = opts?.harvestOnly === true;
   const startedAt = Date.now();
   const since = new Date(Date.now() - POLL_WINDOW_DAYS * 86_400_000);
@@ -414,7 +459,10 @@ export async function runSocialInsightsRefresh(opts?: { harvestOnly?: boolean })
       let quotaAborted = false;
       // Tracks whether the feed-map harvest has already been flushed this run.
       // The provider builds its in-memory feed map on the FIRST fetchBatch call
-      // and caches it; all subsequent batches reuse the cache. We therefore
+      // and caches it for the rest of the sweep (FEED_MAP_TTL_MS in the FB/IG
+      // providers). ⚠️ Until 2026-09-08 this sentence was FALSE — both providers
+      // rebuilt the whole map on every 50-link batch, which is why a sweep could
+      // outlive its 2h interval and stack on itself. We therefore
       // harvest immediately after the first SUCCESSFUL batch — this guarantees
       // that all current-feed captions reach link_content within ~80s of the
       // run starting, well before the multi-hour metric sweep over 37k links

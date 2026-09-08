@@ -38,7 +38,11 @@ npx turbo build --concurrency=1
 unset NODE_OPTIONS
 
 echo "==> Restarting processes"
-pm2 restart all
+# Name the platform's own processes rather than `pm2 restart all`. The box hosts other
+# tenants' pm2 apps (2026-09-08: ds-sales-agent/worker, deliberately stopped after they
+# starved the API into an OOM kill) and `restart all` REVIVES stopped apps — a platform
+# deploy must never restart, or resurrect, processes that are not the platform's.
+pm2 restart api internal client hr jobs
 pm2 save
 
 echo "==> Deploy complete"

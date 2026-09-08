@@ -147,6 +147,23 @@ function isStaleRun(p: SyncProgress): boolean {
   return Date.now() - started > STALE_RUN_MS;
 }
 
+/** First `"accessibilityLabel":"<value>"` whose value matches `test` — linear in the page size. */
+function findAccessibilityLabelMentioning(html: string, test: RegExp): string | null {
+  const key = '"accessibilityLabel":"';
+  let from = 0;
+  for (let guard = 0; guard < 10_000; guard++) {
+    const at = html.indexOf(key, from);
+    if (at === -1) return null;
+    const start = at + key.length;
+    const end = html.indexOf('"', start);
+    if (end === -1) return null;
+    const value = html.slice(start, end);
+    if (test.test(value)) return value;
+    from = end + 1;
+  }
+  return null;
+}
+
 function parseYouTubeSubscribers(text: string): number | null {
   // "553 thousand subscribers" → 553000, "1.08 million" → 1080000
   const match = text.match(/([\d,.]+)\s*(thousand|million|billion|lakh|crore)?/i);
@@ -212,8 +229,11 @@ async function fetchYouTubeSubscribers(profileUrl: string): Promise<number | nul
     // `accessibilityLabel`.  In practice this is the ONLY `accessibilityLabel`
     // on the page that mentions "subscribers" (the related-channels sidebar
     // uses `subscriberCountText` instead).  Match the label directly.
-    const accLabel = html.match(/"accessibilityLabel":"([^"]*\bsubscribers?\b[^"]*)"/i);
-    if (accLabel) return parseYouTubeSubscribers(accLabel[1]);
+    // Linear scan (2026-09-08): the old /"accessibilityLabel":"([^"]*\bsubscribers?\b[^"]*)"/i
+    // is O(n²) on a long quote-free stretch — every backtrack step re-scans the tail. Walk
+    // the occurrences with indexOf and test only each quote-bounded value.
+    const accLabel = findAccessibilityLabelMentioning(html, /\bsubscribers?\b/i);
+    if (accLabel !== null) return parseYouTubeSubscribers(accLabel);
 
     // Fallback to the older sidebar-style key for alternate YT layouts.
     // NOTE: on the current YT layout this returns the wrong (sidebar)

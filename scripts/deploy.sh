@@ -16,7 +16,10 @@ git fetch origin main
 # Conservative: ANY changed path outside the allowlist → the full deploy below.
 PREV_HEAD=$(git rev-parse HEAD)
 CHANGED=$(git diff --name-only "$PREV_HEAD" origin/main)
-if [ -n "$CHANGED" ] && ! echo "$CHANGED" | grep -qvE '^(\.planning/|docs/|mobile/|\.github/)|\.md$'; then
+# NOT_ALLOWED = every changed path outside the allowlist; docs-only ⇔ that set is empty.
+# (Deliberately not `grep -q -v`: BSD grep misreports its exit status for -q -v.)
+NOT_ALLOWED=$(echo "$CHANGED" | grep -vE '^(\.planning/|docs/|mobile/|\.github/)|\.md$' || true)
+if [ -n "$CHANGED" ] && [ -z "$NOT_ALLOWED" ]; then
   echo "==> Docs/mobile-only change ($(echo "$CHANGED" | wc -l | tr -d ' ') file(s)) — syncing files, skipping build and restarts"
   git reset --hard origin/main
   echo "==> Deploy complete (no restart needed)"

@@ -7,6 +7,22 @@ cd "$APP_DIR"
 echo "==> Pulling latest code"
 git config --global --add safe.directory "$APP_DIR" 2>/dev/null || true
 git fetch origin main
+
+# ── Docs-only guard (2026-09-09) ─────────────────────────────────────────────
+# A push that touches nothing the server runs — Markdown, .planning/, docs/, mobile/
+# (not an npm workspace) or .github/ — must NOT rebuild and must NOT restart anything:
+# every `pm2 restart` is a few seconds of 502 for whoever is mid-request, and the
+# 2026-09-01…04 mobile commits alone caused 12 needless production restarts.
+# Conservative: ANY changed path outside the allowlist → the full deploy below.
+PREV_HEAD=$(git rev-parse HEAD)
+CHANGED=$(git diff --name-only "$PREV_HEAD" origin/main)
+if [ -n "$CHANGED" ] && ! echo "$CHANGED" | grep -qvE '^(\.planning/|docs/|mobile/|\.github/)|\.md$'; then
+  echo "==> Docs/mobile-only change ($(echo "$CHANGED" | wc -l | tr -d ' ') file(s)) — syncing files, skipping build and restarts"
+  git reset --hard origin/main
+  echo "==> Deploy complete (no restart needed)"
+  exit 0
+fi
+
 git reset --hard origin/main
 
 echo "==> Writing production .env.local files for frontends"

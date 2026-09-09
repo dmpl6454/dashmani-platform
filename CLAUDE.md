@@ -185,7 +185,7 @@ The Linode server at `/opt/dashmani-platform` may contain **uncommitted, hand-ed
 Pushing to `main` automatically deploys to production via GitHub Actions (`.github/workflows/deploy.yml`).
 
 **Flow:** GitHub Actions SSHes into the Linode server and runs `scripts/deploy.sh`:
-1. `git fetch origin main && git reset --hard origin/main` (no merge conflicts ever)
+1. `git fetch origin main`, then the **docs-only guard** (2026-09-09): if every changed file is Markdown, `.planning/`, `docs/`, `mobile/` or `.github/`, the script syncs the checkout and exits WITHOUT building or restarting — a `pm2 restart` is a few seconds of 502 for anyone mid-request, and docs/mobile pushes were causing them needlessly. Otherwise `git reset --hard origin/main` (no merge conflicts ever) and the full pipeline below. To merge something that must not touch production at all, put `[skip ci]` in the merge-commit subject and `deploy.yml` does not run (the next real deploy syncs everything).
 2. Overwrites `apps/*/.env.local` with `NEXT_PUBLIC_API_URL=https://api.digitalsukoon.com/v1` (see "Why `.env.local` is overwritten" below)
 3. `npm install`
 4. `npm run db:generate` (Prisma client)

@@ -120,3 +120,23 @@ that started the cascade. Owner decision pending on moving them.
 - `psql -c "…"` inside `ssh '…'` turns `"` into SQL identifiers; pipe SQL through `bash -s` + heredoc.
 - The inspector's `Debugger.pause` works on a pegged thread, but issue `Debugger.enable` and wait
   before pausing or `url` comes back empty; a CPU profile (`Profiler.start/stop`) is more diagnostic.
+
+## 2026-09-09 follow-up — sales-agent moved to its own box; residues removed from prod
+
+The owner moved `ds-sales-agent` to a separate Linode (173.230.131.144, 1 vCPU / 961MB) and repointed the
+local `ssh linode` alias at it. **Production is still 172.105.53.101**; a `dashmani-prod` alias was added and
+every `ssh linode` in CLAUDE.md now reads `ssh dashmani-prod`. ⚠️ The first cleanup attempt ran its read-only
+inventory against the NEW box because of the alias change and was aborted before any mutation — always confirm
+`ls /opt/dashmani-platform` succeeds before touching a server.
+
+Removed from prod, all with zero portal impact (verified before/after: API 200 in ~3ms, portals 200, 0 API 5xx):
+- pm2 entries ids 6/7/8 (`ds-sales-worker`, `ds-sales-agent` ×2) — `pm2 delete <id>` one per call, name-checked
+  (a multi-target pm2 command is how yesterday's deploy revived them); `pm2 save` → resurrect set is platform-only.
+- nginx site `ds-sales-agent` (`e035e4d46c.digitalsukoon.com` → :3100) — unlinked, `nginx -t`, graceful reload.
+- `/opt/ds-sales-agent` (1.1G), `/opt/ds-ocr-venv` (387M), `/root/.ds-sales-agent-data` (682M) — renamed into
+  `/root/quarantine-ds-sales-2026-09-09` (instant), then purged by `ionice -c3 nice -n19 rm -rf` in the background.
+  `/opt/ds-ocr-bakeoff` (18M) does not exist on the new box and is kept in the quarantine dir.
+- 91 rotated pm2 log files, `/var/log/ds-accuracy.log`.
+- Left in place on purpose: `/root/.local/share/pnpm` (963M) — `posting-automation` also uses pnpm.
+
+Nothing else referenced the project on prod: no crontab lines, no systemd units, no certbot certificate.

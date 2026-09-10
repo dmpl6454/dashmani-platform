@@ -339,6 +339,73 @@ function seriesFor(res: InsightsResponse | undefined, name: string) {
 }
 
 /**
+ * How far back every Facebook window request reaches (`since = now − N days`).
+ *
+ * ⚠️ FACEBOOK MUST BE ASKED WITH AN EXPLICIT since/until. Live-probed 2026-09-10
+ * 09:47Z on the production connection: with NO since/until, `period=day`
+ * returned points ending 2026-09-08T07:00Z and 2026-09-09T07:00Z — the newest
+ * describing Pacific Sep 8, although Pacific Sep 9 had closed almost three
+ * hours earlier. The SAME metric with `since=now−3d, until=now` returned Sep 9
+ * (closed, $262.02 on Dashmani) AND an open bucket stamped 2026-09-11T07:00Z
+ * (today so far, $26.65). Same shape for week / days_28 and for the regular
+ * metrics. So Meta's default span silently stops ONE CLOSED DAY EARLY, and
+ * every window we served was a day staler than it needed to be: "Yesterday"
+ * was the day before yesterday, and the daily table gained the newest closed
+ * day ~24h late. Four days back gives the daily writer ~4 closed points, so a
+ * missed 3-hourly run no longer leaves a permanent hole in per-day history.
+ */
+const FB_SERIES_LOOKBACK_DAYS = 4;
+
+/** Graph stamps like `2026-09-11T07:00:00+0000` — V8 parses that, but normalise the
+ *  colon-less offset anyway so a stricter engine cannot turn it into NaN. */
+function parseGraphTime(v: unknown): number {
+  if (typeof v !== "string") return NaN;
+  return Date.parse(v.replace(/([+-]\d{2})(\d{2})$/, "$1:$2"));
+}
+
+/**
+ * Split a Facebook insights response into the points Meta has CLOSED and the
+ * one still OPEN.
+ *
+ * With an explicit `until=now`, Facebook includes the bucket that contains
+ * `now` — stamped with the NEXT Pacific midnight, i.e. an end_time in the
+ * future — carrying that period's running total so far. That open bucket is
+ * exactly "Today (so far)", and it must never be read as a closed window: the
+ * `last`-point readers would otherwise label a partial day as Yesterday, a
+ * partial rolling week as 7d, and the daily writer would persist a half day.
+ * Points without a parseable end_time are treated as closed (prior behaviour).
+ * Pure; exported for tests.
+ */
+export function splitFbSeries(
+  res: InsightsResponse | undefined,
+  nowMs: number,
+): { closed: InsightsResponse | undefined; open: InsightsResponse | undefined } {
+  if (!res?.data) return { closed: res, open: undefined };
+  const closed: NonNullable<InsightsResponse["data"]> = [];
+  const open: NonNullable<InsightsResponse["data"]> = [];
+  for (const series of res.data) {
+    const c: NonNullable<typeof series.values> = [];
+    const o: NonNullable<typeof series.values> = [];
+    for (const v of series.values ?? []) {
+      const t = parseGraphTime(v.end_time);
+      if (Number.isFinite(t) && t > nowMs) o.push(v); else c.push(v);
+    }
+    closed.push({ ...series, values: c });
+    if (o.length > 0) open.push({ ...series, values: o });
+  }
+  return { closed: { ...res, data: closed }, open: open.length > 0 ? { ...res, data: open } : undefined };
+}
+
+/** Drop a window row so a stale figure can never outlive the data behind it. */
+async function clearWindowMetric(assetId: string, window: ChannelWindow | "today"): Promise<void> {
+  try {
+    await prisma.metaAssetMetric.deleteMany({ where: { assetId, window } });
+  } catch (e) {
+    console.warn(`[meta-channels] window clear failed ${assetId}/${window}: ${scrubSecrets(String(e))}`);
+  }
+}
+
+/**
  * Refresh channel-level metrics for every selected, connected asset.
  * Never throws; always returns a summary.
  */
@@ -459,12 +526,17 @@ export async function runMetaChannelSync(opts?: {
         //   7 days (reference)             -> 6,670,450
         //
         // Shipping the first form would have put "7 views" next to a channel doing
-        // 6.6m a week. Ending on the last completed day also matches Facebook,
-        // whose series already stops at a closed boundary (probed: the newest point
-        // is end_time 2026-08-23T07:00:00Z, never a partial today), so the two
-        // platforms describe the same span instead of silently differing by a day.
+        // 6.6m a week. Facebook is different: its points are stamped at the
+        // Pacific midnight that CLOSED them, so `until=now` is safe there — the
+        // closed points are whole days and the one open bucket is split off by
+        // splitFbSeries (it becomes "Today (so far)", never a window figure).
         const untilTs = Math.floor(Date.now() / 86_400_000) * 86_400;
         const sinceTs = untilTs - IG_WINDOW_DAYS[win] * 86_400;
+
+        // ⚠️ Facebook: EXPLICIT since/until, or Meta stops one closed day early —
+        // see FB_SERIES_LOOKBACK_DAYS for the live probe that found it.
+        const nowTs = Math.floor(Date.now() / 1000);
+        const fbSinceTs = nowTs - FB_SERIES_LOOKBACK_DAYS * 86_400;
 
         const insightsParams = isIg
           ? {
@@ -475,7 +547,7 @@ export async function runMetaChannelSync(opts?: {
               since: sinceTs,
               until: untilTs,
             }
-          : { metric: FB_METRICS.join(","), period: win };
+          : { metric: FB_METRICS.join(","), period: win, since: fbSinceTs, until: nowTs };
         const insightsLabel = isIg ? `channel-ig-insights-${win}` : `channel-fb-insights-${win}`;
 
         let res = await oauthGraphFetch<InsightsResponse>(
@@ -496,10 +568,25 @@ export async function runMetaChannelSync(opts?: {
         if (res.rateLimited) { sawRateLimit = true; break; }
 
         if (!res.ok) {
-          await upsertWindowMetric(asset.id, win, null, scrubSecrets(res.error ?? "channel insights failed"));
+          const msg = scrubSecrets(res.error ?? "channel insights failed");
+          await upsertWindowMetric(asset.id, win, null, msg);
+          // The Facebook today row is derived from THIS request's open bucket, so a
+          // failed day fetch must flag it too — otherwise the previous run's
+          // running total keeps rendering under "Today (so far)" with no warning,
+          // and after the Pacific rollover that is YESTERDAY's near-complete day
+          // dressed up as today. Mirrors what the Instagram today fetch does.
+          if (win === "day" && !isIg) await upsertWindowMetric(asset.id, "today", null, msg);
           if (win === DEFAULT_WINDOW) out.errors.push(`${asset.name}: ${res.error ?? "insights failed"}`);
           continue;
         }
+
+        // Facebook: only the CLOSED points feed the window, the daily history and
+        // the 28d mirror. The OPEN bucket (end_time still in the future) is this
+        // period's running total so far — for the day window that is exactly
+        // "Today (so far)", written further down. Instagram is unsplit: its
+        // request already ends on a completed UTC day.
+        const fbSplit = isIg ? null : splitFbSeries(res.data, nowTs * 1000);
+        const closedData = isIg ? res.data : fbSplit!.closed;
 
         // Instagram's follower change for this window. Skipped for "day" — Meta
         // will not break a single day down — and skipped when the budget is spent,
@@ -509,10 +596,11 @@ export async function runMetaChannelSync(opts?: {
         // so it is fetched after them and simply stays null if it does not answer.
         let earningsCents: number | null = null;
         let dayEarningsData: InsightsResponse | undefined;
+        let todayEarningsData: InsightsResponse | undefined;
         if (!isIg && budget.used < budget.max) {
           let er = await oauthGraphFetch<InsightsResponse>(
             `${asset.metaId}/insights`,
-            { metric: FB_EARNINGS_METRIC, period: win },
+            { metric: FB_EARNINGS_METRIC, period: win, since: fbSinceTs, until: nowTs },
             token,
             { label: `channel-fb-earnings-${win}`, budget },
           );
@@ -522,7 +610,7 @@ export async function runMetaChannelSync(opts?: {
             await sleep(RETRY_DELAY_MS);
             er = await oauthGraphFetch<InsightsResponse>(
               `${asset.metaId}/insights`,
-              { metric: FB_EARNINGS_METRIC, period: win },
+              { metric: FB_EARNINGS_METRIC, period: win, since: fbSinceTs, until: nowTs },
               token,
               { label: `channel-fb-earnings-${win}-retry`, budget },
             );
@@ -531,8 +619,9 @@ export async function runMetaChannelSync(opts?: {
           // Meta returns a plain USD number. Store CENTS — money must never be
           // carried as a float.
           if (er.ok) {
-            earningsCents = readEarningsCents(er.data);
-            if (win === "day") dayEarningsData = er.data;
+            const earnSplit = splitFbSeries(er.data, nowTs * 1000);
+            earningsCents = readEarningsCents(earnSplit.closed);
+            if (win === "day") { dayEarningsData = earnSplit.closed; todayEarningsData = earnSplit.open; }
           }
         }
 
@@ -546,9 +635,9 @@ export async function runMetaChannelSync(opts?: {
 
         // What the numbers DESCRIBE, as distinct from when we fetched them.
         // Instagram was asked for an explicit until, so we already know its end.
-        const periodEnd = isIg ? new Date(untilTs * 1000) : readPeriodEnd(res.data);
+        const periodEnd = isIg ? new Date(untilTs * 1000) : readPeriodEnd(closedData);
 
-        const metrics = readMetrics(res.data, isIg);
+        const metrics = readMetrics(closedData, isIg);
         if (isIg) { metrics.follows = igFollows; metrics.unfollows = igUnfollows; }
 
         await upsertWindowMetric(asset.id, win, metrics, null, igDelta, earningsCents, periodEnd);
@@ -557,21 +646,43 @@ export async function runMetaChannelSync(opts?: {
         //
         // Calendar months and custom ranges are served from meta_asset_daily,
         // and this is where those rows come from at ZERO extra API cost: the
-        // day fetch already carries per-day values (Facebook returns 2-3 daily
-        // points; Instagram's since/until IS one day). Guarded so a history
-        // write can never affect the sync — same contract as writeApiSnapshot.
+        // day fetch already carries per-day values (Facebook's explicit 4-day
+        // span returns ~4 CLOSED points — the open one was split off above and
+        // is never persisted as history; Instagram's since/until IS one day).
+        // Guarded so a history write can never affect the sync — same contract
+        // as writeApiSnapshot.
         if (win === "day") {
           try {
             const rows = isIg
               ? (() => { const r = igDailyRowFromTotals(res.data, sinceTs); return r ? [r] : []; })()
-              : fbDailyRowsFromSeries(res.data, dayEarningsData);
+              : fbDailyRowsFromSeries(closedData, dayEarningsData, nowTs * 1000);
             if (rows.length > 0) await persistDailyRows(asset.id, rows);
           } catch (e) {
             console.warn(`[meta-daily] persist failed for ${asset.name}: ${scrubSecrets(String(e))}`);
           }
         }
 
-        if (win === DEFAULT_WINDOW) { defaultWindowData = res.data; defaultWindowOk = true; }
+        // ── Facebook "Today (so far)" — the OPEN bucket of the day series ────
+        //
+        // Zero extra calls: the same two day-window requests carry it. Facebook's
+        // day runs midnight-to-midnight PACIFIC (all Page Insights do), so at
+        // 2pm IST this bucket is ~1.5h old and legitimately small — the UI says
+        // when the day started rather than letting a small figure read as wrong.
+        // No open bucket (right at the boundary, or Meta withholding it) means
+        // NO row: a stale "today" from the previous Pacific day must not linger,
+        // so any earlier row is cleared and the cells fall back to dashes.
+        if (win === "day" && !isIg) {
+          const todayMetrics = readMetrics(fbSplit?.open, false);
+          const todayEarnings = readEarningsCents(todayEarningsData);
+          const hasAny = todayEarnings !== null || Object.values(todayMetrics).some((v) => v !== null);
+          if (hasAny) {
+            await upsertWindowMetric(asset.id, "today", todayMetrics, null, null, todayEarnings, new Date(nowTs * 1000));
+          } else {
+            await clearWindowMetric(asset.id, "today");
+          }
+        }
+
+        if (win === DEFAULT_WINDOW) { defaultWindowData = closedData; defaultWindowOk = true; }
       }
 
       // ── "Today (so far)" — INSTAGRAM ONLY, and deliberately partial ──────
@@ -582,11 +693,11 @@ export async function runMetaChannelSync(opts?: {
       // measured 314-views-vs-809k trap). Here the partial day IS the product,
       // and the UI labels it "Today (so far)".
       //
-      // ⚠️ FACEBOOK IS SKIPPED, NOT FAILED: its insights series stops at a
-      // closed boundary (probed — the newest point is the Page's last local
-      // midnight; a partial today simply does not exist in the API, only in
-      // Meta's own app). No row is written, the UI renders dashes, and the
-      // footnote says today's Facebook appears tomorrow under Yesterday.
+      // Facebook's today row is written in the window loop above, from the OPEN
+      // bucket of its day series. (An earlier note here said Facebook had no
+      // partial day in the API at all — that was true only of the default
+      // no-since/until request; see FB_SERIES_LOOKBACK_DAYS.) Its day is the
+      // PACIFIC day, Instagram's the UTC day — the footnote states both starts.
       if (isIg && !sawRateLimit && budget.used < budget.max) {
         const nowTs = Math.floor(Date.now() / 1000);
         const todayStartTs = Math.floor(nowTs / 86_400) * 86_400;
@@ -948,8 +1059,12 @@ function emptyDailyRow(date: string): DailyRow {
 export function fbDailyRowsFromSeries(
   d: InsightsResponse | undefined,
   earnings?: InsightsResponse,
+  nowMs: number = Date.now(),
 ): DailyRow[] {
   const byDate = new Map<string, DailyRow>();
+  // ⚠️ A point stamped in the FUTURE is the still-open bucket (today so far).
+  // Persisting it would put a half day into the exact-sum range table.
+  const isOpen = (endTime: unknown) => { const t = parseGraphTime(endTime); return Number.isFinite(t) && t > nowMs; };
   const rowFor = (date: string) => {
     let r = byDate.get(date);
     if (!r) { r = emptyDailyRow(date); byDate.set(date, r); }
@@ -959,6 +1074,7 @@ export function fbDailyRowsFromSeries(
     const field = series.name ? FB_DAILY_FIELD[series.name] : undefined;
     if (!field) continue;
     for (const v of series.values ?? []) {
+      if (isOpen(v.end_time)) continue;
       const date = fbDayCovered(v.end_time);
       if (!date) continue;
       const n = dailyNum(v.value);
@@ -966,6 +1082,7 @@ export function fbDailyRowsFromSeries(
     }
   }
   for (const v of earnings?.data?.find((x) => x.name === FB_EARNINGS_METRIC)?.values ?? []) {
+    if (isOpen(v.end_time)) continue;
     const date = fbDayCovered(v.end_time);
     if (!date) continue;
     const usd = typeof v.value === "number" && Number.isFinite(v.value) && v.value >= 0 ? v.value : null;

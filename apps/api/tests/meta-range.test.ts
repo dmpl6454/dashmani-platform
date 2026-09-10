@@ -177,7 +177,10 @@ describe("GET /admin/meta/channels — range mode + removal", () => {
     expect(b.coveredDays).toBe(1);
 
     expect(d.totals.views).toBe(65);
-    expect(d.totals.reach).toBe(0); // nothing contributes; the UI renders the tile from items
+    // Nothing contributes → the total is NULL and the UI renders "—". It used to be
+    // 0 here, which fmtMetric painted as a real "0" — the fabricated-zero class
+    // (see finalizeTotals in meta.routes.ts).
+    expect(d.totals.reach).toBeNull();
     expect(d.previousTotals).toMatchObject({ views: 30, earningsCents: 150, coverageShare: 1, assets: 1 });
   });
 
@@ -265,7 +268,7 @@ describe("GET /admin/meta/channels — range mode + removal", () => {
 
     const a = res.body.data.items.find((i: { id: string }) => i.id === assetA);
     expect(a.views28d).toBeNull();
-    // ⚠️ FB has no today row BY DESIGN — falling back to the asset-level error
+    // ⚠️ FB has no today row in this fixture — falling back to the asset-level error
     // here would mark every healthy Facebook channel in the Today view.
     expect(a.metricsError).toBeNull();
   });

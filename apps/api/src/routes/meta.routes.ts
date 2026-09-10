@@ -19,7 +19,7 @@ import { metaOauthConfigured, metaOauthMissingEnv, metaTuning } from "../service
 import { discoverConnectionAssets } from "../services/meta-oauth/meta-discovery.service";
 import { runMetaPostsSync } from "../services/meta-oauth/meta-posts.service";
 import { runMetaChannelSync, resolveContestedOwners, resolveDuplicateAssetIds, CHANNEL_WINDOWS, type ChannelWindow } from "../services/meta-oauth/meta-channels.service";
-import { getRangeTotals, getRangeFollowerDeltas, previousRange, rangeDayCount } from "../services/meta-oauth/meta-range.service";
+import { getRangeTotals, getRangeFollowerDeltas, previousRange, rangeDayCount, coveredDayOf, shiftDay } from "../services/meta-oauth/meta-range.service";
 import { scrubSecrets } from "../utils/token-crypto";
 
 const router = Router();
@@ -432,11 +432,12 @@ router.get(
     // unknown value falls back to the default rather than 400ing, so a stale
     // bookmark degrades to the normal view instead of an error page.
     const requested = typeof req.query.window === "string" ? req.query.window : "";
-    // "today" is a synthetic window: Instagram-only partial-day figures written
-    // by the sync (see the today-so-far block in meta-channels.service.ts).
-    // Facebook has no row there BY DESIGN — its API publishes only completed
-    // days — so its cells render dashes rather than yesterday's numbers dressed
-    // up as today's.
+    // "today" is a synthetic window of PARTIAL-day figures written by the sync:
+    // Instagram from an explicit midnight-UTC→now fetch, Facebook from the OPEN
+    // bucket of its since/until day series (the current PACIFIC day so far — see
+    // FB_SERIES_LOOKBACK_DAYS in meta-channels.service.ts). A channel with no
+    // open bucket, or whose day fetch never succeeded, has no row and renders
+    // dashes rather than yesterday's numbers dressed up as today's.
     const window: ChannelWindow | "today" =
       requested === "today"
         ? "today"
@@ -555,6 +556,7 @@ router.get(
 
       const totals = { followers: 0, views: 0, engagements: 0, reach: 0, earningsCents: 0 };
       const contributing = { views: 0, engagements: 0, reach: 0, earnings: 0 };
+      let earningsReported = 0;
       let dataThrough: string | null = null;
       for (const r of rows) {
         totals.followers += r.followerCount ?? 0;
@@ -563,6 +565,7 @@ router.get(
         if (t?.engagements != null) { totals.engagements += t.engagements; contributing.engagements++; }
         if (t?.earningsCents != null) {
           totals.earningsCents += t.earningsCents;
+          earningsReported++;
           if (t.earningsCents > 0) contributing.earnings++;
         }
         if (t?.latestDay && (dataThrough === null || t.latestDay > dataThrough)) dataThrough = t.latestDay;
@@ -573,7 +576,12 @@ router.get(
       // half-covered baseline would fabricate growth, so the UI hides it below
       // ~95% coverage rather than showing a confident wrong percentage.
       let prevViews = 0, prevEng = 0, prevEarn = 0, prevRowDays = 0, prevAssets = 0;
-      for (const t of prevSums.values()) {
+      // ⚠️ Only the rows on THIS page. The baseline used to sum every asset with
+      // history in the span, so a removed channel — or, under ?platform=instagram,
+      // every Facebook Page's revenue — padded the prior and skewed the chip.
+      for (const r of rows) {
+        const t = prevSums.get(r.id);
+        if (!t) continue;
         if (t.views != null) prevViews += t.views;
         if (t.engagements != null) prevEng += t.engagements;
         if (t.earningsCents != null) prevEarn += t.earningsCents;
@@ -611,6 +619,9 @@ router.get(
           windows: CHANNEL_WINDOWS,
           range: { start: qStart, end: qEnd, days: span },
           dataThrough: dataThrough ? `${dataThrough}T00:00:00.000Z` : null,
+          /** Last calendar day the sums are complete through (already a day key here). */
+          dataThroughDay: dataThrough,
+          dayStarts: null,
           items: rows.map((r) => {
             const t = sums.get(r.id);
             const fd = fDeltas.get(r.id);
@@ -647,7 +658,7 @@ router.get(
             };
           }),
           channelCount: rows.length,
-          totals,
+          totals: finalizeTotals(totals, contributing, earningsReported),
           contributing,
           previousTotals,
         },
@@ -788,6 +799,7 @@ router.get(
     // cover 40, which is the "confident but wrong" failure this page must avoid.
     const totals = { followers: 0, views: 0, engagements: 0, reach: 0, earningsCents: 0 };
     const contributing = { views: 0, engagements: 0, reach: 0, earnings: 0 };
+    let earningsReported = 0;
     for (const r of rows) {
       const w = win(r);
       totals.followers += r.followerCount ?? 0;
@@ -796,8 +808,11 @@ router.get(
       if (w?.reach != null) { totals.reach += Number(w.reach); contributing.reach++; }
       // Only Pages that actually earn count towards "reporting" — 39 of 72 are at
       // a true zero, and counting them would imply coverage we do not have.
+      // earningsReported counts every Page that ANSWERED (zero included): it is
+      // what separates "$0.00" from "nobody published a figure for this window".
       if (w?.earningsCents != null) {
         totals.earningsCents += w.earningsCents;
+        earningsReported++;
         if (w.earningsCents > 0) contributing.earnings++;
       }
     }
@@ -820,6 +835,17 @@ router.get(
     // a failure here must never fail the page, and null simply hides the chips.
     // The UI additionally hides them below ~95% baseline coverage, because a
     // percentage computed against a half-covered baseline fabricates growth.
+    //
+    // ⚠️ ANCHORED ON THE DAY EACH ROW'S FIGURES ACTUALLY COVER, not on "UTC
+    // yesterday". The window row describes the period ending at Meta's
+    // periodEnd — Pacific midnight for Facebook, UTC midnight for Instagram —
+    // and the two platforms can sit on different calendar days for seven hours
+    // a day. Assuming "yesterday" put the 1-day baseline ON the covered day
+    // itself (Yesterday $1,254 vs prior $1,254 → a permanent "0.0%", seen live
+    // 2026-09-10) and overlapped the 7d/28d baselines by a day. Each row now
+    // gets the span before ITS covered range; rows without a periodEnd (never
+    // synced) contribute nothing, and only rows on this page count, so a
+    // removed channel's history can no longer pad the baseline.
     let previousTotals:
       | { views: number; engagements: number; earningsCents: number; coverageShare: number; assets: number; start: string; end: string }
       | null = null;
@@ -827,30 +853,59 @@ router.get(
       // ⚠️ No trend baseline for "today": comparing a partial day against any
       // complete prior day fabricates a decline that is really just the clock.
       if (window === "today") throw new Error("skip");
-      const todayMs = Date.parse(new Date().toISOString().slice(0, 10) + "T00:00:00Z");
-      const curEnd = new Date(todayMs - 86_400_000).toISOString().slice(0, 10);
-      const curStart = new Date(todayMs - windowDays * 86_400_000).toISOString().slice(0, 10);
-      const prev = previousRange(curStart, curEnd);
-      const prevSums = await getRangeTotals(prev.start, prev.end);
+      const prevByAsset = new Map<string, { start: string; end: string }>();
+      for (const r of rows) {
+        const pe = win(r)?.periodEnd;
+        if (!pe) continue;
+        const coveredEnd = coveredDayOf(pe);
+        prevByAsset.set(r.id, previousRange(shiftDay(coveredEnd, -(windowDays - 1)), coveredEnd));
+      }
+      // Usually one or two distinct spans (Facebook's and Instagram's); one
+      // cached GROUP BY each, never a query per asset.
+      const sumsByRange = new Map<string, Awaited<ReturnType<typeof getRangeTotals>>>();
+      for (const p of prevByAsset.values()) {
+        const key = `${p.start}|${p.end}`;
+        if (!sumsByRange.has(key)) sumsByRange.set(key, await getRangeTotals(p.start, p.end));
+      }
       let v = 0, e = 0, c = 0, rowDays = 0, assets = 0;
-      for (const t of prevSums.values()) {
+      let start: string | null = null, end: string | null = null;
+      for (const [assetId, p] of prevByAsset) {
+        const t = sumsByRange.get(`${p.start}|${p.end}`)?.get(assetId);
+        if (!t) continue;
         if (t.views != null) v += t.views;
         if (t.engagements != null) e += t.engagements;
         if (t.earningsCents != null) c += t.earningsCents;
         rowDays += t.coveredDays;
         assets++;
+        if (start === null || p.start < start) start = p.start;
+        if (end === null || p.end > end) end = p.end;
       }
-      if (assets > 0) {
+      if (assets > 0 && start && end) {
         previousTotals = {
           views: v, engagements: e, earningsCents: c,
           coverageShare: Math.min(1, rowDays / (assets * windowDays)),
           assets,
-          start: prev.start, end: prev.end,
+          start, end,
         };
       }
     } catch {
       previousTotals = null;
     }
+
+    // The point through which EVERY figure shown is complete — the earliest
+    // periodEnd on the page (see the dataThrough note below).
+    const earliestPeriodEnd = rows.reduce<Date | null>((acc, r) => {
+      const f = win(r)?.periodEnd;
+      if (!f) return acc;
+      return acc === null || f.getTime() < acc.getTime() ? f : acc;
+    }, null);
+    // Where each platform's partial "today" began — Facebook's day is the
+    // PACIFIC day, Instagram's the UTC day. At 2pm IST the Facebook bucket is
+    // ~1.5h old, so a small revenue figure is the clock, not missing data; the
+    // UI states the start time instead of leaving that to be guessed.
+    const dayStarts = window === "today"
+      ? { facebook: lastMidnightIn("America/Los_Angeles").toISOString(), instagram: lastMidnightIn("UTC").toISOString() }
+      : null;
 
     return res.json({
       success: true,
@@ -877,12 +932,18 @@ router.get(
         // claiming currency the figures do not have, which is the exact failure
         // this line was added to prevent. The earliest boundary is the point
         // through which EVERY figure shown is complete.
-        dataThrough: rows.reduce<string | null>((acc, r) => {
-          const f = win(r)?.periodEnd;
-          if (!f) return acc;
-          const iso = f.toISOString();
-          return acc === null || iso < acc ? iso : acc;
-        }, null),
+        dataThrough: earliestPeriodEnd ? earliestPeriodEnd.toISOString() : null,
+        /**
+         * The last CALENDAR DAY the figures are complete through — what a reader
+         * means by "figures run through …". NOT the date of the boundary instant:
+         * a Facebook periodEnd of 2026-09-10T07:00Z closes Pacific Sep 9, and an
+         * Instagram 2026-09-10T00:00Z closes UTC Sep 9 — rendering the instant's
+         * date said "10 Sep" over figures that stop at the 9th. Null for
+         * "today": a partial day has no completed-through day.
+         */
+        dataThroughDay: window === "today" || !earliestPeriodEnd ? null : coveredDayOf(earliestPeriodEnd),
+        /** ISO instants each platform's partial today began at; only in today mode. */
+        dayStarts,
         items: rows.map((r) => ({
           id: r.id,
           platform: r.kind === "FACEBOOK_PAGE" ? "facebook" : "instagram",
@@ -942,22 +1003,61 @@ router.get(
           // days_28 fetch failed) used to paint a warning on the 7d/24h views
           // whose own rows were fine. The asset-level error is a fallback for
           // "no row for this window at all", nothing more.
-          // ⚠️ And NO fallback at all in today mode: Facebook legitimately has
-          // no today row (its API publishes only completed days), and painting
-          // the default-window error on every FB row here would mark 369
-          // healthy channels.
+          // ⚠️ And NO fallback at all in today mode: a channel with no today row
+          // (no open bucket returned, or never synced since this shipped) is an
+          // honest absence, and painting the default-window error on every such
+          // row would have marked 369 healthy Facebook channels at once.
           metricsError: win(r) ? win(r).error : window === "today" ? null : r.metricsError,
           selected: r.selected,
           linkedToChannel: r.socialAccountId !== null,
           storedPosts: r._count.posts,
         })),
         channelCount: rows.length,
-        totals,
+        totals: finalizeTotals(totals, contributing, earningsReported),
         contributing,
         previousTotals,
       },
     });
   }),
 );
+
+/**
+ * A total is NULL, never 0, when NO channel reported that metric for the
+ * window. Summing nothing gives 0, and "$0.00" under Today (so far) read as
+ * "we made no money today" when the truth was "no Page had published a figure
+ * yet" — the fabricated-zero class this page must never produce. The UI
+ * renders null as an em-dash. Followers is a live stock and always summable.
+ */
+function finalizeTotals(
+  t: { followers: number; views: number; engagements: number; reach: number; earningsCents: number },
+  contributing: { views: number; engagements: number; reach: number },
+  earningsReported: number,
+) {
+  return {
+    followers: t.followers,
+    views: contributing.views > 0 ? t.views : null,
+    engagements: contributing.engagements > 0 ? t.engagements : null,
+    reach: contributing.reach > 0 ? t.reach : null,
+    earningsCents: earningsReported > 0 ? t.earningsCents : null,
+  };
+}
+
+/**
+ * The most recent local midnight in `timeZone`, as an instant. Wall-clock
+ * arithmetic on Intl parts, so it follows DST on its own (Facebook's Pacific
+ * day starts 07:00Z in summer and 08:00Z in winter — hard-coding either would
+ * be wrong for half the year). Label-grade: exact to the second except during
+ * the one hour a year a DST switch falls between midnight and now.
+ */
+function lastMidnightIn(timeZone: string, nowMs: number = Date.now()): Date {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone, hour: "numeric", minute: "numeric", second: "numeric", hourCycle: "h23",
+  }).formatToParts(new Date(nowMs));
+  const get = (type: string) => Number(parts.find((p) => p.type === type)?.value ?? 0);
+  // Intl is second-grained, so also drop the sub-second remainder — otherwise the
+  // instant lands a few hundred ms past midnight.
+  const sinceMidnightMs = ((get("hour") * 60 + get("minute")) * 60 + get("second")) * 1000 + (nowMs % 1000);
+  return new Date(nowMs - sinceMidnightMs);
+}
 
 export default router;

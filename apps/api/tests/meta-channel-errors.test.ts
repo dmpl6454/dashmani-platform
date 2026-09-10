@@ -140,7 +140,10 @@ describe("channel sync — transient Graph failures are retried once", () => {
     await runMetaChannelSync();
 
     const rows = await prisma.metaAssetMetric.findMany({ where: { assetId: asset.id } });
-    expect(rows).toHaveLength(3);
+    // 3 windows + the Facebook TODAY row, which a failed day fetch now flags too
+    // (it is derived from that request's open bucket — see meta-window-freshness).
+    expect(rows).toHaveLength(4);
+    expect(rows.find((r) => r.window === "today")?.error).toBeTruthy();
     for (const row of rows) expect(row.error).toContain("administrator");
     // Exactly one insights call per window — no retry, and earnings is never
     // reached because the window's main fetch failed.
@@ -154,7 +157,10 @@ describe("channel sync — transient Graph failures are retried once", () => {
     await runMetaChannelSync();
 
     const rows = await prisma.metaAssetMetric.findMany({ where: { assetId: asset.id } });
-    expect(rows).toHaveLength(3);
+    // 3 windows + the Facebook TODAY row, which a failed day fetch now flags too
+    // (it is derived from that request's open bucket — see meta-window-freshness).
+    expect(rows).toHaveLength(4);
+    expect(rows.find((r) => r.window === "today")?.error).toBeTruthy();
     for (const row of rows) expect(row.error).toContain("unexpected error");
     // 3 windows x (attempt + one retry) = 6. A third attempt per window would
     // make this 9+ — the bound is the point.
@@ -409,7 +415,7 @@ describe("channel sync — Instagram Today (so far)", () => {
     mockedFetch.mockReset();
   });
 
-  it("writes a partial today row for Instagram and NEVER one for Facebook", async () => {
+  it("writes a partial today row for Instagram, and none for Facebook when Meta returns no open bucket", async () => {
     const fb = await seedConnectedFbAsset();
     const conn = await prisma.metaConnection.findFirstOrThrow({ where: { metaUserId: "mu-err-test" } });
     const ig = await prisma.metaAsset.create({
@@ -445,8 +451,10 @@ describe("channel sync — Instagram Today (so far)", () => {
       expect(igToday?.error).toBeNull();
     }
 
-    // Facebook must never get a today row — its API has no partial today, and a
-    // fabricated one would dress yesterday's numbers up as today's.
+    // This fixture's Facebook series has no OPEN (future-stamped) bucket, so no
+    // today row may be written — a fabricated one would dress yesterday's numbers
+    // up as today's. (With an open bucket present, the sync DOES write one — see
+    // meta-window-freshness.test.ts.)
     const fbToday = await prisma.metaAssetMetric.findUnique({
       where: { assetId_window: { assetId: fb.id, window: "today" } },
     });

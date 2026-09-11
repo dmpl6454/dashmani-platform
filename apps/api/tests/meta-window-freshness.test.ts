@@ -278,6 +278,27 @@ describe("GET /admin/meta/channels — honest totals, covered-day baseline, data
     expect(res.body.data.dataThroughDay).toBe(dayIso(-2));
   });
 
+  it("a broken channel's stale periodEnd does NOT backdate the page — it is excluded and counted", async () => {
+    // Live on prod 2026-09-11: one IG channel stuck on "(#10) …permission" since
+    // Aug 31 kept its last good values, and the earliest-periodEnd rule let it
+    // drag "figures run through" back 11 days while 422 channels were current.
+    await prisma.metaAssetMetric.createMany({
+      data: [
+        { assetId: fbId, window: "day", views: 9n, earningsCents: 125_425, fetchedAt: new Date(), periodEnd: new Date(`${dayIso(-1)}T07:00:00Z`) },
+        { assetId: igId, window: "day", views: 50n, fetchedAt: new Date(), periodEnd: new Date(`${dayIso(-11)}T00:00:00Z`),
+          error: "(#10) Application does not have permission for this action" },
+      ],
+    });
+    const res = await get("/v1/admin/meta/channels?window=day");
+    expect(res.status).toBe(200);
+    expect(res.body.data.dataThroughDay).toBe(dayIso(-2));   // the healthy FB row, not the 11-day-old one
+    expect(res.body.data.erroredChannels).toBe(1);
+    // The broken channel still shows its last good figures, flagged for the reader.
+    const ig = res.body.data.items.find((i: { id: string }) => i.id === igId);
+    expect(ig.views28d).toBe(50);
+    expect(ig.metricsError).toContain("permission");
+  });
+
   it("today: revenue is NULL (a dash) when no Facebook figure exists, never $0.00; day starts are stated", async () => {
     await prisma.metaAssetMetric.create({
       data: { assetId: igId, window: "today", views: 42n, fetchedAt: new Date(), periodEnd: new Date() },

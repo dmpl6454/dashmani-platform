@@ -275,6 +275,10 @@ export function useMetaChannels(params?: {
         /** Today mode only: when each platform's partial day began. Facebook's
          *  day is the Pacific day, Instagram's the UTC day. */
         dayStarts?: { facebook: string; instagram: string } | null;
+        /** Channels whose last refresh failed. They still render their last good
+         *  figures with a warning mark, and are excluded from dataThroughDay so one
+         *  broken channel cannot backdate the whole page's freshness. */
+        erroredChannels?: number;
         /** null = NO channel reported that metric in this window (renders "—"). A
          *  0 is a real, reported zero. Followers is a live stock, always present. */
         totals: { followers: number; views: number | null; engagements: number | null; reach: number | null; earningsCents: number | null };

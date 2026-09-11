@@ -916,9 +916,10 @@ router.get(
     // PACIFIC day, Instagram's the UTC day. At 2pm IST the Facebook bucket is
     // ~1.5h old, so a small revenue figure is the clock, not missing data; the
     // UI states the start time instead of leaving that to be guessed.
-    const dayStarts = window === "today"
-      ? { facebook: lastMidnightIn("America/Los_Angeles").toISOString(), instagram: lastMidnightIn("UTC").toISOString() }
-      : null;
+    // Returned for EVERY live window, not only "today": Yesterday / 7d / 28d
+    // end on the same boundaries, and the panel states them under the pills so
+    // nobody reads a Meta day as an Indian midnight-to-midnight day.
+    const dayStarts = { facebook: lastMidnightIn("America/Los_Angeles").toISOString(), instagram: lastMidnightIn("UTC").toISOString() };
 
     return res.json({
       success: true,
@@ -955,7 +956,8 @@ router.get(
          * "today": a partial day has no completed-through day.
          */
         dataThroughDay: window === "today" || !earliestPeriodEnd ? null : coveredDayOf(earliestPeriodEnd),
-        /** ISO instants each platform's partial today began at; only in today mode. */
+        /** ISO instants of each platform's most recent day start — Facebook's Pacific
+         *  midnight, Instagram's UTC midnight. Every live window ends on these. */
         dayStarts,
         /** Channels whose refresh failed; they still show their last good figures
          *  (each flagged with its own error) and are excluded from dataThrough. */

@@ -605,6 +605,9 @@ export function MetaPanel() {
   // it is already ~23 hours old. A bare clock is only unambiguous when the
   // instant really does fall on today. (Client-only: every caller is guarded on
   // SWR data, so this never renders during SSR and cannot mismatch hydration.)
+  // Clock only — for naming a daily boundary ("starts at 12:30 PM"), where a date
+  // would be wrong: the boundary recurs every day.
+  const fmtDayClock = (iso: string) => new Date(iso).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
   const fmtClock = (iso: string) => {
     const d = new Date(iso);
     const time = d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
@@ -1010,6 +1013,21 @@ export function MetaPanel() {
           <span className="text-[10px] text-[#B0B0B0]">
             completed days only — history reaches back as far as each channel&apos;s stored daily data
           </span>
+        </div>
+      )}
+
+      {/* The one fact readers most often get wrong about this page: Meta's day is
+          not the Indian calendar day. Stated plainly, right under the pills, on
+          every live window — not buried in the footnote. Clock-only on purpose:
+          this names a recurring daily boundary, not a specific instant. */}
+      {live.length > 0 && !isRangeMode && ch?.dayStarts && (
+        <div className="px-5 py-2 border-b border-[#F6F2EA] text-[10px] text-[#7A7A7A] leading-snug">
+          <strong className="font-medium text-[#5A5A5A]">Today and Yesterday follow Meta&apos;s day, not midnight IST.</strong>{" "}
+          Facebook&apos;s day starts at Pacific midnight —{" "}
+          <strong className="font-medium text-[#5A5A5A]">{fmtDayClock(ch.dayStarts.facebook)} your time</strong> — and every
+          Facebook figure (revenue, views, engagements, reach) counts from then. Instagram&apos;s day starts at UTC
+          midnight — <strong className="font-medium text-[#5A5A5A]">{fmtDayClock(ch.dayStarts.instagram)}</strong>.
+          Meta publishes whole days in those zones only, so an Indian midnight-to-midnight day cannot be rebuilt.
         </div>
       )}
 

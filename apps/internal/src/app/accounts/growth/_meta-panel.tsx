@@ -598,7 +598,21 @@ export function MetaPanel() {
   const throughDay = ch?.dataThroughDay
     ? new Date(`${ch.dataThroughDay}T00:00:00Z`).toLocaleDateString(undefined, { day: "numeric", month: "short", timeZone: "UTC" })
     : null;
-  const fmtClock = (iso: string) => new Date(iso).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  // ⚠️ Carry the DATE whenever the instant is not on the viewer's own calendar
+  // today. Facebook's day opens at Pacific midnight — 12:30 PM IST — so for the
+  // whole Indian morning "Facebook's day began 12:30 PM" names a time that has
+  // not happened yet today: it began 12:30 PM YESTERDAY, and the figure beside
+  // it is already ~23 hours old. A bare clock is only unambiguous when the
+  // instant really does fall on today. (Client-only: every caller is guarded on
+  // SWR data, so this never renders during SSR and cannot mismatch hydration.)
+  const fmtClock = (iso: string) => {
+    const d = new Date(iso);
+    const time = d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+    const now = new Date();
+    const sameLocalDay =
+      d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+    return sameLocalDay ? time : `${d.toLocaleDateString(undefined, { day: "numeric", month: "short" })}, ${time}`;
+  };
   // When the partial-day figures were last refreshed (newest row fetch on the
   // page) — a "so far" figure without its as-of time reads as live when it may
   // be up to one sync interval old.
@@ -1276,7 +1290,12 @@ export function MetaPanel() {
               1:30 PM in winter). Every figure here is the exact value Meta&apos;s API returns;
               Meta itself calls earnings &ldquo;approximate&rdquo; and notes its app and the API can
               differ slightly, and the app may bucket a day by a different time zone — so a small
-              gap against the app on a given day is expected, not a lost or wrong number.{" "}
+              gap against the app on a given day is expected, not a lost or wrong number.
+              {(ch?.erroredChannels ?? 0) > 0 && (
+                <> {ch!.erroredChannels} channel{ch!.erroredChannels === 1 ? "" : "s"} could not
+                refresh and still show their last good figures — look for the warning mark beside
+                the name; that date is theirs, not this page&apos;s.</>
+              )}{" "}
             </>
           )}
           Click a channel to see its recent posts.{" "}

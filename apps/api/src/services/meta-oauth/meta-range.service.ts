@@ -181,3 +181,25 @@ export function previousRange(start: string, end: string): { start: string; end:
   const prevStart = new Date(prevEnd.getTime() - (span - 1) * DAY_MS);
   return { start: prevStart.toISOString().slice(0, 10), end: prevEnd.toISOString().slice(0, 10) };
 }
+
+/** `day` shifted by `days` (negative = earlier), as an ISO date. */
+export function shiftDay(day: string, days: number): string {
+  return new Date(Date.parse(`${day}T00:00:00Z`) + days * DAY_MS).toISOString().slice(0, 10);
+}
+
+/**
+ * The last calendar day a live window's figures actually COVER, from the
+ * `periodEnd` Meta stamped on it.
+ *
+ * ⚠️ periodEnd is the instant the period CLOSED — the midnight AFTER its last
+ * day. Facebook closes at Pacific midnight (2026-09-10T07:00Z), Instagram is
+ * asked for a UTC-midnight `until` (2026-09-10T00:00Z); both land on the UTC
+ * date after the day they describe, so the covered day is that date minus one
+ * (the same rule fbDayCovered applies to daily points). Reading the date
+ * straight off periodEnd is the off-by-one that made "Figures run through
+ * 9 Sep" sit above numbers that stopped at Sep 8, and made the 1-day trend
+ * baseline land on the very day it was meant to precede (a permanent 0.0%).
+ */
+export function coveredDayOf(periodEnd: Date): string {
+  return shiftDay(periodEnd.toISOString().slice(0, 10), -1);
+}

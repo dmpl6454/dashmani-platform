@@ -211,12 +211,14 @@ export interface MetaChannel {
  * 28-day reaches double-counts everyone who appears in both.
  */
 export const CHANNEL_WINDOWS = [
-  // ⚠️ "Today (so far)" is INSTAGRAM-ONLY and deliberately partial: IG can be
-  // asked for midnight-UTC→now, refreshed by the ~3-hourly sync. Facebook's
-  // API publishes only COMPLETED days — a partial today exists in Meta's own
-  // app but not in the API — so FB cells render dashes here and its today
-  // appears tomorrow under Yesterday. Better an honest dash than yesterday's
-  // number dressed up as today's.
+  // ⚠️ "Today (so far)" is deliberately PARTIAL, on both platforms. Instagram is
+  // asked for midnight-UTC→now; Facebook's figure is the OPEN bucket Meta
+  // returns for the current PACIFIC day (its day starts ~12:30 PM IST), so an
+  // afternoon visit legitimately shows only a few hours of Facebook — revenue
+  // included. The panel states each platform's day start so a small figure is
+  // read as the clock, not as missing data. (An earlier note here said Facebook
+  // had no partial day in the API — true only of the default request without
+  // since/until; live-probed otherwise 2026-09-10.)
   { key: "today", label: "Today (so far)", suffix: "today" },
   // ⚠️ "Yesterday", not "24h". Meta only publishes CLOSED periods, so the day
   // window has always been the last COMPLETED day — Facebook stamps it at the
@@ -266,7 +268,16 @@ export function useMetaChannels(params?: {
         range?: { start: string; end: string; days: number };
         /** Newest moment Meta has published — Facebook closes periods at local midnight. */
         dataThrough: string | null;
-        totals: { followers: number; views: number; engagements: number; reach: number; earningsCents: number };
+        /** Last calendar day every figure is complete through (YYYY-MM-DD, UTC key);
+         *  null in today mode. Prefer this over dataThrough for any "through <date>"
+         *  copy — dataThrough is the boundary INSTANT, whose date is a day late. */
+        dataThroughDay?: string | null;
+        /** Today mode only: when each platform's partial day began. Facebook's
+         *  day is the Pacific day, Instagram's the UTC day. */
+        dayStarts?: { facebook: string; instagram: string } | null;
+        /** null = NO channel reported that metric in this window (renders "—"). A
+         *  0 is a real, reported zero. Followers is a live stock, always present. */
+        totals: { followers: number; views: number | null; engagements: number | null; reach: number | null; earningsCents: number | null };
         contributing: { views: number; engagements: number; reach: number; earnings: number };
         /** The equal-length span immediately before — the trend baseline. The UI
          *  must hide trend chips when coverageShare < ~0.95: a percentage against

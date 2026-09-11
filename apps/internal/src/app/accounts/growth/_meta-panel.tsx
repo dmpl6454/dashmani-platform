@@ -463,7 +463,7 @@ export function MetaPanel() {
       c.profileViews28d ?? "", c.posts ?? "",
       c.follows ?? "", c.unfollows ?? "",
       c.saves ?? "", c.shares ?? "", c.accountsEngaged ?? "",
-      ch?.dataThrough ? new Date(ch.dataThrough).toISOString().slice(0, 10) : "",
+      ch?.dataThroughDay ?? (ch?.dataThrough ? new Date(ch.dataThrough).toISOString().slice(0, 10) : ""),
       ...(isRangeMode ? [c.coveredDays ?? "", c.rangeDays ?? ""] : []),
     ]);
 
@@ -591,8 +591,19 @@ export function MetaPanel() {
     !!prevTotals &&
     prevTotals.coverageShare >= 0.95 &&
     (prevTotals.assets ?? 0) >= Math.max(1, Math.floor((ch?.contributing?.views ?? 0) * 0.9));
-  const trendPct = (cur: number, prevVal: number): number | null =>
-    trendOk && prevVal > 0 ? ((cur - prevVal) / prevVal) * 100 : null;
+  const trendPct = (cur: number | null, prevVal: number): number | null =>
+    trendOk && cur !== null && prevVal > 0 ? ((cur - prevVal) / prevVal) * 100 : null;
+  // Which calendar day the live figures are complete through — the server's
+  // covered-day key, never the boundary instant's date (a day late).
+  const throughDay = ch?.dataThroughDay
+    ? new Date(`${ch.dataThroughDay}T00:00:00Z`).toLocaleDateString(undefined, { day: "numeric", month: "short", timeZone: "UTC" })
+    : null;
+  const fmtClock = (iso: string) => new Date(iso).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  // When the partial-day figures were last refreshed (newest row fetch on the
+  // page) — a "so far" figure without its as-of time reads as live when it may
+  // be up to one sync interval old.
+  const latestFetched = (ch?.items ?? []).reduce<string | null>(
+    (acc, c) => (c.metricsFetchedAt && (acc === null || c.metricsFetchedAt > acc) ? c.metricsFetchedAt : acc), null);
 
 
   async function connect(mode: "connect" | "reconnect", connectionId?: string) {
@@ -757,7 +768,14 @@ export function MetaPanel() {
               // ⚠️ No trend while revenue is masked — "▲ 12%" leaks the very
               // motion someone hid the amounts to avoid showing on a call.
               trend: hideRevenue ? null : trendPct(t.earningsCents, prevTotals?.earningsCents ?? 0),
-              note: contrib ? `${contrib.earnings} channel(s) earning · Facebook only` : null },
+              // In today mode say WHEN Facebook's day began: its day is the
+              // Pacific day, so at 2pm IST this is ~1.5 hours of revenue — a
+              // small figure that is the clock, not a fault.
+              note: ch?.window === "today"
+                ? (t.earningsCents === null
+                    ? `no Facebook figure published yet${ch?.dayStarts ? ` · Facebook's day began ${fmtClock(ch.dayStarts.facebook)}` : ""}`
+                    : `so far${ch?.dayStarts ? ` since ${fmtClock(ch.dayStarts.facebook)} (Facebook's day start)` : ""}${latestFetched ? ` · refreshed ${fmtClock(latestFetched)}` : ""} · Facebook only`)
+                : contrib ? `${contrib.earnings} channel(s) earning · Facebook only` : null },
           ].map((s) => (
             <div
               key={s.label}
@@ -787,7 +805,7 @@ export function MetaPanel() {
                 className="font-num text-[clamp(1.5rem,2.2vw,2rem)] font-semibold tracking-tight leading-none text-[#1A1A1A] truncate"
               >
                 {s.raw
-                  ? s.value.toLocaleString()
+                  ? (s.value ?? 0).toLocaleString()
                   : "money" in s && s.money
                     ? (hideRevenue ? "•••••" : fmtMoney(s.value))
                     : fmtMetric(s.value)}
@@ -984,7 +1002,7 @@ export function MetaPanel() {
       {live.length > 0 && isRangeMode && (
         <div className="px-5 py-2 border-b border-[#F6F2EA] text-[10px] text-[#7A7A7A] leading-snug">
           Exact sums of stored daily history for <strong className="font-medium">{sfx}</strong>
-          {ch?.dataThrough && <> · data through {new Date(ch.dataThrough).toLocaleDateString(undefined, { day: "numeric", month: "short", timeZone: "UTC" })}</>}.
+          {throughDay && <> · data through {throughDay}</>}.
           Reach shows a dash here: it counts unique people, days cannot be added without
           double-counting, and Meta publishes no unique-people figure for a custom span.
           A <span className="text-[#C2861D]">n/Nd</span> chip beside a channel means its stored
@@ -1247,23 +1265,30 @@ export function MetaPanel() {
           change is measured directly. Instagram publishes no such history — its change is
           Meta&apos;s own follows-minus-unfollows for the period, which is very close but not
           identical, and is unavailable over 24 hours.
-          {ch?.dataThrough && (
+          {throughDay && (
             <>
               <strong className="font-medium text-[#7A7A7A]">Figures run through{" "}
-              {new Date(ch.dataThrough).toLocaleDateString(undefined, { day: "numeric", month: "short" })}</strong>
-              . Facebook only publishes complete days, so a period fetched today still ends at
-              the Page&apos;s last local midnight. Meta&apos;s own app adds today so far, which is
-              why its numbers read slightly higher — the same window, one day further on, not a
-              different measurement.{" "}
+              {throughDay}</strong>
+              , the most recent completed day Meta has published. Facebook&apos;s days run
+              midnight-to-midnight Pacific time and Instagram&apos;s UTC, so &ldquo;Yesterday&rdquo;
+              is Meta&apos;s last closed day, not necessarily your local calendar&apos;s, and it
+              advances once a day at the first refresh after Pacific midnight (about 12:30 PM IST,
+              1:30 PM in winter). Every figure here is the exact value Meta&apos;s API returns;
+              Meta itself calls earnings &ldquo;approximate&rdquo; and notes its app and the API can
+              differ slightly, and the app may bucket a day by a different time zone — so a small
+              gap against the app on a given day is expected, not a lost or wrong number.{" "}
             </>
           )}
           Click a channel to see its recent posts.{" "}
           <strong className="font-medium text-[#7A7A7A]">Periods:</strong>{" "}
-          <strong className="font-medium text-[#7A7A7A]">Today (so far)</strong> is
-          Instagram-only and refreshed every few hours — Facebook&apos;s API publishes only
-          completed days, so its cells show dashes there and its today appears tomorrow
-          under Yesterday. Yesterday / 7d / 28d are Meta&apos;s own live windows (the only
-          ones it measures directly). Months and
+          <strong className="font-medium text-[#7A7A7A]">Today (so far)</strong> is a
+          partial day refreshed every few hours: Instagram&apos;s day starts at UTC midnight
+          and Facebook&apos;s at Pacific midnight
+          {ch?.dayStarts ? <> ({fmtClock(ch.dayStarts.instagram)} and {fmtClock(ch.dayStarts.facebook)} your time)</> : null},
+          so an afternoon visit sees only a few hours of Facebook — revenue included — and a
+          dash means Meta has not published a figure yet. Yesterday / 7d / 28d are
+          Meta&apos;s own live windows, ending on the most recent day it has closed and
+          published (Pacific for Facebook, UTC for Instagram). Months and
           custom ranges are exact sums of stored per-day history — precise for views,
           engagements, profile views and revenue, which add up day by day. Reach is the
           exception on those: it counts unique people, days cannot be added without

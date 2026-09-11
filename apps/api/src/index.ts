@@ -124,7 +124,32 @@ app.listen(PORT, () => {
     // CHANNEL metrics first — they are the headline data on Account Growth and cost
     // ~1 call each, so they must never be starved by the far more expensive
     // per-post pass that follows.
+    //
+    // ⚠️ ONE RETRY, on a THROWN error only. runMetaChannelSync resolves normally
+    // for every EXPECTED outcome (rate limit, per-asset failure, budget spent), so
+    // a rejection means infrastructure — and the one we have actually seen is
+    // Postgres being bounced underneath the run. On 2026-09-11 unattended-upgrades
+    // installed a libc6 security update at 06:33:55 and needrestart stopped
+    // postgresql@16-main at 06:34:56; an in-flight write threw "Server has closed
+    // the connection" and the whole sweep died at asset 116 of 318, leaving
+    // two-thirds of the estate on yesterday's figures until the next tick 3h later.
+    // Postgres was back in 4 seconds. That upgrade job runs DAILY, and the sweep
+    // occupies ~17% of the clock, so this recurs on its own.
+    //
+    // The retry resumes where the run stopped for free: the sync orders assets by
+    // metricsFetchedAt asc NULLS FIRST, so the ones it never reached are precisely
+    // the stalest and therefore first in line. It costs nothing when nothing throws,
+    // and if the database is genuinely down the retry fails fast on its first query
+    // rather than burning Meta calls it cannot store.
     runMetaChannelSync()
+      .catch(async (err) => {
+        console.error(
+          "[meta-sync] channel sync threw — retrying once in 60s:",
+          scrubSecrets(String(err)),
+        );
+        await new Promise((resolve) => setTimeout(resolve, 60_000));
+        return runMetaChannelSync();
+      })
       .then(() => runMetaPostsSync())
       .catch((err) => console.error("[meta-sync] error:", scrubSecrets(String(err))));
   };

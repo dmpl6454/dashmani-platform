@@ -894,8 +894,21 @@ router.get(
 
     // The point through which EVERY figure shown is complete — the earliest
     // periodEnd on the page (see the dataThrough note below).
+    //
+    // ⚠️ ROWS CARRYING AN ERROR ARE EXCLUDED, and counted instead. A failed
+    // refresh writes only {fetchedAt, error} and KEEPS the channel's last good
+    // values, so its periodEnd says when that one channel last succeeded — not
+    // how fresh this page is. Measured on prod 2026-09-11: a single Instagram
+    // channel stuck on "(#10) Application does not have permission" since
+    // 2026-08-31 dragged the whole page's "figures run through" back ELEVEN
+    // DAYS while the other 422 channels were current through yesterday. Those
+    // channels already carry their own warning mark; the count is disclosed
+    // beside the date so the exclusion is visible rather than silent.
+    let erroredChannels = 0;
     const earliestPeriodEnd = rows.reduce<Date | null>((acc, r) => {
-      const f = win(r)?.periodEnd;
+      const w = win(r);
+      if (w?.error) { erroredChannels++; return acc; }
+      const f = w?.periodEnd;
       if (!f) return acc;
       return acc === null || f.getTime() < acc.getTime() ? f : acc;
     }, null);
@@ -944,6 +957,9 @@ router.get(
         dataThroughDay: window === "today" || !earliestPeriodEnd ? null : coveredDayOf(earliestPeriodEnd),
         /** ISO instants each platform's partial today began at; only in today mode. */
         dayStarts,
+        /** Channels whose refresh failed; they still show their last good figures
+         *  (each flagged with its own error) and are excluded from dataThrough. */
+        erroredChannels,
         items: rows.map((r) => ({
           id: r.id,
           platform: r.kind === "FACEBOOK_PAGE" ? "facebook" : "instagram",

@@ -272,8 +272,8 @@ export function useMetaChannels(params?: {
          *  null in today mode. Prefer this over dataThrough for any "through <date>"
          *  copy — dataThrough is the boundary INSTANT, whose date is a day late. */
         dataThroughDay?: string | null;
-        /** Today mode only: when each platform's partial day began. Facebook's
-         *  day is the Pacific day, Instagram's the UTC day. */
+        /** Live windows: each platform's most recent day start. Facebook's day is
+         *  the Pacific day, Instagram's the UTC day; null in range mode. */
         dayStarts?: { facebook: string; instagram: string } | null;
         /** Channels whose last refresh failed. They still render their last good
          *  figures with a warning mark, and are excluded from dataThroughDay so one

@@ -311,6 +311,27 @@ function ChannelPosts({ assetId }: { assetId: string }) {
   );
 }
 
+/**
+ * The channel's own page on Meta, or null when there is no reliable URL for it.
+ *
+ * ⚠️ Facebook uses the NUMERIC PAGE ID, deliberately NOT the username. The id is
+ * permanent; a username is chosen by the page owner, can change at any time, and
+ * 120 of the 317 connected Pages do not have one at all. Live-probed 2026-09-15:
+ * the numeric form resolves for both cases — facebook.com/2129582980630329 loads
+ * "Filme Flicks", and facebook.com/968345306363586 loads "Star Song Live", a Page
+ * with no username.
+ *
+ * ⚠️ Instagram is the opposite: it publishes NO public URL built from the account
+ * id, so the username is the only way in. All 102 connected IG accounts have one;
+ * a future account without one gets no link rather than a broken one.
+ */
+export function channelHref(c: Pick<MetaChannel, "platform" | "metaId" | "username">): string | null {
+  if (c.platform === "facebook") {
+    return c.metaId ? `https://www.facebook.com/${encodeURIComponent(c.metaId)}` : null;
+  }
+  return c.username ? `https://www.instagram.com/${encodeURIComponent(c.username)}/` : null;
+}
+
 /** Columns the table can sort by. */
 type ColKey =
   | "name" | "followers" | "delta" | "views" | "engagements"
@@ -1184,6 +1205,23 @@ export function MetaPanel() {
                             </span>
                             <span className="text-xs font-medium text-[#1A1A1A] truncate max-w-[220px]">{c.name}</span>
                             {c.username && <span className="text-[10px] text-[#B0B0B0] truncate">@{c.username}</span>}
+                            {/* Straight through to the channel on Meta. ⚠️ stopPropagation is
+                                load-bearing — the whole <tr> is a click-to-expand target, so
+                                without it opening the profile would also toggle the drill-down
+                                behind the new tab. Bounded 12px icon, so shrink-0 is safe. */}
+                            {channelHref(c) && (
+                              <a
+                                href={channelHref(c)!}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={(e) => e.stopPropagation()}
+                                title={`Open ${c.name} on ${c.platform === "facebook" ? "Facebook" : "Instagram"}`}
+                                aria-label={`Open ${c.name} on ${c.platform === "facebook" ? "Facebook" : "Instagram"}`}
+                                className="shrink-0 text-[#C4C4C4] hover:text-[#5B4BF5] transition-colors"
+                              >
+                                <ExternalLink className="h-3 w-3" />
+                              </a>
+                            )}
                             {/* Partial-coverage disclosure: this channel's stored daily
                                 history spans only part of the selected range, so its sums
                                 cover those days only. Bounded text (max 8 chars), so

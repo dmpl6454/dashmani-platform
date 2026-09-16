@@ -461,7 +461,7 @@ export function MetaPanel() {
    */
   const downloadCsv = () => {
     const header: string[] = [
-      "Channel", "Handle", "Platform", "Followers",
+      "Channel", "Handle", "Platform", "Channel URL", "Followers",
       // ⚠️ Spell out the convention. A bare signed number is right for a
       // spreadsheet (it sums and sorts), but "-3273" next to a blank next to
       // "328717" is not self-explanatory, and the reader should not have to guess.
@@ -479,6 +479,10 @@ export function MetaPanel() {
       // entirely rather than neutralising it, and a column headed "Handle" does
       // not need the sigil to be unambiguous.
       c.name, c.username ?? "", c.platform,
+      // The same link the row shows on screen, from the same helper — so the file
+      // and the page can never point somewhere different. Blank only for an
+      // Instagram account with no handle, which has no public URL at all.
+      channelHref(c) ?? "",
       c.followers ?? "", c.followerDelta ?? "",
       c.views28d ?? "", c.engagements28d ?? "", c.reach28d ?? "", csvMoney(c.earningsCents),
       c.profileViews28d ?? "", c.posts ?? "",

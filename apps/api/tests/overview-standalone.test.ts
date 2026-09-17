@@ -262,3 +262,58 @@ describe("overview — per-card periods override the global for that card only",
     expect(o.viewsByChannel.length).toBeLessThanOrEqual(8);
   });
 });
+
+/**
+ * ⚠️ REACH IS NULL FOR 14 AND 90 DAYS BY DESIGN, NOT BY FAILURE.
+ * It counts UNIQUE PEOPLE, so it cannot be summed across days (the documented 56%
+ * overstatement). We can only report Meta's own native windows — `week` and `days_28`.
+ * An owner read the resulting em-dash as missing data, so the contract is locked here
+ * and the UI states whose limitation it is.
+ */
+describe("overview — reach is reported only for Meta's native windows", () => {
+  beforeEach(async () => {
+    invalidateOverviewCache();
+    invalidateRangeCache();
+    const { fbId, igId } = await seedEstate();
+    // Meta publishes reach per native window, never per arbitrary range.
+    await prisma.metaAssetMetric.create({ data: { assetId: fbId, window: "week", reach: BigInt(5_000) } });
+    await prisma.metaAssetMetric.create({ data: { assetId: igId, window: "week", reach: BigInt(700) } });
+    await prisma.metaAssetMetric.create({ data: { assetId: fbId, window: "days_28", reach: BigInt(14_000) } });
+    await prisma.metaAssetMetric.create({ data: { assetId: igId, window: "days_28", reach: BigInt(2_000) } });
+  });
+
+  const base = { audDays: 0, revDays: 0, vbcDays: 0, tracDays: 0 } as const;
+
+  it("reports Meta's week figure at 7 days and its 28-day figure at 30", async () => {
+    const seven = await getOverview({ ...base, days: 7 });
+    expect(seven.kpis.reach.window).toBe("week");
+    expect(seven.kpis.reach.value).toBe(5_700);
+    expect(seven.kpis.reach.contributing).toBe(2);
+
+    invalidateOverviewCache();
+    const thirty = await getOverview({ ...base, days: 30 });
+    expect(thirty.kpis.reach.window).toBe("days_28");
+    expect(thirty.kpis.reach.value).toBe(16_000);
+  });
+
+  it("returns NULL — never 0, never a sum — for 14 and 90 days", async () => {
+    for (const days of [14, 90] as const) {
+      invalidateOverviewCache();
+      const o = await getOverview({ ...base, days });
+      expect(o.kpis.reach.window).toBeNull();
+      expect(o.kpis.reach.value).toBeNull();     // ⚠️ null, so the UI renders an em-dash
+      expect(o.kpis.reach.contributing).toBe(0);
+      // …and the rest of the period is emphatically NOT missing
+      expect(o.kpis.views.value).toBeGreaterThan(0);
+      expect(o.kpis.engagements.value).toBeGreaterThan(0);
+    }
+  });
+
+  it("never adds the two native windows together to fake a longer one", async () => {
+    invalidateOverviewCache();
+    const ninety = await getOverview({ ...base, days: 90 });
+    // 5,700 + 16,000 = 21,700 would be the tempting (and wrong) answer
+    expect(ninety.kpis.reach.value).not.toBe(21_700);
+    expect(ninety.kpis.reach.value).toBeNull();
+  });
+});

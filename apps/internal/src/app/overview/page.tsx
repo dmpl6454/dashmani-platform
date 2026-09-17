@@ -193,11 +193,24 @@ export default function OverviewPage() {
       {
         id: "reach", label: "Total Reach", value: fmtCompact(k.reach.value), accent: T.purple, icon: ICONS.reach, spark: [],
         trend: null, reliable: true,
-        note: k.reach.window ? `unique accounts · ${k.reach.window === "week" ? "7" : "28"}-day window` : "only published for 7 & 28-day windows",
-        rows: [
-          { label: "Channels reporting", value: `${k.reach.contributing} of ${o.channels.total}` },
-          { label: "Why no trend", value: "Unique people cannot be compared across periods honestly" },
-        ],
+        // ⚠️ Reach counts UNIQUE PEOPLE, so it cannot be summed across days — we can only
+        // report Meta's own native windows, which are 7 and 28 days. For 14 and 90 there
+        // is genuinely no figure in existence. The dash is correct, but a bare dash reads
+        // as missing data, so it has to say whose limitation it is and what to do next.
+        note: k.reach.window
+          ? `unique accounts · Meta's ${k.reach.window === "week" ? "7" : "28"}-day window`
+          : `Meta publishes no ${o.period.days}-day reach — pick 7 or 30 days`,
+        rows: k.reach.window
+          ? [
+              { label: "Channels reporting", value: `${k.reach.contributing} of ${o.channels.total}` },
+              { label: "Why no trend", value: "Unique people cannot be compared across periods honestly" },
+            ]
+          : [
+              { label: "Why the dash", value: `Meta only publishes a unique-people reach figure for its own 7-day and 28-day windows. No ${o.period.days}-day figure exists to show.` },
+              { label: "Not a data gap", value: "Every other metric on this page is complete for this period" },
+              { label: "Why we don't add it up", value: "Reach counts people, not events — summing days would double-count anyone who came back" },
+              { label: "To see reach", value: "Switch the period to 7 or 30 days" },
+            ],
         href: "/accounts/growth",
       },
       {
@@ -665,7 +678,17 @@ export default function OverviewPage() {
                 }
               >
                 <div className="ov-headline">
-                  <span className="ov-big">{fmtCompact(o.audience.series[o.audience.series.length - 1]?.followers ?? null)}</span>
+                  {/* ⚠️ This is the follower sum of the channels with history reaching
+                      back across the SELECTED window, so it legitimately falls as the
+                      window widens (148 channels at 7d, 43 at 90d on prod). It is not an
+                      estate total — the tooltip and the coverage sentence both say so. */}
+                  <span
+                    className="ov-big"
+                    title={`Followers of the ${o.audience.channelsUsed} channels whose history covers all ${o.audience.days} days — not the whole estate of ${o.channels.total}. Widening the period narrows this set, so the figure can fall.`}
+                  >
+                    {fmtCompact(o.audience.series[o.audience.series.length - 1]?.followers ?? null)}
+                    {o.channels.total > 0 && o.audience.channelsUsed / o.channels.total < 0.9 && <sup className="ov-partial">*</sup>}
+                  </span>
                   <span className="ov-headline-side">
                     <Trend pct={o.audience.delta != null && o.audience.series[0]?.followers ? (o.audience.delta / o.audience.series[0].followers) * 100 : null} />
                     {/* ⚠️ This headline is the follower sum of ONLY the channels with history

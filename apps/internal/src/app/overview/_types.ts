@@ -65,6 +65,10 @@ export interface OverviewPayload {
     trend: Trend | null;
   };
   viewsByChannel: Array<{ id: string | null; name: string; platform: "facebook" | "instagram" | null; views: number; share: number }>;
+  /** Every channel over the Views-by-Channel window, for the expanded view. */
+  viewsByChannelAll: Array<{ id: string; name: string; platform: "facebook" | "instagram"; views: number; share: number }>;
+  /** Effective period of that card (equals period.days unless detached). */
+  viewsByChannelDays: number;
   topChannels: ChannelRow[];
   revenueByChannel: ChannelRow[];
   cities: {
@@ -86,6 +90,8 @@ export interface OverviewPayload {
   }>;
   activity: Array<{ kind: ActivityKind; text: string; at: string }>;
   traction: {
+    /** Effective period of this card (equals period.days unless detached). */
+    days: number;
     start: string;
     end: string;
     prevStart: string;
@@ -104,4 +110,5 @@ export interface OverviewPayload {
 }
 
 export type OverviewPeriod = 7 | 14 | 30 | 90;
-export type WidgetPeriod = 7 | 30 | 90;
+/** 0 = follow the global period — the default for every card. */
+export type WidgetPeriod = 0 | 7 | 14 | 30 | 90;

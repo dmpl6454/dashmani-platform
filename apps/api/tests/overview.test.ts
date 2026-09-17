@@ -176,7 +176,7 @@ describe("getOverview against a seeded estate", () => {
   });
 
   it("sums period metrics like-for-like and reports the reach window only where Meta publishes it", async () => {
-    const o = await getOverview({ days: 7, audDays: 30, revDays: 30 });
+    const o = await getOverview({ days: 7, audDays: 30, revDays: 30, vbcDays: 0, tracDays: 0 });
     expect(o.channels).toEqual({ total: 2, facebook: 1, instagram: 1 });
     // 7 closed days × (100 + 60) views; both channels contribute.
     expect(o.kpis.views.value).toBe(7 * 160);
@@ -193,14 +193,14 @@ describe("getOverview against a seeded estate", () => {
   });
 
   it("has no reach window for a 14-day period, because Meta only publishes 1/7/28-day unique counts", async () => {
-    const o = await getOverview({ days: 14, audDays: 30, revDays: 30 });
+    const o = await getOverview({ days: 14, audDays: 30, revDays: 30, vbcDays: 0, tracDays: 0 });
     expect(o.kpis.reach.window).toBeNull();
     expect(o.kpis.reach.value).toBeNull();
     expect(o.kpis.views.value).toBe(14 * 160);
   });
 
   it("ranks channels, folds the donut tail and links revenue rows to earning channels only", async () => {
-    const o = await getOverview({ days: 7, audDays: 30, revDays: 30 });
+    const o = await getOverview({ days: 7, audDays: 30, revDays: 30, vbcDays: 0, tracDays: 0 });
     expect(o.topChannels.map((c) => c.name)).toEqual(["Bollywood Society", "Dashmani IG"]);
     expect(o.topChannels[0]).toMatchObject({ metaId: "fb-1", platform: "facebook", views: 700, earningsCents: 350 });
     expect(o.revenueByChannel.map((c) => c.name)).toEqual(["Bollywood Society"]);
@@ -209,7 +209,7 @@ describe("getOverview against a seeded estate", () => {
   });
 
   it("maps the Instagram follower audience onto Indian cities and discloses the share outside India", async () => {
-    const o = await getOverview({ days: 7, audDays: 30, revDays: 30 });
+    const o = await getOverview({ days: 7, audDays: 30, revDays: 30, vbcDays: 0, tracDays: 0 });
     expect(o.cities.total).toBe(1000);
     expect(o.cities.indiaShare).toBeCloseTo(80);
     expect(o.cities.items.map((c) => c.name)).toEqual(["Mumbai", "Bengaluru"]);
@@ -221,7 +221,7 @@ describe("getOverview against a seeded estate", () => {
   });
 
   it("builds the feed, activity and trending lists from real rows", async () => {
-    const o = await getOverview({ days: 7, audDays: 30, revDays: 30 });
+    const o = await getOverview({ days: 7, audDays: 30, revDays: 30, vbcDays: 0, tracDays: 0 });
     expect(o.latestPosts).toHaveLength(2);
     expect(o.latestPosts[0]).toMatchObject({ title: "Ganpati Bappa Morya 🙏", mediaProductType: "REELS", views: 46 });
     expect(o.latestPosts[0].channel).toMatchObject({ name: "Bollywood Society", platform: "facebook" });
@@ -236,7 +236,7 @@ describe("getOverview against a seeded estate", () => {
   });
 
   it("computes traction over the last 7 closed days with an equal-length baseline", async () => {
-    const o = await getOverview({ days: 7, audDays: 30, revDays: 30 });
+    const o = await getOverview({ days: 7, audDays: 30, revDays: 30, vbcDays: 0, tracDays: 0 });
     const views = o.traction.tiles.find((t) => t.key === "views")!;
     expect(views.value).toBe(7 * 160);
     expect(views.previous).toBe(7 * 160);
@@ -251,7 +251,7 @@ describe("getOverview against a seeded estate", () => {
     await prisma.metaAssetMetric.deleteMany({});
     invalidateOverviewCache();
     invalidateRangeCache();
-    const o = await getOverview({ days: 7, audDays: 30, revDays: 30 });
+    const o = await getOverview({ days: 7, audDays: 30, revDays: 30, vbcDays: 0, tracDays: 0 });
     expect(o.kpis.views.value).toBeNull();
     expect(o.kpis.revenue.value).toBeNull();
     expect(o.kpis.reach.value).toBeNull();
@@ -280,7 +280,7 @@ describe("getOverview against a seeded estate", () => {
     }
     invalidateOverviewCache();
     invalidateRangeCache();
-    const o = await getOverview({ days: 7, audDays: 30, revDays: 30 });
+    const o = await getOverview({ days: 7, audDays: 30, revDays: 30, vbcDays: 0, tracDays: 0 });
     expect(o.audience.channelsUsed).toBe(1);
     expect(o.audience.series).toHaveLength(30);
     // Smooth, and never inflated by the 5M/130K saw-tooth of the contested row.
@@ -289,12 +289,12 @@ describe("getOverview against a seeded estate", () => {
   });
 
   it("memoises the payload for a minute and honours invalidation", async () => {
-    const a = await getOverview({ days: 7, audDays: 30, revDays: 30 });
+    const a = await getOverview({ days: 7, audDays: 30, revDays: 30, vbcDays: 0, tracDays: 0 });
     await prisma.metaAsset.update({ where: { id: igId }, data: { followerCount: 999 } });
-    const b = await getOverview({ days: 7, audDays: 30, revDays: 30 });
+    const b = await getOverview({ days: 7, audDays: 30, revDays: 30, vbcDays: 0, tracDays: 0 });
     expect(b.kpis.followers.value).toBe(a.kpis.followers.value);
     invalidateOverviewCache();
-    const c = await getOverview({ days: 7, audDays: 30, revDays: 30 });
+    const c = await getOverview({ days: 7, audDays: 30, revDays: 30, vbcDays: 0, tracDays: 0 });
     expect(c.kpis.followers.value).toBe(1_000_999);
   });
 });

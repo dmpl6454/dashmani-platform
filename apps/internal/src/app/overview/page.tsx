@@ -10,7 +10,7 @@ import {
   fmtCompact, fmtUsd, fmtSigned, fmtSignedPct, fmtDay, fmtDayYear, fmtRelative, initials, countryName, greetingFor,
 } from "./_theme";
 import { Sparkline, AreaLineChart, CumulativeBars, Donut, IndexedLines, IndiaMap } from "./_charts";
-import { Card, Chip, ViewAll, Menu, MenuItem, Trend, Avatar, Empty, Skeleton, StateMessage, Drawer, type DrawerSpec } from "./_widgets";
+import { Card, Chip, ViewAll, CardActions, ExpandBtn, ExpandModal, Menu, MenuItem, Trend, Avatar, Empty, Skeleton, StateMessage, Drawer, type DrawerSpec, type ExpandSpec } from "./_widgets";
 import "./overview.css";
 
 // ⚠️ The overview is its OWN plane. This rail used to carry nine cross-links into
@@ -36,14 +36,20 @@ const ICONS = {
 // How many channel results the dropdown renders at once ("a" matches 255 of 419).
 const SEARCH_LIMIT = 40;
 const PERIODS: OverviewPeriod[] = [7, 14, 30, 90];
-const WIDGET_PERIODS: WidgetPeriod[] = [7, 30, 90];
+// ⚠️ PRECEDENCE: 0 = "follow the global period", and it is every card's default. A
+// card's own period overrides the global FOR THAT CARD ONLY; the chip shows a gold dot
+// while a card is detached, and "Follow global period" re-attaches it.
+const WIDGET_PERIODS: WidgetPeriod[] = [0, 7, 14, 30, 90];
+const CARD_PERIODS: WidgetPeriod[] = [7, 14, 30, 90];
+// How many rows a card shows before you expand it. The payload carries more.
+const CARD_ROWS = 5;
 const ACTIVITY_COLOR: Record<string, string> = { post: T.blue, report: T.teal, user: T.purple, leave: T.gold, announcement: T.pink };
 const PLATFORM_TILE: Record<string, string> = {
   facebook: "linear-gradient(135deg,#1877F2,#0B45BB)",
   instagram: "linear-gradient(135deg,#F0803C,#EC42B7)",
 };
 
-type Pop = "search" | "date" | "notif" | "profile" | "aud" | "rev" | null;
+type Pop = "search" | "date" | "notif" | "profile" | "aud" | "rev" | "vbc" | "trac" | null;
 
 function readStored<T>(key: string, allowed: readonly T[], dflt: T): T {
   try {
@@ -59,15 +65,53 @@ function metaUrl(c: ChannelDirectoryRow): string | null {
   return /^\d+$/.test(c.metaId) ? `https://www.facebook.com/${c.metaId}` : null;
 }
 
+/**
+ * A card's period control. Renders ONE element so it can sit in `Card`'s `right` slot
+ * without becoming a third flex child of `.ov-card-h` (that hard-clips the title).
+ * The label comes from `effective`, which the SERVER echoed — never from local state,
+ * so a card can never show one period's numbers under another period's label.
+ */
+function CardPeriod({
+  id, pop, setPop, value, effective, globalDays, onPick,
+}: {
+  id: Pop; pop: Pop; setPop: (p: Pop) => void;
+  value: WidgetPeriod; effective: number; globalDays: number; onPick: (d: WidgetPeriod) => void;
+}) {
+  const detached = value !== 0;
+  return (
+    <div className="ov-rel" onClick={(e) => e.stopPropagation()}>
+      <Chip onClick={() => setPop(pop === id ? null : id)} ariaHasPopup active={pop === id}>
+        {detached && <i className="ov-local-dot" aria-hidden="true" />}
+        <span>Last {effective} Days</span>
+      </Chip>
+      {pop === id && (
+        <Menu width={200}>
+          <div className="ov-menu-group">This card</div>
+          <MenuItem active={!detached} onClick={() => { onPick(0); setPop(null); }} meta={`${globalDays}d`}>
+            Follow global period
+          </MenuItem>
+          {CARD_PERIODS.map((d) => (
+            <MenuItem key={d} active={value === d} onClick={() => { onPick(d); setPop(null); }}>Last {d} days</MenuItem>
+          ))}
+          {detached && <div className="ov-menu-note">This card is detached — the date range above no longer moves it.</div>}
+        </Menu>
+      )}
+    </div>
+  );
+}
+
 export default function OverviewPage() {
   usePageTitle("Overview");
   const router = useRouter();
   const { user, logout } = useAuth();
   const [days, setDays] = useState<OverviewPeriod>(7);
-  const [audDays, setAudDays] = useState<WidgetPeriod>(30);
-  const [revDays, setRevDays] = useState<WidgetPeriod>(30);
+  const [audDays, setAudDays] = useState<WidgetPeriod>(0);
+  const [revDays, setRevDays] = useState<WidgetPeriod>(0);
+  const [vbcDays, setVbcDays] = useState<WidgetPeriod>(0);
+  const [tracDays, setTracDays] = useState<WidgetPeriod>(0);
   const [pop, setPop] = useState<Pop>(null);
   const [drawer, setDrawer] = useState<DrawerSpec | null>(null);
+  const [expand, setExpand] = useState<ExpandSpec | null>(null);
   const [selCat, setSelCat] = useState<number | null>(null);
   const [demoTab, setDemoTab] = useState<"Age" | "Gender" | "Location">("Age");
   const [actOpen, setActOpen] = useState<number | null>(null);
@@ -79,14 +123,16 @@ export default function OverviewPage() {
 
   useEffect(() => {
     setDays(readStored("ov-days", PERIODS, 7));
-    setAudDays(readStored("ov-aud", WIDGET_PERIODS, 30));
-    setRevDays(readStored("ov-rev", WIDGET_PERIODS, 30));
+    setAudDays(readStored("ov-aud", WIDGET_PERIODS, 0));
+    setRevDays(readStored("ov-rev", WIDGET_PERIODS, 0));
+    setVbcDays(readStored("ov-vbc", WIDGET_PERIODS, 0));
+    setTracDays(readStored("ov-trac", WIDGET_PERIODS, 0));
     const t = setInterval(() => setNow(Date.now()), 30_000);
     return () => clearInterval(t);
   }, []);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") { setDrawer(null); setPop(null); setMenuOpen(false); }
+      if (e.key === "Escape") { setExpand(null); setDrawer(null); setPop(null); setMenuOpen(false); }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -102,7 +148,7 @@ export default function OverviewPage() {
   const remember = (key: string, v: number) => { try { localStorage.setItem(key, String(v)); } catch { /* per-viewer convenience only */ } };
 
   // No role gate: every internal user sees this page (owner decision 2026-09-17).
-  const { data, error, isLoading, mutate } = useOverview(days, audDays, revDays);
+  const { data, error, isLoading, mutate } = useOverview(days, audDays, revDays, vbcDays, tracDays);
   const o: OverviewPayload | undefined = data?.data;
 
   const firstName = (user?.name ?? "there").split(" ")[0];
@@ -277,6 +323,128 @@ export default function OverviewPage() {
       note: "Counts come from captions harvested this week and tagged by Link Search.",
     });
   }
+  // ── expanded views ──
+  // ⚠️ Each spec states the exact window its rows were computed over, because a card
+  // may be detached from the global period — an expanded table with no window stated
+  // is exactly how a reader mistakes one period's numbers for another's.
+  const plat = (p: "facebook" | "instagram" | null) => (p === "facebook" ? "FB" : p === "instagram" ? "IG" : "—");
+
+  function openExpandViews() {
+    if (!o) return;
+    setExpand({
+      title: "Views by Channel",
+      subtitle: `Every channel that reported views · last ${o.viewsByChannelDays} closed days (${fmtDayYear(o.period.dataThroughDay ?? o.period.end)} back)`,
+      columns: ["#", "Channel", "Platform", "Views", "Share"],
+      align: ["left", "left", "left", "right", "right"],
+      rows: o.viewsByChannelAll.map((c, i) => ({
+        key: c.id,
+        cells: [i + 1, c.name, plat(c.platform), fmtCompact(c.views), `${c.share.toFixed(1)}%`],
+      })),
+      note: `${o.viewsByChannelAll.length} of ${o.channels.total} channels reported views in this window.`,
+    });
+  }
+
+  function openExpandTopChannels() {
+    if (!o) return;
+    const rows = [...o.allChannels].filter((c) => c.views != null).sort((a, b) => (b.views ?? 0) - (a.views ?? 0));
+    setExpand({
+      title: "Top Channels",
+      subtitle: `Ranked by views · last ${o.period.days} closed days`,
+      columns: ["#", "Channel", "Platform", "Followers", "Views", "Revenue"],
+      align: ["left", "left", "left", "right", "right", "right"],
+      rows: rows.map((c, i) => ({
+        key: c.id,
+        cells: [i + 1, c.name, plat(c.platform), fmtCompact(c.followers), fmtCompact(c.views), fmtUsd(c.earningsCents)],
+      })),
+      note: `${rows.length} of ${o.channels.total} channels reported views in this window.`,
+    });
+  }
+
+  function openExpandRevenue() {
+    if (!o) return;
+    const rows = [...o.allChannels].filter((c) => (c.earningsCents ?? 0) > 0).sort((a, b) => (b.earningsCents ?? 0) - (a.earningsCents ?? 0));
+    const total = rows.reduce((t, c) => t + (c.earningsCents ?? 0), 0);
+    setExpand({
+      title: "Revenue by Channel",
+      subtitle: `Last ${o.period.days} closed days · USD, as paid by Meta`,
+      columns: ["#", "Channel", "Platform", "Revenue", "Share"],
+      align: ["left", "left", "left", "right", "right"],
+      rows: rows.map((c, i) => ({
+        key: c.id,
+        cells: [i + 1, c.name, plat(c.platform), fmtUsd(c.earningsCents), total > 0 ? `${(((c.earningsCents ?? 0) / total) * 100).toFixed(1)}%` : "—"],
+      })),
+      note: `${rows.length} channels earned in this window — revenue is Facebook-only, so Instagram accounts never appear here.`,
+    });
+  }
+
+  function openExpandCities() {
+    if (!o) return;
+    setExpand({
+      title: "India’s Audience Map",
+      subtitle: `Instagram follower audience · ${o.cities.assets} accounts · ${o.cities.indiaShare.toFixed(0)}% of the mapped audience is in India`,
+      lead: o.cities.items.length ? <div className="ov-map ov-map-lg"><IndiaMap cities={o.cities.items} /></div> : undefined,
+      columns: ["#", "City", "State", "Share", "Followers"],
+      align: ["left", "left", "left", "right", "right"],
+      rows: o.cities.items.map((c, i) => ({
+        key: c.name,
+        cells: [i + 1, c.name, c.state ?? "—", `${c.share.toFixed(1)}%`, fmtCompact(c.value)],
+      })),
+      note: "Cities Meta publishes for the connected Instagram accounts. Facebook publishes no equivalent city breakdown, so Pages are not represented.",
+    });
+  }
+
+  function openExpandDemographics() {
+    if (!o) return;
+    const src =
+      demoTab === "Age" ? o.demographics.age.map((a) => ({ label: a.bucket.replace("-", " – "), value: a.value }))
+      : demoTab === "Gender" ? o.demographics.gender.map((g) => ({ label: g.label, value: g.value }))
+      : o.demographics.country.map((c) => ({ label: countryName(c.bucket), value: c.value }));
+    const total = src.reduce((t, x) => t + x.value, 0);
+    setExpand({
+      title: `Audience Demographics · ${demoTab}`,
+      subtitle: `Instagram follower audience · every bucket Meta published, unfolded`,
+      columns: ["#", demoTab === "Location" ? "Country" : demoTab, "Share", "Followers"],
+      align: ["left", "left", "right", "right"],
+      rows: src.map((x, i) => ({
+        key: x.label,
+        cells: [i + 1, x.label, total > 0 ? `${((x.value / total) * 100).toFixed(1)}%` : "—", fmtCompact(x.value)],
+      })),
+      note: "Instagram only — Facebook retired its whole fan-demographic family, so Pages contribute nothing here.",
+    });
+  }
+
+  function openExpandPosts() {
+    if (!o) return;
+    setExpand({
+      title: "Latest Posts",
+      subtitle: "Newest first, by the post’s own publish time. Counts are as last measured by Meta, not live.",
+      columns: ["Posted", "Post", "Channel", "Platform", "Views", "Likes", "Comments"],
+      align: ["left", "left", "left", "left", "right", "right", "right"],
+      rows: o.latestPosts.map((pp) => ({
+        key: pp.id,
+        cells: [fmtRelative(pp.postedAt, now), pp.title, pp.channel.name, plat(pp.channel.platform),
+                fmtCompact(pp.views), fmtCompact(pp.likes), fmtCompact(pp.comments)],
+      })),
+      note: "A dash means Meta has not published that count for the post yet — it is not a zero.",
+    });
+  }
+
+  function openExpandTrending() {
+    if (!o) return;
+    setExpand({
+      title: "What’s Trending",
+      subtitle: "Entities tagged in captions harvested this week, against the week before",
+      columns: ["#", "Entity", "Type", "This week", "Last week", "Change"],
+      align: ["left", "left", "left", "right", "right", "right"],
+      rows: o.trending.map((t, i) => ({
+        key: t.id,
+        cells: [i + 1, t.name, t.type.toLowerCase(), t.count.toLocaleString("en-IN"), t.previousCount.toLocaleString("en-IN"),
+                t.previousCount > 0 ? fmtSignedPct(((t.count - t.previousCount) / t.previousCount) * 100) : "new"],
+      })),
+      note: "Counts come from Link Search caption tagging, not from Meta.",
+    });
+  }
+
   function openKpi(k: (typeof kpis)[number]) {
     setDrawer({
       kind: "KPI detail", accent: k.accent, title: k.label, sub: `Period · last ${o?.period.days ?? days} closed days`,
@@ -492,10 +660,8 @@ export default function OverviewPage() {
               <Card
                 title="Audience Growth"
                 right={
-                  <div className="ov-rel" onClick={(e) => e.stopPropagation()}>
-                    <Chip onClick={() => setPop(pop === "aud" ? null : "aud")} ariaHasPopup active={pop === "aud"}>Last {audDays} Days</Chip>
-                    {pop === "aud" && <Menu>{WIDGET_PERIODS.map((d) => <MenuItem key={d} active={d === audDays} onClick={() => { setAudDays(d); remember("ov-aud", d); setPop(null); }}>Last {d} days</MenuItem>)}</Menu>}
-                  </div>
+                  <CardPeriod id="aud" pop={pop} setPop={setPop} value={audDays} effective={o.audience.days} globalDays={o.period.days}
+                    onPick={(d) => { setAudDays(d); remember("ov-aud", d); }} />
                 }
               >
                 <div className="ov-headline">
@@ -509,10 +675,10 @@ export default function OverviewPage() {
                         sits in the same sentence rather than in small grey type beside it. */}
                     <span>
                       {o.audience.delta != null ? `${fmtSigned(o.audience.delta)} followers · ` : ""}
-                      across {o.audience.channelsUsed} of {o.channels.total} channels with {audDays}-day history
+                      across {o.audience.channelsUsed} of {o.channels.total} channels with {o.audience.days}-day history
                     </span>
                   </span>
-                  {audDays !== 30 && <button type="button" className="ov-reset" onClick={() => { setAudDays(30); remember("ov-aud", 30); }}>Local period · Reset</button>}
+                  {audDays !== 0 && <button type="button" className="ov-reset" onClick={() => { setAudDays(0); remember("ov-aud", 0); }}>Local period · Reset</button>}
                 </div>
                 <AreaLineChart id="ov-aud-fill" color={T.teal} unitLabel="followers" points={o.audience.series.map((s) => ({ date: s.date, value: s.followers }))} />
               </Card>
@@ -520,24 +686,28 @@ export default function OverviewPage() {
               <Card
                 title="Revenue Overview"
                 right={
-                  <div className="ov-rel" onClick={(e) => e.stopPropagation()}>
-                    <Chip onClick={() => setPop(pop === "rev" ? null : "rev")} ariaHasPopup active={pop === "rev"}>Last {revDays} Days</Chip>
-                    {pop === "rev" && <Menu>{WIDGET_PERIODS.map((d) => <MenuItem key={d} active={d === revDays} onClick={() => { setRevDays(d); remember("ov-rev", d); setPop(null); }}>Last {d} days</MenuItem>)}</Menu>}
-                  </div>
+                  <CardPeriod id="rev" pop={pop} setPop={setPop} value={revDays} effective={o.revenue.days} globalDays={o.period.days}
+                    onPick={(d) => { setRevDays(d); remember("ov-rev", d); }} />
                 }
               >
                 <div className="ov-headline">
                   <span className="ov-big">{fmtUsd(o.revenue.totalCents)}</span>
                   <span className="ov-headline-side">
                     <Trend pct={o.revenue.trend?.pct ?? null} reliable={o.revenue.trend?.reliable ?? true} />
-                    <span>vs. previous {revDays} days · USD</span>
+                    <span>vs. previous {o.revenue.days} days · USD</span>
                   </span>
-                  {revDays !== 30 && <button type="button" className="ov-reset" onClick={() => { setRevDays(30); remember("ov-rev", 30); }}>Local period · Reset</button>}
+                  {revDays !== 0 && <button type="button" className="ov-reset" onClick={() => { setRevDays(0); remember("ov-rev", 0); }}>Local period · Reset</button>}
                 </div>
                 <CumulativeBars unitLabel="revenue" formatValue={(v) => fmtUsd(v)} points={o.revenue.series.map((s) => ({ date: s.date, cumulative: s.cumulativeCents, daily: s.cents }))} />
               </Card>
 
-              <Card title="Views by Channel" right={<Chip>Last {o.period.days} Days</Chip>}>
+              <Card title="Views by Channel" right={
+                <CardActions>
+                  <ExpandBtn label="Expand Views by Channel" onClick={openExpandViews} />
+                  <CardPeriod id="vbc" pop={pop} setPop={setPop} value={vbcDays} effective={o.viewsByChannelDays} globalDays={o.period.days}
+                    onPick={(d) => { setVbcDays(d); remember("ov-vbc", d); setSelCat(null); }} />
+                </CardActions>
+              }>
                 {catSlices.length ? (
                   <div className="ov-donut-row">
                     <Donut
@@ -566,7 +736,9 @@ export default function OverviewPage() {
 
             {/* Operations row */}
             <section className="ov-row ov-row-ops" aria-label="Operations">
-              <Card title="Top Channels" right={<ViewAll href="/accounts/growth" />}>
+              <Card title="Top Channels" right={
+                <CardActions><ExpandBtn label="Expand Top Channels" onClick={openExpandTopChannels} /><ViewAll href="/accounts/growth" /></CardActions>
+              }>
                 <div className="ov-table">
                   <div className="ov-th ov-cols-ch"><span>#</span><span>Channel</span><span className="ov-col-fol">Followers</span><span>Views</span><span>Revenue</span><span /></div>
                   {o.topChannels.length === 0 && <Empty>No channel has reported views for this period.</Empty>}
@@ -583,7 +755,9 @@ export default function OverviewPage() {
                 </div>
               </Card>
 
-              <Card title="India’s Audience Map">
+              <Card title="India’s Audience Map" right={
+                <CardActions><ExpandBtn label="Expand India’s Audience Map" onClick={openExpandCities} /></CardActions>
+              }>
                 <div className="ov-map-row">
                   {o.cities.items.length ? <IndiaMap cities={o.cities.items} /> : <Empty>No city-level audience data yet.</Empty>}
                   <div className="ov-cities">
@@ -603,11 +777,11 @@ export default function OverviewPage() {
 
               <Card
                 title={<>Latest Posts <span className="ov-live-pill"><span />LIVE</span></>}
-                right={<ViewAll href="/accounts/growth" />}
+                right={<CardActions><ExpandBtn label="Expand Latest Posts" onClick={openExpandPosts} /><ViewAll href="/accounts/growth" /></CardActions>}
               >
                 <div className="ov-feed">
                   {o.latestPosts.length === 0 && <Empty>No posts synced yet.</Empty>}
-                  {o.latestPosts.map((p) => {
+                  {o.latestPosts.slice(0, CARD_ROWS).map((p) => {
                     const fresh = now - Date.parse(p.postedAt) < 60 * 60_000;
                     return (
                       <button key={p.id} type="button" className="ov-feed-row" onClick={() => openPost(p)}>
@@ -629,7 +803,9 @@ export default function OverviewPage() {
                 </div>
               </Card>
 
-              <Card title="Revenue by Channel" right={<ViewAll href="/accounts/growth" />}>
+              <Card title="Revenue by Channel" right={
+                <CardActions><ExpandBtn label="Expand Revenue by Channel" onClick={openExpandRevenue} /><ViewAll href="/accounts/growth" /></CardActions>
+              }>
                 <div className="ov-table">
                   {/* The period lives on the column, not in the card header: a third
                       child there is the only shrinkable item's undoing (see .ov-card-h). */}
@@ -662,7 +838,10 @@ export default function OverviewPage() {
                 </div>
               </Card>
 
-              <Card title="Content Traction" right={<Chip>Last 7 Days</Chip>}>
+              <Card title="Content Traction" right={
+                <CardPeriod id="trac" pop={pop} setPop={setPop} value={tracDays} effective={o.traction.days} globalDays={o.period.days}
+                  onPick={(d) => { setTracDays(d); remember("ov-trac", d); }} />
+              }>
                 <div className="ov-trac-tiles">
                   {o.traction.tiles.map((t, i) => (
                     <div key={t.key} className={i ? "has-divider" : ""} title={t.key === "shares" ? "Instagram only — Facebook publishes no page-level share count" : undefined}>
@@ -675,7 +854,9 @@ export default function OverviewPage() {
                 {traction && <IndexedLines series={traction.series} dates={traction.dates} />}
               </Card>
 
-              <Card title="Audience Demographics">
+              <Card title="Audience Demographics" right={
+                <CardActions><ExpandBtn label="Expand Audience Demographics" onClick={openExpandDemographics} /></CardActions>
+              }>
                 <div role="tablist" className="ov-tabs">
                   {(["Age", "Gender", "Location"] as const).map((t) => (
                     <button key={t} role="tab" type="button" aria-selected={demoTab === t} className={demoTab === t ? "is-sel" : ""} onClick={() => setDemoTab(t)}>{t}</button>
@@ -693,10 +874,12 @@ export default function OverviewPage() {
                 ) : <Empty>Instagram has not published demographics for these accounts.</Empty>}
               </Card>
 
-              <Card title="What’s Trending" right={<ViewAll href="/reports/link-search" />}>
+              <Card title="What’s Trending" right={
+                <CardActions><ExpandBtn label="Expand What’s Trending" onClick={openExpandTrending} /><ViewAll href="/reports/link-search" /></CardActions>
+              }>
                 <div className="ov-trending">
                   {o.trending.length === 0 && <Empty>No captions tagged this week yet.</Empty>}
-                  {o.trending.map((t, i) => {
+                  {o.trending.slice(0, CARD_ROWS).map((t, i) => {
                     const up = t.count >= t.previousCount;
                     return (
                       <button key={t.id} type="button" className="ov-trend-row" onClick={() => openTrending(t)}>
@@ -722,6 +905,7 @@ export default function OverviewPage() {
           </div>
         )}
 
+        {expand && <ExpandModal spec={expand} onClose={() => setExpand(null)} />}
         {drawer && <Drawer spec={drawer} onClose={() => setDrawer(null)} />}
       </main>
     </div>

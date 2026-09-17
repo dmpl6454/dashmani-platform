@@ -35,21 +35,30 @@ function pickPeriod<T extends readonly number[]>(raw: unknown, allowed: T, dflt:
 }
 
 /**
- * GET /admin/overview?days=7|14|30|90&aud=7|30|90&rev=7|30|90
+ * GET /admin/overview?days=7|14|30|90&aud=&rev=&vbc=&trac=
  *
- * `days` drives the KPI strip and the channel tables; `aud`/`rev` are the
- * Audience Growth and Revenue widgets' own periods, which the design lets an
- * admin override independently. Unknown values fall back to the defaults so a
- * stale bookmark degrades to the normal view, never a 400.
+ * `days` is the GLOBAL period: it drives the KPI strip, the channel tables and every
+ * card that has not been detached. `aud` (Audience Growth), `rev` (Revenue Overview),
+ * `vbc` (Views by Channel) and `trac` (Content Traction) are per-card overrides which
+ * accept the same values plus **0 = follow the global**, which is their default.
+ *
+ * ⚠️ A card's own period beats the global FOR THAT CARD ONLY — see the contract on
+ * WIDGET_PERIODS. Unknown values fall back to 0 (follow), so a stale bookmark degrades
+ * to a perfectly coherent whole-page view rather than a 400.
  */
 router.get(
   "/admin/overview",
   ...overviewGate,
   asyncHandler(async (req: Request, res: Response) => {
     const days = pickPeriod(req.query.days, OVERVIEW_PERIODS, 7) as OverviewPeriod;
-    const audDays = pickPeriod(req.query.aud, WIDGET_PERIODS, 30) as WidgetPeriod;
-    const revDays = pickPeriod(req.query.rev, WIDGET_PERIODS, 30) as WidgetPeriod;
-    const data = await getOverview({ days, audDays, revDays });
+    const widget = (raw: unknown) => pickPeriod(raw, WIDGET_PERIODS, 0) as WidgetPeriod;
+    const data = await getOverview({
+      days,
+      audDays: widget(req.query.aud),
+      revDays: widget(req.query.rev),
+      vbcDays: widget(req.query.vbc),
+      tracDays: widget(req.query.trac),
+    });
     return success(res, data);
   }),
 );

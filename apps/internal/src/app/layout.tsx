@@ -6,6 +6,7 @@ import { apiFetch } from "@/lib/api";
 import { Sidebar } from "@/components/sidebar";
 import { TopNav } from "@/components/top-nav";
 import { CommandPalette } from "@/components/command-palette";
+import { landingPathFor } from "@/lib/landing";
 import "./globals.css";
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -67,7 +68,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     localStorage.setItem("refreshToken", res.data.refreshToken);
     localStorage.setItem("user", JSON.stringify(res.data.user));
     setUser(res.data.user);
-    router.push("/dashboard");
+    router.push(landingPathFor(res.data.user));
   }, [router]);
 
   const logout = useCallback(() => {

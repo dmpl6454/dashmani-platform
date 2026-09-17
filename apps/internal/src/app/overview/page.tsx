@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth";
+import { isAdminUser } from "@/lib/landing";
 import { usePageTitle } from "@/lib/hooks/use-page-title";
 import { useOverview } from "./_hooks";
 import type { OverviewPayload, OverviewPeriod, WidgetPeriod, ChannelRow } from "./_types";
@@ -92,7 +93,10 @@ export default function OverviewPage() {
   }, []);
   const remember = (key: string, v: number) => { try { localStorage.setItem(key, String(v)); } catch { /* per-viewer convenience only */ } };
 
-  const { data, error, isLoading, mutate } = useOverview(days, audDays, revDays);
+  // The API gates this payload on an Admin role; skip the request for anyone else
+  // and show them where to go instead of a 403.
+  const isAdmin = isAdminUser(user);
+  const { data, error, isLoading, mutate } = useOverview(days, audDays, revDays, isAdmin);
   const o: OverviewPayload | undefined = data?.data;
 
   const firstName = (user?.name ?? "there").split(" ")[0];
@@ -405,8 +409,11 @@ export default function OverviewPage() {
           <div className="ov-script">Real Creators.<br />Real Impact.</div>
         </div>
 
-        {!o && isLoading && <Skeleton />}
-        {!o && error && (
+        {!isAdmin && (
+          <StateMessage tone="empty" title="The Overview is for administrators" body="This command centre needs an Admin role. Your dashboard has everything your role can see." cta="Open dashboard" onCta={() => router.push("/dashboard")} />
+        )}
+        {isAdmin && !o && isLoading && <Skeleton />}
+        {isAdmin && !o && error && (
           <StateMessage tone="error" title="Couldn’t load the overview" body={String((error as Error).message ?? "The analytics service returned an error.")} cta="Retry" onCta={() => mutate()} />
         )}
         {o && empty && (

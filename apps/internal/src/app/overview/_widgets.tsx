@@ -46,8 +46,81 @@ export function Caret() {
   );
 }
 
-export function ViewAll({ href, label = "View All →" }: { href: string; label?: string }) {
-  return <a className="ov-viewall" href={href}>{label}</a>;
+export function ViewAll({ href, label = "View All" }: { href: string; label?: string }) {
+  // The words collapse under 1366px (see .ov-viewall-t) so a card header never has to
+  // buy them with the title's letters; the arrow always stays.
+  return <a className="ov-viewall" href={href} title={label}><span className="ov-viewall-t">{label} </span>→</a>;
+}
+
+/**
+ * ⚠️ Card header actions MUST be wrapped in this single element.
+ * `.ov-card-h` is `display:flex; justify-content:space-between` and its `h2` is the only
+ * shrinkable item — and because that h2 is itself a flex container, its
+ * text-overflow:ellipsis is INERT, so a third header child does not ellipsise the title,
+ * it HARD-CLIPS it with no "…" and no tooltip. Passing a fragment of two nodes to
+ * `right` creates exactly that. Group them here instead.
+ */
+export function CardActions({ children }: { children: ReactNode }) {
+  return <span className="ov-card-actions">{children}</span>;
+}
+
+/** Icon-only so a header can carry it without costing the title its letters. */
+export function ExpandBtn({ onClick, label }: { onClick: () => void; label: string }) {
+  return (
+    <button type="button" className="ov-expand-btn" onClick={onClick} title={label} aria-label={label}>
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
+      </svg>
+    </button>
+  );
+}
+
+export interface ExpandSpec {
+  title: string;
+  /** States the exact window and coverage the rows were computed over. */
+  subtitle?: string;
+  columns: string[];
+  /** Per-column alignment; defaults to left. */
+  align?: Array<"left" | "right">;
+  rows: Array<{ key: string; cells: ReactNode[] }>;
+  /** Rendered above the table — e.g. a larger map. */
+  lead?: ReactNode;
+  note?: string;
+}
+
+export function ExpandModal({ spec, onClose }: { spec: ExpandSpec; onClose: () => void }) {
+  const align = spec.align ?? [];
+  return (
+    <>
+      <div className="ov-drawer-bg" onClick={onClose} />
+      <section role="dialog" aria-modal="true" aria-label={spec.title} className="ov-modal">
+        <div className="ov-modal-h">
+          <div style={{ minWidth: 0 }}>
+            <h2>{spec.title}</h2>
+            {spec.subtitle && <div className="ov-modal-s">{spec.subtitle}</div>}
+          </div>
+          <button type="button" onClick={onClose} aria-label="Close" className="ov-x">×</button>
+        </div>
+        {spec.lead && <div className="ov-modal-lead">{spec.lead}</div>}
+        <div className="ov-modal-body">
+          <table className="ov-modal-table">
+            <thead>
+              <tr>{spec.columns.map((c, i) => <th key={c} style={{ textAlign: align[i] ?? "left" }}>{c}</th>)}</tr>
+            </thead>
+            <tbody>
+              {spec.rows.map((r) => (
+                <tr key={r.key}>
+                  {r.cells.map((c, i) => <td key={i} style={{ textAlign: align[i] ?? "left" }}>{c}</td>)}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {spec.rows.length === 0 && <div className="ov-empty">Nothing to show for this period.</div>}
+        </div>
+        <div className="ov-modal-foot">{spec.note ?? `${spec.rows.length} rows · live platform data`}</div>
+      </section>
+    </>
+  );
 }
 
 export function Menu({ children, width = 150, align = "right" }: { children: ReactNode; width?: number; align?: "left" | "right" }) {

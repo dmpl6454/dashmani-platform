@@ -182,3 +182,83 @@ describe("GET /v1/admin/overview — open to every internal role, closed to othe
     expect(res.status).toBe(401);
   });
 });
+
+/**
+ * ⚠️ THE PRECEDENCE CONTRACT. A card follows the global period until it is explicitly
+ * detached, and a detached card's period then applies to THAT CARD ONLY. Every one of
+ * these would have been satisfied by the old code returning `undefined` and falling
+ * through to the global — which is why the detached cases assert a DIFFERENT window,
+ * not merely a present one.
+ */
+describe("overview — per-card periods override the global for that card only", () => {
+  beforeEach(async () => {
+    invalidateOverviewCache();
+    invalidateRangeCache();
+    await seedEstate();
+  });
+
+  const base = { days: 7, audDays: 0, revDays: 0, vbcDays: 0, tracDays: 0 } as const;
+
+  it("0 means follow the global period, for every card", async () => {
+    const o = await getOverview({ ...base, days: 30 });
+    expect(o.period.days).toBe(30);
+    expect(o.audience.days).toBe(30);
+    expect(o.revenue.days).toBe(30);
+    expect(o.viewsByChannelDays).toBe(30);
+    expect(o.traction.days).toBe(30);
+    // and moving the global moves them all
+    invalidateOverviewCache();
+    const seven = await getOverview({ ...base, days: 7 });
+    expect([seven.audience.days, seven.revenue.days, seven.viewsByChannelDays, seven.traction.days]).toEqual([7, 7, 7, 7]);
+  });
+
+  it("a detached card keeps its own window while every other card follows the global", async () => {
+    const o = await getOverview({ ...base, days: 7, vbcDays: 30 });
+    expect(o.period.days).toBe(7);
+    expect(o.viewsByChannelDays).toBe(30);      // detached
+    expect(o.audience.days).toBe(7);            // still following
+    expect(o.revenue.days).toBe(7);
+    expect(o.traction.days).toBe(7);
+  });
+
+  it("each card can be detached independently", async () => {
+    const o = await getOverview({ days: 7, audDays: 90, revDays: 14, vbcDays: 30, tracDays: 90 });
+    expect(o.period.days).toBe(7);
+    expect(o.audience.days).toBe(90);
+    expect(o.revenue.days).toBe(14);
+    expect(o.viewsByChannelDays).toBe(30);
+    expect(o.traction.days).toBe(90);
+    // the traction series really is that long, not a 7-day series wearing a 90-day label
+    expect(o.traction.series).toHaveLength(90);
+  });
+
+  it("⚠️ the memo keys on EVERY period — one card's window can never be served another's", async () => {
+    const a = await getOverview({ ...base, days: 7, vbcDays: 7 });
+    const b = await getOverview({ ...base, days: 7, vbcDays: 90 });
+    expect(a.viewsByChannelDays).toBe(7);
+    expect(b.viewsByChannelDays).toBe(90);
+    // same global window, so the shared parts must still agree
+    expect(b.period.start).toBe(a.period.start);
+    expect(b.kpis.views.value).toBe(a.kpis.views.value);
+  });
+
+  it("a detached Views by Channel really aggregates over its own window", async () => {
+    // The estate reports a fixed 250 views/day (200 FB + 50 IG) for 14 days.
+    const wide = await getOverview({ ...base, days: 7, vbcDays: 14 });
+    const narrow = await getOverview({ ...base, days: 7, vbcDays: 7 });
+    const sum = (o: Awaited<ReturnType<typeof getOverview>>) =>
+      o.viewsByChannelAll.reduce((t, c) => t + c.views, 0);
+    expect(sum(wide)).toBe(sum(narrow) * 2);
+    // …while the KPI strip, which follows the global, is untouched by that choice
+    expect(wide.kpis.views.value).toBe(narrow.kpis.views.value);
+  });
+
+  it("every channel appears in the expanded Views-by-Channel list, with shares summing to 100", async () => {
+    const o = await getOverview(base);
+    expect(o.viewsByChannelAll).toHaveLength(2);
+    const total = o.viewsByChannelAll.reduce((t, c) => t + c.share, 0);
+    expect(total).toBeCloseTo(100, 6);
+    // the card itself still folds to a readable top-N + Others
+    expect(o.viewsByChannel.length).toBeLessThanOrEqual(8);
+  });
+});

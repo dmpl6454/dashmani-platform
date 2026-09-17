@@ -43,10 +43,11 @@ export const TIER_COLOR: Record<"high" | "growing" | "emerging", string> = {
 export function fmtCompact(n: number | null | undefined, digits = 1): string {
   if (n == null || !Number.isFinite(n)) return "—";
   const abs = Math.abs(n);
-  if (abs >= 1e9) return `${trimZero((n / 1e9).toFixed(digits))}B`;
-  if (abs >= 1e6) return `${trimZero((n / 1e6).toFixed(digits))}M`;
-  if (abs >= 1e3) return `${trimZero((n / 1e3).toFixed(digits))}K`;
-  return Math.round(n).toLocaleString("en-IN");
+  const unit: [number, string] | null = abs >= 1e9 ? [1e9, "B"] : abs >= 1e6 ? [1e6, "M"] : abs >= 1e3 ? [1e3, "K"] : null;
+  if (!unit) return Math.round(n).toLocaleString("en-IN");
+  const m = n / unit[0];
+  // Three significant digits are plenty in a leaderboard: 417.9M reads as 418M.
+  return `${trimZero(m.toFixed(Math.abs(m) >= 100 ? 0 : digits))}${unit[1]}`;
 }
 
 function trimZero(s: string): string {
@@ -59,8 +60,7 @@ export function fmtUsd(cents: number | null | undefined): string {
   const d = cents / 100;
   const abs = Math.abs(d);
   if (abs >= 1e6) return `$${trimZero((d / 1e6).toFixed(2))}M`;
-  if (abs >= 1e4) return `$${trimZero((d / 1e3).toFixed(1))}k`;
-  if (abs >= 1e3) return `$${d.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
+  if (abs >= 1e3) return `$${trimZero((d / 1e3).toFixed(abs >= 1e5 ? 0 : 1))}k`;
   return `$${d.toFixed(abs < 10 ? 2 : 0)}`;
 }
 

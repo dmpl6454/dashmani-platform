@@ -169,6 +169,8 @@ button.ov-chip:hover,.ov-chip.is-active{color:#F4F6F8;border-color:#33506A}
 .ov-trend.is-down{color:#E52D47}
 .ov-trend.is-none{color:#738395;font-weight:500}
 .ov-trend.is-muted{font-size:10.5px}
+/* Marks a headline computed over a subset of the estate (see the title attribute). */
+.ov-partial{font-size:13px;color:#E9BD62;margin-left:1px;cursor:help}
 
 /* ── headline block above charts ── */
 .ov-headline{display:flex;align-items:flex-end;gap:10px;margin-top:4px;min-width:0}

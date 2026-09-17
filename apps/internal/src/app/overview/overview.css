@@ -157,8 +157,16 @@ button.ov-chip:hover,.ov-chip.is-active{color:#F4F6F8;border-color:#33506A}
 .ov-tr{display:grid;gap:5px;align-items:center;width:100%;height:27px;white-space:nowrap;padding:0 4px;border:0;border-radius:4px;background:transparent;color:#F4F6F8;font-size:11px;cursor:pointer;text-align:left;min-width:0}
 .ov-tr:hover{background:#0F1E2A}
 .ov-tr-grow{flex:1;height:auto;min-height:24px}
-.ov-cols-ch{grid-template-columns:12px minmax(0,3fr) .8fr .8fr .8fr 40px}
-.ov-cols-ch>span:nth-child(n+3){font-size:10.5px}
+/* Top Channels: at the 1280 frame the card is 28fr wide and the "Followers" header
+   alone costs the name column its distinguishing letters, so that column is shown
+   only from 1360px; followers stay in the KPI card, the drawer and the Channels page. */
+.ov-cols-ch{grid-template-columns:12px minmax(0,1fr) 36px 44px 40px;gap:4px}
+.ov-cols-ch>span:nth-child(n+3){font-size:10px}
+.ov-cols-ch .ov-col-fol{display:none}
+@media (min-width:1600px){
+  .ov-cols-ch{grid-template-columns:12px minmax(0,1fr) 48px 36px 44px 40px;gap:5px}
+  .ov-cols-ch .ov-col-fol{display:block}
+}
 .ov-cols-rev{grid-template-columns:22px minmax(0,1fr) 26px 50px}
 .ov-plat{display:inline-flex;align-items:center;justify-content:center;height:16px;padding:0 4px;border-radius:3px;background:#182630;border:1px solid #223543;color:#A7B3C2;font-size:8.5px;font-weight:700;letter-spacing:.04em}
 .ov-rank{color:#E9BD62;font-weight:600}

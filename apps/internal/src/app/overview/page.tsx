@@ -513,13 +513,13 @@ export default function OverviewPage() {
             <section className="ov-row ov-row-ops" aria-label="Operations">
               <Card title="Top Channels" right={<ViewAll href="/accounts/growth" />}>
                 <div className="ov-table">
-                  <div className="ov-th ov-cols-ch"><span>#</span><span>Channel</span><span>Followers</span><span>Views</span><span>Revenue</span><span /></div>
+                  <div className="ov-th ov-cols-ch"><span>#</span><span>Channel</span><span className="ov-col-fol">Followers</span><span>Views</span><span>Revenue</span><span /></div>
                   {o.topChannels.length === 0 && <Empty>No channel has reported views for this period.</Empty>}
                   {o.topChannels.map((c, i) => (
                     <button key={c.id} type="button" className="ov-tr ov-cols-ch" onClick={() => openChannel(c)}>
                       <span className="ov-rank">{i + 1}</span>
                       <span className="ov-cell-name"><Avatar url={c.pictureUrl} name={c.name} size={18} tile={PLATFORM_TILE[c.platform]} /><span title={`${c.name}${c.username ? ` · @${c.username}` : ""}`}>{c.name}</span></span>
-                      <span>{fmtCompact(c.followers)}</span>
+                      <span className="ov-col-fol">{fmtCompact(c.followers)}</span>
                       <span>{fmtCompact(c.views)}</span>
                       <span>{fmtUsd(c.earningsCents)}</span>
                       <span><Trend pct={c.followerDelta != null && c.followers ? (c.followerDelta / Math.max(1, c.followers - c.followerDelta)) * 100 : null} muted /></span>

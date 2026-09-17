@@ -63,12 +63,16 @@ export interface OverviewPayload {
     dataThroughDay: string | null;
   };
   channels: { total: number; facebook: number; instagram: number };
+  /** Every live channel, followers-desc — the header search searches this, not the ranked lists. */
+  allChannels: ChannelDirectoryRow[];
   kpis: {
     followers: {
       value: number;
       delta: number | null;
       deltaDays: number | null;
       channelsWithHistory: number;
+      /** Follower stock of just those channels — the like-for-like denominator. */
+      followersWithHistory: number | null;
       spark: number[];
     };
     views: PeriodMetric;
@@ -150,6 +154,18 @@ export interface ChannelRow {
   followerDelta: number | null;
   followerDeltaDays: number | null;
 }
+
+/**
+ * A directory row: everything the header search and the channel drawer read, and
+ * nothing else.
+ *
+ * ⚠️ pictureUrl is deliberately OMITTED. It is a Meta CDN URL averaging 397 characters
+ * (max 417) and populated on 102 of the 419 live prod channels — carrying it for all
+ * 419 would add ~40 KB to every payload for a field neither the search list nor the
+ * drawer renders. The ranked lists (topChannels / revenueByChannel) still carry it,
+ * because those DO show avatars.
+ */
+export type ChannelDirectoryRow = Omit<ChannelRow, "pictureUrl">;
 
 export type CityTier = "high" | "growing" | "emerging";
 export type ActivityKind = "post" | "report" | "user" | "leave" | "announcement";
@@ -358,16 +374,51 @@ export function getOverview(params: OverviewParams): Promise<OverviewPayload> {
 
 // ───────────────────────────── builder ─────────────────────────────
 
+// How many trailing days to inspect when deciding which day is genuinely complete.
+const END_PROBE_DAYS = 8;
+// A day counts as closed once this share of the estate's best-covered day reported it.
+const END_COVERAGE_SHARE = 0.8;
+
+/**
+ * The newest day that is complete for the whole estate.
+ *
+ * Instagram closes at UTC midnight and Facebook at Pacific midnight, and the sweep
+ * that writes `meta_asset_daily` runs every ~3h — so the newest day present in the
+ * table is routinely a partial one holding only the platform that closed first.
+ * Counting reporting assets per day and taking the newest day within
+ * END_COVERAGE_SHARE of the best-covered day in the probe window picks the last day
+ * BOTH platforms closed, without hard-coding either boundary.
+ *
+ * Fails open to the clock's yesterday (the previous behaviour) when there is nothing
+ * to measure — a brand-new estate must still render.
+ */
+async function resolveWindowEnd(liveIds: string[], todayIso: string): Promise<string> {
+  const fallback = shiftDay(todayIso, -1);
+  if (liveIds.length === 0) return fallback;
+  const rows = await prisma.metaAssetDaily.groupBy({
+    by: ["date"],
+    where: {
+      assetId: { in: liveIds },
+      date: {
+        gte: new Date(`${shiftDay(todayIso, -END_PROBE_DAYS)}T00:00:00Z`),
+        lte: new Date(`${fallback}T00:00:00Z`),
+      },
+    },
+    _count: { _all: true },
+    orderBy: { date: "desc" },
+  });
+  if (rows.length === 0) return fallback;
+  const best = Math.max(...rows.map((r) => r._count._all));
+  if (best === 0) return fallback;
+  // rows are newest-first, so the first adequately-covered day is the newest one.
+  for (const r of rows) {
+    if (r._count._all >= best * END_COVERAGE_SHARE) return isoDay(r.date);
+  }
+  return fallback;
+}
+
 async function buildOverview(params: OverviewParams): Promise<OverviewPayload> {
   const todayIso = isoDay(new Date());
-  // Stored daily rows are CLOSED days; the current day is never complete.
-  const end = shiftDay(todayIso, -1);
-  const start = shiftDay(end, -(params.days - 1));
-  const prev = previousRange(start, end);
-  const longest = Math.max(params.days, params.audDays, params.revDays, 7);
-  const seriesStart = shiftDay(end, -(longest - 1));
-  // Daily series also need the equal-length baseline for traction/revenue trends.
-  const seriesFetchStart = shiftDay(seriesStart, -longest);
 
   const duplicateIds = await resolveDuplicateAssetIds();
   const assets = (
@@ -387,6 +438,24 @@ async function buildOverview(params: OverviewParams): Promise<OverviewPayload> {
   // such rows out of every snapshot-derived figure, and so does this series.
   const contested = await resolveContestedOwners();
   const historyAccounts = linked.filter((id) => !contested.has(id));
+
+  // ⚠️ The window END comes from the DATA, never from the clock. Facebook's day
+  // closes at PACIFIC midnight (07:00Z) and the channel sweep is 3-hourly, so for a
+  // large part of every UTC day "yesterday" holds Instagram rows only — and Facebook
+  // is ~76% of the estate, ~85% of views and 100% of revenue. Ending on the clock's
+  // yesterday therefore compared a 6-Facebook-day window against a complete
+  // 7-Facebook-day baseline: measured on prod 2026-09-17 that rendered Views ↓14.2%
+  // where the truth was ↓5.1%, and Revenue +3.1% where the truth was +22.8%.
+  // resolveWindowEnd() picks the newest day both platforms have actually closed, so
+  // every window below is complete-by-construction — the same principle as Account
+  // Growth's dataThroughDay, which reports the EARLIEST covered boundary.
+  const end = await resolveWindowEnd(liveIds, todayIso);
+  const start = shiftDay(end, -(params.days - 1));
+  const prev = previousRange(start, end);
+  const longest = Math.max(params.days, params.audDays, params.revDays, 7);
+  const seriesStart = shiftDay(end, -(longest - 1));
+  // Daily series also need the equal-length baseline for traction/revenue trends.
+  const seriesFetchStart = shiftDay(seriesStart, -longest);
   const audStart = shiftDay(end, -(params.audDays - 1));
 
   // Empty `in` lists are valid Prisma filters that simply match nothing, so every
@@ -417,7 +486,10 @@ async function buildOverview(params: OverviewParams): Promise<OverviewPayload> {
       demographicGroup(liveIds, "gender"),
       demographicGroup(liveIds, "country"),
       prisma.metaPost.findMany({
-        where: { assetId: { in: liveIds }, postedAt: { not: null } },
+        // ⚠️ `lte: now` matters: a scheduled or clock-skewed post with a FUTURE
+        // postedAt would sort to the top of a desc ordering and sit at the head of
+        // "Latest" until its own timestamp passed.
+        where: { assetId: { in: liveIds }, postedAt: { not: null, lte: new Date() } },
         orderBy: { postedAt: "desc" },
         take: 6,
         select: {
@@ -460,7 +532,16 @@ async function buildOverview(params: OverviewParams): Promise<OverviewPayload> {
   // ── KPI period metrics from stored daily rows (like-for-like with the baseline) ──
   const cur = { views: [] as Array<number | null>, engagements: [] as Array<number | null>, earnings: [] as Array<number | null> };
   const prv = { views: 0, engagements: 0, earnings: 0, coveredDays: 0, assets: 0, earningsAssets: 0, viewsAssets: 0, engAssets: 0 };
-  let dataThroughDay: string | null = null;
+  // ⚠️ NOT the max of per-asset latestDay — that advertised Instagram's UTC-midnight
+  // freshness across an estate that is ~76% Facebook, overstating how current the page
+  // was. `end` is resolved from estate-wide coverage, so it IS the day every figure
+  // here is complete through. Same rule as Account Growth: report the EARLIEST
+  // boundary, never the newest.
+  // ⚠️ NULL when the estate has reported NOTHING in the probe window. `end` is always a
+  // date (resolveWindowEnd falls open to the clock's yesterday so an empty estate still
+  // renders), but claiming "data complete through <yesterday>" for an estate with no
+  // rows at all would be a fabricated assurance — the footer must show an em-dash.
+  const dataThroughDay: string | null = daily.length > 0 ? end : null;
   const perAsset = new Map<string, AssetRangeTotals>();
   for (const a of assets) {
     const t = rangeNow.get(a.id);
@@ -469,7 +550,6 @@ async function buildOverview(params: OverviewParams): Promise<OverviewPayload> {
       cur.views.push(t.views);
       cur.engagements.push(t.engagements);
       cur.earnings.push(t.earningsCents);
-      if (t.latestDay && (dataThroughDay === null || t.latestDay > dataThroughDay)) dataThroughDay = t.latestDay;
     }
     const p = rangePrev.get(a.id);
     if (p) {
@@ -519,10 +599,14 @@ async function buildOverview(params: OverviewParams): Promise<OverviewPayload> {
   let followers = 0;
   let followerDelta = 0;
   let channelsWithHistory = 0;
+  // ⚠️ The follower stock of ONLY the channels that carry a full-period delta. The
+  // growth chip must divide like by like: dividing a 146-channel delta by the
+  // 419-channel stock understated real growth by 45% on prod (0.393% vs 0.711%).
+  let followersWithHistory = 0;
   for (const a of assets) {
     followers += a.followerCount ?? 0;
     const fd = followerDeltas.get(a.id);
-    if (fd && fd.days >= span - 1) { followerDelta += fd.delta; channelsWithHistory++; }
+    if (fd && fd.days >= span - 1) { followerDelta += fd.delta; channelsWithHistory++; followersWithHistory += a.followerCount ?? 0; }
   }
 
   // ── Audience growth line ──
@@ -585,6 +669,19 @@ async function buildOverview(params: OverviewParams): Promise<OverviewPayload> {
     .filter((a) => (perAsset.get(a.id)?.views ?? null) != null)
     .sort((a, b) => (perAsset.get(b.id)!.views ?? 0) - (perAsset.get(a.id)!.views ?? 0));
   const topChannels = byViews.slice(0, 5).map(channelRow);
+  // ⚠️ The FULL directory, for the header search. Before this the search unioned
+  // topChannels with revenueByChannel — 8 of 419 channels on prod — so searching for
+  // anything outside those two truncated lists (including the estate's largest
+  // channel) answered "No results". Sorted by followers so an empty query shows the
+  // channels a reader is most likely to want. Carries the same ChannelRow the drawer
+  // needs, so a searched channel opens with real figures rather than dashes.
+  const allChannels: ChannelDirectoryRow[] = [...assets]
+    .sort((a, b) => (b.followerCount ?? 0) - (a.followerCount ?? 0))
+    .map((a) => {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { pictureUrl, ...rest } = channelRow(a);
+      return rest;
+    });
   const revenueByChannel = assets
     .filter((a) => (perAsset.get(a.id)?.earningsCents ?? 0) > 0)
     .sort((a, b) => (perAsset.get(b.id)!.earningsCents ?? 0) - (perAsset.get(a.id)!.earningsCents ?? 0))
@@ -726,6 +823,7 @@ async function buildOverview(params: OverviewParams): Promise<OverviewPayload> {
   return {
     generatedAt: new Date().toISOString(),
     period: { days: params.days, start, end, prevStart: prev.start, prevEnd: prev.end, dataThroughDay },
+    allChannels,
     channels: {
       total: assets.length,
       facebook: assets.filter((a) => a.kind === "FACEBOOK_PAGE").length,
@@ -737,6 +835,7 @@ async function buildOverview(params: OverviewParams): Promise<OverviewPayload> {
         delta: channelsWithHistory > 0 ? followerDelta : null,
         deltaDays: channelsWithHistory > 0 ? span : null,
         channelsWithHistory,
+        followersWithHistory: channelsWithHistory > 0 ? followersWithHistory : null,
         spark: filled.series.slice(-params.days).map((s) => s.followers),
       },
       views: metric(viewsSum, prv.views, prv.viewsAssets, spark((d) => num(d._sum.views))),

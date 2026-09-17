@@ -1,11 +1,10 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth";
-import { isAdminUser } from "@/lib/landing";
 import { usePageTitle } from "@/lib/hooks/use-page-title";
 import { useOverview } from "./_hooks";
-import type { OverviewPayload, OverviewPeriod, WidgetPeriod, ChannelRow } from "./_types";
+import type { OverviewPayload, OverviewPeriod, WidgetPeriod, ChannelRow, ChannelDirectoryRow } from "./_types";
 import {
   T, CATEGORICAL, SERIES4, TIER_COLOR,
   fmtCompact, fmtUsd, fmtSigned, fmtSignedPct, fmtDay, fmtDayYear, fmtRelative, initials, countryName, greetingFor,
@@ -14,20 +13,17 @@ import { Sparkline, AreaLineChart, CumulativeBars, Donut, IndexedLines, IndiaMap
 import { Card, Chip, ViewAll, Menu, MenuItem, Trend, Avatar, Empty, Skeleton, StateMessage, Drawer, type DrawerSpec } from "./_widgets";
 import "./overview.css";
 
-// ── navigation: the design's ten sections, each routed to the portal page that
-// really owns that data (labels adjusted where the design's word would lie).
+// ⚠️ The overview is its OWN plane. This rail used to carry nine cross-links into
+// the classic portal (Channels, Content, Accounts, Employees, Clients, Projects,
+// Reports, Link Search, Settings), which is exactly what made it read as a second
+// sidebar rather than a separate dashboard. One entry now, plus one explicit way
+// back. Do not re-add portal sections here.
 const NAV: Array<{ label: string; href: string; icon: string }> = [
   { label: "Overview", href: "/overview", icon: "M3 11l9-8 9 8v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z" },
-  { label: "Channels", href: "/accounts/growth", icon: "M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM5 21a7 7 0 0 1 14 0" },
-  { label: "Content", href: "/content", icon: "M5 4h14a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zM8 9h8M8 13h8M8 17h5" },
-  { label: "Accounts", href: "/accounts", icon: "M9 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM3 20a6 6 0 0 1 12 0M17 11a3 3 0 1 0 0-6M21 20a6 6 0 0 0-4-5.6" },
-  { label: "Employees", href: "/employees", icon: "M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM8 15a4 4 0 0 1 8 0M12 11a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5" },
-  { label: "Clients", href: "/clients", icon: "M8 5h8a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2zM9 5V3h6v2M9 12h6M9 16h4" },
-  { label: "Projects", href: "/projects", icon: "M4 11v2a1 1 0 0 0 1 1h2l6 4V6L7 10H5a1 1 0 0 0-1 1zM17 9a4 4 0 0 1 0 6" },
-  { label: "Reports", href: "/reports", icon: "M6 3h9l5 5v13H6zM15 3v5h5M9 17v-4M12 17v-7M15 17v-2" },
-  { label: "Link Search", href: "/reports/link-search", icon: "M4 20V10M10 20V4M16 20v-8M22 20H2" },
-  { label: "Settings", href: "/settings", icon: "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" },
 ];
+
+// Rendered below the nav with a divider so it reads as an exit, not a peer section.
+const BACK_TO_PORTAL = { label: "Back to portal", href: "/dashboard", icon: "M19 12H5M12 19l-7-7 7-7" };
 
 const ICONS = {
   followers: "M16 11a4 4 0 1 0-8 0 4 4 0 0 0 8 0zM4 21a8 8 0 0 1 16 0",
@@ -37,6 +33,8 @@ const ICONS = {
   engagements: "M12 21s-7-4.5-9-9a5 5 0 0 1 9-3 5 5 0 0 1 9 3c-2 4.5-9 9-9 9z",
 };
 
+// How many channel results the dropdown renders at once ("a" matches 255 of 419).
+const SEARCH_LIMIT = 40;
 const PERIODS: OverviewPeriod[] = [7, 14, 30, 90];
 const WIDGET_PERIODS: WidgetPeriod[] = [7, 30, 90];
 const ACTIVITY_COLOR: Record<string, string> = { post: T.blue, report: T.teal, user: T.purple, leave: T.gold, announcement: T.pink };
@@ -56,7 +54,7 @@ function readStored<T>(key: string, allowed: readonly T[], dflt: T): T {
   }
 }
 
-function metaUrl(c: ChannelRow): string | null {
+function metaUrl(c: ChannelDirectoryRow): string | null {
   if (c.platform === "instagram") return c.username ? `https://www.instagram.com/${encodeURIComponent(c.username)}/` : null;
   return /^\d+$/.test(c.metaId) ? `https://www.facebook.com/${c.metaId}` : null;
 }
@@ -74,6 +72,8 @@ export default function OverviewPage() {
   const [demoTab, setDemoTab] = useState<"Age" | "Gender" | "Location">("Age");
   const [actOpen, setActOpen] = useState<number | null>(null);
   const [q, setQ] = useState("");
+  const [searchIdx, setSearchIdx] = useState(0);
+  const searchListRef = useRef<HTMLDivElement>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [now, setNow] = useState(() => Date.now());
 
@@ -91,12 +91,18 @@ export default function OverviewPage() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
+  // Keyboard selection must follow the highlight — the list scrolls, focus stays in
+  // the input, and a browser only auto-scrolls for a focused element, so nothing would
+  // move the viewport on its own.
+  useEffect(() => {
+    const row = searchListRef.current?.children[searchIdx] as HTMLElement | undefined;
+    row?.scrollIntoView({ block: "nearest" });
+  }, [searchIdx]);
+
   const remember = (key: string, v: number) => { try { localStorage.setItem(key, String(v)); } catch { /* per-viewer convenience only */ } };
 
-  // The API gates this payload on an Admin role; skip the request for anyone else
-  // and show them where to go instead of a 403.
-  const isAdmin = isAdminUser(user);
-  const { data, error, isLoading, mutate } = useOverview(days, audDays, revDays, isAdmin);
+  // No role gate: every internal user sees this page (owner decision 2026-09-17).
+  const { data, error, isLoading, mutate } = useOverview(days, audDays, revDays);
   const o: OverviewPayload | undefined = data?.data;
 
   const firstName = (user?.name ?? "there").split(" ")[0];
@@ -110,14 +116,21 @@ export default function OverviewPage() {
     return [
       {
         id: "followers", label: "Followers (now)", value: fmtCompact(k.followers.value), accent: T.teal, icon: ICONS.followers, spark: k.followers.spark,
-        trend: k.followers.delta != null && k.followers.value - k.followers.delta > 0 ? (k.followers.delta / (k.followers.value - k.followers.delta)) * 100 : null,
-        reliable: true,
+        // ⚠️ Denominator is the follower stock of the channels the delta was MEASURED
+        // over, not the whole estate. Dividing a 146-channel delta by the 419-channel
+        // stock understated real growth by 45% on prod (0.393% shown vs 0.711% true).
+        trend: k.followers.delta != null && k.followers.followersWithHistory != null && k.followers.followersWithHistory - k.followers.delta > 0
+          ? (k.followers.delta / (k.followers.followersWithHistory - k.followers.delta)) * 100
+          : null,
+        reliable: o.channels.total === 0 || k.followers.channelsWithHistory / o.channels.total >= 0.95,
         note: k.followers.delta != null ? `${fmtSigned(k.followers.delta)} · ${k.followers.channelsWithHistory}/${o.channels.total} channels` : `across ${o.channels.total} channels`,
         rows: [
           { label: "Facebook Pages", value: String(o.channels.facebook) },
           { label: "Instagram accounts", value: String(o.channels.instagram) },
           { label: `Change · ${k.followers.deltaDays ?? o.period.days}d`, value: fmtSigned(k.followers.delta) },
           { label: "Channels with full-period history", value: `${k.followers.channelsWithHistory} of ${o.channels.total}` },
+          { label: "Followers on those channels", value: fmtCompact(k.followers.followersWithHistory) },
+          { label: "Growth % measured over", value: `${k.followers.channelsWithHistory} channels — not all ${o.channels.total}` },
         ],
         href: "/accounts/growth",
       },
@@ -202,21 +215,29 @@ export default function OverviewPage() {
     return { series, dates: o.traction.series.map((p) => p.date) };
   }, [o]);
 
+  // ⚠️ Searches o.allChannels — EVERY live channel. It used to union topChannels
+  // with revenueByChannel, i.e. 8 of 419 on prod, so any channel outside those two
+  // ranked lists (including the largest in the estate) answered "No results".
+  // Channels only, by owner's instruction — no posts, no trending.
   const search = useMemo(() => {
     if (!o) return [];
-    const term = q.trim().toLowerCase();
-    const channels = [...o.topChannels, ...o.revenueByChannel].filter((c, i, arr) => arr.findIndex((x) => x.id === c.id) === i);
-    const groups = [
-      { label: "Channels", items: channels.filter((c) => !term || c.name.toLowerCase().includes(term) || (c.username ?? "").toLowerCase().includes(term)).map((c) => ({ title: c.name, meta: `${fmtCompact(c.followers)} followers`, open: () => openChannel(c) })) },
-      { label: "Latest posts", items: o.latestPosts.filter((p) => !term || p.title.toLowerCase().includes(term) || p.channel.name.toLowerCase().includes(term)).map((p) => ({ title: p.title, meta: p.channel.name, open: () => openPost(p) })) },
-      { label: "Trending", items: o.trending.filter((t) => !term || t.name.toLowerCase().includes(term)).map((t) => ({ title: t.name, meta: `${t.count} posts`, open: () => openTrending(t) })) },
-    ];
-    return groups.map((g) => ({ ...g, items: g.items.slice(0, term ? 5 : 2) })).filter((g) => g.items.length);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // A pasted "@handle" must match: the UI renders "@name" but usernames are stored bare.
+    const term = q.trim().toLowerCase().replace(/^@+/, "");
+    const rows = term
+      ? o.allChannels.filter((c) => c.name.toLowerCase().includes(term) || (c.username ?? "").toLowerCase().includes(term))
+      : o.allChannels;
+    return rows.slice(0, SEARCH_LIMIT);
+  }, [o, q]);
+  const searchTotal = useMemo(() => {
+    if (!o) return 0;
+    const term = q.trim().toLowerCase().replace(/^@+/, "");
+    if (!term) return o.allChannels.length;
+    return o.allChannels.filter((c) => c.name.toLowerCase().includes(term) || (c.username ?? "").toLowerCase().includes(term)).length;
   }, [o, q]);
 
   // ── drawers ──
-  function openChannel(c: ChannelRow) {
+  // Accepts a ranked row or a slim directory row — it reads no avatar either way.
+  function openChannel(c: ChannelDirectoryRow) {
     const url = metaUrl(c);
     setDrawer({
       kind: c.platform === "facebook" ? "Facebook Page" : "Instagram account", accent: T.gold, title: c.name,
@@ -234,7 +255,7 @@ export default function OverviewPage() {
   function openPost(p: OverviewPayload["latestPosts"][number]) {
     setDrawer({
       kind: p.mediaProductType === "REELS" ? "Reel" : "Post", accent: T.pink, title: p.title, sub: `${p.channel.name} · ${fmtRelative(p.postedAt, now)}`,
-      hero: { label: "Views", value: fmtCompact(p.views), note: p.views == null ? "Meta has not published a view count for this post yet" : "since publish" },
+      hero: { label: "Views", value: fmtCompact(p.views), note: p.views == null ? "not measured yet — per-post insights are collected in rotation" : "cumulative since publish, as last measured" },
       rows: [
         { label: "Likes", value: fmtCompact(p.likes) },
         { label: "Comments", value: fmtCompact(p.comments) },
@@ -287,6 +308,12 @@ export default function OverviewPage() {
               </a>
             );
           })}
+          <span className="ov-nav-sep" aria-hidden="true" />
+          <a href={BACK_TO_PORTAL.href} className="ov-nav-item ov-nav-back" title="Return to the classic portal">
+            <span className="ov-nav-edge" />
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={BACK_TO_PORTAL.icon} /></svg>
+            <span className="ov-nav-label">{BACK_TO_PORTAL.label}</span>
+          </a>
         </nav>
         <div className="ov-landscape" aria-hidden="true">
           <svg viewBox="0 0 195 250" preserveAspectRatio="xMidYMax slice">
@@ -321,26 +348,49 @@ export default function OverviewPage() {
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={T.sub} strokeWidth="2" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
               <input
                 value={q}
-                onChange={(e) => { setQ(e.target.value); setPop("search"); }}
-                onFocus={() => setPop("search")}
-                placeholder="Search channels, posts, trending…"
-                aria-label="Search"
+                onChange={(e) => { setQ(e.target.value); setSearchIdx(0); setPop("search"); }}
+                onFocus={() => { setSearchIdx(0); setPop("search"); }}
+                onKeyDown={(e) => {
+                  if (!search.length) return;
+                  if (e.key === "ArrowDown") { e.preventDefault(); setSearchIdx((i) => (i + 1) % search.length); }
+                  else if (e.key === "ArrowUp") { e.preventDefault(); setSearchIdx((i) => (i - 1 + search.length) % search.length); }
+                  else if (e.key === "Enter") { e.preventDefault(); const c = search[Math.min(searchIdx, search.length - 1)]; if (c) { openChannel(c); setQ(""); } }
+                }}
+                placeholder="Search channels…"
+                aria-label="Search channels"
+                aria-autocomplete="list"
+                aria-expanded={pop === "search"}
+                role="combobox"
+                aria-controls="ov-search-results"
               />
             </div>
-            {pop === "search" && o && (
-              <div role="listbox" className="ov-menu ov-search-menu">
-                {search.map((g) => (
-                  <div key={g.label}>
-                    <div className="ov-menu-group">{g.label}</div>
-                    {g.items.map((r) => (
-                      <MenuItem key={r.title} onClick={() => { r.open(); setQ(""); }} meta={r.meta}>{r.title}</MenuItem>
-                    ))}
-                  </div>
-                ))}
-                {search.length === 0 && (
-                  <div className="ov-noresults">No results for “{q}”.<br /><span>Try a channel name, caption or topic.</span></div>
+            {pop === "search" && (
+              <div id="ov-search-results" role="listbox" aria-label="Channels" className="ov-menu ov-search-menu">
+                {!o && <div className="ov-noresults">Loading channels…</div>}
+                {o && search.length > 0 && (
+                  <>
+                    <div className="ov-menu-group">{q.trim() ? `${searchTotal} channel${searchTotal === 1 ? "" : "s"}` : `All ${searchTotal} channels`}</div>
+                    <div className="ov-search-list" ref={searchListRef}>
+                      {/* key on id, not name — 137 of 419 channels share a name with another */}
+                      {search.map((c, i) => (
+                        <MenuItem
+                          key={c.id}
+                          active={i === searchIdx}
+                          onClick={() => { openChannel(c); setQ(""); }}
+                          meta={`${fmtCompact(c.followers)} followers`}
+                        >
+                          {c.name}{c.username ? ` · @${c.username}` : ""}
+                        </MenuItem>
+                      ))}
+                    </div>
+                    {searchTotal > search.length && (
+                      <div className="ov-menu-note">Showing the first {search.length} of {searchTotal} — keep typing to narrow.</div>
+                    )}
+                  </>
                 )}
-                <a className="ov-menu-foot" href="/reports/link-search">Search every submitted post in Link Search →</a>
+                {o && search.length === 0 && (
+                  <div className="ov-noresults">No channel matches “{q}”.<br /><span>Search by channel name or @handle.</span></div>
+                )}
               </div>
             )}
           </div>
@@ -409,11 +459,8 @@ export default function OverviewPage() {
           <div className="ov-script">Real Creators.<br />Real Impact.</div>
         </div>
 
-        {!isAdmin && (
-          <StateMessage tone="empty" title="The Overview is for administrators" body="This command centre needs an Admin role. Your dashboard has everything your role can see." cta="Open dashboard" onCta={() => router.push("/dashboard")} />
-        )}
-        {isAdmin && !o && isLoading && <Skeleton />}
-        {isAdmin && !o && error && (
+        {!o && isLoading && <Skeleton />}
+        {!o && error && (
           <StateMessage tone="error" title="Couldn’t load the overview" body={String((error as Error).message ?? "The analytics service returned an error.")} cta="Retry" onCta={() => mutate()} />
         )}
         {o && empty && (
@@ -455,7 +502,15 @@ export default function OverviewPage() {
                   <span className="ov-big">{fmtCompact(o.audience.series[o.audience.series.length - 1]?.followers ?? null)}</span>
                   <span className="ov-headline-side">
                     <Trend pct={o.audience.delta != null && o.audience.series[0]?.followers ? (o.audience.delta / o.audience.series[0].followers) * 100 : null} />
-                    <span>{o.audience.delta != null ? `${fmtSigned(o.audience.delta)} followers · ${o.audience.channelsUsed} of ${o.channels.total} channels` : `${o.audience.channelsUsed} of ${o.channels.total} channels with history`}</span>
+                    {/* ⚠️ This headline is the follower sum of ONLY the channels with history
+                        reaching back across the selected window — 148 channels at 7d but 43 at
+                        30d on prod, so the number legitimately drops 61% when you widen the
+                        period. It must never read as an estate-wide total, hence the coverage
+                        sits in the same sentence rather than in small grey type beside it. */}
+                    <span>
+                      {o.audience.delta != null ? `${fmtSigned(o.audience.delta)} followers · ` : ""}
+                      across {o.audience.channelsUsed} of {o.channels.total} channels with {audDays}-day history
+                    </span>
                   </span>
                   {audDays !== 30 && <button type="button" className="ov-reset" onClick={() => { setAudDays(30); remember("ov-aud", 30); }}>Local period · Reset</button>}
                 </div>
@@ -560,6 +615,7 @@ export default function OverviewPage() {
                         <span className="ov-feed-body">
                           <span className="ov-feed-t">{p.title}</span>
                           <span className="ov-feed-m">
+                            <span className="ov-plat" title={p.channel.platform === "facebook" ? "Facebook" : "Instagram"}>{p.channel.platform === "facebook" ? "FB" : "IG"}</span>
                             <span className="ov-feed-h">{p.channel.username ? `@${p.channel.username}` : p.channel.name}</span>
                             {fresh && <span className="ov-new">NEW</span>}
                             <span className="ov-metric"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke={T.blue} strokeWidth="2.2" aria-hidden="true"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z" /><circle cx="12" cy="12" r="3" /></svg>{fmtCompact(p.views)}</span>
@@ -575,7 +631,9 @@ export default function OverviewPage() {
 
               <Card title="Revenue by Channel" right={<ViewAll href="/accounts/growth" />}>
                 <div className="ov-table">
-                  <div className="ov-th ov-cols-rev"><span /><span>Channel</span><span /><span style={{ textAlign: "right" }}>Revenue</span></div>
+                  {/* The period lives on the column, not in the card header: a third
+                      child there is the only shrinkable item's undoing (see .ov-card-h). */}
+                  <div className="ov-th ov-cols-rev"><span /><span>Channel</span><span /><span style={{ textAlign: "right" }}>Revenue · {o.period.days}d</span></div>
                   {o.revenueByChannel.length === 0 && <Empty>No Page reported earnings for this period.</Empty>}
                   {o.revenueByChannel.map((c) => (
                     <button key={c.id} type="button" className="ov-tr ov-cols-rev ov-tr-grow" onClick={() => openChannel(c)}>
@@ -607,9 +665,9 @@ export default function OverviewPage() {
               <Card title="Content Traction" right={<Chip>Last 7 Days</Chip>}>
                 <div className="ov-trac-tiles">
                   {o.traction.tiles.map((t, i) => (
-                    <div key={t.key} className={i ? "has-divider" : ""}>
+                    <div key={t.key} className={i ? "has-divider" : ""} title={t.key === "shares" ? "Instagram only — Facebook publishes no page-level share count" : undefined}>
                       <div className="ov-trac-v">{fmtCompact(t.value)}</div>
-                      <div className="ov-trac-l" style={{ color: SERIES4[i] }}>{t.label}</div>
+                      <div className="ov-trac-l" style={{ color: SERIES4[i] }}>{t.label}{t.key === "shares" ? " · IG" : ""}</div>
                       <div className="ov-trac-t"><Trend pct={t.pct} /></div>
                     </div>
                   ))}
@@ -645,7 +703,9 @@ export default function OverviewPage() {
                         <span className="ov-rank-sm">{i + 1}</span>
                         <span className="ov-trend-tile" style={{ background: `linear-gradient(135deg,${CATEGORICAL[i % CATEGORICAL.length]},${CATEGORICAL[(i + 3) % CATEGORICAL.length]})` }} />
                         <span className="ov-trend-name">{t.name}</span>
-                        <span className="ov-trend-count">{fmtCompact(t.count, 0)} posts</span>
+                        {/* NOT fmtCompact: with digits=0 every count in 1,000–1,999 collapsed
+                            to "1K", flattening the very ranking this widget exists to show. */}
+                        <span className="ov-trend-count">{t.count.toLocaleString("en-IN")} posts</span>
                         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={up ? T.teal : T.red} strokeWidth="2.4" aria-hidden="true"><path d={up ? "M12 19V5M5 12l7-7 7 7" : "M12 5v14M5 12l7 7 7-7"} /></svg>
                       </button>
                     );
@@ -658,7 +718,7 @@ export default function OverviewPage() {
 
         {o && (
           <div className="ov-foot">
-            Live platform data · {o.channels.total} connected channels · data through {o.period.dataThroughDay ? fmtDay(o.period.dataThroughDay) : "—"} · refreshed {fmtRelative(o.generatedAt, now)}
+            Meta channel data complete through {o.period.dataThroughDay ? fmtDayYear(o.period.dataThroughDay) : "—"} · {o.channels.total} connected channels · page refreshed {fmtRelative(o.generatedAt, now)}
           </div>
         )}
 

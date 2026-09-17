@@ -14,6 +14,9 @@ export interface PeriodMetric {
   spark: number[];
 }
 
+/** The search/drawer subset — no pictureUrl (a ~397-char Meta CDN URL nothing here renders). */
+export type ChannelDirectoryRow = Omit<ChannelRow, "pictureUrl">;
+
 export interface ChannelRow {
   id: string;
   metaId: string;
@@ -36,8 +39,12 @@ export interface OverviewPayload {
   generatedAt: string;
   period: { days: number; start: string; end: string; prevStart: string; prevEnd: string; dataThroughDay: string | null };
   channels: { total: number; facebook: number; instagram: number };
+  /** Every live channel, followers-desc — what the header search searches. */
+  allChannels: ChannelDirectoryRow[];
   kpis: {
-    followers: { value: number; delta: number | null; deltaDays: number | null; channelsWithHistory: number; spark: number[] };
+    followers: { value: number; delta: number | null; deltaDays: number | null; channelsWithHistory: number;
+      /** Follower stock of just those channels — the like-for-like denominator. */
+      followersWithHistory: number | null; spark: number[] };
     views: PeriodMetric;
     engagements: PeriodMetric;
     revenue: PeriodMetric;

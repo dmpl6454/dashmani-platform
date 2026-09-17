@@ -8,9 +8,9 @@ interface Envelope {
   data: OverviewPayload;
 }
 
-export function useOverview(days: OverviewPeriod, aud: WidgetPeriod, rev: WidgetPeriod) {
+export function useOverview(days: OverviewPeriod, aud: WidgetPeriod, rev: WidgetPeriod, enabled = true) {
   return useSWR<Envelope>(
-    `/admin/overview?days=${days}&aud=${aud}&rev=${rev}`,
+    enabled ? `/admin/overview?days=${days}&aud=${aud}&rev=${rev}` : null,
     (url: string) => apiFetch<Envelope>(url),
     {
       // The server memoises for 60 s; polling on the same cadence gives the

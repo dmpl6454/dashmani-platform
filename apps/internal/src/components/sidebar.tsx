@@ -14,6 +14,7 @@ import { useState, useEffect } from "react";
 
 /* ── Primary nav — grouped, always visible ── */
 const primaryNav = [
+  { href: "/overview",      label: "Overview",         icon: LayoutGrid,      group: null },
   { href: "/dashboard",     label: "Dashboard",        icon: LayoutDashboard, group: null },
   { href: "/employees",     label: "Employees",        icon: Users,           group: "People",    badgeKey: "pendingEmployees" as const },
   { href: "/teams",         label: "Teams",            icon: Building2,       group: null },

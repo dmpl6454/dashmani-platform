@@ -1,0 +1,303 @@
+/* Overview command centre — page-scoped styles (every selector is ov-prefixed).
+   Composition, tokens and densities follow the Claude Design prototype:
+   195px rail, 16px gutters, 95/203/211/175 row rhythm at the 1280×853 frame. */
+
+.ov-root{position:fixed;inset:0;z-index:1;display:grid;grid-template-columns:195px minmax(0,1fr);background:#060D14;color:#F4F6F8;font-family:Inter,system-ui,sans-serif;font-size:12px;font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased}
+.ov-root *{box-sizing:border-box}
+.ov-root button{font-family:inherit}
+.ov-root a{color:inherit;text-decoration:none}
+
+/* ── sidebar ── */
+.ov-side{background:#050A10;border-right:1px solid #182C39;display:flex;flex-direction:column;position:relative;overflow:hidden;min-height:0}
+.ov-brand{height:118px;display:flex;align-items:center;justify-content:center;padding-top:6px;flex-shrink:0}
+.ov-logo{width:86px;height:86px;border-radius:50%;object-fit:contain;display:block}
+.ov-nav{display:flex;flex-direction:column;gap:4px;padding:0 8px}
+.ov-nav-item{position:relative;display:flex;align-items:center;gap:12px;height:40px;padding:0 14px;border-radius:6px;border:1px solid transparent;color:#A7B3C2;font-size:12.5px;font-weight:500;transition:background .15s,color .15s;outline:none;white-space:nowrap}
+.ov-nav-item:hover{background:rgba(233,189,98,.08);color:#F4F6F8}
+.ov-nav-item:focus-visible{box-shadow:0 0 0 2px rgba(233,189,98,.6)}
+.ov-nav-item.is-current{background:rgba(233,189,98,.14);border-color:rgba(233,189,98,.55);color:#F4F6F8;font-weight:600}
+.ov-nav-edge{position:absolute;left:-1px;top:8px;bottom:8px;width:2px;border-radius:2px;background:transparent}
+.ov-nav-item.is-current .ov-nav-edge{background:#E9BD62}
+.ov-landscape{margin-top:auto;position:relative;height:250px;flex-shrink:0}
+.ov-landscape svg{position:absolute;inset:0;width:100%;height:100%}
+.ov-landscape-fade{position:absolute;inset:0;background:linear-gradient(180deg,#050A10 0%,rgba(5,10,16,.35) 45%,rgba(5,10,16,.55) 100%);pointer-events:none}
+.ov-landscape-copy{position:absolute;left:24px;right:16px;bottom:60px;font-size:13px;letter-spacing:.24em;line-height:1.55;color:#E6EAF0;font-weight:500;text-transform:uppercase;pointer-events:none}
+.ov-landscape-rule{position:absolute;left:24px;bottom:44px;width:28px;height:2px;background:#E9BD62}
+
+/* ── main column ── */
+.ov-main{display:flex;flex-direction:column;min-width:0;min-height:0;padding:0 16px 16px;position:relative;overflow:auto}
+.ov-top{height:50px;display:flex;align-items:center;gap:12px;flex-shrink:0}
+.ov-burger{display:none}
+.ov-search-wrap{position:relative;width:368px;max-width:100%}
+.ov-search{display:flex;align-items:center;gap:8px;height:30px;padding:0 12px;border-radius:15px;background:#182630;border:1px solid #223543}
+.ov-search input{flex:1;min-width:0;background:transparent;border:0;outline:none;color:#F4F6F8;font-size:12px;font-family:inherit}
+.ov-search input::placeholder{color:#738395}
+.ov-search-menu{width:368px;left:0;right:auto}
+.ov-top-right{margin-left:auto;display:flex;align-items:center;gap:8px}
+.ov-rel{position:relative}
+.ov-chip{display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 8px;border-radius:5px;background:#0B1720;border:1px solid #223543;color:#A7B3C2;font-size:10.5px;white-space:nowrap;cursor:default}
+button.ov-chip{cursor:pointer}
+button.ov-chip:hover,.ov-chip.is-active{color:#F4F6F8;border-color:#33506A}
+.ov-top .ov-chip{height:30px;padding:0 12px;border-radius:6px;font-size:12px;color:#F4F6F8;gap:8px}
+.ov-icon-btn{width:34px;height:30px;border-radius:6px;border:1px solid transparent;background:transparent;color:#A7B3C2;cursor:pointer;position:relative;display:flex;align-items:center;justify-content:center}
+.ov-icon-btn:hover{background:#0B1720;border-color:#223543}
+.ov-badge{position:absolute;top:6px;right:8px;width:6px;height:6px;border-radius:50%;background:#E52D47;box-shadow:0 0 6px #E52D47}
+.ov-profile{display:flex;align-items:center;gap:10px;height:34px;padding:0 6px;border-radius:6px;border:1px solid transparent;background:transparent;color:#F4F6F8;cursor:pointer;text-align:left}
+.ov-profile:hover{background:#0B1720;border-color:#223543}
+.ov-profile-av{width:30px;height:30px;border-radius:50%;background:#182630;border:1px solid #2A4658;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600}
+.ov-profile-t{display:flex;flex-direction:column;line-height:1.2}
+.ov-profile-t span:first-child{font-size:12px;font-weight:600}
+.ov-profile-t span:last-child{font-size:10.5px;color:#A7B3C2}
+
+/* ── menus & popovers ── */
+.ov-menu{position:absolute;top:calc(100% + 6px);background:#0B1A26;border:1px solid #244358;border-radius:8px;padding:6px;z-index:30;box-shadow:0 12px 30px rgba(0,0,0,.5)}
+.ov-menu-group{padding:6px 8px 2px;font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:#738395}
+.ov-menu-item{display:flex;justify-content:space-between;align-items:center;gap:10px;width:100%;padding:7px 8px;border:0;border-radius:5px;background:transparent;color:#F4F6F8;font-size:12px;cursor:pointer;text-align:left}
+.ov-menu-item:hover{background:#182630}
+.ov-menu-item.is-active{background:rgba(233,189,98,.15)}
+.ov-menu-item>span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ov-menu-meta{color:#738395;font-size:11px;white-space:nowrap}
+.ov-menu-note{margin-top:4px;padding:6px 8px;border-top:1px solid #182C39;font-size:10.5px;color:#738395;line-height:1.4}
+.ov-menu-row{display:flex;justify-content:space-between;padding:6px 8px;font-size:11px;color:#A7B3C2}
+.ov-menu-row b{color:#F4F6F8;font-weight:600}
+.ov-menu-foot{display:block;padding:8px;margin-top:4px;border-top:1px solid #182C39;font-size:11px;color:#E9BD62}
+.ov-menu-foot:hover{color:#F4D58C}
+.ov-noresults{padding:14px 8px;text-align:center;color:#A7B3C2;font-size:12px;line-height:1.4}
+.ov-noresults span{color:#738395;font-size:11px}
+
+/* ── greeting ── */
+.ov-greet{height:68px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
+.ov-greet h1{margin:0;font-size:22px;font-weight:600;letter-spacing:-.01em}
+.ov-greet p{margin:3px 0 0;font-size:12.5px;color:#A7B3C2}
+.ov-script{font-family:Caveat,cursive;font-size:22px;line-height:1;color:#E9BD62;text-align:right;transform:rotate(-7deg);margin-right:8px;text-shadow:0 0 14px rgba(233,189,98,.35)}
+
+/* ── grid ── */
+.ov-grid{flex:1;min-height:640px;display:grid;grid-template-rows:95px minmax(0,203fr) minmax(0,211fr) minmax(0,175fr);gap:9px 0;position:relative;transition:opacity .2s}
+.ov-row{display:grid;gap:9px;min-height:0}
+.ov-row-kpi{grid-template-columns:repeat(5,minmax(0,1fr))}
+.ov-row-analytics{grid-template-columns:35fr 34fr 31fr}
+.ov-row-ops{grid-template-columns:28fr 25fr 24fr 23fr}
+.ov-row-bottom{grid-template-columns:23fr 30fr 24fr 23fr}
+
+/* ── cards ── */
+.ov-card{background:#08131C;border:1px solid #182C39;border-radius:6px;padding:10px 12px;display:flex;flex-direction:column;min-width:0;min-height:0;overflow:hidden;position:relative}
+.ov-card-h{display:flex;justify-content:space-between;align-items:center;gap:8px;min-height:22px}
+.ov-card-h h2{margin:0;font-size:13px;font-weight:600;display:flex;align-items:center;gap:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ov-viewall{border:0;background:transparent;color:#A7B3C2;font-size:10.5px;cursor:pointer;padding:0;white-space:nowrap}
+.ov-viewall:hover{color:#F4F6F8}
+
+/* ── KPI strip ── */
+.ov-kpi{background:#08131C;border:1px solid #182C39;border-radius:6px;padding:9px 12px;display:flex;gap:10px;text-align:left;color:#F4F6F8;cursor:pointer;position:relative;overflow:hidden;transition:border-color .15s;min-width:0}
+.ov-kpi:hover{border-color:#2A4658}
+.ov-kpi:focus-visible{outline:2px solid rgba(233,189,98,.6);outline-offset:-2px}
+.ov-kpi-tile{width:40px;height:40px;border-radius:9px;flex-shrink:0;display:flex;align-items:center;justify-content:center}
+.ov-kpi-body{display:flex;flex-direction:column;min-width:0;flex:1;padding-right:68px}
+.ov-kpi-l{font-size:11.5px;color:#A7B3C2;white-space:nowrap}
+.ov-kpi-v{font-size:22px;font-weight:600;line-height:1.15;margin-top:2px;letter-spacing:-.01em}
+.ov-kpi-t{font-size:12px;margin-top:2px}
+.ov-kpi-n{font-size:9.5px;color:#738395;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.ov-spark{position:absolute;right:10px;bottom:26px;width:64px;height:24px}
+
+/* ── trend chips ── */
+.ov-trend{font-weight:600;white-space:nowrap}
+.ov-trend.is-up{color:#00D7A0}
+.ov-trend.is-down{color:#E52D47}
+.ov-trend.is-none{color:#738395;font-weight:500}
+.ov-trend.is-muted{font-size:10.5px}
+
+/* ── headline block above charts ── */
+.ov-headline{display:flex;align-items:flex-end;gap:10px;margin-top:4px;min-width:0}
+.ov-big{font-size:24px;font-weight:600;line-height:1;letter-spacing:-.01em;white-space:nowrap}
+.ov-headline-side{display:flex;flex-direction:column;line-height:1.15;font-size:13px;min-width:0}
+.ov-headline-side>span:last-child{font-size:9.5px;color:#738395;font-weight:400;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ov-reset{margin-left:auto;height:18px;padding:0 6px;border-radius:4px;border:1px solid #3A3A22;background:rgba(233,189,98,.08);color:#E9BD62;font-size:9.5px;cursor:pointer;white-space:nowrap}
+
+/* ── charts ── */
+.ov-chart{flex:1;display:grid;grid-template-columns:36px minmax(0,1fr);grid-template-rows:minmax(0,1fr) 14px;margin-top:8px;min-height:0}
+.ov-chart-idx{grid-template-columns:26px minmax(0,1fr) 72px;column-gap:6px;margin-top:6px}
+.ov-yaxis{display:flex;flex-direction:column;justify-content:space-between;font-size:9px;color:#738395;text-align:right;padding-right:6px;line-height:1;white-space:nowrap}
+.ov-yaxis-sm{font-size:8.5px;padding-right:0}
+.ov-plot{position:relative;min-height:0}
+.ov-plot>svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
+.ov-plot rect{cursor:crosshair}
+.ov-dot{position:absolute;width:5px;height:5px;margin:-2.5px;border-radius:50%;pointer-events:none}
+.ov-tip{position:absolute;translate:0 -100%;margin-top:-10px;background:#0B1A26;border:1px solid #2A4658;border-radius:5px;padding:4px 8px;text-align:center;pointer-events:none;white-space:nowrap;box-shadow:0 6px 16px rgba(0,0,0,.5);z-index:2}
+.ov-tip.is-below{translate:0 0;margin-top:10px}
+.ov-tip-v{font-size:12px;font-weight:600}
+.ov-tip-d{font-size:9.5px;color:#A7B3C2}
+.ov-xaxis{display:flex;justify-content:space-between;font-size:9px;color:#738395;padding-top:4px;white-space:nowrap;grid-column:2}
+.ov-legend{display:flex;flex-direction:column;justify-content:center;gap:4px;font-size:10px;color:#A7B3C2}
+.ov-legend span{display:flex;align-items:center;gap:6px;white-space:nowrap}
+.ov-legend i,.ov-legend-list i,.ov-map-legend i{display:inline-block;width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.ov-idx-note{font-size:7.5px;color:#738395;white-space:nowrap;padding-top:4px}
+.ov-bars{position:absolute;inset:0;display:flex;align-items:flex-end;gap:2px;padding:0 2px}
+.ov-bar{flex:1;height:100%;display:flex;align-items:flex-end;border:0;background:transparent;padding:0;cursor:pointer;outline:none;min-width:0}
+.ov-bar>span{display:block;width:100%;border-radius:2px 2px 0 0;transition:height .2s}
+.ov-chart-empty{flex:1;display:flex;align-items:center;justify-content:center;color:#738395;font-size:11px;text-align:center;padding:12px;line-height:1.4}
+
+/* ── donut + legend ── */
+.ov-donut-row{flex:1;display:grid;grid-template-columns:auto minmax(0,1fr);gap:12px;align-items:center;margin-top:2px;min-height:0}
+.ov-donut-row-sm{margin-top:4px}
+.ov-donut{position:relative;flex-shrink:0}
+.ov-donut-c{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;pointer-events:none;text-align:center}
+.ov-donut-v{font-weight:600;line-height:1}
+.ov-donut-l{font-size:9.5px;color:#A7B3C2;margin-top:3px}
+.ov-legend-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px;min-width:0}
+.ov-legend-list-sm{gap:5px}
+.ov-legend-list button,.ov-legend-static{display:flex;align-items:center;gap:8px;width:100%;padding:1px 6px;border:0;border-radius:4px;background:transparent;color:#F4F6F8;font-size:10.5px;white-space:nowrap;cursor:pointer;text-align:left;font-family:inherit;min-width:0}
+.ov-legend-static{cursor:default;font-size:11px;padding:2px 0}
+.ov-legend-list button:hover{background:#0F1E2A}
+.ov-legend-list button.is-active{background:rgba(255,255,255,.06)}
+.ov-legend-list span{flex:1;color:#D4DBE4;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.ov-legend-list b{font-weight:600}
+
+/* ── tables ── */
+.ov-table{flex:1;overflow:hidden;margin-top:6px;display:flex;flex-direction:column;min-height:0}
+.ov-th{display:grid;gap:5px;font-size:10px;white-space:nowrap;color:#738395;padding:0 4px 4px;border-bottom:1px solid #182C39}
+.ov-tr{display:grid;gap:5px;align-items:center;width:100%;height:27px;white-space:nowrap;padding:0 4px;border:0;border-radius:4px;background:transparent;color:#F4F6F8;font-size:11px;cursor:pointer;text-align:left;min-width:0}
+.ov-tr:hover{background:#0F1E2A}
+.ov-tr-grow{flex:1;height:auto;min-height:24px}
+.ov-cols-ch{grid-template-columns:12px minmax(0,2.4fr) .75fr .75fr .75fr 42px}
+.ov-cols-ch>span:nth-child(n+3){font-size:10.5px}
+.ov-cols-rev{grid-template-columns:22px minmax(0,1fr) 26px 50px}
+.ov-plat{display:inline-flex;align-items:center;justify-content:center;height:16px;padding:0 4px;border-radius:3px;background:#182630;border:1px solid #223543;color:#A7B3C2;font-size:8.5px;font-weight:700;letter-spacing:.04em}
+.ov-rank{color:#E9BD62;font-weight:600}
+.ov-cell-name{display:flex;align-items:center;gap:6px;min-width:0}
+.ov-cell-name>span:last-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ov-avatar{border-radius:50%;flex-shrink:0;object-fit:cover;display:inline-flex;align-items:center;justify-content:center;font-weight:700;color:#fff}
+.ov-strong{font-weight:600}
+.ov-sub{color:#A7B3C2}
+.ov-ellipsis{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* ── map ── */
+.ov-map-row{flex:1;display:grid;grid-template-columns:minmax(0,1fr) 96px;gap:8px;margin-top:4px;min-height:0}
+.ov-map{position:relative;min-height:0;height:100%}
+.ov-map svg{display:block;width:100%;height:100%}
+.ov-map-tip{position:absolute;transform:translate(-50%,-115%);background:#0B1A26;border:1px solid #244358;color:#F4F6F8;font-size:10px;padding:4px 7px;border-radius:4px;white-space:nowrap;pointer-events:none;line-height:1.35;z-index:2}
+.ov-map-tip b{color:#E9BD62}
+.ov-cities{display:flex;flex-direction:column;font-size:10.5px;min-height:0;min-width:0}
+.ov-cities-h{color:#A7B3C2;margin-bottom:5px}
+.ov-city{display:flex;justify-content:space-between;gap:6px;padding:1px 0;color:#D4DBE4}
+.ov-city span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ov-city span:last-child{color:#A7B3C2}
+.ov-map-legend{margin-top:auto;display:flex;flex-direction:column;gap:2px;font-size:9.5px;color:#A7B3C2;white-space:nowrap}
+.ov-map-legend span{display:flex;align-items:center;gap:6px}
+.ov-map-note{font-size:8.5px;color:#4E5F70;margin-top:4px;line-height:1.3}
+@media (prefers-reduced-motion:no-preference){.ov-pulse{animation:ovPulse 2.4s ease-in-out infinite}}
+@keyframes ovPulse{0%,100%{opacity:.35}50%{opacity:.9}}
+
+/* ── feed ── */
+.ov-feed{flex:1;display:flex;flex-direction:column;justify-content:space-between;margin-top:4px;min-height:0}
+.ov-feed-row{display:flex;gap:8px;align-items:center;width:100%;padding:1px 3px;border:0;border-radius:4px;background:transparent;color:#F4F6F8;cursor:pointer;text-align:left;min-width:0}
+.ov-feed-row:hover{background:#0F1E2A}
+.ov-thumb{width:40px;height:24px;border-radius:3px;flex-shrink:0;position:relative;overflow:hidden;display:block}
+.ov-thumb>span{position:absolute;inset:0;background:linear-gradient(180deg,rgba(255,255,255,.08),rgba(0,0,0,.35))}
+.ov-feed-body{flex:1;min-width:0;display:flex;flex-direction:column;line-height:1.2}
+.ov-feed-t{font-size:10.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ov-feed-m{display:flex;align-items:center;gap:8px;font-size:9.5px;color:#A7B3C2;margin-top:1px;white-space:nowrap;overflow:hidden}
+.ov-feed-h{color:#738395;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.ov-metric{display:inline-flex;align-items:center;gap:3px;flex-shrink:0}
+.ov-feed-when{font-size:9.5px;color:#738395;flex-shrink:0}
+.ov-new,.ov-live-pill{font-size:7.5px;font-weight:700;padding:1px 4px;border-radius:2px;background:#E52D47;color:#fff;letter-spacing:.06em;flex-shrink:0}
+.ov-live-pill{font-size:8.5px;padding:2px 6px;border-radius:3px;display:inline-flex;align-items:center;gap:4px}
+.ov-live-pill span{width:4px;height:4px;border-radius:50%;background:#fff}
+.ov-live{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:#00D7A0;font-weight:500}
+.ov-live span{width:6px;height:6px;border-radius:50%;background:#00D7A0;animation:ovBeat 2s infinite}
+@keyframes ovBeat{0%,100%{box-shadow:0 0 0 0 rgba(0,215,160,.55)}50%{box-shadow:0 0 0 5px rgba(0,215,160,0)}}
+
+/* ── activity ── */
+.ov-activity{flex:1;display:flex;flex-direction:column;justify-content:space-around;margin-top:4px;min-height:0}
+.ov-act{display:flex;gap:8px;align-items:flex-start;width:100%;padding:2px 3px;border:0;border-radius:4px;background:transparent;color:#F4F6F8;cursor:pointer;text-align:left;min-width:0}
+.ov-act:hover{background:#0F1E2A}
+.ov-act-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;margin-top:4px}
+.ov-act-t{flex:1;min-width:0;font-size:10.5px;line-height:1.35;overflow:hidden;text-overflow:ellipsis}
+.ov-act-when{font-size:9.5px;color:#738395;flex-shrink:0;padding-top:1px}
+
+/* ── traction ── */
+.ov-trac-tiles{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));margin-top:4px;white-space:nowrap}
+.ov-trac-tiles>div{line-height:1.15;min-width:0;overflow:hidden}
+.ov-trac-tiles>div.has-divider{border-left:1px solid #182C39;padding-left:10px}
+.ov-trac-v{font-size:14px;font-weight:600}
+.ov-trac-l{font-size:10px}
+.ov-trac-t{font-size:10.5px;margin-top:1px}
+
+/* ── tabs ── */
+.ov-tabs{display:flex;gap:2px;margin-top:6px;padding:2px;border-radius:14px;background:#0B1720;border:1px solid #182C39}
+.ov-tabs button{flex:1;height:20px;border:0;border-radius:11px;background:transparent;color:#A7B3C2;font-size:10.5px;font-weight:500;cursor:pointer;transition:background .15s}
+.ov-tabs button:hover{color:#F4F6F8}
+.ov-tabs button.is-sel{background:#238BFF;color:#fff}
+
+/* ── trending ── */
+.ov-trending{flex:1;display:flex;flex-direction:column;justify-content:space-around;margin-top:4px;min-height:0}
+.ov-trend-row{display:flex;gap:8px;align-items:center;width:100%;padding:2px 3px;border:0;border-radius:4px;background:transparent;color:#F4F6F8;cursor:pointer;text-align:left;min-width:0}
+.ov-trend-row:hover{background:#0F1E2A}
+.ov-rank-sm{width:12px;font-size:11px;font-weight:600}
+.ov-trend-tile{width:18px;height:18px;border-radius:4px;flex-shrink:0}
+.ov-trend-name{flex:1;min-width:0;font-size:11px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ov-trend-count{font-size:10px;color:#A7B3C2;flex-shrink:0}
+
+/* ── states ── */
+.ov-empty{flex:1;display:flex;align-items:center;justify-content:center;text-align:center;color:#738395;font-size:11px;padding:10px;line-height:1.4}
+.ov-shimmer{background:#0B1720;border-radius:6px;animation:ovShimmer 1.4s infinite}
+@keyframes ovShimmer{0%{opacity:.35}50%{opacity:.7}100%{opacity:.35}}
+.ov-state{flex:1;display:flex;align-items:center;justify-content:center;min-height:320px}
+.ov-state-box{width:320px;max-width:100%;background:#08131C;border:1px solid #244358;border-radius:8px;padding:20px;text-align:center;box-shadow:0 20px 50px rgba(0,0,0,.6)}
+.ov-state-icon{width:36px;height:36px;border-radius:50%;margin:0 auto 10px;display:flex;align-items:center;justify-content:center}
+.ov-state-t{font-size:14px;font-weight:600}
+.ov-state-b{font-size:11.5px;color:#A7B3C2;margin-top:4px;line-height:1.4}
+.ov-cta{margin-top:12px;height:28px;padding:0 14px;border-radius:5px;border:1px solid #E9BD62;background:rgba(233,189,98,.12);color:#E9BD62;font-size:11.5px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;justify-content:center}
+.ov-cta:hover{background:rgba(233,189,98,.22)}
+.ov-cta-block{display:flex;width:100%;margin-top:14px}
+.ov-foot{position:absolute;right:20px;bottom:3px;font-size:8.5px;color:#4E5F70;letter-spacing:.04em;white-space:nowrap}
+
+/* ── detail drawer ── */
+.ov-drawer-bg{position:fixed;inset:0;z-index:40;background:rgba(3,7,11,.45)}
+.ov-drawer{position:fixed;top:0;right:0;bottom:0;width:360px;max-width:100vw;z-index:41;background:#08131C;border-left:1px solid #244358;box-shadow:-20px 0 50px rgba(0,0,0,.55);display:flex;flex-direction:column;padding:18px 18px 14px;overflow:auto;color:#F4F6F8;font-family:Inter,system-ui,sans-serif;font-size:12px}
+.ov-drawer-h{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
+.ov-drawer-k{font-size:10.5px;text-transform:uppercase;letter-spacing:.08em;font-weight:600}
+.ov-drawer h2{margin:4px 0 0;font-size:18px;font-weight:600;line-height:1.2;overflow-wrap:anywhere}
+.ov-drawer-s{font-size:11.5px;color:#A7B3C2;margin-top:3px}
+.ov-x{width:28px;height:28px;border-radius:6px;border:1px solid #223543;background:#0B1720;color:#A7B3C2;cursor:pointer;flex-shrink:0;font-size:14px;line-height:1}
+.ov-x:hover{color:#F4F6F8}
+.ov-drawer-hero{margin-top:14px;padding:12px;border-radius:6px;background:#0B1720;border:1px solid #182C39}
+.ov-drawer-hl{font-size:11px;color:#A7B3C2}
+.ov-drawer-hv{font-size:26px;font-weight:600;margin-top:2px;letter-spacing:-.01em}
+.ov-drawer-ht{font-size:11.5px;font-weight:600;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.ov-drawer-ht span{color:#738395;font-weight:400}
+.ov-drawer-rows{margin:12px 0 0;display:flex;flex-direction:column}
+.ov-drawer-rows>div{display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid #182C39;font-size:12px}
+.ov-drawer-rows dt{color:#A7B3C2;margin:0}
+.ov-drawer-rows dd{margin:0;font-weight:600;text-align:right;overflow-wrap:anywhere}
+.ov-drawer-foot{margin-top:auto;padding-top:14px;font-size:9.5px;color:#4E5F70}
+
+/* ── responsive: collapse the rail, reflow to two columns, then one ── */
+@media (max-width:1279px){
+  .ov-root{grid-template-columns:64px minmax(0,1fr)}
+  .ov-nav-label,.ov-landscape-copy,.ov-landscape-rule,.ov-date-label{display:none}
+  .ov-nav-item{justify-content:center;padding:0}
+  .ov-logo{width:44px;height:44px}
+  .ov-brand{height:70px}
+  .ov-landscape{height:120px}
+  .ov-grid{display:flex;flex-direction:column;min-height:0;flex:none}
+  .ov-row{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .ov-row-kpi{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .ov-row>*{min-height:230px}
+  .ov-row-kpi>*{min-height:0}
+  .ov-foot{position:static;text-align:right;padding-top:10px}
+}
+@media (max-width:767px){
+  .ov-root{grid-template-columns:minmax(0,1fr)}
+  .ov-side{position:fixed;top:0;bottom:0;left:0;width:195px;z-index:50;transform:translateX(-100%);transition:transform .2s}
+  .ov-root.is-menu .ov-side{transform:none}
+  .ov-nav-label,.ov-landscape-copy{display:block}
+  .ov-nav-item{justify-content:flex-start;padding:0 14px}
+  .ov-logo{width:86px;height:86px}
+  .ov-brand{height:118px}
+  .ov-burger{display:flex;align-items:center;justify-content:center;width:34px;height:30px;border-radius:6px;border:1px solid #223543;background:#0B1720;color:#F4F6F8;cursor:pointer;flex-shrink:0}
+  .ov-row,.ov-row-kpi{grid-template-columns:minmax(0,1fr)}
+  .ov-profile-t,.ov-script{display:none}
+  .ov-search-wrap{width:auto;flex:1}
+  .ov-search-menu{width:100%}
+  .ov-greet{height:auto;padding:6px 0 10px}
+}
+@media (prefers-reduced-motion:reduce){.ov-root *,.ov-drawer{animation:none!important;transition:none!important}}

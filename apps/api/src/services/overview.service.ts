@@ -16,7 +16,7 @@
  */
 
 import { prisma } from "@dashmani/db";
-import { resolveDuplicateAssetIds } from "./meta-oauth/meta-channels.service";
+import { resolveDuplicateAssetIds, resolveContestedOwners } from "./meta-oauth/meta-channels.service";
 import {
   getRangeTotals,
   getRangeFollowerDeltas,
@@ -85,12 +85,12 @@ export interface OverviewPayload {
   };
   revenue: {
     days: number;
-    series: Array<{ date: string; cents: number; cumulativeCents: number }>;
+    series: Array<{ date: string; cents: number | null; cumulativeCents: number }>;
     totalCents: number | null;
     previousCents: number | null;
     trend: Trend | null;
   };
-  viewsByChannel: Array<{ id: string | null; name: string; views: number; share: number }>;
+  viewsByChannel: Array<{ id: string | null; name: string; platform: "facebook" | "instagram" | null; views: number; share: number }>;
   topChannels: ChannelRow[];
   revenueByChannel: ChannelRow[];
   cities: {
@@ -382,6 +382,11 @@ async function buildOverview(params: OverviewParams): Promise<OverviewPayload> {
   ).filter((a) => !duplicateIds.has(a.id));
   const liveIds = assets.map((a) => a.id);
   const linked = assets.map((a) => a.socialAccountId).filter((x): x is string => x !== null);
+  // A channel row claimed by two or more live Pages carries a follower history
+  // that switches between them (the documented saw-tooth). Account Growth keeps
+  // such rows out of every snapshot-derived figure, and so does this series.
+  const contested = await resolveContestedOwners();
+  const historyAccounts = linked.filter((id) => !contested.has(id));
   const audStart = shiftDay(end, -(params.audDays - 1));
 
   // Empty `in` lists are valid Prisma filters that simply match nothing, so every
@@ -401,7 +406,7 @@ async function buildOverview(params: OverviewParams): Promise<OverviewPayload> {
       prisma.accountGrowthSnapshot.findMany({
         where: {
           source: "api",
-          accountId: { in: linked },
+          accountId: { in: historyAccounts },
           date: { gte: new Date(`${shiftDay(audStart, -3)}T00:00:00Z`), lte: new Date(`${end}T00:00:00Z`) },
         },
         select: { accountId: true, date: true, followerCount: true },
@@ -537,9 +542,11 @@ async function buildOverview(params: OverviewParams): Promise<OverviewPayload> {
   let revReported = 0;
   const revSeries = revDaysList.map((day) => {
     const d = dailyByDate.get(day);
+    // null = no Page has published that day's earnings yet (Meta lags a closed
+    // day); the UI says so instead of showing a "+$0.00" that reads as no income.
     const cents = d ? num(d._sum.earningsCents) : null;
     if (cents != null) { cumulative += cents; revReported++; }
-    return { date: day, cents: cents ?? 0, cumulativeCents: cumulative };
+    return { date: day, cents, cumulativeCents: cumulative };
   });
   let revPrevTotal = 0;
   let revPrevDaysCovered = 0;
@@ -584,9 +591,9 @@ async function buildOverview(params: OverviewParams): Promise<OverviewPayload> {
     .slice(0, 5)
     .map(channelRow);
   const viewsByChannel = topWithOthers(
-    byViews.map((a) => ({ id: a.id, name: a.name, value: perAsset.get(a.id)!.views ?? 0 })),
+    byViews.map((a) => ({ id: a.id, name: a.name, platform: platformOf(a.kind), value: perAsset.get(a.id)!.views ?? 0 })),
     7,
-  ).map((r) => ({ id: r.item?.id ?? null, name: r.name, views: r.value, share: r.share }));
+  ).map((r) => ({ id: r.item?.id ?? null, name: r.name, platform: r.item?.platform ?? null, views: r.value, share: r.share }));
 
   // ── Cities (Instagram follower audience) ──
   const cityTotal = cityRows.reduce((s, r) => s + (r._sum.value ?? 0), 0);

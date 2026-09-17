@@ -159,10 +159,15 @@ export default function OverviewPage() {
     ];
   }, [o]);
 
-  const catSlices = useMemo(
-    () => (o?.viewsByChannel ?? []).map((v, i) => ({ label: v.name, value: v.views, color: CATEGORICAL[i % CATEGORICAL.length], share: v.share, id: v.id })),
-    [o],
-  );
+  const catSlices = useMemo(() => {
+    const rows = o?.viewsByChannel ?? [];
+    // A Page and an Instagram account often share a name; tag the platform only when they collide.
+    const dupes = new Set(rows.map((r) => r.name).filter((n, i, arr) => arr.indexOf(n) !== i));
+    return rows.map((v, i) => ({
+      label: dupes.has(v.name) && v.platform ? `${v.name} · ${v.platform === "facebook" ? "FB" : "IG"}` : v.name,
+      value: v.views, color: CATEGORICAL[i % CATEGORICAL.length], share: v.share, id: v.id,
+    }));
+  }, [o]);
   const demoSlices = useMemo(() => {
     if (!o) return [];
     // Five rows fit the card: fold the oldest age bands into "45+" and the

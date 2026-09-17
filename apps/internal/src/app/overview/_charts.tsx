@@ -153,7 +153,7 @@ export function CumulativeBars({
   formatValue,
   unitLabel,
 }: {
-  points: Array<{ date: string; cumulative: number; daily: number }>;
+  points: Array<{ date: string; cumulative: number; daily: number | null }>;
   formatValue: (v: number) => string;
   unitLabel: string;
 }) {
@@ -202,7 +202,7 @@ export function CumulativeBars({
         {active != null && (
           <div className={`ov-tip ${100 - (points[active].cumulative / max) * 100 < 34 ? "is-below" : ""}`} style={{ ...tipPos, top: `${100 - (points[active].cumulative / max) * 100}%` }}>
             <div className="ov-tip-v">{formatValue(points[active].cumulative)}</div>
-            <div className="ov-tip-d">{fmtDay(points[active].date)} · cumulative · +{formatValue(points[active].daily)}</div>
+            <div className="ov-tip-d">{fmtDay(points[active].date)} · cumulative · {points[active].daily == null ? "day not yet reported" : `+${formatValue(points[active].daily)}`}</div>
           </div>
         )}
       </div>

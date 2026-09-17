@@ -52,12 +52,12 @@ export interface OverviewPayload {
   };
   revenue: {
     days: number;
-    series: Array<{ date: string; cents: number; cumulativeCents: number }>;
+    series: Array<{ date: string; cents: number | null; cumulativeCents: number }>;
     totalCents: number | null;
     previousCents: number | null;
     trend: Trend | null;
   };
-  viewsByChannel: Array<{ id: string | null; name: string; views: number; share: number }>;
+  viewsByChannel: Array<{ id: string | null; name: string; platform: "facebook" | "instagram" | null; views: number; share: number }>;
   topChannels: ChannelRow[];
   revenueByChannel: ChannelRow[];
   cities: {

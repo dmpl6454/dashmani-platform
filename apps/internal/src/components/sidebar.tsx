@@ -14,7 +14,6 @@ import { useState, useEffect } from "react";
 
 /* ── Primary nav — grouped, always visible ── */
 const primaryNav = [
-  { href: "/overview",      label: "Overview",         icon: LayoutGrid,      group: null },
   { href: "/dashboard",     label: "Dashboard",        icon: LayoutDashboard, group: null },
   { href: "/employees",     label: "Employees",        icon: Users,           group: "People",    badgeKey: "pendingEmployees" as const },
   { href: "/teams",         label: "Teams",            icon: Building2,       group: null },
@@ -153,6 +152,31 @@ export function Sidebar() {
             <p className="text-[10px] text-ink-4 leading-tight">Management Portal</p>
           </div>
         )}
+      </div>
+
+      {/* ── Command Centre ──
+          ⚠️ Deliberately NOT one of the primaryNav rows. /overview is a separate plane
+          with its own dark chrome and its own data; the classic portal's default
+          landing page is /dashboard for EVERY user (owner decision, 2026-09-17). This
+          button is the single way in, styled apart so it never reads as a sibling of
+          the portal's sections. */}
+      <div className="px-2 pt-3">
+        <Link
+          href="/overview"
+          title="Overview — company command centre"
+          className={cn(
+            "w-full flex items-center rounded-xl h-10 transition-all border",
+            (collapsed && !mobile) ? "justify-center" : "gap-3 px-3",
+            pathname === "/overview"
+              ? "bg-ink text-white border-ink"
+              : "bg-ink/[0.04] text-ink border-ink/10 hover:bg-ink/[0.08]",
+          )}
+        >
+          <LayoutGrid className="h-[18px] w-[18px] shrink-0" strokeWidth={1.8} />
+          {(!collapsed || mobile) && (
+            <span className="min-w-0 flex-1 text-[13px] font-semibold truncate">Overview</span>
+          )}
+        </Link>
       </div>
 
       {/* Nav scroll area */}

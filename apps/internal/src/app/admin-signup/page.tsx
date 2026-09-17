@@ -2,7 +2,6 @@
 import { useState, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { apiFetch } from "@/lib/api";
-import { landingPathFor } from "@/lib/landing";
 import { Eye, EyeOff, Lock, User } from "lucide-react";
 
 function AdminSignupForm() {
@@ -61,7 +60,7 @@ function AdminSignupForm() {
       localStorage.setItem("accessToken", res.data.accessToken);
       localStorage.setItem("refreshToken", res.data.refreshToken);
       localStorage.setItem("user", JSON.stringify(res.data.user));
-      router.push(landingPathFor(res.data.user));
+      router.push("/dashboard");
     } catch (err: any) {
       setError(err.message || "Signup failed");
       setShake(true);

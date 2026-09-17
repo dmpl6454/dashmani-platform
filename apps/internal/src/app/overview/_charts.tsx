@@ -391,12 +391,26 @@ export function IndiaMap({ cities }: { cities: MapCity[] }) {
           );
         })}
       </svg>
-      {hover && (
-        <div className="ov-map-tip" style={{ left: `${(hover.x / W) * 100}%`, top: `${(hover.y / H) * 100}%` }}>
-          <b>{hover.c.name}</b>{hover.c.state ? `, ${hover.c.state}` : ""}<br />
-          {hover.c.share.toFixed(1)}% of audience · {fmtCompact(hover.c.value)} followers
-        </div>
-      )}
+      {hover && (() => {
+        // ⚠️ A fixed translate(-50%,-115%) pushed the tooltip off the card for any city
+        // near an edge — western cities lost their first characters ("…abad, Uttar
+        // Pradesh") behind the card's left border. Anchor the tooltip's own edge to the
+        // dot instead of its centre once the dot is near a side, and drop it below the
+        // dot when it is near the top.
+        const xPct = (hover.x / W) * 100;
+        const yPct = (hover.y / H) * 100;
+        const tx = xPct < 24 ? "-8%" : xPct > 76 ? "-92%" : "-50%";
+        const below = yPct < 22;
+        return (
+          <div
+            className="ov-map-tip"
+            style={{ left: `${xPct}%`, top: `${yPct}%`, transform: `translate(${tx}, ${below ? "18%" : "-115%"})` }}
+          >
+            <b>{hover.c.name}</b>{hover.c.state ? `, ${hover.c.state}` : ""}<br />
+            {hover.c.share.toFixed(1)}% of audience · {fmtCompact(hover.c.value)} followers
+          </div>
+        );
+      })()}
     </div>
   );
 }

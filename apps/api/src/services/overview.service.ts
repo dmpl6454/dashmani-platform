@@ -28,14 +28,36 @@ import {
 import * as analyticsService from "./analytics.service";
 
 export const OVERVIEW_PERIODS = [7, 14, 30, 90] as const;
-export const WIDGET_PERIODS = [7, 30, 90] as const;
+/**
+ * Per-card periods offer the SAME set as the global one, plus 0.
+ *
+ * ⚠️ PRECEDENCE, and it is the whole contract: the global period is the default for
+ * every card, and a card's own period OVERRIDES it FOR THAT CARD ONLY. `0` means
+ * "follow the global", which is the default for all of them — so moving the global
+ * dropdown moves every card that has not been explicitly detached, and a detached
+ * card keeps its own window until it is reset. The payload echoes both the effective
+ * period and whether it was overridden, so the UI labels each card from the SERVER's
+ * answer and can never show one period's number under another period's label.
+ */
+export const WIDGET_PERIODS = [0, 7, 14, 30, 90] as const;
 export type OverviewPeriod = (typeof OVERVIEW_PERIODS)[number];
 export type WidgetPeriod = (typeof WIDGET_PERIODS)[number];
 
 export interface OverviewParams {
   days: OverviewPeriod;
+  /** 0 = follow `days`. Same for the three below. */
   audDays: WidgetPeriod;
   revDays: WidgetPeriod;
+  vbcDays: WidgetPeriod;
+  tracDays: WidgetPeriod;
+}
+
+/** The effective window of one card, and whether it was detached from the global. */
+export interface WidgetPeriodInfo {
+  days: number;
+  overridden: boolean;
+  start: string;
+  end: string;
 }
 
 export interface Trend {
@@ -63,12 +85,16 @@ export interface OverviewPayload {
     dataThroughDay: string | null;
   };
   channels: { total: number; facebook: number; instagram: number };
+  /** Every live channel, followers-desc — the header search searches this, not the ranked lists. */
+  allChannels: ChannelDirectoryRow[];
   kpis: {
     followers: {
       value: number;
       delta: number | null;
       deltaDays: number | null;
       channelsWithHistory: number;
+      /** Follower stock of just those channels — the like-for-like denominator. */
+      followersWithHistory: number | null;
       spark: number[];
     };
     views: PeriodMetric;
@@ -91,6 +117,10 @@ export interface OverviewPayload {
     trend: Trend | null;
   };
   viewsByChannel: Array<{ id: string | null; name: string; platform: "facebook" | "instagram" | null; views: number; share: number }>;
+  /** Every channel over the Views-by-Channel window, for the expanded view. */
+  viewsByChannelAll: Array<{ id: string; name: string; platform: "facebook" | "instagram"; views: number; share: number }>;
+  /** Effective period of that card (equals period.days unless detached). */
+  viewsByChannelDays: number;
   topChannels: ChannelRow[];
   revenueByChannel: ChannelRow[];
   cities: {
@@ -112,6 +142,8 @@ export interface OverviewPayload {
   }>;
   activity: Array<{ kind: ActivityKind; text: string; at: string }>;
   traction: {
+    /** Effective period of this card (equals period.days unless detached). */
+    days: number;
     start: string;
     end: string;
     prevStart: string;
@@ -150,6 +182,18 @@ export interface ChannelRow {
   followerDelta: number | null;
   followerDeltaDays: number | null;
 }
+
+/**
+ * A directory row: everything the header search and the channel drawer read, and
+ * nothing else.
+ *
+ * ⚠️ pictureUrl is deliberately OMITTED. It is a Meta CDN URL averaging 397 characters
+ * (max 417) and populated on 102 of the 419 live prod channels — carrying it for all
+ * 419 would add ~40 KB to every payload for a field neither the search list nor the
+ * drawer renders. The ranked lists (topChannels / revenueByChannel) still carry it,
+ * because those DO show avatars.
+ */
+export type ChannelDirectoryRow = Omit<ChannelRow, "pictureUrl">;
 
 export type CityTier = "high" | "growing" | "emerging";
 export type ActivityKind = "post" | "report" | "user" | "leave" | "announcement";
@@ -343,11 +387,20 @@ export function invalidateOverviewCache(): void {
   _cache.clear();
 }
 
+/** Five independent periods mean many possible keys; keep the map from growing. */
+const MAX_CACHE_ENTRIES = 60;
+
 export function getOverview(params: OverviewParams): Promise<OverviewPayload> {
-  const key = `${params.days}:${params.audDays}:${params.revDays}`;
+  // ⚠️ EVERY period must be in the key. Leave one out and a card detached to 90 days
+  // would be served another request's 7-day payload under a 90-day label.
+  const key = `${params.days}:${params.audDays}:${params.revDays}:${params.vbcDays}:${params.tracDays}`;
   const now = Date.now();
   const hit = _cache.get(key);
   if (hit && hit.expires > now) return hit.promise;
+  if (_cache.size >= MAX_CACHE_ENTRIES) {
+    for (const [k, v] of _cache) if (v.expires <= now) _cache.delete(k);
+    if (_cache.size >= MAX_CACHE_ENTRIES) _cache.delete(_cache.keys().next().value as string);
+  }
   const promise = buildOverview(params).catch((e) => {
     _cache.delete(key);
     throw e;
@@ -358,16 +411,51 @@ export function getOverview(params: OverviewParams): Promise<OverviewPayload> {
 
 // ───────────────────────────── builder ─────────────────────────────
 
+// How many trailing days to inspect when deciding which day is genuinely complete.
+const END_PROBE_DAYS = 8;
+// A day counts as closed once this share of the estate's best-covered day reported it.
+const END_COVERAGE_SHARE = 0.8;
+
+/**
+ * The newest day that is complete for the whole estate.
+ *
+ * Instagram closes at UTC midnight and Facebook at Pacific midnight, and the sweep
+ * that writes `meta_asset_daily` runs every ~3h — so the newest day present in the
+ * table is routinely a partial one holding only the platform that closed first.
+ * Counting reporting assets per day and taking the newest day within
+ * END_COVERAGE_SHARE of the best-covered day in the probe window picks the last day
+ * BOTH platforms closed, without hard-coding either boundary.
+ *
+ * Fails open to the clock's yesterday (the previous behaviour) when there is nothing
+ * to measure — a brand-new estate must still render.
+ */
+async function resolveWindowEnd(liveIds: string[], todayIso: string): Promise<string> {
+  const fallback = shiftDay(todayIso, -1);
+  if (liveIds.length === 0) return fallback;
+  const rows = await prisma.metaAssetDaily.groupBy({
+    by: ["date"],
+    where: {
+      assetId: { in: liveIds },
+      date: {
+        gte: new Date(`${shiftDay(todayIso, -END_PROBE_DAYS)}T00:00:00Z`),
+        lte: new Date(`${fallback}T00:00:00Z`),
+      },
+    },
+    _count: { _all: true },
+    orderBy: { date: "desc" },
+  });
+  if (rows.length === 0) return fallback;
+  const best = Math.max(...rows.map((r) => r._count._all));
+  if (best === 0) return fallback;
+  // rows are newest-first, so the first adequately-covered day is the newest one.
+  for (const r of rows) {
+    if (r._count._all >= best * END_COVERAGE_SHARE) return isoDay(r.date);
+  }
+  return fallback;
+}
+
 async function buildOverview(params: OverviewParams): Promise<OverviewPayload> {
   const todayIso = isoDay(new Date());
-  // Stored daily rows are CLOSED days; the current day is never complete.
-  const end = shiftDay(todayIso, -1);
-  const start = shiftDay(end, -(params.days - 1));
-  const prev = previousRange(start, end);
-  const longest = Math.max(params.days, params.audDays, params.revDays, 7);
-  const seriesStart = shiftDay(end, -(longest - 1));
-  // Daily series also need the equal-length baseline for traction/revenue trends.
-  const seriesFetchStart = shiftDay(seriesStart, -longest);
 
   const duplicateIds = await resolveDuplicateAssetIds();
   const assets = (
@@ -387,7 +475,30 @@ async function buildOverview(params: OverviewParams): Promise<OverviewPayload> {
   // such rows out of every snapshot-derived figure, and so does this series.
   const contested = await resolveContestedOwners();
   const historyAccounts = linked.filter((id) => !contested.has(id));
-  const audStart = shiftDay(end, -(params.audDays - 1));
+
+  // ⚠️ The window END comes from the DATA, never from the clock. Facebook's day
+  // closes at PACIFIC midnight (07:00Z) and the channel sweep is 3-hourly, so for a
+  // large part of every UTC day "yesterday" holds Instagram rows only — and Facebook
+  // is ~76% of the estate, ~85% of views and 100% of revenue. Ending on the clock's
+  // yesterday therefore compared a 6-Facebook-day window against a complete
+  // 7-Facebook-day baseline: measured on prod 2026-09-17 that rendered Views ↓14.2%
+  // where the truth was ↓5.1%, and Revenue +3.1% where the truth was +22.8%.
+  // resolveWindowEnd() picks the newest day both platforms have actually closed, so
+  // every window below is complete-by-construction — the same principle as Account
+  // Growth's dataThroughDay, which reports the EARLIEST covered boundary.
+  const end = await resolveWindowEnd(liveIds, todayIso);
+  const start = shiftDay(end, -(params.days - 1));
+  const prev = previousRange(start, end);
+  // ⚠️ THE PRECEDENCE RULE, in one line each: 0 means follow the global period.
+  const audN = params.audDays || params.days;
+  const revN = params.revDays || params.days;
+  const vbcN = params.vbcDays || params.days;
+  const tracN = params.tracDays || params.days;
+  const longest = Math.max(params.days, audN, revN, vbcN, tracN, 7);
+  const seriesStart = shiftDay(end, -(longest - 1));
+  // Daily series also need the equal-length baseline for traction/revenue trends.
+  const seriesFetchStart = shiftDay(seriesStart, -longest);
+  const audStart = shiftDay(end, -(audN - 1));
 
   // Empty `in` lists are valid Prisma filters that simply match nothing, so every
   // query below runs unconditionally and keeps one concrete result type.
@@ -417,9 +528,14 @@ async function buildOverview(params: OverviewParams): Promise<OverviewPayload> {
       demographicGroup(liveIds, "gender"),
       demographicGroup(liveIds, "country"),
       prisma.metaPost.findMany({
-        where: { assetId: { in: liveIds }, postedAt: { not: null } },
+        // ⚠️ `lte: now` matters: a scheduled or clock-skewed post with a FUTURE
+        // postedAt would sort to the top of a desc ordering and sit at the head of
+        // "Latest" until its own timestamp passed.
+        where: { assetId: { in: liveIds }, postedAt: { not: null, lte: new Date() } },
         orderBy: { postedAt: "desc" },
-        take: 6,
+        // The card renders 5; the rest exist so the expanded view is real data rather
+        // than a re-render of the same five rows.
+        take: 24,
         select: {
           id: true, caption: true, permalink: true, postedAt: true, views: true, likes: true, comments: true,
           mediaProductType: true,
@@ -452,7 +568,7 @@ async function buildOverview(params: OverviewParams): Promise<OverviewPayload> {
         where: { content: { status: "ok", createdAt: { gte: new Date(Date.now() - 7 * 86_400_000) } } },
         _count: { _all: true },
         orderBy: { _count: { entityId: "desc" } },
-        take: 6,
+        take: 20,
       }),
       analyticsService.getOverviewStats().catch(() => null),
     ]);
@@ -460,7 +576,16 @@ async function buildOverview(params: OverviewParams): Promise<OverviewPayload> {
   // ── KPI period metrics from stored daily rows (like-for-like with the baseline) ──
   const cur = { views: [] as Array<number | null>, engagements: [] as Array<number | null>, earnings: [] as Array<number | null> };
   const prv = { views: 0, engagements: 0, earnings: 0, coveredDays: 0, assets: 0, earningsAssets: 0, viewsAssets: 0, engAssets: 0 };
-  let dataThroughDay: string | null = null;
+  // ⚠️ NOT the max of per-asset latestDay — that advertised Instagram's UTC-midnight
+  // freshness across an estate that is ~76% Facebook, overstating how current the page
+  // was. `end` is resolved from estate-wide coverage, so it IS the day every figure
+  // here is complete through. Same rule as Account Growth: report the EARLIEST
+  // boundary, never the newest.
+  // ⚠️ NULL when the estate has reported NOTHING in the probe window. `end` is always a
+  // date (resolveWindowEnd falls open to the clock's yesterday so an empty estate still
+  // renders), but claiming "data complete through <yesterday>" for an estate with no
+  // rows at all would be a fabricated assurance — the footer must show an em-dash.
+  const dataThroughDay: string | null = daily.length > 0 ? end : null;
   const perAsset = new Map<string, AssetRangeTotals>();
   for (const a of assets) {
     const t = rangeNow.get(a.id);
@@ -469,7 +594,6 @@ async function buildOverview(params: OverviewParams): Promise<OverviewPayload> {
       cur.views.push(t.views);
       cur.engagements.push(t.engagements);
       cur.earnings.push(t.earningsCents);
-      if (t.latestDay && (dataThroughDay === null || t.latestDay > dataThroughDay)) dataThroughDay = t.latestDay;
     }
     const p = rangePrev.get(a.id);
     if (p) {
@@ -519,14 +643,18 @@ async function buildOverview(params: OverviewParams): Promise<OverviewPayload> {
   let followers = 0;
   let followerDelta = 0;
   let channelsWithHistory = 0;
+  // ⚠️ The follower stock of ONLY the channels that carry a full-period delta. The
+  // growth chip must divide like by like: dividing a 146-channel delta by the
+  // 419-channel stock understated real growth by 45% on prod (0.393% vs 0.711%).
+  let followersWithHistory = 0;
   for (const a of assets) {
     followers += a.followerCount ?? 0;
     const fd = followerDeltas.get(a.id);
-    if (fd && fd.days >= span - 1) { followerDelta += fd.delta; channelsWithHistory++; }
+    if (fd && fd.days >= span - 1) { followerDelta += fd.delta; channelsWithHistory++; followersWithHistory += a.followerCount ?? 0; }
   }
 
   // ── Audience growth line ──
-  const audDaysList = dayRange(shiftDay(end, -(params.audDays - 1)), end);
+  const audDaysList = dayRange(shiftDay(end, -(audN - 1)), end);
   const filled = forwardFillFollowerSeries(
     snapshots.map((s) => ({ accountId: s.accountId, date: isoDay(s.date), followerCount: s.followerCount })),
     audDaysList,
@@ -536,7 +664,7 @@ async function buildOverview(params: OverviewParams): Promise<OverviewPayload> {
   const audLast = filled.series[filled.series.length - 1]?.followers ?? null;
 
   // ── Revenue chart (cumulative over its own period, with a like-for-like baseline) ──
-  const revDaysList = dayRange(shiftDay(end, -(params.revDays - 1)), end);
+  const revDaysList = dayRange(shiftDay(end, -(revN - 1)), end);
   const revPrevRange = previousRange(revDaysList[0], end);
   let cumulative = 0;
   let revReported = 0;
@@ -585,15 +713,44 @@ async function buildOverview(params: OverviewParams): Promise<OverviewPayload> {
     .filter((a) => (perAsset.get(a.id)?.views ?? null) != null)
     .sort((a, b) => (perAsset.get(b.id)!.views ?? 0) - (perAsset.get(a.id)!.views ?? 0));
   const topChannels = byViews.slice(0, 5).map(channelRow);
+  // ⚠️ The FULL directory, for the header search. Before this the search unioned
+  // topChannels with revenueByChannel — 8 of 419 channels on prod — so searching for
+  // anything outside those two truncated lists (including the estate's largest
+  // channel) answered "No results". Sorted by followers so an empty query shows the
+  // channels a reader is most likely to want. Carries the same ChannelRow the drawer
+  // needs, so a searched channel opens with real figures rather than dashes.
+  const allChannels: ChannelDirectoryRow[] = [...assets]
+    .sort((a, b) => (b.followerCount ?? 0) - (a.followerCount ?? 0))
+    .map((a) => {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { pictureUrl, ...rest } = channelRow(a);
+      return rest;
+    });
   const revenueByChannel = assets
     .filter((a) => (perAsset.get(a.id)?.earningsCents ?? 0) > 0)
     .sort((a, b) => (perAsset.get(b.id)!.earningsCents ?? 0) - (perAsset.get(a.id)!.earningsCents ?? 0))
     .slice(0, 5)
     .map(channelRow);
+  // ⚠️ Views by Channel may be detached from the global period, in which case it needs
+  // per-asset totals over ITS OWN window — reusing `perAsset` would put the global
+  // window's numbers under this card's label. getRangeTotals has its own 60s cache, so
+  // the extra call is cheap and is skipped entirely when the card follows the global.
+  const vbcStart = shiftDay(end, -(vbcN - 1));
+  const rangeVbc = vbcN === params.days ? rangeNow : await getRangeTotals(vbcStart, end);
+  const vbcRanked = assets
+    .filter((a) => (rangeVbc.get(a.id)?.views ?? null) != null)
+    .sort((a, b) => (rangeVbc.get(b.id)!.views ?? 0) - (rangeVbc.get(a.id)!.views ?? 0));
   const viewsByChannel = topWithOthers(
-    byViews.map((a) => ({ id: a.id, name: a.name, platform: platformOf(a.kind), value: perAsset.get(a.id)!.views ?? 0 })),
+    vbcRanked.map((a) => ({ id: a.id, name: a.name, platform: platformOf(a.kind), value: rangeVbc.get(a.id)!.views ?? 0 })),
     7,
   ).map((r) => ({ id: r.item?.id ?? null, name: r.name, platform: r.item?.platform ?? null, views: r.value, share: r.share }));
+  const vbcTotal = vbcRanked.reduce((t, a) => t + (rangeVbc.get(a.id)!.views ?? 0), 0);
+  /** Every channel over the Views-by-Channel window — the expanded view reads this. */
+  const viewsByChannelAll = vbcRanked.map((a) => ({
+    id: a.id, name: a.name, platform: platformOf(a.kind),
+    views: rangeVbc.get(a.id)!.views ?? 0,
+    share: vbcTotal > 0 ? ((rangeVbc.get(a.id)!.views ?? 0) / vbcTotal) * 100 : 0,
+  }));
 
   // ── Cities (Instagram follower audience) ──
   const cityTotal = cityRows.reduce((s, r) => s + (r._sum.value ?? 0), 0);
@@ -610,7 +767,7 @@ async function buildOverview(params: OverviewParams): Promise<OverviewPayload> {
   const indiaTotal = [...merged.values()].reduce((s, c) => s + c.value, 0);
   const cityItems = [...merged.values()]
     .sort((a, b) => b.value - a.value)
-    .slice(0, 15)
+    .slice(0, 40)
     .map((c, i) => ({ ...c, share: cityTotal > 0 ? (c.value / cityTotal) * 100 : 0, tier: tierForRank(i + 1) }));
 
   // ── Demographics ──
@@ -630,7 +787,6 @@ async function buildOverview(params: OverviewParams): Promise<OverviewPayload> {
   // ── Latest posts + activity ──
   const latestPosts = posts
     .filter((p) => p.postedAt !== null)
-    .slice(0, 5)
     .map((p) => ({
       id: p.id,
       title: firstLine(p.caption),
@@ -666,8 +822,11 @@ async function buildOverview(params: OverviewParams): Promise<OverviewPayload> {
     .slice(0, 6);
 
   // ── Content traction: last 7 closed days vs the 7 before, all flows ──
-  const tracDays = dayRange(shiftDay(end, -6), end);
-  const tracPrev = previousRange(tracDays[0], end);
+  // Reads the `daily` groupBy already in memory, so a detached period costs no query —
+  // `longest` above is what guarantees `daily` reaches back far enough for it and its
+  // equal-length baseline.
+  const tracDayList = dayRange(shiftDay(end, -(tracN - 1)), end);
+  const tracPrev = previousRange(tracDayList[0], end);
   const flow = (day: string, key: TractionKey): number | null => {
     const d = dailyByDate.get(day);
     if (!d) return null;
@@ -680,11 +839,11 @@ async function buildOverview(params: OverviewParams): Promise<OverviewPayload> {
     { key: "shares", label: "Shares" },
   ];
   const tiles = tracKeys.map(({ key, label }) => {
-    const curVals = sumNullable(tracDays.map((d) => flow(d, key)));
+    const curVals = sumNullable(tracDayList.map((d) => flow(d, key)));
     const prevVals = sumNullable(dayRange(tracPrev.start, tracPrev.end).map((d) => flow(d, key)));
     return { key, label, value: curVals.sum, previous: prevVals.sum, pct: pctChange(curVals.sum, prevVals.sum) };
   });
-  const tracSeries = tracDays.map((day) => ({
+  const tracSeries = tracDayList.map((day) => ({
     date: day,
     views: flow(day, "views"),
     engagements: flow(day, "engagements"),
@@ -717,8 +876,7 @@ async function buildOverview(params: OverviewParams): Promise<OverviewPayload> {
       const e = entityById.get(t.entityId);
       return e ? { id: e.id, name: e.canonicalName, type: e.type, count: t._count._all, previousCount: prevCount.get(t.entityId) ?? 0 } : null;
     })
-    .filter((x): x is NonNullable<typeof x> => x !== null)
-    .slice(0, 5);
+    .filter((x): x is NonNullable<typeof x> => x !== null);
 
   const p = pendingStats as Record<string, unknown> | null;
   const n = (k: string) => (p && typeof p[k] === "number" ? (p[k] as number) : 0);
@@ -726,6 +884,7 @@ async function buildOverview(params: OverviewParams): Promise<OverviewPayload> {
   return {
     generatedAt: new Date().toISOString(),
     period: { days: params.days, start, end, prevStart: prev.start, prevEnd: prev.end, dataThroughDay },
+    allChannels,
     channels: {
       total: assets.length,
       facebook: assets.filter((a) => a.kind === "FACEBOOK_PAGE").length,
@@ -737,6 +896,7 @@ async function buildOverview(params: OverviewParams): Promise<OverviewPayload> {
         delta: channelsWithHistory > 0 ? followerDelta : null,
         deltaDays: channelsWithHistory > 0 ? span : null,
         channelsWithHistory,
+        followersWithHistory: channelsWithHistory > 0 ? followersWithHistory : null,
         spark: filled.series.slice(-params.days).map((s) => s.followers),
       },
       views: metric(viewsSum, prv.views, prv.viewsAssets, spark((d) => num(d._sum.views))),
@@ -745,14 +905,16 @@ async function buildOverview(params: OverviewParams): Promise<OverviewPayload> {
       reach: { value: reachContributing > 0 ? reachSum : null, window: reachWindow, contributing: reachContributing },
     },
     audience: {
-      days: params.audDays,
+      days: audN,
       series: filled.series,
       channelsUsed: filled.used,
       channelsLinked: linkedCount,
       delta: audFirst != null && audLast != null && filled.used > 0 ? audLast - audFirst : null,
     },
-    revenue: { days: params.revDays, series: revSeries, totalCents: revTotal, previousCents: revPrevious, trend: revTrend },
+    revenue: { days: revN, series: revSeries, totalCents: revTotal, previousCents: revPrevious, trend: revTrend },
     viewsByChannel,
+    viewsByChannelAll,
+    viewsByChannelDays: vbcN,
     topChannels,
     revenueByChannel,
     cities: {
@@ -763,7 +925,7 @@ async function buildOverview(params: OverviewParams): Promise<OverviewPayload> {
     },
     latestPosts,
     activity,
-    traction: { start: tracDays[0], end, prevStart: tracPrev.start, prevEnd: tracPrev.end, tiles, series: tracSeries },
+    traction: { days: tracN, start: tracDayList[0], end, prevStart: tracPrev.start, prevEnd: tracPrev.end, tiles, series: tracSeries },
     demographics: { assets: demoAssets.size, age, gender, country },
     trending,
     pending: p

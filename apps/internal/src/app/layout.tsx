@@ -6,7 +6,6 @@ import { apiFetch } from "@/lib/api";
 import { Sidebar } from "@/components/sidebar";
 import { TopNav } from "@/components/top-nav";
 import { CommandPalette } from "@/components/command-palette";
-import { landingPathFor } from "@/lib/landing";
 import "./globals.css";
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -45,8 +44,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     }
   }, [isLoading, user, isPublicPage, router]);
 
-  /* Global Ctrl+K / Cmd+K handler */
+  /* Global Ctrl+K / Cmd+K handler — not on full-bleed routes, which render no
+     CommandPalette; without this the shortcut would toggle state nothing consumes
+     and swallow the browser's own Cmd+K. */
   useEffect(() => {
+    if (isFullBleed) return;
     function onKey(e: KeyboardEvent) {
       if ((e.metaKey || e.ctrlKey) && e.key === "k") {
         e.preventDefault();
@@ -55,7 +57,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [isFullBleed]);
 
   const login = useCallback(async (email: string, password: string, rememberMe = false) => {
     // rememberMe stretches the refresh token 7d -> 30d server-side; the choice
@@ -68,7 +70,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     localStorage.setItem("refreshToken", res.data.refreshToken);
     localStorage.setItem("user", JSON.stringify(res.data.user));
     setUser(res.data.user);
-    router.push(landingPathFor(res.data.user));
+    router.push("/dashboard");
   }, [router]);
 
   const logout = useCallback(() => {
@@ -127,10 +129,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           {isPublicPage ? (
             children
           ) : isFullBleed ? (
-            <>
-              {children}
-              <CommandPalette open={cmdOpen} onClose={() => setCmdOpen(false)} />
-            </>
+            // ⚠️ No CommandPalette here. It indexes all 28 classic-portal pages, so
+            // Cmd+K inside the overview plane surfaced a light-themed overlay that
+            // navigates straight out of it — the same cross-plane leak as the old
+            // nav rail, from a second source. The overview has its own channel search.
+            children
           ) : (
             <div className="flex min-h-screen bg-bg">
               {/* Collapsible left rail */}

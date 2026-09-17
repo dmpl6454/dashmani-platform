@@ -2,13 +2,27 @@
    Composition, tokens and densities follow the Claude Design prototype:
    195px rail, 16px gutters, 95/203/211/175 row rhythm at the 1280×853 frame. */
 
-.ov-root{position:fixed;inset:0;z-index:1;display:grid;grid-template-columns:195px minmax(0,1fr);background:#060D14;color:#F4F6F8;font-family:Inter,system-ui,sans-serif;font-size:12px;font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased}
+/* ⚠️ NOT position:fixed. It was, and that made document.body.scrollHeight === 0 at
+   every viewport — nothing below the fold was reachable by wheel, scrollbar or
+   keyboard, and the rail copy was simply unreachable. The page is a normal flow
+   block now and the DOCUMENT scrolls. */
+.ov-root{position:relative;display:grid;grid-template-columns:195px minmax(0,1fr);min-height:100vh;min-height:100dvh;background:#060D14;color:#F4F6F8;font-family:Inter,system-ui,sans-serif;font-size:12px;font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased}
+/* globals.css paints body cream (#FDFCF0); the fixed root used to hide it. Keep a
+   fixed dark backdrop so overscroll and short pages never flash cream. */
+.ov-root::before{content:"";position:fixed;inset:0;background:#060D14;z-index:-1}
 .ov-root *{box-sizing:border-box}
 .ov-root button{font-family:inherit}
 .ov-root a{color:inherit;text-decoration:none}
 
 /* ── sidebar ── */
-.ov-side{background:#050A10;border-right:1px solid #182C39;display:flex;flex-direction:column;position:relative;overflow:hidden;min-height:0}
+/* ⚠️ FIXED, not sticky. globals.css line 34 sets `html, body { overflow-x: hidden }`
+   for the whole portal, and ANY ancestor with a non-visible overflow silently
+   downgrades position:sticky — measured, the rail scrolled away with the page
+   (its top went 0 → -176px at scrollY 176), leaving a band of bare background with
+   no border and the landscape copy cut off. The grid's first track still reserves
+   the 195px, so the main column is unaffected; the fixed rail simply paints over
+   that reserved space. Width MUST track the grid column at every breakpoint below. */
+.ov-side{background:#050A10;border-right:1px solid #182C39;display:flex;flex-direction:column;position:fixed;top:0;left:0;width:195px;height:100vh;height:100dvh;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;min-height:0;scrollbar-width:thin;z-index:20}
 .ov-brand{height:118px;display:flex;align-items:center;justify-content:center;padding-top:6px;flex-shrink:0}
 .ov-logo{width:86px;height:86px;border-radius:50%;object-fit:contain;display:block}
 .ov-nav{display:flex;flex-direction:column;gap:4px;padding:0 8px}
@@ -18,14 +32,25 @@
 .ov-nav-item.is-current{background:rgba(233,189,98,.14);border-color:rgba(233,189,98,.55);color:#F4F6F8;font-weight:600}
 .ov-nav-edge{position:absolute;left:-1px;top:8px;bottom:8px;width:2px;border-radius:2px;background:transparent}
 .ov-nav-item.is-current .ov-nav-edge{background:#E9BD62}
-.ov-landscape{margin-top:auto;position:relative;height:250px;flex-shrink:0}
+.ov-nav-sep{display:block;height:1px;margin:10px 14px;background:#182C39}
+.ov-nav-back{color:#738395}
+.ov-nav-back:hover{background:rgba(233,189,98,.08);color:#E9BD62}
+/* The dropdown can hold up to SEARCH_LIMIT rows — cap it and scroll rather than
+   letting it run off the bottom of the window. */
+.ov-search-list{max-height:min(46vh,320px);overflow-y:auto;overscroll-behavior:contain}
+/* min-height + shrink so the ARTWORK compresses before the copy is ever clipped. */
+.ov-landscape{margin-top:auto;position:relative;height:250px;min-height:158px;flex-shrink:1}
 .ov-landscape svg{position:absolute;inset:0;width:100%;height:100%}
 .ov-landscape-fade{position:absolute;inset:0;background:linear-gradient(180deg,#050A10 0%,rgba(5,10,16,.35) 45%,rgba(5,10,16,.55) 100%);pointer-events:none}
-.ov-landscape-copy{position:absolute;left:24px;right:16px;bottom:60px;font-size:13px;letter-spacing:.24em;line-height:1.55;color:#E6EAF0;font-weight:500;text-transform:uppercase;pointer-events:none}
-.ov-landscape-rule{position:absolute;left:24px;bottom:44px;width:28px;height:2px;background:#E9BD62}
+.ov-landscape-copy{position:absolute;left:24px;right:16px;bottom:clamp(30px,13%,60px);font-size:13px;letter-spacing:.24em;line-height:1.55;color:#E6EAF0;font-weight:500;text-transform:uppercase;pointer-events:none}
+.ov-landscape-rule{position:absolute;left:24px;bottom:clamp(16px,7%,44px);width:28px;height:2px;background:#E9BD62}
 
 /* ── main column ── */
-.ov-main{display:flex;flex-direction:column;min-width:0;min-height:0;padding:0 16px 16px;position:relative;overflow:auto}
+/* ⚠️ grid-column:2 is LOAD-BEARING. `.ov-side` is position:fixed, so it is out of flow
+   and is not a grid item — without this, `.ov-main` becomes the FIRST in-flow child and
+   is placed in the 195px rail track, collapsing the content to ~155px wide (measured).
+   Track 1 stays reserved and empty; the fixed rail paints over it. */
+.ov-main{grid-column:2;display:flex;flex-direction:column;min-width:0;min-height:0;padding:0 20px 20px;position:relative}
 .ov-top{height:50px;display:flex;align-items:center;gap:12px;flex-shrink:0}
 .ov-burger{display:none}
 .ov-search-wrap{position:relative;width:368px;max-width:100%}
@@ -72,31 +97,71 @@ button.ov-chip:hover,.ov-chip.is-active{color:#F4F6F8;border-color:#33506A}
 .ov-script{font-family:Caveat,cursive;font-size:22px;line-height:1;color:#E9BD62;text-align:right;transform:rotate(-7deg);margin-right:8px;text-shadow:0 0 14px rgba(233,189,98,.35)}
 
 /* ── grid ── */
-.ov-grid{flex:1;min-height:640px;display:grid;grid-template-rows:95px minmax(0,203fr) minmax(0,211fr) minmax(0,175fr);gap:9px 0;position:relative;transition:opacity .2s}
-.ov-row{display:grid;gap:9px;min-height:0}
-.ov-row-kpi{grid-template-columns:repeat(5,minmax(0,1fr))}
-.ov-row-analytics{grid-template-columns:35fr 34fr 31fr}
-.ov-row-ops{grid-template-columns:28fr 25fr 24fr 23fr}
-.ov-row-bottom{grid-template-columns:23fr 30fr 24fr 23fr}
+/* ⚠️ Rows are AUTO, never fr. The old `95px 203fr 211fr 175fr` divided whatever a
+   fixed viewport left over, so card height was a function of window height and
+   content never got a vote — every clipped legend, half-row and amputated note on
+   this page came from that one line. The prototype's rhythm is preserved as
+   min-height floors on each row instead, so the design still reads the same at
+   1280x853 but nothing is ever cut. */
+.ov-grid{display:grid;grid-template-rows:auto auto auto auto;gap:14px 0;position:relative;transition:opacity .2s}
+.ov-row{display:grid;gap:14px;min-height:0}
+.ov-row-kpi{grid-template-columns:repeat(5,minmax(0,1fr));min-height:104px}
+.ov-row-analytics{grid-template-columns:35fr 34fr 31fr;min-height:236px}
+.ov-row-ops{grid-template-columns:28fr 25fr 24fr 23fr;min-height:248px}
+.ov-row-bottom{grid-template-columns:23fr 30fr 24fr 23fr;min-height:214px}
 
 /* ── cards ── */
-.ov-card{background:#08131C;border:1px solid #182C39;border-radius:6px;padding:10px 12px;display:flex;flex-direction:column;min-width:0;min-height:0;overflow:hidden;position:relative}
+.ov-card{background:#08131C;border:1px solid #182C39;border-radius:6px;padding:12px 14px;display:flex;flex-direction:column;min-width:0;min-height:0;overflow:hidden;position:relative}
 .ov-card-h{display:flex;justify-content:space-between;align-items:center;gap:8px;min-height:22px}
-.ov-card-h h2{margin:0;font-size:13px;font-weight:600;display:flex;align-items:center;gap:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ov-card-h h2{margin:0;font-size:13px;font-weight:600;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ov-viewall{border:0;background:transparent;color:#A7B3C2;font-size:10.5px;cursor:pointer;padding:0;white-space:nowrap}
+/* At narrow widths the words cost the title its letters; the arrow still reads as
+   "go to the full page" and the adjacent expand button covers "show me more here". */
+@media (max-width:1365px){.ov-viewall-t{display:none}}
 .ov-viewall:hover{color:#F4F6F8}
+/* ⚠️ Card header actions live in ONE flex child — see CardActions in _widgets.tsx. */
+.ov-card-actions{display:flex;align-items:center;gap:8px;flex-shrink:0}
+.ov-expand-btn{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;padding:0;border:1px solid #223543;border-radius:4px;background:#0B1720;color:#A7B3C2;cursor:pointer}
+.ov-expand-btn:hover{color:#E9BD62;border-color:#33506A}
+.ov-expand-btn:focus-visible{outline:2px solid rgba(233,189,98,.6);outline-offset:1px}
+/* Marks a card whose period is detached from the global one. */
+.ov-local-dot{width:5px;height:5px;border-radius:50%;background:#E9BD62;box-shadow:0 0 6px rgba(233,189,98,.8);flex-shrink:0}
+
+/* ── expanded card view ── */
+.ov-modal{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:41;width:min(880px,92vw);max-height:86vh;background:#08131C;border:1px solid #244358;border-radius:10px;box-shadow:0 30px 80px rgba(0,0,0,.6);display:flex;flex-direction:column;padding:18px 20px 12px;color:#F4F6F8;font-family:Inter,system-ui,sans-serif;font-size:12px}
+.ov-modal-h{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-shrink:0}
+.ov-modal-h h2{margin:0;font-size:17px;font-weight:600;line-height:1.2}
+.ov-modal-s{font-size:11.5px;color:#A7B3C2;margin-top:4px;line-height:1.4}
+.ov-modal-lead{margin-top:14px;flex-shrink:0}
+.ov-modal-body{margin-top:12px;overflow:auto;min-height:0;flex:1}
+.ov-modal-table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+.ov-modal-table th{position:sticky;top:0;background:#08131C;text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:#738395;font-weight:500;padding:0 8px 6px;border-bottom:1px solid #182C39;white-space:nowrap}
+.ov-modal-table td{padding:7px 8px;border-bottom:1px solid #101E29;font-size:11.5px;vertical-align:middle}
+.ov-modal-table tbody tr:hover{background:#0F1E2A}
+.ov-modal-table td:first-child{color:#A7B3C2}
+.ov-modal-foot{flex-shrink:0;padding-top:10px;font-size:9.5px;color:#4E5F70}
+@media (max-width:767px){.ov-modal{width:94vw;max-height:88vh;padding:14px 14px 10px}.ov-modal-table td,.ov-modal-table th{padding-left:5px;padding-right:5px}}
 
 /* ── KPI strip ── */
-.ov-kpi{background:#08131C;border:1px solid #182C39;border-radius:6px;padding:9px 12px;display:flex;gap:10px;text-align:left;color:#F4F6F8;cursor:pointer;position:relative;overflow:hidden;transition:border-color .15s;min-width:0}
+.ov-kpi{background:#08131C;border:1px solid #182C39;border-radius:6px;padding:10px 12px;min-height:104px;display:flex;gap:10px;text-align:left;color:#F4F6F8;cursor:pointer;position:relative;overflow:hidden;transition:border-color .15s;min-width:0}
 .ov-kpi:hover{border-color:#2A4658}
 .ov-kpi:focus-visible{outline:2px solid rgba(233,189,98,.6);outline-offset:-2px}
 .ov-kpi-tile{width:40px;height:40px;border-radius:9px;flex-shrink:0;display:flex;align-items:center;justify-content:center}
-.ov-kpi-body{display:flex;flex-direction:column;min-width:0;flex:1;padding-right:68px}
-.ov-kpi-l{font-size:11.5px;color:#A7B3C2;white-space:nowrap}
+/* ⚠️ The 68px sparkline reserve used to sit on the WHOLE body, so the note — the
+   longest string in the card — was squeezed to 59px and every KPI read
+   "vs. previou…". The reserve now applies only to the three lines the sparkline
+   actually sits beside; the note gets the full width and wraps. */
+.ov-kpi-body{display:flex;flex-direction:column;min-width:0;flex:1}
+/* The sparkline is anchored at top:34px, i.e. BESIDE the value and trend lines only —
+   the label sits above it and needs no reserve, which is what was clipping
+   "Followers (now)" to "Followers (n…". */
+.ov-kpi-v,.ov-kpi-t{padding-right:72px}
+.ov-kpi-l{font-size:11.5px;color:#A7B3C2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ov-kpi-v{font-size:22px;font-weight:600;line-height:1.15;margin-top:2px;letter-spacing:-.01em}
 .ov-kpi-t{font-size:12px;margin-top:2px}
-.ov-kpi-n{font-size:9.5px;color:#738395;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
-.ov-spark{position:absolute;right:10px;bottom:26px;width:64px;height:24px}
+.ov-kpi-n{font-size:9.5px;color:#738395;margin-top:3px;line-height:1.4;overflow-wrap:anywhere}
+/* Anchored from the TOP so a two-line note can never push it out of the card. */
+.ov-spark{position:absolute;right:12px;top:34px;width:64px;height:24px}
 
 /* ── trend chips ── */
 .ov-trend{font-weight:600;white-space:nowrap}
@@ -107,14 +172,14 @@ button.ov-chip:hover,.ov-chip.is-active{color:#F4F6F8;border-color:#33506A}
 
 /* ── headline block above charts ── */
 .ov-headline{display:flex;align-items:flex-end;gap:10px;margin-top:4px;min-width:0}
-.ov-big{font-size:24px;font-weight:600;line-height:1;letter-spacing:-.01em;white-space:nowrap}
+.ov-big{font-size:24px;font-weight:600;line-height:1;letter-spacing:-.01em;white-space:nowrap;min-width:0;overflow:hidden;text-overflow:ellipsis;flex-shrink:0}
 .ov-headline-side{display:flex;flex-direction:column;line-height:1.15;font-size:13px;min-width:0}
-.ov-headline-side>span:last-child{font-size:9.5px;color:#738395;font-weight:400;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ov-headline-side>span:last-child{font-size:9.5px;color:#738395;font-weight:400;line-height:1.35;overflow-wrap:anywhere}
 .ov-reset{margin-left:auto;height:18px;padding:0 6px;border-radius:4px;border:1px solid #3A3A22;background:rgba(233,189,98,.08);color:#E9BD62;font-size:9.5px;cursor:pointer;white-space:nowrap}
 
 /* ── charts ── */
 .ov-chart{flex:1;display:grid;grid-template-columns:36px minmax(0,1fr);grid-template-rows:minmax(0,1fr) 14px;margin-top:8px;min-height:0}
-.ov-chart-idx{grid-template-columns:26px minmax(0,1fr) 72px;column-gap:6px;margin-top:6px}
+.ov-chart-idx{grid-template-columns:26px minmax(0,1fr) 92px;column-gap:8px;margin-top:8px}
 .ov-yaxis{display:flex;flex-direction:column;justify-content:space-between;font-size:9px;color:#738395;text-align:right;padding-right:6px;line-height:1;white-space:nowrap}
 .ov-yaxis-sm{font-size:8.5px;padding-right:0}
 .ov-plot{position:relative;min-height:0}
@@ -129,20 +194,20 @@ button.ov-chip:hover,.ov-chip.is-active{color:#F4F6F8;border-color:#33506A}
 .ov-legend{display:flex;flex-direction:column;justify-content:center;gap:4px;font-size:10px;color:#A7B3C2}
 .ov-legend span{display:flex;align-items:center;gap:6px;white-space:nowrap}
 .ov-legend i,.ov-legend-list i,.ov-map-legend i{display:inline-block;width:7px;height:7px;border-radius:50%;flex-shrink:0}
-.ov-idx-note{font-size:7.5px;color:#738395;white-space:nowrap;padding-top:4px}
+.ov-idx-note{font-size:9px;color:#738395;white-space:nowrap;padding-top:4px}
 .ov-bars{position:absolute;inset:0;display:flex;align-items:flex-end;gap:2px;padding:0 2px}
 .ov-bar{flex:1;height:100%;display:flex;align-items:flex-end;border:0;background:transparent;padding:0;cursor:pointer;outline:none;min-width:0}
 .ov-bar>span{display:block;width:100%;border-radius:2px 2px 0 0;transition:height .2s}
 .ov-chart-empty{flex:1;display:flex;align-items:center;justify-content:center;color:#738395;font-size:11px;text-align:center;padding:12px;line-height:1.4}
 
 /* ── donut + legend ── */
-.ov-donut-row{flex:1;display:grid;grid-template-columns:auto minmax(0,1fr);gap:12px;align-items:center;margin-top:2px;min-height:0}
+.ov-donut-row{flex:1;display:grid;grid-template-columns:auto minmax(0,1fr);gap:14px;align-items:center;margin-top:6px;min-height:0}
 .ov-donut-row-sm{margin-top:4px}
 .ov-donut{position:relative;flex-shrink:0}
 .ov-donut-c{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;pointer-events:none;text-align:center}
 .ov-donut-v{font-weight:600;line-height:1}
 .ov-donut-l{font-size:9.5px;color:#A7B3C2;margin-top:3px}
-.ov-legend-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px;min-width:0}
+.ov-legend-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:3px;min-width:0}
 .ov-legend-list-sm{gap:5px}
 .ov-legend-list button,.ov-legend-static{display:flex;align-items:center;gap:8px;width:100%;padding:1px 6px;border:0;border-radius:4px;background:transparent;color:#F4F6F8;font-size:10.5px;white-space:nowrap;cursor:pointer;text-align:left;font-family:inherit;min-width:0}
 .ov-legend-static{cursor:default;font-size:11px;padding:2px 0}
@@ -152,11 +217,11 @@ button.ov-chip:hover,.ov-chip.is-active{color:#F4F6F8;border-color:#33506A}
 .ov-legend-list b{font-weight:600}
 
 /* ── tables ── */
-.ov-table{flex:1;overflow:hidden;margin-top:6px;display:flex;flex-direction:column;min-height:0}
+.ov-table{flex:1;margin-top:8px;display:flex;flex-direction:column;min-height:0}
 .ov-th{display:grid;gap:5px;font-size:10px;white-space:nowrap;color:#738395;padding:0 4px 4px;border-bottom:1px solid #182C39}
-.ov-tr{display:grid;gap:5px;align-items:center;width:100%;height:27px;white-space:nowrap;padding:0 4px;border:0;border-radius:4px;background:transparent;color:#F4F6F8;font-size:11px;cursor:pointer;text-align:left;min-width:0}
+.ov-tr{display:grid;gap:5px;align-items:center;width:100%;min-height:28px;white-space:nowrap;padding:0 4px;border:0;border-radius:4px;background:transparent;color:#F4F6F8;font-size:11px;cursor:pointer;text-align:left;min-width:0}
 .ov-tr:hover{background:#0F1E2A}
-.ov-tr-grow{flex:1;height:auto;min-height:24px}
+.ov-tr-grow{flex:1;height:auto;min-height:26px}
 /* Top Channels: at the 1280 frame the card is 28fr wide and the "Followers" header
    alone costs the name column its distinguishing letters, so that column is shown
    only from 1360px; followers stay in the KPI card, the drawer and the Channels page. */
@@ -178,47 +243,52 @@ button.ov-chip:hover,.ov-chip.is-active{color:#F4F6F8;border-color:#33506A}
 .ov-ellipsis{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
 /* ── map ── */
-.ov-map-row{flex:1;display:grid;grid-template-columns:minmax(0,1fr) 96px;gap:8px;margin-top:4px;min-height:0}
+.ov-map-row{flex:1;display:grid;grid-template-columns:minmax(0,1fr) 112px;gap:10px;margin-top:8px;min-height:0}
 .ov-map{position:relative;min-height:0;height:100%}
 .ov-map svg{display:block;width:100%;height:100%}
-.ov-map-tip{position:absolute;transform:translate(-50%,-115%);background:#0B1A26;border:1px solid #244358;color:#F4F6F8;font-size:10px;padding:4px 7px;border-radius:4px;white-space:nowrap;pointer-events:none;line-height:1.35;z-index:2}
+/* The expanded map gets real height instead of a card's leftovers. */
+.ov-map-lg{height:min(46vh,380px)}
+/* max-width + clamped left (see IndiaMap) keep it off the card's edges. */
+.ov-map-tip{position:absolute;max-width:min(190px,92%);white-space:normal;transform:translate(-50%,-115%);background:#0B1A26;border:1px solid #244358;color:#F4F6F8;font-size:10px;padding:4px 7px;border-radius:4px;pointer-events:none;line-height:1.35;z-index:2}
 .ov-map-tip b{color:#E9BD62}
 .ov-cities{display:flex;flex-direction:column;font-size:10.5px;min-height:0;min-width:0}
 .ov-cities-h{color:#A7B3C2;margin-bottom:5px}
 .ov-city{display:flex;justify-content:space-between;gap:6px;padding:1px 0;color:#D4DBE4}
 .ov-city span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ov-city span:last-child{color:#A7B3C2}
-.ov-map-legend{margin-top:auto;display:flex;flex-direction:column;gap:2px;font-size:9.5px;color:#A7B3C2;white-space:nowrap}
+.ov-map-legend{margin-top:auto;padding-top:6px;display:flex;flex-direction:column;gap:3px;font-size:9.5px;color:#A7B3C2;white-space:nowrap}
 .ov-map-legend span{display:flex;align-items:center;gap:6px}
-.ov-map-note{font-size:8.5px;color:#4E5F70;margin-top:4px;line-height:1.3}
+.ov-map-note{font-size:8.5px;color:#4E5F70;margin-top:5px;line-height:1.35}
 @media (prefers-reduced-motion:no-preference){.ov-pulse{animation:ovPulse 2.4s ease-in-out infinite}}
 @keyframes ovPulse{0%,100%{opacity:.35}50%{opacity:.9}}
 
 /* ── feed ── */
-.ov-feed{flex:1;display:flex;flex-direction:column;justify-content:space-between;margin-top:4px;min-height:0}
+.ov-feed{flex:1;display:flex;flex-direction:column;gap:7px;margin-top:8px;min-height:0}
 .ov-feed-row{display:flex;gap:8px;align-items:center;width:100%;padding:1px 3px;border:0;border-radius:4px;background:transparent;color:#F4F6F8;cursor:pointer;text-align:left;min-width:0}
 .ov-feed-row:hover{background:#0F1E2A}
 .ov-thumb{width:40px;height:24px;border-radius:3px;flex-shrink:0;position:relative;overflow:hidden;display:block}
 .ov-thumb>span{position:absolute;inset:0;background:linear-gradient(180deg,rgba(255,255,255,.08),rgba(0,0,0,.35))}
 .ov-feed-body{flex:1;min-width:0;display:flex;flex-direction:column;line-height:1.2}
-.ov-feed-t{font-size:10.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* Two lines instead of one: the card has the room now, and 70-char titles were
+   truncating to visually identical rows for genuinely different posts. */
+.ov-feed-t{font-size:10.5px;font-weight:600;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .ov-feed-m{display:flex;align-items:center;gap:8px;font-size:9.5px;color:#A7B3C2;margin-top:1px;white-space:nowrap;overflow:hidden}
 .ov-feed-h{color:#738395;overflow:hidden;text-overflow:ellipsis;min-width:0}
 .ov-metric{display:inline-flex;align-items:center;gap:3px;flex-shrink:0}
 .ov-feed-when{font-size:9.5px;color:#738395;flex-shrink:0}
 .ov-new,.ov-live-pill{font-size:7.5px;font-weight:700;padding:1px 4px;border-radius:2px;background:#E52D47;color:#fff;letter-spacing:.06em;flex-shrink:0}
-.ov-live-pill{font-size:8.5px;padding:2px 6px;border-radius:3px;display:inline-flex;align-items:center;gap:4px}
+.ov-live-pill{font-size:8.5px;padding:2px 6px;border-radius:3px;display:inline-flex;align-items:center;gap:4px;vertical-align:middle;margin-left:8px}
 .ov-live-pill span{width:4px;height:4px;border-radius:50%;background:#fff}
-.ov-live{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:#00D7A0;font-weight:500}
+.ov-live{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:#00D7A0;font-weight:500;vertical-align:middle;margin-left:8px}
 .ov-live span{width:6px;height:6px;border-radius:50%;background:#00D7A0;animation:ovBeat 2s infinite}
 @keyframes ovBeat{0%,100%{box-shadow:0 0 0 0 rgba(0,215,160,.55)}50%{box-shadow:0 0 0 5px rgba(0,215,160,0)}}
 
 /* ── activity ── */
-.ov-activity{flex:1;display:flex;flex-direction:column;justify-content:space-around;margin-top:4px;min-height:0}
+.ov-activity{flex:1;display:flex;flex-direction:column;gap:6px;margin-top:8px;min-height:0}
 .ov-act{display:flex;gap:8px;align-items:flex-start;width:100%;padding:2px 3px;border:0;border-radius:4px;background:transparent;color:#F4F6F8;cursor:pointer;text-align:left;min-width:0}
 .ov-act:hover{background:#0F1E2A}
 .ov-act-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;margin-top:4px}
-.ov-act-t{flex:1;min-width:0;font-size:10.5px;line-height:1.35;overflow:hidden;text-overflow:ellipsis}
+.ov-act-t{flex:1;min-width:0;font-size:10.5px;line-height:1.35;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .ov-act-when{font-size:9.5px;color:#738395;flex-shrink:0;padding-top:1px}
 
 /* ── traction ── */
@@ -236,7 +306,7 @@ button.ov-chip:hover,.ov-chip.is-active{color:#F4F6F8;border-color:#33506A}
 .ov-tabs button.is-sel{background:#238BFF;color:#fff}
 
 /* ── trending ── */
-.ov-trending{flex:1;display:flex;flex-direction:column;justify-content:space-around;margin-top:4px;min-height:0}
+.ov-trending{flex:1;display:flex;flex-direction:column;gap:6px;margin-top:8px;min-height:0}
 .ov-trend-row{display:flex;gap:8px;align-items:center;width:100%;padding:2px 3px;border:0;border-radius:4px;background:transparent;color:#F4F6F8;cursor:pointer;text-align:left;min-width:0}
 .ov-trend-row:hover{background:#0F1E2A}
 .ov-rank-sm{width:12px;font-size:11px;font-weight:600}
@@ -256,7 +326,9 @@ button.ov-chip:hover,.ov-chip.is-active{color:#F4F6F8;border-color:#33506A}
 .ov-cta{margin-top:12px;height:28px;padding:0 14px;border-radius:5px;border:1px solid #E9BD62;background:rgba(233,189,98,.12);color:#E9BD62;font-size:11.5px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;justify-content:center}
 .ov-cta:hover{background:rgba(233,189,98,.22)}
 .ov-cta-block{display:flex;width:100%;margin-top:14px}
-.ov-foot{position:absolute;right:20px;bottom:3px;font-size:8.5px;color:#4E5F70;letter-spacing:.04em;white-space:nowrap}
+/* ⚠️ Was position:absolute inside the scroller and painted straight over Audience
+   Demographics and What's Trending at any viewport under ~775px. In flow now. */
+.ov-foot{margin-top:12px;text-align:right;font-size:9.5px;color:#4E5F70;letter-spacing:.04em;line-height:1.5}
 
 /* ── detail drawer ── */
 .ov-drawer-bg{position:fixed;inset:0;z-index:40;background:rgba(3,7,11,.45)}
@@ -281,23 +353,30 @@ button.ov-chip:hover,.ov-chip.is-active{color:#F4F6F8;border-color:#33506A}
 /* ── responsive: collapse the rail, reflow to two columns, then one ── */
 @media (max-width:1279px){
   .ov-root{grid-template-columns:64px minmax(0,1fr)}
-  .ov-nav-label,.ov-landscape-copy,.ov-landscape-rule,.ov-date-label{display:none}
+  .ov-side{width:64px}
+  .ov-nav-label,.ov-landscape-copy,.ov-landscape-rule{display:none}
+  /* ⚠️ .ov-date-label is NOT hidden here any more: it is the only thing on the page
+     that states which period is selected, and hiding it made every figure unlabelled
+     on any window under 1280px. */
+  .ov-date-label{font-size:11px}
   .ov-nav-item{justify-content:center;padding:0}
   .ov-logo{width:44px;height:44px}
   .ov-brand{height:70px}
-  .ov-landscape{height:120px}
-  .ov-grid{display:flex;flex-direction:column;min-height:0;flex:none}
+  .ov-landscape{height:120px;min-height:0}
+  .ov-grid{display:flex;flex-direction:column}
   .ov-row{grid-template-columns:repeat(2,minmax(0,1fr))}
   .ov-row-kpi{grid-template-columns:repeat(3,minmax(0,1fr))}
-  .ov-row>*{min-height:230px}
+  .ov-row>*{min-height:236px}
   .ov-row-kpi>*{min-height:0}
-  .ov-foot{position:static;text-align:right;padding-top:10px}
+  .ov-row-analytics,.ov-row-ops,.ov-row-bottom{min-height:0}
 }
 @media (max-width:767px){
   .ov-root{grid-template-columns:minmax(0,1fr)}
-  .ov-side{position:fixed;top:0;bottom:0;left:0;width:195px;z-index:50;transform:translateX(-100%);transition:transform .2s}
+  .ov-main{grid-column:1}
+  .ov-side{position:fixed;top:0;bottom:0;left:0;width:195px;height:auto;z-index:50;transform:translateX(-100%);transition:transform .2s}
   .ov-root.is-menu .ov-side{transform:none}
   .ov-nav-label,.ov-landscape-copy{display:block}
+  .ov-landscape{height:250px;min-height:158px}
   .ov-nav-item{justify-content:flex-start;padding:0 14px}
   .ov-logo{width:86px;height:86px}
   .ov-brand{height:118px}

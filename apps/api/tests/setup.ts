@@ -7,6 +7,7 @@ const TRUNCATE_SQL = `
       task_comments, tasks, report_links, daily_reports, account_growth_snapshots, account_assignments,
       meta_asset_demographics, meta_asset_metrics, meta_asset_daily,
       meta_posts, meta_assets, meta_connections, meta_oauth_states, social_accounts, platforms,
+      link_content_entities, link_content, entities, announcements,
       otp_tokens, audit_logs, attendance, leave_requests, refresh_tokens,
       user_roles, role_permissions, users, roles, org_units, settings
     CASCADE

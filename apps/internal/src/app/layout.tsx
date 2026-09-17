@@ -17,6 +17,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
   const publicRoutes = ["/login", "/admin-signup", "/reset-password"];
   const isPublicPage = publicRoutes.includes(pathname);
+  // Full-bleed pages draw their own chrome (the /overview command centre has its
+  // own dark rail and header), but stay behind the same auth guard as everything else.
+  const fullBleedRoutes = ["/overview"];
+  const isFullBleed = fullBleedRoutes.some((r) => pathname === r || pathname.startsWith(`${r}/`));
 
   useEffect(() => {
     const token = localStorage.getItem("accessToken");
@@ -121,6 +125,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <AuthContext.Provider value={{ user, login, logout, isLoading }}>
           {isPublicPage ? (
             children
+          ) : isFullBleed ? (
+            <>
+              {children}
+              <CommandPalette open={cmdOpen} onClose={() => setCmdOpen(false)} />
+            </>
           ) : (
             <div className="flex min-h-screen bg-bg">
               {/* Collapsible left rail */}

@@ -2,6 +2,13 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "name": "api",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["tsx", "watch", "src/index.ts"],
+      "port": 4000,
+      "cwd": "apps/api"
+    },
+    {
       "name": "jobs",
       "runtimeExecutable": "npx",
       "runtimeArgs": ["next", "dev", "--port", "3003"],

@@ -263,6 +263,31 @@ describe("getOverview against a seeded estate", () => {
     expect(o.kpis.followers.value).toBe(1_250_000);
   });
 
+  it("builds the audience series from uncontested channel rows only", async () => {
+    const platform = await prisma.platform.create({ data: { name: "Facebook T", slug: "facebook-t" } });
+    const clean = await prisma.socialAccount.create({ data: { handle: "clean-page", displayName: "Clean", platformId: platform.id } });
+    const shared = await prisma.socialAccount.create({ data: { handle: "shared-page", displayName: "Shared", platformId: platform.id } });
+    const conn = await prisma.metaConnection.findFirstOrThrow({ where: { metaUserId: "mu-ov" } });
+    await prisma.metaAsset.update({ where: { id: fbId }, data: { socialAccountId: clean.id } });
+    // Two live Pages claim the same channel row — its history alternates between them.
+    for (const metaId of ["fb-2", "fb-3"]) {
+      await prisma.metaAsset.create({ data: { connectionId: conn.id, kind: "FACEBOOK_PAGE", metaId, name: "The Candid Couch", followerCount: 100, socialAccountId: shared.id } });
+    }
+    for (let n = 0; n <= 35; n++) {
+      const date = dateOf(isoDaysAgo(n));
+      await prisma.accountGrowthSnapshot.create({ data: { accountId: clean.id, date, followerCount: 1000 + (35 - n), source: "api" } });
+      await prisma.accountGrowthSnapshot.create({ data: { accountId: shared.id, date, followerCount: n % 2 ? 5_000_000 : 130_000, source: "api" } });
+    }
+    invalidateOverviewCache();
+    invalidateRangeCache();
+    const o = await getOverview({ days: 7, audDays: 30, revDays: 30 });
+    expect(o.audience.channelsUsed).toBe(1);
+    expect(o.audience.series).toHaveLength(30);
+    // Smooth, and never inflated by the 5M/130K saw-tooth of the contested row.
+    expect(o.audience.series.every((s) => s.followers >= 1000 && s.followers <= 1035)).toBe(true);
+    expect(o.audience.series[29].followers).toBe(1000 + 34);
+  });
+
   it("memoises the payload for a minute and honours invalidation", async () => {
     const a = await getOverview({ days: 7, audDays: 30, revDays: 30 });
     await prisma.metaAsset.update({ where: { id: igId }, data: { followerCount: 999 } });

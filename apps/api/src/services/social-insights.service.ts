@@ -1,26 +1,27 @@
 import { prisma } from "@dashmani/db";
 import { getSupportedInsightPlatforms, isPlatformInsightSupported } from "@dashmani/shared";
+import { createSingleFlightMemo } from "../utils/single-flight-memo";
+import { withHeavyQuerySlot } from "../utils/heavy-query";
 
-// Short TTL cache for the heavy insights reads. getInsightsSummary + getTopLinksByPlatform
-// both recompute a DISTINCT ON over the link_metrics table (~2M+ rows); the admin /reports
-// page fires getInsightsSummary + 4× per-platform getTopLinksByPlatform on every load and
-// SWR revalidation. Without a cache those repeated calls each hold a pooled DB connection
-// while the query runs and — under concurrent load with the 6h social-insights cron — drain
-// the 10-connection pool, producing the P2024 "Timed out fetching a connection" errors that
-// surfaced as intermittent "unexpected error" / "failed to fetch" across the portals
-// (incident 2026-07-16). 60s is long enough to absorb a load/focus-revalidation storm, short
-// enough that a fresh cron write shows within a minute. Keyed by fn + window so ranges/
-// employees don't collide. Mirrors leaderboard.service.ts's _lbCache (same rationale).
+// 60s SINGLE-FLIGHT TTL cache + heavy-query bulkhead for the insights reads.
+//
+// The admin /reports and /dashboard pages fire getInsightsSummary + 4× per-platform
+// getTopLinksByPlatform on every load and SWR revalidation, and several admins land
+// at once after a deploy. The memo collapses REPEAT reads inside the TTL AND
+// concurrent COLD reads for the same key into ONE compute — the previous value-only
+// cache did not, so N cold callers each ran the query on its own pool connection
+// (incident 2026-07-16, and again 2026-09-18 when the query got slow). The bulkhead
+// (utils/heavy-query.ts) caps how many DISTINCT computes run at once, so analytics
+// can never drain the 10-connection pool that login and HR submit share. Keyed by
+// fn + window so ranges/employees don't collide. Tests MUST call
+// invalidateInsightsCache() in beforeEach (module-level cache = the documented
+// cross-test pollution class).
 const INSIGHTS_TTL_MS = 60 * 1000;
-const _insightsCache = new Map<string, { value: unknown; builtAt: number }>();
-export function invalidateInsightsCache(): void { _insightsCache.clear(); }
-async function memoInsights<T>(key: string, fn: () => Promise<T>): Promise<T> {
-  const hit = _insightsCache.get(key);
-  const now = Date.now();
-  if (hit && now - hit.builtAt < INSIGHTS_TTL_MS) return hit.value as T;
-  const value = await fn();
-  _insightsCache.set(key, { value, builtAt: now });
-  return value;
+const _insights = createSingleFlightMemo({ ttlMs: INSIGHTS_TTL_MS, maxEntries: 200 });
+export function invalidateInsightsCache(): void { _insights.clear(); }
+function memoInsights<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  const label = `insights:${key.split(":")[0]}`;
+  return _insights.memo(key, () => withHeavyQuerySlot(label, fn));
 }
 
 // ============ Types ============
@@ -152,86 +153,56 @@ async function getInsightsSummaryUncached(
   endDate?: string,
   employeeId?: string,
 ): Promise<InsightsSummary> {
-  // Latest snapshot per (employee_id, url_normalized) via DISTINCT ON, but BOTH the
-  // aggregation AND the top-20 selection now happen IN POSTGRES. The previous shape
-  // deduped in SQL yet still returned the ENTIRE deduped set (~41k rows all-time) into
-  // Node to sum + sort in JS — measured 14-16s per call on prod, dominated by a parallel
-  // seq scan + a ~92MB on-disk merge sort, because selecting url/link_id/video_id per row
-  // makes the covering index unusable. Split into two queries that each stay inside
-  // link_metrics_emp_url_fetched_ok_v2_idx (employee_id, url_normalized, fetched_at DESC)
-  // INCLUDE (views, likes, comments, report_date, platform) WHERE status='ok':
-  //   1) aggregate: DISTINCT ON over covered columns only → GROUP BY platform (~1.3s
-  //      index-only, measured live);
-  //   2) top-20: DISTINCT ON over covered columns → ORDER BY views LIMIT 20, then a
-  //      LATERAL join-back fetches the full row for ONLY the 20 winners (~0.5s live).
-  // The LATERAL repeats the same status/window predicates so its winner is the SAME row
-  // DISTINCT ON picked. ORDER BY COALESCE(views,0) DESC, fetched_at DESC reproduces the
-  // old JS stable-sort tie-break (equal views → newer fetched_at first) exactly.
+  // Both reads come from link_metrics_latest — ONE row per (employee_id, url_normalized),
+  // already the newest status='ok' snapshot (link-metrics-latest.service.ts; model
+  // comment in schema.prisma). No DISTINCT ON, no LATERAL join-back, no scan of the
+  // snapshot log.
   //
-  // Bounds are ALWAYS passed as concrete Dates (null-start → epoch, null-end → far future)
-  // to keep these fully STATIC tagged templates — the repo's proven $queryRaw pattern
-  // (leaderboard.service.ts / link-search.service.ts), no conditional Prisma.sql fragments.
-  // employeeId is optional: when absent we bind a sentinel and the `(… OR ${bind} IS NULL)`
-  // makes the filter a no-op (still fully static, still two-plus fixed bindings).
+  // HISTORY, so nobody reintroduces the old shape: until 2026-09-18 these did
+  // `SELECT DISTINCT ON (employee_id, url_normalized) … FROM link_metrics WHERE
+  // status='ok' … ORDER BY …, fetched_at DESC`, i.e. O(all snapshots ever written).
+  // Once the sweep started appending ~850k rows/day (3.99M → 14.6M rows / 10GB in six
+  // weeks) the planner left the covering index for a parallel seq scan + disk sort,
+  // each call took 5-10 MINUTES, six of them held the whole 10-connection pool, and
+  // login + HR submit failed with P2024 ("An unexpected error occurred").
+  // ⚠️ NEVER read engagement from link_metrics on a portal path again.
+  //
+  // Bounds are ALWAYS passed as concrete Dates (null-start → epoch, null-end → far
+  // future) to keep these fully STATIC tagged templates — the repo's proven $queryRaw
+  // pattern, no conditional Prisma.sql fragments. employeeId is optional: when absent
+  // we bind a sentinel and the `(… IS NULL OR …)` makes the filter a no-op.
   const start = startDate ? new Date(startDate) : new Date("1970-01-01T00:00:00.000Z");
   const end = endDate ? new Date(endDate) : new Date("2999-12-31T00:00:00.000Z");
   const empFilter = employeeId ?? null;
 
-  // Queries run sequentially on purpose: one pooled connection at a time, so a burst of
-  // uncached windows can't hold two pool slots per request (the 2026-07-16 incident class).
+  // Sequential on purpose: one pooled connection at a time per request.
   const agg = await prisma.$queryRaw<PlatformAggRow[]>`
-    WITH latest AS (
-      SELECT DISTINCT ON (lm.employee_id, lm.url_normalized)
-        lm.platform, lm.views, lm.likes, lm.comments
-      FROM link_metrics lm
-      WHERE lm.status = 'ok'
-        AND lm.report_date >= ${start}
-        AND lm.report_date <= ${end}
-        AND (${empFilter}::text IS NULL OR lm.employee_id = ${empFilter})
-      ORDER BY lm.employee_id, lm.url_normalized, lm.fetched_at DESC
-    )
     SELECT lower(platform) AS platform,
            count(*)::bigint AS link_count,
            sum(coalesce(views, 0))::bigint AS views,
            sum(coalesce(likes, 0))::bigint AS likes,
            sum(coalesce(comments, 0))::bigint AS comments
-    FROM latest
+    FROM link_metrics_latest
+    WHERE report_date >= ${start}
+      AND report_date <= ${end}
+      AND (${empFilter}::text IS NULL OR employee_id = ${empFilter})
     GROUP BY lower(platform)
     ORDER BY count(*) DESC
   `;
 
+  // Top-20 by views. ORDER BY COALESCE(views, 0) DESC, fetched_at DESC is the same
+  // tie-break the previous shape used (equal views → newer snapshot first).
   const topRows = await prisma.$queryRaw<InsightRow[]>`
-    WITH winners AS (
-      SELECT DISTINCT ON (lm.employee_id, lm.url_normalized)
-        lm.employee_id, lm.url_normalized, lm.fetched_at, lm.views
-      FROM link_metrics lm
-      WHERE lm.status = 'ok'
-        AND lm.report_date >= ${start}
-        AND lm.report_date <= ${end}
-        AND (${empFilter}::text IS NULL OR lm.employee_id = ${empFilter})
-      ORDER BY lm.employee_id, lm.url_normalized, lm.fetched_at DESC
-    ),
-    top_n AS (
-      SELECT * FROM winners ORDER BY COALESCE(views, 0) DESC, fetched_at DESC LIMIT 20
-    )
-    SELECT f.link_id, f.url_normalized, f.url, f.video_id, f.platform,
-           f.employee_id, u.name AS employee_name, f.fetched_at,
-           f.views, f.likes, f.comments
-    FROM top_n t
-    JOIN LATERAL (
-      SELECT lm2.link_id, lm2.url_normalized, lm2.url, lm2.video_id, lm2.platform,
-             lm2.employee_id, lm2.fetched_at, lm2.views, lm2.likes, lm2.comments
-      FROM link_metrics lm2
-      WHERE lm2.employee_id = t.employee_id
-        AND lm2.url_normalized = t.url_normalized
-        AND lm2.status = 'ok'
-        AND lm2.report_date >= ${start}
-        AND lm2.report_date <= ${end}
-      ORDER BY lm2.fetched_at DESC
-      LIMIT 1
-    ) f ON true
-    JOIN users u ON u.id = f.employee_id
-    ORDER BY COALESCE(f.views, 0) DESC, f.fetched_at DESC
+    SELECT l.link_id, l.url_normalized, l.url, l.video_id, l.platform,
+           l.employee_id, u.name AS employee_name, l.fetched_at,
+           l.views, l.likes, l.comments
+    FROM link_metrics_latest l
+    JOIN users u ON u.id = l.employee_id
+    WHERE l.report_date >= ${start}
+      AND l.report_date <= ${end}
+      AND (${empFilter}::text IS NULL OR l.employee_id = ${empFilter})
+    ORDER BY COALESCE(l.views, 0) DESC, l.fetched_at DESC
+    LIMIT 20
   `;
 
   let totalViews = 0;
@@ -323,92 +294,40 @@ async function getTopLinksByPlatformUncached(
   startDate?: string,
   endDate?: string,
 ): Promise<TopLink[]> {
-  // Latest snapshot per (employee_id, url_normalized) for ONE platform via DISTINCT ON,
-  // with the top-N selection ALSO in Postgres. The previous shape deduped in SQL but
-  // returned the whole deduped platform set (~tens of thousands of rows all-time) into
-  // Node to score + sort + slice in JS — measured 11-12s per call on prod (parallel seq
-  // scan + on-disk sort; selecting url/link_id/video_id per row defeats the covering
-  // index). Now: winners CTE over ONLY covered columns (index-only via
-  // link_metrics_emp_url_fetched_ok_v2_idx — platform is in its INCLUDE list), scored +
-  // LIMITed in SQL, then a LATERAL join-back fetches full rows for just the N winners.
-  // The LATERAL repeats the same status/platform/window predicates so its winner is the
-  // SAME row DISTINCT ON picked. ORDER BY score DESC, fetched_at DESC reproduces the old
-  // JS stable-sort tie-break (equal score → newer fetched_at first) exactly. Two static
-  // tagged templates (one per sort metric) keep the repo's no-conditional-fragments rule.
+  // link_metrics_latest already holds exactly one (newest ok) row per link, so the
+  // top-N is a filter + ORDER BY + LIMIT over ~150k rows, indexed by (platform,
+  // report_date). See getInsightsSummaryUncached for why link_metrics itself must never
+  // be read here again. Two static templates (one per sort metric) keep the repo's
+  // no-conditional-fragments rule; the tie-break (score DESC, fetched_at DESC) is
+  // byte-identical to the previous DISTINCT ON + LATERAL shape.
   const start = startDate ? new Date(startDate) : new Date("1970-01-01T00:00:00.000Z");
   const end = endDate ? new Date(endDate) : new Date("2999-12-31T00:00:00.000Z");
 
   const latest =
     sortBy === "views"
       ? await prisma.$queryRaw<InsightRow[]>`
-    WITH winners AS (
-      SELECT DISTINCT ON (lm.employee_id, lm.url_normalized)
-        lm.employee_id, lm.url_normalized, lm.fetched_at, lm.views, lm.likes, lm.comments
-      FROM link_metrics lm
-      WHERE lm.status = 'ok'
-        AND lm.platform = ${platform}
-        AND lm.report_date >= ${start}
-        AND lm.report_date <= ${end}
-      ORDER BY lm.employee_id, lm.url_normalized, lm.fetched_at DESC
-    ),
-    top_n AS (
-      SELECT * FROM winners ORDER BY COALESCE(views, 0) DESC, fetched_at DESC LIMIT ${limit}
-    )
-    SELECT f.link_id, f.url_normalized, f.url, f.video_id, f.platform,
-           f.employee_id, u.name AS employee_name, f.fetched_at,
-           f.views, f.likes, f.comments
-    FROM top_n t
-    JOIN LATERAL (
-      SELECT lm2.link_id, lm2.url_normalized, lm2.url, lm2.video_id, lm2.platform,
-             lm2.employee_id, lm2.fetched_at, lm2.views, lm2.likes, lm2.comments
-      FROM link_metrics lm2
-      WHERE lm2.employee_id = t.employee_id
-        AND lm2.url_normalized = t.url_normalized
-        AND lm2.status = 'ok'
-        AND lm2.platform = ${platform}
-        AND lm2.report_date >= ${start}
-        AND lm2.report_date <= ${end}
-      ORDER BY lm2.fetched_at DESC
-      LIMIT 1
-    ) f ON true
-    JOIN users u ON u.id = f.employee_id
-    ORDER BY COALESCE(f.views, 0) DESC, f.fetched_at DESC
+    SELECT l.link_id, l.url_normalized, l.url, l.video_id, l.platform,
+           l.employee_id, u.name AS employee_name, l.fetched_at,
+           l.views, l.likes, l.comments
+    FROM link_metrics_latest l
+    JOIN users u ON u.id = l.employee_id
+    WHERE l.platform = ${platform}
+      AND l.report_date >= ${start}
+      AND l.report_date <= ${end}
+    ORDER BY COALESCE(l.views, 0) DESC, l.fetched_at DESC
+    LIMIT ${limit}
   `
       : await prisma.$queryRaw<InsightRow[]>`
-    WITH winners AS (
-      SELECT DISTINCT ON (lm.employee_id, lm.url_normalized)
-        lm.employee_id, lm.url_normalized, lm.fetched_at, lm.views, lm.likes, lm.comments
-      FROM link_metrics lm
-      WHERE lm.status = 'ok'
-        AND lm.platform = ${platform}
-        AND lm.report_date >= ${start}
-        AND lm.report_date <= ${end}
-      ORDER BY lm.employee_id, lm.url_normalized, lm.fetched_at DESC
-    ),
-    top_n AS (
-      SELECT * FROM winners
-      ORDER BY COALESCE(likes, 0) + COALESCE(comments, 0) DESC, fetched_at DESC
-      LIMIT ${limit}
-    )
-    SELECT f.link_id, f.url_normalized, f.url, f.video_id, f.platform,
-           f.employee_id, u.name AS employee_name, f.fetched_at,
-           f.views, f.likes, f.comments
-    FROM top_n t
-    JOIN LATERAL (
-      SELECT lm2.link_id, lm2.url_normalized, lm2.url, lm2.video_id, lm2.platform,
-             lm2.employee_id, lm2.fetched_at, lm2.views, lm2.likes, lm2.comments
-      FROM link_metrics lm2
-      WHERE lm2.employee_id = t.employee_id
-        AND lm2.url_normalized = t.url_normalized
-        AND lm2.status = 'ok'
-        AND lm2.platform = ${platform}
-        AND lm2.report_date >= ${start}
-        AND lm2.report_date <= ${end}
-      ORDER BY lm2.fetched_at DESC
-      LIMIT 1
-    ) f ON true
-    JOIN users u ON u.id = f.employee_id
-    ORDER BY COALESCE(f.likes, 0) + COALESCE(f.comments, 0) DESC, f.fetched_at DESC
+    SELECT l.link_id, l.url_normalized, l.url, l.video_id, l.platform,
+           l.employee_id, u.name AS employee_name, l.fetched_at,
+           l.views, l.likes, l.comments
+    FROM link_metrics_latest l
+    JOIN users u ON u.id = l.employee_id
+    WHERE l.platform = ${platform}
+      AND l.report_date >= ${start}
+      AND l.report_date <= ${end}
+    ORDER BY COALESCE(l.likes, 0) + COALESCE(l.comments, 0) DESC, l.fetched_at DESC
+    LIMIT ${limit}
   `;
 
   return latest.map((s) => ({
@@ -470,12 +389,14 @@ export async function getMyLinkInsights(
 
   if (links.length === 0) return [];
 
-  // Get latest ok snapshot per (employeeId + urlNormalized) in window
-  const snapshots = await prisma.linkMetric.findMany({
+  // Latest ok snapshot per url — ONE row per (employee, url) from link_metrics_latest.
+  // (Until 2026-09-18 this hydrated EVERY ok snapshot the employee had in the window —
+  // hundreds of thousands of rows for a heavy Instagram submitter — on every HR
+  // /report page load, holding a pool connection for seconds each time.)
+  const snapshots = await prisma.linkMetricLatest.findMany({
     where: {
       employeeId,
       reportDate: { gte: since },
-      status: "ok",
     },
     orderBy: { fetchedAt: "desc" },
     select: {

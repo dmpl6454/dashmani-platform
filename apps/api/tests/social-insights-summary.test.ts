@@ -5,6 +5,7 @@ import {
   getTopLinksByPlatform,
   invalidateInsightsCache,
 } from "../src/services/social-insights.service";
+import { upsertLinkMetricLatest } from "../src/services/link-metrics-latest.service";
 
 // ── DB-backed characterization + regression guard for the DISTINCT ON rewrite of
 // getInsightsSummary + getTopLinksByPlatform (the unbounded `linkMetric.findMany`
@@ -26,6 +27,7 @@ async function cleanup() {
   // roles, etc. (but NOT link_metrics). Deleting users here too would contend with
   // that TRUNCATE for the same table lock and deadlock (40P01).
   await prisma.linkMetric.deleteMany({ where: { url: { startsWith: P } } });
+  await prisma.linkMetricLatest.deleteMany({ where: { url: { startsWith: P } } });
 }
 
 async function ensureEmployeeRole(): Promise<string> {
@@ -59,8 +61,9 @@ async function snap(opts: {
   comments?: number | null;
   platform?: string;
   status?: string;
+  reportDate?: Date;
 }) {
-  return prisma.linkMetric.create({
+  const row = await prisma.linkMetric.create({
     data: {
       url: opts.url,
       urlNormalized: opts.url,
@@ -68,12 +71,32 @@ async function snap(opts: {
       employeeId: opts.employeeId,
       status: opts.status ?? "ok",
       fetchedAt: opts.fetchedAt,
-      reportDate: opts.fetchedAt,
+      reportDate: opts.reportDate ?? opts.fetchedAt,
       views: opts.views ?? null,
       likes: opts.likes ?? null,
       comments: opts.comments ?? null,
     },
   });
+  // Mirror what the cron does on every ok poll (2026-09-18): the reads now come from
+  // link_metrics_latest, so seeding a snapshot must also maintain the latest row.
+  // Newer fetchedAt wins inside the upsert, so seeding order does not matter.
+  if (row.status === "ok") {
+    await upsertLinkMetricLatest({
+      employeeId: row.employeeId,
+      urlNormalized: row.urlNormalized,
+      linkId: row.linkId,
+      reportDate: row.reportDate,
+      url: row.url,
+      platform: row.platform,
+      videoId: row.videoId,
+      fetchedAt: row.fetchedAt,
+      views: row.views,
+      likes: row.likes,
+      comments: row.comments,
+      shares: row.shares,
+    });
+  }
+  return row;
 }
 
 beforeAll(async () => {

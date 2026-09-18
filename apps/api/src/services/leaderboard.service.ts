@@ -2,26 +2,26 @@ import { prisma } from "@dashmani/db";
 import { calcStreaks } from "../utils/streak";
 import { employeeWhere } from "./analytics.service";
 import { todayIST, istMidnight } from "@dashmani/shared";
+import { createSingleFlightMemo } from "../utils/single-flight-memo";
+import { withHeavyQuerySlot } from "../utils/heavy-query";
 
-// Short TTL cache for the heavy leaderboard reads. These recompute a DISTINCT ON over
-// ~925k link_metrics rows + a report groupBy; without a cache, every SWR revalidation
-// (esp. the leaderboard page's 3 concurrent, focus-revalidating calls) re-ran them and
-// saturated the pool. 60s is long enough to absorb a focus/remount storm, short enough
-// that a fresh cron write shows within a minute. Keyed by fn+window so ranges don't collide.
+// 60s SINGLE-FLIGHT TTL cache for the heavy leaderboard reads. The leaderboard page
+// fires 3 concurrent, focus-revalidating calls, and several admins can land at once;
+// the memo collapses repeat reads inside the TTL AND concurrent cold reads for the
+// same key into one compute (the old value-only cache let each cold caller run its
+// own query on its own pool connection — incidents 2026-07-16 / 2026-09-18). Keyed
+// by fn + window so ranges don't collide. Tests MUST call invalidateLeaderboardCache()
+// in beforeEach (module-level cache = the documented cross-test pollution class).
 const LEADERBOARD_TTL_MS = 60 * 1000;
-const _lbCache = new Map<string, { value: unknown; builtAt: number }>();
-export function invalidateLeaderboardCache(): void { _lbCache.clear(); }
-async function memo<T>(key: string, fn: () => Promise<T>): Promise<T> {
-  const hit = _lbCache.get(key);
-  const now = Date.now();
-  if (hit && now - hit.builtAt < LEADERBOARD_TTL_MS) return hit.value as T;
-  const value = await fn();
-  _lbCache.set(key, { value, builtAt: now });
-  return value;
+const _lb = createSingleFlightMemo({ ttlMs: LEADERBOARD_TTL_MS, maxEntries: 200 });
+export function invalidateLeaderboardCache(): void { _lb.clear(); }
+function memo<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  return _lb.memo(key, fn);
 }
 
-// Real per-employee engagement, derived from the link_metrics snapshots (the SAME
-// authoritative source as the Top Links panels / getInsightsSummary), NOT from
+// Real per-employee engagement, derived from link_metrics_latest — the newest ok
+// snapshot per link (the SAME authoritative source as the Top Links panels /
+// getInsightsSummary), NOT from
 // report_links.likes/comments/shares — those columns are NEVER populated (verified
 // 2026-06-29: all 66k report_links rows have likes/comments/shares = 0), which is
 // why the leaderboard's Engagement column used to read a flat 0 for everyone.
@@ -47,48 +47,38 @@ async function getEngagementByEmployee(
   startDate?: string,
   endDate?: string,
 ): Promise<Map<string, EngagementAgg>> {
-  // Latest snapshot per (employeeId, urlNormalized) done IN POSTGRES via DISTINCT ON
-  // (byte-identical to the old JS seen-Set dedup: same key, same latest-by-fetchedAt).
-  // Backed by the partial covering index (Task B1): Index Only Scan, no disk sort.
+  // Reads link_metrics_latest: ONE row per (employee_id, url_normalized) = the newest
+  // status='ok' snapshot, maintained by the social-insights cron (see
+  // link-metrics-latest.service.ts and the model comment in schema.prisma). The result
+  // is byte-identical to the old JS seen-Set dedup and to the DISTINCT ON that replaced
+  // it, but the cost is O(distinct links) instead of O(all snapshots ever written).
+  //
+  // ⚠️ HISTORY: until 2026-09-18 this was `SELECT DISTINCT ON (employee_id,
+  // url_normalized) … FROM link_metrics WHERE status='ok' …`. That query took 0.8s in
+  // July on 2.15M rows and 5-10 MINUTES in September on 14.6M rows (the sweep had
+  // started appending ~850k snapshots/day); six of them held the 10-connection pool and
+  // login/HR-submit died with P2024. Never read engagement from link_metrics here again.
   //
   // ⚠️ NO 90-DAY DEFAULT: when no dates are passed this queries ALL-TIME, matching the
-  // OLD behavior exactly. This is deliberate, not an oversight — prod EXPLAIN ANALYZE
-  // with the tuned index shows ALL-TIME (763ms) is actually FASTER than a 90-day-windowed
-  // query (834ms) at this row count, so narrowing the window bought nothing and would
-  // have silently changed what several existing callers show (e.g. the HR portal's
-  // /hr/leaderboard page, which never sends date params and previously showed all-time
-  // engagement) without any UI indicating the narrower scope. The index alone is the
-  // fix; do not reintroduce a silent default window here.
-  //
-  // ⚠️ FORWARD-LOOKING: this all-time/windowed cost comparison is a snapshot at today's
-  // row count. An all-time DISTINCT ON's cost grows with total distinct (employee, url)
-  // pairs ever recorded, while a windowed query's cost stays roughly flat as the table
-  // ages. Re-measure this comparison if link_metrics grows materially past its current
-  // size (e.g. 2-5x) — the all-time query may eventually become the slower option again.
+  // behaviour every caller has always had (e.g. the HR portal's /hr/leaderboard page
+  // never sends date params). Confirmed with the owner ("there must be an all-time
+  // option for all") — do not reintroduce a silent default window here.
   //
   // NOTE: both bounds are computed in JS and ALWAYS passed as concrete Dates (a null
   // start becomes the epoch, a null end becomes a far-future date). This keeps the
-  // $queryRaw a fully STATIC tagged template — the repo's proven pattern
-  // (link-search.service.ts) — with NO conditional `Prisma.sql`/`Prisma.empty` fragment
-  // (that helper isn't used anywhere in this repo yet, so we don't introduce it). Two
-  // fixed `${}` param bindings only.
+  // $queryRaw a fully STATIC tagged template — the repo's proven pattern — with NO
+  // conditional `Prisma.sql`/`Prisma.empty` fragment. Two fixed `${}` bindings only.
   const start = startDate ? new Date(startDate) : new Date("1970-01-01T00:00:00.000Z");
   const end = endDate ? new Date(endDate) : new Date("2999-12-31T00:00:00.000Z");
 
-  const rows = await prisma.$queryRaw<
+  const rows = await withHeavyQuerySlot("leaderboard:engagement", () => prisma.$queryRaw<
     Array<{ employee_id: string; views: number | null; likes: number | null; comments: number | null }>
   >`
     SELECT employee_id, views, likes, comments
-    FROM (
-      SELECT DISTINCT ON (employee_id, url_normalized)
-        employee_id, views, likes, comments
-      FROM link_metrics
-      WHERE status = 'ok'
-        AND report_date >= ${start}
-        AND report_date <= ${end}
-      ORDER BY employee_id, url_normalized, fetched_at DESC
-    ) latest
-  `;
+    FROM link_metrics_latest
+    WHERE report_date >= ${start}
+      AND report_date <= ${end}
+  `);
 
   const byEmployee = new Map<string, EngagementAgg>();
   for (const r of rows) {
@@ -123,25 +113,19 @@ async function getEngagementByEmployeePlatform(
   endDate?: string,
 ): Promise<Map<string, Map<"youtube" | "instagram" | "facebook" | "snapchat", EngagementAgg>>> {
   // No 90-day default here either — see the matching note in getEngagementByEmployee.
-  // All-time is fast with the Task B1 index (763ms), so there's nothing to gain by
-  // narrowing the window, and doing so would silently change existing callers' output.
+  // Same source (link_metrics_latest), plus url_normalized so rows can be split by
+  // platform in JS.
   const start = startDate ? new Date(startDate) : new Date("1970-01-01T00:00:00.000Z");
   const end = endDate ? new Date(endDate) : new Date("2999-12-31T00:00:00.000Z");
 
-  const rows = await prisma.$queryRaw<
+  const rows = await withHeavyQuerySlot("leaderboard:engagement-platform", () => prisma.$queryRaw<
     Array<{ employee_id: string; url_normalized: string | null; views: number | null; likes: number | null; comments: number | null }>
   >`
     SELECT employee_id, url_normalized, views, likes, comments
-    FROM (
-      SELECT DISTINCT ON (employee_id, url_normalized)
-        employee_id, url_normalized, views, likes, comments
-      FROM link_metrics
-      WHERE status = 'ok'
-        AND report_date >= ${start}
-        AND report_date <= ${end}
-      ORDER BY employee_id, url_normalized, fetched_at DESC
-    ) latest
-  `;
+    FROM link_metrics_latest
+    WHERE report_date >= ${start}
+      AND report_date <= ${end}
+  `);
 
   const byEmp = new Map<string, Map<"youtube" | "instagram" | "facebook" | "snapchat", EngagementAgg>>();
   for (const r of rows) {
@@ -437,7 +421,7 @@ export async function getTeamDashboard(teamLeadId: string) {
 // honestly instead of showing no coverage date at all. Two distinct sources:
 //  - reportsSince = earliest daily_reports.date → how far back link VOLUME / reports go
 //    (drives the main leaderboard: totalLinks, reports, streaks).
-//  - metricsSince = earliest link_metrics.reportDate (status ok) → how far back ENGAGEMENT
+//  - metricsSince = earliest link_metrics_latest.reportDate → how far back ENGAGEMENT
 //    data goes (drives the Top Links leaderboard: views/likes/comments). This is later
 //    than reportsSince and only covers links that got enriched.
 // Cheap: two indexed min() aggregates. Returns ISO date strings (YYYY-MM-DD) or null.
@@ -447,7 +431,10 @@ export async function getLeaderboardCoverage(): Promise<{
 }> {
   const [reportMin, metricMin] = await Promise.all([
     prisma.dailyReport.aggregate({ _min: { date: true } }),
-    prisma.linkMetric.aggregate({ where: { status: "ok" }, _min: { reportDate: true } }),
+    // link_metrics_latest carries the same report_date as each link's ok snapshots, so
+    // its min is the same value — read from the small table (an un-indexed min over
+    // link_metrics WHERE status='ok' was a full covering-index scan per call).
+    prisma.linkMetricLatest.aggregate({ _min: { reportDate: true } }),
   ]);
   const toDay = (d: Date | null | undefined) => (d ? d.toISOString().slice(0, 10) : null);
   return {

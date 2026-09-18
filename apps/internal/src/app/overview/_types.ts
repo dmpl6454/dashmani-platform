@@ -47,7 +47,13 @@ export interface OverviewPayload {
     /** The last closed day, when the requested end was later than it. */
     clampedTo: string | null;
   };
-  channels: { total: number; facebook: number; instagram: number };
+  channels: {
+    total: number; facebook: number; instagram: number;
+    /** Channels whose stored history covers every day of the window. */
+    complete: number;
+    /** Channels whose latest window fetch carries a Meta error (figures still counted). */
+    errored: number;
+  };
   /** Every live channel, followers-desc — what the header search searches. */
   allChannels: ChannelDirectoryRow[];
   kpis: {
@@ -121,7 +127,14 @@ export interface OverviewPayload {
     gender: Array<{ bucket: string; label: string; value: number }>;
     country: Array<{ bucket: string; value: number }>;
   };
-  trending: Array<{ id: string; name: string; type: string; count: number; previousCount: number }>;
+  trending: Array<{
+    id: string; name: string; type: string; count: number; previousCount: number;
+    share: number | null; previousShare: number | null;
+    /** Change in SHARE of harvested captions, not in raw count — null when nothing to compare. */
+    changePct: number | null;
+    firstSeenThisWeek: boolean;
+  }>;
+  trendingWindow: { captionsThisWeek: number; captionsLastWeek: number };
   pending: { approvals: number; employees: number; leave: number; documents: number; linksToday: number; submittedToday: number } | null;
 }
 

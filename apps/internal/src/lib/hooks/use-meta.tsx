@@ -265,7 +265,13 @@ export function useMetaChannels(params?: {
         /** Which window the figures describe — echoed so the UI can never mislabel them. */
         window: ChannelWindowKey | "custom";
         /** Present in range mode: the span the figures cover. */
-        range?: { start: string; end: string; days: number };
+        range?: {
+          start: string; end: string; days: number;
+          /** What was asked for; differs from `end` only when the server clamped. */
+          requestedEnd?: string;
+          /** The last day the estate had closed, when the requested end was later. */
+          clampedTo?: string | null;
+        };
         /** Newest moment Meta has published — Facebook closes periods at local midnight. */
         dataThrough: string | null;
         /** Last calendar day every figure is complete through (YYYY-MM-DD, UTC key);

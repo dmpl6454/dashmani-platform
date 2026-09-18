@@ -524,3 +524,75 @@ describe("overview — custom date range", () => {
     expect(a.period.end).not.toBe(b.period.end);
   });
 });
+
+/**
+ * Coverage disclosure + share-normalised trending (2026-09-18, PR after #156).
+ */
+describe("overview — coverage counts and share-normalised trending", () => {
+  beforeEach(async () => {
+    invalidateOverviewCache();
+    invalidateRangeCache();
+  });
+
+  it("counts channels COMPLETE for the span separately from channels merely reporting, and names errored ones", async () => {
+    const admin = await prisma.user.create({
+      data: { name: "Cov Admin", email: `cov-${Date.now()}@zz.test`, passwordHash: "x", status: "ACTIVE" },
+    });
+    const conn = await prisma.metaConnection.create({
+      data: { metaUserId: `mu-cov-${Date.now()}`, connectedById: admin.id, status: "ACTIVE" },
+    });
+    const full = await prisma.metaAsset.create({ data: { connectionId: conn.id, kind: "FACEBOOK_PAGE", metaId: "cov-full", name: "Full" } });
+    const partial = await prisma.metaAsset.create({ data: { connectionId: conn.id, kind: "FACEBOOK_PAGE", metaId: "cov-part", name: "Partial" } });
+    const errored = await prisma.metaAsset.create({ data: { connectionId: conn.id, kind: "FACEBOOK_PAGE", metaId: "cov-err", name: "Errored" } });
+    for (let n = 1; n <= 8; n++) {
+      const date = dateOf(isoDaysAgo(n));
+      await prisma.metaAssetDaily.create({ data: { assetId: full.id, date, views: BigInt(10), engagements: BigInt(1) } });
+      await prisma.metaAssetDaily.create({ data: { assetId: errored.id, date, views: BigInt(10), engagements: BigInt(1) } });
+      // The partial channel joined mid-window: only its last 3 days exist.
+      if (n <= 3) await prisma.metaAssetDaily.create({ data: { assetId: partial.id, date, views: BigInt(5), engagements: BigInt(1) } });
+    }
+    await prisma.metaAssetMetric.create({
+      data: { assetId: errored.id, window: "days_28", error: "(#10) The user must be an administrator of the page" },
+    });
+    const o = await getOverview({ days: 7, audDays: 0, revDays: 0, vbcDays: 0, tracDays: 0 });
+    // All three REPORT (they have rows), but only two are complete for the whole span.
+    expect(o.kpis.views.contributing).toBe(3);
+    expect(o.channels.total).toBe(3);
+    expect(o.channels.complete).toBe(2);
+    expect(o.channels.errored).toBe(1);
+    // The partial channel's figures are still counted — disclosure, not exclusion.
+    expect(o.kpis.views.value).toBe(7 * 10 + 7 * 10 + 3 * 5);
+  });
+
+  it("⚠️ trending change follows the SHARE of harvested captions, so tripling harvest volume does not fake a rise", async () => {
+    const ent = await prisma.entity.create({ data: { canonicalName: "Steady Topic", type: "TOPIC", aliases: [], createdAt: new Date(Date.now() - 30 * 86_400_000) } });
+    const mk = async (key: string, daysAgo: number, tagIt: boolean) => {
+      const c = await prisma.linkContent.create({
+        data: { canonicalKey: key, platform: "instagram", status: "ok", caption: "x", createdAt: new Date(Date.now() - daysAgo * 86_400_000) },
+      });
+      if (tagIt) await prisma.linkContentEntity.create({ data: { linkContentId: c.id, entityId: ent.id } });
+    };
+    // Last week: 2 captions harvested, both about the topic → share 100%.
+    await mk("ig:lw1", 10, true);
+    await mk("ig:lw2", 9, true);
+    // This week: harvest TRIPLED to 6 captions, 3 about the topic → count ROSE 2→3 but
+    // share FELL 100%→50%. A count-based arrow would point up; the truth is down.
+    await mk("ig:tw1", 2, true);
+    await mk("ig:tw2", 2, true);
+    await mk("ig:tw3", 1, true);
+    await mk("ig:tw4", 1, false);
+    await mk("ig:tw5", 1, false);
+    await mk("ig:tw6", 1, false);
+    const o = await getOverview({ days: 7, audDays: 0, revDays: 0, vbcDays: 0, tracDays: 0 });
+    const t = o.trending.find((x) => x.name === "Steady Topic")!;
+    expect(t.count).toBe(3);
+    expect(t.previousCount).toBe(2);
+    expect(o.trendingWindow).toEqual({ captionsThisWeek: 6, captionsLastWeek: 2 });
+    expect(t.share).toBeCloseTo(0.5, 6);
+    expect(t.previousShare).toBeCloseTo(1, 6);
+    // The whole point: negative despite the raw count rising.
+    expect(t.changePct).toBeCloseTo(-50, 6);
+    expect(t.changePct!).toBeLessThan(0);
+    expect(t.firstSeenThisWeek).toBe(false);
+  });
+});

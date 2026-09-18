@@ -23,6 +23,7 @@ import {
   previousRange,
   rangeDayCount,
   shiftDay,
+  resolveClosedEnd,
   type AssetRangeTotals,
 } from "./meta-oauth/meta-range.service";
 import * as analyticsService from "./analytics.service";
@@ -108,7 +109,15 @@ export interface OverviewPayload {
     /** The last closed day, when the requested end was later than it. Null otherwise. */
     clampedTo: string | null;
   };
-  channels: { total: number; facebook: number; instagram: number };
+  channels: {
+    total: number;
+    facebook: number;
+    instagram: number;
+    /** Channels whose stored history covers EVERY day of the window (coveredDays === span). */
+    complete: number;
+    /** Channels whose latest window fetch carries a Meta error (their figures still count). */
+    errored: number;
+  };
   /** Every live channel, followers-desc — the header search searches this, not the ranked lists. */
   allChannels: ChannelDirectoryRow[];
   kpis: {
@@ -201,7 +210,17 @@ export interface OverviewPayload {
     gender: Array<{ bucket: string; label: string; value: number }>;
     country: Array<{ bucket: string; value: number }>;
   };
-  trending: Array<{ id: string; name: string; type: string; count: number; previousCount: number }>;
+  trending: Array<{
+    id: string; name: string; type: string; count: number; previousCount: number;
+    /** Share of this week's / last week's harvested captions (null when the half is empty). */
+    share: number | null; previousShare: number | null;
+    /** Change in SHARE, week over week — null when there is no prior share to compare against. */
+    changePct: number | null;
+    /** The entity row itself was created inside the current window. */
+    firstSeenThisWeek: boolean;
+  }>;
+  /** Denominators for the trending shares — how much was harvested in each half. */
+  trendingWindow: { captionsThisWeek: number; captionsLastWeek: number };
   pending: {
     approvals: number;
     employees: number;
@@ -476,47 +495,16 @@ export function getOverview(params: OverviewParams): Promise<OverviewPayload> {
  */
 const ACTIVITY_WINDOW_DAYS = 7;
 
-// How many trailing days to inspect when deciding which day is genuinely complete.
-const END_PROBE_DAYS = 8;
-// A day counts as closed once this share of the estate's best-covered day reported it.
-const END_COVERAGE_SHARE = 0.8;
-
 /**
- * The newest day that is complete for the whole estate.
+ * The newest day that is complete for the whole estate — see resolveClosedEnd in
+ * meta-range.service.ts, which Account Growth's custom range now shares. The overview
+ * passes NO minimum-estate floor: its end is always derived (never user-picked), and
+ * its tests seed two assets and rely on the clamp firing.
  *
- * Instagram closes at UTC midnight and Facebook at Pacific midnight, and the sweep
- * that writes `meta_asset_daily` runs every ~3h — so the newest day present in the
- * table is routinely a partial one holding only the platform that closed first.
- * Counting reporting assets per day and taking the newest day within
- * END_COVERAGE_SHARE of the best-covered day in the probe window picks the last day
- * BOTH platforms closed, without hard-coding either boundary.
- *
- * Fails open to the clock's yesterday (the previous behaviour) when there is nothing
- * to measure — a brand-new estate must still render.
+ * Fails open to the clock's yesterday when there is nothing to measure.
  */
 async function resolveWindowEnd(liveIds: string[], todayIso: string): Promise<string> {
-  const fallback = shiftDay(todayIso, -1);
-  if (liveIds.length === 0) return fallback;
-  const rows = await prisma.metaAssetDaily.groupBy({
-    by: ["date"],
-    where: {
-      assetId: { in: liveIds },
-      date: {
-        gte: new Date(`${shiftDay(todayIso, -END_PROBE_DAYS)}T00:00:00Z`),
-        lte: new Date(`${fallback}T00:00:00Z`),
-      },
-    },
-    _count: { _all: true },
-    orderBy: { date: "desc" },
-  });
-  if (rows.length === 0) return fallback;
-  const best = Math.max(...rows.map((r) => r._count._all));
-  if (best === 0) return fallback;
-  // rows are newest-first, so the first adequately-covered day is the newest one.
-  for (const r of rows) {
-    if (r._count._all >= best * END_COVERAGE_SHARE) return isoDay(r.date);
-  }
-  return fallback;
+  return resolveClosedEnd(liveIds, shiftDay(todayIso, -1));
 }
 
 async function buildOverview(params: OverviewParams): Promise<OverviewPayload> {
@@ -529,7 +517,7 @@ async function buildOverview(params: OverviewParams): Promise<OverviewPayload> {
       select: {
         id: true, kind: true, metaId: true, name: true, username: true, pictureUrl: true,
         followerCount: true, socialAccountId: true,
-        windowMetrics: { where: { window: { in: ["week", "days_28"] } }, select: { window: true, reach: true } },
+        windowMetrics: { where: { window: { in: ["week", "days_28"] } }, select: { window: true, reach: true, error: true } },
       },
     })
   ).filter((a) => !duplicateIds.has(a.id));
@@ -588,7 +576,7 @@ async function buildOverview(params: OverviewParams): Promise<OverviewPayload> {
 
   // Empty `in` lists are valid Prisma filters that simply match nothing, so every
   // query below runs unconditionally and keeps one concrete result type.
-  const [rangeNow, rangePrev, followerDeltas, daily, snapshots, cityRows, ageRows, genderRows, countryRows, posts, reports, newUsers, announcements, trendingNow, pendingStats] =
+  const [rangeNow, rangePrev, followerDeltas, daily, snapshots, cityRows, ageRows, genderRows, countryRows, posts, reports, newUsers, announcements, trendingNow, captionsThisWeek, captionsLastWeek, pendingStats] =
     await Promise.all([
       getRangeTotals(start, end),
       getRangeTotals(prev.start, prev.end),
@@ -675,6 +663,14 @@ async function buildOverview(params: OverviewParams): Promise<OverviewPayload> {
         orderBy: { _count: { entityId: "desc" } },
         take: 20,
       }),
+      // ⚠️ Both halves' caption totals, so the trending change can be a change in SHARE.
+      // Weekly harvest throughput swings ~3x on prod (5,794 → 17,312 captions between two
+      // measured weeks); an absolute count difference therefore rises and falls with how
+      // much we HARVESTED, and a quiet harvest week rendered every topic as "declining".
+      prisma.linkContent.count({ where: { status: "ok", createdAt: { gte: new Date(Date.now() - 7 * 86_400_000) } } }),
+      prisma.linkContent.count({
+        where: { status: "ok", createdAt: { gte: new Date(Date.now() - 14 * 86_400_000), lt: new Date(Date.now() - 7 * 86_400_000) } },
+      }),
       analyticsService.getOverviewStats().catch(() => null),
     ]);
 
@@ -692,6 +688,13 @@ async function buildOverview(params: OverviewParams): Promise<OverviewPayload> {
   // rows at all would be a fabricated assurance — the footer must show an em-dash.
   const dataThroughDay: string | null = daily.length > 0 ? end : null;
   const perAsset = new Map<string, AssetRangeTotals>();
+  // ⚠️ "419 of 419 channels reporting" was true and still misleading: a channel counts as
+  // reporting if it has ANY row in the window, so 6 channels contributing partial spans
+  // (4 of them stuck on a permanent Meta permission error) read as complete. Account
+  // Growth shows a per-channel coveredDays chip; the overview disclosed nothing. These
+  // two counts let every KPI drawer say how many channels the span is COMPLETE for.
+  let completeChannels = 0;
+  let erroredChannels = 0;
   for (const a of assets) {
     const t = rangeNow.get(a.id);
     if (t) {
@@ -699,7 +702,9 @@ async function buildOverview(params: OverviewParams): Promise<OverviewPayload> {
       cur.views.push(t.views);
       cur.engagements.push(t.engagements);
       cur.earnings.push(t.earningsCents);
+      if (t.coveredDays >= spanDays) completeChannels++;
     }
+    if (a.windowMetrics.some((w) => w.error != null)) erroredChannels++;
     const p = rangePrev.get(a.id);
     if (p) {
       if (p.views != null) { prv.views += p.views; prv.viewsAssets++; }
@@ -1010,7 +1015,7 @@ async function buildOverview(params: OverviewParams): Promise<OverviewPayload> {
   const trendingIds = trendingNow.map((t) => t.entityId);
   const [entities, trendingPrev] = trendingIds.length
     ? await Promise.all([
-        prisma.entity.findMany({ where: { id: { in: trendingIds } }, select: { id: true, canonicalName: true, type: true } }),
+        prisma.entity.findMany({ where: { id: { in: trendingIds } }, select: { id: true, canonicalName: true, type: true, createdAt: true } }),
         prisma.linkContentEntity.groupBy({
           by: ["entityId"],
           where: {
@@ -1026,10 +1031,28 @@ async function buildOverview(params: OverviewParams): Promise<OverviewPayload> {
     : [[], []];
   const entityById = new Map(entities.map((e) => [e.id, e]));
   const prevCount = new Map(trendingPrev.map((t) => [t.entityId, t._count._all]));
+  const weekAgo = Date.now() - 7 * 86_400_000;
   const trending = trendingNow
     .map((t) => {
       const e = entityById.get(t.entityId);
-      return e ? { id: e.id, name: e.canonicalName, type: e.type, count: t._count._all, previousCount: prevCount.get(t.entityId) ?? 0 } : null;
+      if (!e) return null;
+      const count = t._count._all;
+      const previousCount = prevCount.get(t.entityId) ?? 0;
+      // Share of that week's harvested captions. NULL when the half has no captions at all
+      // — never a fabricated 0%.
+      const share = captionsThisWeek > 0 ? count / captionsThisWeek : null;
+      const previousShare = captionsLastWeek > 0 ? previousCount / captionsLastWeek : null;
+      // ⚠️ Change in SHARE, not in count — see the caption-total comment above. NULL when
+      // there is no prior share to compare against (a genuinely new topic, or an empty
+      // prior week), so the UI renders "new" rather than an infinite percentage.
+      const changePct = share != null && previousShare != null && previousShare > 0 ? ((share - previousShare) / previousShare) * 100 : null;
+      return {
+        id: e.id, name: e.canonicalName, type: e.type, count, previousCount, share, previousShare, changePct,
+        // ⚠️ An entity BORN this week is not evidence a topic is new — the extractor may
+        // simply have rendered an old topic as a new string ("Ganpati Puja" vs "Ganpati
+        // Pooja"). Surfaced so the UI can say "first seen this week" instead of a huge %.
+        firstSeenThisWeek: e.createdAt.getTime() >= weekAgo,
+      };
     })
     .filter((x): x is NonNullable<typeof x> => x !== null);
 
@@ -1051,6 +1074,8 @@ async function buildOverview(params: OverviewParams): Promise<OverviewPayload> {
       total: assets.length,
       facebook: assets.filter((a) => a.kind === "FACEBOOK_PAGE").length,
       instagram: assets.filter((a) => a.kind !== "FACEBOOK_PAGE").length,
+      complete: completeChannels,
+      errored: erroredChannels,
     },
     kpis: {
       followers: {
@@ -1091,6 +1116,7 @@ async function buildOverview(params: OverviewParams): Promise<OverviewPayload> {
     traction: { days: tracN, start: tracDayList[0], end, prevStart: tracPrev.start, prevEnd: tracPrev.end, tiles, series: tracSeries },
     demographics: { assets: demoAssets.size, age, gender, country },
     trending,
+    trendingWindow: { captionsThisWeek, captionsLastWeek },
     pending: p
       ? {
           approvals: n("pendingApprovals"),

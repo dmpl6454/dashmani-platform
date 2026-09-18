@@ -174,6 +174,64 @@ export async function getRangeFollowerDeltas(start: string, end: string): Promis
   return out;
 }
 
+// How many trailing days to inspect when deciding which day is genuinely complete.
+export const END_PROBE_DAYS = 8;
+// A day counts as closed once this share of the estate's best-covered day reported it.
+export const END_COVERAGE_SHARE = 0.8;
+
+/**
+ * The newest day ≤ `upTo` that is complete for the whole estate — shared by the
+ * overview (which derives its window end from it) and Account Growth's custom range
+ * (which clamps a user-picked end to it).
+ *
+ * Instagram closes at UTC midnight and Facebook at Pacific midnight, and the sweep that
+ * writes meta_asset_daily runs every ~3h — so the newest day in the table is routinely a
+ * PARTIAL one holding only the platform that closed first. Counting reporting assets per
+ * day over the probe window and taking the newest day within END_COVERAGE_SHARE of the
+ * best-covered day picks the last day BOTH platforms closed, without hard-coding either
+ * boundary. Measured on prod: a 7-day range ending on the unclosed day understated views
+ * by 7.2% because all 313 Facebook Pages were missing it.
+ *
+ * ⚠️ `minAssets` IS A STATISTICAL FLOOR, NOT A TEST DODGE. The rule compares SHARES of
+ * the estate, and a share needs a denominator: with 2 assets, one sparse Instagram
+ * account with a single stored day makes every other day read as "20% covered" and would
+ * shorten a range nothing is wrong with. Below the floor the caller's `upTo` is returned
+ * untouched and the per-channel coverage chips carry the disclosure, exactly as before.
+ * The overview passes no floor (its end is always derived, never user-picked, and its
+ * tests seed 2 assets and rely on the clamp); Account Growth passes 20 because it is
+ * overriding an explicit user choice and must not do so on noise.
+ *
+ * Fails open to `upTo` when there is nothing to measure — a brand-new estate must render.
+ */
+export async function resolveClosedEnd(
+  assetIds: string[],
+  upTo: string,
+  opts: { minAssets?: number } = {},
+): Promise<string> {
+  if (assetIds.length === 0) return upTo;
+  if (opts.minAssets && assetIds.length < opts.minAssets) return upTo;
+  const rows = await prisma.metaAssetDaily.groupBy({
+    by: ["date"],
+    where: {
+      assetId: { in: assetIds },
+      date: {
+        gte: new Date(`${shiftDay(upTo, -(END_PROBE_DAYS - 1))}T00:00:00Z`),
+        lte: new Date(`${upTo}T00:00:00Z`),
+      },
+    },
+    _count: { _all: true },
+    orderBy: { date: "desc" },
+  });
+  if (rows.length === 0) return upTo;
+  const best = Math.max(...rows.map((r) => r._count._all));
+  if (best === 0) return upTo;
+  // rows are newest-first, so the first adequately-covered day is the newest one.
+  for (const r of rows) {
+    if (r._count._all >= best * END_COVERAGE_SHARE) return r.date.toISOString().slice(0, 10);
+  }
+  return upTo;
+}
+
 /** The equal-length range immediately BEFORE [start, end] — for trend chips. */
 export function previousRange(start: string, end: string): { start: string; end: string } {
   const span = rangeDayCount(start, end);

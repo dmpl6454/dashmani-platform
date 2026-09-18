@@ -19,7 +19,9 @@ export function Card({
     <section className={`ov-card ${className}`} aria-label={ariaLabel}>
       {(title || right) && (
         <div className="ov-card-h">
-          {title && <h2>{title}</h2>}
+          {/* `title` attr only when the heading is a plain string — the ones that carry a
+              pill are ReactNodes and would stringify to "[object Object]". */}
+          {title && <h2 title={typeof title === "string" ? title : undefined}>{title}</h2>}
           {right}
         </div>
       )}
@@ -54,11 +56,18 @@ export function ViewAll({ href, label = "View All" }: { href: string; label?: st
 
 /**
  * ⚠️ Card header actions MUST be wrapped in this single element.
+ *
  * `.ov-card-h` is `display:flex; justify-content:space-between` and its `h2` is the only
- * shrinkable item — and because that h2 is itself a flex container, its
- * text-overflow:ellipsis is INERT, so a third header child does not ellipsise the title,
- * it HARD-CLIPS it with no "…" and no tooltip. Passing a fragment of two nodes to
- * `right` creates exactly that. Group them here instead.
+ * shrinkable item, so every extra header child is paid for out of the title's width.
+ *
+ * ⚠️ CORRECTION TO THE OLD COMMENT HERE (and to CLAUDE.md, which still repeats it): the
+ * h2 is NO LONGER a flex container — overview.css:120 is a plain block with
+ * `white-space:nowrap; overflow:hidden; text-overflow:ellipsis`, so its ellipsis is LIVE
+ * and a third child now TRUNCATES the title with a visible "…" rather than hard-clipping
+ * it mid-glyph. That makes an extra child degrade gracefully instead of silently, but it
+ * does not make it free: 1366px is the binding width case, where one more icon button
+ * costs a title roughly 14px. Group actions here, and keep `Card`'s `title` attribute so
+ * a truncated title is still recoverable on hover.
  */
 export function CardActions({ children }: { children: ReactNode }) {
   return <span className="ov-card-actions">{children}</span>;
@@ -79,20 +88,36 @@ export interface ExpandSpec {
   title: string;
   /** States the exact window and coverage the rows were computed over. */
   subtitle?: string;
-  columns: string[];
+  /**
+   * ⚠️ OPTIONAL, because a picture-only expand exists. When `columns` is omitted no
+   * table is rendered at all — without this a chart-only expand printed the empty-state
+   * line "Nothing to show for this period." underneath a perfectly good chart.
+   */
+  columns?: string[];
   /** Per-column alignment; defaults to left. */
   align?: Array<"left" | "right">;
-  rows: Array<{ key: string; cells: ReactNode[] }>;
-  /** Rendered above the table — e.g. a larger map. */
+  /**
+   * `onRowClick` makes the row interactive. It stays OPTIONAL per row so a table whose
+   * rows have no sensible target (cities, demographic buckets) renders exactly as before.
+   */
+  rows?: Array<{ key: string; cells: ReactNode[]; onClick?: () => void; label?: string }>;
+  /** Rendered above the table — a larger map or chart. */
   lead?: ReactNode;
   note?: string;
 }
 
 export function ExpandModal({ spec, onClose }: { spec: ExpandSpec; onClose: () => void }) {
   const align = spec.align ?? [];
+  const rows = spec.rows ?? [];
+  const columns = spec.columns ?? [];
+  const hasTable = columns.length > 0;
   return (
     <>
-      <div className="ov-drawer-bg" onClick={onClose} />
+      {/* ⚠️ `ov-modal-bg`, NOT the bare `ov-drawer-bg` this used to emit. That class is
+          shared with Drawer, so raising it to stack a drawer above the modal would have
+          raised the MODAL'S OWN dimmer above the modal and covered it completely. The two
+          scrims now have their own z-indexes. */}
+      <div className="ov-drawer-bg ov-modal-bg" onClick={onClose} />
       <section role="dialog" aria-modal="true" aria-label={spec.title} className="ov-modal">
         <div className="ov-modal-h">
           <div style={{ minWidth: 0 }}>
@@ -102,22 +127,38 @@ export function ExpandModal({ spec, onClose }: { spec: ExpandSpec; onClose: () =
           <button type="button" onClick={onClose} aria-label="Close" className="ov-x">×</button>
         </div>
         {spec.lead && <div className="ov-modal-lead">{spec.lead}</div>}
-        <div className="ov-modal-body">
-          <table className="ov-modal-table">
-            <thead>
-              <tr>{spec.columns.map((c, i) => <th key={c} style={{ textAlign: align[i] ?? "left" }}>{c}</th>)}</tr>
-            </thead>
-            <tbody>
-              {spec.rows.map((r) => (
-                <tr key={r.key}>
-                  {r.cells.map((c, i) => <td key={i} style={{ textAlign: align[i] ?? "left" }}>{c}</td>)}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {spec.rows.length === 0 && <div className="ov-empty">Nothing to show for this period.</div>}
-        </div>
-        <div className="ov-modal-foot">{spec.note ?? `${spec.rows.length} rows · live platform data`}</div>
+        {hasTable && (
+          <div className="ov-modal-body">
+            <table className="ov-modal-table">
+              <thead>
+                <tr>{columns.map((c, i) => <th key={c} style={{ textAlign: align[i] ?? "left" }}>{c}</th>)}</tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => (
+                  /* ⚠️ NO `role="button"` HERE, deliberately. It would replace the row's
+                     own semantics, leaving a <tbody> whose children are not rows — every
+                     cell in a 419-row table would lose its column/header association for
+                     assistive tech. A <tr> stays a row; tabIndex makes it focusable and
+                     the key handler gives it Enter/Space, which is what it actually needs. */
+                  <tr
+                    key={r.key}
+                    className={r.onClick ? "is-clickable" : undefined}
+                    onClick={r.onClick}
+                    tabIndex={r.onClick ? 0 : undefined}
+                    aria-label={r.onClick ? r.label : undefined}
+                    onKeyDown={r.onClick ? (e) => {
+                      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); r.onClick!(); }
+                    } : undefined}
+                  >
+                    {r.cells.map((c, i) => <td key={i} style={{ textAlign: align[i] ?? "left" }}>{c}</td>)}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {rows.length === 0 && <div className="ov-empty">Nothing to show for this period.</div>}
+          </div>
+        )}
+        <div className="ov-modal-foot">{spec.note ?? `${rows.length} rows · live platform data`}</div>
       </section>
     </>
   );
@@ -234,11 +275,16 @@ export interface DrawerSpec {
   note?: string;
 }
 
-export function Drawer({ spec, onClose }: { spec: DrawerSpec; onClose: () => void }) {
+export function Drawer({ spec, onClose, stacked = false }: { spec: DrawerSpec; onClose: () => void; stacked?: boolean }) {
   return (
     <>
-      <div className="ov-drawer-bg" onClick={onClose} />
-      <aside role="dialog" aria-modal="true" aria-label={spec.title} className="ov-drawer">
+      {/* ⚠️ When opened FROM an expanded table the drawer must out-rank the modal, and it
+          cannot do that by DOM order alone — both were z-index 41, so the drawer painted
+          above only by accident of render order while the modal stayed UNDIMMED and fully
+          hit-testable, swallowing this scrim's dismiss-on-click across its 880px footprint.
+          The stacked variant lifts the scrim above the modal and the panel above that. */}
+      <div className={`ov-drawer-bg ${stacked ? "ov-drawer-bg-top" : ""}`} onClick={onClose} />
+      <aside role="dialog" aria-modal="true" aria-label={spec.title} className={`ov-drawer ${stacked ? "ov-drawer-top" : ""}`}>
         <div className="ov-drawer-h">
           <div style={{ minWidth: 0 }}>
             <div className="ov-drawer-k" style={{ color: spec.accent }}>{spec.kind}</div>

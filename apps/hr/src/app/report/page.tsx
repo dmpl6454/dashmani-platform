@@ -217,7 +217,7 @@ function TodaySubmittedPanel({ existing, accounts }: {
 export default function ReportPage() {
   const router = useRouter();
   const { data: accountsData } = useAssignedAccounts();
-  const { data: todayData, mutate: mutateToday } = useTodayReport();
+  const { data: todayData, mutate: mutateToday, error: todayError } = useTodayReport();
   const { data: myInsightsData, isLoading: myInsightsLoading } = useMyLinkInsights(30);
 
   const accounts = (accountsData as any)?.data || [];
@@ -333,6 +333,39 @@ export default function ReportPage() {
       return ls.length <= 1 && !ls[0]?.url.trim() && !ls[0]?.isScheduled && !ls[0]?.accountId;
     };
 
+    const toRow = (l: any) => ({
+      accountId: l.accountId || "",
+      url: l.url || "",
+      description: l.description || "",
+      likes: l.likes?.toString() || "",
+      comments: l.comments?.toString() || "",
+      shares: l.shares?.toString() || "",
+      views: l.views?.toString() || "",
+      mediaUrl: l.mediaUrl || "",
+      isScheduled: l.isScheduled || false,
+      scheduledFor: l.scheduledFor ? new Date(l.scheduledFor).toISOString().slice(0, 16) : "",
+      matchStatus: "manual" as const,
+    });
+    const keyOf = (url: string) => canonicalKey(url) || url.trim().toLowerCase();
+    // Put the SUBMITTED links into the form. Pristine form → plain prefill (the normal
+    // path). Form already holds user content (they pasted before this resolved — normal
+    // whenever the API is slow) → MERGE the submitted rows in front of theirs instead of
+    // skipping. Skipping was the 2026-09-18 loss path: the form then held only the new
+    // rows and Update Links (delete-and-recreate on the server) replaced today's report
+    // with them. Rows are only ever ADDED here, never removed or overwritten (the
+    // 2026-06-04 restore-clobber rule still holds); a URL present in both is collapsed
+    // by the in-submission dedupe, which keeps the first (submitted) row.
+    const applyExisting = (serverLinks: any[] | undefined) => {
+      if (!Array.isArray(serverLinks) || serverLinks.length === 0) return;
+      const rows = serverLinks.map(toRow);
+      if (formIsPristine()) { setLinks(rows); return; }
+      setLinks((prev) => {
+        const have = new Set(prev.map((r) => keyOf(r.url)));
+        const missing = rows.filter((r) => !have.has(keyOf(r.url)));
+        return missing.length ? [...missing, ...prev] : prev;
+      });
+    };
+
     apiFetch<any>(`/hr/reports/draft?date=${dateKey}`)
       .then((res) => {
         const draft = res?.data;
@@ -347,6 +380,10 @@ export default function ReportPage() {
             setNotes(draft.notes || "");
             setDraftRestored(true);
             setTimeout(() => setDraftRestored(false), 5000);
+          } else {
+            // Draft skipped (form already has user content) — but the SUBMITTED links
+            // must still land in the form, or Update Links would drop them.
+            applyExisting(existing?.links);
           }
           setPrefilled(true);
           return;
@@ -356,21 +393,7 @@ export default function ReportPage() {
         if (existing && !prefilled) {
           setPrefilled(true);
           setNotes(existing.notes || "");
-          if (existing.links?.length > 0 && formIsPristine()) {
-            setLinks(existing.links.map((l: any) => ({
-              accountId: l.accountId || "",
-              url: l.url || "",
-              description: l.description || "",
-              likes: l.likes?.toString() || "",
-              comments: l.comments?.toString() || "",
-              shares: l.shares?.toString() || "",
-              views: l.views?.toString() || "",
-              mediaUrl: l.mediaUrl || "",
-              isScheduled: l.isScheduled || false,
-              scheduledFor: l.scheduledFor ? new Date(l.scheduledFor).toISOString().slice(0, 16) : "",
-              matchStatus: "manual" as const,
-            })));
-          }
+          applyExisting(existing.links);
         }
       })
       .catch(() => {
@@ -378,21 +401,7 @@ export default function ReportPage() {
         if (existing && !prefilled) {
           setPrefilled(true);
           setNotes(existing.notes || "");
-          if (existing.links?.length > 0 && formIsPristine()) {
-            setLinks(existing.links.map((l: any) => ({
-              accountId: l.accountId || "",
-              url: l.url || "",
-              description: l.description || "",
-              likes: l.likes?.toString() || "",
-              comments: l.comments?.toString() || "",
-              shares: l.shares?.toString() || "",
-              views: l.views?.toString() || "",
-              mediaUrl: l.mediaUrl || "",
-              isScheduled: l.isScheduled || false,
-              scheduledFor: l.scheduledFor ? new Date(l.scheduledFor).toISOString().slice(0, 16) : "",
-              matchStatus: "manual" as const,
-            })));
-          }
+          applyExisting(existing.links);
         }
       });
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -720,6 +729,20 @@ export default function ReportPage() {
     // which could interleave the server's delete-and-recreate destructively.
     if (loading) return;
     setError("");
+    // Never save over an UNKNOWN server state. If today's report has not loaded (slow
+    // API, rate limit, offline), this form does NOT contain the links already
+    // submitted today, and the server's delete-and-recreate would replace them with
+    // whatever is here. Refuse until the load succeeds — SWR keeps retrying and the
+    // banner above the form offers Retry. (2026-09-18: a rate-limit storm made this
+    // exact sequence possible; it read as "people lost their links".)
+    if (todayData === undefined) {
+      setError(
+        todayError
+          ? "Couldn't load the links you already submitted today, so saving is paused — nothing you submitted earlier has been touched. Tap Retry above (or reload the page) and try again."
+          : "Still loading the links you already submitted today — please wait a moment and try again.",
+      );
+      return;
+    }
     if (validLinks.length === 0) { setError("At least one link is required"); return; }
     const missingAccount = validLinks.find((l) => !l.accountId);
     if (missingAccount) { setError("Please select an account for every link before submitting"); return; }
@@ -1081,6 +1104,18 @@ export default function ReportPage() {
           <Link2 className="h-4 w-4 text-[#B8960C]" />
           <h2 className="text-sm font-semibold text-[#1A1A1A]">Post Links</h2>
           <div className="flex-1 h-px bg-[#E8E0D0]" />
+          {todayData === undefined && todayError && (
+            <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-start gap-3" role="alert">
+              <AlertTriangle className="h-4 w-4 text-amber-600 mt-0.5 flex-shrink-0" />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-[#1A1A1A]">Couldn't load the links you already submitted today</p>
+                <p className="text-xs text-[#7A7A7A] mt-1">
+                  {(todayError as any)?.message || "The server did not respond"}. Saving is paused until this loads, so nothing you submitted earlier can be replaced by mistake — your earlier links are safe on the server.
+                </p>
+                <button type="button" onClick={() => mutateToday()} className="mt-2 text-xs font-semibold text-[#1A1A1A] underline">Retry now</button>
+              </div>
+            </div>
+          )}
           {existing && (
             <span className="text-[11px] text-indigo-500 font-medium shrink-0">
               editing — trash to remove, then Update Links

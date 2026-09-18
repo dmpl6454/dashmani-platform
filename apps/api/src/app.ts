@@ -6,6 +6,7 @@ import path from "path";
 import rateLimit from "express-rate-limit";
 import routes from "./routes";
 import { errorHandler } from "./middleware/error-handler";
+import { rateLimitKey, loginRateLimitKey, isHealthProbe, envInt } from "./middleware/rate-limit-key";
 
 const app = express();
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(process.cwd(), "uploads");
@@ -36,23 +37,31 @@ app.use(cors({
   allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
 }));
 
-// Global rate limiter
+// Global rate limiter — keyed per VERIFIED USER, falling back to req.ip for anonymous
+// calls (see middleware/rate-limit-key.ts for the 2026-09-18 incident: under
+// `trust proxy 1` behind Cloudflare, req.ip is the Cloudflare EDGE IP, so keying on it
+// made every employee share one bucket and produced "Too many requests" storms).
+// Health probes are exempt so monitors never eat a user's budget.
 app.use(rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 1000,
+  max: envInt("RATE_LIMIT_MAX", 1000),
+  keyGenerator: rateLimitKey,
+  skip: isHealthProbe,
   standardHeaders: true,
   legacyHeaders: false,
   message: { success: false, error: { code: "RATE_LIMIT", message: "Too many requests, please try again later" } },
 }));
 
-// Stricter rate limit on auth endpoints
+// Stricter rate limit on login endpoints — keyed per (client, account). Mounted
+// further down, AFTER express.json(), because the key reads the request body.
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 20,
+  max: envInt("RATE_LIMIT_LOGIN_MAX", 20),
+  keyGenerator: loginRateLimitKey,
+  standardHeaders: true,
+  legacyHeaders: false,
   message: { success: false, error: { code: "RATE_LIMIT", message: "Too many login attempts, please try again later" } },
 });
-app.use("/v1/auth/login", authLimiter);
-app.use("/v1/hr/auth/login", authLimiter);
 
 // Stricter rate limit on public job applications (prevent spam)
 const publicLimiter = rateLimit({
@@ -65,6 +74,10 @@ app.use("/v1/internship/apply", publicLimiter);
 
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true }));
+
+// Login limiter needs req.body (per-account key) → after the body parsers.
+app.use("/v1/auth/login", authLimiter);
+app.use("/v1/hr/auth/login", authLimiter);
 
 if (process.env.NODE_ENV !== "test") {
   app.use(morgan("combined"));

@@ -88,6 +88,8 @@ button.ov-chip:hover,.ov-chip.is-active{color:#F4F6F8;border-color:#33506A}
 /* A one-line provenance note under a card title, for widgets whose numbers mean something
    narrower than their name suggests. */
 .ov-card-note{font-size:9.5px;color:#738395;line-height:1.35;margin-top:4px}
+/* Trending row with no prior week to compare against — a label, not an arrow. */
+.ov-trend-new{font-size:9px;text-transform:uppercase;letter-spacing:.06em;color:#E9BD62;flex-shrink:0}
 /* Custom-range picker inside the global period menu. */
 .ov-daterange{display:flex;flex-direction:column;gap:7px;padding:6px 8px 2px}
 .ov-daterange label{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:11px;color:#A7B3C2}

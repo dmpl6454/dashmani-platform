@@ -158,7 +158,9 @@ describe("GET /admin/meta/channels — range mode + removal", () => {
     expect(res.status).toBe(200);
     const d = res.body.data;
     expect(d.window).toBe("custom");
-    expect(d.range).toEqual({ start: dayIso(-4), end: dayIso(-2), days: 3 });
+    // ⚠️ NOT clamped: this is a 2-asset estate, below RANGE_CLAMP_MIN_ASSETS, so the sparse
+    // Instagram account (one stored day) must not shorten the range. clampedTo stays null.
+    expect(d.range).toEqual({ start: dayIso(-4), end: dayIso(-2), days: 3, requestedEnd: dayIso(-2), clampedTo: null });
 
     const a = d.items.find((i: { id: string }) => i.id === assetA);
     expect(a.views28d).toBe(60);
@@ -354,5 +356,86 @@ describe("duplicate resolution vs removal", () => {
     const suppressed = await resolveDuplicateAssetIds();
     expect(suppressed.has(hiddenBig.id)).toBe(true);
     expect(suppressed.has(visibleSmall.id)).toBe(false);
+  });
+});
+
+/**
+ * Custom-range END CLAMP (2026-09-18).
+ *
+ * Facebook closes at Pacific midnight and the sweep is 3-hourly, so the newest day in
+ * meta_asset_daily routinely holds Instagram rows only. Summing it as a full day
+ * understated a 7-day range by a measured 7.2% on prod (313 of 313 Pages missing it) while
+ * the headline read as a complete 7d. The route now clamps a requested end back to the
+ * last day the estate had closed — but ONLY on an estate large enough for a coverage
+ * share to mean anything (RANGE_CLAMP_MIN_ASSETS). The two-asset seed above stays
+ * unclamped by design: one sparse Instagram account must never shorten everyone's range.
+ */
+describe("GET /admin/meta/channels — custom range end is clamped to the last CLOSED day", () => {
+  let adminToken: string;
+  async function get(path: string) {
+    return request(app).get(path).set("Authorization", `Bearer ${adminToken}`);
+  }
+
+  const D = (iso: string) => new Date(`${iso}T00:00:00Z`);
+
+  beforeEach(async () => {
+    invalidateRangeCache();
+    // The route is gated on reports.manage + requireAdminRole; setup.ts TRUNCATEs roles
+    // between tests, so the role must be re-created here exactly as the suite above does.
+    await createTestRole("Admin", [
+      { resource: "reports", action: "manage", scope: "global" },
+      { resource: "reports", action: "view", scope: "global" },
+    ]);
+    const admin = await createTestUser({ roleNames: ["Admin"] });
+    adminToken = generateToken(admin.id, admin.email, ["Admin"]);
+    const conn = await prisma.metaConnection.create({
+      data: { metaUserId: `mu-clamp-${Date.now()}`, connectedById: admin.id, status: "ACTIVE" },
+    });
+    // 24 Facebook Pages (above the floor) that have ALL closed dayIso(-3) and dayIso(-2)
+    // but NONE has published dayIso(-1) yet; 6 Instagram accounts that have.
+    for (let i = 0; i < 24; i++) {
+      const a = await prisma.metaAsset.create({
+        data: { connectionId: conn.id, kind: "FACEBOOK_PAGE", metaId: `clamp-fb-${i}`, name: `FB ${i}` },
+      });
+      await prisma.metaAssetDaily.createMany({
+        data: [
+          { assetId: a.id, date: D(dayIso(-3)), views: 100n, engagements: 1 },
+          { assetId: a.id, date: D(dayIso(-2)), views: 100n, engagements: 1 },
+        ],
+      });
+    }
+    for (let i = 0; i < 6; i++) {
+      const b = await prisma.metaAsset.create({
+        data: { connectionId: conn.id, kind: "INSTAGRAM_ACCOUNT", metaId: `clamp-ig-${i}`, name: `IG ${i}`, username: `ig${i}` },
+      });
+      await prisma.metaAssetDaily.createMany({
+        data: [
+          { assetId: b.id, date: D(dayIso(-3)), views: 10n, engagements: 1 },
+          { assetId: b.id, date: D(dayIso(-2)), views: 10n, engagements: 1 },
+          { assetId: b.id, date: D(dayIso(-1)), views: 10n, engagements: 1 },
+        ],
+      });
+    }
+  });
+
+  it("shortens a range ending on the unclosed day and says so, instead of summing a partial day as a full one", async () => {
+    const res = await get(`/v1/admin/meta/channels?start=${dayIso(-3)}&end=${dayIso(-1)}`);
+    expect(res.status).toBe(200);
+    const d = res.body.data;
+    expect(d.range.requestedEnd).toBe(dayIso(-1));
+    expect(d.range.end).toBe(dayIso(-2));
+    expect(d.range.clampedTo).toBe(dayIso(-2));
+    expect(d.range.days).toBe(2);
+    // Every one of the 30 channels is complete for the CLAMPED span — the whole point.
+    for (const it of d.items) expect(it.coveredDays).toBe(it.rangeDays);
+    // 24 FB × 2 days × 100 + 6 IG × 2 days × 10 — the Instagram-only day is left out.
+    expect(d.totals.views).toBe(24 * 2 * 100 + 6 * 2 * 10);
+  });
+
+  it("leaves a range that already ends on a closed day untouched", async () => {
+    const res = await get(`/v1/admin/meta/channels?start=${dayIso(-3)}&end=${dayIso(-2)}`);
+    expect(res.status).toBe(200);
+    expect(res.body.data.range.end).toBe(dayIso(-2));
+    expect(res.body.data.range.clampedTo).toBeNull();
   });
 });

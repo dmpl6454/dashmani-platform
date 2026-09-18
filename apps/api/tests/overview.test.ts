@@ -177,7 +177,9 @@ describe("getOverview against a seeded estate", () => {
 
   it("sums period metrics like-for-like and reports the reach window only where Meta publishes it", async () => {
     const o = await getOverview({ days: 7, audDays: 30, revDays: 30, vbcDays: 0, tracDays: 0 });
-    expect(o.channels).toEqual({ total: 2, facebook: 1, instagram: 1 });
+    // Both seeded assets carry a row for every day of the 7-day window, and neither
+    // window row carries a Meta error.
+    expect(o.channels).toEqual({ total: 2, facebook: 1, instagram: 1, complete: 2, errored: 0 });
     // 7 closed days × (100 + 60) views; both channels contribute.
     expect(o.kpis.views.value).toBe(7 * 160);
     expect(o.kpis.views.contributing).toBe(2);
@@ -232,7 +234,14 @@ describe("getOverview against a seeded estate", () => {
     expect(o.activity.find((a) => a.kind === "report")?.text).toBe("Roshan S submitted a daily report with 0 links");
     // Newest first.
     for (let i = 1; i < o.activity.length; i++) expect(o.activity[i - 1].at >= o.activity[i].at).toBe(true);
-    expect(o.trending).toEqual([{ id: expect.any(String), name: "Kriti Sanon", type: "PERSON", count: 1, previousCount: 0 }]);
+    // One caption harvested this week, tagged once → share 1/1; nothing last week, so
+    // there is no prior share and the change is NULL (rendered "new"), never a fabricated
+    // percentage. The entity row was created in beforeEach, i.e. this week.
+    expect(o.trending).toEqual([{
+      id: expect.any(String), name: "Kriti Sanon", type: "PERSON", count: 1, previousCount: 0,
+      share: 1, previousShare: null, changePct: null, firstSeenThisWeek: true,
+    }]);
+    expect(o.trendingWindow).toEqual({ captionsThisWeek: 1, captionsLastWeek: 0 });
   });
 
   it("computes traction over the last 7 closed days with an equal-length baseline", async () => {

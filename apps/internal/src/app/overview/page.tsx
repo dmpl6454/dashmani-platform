@@ -229,6 +229,13 @@ export default function OverviewPage() {
   const kpis = useMemo(() => {
     if (!o) return [];
     const k = o.kpis;
+    // ⚠️ "419 of 419 reporting" was true and still misleading — a channel counts as
+    // reporting with ANY row in the window. This row says how many the span is COMPLETE
+    // for, and names the permanently-erroring ones, which Account Growth already does
+    // per channel. Only shown when it adds information.
+    const coverageRow = o.channels.complete < o.channels.total
+      ? [{ label: "Complete for the whole period", value: `${o.channels.complete} of ${o.channels.total}${o.channels.errored ? ` · ${o.channels.errored} on a Meta permission error` : ""} — the rest contribute the days they have` }]
+      : [];
     const periodNote = `vs. previous ${o.period.days} days`;
     return [
       {
@@ -240,7 +247,12 @@ export default function OverviewPage() {
           ? (k.followers.delta / (k.followers.followersWithHistory - k.followers.delta)) * 100
           : null,
         reliable: o.channels.total === 0 || k.followers.channelsWithHistory / o.channels.total >= 0.95,
-        note: k.followers.delta != null ? `${fmtSigned(k.followers.delta)} · ${k.followers.channelsWithHistory}/${o.channels.total} channels` : `across ${o.channels.total} channels`,
+        // ⚠️ Worded as "measured over", not "with history": Audience Growth's headline counts
+        // a DIFFERENT population (uncontested linked channels with snapshots spanning the
+        // window — 148 on prod) while this delta counts assets whose follower change spans
+        // the period (146). Both are true of their own set; giving them the same phrase
+        // made the two-channel gap read as a contradiction.
+        note: k.followers.delta != null ? `${fmtSigned(k.followers.delta)} · measured over ${k.followers.channelsWithHistory} of ${o.channels.total}` : `across ${o.channels.total} channels`,
         rows: [
           { label: "Facebook Pages", value: String(o.channels.facebook) },
           { label: "Instagram accounts", value: String(o.channels.instagram) },
@@ -257,6 +269,7 @@ export default function OverviewPage() {
         rows: [
           { label: "Previous period", value: fmtCompact(k.views.previous) },
           { label: "Channels reporting", value: `${k.views.contributing} of ${o.channels.total}` },
+          ...coverageRow,
           { label: "Period", value: `${fmtDay(o.period.start)} – ${fmtDay(o.period.end)}` },
         ],
         href: "/accounts/growth",
@@ -309,6 +322,7 @@ export default function OverviewPage() {
           { label: "Pages that earned", value: `${k.revenue.earning} of ${k.revenue.contributing} monetised Pages` },
           { label: "Reported exactly $0.00", value: String(Math.max(0, k.revenue.contributing - k.revenue.earning)) },
           { label: "Why the two differ", value: "A monetised Page that made nothing still reports a real $0.00, so it counts as reporting but not as earning" },
+          ...coverageRow,
           { label: "Currency", value: "USD, as paid by Meta. Instagram publishes no earnings metric, so revenue is Facebook-only" },
         ],
         href: "/accounts/growth",
@@ -319,6 +333,7 @@ export default function OverviewPage() {
         rows: [
           { label: "Previous period", value: fmtCompact(k.engagements.previous) },
           { label: "Channels reporting", value: `${k.engagements.contributing} of ${o.channels.total}` },
+          ...coverageRow,
         ],
         href: "/accounts/growth",
       },
@@ -445,17 +460,16 @@ export default function OverviewPage() {
     setDrawer({
       kind: `Trending ${t.type.toLowerCase()}`, accent: T.teal, title: t.name, sub: `${t.count} tagged posts · last 7 days`,
       rows: [
-        { label: "Previous 7 days", value: String(t.previousCount) },
-        { label: "Change", value: t.previousCount > 0 ? fmtSignedPct(((t.count - t.previousCount) / t.previousCount) * 100) : "new this week" },
+        { label: "Previous 7 days", value: `${t.previousCount} tagged posts` },
+        { label: "Share of this week's captions", value: t.share != null ? `${(t.share * 100).toFixed(2)}% of ${o?.trendingWindow.captionsThisWeek.toLocaleString("en-IN") ?? "—"}` : "—" },
+        { label: "Share last week", value: t.previousShare != null ? `${(t.previousShare * 100).toFixed(2)}% of ${o?.trendingWindow.captionsLastWeek.toLocaleString("en-IN") ?? "—"}` : "—" },
+        { label: "Change in share", value: t.changePct != null ? fmtSignedPct(t.changePct) : t.firstSeenThisWeek ? "first tagged this week" : "no prior week to compare" },
+        ...(t.firstSeenThisWeek ? [{ label: "⚠️ Entity is new", value: "This label was first created this week — it may be a new spelling of an existing topic rather than a new topic" }] : []),
       ],
       href: { label: "Search these posts", url: "/reports/link-search" },
-      // ⚠️ The change is an ABSOLUTE count difference between two harvest weeks, and
-      // weekly harvest throughput itself swings (5,794 → 17,312 captions between two
-      // measured weeks). So a quiet harvest week can render as a topic "declining" when
-      // only our collection volume moved. Normalising to each week's share is the real
-      // fix and is a deliberate follow-up; until then the caveat must be on screen rather
-      // than implied by an arrow.
-      note: "Counts are captions harvested from connected channels and tagged by Link Search — a wider set than the links our team submitted. The week-on-week change also moves with how much we harvested that week, so read it as a signal, not a precise trend.",
+      // The change is normalised to each week's SHARE of harvested captions, so a quiet
+      // harvest week no longer renders every topic as "declining" (throughput swings ~3x).
+      note: "Counts are captions harvested from connected channels and tagged by Link Search — a wider set than the links our team submitted. The change compares this week's share of all harvested captions with last week's, so harvest volume cancels out.",
     });
   }
   /**
@@ -559,16 +573,17 @@ export default function OverviewPage() {
     setExpand({
       title: "What’s Trending",
       subtitle: "Entities tagged in captions harvested this week, against the week before",
-      columns: ["#", "Entity", "Type", "This week", "Last week", "Change"],
-      align: ["left", "left", "left", "right", "right", "right"],
+      columns: ["#", "Entity", "Type", "This week", "Share", "Last week", "Change in share"],
+      align: ["left", "left", "left", "right", "right", "right", "right"],
       rows: o.trending.map((t, i) => ({
         key: t.id,
-        cells: [i + 1, t.name, t.type.toLowerCase(), t.count.toLocaleString("en-IN"), t.previousCount.toLocaleString("en-IN"),
-                t.previousCount > 0 ? fmtSignedPct(((t.count - t.previousCount) / t.previousCount) * 100) : "new"],
+        cells: [i + 1, t.firstSeenThisWeek ? `${t.name} ·new` : t.name, t.type.toLowerCase(), t.count.toLocaleString("en-IN"),
+                t.share != null ? `${(t.share * 100).toFixed(2)}%` : "—", t.previousCount.toLocaleString("en-IN"),
+                t.changePct != null ? fmtSignedPct(t.changePct) : "new"],
         onClick: () => openTrending(t, true),
         label: `Open ${t.name}`,
       })),
-      note: "Counts come from Link Search caption tagging, not from Meta.",
+      note: `Counts come from Link Search caption tagging, not from Meta. Share = of the ${o.trendingWindow.captionsThisWeek.toLocaleString("en-IN")} captions harvested this week (${o.trendingWindow.captionsLastWeek.toLocaleString("en-IN")} last week); the change compares shares so harvest volume cancels out. "·new" marks a label first created this week.`,
     });
   }
 
@@ -1004,7 +1019,7 @@ export default function OverviewPage() {
                         sits in the same sentence rather than in small grey type beside it. */}
                     <span>
                       {o.audience.delta != null ? `${fmtSigned(o.audience.delta)} followers · ` : ""}
-                      across {o.audience.channelsUsed} of {o.channels.total} channels with {o.audience.days}-day history
+                      across {o.audience.channelsUsed} of {o.channels.total} channels whose snapshot history spans all {o.audience.days} days
                     </span>
                   </span>
                   {audDays !== 0 && <button type="button" className="ov-reset" onClick={() => { setAudDays(0); remember("ov-aud", 0); }}>Local period · Reset</button>}
@@ -1249,7 +1264,11 @@ export default function OverviewPage() {
                 <div className="ov-trending">
                   {o.trending.length === 0 && <Empty>No captions tagged this week yet.</Empty>}
                   {o.trending.slice(0, CARD_ROWS).map((t, i) => {
-                    const up = t.count >= t.previousCount;
+                    // ⚠️ The arrow follows the change in SHARE of harvested captions, never the
+                    // raw count — harvest throughput swings ~3x week to week, so a count
+                    // arrow tracked our collection volume, not the topic. No prior share
+                    // (a new entity, or an empty prior week) renders "new", not an arrow.
+                    const up = (t.changePct ?? 0) >= 0;
                     return (
                       <button key={t.id} type="button" className="ov-trend-row" onClick={() => openTrending(t)}>
                         <span className="ov-rank-sm">{i + 1}</span>
@@ -1258,7 +1277,11 @@ export default function OverviewPage() {
                         {/* NOT fmtCompact: with digits=0 every count in 1,000–1,999 collapsed
                             to "1K", flattening the very ranking this widget exists to show. */}
                         <span className="ov-trend-count">{t.count.toLocaleString("en-IN")} posts</span>
-                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={up ? T.teal : T.red} strokeWidth="2.4" aria-hidden="true"><path d={up ? "M12 19V5M5 12l7-7 7 7" : "M12 5v14M5 12l7 7 7-7"} /></svg>
+                        {t.changePct == null
+                          ? <span className="ov-trend-new" title={t.firstSeenThisWeek ? "First tagged this week — no prior week to compare against" : "No captions tagged for this in the prior week"}>new</span>
+                          : <span title={`${fmtSignedPct(t.changePct)} share of harvested captions vs last week`} style={{ display: "inline-flex", flexShrink: 0 }}>
+                              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={up ? T.teal : T.red} strokeWidth="2.4" aria-hidden="true"><path d={up ? "M12 19V5M5 12l7-7 7 7" : "M12 5v14M5 12l7 7 7-7"} /></svg>
+                            </span>}
                       </button>
                     );
                   })}
@@ -1270,7 +1293,7 @@ export default function OverviewPage() {
 
         {o && (
           <div className="ov-foot">
-            Meta channel data complete through {o.period.dataThroughDay ? fmtDayYear(o.period.dataThroughDay) : "—"} · {o.channels.total} connected channels · page refreshed {fmtRelative(o.generatedAt, now)}
+            Meta channel data complete through {o.period.dataThroughDay ? fmtDayYear(o.period.dataThroughDay) : "—"} · {o.channels.total} connected channels{o.channels.complete < o.channels.total ? ` (${o.channels.complete} complete for this period)` : ""} · page refreshed {fmtRelative(o.generatedAt, now)}
             {/* Disclose a clamp rather than silently showing a shorter window than asked for. */}
             {o.period.clampedTo && (
               <> · range shortened to {fmtDayYear(o.period.clampedTo)} — Meta has not published a complete day after that</>

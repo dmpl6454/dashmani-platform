@@ -307,9 +307,28 @@ router.delete(
           where: { id },
           data: { status: "REVOKED", revokedAt: now, userTokenEnc: null },
         }),
+        // ⚠️⚠️ DO NOT ADD `selected: false` BACK HERE. It used to be set, and it made a
+        // disconnect → reconnect cycle silently blank the whole platform: the discovery
+        // upsert's `update` branch revives `disconnectedAt: null` but never restores
+        // `selected` (meta-discovery.service.ts ~278 and ~381), and EVERY reader and
+        // every sync filters `selected: true` — the overview, /admin/meta/channels, the
+        // channel/posts/demographics syncs and account-growth qualification. Reconnecting
+        // would therefore have left all 419 prod channels deselected: empty overview, no
+        // metric refresh, and no error anywhere to explain it.
+        //
+        // It is also redundant: all eleven of those call sites pair `selected: true` with
+        // `disconnectedAt: null`, so the stamp below already excludes these assets from
+        // every surface on its own.
+        //
+        // And it was destructive. `selected: false` is ALSO how the owner removes a
+        // channel from monitoring in Manage mode (56 such rows on prod), so clobbering it
+        // here erased the difference between "the owner removed this channel" and "this
+        // connection was disconnected" — leaving no way to restore the right state on
+        // reconnect. Leaving the flag alone preserves both: monitored channels come back
+        // monitored, deliberately-removed channels stay removed.
         prisma.metaAsset.updateMany({
           where: { connectionId: id },
-          data: { pageTokenEnc: null, disconnectedAt: now, selected: false },
+          data: { pageTokenEnc: null, disconnectedAt: now },
         }),
       ]);
 

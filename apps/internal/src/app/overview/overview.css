@@ -85,6 +85,33 @@ button.ov-chip:hover,.ov-chip.is-active{color:#F4F6F8;border-color:#33506A}
 .ov-menu-note{margin-top:4px;padding:6px 8px;border-top:1px solid #182C39;font-size:10.5px;color:#738395;line-height:1.4}
 .ov-menu-row{display:flex;justify-content:space-between;padding:6px 8px;font-size:11px;color:#A7B3C2}
 .ov-menu-row b{color:#F4F6F8;font-weight:600}
+/* A one-line provenance note under a card title, for widgets whose numbers mean something
+   narrower than their name suggests. */
+.ov-card-note{font-size:9.5px;color:#738395;line-height:1.35;margin-top:4px}
+/* Custom-range picker inside the global period menu. */
+.ov-daterange{display:flex;flex-direction:column;gap:7px;padding:6px 8px 2px}
+.ov-daterange label{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:11px;color:#A7B3C2}
+/* ⚠️ min-width:0 + max-width:100% is the documented containment for native date inputs:
+   iOS Safari sizes them from their own shadow DOM, so a bare width rule does not hold
+   them inside a 278px menu. Kept UNCONDITIONAL — capping a date field at its container is
+   harmless on desktop, and gating it on (hover:none) misses iOS "Desktop Site" mode. */
+.ov-daterange input[type="date"]{min-width:0;max-width:100%;flex:1;background:#0B1720;border:1px solid #223543;border-radius:5px;color:#F4F6F8;font-family:inherit;font-size:12px;padding:4px 7px;color-scheme:dark}
+.ov-daterange input[type="date"]:focus-visible{outline:2px solid rgba(233,189,98,.6);outline-offset:-1px}
+.ov-daterange .ov-cta{margin-top:2px}
+.ov-daterange .ov-cta:disabled{opacity:.45;cursor:default}
+/* The period chip has a full and an abbreviated spelling; only one is ever rendered.
+   Below 1500px the cards in the 4-track ops row cannot afford the full wording beside
+   an expand button. The full text stays in the DOM for screen readers at wide widths,
+   and the abbreviation is aria-hidden so it is never double-announced. */
+.ov-chip-abbr{display:none}
+@media (max-width:1499px){
+  .ov-chip-full{display:none}
+  .ov-chip-abbr{display:inline}
+}
+/* Components of the approvals roll-up, indented so the three visibly sum to the total
+   above them rather than reading as four independent queues. */
+.ov-menu-sub{padding-left:10px;border-left:1px solid #182C39;margin-left:8px}
+.ov-menu-sub .ov-menu-item{font-size:11px;color:#A7B3C2}
 .ov-menu-foot{display:block;padding:8px;margin-top:4px;border-top:1px solid #182C39;font-size:11px;color:#E9BD62}
 .ov-menu-foot:hover{color:#F4D58C}
 .ov-noresults{padding:14px 8px;text-align:center;color:#A7B3C2;font-size:12px;line-height:1.4}
@@ -138,6 +165,23 @@ button.ov-chip:hover,.ov-chip.is-active{color:#F4F6F8;border-color:#33506A}
 .ov-modal-table th{position:sticky;top:0;background:#08131C;text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:#738395;font-weight:500;padding:0 8px 6px;border-bottom:1px solid #182C39;white-space:nowrap}
 .ov-modal-table td{padding:7px 8px;border-bottom:1px solid #101E29;font-size:11.5px;vertical-align:middle}
 .ov-modal-table tbody tr:hover{background:#0F1E2A}
+/* Rows that actually go somewhere. The hover highlight above has always been present on
+   EVERY row, which is precisely why a dead table read as interactive — only clickable
+   rows now get a pointer and a focus ring. */
+.ov-modal-table tbody tr.is-clickable{cursor:pointer}
+.ov-modal-table tbody tr.is-clickable:focus-visible{outline:2px solid rgba(233,189,98,.7);outline-offset:-2px}
+.ov-modal-table tbody tr.is-clickable:hover{background:#13242F}
+/* A chart or map dropped into the modal lead.
+   ⚠️ THE EXPLICIT HEIGHT IS LOAD-BEARING. `.ov-chart` takes its height from `flex:1`
+   inside the flex-column card, and `.ov-plot>svg` is absolutely positioned — so in the
+   height-less `.ov-modal-lead` block a chart collapses to ZERO and renders INVISIBLE.
+   `.ov-map-lg` is the existing precedent; this is the same trick for the line/bar charts.
+   ⚠️ And it is CAPPED: `.ov-modal` is not scrollable and `.ov-modal-lead` is
+   flex-shrink:0, so an over-tall lead pushes the table out of the modal box entirely. */
+.ov-chart-lg{height:min(44vh,340px);display:flex;flex-direction:column;min-height:0}
+.ov-chart-lg .ov-chart{margin-top:0}
+/* Donut expands size their own SVG, so they only need centring. */
+.ov-donut-lg{display:flex;align-items:center;justify-content:center;gap:28px;flex-wrap:wrap}
 .ov-modal-table td:first-child{color:#A7B3C2}
 .ov-modal-foot{flex-shrink:0;padding-top:10px;font-size:9.5px;color:#4E5F70}
 @media (max-width:767px){.ov-modal{width:94vw;max-height:88vh;padding:14px 14px 10px}.ov-modal-table td,.ov-modal-table th{padding-left:5px;padding-right:5px}}
@@ -288,7 +332,11 @@ button.ov-chip:hover,.ov-chip.is-active{color:#F4F6F8;border-color:#33506A}
 /* ── activity ── */
 .ov-activity{flex:1;display:flex;flex-direction:column;gap:6px;margin-top:8px;min-height:0}
 .ov-act{display:flex;gap:8px;align-items:flex-start;width:100%;padding:2px 3px;border:0;border-radius:4px;background:transparent;color:#F4F6F8;cursor:pointer;text-align:left;min-width:0}
-.ov-act:hover{background:#0F1E2A}
+.ov-act:hover:not(:disabled){background:#0F1E2A}
+/* A stream with no target must not look clickable. Every stream has one today, so this
+   is a guard for a future one rather than a state you can reach now. */
+.ov-act:disabled{cursor:default}
+.ov-act:focus-visible{outline:2px solid rgba(233,189,98,.6);outline-offset:-2px}
 .ov-act-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;margin-top:4px}
 .ov-act-t{flex:1;min-width:0;font-size:10.5px;line-height:1.35;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .ov-act-when{font-size:9.5px;color:#738395;flex-shrink:0;padding-top:1px}
@@ -334,6 +382,24 @@ button.ov-chip:hover,.ov-chip.is-active{color:#F4F6F8;border-color:#33506A}
 
 /* ── detail drawer ── */
 .ov-drawer-bg{position:fixed;inset:0;z-index:40;background:rgba(3,7,11,.45)}
+/* ⚠️ STACKING CONTRACT — four layers, and the ORDER MATTERS.
+   modal scrim 40 < modal 41 < drawer scrim 42 < drawer 43.
+   Before this, `.ov-modal` and `.ov-drawer` were BOTH 41 and shared one scrim class at
+   40: a drawer opened from an expanded table painted above the modal only by accident of
+   DOM order, the modal stayed UNDIMMED, and because the modal (41) sat above the drawer's
+   own scrim (40) it swallowed every dismiss-click across its 880px footprint.
+   Do NOT raise `.ov-drawer-bg` itself to stack a drawer — it is emitted by the modal too,
+   so that lifts the modal's own dimmer above the modal and covers it. */
+/* ⚠️ TWO-CLASS SELECTORS ARE DELIBERATE, NOT STYLE. `.ov-drawer-top` alone has the same
+   specificity (0,1,0) as `.ov-drawer`, and `.ov-drawer` is declared LATER in this file —
+   so on a tie the later rule wins and the panel computed z-index:41 instead of 43. A
+   headless measurement caught it: the drawer's own scrim then painted OVER the panel and
+   `elementFromPoint` inside the drawer returned the scrim, i.e. the drawer would have
+   been completely un-clickable. Qualifying with the base class (0,2,0) makes these win
+   wherever they sit in the file. */
+.ov-drawer-bg.ov-modal-bg{z-index:40}
+.ov-drawer-bg.ov-drawer-bg-top{z-index:42;background:rgba(3,7,11,.55)}
+.ov-drawer.ov-drawer-top{z-index:43}
 .ov-drawer{position:fixed;top:0;right:0;bottom:0;width:360px;max-width:100vw;z-index:41;background:#08131C;border-left:1px solid #244358;box-shadow:-20px 0 50px rgba(0,0,0,.55);display:flex;flex-direction:column;padding:18px 18px 14px;overflow:auto;color:#F4F6F8;font-family:Inter,system-ui,sans-serif;font-size:12px}
 .ov-drawer-h{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
 .ov-drawer-k{font-size:10.5px;text-transform:uppercase;letter-spacing:.08em;font-weight:600}

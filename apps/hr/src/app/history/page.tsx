@@ -109,9 +109,15 @@ function ReportCard({ report }: { report: any }) {
 export default function HistoryPage() {
   const [range, setRange] = useState<RangeKey>("7d");
   const { startDate, endDate } = getDateRange(range);
-  const { data, isLoading } = useMyReports(startDate, endDate);
-  const { data: todayData } = useTodayReport();
+  const { data, isLoading, error, mutate } = useMyReports(startDate, endDate);
+  const { data: todayData, error: todayError, mutate: mutateToday } = useTodayReport();
   const reports = data?.data ?? [];
+  // A failed request is NOT "no reports". On 2026-09-18 a rate-limit storm made this
+  // page render "No reports found for this period" for employees with months of
+  // history, which was read as their links having been deleted. Only the loaded
+  // response may claim emptiness; a failure says so and offers a retry.
+  const loadFailed = !isLoading && data === undefined && error != null;
+  const todayFailed = todayData === undefined && todayError != null;
 
   const todayReport = todayData?.data ?? null;
   const linksTodayCount: number = todayReport?.links?.length ?? 0;
@@ -138,11 +144,20 @@ export default function HistoryPage() {
           </div>
           <div className="flex-1 min-w-0">
             <p className="text-[13px] font-bold text-ink leading-tight">
-              {linksTodayCount > 0
-                ? `${linksTodayCount} link${linksTodayCount !== 1 ? "s" : ""} submitted today`
-                : "No links submitted today yet"}
+              {todayFailed
+                ? "Couldn't check today's submissions"
+                : linksTodayCount > 0
+                  ? `${linksTodayCount} link${linksTodayCount !== 1 ? "s" : ""} submitted today`
+                  : "No links submitted today yet"}
             </p>
-            <p className="text-[11px] text-ink-3 font-medium mt-0.5">{todayDateStr}</p>
+            <p className="text-[11px] text-ink-3 font-medium mt-0.5">
+              {todayFailed ? (
+                <>
+                  {todayError?.message || "The server did not respond"} ·{" "}
+                  <button type="button" onClick={() => mutateToday()} className="underline font-semibold text-ink-2">Retry</button>
+                </>
+              ) : todayDateStr}
+            </p>
           </div>
           {linksTodayCount > 0 && (
             <span className="shrink-0 h-8 min-w-[2rem] rounded-xl bg-success-bg text-success text-[13px] font-bold grid place-items-center px-2">
@@ -154,6 +169,13 @@ export default function HistoryPage() {
         <div className="space-y-3 anim-fade-up d2">
           {isLoading ? (
             <div className="v3-card px-5 py-10 text-center"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo mx-auto" /></div>
+          ) : loadFailed ? (
+            <div className="v3-card px-5 py-10 text-center" role="alert">
+              <Clock size={24} className="mx-auto mb-3 text-attention" />
+              <p className="text-[13px] text-ink font-bold">Couldn't load your reports</p>
+              <p className="text-[12px] text-ink-3 font-medium mt-1">{error?.message || "The server did not respond"}. Your submitted links are safe — this is a loading problem, not a data problem.</p>
+              <button type="button" onClick={() => mutate()} className="mt-4 h-9 px-4 rounded-full bg-ink text-white text-[12px] font-semibold">Retry</button>
+            </div>
           ) : reports.length === 0 ? (
             <div className="v3-card px-5 py-10 text-center"><Clock size={24} className="mx-auto mb-3 text-ink-4" /><p className="text-[13px] text-ink-3 font-medium">No reports found for this period</p></div>
           ) : (

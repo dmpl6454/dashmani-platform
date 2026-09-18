@@ -32,12 +32,21 @@ export interface ChannelRow {
 }
 
 export type CityTier = "high" | "growing" | "emerging";
-export type ActivityKind = "post" | "report" | "user" | "leave" | "announcement";
+/** ⚠️ No "leave": a named person's leave type/status must not ride a payload served to
+ *  every internal user. Removing it from the union makes re-adding it a compile error. */
+export type ActivityKind = "post" | "report" | "user" | "announcement";
 export type TractionKey = "views" | "engagements" | "reactions" | "shares";
 
 export interface OverviewPayload {
   generatedAt: string;
-  period: { days: number; start: string; end: string; prevStart: string; prevEnd: string; dataThroughDay: string | null };
+  period: {
+    days: number; start: string; end: string; prevStart: string; prevEnd: string;
+    dataThroughDay: string | null;
+    /** True when the window came from an explicit start/end rather than a preset. */
+    custom: boolean;
+    /** The last closed day, when the requested end was later than it. */
+    clampedTo: string | null;
+  };
   channels: { total: number; facebook: number; instagram: number };
   /** Every live channel, followers-desc — what the header search searches. */
   allChannels: ChannelDirectoryRow[];
@@ -47,7 +56,10 @@ export interface OverviewPayload {
       followersWithHistory: number | null; spark: number[] };
     views: PeriodMetric;
     engagements: PeriodMetric;
-    revenue: PeriodMetric;
+    /** `contributing` = Pages that REPORTED a figure (includes exact zeros, 317 on prod
+     *  at every period); `earning` = Pages actually above zero (57 at 14d). Label each
+     *  for what it is — conflating them is what made this card read "317 pages earning". */
+    revenue: PeriodMetric & { earning: number };
     reach: { value: number | null; window: "week" | "days_28" | null; contributing: number };
   };
   audience: {
@@ -69,6 +81,9 @@ export interface OverviewPayload {
   viewsByChannelAll: Array<{ id: string; name: string; platform: "facebook" | "instagram"; views: number; share: number }>;
   /** Effective period of that card (equals period.days unless detached). */
   viewsByChannelDays: number;
+  /** Total views over THAT card's own window — the donut centre must use this, never
+   *  kpis.views.value, which is always the global period (measured 12x apart on prod). */
+  viewsByChannelTotal: number;
   topChannels: ChannelRow[];
   revenueByChannel: ChannelRow[];
   cities: {
@@ -88,7 +103,8 @@ export interface OverviewPayload {
     mediaProductType: string | null;
     channel: { name: string; username: string | null; platform: "facebook" | "instagram"; pictureUrl: string | null };
   }>;
-  activity: Array<{ kind: ActivityKind; text: string; at: string }>;
+  /** `postId` opens the post drawer; `href` is an in-portal route. Both nullable. */
+  activity: Array<{ kind: ActivityKind; text: string; at: string; postId: string | null; href: string | null }>;
   traction: {
     /** Effective period of this card (equals period.days unless detached). */
     days: number;

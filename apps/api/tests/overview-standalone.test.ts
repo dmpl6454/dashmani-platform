@@ -21,6 +21,7 @@ import app from "../src/app";
 import { prisma } from "@dashmani/db";
 import { createTestUser, createTestRole, generateToken } from "./helpers";
 import { getOverview, invalidateOverviewCache } from "../src/services/overview.service";
+import { shiftDay } from "../src/services/meta-oauth/meta-range.service";
 import { invalidateRangeCache } from "../src/services/meta-oauth/meta-range.service";
 import "./setup";
 
@@ -315,5 +316,211 @@ describe("overview — reach is reported only for Meta's native windows", () => 
     // 5,700 + 16,000 = 21,700 would be the tempting (and wrong) answer
     expect(ninety.kpis.reach.value).not.toBe(21_700);
     expect(ninety.kpis.reach.value).toBeNull();
+  });
+});
+
+/**
+ * Regressions from the 2026-09-18 "interactions + accuracy" pass.
+ *
+ * ⚠️ THE FIXTURE GAP THESE CLOSE. Until now no fixture anywhere carried
+ * `earningsCents: 0`, so the two definitions of "contributing" — `!= null` (the overview)
+ * and `> 0` (Account Growth) — were INDISTINGUISHABLE to the suite. That is precisely why
+ * the KPI could report 317 "Pages reporting earnings" on prod while 260 of those 317 had
+ * earned exactly nothing, and why no test caught it. A zero-earning Page is now seeded.
+ */
+describe("overview — 2026-09-18 interactions and accuracy", () => {
+  beforeEach(async () => {
+    invalidateOverviewCache();
+    invalidateRangeCache();
+  });
+
+  async function seedWithAZeroEarningPage() {
+    const admin = await prisma.user.create({
+      data: { name: "Admin Z", email: `admin-ovz-${Date.now()}@zz.test`, passwordHash: "x", status: "ACTIVE" },
+    });
+    const conn = await prisma.metaConnection.create({
+      data: { metaUserId: `mu-ovz-${Date.now()}`, connectedById: admin.id, status: "ACTIVE" },
+    });
+    // Earns real money.
+    const earner = await prisma.metaAsset.create({
+      data: { connectionId: conn.id, kind: "FACEBOOK_PAGE", metaId: "fb-earn", name: "Earner", followerCount: 500_000 },
+    });
+    // Monetised and REPORTING, but every day is a genuine 0.00 — the 260-Page case on prod.
+    const zero = await prisma.metaAsset.create({
+      data: { connectionId: conn.id, kind: "FACEBOOK_PAGE", metaId: "fb-zero", name: "Zero Earner", followerCount: 400_000 },
+    });
+    for (let n = 1; n <= 14; n++) {
+      const date = dateOf(isoDaysAgo(n));
+      await prisma.metaAssetDaily.create({
+        data: { assetId: earner.id, date, views: BigInt(1000), engagements: BigInt(100), earningsCents: 250 },
+      });
+      await prisma.metaAssetDaily.create({
+        data: { assetId: zero.id, date, views: BigInt(900), engagements: BigInt(90), earningsCents: 0 },
+      });
+    }
+    return { earnerId: earner.id, zeroId: zero.id };
+  }
+
+  it("counts REPORTING and EARNING Pages separately — a monetised Page at $0.00 reports but does not earn", async () => {
+    await seedWithAZeroEarningPage();
+    const o = await getOverview({ days: 7, audDays: 0, revDays: 0, vbcDays: 0, tracDays: 0 });
+    // Both Pages answered, so both are "contributing"...
+    expect(o.kpis.revenue.contributing).toBe(2);
+    // ...but only one of them actually earned. This is the assertion that would have
+    // caught the mislabel: with a single count these two numbers are the same.
+    expect(o.kpis.revenue.earning).toBe(1);
+    expect(o.kpis.revenue.earning).toBeLessThan(o.kpis.revenue.contributing);
+  });
+
+  it("never reports a zero-earning Page as earning, even though its figure is a real 0 and not null", async () => {
+    const { zeroId } = await seedWithAZeroEarningPage();
+    const o = await getOverview({ days: 7, audDays: 0, revDays: 0, vbcDays: 0, tracDays: 0 });
+    const zeroRow = o.allChannels.find((c) => c.id === zeroId)!;
+    // A real 0 — NOT null. That distinction is the whole bug.
+    expect(zeroRow.earningsCents).toBe(0);
+    expect(zeroRow.earningsCents).not.toBeNull();
+    // And it must not appear in the earning-channel list.
+    expect(o.revenueByChannel.map((c) => c.id)).not.toContain(zeroId);
+  });
+
+  it("⚠️ never emits a `leave` activity item — named leave status must not reach every internal user", async () => {
+    const admin = await prisma.user.create({
+      data: { name: "Leave Admin", email: `lv-admin-${Date.now()}@zz.test`, passwordHash: "x", status: "ACTIVE" },
+    });
+    await prisma.leaveRequest.create({
+      data: {
+        employeeId: admin.id,
+        type: "SICK",
+        status: "PENDING",
+        startDate: dateOf(isoDaysAgo(1)),
+        endDate: dateOf(isoDaysAgo(0)),
+        reason: "flu",
+      },
+    });
+    const o = await getOverview({ days: 7, audDays: 0, revDays: 0, vbcDays: 0, tracDays: 0 });
+    // The row exists in the database; it must simply never be published here.
+    expect(await prisma.leaveRequest.count()).toBeGreaterThan(0);
+    expect(o.activity.map((a) => a.kind)).not.toContain("leave");
+    expect(JSON.stringify(o.activity)).not.toMatch(/sick/i);
+  });
+
+  it("gives every activity item a target, so the feed is not a dead end", async () => {
+    await seedEstate();
+    await prisma.metaPost.create({
+      data: {
+        assetId: (await prisma.metaAsset.findFirstOrThrow({ where: { kind: "FACEBOOK_PAGE" } })).id,
+        metaPostId: `pz-${Date.now()}`,
+        caption: "hello",
+        postedAt: new Date(Date.now() - 30 * 60_000),
+        views: 5,
+      },
+    });
+    const o = await getOverview({ days: 7, audDays: 0, revDays: 0, vbcDays: 0, tracDays: 0 });
+    expect(o.activity.length).toBeGreaterThan(0);
+    for (const a of o.activity) {
+      // Exactly one of the two is how the client knows where to go.
+      expect(a.postId != null || a.href != null).toBe(true);
+    }
+    // A post item must point at a post that is actually in the payload, or the drawer
+    // would open empty.
+    for (const a of o.activity.filter((x) => x.postId)) {
+      expect(o.latestPosts.some((p) => p.id === a.postId)).toBe(true);
+    }
+  });
+
+  it("carries the Views-by-Channel total over THAT card's window, not the global period", async () => {
+    await seedEstate();
+    // Global 7 days, card detached to 14 — the two totals must differ and each must match
+    // its own window. The donut centre used to render the GLOBAL figure beside 14-day
+    // slices (measured 12x apart on prod).
+    const o = await getOverview({ days: 7, audDays: 0, revDays: 0, vbcDays: 14, tracDays: 0 });
+    expect(o.viewsByChannelDays).toBe(14);
+    const sliceSum = o.viewsByChannelAll.reduce((t, c) => t + c.views, 0);
+    expect(o.viewsByChannelTotal).toBe(sliceSum);
+    expect(o.viewsByChannelTotal).not.toBe(o.kpis.views.value);
+  });
+});
+
+/**
+ * Custom date range (2026-09-18).
+ *
+ * The owner asked for Account Growth's calendar range on the overview. These lock the
+ * three things that make it trustworthy rather than merely present: it overrides the
+ * preset, it is CLAMPED to the last closed day (Account Growth's version is not, and was
+ * measured understating a 7-day span by 7.2%), and it never invents a reach figure.
+ */
+describe("overview — custom date range", () => {
+  beforeEach(async () => {
+    invalidateOverviewCache();
+    invalidateRangeCache();
+    await seedEstate();
+  });
+
+  it("an explicit start/end overrides the preset and reports its own span", async () => {
+    const o = await getOverview({
+      days: 7,
+      range: { start: isoDaysAgo(10), end: isoDaysAgo(4) },
+      audDays: 0, revDays: 0, vbcDays: 0, tracDays: 0,
+    });
+    expect(o.period.custom).toBe(true);
+    expect(o.period.start).toBe(isoDaysAgo(10));
+    expect(o.period.end).toBe(isoDaysAgo(4));
+    expect(o.period.days).toBe(7); // inclusive span
+  });
+
+  it("⚠️ clamps an end the estate has not closed yet, and says so", async () => {
+    // Tomorrow cannot possibly be closed.
+    const o = await getOverview({
+      days: 7,
+      range: { start: isoDaysAgo(5), end: isoDaysAgo(-1) },
+      audDays: 0, revDays: 0, vbcDays: 0, tracDays: 0,
+    });
+    expect(o.period.clampedTo).not.toBeNull();
+    expect(o.period.end).toBe(o.period.clampedTo);
+    // And the end must not be in the future.
+    expect(o.period.end <= isoDaysAgo(0)).toBe(true);
+  });
+
+  it("never reports a reach figure for a custom range — not even a 7-day one", async () => {
+    // Exactly 7 days, which as a PRESET would resolve Meta's native `week` window.
+    const preset = await getOverview({ days: 7, audDays: 0, revDays: 0, vbcDays: 0, tracDays: 0 });
+    const ranged = await getOverview({
+      days: 7,
+      range: { start: shiftDay(preset.period.end, -6), end: preset.period.end },
+      audDays: 0, revDays: 0, vbcDays: 0, tracDays: 0,
+    });
+    expect(ranged.period.days).toBe(7);
+    // A custom range describes a span the user chose, not Meta's own trailing window.
+    expect(ranged.kpis.reach.window).toBeNull();
+    expect(ranged.kpis.reach.value).toBeNull();
+  });
+
+  it("a card following the global follows the RANGE, while a detached card keeps its own", async () => {
+    const o = await getOverview({
+      days: 7,
+      range: { start: isoDaysAgo(20), end: isoDaysAgo(6) },
+      audDays: 0,   // follow → 15 days
+      revDays: 0,
+      vbcDays: 7,   // detached → 7 days
+      tracDays: 0,
+    });
+    expect(o.period.days).toBe(15);
+    expect(o.audience.days).toBe(15);
+    expect(o.revenue.days).toBe(15);
+    expect(o.traction.days).toBe(15);
+    expect(o.viewsByChannelDays).toBe(7);
+  });
+
+  it("the memo distinguishes two different ranges — one range's numbers can never be served under another's label", async () => {
+    const a = await getOverview({
+      days: 7, range: { start: isoDaysAgo(14), end: isoDaysAgo(8) },
+      audDays: 0, revDays: 0, vbcDays: 0, tracDays: 0,
+    });
+    const b = await getOverview({
+      days: 7, range: { start: isoDaysAgo(7), end: isoDaysAgo(1) },
+      audDays: 0, revDays: 0, vbcDays: 0, tracDays: 0,
+    });
+    expect(a.period.start).not.toBe(b.period.start);
+    expect(a.period.end).not.toBe(b.period.end);
   });
 });

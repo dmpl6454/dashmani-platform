@@ -294,7 +294,10 @@ export function IndexedLines({
 }) {
   const N = dates.length;
   const all = series.flatMap((s) => s.values).filter((v): v is number => v != null);
-  if (!all.length) return <div className="ov-chart-empty">No traction data for the last 7 days</div>;
+  // ⚠️ The window is whatever the caller passed — Content Traction became detachable
+  // (7/14/30/90) but these strings still said "7 days" regardless, so a reader (and a
+  // screen-reader user) on a 90-day card was told it was a 7-day trend.
+  if (!all.length) return <div className="ov-chart-empty">No traction data for the last {N} days</div>;
   const lo = Math.floor(Math.min(...all, 100) / 10) * 10 - 5;
   const hi = Math.ceil(Math.max(...all, 100) / 10) * 10 + 5;
   const yOf = (v: number) => 100 - ((v - lo) / (hi - lo || 1)) * 100;
@@ -304,7 +307,7 @@ export function IndexedLines({
     <div className="ov-chart ov-chart-idx">
       <div className="ov-yaxis ov-yaxis-sm">{ticks.map((t, i) => <span key={i}>{Math.round(t)}</span>)}</div>
       <div className="ov-plot">
-        <svg viewBox="0 0 300 100" preserveAspectRatio="none" aria-label="Indexed 7-day trend of views, engagements, reactions and shares">
+        <svg viewBox="0 0 300 100" preserveAspectRatio="none" aria-label={`Indexed ${N}-day trend of views, engagements, reactions and shares`}>
           <path d="M0 0.5H300M0 33.5H300M0 66.5H300M0 99.5H300" stroke={T.border} strokeWidth="1" vectorEffect="non-scaling-stroke" />
           {series.map((s) => {
             let d = "";
@@ -336,7 +339,15 @@ export function IndexedLines({
         ))}
       </div>
       <span className="ov-idx-note">Idx</span>
-      <div className="ov-xaxis">{dates.map((d) => <span key={d}>{fmtDay(d).replace(/^(\w{3}) /, (_, m) => `${m[0]}`)}</span>)}</div>
+      {/* ⚠️ THINNED, targeting ~8 labels. This rendered one label PER DAY, so a card
+          detached to 90 days needed roughly 1378px of label text in a ~137px axis and the
+          dates collapsed into an unreadable smear (the "S3S4S5S6S7…" in the card).
+          Same rule AreaLineChart already uses. */}
+      <div className="ov-xaxis">
+        {dates
+          .filter((_, i) => N <= 8 || i % Math.ceil(N / 7) === 1 || i === N - 1)
+          .map((d) => <span key={d}>{fmtDay(d).replace(/^(\w{3}) /, (_, m) => `${m[0]}`)}</span>)}
+      </div>
       <span className="ov-idx-note">day 1 = 100</span>
     </div>
   );

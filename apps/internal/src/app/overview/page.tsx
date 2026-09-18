@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth";
 import { usePageTitle } from "@/lib/hooks/use-page-title";
 import { useOverview } from "./_hooks";
-import type { OverviewPayload, OverviewPeriod, WidgetPeriod, ChannelRow, ChannelDirectoryRow } from "./_types";
+import type { OverviewPayload, OverviewPeriod, WidgetPeriod, ChannelDirectoryRow } from "./_types";
 import {
   T, CATEGORICAL, SERIES4, TIER_COLOR,
   fmtCompact, fmtUsd, fmtSigned, fmtSignedPct, fmtDay, fmtDayYear, fmtRelative, initials, countryName, greetingFor,
@@ -43,6 +43,9 @@ const WIDGET_PERIODS: WidgetPeriod[] = [0, 7, 14, 30, 90];
 const CARD_PERIODS: WidgetPeriod[] = [7, 14, 30, 90];
 // How many rows a card shows before you expand it. The payload carries more.
 const CARD_ROWS = 5;
+/** Mirrors MAX_RANGE_DAYS in overview.service.ts — the page draws one point per day. */
+const MAX_RANGE_DAYS = 366;
+const RANGE_KEY = "ov-range";
 const ACTIVITY_COLOR: Record<string, string> = { post: T.blue, report: T.teal, user: T.purple, leave: T.gold, announcement: T.pink };
 const PLATFORM_TILE: Record<string, string> = {
   facebook: "linear-gradient(135deg,#1877F2,#0B45BB)",
@@ -82,7 +85,13 @@ function CardPeriod({
     <div className="ov-rel" onClick={(e) => e.stopPropagation()}>
       <Chip onClick={() => setPop(pop === id ? null : id)} ariaHasPopup active={pop === id}>
         {detached && <i className="ov-local-dot" aria-hidden="true" />}
-        <span>Last {effective} Days</span>
+        {/* ⚠️ Two spellings, one shown at a time by CSS — the same trick `.ov-viewall-t`
+            already uses for "View All". Adding an expand button beside this chip clipped
+            "Content Traction" by 17.2px at 1280px (measured): it sits in the narrow
+            24fr ops-row track and "Last 14 Days" is the widest chip label on the page.
+            The abbreviation buys back ~44px, which covers it with room to spare. */}
+        <span className="ov-chip-full">Last {effective} Days</span>
+        <span className="ov-chip-abbr" aria-hidden="true">{effective}d</span>
       </Chip>
       {pop === id && (
         <Menu width={200}>
@@ -112,9 +121,15 @@ export default function OverviewPage() {
   const [pop, setPop] = useState<Pop>(null);
   const [drawer, setDrawer] = useState<DrawerSpec | null>(null);
   const [expand, setExpand] = useState<ExpandSpec | null>(null);
+  // True when this drawer was opened FROM an expanded table, so it must render above the
+  // modal and hand the reader back to that table when it closes.
+  const [drawerStacked, setDrawerStacked] = useState(false);
+  /** An explicit window that overrides the presets. null = a preset is driving the page. */
+  const [range, setRange] = useState<{ start: string; end: string } | null>(null);
+  const [draftStart, setDraftStart] = useState("");
+  const [draftEnd, setDraftEnd] = useState("");
   const [selCat, setSelCat] = useState<number | null>(null);
   const [demoTab, setDemoTab] = useState<"Age" | "Gender" | "Location">("Age");
-  const [actOpen, setActOpen] = useState<number | null>(null);
   const [q, setQ] = useState("");
   const [searchIdx, setSearchIdx] = useState(0);
   const searchListRef = useRef<HTMLDivElement>(null);
@@ -127,16 +142,42 @@ export default function OverviewPage() {
     setRevDays(readStored("ov-rev", WIDGET_PERIODS, 0));
     setVbcDays(readStored("ov-vbc", WIDGET_PERIODS, 0));
     setTracDays(readStored("ov-trac", WIDGET_PERIODS, 0));
+    // ⚠️ try/catch: localStorage throws outright in private windows and when site data is
+    // blocked, and a remembered filter must never be able to break the page.
+    try {
+      const raw = localStorage.getItem(RANGE_KEY);
+      if (raw) {
+        const v = JSON.parse(raw) as { start?: unknown; end?: unknown };
+        if (typeof v.start === "string" && typeof v.end === "string" && v.start <= v.end) {
+          setRange({ start: v.start, end: v.end });
+          setDraftStart(v.start);
+          setDraftEnd(v.end);
+        }
+      }
+    } catch {
+      /* ignore — a preset drives the page */
+    }
     const t = setInterval(() => setNow(Date.now()), 30_000);
     return () => clearInterval(t);
   }, []);
+  // ⚠️ Escape peels ONE layer at a time, innermost first. It used to null everything at
+  // once, which was harmless while only one layer could ever be open — but now that a row
+  // in an expanded table opens a drawer on top of it, collapsing both would throw the
+  // reader out of the table they were working through instead of back into it.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") { setExpand(null); setDrawer(null); setPop(null); setMenuOpen(false); }
+      if (e.key !== "Escape") return;
+      // Innermost first, one per press. Re-subscribing when a layer changes is cheap and
+      // keeps this readable — the alternative (nested state updaters) runs during the
+      // render phase and is exactly the kind of thing that breaks quietly later.
+      if (pop) return setPop(null);
+      if (menuOpen) return setMenuOpen(false);
+      if (drawer) return closeDrawer();
+      if (expand) return setExpand(null);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [pop, menuOpen, drawer, expand]);
   // Keyboard selection must follow the highlight — the list scrolls, focus stays in
   // the input, and a browser only auto-scrolls for a focused element, so nothing would
   // move the viewport on its own.
@@ -148,11 +189,41 @@ export default function OverviewPage() {
   const remember = (key: string, v: number) => { try { localStorage.setItem(key, String(v)); } catch { /* per-viewer convenience only */ } };
 
   // No role gate: every internal user sees this page (owner decision 2026-09-17).
-  const { data, error, isLoading, mutate } = useOverview(days, audDays, revDays, vbcDays, tracDays);
+  function rememberRange(r: { start: string; end: string } | null) {
+    try {
+      if (r) localStorage.setItem(RANGE_KEY, JSON.stringify(r));
+      else localStorage.removeItem(RANGE_KEY);
+    } catch {
+      /* a preference must never break the page */
+    }
+  }
+  const { data, error, isLoading, mutate } = useOverview(days, audDays, revDays, vbcDays, tracDays, range);
   const o: OverviewPayload | undefined = data?.data;
+  // The newest day the estate has actually closed — the furthest a picker should reach.
+  // Falls back to the clock's yesterday before the first payload arrives.
+  const maxPickable =
+    o?.period.dataThroughDay ??
+    new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+  const rangeTooLong =
+    !!draftStart && !!draftEnd && draftStart <= draftEnd &&
+    Math.round((Date.parse(`${draftEnd}T00:00:00Z`) - Date.parse(`${draftStart}T00:00:00Z`)) / 86_400_000) + 1 > MAX_RANGE_DAYS;
 
   const firstName = (user?.name ?? "there").split(" ")[0];
   const roleLabel: string = (Array.isArray(user?.roles) && typeof user.roles[0] === "string" && user.roles[0]) || "Admin";
+  /**
+   * ⚠️ The notification bell links into ADMIN queues (/approvals, /employees/pending,
+   * /reports). This page is deliberately open to every internal user, and 71 of the 74
+   * active users hold only the Employee role — whose permissions are accounts, attendance,
+   * employees(own) and tasks(own). For them every one of those destinations 403s, so the
+   * bell was an affordance that could only disappoint. Mirrors the role-name test in
+   * `require-admin-role.ts` rather than inventing a second rule.
+   * ⚠️ This is a UI affordance only — never a security boundary. The endpoints gate
+   * themselves; hiding a link that cannot work is a courtesy, not a control.
+   */
+  const canActOnQueues = (user?.roles ?? []).some((r) => {
+    const n = String(r).toLowerCase();
+    return n === "admin" || n === "super admin";
+  });
 
   // ── derived widget data ──
   const kpis = useMemo(() => {
@@ -197,11 +268,20 @@ export default function OverviewPage() {
         // report Meta's own native windows, which are 7 and 28 days. For 14 and 90 there
         // is genuinely no figure in existence. The dash is correct, but a bare dash reads
         // as missing data, so it has to say whose limitation it is and what to do next.
+        // ⚠️⚠️ AND IT IS A SUM ACROSS CHANNELS, so it must NOT claim to be a count of unique
+        // accounts. Meta reports unique reach PER CHANNEL; adding 419 of those counts a
+        // person once for every channel they saw. On prod that sums to 3,353,317,458 against
+        // a 342,086,989 follower base — individual Pages report 240-394M each — so read as
+        // "unique accounts" it is arithmetically impossible. Account Growth computes the very
+        // same total and deliberately never displays it. The figure is useful as audience
+        // touchpoints; it just has to say so.
         note: k.reach.window
-          ? `unique accounts · Meta's ${k.reach.window === "week" ? "7" : "28"}-day window`
+          ? `per-channel reach, summed · Meta's ${k.reach.window === "week" ? "7" : "28"}-day window`
           : `Meta publishes no ${o.period.days}-day reach — pick 7 or 30 days`,
         rows: k.reach.window
           ? [
+              { label: "What this is", value: `Each channel's unique reach over Meta's ${k.reach.window === "week" ? "7" : "28"}-day window, added together` },
+              { label: "⚠️ Not de-duplicated", value: `Someone who saw two of our channels is counted twice, so this is above the true number of distinct people — it cannot be compared against the ${fmtCompact(k.followers.value)} follower base` },
               { label: "Channels reporting", value: `${k.reach.contributing} of ${o.channels.total}` },
               { label: "Why no trend", value: "Unique people cannot be compared across periods honestly" },
             ]
@@ -216,10 +296,20 @@ export default function OverviewPage() {
       {
         id: "revenue", label: "Total Revenue", value: fmtUsd(k.revenue.value), accent: T.green, icon: ICONS.revenue, spark: k.revenue.spark,
         trend: k.revenue.trend?.pct ?? null, reliable: k.revenue.trend?.reliable ?? true, note: periodNote,
+        // ⚠️ TWO DIFFERENT COUNTS, AND THE DIFFERENCE IS THE WHOLE POINT. `contributing`
+        // counts Pages that REPORTED an earnings figure — including a genuine $0.00 — so on
+        // prod it is 317 (every Facebook Page) at 7, 14, 30 AND 90 days. A number that never
+        // moves with the period tells a reader nothing, yet it was the only one shown, under
+        // the label "Pages reporting earnings", which reads as "317 pages earning". Account
+        // Growth counts only earnings > 0 and says 57 over the same 14 days — that gap was
+        // reported as a data discrepancy when both pages' revenue TOTALS were byte-identical.
+        // Lead with the number the reader actually means, and name the zeros explicitly.
         rows: [
           { label: "Previous period", value: fmtUsd(k.revenue.previous) },
-          { label: "Pages reporting earnings", value: String(k.revenue.contributing) },
-          { label: "Currency", value: "USD, as paid by Meta" },
+          { label: "Pages that earned", value: `${k.revenue.earning} of ${k.revenue.contributing} monetised Pages` },
+          { label: "Reported exactly $0.00", value: String(Math.max(0, k.revenue.contributing - k.revenue.earning)) },
+          { label: "Why the two differ", value: "A monetised Page that made nothing still reports a real $0.00, so it counts as reporting but not as earning" },
+          { label: "Currency", value: "USD, as paid by Meta. Instagram publishes no earnings metric, so revenue is Facebook-only" },
         ],
         href: "/accounts/growth",
       },
@@ -295,13 +385,37 @@ export default function OverviewPage() {
   }, [o, q]);
 
   // ── drawers ──
+  /**
+   * The single close path for the drawer, so the stacked flag can never outlive the panel
+   * it describes. Closing a stacked drawer deliberately leaves `expand` alone — the reader
+   * came from that table and goes back to it.
+   */
+  function closeDrawer() {
+    setDrawer(null);
+    setDrawerStacked(false);
+  }
+  /**
+   * `fromExpand` is set when the drawer is opened by clicking a row inside an expanded
+   * table, which is the only case that needs the raised z-index.
+   */
   // Accepts a ranked row or a slim directory row — it reads no avatar either way.
-  function openChannel(c: ChannelDirectoryRow) {
+  /**
+   * `windowed` overrides the hero when the row came from a card with its OWN period.
+   *
+   * ⚠️ WHY IT EXISTS. Every figure on a ChannelDirectoryRow is computed over the GLOBAL
+   * window, so clicking a row in a Views-by-Channel table detached to 90 days would open a
+   * drawer showing that channel's 7-day views. Both figures are correctly labelled, so
+   * nothing is false — but a row reading 3.0B opening a panel reading 641M invites exactly
+   * one conclusion, that something is broken. Passing the card's own figure keeps the
+   * drawer describing the number that was clicked.
+   */
+  function openChannel(c: ChannelDirectoryRow, fromExpand = false, windowed?: { days: number; views: number }) {
+    setDrawerStacked(fromExpand);
     const url = metaUrl(c);
     setDrawer({
       kind: c.platform === "facebook" ? "Facebook Page" : "Instagram account", accent: T.gold, title: c.name,
       sub: c.username ? `@${c.username}` : undefined,
-      hero: { label: `Views · last ${o?.period.days ?? 7} days`, value: fmtCompact(c.views), trend: c.followerDelta != null && c.followers ? <Trend pct={(c.followerDelta / Math.max(1, c.followers - c.followerDelta)) * 100} /> : undefined, note: c.followerDeltaDays ? `followers · ${c.followerDeltaDays}d` : undefined },
+      hero: { label: `Views · last ${windowed?.days ?? o?.period.days ?? 7} days`, value: fmtCompact(windowed ? windowed.views : c.views), trend: c.followerDelta != null && c.followers ? <Trend pct={(c.followerDelta / Math.max(1, c.followers - c.followerDelta)) * 100} /> : undefined, note: c.followerDeltaDays ? `followers · ${c.followerDeltaDays}d` : undefined },
       rows: [
         { label: "Followers", value: fmtCompact(c.followers) },
         { label: `Revenue · last ${o?.period.days ?? 7} days`, value: fmtUsd(c.earningsCents) },
@@ -311,7 +425,8 @@ export default function OverviewPage() {
     });
     setPop(null);
   }
-  function openPost(p: OverviewPayload["latestPosts"][number]) {
+  function openPost(p: OverviewPayload["latestPosts"][number], fromExpand = false) {
+    setDrawerStacked(fromExpand);
     setDrawer({
       kind: p.mediaProductType === "REELS" ? "Reel" : "Post", accent: T.pink, title: p.title, sub: `${p.channel.name} · ${fmtRelative(p.postedAt, now)}`,
       hero: { label: "Views", value: fmtCompact(p.views), note: p.views == null ? "not measured yet — per-post insights are collected in rotation" : "cumulative since publish, as last measured" },
@@ -325,7 +440,8 @@ export default function OverviewPage() {
     });
     setPop(null);
   }
-  function openTrending(t: OverviewPayload["trending"][number]) {
+  function openTrending(t: OverviewPayload["trending"][number], fromExpand = false) {
+    setDrawerStacked(fromExpand);
     setDrawer({
       kind: `Trending ${t.type.toLowerCase()}`, accent: T.teal, title: t.name, sub: `${t.count} tagged posts · last 7 days`,
       rows: [
@@ -333,29 +449,33 @@ export default function OverviewPage() {
         { label: "Change", value: t.previousCount > 0 ? fmtSignedPct(((t.count - t.previousCount) / t.previousCount) * 100) : "new this week" },
       ],
       href: { label: "Search these posts", url: "/reports/link-search" },
-      note: "Counts come from captions harvested this week and tagged by Link Search.",
+      // ⚠️ The change is an ABSOLUTE count difference between two harvest weeks, and
+      // weekly harvest throughput itself swings (5,794 → 17,312 captions between two
+      // measured weeks). So a quiet harvest week can render as a topic "declining" when
+      // only our collection volume moved. Normalising to each week's share is the real
+      // fix and is a deliberate follow-up; until then the caveat must be on screen rather
+      // than implied by an arrow.
+      note: "Counts are captions harvested from connected channels and tagged by Link Search — a wider set than the links our team submitted. The week-on-week change also moves with how much we harvested that week, so read it as a signal, not a precise trend.",
     });
   }
+  /**
+   * id → full channel record.
+   *
+   * ⚠️ REQUIRED for Views by Channel: `viewsByChannelAll` rows carry only
+   * {id,name,platform,views,share} — NO `metaId` and NO `username` — and `metaUrl()`
+   * needs a numeric metaId for Facebook or a username for Instagram, so a row cannot
+   * build its own Meta link. The lookup cannot miss: `allChannels` and
+   * `viewsByChannelAll` are both derived from the same server-side `assets` array keyed
+   * on the same `a.id`, the first unfiltered and the second a filter of it — so it is a
+   * structural guarantee, not an empirical one (and 419/419 resolve on prod today).
+   */
+  const channelById = useMemo(() => new Map((o?.allChannels ?? []).map((c) => [c.id, c])), [o]);
+
   // ── expanded views ──
   // ⚠️ Each spec states the exact window its rows were computed over, because a card
   // may be detached from the global period — an expanded table with no window stated
   // is exactly how a reader mistakes one period's numbers for another's.
   const plat = (p: "facebook" | "instagram" | null) => (p === "facebook" ? "FB" : p === "instagram" ? "IG" : "—");
-
-  function openExpandViews() {
-    if (!o) return;
-    setExpand({
-      title: "Views by Channel",
-      subtitle: `Every channel that reported views · last ${o.viewsByChannelDays} closed days (${fmtDayYear(o.period.dataThroughDay ?? o.period.end)} back)`,
-      columns: ["#", "Channel", "Platform", "Views", "Share"],
-      align: ["left", "left", "left", "right", "right"],
-      rows: o.viewsByChannelAll.map((c, i) => ({
-        key: c.id,
-        cells: [i + 1, c.name, plat(c.platform), fmtCompact(c.views), `${c.share.toFixed(1)}%`],
-      })),
-      note: `${o.viewsByChannelAll.length} of ${o.channels.total} channels reported views in this window.`,
-    });
-  }
 
   function openExpandTopChannels() {
     if (!o) return;
@@ -368,6 +488,8 @@ export default function OverviewPage() {
       rows: rows.map((c, i) => ({
         key: c.id,
         cells: [i + 1, c.name, plat(c.platform), fmtCompact(c.followers), fmtCompact(c.views), fmtUsd(c.earningsCents)],
+        onClick: () => openChannel(c, true),
+        label: `Open ${c.name}`,
       })),
       note: `${rows.length} of ${o.channels.total} channels reported views in this window.`,
     });
@@ -385,6 +507,8 @@ export default function OverviewPage() {
       rows: rows.map((c, i) => ({
         key: c.id,
         cells: [i + 1, c.name, plat(c.platform), fmtUsd(c.earningsCents), total > 0 ? `${(((c.earningsCents ?? 0) / total) * 100).toFixed(1)}%` : "—"],
+        onClick: () => openChannel(c, true),
+        label: `Open ${c.name}`,
       })),
       note: `${rows.length} channels earned in this window — revenue is Facebook-only, so Instagram accounts never appear here.`,
     });
@@ -398,31 +522,13 @@ export default function OverviewPage() {
       lead: o.cities.items.length ? <div className="ov-map ov-map-lg"><IndiaMap cities={o.cities.items} /></div> : undefined,
       columns: ["#", "City", "State", "Share", "Followers"],
       align: ["left", "left", "left", "right", "right"],
+      // Keyed on name+state, not name: two states can carry the same city name and a
+      // duplicate React key silently drops a row.
       rows: o.cities.items.map((c, i) => ({
-        key: c.name,
+        key: `${c.name}|${c.state ?? ""}`,
         cells: [i + 1, c.name, c.state ?? "—", `${c.share.toFixed(1)}%`, fmtCompact(c.value)],
       })),
       note: "Cities Meta publishes for the connected Instagram accounts. Facebook publishes no equivalent city breakdown, so Pages are not represented.",
-    });
-  }
-
-  function openExpandDemographics() {
-    if (!o) return;
-    const src =
-      demoTab === "Age" ? o.demographics.age.map((a) => ({ label: a.bucket.replace("-", " – "), value: a.value }))
-      : demoTab === "Gender" ? o.demographics.gender.map((g) => ({ label: g.label, value: g.value }))
-      : o.demographics.country.map((c) => ({ label: countryName(c.bucket), value: c.value }));
-    const total = src.reduce((t, x) => t + x.value, 0);
-    setExpand({
-      title: `Audience Demographics · ${demoTab}`,
-      subtitle: `Instagram follower audience · every bucket Meta published, unfolded`,
-      columns: ["#", demoTab === "Location" ? "Country" : demoTab, "Share", "Followers"],
-      align: ["left", "left", "right", "right"],
-      rows: src.map((x, i) => ({
-        key: x.label,
-        cells: [i + 1, x.label, total > 0 ? `${((x.value / total) * 100).toFixed(1)}%` : "—", fmtCompact(x.value)],
-      })),
-      note: "Instagram only — Facebook retired its whole fan-demographic family, so Pages contribute nothing here.",
     });
   }
 
@@ -433,10 +539,16 @@ export default function OverviewPage() {
       subtitle: "Newest first, by the post’s own publish time. Counts are as last measured by Meta, not live.",
       columns: ["Posted", "Post", "Channel", "Platform", "Views", "Likes", "Comments"],
       align: ["left", "left", "left", "left", "right", "right", "right"],
+      // ⚠️ Opens the POST, not its channel. `latestPosts[].channel` carries no id, and 63
+      // of the 419 live channel names are shared by two or more channels (15 of the 24
+      // posts in this list have an ambiguous channel name), so a name-based lookup could
+      // confidently open the WRONG Page. The post drawer is the unambiguous target.
       rows: o.latestPosts.map((pp) => ({
         key: pp.id,
         cells: [fmtRelative(pp.postedAt, now), pp.title, pp.channel.name, plat(pp.channel.platform),
                 fmtCompact(pp.views), fmtCompact(pp.likes), fmtCompact(pp.comments)],
+        onClick: () => openPost(pp, true),
+        label: `Open post: ${pp.title}`,
       })),
       note: "A dash means Meta has not published that count for the post yet — it is not a zero.",
     });
@@ -453,12 +565,157 @@ export default function OverviewPage() {
         key: t.id,
         cells: [i + 1, t.name, t.type.toLowerCase(), t.count.toLocaleString("en-IN"), t.previousCount.toLocaleString("en-IN"),
                 t.previousCount > 0 ? fmtSignedPct(((t.count - t.previousCount) / t.previousCount) * 100) : "new"],
+        onClick: () => openTrending(t, true),
+        label: `Open ${t.name}`,
       })),
       note: "Counts come from Link Search caption tagging, not from Meta.",
     });
   }
 
+  // ── chart-enlarging expands ──
+  /**
+   * The owner's second ask: see the PICTURE bigger, not just the data (as India's Audience
+   * Map already allows). These reuse `ExpandSpec.lead`, which the cities expand already
+   * uses, so there is no new modal machinery — and each also carries the underlying table,
+   * so one expand serves both "show me it larger" and "show me the numbers".
+   *
+   * ⚠️ `.ov-chart-lg` IS LOAD-BEARING, NOT COSMETIC. `.ov-chart` takes its height from
+   * `flex:1` inside the flex-column card and `.ov-plot>svg` is absolutely positioned, so
+   * dropped into the height-less `.ov-modal-lead` block a chart collapses to ZERO height
+   * and renders completely invisible. The wrapper supplies the height, capped — the modal
+   * is not scrollable and the lead is flex-shrink:0, so an over-tall lead would push the
+   * table straight out of the modal.
+   *
+   * ⚠️ Every subtitle states the window from the period the SERVER echoed, never local
+   * state, because any of these cards may be detached from the global period.
+   */
+  function openExpandAudience() {
+    if (!o) return;
+    const first = o.audience.series[0]?.followers ?? null;
+    setExpand({
+      title: "Audience Growth",
+      subtitle: `Followers across the ${o.audience.channelsUsed} of ${o.channels.total} channels whose snapshot history covers all ${o.audience.days} days — not an estate total`,
+      lead: (
+        <div className="ov-chart-lg">
+          <AreaLineChart id="ov-aud-fill-lg" color={T.teal} unitLabel="followers"
+            points={o.audience.series.map((sp) => ({ date: sp.date, value: sp.followers }))} />
+        </div>
+      ),
+      columns: ["Day", "Followers", "Change vs. day 1"],
+      align: ["left", "right", "right"],
+      rows: o.audience.series.map((sp) => ({
+        key: sp.date,
+        cells: [fmtDayYear(sp.date), fmtCompact(sp.followers), first != null ? fmtSigned(sp.followers - first) : "—"],
+      })),
+      note: `Forward-filled from API follower snapshots. Channels whose history starts mid-window are excluded so a joiner cannot fake a jump; contested channel rows are excluded because their history is shared by two Pages.`,
+    });
+  }
+
+  function openExpandRevenueOverview() {
+    if (!o) return;
+    setExpand({
+      title: "Revenue Overview",
+      subtitle: `Cumulative earnings over the last ${o.revenue.days} closed days · USD, as paid by Meta`,
+      lead: (
+        <div className="ov-chart-lg">
+          <CumulativeBars unitLabel="revenue" formatValue={(v) => fmtUsd(v)}
+            points={o.revenue.series.map((sp) => ({ date: sp.date, cumulative: sp.cumulativeCents, daily: sp.cents }))} />
+        </div>
+      ),
+      columns: ["Day", "Earned that day", "Cumulative"],
+      align: ["left", "right", "right"],
+      rows: o.revenue.series.map((sp) => ({
+        key: sp.date,
+        cells: [fmtDayYear(sp.date), sp.cents == null ? "—" : fmtUsd(sp.cents), fmtUsd(sp.cumulativeCents)],
+      })),
+      note: "A dash means no Page has published that day's earnings yet — Meta lags a freshly closed day, and it is not a $0.00. Facebook only: Instagram publishes no earnings metric.",
+    });
+  }
+
+  function openExpandTraction() {
+    if (!o || !traction) return;
+    setExpand({
+      title: "Content Traction",
+      subtitle: `Views, engagements, reactions and shares over the last ${o.traction.days} closed days, each indexed to its first day = 100`,
+      lead: (
+        <div className="ov-chart-lg">
+          <IndexedLines series={traction.series} dates={traction.dates} />
+        </div>
+      ),
+      columns: ["Day", "Views", "Engagements", "Reactions", "Shares · IG"],
+      align: ["left", "right", "right", "right", "right"],
+      rows: o.traction.series.map((sp) => ({
+        key: sp.date,
+        cells: [fmtDayYear(sp.date), fmtCompact(sp.views), fmtCompact(sp.engagements), fmtCompact(sp.reactions), fmtCompact(sp.shares)],
+      })),
+      note: "Indexing to day 1 = 100 is what lets four very different scales share one axis; the table carries the raw figures. Shares are Instagram-only — Facebook publishes no page-level share count, so a dash there is absence, not zero.",
+    });
+  }
+
+  function openExpandViewsChart() {
+    if (!o) return;
+    setExpand({
+      title: "Views by Channel",
+      subtitle: `Share of views across the last ${o.viewsByChannelDays} closed days · ${fmtCompact(o.viewsByChannelTotal)} views total`,
+      lead: catSlices.length ? (
+        <div className="ov-donut-lg">
+          <Donut slices={catSlices} size={210} thickness={28}
+            center={fmtCompact(o.viewsByChannelTotal)} centerLabel="Total Views"
+            ariaLabel="Donut chart of views by channel" />
+          <ul className="ov-legend-list">
+            {catSlices.map((c) => (
+              <li key={c.label}><span className="ov-legend-static"><i style={{ background: c.color }} /><span>{c.label}</span><b>{c.share.toFixed(1)}%</b></span></li>
+            ))}
+          </ul>
+        </div>
+      ) : undefined,
+      columns: ["#", "Channel", "Platform", "Views", "Share"],
+      align: ["left", "left", "left", "right", "right"],
+      rows: o.viewsByChannelAll.map((c, i) => {
+        const full = channelById.get(c.id);
+        return {
+          key: c.id,
+          cells: [i + 1, c.name, plat(c.platform), fmtCompact(c.views), `${c.share.toFixed(1)}%`],
+          onClick: full ? () => openChannel(full, true, { days: o.viewsByChannelDays, views: c.views }) : undefined,
+          label: full ? `Open ${c.name}` : undefined,
+        };
+      }),
+      note: `The donut folds the tail into "Others"; the table below lists every one of the ${o.viewsByChannelAll.length} channels that reported views in this window.`,
+    });
+  }
+
+  function openExpandDemographicsChart() {
+    if (!o) return;
+    setExpand({
+      title: `Audience Demographics · ${demoTab}`,
+      subtitle: `Instagram follower audience across ${o.demographics.assets} accounts · ${fmtCompact(demoTotal)} followers in the mapped set`,
+      lead: demoSlices.length ? (
+        <div className="ov-donut-lg">
+          <Donut slices={demoSlices.map((d) => ({ ...d, share: d.pct }))} size={210} thickness={28}
+            center={fmtCompact(demoTotal)} centerLabel="IG audience"
+            ariaLabel={`Audience by ${demoTab.toLowerCase()}`} />
+          <ul className="ov-legend-list">
+            {demoSlices.map((d) => (
+              <li key={d.label}><span className="ov-legend-static"><i style={{ background: d.color }} /><span>{d.label}</span><b>{d.pct.toFixed(1)}%</b></span></li>
+            ))}
+          </ul>
+        </div>
+      ) : undefined,
+      columns: ["#", demoTab === "Location" ? "Country" : demoTab, "Share", "Followers"],
+      align: ["left", "left", "right", "right"],
+      rows: (demoTab === "Age" ? o.demographics.age.map((a) => ({ label: a.bucket.replace("-", " – "), value: a.value }))
+        : demoTab === "Gender" ? o.demographics.gender.map((g) => ({ label: g.label, value: g.value }))
+        : o.demographics.country.map((c) => ({ label: countryName(c.bucket), value: c.value }))
+      ).map((x, i, arr) => {
+        const tot = arr.reduce((t, y) => t + y.value, 0);
+        return { key: `${x.label}|${i}`, cells: [i + 1, x.label, tot > 0 ? `${((x.value / tot) * 100).toFixed(1)}%` : "—", fmtCompact(x.value)] };
+      }),
+      note: "Instagram only — Facebook retired its whole fan-demographic family, so Pages contribute nothing here. The donut folds the tail; the table is every bucket Meta published.",
+    });
+  }
+
   function openKpi(k: (typeof kpis)[number]) {
+    setDrawerStacked(false);
     setDrawer({
       kind: "KPI detail", accent: k.accent, title: k.label, sub: `Period · last ${o?.period.days ?? days} closed days`,
       hero: { label: k.label, value: k.value, trend: <Trend pct={k.trend} reliable={k.reliable} />, note: k.note },
@@ -580,19 +837,51 @@ export default function OverviewPage() {
             <div className="ov-rel">
               <Chip onClick={() => setPop(pop === "date" ? null : "date")} ariaHasPopup active={pop === "date"}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={T.sub} strokeWidth="1.8" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M3 10h18M8 3v4M16 3v4" /></svg>
+                {/* Always the window the SERVER echoed — never local state, so the label
+                    can never move before the numbers under it do. */}
                 <span className="ov-date-label">{o ? `${fmtDayYear(o.period.start)} – ${fmtDayYear(o.period.end)}` : `Last ${days} days`}</span>
+                {o?.period.custom && <i className="ov-local-dot" aria-hidden="true" title="Custom range" />}
               </Chip>
               {pop === "date" && (
-                <Menu width={240}>
+                <Menu width={278}>
                   <div className="ov-menu-group">Global period · KPI strip &amp; tables</div>
                   {PERIODS.map((d) => (
-                    <MenuItem key={d} active={d === days} onClick={() => { setDays(d); remember("ov-days", d); setPop(null); }} meta={`${d} closed days`}>Last {d} days</MenuItem>
+                    <MenuItem key={d} active={!range && d === days} onClick={() => { setRange(null); rememberRange(null); setDays(d); remember("ov-days", d); setPop(null); }} meta={`${d} closed days`}>Last {d} days</MenuItem>
                   ))}
-                  <div className="ov-menu-note">Audience Growth and Revenue keep their own period unless reset.</div>
+                  <div className="ov-menu-group">Custom range</div>
+                  {/* ⚠️ `max` is the last day the estate has CLOSED, not today. Picking a day
+                      Meta has not published does not give fresher data, it silently averages
+                      in a partial day — the defect measured on Account Growth's own range
+                      picker. The server clamps regardless; this just stops the mistake. */}
+                  <div className="ov-daterange">
+                    <label>
+                      <span>From</span>
+                      <input type="date" value={draftStart} max={maxPickable} onChange={(e) => setDraftStart(e.target.value)} />
+                    </label>
+                    <label>
+                      <span>To</span>
+                      <input type="date" value={draftEnd} max={maxPickable} onChange={(e) => setDraftEnd(e.target.value)} />
+                    </label>
+                    <button
+                      type="button"
+                      className="ov-cta ov-cta-block"
+                      disabled={!draftStart || !draftEnd || draftStart > draftEnd || rangeTooLong}
+                      onClick={() => { const r = { start: draftStart, end: draftEnd }; setRange(r); rememberRange(r); setPop(null); }}
+                    >
+                      Apply range
+                    </button>
+                    {rangeTooLong && <div className="ov-menu-note">Ranges are capped at {MAX_RANGE_DAYS} days — the page draws one point per day.</div>}
+                    {range && (
+                      <button type="button" className="ov-reset" onClick={() => { setRange(null); rememberRange(null); setPop(null); }}>
+                        Clear range · back to presets
+                      </button>
+                    )}
+                  </div>
+                  <div className="ov-menu-note">Cards with their own period keep it unless reset.</div>
                 </Menu>
               )}
             </div>
-            <div className="ov-rel">
+            <div className="ov-rel" hidden={!canActOnQueues}>
               <button type="button" className="ov-icon-btn" aria-label={`Notifications, ${pendingCount} pending`} onClick={() => setPop(pop === "notif" ? null : "notif")}>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0v5l2 3H4l2-3zM10 20a2 2 0 0 0 4 0" /></svg>
                 {pendingCount > 0 && <span className="ov-badge" />}
@@ -602,10 +891,21 @@ export default function OverviewPage() {
                   <div className="ov-menu-row"><b>Needs attention</b><span>{o?.pending ? "live" : "unavailable"}</span></div>
                   {o?.pending ? (
                     <>
-                      <MenuItem onClick={() => router.push("/approvals")} meta={String(o.pending.approvals)}>Pending approvals</MenuItem>
+                      {/* ⚠️ "Pending approvals" is the SUM of documents + profile pictures +
+                          leave (analytics.service.ts:109), and two of those three are listed
+                          beneath it — so a single leave request used to be printed twice and
+                          read as two separate things to do. The roll-up is deliberate (it
+                          matches the /approvals page total), so the fix is to present it AS a
+                          roll-up with its components indented under it, not to change the
+                          arithmetic. Profile-picture requests are the third component and had
+                          no row at all; it is derived here so the three visibly sum to the total. */}
+                      <MenuItem onClick={() => router.push("/approvals")} meta={String(o.pending.approvals)}>Approvals queue · total</MenuItem>
+                      <div className="ov-menu-sub">
+                        <MenuItem onClick={() => router.push("/approvals")} meta={String(o.pending.leave)}>↳ Leave requests</MenuItem>
+                        <MenuItem onClick={() => router.push("/approvals")} meta={String(o.pending.documents)}>↳ Documents to verify</MenuItem>
+                        <MenuItem onClick={() => router.push("/approvals")} meta={String(Math.max(0, o.pending.approvals - o.pending.leave - o.pending.documents))}>↳ Profile pictures</MenuItem>
+                      </div>
                       <MenuItem onClick={() => router.push("/employees/pending")} meta={String(o.pending.employees)}>New joiners to review</MenuItem>
-                      <MenuItem onClick={() => router.push("/approvals")} meta={String(o.pending.leave)}>Leave requests</MenuItem>
-                      <MenuItem onClick={() => router.push("/approvals")} meta={String(o.pending.documents)}>Documents to verify</MenuItem>
                       <MenuItem onClick={() => router.push("/reports")} meta={`${fmtCompact(o.pending.linksToday)} links`}>Submitted today · {o.pending.submittedToday} employees</MenuItem>
                     </>
                   ) : (
@@ -673,8 +973,14 @@ export default function OverviewPage() {
               <Card
                 title="Audience Growth"
                 right={
-                  <CardPeriod id="aud" pop={pop} setPop={setPop} value={audDays} effective={o.audience.days} globalDays={o.period.days}
-                    onPick={(d) => { setAudDays(d); remember("ov-aud", d); }} />
+                  /* ⚠️ CardActions, not a bare pair: `.ov-card-h` is a space-between flex
+                     whose h2 is the only shrinkable item, so two loose children would be
+                     paid for out of the title's width. */
+                  <CardActions>
+                    <ExpandBtn label="Expand Audience Growth" onClick={openExpandAudience} />
+                    <CardPeriod id="aud" pop={pop} setPop={setPop} value={audDays} effective={o.audience.days} globalDays={o.period.days}
+                      onPick={(d) => { setAudDays(d); remember("ov-aud", d); }} />
+                  </CardActions>
                 }
               >
                 <div className="ov-headline">
@@ -709,8 +1015,11 @@ export default function OverviewPage() {
               <Card
                 title="Revenue Overview"
                 right={
-                  <CardPeriod id="rev" pop={pop} setPop={setPop} value={revDays} effective={o.revenue.days} globalDays={o.period.days}
-                    onPick={(d) => { setRevDays(d); remember("ov-rev", d); }} />
+                  <CardActions>
+                    <ExpandBtn label="Expand Revenue Overview" onClick={openExpandRevenueOverview} />
+                    <CardPeriod id="rev" pop={pop} setPop={setPop} value={revDays} effective={o.revenue.days} globalDays={o.period.days}
+                      onPick={(d) => { setRevDays(d); remember("ov-rev", d); }} />
+                  </CardActions>
                 }
               >
                 <div className="ov-headline">
@@ -726,7 +1035,7 @@ export default function OverviewPage() {
 
               <Card title="Views by Channel" right={
                 <CardActions>
-                  <ExpandBtn label="Expand Views by Channel" onClick={openExpandViews} />
+                  <ExpandBtn label="Expand Views by Channel" onClick={openExpandViewsChart} />
                   <CardPeriod id="vbc" pop={pop} setPop={setPop} value={vbcDays} effective={o.viewsByChannelDays} globalDays={o.period.days}
                     onPick={(d) => { setVbcDays(d); remember("ov-vbc", d); setSelCat(null); }} />
                 </CardActions>
@@ -739,7 +1048,7 @@ export default function OverviewPage() {
                       thickness={16}
                       selected={selCat}
                       onSelect={setSelCat}
-                      center={selCat != null && catSlices[selCat] ? `${catSlices[selCat].share.toFixed(0)}%` : fmtCompact(o.kpis.views.value)}
+                      center={selCat != null && catSlices[selCat] ? `${catSlices[selCat].share.toFixed(0)}%` : fmtCompact(o.viewsByChannelTotal)}
                       centerLabel={selCat != null && catSlices[selCat] ? catSlices[selCat].label : "Total Views"}
                       ariaLabel="Donut chart of views by channel"
                     />
@@ -798,8 +1107,12 @@ export default function OverviewPage() {
                 </div>
               </Card>
 
+              {/* ⚠️ Not "LIVE": these arrive on the ~3-hourly Meta sync, so the newest post
+                  is routinely an hour or more old (103 min when measured on prod). "SYNCED"
+                  is the honest word for a feed that is as fresh as its last fetch rather
+                  than streaming. */}
               <Card
-                title={<>Latest Posts <span className="ov-live-pill"><span />LIVE</span></>}
+                title={<>Latest Posts <span className="ov-live-pill"><span />SYNCED</span></>}
                 right={<CardActions><ExpandBtn label="Expand Latest Posts" onClick={openExpandPosts} /><ViewAll href="/accounts/growth" /></CardActions>}
               >
                 <div className="ov-feed">
@@ -851,19 +1164,43 @@ export default function OverviewPage() {
               <Card title={<>Real-time Activity <span className="ov-live"><span />Live</span></>}>
                 <div className="ov-activity">
                   {o.activity.length === 0 && <Empty>Quiet for now.</Empty>}
-                  {o.activity.map((a, i) => (
-                    <button key={`${a.kind}-${a.at}-${i}`} type="button" className="ov-act" aria-expanded={actOpen === i} onClick={() => setActOpen(actOpen === i ? null : i)}>
-                      <span className="ov-act-dot" style={{ background: ACTIVITY_COLOR[a.kind], boxShadow: `0 0 6px ${ACTIVITY_COLOR[a.kind]}` }} />
-                      <span className="ov-act-t" style={{ whiteSpace: actOpen === i ? "normal" : "nowrap" }}>{a.text}</span>
-                      <span className="ov-act-when">{fmtRelative(a.at, now)}</span>
-                    </button>
-                  ))}
+                  {/* ⚠️ These rows now GO somewhere. The click used to only toggle the
+                      text between one line and two, which is why the feed read as a dead
+                      end — the payload carried no id or link at all, so there was nothing
+                      to navigate to. `postId` opens the same post drawer Latest Posts
+                      opens; `href` is an in-portal route. Dropping the toggle is not a
+                      loss: the text now clamps to two lines by default (it was forced to
+                      one) and the full string is on the title attribute.
+                      ⚠️ An href is a navigation hint, NOT an authorisation claim — most of
+                      this page's audience holds only the Employee role, so the destination
+                      gates itself. */}
+                  {o.activity.map((a, i) => {
+                    const post = a.postId ? o.latestPosts.find((lp) => lp.id === a.postId) : undefined;
+                    const go = post ? () => openPost(post) : a.href ? () => router.push(a.href!) : undefined;
+                    return (
+                      <button
+                        key={`${a.kind}-${a.at}-${i}`}
+                        type="button"
+                        className="ov-act"
+                        onClick={go}
+                        disabled={!go}
+                        aria-label={go ? `${a.text} — open` : undefined}
+                      >
+                        <span className="ov-act-dot" style={{ background: ACTIVITY_COLOR[a.kind], boxShadow: `0 0 6px ${ACTIVITY_COLOR[a.kind]}` }} />
+                        <span className="ov-act-t" title={a.text}>{a.text}</span>
+                        <span className="ov-act-when">{fmtRelative(a.at, now)}</span>
+                      </button>
+                    );
+                  })}
                 </div>
               </Card>
 
               <Card title="Content Traction" right={
-                <CardPeriod id="trac" pop={pop} setPop={setPop} value={tracDays} effective={o.traction.days} globalDays={o.period.days}
-                  onPick={(d) => { setTracDays(d); remember("ov-trac", d); }} />
+                <CardActions>
+                  <ExpandBtn label="Expand Content Traction" onClick={openExpandTraction} />
+                  <CardPeriod id="trac" pop={pop} setPop={setPop} value={tracDays} effective={o.traction.days} globalDays={o.period.days}
+                    onPick={(d) => { setTracDays(d); remember("ov-trac", d); }} />
+                </CardActions>
               }>
                 <div className="ov-trac-tiles">
                   {o.traction.tiles.map((t, i) => (
@@ -878,7 +1215,7 @@ export default function OverviewPage() {
               </Card>
 
               <Card title="Audience Demographics" right={
-                <CardActions><ExpandBtn label="Expand Audience Demographics" onClick={openExpandDemographics} /></CardActions>
+                <CardActions><ExpandBtn label="Expand Audience Demographics" onClick={openExpandDemographicsChart} /></CardActions>
               }>
                 <div role="tablist" className="ov-tabs">
                   {(["Age", "Gender", "Location"] as const).map((t) => (
@@ -900,6 +1237,15 @@ export default function OverviewPage() {
               <Card title="What’s Trending" right={
                 <CardActions><ExpandBtn label="Expand What’s Trending" onClick={openExpandTrending} /><ViewAll href="/reports/link-search" /></CardActions>
               }>
+                {/* ⚠️ THE CARD FACE MUST SAY WHAT THIS ACTUALLY COUNTS. It reads
+                    link_content — captions HARVESTED from the connected channel feeds —
+                    which is a superset of what our employees submitted: of 400 sampled
+                    captions harvested in the last 7 days, only 243 (61%) matched any
+                    submitted link. The drawer and the expanded view both said "harvested"
+                    already; a bare "N posts" on the card invited exactly the reading the
+                    owner had, that this is our team's posting activity. It is the wider
+                    market signal, which is useful — it just has to be labelled. */}
+                <div className="ov-card-note">Harvested channel captions · 7d — wider than our team&rsquo;s own links.</div>
                 <div className="ov-trending">
                   {o.trending.length === 0 && <Empty>No captions tagged this week yet.</Empty>}
                   {o.trending.slice(0, CARD_ROWS).map((t, i) => {
@@ -925,11 +1271,15 @@ export default function OverviewPage() {
         {o && (
           <div className="ov-foot">
             Meta channel data complete through {o.period.dataThroughDay ? fmtDayYear(o.period.dataThroughDay) : "—"} · {o.channels.total} connected channels · page refreshed {fmtRelative(o.generatedAt, now)}
+            {/* Disclose a clamp rather than silently showing a shorter window than asked for. */}
+            {o.period.clampedTo && (
+              <> · range shortened to {fmtDayYear(o.period.clampedTo)} — Meta has not published a complete day after that</>
+            )}
           </div>
         )}
 
         {expand && <ExpandModal spec={expand} onClose={() => setExpand(null)} />}
-        {drawer && <Drawer spec={drawer} onClose={() => setDrawer(null)} />}
+        {drawer && <Drawer spec={drawer} stacked={drawerStacked} onClose={closeDrawer} />}
       </main>
     </div>
   );

@@ -43,9 +43,28 @@ export const WIDGET_PERIODS = [0, 7, 14, 30, 90] as const;
 export type OverviewPeriod = (typeof OVERVIEW_PERIODS)[number];
 export type WidgetPeriod = (typeof WIDGET_PERIODS)[number];
 
+/**
+ * Longest custom range we will serve.
+ *
+ * ⚠️ NOT a database limit — the GROUP BY over meta_asset_daily is cheap at any span. The
+ * binding cost is that every series carries ONE POINT PER DAY (audience, revenue, traction
+ * and four KPI sparklines), and the traction baseline doubles the scanned span via
+ * previousRange. A two-year range would ship ~730-element arrays per series in a payload
+ * that is polled every 60s. A year is more than any real question needs here.
+ */
+export const MAX_RANGE_DAYS = 366;
+
 export interface OverviewParams {
   days: OverviewPeriod;
-  /** 0 = follow `days`. Same for the three below. */
+  /**
+   * An explicit inclusive [start, end] window that OVERRIDES `days`.
+   *
+   * ⚠️ OPTIONAL, deliberately. `apps/api/tsconfig.json` excludes tests and vitest strips
+   * types, so a newly REQUIRED field on this interface would be caught by nothing — not
+   * the typecheck, not CI. Every existing caller keeps working unchanged.
+   */
+  range?: { start: string; end: string } | null;
+  /** 0 = follow the global window (whether that is `days` or `range`). Same for the three below. */
   audDays: WidgetPeriod;
   revDays: WidgetPeriod;
   vbcDays: WidgetPeriod;
@@ -77,12 +96,17 @@ export interface PeriodMetric {
 export interface OverviewPayload {
   generatedAt: string;
   period: {
+    /** Length of the effective window in days — derived, so a custom range reports its own span. */
     days: number;
     start: string;
     end: string;
     prevStart: string;
     prevEnd: string;
     dataThroughDay: string | null;
+    /** True when this window came from an explicit start/end rather than a preset. */
+    custom: boolean;
+    /** The last closed day, when the requested end was later than it. Null otherwise. */
+    clampedTo: string | null;
   };
   channels: { total: number; facebook: number; instagram: number };
   /** Every live channel, followers-desc — the header search searches this, not the ranked lists. */
@@ -99,7 +123,11 @@ export interface OverviewPayload {
     };
     views: PeriodMetric;
     engagements: PeriodMetric;
-    revenue: PeriodMetric;
+    /**
+     * `contributing` = Pages that reported an earnings figure (includes exact zeros);
+     * `earning` = Pages whose earnings were actually above zero. See earningChannels.
+     */
+    revenue: PeriodMetric & { earning: number };
     reach: { value: number | null; window: "week" | "days_28" | null; contributing: number };
   };
   audience: {
@@ -121,6 +149,15 @@ export interface OverviewPayload {
   viewsByChannelAll: Array<{ id: string; name: string; platform: "facebook" | "instagram"; views: number; share: number }>;
   /** Effective period of that card (equals period.days unless detached). */
   viewsByChannelDays: number;
+  /**
+   * Total views over the Views-by-Channel card's OWN window.
+   *
+   * ⚠️ The donut centre must render THIS, never kpis.views.value. The card can be
+   * detached from the global period, and the KPI is always the global one — at
+   * days=7&vbc=90 on prod the centre read 3,034,644,872 while its own slices summed to
+   * 37,154,832,135, a 12x mismatch presented as that donut's total.
+   */
+  viewsByChannelTotal: number;
   topChannels: ChannelRow[];
   revenueByChannel: ChannelRow[];
   cities: {
@@ -140,7 +177,14 @@ export interface OverviewPayload {
     mediaProductType: string | null;
     channel: { name: string; username: string | null; platform: "facebook" | "instagram"; pictureUrl: string | null };
   }>;
-  activity: Array<{ kind: ActivityKind; text: string; at: string }>;
+  /**
+   * Real-time Activity feed. Every stream is bounded to ACTIVITY_WINDOW_DAYS.
+   *
+   * `postId` opens the same post drawer the Latest Posts card opens; `href` is an
+   * in-portal route. Exactly one of the two is set per item, and both are nullable so a
+   * future stream can be inert without widening the type.
+   */
+  activity: Array<{ kind: ActivityKind; text: string; at: string; postId: string | null; href: string | null }>;
   traction: {
     /** Effective period of this card (equals period.days unless detached). */
     days: number;
@@ -196,7 +240,13 @@ export interface ChannelRow {
 export type ChannelDirectoryRow = Omit<ChannelRow, "pictureUrl">;
 
 export type CityTier = "high" | "growing" | "emerging";
-export type ActivityKind = "post" | "report" | "user" | "leave" | "announcement";
+/**
+ * ⚠️ "leave" IS DELIBERATELY ABSENT. A named person's leave type/status is
+ * health-adjacent and this payload is served to every internal user (71 of 74 hold only
+ * the Employee role, which has no `leave` permission). Removing it from the union makes
+ * re-adding the stream a compile error rather than a quiet privacy regression.
+ */
+export type ActivityKind = "post" | "report" | "user" | "announcement";
 export type TractionKey = "views" | "engagements" | "reactions" | "shares";
 
 // ───────────────────────────── pure helpers ─────────────────────────────
@@ -393,7 +443,10 @@ const MAX_CACHE_ENTRIES = 60;
 export function getOverview(params: OverviewParams): Promise<OverviewPayload> {
   // ⚠️ EVERY period must be in the key. Leave one out and a card detached to 90 days
   // would be served another request's 7-day payload under a 90-day label.
-  const key = `${params.days}:${params.audDays}:${params.revDays}:${params.vbcDays}:${params.tracDays}`;
+  // ⚠️ THE RANGE IS PART OF THE KEY. Leave it out and two materially different windows
+  // collide for up to 60s — one range's numbers under another range's label.
+  const r = params.range ? `${params.range.start}_${params.range.end}` : "-";
+  const key = `${params.days}:${params.audDays}:${params.revDays}:${params.vbcDays}:${params.tracDays}:${r}`;
   const now = Date.now();
   const hit = _cache.get(key);
   if (hit && hit.expires > now) return hit.promise;
@@ -410,6 +463,18 @@ export function getOverview(params: OverviewParams): Promise<OverviewPayload> {
 }
 
 // ───────────────────────────── builder ─────────────────────────────
+
+/**
+ * Recency bound for every Real-time Activity stream.
+ *
+ * ⚠️ The card is titled "Real-time Activity" and carries a pulsing "Live" badge, so a
+ * row it shows must actually be recent. Before this bound the `leave` and `announcement`
+ * streams were unbounded and held rows 50 and 59 days old on prod, outranked by live
+ * posts rather than excluded — one quiet stretch away from presenting a seven-week-old
+ * row as live. Seven days is deliberately shorter than the 30 the new-joiner stream used
+ * to allow: "joined the team" a month ago is not activity either.
+ */
+const ACTIVITY_WINDOW_DAYS = 7;
 
 // How many trailing days to inspect when deciding which day is genuinely complete.
 const END_PROBE_DAYS = 8;
@@ -486,23 +551,44 @@ async function buildOverview(params: OverviewParams): Promise<OverviewPayload> {
   // resolveWindowEnd() picks the newest day both platforms have actually closed, so
   // every window below is complete-by-construction — the same principle as Account
   // Growth's dataThroughDay, which reports the EARLIEST covered boundary.
-  const end = await resolveWindowEnd(liveIds, todayIso);
-  const start = shiftDay(end, -(params.days - 1));
+  const closedEnd = await resolveWindowEnd(liveIds, todayIso);
+  // ⚠️ A CUSTOM RANGE IS CLAMPED TO THE LAST CLOSED DAY — this is the one place this
+  // implementation deliberately differs from Account Growth's custom range, which accepts
+  // whatever end the user picks and was measured understating a 7-day span by 7.2% because
+  // Facebook had not closed the final day. Picking an end Meta has not published does not
+  // give you fresher data, it gives you a partial day silently averaged into the total.
+  // `rangeClampedTo` is echoed so the UI can say so rather than quietly showing less.
+  const requestedEnd = params.range ? params.range.end : null;
+  const end = requestedEnd ? (requestedEnd > closedEnd ? closedEnd : requestedEnd) : closedEnd;
+  const rangeClampedTo = requestedEnd && requestedEnd > closedEnd ? closedEnd : null;
+  const start = params.range
+    ? (params.range.start > end ? end : params.range.start)
+    : shiftDay(end, -(params.days - 1));
+  // Every window below derives from this span, so a custom range and a preset behave
+  // identically from here on.
+  const spanDays = rangeDayCount(start, end);
   const prev = previousRange(start, end);
   // ⚠️ THE PRECEDENCE RULE, in one line each: 0 means follow the global period.
-  const audN = params.audDays || params.days;
-  const revN = params.revDays || params.days;
-  const vbcN = params.vbcDays || params.days;
-  const tracN = params.tracDays || params.days;
-  const longest = Math.max(params.days, audN, revN, vbcN, tracN, 7);
+  // ⚠️ "Follow the global" now means "follow the global WINDOW", which may be a custom
+  // range — so the fallback is spanDays, not params.days. A detached card still means
+  // "its own N days ending at the same `end`", exactly as before.
+  const audN = params.audDays || spanDays;
+  const revN = params.revDays || spanDays;
+  const vbcN = params.vbcDays || spanDays;
+  const tracN = params.tracDays || spanDays;
+  const longest = Math.max(spanDays, audN, revN, vbcN, tracN, 7);
   const seriesStart = shiftDay(end, -(longest - 1));
   // Daily series also need the equal-length baseline for traction/revenue trends.
   const seriesFetchStart = shiftDay(seriesStart, -longest);
   const audStart = shiftDay(end, -(audN - 1));
+  // A "Live" feed must not be able to show a month-old row. Every activity stream is
+  // bounded by this; it is a wall-clock recency window, NOT the Meta closed-day period,
+  // because these are portal events rather than channel metrics.
+  const activitySince = new Date(Date.now() - ACTIVITY_WINDOW_DAYS * 86_400_000);
 
   // Empty `in` lists are valid Prisma filters that simply match nothing, so every
   // query below runs unconditionally and keeps one concrete result type.
-  const [rangeNow, rangePrev, followerDeltas, daily, snapshots, cityRows, ageRows, genderRows, countryRows, posts, reports, newUsers, leaves, announcements, trendingNow, pendingStats] =
+  const [rangeNow, rangePrev, followerDeltas, daily, snapshots, cityRows, ageRows, genderRows, countryRows, posts, reports, newUsers, announcements, trendingNow, pendingStats] =
     await Promise.all([
       getRangeTotals(start, end),
       getRangeTotals(prev.start, prev.end),
@@ -542,23 +628,42 @@ async function buildOverview(params: OverviewParams): Promise<OverviewPayload> {
           asset: { select: { name: true, username: true, kind: true, pictureUrl: true } },
         },
       }),
+      // ⚠️ EVERY ACTIVITY STREAM IS BOUNDED TO ACTIVITY_WINDOW_DAYS. The `leave` and
+      // `announcement` streams used to have NO date bound at all, so on prod they held
+      // rows 50 and 59 days old — invisible only because live posts outranked them. A
+      // quiet stretch (a weekend with no submissions plus a failed posts sync, both
+      // documented occurrences) would have surfaced a 50-day-old row under a pulsing
+      // "Live" badge. An empty feed renders the existing empty state, which is honest.
       prisma.dailyReport.findMany({
+        where: { submittedAt: { gte: activitySince } },
         orderBy: { submittedAt: "desc" },
         take: 5,
         select: { submittedAt: true, employee: { select: { name: true } }, _count: { select: { links: true } } },
       }),
       prisma.user.findMany({
-        where: { deletedAt: null, createdAt: { gte: new Date(Date.now() - 30 * 86_400_000) } },
+        // ⚠️ `status: "ACTIVE"` matters: without it a self-registered ONBOARDING account
+        // that no admin has approved yet is announced estate-wide as "joined the team".
+        where: { deletedAt: null, status: "ACTIVE", createdAt: { gte: activitySince } },
         orderBy: { createdAt: "desc" },
         take: 3,
         select: { name: true, createdAt: true },
       }),
-      prisma.leaveRequest.findMany({
-        orderBy: { createdAt: "desc" },
-        take: 3,
-        select: { createdAt: true, type: true, status: true, employee: { select: { name: true } } },
-      }),
+      // ⚠️⚠️ THE `leave` STREAM IS DELIBERATELY GONE — DO NOT RE-ADD IT.
+      // It rendered "<name> requested sick leave · pending", i.e. a named person's
+      // health-adjacent status. That was acceptable while this page was admin-only, but
+      // the gate was widened to EVERY internal user on 2026-09-17 and 71 of the 74 active
+      // users hold only the Employee role, whose permissions are accounts/attendance/
+      // employees/tasks — no `leave` at all. The owner's recorded decision covers exposing
+      // REVENUE at that audience; there is no such decision for leave. Admins still get
+      // the aggregate, non-identifying count in the notification bell and the full queue
+      // at /approvals, so nothing actionable is lost. If a per-viewer feed is ever wanted,
+      // note the payload is memoised on the period key alone and is shared by all
+      // viewers — per-user filtering cannot be bolted on without re-keying that cache.
       prisma.announcement.findMany({
+        // ⚠️ `orgUnitId: null` = company-wide only. A team-scoped announcement (1 of the
+        // 4 on prod) must not be broadcast to the whole estate by this feed. Scope cannot
+        // be honoured per-viewer here for the same shared-cache reason as above.
+        where: { orgUnitId: null, createdAt: { gte: activitySince } },
         orderBy: { createdAt: "desc" },
         take: 2,
         select: { title: true, createdAt: true },
@@ -609,6 +714,20 @@ async function buildOverview(params: OverviewParams): Promise<OverviewPayload> {
   const viewsSum = sumNullable(cur.views);
   const engSum = sumNullable(cur.engagements);
   const earnSum = sumNullable(cur.earnings);
+  /**
+   * Channels that ACTUALLY EARNED, i.e. sum > 0 — not merely those that reported a figure.
+   *
+   * ⚠️ WHY BOTH NUMBERS EXIST. `earnSum.contributing` counts assets whose earnings are
+   * non-null, which on prod is 317 — every Facebook Page — because a monetisation-enabled
+   * Page that made nothing still reports a real 0.00. 260 of those 317 are exact zeros, so
+   * the count reads 317 at 7, 14, 30 AND 90 days: a figure that never moves with the period
+   * carries no information, yet it was the one shown, labelled "Pages reporting earnings",
+   * which every reader compressed to "317 pages earning". Account Growth counts `> 0` for
+   * the same estate and reports 57 over 14 days (meta.routes.ts ~569) — hence the mismatch
+   * the owner reported. Both pages' revenue TOTALS were byte-identical throughout; only
+   * this count differed, and only by definition. Keep both and label each for what it is.
+   */
+  const earningChannels = cur.earnings.filter((v) => v != null && v > 0).length;
 
   const dailyByDate = new Map(daily.map((d) => [isoDay(d.date), d]));
   const periodDays = dayRange(start, end);
@@ -629,7 +748,14 @@ async function buildOverview(params: OverviewParams): Promise<OverviewPayload> {
   });
 
   // ── Reach: Meta's own unique count for the native window matching the period ──
-  const reachWindow: "week" | "days_28" | null = params.days === 7 ? "week" : params.days === 30 ? "days_28" : null;
+  // ⚠️ A CUSTOM RANGE NEVER HAS A REACH FIGURE, regardless of its length. Meta publishes
+  // unique-people reach only for its OWN trailing windows (`week`, `days_28`), anchored at
+  // Meta's own boundary — not for an arbitrary span the user picked. Even a custom range
+  // that happens to be exactly 7 days describes a different interval than Meta's `week`.
+  // Account Growth's range mode returns reach: null for the same reason; matching it keeps
+  // the two pages honest AND consistent.
+  const reachWindow: "week" | "days_28" | null =
+    params.range ? null : spanDays === 7 ? "week" : spanDays === 30 ? "days_28" : null;
   let reachSum = 0;
   let reachContributing = 0;
   if (reachWindow) {
@@ -685,10 +811,18 @@ async function buildOverview(params: OverviewParams): Promise<OverviewPayload> {
   }
   const revTotal = revReported > 0 ? cumulative : null;
   const revPrevious = revPrevDaysCovered > 0 ? revPrevTotal : null;
+  // ⚠️ `assets` and `contributing` must carry REAL evidence, not 1 and 1. With both
+  // hard-wired to 1 the gate `previous.assets >= floor(contributing * 0.9)` reduced to
+  // `1 >= 0` — always true — so this trend could never be marked unreliable. Measured on
+  // prod at days=90: the KPI and this card returned the IDENTICAL -7.418514641702768%,
+  // but the KPI rendered "↓ 7%*" (starred, thin baseline) and the card rendered "↓ 7%".
+  // One number, two confidence claims, on the same screen.
   const revTrend = trendFrom(
     revTotal,
-    revPrevious != null ? { value: revPrevious, coverageShare: revPrevDaysCovered / revDaysList.length, assets: 1 } : null,
-    1,
+    revPrevious != null
+      ? { value: revPrevious, coverageShare: revPrevDaysCovered / revDaysList.length, assets: prv.earningsAssets }
+      : null,
+    earnSum.contributing,
   );
 
   // ── Channel tables ──
@@ -736,7 +870,7 @@ async function buildOverview(params: OverviewParams): Promise<OverviewPayload> {
   // window's numbers under this card's label. getRangeTotals has its own 60s cache, so
   // the extra call is cheap and is skipped entirely when the card follows the global.
   const vbcStart = shiftDay(end, -(vbcN - 1));
-  const rangeVbc = vbcN === params.days ? rangeNow : await getRangeTotals(vbcStart, end);
+  const rangeVbc = vbcN === spanDays ? rangeNow : await getRangeTotals(vbcStart, end);
   const vbcRanked = assets
     .filter((a) => (rangeVbc.get(a.id)?.views ?? null) != null)
     .sort((a, b) => (rangeVbc.get(b.id)!.views ?? 0) - (rangeVbc.get(a.id)!.views ?? 0));
@@ -799,24 +933,45 @@ async function buildOverview(params: OverviewParams): Promise<OverviewPayload> {
       channel: { name: p.asset.name, username: p.asset.username, platform: platformOf(p.asset.kind), pictureUrl: p.asset.pictureUrl },
     }));
 
+  // ⚠️ Each item now carries the ONE thing needed to act on it, because the feed used to
+  // carry {kind,text,at} only and was therefore a dead end in every mode — clicking a row
+  // just unfolded its truncated text. `postId` lets the client open the SAME post drawer
+  // the Latest Posts card opens (no extra data: these rows come from latestPosts, which
+  // already carries the id); `href` is an in-portal route for the rest.
+  // ⚠️ An href here is only a NAVIGATION HINT, never an authorisation claim — the
+  // destination enforces its own permissions, and most of this page's audience holds only
+  // the Employee role. The client links the row and lets the target gate it.
   const activity: OverviewPayload["activity"] = [
     ...latestPosts.slice(0, 4).map((p) => ({
       kind: "post" as const,
       text: `${p.channel.name} published ${p.mediaProductType === "REELS" ? "a reel" : "a post"}${p.title !== "Untitled post" ? ` — “${p.title}”` : ""}`,
       at: p.postedAt,
+      postId: p.id,
+      href: null,
     })),
     ...reports.map((r) => ({
       kind: "report" as const,
       text: `${r.employee.name} submitted a daily report with ${r._count.links} link${r._count.links === 1 ? "" : "s"}`,
       at: r.submittedAt.toISOString(),
+      postId: null,
+      href: "/reports",
     })),
-    ...newUsers.map((u) => ({ kind: "user" as const, text: `${u.name} joined the team`, at: u.createdAt.toISOString() })),
-    ...leaves.map((l) => ({
-      kind: "leave" as const,
-      text: `${l.employee.name} requested ${String(l.type).toLowerCase().replace(/_/g, " ")} leave · ${String(l.status).toLowerCase()}`,
-      at: l.createdAt.toISOString(),
+    ...newUsers.map((u) => ({
+      kind: "user" as const,
+      text: `${u.name} joined the team`,
+      at: u.createdAt.toISOString(),
+      postId: null,
+      href: "/employees",
     })),
-    ...announcements.map((a) => ({ kind: "announcement" as const, text: `Announcement: ${a.title}`, at: a.createdAt.toISOString() })),
+    // ⚠️ NO `leave` STREAM — see the query block above. Named health-adjacent status must
+    // not ride a payload served to all 74 internal users, 71 of whom hold no leave permission.
+    ...announcements.map((a) => ({
+      kind: "announcement" as const,
+      text: `Announcement: ${a.title}`,
+      at: a.createdAt.toISOString(),
+      postId: null,
+      href: "/announcements",
+    })),
   ]
     .sort((a, b) => (a.at < b.at ? 1 : -1))
     .slice(0, 6);
@@ -883,7 +1038,14 @@ async function buildOverview(params: OverviewParams): Promise<OverviewPayload> {
 
   return {
     generatedAt: new Date().toISOString(),
-    period: { days: params.days, start, end, prevStart: prev.start, prevEnd: prev.end, dataThroughDay },
+    period: {
+      days: spanDays,
+      start, end, prevStart: prev.start, prevEnd: prev.end, dataThroughDay,
+      /** True when the window came from an explicit start/end rather than a preset. */
+      custom: params.range != null,
+      /** Set when the requested end was later than the last day the estate has closed. */
+      clampedTo: rangeClampedTo,
+    },
     allChannels,
     channels: {
       total: assets.length,
@@ -897,11 +1059,11 @@ async function buildOverview(params: OverviewParams): Promise<OverviewPayload> {
         deltaDays: channelsWithHistory > 0 ? span : null,
         channelsWithHistory,
         followersWithHistory: channelsWithHistory > 0 ? followersWithHistory : null,
-        spark: filled.series.slice(-params.days).map((s) => s.followers),
+        spark: filled.series.slice(-spanDays).map((s) => s.followers),
       },
       views: metric(viewsSum, prv.views, prv.viewsAssets, spark((d) => num(d._sum.views))),
       engagements: metric(engSum, prv.engagements, prv.engAssets, spark((d) => num(d._sum.engagements))),
-      revenue: metric(earnSum, prv.earnings, prv.earningsAssets, spark((d) => num(d._sum.earningsCents))),
+      revenue: { ...metric(earnSum, prv.earnings, prv.earningsAssets, spark((d) => num(d._sum.earningsCents))), earning: earningChannels },
       reach: { value: reachContributing > 0 ? reachSum : null, window: reachWindow, contributing: reachContributing },
     },
     audience: {
@@ -915,6 +1077,7 @@ async function buildOverview(params: OverviewParams): Promise<OverviewPayload> {
     viewsByChannel,
     viewsByChannelAll,
     viewsByChannelDays: vbcN,
+    viewsByChannelTotal: vbcTotal,
     topChannels,
     revenueByChannel,
     cities: {

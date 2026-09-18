@@ -4,6 +4,12 @@ import { getSupportedSlugs, getProvider } from "../services/social-insights";
 import type { InsightTarget } from "../services/social-insights";
 import { youTubeQuotaExceeded } from "../services/social-insights/youtube.provider";
 import { upsertLinkContent } from "../services/link-content.service";
+import {
+  upsertLinkMetricLatest,
+  findLatestSnapshotsByLinkIds,
+  isIdenticalSnapshot,
+  rehealLinkMetricLatest,
+} from "../services/link-metrics-latest.service";
 
 const POLL_WINDOW_DAYS = 60;
 // Per-provider metric-sweep wall-clock budget (default 25 min). A provider yields to
@@ -456,6 +462,7 @@ async function runSocialInsightsRefreshInner(opts?: { harvestOnly?: boolean }): 
       let succeeded = 0;
       let notFound = 0;
       let errors = 0;
+      let skippedIdentical = 0; // polled, result byte-identical to the stored snapshot → no new log row
       let quotaAborted = false;
       // Tracks whether the feed-map harvest has already been flushed this run.
       // The provider builds its in-memory feed map on the FIRST fetchBatch call
@@ -525,6 +532,22 @@ async function runSocialInsightsRefreshInner(opts?: { harvestOnly?: boolean }): 
 
           // Write snapshots + per-link content enrichment (skipped in harvestOnly mode)
           if (!harvestOnly) {
+            // ── Write-dedupe reference (2026-09-18) ──────────────────────────────
+            // The latest stored snapshot per link in THIS batch, one indexed query.
+            // When a poll result is byte-identical to it (same status + metrics) there
+            // is nothing new to record and the log row is NOT appended. Measured
+            // 2026-09-17: 760k of 872k Instagram rows/day were identical `not_found`
+            // re-polls; the log had grown 3.99M → 14.6M rows / 10GB in six weeks and
+            // the "latest per link" reads took 5-10 min each (portal-wide P2024).
+            // FAIL-OPEN: a lookup error → empty map → every result is written, i.e.
+            // the pre-2026-09-18 behaviour. Never lets the sweep stop.
+            let prevByLink = new Map<string, Awaited<ReturnType<typeof findLatestSnapshotsByLinkIds>> extends Map<string, infer V> ? V : never>();
+            try {
+              prevByLink = await findLatestSnapshotsByLinkIds(batch.map((b) => b.linkId));
+            } catch (lookupErr) {
+              console.warn(`[social-insights/${slug}] latest-snapshot lookup failed — writing every result this batch:`, lookupErr);
+            }
+
             for (const t of batch) {
               const r = results.get(t.linkId);
               if (!r) continue;
@@ -540,24 +563,36 @@ async function runSocialInsightsRefreshInner(opts?: { harvestOnly?: boolean }): 
                 if (t.linkId > tierHighWater[tier]) tierHighWater[tier] = t.linkId;
               }
 
+              const fetchedAt = new Date();
+              const videoId = slug === "youtube" ? extractYouTubeVideoId(t.url) : null;
+              const prev = prevByLink.get(t.linkId);
+              const identical = prev != null && isIdenticalSnapshot(prev, r);
+
               try {
-                await prisma.linkMetric.create({
-                  data: {
-                    linkId: t.linkId,
-                    employeeId: t.employeeId,
-                    reportDate: t.reportDate,
-                    url: t.url,
-                    urlNormalized: t.urlNormalized,
-                    platform: slug,
-                    videoId: slug === "youtube" ? extractYouTubeVideoId(t.url) : null,
-                    status: r.status,
-                    views: r.views ?? null,
-                    likes: r.likes ?? null,
-                    comments: r.comments ?? null,
-                    shares: r.shares ?? null,
-                    errorMessage: r.error ?? null,
-                  },
-                });
+                if (identical) {
+                  // Same status, same numbers as the last stored snapshot → the log
+                  // already says this; don't append another 200-byte row (× 7 indexes).
+                  skippedIdentical++;
+                } else {
+                  await prisma.linkMetric.create({
+                    data: {
+                      linkId: t.linkId,
+                      employeeId: t.employeeId,
+                      reportDate: t.reportDate,
+                      url: t.url,
+                      urlNormalized: t.urlNormalized,
+                      platform: slug,
+                      videoId,
+                      fetchedAt,
+                      status: r.status,
+                      views: r.views ?? null,
+                      likes: r.likes ?? null,
+                      comments: r.comments ?? null,
+                      shares: r.shares ?? null,
+                      errorMessage: r.error ?? null,
+                    },
+                  });
+                }
 
                 if (r.status === "ok") succeeded++;
                 else if (r.status === "not_found") notFound++;
@@ -565,6 +600,33 @@ async function runSocialInsightsRefreshInner(opts?: { harvestOnly?: boolean }): 
               } catch (writeErr) {
                 console.error(`[social-insights/${slug}] failed to write snapshot for linkId ${t.linkId}:`, writeErr);
                 errors++;
+              }
+
+              // ── Latest-state upsert (the READ model) ───────────────────────────
+              // Every ok poll refreshes link_metrics_latest — including polls whose
+              // snapshot append was skipped as identical, so the row's fetched_at
+              // (the "Nd old" staleness chip) stays honest about WHEN we last checked.
+              // Newer fetched_at wins inside the upsert. Independently guarded: a
+              // failure here must never affect the snapshot write or the counters.
+              if (r.status === "ok") {
+                try {
+                  await upsertLinkMetricLatest({
+                    employeeId: t.employeeId,
+                    urlNormalized: t.urlNormalized,
+                    linkId: t.linkId,
+                    reportDate: t.reportDate,
+                    url: t.url,
+                    platform: slug,
+                    videoId,
+                    fetchedAt,
+                    views: r.views ?? null,
+                    likes: r.likes ?? null,
+                    comments: r.comments ?? null,
+                    shares: r.shares ?? null,
+                  });
+                } catch (latestErr) {
+                  console.error(`[social-insights/${slug}] latest-state upsert failed for linkId ${t.linkId}:`, latestErr);
+                }
               }
 
               // ── Link-content enrichment (ADDITIVE) ─────────────────────────────
@@ -671,7 +733,7 @@ async function runSocialInsightsRefreshInner(opts?: { harvestOnly?: boolean }): 
 
       if (!harvestOnly) {
         console.log(
-          `[social-insights/${slug}] ${targets.length} links → ${polled} polled, ${succeeded} ok, ${notFound} not_found, ${errors} errors${quotaAborted ? " (QUOTA ABORTED)" : ""}`
+          `[social-insights/${slug}] ${targets.length} links → ${polled} polled, ${succeeded} ok, ${notFound} not_found, ${errors} errors, ${skippedIdentical} identical (no new log row)${quotaAborted ? " (QUOTA ABORTED)" : ""}`
         );
         // (Cost Sheet usage is now recorded at the TRUE chokepoints — graphFetch for
         // ALL Meta calls, the YouTube fetch helpers for YouTube — so EVERY caller is
@@ -768,6 +830,12 @@ async function runSocialInsightsRefreshInner(opts?: { harvestOnly?: boolean }): 
         `;
       } catch (healErr) {
         console.error(`[social-insights/${slug}] re-heal query failed:`, healErr);
+      }
+      // Same re-heal for the latest-state read model (independently guarded).
+      try {
+        await rehealLinkMetricLatest(slug);
+      } catch (healErr) {
+        console.error(`[social-insights/${slug}] latest-state re-heal failed:`, healErr);
       }
     } catch (slugErr) {
       console.error(`[social-insights/${slug}] run failed (continuing to next provider):`, slugErr);

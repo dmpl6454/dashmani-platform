@@ -22,7 +22,22 @@ function withConnectionPool(url: string | undefined): string | undefined {
     for (const [key, value] of Object.entries(POOL_DEFAULTS)) {
       if (!params.has(key)) params.set(key, value);
     }
-    const qs = params.toString();
+    let qs = params.toString();
+    // DB_STATEMENT_TIMEOUT_MS → a server-side statement_timeout for THIS process's
+    // connections only. Prisma forwards the Postgres `options` connection parameter at
+    // connection start (verified 2026-09-18: pg_sleep(5) through PrismaClient was
+    // cancelled at 1.5s with SQLSTATE 57014). WHY: a statement that runs for minutes
+    // holds a pooled connection for minutes — on 2026-09-18 six such statements held
+    // the whole pool and login/HR-submit failed with P2024. A ceiling turns "stuck for
+    // 10 minutes" into "clean error after N seconds, connection returned".
+    // Deliberately ENV-DRIVEN, not a default: scripts, backups and `prisma db push`
+    // run under the same role and may legitimately run long; only apps/api/.env sets
+    // it (60000). An explicit `options` already in the URL wins. Encoded by hand
+    // (%20 / %3D) rather than via URLSearchParams, which would emit `+` for the space.
+    const stmtMs = process.env.DB_STATEMENT_TIMEOUT_MS;
+    if (stmtMs && /^\d+$/.test(stmtMs) && !params.has("options")) {
+      qs += `${qs ? "&" : ""}options=-c%20statement_timeout%3D${stmtMs}`;
+    }
     return qs ? `${base}?${qs}` : base;
   } catch {
     return url;

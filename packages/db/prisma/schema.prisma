@@ -63,6 +63,7 @@ model User {
   dailyPOAs          DailyPOA[]              @relation("POAEmployee")
   complaints         Complaint[]             @relation("ComplaintEmployee")
   linkMetrics        LinkMetric[]
+  linkMetricsLatest  LinkMetricLatest[]
   reportDrafts       ReportDraft[]
   metaConnections    MetaConnection[]        @relation("MetaConnectionsCreated")
   metaOauthStates    MetaOAuthState[]
@@ -728,6 +729,7 @@ model ReportLink {
   report  DailyReport   @relation(fields: [reportId], references: [id], onDelete: Cascade)
   account SocialAccount @relation(fields: [accountId], references: [id])
   metrics LinkMetric[]
+  latestMetric LinkMetricLatest[]
 
   @@index([reportId])
   @@index([accountId])
@@ -1401,6 +1403,61 @@ model LinkMetric {
   // status='ok') in a later task. Do NOT drop this entry.
   @@index([employeeId, urlNormalized, fetchedAt(sort: Desc)])
   @@map("link_metrics")
+}
+
+// ─── Latest OK snapshot per link — the READ model for every engagement surface ───
+//
+// WHY THIS TABLE EXISTS (incident 2026-09-18): `link_metrics` is an append-only
+// per-poll snapshot log. Every read (Top Links, insights summary, leaderboard
+// engagement, HR my-link-insights) only ever wanted the LATEST ok snapshot per
+// (employee_id, url_normalized), which they derived with a `DISTINCT ON` over the
+// WHOLE log. That is O(all snapshots ever written). After the 2026-09-08 sweep
+// hardening let the Instagram provider poll its entire window every 2h, the log
+// grew ~850k rows/DAY (3.99M → 14.6M rows / 10GB in six weeks), the planner
+// abandoned the covering index for a parallel seq scan + disk sort, each read took
+// 5-10 MINUTES, six of them held the 10-connection pool, and LOGIN + HR SUBMIT died
+// with P2024 ("An unexpected error occurred").
+//
+// This table holds ONE row per (employee_id, url_normalized): the newest snapshot
+// with status='ok'. The cron upserts it on every ok poll (newer fetched_at wins);
+// `scripts/backfill-link-metrics-latest.ts` seeds it from the log. Reads are now
+// O(distinct links) (~150k rows, fully cached) instead of O(14.6M).
+//
+// INVARIANTS — do not regress:
+//   • Only status='ok' results are written here. A link whose newest poll is
+//     not_found keeps showing its last ok values (exactly what the old DISTINCT ON
+//     ... WHERE status='ok' produced).
+//   • `report_date` is the link's report day (copied from the snapshot), so the
+//     window filters (`report_date BETWEEN ...`) keep their meaning.
+//   • `link_id` is a nullable FK with SetNull (survives the HR delete-and-recreate
+//     resubmit); the cron's re-heal UPDATE relinks it, same as for link_metrics.
+//   • NEVER read engagement from `link_metrics` again for a portal page — that is
+//     the exact query class that took the portals down. `link_metrics` is kept as
+//     the per-link HISTORY (getLinkMetricsHistory) and the write-dedupe reference.
+model LinkMetricLatest {
+  employeeId    String   @map("employee_id")
+  urlNormalized String   @map("url_normalized")
+
+  linkId     String?  @map("link_id")
+  reportDate DateTime @map("report_date") @db.Date
+  url        String
+  platform   String
+  videoId    String?  @map("video_id")
+
+  fetchedAt DateTime @map("fetched_at")
+  views     Int?
+  likes     Int?
+  comments  Int?
+  shares    Int?
+
+  link     ReportLink? @relation(fields: [linkId], references: [id], onDelete: SetNull)
+  employee User        @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@id([employeeId, urlNormalized])
+  @@index([reportDate])
+  @@index([platform, reportDate])
+  @@index([linkId])
+  @@map("link_metrics_latest")
 }
 
 // ============ LINK ENTITY SEARCH ============

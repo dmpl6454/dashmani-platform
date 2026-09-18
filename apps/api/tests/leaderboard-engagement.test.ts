@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { prisma } from "@dashmani/db";
+import { upsertLinkMetricLatest } from "../src/services/link-metrics-latest.service";
 import {
   getLeaderboard,
   getTopLinksLeaderboard,
@@ -24,6 +25,8 @@ let dbAvailable = false;
 async function cleanup() {
   await prisma.linkMetric.deleteMany({ where: { url: { startsWith: URL_PREFIX } } });
   await prisma.linkMetric.deleteMany({ where: { url: { startsWith: SNAPCHAT_URL_PREFIX } } });
+  await prisma.linkMetricLatest.deleteMany({ where: { url: { startsWith: URL_PREFIX } } });
+  await prisma.linkMetricLatest.deleteMany({ where: { url: { startsWith: SNAPCHAT_URL_PREFIX } } });
   await prisma.dailyReport.deleteMany({ where: { employee: { email: { startsWith: "zztest-lb-" } } } });
   await prisma.socialAccount.deleteMany({ where: { handle: { startsWith: "zztest-lb-" } } });
   await prisma.platform.deleteMany({ where: { name: { startsWith: "ZZTEST_LB_" } } });
@@ -102,7 +105,7 @@ async function snap(opts: {
   comments?: number;
   platform?: string;
 }) {
-  return prisma.linkMetric.create({
+  const row = await prisma.linkMetric.create({
     data: {
       url: opts.url,
       urlNormalized: opts.url,
@@ -116,6 +119,23 @@ async function snap(opts: {
       comments: opts.comments ?? null,
     },
   });
+  // Mirror the cron (2026-09-18): reads come from link_metrics_latest, so seeding a
+  // snapshot must also maintain the latest row (newer fetchedAt wins in the upsert).
+  await upsertLinkMetricLatest({
+    employeeId: row.employeeId,
+    urlNormalized: row.urlNormalized,
+    linkId: row.linkId,
+    reportDate: row.reportDate,
+    url: row.url,
+    platform: row.platform,
+    videoId: row.videoId,
+    fetchedAt: row.fetchedAt,
+    views: row.views,
+    likes: row.likes,
+    comments: row.comments,
+    shares: row.shares,
+  });
+  return row;
 }
 
 describe("leaderboard engagement (link_metrics-sourced)", () => {

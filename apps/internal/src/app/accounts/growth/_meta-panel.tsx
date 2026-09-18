@@ -1018,11 +1018,14 @@ export function MetaPanel() {
       {live.length > 0 && customOpen && (
         <div className="px-5 py-2 border-b border-[#F6F2EA] flex flex-wrap items-center gap-2 text-[11px]">
           <span className="text-[#7A7A7A]">From</span>
-          <input type="date" value={customStart} max={yesterdayIso()}
+          {/* `max` is the last day the estate is complete through when the server has
+              said so, falling back to the clock's yesterday before the first payload —
+              picking an unclosed day only earns a partial day averaged into the total. */}
+          <input type="date" value={customStart} max={ch?.dataThroughDay ?? yesterdayIso()}
             onChange={(e) => setCustomStart(e.target.value)}
             className="border border-[#DCDCDC] rounded-lg px-2 py-1" />
           <span className="text-[#7A7A7A]">to</span>
-          <input type="date" value={customEnd} max={yesterdayIso()}
+          <input type="date" value={customEnd} max={ch?.dataThroughDay ?? yesterdayIso()}
             onChange={(e) => setCustomEnd(e.target.value)}
             className="border border-[#DCDCDC] rounded-lg px-2 py-1" />
           <button
@@ -1060,6 +1063,12 @@ export function MetaPanel() {
         <div className="px-5 py-2 border-b border-[#F6F2EA] text-[10px] text-[#7A7A7A] leading-snug">
           Exact sums of stored daily history for <strong className="font-medium">{sfx}</strong>
           {throughDay && <> · data through {throughDay}</>}.
+          {/* ⚠️ Disclose a clamp rather than silently summing fewer days than were asked
+              for. The server shortens a range whose end Meta has not closed yet — the
+              measured 7.2% understatement — and echoes the day it stopped at. */}
+          {ch?.range?.clampedTo && (
+            <> <span className="text-[#C2861D]">Range shortened to {customLabel(ch.range.clampedTo, ch.range.clampedTo).split(" – ")[0]}</span> — Meta has not published a complete day after that, so the unclosed day is left out instead of being counted as a full one.</>
+          )}
           Reach shows a dash here: it counts unique people, days cannot be added without
           double-counting, and Meta publishes no unique-people figure for a custom span.
           A <span className="text-[#C2861D]">n/Nd</span> chip beside a channel means its stored

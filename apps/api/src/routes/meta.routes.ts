@@ -19,10 +19,17 @@ import { metaOauthConfigured, metaOauthMissingEnv, metaTuning } from "../service
 import { discoverConnectionAssets } from "../services/meta-oauth/meta-discovery.service";
 import { runMetaPostsSync } from "../services/meta-oauth/meta-posts.service";
 import { runMetaChannelSync, resolveContestedOwners, resolveDuplicateAssetIds, CHANNEL_WINDOWS, type ChannelWindow } from "../services/meta-oauth/meta-channels.service";
-import { getRangeTotals, getRangeFollowerDeltas, previousRange, rangeDayCount, coveredDayOf, shiftDay } from "../services/meta-oauth/meta-range.service";
+import { getRangeTotals, getRangeFollowerDeltas, previousRange, rangeDayCount, coveredDayOf, shiftDay, resolveClosedEnd } from "../services/meta-oauth/meta-range.service";
 import { scrubSecrets } from "../utils/token-crypto";
 
 const router = Router();
+
+/**
+ * Minimum live estate before a custom range's end is clamped to the last closed day.
+ * See resolveClosedEnd — a coverage SHARE needs a denominator; below this the user's end
+ * stands and the per-channel n/Nd chips carry the disclosure.
+ */
+const RANGE_CLAMP_MIN_ASSETS = 20;
 
 const adminGate = [authenticate, requirePermission("reports", "manage"), requireAdminRole] as const;
 
@@ -546,12 +553,28 @@ router.get(
     // partial sum as the whole. metricsError is null here: the warning mark
     // describes live-window refresh health, which stored history does not have.
     if (isRange) {
-      const span = rangeDayCount(qStart, qEnd);
-      const prev = previousRange(qStart, qEnd);
+      // ⚠️ CLAMP THE END TO THE LAST DAY THE ESTATE HAS CLOSED. Facebook closes at Pacific
+      // midnight and the sweep is 3-hourly, so "yesterday" routinely holds Instagram rows
+      // only — and this route summed it anyway: measured on prod, a 7-day range ending
+      // there understated views by 7.2% with all 313 Facebook Pages missing the final day,
+      // labelled as a complete 7d. The per-channel n/Nd chips disclosed it row by row; the
+      // headline and the trend chip did not. Picking an unclosed day never yields fresher
+      // data, only a partial day averaged into the total.
+      // ⚠️ `minAssets: 20` is the statistical floor documented on resolveClosedEnd: the rule
+      // compares shares of the estate, and on a two-asset estate one sparse Instagram
+      // account would shorten a range nothing is wrong with. Below the floor the user's end
+      // stands and the chips carry the disclosure exactly as before.
+      const closedEnd = await resolveClosedEnd(rows.map((r) => r.id), qEnd, { minAssets: RANGE_CLAMP_MIN_ASSETS });
+      const effEnd = closedEnd < qEnd ? closedEnd : qEnd;
+      const clampedTo = effEnd !== qEnd ? effEnd : null;
+      // A range that sits ENTIRELY inside the unclosed zone collapses to the closed day.
+      const effStart = qStart > effEnd ? effEnd : qStart;
+      const span = rangeDayCount(effStart, effEnd);
+      const prev = previousRange(effStart, effEnd);
       const [sums, prevSums, fDeltas] = await Promise.all([
-        getRangeTotals(qStart, qEnd),
+        getRangeTotals(effStart, effEnd),
         getRangeTotals(prev.start, prev.end),
-        getRangeFollowerDeltas(qStart, qEnd),
+        getRangeFollowerDeltas(effStart, effEnd),
       ]);
 
       const totals = { followers: 0, views: 0, engagements: 0, reach: 0, earningsCents: 0 };
@@ -617,7 +640,13 @@ router.get(
         data: {
           window: "custom",
           windows: CHANNEL_WINDOWS,
-          range: { start: qStart, end: qEnd, days: span },
+          range: {
+            start: effStart, end: effEnd, days: span,
+            /** What the caller asked for, so the UI can say the range was shortened and why. */
+            requestedEnd: qEnd,
+            /** The last closed day, when it was earlier than the requested end. Null otherwise. */
+            clampedTo,
+          },
           dataThrough: dataThrough ? `${dataThrough}T00:00:00.000Z` : null,
           /** Last calendar day the sums are complete through (already a day key here). */
           dataThroughDay: dataThrough,

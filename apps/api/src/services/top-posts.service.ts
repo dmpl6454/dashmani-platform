@@ -215,6 +215,9 @@ interface RankedRow {
   submitters: bigint | number;
   last_submitted: Date;
   measured_at: Date;
+  /** Window-function totals over the whole grouped set — identical on every row. */
+  total_groups: bigint | number;
+  ranked_groups: bigint | number;
 }
 
 const num = (v: bigint | number | null | undefined): number | null =>
@@ -270,10 +273,12 @@ async function build(params: {
   // real row — independent MIN()s could pair one variant's url with another's platform.
   // Highest-views-first means the row links to the copy whose number is on screen.
   //
-  // ⚠️ COST, MEASURED ON PROD 2026-09-19 WITH THIS EXACT QUERY: 24h 5.8ms, 7d 285ms,
-  // 30d (the default) 1.27s, 90d (the worst) 3.33s. The regex CASE is ~1.9s of the 90d
-  // figure — grouping on the cheap lowercased url was 584ms there, and that speed is
-  // exactly what produced the wrong answer. Three things make the trade safe, and all
+  // ⚠️ COST, MEASURED END-TO-END ON PROD 2026-09-19: 24h 79ms, 7d 280ms, 30d (the
+  // default) 1.16s, 90d (the worst) 4.21s. It was 3.3s / 7.0s when the denominators
+  // were a SECOND statement that re-ran the whole derived-key CASE over the window —
+  // folding them in as window functions is where that 40% went. The regex CASE is the
+  // remaining bulk; grouping on the cheap lowercased url was 584ms at 90d, and that
+  // speed is exactly what produced the wrong answer. Three things make the trade safe, and all
   // three must stay: the 60s single-flight memo (one compute per minute per
   // platform+window, never one per viewer), the 2-slot heavy-query bulkhead (analytics
   // can never drain the pool login and HR submit share), and this being its OWN endpoint
@@ -281,39 +286,55 @@ async function build(params: {
   // runs the same expression over 108k rows at ~5s cold behind the same pattern.
   // If it ever needs to be faster, make the QUERY cheaper — do not raise the bulkhead.
   const rows = await prisma.$queryRaw<RankedRow[]>`
-    SELECT ${DERIVED_CANONICAL_KEY_SQL} AS ckey,
-           (ARRAY_AGG(rl.url      ORDER BY rl.views DESC NULLS LAST, rl.url))[1] AS url,
-           (ARRAY_AGG(rl.platform ORDER BY rl.views DESC NULLS LAST, rl.url))[1] AS platform,
-           MAX(rl.views)                     AS views,
-           MAX(rl.likes)                     AS likes,
-           MAX(rl.comments)                  AS comments,
-           COUNT(DISTINCT rl.employee_id)    AS submitters,
-           MAX(rl.report_date)               AS last_submitted,
-           MAX(rl.fetched_at)                AS measured_at
-    FROM link_metrics_latest rl
-    WHERE rl.report_date >= ${start}::date
-      AND rl.report_date <= ${end}::date
-      ${platformFilter}
-    GROUP BY 1
-    HAVING MAX(rl.views) IS NOT NULL
-    ORDER BY MAX(rl.views) DESC, 1 ASC
+    WITH keyed AS (
+      SELECT ${DERIVED_CANONICAL_KEY_SQL} AS ckey,
+             rl.url, rl.platform, rl.views, rl.likes, rl.comments,
+             rl.employee_id, rl.report_date, rl.fetched_at
+      FROM link_metrics_latest rl
+      WHERE rl.report_date >= ${start}::date
+        AND rl.report_date <= ${end}::date
+        ${platformFilter}
+    ),
+    grouped AS (
+      SELECT k.ckey,
+             (ARRAY_AGG(k.url      ORDER BY k.views DESC NULLS LAST, k.url))[1] AS url,
+             (ARRAY_AGG(k.platform ORDER BY k.views DESC NULLS LAST, k.url))[1] AS platform,
+             MAX(k.views)                     AS views,
+             MAX(k.likes)                     AS likes,
+             MAX(k.comments)                  AS comments,
+             COUNT(DISTINCT k.employee_id)    AS submitters,
+             MAX(k.report_date)               AS last_submitted,
+             MAX(k.fetched_at)                AS measured_at
+      FROM keyed k
+      GROUP BY k.ckey
+    )
+    SELECT * FROM (
+      SELECT g.*,
+             COUNT(*) OVER ()                                   AS total_groups,
+             COUNT(*) FILTER (WHERE g.views IS NOT NULL) OVER () AS ranked_groups
+      FROM grouped g
+    ) w
+    -- ⚠️ The views filter MUST sit outside the window subquery. SQL applies WHERE
+    -- BEFORE window functions, so filtering in the same SELECT would make
+    -- COUNT(*) OVER () count only the ROWS THAT SURVIVED — i.e. total would equal
+    -- ranked, always, and the card's coverage line would read "15,503 of 15,503".
+    -- Caught by the "excludes a row with no view count" test, which seeds exactly
+    -- one of each.
+    WHERE w.views IS NOT NULL
+    ORDER BY w.views DESC, w.ckey ASC
     LIMIT ${LIMIT}
   `;
 
-  // Denominators for the card's honesty line, over the SAME canonical key.
-  // ⚠️ `total` counts distinct posts IN THIS TABLE, i.e. posts whose poll SUCCEEDED at
-  // least once — not "posts submitted". A link nobody could poll (an unresolvable
-  // Facebook /share/ url, a deleted post) never gets a row here at all, so this pair
-  // understates the true submitted count. The UI copy says exactly that; do not relabel
-  // it "submitted" without changing where the denominator comes from.
-  const [{ ranked, total }] = await prisma.$queryRaw<Array<{ ranked: bigint; total: bigint }>>`
-    SELECT COUNT(DISTINCT ${DERIVED_CANONICAL_KEY_SQL}) FILTER (WHERE rl.views IS NOT NULL) AS ranked,
-           COUNT(DISTINCT ${DERIVED_CANONICAL_KEY_SQL})                                     AS total
-    FROM link_metrics_latest rl
-    WHERE rl.report_date >= ${start}::date
-      AND rl.report_date <= ${end}::date
-      ${platformFilter}
-  `;
+  // ⚠️ The denominators ride along as WINDOW functions over `grouped`, which is why
+  // there is only ONE query here. They used to be a second statement that re-ran the
+  // whole derived-key CASE over the window — measured on prod at 90d/all that made the
+  // card 7.0s. Window functions are evaluated over the full grouped set BEFORE the
+  // LIMIT, so these are the true totals, not the totals of the 20 rows returned.
+  //
+  // ⚠️ Both are 0 when `rows` is empty, and that is correct: no group in the window
+  // means nothing to count. Do not "fix" it by falling back to a second query.
+  const ranked = rows.length ? Number(rows[0].ranked_groups) : 0;
+  const total = rows.length ? Number(rows[0].total_groups) : 0;
 
   // ── Preview + title, from posts we happen to own. Strictly bounded: at most LIMIT
   // ids, looked up on the match_id index. A miss is normal and costs only a thumbnail.

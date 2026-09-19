@@ -3,8 +3,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth";
 import { usePageTitle } from "@/lib/hooks/use-page-title";
-import { useOverview } from "./_hooks";
-import type { OverviewPayload, OverviewPeriod, WidgetPeriod, ChannelDirectoryRow } from "./_types";
+import { useOverview, useTopPosts } from "./_hooks";
+import type { OverviewPayload, OverviewPeriod, TopPostPeriod, TopPostPlatform, WidgetPeriod, ChannelDirectoryRow } from "./_types";
 import {
   T, CATEGORICAL, SERIES4, TIER_COLOR,
   fmtCompact, fmtUsd, fmtSigned, fmtSignedPct, fmtDay, fmtDayYear, fmtRelative, initials, countryName, greetingFor,
@@ -36,6 +36,70 @@ const ICONS = {
 // How many channel results the dropdown renders at once ("a" matches 255 of 419).
 const SEARCH_LIMIT = 40;
 const PERIODS: OverviewPeriod[] = [7, 14, 30, 90];
+/**
+ * The window the page lands on. Must equal DEFAULT_OVERVIEW_PERIOD in the API's
+ * overview.service.ts — see the note on the `days` state below.
+ *
+ * ⚠️ 30 rather than 14 is not arbitrary: Total Reach counts UNIQUE people, so it only
+ * exists for Meta's own native windows (7 -> `week`, 30 -> `days_28`). 14 and 90 have
+ * no reach figure at all and correctly render a dash, so those are the two defaults
+ * that would have silently emptied a KPI tile.
+ */
+const DEFAULT_PERIOD: OverviewPeriod = 30;
+
+/**
+ * Top Posts windows. ⚠️ 1 (24h) is offered HERE and deliberately not in PERIODS — see
+ * the note on the tpDays state. TP_LABEL spells 1 as "Last 24 hours" rather than "Last
+ * 1 days", which is both correct English and the phrasing the owner asked for.
+ */
+const TP_PERIODS: TopPostPeriod[] = [1, 7, 30, 90];
+const TP_LABEL: Record<number, string> = { 1: "Last 24 hours", 7: "Last 7 days", 30: "Last 30 days", 90: "Last 90 days" };
+const TP_TABS: Array<{ id: TopPostPlatform; label: string }> = [
+  { id: "all", label: "All" },
+  { id: "instagram", label: "Instagram" },
+  { id: "facebook", label: "Facebook" },
+];
+
+/** Display name for any platform string that can reach this page, including "all". */
+function platLabel(p: string): string {
+  if (p === "instagram") return "Instagram";
+  if (p === "facebook") return "Facebook";
+  if (p === "youtube") return "YouTube";
+  if (p === "snapchat") return "Snapchat";
+  if (p === "all") return "All";
+  return p;
+}
+
+/**
+ * A readable stand-in when we hold no caption for a post — the tail of its URL rather
+ * than the whole thing. ⚠️ Never "Untitled": the reader can recognise a shortcode or
+ * reel id and click through, which a generic label takes away from them.
+ */
+/**
+ * Whole days since a post's engagement was last polled, or null when it is fresh.
+ *
+ * ⚠️ Null below the threshold, so a fresh row shows NOTHING rather than "0d old". The
+ * chip exists to flag a stale number, and a chip on every row would stop meaning
+ * anything. 48h matches the /reports Top Links panel so the two pages agree on what
+ * "stale" is.
+ */
+const STALE_AFTER_MS = 48 * 60 * 60 * 1000;
+function staleDays(measuredAt: string, now: number): number | null {
+  const t = Date.parse(measuredAt);
+  if (!Number.isFinite(t)) return null;
+  const age = now - t;
+  return age >= STALE_AFTER_MS ? Math.floor(age / 86_400_000) : null;
+}
+
+function shortUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    const tail = u.pathname.replace(/\/+$/, "").split("/").filter(Boolean).slice(-2).join("/");
+    return tail ? `${u.hostname.replace(/^www\./, "")}/${tail}` : u.hostname;
+  } catch {
+    return url.length > 60 ? `${url.slice(0, 59)}…` : url;
+  }
+}
 // ⚠️ PRECEDENCE: 0 = "follow the global period", and it is every card's default. A
 // card's own period overrides the global FOR THAT CARD ONLY; the chip shows a gold dot
 // while a card is detached, and "Follow global period" re-attaches it.
@@ -52,7 +116,7 @@ const PLATFORM_TILE: Record<string, string> = {
   instagram: "linear-gradient(135deg,#F0803C,#EC42B7)",
 };
 
-type Pop = "search" | "date" | "notif" | "profile" | "aud" | "rev" | "vbc" | "trac" | null;
+type Pop = "search" | "date" | "notif" | "profile" | "aud" | "rev" | "vbc" | "trac" | "tp" | null;
 
 function readStored<T>(key: string, allowed: readonly T[], dflt: T): T {
   try {
@@ -74,6 +138,53 @@ function metaUrl(c: ChannelDirectoryRow): string | null {
  * The label comes from `effective`, which the SERVER echoed — never from local state,
  * so a card can never show one period's numbers under another period's label.
  */
+/**
+ * The preview tile on a post row: the real image when we have a usable one, the
+ * card's platform-tinted gradient when we do not.
+ *
+ * ⚠️ TWO INDEPENDENT GUARDS, because a broken image reads as a broken page. The server
+ * already refuses to send a URL whose signed `oe=` expiry has passed (thumbnailIfFresh),
+ * and `onError` catches everything that check cannot know about — a revoked asset, a
+ * deleted post, a blocked CDN, an offline viewer. Either way the row degrades to the
+ * placeholder that was there before previews existed, never to a torn-image icon.
+ *
+ * ⚠️ `loading="lazy"` is load-bearing, not decoration. The expanded modal renders up to
+ * 20 of these and the card itself is below the fold; native lazy-loading means only the
+ * tiles actually on screen are ever fetched. This is the same lesson as the /reports
+ * link-preview regression, which was fixed with an IntersectionObserver — the browser
+ * now does that for us, so there is no scroll handler and no observer to leak.
+ *
+ * The image is `alt=""` on purpose: it is decorative, and the post title beside it
+ * already carries the meaning. A generated alt here would just make screen readers
+ * announce every row twice.
+ */
+function PostThumb({ url, platform, size }: { url: string | null; platform: string; size?: "lg" }) {
+  // ⚠️ Remember WHICH url failed, not merely THAT one did. A boolean would latch: React
+  // keeps this instance across a re-render (Latest Posts keys rows by post id, and a
+  // post's thumbnail url is rewritten by every sync), so one transient failure would
+  // hide every future image for that row until a full remount.
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  const show = url && failedUrl !== url;
+  return (
+    <span className={size === "lg" ? "ov-thumb ov-thumb-lg" : "ov-thumb"} style={{ background: PLATFORM_TILE[platform] ?? PLATFORM_TILE.facebook }}>
+      {show ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={url}
+          alt=""
+          loading="lazy"
+          decoding="async"
+          referrerPolicy="no-referrer"
+          className="ov-thumb-img"
+          onError={() => setFailedUrl(url)}
+        />
+      ) : (
+        <span />
+      )}
+    </span>
+  );
+}
+
 function CardPeriod({
   id, pop, setPop, value, effective, globalDays, onPick,
 }: {
@@ -113,7 +224,11 @@ export default function OverviewPage() {
   usePageTitle("Overview");
   const router = useRouter();
   const { user, logout } = useAuth();
-  const [days, setDays] = useState<OverviewPeriod>(7);
+  // ⚠️ DEFAULT_OVERVIEW_PERIOD — this literal, the readStored fallback below, and
+  // DEFAULT_OVERVIEW_PERIOD in the API's overview.service.ts must all agree. If they
+  // disagree the first paint fetches one window and immediately refetches another,
+  // burning a second server cache entry on every single page load.
+  const [days, setDays] = useState<OverviewPeriod>(DEFAULT_PERIOD);
   const [audDays, setAudDays] = useState<WidgetPeriod>(0);
   const [revDays, setRevDays] = useState<WidgetPeriod>(0);
   const [vbcDays, setVbcDays] = useState<WidgetPeriod>(0);
@@ -130,6 +245,30 @@ export default function OverviewPage() {
   const [draftEnd, setDraftEnd] = useState("");
   const [selCat, setSelCat] = useState<number | null>(null);
   const [demoTab, setDemoTab] = useState<"Age" | "Gender" | "Location">("Age");
+  /**
+   * Which platform the Top Channels board shows.
+   *
+   * ⚠️ PURELY CLIENT-SIDE. All three boards arrive in the payload already (they are
+   * slices of one sorted array the server had computed anyway), so switching tabs
+   * costs no request, no cache key and no re-render of anything else. Do not turn
+   * this into a query param — that would add a dimension to a server cache key that
+   * already carries five periods plus a custom range.
+   */
+  const [chTab, setChTab] = useState<"All" | "Instagram" | "Facebook">("All");
+
+  /**
+   * Top Posts — its own platform tab AND its own window.
+   *
+   * ⚠️ This card does NOT follow the global period, and that is deliberate rather than
+   * an oversight. Its window set includes 24h, which the global set does not: the
+   * global period drives the Meta channel cards, whose days close on Meta's clock
+   * (Facebook at Pacific midnight, Instagram at UTC) and whose reach metric only
+   * exists for Meta's own week/28-day windows. This card filters report_date — the IST
+   * calendar day an employee submitted the link — so 24h is meaningful here and
+   * nowhere else on the page. Keep the two period sets apart.
+   */
+  const [tpTab, setTpTab] = useState<TopPostPlatform>("all");
+  const [tpDays, setTpDays] = useState<TopPostPeriod>(30);
   const [q, setQ] = useState("");
   const [searchIdx, setSearchIdx] = useState(0);
   const searchListRef = useRef<HTMLDivElement>(null);
@@ -137,7 +276,11 @@ export default function OverviewPage() {
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
-    setDays(readStored("ov-days", PERIODS, 7));
+    // ⚠️ An explicitly chosen period is still honoured — `remember` only writes
+    // "ov-days" when someone clicks a period chip, so this new default reaches
+    // everyone who never picked one and overrides nobody who did. Do NOT bump the
+    // storage key to "force" 30 on existing users: that would discard a real choice.
+    setDays(readStored("ov-days", PERIODS, DEFAULT_PERIOD));
     setAudDays(readStored("ov-aud", WIDGET_PERIODS, 0));
     setRevDays(readStored("ov-rev", WIDGET_PERIODS, 0));
     setVbcDays(readStored("ov-vbc", WIDGET_PERIODS, 0));
@@ -198,6 +341,23 @@ export default function OverviewPage() {
     }
   }
   const { data, error, isLoading, mutate } = useOverview(days, audDays, revDays, vbcDays, tracDays, range);
+  // ⚠️ A SEPARATE request from the payload above, on purpose — a slow or failing Top
+  // Posts must never delay or blank the KPI strip. Its own error/loading state is what
+  // lets the card say "couldn't load" instead of silently rendering "no posts", which
+  // is the documented rule: only a LOADED response may claim emptiness.
+  const { data: tpData, error: tpError, mutate: tpMutate } = useTopPosts(tpTab, tpDays);
+  /**
+   * ⚠️ Only render a response that ANSWERS THE CURRENT SELECTION.
+   *
+   * `keepPreviousData` is what stops the card flashing empty while SWR revalidates the
+   * SAME key — but it also hands back the PREVIOUS key's payload for a moment after the
+   * platform tab or the window changes. Rendering that would put Facebook's posts under
+   * an "Instagram" tab, or a 24-hour list under a "Last 90 days" chip, which is exactly
+   * the "label from the server's answer, never from local state" rule this page already
+   * follows for its per-card periods. Matching on the echoed platform AND days makes
+   * the mismatch a loading state instead of a lie.
+   */
+  const tp = tpData?.data && tpData.data.platform === tpTab && tpData.data.days === tpDays ? tpData.data : undefined;
   const o: OverviewPayload | undefined = data?.data;
   // The newest day the estate has actually closed — the furthest a picker should reach.
   // Falls back to the clock's yesterday before the first payload arrives.
@@ -226,6 +386,26 @@ export default function OverviewPage() {
   });
 
   // ── derived widget data ──
+  /**
+   * Top Channels rows for the selected platform tab.
+   *
+   * ⚠️ Defensive `?? o.topChannels`: the per-platform arrays were added on 2026-09-19,
+   * and SWR's keepPreviousData plus a browser holding a cached bundle mean an OLDER
+   * payload can render against NEWER code for one revalidation. Falling back to the
+   * array that has always existed makes that transient case render the All board
+   * rather than an empty card under an "Instagram" tab.
+   */
+  const topChannelRows = useMemo(() => {
+    if (!o) return [];
+    // ⚠️ Fall back to the ALL board, not to []. An older payload rendering against
+    // newer code (SWR keepPreviousData, or a browser holding a cached bundle for one
+    // revalidation) would otherwise show an empty card under an "Instagram" tab, which
+    // reads as "no Instagram channels" rather than "still loading".
+    if (chTab === "Instagram") return o.topChannelsInstagram ?? o.topChannels ?? [];
+    if (chTab === "Facebook") return o.topChannelsFacebook ?? o.topChannels ?? [];
+    return o.topChannels ?? [];
+  }, [o, chTab]);
+
   const kpis = useMemo(() => {
     if (!o) return [];
     const k = o.kpis;
@@ -493,9 +673,14 @@ export default function OverviewPage() {
 
   function openExpandTopChannels() {
     if (!o) return;
-    const rows = [...o.allChannels].filter((c) => c.views != null).sort((a, b) => (b.views ?? 0) - (a.views ?? 0));
+    // ⚠️ The expanded table must honour the tab the card is showing, or "Expand" on the
+    // Instagram board silently answers with all 419 channels under an Instagram heading.
+    const want = chTab === "All" ? null : chTab === "Instagram" ? "instagram" : "facebook";
+    const rows = [...o.allChannels]
+      .filter((c) => c.views != null && (want === null || c.platform === want))
+      .sort((a, b) => (b.views ?? 0) - (a.views ?? 0));
     setExpand({
-      title: "Top Channels",
+      title: chTab === "All" ? "Top Channels" : `Top Channels · ${chTab}`,
       subtitle: `Ranked by views · last ${o.period.days} closed days`,
       columns: ["#", "Channel", "Platform", "Followers", "Views", "Revenue"],
       align: ["left", "left", "left", "right", "right", "right"],
@@ -505,7 +690,40 @@ export default function OverviewPage() {
         onClick: () => openChannel(c, true),
         label: `Open ${c.name}`,
       })),
-      note: `${rows.length} of ${o.channels.total} channels reported views in this window.`,
+      note: `${rows.length} of ${want === null ? o.channels.total : want === "instagram" ? o.channels.instagram : o.channels.facebook} ${want === null ? "" : `${chTab} `}channels reported views in this window.`,
+    });
+  }
+
+  function openExpandTopPosts() {
+    if (!tp) return;
+    setExpand({
+      title: `Top Posts${tp.platform === "all" ? "" : ` · ${platLabel(tp.platform)}`}`,
+      subtitle: `${TP_LABEL[tp.days]} · ranked by views · links our team submitted`,
+      columns: ["#", "Post", "Channel", "Views", "Likes", "Comments", "Shared by"],
+      align: ["left", "left", "left", "right", "right", "right", "right"],
+      rows: tp.posts.map((p, i) => ({
+        key: p.urlNormalized,
+        cells: [
+          i + 1,
+          p.title ?? shortUrl(p.url),
+          p.channel ?? platLabel(p.platform),
+          fmtCompact(p.views),
+          fmtCompact(p.likes),
+          fmtCompact(p.comments),
+          // ⚠️ NOT an em-dash for the solo case. On this page "—" means "the platform
+          // publishes no such number", and 1 is a known, measured value. Spelling it
+          // out keeps the one glyph reserved for genuine absence.
+          p.submitters > 1 ? p.submitters : "1 (solo)",
+        ],
+        // ⚠️ Opens the POST on its own platform, in a new tab. There is no in-portal
+        // destination for a submitted link, and guessing a channel from it would be
+        // wrong — 63 of 419 live channel names are shared.
+        onClick: () => window.open(p.url, "_blank", "noopener,noreferrer"),
+        label: `Open ${p.title ?? "post"} on ${platLabel(p.platform)}`,
+      })),
+      note: tp.total > 0
+        ? `${tp.ranked.toLocaleString("en-IN")} of ${tp.total.toLocaleString("en-IN")} distinct links submitted in this window carry a view count and could be ranked.`
+        : undefined,
     });
   }
 
@@ -952,7 +1170,6 @@ export default function OverviewPage() {
             <h1>{greetingFor(new Date(now).getHours())}, {firstName}!</h1>
             <p>Here’s what’s happening across Digital Sukoon today.</p>
           </div>
-          <div className="ov-script">Real Creators.<br />Real Impact.</div>
         </div>
 
         {!o && isLoading && <Skeleton />}
@@ -1086,10 +1303,21 @@ export default function OverviewPage() {
               <Card title="Top Channels" right={
                 <CardActions><ExpandBtn label="Expand Top Channels" onClick={openExpandTopChannels} /><ViewAll href="/accounts/growth" /></CardActions>
               }>
+                {/* ⚠️ The tablist goes in the BODY, not the header. `.ov-card-h` is a
+                    flex row whose h2 is its only shrinkable item, so a third child
+                    there comes straight out of the title — measured at 17px of loss on
+                    the narrowest track. The Audience Demographics card puts its tabs
+                    here for the same reason. */}
+                <div role="tablist" className="ov-tabs" aria-label="Top channels platform">
+                  {(["All", "Instagram", "Facebook"] as const).map((t) => (
+                    <button key={t} role="tab" type="button" aria-selected={chTab === t}
+                      className={chTab === t ? "is-sel" : ""} onClick={() => setChTab(t)}>{t}</button>
+                  ))}
+                </div>
                 <div className="ov-table">
                   <div className="ov-th ov-cols-ch"><span>#</span><span>Channel</span><span className="ov-col-fol">Followers</span><span>Views</span><span>Revenue</span><span /></div>
-                  {o.topChannels.length === 0 && <Empty>No channel has reported views for this period.</Empty>}
-                  {o.topChannels.map((c, i) => (
+                  {topChannelRows.length === 0 && <Empty>No {chTab === "All" ? "" : `${chTab} `}channel has reported views for this period.</Empty>}
+                  {topChannelRows.map((c, i) => (
                     <button key={c.id} type="button" className="ov-tr ov-cols-ch" onClick={() => openChannel(c)}>
                       <span className="ov-rank">{i + 1}</span>
                       <span className="ov-cell-name"><Avatar url={c.pictureUrl} name={c.name} size={18} tile={PLATFORM_TILE[c.platform]} /><span title={`${c.name}${c.username ? ` · @${c.username}` : ""}`}>{c.name}</span></span>
@@ -1136,7 +1364,7 @@ export default function OverviewPage() {
                     const fresh = now - Date.parse(p.postedAt) < 60 * 60_000;
                     return (
                       <button key={p.id} type="button" className="ov-feed-row" onClick={() => openPost(p)}>
-                        <span className="ov-thumb" style={{ background: PLATFORM_TILE[p.channel.platform] }}><span /></span>
+                        <PostThumb url={p.thumbnailUrl} platform={p.channel.platform} />
                         <span className="ov-feed-body">
                           <span className="ov-feed-t">{p.title}</span>
                           <span className="ov-feed-m">
@@ -1171,6 +1399,107 @@ export default function OverviewPage() {
                     </button>
                   ))}
                 </div>
+              </Card>
+            </section>
+
+            {/* Top Posts row — one full-width card. ⚠️ A NEW section, not a fifth
+                child appended to an existing .ov-row: every row's grid-template-columns
+                lists exactly as many tracks as it has children, so an extra child lands
+                in an implicit, unsized column. .ov-grid's grid-template-rows gained a
+                matching `auto` in the same change. */}
+            <section className="ov-row ov-row-posts" aria-label="Top posts">
+              <Card
+                title="Top Posts"
+                right={
+                  <CardActions>
+                    <ExpandBtn label="Expand Top Posts" onClick={openExpandTopPosts} />
+                    <div className="ov-rel" onClick={(e) => e.stopPropagation()}>
+                      <Chip onClick={() => setPop(pop === "tp" ? null : "tp")} active={pop === "tp"} ariaHasPopup>
+                        {TP_LABEL[tp?.days ?? tpDays]}
+                      </Chip>
+                      {pop === "tp" && (
+                        <Menu width={180}>
+                          <div className="ov-menu-group">This card</div>
+                          {TP_PERIODS.map((d) => (
+                            <MenuItem key={d} active={tpDays === d} onClick={() => { setTpDays(d); setPop(null); }}>
+                              {TP_LABEL[d]}
+                            </MenuItem>
+                          ))}
+                          <div className="ov-menu-note">
+                            Ranked by views over the day the link was submitted — independent of the date range above.
+                          </div>
+                        </Menu>
+                      )}
+                    </div>
+                  </CardActions>
+                }
+              >
+                <div role="tablist" className="ov-tabs" aria-label="Top posts platform">
+                  {TP_TABS.map((t) => (
+                    <button key={t.id} role="tab" type="button" aria-selected={tpTab === t.id}
+                      className={tpTab === t.id ? "is-sel" : ""} onClick={() => setTpTab(t.id)}>{t.label}</button>
+                  ))}
+                </div>
+
+                {/* ⚠️ THREE DISTINCT STATES, and they must stay distinct. A failed
+                    request renders as a failure with a retry — never as "no posts yet",
+                    which is how an incident gets read as data loss (the HR Link History
+                    report, 2026-09-18). `tp &&` on the empty state means only a LOADED
+                    response is ever allowed to claim emptiness. */}
+                {!tp && !tpError && <Empty>Loading top posts…</Empty>}
+                {!tp && tpError && (
+                  <div className="ov-tp-err">
+                    <p>Couldn’t load top posts. Every other figure on this page is unaffected — this is one card’s request, not your data.</p>
+                    <button type="button" className="ov-retry" onClick={() => tpMutate()}>Retry</button>
+                  </div>
+                )}
+                {tp && tp.posts.length === 0 && (
+                  <Empty>No submitted {tpTab === "all" ? "" : `${platLabel(tpTab)} `}link has a view count in this window yet.</Empty>
+                )}
+
+                {tp && tp.posts.length > 0 && (
+                  <div className="ov-tp-list">
+                    {tp.posts.slice(0, CARD_ROWS).map((p, i) => (
+                      <a key={p.urlNormalized} href={p.url} target="_blank" rel="noopener noreferrer"
+                        className="ov-tp-row" title={p.title ?? p.url}>
+                        <span className="ov-rank">{i + 1}</span>
+                        <PostThumb url={p.thumbnailUrl} platform={p.platform} size="lg" />
+                        <span className="ov-tp-body">
+                          <span className="ov-tp-t">{p.title ?? shortUrl(p.url)}</span>
+                          <span className="ov-tp-m">
+                            <span className="ov-plat">{p.platform === "facebook" ? "FB" : p.platform === "instagram" ? "IG" : platLabel(p.platform)}</span>
+                            {p.channel && <span className="ov-tp-ch">{p.channel}</span>}
+                            {p.submitters > 1 && <span className="ov-tp-share" title={`${p.submitters} employees submitted this same post`}>shared ×{p.submitters}</span>}
+                            {/* ⚠️ A view count is only as fresh as its last poll, and the
+                                2-hourly sweep is tiered — an older-tier link can go days
+                                between polls. Without this the row would present a
+                                week-old number as "now". Mirrors the /reports Top Links
+                                per-row chip; 48h is the same threshold. */}
+                            {staleDays(p.measuredAt, now) !== null && (
+                              <span className="ov-tp-stale" title={`Engagement last measured ${fmtRelative(p.measuredAt, now)}`}>{staleDays(p.measuredAt, now)}d old</span>
+                            )}
+                          </span>
+                        </span>
+                        <span className="ov-tp-n"><b>{fmtCompact(p.views)}</b><i>views</i></span>
+                        <span className="ov-tp-n ov-tp-n2"><b>{fmtCompact(p.likes)}</b><i>likes</i></span>
+                        <span className="ov-tp-n ov-tp-n2"><b>{fmtCompact(p.comments)}</b><i>comments</i></span>
+                      </a>
+                    ))}
+                  </div>
+                )}
+
+                {tp && tp.posts.length > 0 && (
+                  <p className="ov-tp-note">
+                    {/* ⚠️ Says what the numbers ARE, not what they would ideally be.
+                        "as of each post's last check" because the sweep is tiered, and
+                        "we could poll" because the denominator counts links that have a
+                        stored metric — a link nobody could resolve never appears in it
+                        at all, so this is not the submitted total. */}
+                    Links our team submitted, ranked by views as of each post’s last check.
+                    {" "}{tp.ranked.toLocaleString("en-IN")} of {tp.total.toLocaleString("en-IN")} posts we could poll in this window carry a view count
+                    {tp.posts.length > 0 && <> · {tp.withPreview} of {tp.posts.length} shown have a preview</>}.
+                  </p>
+                )}
               </Card>
             </section>
 

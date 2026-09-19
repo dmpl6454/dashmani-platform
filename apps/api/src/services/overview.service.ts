@@ -27,8 +27,38 @@ import {
   type AssetRangeTotals,
 } from "./meta-oauth/meta-range.service";
 import * as analyticsService from "./analytics.service";
+import { thumbnailIfFresh } from "./top-posts.service";
 
 export const OVERVIEW_PERIODS = [7, 14, 30, 90] as const;
+
+/**
+ * The window the page lands on when nothing else is chosen (owner decision,
+ * 2026-09-19 — it was 7).
+ *
+ * ⚠️ IT COSTS NOTHING, and that was measured on prod rather than assumed: a cold build
+ * is 922ms at 30 days against 1,325ms at 7, the payload is 186KB against 180KB, and 90
+ * days — already a shipped option — is 1,064ms. A wider default cannot introduce a cost
+ * this endpoint does not already serve on demand.
+ *
+ * ⚠️ 30 is also the only OTHER value that carries Total Reach. Reach counts UNIQUE
+ * people, so it exists only for Meta's own native windows: 7 maps to `week` and 30 to
+ * `days_28`, while 14 and 90 have no such figure and correctly render a dash. Moving
+ * the default 7 -> 30 therefore keeps reach populated; 7 -> 14 would have silently
+ * emptied that KPI.
+ *
+ * ⚠️ KNOWN AND INTENDED CONSEQUENCE: Audience Growth and the Followers delta count only
+ * channels whose snapshot history spans the WHOLE window, and API follower history
+ * began in late August — so those two figures cover 43 of 180 linked channels at 30
+ * days where they covered 148 at 7 (measured on prod the day this shipped). The numbers
+ * stay correct and the existing "N of M" / `*` disclosures already say so; coverage
+ * climbs on its own as snapshots accumulate. Do NOT "fix" it by detaching those cards
+ * from the global default — that would break the precedence contract on WIDGET_PERIODS.
+ *
+ * ⚠️ This constant has TWO counterparts in the frontend (the useState literal and the
+ * localStorage fallback in overview/page.tsx). All three must agree or the first paint
+ * fetches one window and immediately refetches another.
+ */
+export const DEFAULT_OVERVIEW_PERIOD = 30 as const satisfies (typeof OVERVIEW_PERIODS)[number];
 /**
  * Per-card periods offer the SAME set as the global one, plus 0.
  *
@@ -168,6 +198,16 @@ export interface OverviewPayload {
    */
   viewsByChannelTotal: number;
   topChannels: ChannelRow[];
+  /**
+   * The same ranking restricted to one platform.
+   *
+   * ⚠️ These cost ZERO extra queries — they are further slices of the `byViews` array
+   * that already produced `topChannels`. Do not be tempted to add a platform QUERY
+   * PARAM instead: that would put a new dimension in this endpoint's 60-entry cache
+   * key, which already carries five periods plus a custom range, and thrash it.
+   */
+  topChannelsInstagram: ChannelRow[];
+  topChannelsFacebook: ChannelRow[];
   revenueByChannel: ChannelRow[];
   cities: {
     total: number;
@@ -184,6 +224,12 @@ export interface OverviewPayload {
     likes: number | null;
     comments: number | null;
     mediaProductType: string | null;
+    /**
+     * Meta CDN preview, and NULL unless its own signed expiry is still in the future —
+     * see thumbnailIfFresh. Serving a rotted URL would put a broken image on the card,
+     * which reads as a defect; serving nothing renders the designed placeholder.
+     */
+    thumbnailUrl: string | null;
     channel: { name: string; username: string | null; platform: "facebook" | "instagram"; pictureUrl: string | null };
   }>;
   /**
@@ -508,7 +554,8 @@ async function resolveWindowEnd(liveIds: string[], todayIso: string): Promise<st
 }
 
 async function buildOverview(params: OverviewParams): Promise<OverviewPayload> {
-  const todayIso = isoDay(new Date());
+  const nowMs = Date.now();
+  const todayIso = isoDay(new Date(nowMs));
 
   const duplicateIds = await resolveDuplicateAssetIds();
   const assets = (
@@ -612,7 +659,7 @@ async function buildOverview(params: OverviewParams): Promise<OverviewPayload> {
         take: 24,
         select: {
           id: true, caption: true, permalink: true, postedAt: true, views: true, likes: true, comments: true,
-          mediaProductType: true,
+          mediaProductType: true, thumbnailUrl: true,
           asset: { select: { name: true, username: true, kind: true, pictureUrl: true } },
         },
       }),
@@ -852,6 +899,12 @@ async function buildOverview(params: OverviewParams): Promise<OverviewPayload> {
     .filter((a) => (perAsset.get(a.id)?.views ?? null) != null)
     .sort((a, b) => (perAsset.get(b.id)!.views ?? 0) - (perAsset.get(a.id)!.views ?? 0));
   const topChannels = byViews.slice(0, 5).map(channelRow);
+  // ⚠️ FREE. `byViews` is already computed and already sorted, so a per-platform board
+  // is a filter over an in-memory array — no query, no cache-key dimension, no extra
+  // payload beyond ten more rows. The card's three tabs are therefore a pure
+  // presentation choice that cannot regress this endpoint's cost.
+  const topChannelsInstagram = byViews.filter((a) => platformOf(a.kind) === "instagram").slice(0, 5).map(channelRow);
+  const topChannelsFacebook = byViews.filter((a) => platformOf(a.kind) === "facebook").slice(0, 5).map(channelRow);
   // ⚠️ The FULL directory, for the header search. Before this the search unioned
   // topChannels with revenueByChannel — 8 of 419 channels on prod — so searching for
   // anything outside those two truncated lists (including the estate's largest
@@ -935,6 +988,12 @@ async function buildOverview(params: OverviewParams): Promise<OverviewPayload> {
       likes: p.likes,
       comments: p.comments,
       mediaProductType: p.mediaProductType,
+      // ⚠️ Guarded by the URL's own `oe=` expiry, never by "we stored it recently".
+      // These are the NEWEST posts across every channel, so in practice they are
+      // hours old and essentially always carry a live preview — but the guard is what
+      // guarantees the card can never show a broken image as the feed ages or a sync
+      // is missed.
+      thumbnailUrl: thumbnailIfFresh(p.thumbnailUrl, nowMs),
       channel: { name: p.asset.name, username: p.asset.username, platform: platformOf(p.asset.kind), pictureUrl: p.asset.pictureUrl },
     }));
 
@@ -1104,6 +1163,8 @@ async function buildOverview(params: OverviewParams): Promise<OverviewPayload> {
     viewsByChannelDays: vbcN,
     viewsByChannelTotal: vbcTotal,
     topChannels,
+    topChannelsInstagram,
+    topChannelsFacebook,
     revenueByChannel,
     cities: {
       total: cityTotal,

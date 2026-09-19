@@ -1937,6 +1937,17 @@ model MetaPost {
   mediaProductType String?   @map("media_product_type")
   postedAt         DateTime? @map("posted_at")
 
+  /// Meta CDN preview image (IG `thumbnail_url`, FB `full_picture`).
+  /// FREE — rides along in the feed call the sync already makes, like like_count.
+  ///
+  /// ⚠️ SIGNED AND SHORT-LIVED. The URL carries its own expiry in its `oe=` query
+  /// parameter — measured live 2026-09-19 at ~4.4 days. A stored URL therefore ROTS:
+  /// it 403s once `oe` passes, and only posts still inside their asset's newest-feed
+  /// window get refreshed by the ~3-hourly sync. NEVER serve one without checking
+  /// `oe` first (thumbnailIfFresh in overview.service.ts) — shipping an expired URL
+  /// puts a broken image on the page, which reads as a defect rather than "no preview".
+  thumbnailUrl String? @map("thumbnail_url") @db.Text
+
   /// NULL = "Meta publishes no such number for this post type".
   /// ⚠️ NEVER coerce to 0 — that is the documented fabricated-zero bug class
   /// (the Snapchat showLikes incident), where a genuinely-absent metric was

@@ -74,6 +74,8 @@ export interface StoredSnapshotShape {
   likes: number | null;
   comments: number | null;
   shares: number | null;
+  /** When this stored snapshot was taken — the reference for the views-only floor. */
+  fetchedAt: Date;
 }
 
 /**
@@ -90,13 +92,14 @@ export async function findLatestSnapshotsByLinkIds(
     Array<{
       link_id: string;
       status: string;
+      fetched_at: Date;
       views: number | null;
       likes: number | null;
       comments: number | null;
       shares: number | null;
     }>
   >`
-    SELECT DISTINCT ON (link_id) link_id, status, views, likes, comments, shares
+    SELECT DISTINCT ON (link_id) link_id, status, views, likes, comments, shares, fetched_at
     FROM link_metrics
     WHERE link_id = ANY(${linkIds}::text[])
     ORDER BY link_id, fetched_at DESC
@@ -104,6 +107,7 @@ export async function findLatestSnapshotsByLinkIds(
   for (const r of rows) {
     out.set(r.link_id, {
       status: r.status,
+      fetchedAt: r.fetched_at,
       views: r.views,
       likes: r.likes,
       comments: r.comments,
@@ -119,6 +123,79 @@ export async function findLatestSnapshotsByLinkIds(
  * absence). Error messages are deliberately NOT compared — they can carry
  * timestamps/ids and would defeat the dedupe for repeated failures.
  */
+/**
+ * Minimum spacing between HISTORY rows whose only difference is a views tick.
+ *
+ * ⚠️ THIS EXISTS BECAUSE VIEWS ARE A MONOTONIC COUNTER AND THE SWEEP IS RELENTLESS.
+ * Measured on prod 2026-09-19, one Instagram sweep: 68,827 links polled, 9,175 ok, and
+ * 67,190 suppressed as identical — only ~1,600 rows appended. Instagram reached that
+ * state only because its views were ALWAYS NULL, so an ok re-poll whose likes and
+ * comments had not moved was byte-identical and skipped.
+ *
+ * Populating real Instagram views (2026-09-19) breaks that by construction: a view
+ * count ticks between almost any two polls, so nearly every one of those 9,175 ok polls
+ * would append a row — ~110,000 rows/day against today's ~37,900, i.e. roughly +26M
+ * rows and +20GB a year on a table ALREADY at 14.8M rows / 11GB, on a disk at 78% of
+ * 49GB. That is precisely the growth curve that made the "latest per link" reads take
+ * 5-10 minutes and took the LOGIN PAGE down on 2026-09-18.
+ *
+ * ⚠️ Suppressing these costs no reader anything. Since that same incident, NOTHING on a
+ * portal path reads link_metrics for engagement — every consumer reads
+ * link_metrics_latest, which is an UPSERT (one row per link, no growth) and is still
+ * refreshed on EVERY ok poll. link_metrics is the per-link history behind
+ * getLinkMetricsHistory alone, and a views curve sampled daily tells that drill-down
+ * the same story as one sampled every two hours.
+ *
+ * ⚠️ Deliberately platform-agnostic, and deliberately a TIME FLOOR rather than a
+ * views-only blacklist: YouTube's history is mostly views changes, so dropping them
+ * outright would flatten its chart. A daily sample keeps every platform's curve.
+ */
+export const VIEWS_ONLY_MIN_INTERVAL_MS = 24 * 60 * 60 * 1000;
+
+type NextSnapshot = { status: string; views?: number | null; likes?: number | null; comments?: number | null; shares?: number | null };
+
+const sameNum = (a: number | null | undefined, b: number | null | undefined) => (a ?? null) === (b ?? null);
+
+/** Status and every metric EXCEPT views match, and views genuinely moved. */
+export function isViewsOnlyChange(prev: StoredSnapshotShape, next: NextSnapshot): boolean {
+  return (
+    prev.status === next.status &&
+    sameNum(prev.likes, next.likes) &&
+    sameNum(prev.comments, next.comments) &&
+    sameNum(prev.shares, next.shares) &&
+    !sameNum(prev.views, next.views)
+  );
+}
+
+/**
+ * Should this poll result be APPENDED to the link_metrics history?
+ *
+ * No stored snapshot → yes. Byte-identical → no. Only the view counter moved → only if
+ * the stored row is at least VIEWS_ONLY_MIN_INTERVAL_MS old. Anything else (a status
+ * change, a like, a comment, a share) → always yes, immediately.
+ *
+ * ⚠️ FAIL-OPEN BY SHAPE: the cron passes `prev = undefined` when its lookup failed, and
+ * that returns true — every result is written, i.e. the pre-dedupe behaviour. A bug
+ * here can cost disk; it must never cost data.
+ */
+export function shouldAppendSnapshot(
+  prev: StoredSnapshotShape | undefined,
+  next: NextSnapshot,
+  now: Date,
+): boolean {
+  if (prev == null) return true;
+  if (isIdenticalSnapshot(prev, next)) return false;
+  if (isViewsOnlyChange(prev, next)) {
+    // ⚠️ FAIL OPEN on a missing/invalid timestamp. A caller that cannot tell us WHEN the
+    // stored row was written cannot be told to suppress — the floor is a disk
+    // optimisation, and losing a history row is worse than writing an extra one.
+    const t = prev.fetchedAt instanceof Date ? prev.fetchedAt.getTime() : NaN;
+    if (!Number.isFinite(t)) return true;
+    return now.getTime() - t >= VIEWS_ONLY_MIN_INTERVAL_MS;
+  }
+  return true;
+}
+
 export function isIdenticalSnapshot(
   prev: StoredSnapshotShape,
   next: { status: string; views?: number | null; likes?: number | null; comments?: number | null; shares?: number | null },

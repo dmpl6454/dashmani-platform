@@ -8,6 +8,8 @@ import {
   upsertLinkMetricLatest,
   findLatestSnapshotsByLinkIds,
   rehealLinkMetricLatest,
+  shouldAppendSnapshot,
+  isViewsOnlyChange,
 } from "../src/services/link-metrics-latest.service";
 import { getMyLinkInsights, invalidateInsightsCache } from "../src/services/social-insights.service";
 import { getLeaderboardCoverage, invalidateLeaderboardCache } from "../src/services/leaderboard.service";
@@ -136,7 +138,12 @@ describe("findLatestSnapshotsByLinkIds", () => {
 
     const m = await findLatestSnapshotsByLinkIds([l1.id, "does-not-exist"]);
     expect([...m.keys()]).toEqual([l1.id]);
-    expect(m.get(l1.id)).toEqual({ status: "not_found", views: null, likes: null, comments: null, shares: null });
+    // fetchedAt rides along (2026-09-19) — it is the reference for the views-only
+    // history floor, so the dedupe can tell "nothing changed" from "only the counter did".
+    expect(m.get(l1.id)).toEqual({
+      status: "not_found", views: null, likes: null, comments: null, shares: null,
+      fetchedAt: new Date("2026-09-18T10:00:00Z"),
+    });
     expect((await findLatestSnapshotsByLinkIds([])).size).toBe(0);
   });
 });
@@ -170,5 +177,60 @@ describe("readers use link_metrics_latest", () => {
     await upsertLinkMetricLatest(latestInput({ employeeId: emp.id, url: `${P}f2`, reportDate: new Date("2026-05-06T00:00:00Z"), views: 1 }));
     const cov = await getLeaderboardCoverage();
     expect(cov.metricsSince).toBe("2026-03-04");
+  });
+});
+
+/**
+ * The views-only history floor (2026-09-19).
+ *
+ * Populating real Instagram views made a view tick the ONLY difference between two
+ * consecutive polls of an otherwise unchanged post — which would have defeated the
+ * 2026-09-18 write-dedupe entirely. Measured on prod: one Instagram sweep polls 68,827
+ * links of which 67,190 are suppressed as identical; without a floor, ~9,175 ok polls
+ * per sweep x 12 sweeps/day would have appended ~110,000 rows/day against today's
+ * ~37,900, on a table already at 14.8M rows / 11GB with 11GB of disk left.
+ */
+describe("shouldAppendSnapshot — the views-only floor", () => {
+  const base = { status: "ok", views: 100, likes: 5, comments: 2, shares: 1 };
+  const at = (iso: string) => new Date(iso);
+  const prevAt = (iso: string, over: Partial<typeof base> = {}) =>
+    ({ ...base, ...over, fetchedAt: at(iso) });
+
+  it("appends when there is no stored snapshot", () => {
+    expect(shouldAppendSnapshot(undefined, base, at("2026-09-19T12:00:00Z"))).toBe(true);
+  });
+
+  it("does NOT append a byte-identical result", () => {
+    expect(shouldAppendSnapshot(prevAt("2026-09-19T10:00:00Z"), base, at("2026-09-19T12:00:00Z"))).toBe(false);
+  });
+
+  it("does NOT append when ONLY views moved and the stored row is fresh", () => {
+    const next = { ...base, views: 140 };
+    expect(shouldAppendSnapshot(prevAt("2026-09-19T10:00:00Z"), next, at("2026-09-19T12:00:00Z"))).toBe(false);
+  });
+
+  it("DOES append a views-only change once the daily floor has elapsed", () => {
+    const next = { ...base, views: 140 };
+    expect(shouldAppendSnapshot(prevAt("2026-09-18T11:00:00Z"), next, at("2026-09-19T12:00:00Z"))).toBe(true);
+  });
+
+  it("appends IMMEDIATELY when a like, comment, share or status also changed", () => {
+    const now = at("2026-09-19T12:00:00Z");
+    const prev = prevAt("2026-09-19T11:00:00Z");
+    expect(shouldAppendSnapshot(prev, { ...base, views: 140, likes: 6 }, now)).toBe(true);
+    expect(shouldAppendSnapshot(prev, { ...base, comments: 3 }, now)).toBe(true);
+    expect(shouldAppendSnapshot(prev, { ...base, shares: 2 }, now)).toBe(true);
+    expect(shouldAppendSnapshot(prev, { ...base, status: "not_found" }, now)).toBe(true);
+  });
+
+  it("treats a null↔number views transition as a views-only change, not a wipe", () => {
+    // The Instagram rollout itself: every stored row has views null, then gets a number.
+    const prev = prevAt("2026-09-19T11:00:00Z", { views: null });
+    expect(shouldAppendSnapshot(prev, base, at("2026-09-19T12:00:00Z"))).toBe(false);
+    expect(shouldAppendSnapshot(prev, base, at("2026-09-21T12:00:00Z"))).toBe(true);
+  });
+
+  it("isViewsOnlyChange is false when views did NOT move", () => {
+    expect(isViewsOnlyChange(prevAt("2026-09-19T11:00:00Z"), base)).toBe(false);
   });
 });

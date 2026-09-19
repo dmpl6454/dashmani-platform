@@ -40,6 +40,11 @@ vi.mock("../src/services/link-metrics-latest.service", async () => {
   );
   return {
     isIdenticalSnapshot: actual.isIdenticalSnapshot,
+    // ⚠️ REAL implementations, not stubs — these encode the cron's append/skip
+    // DECISION, which is exactly what this file exists to lock.
+    isViewsOnlyChange: actual.isViewsOnlyChange,
+    shouldAppendSnapshot: actual.shouldAppendSnapshot,
+    VIEWS_ONLY_MIN_INTERVAL_MS: actual.VIEWS_ONLY_MIN_INTERVAL_MS,
     findLatestSnapshotsByLinkIds: vi.fn(async () => new Map()),
     upsertLinkMetricLatest: vi.fn(async () => true),
     rehealLinkMetricLatest: vi.fn(async () => 0),
@@ -153,16 +158,49 @@ describe("social-insights cron — write dedupe + latest-state upsert", () => {
   });
 
   it("changed metrics or changed status → a new log row for exactly those links", async () => {
+    const hourAgo = new Date(Date.now() - 60 * 60 * 1000);
     mockLookup.mockResolvedValue(new Map([
-      ["L1", { status: "ok", views: 100, likes: 10, comments: 1, shares: null }],
-      ["L2", { status: "ok", views: null, likes: 5, comments: 0, shares: null }],
-      ["L3", { status: "not_found", views: null, likes: null, comments: null, shares: null }],
+      ["L1", { status: "ok", views: 100, likes: 10, comments: 1, shares: null, fetchedAt: hourAgo }],
+      ["L2", { status: "ok", views: null, likes: 5, comments: 0, shares: null, fetchedAt: hourAgo }],
+      ["L3", { status: "not_found", views: null, likes: null, comments: null, shares: null, fetchedAt: hourAgo }],
     ]));
-    resultsByLink.set("L1", { ok: true, status: "ok", views: 150, likes: 10, comments: 1, shares: null }); // views moved
+    // L1: likes moved TOO, so it appends immediately — a views-only tick would not.
+    resultsByLink.set("L1", { ok: true, status: "ok", views: 150, likes: 11, comments: 1, shares: null });
     resultsByLink.set("L3", { ok: true, status: "ok", views: 7, likes: 1, comments: 0, shares: null }); // not_found → ok (the 94% FB recovery class)
     await run();
     expect(createdLinkIds().sort()).toEqual(["L1", "L3"]);
     expect(mockUpsert).toHaveBeenCalledTimes(3);
+  });
+
+  /**
+   * ⚠️ THE GROWTH GUARD (2026-09-19). Instagram views became real, so a view tick is now
+   * the only difference between two consecutive polls of an unchanged post. Without a
+   * floor that defeats the whole 2026-09-18 dedupe: measured on prod, one IG sweep polls
+   * 68,827 links and suppresses 67,190 — ~9,175 ok polls x 12 sweeps/day would append
+   * ~110,000 rows/day against today's ~37,900, on a table already at 14.8M rows / 11GB.
+   */
+  it("a views-ONLY tick appends nothing while the stored row is fresh, but STILL refreshes the latest row", async () => {
+    const hourAgo = new Date(Date.now() - 60 * 60 * 1000);
+    mockLookup.mockResolvedValue(new Map([
+      ["L1", { status: "ok", views: 100, likes: 10, comments: 1, shares: null, fetchedAt: hourAgo }],
+    ]));
+    resultsByLink.set("L1", { ok: true, status: "ok", views: 150, likes: 10, comments: 1, shares: null });
+    await run();
+    // L2/L3 have no stored snapshot in this fixture, so they append (first sight) —
+    // the claim under test is only about L1.
+    expect(createdLinkIds()).not.toContain("L1");
+    // The read model every portal path uses is still updated — only the history is skipped.
+    expect(mockUpsert).toHaveBeenCalledTimes(2);
+  });
+
+  it("the same views-only tick DOES append once the stored row is a day old", async () => {
+    const twoDaysAgo = new Date(Date.now() - 48 * 60 * 60 * 1000);
+    mockLookup.mockResolvedValue(new Map([
+      ["L1", { status: "ok", views: 100, likes: 10, comments: 1, shares: null, fetchedAt: twoDaysAgo }],
+    ]));
+    resultsByLink.set("L1", { ok: true, status: "ok", views: 150, likes: 10, comments: 1, shares: null });
+    await run();
+    expect(createdLinkIds()).toContain("L1");
   });
 
   it("FAIL-OPEN: a lookup failure writes every result (the pre-2026-09-18 behaviour) and does not stop the sweep", async () => {

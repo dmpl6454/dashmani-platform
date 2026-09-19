@@ -230,6 +230,28 @@ describe("getTopPosts", () => {
     expect(after.posts[0].title).toBe("Line one");
   });
 
+  it("an empty board still reports the true denominator — never '0 of 0'", async () => {
+    const role = await prisma.role.create({ data: { name: `RD${Date.now()}`, description: "t" } });
+    const u = await prisma.user.create({
+      data: { name: "deno", email: "deno@d.test", passwordHash: "x", status: "ACTIVE", roles: { create: { roleId: role.id } } },
+    });
+    const day = new Date(Date.UTC(2026, 8, 18));
+    // Three polled Instagram posts, NONE with a view count yet — the real state of
+    // Instagram on the day views were switched on. The board must be empty AND say
+    // "0 of 3", because "0 of 0" would claim there is nothing there at all.
+    for (const c of ["A", "B", "C"]) {
+      const url = `https://www.instagram.com/reel/NOVIEWS${c}/`;
+      await prisma.linkMetricLatest.create({
+        data: { employeeId: u.id, urlNormalized: url.toLowerCase(), url, platform: "instagram",
+          reportDate: day, fetchedAt: day, views: null, likes: 3, comments: 1 },
+      });
+    }
+    const r = await getTopPosts({ platform: "instagram", days: 7, now: new Date(NOW) });
+    expect(r.posts).toEqual([]);
+    expect(r.ranked).toBe(0);
+    expect(r.total).toBe(3);
+  });
+
   it("returns an empty board rather than throwing when nothing is in the window", async () => {
     const r = await getTopPosts({ platform: "all", days: 1, now: new Date(NOW) });
     expect(r.posts).toEqual([]);

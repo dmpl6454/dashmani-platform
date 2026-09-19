@@ -1497,7 +1497,13 @@ export default function OverviewPage() {
                         at all, so this is not the submitted total. */}
                     Links our team submitted, ranked by views as of each post’s last check.
                     {" "}{tp.ranked.toLocaleString("en-IN")} of {tp.total.toLocaleString("en-IN")} posts we could poll in this window carry a view count
-                    {tp.posts.length > 0 && <> · {tp.withPreview} of {tp.posts.length} shown have a preview</>}.
+                    {/* ⚠️ Only when there ARE previews. A post keeps a usable preview only
+                        while it is inside its channel's newest-25 feed window, and a post
+                        that went viral is often NOT recent on a high-volume channel —
+                        measured on prod, the top-ranked submitted posts sit at feed
+                        positions #33-#131, so this is routinely 0. "0 of 20 shown have a
+                        preview" is just noise; the placeholder tile already says it. */}
+                    {tp.withPreview > 0 && <> · {tp.withPreview} of {tp.posts.length} shown have a preview</>}.
                   </p>
                 )}
               </Card>

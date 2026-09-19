@@ -314,14 +314,22 @@ async function build(params: {
              COUNT(*) FILTER (WHERE g.views IS NOT NULL) OVER () AS ranked_groups
       FROM grouped g
     ) w
-    -- ⚠️ The views filter MUST sit outside the window subquery. SQL applies WHERE
-    -- BEFORE window functions, so filtering in the same SELECT would make
-    -- COUNT(*) OVER () count only the ROWS THAT SURVIVED — i.e. total would equal
-    -- ranked, always, and the card's coverage line would read "15,503 of 15,503".
-    -- Caught by the "excludes a row with no view count" test, which seeds exactly
-    -- one of each.
-    WHERE w.views IS NOT NULL
-    ORDER BY w.views DESC, w.ckey ASC
+    -- ⚠️ NOT FILTERED HERE, AND THAT IS THE POINT. Two separate traps:
+    --
+    -- 1. SQL applies WHERE before window functions, so filtering inside the subquery
+    --    would make COUNT(*) OVER () count only the surviving rows — total would equal
+    --    ranked always, and the coverage line would read "15,503 of 15,503".
+    --
+    -- 2. Filtering out here instead would empty the result set whenever NO post in the
+    --    window has a view count — and the totals ride ON the rows, so they would come
+    --    back 0 and the card would claim "0 of 0 posts". That is false: measured on prod
+    --    the day this shipped, Instagram had 14,069 polled posts and none with views
+    --    yet, and "0 of 14,069" is the honest line that explains WHY the board is empty.
+    --
+    -- So: sort rows WITH views first, take LIMIT of them, and drop the stragglers in JS.
+    -- When 20+ posts have views no straggler is returned; when none do, 20 view-less
+    -- rows come back carrying the true totals and JS filters them to an empty board.
+    ORDER BY (w.views IS NOT NULL) DESC, w.views DESC NULLS LAST, w.ckey ASC
     LIMIT ${LIMIT}
   `;
 
@@ -335,11 +343,13 @@ async function build(params: {
   // means nothing to count. Do not "fix" it by falling back to a second query.
   const ranked = rows.length ? Number(rows[0].ranked_groups) : 0;
   const total = rows.length ? Number(rows[0].total_groups) : 0;
+  // The view-less stragglers described above never reach the board.
+  const ranked20 = rows.filter((r) => r.views != null);
 
   // ── Preview + title, from posts we happen to own. Strictly bounded: at most LIMIT
   // ids, looked up on the match_id index. A miss is normal and costs only a thumbnail.
   const wanted = new Map<string, string>(); // matchId -> canonical key
-  for (const r of rows) {
+  for (const r of ranked20) {
     const mid = matchIdFromUrl(r.platform, r.url);
     if (mid) wanted.set(mid, r.ckey);
   }
@@ -369,7 +379,7 @@ async function build(params: {
   }
 
   let withPreview = 0;
-  const posts: TopPost[] = rows.map((r) => {
+  const posts: TopPost[] = ranked20.map((r) => {
     const mid = matchIdFromUrl(r.platform, r.url);
     const own = mid ? byMatch.get(mid) : undefined;
     const thumbnailUrl = thumbnailIfFresh(own?.thumbnailUrl, nowMs);

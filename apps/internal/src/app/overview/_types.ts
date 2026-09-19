@@ -91,6 +91,10 @@ export interface OverviewPayload {
    *  kpis.views.value, which is always the global period (measured 12x apart on prod). */
   viewsByChannelTotal: number;
   topChannels: ChannelRow[];
+  /** The same ranking restricted to one platform. Free — further slices of the array
+   *  that produced topChannels, so the card's three tabs cost no query and no cache key. */
+  topChannelsInstagram: ChannelRow[];
+  topChannelsFacebook: ChannelRow[];
   revenueByChannel: ChannelRow[];
   cities: {
     total: number;
@@ -107,6 +111,9 @@ export interface OverviewPayload {
     likes: number | null;
     comments: number | null;
     mediaProductType: string | null;
+    /** Meta CDN preview, already checked against its own signed expiry server-side.
+     *  Null means "no usable preview" — render the placeholder, never a broken <img>. */
+    thumbnailUrl: string | null;
     channel: { name: string; username: string | null; platform: "facebook" | "instagram"; pictureUrl: string | null };
   }>;
   /** `postId` opens the post drawer; `href` is an in-portal route. Both nullable. */
@@ -141,3 +148,40 @@ export interface OverviewPayload {
 export type OverviewPeriod = 7 | 14 | 30 | 90;
 /** 0 = follow the global period — the default for every card. */
 export type WidgetPeriod = 0 | 7 | 14 | 30 | 90;
+
+// ── Top Posts (its own endpoint — see apps/api/src/services/top-posts.service.ts) ──
+
+/** ⚠️ Includes 1 (24h), which OverviewPeriod deliberately does not: this card filters
+ *  report_date (an IST submission day), not Meta's Pacific/UTC channel boundaries. */
+export type TopPostPeriod = 1 | 7 | 30 | 90;
+export type TopPostPlatform = "all" | "instagram" | "facebook";
+
+export interface TopPost {
+  urlNormalized: string;
+  url: string;
+  platform: string;
+  /** Null = the platform publishes no such number. Render a dash, NEVER 0. */
+  views: number | null;
+  likes: number | null;
+  comments: number | null;
+  /** Distinct employees who submitted this same post (1 = solo, >=2 = shared). */
+  submitters: number;
+  lastSubmitted: string;
+  /** When engagement was last actually polled — drives the staleness chip. */
+  measuredAt: string;
+  title: string | null;
+  thumbnailUrl: string | null;
+  channel: string | null;
+}
+
+export interface TopPostsPayload {
+  platform: TopPostPlatform;
+  days: TopPostPeriod;
+  start: string;
+  end: string;
+  posts: TopPost[];
+  /** Distinct links in the window we could rank, vs all of them. */
+  ranked: number;
+  total: number;
+  withPreview: number;
+}

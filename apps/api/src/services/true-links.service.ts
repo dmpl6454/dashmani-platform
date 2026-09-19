@@ -46,8 +46,80 @@
 // which is why the UI labels this figure "submitted" from ITS OWN response, never
 // asserting equality with the card.
 
-import { prisma } from "@dashmani/db";
+import { prisma, Prisma } from "@dashmani/db";
 import { AppError } from "../middleware/error-handler";
+
+/**
+ * The derived canonical key, as ONE shared SQL fragment.
+ *
+ * ⚠️ THIS IS THE SINGLE STRICT COPY, and it is the only one contractually locked to
+ * `canonicalKey()` (@dashmani/shared) — true-links.test.ts asserts the SQL output equals
+ * a JS `canonicalKey()` run over the same rows, and it was verified 100.0000% key-
+ * identical across all 109,765 prod URLs. The three looser copies in
+ * link-search.service.ts serve a different purpose (there a miss only undercounts
+ * coverage; HERE the key IS the group, so any divergence fabricates or hides a
+ * duplicate).
+ *
+ * ⚠️ It reads `rl.url`, so any query using it must alias its source table `rl`. Exported
+ * rather than copied so a new consumer inherits the verification instead of starting a
+ * fifth divergent copy — top-posts.service.ts is the first such consumer.
+ *
+ * ⚠️ Prisma $queryRaw templates are COOKED: every backslash below is DOUBLED so Postgres
+ * receives one. Keep it inside a Prisma.sql template for that reason.
+ */
+export const DERIVED_CANONICAL_KEY_SQL = Prisma.sql`COALESCE(
+  CASE
+    -- Every WHEN/capture is HOST-ANCHORED ('^https?://(?:[^/?#]*\\.)?host/')
+    -- to mirror JS's parsed-hostname validation. Unanchored substring
+    -- matching keyed EMBEDDED urls the arbiter treats as raw — e.g. a
+    -- redirect wrapper '...l.php?u=https://youtube.com/watch?v=<id>' or
+    -- the PR #108 glued-FB rows ('...reel/<id>https://...') — which could
+    -- fabricate a duplicate the submit-time arbiter denies (adversarial
+    -- review 2026-07-22; 2 real glued rows existed in 109k prod urls).
+    -- ⚠️ The host-prefix group MUST be non-capturing (?:...) — substring()
+    -- returns the FIRST parenthesized group, which must stay the id.
+    --
+    -- YouTube: JS validates EXACTLY 11 chars as a complete segment/param
+    -- (isValidVideoId) — hence {11} + a terminal boundary ([/?#], [&#] or
+    -- end). Without it, 'youtu.be/abcdef?si=1' and '?si=2' (invalid short
+    -- ids JS treats as DISTINCT raw urls) would merge into one phantom key.
+    -- (?i) director: the ~* WHEN is case-insensitive but substring() is
+    -- case-SENSITIVE by default — without (?i) a mixed-case host/segment
+    -- would match the WHEN yet fail the capture. Captures preserve source
+    -- case (ids stay case-sensitive, per canonicalKey's guarantees).
+    WHEN rl.url ~* '^https?://([^/?#]*\\.)?youtu\\.be/[A-Za-z0-9_-]{11}([/?#]|$)'
+      THEN 'yt:' || substring(rl.url from '(?i)^https?://(?:[^/?#]*\\.)?youtu\\.be/([A-Za-z0-9_-]{11})([/?#]|$)')
+    WHEN rl.url ~* '^https?://([^/?#]*\\.)?youtube\\.com/[^[:space:]]*[?&]v=[A-Za-z0-9_-]{11}([&#]|$)'
+      THEN 'yt:' || substring(rl.url from '(?i)[?&]v=([A-Za-z0-9_-]{11})([&#]|$)')
+    WHEN rl.url ~* '^https?://([^/?#]*\\.)?youtube\\.com/(shorts|embed|live|e)/[A-Za-z0-9_-]{11}([/?#]|$)'
+      THEN 'yt:' || substring(rl.url from '(?i)^https?://(?:[^/?#]*\\.)?youtube\\.com/(?:shorts|embed|live|e)/([A-Za-z0-9_-]{11})([/?#]|$)')
+    -- Instagram: JS captures pathname [^/]+ (ANY chars to the next slash,
+    -- not just [A-Za-z0-9_-]) — on a raw url that's [^/?#]+ (stop at query/
+    -- fragment too). The optional prefix segment must also be [^/?#]+ so it
+    -- can never swallow a '?' and key a non-path lookalike.
+    WHEN rl.url ~* '^https?://([^/?#]*\\.)?instagram\\.com/([^/?#]+/)?(p|reel|reels|tv)/[^/?#]'
+      THEN 'ig:' || substring(rl.url from '(?i)^https?://(?:[^/?#]*\\.)?instagram\\.com/(?:[^/?#]+/)?(?:p|reel|reels|tv)/([^/?#]+)')
+    -- Facebook ?v=: JS requires the ENTIRE param to be digits (/^\\d+$/) —
+    -- 'v=123x' must FALL THROUGH to the path branch (as JS does), so the
+    -- WHEN itself demands the full-digits+boundary form.
+    WHEN rl.url ~* '^https?://([^/?#]*\\.)?(facebook\\.com|fb\\.watch)/[^[:space:]]*[?&]v=[0-9]+([&#]|$)'
+      THEN 'fb:' || substring(rl.url from '(?i)[?&]v=([0-9]+)([&#]|$)')
+    -- Facebook path: JS requires digits to be TERMINAL ((\\d+)(?:\\/|$) on
+    -- the pathname) — 'reel/123' + apostrophe/suffix falls back to raw.
+    -- THE live divergence this CASE originally had: /reel/<id>' (a paste
+    -- typo) merged with the clean /reel/<id>/ and fabricated one phantom
+    -- cross-employee dup on prod. fb.watch mirrors JS's host set.
+    WHEN rl.url ~* '^https?://([^/?#]*\\.)?(facebook\\.com|fb\\.watch)/(reel|videos|video)/[0-9]+([/?#]|$)'
+      THEN 'fb:' || substring(rl.url from '(?i)^https?://(?:[^/?#]*\\.)?(?:facebook\\.com|fb\\.watch)/(?:reel|videos|video)/([0-9]+)([/?#]|$)')
+    -- Snapchat: JS's /spotlight/ segment match is case-SENSITIVE (no i
+    -- flag in extractSnapchatSpotlightId) — hence the second, case-
+    -- sensitive ~ condition and a case-sensitive capture.
+    WHEN rl.url ~* '^https?://([^/?#]*\\.)?snapchat\\.com/' AND rl.url ~ '/spotlight/[A-Za-z0-9_-]{8,}'
+      THEN 'sc:' || substring(rl.url from '/spotlight/([A-Za-z0-9_-]{8,})')
+    ELSE 'raw:' || lower(rl.url)
+  END,
+  'raw:' || lower(rl.url)
+)`;
 
 export interface TrueLinksEmployeeRow {
   id: string;
@@ -149,59 +221,7 @@ async function computeTrueLinksBreakdown(
     WITH keyed AS (
       SELECT
         r.employee_id,
-        COALESCE(
-          CASE
-            -- Every WHEN/capture is HOST-ANCHORED ('^https?://(?:[^/?#]*\\.)?host/')
-            -- to mirror JS's parsed-hostname validation. Unanchored substring
-            -- matching keyed EMBEDDED urls the arbiter treats as raw — e.g. a
-            -- redirect wrapper '...l.php?u=https://youtube.com/watch?v=<id>' or
-            -- the PR #108 glued-FB rows ('...reel/<id>https://...') — which could
-            -- fabricate a duplicate the submit-time arbiter denies (adversarial
-            -- review 2026-07-22; 2 real glued rows existed in 109k prod urls).
-            -- ⚠️ The host-prefix group MUST be non-capturing (?:...) — substring()
-            -- returns the FIRST parenthesized group, which must stay the id.
-            --
-            -- YouTube: JS validates EXACTLY 11 chars as a complete segment/param
-            -- (isValidVideoId) — hence {11} + a terminal boundary ([/?#], [&#] or
-            -- end). Without it, 'youtu.be/abcdef?si=1' and '?si=2' (invalid short
-            -- ids JS treats as DISTINCT raw urls) would merge into one phantom key.
-            -- (?i) director: the ~* WHEN is case-insensitive but substring() is
-            -- case-SENSITIVE by default — without (?i) a mixed-case host/segment
-            -- would match the WHEN yet fail the capture. Captures preserve source
-            -- case (ids stay case-sensitive, per canonicalKey's guarantees).
-            WHEN rl.url ~* '^https?://([^/?#]*\\.)?youtu\\.be/[A-Za-z0-9_-]{11}([/?#]|$)'
-              THEN 'yt:' || substring(rl.url from '(?i)^https?://(?:[^/?#]*\\.)?youtu\\.be/([A-Za-z0-9_-]{11})([/?#]|$)')
-            WHEN rl.url ~* '^https?://([^/?#]*\\.)?youtube\\.com/[^[:space:]]*[?&]v=[A-Za-z0-9_-]{11}([&#]|$)'
-              THEN 'yt:' || substring(rl.url from '(?i)[?&]v=([A-Za-z0-9_-]{11})([&#]|$)')
-            WHEN rl.url ~* '^https?://([^/?#]*\\.)?youtube\\.com/(shorts|embed|live|e)/[A-Za-z0-9_-]{11}([/?#]|$)'
-              THEN 'yt:' || substring(rl.url from '(?i)^https?://(?:[^/?#]*\\.)?youtube\\.com/(?:shorts|embed|live|e)/([A-Za-z0-9_-]{11})([/?#]|$)')
-            -- Instagram: JS captures pathname [^/]+ (ANY chars to the next slash,
-            -- not just [A-Za-z0-9_-]) — on a raw url that's [^/?#]+ (stop at query/
-            -- fragment too). The optional prefix segment must also be [^/?#]+ so it
-            -- can never swallow a '?' and key a non-path lookalike.
-            WHEN rl.url ~* '^https?://([^/?#]*\\.)?instagram\\.com/([^/?#]+/)?(p|reel|reels|tv)/[^/?#]'
-              THEN 'ig:' || substring(rl.url from '(?i)^https?://(?:[^/?#]*\\.)?instagram\\.com/(?:[^/?#]+/)?(?:p|reel|reels|tv)/([^/?#]+)')
-            -- Facebook ?v=: JS requires the ENTIRE param to be digits (/^\\d+$/) —
-            -- 'v=123x' must FALL THROUGH to the path branch (as JS does), so the
-            -- WHEN itself demands the full-digits+boundary form.
-            WHEN rl.url ~* '^https?://([^/?#]*\\.)?(facebook\\.com|fb\\.watch)/[^[:space:]]*[?&]v=[0-9]+([&#]|$)'
-              THEN 'fb:' || substring(rl.url from '(?i)[?&]v=([0-9]+)([&#]|$)')
-            -- Facebook path: JS requires digits to be TERMINAL ((\\d+)(?:\\/|$) on
-            -- the pathname) — 'reel/123' + apostrophe/suffix falls back to raw.
-            -- THE live divergence this CASE originally had: /reel/<id>' (a paste
-            -- typo) merged with the clean /reel/<id>/ and fabricated one phantom
-            -- cross-employee dup on prod. fb.watch mirrors JS's host set.
-            WHEN rl.url ~* '^https?://([^/?#]*\\.)?(facebook\\.com|fb\\.watch)/(reel|videos|video)/[0-9]+([/?#]|$)'
-              THEN 'fb:' || substring(rl.url from '(?i)^https?://(?:[^/?#]*\\.)?(?:facebook\\.com|fb\\.watch)/(?:reel|videos|video)/([0-9]+)([/?#]|$)')
-            -- Snapchat: JS's /spotlight/ segment match is case-SENSITIVE (no i
-            -- flag in extractSnapchatSpotlightId) — hence the second, case-
-            -- sensitive ~ condition and a case-sensitive capture.
-            WHEN rl.url ~* '^https?://([^/?#]*\\.)?snapchat\\.com/' AND rl.url ~ '/spotlight/[A-Za-z0-9_-]{8,}'
-              THEN 'sc:' || substring(rl.url from '/spotlight/([A-Za-z0-9_-]{8,})')
-            ELSE 'raw:' || lower(rl.url)
-          END,
-          'raw:' || lower(rl.url)
-        ) AS ckey
+        ${DERIVED_CANONICAL_KEY_SQL} AS ckey
       FROM report_links rl
       JOIN daily_reports r ON r.id = rl.report_id
       WHERE rl.url IS NOT NULL

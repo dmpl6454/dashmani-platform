@@ -5,12 +5,20 @@ import { asyncHandler } from "../utils/async-handler";
 import { success } from "../utils/response";
 import {
   getOverview,
+  DEFAULT_OVERVIEW_PERIOD,
   MAX_RANGE_DAYS,
   OVERVIEW_PERIODS,
   WIDGET_PERIODS,
   type OverviewPeriod,
   type WidgetPeriod,
 } from "../services/overview.service";
+import {
+  getTopPosts,
+  TOP_POST_PERIODS,
+  TOP_POST_PLATFORMS,
+  type TopPostPeriod,
+  type TopPostPlatform,
+} from "../services/top-posts.service";
 
 const router = Router();
 
@@ -42,7 +50,8 @@ const DAY_MS = 86_400_000;
  * Parse an optional `start`/`end` pair into a window, or null.
  *
  * ⚠️ IT DEGRADES, IT DOES NOT 400. Everything else on this endpoint whitelists and falls
- * back (an unknown `days` becomes 7, an unknown card period becomes 0), so a stale
+ * back (an unknown `days` becomes DEFAULT_OVERVIEW_PERIOD, an unknown card period
+ * becomes 0), so a stale
  * bookmark renders a coherent page rather than an error. A malformed range behaves the
  * same way: it is ignored and the preset `days` drives the page. Returning 400 here would
  * make a mistyped URL a broken dashboard.
@@ -73,7 +82,8 @@ function pickRange(rawStart: unknown, rawEnd: unknown): { start: string; end: st
  * OVERRIDES `days`, capped at MAX_RANGE_DAYS and clamped to the last day the estate has
  * closed. A malformed or over-long pair is ignored rather than rejected — see pickRange.
  *
- * `days` is the GLOBAL period: it drives the KPI strip, the channel tables and every
+ * `days` is the GLOBAL period (default DEFAULT_OVERVIEW_PERIOD = 30 closed days): it
+ * drives the KPI strip, the channel tables and every
  * card that has not been detached. `aud` (Audience Growth), `rev` (Revenue Overview),
  * `vbc` (Views by Channel) and `trac` (Content Traction) are per-card overrides which
  * accept the same values plus **0 = follow the global**, which is their default.
@@ -86,7 +96,13 @@ router.get(
   "/admin/overview",
   ...overviewGate,
   asyncHandler(async (req: Request, res: Response) => {
-    const days = pickPeriod(req.query.days, OVERVIEW_PERIODS, 7) as OverviewPeriod;
+    // ⚠️ The default lives in THREE places and they must agree: here, and the two
+    // frontend defaults (the useState literal and the localStorage fallback in
+    // page.tsx). If the server said 7 while the client asked for 30 every load would
+    // burn a second cache entry and a wasted build; if the client's useState said 30
+    // while its stored fallback said 7, the first paint would fetch 7 and immediately
+    // refetch 30.
+    const days = pickPeriod(req.query.days, OVERVIEW_PERIODS, DEFAULT_OVERVIEW_PERIOD) as OverviewPeriod;
     const widget = (raw: unknown) => pickPeriod(raw, WIDGET_PERIODS, 0) as WidgetPeriod;
     const data = await getOverview({
       days,
@@ -97,6 +113,36 @@ router.get(
       tracDays: widget(req.query.trac),
     });
     return success(res, data);
+  }),
+);
+
+/**
+ * GET /admin/overview/top-posts?days=1|7|30|90&platform=all|instagram|facebook
+ *
+ * The best-performing links our employees SUBMITTED, ranked by views.
+ *
+ * ⚠️ A SEPARATE ENDPOINT ON PURPOSE — see the header of top-posts.service.ts. Folding
+ * this into the overview payload would multiply that endpoint's 60-entry cache key
+ * space by twelve AND put a heavier table inside the Promise.all that builds the KPI
+ * strip. Here, a slow Top Posts delays one card and nothing else.
+ *
+ * ⚠️ It carries the SAME gate as the overview itself, which is the point: the existing
+ * /admin/reports/top-links route is gated on `reports.view`, which 108 of 116 active
+ * users do not hold — reusing it here would 403 for 93% of this page's audience.
+ *
+ * Params DEGRADE, never 400, exactly like the overview's: an unknown value falls back
+ * to the default so a stale bookmark renders a coherent card instead of an error.
+ */
+router.get(
+  "/admin/overview/top-posts",
+  ...overviewGate,
+  asyncHandler(async (req: Request, res: Response) => {
+    const days = pickPeriod(req.query.days, TOP_POST_PERIODS, 30) as TopPostPeriod;
+    const raw = String(req.query.platform ?? "");
+    const platform = ((TOP_POST_PLATFORMS as readonly string[]).includes(raw)
+      ? raw
+      : "all") as TopPostPlatform;
+    return success(res, await getTopPosts({ platform, days }));
   }),
 );
 

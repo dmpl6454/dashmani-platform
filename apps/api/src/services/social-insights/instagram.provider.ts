@@ -22,7 +22,8 @@ import {
 //      live Graph API; the bare field reliably returns { instagram_business_account:
 //      { id } } for each Page. See meta-followers.ts STEP 1 for the same rationale.
 //   2. For each managed IG user id, page GET /{ig-user-id}/media?fields=
-//      id,shortcode,caption,like_count,comments_count,media_type,timestamp&limit=100
+//      id,shortcode,caption,like_count,comments_count,media_type,timestamp,
+//      insights.metric(views)&limit=100
 //      (paginate up to a sane cap; stop early once media is older than the poll
 //      window), building a shortcode→media map ONCE per run, cached on the provider.
 //   3. extractTargetId(url) returns the shortcode; fetchBatch looks each target
@@ -32,9 +33,12 @@ import {
 // on an account we don't manage, or older than what we paged). That is correct and
 // bounded — we never guess.
 //
-// Reel "plays"/views would require a per-media GET /{media-id}/insights?metric=plays
-// call. That is left as a best-effort, nullable extension; this build returns
-// views: null. Captions + like/comment counts come straight from the media list.
+// Views, captions and like/comment counts ALL come straight from the media list.
+// ⚠️ The old note here claimed views "would require a per-media
+// GET /{media-id}/insights?metric=plays call" and this provider therefore returned
+// views: null for every Instagram link. That was WRONG, and it is why 0 of 43,828
+// stored Instagram rows carried a view count. `insights.metric(views)` is a FREE
+// EXPANSION on the media list — see IG_MEDIA_FIELDS below for the live proof.
 //
 // DARK SWITCH: while META_SYSTEM_USER_TOKEN is absent, isSupported() is false, the
 // registry never polls this provider, and fetchBatch (if ever called directly)
@@ -110,6 +114,11 @@ interface IgMediaItem {
   comments_count?: number;
   media_type?: string;
   timestamp?: string; // ISO-8601
+  /**
+   * `insights.metric(views)` expanded inline on the media list — see the header note.
+   * Shape: { data: [{ name: "views", values: [{ value: 12345 }] }] }.
+   */
+  insights?: { data?: Array<{ name?: string; values?: Array<{ value?: number }> }> };
 }
 
 interface IgMediaResponse {
@@ -171,6 +180,32 @@ async function discoverIgUserIds(): Promise<string[]> {
   return ids;
 }
 
+/**
+ * ⚠️ `insights.metric(views)` IS A FREE FIELD EXPANSION ON THE MEDIA LIST — it rides
+ * along in the call this provider already makes, exactly like `like_count`. It does
+ * NOT cost one request per media.
+ *
+ * This overturns the note that stood in this file's header until 2026-09-19 ("reel
+ * plays would require a per-media GET /{media-id}/insights"), which was written from
+ * the media OBJECT's fields (where a bare `views` field genuinely is absent) and was
+ * never probed as an expansion. Live-probed 2026-09-19 against the real prod token:
+ * **8/8 accounts, 800/800 media, 100% populated**, at the production `limit=100` page
+ * size, on v21.0 — and identically on v22.0/v23.0. Coverage held across every media
+ * type (VIDEO 731/731, IMAGE 4/4, CAROUSEL_ALBUM 65/65).
+ *
+ * ⚠️ Read it defensively anyway. Meta omits an expansion rather than erroring when it
+ * has nothing to say, so `viewsOf` returns null on any missing layer and the caller
+ * stores null. A null is rendered as an em-dash; it must NEVER become 0 (the
+ * documented fabricated-zero class).
+ */
+const IG_MEDIA_FIELDS =
+  "id,shortcode,caption,like_count,comments_count,media_type,timestamp,insights.metric(views)";
+
+export function viewsOf(item: { insights?: IgMediaItem["insights"] }): number | null {
+  const v = item.insights?.data?.find((d) => d?.name === "views")?.values?.[0]?.value;
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
+
 // Page one IG user's media into the shared shortcode→item map. Stops early once it
 // sees media older than the poll window.
 async function loadAccountMedia(
@@ -180,7 +215,7 @@ async function loadAccountMedia(
   const oldestAllowed = Date.now() - POLL_WINDOW_DAYS * 86_400_000;
   let path: string | null = `${igUserId}/media`;
   let params: Record<string, string | number | undefined> | undefined = {
-    fields: "id,shortcode,caption,like_count,comments_count,media_type,timestamp",
+    fields: IG_MEDIA_FIELDS,
     limit: MEDIA_PAGE_SIZE,
   };
   let pages = 0;
@@ -333,7 +368,9 @@ export const instagramProvider: InsightProvider = {
       results.set(t.linkId, {
         ok: true,
         status: "ok",
-        views: null, // reels "plays" require a separate insights call — best-effort, not in this build
+        // Real Instagram views — see IG_MEDIA_FIELDS. Null when Meta omits the
+        // expansion for this media; never coerced to 0.
+        views: viewsOf(item),
         likes: item.like_count ?? null,
         comments: item.comments_count ?? null,
         shares: null, // not provided by the media list

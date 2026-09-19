@@ -78,6 +78,43 @@ const IG_METRICS = ["reach", "views", "saved", "total_interactions", "shares"] a
  */
 const FB_METRICS_VIEWS = ["post_media_view", "post_total_media_view_unique"] as const;
 
+/**
+ * ⚠️ TWO FIELDS HERE ARE FREE AND BOTH FIX A REAL DEFECT — live-probed 2026-09-19.
+ *
+ * `insights.metric(views)` — an inline EXPANSION of the insights edge, not a per-post
+ * call. 8/8 accounts and 800/800 media returned a value at the production page size on
+ * v21.0. It matters because PHASE 2 measures a post's views ONCE and then rotates away
+ * (8 posts per asset per run), so a stored Instagram view count is frozen at roughly
+ * its first day: measured on prod, 33,011 of 38,921 IG posts were last measured within
+ * 24h of posting, and a 10-day-old reel stored at 9,305 actually had 184,655 views — a
+ * 20x understatement rendered as fact. Taking views inline refreshes every post in the
+ * feed window on EVERY sync, at zero extra cost.
+ *
+ * `thumbnail_url` / `full_picture` — the post preview image. Also free here.
+ * ⚠️ Both are SIGNED and expire ~4.4 days out (decoded from their own `oe=` parameter,
+ * measured live). They are refreshed for as long as a post stays in this feed window;
+ * once it falls out, the stored URL rots. Nothing may serve one without re-checking
+ * `oe` — see thumbnailIfFresh in overview.service.ts.
+ *
+ * ⚠️ `thumbnail_url` is the RIGHT Instagram field, not `media_url`. media_url is the
+ * full-resolution asset, expires in ~1.3 days (3x sooner), and was ABSENT on 2 of the
+ * 3 probed reels. thumbnail_url was present on all of them.
+ */
+const IG_FEED_FIELDS =
+  "id,shortcode,permalink,caption,like_count,comments_count,media_type,media_product_type," +
+  "timestamp,thumbnail_url,insights.metric(views)";
+
+const FB_FEED_FIELDS =
+  "id,message,permalink_url,created_time,full_picture," +
+  "likes.summary(true).limit(0),comments.summary(true).limit(0),shares";
+
+/** Pull `views` out of an inline insights expansion. Null on any missing layer — never 0. */
+function inlineViews(raw: Record<string, unknown>): number | null {
+  const ins = raw.insights as { data?: Array<{ name?: string; values?: Array<{ value?: unknown }> }> } | undefined;
+  const v = ins?.data?.find((d) => d?.name === "views")?.values?.[0]?.value;
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
+
 interface IgMediaResponse {
   data?: Array<{
     id?: string;
@@ -89,6 +126,8 @@ interface IgMediaResponse {
     media_type?: string;
     media_product_type?: string;
     timestamp?: string;
+    thumbnail_url?: string;
+    insights?: { data?: Array<{ name?: string; values?: Array<{ value?: number }> }> };
   }>;
   paging?: { next?: string };
 }
@@ -115,6 +154,7 @@ interface FbPostsResponse {
     id?: string;
     message?: string;
     permalink_url?: string;
+    full_picture?: string;
     created_time?: string;
     likes?: { summary?: { total_count?: number } };
     comments?: { summary?: { total_count?: number } };
@@ -252,7 +292,7 @@ async function syncAsset(
         {
           // like_count + comments_count are FREE here — this is the perf lever.
           fields:
-            "id,shortcode,permalink,caption,like_count,comments_count,media_type,media_product_type,timestamp",
+            IG_FEED_FIELDS,
           limit: FEED_LIMIT,
         },
         token,
@@ -263,8 +303,7 @@ async function syncAsset(
         {
           // Summary fields ride along FREE — see the FbPostsResponse note above.
           fields:
-            "id,message,permalink_url,created_time," +
-            "likes.summary(true).limit(0),comments.summary(true).limit(0),shares",
+            FB_FEED_FIELDS,
           limit: FEED_LIMIT,
         },
         token,
@@ -283,7 +322,7 @@ async function syncAsset(
           `${asset.metaId}/media`,
           {
             fields:
-              "id,shortcode,permalink,caption,like_count,comments_count,media_type,media_product_type,timestamp",
+              IG_FEED_FIELDS,
             limit: FEED_RETRY_LIMIT,
           },
           token,
@@ -293,8 +332,7 @@ async function syncAsset(
           `${asset.metaId}/published_posts`,
           {
             fields:
-              "id,message,permalink_url,created_time," +
-              "likes.summary(true).limit(0),comments.summary(true).limit(0),shares",
+              FB_FEED_FIELDS,
             limit: FEED_RETRY_LIMIT,
           },
           token,
@@ -354,6 +392,16 @@ async function syncAsset(
         : numOrNull((r.comments as { summary?: { total_count?: number } } | undefined)?.summary?.total_count),
       // FB only: `shares` is ABSENT rather than 0 when there are none ⇒ honest null.
       ...(isIg ? {} : { shares: numOrNull((r.shares as { count?: number } | undefined)?.count) }),
+      thumbnailUrl: ((isIg ? r.thumbnail_url : r.full_picture) as string | undefined) ?? null,
+      // ⚠️ INSTAGRAM ONLY, and only when Meta actually returned a number. Facebook has
+      // no inline views field, so FB keeps getting views from the phase-2 insights pass
+      // (post_media_view) and must NOT be touched here.
+      //
+      // ⚠️ The conditional spread is load-bearing: writing `views: null` for a post
+      // whose expansion was omitted would WIPE a good value phase 2 had already
+      // stored. Omitting the key leaves the column alone — the feed pass only ever
+      // ADDS, the same reasoning as the metricsStatus note on the upsert below.
+      ...(isIg && inlineViews(r) !== null ? { views: inlineViews(r) } : {}),
     };
 
     await prisma.metaPost.upsert({

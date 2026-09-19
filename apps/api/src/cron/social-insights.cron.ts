@@ -9,6 +9,7 @@ import {
   findLatestSnapshotsByLinkIds,
   isIdenticalSnapshot,
   rehealLinkMetricLatest,
+  shouldAppendSnapshot,
 } from "../services/link-metrics-latest.service";
 
 const POLL_WINDOW_DAYS = 60;
@@ -463,6 +464,7 @@ async function runSocialInsightsRefreshInner(opts?: { harvestOnly?: boolean }): 
       let notFound = 0;
       let errors = 0;
       let skippedIdentical = 0; // polled, result byte-identical to the stored snapshot → no new log row
+      let skippedViewsOnly = 0; // polled, ONLY the view counter moved and the daily floor has not elapsed
       let quotaAborted = false;
       // Tracks whether the feed-map harvest has already been flushed this run.
       // The provider builds its in-memory feed map on the FIRST fetchBatch call
@@ -565,14 +567,21 @@ async function runSocialInsightsRefreshInner(opts?: { harvestOnly?: boolean }): 
 
               const fetchedAt = new Date();
               const videoId = slug === "youtube" ? extractYouTubeVideoId(t.url) : null;
-              const prev = prevByLink.get(t.linkId);
-              const identical = prev != null && isIdenticalSnapshot(prev, r);
+                      const prev = prevByLink.get(t.linkId);
+              // ⚠️ Two reasons NOT to append, and they are counted separately so the
+              // summary line stays diagnostic: byte-identical (nothing happened), or a
+              // views-only tick inside the daily floor (a monotonic counter moved, which
+              // link_metrics_latest already records — see VIEWS_ONLY_MIN_INTERVAL_MS).
+              const append = shouldAppendSnapshot(prev, r, fetchedAt);
+              const identical = !append && prev != null && isIdenticalSnapshot(prev, r);
+              const viewsThrottled = !append && !identical;
 
               try {
-                if (identical) {
+                if (!append) {
                   // Same status, same numbers as the last stored snapshot → the log
                   // already says this; don't append another 200-byte row (× 7 indexes).
-                  skippedIdentical++;
+                  if (identical) skippedIdentical++;
+                  else skippedViewsOnly++;
                 } else {
                   await prisma.linkMetric.create({
                     data: {
@@ -733,7 +742,7 @@ async function runSocialInsightsRefreshInner(opts?: { harvestOnly?: boolean }): 
 
       if (!harvestOnly) {
         console.log(
-          `[social-insights/${slug}] ${targets.length} links → ${polled} polled, ${succeeded} ok, ${notFound} not_found, ${errors} errors, ${skippedIdentical} identical (no new log row)${quotaAborted ? " (QUOTA ABORTED)" : ""}`
+          `[social-insights/${slug}] ${targets.length} links → ${polled} polled, ${succeeded} ok, ${notFound} not_found, ${errors} errors, ${skippedIdentical} identical, ${skippedViewsOnly} views-only-throttled (no new log row)${quotaAborted ? " (QUOTA ABORTED)" : ""}`
         );
         // (Cost Sheet usage is now recorded at the TRUE chokepoints — graphFetch for
         // ALL Meta calls, the YouTube fetch helpers for YouTube — so EVERY caller is

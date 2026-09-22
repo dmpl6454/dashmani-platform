@@ -80,6 +80,21 @@ const SNAPCHAT: string[] = [
   "paparazzireel", "Bollywoodpop", "MovieReviewhub", "paparazzinews",
 ];
 
+/**
+ * Existing rows whose stored display name does NOT equal the platform's current title, so
+ * neither the handle nor the name would match them.
+ *
+ * ⚠️ Without this the script CREATES A DUPLICATE: prod stores "Moviefied Bollywood" (with
+ * an "e") while Snapchat's live title for @movified_bolly is "Movified Bollywood" (without).
+ * The stale row would stay ACTIVE on 129,800 August followers and the new row would appear
+ * beside it — the same channel twice on the board, disagreeing.
+ *
+ * Keyed by the handle we are adding -> the stored display name to adopt.
+ */
+const SNAPCHAT_ALIASES: Record<string, string> = {
+  movified_bolly: "moviefied bollywood",
+};
+
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 type Action = { kind: "create" | "update" | "skip"; platform: string; handle: string; detail: string };
@@ -169,6 +184,8 @@ async function doSnapchat() {
   const byHandle = new Map(existing.map((a) => [a.handle.toLowerCase(), a]));
   // Match the four rows whose `handle` is a display name, not a username, by their title.
   const byName = new Map(existing.map((a) => [a.displayName.trim().toLowerCase(), a]));
+  /** Which pre-existing rows a requested handle claimed — anything left over is reported. */
+  const matched = new Set<string>();
 
   for (const handle of SNAPCHAT) {
     const profile = await scrapeSnapchatProfile(handle);
@@ -182,7 +199,9 @@ async function doSnapchat() {
 
     const hit =
       byHandle.get(handle.toLowerCase()) ??
-      (profile.displayName ? byName.get(profile.displayName.trim().toLowerCase()) : undefined);
+      (profile.displayName ? byName.get(profile.displayName.trim().toLowerCase()) : undefined) ??
+      (SNAPCHAT_ALIASES[handle] ? byName.get(SNAPCHAT_ALIASES[handle]) : undefined);
+    if (hit) matched.add(hit.id);
 
     const data = {
       displayName: profile.displayName ?? handle,
@@ -220,6 +239,19 @@ async function doSnapchat() {
       if (APPLY) {
         await prisma.socialAccount.create({ data: { ...data, handle, platformId: pid, status: "ACTIVE" } });
       }
+    }
+  }
+
+  // ⚠️ Anything already on this platform that no requested handle claimed is a POSSIBLE
+  // DUPLICATE — a renamed channel we failed to match, which would now sit on the board
+  // twice with two different figures. Report it loudly; never silently archive or delete,
+  // because report_links references these rows and the call is the owner's to make.
+  const orphans = existing.filter((a) => !matched.has(a.id));
+  if (orphans.length > 0) {
+    console.log(`  ⚠ ${orphans.length} existing Snapchat row(s) matched no requested handle:`);
+    for (const o of orphans) {
+      console.log(`      "${o.handle}" (${o.displayName}) — check whether this duplicates one above`);
+      actions.push({ kind: "skip", platform: "snapchat", handle: o.handle, detail: "pre-existing row, unmatched — possible duplicate" });
     }
   }
 }

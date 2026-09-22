@@ -1331,7 +1331,7 @@ export function MetaPanel() {
       {live.length > 0 && (
         <p className="px-5 py-3 text-[11px] text-[#B0B0B0] leading-snug border-t border-[#F0EAE0]">
           Figures cover the selected period and come straight from Meta — every channel here
-          is one the connected account administers, so nothing on this page is scraped or
+          is one the connected account administers, so nothing on this tab is scraped or
           hand-entered. Views and reach use Meta&apos;s current metrics, which replaced
           impressions when Meta retired that family across the API. A dash means Meta
           publishes no value for that metric on that platform — not a zero and not missing

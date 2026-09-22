@@ -98,8 +98,15 @@ function parseSnapCount(raw: string): number | null {
 const MAX_PARSE_LEN = 4 * 1024 * 1024; // defense-in-depth cap; a profile page is ~100KB-1MB
 const MAX_TAG_LEN = 4096; // a real <meta …> / <script …> opening tag is far shorter
 
-/** Body of the first `<script …>` whose opening tag starts with `openTagPrefix` at/after `from`. */
-function scriptBodyAfter(html: string, openTagPrefix: string, from = 0): { body: string; end: number } | null {
+/**
+ * Body of the first `<script …>` whose opening tag starts with `openTagPrefix` at/after `from`.
+ *
+ * ⚠️ EXPORTED ON PURPOSE — import it, never re-derive it. The obvious alternative,
+ * `/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/`, is the super-linear shape that
+ * pinned the API's main thread for 5h44m on 2026-09-08 (see the header of this file). Any
+ * new code that needs a `<script>` body out of a Snapchat page must call this.
+ */
+export function scriptBodyAfter(html: string, openTagPrefix: string, from = 0): { body: string; end: number } | null {
   const start = html.indexOf(openTagPrefix, from);
   if (start === -1) return null;
   const gt = html.indexOf(">", start);

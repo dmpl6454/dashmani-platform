@@ -89,6 +89,7 @@ const LIVE_WITHIN_MS = 48 * 60 * 60 * 1000;
 export function SyncBadge({
   lastSyncedAt,
   metricsFetchedAt,
+  metricsError,
 }: {
   lastSyncedAt: string | null | undefined;
   /**
@@ -98,12 +99,28 @@ export function SyncBadge({
    * which tells the reader the figure was typed in by hand. It was not; there is no figure.
    */
   metricsFetchedAt?: string | null;
+  /**
+   * ⚠️ Load-bearing for a channel that no longer exists. We DO check a terminated channel
+   * every run, so `metricsFetchedAt` is fresh and the fallback above would render a green
+   * "Live · 2m ago" beside the warning triangle — two opposite claims about the same row.
+   * When we have never once measured a figure AND the last attempt failed, the honest state
+   * is neither "Live" nor "Manual" (hand-entered): it is that we keep asking and keep being
+   * told nothing.
+   */
+  metricsError?: string | null;
 }) {
   const stamp = lastSyncedAt ?? metricsFetchedAt ?? null;
   const measured = Boolean(lastSyncedAt);
   const ago = relativeTime(stamp);
   const age = stamp ? Date.now() - new Date(stamp).getTime() : null;
-  const state = age === null ? "MANUAL" : age <= LIVE_WITHIN_MS ? "LIVE" : "STALE";
+  const state =
+    age === null
+      ? "MANUAL"
+      : !measured && metricsError
+        ? "UNAVAILABLE"
+        : age <= LIVE_WITHIN_MS
+          ? "LIVE"
+          : "STALE";
 
   const map = {
     LIVE: {
@@ -126,6 +143,14 @@ export function SyncBadge({
       dot: "bg-[#7A7A7A]", cls: "text-[#7A7A7A] border-[#DCDCDC]",
       label: "Manual",
       title: "Manual — never collected automatically, so this figure is whatever was entered by hand.",
+    },
+    UNAVAILABLE: {
+      dot: "bg-[#C2861D]", cls: "text-[#C2861D] border-[#F3D9A4]",
+      label: ago ? `No data · ${ago}` : "No data",
+      title:
+        "We check this channel automatically and the platform keeps returning nothing for it — so there has never been a " +
+        "figure to show. That normally means the channel was renamed, deleted or terminated, and the handle stored here " +
+        "needs correcting. It is NOT hand-entered, and it is not a zero.",
     },
   }[state];
 

@@ -52,6 +52,10 @@ export interface ChannelRow {
   followerDelta: number | null;
   /** The span the delta actually covers — often shorter than the window asked for. */
   followerDeltaDays: number | null;
+  /** This row's change exceeds its own baseline — a series that jumped between two
+   *  different channels, not growth. Shown, but must be visibly marked. Optional so an
+   *  older cached response simply renders unmarked rather than crashing. */
+  followerDeltaUnreliable?: boolean;
   /** "api" | "scraper" | null (hand-entered). */
   syncSource: string | null;
   lastSyncedAt: string | null;

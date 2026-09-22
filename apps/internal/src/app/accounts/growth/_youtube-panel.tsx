@@ -34,13 +34,29 @@ function colValue(c: ChannelRow, k: ColKey): number | string | null {
 }
 
 /** A measured change, coloured by direction. "—" when nothing was measurable. */
-function DeltaLine({ value, days, absentTitle }: {
+function DeltaLine({ value, days, absentTitle, unreliable }: {
   value: number | null;
   days: number | null;
   absentTitle: string;
+  /** The change exceeds its own baseline — shown, but never as a plain result. */
+  unreliable?: boolean;
 }) {
   if (value === null || value === undefined) {
     return <span title={absentTitle} className="text-[#B0B0B0]">—</span>;
+  }
+  if (unreliable) {
+    // ⚠️ Deliberately NOT hidden. This number is the visible evidence that the row's stored
+    // identity is wrong — its history alternates between two different channels of the same
+    // name. Hiding it would hide the problem; presenting it plainly would assert growth
+    // that never happened. So it is shown, struck through, and explained.
+    return (
+      <span
+        className="text-[#B0B0B0] line-through decoration-[#C2861D]"
+        title={`This change (${fmtDelta(value)}) is larger than the figure it was measured from, so it cannot be growth — the stored history for this channel jumps between two different channels that share a name. It is excluded from the totals above and needs the channel's handle corrected here. The current subscriber figure itself is fine.`}
+      >
+        {fmtDelta(value)}
+      </span>
+    );
   }
   return (
     <span
@@ -222,6 +238,7 @@ function YouTubeTable({ rows, sort, onSort, manageMode, onRemove, busy }: {
               <DeltaLine
                 value={c.followerDelta}
                 days={c.followerDeltaDays}
+                unreliable={c.followerDeltaUnreliable}
                 absentTitle={
                   // ⚠️ `followerDeltaDays` is stamped even when the change is suppressed, so
                   // its presence proves we DID measure across the period and the movement
@@ -249,7 +266,7 @@ function YouTubeTable({ rows, sort, onSort, manageMode, onRemove, busy }: {
               {/* flex-wrap, not shrink-0, on a cell holding two pills: at a narrow width
                   they stack instead of painting over the column beside them. */}
               <div className="flex flex-wrap items-center justify-end gap-1">
-                <SyncBadge lastSyncedAt={c.lastSyncedAt} metricsFetchedAt={c.metricsFetchedAt} />
+                <SyncBadge lastSyncedAt={c.lastSyncedAt} metricsFetchedAt={c.metricsFetchedAt} metricsError={c.metricsError} />
                 <SourceBadge source={c.syncSource} />
               </div>
             </td>

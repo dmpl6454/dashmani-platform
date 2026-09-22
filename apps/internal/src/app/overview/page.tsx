@@ -1071,8 +1071,26 @@ export default function OverviewPage() {
               <Chip onClick={() => setPop(pop === "date" ? null : "date")} ariaHasPopup active={pop === "date"}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={T.sub} strokeWidth="1.8" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M3 10h18M8 3v4M16 3v4" /></svg>
                 {/* Always the window the SERVER echoed — never local state, so the label
-                    can never move before the numbers under it do. */}
-                <span className="ov-date-label">{o ? `${fmtDayYear(o.period.start)} – ${fmtDayYear(o.period.end)}` : `Last ${days} days`}</span>
+                    can never move before the numbers under it do.
+
+                    ⚠️ A PRESET NAMES ITSELF; ONLY A CUSTOM RANGE SHOWS DATES. This used to
+                    render the resolved span unconditionally once the payload landed, so the
+                    default 30-day view read "Aug 22, 2026 – Sep 20, 2026" while every card
+                    chip read "Last 30 Days" — which looks exactly like a custom range is
+                    stuck on, and was reported as "the global filter is not set to 30 days".
+                    Verified on prod with empty localStorage: the menu had "Last 30 days"
+                    marked active the whole time, so nothing but the label was ever wrong.
+                    The resolved dates are kept on the tooltip rather than dropped. */}
+                <span
+                  className="ov-date-label"
+                  title={o ? `${fmtDayYear(o.period.start)} – ${fmtDayYear(o.period.end)}` : undefined}
+                >
+                  {!o
+                    ? `Last ${days} days`
+                    : o.period.custom
+                      ? `${fmtDayYear(o.period.start)} – ${fmtDayYear(o.period.end)}`
+                      : `Last ${o.period.days} days`}
+                </span>
                 {o?.period.custom && <i className="ov-local-dot" aria-hidden="true" title="Custom range" />}
               </Chip>
               {pop === "date" && (

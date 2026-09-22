@@ -305,6 +305,46 @@ model SocialAccount {
   /// says WHEN. A scraper number can be fresh yet less trustworthy than an API
   /// one, so freshness and provenance are shown as separate pills in the UI.
   syncSource    String?       @map("sync_source")
+
+  // ── CHANNEL METRICS BEYOND THE FOLLOWER COUNT ────────────────────────────────
+  //
+  // All nullable and rendered as "—" when absent. A fabricated 0 here would read as a
+  // real result — the documented Snapchat-showLikes bug class. Every one of these is
+  // written only when the platform actually published a value.
+
+  /// YouTube: LIFETIME view count, exact. ⚠️ Not windowed — the honest per-window figure
+  /// is the delta of this counter between two AccountGrowthSnapshot rows, which is why
+  /// that table carries it too. Snapchat publishes no equivalent, so it stays null there.
+  totalViews    BigInt?       @map("total_views")
+  /// YouTube: public upload count, exact.
+  videoCount    Int?          @map("video_count")
+  /// ⚠️ The rounding step applied to `followerCount`, or null when the figure is exact.
+  /// YouTube rounds to 3 significant figures, so seven of this estate's channels cannot
+  /// move their reported subscriber count for 15–19 consecutive days. Any delta smaller
+  /// than this step is quantisation noise and must render "—", never 0. It is also what
+  /// distinguishes a legitimately-rounded official-API series from the "mostly round ⇒
+  /// scraped display string" fingerprint that a 2026-08-24 audit deletes history on.
+  followersPrecision Int?     @map("followers_precision")
+  /// Snapchat: summed views of the Spotlight posts on the profile page that actually
+  /// published one. ⚠️ Meaningless without the two coverage fields below — 74% of posts
+  /// across the estate withhold their view count, and the withholding is per-channel
+  /// (nine channels publish none at all), so channels are NOT comparable on this alone.
+  recentViews   BigInt?       @map("recent_views")
+  /// How many posts on the page carried a real view count …
+  recentViewsCovered Int?     @map("recent_views_covered")
+  /// … out of how many posts the page returned. Snapchat chooses this number (2–31
+  /// observed); it is not a time window, so never label a sum "views in N days".
+  recentPostsSeen    Int?     @map("recent_posts_seen")
+  /// Why the last metrics refresh failed, if it did. Surfaced in the UI so a blank cell
+  /// can explain itself instead of looking like missing data.
+  metricsError  String?       @map("metrics_error")
+  /// When the channel metrics above were last REFRESHED — distinct from lastSyncedAt,
+  /// which means "when we last measured a real follower count". They differ for the seven
+  /// Snapchat profiles that withhold their count: we fetch those successfully every time
+  /// and still have no number to stamp. Mirrors meta_assets.metricsFetchedAt, and is what
+  /// the scraper's refresh floor is measured against.
+  metricsFetchedAt DateTime?  @map("metrics_fetched_at")
+
   createdAt     DateTime      @default(now()) @map("created_at")
   updatedAt     DateTime      @updatedAt @map("updated_at")
 
@@ -746,6 +786,12 @@ model AccountGrowthSnapshot {
   followingCount Int?     @map("following_count")
   postCount      Int?     @map("post_count")
   engagementRate Float?   @map("engagement_rate")
+  /// YouTube lifetime views on this day. ⚠️ THE point of storing it: `followerCount` for a
+  /// YouTube channel is rounded to 3 significant figures, so its day-over-day delta is a
+  /// quantisation staircase. This counter is exact, so the delta between two snapshots is
+  /// the only truthful "growth over a window" figure YouTube gives us. Null for every
+  /// platform that publishes no lifetime counter.
+  totalViews     BigInt?  @map("total_views")
   createdAt      DateTime @default(now()) @map("created_at")
 
   /// Provenance of THIS snapshot's followerCount:

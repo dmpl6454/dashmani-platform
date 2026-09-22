@@ -40,6 +40,35 @@ export interface YtAccountRef {
 export interface YtFollowerResult {
   accountId: string;
   subscribers: number;
+  /**
+   * The channel's permanent UC… id, once resolved. Worth persisting: a handle can be
+   * renamed out from under us, an id cannot.
+   */
+  channelId: string | null;
+  /**
+   * Lifetime view count — EXACT, unlike `subscribers`. This is the honest basis for a
+   * growth figure (see `subscriberPrecision`). Already present in the same `part=statistics`
+   * response we were making anyway, so it costs zero additional quota.
+   */
+  totalViews: number | null;
+  /** Public upload count. Exact. */
+  videoCount: number | null;
+  /**
+   * ⚠️ How coarse `subscribers` is. YouTube rounds subscriber counts to 3 significant
+   * figures (verified against all 16 of the estate's channels), so the reported figure only
+   * moves when a channel crosses a bucket boundary — measured, seven channels cannot move
+   * theirs for 15–19 consecutive days. A day-over-day subscriber delta is therefore a
+   * quantisation staircase, not a measurement, and must be suppressed below this step
+   * rather than rendered as a real 0.
+   *
+   * It also matters for provenance: CLAUDE.md records an audit rule that treats a
+   * "mostly round" follower series as a scraped display string and DELETES it. Inde News'
+   * genuine API series is 10,500,000 → 10,600,000. Storing the step is what distinguishes
+   * "rounded by the official API" from "parsed off a page".
+   *
+   * null = exact (channels under 1,000 subscribers are not rounded).
+   */
+  subscriberPrecision: number | null;
 }
 
 // ── Internal API response shapes ──────────────────────────────────────────────
@@ -47,6 +76,10 @@ export interface YtFollowerResult {
 interface YtChannelStatistics {
   subscriberCount?: string;
   hiddenSubscriberCount?: boolean;
+  /** Lifetime views. Exact — unlike subscriberCount, YouTube does not round this. */
+  viewCount?: string;
+  /** Public upload count. Exact. */
+  videoCount?: string;
 }
 
 interface YtChannelItem {
@@ -213,6 +246,41 @@ function extractSubscribers(stats: YtChannelStatistics | null): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+/** A non-negative integer out of one of YouTube's string-typed counters, else null. */
+function intOrNull(raw: string | undefined): number | null {
+  if (raw == null) return null;
+  const n = parseInt(raw, 10);
+  return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
+/**
+ * The rounding step YouTube applied to a subscriber count.
+ *
+ * YouTube publicly rounds to 3 significant figures at and above 1,000 (verified against all
+ * 16 channels in this estate: 10,500,000 / 3,690,000 / 1,040,000 / 33,400 / 8,100 — every
+ * one an exact multiple of 10^(digits-3)). Below 1,000 the figure is exact.
+ *
+ * Exported for tests and for the renderer, which suppresses any delta smaller than this.
+ */
+export function subscriberPrecisionFor(subscribers: number): number | null {
+  if (!Number.isFinite(subscribers) || subscribers < 1000) return null; // exact
+  return 10 ** (Math.floor(Math.log10(subscribers)) - 2);
+}
+
+/** Everything beyond the subscriber count that the same response already carried. */
+function extractExtras(
+  stats: YtChannelStatistics | null,
+  subscribers: number,
+  channelId: string | null,
+): Omit<YtFollowerResult, "accountId" | "subscribers"> {
+  return {
+    channelId,
+    totalViews: intOrNull(stats?.viewCount),
+    videoCount: intOrNull(stats?.videoCount),
+    subscriberPrecision: subscriberPrecisionFor(subscribers),
+  };
+}
+
 // ── Main export ───────────────────────────────────────────────────────────────
 
 /**
@@ -282,7 +350,7 @@ export async function fetchYouTubeSubscriberCounts(
 
       const subscribers = extractSubscribers(stats);
       if (subscribers != null) {
-        results.push({ accountId, subscribers });
+        results.push({ accountId, subscribers, ...extractExtras(stats, subscribers, channelId) });
       }
       // null → deleted/terminated/hidden → simply absent from results (fail-open)
     }
@@ -300,7 +368,11 @@ export async function fetchYouTubeSubscriberCounts(
     if (forHandleResult) {
       const subscribers = extractSubscribers(forHandleResult.statistics);
       if (subscribers != null) {
-        results.push({ accountId: acc.id, subscribers });
+        results.push({
+          accountId: acc.id,
+          subscribers,
+          ...extractExtras(forHandleResult.statistics, subscribers, forHandleResult.channelId),
+        });
       }
       continue; // resolved (or hidden — absent)
     }
@@ -320,9 +392,88 @@ export async function fetchYouTubeSubscriberCounts(
     const stats = statsMap.get(resolvedChannelId) ?? null;
     const subscribers = extractSubscribers(stats);
     if (subscribers != null) {
-      results.push({ accountId: acc.id, subscribers });
+      results.push({ accountId: acc.id, subscribers, ...extractExtras(stats, subscribers, resolvedChannelId) });
     }
   }
 
   return results;
+}
+
+// ── Add-flow resolver ─────────────────────────────────────────────────────────
+
+export interface YtResolved {
+  channelId: string;
+  title: string;
+  handle: string | null;
+  subscribers: number | null;
+  subscriberPrecision: number | null;
+  totalViews: number | null;
+  videoCount: number | null;
+  thumbnailUrl: string | null;
+}
+
+/**
+ * Resolve ONE channel from whatever an admin pasted — a UC… id, a `/channel/UC…` URL, an
+ * `@handle`, or a `/@handle` URL — and return enough to confirm it is the right channel
+ * before anything is stored.
+ *
+ * ⚠️ This exists so a typo fails LOUDLY at the moment of entry. Two of the 36 Snapchat
+ * handles the owner supplied were wrong, and one of them (`bollywodpaps`, a missing "o")
+ * hid the largest account in that estate. A row that silently never resolves is worse than
+ * a rejected form.
+ *
+ * ⚠️ Deliberately avoids `search.list` (100 quota units). `channels.list` by id or
+ * forHandle is 1 unit, and forHandle resolved 12/12 of the real handles in this estate —
+ * its documented unreliability is for STALE or misspelled handles, which is precisely the
+ * case we want to reject rather than guess around.
+ *
+ * Fail-open: returns null on any miss. Never throws.
+ */
+export async function resolveYouTubeChannel(input: string): Promise<YtResolved | null> {
+  const apiKey = process.env.YOUTUBE_API_KEY;
+  if (!apiKey) return null;
+
+  const raw = input.trim();
+  if (!raw) return null;
+
+  const fromUrl = channelIdFromUrl(raw);
+  const handleFromUrl = raw.match(/\/@([^/?#\s]+)/)?.[1] ?? null;
+  const id = fromUrl ?? (isChannelId(raw) ? raw : null);
+  const handle = handleFromUrl ?? (id ? null : stripAt(raw));
+
+  const url = id
+    ? `${YT_BASE}/channels?part=snippet,statistics&id=${encodeURIComponent(id)}&key=${apiKey}`
+    : `${YT_BASE}/channels?part=snippet,statistics&forHandle=${encodeURIComponent(stripAt(handle ?? ""))}&key=${apiKey}`;
+
+  const res = await safeFetch(url);
+  if (!res) return null;
+
+  let data: {
+    items?: Array<{
+      id: string;
+      snippet?: { title?: string; customUrl?: string; thumbnails?: { default?: { url?: string } } };
+      statistics?: YtChannelStatistics;
+    }>;
+  };
+  try {
+    data = (await res.json()) as typeof data;
+  } catch {
+    return null;
+  }
+
+  const item = data.items?.[0];
+  if (!item) return null;
+
+  const stats = item.statistics ?? {};
+  const subscribers = extractSubscribers(stats);
+  return {
+    channelId: item.id,
+    title: item.snippet?.title ?? item.id,
+    handle: item.snippet?.customUrl ? stripAt(item.snippet.customUrl) : (handle ? stripAt(handle) : null),
+    subscribers,
+    subscriberPrecision: subscribers != null ? subscriberPrecisionFor(subscribers) : null,
+    totalViews: intOrNull(stats.viewCount),
+    videoCount: intOrNull(stats.videoCount),
+    thumbnailUrl: item.snippet?.thumbnails?.default?.url ?? null,
+  };
 }

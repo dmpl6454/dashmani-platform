@@ -39,6 +39,7 @@
 
 import { prisma } from "@dashmani/db";
 import { createSingleFlightMemo } from "../utils/single-flight-memo";
+import { subscriberPrecisionFor } from "./social-insights/youtube-followers";
 
 /** Platforms this board serves. Meta lives on its own tab and is deliberately absent. */
 export const CHANNEL_PLATFORMS = ["youtube", "snapchat"] as const;
@@ -174,12 +175,21 @@ async function buildBoard(platform: ChannelPlatform, days: number): Promise<Chan
   // first/last per account, in one pass over an already-sorted list
   const first = new Map<string, (typeof snaps)[number]>();
   const last = new Map<string, (typeof snaps)[number]>();
-  let earliest: Date | null = null;
   for (const s of snaps) {
     if (!first.has(s.accountId)) first.set(s.accountId, s);
     last.set(s.accountId, s);
-    if (!earliest || s.date < earliest) earliest = s.date;
   }
+
+  // ⚠️ Asked SEPARATELY and WITHOUT the window filter. Taking the earliest of `snaps` would
+  // clip it to the selected period, so a 7-day view would claim "collecting since 15 Sep"
+  // for a channel we have held since May — understating our own history to the reader.
+  const oldest = ids.length
+    ? await prisma.accountGrowthSnapshot.aggregate({
+        where: { accountId: { in: ids } },
+        _min: { date: true },
+      })
+    : null;
+  const earliest = oldest?._min.date ?? null;
 
   let sumFollowers = 0;
   let followersReported = 0;
@@ -214,9 +224,18 @@ async function buildBoard(platform: ChannelPlatform, days: number): Promise<Chan
       followerDeltaDays = daysBetween(f!.date, l!.date);
       // ⚠️ THE QUANTISATION GUARD. YouTube rounds to 3 significant figures, so a movement
       // smaller than one step is invisible to us — reporting 0 would assert "did not grow".
-      const step = a.followersPrecision ?? 0;
+      //
+      // ⚠️⚠️ IT MUST NOT FALL BACK TO 0. `followersPrecision` is NULL on every row until a
+      // sync has written it — which is the state of every existing YouTube channel right
+      // after this ships, and the permanent state of one whose resolution keeps failing
+      // (no API key, quota exhausted, terminated channel). With step 0 the comparison can
+      // never be true, so a channel sitting on flat rounded snapshots renders a confident
+      // "0" for a period in which it really gained tens of thousands of subscribers.
+      // Rounding is a property of the PLATFORM, not of our backfill state, so derive it.
+      const step =
+        a.followersPrecision ??
+        (platform === "youtube" && followers != null ? (subscriberPrecisionFor(followers) ?? 0) : 0);
       followerDelta = Math.abs(raw) < step ? null : raw;
-      if (followerDelta != null) withHistory++;
     }
 
     let viewsDelta: number | null = null;
@@ -229,6 +248,12 @@ async function buildBoard(platform: ChannelPlatform, days: number): Promise<Chan
         viewsDeltaDays = daysBetween(f!.date, l!.date);
       }
     }
+
+    // ⚠️ EITHER delta counts as history. Counting only the follower delta made the YouTube
+    // board print "no channel has N days of history yet, we are still collecting" on a
+    // board where every Views Δ cell held a real number — blaming collection lag for what
+    // is actually YouTube's rounding, and contradicting the note directly beneath it.
+    if (followerDelta != null || viewsDelta != null) withHistory++;
 
     const tv = num(a.totalViews);
     if (tv != null) {

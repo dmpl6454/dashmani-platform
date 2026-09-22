@@ -277,3 +277,41 @@ describe("snapchatProfileUrl", () => {
     expect(snapchatProfileUrl("@Foo")).toBe("https://www.snapchat.com/@Foo?locale=en-US");
   });
 });
+
+// ── Findings from the adversarial pre-merge review ────────────────────────────
+
+describe("failure modes are classified so the caller can respond correctly", () => {
+  const res = (init: { ok?: boolean; status?: number; url?: string; body?: string }) =>
+    ({
+      ok: init.ok ?? true,
+      status: init.status ?? 200,
+      url: init.url ?? "https://www.snapchat.com/@x",
+      text: async () => init.body ?? "",
+    }) as unknown as Response;
+
+  it("counts a TIMEOUT as a wall, so the short-circuit is not keyed on the one mode that never sets it", async () => {
+    // Snapchat degrading by hanging rather than answering 429 is the likelier shape. If a
+    // timeout did not set `walled`, the sync would walk all 36 profiles paying the full
+    // 12s timeout on each with no brake.
+    const r = await scrapeSnapchatProfile("x", (async () => {
+      const e = new Error("The operation was aborted");
+      e.name = "AbortError";
+      throw e;
+    }) as typeof fetch);
+    expect(r.walled).toBe(true);
+    expect(r.error).toMatch(/timeout/);
+  });
+
+  it("marks a 404 as notFound and NOT as a wall", async () => {
+    const r = await scrapeSnapchatProfile("nope", (async () => res({ ok: false, status: 404 })) as typeof fetch);
+    expect(r.notFound).toBe(true);
+    expect(r.walled).toBe(false); // two real handles are permanently in this state
+  });
+
+  it("a connection reset is a wall, not a channel-level fault", async () => {
+    const r = await scrapeSnapchatProfile("x", (async () => {
+      throw new Error("ECONNRESET");
+    }) as typeof fetch);
+    expect(r.walled).toBe(true);
+  });
+});

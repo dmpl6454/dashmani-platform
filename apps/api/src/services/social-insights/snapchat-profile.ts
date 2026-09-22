@@ -93,8 +93,17 @@ export interface SnapProfileResult {
    * (see "THE PARTIAL RESPONSE"). Caller MUST treat this as a failure, not as "no posts".
    */
   partial: boolean;
+  /**
+   * The handle definitively does not exist (HTTP 404). A PERMANENT answer about the handle,
+   * so the caller must neither count it as a wall nor pay for the legacy fallback — two of
+   * the 36 supplied handles are in exactly this state, forever.
+   */
+  notFound: boolean;
   /** Real subscriber count. null when Snapchat withholds it — never 0 for a withhold. */
   followers: number | null;
+  /** The username the PROFILE reports, which Snapchat lowercases on redirect. Store this
+   *  rather than what was typed, so the row matches itself on the next lookup. */
+  username: string | null;
   displayName: string | null;
   bio: string | null;
   pictureUrl: string | null;
@@ -114,7 +123,7 @@ export interface SnapProfileResult {
 }
 
 const MISS = (error: string, over: Partial<SnapProfileResult> = {}): SnapProfileResult => ({
-  ok: false, walled: false, partial: false, followers: null, displayName: null,
+  ok: false, walled: false, partial: false, notFound: false, followers: null, username: null, displayName: null,
   bio: null, pictureUrl: null, badge: null, recentViews: null,
   viewsCovered: 0, postsSeen: 0, error, ...over,
 });
@@ -195,7 +204,9 @@ export function parseSnapchatProfilePage(html: string, expectedHandle: string): 
     ok: !partial,
     walled: false,
     partial,
+    notFound: false,
     followers,
+    username: flatCopy(username),
     displayName: str(info.title, 200),
     bio: str(info.bio, 500),
     pictureUrl: str(info.profilePictureUrl, 1000),
@@ -245,7 +256,7 @@ export async function scrapeSnapchatProfile(
       // 404 = the handle does not exist (2 of the owner's 36 were like this). That is a real
       // answer about the handle, not a block, so it must not trip the wall short-circuit.
       return res.status === 404
-        ? MISS("handle does not exist (404)")
+        ? MISS("handle does not exist (404)", { notFound: true })
         : MISS(`HTTP ${res.status}`, { walled: true });
     }
     if (/\/login|\/signup|accounts\.snapchat\.com|\/checkpoint/i.test(res.url)) {
@@ -258,8 +269,12 @@ export async function scrapeSnapchatProfile(
     const html = await res.text();
     return parseSnapchatProfilePage(html, clean);
   } catch (err) {
+    // ⚠️ A TIMEOUT OR RESET COUNTS AS A WALL. Snapchat degrading by hanging rather than
+    // answering 429 is the likelier shape, and if that does not trip the consecutive-wall
+    // short-circuit the sync walks all 36 profiles paying the full timeout on each — the
+    // brake would be keyed on the one failure mode that never sets it.
     const msg = err instanceof Error ? err.message : String(err);
-    return MISS(/abort/i.test(msg) ? `timeout after ${TIMEOUT_MS}ms` : msg.slice(0, 200));
+    return MISS(/abort/i.test(msg) ? `timeout after ${TIMEOUT_MS}ms` : msg.slice(0, 200), { walled: true });
   } finally {
     clearTimeout(timer);
   }

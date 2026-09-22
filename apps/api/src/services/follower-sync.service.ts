@@ -109,6 +109,22 @@ export function getSyncProgress(): SyncProgress {
 const STALE_RUN_MS = 2 * 60 * 60 * 1000; // 2 hours
 
 /**
+ * ⚠️ A mistyped env var must not silently disable the protection it configures. Bare
+ * parseInt yields NaN, and every comparison against NaN is false — so `SNAP_WALL_LIMIT=five`
+ * would turn the wall short-circuit off and `SNAP_MIN_REFRESH_MS=3h` would remove the
+ * refresh floor, both without a word in the logs.
+ */
+function intEnv(raw: string | undefined, dflt: number): number {
+  if (raw == null || raw === "") return dflt;
+  const n = parseInt(raw, 10);
+  if (!Number.isFinite(n) || n < 0) {
+    console.warn(`[follower-sync] ignoring non-numeric env value ${JSON.stringify(raw)} — using ${dflt}`);
+    return dflt;
+  }
+  return n;
+}
+
+/**
  * Consecutive Snapchat walls before the rest of a run stops asking.
  *
  * Mirrors SNAP_SCRAPER_WALL_LIMIT in snapchat.provider.ts. Snapchat is now a shared-fate
@@ -119,7 +135,7 @@ const STALE_RUN_MS = 2 * 60 * 60 * 1000; // 2 hours
  * ⚠️ A 404 is NOT a wall: two of the estate's handles genuinely do not exist, and counting
  * those would trip the limit on a healthy run.
  */
-const SNAP_WALL_LIMIT = parseInt(process.env.SNAP_SCRAPER_WALL_LIMIT ?? "5", 10);
+const SNAP_WALL_LIMIT = intEnv(process.env.SNAP_SCRAPER_WALL_LIMIT, 5);
 
 /**
  * Don't re-scrape a Snapchat profile more often than this.
@@ -133,7 +149,7 @@ const SNAP_WALL_LIMIT = parseInt(process.env.SNAP_SCRAPER_WALL_LIMIT ?? "5", 10)
  * shared-fate dependency — the Spotlight provider behind Top Links and Link Search reads
  * the same host — so restraint here protects more than this feature.
  */
-const SNAP_MIN_REFRESH_MS = parseInt(process.env.SNAP_MIN_REFRESH_MS ?? String(3 * 60 * 60 * 1000), 10);
+const SNAP_MIN_REFRESH_MS = intEnv(process.env.SNAP_MIN_REFRESH_MS, 3 * 60 * 60 * 1000);
 
 /**
  * Cursor persistence for the rotating IG Tier-3 slice, stored in `system_settings`
@@ -477,7 +493,12 @@ export async function syncAllFollowerCounts() {
   try { fbFollowerMap = await fetchFacebookFollowerMap(); } catch (e) { console.error("[follower-sync] FB graph map failed:", e); }
 
   const accounts = await prisma.socialAccount.findMany({
-    where: { profileUrl: { not: "" } },
+    // ⚠️ ARCHIVED is the "removed from the board" state, and removal has to actually stop
+    // the collection — otherwise the one lever an admin has for cutting load on Snapchat
+    // (a host Top Links and Link Search also depend on) is inert, while the UI says it
+    // worked. Archived rows also kept receiving follower writes and snapshots, which is
+    // history for a channel nobody is watching.
+    where: { profileUrl: { not: "" }, status: { not: "ARCHIVED" } },
     include: { platform: { select: { slug: true } } },
   });
 
@@ -754,20 +775,37 @@ export async function syncAllFollowerCounts() {
           followers = profile.followers;
           source = "scraper"; // Snapchat has no follower API at all
         }
-      } else if (!profile.partial) {
-        // `partial` = a 200 that came back stripped of its content. Recording THAT as an
-        // error would be noise; anything else is a real, explainable failure.
+      } else if (profile.partial) {
+        // ⚠️ A stripped 200 still carries a CORRECT subscriber count in its header — that is
+        // the shape that was observed (261,200 and 146,200 came back right while the post
+        // list was empty). Take it, and stamp the refresh clock so the 3h floor engages;
+        // without the stamp this channel was re-fetched EVERY HOUR and also paid for the
+        // 3-URL legacy fallback, which is the opposite of the restraint the floor buys.
+        // Deliberately writes NO view fields, so the previous ones survive untouched.
+        if (profile.followers != null) {
+          followers = profile.followers;
+          source = "scraper";
+        }
+        await persistChannelMetrics(account.id, { touch: true });
+      } else if (!profile.walled) {
+        // ⚠️ Only an explained, CHANNEL-level failure is recorded — a 404 handle, say.
+        //   * `partial` = a 200 stripped of content. Transient; recording it is noise.
+        //   * `walled`  = Snapchat blocking this IP. Nothing is wrong with the channel, so
+        //     painting a per-channel error badge on it would be a lie, and `touch` would
+        //     freeze a healthy channel for 3h over someone else's rate limit.
+        // Touch on a real channel failure so a permanently dead handle is not retried hourly.
         await persistChannelMetrics(account.id, {
           metricsError: profile.error ?? "profile unavailable",
-          // Touch even on an explained failure (e.g. a 404 handle): otherwise a permanently
-          // dead handle is retried every hour forever.
           touch: true,
         });
       }
 
-      // Legacy fallback: only when the canonical page could not identify the handle at
-      // all, and only if a profile_url is stored to try.
-      if (followers === null && !profile.ok && !profile.walled && account.profileUrl) {
+      // Legacy fallback: only when the canonical page could not identify the handle at all,
+      // and only if a profile_url is stored to try.
+      // ⚠️ NOT after a definitive 404 — that is a permanent answer about the handle, and
+      // retrying three retired URL shapes for it every cycle is pure waste; and NOT after a
+      // `partial`, which already gave us the count.
+      if (followers === null && !profile.ok && !profile.walled && !profile.notFound && !profile.partial && account.profileUrl) {
         const legacy = await scrapeSnapchatFollowers(scHandle, fetch, account.profileUrl);
         if (legacy.followers && legacy.followers > 0) {
           followers = legacy.followers;
@@ -1015,11 +1053,34 @@ export async function syncSingleAccountFollowers(accountId: string) {
   } else if (slug === "facebook") {
     followers = await fetchFacebookFollowers(account.profileUrl || "", account.handle);
   } else if (slug === "snapchat") {
-    // profile_url (a /t/ or /p/ link) is tried FIRST by the scraper — that's where
-    // the count lives; /add/<handle> 404s for our accounts. See snapchat-scraper.ts.
+    // ⚠️ Same path as the batch sync: the canonical `/@handle` page first, with the legacy
+    // `/p/`+`/t/` scraper only as a fallback. This function backs the per-account refresh
+    // button on /accounts, and leaving it on the legacy path alone meant that button kept
+    // failing against URL shapes that are now retired while the Growth board beside it
+    // worked — the same channel disagreeing with itself depending on where you looked.
     const scHandle = account.handle.replace(/^@/, "").split("?")[0].trim();
-    const result = await scrapeSnapchatFollowers(scHandle, fetch, account.profileUrl);
-    followers = result.followers;
+    const profile = await scrapeSnapchatProfile(scHandle, fetch);
+    if (profile.ok) {
+      followers = profile.followers; // may be null — Snapchat withholds it on some profiles
+      try {
+        await prisma.socialAccount.update({
+          where: { id: account.id },
+          data: {
+            recentViews: profile.recentViews == null ? null : BigInt(profile.recentViews),
+            recentViewsCovered: profile.viewsCovered,
+            recentPostsSeen: profile.postsSeen,
+            metricsError: null,
+            metricsFetchedAt: new Date(),
+          },
+        });
+      } catch {
+        /* metrics are a bonus on top of the follower refresh — never fail the request */
+      }
+    }
+    if (followers == null && !profile.walled && account.profileUrl) {
+      const legacy = await scrapeSnapchatFollowers(scHandle, fetch, account.profileUrl);
+      followers = legacy.followers;
+    }
   } else if (slug === "x") {
     // fetchTwitterFollowerMap activates a fresh guest token per call — calling
     // it here for a single handle is a little wasteful (one token activation

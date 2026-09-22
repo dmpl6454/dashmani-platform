@@ -201,7 +201,15 @@ async function doSnapchat() {
       byHandle.get(handle.toLowerCase()) ??
       (profile.displayName ? byName.get(profile.displayName.trim().toLowerCase()) : undefined) ??
       (SNAPCHAT_ALIASES[handle] ? byName.get(SNAPCHAT_ALIASES[handle]) : undefined);
-    if (hit) matched.add(hit.id);
+    if (hit) {
+      // ⚠️ CLAIM IT. The indexes are built once, so without this a second requested handle
+      // whose live title happens to match the same stored row would claim it AGAIN and
+      // rewrite its handle a second time — one channel silently untracked, and the surviving
+      // row (which report_links.accountId points at) carrying a mix of two channels' figures.
+      matched.add(hit.id);
+      byHandle.delete(hit.handle.toLowerCase());
+      byName.delete(hit.displayName.trim().toLowerCase());
+    }
 
     const data = {
       displayName: profile.displayName ?? handle,

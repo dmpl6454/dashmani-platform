@@ -21,6 +21,7 @@ import publicJobsRoutes from "./public-jobs.routes";
 import publicStatsRoutes from "./public-stats.routes";
 import metaOauthRoutes from "./meta-oauth.routes";
 import metaRoutes from "./meta.routes";
+import channelRoutes from "./channel.routes";
 import overviewRoutes from "./overview.routes";
 
 const router = Router();
@@ -43,6 +44,9 @@ router.use(hrRoutes);
 // be captured by any parameterised /admin/:x route declared later.
 router.use(metaOauthRoutes);
 router.use(metaRoutes);
+// Same placement rationale as metaRoutes: /admin/channels must not be captured by a
+// parameterised /admin/:x route declared later.
+router.use(channelRoutes);
 router.use(overviewRoutes);
 router.use(adminReportsRoutes);
 router.use(notificationRoutes);

@@ -120,9 +120,48 @@ function stripAt(handle: string): string {
 }
 
 /**
+ * Whether the API actually ANSWERED during a run.
+ *
+ * ⚠️ WHY THIS EXISTS. `channels.list` returns HTTP 200 with `totalResults: 0` and no
+ * `items` for a terminated channel — and the shape a caller sees when the quota is spent,
+ * the key is rejected or the request times out is IDENTICAL: the account is simply absent
+ * from the results array. Live-verified against two terminated ids. So "this channel is
+ * gone" and "we never got to ask" are indistinguishable downstream, and a caller that
+ * records the former would, on a quota-exhausted day, stamp "renamed, deleted or
+ * terminated" on EVERY channel on the board at once.
+ *
+ * A caller passes one of these in and must refuse to record any per-channel verdict when
+ * `apiUnavailable` is true. Deliberately run-scoped and conservative: ANY refusal or
+ * transport failure anywhere in the run trips it, because there is no cheap way to know
+ * which accounts a failed batch would have covered. The cost of being conservative is one
+ * missed run of error-marking; the cost of being wrong is a board-wide false accusation.
+ */
+export interface YtRunHealth {
+  apiUnavailable: boolean;
+  /** First reason observed, for the log line. */
+  reason: string | null;
+}
+
+/** Trip the run's health flag, keeping the FIRST reason (the one that started it). */
+function markUnavailable(health: YtRunHealth | undefined, reason: string) {
+  if (!health || health.apiUnavailable) return;
+  health.apiUnavailable = true;
+  health.reason = reason;
+  console.warn(`[youtube-followers] API unavailable this run (${reason}) — per-channel verdicts suppressed`);
+}
+
+/** Read a Google API error body for the reasons that mean "we were refused, not answered". */
+function refusalReason(data: { error?: { code?: number; message?: string; errors?: Array<{ reason?: string }> } }): string | null {
+  const err = data.error;
+  if (!err) return null;
+  const reason = err.errors?.[0]?.reason ?? `httpError${err.code ?? ""}`;
+  return reason;
+}
+
+/**
  * Perform a fetch with timeout; returns null on any network/abort error (fail-open).
  */
-async function safeFetch(url: string): Promise<Response | null> {
+async function safeFetch(url: string, health?: YtRunHealth): Promise<Response | null> {
   // Cost Sheet: record the call + its QUOTA UNITS. YouTube Data API is free within
   // a 10,000-unit/day quota, but the cost VARIES sharply by endpoint — search.list
   // is 100 units, channels.list/videos.list are 1 — so a few searches can blow the
@@ -135,8 +174,12 @@ async function safeFetch(url: string): Promise<Response | null> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
   try {
-    return await fetch(url, { signal: controller.signal });
+    const res = await fetch(url, { signal: controller.signal });
+    // A 403 (quota/key) or 5xx is a REFUSAL, not an answer about any channel.
+    if (!res.ok) markUnavailable(health, `http ${res.status}`);
+    return res;
   } catch {
+    markUnavailable(health, "network or timeout");
     return null;
   } finally {
     clearTimeout(timer);
@@ -150,13 +193,14 @@ async function safeFetch(url: string): Promise<Response | null> {
 async function fetchChannelStatsBatch(
   ids: string[],
   apiKey: string,
+  health?: YtRunHealth,
 ): Promise<Map<string, YtChannelStatistics | null>> {
   const result = new Map<string, YtChannelStatistics | null>();
 
   const url =
     `${YT_BASE}/channels?part=statistics&id=${encodeURIComponent(ids.join(","))}&key=${apiKey}`;
 
-  const res = await safeFetch(url);
+  const res = await safeFetch(url, health);
   if (!res) {
     for (const id of ids) result.set(id, null);
     return result;
@@ -166,6 +210,15 @@ async function fetchChannelStatsBatch(
   try {
     data = (await res.json()) as YtChannelsResponse;
   } catch {
+    for (const id of ids) result.set(id, null);
+    return result;
+  }
+
+  // ⚠️ A `quotaExceeded` / `dailyLimitExceeded` body arrives as HTTP 200 in some Google
+  // client configurations, so the status check in safeFetch is not sufficient on its own.
+  const refusal = refusalReason(data);
+  if (refusal) {
+    markUnavailable(health, refusal);
     for (const id of ids) result.set(id, null);
     return result;
   }
@@ -193,17 +246,24 @@ async function fetchChannelStatsBatch(
 async function fetchByForHandle(
   handle: string,
   apiKey: string,
+  health?: YtRunHealth,
 ): Promise<{ channelId: string; statistics: YtChannelStatistics } | null> {
   const url =
     `${YT_BASE}/channels?part=statistics&forHandle=${encodeURIComponent(handle)}&key=${apiKey}`;
 
-  const res = await safeFetch(url);
+  const res = await safeFetch(url, health);
   if (!res) return null;
 
   let data: YtChannelsResponse;
   try {
     data = (await res.json()) as YtChannelsResponse;
   } catch {
+    return null;
+  }
+
+  const refusal = refusalReason(data);
+  if (refusal) {
+    markUnavailable(health, refusal);
     return null;
   }
 
@@ -218,17 +278,23 @@ async function fetchByForHandle(
  * Returns the resolved channelId or null.
  * Cost: 100 quota units.
  */
-async function searchForChannelId(query: string, apiKey: string): Promise<string | null> {
+async function searchForChannelId(query: string, apiKey: string, health?: YtRunHealth): Promise<string | null> {
   const url =
     `${YT_BASE}/search?part=snippet&type=channel&q=${encodeURIComponent(query)}&maxResults=1&key=${apiKey}`;
 
-  const res = await safeFetch(url);
+  const res = await safeFetch(url, health);
   if (!res) return null;
 
   let data: YtSearchResponse;
   try {
     data = (await res.json()) as YtSearchResponse;
   } catch {
+    return null;
+  }
+
+  const refusal = refusalReason(data);
+  if (refusal) {
+    markUnavailable(health, refusal);
     return null;
   }
 
@@ -294,10 +360,24 @@ function extractExtras(
  */
 export async function fetchYouTubeSubscriberCounts(
   accounts: YtAccountRef[],
-  opts?: { maxSearchLookups?: number },
+  opts?: {
+    maxSearchLookups?: number;
+    /**
+     * Optional out-parameter. Pass one to learn whether the API actually answered this
+     * run; see YtRunHealth. Omitting it preserves the previous behaviour exactly, which
+     * is why every existing caller and test is unaffected.
+     */
+    health?: YtRunHealth;
+  },
 ): Promise<YtFollowerResult[]> {
+  const health = opts?.health;
   const apiKey = process.env.YOUTUBE_API_KEY;
-  if (!apiKey) return []; // DARK: no key → no network
+  if (!apiKey) {
+    // DARK: no key → no network. ⚠️ Every account is absent from the results, which must
+    // NOT be read as "every channel is gone".
+    markUnavailable(health, "no YOUTUBE_API_KEY");
+    return [];
+  }
 
   const maxSearchLookups = opts?.maxSearchLookups ?? DEFAULT_MAX_SEARCH_LOOKUPS;
   const results: YtFollowerResult[] = [];
@@ -342,7 +422,7 @@ export async function fetchYouTubeSubscriberCounts(
 
   for (let i = 0; i < allChannelIds.length; i += BATCH_SIZE) {
     const batchIds = allChannelIds.slice(i, i + BATCH_SIZE);
-    const statsMap = await fetchChannelStatsBatch(batchIds, apiKey);
+    const statsMap = await fetchChannelStatsBatch(batchIds, apiKey, health);
 
     for (const [channelId, stats] of statsMap) {
       const accountId = channelIdToAccountId.get(channelId);
@@ -364,7 +444,7 @@ export async function fetchYouTubeSubscriberCounts(
     const handle = stripAt(acc.handle);
 
     // Step 2: channels.list?forHandle=
-    const forHandleResult = await fetchByForHandle(handle, apiKey);
+    const forHandleResult = await fetchByForHandle(handle, apiKey, health);
     if (forHandleResult) {
       const subscribers = extractSubscribers(forHandleResult.statistics);
       if (subscribers != null) {
@@ -384,11 +464,11 @@ export async function fetchYouTubeSubscriberCounts(
     }
 
     searchLookupsUsed++;
-    const resolvedChannelId = await searchForChannelId(handle, apiKey);
+    const resolvedChannelId = await searchForChannelId(handle, apiKey, health);
     if (!resolvedChannelId) continue; // search found nothing
 
     // Re-fetch stats for the resolved channel ID
-    const statsMap = await fetchChannelStatsBatch([resolvedChannelId], apiKey);
+    const statsMap = await fetchChannelStatsBatch([resolvedChannelId], apiKey, health);
     const stats = statsMap.get(resolvedChannelId) ?? null;
     const subscribers = extractSubscribers(stats);
     if (subscribers != null) {

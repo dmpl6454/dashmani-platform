@@ -663,7 +663,15 @@ describe("syncAllFollowerCounts — Tier 3: public-API fallback", () => {
     expect(result.updated).toBe(0);
   });
 
-  it("does NOT write when YouTube resolver returns no result for an account", async () => {
+  it("keeps the stored count but RECORDS why, when YouTube answers and has no such channel", async () => {
+    // ⚠️ BEHAVIOUR CHANGED DELIBERATELY. This used to assert that nothing at all was
+    // written. Preserving the follower count is still the load-bearing guarantee and is
+    // asserted below — but writing NOTHING left the row with sync_source NULL and
+    // last_synced_at NULL, i.e. byte-identical to a channel nobody had ever collected, and
+    // the board rendered it as a grey "Manual" pill whose tooltip reads "never collected
+    // automatically, so this figure is whatever was entered by hand". That is false for a
+    // channel we ask about every single run. Two of the three rows the owner reported as
+    // broken were in exactly this state (terminated channels, live-verified).
     const account = makeAccount({
       id: "acc-yt-miss",
       handle: "@NoCountChannel",
@@ -673,13 +681,60 @@ describe("syncAllFollowerCounts — Tier 3: public-API fallback", () => {
     });
     mockFindMany.mockResolvedValue([account]);
 
-    // Resolver returns empty array (account absent = unresolvable)
+    // Resolver returns empty array (account absent = unresolvable) and leaves health clean,
+    // i.e. the API answered — it simply has no such channel.
     mockFetchYt.mockResolvedValue([]);
 
     const result = await syncAllFollowerCounts();
 
-    expect(mockAccountUpdate).not.toHaveBeenCalled();
     expect(result.updated).toBe(0);
+    expect(result.failed).toBeGreaterThanOrEqual(1);
+    // An explanation IS now recorded …
+    expect(mockAccountUpdate).toHaveBeenCalledTimes(1);
+    const written = mockAccountUpdate.mock.calls[0][0].data;
+    expect(written.metricsError).toContain("YouTube returned no channel");
+    expect(written.metricsFetchedAt).toBeInstanceOf(Date);
+    // … and the three fields that mean "we measured a real follower count" are untouched,
+    // so the previously stored 10,000 survives and is never replaced by a zero.
+    expect(written).not.toHaveProperty("followerCount");
+    expect(written).not.toHaveProperty("lastSyncedAt");
+    expect(written).not.toHaveProperty("syncSource");
+    // And no growth point is invented for a measurement that did not happen.
+    expect(mockSnapshotCreate).not.toHaveBeenCalled();
+    expect(mockSnapshotUpdate).not.toHaveBeenCalled();
+  });
+
+  it("writes NOTHING when the YouTube API refused us — absence proves nothing about any channel", async () => {
+    // ⚠️ RED-GREEN, and the reason YtRunHealth exists. channels.list returns HTTP 200 with
+    // `totalResults: 0` and no items for a terminated channel — and a quota refusal, a
+    // rejected key or a timeout makes every account absent from the results in exactly the
+    // same shape. Without this guard, the first day the 10,000-unit daily quota ran out we
+    // would have stamped "renamed, deleted or terminated" on EVERY channel on the board at
+    // once, turning a transient outage into a board-wide false accusation.
+    const account = makeAccount({
+      id: "acc-yt-quota",
+      handle: "@PerfectlyFineChannel",
+      profileUrl: "https://www.youtube.com/@PerfectlyFineChannel",
+      platformSlug: "youtube",
+      followerCount: 10000,
+    });
+    mockFindMany.mockResolvedValue([account]);
+
+    // The resolver reports that it never got an answer.
+    mockFetchYt.mockImplementation(async (_accounts: unknown, opts?: { health?: { apiUnavailable: boolean; reason: string | null } }) => {
+      if (opts?.health) {
+        opts.health.apiUnavailable = true;
+        opts.health.reason = "quotaExceeded";
+      }
+      return [];
+    });
+
+    const result = await syncAllFollowerCounts();
+
+    expect(mockAccountUpdate).not.toHaveBeenCalled();
+    expect(mockSnapshotCreate).not.toHaveBeenCalled();
+    expect(result.updated).toBe(0);
+    // Still counted as a miss — we just refuse to say WHY on the channel's record.
     expect(result.failed).toBeGreaterThanOrEqual(1);
   });
 

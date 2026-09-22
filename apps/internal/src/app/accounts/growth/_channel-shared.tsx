@@ -116,7 +116,11 @@ export function SyncBadge({
     STALE: {
       dot: "bg-[#C2861D]", cls: "text-[#C2861D] border-[#F3D9A4]",
       label: ago ? `Stale · ${ago}` : "Stale",
-      title: "Stale — the last successful collection was more than two days ago, so this figure may have moved since.",
+      title:
+        "Stale — we last MEASURED this figure more than two days ago, so it may have moved since. " +
+        "That usually means the platform has stopped publishing it: we keep the last number we " +
+        "actually measured rather than replacing it with a guess or a zero, and we keep checking. " +
+        "Live-verified on Snapchat: a profile can simply begin withholding a count it used to publish.",
     },
     MANUAL: {
       dot: "bg-[#7A7A7A]", cls: "text-[#7A7A7A] border-[#DCDCDC]",
@@ -267,6 +271,76 @@ export function ChannelLink({ url, name }: { url: string | null | undefined; nam
   );
 }
 
+/**
+ * A tile's movement across the selected period.
+ *
+ * ⚠️ `channels` is not decoration. The sum covers only channels whose own delta spans
+ * ~the whole window, so without the count a partial estate reads as the whole one — the
+ * mistake that understated Meta's real follower growth by 45% before it was guarded.
+ */
+export interface TileChange {
+  value: number | null | undefined;
+  channels: number | undefined;
+  /** Channels whose real movement was below the platform's rounding step (YouTube). */
+  suppressed?: number;
+  /** Channels whose change exceeded their own baseline — a jump between channels, not growth. */
+  excluded?: number;
+  /**
+   * The error bar on `value`. When |value| is smaller than this, the movement is smaller
+   * than the platform's rounding can resolve across these channels and NO number is shown.
+   */
+  uncertainty?: number;
+  /** What to say instead when the value is inside the error bar. */
+  unresolvedNote?: string;
+  /** Plain-English explanation of exactly what the sum covers. */
+  title: string;
+}
+
+/**
+ * The change line under a totals tile.
+ *
+ * ⚠️ Renders NOTHING when no channel qualified. A "+0" here would assert that the estate
+ * did not move, which is the opposite of "we could not measure it yet" — the fabricated-
+ * zero class this repo has fixed three times (Snapchat likes, Meta reach, revenue today).
+ */
+export function ChangeLine({ change, days }: { change: TileChange | null | undefined; days: number }) {
+  if (!change) return null;
+  const { value, channels, suppressed, excluded, uncertainty } = change;
+  if (value === null || value === undefined || !Number.isFinite(value) || !channels) return null;
+
+  // ⚠️ THE ERROR-BAR GATE. Printing a figure smaller than the rounding noise it sits in
+  // would be a confident number standing in front of a much larger unknown — measured on
+  // the live YouTube board the signal is 5–124× smaller than its own envelope. Say what
+  // the limit is instead; it un-suppresses on its own once real movement clears the noise.
+  if (uncertainty != null && uncertainty > 0 && Math.abs(value) < uncertainty) {
+    return (
+      <p
+        className="mt-1 text-[10px] leading-tight text-[#B0B0B0]"
+        title={
+          `Across the ${channels + (suppressed ?? 0)} channel(s) measured over this period the platform ` +
+          `publishes rounded figures, and those roundings add up to ±${fmtMetric(uncertainty)} — larger than the ` +
+          `${fmtDelta(value)} we can see. Showing that number would state something we cannot actually resolve. ` +
+          `It will appear on its own once real movement is bigger than the rounding.`
+        }
+      >
+        {change.unresolvedNote ?? `movement is smaller than the ±${fmtMetric(uncertainty)} the rounding can resolve`}
+      </p>
+    );
+  }
+
+  const tone = value > 0 ? "text-[#3E9B4F]" : value < 0 ? "text-[#C0504D]" : "text-[#8A8A8A]";
+  return (
+    <p className="mt-1 text-[10px] leading-tight text-[#B0B0B0]" title={change.title}>
+      <span className={`font-medium ${tone}`}>{fmtDelta(value)}</span>{" "}
+      <span>
+        over {days}d · {channels} channel{channels === 1 ? "" : "s"}
+        {suppressed ? ` · ${suppressed} below the rounding step` : ""}
+        {excluded ? ` · ${excluded} excluded as unreliable` : ""}
+      </span>
+    </p>
+  );
+}
+
 /** An extra totals tile whose meaning is platform-specific. */
 export interface ExtraTotal {
   label: string;
@@ -275,6 +349,8 @@ export interface ExtraTotal {
   raw?: boolean;
   note?: string | null;
   title?: string;
+  /** Optional period movement for this tile. Omit where the tile is not a flow. */
+  change?: TileChange | null;
 }
 
 interface ShellChildContext {
@@ -403,7 +479,14 @@ export function ChannelBoardShell({
         // exactly what had to be fixed on the Meta board.
         <div className="px-5 py-5 grid grid-cols-1 sm:grid-cols-3 gap-x-4 gap-y-5 border-b border-[#F0EAE0]">
           {[
-            { label: "Channels", value: t.channels, raw: true, note: null as string | null, title: undefined as string | undefined },
+            {
+              label: "Channels",
+              value: t.channels, raw: true,
+              note: null as string | null,
+              title: undefined as string | undefined,
+              // A count of tracked channels has no period movement by definition.
+              change: null as TileChange | null,
+            },
             {
               // ⚠️ "(now)" is load-bearing. Followers is a STOCK — how many right now —
               // so the headline is window-invariant BY DEFINITION and reads the same on
@@ -415,8 +498,27 @@ export function ChannelBoardShell({
               note: t.followersWithheld > 0
                 ? `${t.followersReported} of ${t.channels} published a count · ${t.followersWithheld} withheld`
                 : `${t.followersReported} of ${t.channels} published a count`,
+              change: {
+                value: t.followerDelta,
+                channels: t.followerDeltaChannels,
+                suppressed: t.followerDeltaSuppressed,
+                excluded: t.followerDeltaExcluded,
+                uncertainty: t.followerDeltaUncertainty,
+                title:
+                  `Movement across the selected period, summed over the ${t.followerDeltaChannels ?? 0} channel(s) whose own ` +
+                  `stored history spans it. Channels we have not tracked that long are left out rather than counted as flat.` +
+                  (t.followerDeltaSuppressed
+                    ? ` A further ${t.followerDeltaSuppressed} had a full-period measurement but moved less than the rounding step ` +
+                      `the platform publishes them at, so their real movement is invisible to us and is not counted as zero — ` +
+                      `the true estate change is this figure plus an unknown amount from those.`
+                    : ""),
+              } as TileChange,
             },
-            { label: extra.label, value: extra.value, raw: extra.raw ?? false, note: extra.note ?? null, title: extra.title },
+            {
+              label: extra.label, value: extra.value, raw: extra.raw ?? false,
+              note: extra.note ?? null, title: extra.title,
+              change: extra.change ?? null,
+            },
           ].map((s, i) => (
             <div
               key={s.label}
@@ -438,6 +540,7 @@ export function ChannelBoardShell({
                 {s.label}
               </p>
               {s.note && <p className="mt-0.5 text-[10px] leading-tight text-[#B0B0B0]">{s.note}</p>}
+              <ChangeLine change={s.change} days={days} />
             </div>
           ))}
         </div>

@@ -87,6 +87,25 @@ export interface ChannelBoard {
     totalViews: number | null;
     /** Channels with a delta spanning the whole window — the like-for-like denominator. */
     withHistory: number;
+    /**
+     * Period movement of the two summable tiles, summed ONLY over channels whose own
+     * delta spans ~the whole window, with the contributing count beside it. null (never
+     * 0) when no channel qualifies. ⚠️ All optional: an older cached API response has
+     * none of these, and every reader must degrade to "no change line" rather than
+     * rendering a confident 0.
+     */
+    followerDelta?: number | null;
+    followerDeltaChannels?: number;
+    /** Channels excluded because their movement was below the platform's rounding step. */
+    followerDeltaSuppressed?: number;
+    /** Channels whose in-window change exceeded their own baseline — a series that jumped
+     *  between two different channels, not growth. Disclosed, never silently dropped. */
+    followerDeltaExcluded?: number;
+    /** ⚠️ The error bar on followerDelta: summed rounding steps of the full-span channels.
+     *  The tile must not print a value smaller than this — see the service's note. */
+    followerDeltaUncertainty?: number;
+    viewsDelta?: number | null;
+    viewsDeltaChannels?: number;
   };
   /** Earliest snapshot we hold for this platform, so the UI can say "collecting since". */
   historyFrom: string | null;

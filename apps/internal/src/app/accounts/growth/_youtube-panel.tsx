@@ -92,6 +92,18 @@ export function YouTubePanel() {
         value: b.totals.totalViews,
         note: "exact — YouTube's view counter is not rounded",
         title: "The summed all-time view count of every channel on this board. Not a period figure: it is a lifetime counter, so it only ever goes up.",
+        // ⚠️ THE TRUSTWORTHY GROWTH FIGURE ON THIS BOARD. Subscribers are rounded to three
+        // significant figures, so their summed change hides every movement below a
+        // channel's step; the lifetime view counter is an exact integer, so this total
+        // conceals nothing and needs no suppression count beside it.
+        change: {
+          value: b.totals.viewsDelta,
+          channels: b.totals.viewsDeltaChannels,
+          title:
+            "How many views these channels gained across the selected period, summed over the " +
+            `${b.totals.viewsDeltaChannels ?? 0} channel(s) whose stored view history spans it. This counter is exact, ` +
+            "so unlike the subscriber change it hides nothing — it is the figure to read growth from.",
+        },
       })}
       columnNote={
         <>
@@ -211,9 +223,13 @@ function YouTubeTable({ rows, sort, onSort, manageMode, onRemove, busy }: {
                 value={c.followerDelta}
                 days={c.followerDeltaDays}
                 absentTitle={
-                  c.followersPrecision != null && c.followersPrecision > 1
-                    ? `No subscriber change to show: YouTube rounds this channel to the nearest ${c.followersPrecision.toLocaleString()}, so anything smaller is invisible to us. Read Views change instead — that counter is exact.`
-                    : "No subscriber change to show for this period — there is not enough stored history yet. This is not a zero."
+                  // ⚠️ `followerDeltaDays` is stamped even when the change is suppressed, so
+                  // its presence proves we DID measure across the period and the movement
+                  // was simply finer than the rounding — a different thing from having no
+                  // history at all, which used to be reported for both.
+                  c.followerDeltaDays != null && c.followersPrecision != null && c.followersPrecision > 1
+                    ? `No subscriber change to show: YouTube rounds this channel to the nearest ${c.followersPrecision.toLocaleString()}, and it moved less than that across the period. Read Views change instead — that counter is exact.`
+                    : "No subscriber change to show for this period — we have not been collecting this channel long enough yet. This is not a zero."
                 }
               />
             </td>
@@ -225,7 +241,7 @@ function YouTubeTable({ rows, sort, onSort, manageMode, onRemove, busy }: {
               <DeltaLine
                 value={c.viewsDelta}
                 days={c.viewsDeltaDays}
-                absentTitle="No view change to show for this period — there is not enough stored history yet. This is not a zero."
+                absentTitle="No view change to show for this period — we hold fewer than two days of view-count history for this channel. It is not a zero, and it fills in on its own as history accumulates."
               />
             </td>
             <td className="px-2 py-2 text-right text-xs text-[#7A7A7A]">{fmtExact(c.videoCount)}</td>

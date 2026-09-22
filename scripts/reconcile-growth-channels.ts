@@ -35,6 +35,7 @@
 import { prisma } from "@dashmani/db";
 import { resolveYouTubeChannel } from "../apps/api/src/services/social-insights/youtube-followers";
 import { scrapeSnapchatProfile, snapchatProfileUrl } from "../apps/api/src/services/social-insights/snapchat-profile";
+import { istMidnight, todayIST } from "@dashmani/shared";
 
 const APPLY = process.argv.includes("--apply");
 const CONFIRM_PROD = process.argv.includes("--confirm-prod");
@@ -106,6 +107,43 @@ async function platformId(slug: string): Promise<string> {
   return p.id;
 }
 
+/**
+ * Anchor a channel's growth history at the value this run measured.
+ *
+ * ⚠️ WHY THIS EXISTS. This script wrote follower_count + last_synced_at straight onto the
+ * row and never created a snapshot, so a channel it added or refreshed stored a fresh
+ * count that NEVER entered account_growth_snapshots. Measured on prod after the last run,
+ * 28 of 35 Snapchat rows had a current follower count and zero snapshots — their Change
+ * column had nothing to compute from and the board read as broken rather than new.
+ *
+ * ⚠️ IST midnight, matching persistFollowerCount, so the (accountId, date) key is
+ * idempotent whichever writer gets there first.
+ */
+async function anchorSnapshot(
+  accountId: string,
+  followers: number | null | undefined,
+  source: string,
+  totalViews?: number | null,
+) {
+  if (followers == null || followers <= 0) return;
+  const day = istMidnight(todayIST());
+  try {
+    await prisma.accountGrowthSnapshot.upsert({
+      where: { accountId_date: { accountId, date: day } },
+      create: {
+        accountId, date: day, followerCount: followers, source,
+        ...(totalViews != null ? { totalViews: BigInt(totalViews) } : {}),
+      },
+      update: {
+        followerCount: followers,
+        ...(totalViews != null ? { totalViews: BigInt(totalViews) } : {}),
+      },
+    });
+  } catch (e) {
+    console.warn(`    ! could not anchor history for ${accountId}:`, e);
+  }
+}
+
 async function doYouTube() {
   console.log("\n=== YOUTUBE ===");
   const pid = await platformId("youtube");
@@ -157,7 +195,10 @@ async function doYouTube() {
         : `refreshed (${resolved.subscribers?.toLocaleString() ?? "—"} subs, ${resolved.totalViews?.toLocaleString() ?? "—"} views)`;
       actions.push({ kind: "update", platform: "youtube", handle: hit.handle, detail });
       console.log(`  ↻ ${hit.handle.padEnd(26)} ${detail}`);
-      if (APPLY) await prisma.socialAccount.update({ where: { id: hit.id }, data });
+      if (APPLY) {
+        await prisma.socialAccount.update({ where: { id: hit.id }, data });
+        await anchorSnapshot(hit.id, resolved.subscribers, "api", resolved.totalViews);
+      }
     } else {
       const handle = handleFromUrl;
       actions.push({
@@ -168,7 +209,10 @@ async function doYouTube() {
       });
       console.log(`  + ${handle.padEnd(26)} ${resolved.title} (${resolved.subscribers?.toLocaleString() ?? "—"})`);
       if (APPLY) {
-        await prisma.socialAccount.create({ data: { ...data, handle, platformId: pid, status: "ACTIVE" } });
+        const made = await prisma.socialAccount.create({
+          data: { ...data, handle, platformId: pid, status: "ACTIVE" },
+        });
+        await anchorSnapshot(made.id, resolved.subscribers, "api", resolved.totalViews);
       }
     }
   }
@@ -237,7 +281,10 @@ async function doSnapchat() {
       const detail = bits.join("; ");
       actions.push({ kind: "update", platform: "snapchat", handle, detail });
       console.log(`  ↻ ${handle.padEnd(22)} ${detail}`);
-      if (APPLY) await prisma.socialAccount.update({ where: { id: hit.id }, data: { ...data, handle } });
+      if (APPLY) {
+        await prisma.socialAccount.update({ where: { id: hit.id }, data: { ...data, handle } });
+        await anchorSnapshot(hit.id, profile.followers, "scraper");
+      }
     } else {
       const detail = `${profile.displayName} — ${
         profile.followers != null ? `${profile.followers.toLocaleString()} followers` : "followers withheld"
@@ -245,7 +292,10 @@ async function doSnapchat() {
       actions.push({ kind: "create", platform: "snapchat", handle, detail });
       console.log(`  + ${handle.padEnd(22)} ${detail}`);
       if (APPLY) {
-        await prisma.socialAccount.create({ data: { ...data, handle, platformId: pid, status: "ACTIVE" } });
+        const made = await prisma.socialAccount.create({
+          data: { ...data, handle, platformId: pid, status: "ACTIVE" },
+        });
+        await anchorSnapshot(made.id, profile.followers, "scraper");
       }
     }
   }

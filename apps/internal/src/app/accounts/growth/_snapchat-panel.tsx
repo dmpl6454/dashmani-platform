@@ -195,9 +195,16 @@ function SnapchatTable({ rows, sort, onSort, manageMode, onRemove, busy }: {
             <td className="px-2 py-2 text-right text-xs">
               {c.followerDelta === null || c.followerDelta === undefined ? (
                 <span
+                  // ⚠️ THREE DIFFERENT ABSENCES, told apart from the data rather than
+                  // guessed at: no count published at all; a full-period measurement whose
+                  // movement was smaller than Snapchat's grid; or no stored history yet.
+                  // `followerDeltaDays` is stamped even when the delta is suppressed, so
+                  // its presence is what separates the middle case from the last one.
                   title={c.followers === null
                     ? "No change to show: Snapchat publishes no follower count for this profile, so there is nothing to measure movement in."
-                    : "No change to show for this period — there is not enough stored history yet. This is not a zero."}
+                    : c.followerDeltaDays != null
+                      ? "No change to show: Snapchat publishes follower counts rounded to the nearest 100, and this profile moved less than that across the period. It is not a zero — we simply cannot see movement finer than Snapchat's own rounding."
+                      : "No change to show for this period — we have not been collecting this profile long enough yet. This is not a zero."}
                   className="text-[#B0B0B0]"
                 >
                   —

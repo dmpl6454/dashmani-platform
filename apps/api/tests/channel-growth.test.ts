@@ -360,6 +360,9 @@ describe("totals movement — the sum must not inherit a corrupted series", () =
     expect(board.totals.followerDelta).toBe(10_000);
     expect(board.totals.followerDeltaChannels).toBe(1);
     expect(board.totals.followerDeltaExcluded).toBe(1);
+    // …and the ROW marks itself, so the number it still shows cannot be read as growth.
+    expect(board.rows.find((r) => r.handle === "ytjumpy")!.followerDeltaUnreliable).toBe(true);
+    expect(board.rows.find((r) => r.handle === "ytsteady")!.followerDeltaUnreliable).toBe(false);
   });
 
   it("reports the uncertainty envelope so the tile can refuse to state an unresolvable figure", async () => {

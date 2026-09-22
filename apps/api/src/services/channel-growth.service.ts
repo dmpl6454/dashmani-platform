@@ -75,6 +75,13 @@ export interface ChannelRow {
   followerDelta: number | null;
   /** The span the delta actually covers — often shorter than the window asked for. */
   followerDeltaDays: number | null;
+  /**
+   * ⚠️ This row's own change is NOT TRUSTWORTHY: it exceeds the value it was measured from,
+   * which is not growth — it is the stored series jumping between two different channels.
+   * The number is still shown, because hiding it would hide the evidence that the row's
+   * identity is wrong, but it must be visibly marked rather than read as a result.
+   */
+  followerDeltaUnreliable: boolean;
   syncSource: string | null;
   /** When a real FOLLOWER COUNT was last measured. Null for a channel that withholds it. */
   lastSyncedAt: string | null;
@@ -111,7 +118,16 @@ export interface ChannelBoard {
     /** Channels whose follower count the platform withholds. */
     followersWithheld: number;
     totalViews: number | null;
-    /** Channels with a delta spanning the whole window — the like-for-like denominator. */
+    /**
+     * Channels for which EITHER metric produced a change — the board-level "we are still
+     * collecting" note is gated on this being 0.
+     *
+     * ⚠️ NOT a like-for-like denominator, and it deliberately does not check the span.
+     * Counting only the follower delta made the board print "no channel has N days of
+     * history yet" while every Views-change cell held a real number (fixed in 954c253), so
+     * do not narrow it back. The TOTALS above are the span-guarded figures; this is only
+     * "is there anything at all to show yet".
+     */
     withHistory: number;
     /**
      * ── PERIOD MOVEMENT OF THE TWO SUMMABLE TILES ────────────────────────────────────
@@ -371,6 +387,11 @@ async function buildBoard(platform: ChannelPlatform, days: number): Promise<Chan
     // is actually YouTube's rounding, and contradicting the note directly beneath it.
     if (followerDelta != null || viewsDelta != null) withHistory++;
 
+    // A change larger than the value it was measured from cannot be growth. Computed once
+    // here so the ROW can mark itself and the TOTAL can exclude it from the same test.
+    const deltaExceedsBaseline =
+      followerDelta != null && baseline != null && baseline > 0 && Math.abs(followerDelta) > baseline;
+
     // ── Totals movement — same-span, same-kind measurements only ────────────────────
     const fullSpan = followerDeltaDays != null && followerDeltaDays >= fullSpanMin;
     if (fullSpan) {
@@ -378,18 +399,30 @@ async function buildBoard(platform: ChannelPlatform, days: number): Promise<Chan
       // rounded reading is within ±step/2, so a difference of two carries up to ±step.
       sumFollowerStep += step;
       if (followerDelta != null) {
-        // ⚠️ ARTIFACT GUARD. A change LARGER THAN ITS OWN BASELINE is not growth, it is the
-        // series jumping between two different channels — which happens when a row has no
-        // channel id pinned and falls through to search.list, a fuzzy NAME search whose
-        // items[0] is not stable. Measured on prod: `Total filmi ` alternates between four
-        // differently-sized channels sharing a name (1,040,000 / 356,000 / 46,300 / 10,900)
-        // and contributed +684,000 of a +685,500 7-day total — 99.8% of the headline from
-        // one corrupted row, and it PASSES the full-span filter, so that filter is
+        // ⚠️ ARTIFACT GUARD. A change LARGER THAN ITS OWN BASELINE is not growth — it is the
+        // stored series having been written from two different channels. Measured on prod:
+        // `Total filmi ` holds four distinct values across 90 days (1,040,000 / 356,000 /
+        // 46,300 / 10,900, a 95x range, where every other channel on both boards varies by
+        // <=1.1x) and contributed +684,000 of a +687,600 fourteen-day total — 99.5% of the
+        // headline from one row. It PASSES the full-span filter, so that filter is
         // necessary but not sufficient.
+        //
+        // ⚠️ ON THE CAUSE, stated only as far as the evidence goes: that row has no exact
+        // identity path (its handle is a display name, and forHandle on it returns 0 items
+        // — verified live), so it resolves through a RANKED NAME match, and the stored
+        // series proves that ranking has returned at least four different channels over
+        // time. It is NOT whitespace-sensitive and it is NOT unstable today: probed live,
+        // "Total filmi " and "Total filmi" return an identical top-3 led by the correct
+        // channel. So the exposure is the missing exact path, not a reproducible flapping
+        // search — which is why the fix is to pin identity, not to distrust the search.
+        //
+        // ⚠️ The 100%-of-baseline bound is a HEURISTIC, not a measurement: it would also
+        // drop a genuinely doubling channel from the sum. That is why the row keeps its own
+        // number and the exclusion is counted and disclosed rather than silent.
         //
         // ⚠️ The row keeps showing its own change; only the SUM excludes it, and the count
         // is disclosed. Hiding the row would hide the evidence of the underlying problem.
-        if (baseline != null && baseline > 0 && Math.abs(followerDelta) > baseline) {
+        if (deltaExceedsBaseline) {
           followerDeltaExcluded++;
         } else {
           sumFollowerDelta += followerDelta;
@@ -422,6 +455,7 @@ async function buildBoard(platform: ChannelPlatform, days: number): Promise<Chan
       followersPrecision: a.followersPrecision,
       followerDelta,
       followerDeltaDays,
+      followerDeltaUnreliable: deltaExceedsBaseline,
       syncSource: a.syncSource,
       lastSyncedAt: iso(a.lastSyncedAt),
       metricsFetchedAt: iso(a.metricsFetchedAt),

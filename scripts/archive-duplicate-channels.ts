@@ -30,12 +30,23 @@
  *
  * ── AND THE REASON THEY EXISTED AT ALL ────────────────────────────────────────────────
  *
- * A row whose stored URL carries no channel id cannot be resolved by id, so the sync falls
- * through to `search.list` — a fuzzy NAME search whose items[0] is NOT stable. Measured:
- * `Total filmi ` alternated day to day between four differently-sized channels sharing that
- * name (1,040,000 / 356,000 / 46,300 / 10,900), poisoning its own history. This script
- * therefore also PINS each survivor to `/channel/<id>`, which is what the sync now does on
- * every successful resolution.
+ * A row whose stored URL carries no channel id, and whose handle is a display name rather
+ * than a real @handle, has NO exact resolution path — so its identity rests on a ranked
+ * name search. `Total filmi ` holds four distinct values across 90 days (1,040,000 /
+ * 356,000 / 46,300 / 10,900), i.e. its history has been written from more than one channel.
+ *
+ * ⚠️ Stated precisely, because the obvious explanation is wrong: that search is not
+ * whitespace-sensitive and is not flapping today — probed live, both spellings return an
+ * identical top-3 led by the correct channel. The defect is the missing exact path. This
+ * script therefore PINS each survivor to `/channel/<id>`, which is what the sync now does
+ * on every successful resolution, and the resolver now also mines an @handle out of the
+ * stored URL before it will pay for a name search at all.
+ *
+ * ⚠️ NOT DONE HERE, and it needs its own decision: the survivor `Total filmi ` KEEPS its
+ * mixed history, so its own Change cell will read oddly until those rows age out of the
+ * 90-day window. The board now marks that cell as unreliable and excludes it from the
+ * totals rather than hiding it. Deleting the provably-foreign snapshots (CLAUDE.md's
+ * 2026-08-24 precedent: back up to CSV first) would clear it sooner.
  *
  * Usage (from packages/db so the Prisma client loads its .env):
  *   npx tsx ../../scripts/archive-duplicate-channels.ts                     # dry run

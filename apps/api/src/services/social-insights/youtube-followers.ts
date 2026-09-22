@@ -6,6 +6,10 @@
 //      Empty items = deleted/terminated channel → skip (no value).
 //   2. Handle present, no channel ID → channels.list?forHandle= (1 unit).
 //      NOTE: forHandle OFTEN returns empty for real channels → fall through to 3.
+//   2b. Handle mined from the stored profile URL (youtube.com/@name) when it differs from
+//      the stored handle → channels.list?forHandle= (1 unit). A row can carry a DISPLAY
+//      NAME in `handle` while its URL carries the real handle; without this it has no exact
+//      path at all and its identity rests on the ranked name search in step 3.
 //   3. Last resort: search.list?type=channel&q= (100 units — expensive!) →
 //      take items[0].snippet.channelId → channels.list?id= (1 unit).
 //      Capped via opts.maxSearchLookups (default 25) to protect the daily
@@ -114,6 +118,31 @@ function channelIdFromUrl(profileUrl: string): string | null {
   return match ? match[1] : null;
 }
 
+/**
+ * Extract an @handle from a stored profile URL.
+ *
+ * ⚠️ WHY THIS MATTERS MORE THAN IT LOOKS. The cascade previously mined `profile_url` only
+ * for `/channel/UC…`, so a row whose URL is `youtube.com/@totalfilmi?si=…` while its stored
+ * HANDLE is the display name "Total filmi " had NO exact path at all — verified live,
+ * forHandle on that handle returns 0 items — and fell through to the ranked name search.
+ * That row's stored history holds four distinct values across 90 days (1,040,000 / 356,000
+ * / 46,300 / 10,900), i.e. it has been written from more than one channel.
+ *
+ * ⚠️ Stated precisely, because the obvious explanation is wrong: the search is NOT
+ * whitespace-sensitive and is NOT flapping today — probed live, "Total filmi " and
+ * "Total filmi" return an identical top-3 led by the correct channel. The defect is the
+ * absence of an exact path, which leaves the row's identity at the mercy of a ranking that
+ * has demonstrably changed over time. This step restores that exact path.
+ *
+ * It also costs 99 fewer quota units than the search it replaces (forHandle is 1 unit,
+ * search.list is 100). Verified live: forHandle=totalfilmi returns UC_qXlnj3LcTg_qScXJcEL2w
+ * with 1,040,000 subscribers.
+ */
+function handleFromUrl(profileUrl: string): string | null {
+  const match = profileUrl.match(/youtube\.com\/@([^/?#&]+)/i);
+  return match ? match[1] : null;
+}
+
 /** Strips a leading @ from a handle string. */
 function stripAt(handle: string): string {
   return handle.replace(/^@/, "");
@@ -210,6 +239,10 @@ async function fetchChannelStatsBatch(
   try {
     data = (await res.json()) as YtChannelsResponse;
   } catch {
+    // ⚠️ A body we could not parse tells us NOTHING about these channels. Without this the
+    // batch resolves every id to null, which downstream is indistinguishable from "all of
+    // these channels are gone".
+    markUnavailable(health, "unparseable response body");
     for (const id of ids) result.set(id, null);
     return result;
   }
@@ -258,6 +291,7 @@ async function fetchByForHandle(
   try {
     data = (await res.json()) as YtChannelsResponse;
   } catch {
+    markUnavailable(health, "unparseable response body");
     return null;
   }
 
@@ -289,6 +323,7 @@ async function searchForChannelId(query: string, apiKey: string, health?: YtRunH
   try {
     data = (await res.json()) as YtSearchResponse;
   } catch {
+    markUnavailable(health, "unparseable response body");
     return null;
   }
 
@@ -455,6 +490,30 @@ export async function fetchYouTubeSubscriberCounts(
         });
       }
       continue; // resolved (or hidden — absent)
+    }
+
+    // Step 2b: the @handle written in the stored profile URL.
+    //
+    // ⚠️ THIS IS THE STEP WHOSE ABSENCE CORRUPTED A CHANNEL'S HISTORY. A row can carry a
+    // DISPLAY NAME in `handle` ("Total filmi ", trailing space) while its URL carries the
+    // real one (youtube.com/@totalfilmi). Step 2 fails on the display name, and without
+    // this the row fell straight through to the fuzzy name search, which bound it to a
+    // different same-named channel on different days. Exact, and 1 unit against that
+    // search's 100.
+    const urlHandle = handleFromUrl(acc.profileUrl || "");
+    if (urlHandle && urlHandle.toLowerCase() !== handle.toLowerCase()) {
+      const byUrlHandle = await fetchByForHandle(urlHandle, apiKey, health);
+      if (byUrlHandle) {
+        const subscribers = extractSubscribers(byUrlHandle.statistics);
+        if (subscribers != null) {
+          results.push({
+            accountId: acc.id,
+            subscribers,
+            ...extractExtras(byUrlHandle.statistics, subscribers, byUrlHandle.channelId),
+          });
+        }
+        continue;
+      }
     }
 
     // Step 3: search.list (expensive — respect the cap)

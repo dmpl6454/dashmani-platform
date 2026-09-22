@@ -44,9 +44,21 @@ function pickPeriod(raw: unknown): ChannelPeriod {
   return (CHANNEL_PERIODS as readonly number[]).includes(n) ? (n as ChannelPeriod) : DEFAULT_CHANNEL_PERIOD;
 }
 
-/** Normalise whatever was pasted into a storable handle. */
+/**
+ * Normalise whatever was pasted into a lookup key.
+ *
+ * ⚠️ A URL MUST be reduced to its handle. The owner's own channel list is written as full
+ * URLs, so pasting one is the expected case — and storing the URL verbatim as the handle
+ * defeats the duplicate check (`https://www.youtube.com/@Inde-News` != `Inde-News`), so a
+ * channel already on the board gets a SECOND row, the totals add its followers twice, and
+ * the name column renders "@https://www.youtube.com/@Inde-News".
+ */
 function cleanHandle(raw: string): string {
-  return raw.trim().replace(/^@/, "").split(/[?#]/)[0].trim();
+  const t = raw.trim();
+  const fromUrl =
+    t.match(/^https?:\/\/[^\s]*\/@([^/?#\s]+)/)?.[1] ??            // /@handle
+    t.match(/^https?:\/\/[^\s]*\/(?:channel|add|p)\/([^/?#\s]+)/)?.[1]; // /channel/UC… /add/ /p/
+  return (fromUrl ?? t).replace(/^@/, "").split(/[?#]/)[0].trim();
 }
 
 /** GET /admin/channels?platform=youtube|snapchat&days=30 */
@@ -124,6 +136,11 @@ router.post(
     // ── resolve BEFORE touching the database; hold no connection across the network ──
     let displayName: string;
     let profileUrl: string;
+    /** What the PLATFORM calls this channel — stored in preference to what was typed. */
+    let resolvedHandle: string = handle;
+    /** A second identity to re-check for duplicates once resolved (YouTube's UC… id). */
+    let resolvedKey: string | null = null;
+    let scMetrics: { recentViews: bigint | null; recentViewsCovered: number; recentPostsSeen: number } | null = null;
     let followers: number | null = null;
     let precision: number | null = null;
     let totalViews: number | null = null;
@@ -142,6 +159,10 @@ router.post(
         }
         displayName = yt.title;
         profileUrl = `https://www.youtube.com/channel/${yt.channelId}`;
+        // ⚠️ Adopt the identity YouTube reported. What was typed may be a URL, a UC… id or
+        // a stale handle; storing the resolved one is what makes the row match next time.
+        resolvedHandle = yt.handle ?? yt.channelId;
+        resolvedKey = yt.channelId;
         followers = yt.subscribers;
         precision = yt.subscriberPrecision;
         totalViews = yt.totalViews;
@@ -162,13 +183,50 @@ router.post(
         displayName = sc.displayName ?? handle;
         profileUrl = snapchatProfileUrl(handle).replace("?locale=en-US", "");
         followers = sc.followers;
+        // Snapchat lowercases on redirect; adopt what the profile actually calls itself.
+        resolvedHandle = sc.username ?? handle;
+        // ⚠️ Also carry the scrape we just paid for — otherwise the new row shows dashes in
+        // every column and a grey "Manual" pill until the next sync up to 3 hours later,
+        // which for the ~20% of profiles that withhold their follower count looks exactly
+        // like a dead hand-typed row.
+        scMetrics = {
+          recentViews: sc.recentViews == null ? null : BigInt(sc.recentViews),
+          recentViewsCovered: sc.viewsCovered,
+          recentPostsSeen: sc.postsSeen,
+        };
       }
     } finally {
       resolving.delete(key);
     }
 
+    // ⚠️ Re-check AFTER resolving. The first check used what was typed; two different
+    // spellings of the same channel (a URL and a handle, or an old and a current handle)
+    // only collide once the platform has told us who it really is.
+    if (!existing && (resolvedHandle.toLowerCase() !== handle.toLowerCase() || resolvedKey)) {
+      const dupe = await prisma.socialAccount.findFirst({
+        where: {
+          platformId: plat.id,
+          status: { not: "ARCHIVED" },
+          OR: [
+            { handle: { equals: resolvedHandle, mode: "insensitive" } },
+            ...(resolvedKey ? [{ profileUrl: { contains: resolvedKey } }] : []),
+          ],
+        },
+        select: { handle: true, displayName: true },
+      });
+      if (dupe) {
+        return res.status(409).json({
+          success: false,
+          error: {
+            code: "ALREADY_TRACKED",
+            message: `That is ${dupe.displayName}, already on this board as @${dupe.handle}.`,
+          },
+        });
+      }
+    }
+
     const data = {
-      handle,
+      handle: resolvedHandle,
       displayName,
       profileUrl,
       platformId: plat.id,
@@ -180,7 +238,10 @@ router.post(
       followersPrecision: precision,
       ...(totalViews != null ? { totalViews: BigInt(totalViews) } : {}),
       ...(videoCount != null ? { videoCount } : {}),
+      ...(scMetrics ?? {}),
       metricsError: null,
+      // We just fetched this successfully — stamp it, or the row reads as hand-entered.
+      metricsFetchedAt: new Date(),
     };
 
     const account = existing
@@ -256,7 +317,16 @@ router.get(
       orderBy: { followerCount: "desc" },
       take: 200,
     });
-    return res.json({ success: true, data: { rows } });
+    return res.json({
+      success: true,
+      data: {
+        // ⚠️ 0 means "never measured" here, exactly as it does on the board — the sync only
+        // ever writes a count above zero. Sending it raw made the removed-channels list
+        // read "paparazzze — 0 followers" for a profile whose count Snapchat withholds, on
+        // a page that promises a dash never means zero.
+        rows: rows.map((r) => ({ ...r, followerCount: r.followerCount > 0 ? r.followerCount : null })),
+      },
+    });
   }),
 );
 

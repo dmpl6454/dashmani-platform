@@ -208,3 +208,84 @@ describe("GET /admin/channels — gate and validation", () => {
     expect(res.body.data.days).toBe(30);
   });
 });
+
+// ── Regressions found by adversarial review of the first cut ──────────────────
+
+describe("the quantisation guard must not FAIL OPEN", () => {
+  it("suppresses a flat rounded YouTube delta even when followersPrecision is NULL", async () => {
+    // ⚠️ THE BUG THIS LOCKS. `step = followersPrecision ?? 0` made `Math.abs(raw) < 0`
+    // impossible to satisfy, so a channel sitting on flat rounded snapshots rendered a
+    // confident "0". followersPrecision is NULL on EVERY existing row until a sync writes
+    // it — i.e. the state of the whole estate the moment this ships — and permanently for
+    // any channel whose resolution keeps failing (no API key, quota out, terminated).
+    const id = await channel("youtube", "nullprec", { followerCount: 10_500_000, followersPrecision: null });
+    await snapshot(id, 30, 10_500_000);
+    await snapshot(id, 1, 10_500_000);
+    const board = await getChannelBoard("youtube", 30);
+    const row = board.rows.find((r) => r.handle === "nullprec")!;
+    expect(row.followerDelta).toBeNull(); // NOT 0 — the channel may well have grown
+  });
+
+  it("still reports a real YouTube move that clears the derived step", async () => {
+    const id = await channel("youtube", "realmove", { followerCount: 10_600_000, followersPrecision: null });
+    await snapshot(id, 30, 10_500_000);
+    await snapshot(id, 1, 10_600_000);
+    const board = await getChannelBoard("youtube", 30);
+    expect(board.rows.find((r) => r.handle === "realmove")!.followerDelta).toBe(100_000);
+  });
+
+  it("does NOT derive a step for Snapchat — its counts are exact, not rounded", async () => {
+    const id = await channel("snapchat", "scexact", { followerCount: 152_500, followersPrecision: null });
+    await snapshot(id, 10, 152_400);
+    await snapshot(id, 1, 152_500);
+    const board = await getChannelBoard("snapchat", 30);
+    // A 100-follower move on a 152,500 account would be swallowed by a derived 1,000 step.
+    expect(board.rows.find((r) => r.handle === "scexact")!.followerDelta).toBe(100);
+  });
+});
+
+describe("a channel with an exact views delta HAS history", () => {
+  it("counts a views-only delta, so the board does not blame collection lag for rounding", async () => {
+    // Counting only follower deltas made the YouTube board print "no channel has N days of
+    // history yet, we are still collecting" while every Views change cell held a real
+    // number — contradicting the note directly beneath it.
+    const id = await channel("youtube", "viewsonly", { followerCount: 10_500_000, followersPrecision: 100_000 });
+    await snapshot(id, 20, 10_500_000, 1_000_000);
+    await snapshot(id, 1, 10_500_000, 1_400_000);
+    const board = await getChannelBoard("youtube", 30);
+    const row = board.rows.find((r) => r.handle === "viewsonly")!;
+    expect(row.followerDelta).toBeNull();
+    expect(row.viewsDelta).toBe(400_000);
+    expect(board.totals.withHistory).toBe(1);
+  });
+});
+
+describe("historyFrom is the true start of collection, not the window edge", () => {
+  it("names a date older than the selected period", async () => {
+    const id = await channel("youtube", "oldhistory", { followerCount: 1000 });
+    await snapshot(id, 60, 900);
+    await snapshot(id, 1, 1000);
+    const board = await getChannelBoard("youtube", 7); // a 7-day window …
+    const sixtyDaysAgo = dayAgo(60).toISOString().slice(0, 10);
+    // … must still report that we have been collecting since day 60.
+    expect(board.historyFrom).toBe(sixtyDaysAgo);
+  });
+});
+
+describe("removal actually removes, and never reports a fabricated zero", () => {
+  it("sends null, not 0, for a removed channel whose count was never measured", async () => {
+    await createTestRole("Admin", [
+      { resource: "reports", action: "manage", scope: "global" },
+      { resource: "reports", action: "view", scope: "global" },
+    ]);
+    const u = await createTestUser({ roleNames: ["Admin"], email: "rm-admin@zz.test" });
+    const token = generateToken(u.id, u.email, ["Admin"]);
+    await channel("snapchat", "withheld-removed", { followerCount: 0, status: "ARCHIVED" });
+    const res = await request(app)
+      .get("/v1/admin/channels/removed?platform=snapchat")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    const row = res.body.data.rows.find((r: { handle: string }) => r.handle === "withheld-removed");
+    expect(row.followerCount).toBeNull(); // NOT 0 — "0 followers" would be a claim
+  });
+});

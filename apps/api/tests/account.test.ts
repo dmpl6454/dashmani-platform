@@ -27,6 +27,53 @@ describe("Accounts API", () => {
     platformId = platform.id;
   });
 
+  describe("BigInt columns must serialise — the 2026-09-22 outage", () => {
+    // ⚠️ RED-GREEN. Without the `json replacer` in app.ts, Prisma's BigInt for `totalViews`
+    // makes res.json() throw `Do not know how to serialize a BigInt`, and GET /accounts
+    // 500s. That is exactly what took the accounts board down for a day after PR #164 —
+    // and it slipped through every test because no fixture ever set a non-null BigInt.
+    it("lists an account whose totalViews is a BigInt, as a plain number", async () => {
+      const acct = await prisma.socialAccount.create({
+        data: {
+          handle: "bigint_channel",
+          displayName: "BigInt Channel",
+          platformId,
+          totalViews: 5_000_000_000n,   // > 2^31, < 2^53 — a real YouTube lifetime count
+          recentViews: 12_345n,
+        },
+      });
+
+      const list = await request(app)
+        .get("/v1/accounts?limit=50")
+        .set("Authorization", `Bearer ${adminToken}`);
+      expect(list.status).toBe(200);
+      const row = list.body.data.find((a: { id: string }) => a.id === acct.id);
+      expect(row).toBeDefined();
+      expect(row.totalViews).toBe(5_000_000_000);
+      expect(typeof row.totalViews).toBe("number");
+      expect(row.recentViews).toBe(12_345);
+
+      const one = await request(app)
+        .get(`/v1/accounts/${acct.id}`)
+        .set("Authorization", `Bearer ${adminToken}`);
+      expect(one.status).toBe(200);
+      expect(one.body.data.totalViews).toBe(5_000_000_000);
+    });
+
+    it("emits a BigInt beyond the safe-integer range as a string rather than rounding it", async () => {
+      // Not reachable by any real counter today (max ~5.9e12), but the guard must never
+      // silently lose precision if one ever is.
+      const acct = await prisma.socialAccount.create({
+        data: { handle: "huge_channel", displayName: "Huge", platformId, totalViews: 9_007_199_254_740_993n },
+      });
+      const one = await request(app)
+        .get(`/v1/accounts/${acct.id}`)
+        .set("Authorization", `Bearer ${adminToken}`);
+      expect(one.status).toBe(200);
+      expect(one.body.data.totalViews).toBe("9007199254740993");
+    });
+  });
+
   describe("GET /v1/platforms", () => {
     it("lists all platforms", async () => {
       const res = await request(app)

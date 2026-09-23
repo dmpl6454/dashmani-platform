@@ -195,12 +195,30 @@ function SnapchatTable({ rows, sort, onSort, manageMode, onRemove, busy }: {
             <td className="px-2 py-2 text-right text-xs">
               {c.followerDelta === null || c.followerDelta === undefined ? (
                 <span
+                  // ⚠️ THREE DIFFERENT ABSENCES, told apart from the data rather than
+                  // guessed at: no count published at all; a full-period measurement whose
+                  // movement was smaller than Snapchat's grid; or no stored history yet.
+                  // `followerDeltaDays` is stamped even when the delta is suppressed, so
+                  // its presence is what separates the middle case from the last one.
                   title={c.followers === null
                     ? "No change to show: Snapchat publishes no follower count for this profile, so there is nothing to measure movement in."
-                    : "No change to show for this period — there is not enough stored history yet. This is not a zero."}
+                    : c.followerDeltaDays != null
+                      ? "No change to show: Snapchat publishes follower counts rounded to the nearest 100, and this profile moved less than that across the period. It is not a zero — we simply cannot see movement finer than Snapchat's own rounding."
+                      : "No change to show for this period — we have not been collecting this profile long enough yet. This is not a zero."}
                   className="text-[#B0B0B0]"
                 >
                   —
+                </span>
+              ) : c.followerDeltaUnreliable ? (
+                // ⚠️ Shown, struck through, and explained — never hidden and never plain.
+                // A change bigger than the figure it was measured from is a series that
+                // jumped between two profiles, not growth; hiding it would hide the
+                // evidence that this row's identity needs correcting.
+                <span
+                  className="text-[#B0B0B0] line-through decoration-[#C2861D]"
+                  title={`This change (${fmtDelta(c.followerDelta)}) is larger than the figure it was measured from, so it cannot be growth — the stored history for this profile spans two different accounts. It is excluded from the total above and the handle stored here needs correcting. The current follower figure itself is fine.`}
+                >
+                  {fmtDelta(c.followerDelta)}
                 </span>
               ) : (
                 <span className={
@@ -247,7 +265,7 @@ function SnapchatTable({ rows, sort, onSort, manageMode, onRemove, busy }: {
               {/* flex-wrap, not shrink-0, on a cell holding two pills: at a narrow width
                   they stack instead of painting over the column beside them. */}
               <div className="flex flex-wrap items-center justify-end gap-1">
-                <SyncBadge lastSyncedAt={c.lastSyncedAt} metricsFetchedAt={c.metricsFetchedAt} />
+                <SyncBadge lastSyncedAt={c.lastSyncedAt} metricsFetchedAt={c.metricsFetchedAt} metricsError={c.metricsError} />
                 <SourceBadge source={c.syncSource} />
               </div>
             </td>

@@ -23,6 +23,7 @@ import {
 } from "../services/channel-growth.service";
 import { scrapeSnapchatProfile, snapchatProfileUrl } from "../services/social-insights/snapchat-profile";
 import { resolveYouTubeChannel } from "../services/social-insights/youtube-followers";
+import { istMidnight, todayIST } from "@dashmani/shared";
 
 const router = Router();
 const adminGate = [authenticate, requirePermission("reports", "manage"), requireAdminRole] as const;
@@ -247,6 +248,39 @@ router.post(
     const account = existing
       ? await prisma.socialAccount.update({ where: { id: existing.id }, data })
       : await prisma.socialAccount.create({ data });
+
+    // ── Anchor the growth history at the value we just paid to measure ────────────────
+    //
+    // ⚠️ Without this, a channel added here stored a follower count that NEVER entered
+    // account_growth_snapshots — measured on prod, 28 of 35 Snapchat rows had a fresh
+    // count and zero snapshots, so their Change column had nothing to compute from and the
+    // board looked broken rather than new. The same gap exists in the reconcile script.
+    //
+    // ⚠️ IST midnight, matching persistFollowerCount exactly, so the (accountId, date)
+    // upsert is idempotent no matter which writer gets there first — the hourly sync may
+    // write the same key minutes later and must not collide or double-count.
+    //
+    // ⚠️ Fail-open and deliberately last: adding a channel must never fail because its
+    // history could not be anchored.
+    if (followers != null && followers > 0) {
+      try {
+        const day = istMidnight(todayIST());
+        await prisma.accountGrowthSnapshot.upsert({
+          where: { accountId_date: { accountId: account.id, date: day } },
+          create: {
+            accountId: account.id, date: day, followerCount: followers,
+            source: platform === "snapchat" ? "scraper" : "api",
+            ...(totalViews != null ? { totalViews: BigInt(totalViews) } : {}),
+          },
+          update: {
+            followerCount: followers,
+            ...(totalViews != null ? { totalViews: BigInt(totalViews) } : {}),
+          },
+        });
+      } catch (e) {
+        console.warn(`[channels] could not anchor growth history for ${account.handle}:`, e);
+      }
+    }
 
     return res.status(201).json({
       success: true,

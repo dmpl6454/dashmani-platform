@@ -6,7 +6,7 @@ import {
   fetchPublicInstagramFollowerMap,
   fbLookupKeys,
 } from "./social-insights/meta-followers";
-import { fetchYouTubeSubscriberCounts } from "./social-insights/youtube-followers";
+import { fetchYouTubeSubscriberCounts, type YtRunHealth } from "./social-insights/youtube-followers";
 import { scrapeSnapchatFollowers, SC_SCRAPER_DELAY_MS } from "./social-insights/snapchat-scraper";
 import { scrapeSnapchatProfile } from "./social-insights/snapchat-profile";
 import { fetchTwitterFollowerMap } from "./social-insights/twitter-followers";
@@ -539,7 +539,24 @@ export async function syncAllFollowerCounts() {
      * day-over-day delta is quantisation noise. The lifetime view counter is exact, so the
      * difference between two snapshots is the only truthful growth figure YouTube gives.
      */
-    extra?: { totalViews?: number | null; videoCount?: number | null; followersPrecision?: number | null },
+    extra?: {
+      totalViews?: number | null;
+      videoCount?: number | null;
+      followersPrecision?: number | null;
+      /**
+       * A canonical, id-based profile URL to PIN this row to.
+       *
+       * ⚠️ THIS IS WHAT STOPS A SERIES JUMPING BETWEEN CHANNELS. A row whose stored URL
+       * carries no channel id cannot be resolved by id, so it falls through to
+       * `search.list` — a fuzzy NAME search whose items[0] is not stable. Measured on prod:
+       * `Total filmi ` alternated day to day between four differently-sized channels
+       * sharing that name (1,040,000 / 356,000 / 46,300 / 10,900), poisoning its own
+       * history and printing a fabricated +684,000 change. Writing the id-based URL back
+       * pins the row to the cheap, exact `channels.list?id=` path forever after — and as a
+       * bonus its link stops 404ing when the channel's @handle is renamed.
+       */
+      profileUrl?: string | null;
+    },
   ) {
     if (followers <= 0) return;
     console.log(`[follower-sync] ${account.platform.slug}/${account.handle}: ${followers} (${source})`);
@@ -551,6 +568,7 @@ export async function syncAllFollowerCounts() {
         syncSource: source,
         ...(extra?.totalViews != null ? { totalViews: BigInt(extra.totalViews) } : {}),
         ...(extra?.videoCount != null ? { videoCount: extra.videoCount } : {}),
+        ...(extra?.profileUrl ? { profileUrl: extra.profileUrl } : {}),
         // Written even when null: a channel that drops below 1,000 subscribers becomes
         // exact, and a stale precision would keep suppressing real deltas.
         followersPrecision: extra?.followersPrecision ?? null,
@@ -596,6 +614,15 @@ export async function syncAllFollowerCounts() {
       recentViewsCovered?: number | null;
       recentPostsSeen?: number | null;
       metricsError?: string | null;
+      /**
+       * YouTube's two EXACT counters. Carried here — not only on persistFollowerCount —
+       * because a channel can resolve perfectly and report zero subscribers, and that
+       * `<= 0` case is refused by persistFollowerCount by design. Without this the real
+       * facts we just paid a quota unit for (0 views, 0 videos) were thrown away and the
+       * row rendered as if it had never been collected at all.
+       */
+      totalViews?: number | null;
+      videoCount?: number | null;
       /** Stamp the refresh clock. Set on every fetch we completed, success or explained failure. */
       touch?: boolean;
     },
@@ -610,6 +637,8 @@ export async function syncAllFollowerCounts() {
           ...(data.recentViewsCovered !== undefined ? { recentViewsCovered: data.recentViewsCovered } : {}),
           ...(data.recentPostsSeen !== undefined ? { recentPostsSeen: data.recentPostsSeen } : {}),
           ...(data.metricsError !== undefined ? { metricsError: data.metricsError } : {}),
+          ...(data.totalViews != null ? { totalViews: BigInt(data.totalViews) } : {}),
+          ...(data.videoCount != null ? { videoCount: data.videoCount } : {}),
           ...(data.touch ? { metricsFetchedAt: new Date() } : {}),
         },
       });
@@ -958,9 +987,14 @@ export async function syncAllFollowerCounts() {
   // again here.
   if (unresolvedYt.length > 0) {
     try {
+      // ⚠️ Health is an out-parameter: a quota refusal, a rejected key or a timeout makes
+      // every account absent from `ytResults`, which is byte-identical to how a terminated
+      // channel looks. Without this we would stamp "renamed, deleted or terminated" on the
+      // WHOLE board the first time the 10,000-unit daily quota ran out.
+      const ytHealth: YtRunHealth = { apiUnavailable: false, reason: null };
       const ytResults = await fetchYouTubeSubscriberCounts(
         unresolvedYt.map((a) => ({ id: a.id, handle: a.handle, profileUrl: a.profileUrl || "" })),
-        { maxSearchLookups: 10 },
+        { maxSearchLookups: 10, health: ytHealth },
       );
       // Index by accountId for O(1) lookup. ⚠️ Keep the WHOLE result, not just the
       // subscriber count: viewCount/videoCount ride along in the same `part=statistics`
@@ -969,12 +1003,51 @@ export async function syncAllFollowerCounts() {
       for (const account of unresolvedYt) {
         const hit = ytMap.get(account.id);
         if (hit != null && hit.subscribers > 0) {
+          // Pin the row to the id we just resolved, but only when its stored URL does not
+          // already carry that id — so a row already pinned is never rewritten.
+          const pinned =
+            hit.channelId && !(account.profileUrl ?? "").includes(hit.channelId)
+              ? `https://www.youtube.com/channel/${hit.channelId}`
+              : undefined;
           await persistFollowerCount(account, hit.subscribers, "api", {
             totalViews: hit.totalViews,
             videoCount: hit.videoCount,
             followersPrecision: hit.subscriberPrecision,
+            profileUrl: pinned,
           }); // YouTube Data API v3
+        } else if (hit != null) {
+          // ⚠️ RESOLVED, and YouTube genuinely reports ZERO subscribers (verified live on
+          // @moviefied: public, created 2009, hiddenSubscriberCount false, 0 videos).
+          // persistFollowerCount refuses `<= 0` — correctly, so a scraper miss can never
+          // wipe a good number — but silently dropping the whole result made a channel we
+          // successfully collect every cycle render a grey "Manual" pill, whose tooltip
+          // reads "never collected automatically, so this figure is whatever was entered
+          // by hand". That is simply false. Stamp what we did learn instead.
+          await persistChannelMetrics(account.id, {
+            metricsError: null,
+            totalViews: hit.totalViews,
+            videoCount: hit.videoCount,
+            touch: true,
+          });
+          progress.failed++;
         } else {
+          // NOT RESOLVED AT ALL. channels.list returns `items: []` with NO error for a
+          // terminated, deleted or renamed channel alike (live-verified against two
+          // terminated ids), so we cannot name which — but we CAN stop pretending we never
+          // asked. Recording an explained failure turns a silent "Manual" row into the
+          // warning mark whose tooltip already says a persistent one needs the handle fixed.
+          //
+          // ⚠️ ONLY when the API actually answered. If it refused us anywhere in this run,
+          // absence carries no information about any channel and we write nothing at all —
+          // the previous behaviour — so a quota-exhausted day cannot paint the whole board
+          // with a false "this channel is gone".
+          if (!ytHealth.apiUnavailable) {
+            await persistChannelMetrics(account.id, {
+              metricsError:
+                "YouTube returned no channel for this handle — it has most likely been renamed, deleted or terminated.",
+              touch: true,
+            });
+          }
           progress.failed++;
         }
       }

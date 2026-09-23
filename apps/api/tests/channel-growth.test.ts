@@ -234,13 +234,28 @@ describe("the quantisation guard must not FAIL OPEN", () => {
     expect(board.rows.find((r) => r.handle === "realmove")!.followerDelta).toBe(100_000);
   });
 
-  it("does NOT derive a step for Snapchat — its counts are exact, not rounded", async () => {
+  it("does NOT apply YouTube's 3-significant-figure rule to Snapchat", async () => {
+    // ⚠️ The name of this test used to claim Snapchat counts are "exact, not rounded".
+    // That was wrong and is now measured: Snapchat publishes on a FLAT x100 grid (all 30
+    // live counts and all 341 stored snapshots are multiples of 100; the smallest non-zero
+    // move ever recorded is exactly 100). What must NOT happen is applying YouTube's
+    // significant-figures rule, which would derive a 1,000 step here and swallow a real
+    // one-step move on a 152,500 account. The assertion is unchanged; only the reasoning is.
     const id = await channel("snapchat", "scexact", { followerCount: 152_500, followersPrecision: null });
     await snapshot(id, 10, 152_400);
     await snapshot(id, 1, 152_500);
     const board = await getChannelBoard("snapchat", 30);
-    // A 100-follower move on a 152,500 account would be swallowed by a derived 1,000 step.
     expect(board.rows.find((r) => r.handle === "scexact")!.followerDelta).toBe(100);
+  });
+
+  it("suppresses a FLAT Snapchat reading rather than reporting a confident 0", async () => {
+    // Below Snapchat's own 100 grid the only representable difference is 0, and rendering
+    // that as "0" asserts "did not grow" — which the grid cannot tell us.
+    const id = await channel("snapchat", "scflat", { followerCount: 39_300, followersPrecision: null });
+    await snapshot(id, 10, 39_300);
+    await snapshot(id, 1, 39_300);
+    const board = await getChannelBoard("snapchat", 30);
+    expect(board.rows.find((r) => r.handle === "scflat")!.followerDelta).toBeNull();
   });
 });
 
@@ -287,5 +302,106 @@ describe("removal actually removes, and never reports a fabricated zero", () => 
       .expect(200);
     const row = res.body.data.rows.find((r: { handle: string }) => r.handle === "withheld-removed");
     expect(row.followerCount).toBeNull(); // NOT 0 — "0 followers" would be a claim
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────────────
+// The Views-change column, and the totals' period movement.
+// ─────────────────────────────────────────────────────────────────────────────────────
+
+describe("the views delta measures over snapshots that actually CARRY a view count", () => {
+  it("does not let a pre-column snapshot become the baseline and kill the delta", async () => {
+    // ⚠️ RED-GREEN. `total_views` shipped later than the snapshot table, so every row
+    // written before it holds NULL. Picking the window's first snapshot regardless meant
+    // the baseline was almost always one of those, and the delta was discarded: measured
+    // on prod the day after launch, 20 of 22 channels' earliest 7-day snapshot had no view
+    // count, so the column was a dash at EVERY period and would have stayed one until the
+    // window stopped reaching past the cutover — 21 Dec at 90d. With the old selection
+    // this expectation is null.
+    const id = await channel("youtube", "ytmixed", { followerCount: 5000 });
+    await snapshot(id, 40, 4900);                    // pre-column: no total_views
+    await snapshot(id, 3, 5000, 1_000_000);          // first snapshot carrying one
+    await snapshot(id, 1, 5000, 1_250_000);
+    const board = await getChannelBoard("youtube", 90);
+    const row = board.rows.find((r) => r.handle === "ytmixed")!;
+    expect(row.viewsDelta).toBe(250_000);
+    // …and labelled with the VIEW counter's own span (2 days), never the follower span (39).
+    expect(row.viewsDeltaDays).toBe(2);
+  });
+
+  it("still reports nothing when only one snapshot carries a view count", async () => {
+    const id = await channel("youtube", "ytonepoint", { followerCount: 5000 });
+    await snapshot(id, 40, 4900);
+    await snapshot(id, 1, 5000, 1_000_000);
+    const board = await getChannelBoard("youtube", 90);
+    expect(board.rows.find((r) => r.handle === "ytonepoint")!.viewsDelta).toBeNull();
+  });
+});
+
+describe("totals movement — the sum must not inherit a corrupted series", () => {
+  it("EXCLUDES a channel whose change exceeds its own baseline, and discloses the count", async () => {
+    // ⚠️ RED-GREEN for the artifact guard. A row with no channel id pinned falls through to
+    // search.list — a fuzzy NAME search whose items[0] is not stable — so its series jumps
+    // between differently-sized channels sharing a name. Measured on prod, `Total filmi `
+    // alternated 1,040,000 / 356,000 / 46,300 / 10,900 and contributed +684,000 of a
+    // +685,500 seven-day total: 99.8% of the headline from one corrupted row. It passes the
+    // full-span filter, so that filter is necessary but NOT sufficient.
+    const good = await channel("youtube", "ytsteady", { followerCount: 500_000, followersPrecision: 1000 });
+    await snapshot(good, 30, 490_000);
+    await snapshot(good, 1, 500_000);
+    const jumpy = await channel("youtube", "ytjumpy", { followerCount: 1_040_000, followersPrecision: 10_000 });
+    await snapshot(jumpy, 30, 46_300);   // a different channel of the same name
+    await snapshot(jumpy, 1, 1_040_000);
+    const board = await getChannelBoard("youtube", 30);
+
+    // The corrupted row still shows its OWN change — hiding it would hide the evidence.
+    expect(board.rows.find((r) => r.handle === "ytjumpy")!.followerDelta).toBe(993_700);
+    // …but it is kept out of the total, and the exclusion is disclosed.
+    expect(board.totals.followerDelta).toBe(10_000);
+    expect(board.totals.followerDeltaChannels).toBe(1);
+    expect(board.totals.followerDeltaExcluded).toBe(1);
+    // …and the ROW marks itself, so the number it still shows cannot be read as growth.
+    expect(board.rows.find((r) => r.handle === "ytjumpy")!.followerDeltaUnreliable).toBe(true);
+    expect(board.rows.find((r) => r.handle === "ytsteady")!.followerDeltaUnreliable).toBe(false);
+  });
+
+  it("reports the uncertainty envelope so the tile can refuse to state an unresolvable figure", async () => {
+    // Each rounded reading is within ±step/2, so a difference of two carries up to ±step.
+    // Summed over the full-span channels this is the error bar on the total.
+    const a = await channel("youtube", "ytbig", { followerCount: 10_500_000, followersPrecision: 100_000 });
+    await snapshot(a, 30, 10_500_000);
+    await snapshot(a, 1, 10_500_000);
+    const b = await channel("youtube", "ytsmall", { followerCount: 72_600, followersPrecision: 100 });
+    await snapshot(b, 30, 72_500);
+    await snapshot(b, 1, 72_600);
+    const board = await getChannelBoard("youtube", 30);
+    // Both channels span the window, so both contribute their step to the envelope …
+    expect(board.totals.followerDeltaUncertainty).toBe(100_100);
+    // … even though only the small one produced a visible change.
+    expect(board.totals.followerDelta).toBe(100);
+    expect(board.totals.followerDeltaSuppressed).toBe(1);
+  });
+
+  it("sums the EXACT lifetime-view change, which needs no suppression", async () => {
+    const a = await channel("youtube", "ytv1", { followerCount: 1000 });
+    await snapshot(a, 30, 1000, 1_000_000);
+    await snapshot(a, 1, 1000, 1_400_000);
+    const b = await channel("youtube", "ytv2", { followerCount: 2000 });
+    await snapshot(b, 30, 2000, 5_000_000);
+    await snapshot(b, 1, 2000, 5_100_000);
+    const board = await getChannelBoard("youtube", 30);
+    expect(board.totals.viewsDelta).toBe(500_000);
+    expect(board.totals.viewsDeltaChannels).toBe(2);
+  });
+
+  it("returns null, not 0, when no channel's history spans the window", async () => {
+    // ⚠️ "No channel qualified" is not "the estate did not move".
+    const id = await channel("youtube", "ytshort", { followerCount: 1000 });
+    await snapshot(id, 2, 900, 10);
+    await snapshot(id, 1, 1000, 20);
+    const board = await getChannelBoard("youtube", 90); // 2-day span vs an 81-day requirement
+    expect(board.totals.followerDelta).toBeNull();
+    expect(board.totals.viewsDelta).toBeNull();
+    expect(board.totals.followerDeltaChannels).toBe(0);
   });
 });

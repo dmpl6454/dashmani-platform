@@ -7,11 +7,17 @@ import rateLimit from "express-rate-limit";
 import routes from "./routes";
 import { errorHandler } from "./middleware/error-handler";
 import { rateLimitKey, loginRateLimitKey, isHealthProbe, envInt } from "./middleware/rate-limit-key";
+import { bigintJsonReplacer } from "./utils/bigint-json";
 
 const app = express();
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(process.cwd(), "uploads");
 
 app.set("trust proxy", 1);
+
+// ⚠️ Every `res.json()` goes through this. Prisma returns `BigInt` for the schema's twenty
+// BigInt columns and JSON.stringify cannot serialise one — `GET /accounts` 500'd for a day
+// after PR #164 added two such columns to social_accounts. See utils/bigint-json.ts.
+app.set("json replacer", bigintJsonReplacer);
 
 // Security headers — CSP disabled for API (served cross-origin to frontend apps)
 app.use(helmet({

@@ -157,6 +157,15 @@ export async function getPipelineSettings(): Promise<PipelineSettings> {
   }
 }
 
+/**
+ * Is `userId` on the pilot allowlist? The ONE place the comparison is made (the gate and
+ * the directory's `pickable` both use it), so the two can never disagree. Ids are compared
+ * lowercased — parsePilotIds lowercases the list.
+ */
+export function isPilotUser(settings: Pick<PipelineSettings, "pilotUserIds">, userId: string): boolean {
+  return settings.pilotUserIds.has(userId.toLowerCase());
+}
+
 /** Forget the memo AND the last-known value (tests, and after the flag script writes). */
 export function invalidatePipelineSettings(): void {
   current = null;

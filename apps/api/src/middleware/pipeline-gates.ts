@@ -24,7 +24,7 @@ import type { Request, Response, NextFunction, RequestHandler } from "express";
 import { DEFAULT_ROLES, type PipelineDisabledReason } from "@dashmani/shared";
 import { authenticate } from "./auth";
 import { asyncHandler } from "../utils/async-handler";
-import { getPipelineSettings, type PipelineSettings } from "../services/pipeline/settings";
+import { getPipelineSettings, isPilotUser, type PipelineSettings } from "../services/pipeline/settings";
 import { getPipelineAccess, type PipelineAccess } from "../services/pipeline/access";
 import { ensurePipelineSchemaChecked } from "../services/pipeline/self-check";
 import { healPendingBoardBump } from "../services/pipeline/board";
@@ -89,7 +89,7 @@ export async function evaluatePipelineAccess(
   if (settings.mode === "off") {
     return { ok: false, denial: { status: 403, code: "PIPELINE_DISABLED", reason: "off" } };
   }
-  if (settings.mode === "pilot" && !settings.pilotUserIds.has(userId.toLowerCase())) {
+  if (settings.mode === "pilot" && !isPilotUser(settings, userId)) {
     return { ok: false, denial: { status: 403, code: "PIPELINE_NOT_IN_PILOT", reason: "not_in_pilot" } };
   }
   const access = await getPipelineAccess(userId);

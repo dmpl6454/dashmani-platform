@@ -636,4 +636,160 @@ describe("pipeline projects", () => {
       expect((await act(card.id, owner.token, "archive")).status).toBe(403);
     });
   });
+
+  // ── Task 7.5: members and follow (routes #12–14, §4.6) ────────────────────────────
+  describe("members and follow", () => {
+    const add = (id: string, token: string, userIds: string[]) => call("post", `${P}/${id}/members`, token, { userIds });
+    const remove = (id: string, token: string, userId: string) => call("delete", `${P}/${id}/members/${userId}`, token);
+    const follow = (id: string, token: string, following: boolean) => call("put", `${P}/${id}/follow`, token, { following });
+    const part = (projectId: string, userId: string) =>
+      prisma.pipelineParticipant.findUnique({ where: { projectId_userId: { projectId, userId } } });
+    const project = (id: string) => prisma.pipelineProject.findUniqueOrThrow({ where: { id } });
+
+    it("owner or admin: an engaged member is demoted, a never-engaged one is deleted", async () => {
+      const owner = await user("Mem Owner");
+      const admin = await user("Mem Admin", { roleNames: ["Admin"] });
+      const [a, b, c] = [await user("Mem A"), await user("Mem B"), await user("Mem C")];
+      const card = await create(owner.token, { memberIds: [a.id, b.id, c.id] });
+      await prisma.pipelineParticipant.update({
+        where: { projectId_userId: { projectId: card.id, userId: a.id } },
+        data: { engagedAt: new Date(), notify: false, lastReadSeq: 7 },
+      });
+      const demoted = await remove(card.id, owner.token, a.id);
+      expect(demoted.status).toBe(200);
+      expect(demoted.body.data).toEqual({ result: "demoted" });
+      expect(await part(card.id, a.id)).toMatchObject({ role: "FOLLOWER", notify: false, lastReadSeq: 7 });
+      expect((await remove(card.id, owner.token, b.id)).body.data).toEqual({ result: "removed" });
+      expect(await part(card.id, b.id)).toBeNull();
+      expect((await remove(card.id, admin.token, c.id)).body.data).toEqual({ result: "removed" });
+      expect((await remove(card.id, owner.token, c.id)).body.data).toEqual({ result: "none" });
+      expect((await project(card.id)).memberCount).toBe(1);
+    });
+
+    it("the adder can undo within 10 minutes, only for rows they added", async () => {
+      const owner = await user("Undo Owner");
+      const adder = await user("Undo Adder");
+      const [a, d, e] = [await user("Undo A"), await user("Undo D"), await user("Undo E")];
+      const card = await create(owner.token, { memberIds: [a.id] });
+      const r = await add(card.id, adder.token, [d.id, e.id]);
+      expect(r.status).toBe(200);
+      expect(r.body.data.added.sort()).toEqual([d.id, e.id].sort());
+      expect((await remove(card.id, adder.token, d.id)).body.data).toEqual({ result: "removed" });
+      const notMine = await remove(card.id, adder.token, a.id);
+      expect(notMine.status).toBe(403);
+      expect(notMine.body.error.code).toBe("CANNOT_REMOVE_MEMBER");
+      await prisma.pipelineParticipant.update({
+        where: { projectId_userId: { projectId: card.id, userId: e.id } },
+        data: { memberAddedAt: new Date(Date.now() - 11 * 60_000) },
+      });
+      expect((await remove(card.id, adder.token, e.id)).status).toBe(403);
+    });
+
+    it("removing or leaving the owner is 409; anyone else may leave (deleting their own row)", async () => {
+      const owner = await user("Own Owner");
+      const admin = await user("Own Admin", { roleNames: ["Admin"] });
+      const a = await user("Own A");
+      const card = await create(owner.token, { memberIds: [a.id] });
+      const byAdmin = await remove(card.id, admin.token, owner.id);
+      expect(byAdmin.status).toBe(409);
+      expect(byAdmin.body.error.code).toBe("OWNER_CANNOT_BE_REMOVED");
+      expect((await remove(card.id, owner.token, owner.id)).body.error.code).toBe("OWNER_CANNOT_BE_REMOVED");
+      await prisma.pipelineParticipant.update({ where: { projectId_userId: { projectId: card.id, userId: a.id } }, data: { engagedAt: new Date() } });
+      expect((await remove(card.id, a.token, a.id)).body.data).toEqual({ result: "removed" });
+      expect(await part(card.id, a.id)).toBeNull();
+    });
+
+    it("after a transfer the new owner cannot be removed, but the old one can", async () => {
+      const owner = await user("Xo Owner");
+      const next = await user("Xo Next");
+      const card = await create(owner.token);
+      await call("put", `${P}/${card.id}/owner`, owner.token, { userId: next.id });
+      expect((await remove(card.id, next.token, next.id)).body.error.code).toBe("OWNER_CANNOT_BE_REMOVED");
+      expect((await remove(card.id, next.token, owner.id)).body.data).toEqual({ result: "removed" });
+      expect((await project(card.id)).memberCount).toBe(1);
+    });
+
+    it("adding never changes notify; [b, b] gives one row; a repeat add is a no-op", async () => {
+      const owner = await user("Add Owner");
+      const [b, f] = [await user("Add B"), await user("Add F")];
+      const card = await create(owner.token);
+      await prisma.pipelineParticipant.create({
+        data: { projectId: card.id, userId: f.id, role: "FOLLOWER", notify: false, engagedAt: new Date() },
+      });
+      const r = await add(card.id, owner.token, [b.id, b.id, f.id]);
+      expect(r.status).toBe(200);
+      expect(r.body.data.added.sort()).toEqual([b.id, f.id].sort());
+      expect(r.body.data.participants).toHaveLength(3);
+      expect(await part(card.id, f.id)).toMatchObject({ role: "MEMBER", notify: false, memberAddedById: owner.id });
+      expect(await prisma.pipelineParticipant.count({ where: { projectId: card.id, userId: b.id } })).toBe(1);
+      const hv = (await project(card.id)).headerRev;
+      const again = await add(card.id, owner.token, [b.id]);
+      expect(again.body.data.added).toEqual([]);
+      expect((await project(card.id)).headerRev).toBe(hv);
+      expect((await project(card.id)).memberCount).toBe(3);
+    });
+
+    it("refuses an archived project (409), an inactive user (409 MEMBER_NOT_PICKABLE) and a 201st participant (409 MEMBER_LIMIT)", async () => {
+      const owner = await user("Lim Owner");
+      const gone = await user("Lim Gone", { status: "INACTIVE" });
+      const card = await create(owner.token);
+      expect((await add(card.id, owner.token, [gone.id])).body.error.code).toBe("MEMBER_NOT_PICKABLE");
+      await prisma.user.createMany({
+        data: Array.from({ length: 200 }, (_, i) => ({ name: `Bulk ${i}`, email: `pl-bulk-${i}-${Date.now()}@test.com`, passwordHash: "x", status: "ACTIVE" })),
+      });
+      const bulk = await prisma.user.findMany({ where: { name: { startsWith: "Bulk " } }, select: { id: true }, orderBy: { id: "asc" } });
+      await prisma.pipelineParticipant.createMany({
+        data: bulk.slice(0, 199).map((u) => ({ projectId: card.id, userId: u.id, role: "FOLLOWER" })),
+      });
+      const over = await add(card.id, owner.token, [bulk[199].id]);
+      expect(over.status).toBe(409);
+      expect(over.body.error.code).toBe("MEMBER_LIMIT");
+      await prisma.pipelineProject.update({ where: { id: card.id }, data: { archivedAt: new Date() } });
+      expect((await add(card.id, owner.token, [bulk[0].id])).body.error.code).toBe("PROJECT_ARCHIVED");
+    });
+
+    it("every change bumps header_rev, and member_count stays exact under 10 parallel add/remove calls", async () => {
+      const owner = await user("Par Owner");
+      const people = [];
+      for (let i = 0; i < 10; i++) people.push(await user(`Par P${i}`));
+      const card = await create(owner.token, { memberIds: people.slice(5).map((p) => p.id) });
+      const hv = (await project(card.id)).headerRev;
+      const results = await Promise.allSettled([
+        ...people.slice(0, 5).map((p) => add(card.id, owner.token, [p.id])),
+        ...people.slice(5).map((p) => remove(card.id, owner.token, p.id)),
+      ]);
+      for (const r of results) {
+        expect(r.status).toBe("fulfilled");
+        if (r.status === "fulfilled") expect(r.value.status).toBe(200);
+      }
+      const row = await project(card.id);
+      const members = await prisma.pipelineParticipant.count({ where: { projectId: card.id, role: "MEMBER" } });
+      expect(members).toBe(6);
+      expect(row.memberCount).toBe(6);
+      expect(row.headerRev).toBe(hv + 10);
+    });
+
+    it("follow is self-only and idempotent; unfollow keeps the row and clears notify", async () => {
+      const owner = await user("Fol Owner");
+      const me = await user("Fol Me");
+      const card = await create(owner.token);
+      const on = await follow(card.id, me.token, true);
+      expect(on.status).toBe(200);
+      expect(on.body.data).toEqual({ role: "FOLLOWER", notify: true });
+      const row = await part(card.id, me.id);
+      expect(row?.engagedAt).not.toBeNull();
+      const hv = (await project(card.id)).headerRev;
+      expect((await follow(card.id, me.token, true)).body.data).toEqual({ role: "FOLLOWER", notify: true });
+      expect((await project(card.id)).headerRev).toBe(hv);
+      expect((await follow(card.id, me.token, false)).body.data).toEqual({ role: "FOLLOWER", notify: false });
+      expect((await follow(card.id, me.token, false)).body.data).toEqual({ role: "FOLLOWER", notify: false });
+      expect((await project(card.id)).headerRev).toBe(hv + 1);
+      // The owner unfollowing stays a MEMBER.
+      expect((await follow(card.id, owner.token, false)).body.data).toEqual({ role: "MEMBER", notify: false });
+      // A non-participant unfollowing is a no-op.
+      const stranger = await user("Fol Stranger");
+      expect((await follow(card.id, stranger.token, false)).body.data).toEqual({ role: null, notify: false });
+      expect((await project(card.id)).memberCount).toBe(1);
+    });
+  });
 });

@@ -7,8 +7,9 @@ import { z } from "zod";
  * ⚠️ Why not the regex (P11). On input containing a `<` with no later `>`, V8's
  * backtracking engine rescans the rest of the string from EVERY `<`, which is O(n²) and
  * fully synchronous on the API's single main thread: measured 1.9 s for 40 KB of "<" and
- * 5.3 s for 80 KB, while express.json() accepts 100 KB bodies — the 2026-09-08
- * main-thread-hang class. This scan visits each character at most twice.
+ * 5.3 s for 80 KB, while the API's express.json() accepts 10 MB bodies and every caller
+ * applies its `.max()` only AFTER this transform — the 2026-09-08 main-thread-hang class.
+ * This scan visits each character at most twice.
  *
  * Semantics reproduced exactly:
  * - a span runs from a `<` to the FIRST `>` after it (`[^>]*` may contain further `<`);

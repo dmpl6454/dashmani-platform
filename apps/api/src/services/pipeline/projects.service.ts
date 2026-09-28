@@ -14,6 +14,8 @@
 import { randomUUID } from "node:crypto";
 import {
   keyBetween,
+  type PipelineProjectDetail,
+  type PipelineMe,
   rankNeedsRebalance,
   PIPELINE_LIMITS,
   type PipelineCard,
@@ -25,7 +27,8 @@ import { pipelineRead, pipelineWrite } from "./tx";
 import { PipelineDbError, PipelineError, isIdempotencyKeyViolation } from "./errors";
 import { bumpBoard } from "./board";
 import { notifier } from "./notifier";
-import { cardFromRow } from "./wire";
+import { cardFromRow, headerFromRow, messageFromRow, participantFromRow } from "./wire";
+import type { PipelineDirectory } from "./access";
 import { isPilotUser, type PipelineSettings } from "./settings";
 
 type Row = Record<string, unknown>;
@@ -250,4 +253,141 @@ export async function listProjects(actor: PipelineActor, input: ListProjectsInpu
     nextCursor = `${stamp},${last.id}`;
   }
   return { items, nextCursor };
+}
+
+// ── Route #6: detail (one statement) ─────────────────────────────────────────────────
+
+const LATEST_PAGE = PIPELINE_LIMITS.messagesPageDefault; // 30
+const AROUND_HALF = Math.floor(LATEST_PAGE / 2); // 15 + 15
+
+type DetailRow = {
+  project: Row | null;
+  me: Row | null;
+  around_project: string | null;
+  participants: Row[];
+  latest: Row[];
+  older: Row[];
+  newer: Row[];
+  anchored: boolean;
+};
+
+/**
+ * Header, participants (≤ 200, projected), my row, button flags and one page of top-level
+ * messages — in ONE statement (spec route #6). The page is, in order of preference:
+ * around `?around=` (a reply anchors on its root); around my first unread; the latest 30.
+ * An `around` from another project is 404; a vanished one returns the latest page with
+ * `aroundMissing`.
+ */
+export async function getProjectDetail(
+  actor: PipelineActor,
+  projectId: string,
+  around: string | undefined,
+  dir: PipelineDirectory,
+): Promise<PipelineProjectDetail> {
+  const me = actor.userId;
+  const aroundId = around ?? null;
+  const rows = await pipelineRead((db) =>
+    db.$queryRaw<DetailRow[]>`
+      WITH p AS (
+        SELECT * FROM pipeline_projects WHERE id = ${projectId}),
+      me AS (
+        SELECT role, notify, last_read_seq FROM pipeline_participants
+         WHERE project_id = ${projectId} AND user_id = ${me}),
+      arq AS (
+        SELECT m.project_id, COALESCE(r.seq, m.seq) AS root_seq
+          FROM pipeline_messages m
+          LEFT JOIN pipeline_messages r ON r.id = m.parent_id
+         WHERE m.id = ${aroundId}::text),
+      unr AS (
+        SELECT COALESCE(r.seq, m.seq) AS root_seq
+          FROM pipeline_messages m
+          LEFT JOIN pipeline_messages r ON r.id = m.parent_id
+         WHERE ${aroundId}::text IS NULL
+           AND m.project_id = ${projectId}
+           AND m.seq > (SELECT last_read_seq FROM me)
+         ORDER BY m.seq
+         LIMIT 1),
+      anchor AS (
+        SELECT COALESCE((SELECT root_seq FROM arq WHERE project_id = ${projectId}), (SELECT root_seq FROM unr)) AS seq),
+      latest AS (
+        SELECT m.* FROM pipeline_messages m
+         WHERE (SELECT seq FROM anchor) IS NULL
+           AND m.project_id = ${projectId} AND m.parent_id IS NULL
+         ORDER BY m.seq DESC
+         LIMIT ${LATEST_PAGE + 1}),
+      older AS (
+        SELECT m.* FROM pipeline_messages m
+         WHERE m.project_id = ${projectId} AND m.parent_id IS NULL
+           AND m.seq < (SELECT seq FROM anchor)
+         ORDER BY m.seq DESC
+         LIMIT ${AROUND_HALF + 1}),
+      newer AS (
+        SELECT m.* FROM pipeline_messages m
+         WHERE m.project_id = ${projectId} AND m.parent_id IS NULL
+           AND m.seq >= (SELECT seq FROM anchor)
+         ORDER BY m.seq
+         LIMIT ${AROUND_HALF + 1}),
+      parts AS (
+        SELECT user_id, role, member_added_by_id, created_at FROM pipeline_participants
+         WHERE project_id = ${projectId}
+         ORDER BY created_at, user_id
+         LIMIT ${PIPELINE_LIMITS.participantsMax})
+      SELECT (SELECT row_to_json(p) FROM p) AS project,
+             (SELECT row_to_json(me) FROM me) AS me,
+             (SELECT project_id FROM arq) AS around_project,
+             ((SELECT seq FROM anchor) IS NOT NULL) AS anchored,
+             (SELECT COALESCE(json_agg(x ORDER BY x.created_at, x.user_id), '[]'::json) FROM parts x) AS participants,
+             (SELECT COALESCE(json_agg(x ORDER BY x.seq), '[]'::json) FROM latest x) AS latest,
+             (SELECT COALESCE(json_agg(x ORDER BY x.seq), '[]'::json) FROM older x) AS older,
+             (SELECT COALESCE(json_agg(x ORDER BY x.seq), '[]'::json) FROM newer x) AS newer`,
+  );
+  const d = rows[0];
+  if (!d?.project) throw new PipelineError(404, "PROJECT_NOT_FOUND", "This project doesn't exist");
+  if (d.project.deleted_at) throw new PipelineError(404, "PROJECT_DELETED", "This project was deleted");
+  let aroundMissing = false;
+  if (aroundId !== null) {
+    if (d.around_project === null) aroundMissing = true;
+    else if (d.around_project !== projectId) throw new PipelineError(404, "MESSAGE_NOT_FOUND", "That message isn't in this project");
+  }
+
+  let page: Row[];
+  let hasOlder: boolean;
+  let hasNewer: boolean;
+  if (d.anchored) {
+    hasOlder = d.older.length > AROUND_HALF;
+    hasNewer = d.newer.length > AROUND_HALF;
+    page = [...d.older.slice(hasOlder ? 1 : 0), ...d.newer.slice(0, AROUND_HALF)];
+  } else {
+    hasOlder = d.latest.length > LATEST_PAGE;
+    hasNewer = false;
+    page = d.latest.slice(hasOlder ? 1 : 0);
+  }
+
+  const header = headerFromRow(d.project);
+  const meRow: PipelineMe = d.me
+    ? { role: String(d.me.role) as PipelineMe["role"], notify: d.me.notify === true, lastReadSeq: Number(d.me.last_read_seq) }
+    : { role: null, notify: false, lastReadSeq: 0 };
+  const ownerOrAdmin = header.ownerId === me || actor.isAdminHint;
+  const archived = header.archivedAt !== null;
+  const detail: PipelineProjectDetail = {
+    header,
+    description: header.description,
+    participants: d.participants.map((r) => participantFromRow(r, header.ownerId)),
+    me: meRow,
+    // Button visibility only (memo admin flag); every action re-checks in the DB.
+    can: {
+      archive: ownerOrAdmin && !archived,
+      delete: ownerOrAdmin,
+      restore: ownerOrAdmin && archived && (!header.archivedByAdmin || actor.isAdminHint),
+      transferOwner: ownerOrAdmin && !archived,
+      removeOthers: ownerOrAdmin && !archived,
+    },
+    messages: page.map((r) => messageFromRow(r, me, dir)),
+    threadRev: header.threadRev,
+    headerRev: header.headerRev,
+    hasOlder,
+    hasNewer,
+  };
+  if (aroundMissing) detail.aroundMissing = true;
+  return detail;
 }

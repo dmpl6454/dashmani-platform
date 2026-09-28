@@ -3,6 +3,7 @@ import crypto from "crypto";
 import bcrypt from "bcrypt";
 import { AppError } from "../middleware/error-handler";
 import { signAccessToken, signRefreshToken, verifyRefreshToken } from "../utils/jwt";
+import { likeLiteral } from "../utils/like-literal";
 import type { JwtPayload } from "@dashmani/shared";
 import { dispatchNotification } from "./notification.service";
 
@@ -38,8 +39,13 @@ export async function registerEmployee(data: {
         // Case-INSENSITIVE, like every other auth lookup: the unique index on email is
         // case-sensitive, so an exact match misses a legacy mixed-case row and the create
         // below would then mint a SECOND account under the same address (CLAUDE.md,
-        // "Email-case lockouts"). Prisma escapes ILIKE wildcards; the table is small.
-        { email: { equals: email, mode: "insensitive" } },
+        // "Email-case lockouts").
+        // ⚠️ Prisma sends this as `ILIKE $1` and does NOT escape the value, so a raw '_'
+        // would match any character: `a_b@x.com` would 409 against `axb@x.com`, and this
+        // public endpoint would become an enumeration oracle. likeLiteral() makes it an
+        // exact case-insensitive match. The email is bounded to 254 chars by
+        // registerEmployeeSchema before it gets here, so the (unindexed) ILIKE stays cheap.
+        { email: { equals: likeLiteral(email), mode: "insensitive" } },
         ...(phone ? [{ phone }] : []),
       ],
     },

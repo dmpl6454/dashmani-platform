@@ -80,11 +80,14 @@ jobs:
       # P8 source guards — plain greps, so they run before npm ci and fail fast:
       # - no regex lookbehind in apps/hr/src, packages/shared/src or mobile/src (older
       #   iOS Safari throws a SyntaxError at PARSE time, taking the whole page down);
-      # - apps/api/src/services/pipeline/** imports its DB client only from ./db, never
-      #   @dashmani/db or @prisma/client (the global pool inside a pipeline transaction
-      #   breaks the pool arithmetic and deadlocks at connection_limit=1);
-      # - no localeCompare in pipeline code (ranks are compared byte-wise).
-      # Directories that do not exist yet are skipped with a note; see the script header.
+      # - pipeline API code (services/pipeline/**, routes/pipeline.routes.ts,
+      #   middleware/pipeline-*.ts, cron/pipeline-due.cron.ts) imports its DB client only
+      #   via services/pipeline/db.ts, never @dashmani/db or @prisma/client (the global
+      #   pool inside a pipeline transaction breaks the pool arithmetic and deadlocks at
+      #   connection_limit=1, and draws from the pool login and HR submit share);
+      # - no localeCompare in server pipeline code, and none on ranks in the HR pipeline
+      #   pages/components (ranks are compared byte-wise, COLLATE "C").
+      # Paths that do not exist yet are skipped with a note; see the script header.
       - name: Guards (lookbehind, pipeline DB import, rank ordering)
         run: bash scripts/ci/guards.sh source
 

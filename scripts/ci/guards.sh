@@ -12,8 +12,9 @@
 # ⚠️ Each guard distinguishes three grep outcomes and never lets "grep errored" pass:
 #   exit 0 → a match → violation;  exit 1 → no match → ok;  exit ≥2 → the guard FAILS.
 # A REQUIRED path that is missing also fails (a renamed directory must not silently turn
-# a guard into a scan of nothing). OPTIONAL paths are directories a later PR creates
-# (services/pipeline, shared/src/pipeline); until they exist the guard notes the skip.
+# a guard into a scan of nothing). OPTIONAL paths are files and directories a later PR
+# creates (services/pipeline, shared/src/pipeline, the pipeline route/middleware/cron
+# files, the HR pipeline pages and components); until they exist the guard notes the skip.
 #
 # Portable to GNU grep (CI) and BSD grep (macOS). No `set -e`: grep's exit 1 is the
 # success case here.
@@ -81,21 +82,43 @@ case "$mode" in
 
     # Pipeline code must use ONLY pipelineDb (its own 3-connection pool). A global
     # `prisma` call inside a pipeline transaction breaks the pool arithmetic and deadlocks
-    # at connection_limit=1 (spec §3.2 rule 1, review item 38). Any module reference —
-    # import, export-from, require or dynamic import, either quote style — to
-    # @dashmani/db or @prisma/client counts, except in services/pipeline/db.ts itself.
+    # at connection_limit=1 (spec §3.2 rule 1, review item 38), and a global `prisma`
+    # call anywhere on a pipeline path draws from the main 10-connection pool that login
+    # and HR submit share (spec review item 1: "every pipeline DB access uses it"). Any
+    # module reference — import, export-from, require or dynamic import, either quote
+    # style — to @dashmani/db or @prisma/client counts, except in services/pipeline/db.ts
+    # itself. The scan covers services/pipeline/** plus the pipeline files that live
+    # outside it (plan file map): the router, its gates and limiters, and the due cron.
     check "pipeline-db-import" \
-      "services/pipeline/** may import pipelineDb (and any Prisma types) only from ./db — never @dashmani/db or @prisma/client directly." \
+      "Pipeline code (services/pipeline/**, routes/pipeline.routes.ts, middleware/pipeline-*.ts, cron/pipeline-due.cron.ts) may import pipelineDb (and any Prisma types) only via services/pipeline/db.ts — never @dashmani/db or @prisma/client directly." \
       "[\"'](@dashmani/db|@prisma/client)[\"'/]" optional \
       '^apps/api/src/services/pipeline/db\.ts:' \
-      apps/api/src/services/pipeline
+      apps/api/src/services/pipeline \
+      apps/api/src/routes/pipeline.routes.ts \
+      apps/api/src/middleware/pipeline-*.ts \
+      apps/api/src/cron/pipeline-due.cron.ts
+    # ↑ The unquoted glob is deliberate (pipeline-gates.ts, pipeline-rate-limit.ts and any
+    # later pipeline middleware). With no match bash passes it through literally, `-e`
+    # fails, and check() notes the skip — it never silently scans nothing.
 
     # Ranks are ordered byte-wise (COLLATE "C" in SQL, compareRank's plain < and > in
     # JS). localeCompare orders them differently and silently scrambles the board.
+    # Server-side pipeline code bans localeCompare outright (the plan's grep must print
+    # nothing there, comments included).
     check "no-localecompare-rank" \
       "localeCompare is banned in pipeline code — compare ranks with compareRank from packages/shared/src/pipeline/rank.ts." \
       "localeCompare" optional "" \
       apps/api/src/services/pipeline packages/shared/src/pipeline
+
+    # The HR board is where cards are actually sorted (spec §3.2 rule 3, review item 37).
+    # Scoped to rank so ordinary name sorting (e.g. the people picker) stays allowed: a
+    # line that mentions rank/Rank within 80 characters of localeCompare, in either order,
+    # is a violation. A comment such as "use compareRank, not localeCompare" also
+    # matches — reword it; the shared compareRank is the one sanctioned comparator.
+    check "no-localecompare-rank-client" \
+      "Client code must order ranks with compareRank from packages/shared/src/pipeline/rank.ts, never localeCompare (it disagrees with COLLATE \"C\" and scrambles card order)." \
+      '[Rr]ank[^;]{0,80}localeCompare|localeCompare[^;]{0,80}[Rr]ank' optional "" \
+      apps/hr/src/components/pipeline apps/hr/src/app/pipeline
     ;;
   bundle)
     # The source scan cannot see third-party code (dnd-kit, markdown renderers, vendored

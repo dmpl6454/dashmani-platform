@@ -42,9 +42,11 @@ app.use(cors({
   methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
   // P12: let the browser reuse a preflight for 10 minutes. Without it nearly every
-  // authenticated cross-origin request is preceded by an OPTIONS, doubling what nginx and
-  // the rate limiters count. Security-neutral: the origin allowlist above is unchanged,
-  // and a browser caps the value anyway (Chromium at 7200 s).
+  // authenticated cross-origin request is preceded by an OPTIONS that nginx/Cloudflare
+  // count and that costs a round trip. The Express rate limiters never see preflights
+  // (cors ends them first — it is mounted above the limiter, preflightContinue false),
+  // so this does not change their budgets. Security-neutral: the origin allowlist above
+  // is unchanged, and a browser caps the value anyway (Chromium at 7200 s).
   maxAge: 600,
 }));
 

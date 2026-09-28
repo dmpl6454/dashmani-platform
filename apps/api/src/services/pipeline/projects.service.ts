@@ -13,7 +13,13 @@
  */
 import { randomUUID } from "node:crypto";
 import {
+  compareRank,
   keyBetween,
+  nKeysBetween,
+  type PipelineEditableFields,
+  type PipelineHeader,
+  type PipelineMoveRequest,
+  type PipelineMoveResponse,
   type PipelineProjectDetail,
   type PipelineMe,
   rankNeedsRebalance,
@@ -68,6 +74,34 @@ async function readCard(db: Db, projectId: string): Promise<PipelineCard | null>
 }
 
 export { readCard };
+
+/**
+ * Statement 1 of every project write: lock the row and re-check the actor (spec §4.3, §6).
+ * `db_now` is the database clock, so time windows never depend on the API host's clock.
+ */
+export async function lockProject(tx: PipelineTx, projectId: string, actorId: string): Promise<Row | null> {
+  const rows = await tx.$queryRaw<Row[]>`
+    SELECT p.*,
+           (SELECT (u.status = 'ACTIVE' AND u.deleted_at IS NULL) FROM users u WHERE u.id = ${actorId}) AS actor_active,
+           timezone('utc', now()) AS db_now
+      FROM pipeline_projects p
+     WHERE p.id = ${projectId}
+       FOR UPDATE OF p`;
+  return rows[0] ?? null;
+}
+
+/**
+ * The common refusals after the lock, in a fixed order: missing → 404, deleted → 404,
+ * inactive actor → 403, archived → 409 (unless the operation is allowed on archived rows).
+ */
+export function assertWritable(row: Row | null, opts: { allowArchived?: boolean } = {}): asserts row is Row {
+  if (!row) throw new PipelineError(404, "PROJECT_NOT_FOUND", "This project doesn't exist");
+  if (row.deleted_at) throw new PipelineError(404, "PROJECT_DELETED", "This project was deleted");
+  if (row.actor_active !== true) throw new PipelineError(403, "ACCOUNT_INACTIVE", "Your account is inactive");
+  if (row.archived_at && !opts.allowArchived) {
+    throw new PipelineError(409, "PROJECT_ARCHIVED", "This project is archived — unarchive it to make changes");
+  }
+}
 
 // ── Route #5: create (spec §6 "Create project") ──────────────────────────────────────
 
@@ -390,4 +424,219 @@ export async function getProjectDetail(
   };
   if (aroundMissing) detail.aroundMissing = true;
   return detail;
+}
+
+// ── Route #7: field edits (spec §6 "Field edits") ────────────────────────────────────
+
+type EditKey = "title" | "description" | "startDate" | "dueDate";
+const EDIT_KEYS: readonly EditKey[] = ["title", "description", "startDate", "dueDate"];
+
+function editableOf(h: PipelineHeader): Record<EditKey, string | null> {
+  return { title: h.title, description: h.description, startDate: h.startDate, dueDate: h.dueDate };
+}
+
+/**
+ * Per field: a conflict iff `current ≠ base AND current ≠ desired` (someone else changed
+ * it to something else). Fields already at the desired value are skipped, so a retry is a
+ * no-op. The date order is checked on the merged result, against the STORED other date.
+ * The board is bumped only when the title or a date changed.
+ */
+export async function editProject(
+  actor: PipelineActor,
+  projectId: string,
+  changes: PipelineEditableFields,
+  base: PipelineEditableFields,
+): Promise<{ header: PipelineHeader }> {
+  const out = await pipelineWrite(async (tx) => {
+    const row = await lockProject(tx, projectId, actor.userId);
+    assertWritable(row);
+    const current = headerFromRow(row);
+    const cur = editableOf(current);
+    const changed: EditKey[] = [];
+    for (const k of EDIT_KEYS) {
+      const desired = changes[k];
+      if (desired === undefined) continue;
+      if (cur[k] === desired) continue;
+      if (cur[k] !== (base[k] ?? null)) {
+        throw new PipelineError(409, "EDIT_CONFLICT", "Someone else just changed this", { current });
+      }
+      changed.push(k);
+    }
+    const start = changes.startDate !== undefined ? changes.startDate : cur.startDate;
+    const due = changes.dueDate !== undefined ? changes.dueDate : cur.dueDate;
+    if (start && due && start > due) {
+      throw new PipelineError(400, "DATE_ORDER", "The due date can't be before the start date");
+    }
+    if (changed.length === 0) return { header: current, boardChanged: false };
+
+    const has = (k: EditKey) => changed.includes(k);
+    const [updated] = await tx.$queryRaw<Row[]>`
+      UPDATE pipeline_projects SET
+             title       = CASE WHEN ${has("title")}::boolean THEN ${changes.title ?? null}::text ELSE title END,
+             description = CASE WHEN ${has("description")}::boolean THEN ${changes.description ?? null}::text ELSE description END,
+             start_date  = CASE WHEN ${has("startDate")}::boolean THEN ${changes.startDate ?? null}::date ELSE start_date END,
+             due_date    = CASE WHEN ${has("dueDate")}::boolean THEN ${changes.dueDate ?? null}::date ELSE due_date END,
+             header_rev  = header_rev + 1,
+             updated_at  = timezone('utc', now())
+       WHERE id = ${projectId}
+   RETURNING *`;
+    return {
+      header: headerFromRow(updated),
+      boardChanged: has("title") || has("startDate") || has("dueDate"),
+    };
+  });
+  if (out.boardChanged) await bumpBoard();
+  return { header: out.header };
+}
+
+// ── Route #8: move (spec §6 "Card move", "Rebalance", §7.6) ──────────────────────────
+
+const MOVE_MERGE_IDLE_MS = 2 * 60_000;
+const MOVE_MERGE_SPAN_MS = 10 * 60_000;
+
+const asDate = (v: unknown): Date | null => (v instanceof Date ? v : v ? new Date(String(v)) : null);
+
+export async function moveProject(actor: PipelineActor, projectId: string, input: PipelineMoveRequest): Promise<PipelineMoveResponse> {
+  const me = actor.userId;
+  const { toPhaseId, basePhaseId } = input;
+  const afterId = input.afterId === projectId ? null : input.afterId;
+  const out = await pipelineWrite(async (tx) => {
+    // S1: lock the card.
+    const row = await lockProject(tx, projectId, me);
+    assertWritable(row);
+    const curPhase = String(row.phase_id);
+    if (curPhase !== basePhaseId && curPhase !== toPhaseId) {
+      const current = await readCard(tx, projectId);
+      throw new PipelineError(409, "MOVE_CONFLICT", "Someone else just moved this card", { current });
+    }
+
+    // The §7.6 merge decision needs only the locked row and the DB clock.
+    const phaseChanged = curPhase !== toPhaseId;
+    const now = asDate(row.db_now)!.getTime();
+    const lastAt = asDate(row.move_last_at);
+    const startedAt = asDate(row.move_started_at);
+    const sameGen =
+      phaseChanged &&
+      row.move_actor_id === me &&
+      lastAt !== null &&
+      startedAt !== null &&
+      now - lastAt.getTime() <= MOVE_MERGE_IDLE_MS &&
+      now - startedAt.getTime() <= MOVE_MERGE_SPAN_MS;
+    const gen = sameGen ? Number(row.move_gen) : Number(row.move_gen) + 1;
+    const fromPhaseId = sameGen ? String(row.move_from_phase_id ?? curPhase) : curPhase;
+    const netZero = sameGen && toPhaseId === fromPhaseId;
+
+    // S2: the target phase and the neighbours (a = after, b = the next rank above a).
+    const [s2] = await tx.$queryRaw<Row[]>`
+      WITH ph AS (
+        SELECT id, name, archived_at FROM pipeline_phases WHERE id = ${toPhaseId}),
+      aft AS (
+        SELECT rank FROM pipeline_projects
+         WHERE id = ${afterId}::text AND phase_id = ${toPhaseId}
+           AND archived_at IS NULL AND deleted_at IS NULL AND id <> ${projectId}),
+      lst AS (
+        SELECT rank FROM pipeline_projects
+         WHERE phase_id = ${toPhaseId} AND archived_at IS NULL AND deleted_at IS NULL AND id <> ${projectId}
+         ORDER BY rank COLLATE "C" DESC, id DESC LIMIT 1),
+      a AS (
+        SELECT CASE WHEN ${afterId}::text IS NULL THEN NULL
+                    WHEN EXISTS (SELECT 1 FROM aft) THEN (SELECT rank FROM aft)
+                    ELSE (SELECT rank FROM lst) END AS rank,
+               (${afterId}::text IS NOT NULL AND NOT EXISTS (SELECT 1 FROM aft)) AS adjusted),
+      b AS (
+        SELECT q.rank FROM pipeline_projects q, a
+         WHERE q.phase_id = ${toPhaseId} AND q.archived_at IS NULL AND q.deleted_at IS NULL AND q.id <> ${projectId}
+           AND (a.rank IS NULL OR q.rank COLLATE "C" > a.rank COLLATE "C")
+         ORDER BY q.rank COLLATE "C", q.id LIMIT 1)
+      SELECT ph.id AS phase_id, ph.name AS phase_name, ph.archived_at AS phase_archived_at,
+             (SELECT name FROM pipeline_phases WHERE id = ${fromPhaseId}) AS from_name,
+             (SELECT rank FROM a) AS a_rank, (SELECT adjusted FROM a) AS adjusted, (SELECT rank FROM b) AS b_rank
+        FROM (SELECT 1) one
+        LEFT JOIN ph ON true`;
+    if (!s2.phase_id) throw new PipelineError(404, "PHASE_NOT_FOUND", "That phase doesn't exist");
+    if (s2.phase_archived_at) throw new PipelineError(409, "PHASE_ARCHIVED", "That phase is no longer in use");
+    const a = (s2.a_rank as string | null) ?? null;
+    const b = (s2.b_rank as string | null) ?? null;
+    const placementAdjusted = s2.adjusted === true;
+    const curRank = String(row.rank);
+
+    if (!phaseChanged && (a === null || compareRank(a, curRank) < 0) && (b === null || compareRank(curRank, b) < 0)) {
+      // Already exactly there: a retry after success.
+      return { card: await readCard(tx, projectId), placementAdjusted, changed: false };
+    }
+
+    let rank = keyBetween(a, b);
+    if (rankNeedsRebalance(rank)) rank = await rebalancePhase(tx, toPhaseId, projectId, afterId);
+
+    // S3: the card, with the move bookkeeping only when the phase changed.
+    const [updated] = await tx.$queryRaw<Row[]>`
+      UPDATE pipeline_projects p SET
+             phase_id            = ${toPhaseId},
+             rank                = ${rank},
+             phase_changed_at    = CASE WHEN ${phaseChanged}::boolean THEN timezone('utc', now()) ELSE p.phase_changed_at END,
+             phase_changed_by_id = CASE WHEN ${phaseChanged}::boolean THEN ${me} ELSE p.phase_changed_by_id END,
+             move_gen            = ${phaseChanged ? gen : Number(row.move_gen)}::int,
+             move_actor_id       = CASE WHEN ${phaseChanged}::boolean THEN ${netZero ? null : me}::text ELSE p.move_actor_id END,
+             move_from_phase_id  = CASE WHEN ${phaseChanged}::boolean THEN ${fromPhaseId}::text ELSE p.move_from_phase_id END,
+             move_started_at     = CASE WHEN ${phaseChanged && !sameGen}::boolean THEN timezone('utc', now()) ELSE p.move_started_at END,
+             move_last_at        = CASE WHEN ${phaseChanged}::boolean THEN timezone('utc', now()) ELSE p.move_last_at END,
+             header_rev          = p.header_rev + 1,
+             updated_at          = timezone('utc', now())
+       WHERE p.id = ${projectId}
+   RETURNING p.id, p.phase_id, p.title, p.rank, p.owner_id, p.start_date, p.due_date, p.member_count,
+             ARRAY(SELECT pp.user_id FROM pipeline_participants pp
+                    WHERE pp.project_id = p.id AND pp.role = 'MEMBER'
+                    ORDER BY pp.created_at, pp.user_id LIMIT 3) AS preview`;
+
+    if (phaseChanged) {
+      await notifier.onMoved(tx, {
+        projectId,
+        projectTitle: String(row.title),
+        actorId: me,
+        actorName: actor.name,
+        allow: allowList(actor.settings),
+        gen,
+        sameGeneration: sameGen,
+        netZero,
+        fromPhaseId,
+        fromPhaseName: String(s2.from_name ?? ""),
+        toPhaseId,
+        toPhaseName: String(s2.phase_name ?? ""),
+      });
+    }
+    return { card: cardFromRow(updated), placementAdjusted, changed: true };
+  });
+  if (out.changed) await bumpBoard();
+  return { card: out.card!, placementAdjusted: out.placementAdjusted };
+}
+
+/**
+ * The rare locked rebalance (spec §6 "Rebalance"): lock the target phase's live rows in
+ * id order (a consistent lock order, fresh values once locked), recompute the order from
+ * that read with the moving card inserted where `afterId` says, and rewrite every rank
+ * with short evenly spaced keys. The UPDATE re-checks phase_id. Returns the card's rank.
+ */
+async function rebalancePhase(tx: PipelineTx, phaseId: string, projectId: string, afterId: string | null): Promise<string> {
+  const locked = await tx.$queryRaw<Array<{ id: string; rank: string }>>`
+    SELECT id, rank FROM pipeline_projects
+     WHERE phase_id = ${phaseId} AND archived_at IS NULL AND deleted_at IS NULL
+     ORDER BY id
+       FOR UPDATE`;
+  const others = locked
+    .filter((r) => r.id !== projectId)
+    .sort((x, y) => compareRank(x.rank, y.rank) || (x.id < y.id ? -1 : x.id > y.id ? 1 : 0));
+  let at = afterId === null ? 0 : others.findIndex((r) => r.id === afterId) + 1;
+  if (afterId !== null && at === 0) at = others.length; // afterId gone → last
+  const order = [...others.slice(0, at).map((r) => r.id), projectId, ...others.slice(at).map((r) => r.id)];
+  const keys = nKeysBetween(null, null, order.length);
+  const ids = order.filter((id) => id !== projectId);
+  const ranks = order.map((id, i) => ({ id, rank: keys[i] })).filter((x) => x.id !== projectId).map((x) => x.rank);
+  if (ids.length > 0) {
+    await tx.$executeRaw`
+      UPDATE pipeline_projects p
+         SET rank = v.rank, header_rev = p.header_rev + 1, updated_at = timezone('utc', now())
+        FROM unnest(${ids}::text[], ${ranks}::text[]) AS v(id, rank)
+       WHERE p.id = v.id AND p.phase_id = ${phaseId} AND p.rank IS DISTINCT FROM v.rank`;
+  }
+  return keys[order.indexOf(projectId)];
 }

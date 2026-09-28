@@ -35,7 +35,14 @@ import { PipelineError, pipelineErrorMiddleware } from "../services/pipeline/err
 import { getPipelineDirectory } from "../services/pipeline/access";
 import { isPilotUser } from "../services/pipeline/settings";
 import { getLivePhases } from "../services/pipeline/board";
-import { createProject, getProjectDetail, listProjects, type PipelineActor } from "../services/pipeline/projects.service";
+import {
+  createProject,
+  editProject,
+  getProjectDetail,
+  listProjects,
+  moveProject,
+  type PipelineActor,
+} from "../services/pipeline/projects.service";
 
 const router = Router();
 
@@ -155,6 +162,28 @@ router.get(
     const dir = await getPipelineDirectory(); // memo: resolved BEFORE the handler takes a slot
     const { around } = req.query as { around?: string };
     return ok(res, await getProjectDetail(actorOf(req), req.params.id, around, dir));
+  }),
+);
+
+// ── #7 PATCH /pipeline/projects/:id ──────────────────────────────────────────────────
+router.patch(
+  "/pipeline/projects/:id",
+  ...G,
+  pv(V.projectParamsSchema, "params"),
+  pv(V.editProjectSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    return ok(res, await editProject(actorOf(req), req.params.id, req.body.changes, req.body.base));
+  }),
+);
+
+// ── #8 POST /pipeline/projects/:id/move ──────────────────────────────────────────────
+router.post(
+  "/pipeline/projects/:id/move",
+  ...G,
+  pv(V.projectParamsSchema, "params"),
+  pv(V.moveProjectSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    return ok(res, await moveProject(actorOf(req), req.params.id, req.body));
   }),
 );
 

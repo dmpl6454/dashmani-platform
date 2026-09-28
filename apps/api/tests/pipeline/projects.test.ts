@@ -361,4 +361,166 @@ describe("pipeline projects", () => {
       expect(regressed).not.toBe(second);
     });
   });
+
+  // ── Task 7.3: edit and move (routes #7–8) ─────────────────────────────────────────
+  describe("PATCH /pipeline/projects/:id (edit)", () => {
+    const patch = (id: string, token: string, changes: object, base: object) =>
+      call("patch", `${P}/${id}`, token, { changes, base });
+
+    it("edits to different fields both succeed; the same field is 409 EDIT_CONFLICT {current}", async () => {
+      const a = await user("Edit Alpha");
+      const b = await user("Edit Beta");
+      const card = await create(a.token, { title: "Diwali campaign", dueDate: "2026-10-20" });
+      const r1 = await patch(card.id, a.token, { title: "Diwali 2026" }, { title: "Diwali campaign" });
+      expect(r1.status).toBe(200);
+      expect(r1.body.data.header).toMatchObject({ title: "Diwali 2026", headerRev: 2 });
+      const r2 = await patch(card.id, b.token, { dueDate: "2026-10-25" }, { dueDate: "2026-10-20" });
+      expect(r2.status).toBe(200);
+      expect(r2.body.data.header).toMatchObject({ title: "Diwali 2026", dueDate: "2026-10-25", headerRev: 3 });
+
+      const clash = await patch(card.id, b.token, { title: "Holi" }, { title: "Diwali campaign" });
+      expect(clash.status).toBe(409);
+      expect(clash.body.error.code).toBe("EDIT_CONFLICT");
+      expect(clash.body.error.current).toMatchObject({ id: card.id, title: "Diwali 2026" });
+    });
+
+    it("a retried edit (current already equals the change) is a 200 no-op without a header or board bump", async () => {
+      const a = await user("Edit Retry");
+      const card = await create(a.token, { title: "Old" });
+      await patch(card.id, a.token, { title: "New" }, { title: "Old" });
+      const v = await boardSeq();
+      const again = await patch(card.id, a.token, { title: "New" }, { title: "Old" });
+      expect(again.status).toBe(200);
+      expect(again.body.data.header).toMatchObject({ title: "New", headerRev: 2 });
+      expect(await boardSeq()).toBe(v);
+    });
+
+    it("due < start (against the stored start) is 400 DATE_ORDER; a description-only edit does not bump the board", async () => {
+      const a = await user("Edit Dates");
+      const card = await create(a.token, { startDate: "2026-10-10" });
+      const bad = await patch(card.id, a.token, { dueDate: "2026-10-01" }, { dueDate: null });
+      expect(bad.status).toBe(400);
+      expect(bad.body.error.code).toBe("DATE_ORDER");
+      const v = await boardSeq();
+      const desc = await patch(card.id, a.token, { description: "New brief" }, { description: "" });
+      expect(desc.status).toBe(200);
+      expect(desc.body.data.header.description).toBe("New brief");
+      expect(await boardSeq()).toBe(v);
+    });
+
+    it("an archived project is 409 PROJECT_ARCHIVED", async () => {
+      const a = await user("Edit Archived");
+      const card = await create(a.token);
+      await prisma.pipelineProject.update({ where: { id: card.id }, data: { archivedAt: new Date() } });
+      const r = await patch(card.id, a.token, { title: "X" }, { title: "Diwali campaign" });
+      expect(r.status).toBe(409);
+      expect(r.body.error.code).toBe("PROJECT_ARCHIVED");
+    });
+  });
+
+  describe("POST /pipeline/projects/:id/move", () => {
+    const move = (id: string, token: string, body: object) => call("post", `${P}/${id}/move`, token, body);
+
+    it("moves to the top of the target phase; a retry after success is a no-op 200", async () => {
+      const a = await user("Move One");
+      const brief = await phase("brief");
+      const planning = await phase("planning");
+      const existing = await create(a.token, { phaseId: planning.id, title: "Already there" });
+      const card = await create(a.token);
+      const r = await move(card.id, a.token, { toPhaseId: planning.id, afterId: null, basePhaseId: brief.id });
+      expect(r.status).toBe(200);
+      expect(r.body.data.placementAdjusted).toBe(false);
+      expect(r.body.data.card.phaseId).toBe(planning.id);
+      expect(compareRank(r.body.data.card.rank, existing.rank)).toBe(-1);
+      const row = await prisma.pipelineProject.findUniqueOrThrow({ where: { id: card.id } });
+      expect(row).toMatchObject({ phaseChangedById: a.id, moveGen: 1, moveActorId: a.id, moveFromPhaseId: brief.id, headerRev: 2 });
+
+      const v = await boardSeq();
+      const retry = await move(card.id, a.token, { toPhaseId: planning.id, afterId: null, basePhaseId: brief.id });
+      expect(retry.status).toBe(200);
+      expect(retry.body.data.card.rank).toBe(r.body.data.card.rank);
+      expect((await prisma.pipelineProject.findUniqueOrThrow({ where: { id: card.id } })).headerRev).toBe(2);
+      expect(await boardSeq()).toBe(v);
+    });
+
+    it("a move whose current phase is neither the base nor the target is 409 MOVE_CONFLICT {current}", async () => {
+      const a = await user("Move Clash");
+      const [brief, planning, review] = [await phase("brief"), await phase("planning"), await phase("review")];
+      const card = await create(a.token);
+      await move(card.id, a.token, { toPhaseId: planning.id, afterId: null, basePhaseId: brief.id });
+      const r = await move(card.id, a.token, { toPhaseId: review.id, afterId: null, basePhaseId: brief.id });
+      expect(r.status).toBe(409);
+      expect(r.body.error.code).toBe("MOVE_CONFLICT");
+      expect(r.body.error.current).toMatchObject({ id: card.id, phaseId: planning.id });
+    });
+
+    it("someone else reordering the phase first is not a conflict", async () => {
+      const a = await user("Move Reorder A");
+      const b = await user("Move Reorder B");
+      const brief = await phase("brief");
+      const review = await phase("review");
+      const c1 = await create(a.token, { title: "c1" });
+      const c2 = await create(a.token, { title: "c2" }); // order: c2, c1
+      const reorder = await move(c2.id, b.token, { toPhaseId: brief.id, afterId: c1.id, basePhaseId: brief.id });
+      expect(reorder.status).toBe(200);
+      expect(compareRank(c1.rank, reorder.body.data.card.rank)).toBe(-1);
+      expect((await prisma.pipelineProject.findUniqueOrThrow({ where: { id: c2.id } })).moveGen).toBe(0); // a reorder is not a move
+      const mine = await move(c1.id, a.token, { toPhaseId: review.id, afterId: null, basePhaseId: brief.id });
+      expect(mine.status).toBe(200);
+      expect(mine.body.data.card.phaseId).toBe(review.id);
+    });
+
+    it("an archived target phase is 409 PHASE_ARCHIVED; a vanished afterId places the card last", async () => {
+      const a = await user("Move Phase");
+      const brief = await phase("brief");
+      const planning = await phase("planning");
+      const old = await prisma.pipelinePhase.create({ data: { key: "old", name: "Old", position: 99, archivedAt: new Date() } });
+      const card = await create(a.token);
+      const r = await move(card.id, a.token, { toPhaseId: old.id, afterId: null, basePhaseId: brief.id });
+      expect(r.status).toBe(409);
+      expect(r.body.error.code).toBe("PHASE_ARCHIVED");
+
+      const other = await create(a.token, { phaseId: planning.id, title: "Other" });
+      const adj = await move(card.id, a.token, { toPhaseId: planning.id, afterId: uuid(), basePhaseId: brief.id });
+      expect(adj.status).toBe(200);
+      expect(adj.body.data.placementAdjusted).toBe(true);
+      expect(compareRank(other.rank, adj.body.data.card.rank)).toBe(-1);
+    });
+
+    it("same actor within 2 minutes keeps the generation; moving back to the origin is net-zero", async () => {
+      const a = await user("Move Merge");
+      const [brief, planning, review] = [await phase("brief"), await phase("planning"), await phase("review")];
+      const card = await create(a.token);
+      await move(card.id, a.token, { toPhaseId: planning.id, afterId: null, basePhaseId: brief.id });
+      await move(card.id, a.token, { toPhaseId: review.id, afterId: null, basePhaseId: planning.id });
+      let row = await prisma.pipelineProject.findUniqueOrThrow({ where: { id: card.id } });
+      expect(row).toMatchObject({ moveGen: 1, moveFromPhaseId: brief.id, moveActorId: a.id });
+      await move(card.id, a.token, { toPhaseId: brief.id, afterId: null, basePhaseId: review.id });
+      row = await prisma.pipelineProject.findUniqueOrThrow({ where: { id: card.id } });
+      expect(row).toMatchObject({ moveGen: 1, moveActorId: null, phaseId: brief.id });
+    });
+
+    it("a key over 64 characters triggers a locked rebalance that preserves the order", async () => {
+      const a = await user("Move Rebalance");
+      const planning = await phase("planning");
+      const A = "a0" + "V".repeat(61); // 63 chars
+      const B = A + "1"; // 64: keyBetween(A, B) needs 65
+      const C = "a0" + "V".repeat(60) + "W";
+      const seeded: string[] = [];
+      for (const [title, rank] of [["A", A], ["B", B], ["C", C]]) {
+        const row = await prisma.pipelineProject.create({
+          data: { clientId: uuid(), title, ownerId: a.id, createdById: a.id, phaseId: planning.id, rank },
+        });
+        seeded.push(row.id);
+      }
+      const card = await create(a.token, { title: "X" });
+      const r = await move(card.id, a.token, { toPhaseId: planning.id, afterId: seeded[0], basePhaseId: card.phaseId });
+      expect(r.status).toBe(200);
+      const rows = await prisma.pipelineProject.findMany({ where: { phaseId: planning.id } });
+      const ordered = [...rows].sort((x, y) => compareRank(x.rank, y.rank) || (x.id < y.id ? -1 : 1));
+      expect(ordered.map((x) => x.title)).toEqual(["A", "X", "B", "C"]);
+      for (const x of rows) expect(x.rank.length).toBeLessThanOrEqual(8);
+      expect(r.body.data.card.rank).toBe(ordered[1].rank);
+    });
+  });
 });

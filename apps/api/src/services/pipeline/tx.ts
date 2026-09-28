@@ -20,6 +20,7 @@
  */
 import { createBulkhead } from "../../utils/bulkhead";
 import { pipelineDb, pipelineDbConnections, type PipelineDbClient, type PipelineTx } from "./db";
+import { normalizePipelineError, withRetryOnce } from "./errors";
 
 /**
  * Sized from the pipeline pool (3 in production, 1 in the main test suite): a slot is a
@@ -36,16 +37,41 @@ export const pipelineGate = createBulkhead({
   retryAfterSec: 2,
 });
 
-/** One read slot, one autocommit statement (or a few sequential ones). */
+/**
+ * One read slot, one autocommit statement (or a few sequential ones). Errors are
+ * classified (errors.ts): a recognised DB failure is rethrown as its PipelineDbError
+ * (503 / 409 / 404), an AppError thrown by `fn` passes through, anything else is
+ * rethrown unchanged and becomes a logged 500.
+ */
 export async function pipelineRead<T>(fn: (db: PipelineDbClient) => Promise<T>): Promise<T> {
-  return pipelineGate.run("read", () => fn(pipelineDb));
+  try {
+    return await pipelineGate.run("read", () => fn(pipelineDb));
+  } catch (err) {
+    throw normalizePipelineError(err);
+  }
+}
+
+export interface PipelineWriteOptions {
+  /**
+   * Retry once after 50–150 ms on a deadlock (40P01) or serialization failure (40001).
+   * ONLY for operations that are safe to run twice (idempotent by key or by state).
+   * The slot is released during the pause and re-acquired for the retry.
+   */
+  retryOnce?: boolean;
 }
 
 /** One write slot; `fn` runs in an interactive transaction on the pipeline client. */
-export async function pipelineWrite<T>(fn: (tx: PipelineTx) => Promise<T>): Promise<T> {
-  return pipelineGate.run("write", () =>
-    pipelineDb.$transaction((tx) => fn(tx), { maxWait: 1500, timeout: 4000 }),
-  );
+export async function pipelineWrite<T>(
+  fn: (tx: PipelineTx) => Promise<T>,
+  opts: PipelineWriteOptions = {},
+): Promise<T> {
+  const attempt = () =>
+    pipelineGate.run("write", () => pipelineDb.$transaction((tx) => fn(tx), { maxWait: 1500, timeout: 4000 }));
+  try {
+    return await (opts.retryOnce ? withRetryOnce(attempt) : attempt());
+  } catch (err) {
+    throw normalizePipelineError(err);
+  }
 }
 
 /** Tests only: refuse every queued waiter and zero the gate's counters. */

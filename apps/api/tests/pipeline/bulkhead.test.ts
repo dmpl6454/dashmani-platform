@@ -79,6 +79,20 @@ describe("createBulkhead({ max: 2, queue: 3, maxWaitMs: 100, writePriority: true
     expect(b.stats()).toMatchObject({ active: 0, queued: 0 });
   });
 
+  it("stats().granted counts every slot handed out (fast path and from the queue), never a refusal", async () => {
+    const b = createBulkhead({ max: 1, queue: 1, maxWaitMs: 100, writePriority: true });
+    const r1 = await b.acquire("read"); // fast path
+    expect(b.stats().granted).toBe(1);
+    const queued = b.acquire("write");
+    await expect(b.acquire("read")).rejects.toBeInstanceOf(BulkheadBusyError); // queue full
+    expect(b.stats().granted).toBe(1);
+    r1();
+    (await queued)(); // granted from the queue
+    expect(b.stats()).toMatchObject({ granted: 2, rejected: 1 });
+    b.reset();
+    expect(b.stats().granted).toBe(0);
+  });
+
   it("a waiter past maxWaitMs rejects with AppError(503, PIPELINE_BUSY) carrying retryAfterSec", async () => {
     const b = make();
     await b.acquire("read");

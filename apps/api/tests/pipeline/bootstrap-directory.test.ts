@@ -14,6 +14,7 @@ import { PIPELINE_LIMITS, PIPELINE_REACTION_KEYS } from "@dashmani/shared";
 import app from "../../src/app";
 import { invalidatePipelineCaches } from "../../src/services/pipeline";
 import { pipelineDb } from "../../src/services/pipeline/db";
+import { pipelineGate } from "../../src/services/pipeline/tx";
 import { hrToken, setPipelineSetting, clearPipelineSettings, createPipelineUser, seedPipelinePhases } from "./pipeline-helpers";
 
 const BOOT = "/v1/pipeline/bootstrap";
@@ -98,6 +99,21 @@ describe("pipeline bootstrap and directory", () => {
       invalidatePipelineCaches();
       await setPipelineSetting("pipeline.pollMs", "not json");
       expect((await get(BOOT, hrToken(u.id))).body.data.pollMs.project).toBe(10000);
+    });
+
+    it("warm bootstrap and directory calls cost ZERO pipeline statements (spec §8.3)", async () => {
+      // Every 10 s poll passes the same gates; a statement on the hit path would multiply
+      // across every open tab. Count gate grants — every pipeline statement takes one.
+      const u = await createPipelineUser({ name: "Zed Zero", tag: "boot-zero" });
+      expect((await get(BOOT, hrToken(u.id))).status).toBe(200); // warms schema, settings, access, phases
+      expect((await get(DIR, hrToken(u.id))).status).toBe(200); // warms the directory
+      const before = pipelineGate.stats().granted;
+      expect(before).toBeGreaterThan(0); // the counter is live: the warm-up calls took slots
+      for (let i = 0; i < 50; i++) {
+        expect((await get(BOOT, hrToken(u.id))).status).toBe(200);
+        expect((await get(DIR, hrToken(u.id))).status).toBe(200);
+      }
+      expect(pipelineGate.stats().granted).toBe(before);
     });
 
     it("a user created after the directory was cached still gets their own name", async () => {

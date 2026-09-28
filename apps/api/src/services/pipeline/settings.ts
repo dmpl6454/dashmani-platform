@@ -12,6 +12,11 @@
  * client would show "paused" for a DB blip. A failed read is served from the last value
  * read successfully within 5 minutes; with none, callers get 503 PIPELINE_BUSY
  * (retried silently). PIPELINE_DISABLED is only ever the result of a SUCCESSFUL read.
+ *
+ * BACKOFF. After a failed read the next attempt waits RETRY_BACKOFF_MS: meanwhile the
+ * last-known value (or the 503) is answered at once, without a load. Otherwise every
+ * gated request during a blip would first wait for its own failing load (a read slot, up
+ * to the 2 s bulkhead wait or the 5 s connect timeout) and only then fall back.
  */
 import { PIPELINE_DEFAULT_POLL_MS, PIPELINE_MODES, type PipelineMode, type PipelinePollMs } from "@dashmani/shared";
 import { pipelineRead } from "./tx";
@@ -36,6 +41,7 @@ const LAST_KNOWN_MS = 5 * 60_000;
 const POLL_MIN_MS = 2_000;
 const POLL_MAX_MS = 600_000;
 const MAX_PILOT_IDS = 1_000;
+const RETRY_BACKOFF_MS = 2_000;
 
 type SettingRow = { key: string; value: string };
 type Loader = () => Promise<SettingRow[]>;
@@ -52,6 +58,8 @@ let loader: Loader = defaultLoader;
 let current: { settings: PipelineSettings; loadedAt: number } | null = null;
 let inflight: Promise<PipelineSettings> | null = null;
 let lastFailureLog = 0;
+/** No load is attempted before this time (set after a failed load). */
+let retryAt = 0;
 
 function parseMode(raw: string | undefined): PipelineMode {
   const v = (raw ?? "").trim().toLowerCase();
@@ -141,19 +149,36 @@ function load(): Promise<PipelineSettings> {
  * The current settings (memoised 15 s, single-flight).
  * @throws PipelineError 503 PIPELINE_BUSY when unreadable and no value < 5 min old exists.
  */
+function busy(): PipelineError {
+  return new PipelineError(503, "PIPELINE_BUSY", "The pipeline is busy — retrying shortly", {
+    retryAfterSec: PIPELINE_RETRY_AFTER_SEC,
+  });
+}
+
+function lastKnown(now: number): PipelineSettings | null {
+  return current && now - current.loadedAt < LAST_KNOWN_MS ? current.settings : null;
+}
+
 export async function getPipelineSettings(): Promise<PipelineSettings> {
-  if (current && Date.now() - current.loadedAt < MEMO_MS) return current.settings;
+  const now = Date.now();
+  if (current && now - current.loadedAt < MEMO_MS) return current.settings;
+  if (now < retryAt) {
+    // Backing off after a failed load: answer from what we have, without a load.
+    const known = lastKnown(now);
+    if (known) return known;
+    throw busy();
+  }
   try {
     return await load();
   } catch (err) {
-    if (current && Date.now() - current.loadedAt < LAST_KNOWN_MS) return current.settings;
+    retryAt = Date.now() + RETRY_BACKOFF_MS;
+    const known = lastKnown(Date.now());
+    if (known) return known;
     if (Date.now() - lastFailureLog > 10_000) {
       lastFailureLog = Date.now();
       console.warn("[pipeline] settings unreadable and no recent value — answering 503:", String(err));
     }
-    throw new PipelineError(503, "PIPELINE_BUSY", "The pipeline is busy — retrying shortly", {
-      retryAfterSec: PIPELINE_RETRY_AFTER_SEC,
-    });
+    throw busy();
   }
 }
 
@@ -169,6 +194,7 @@ export function isPilotUser(settings: Pick<PipelineSettings, "pilotUserIds">, us
 /** Forget the memo AND the last-known value (tests, and after the flag script writes). */
 export function invalidatePipelineSettings(): void {
   current = null;
+  retryAt = 0;
 }
 
 /** Tests only: replace the loader (null restores the real one). */

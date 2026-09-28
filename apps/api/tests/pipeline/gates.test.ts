@@ -19,7 +19,8 @@ import { __setPipelineSettingsLoaderForTests, __expirePipelineSettingsMemoForTes
 import { __setPipelineSchemaOkForTests, isPipelineSchemaOk } from "../../src/services/pipeline/self-check";
 import { bumpBoard, isBoardBumpPending } from "../../src/services/pipeline/board";
 import { pipelineDb, buildPipelineDbUrl } from "../../src/services/pipeline/db";
-import { pipelineGate } from "../../src/services/pipeline/tx";
+import { pipelineGate, pipelineWrite } from "../../src/services/pipeline/tx";
+import { assertOwnerOrAdmin } from "../../src/middleware/pipeline-gates";
 import {
   hrToken,
   tokenFor,
@@ -228,6 +229,29 @@ describe("pipeline gates", () => {
       expect(isPipelineSchemaOk()).toBeNull();
       expect((await get(DIR, hrToken(u.id))).status).toBe(200);
       expect(isPipelineSchemaOk()).toBe(true);
+    });
+  });
+
+  describe("+O — owner or admin, checked fresh in the action's transaction", () => {
+    const check = (actorId: string, ownerId: string) => pipelineWrite((tx) => assertOwnerOrAdmin(tx, { actorId, ownerId }));
+
+    it("the owner passes; an ACTIVE Admin or Super Admin who is not the owner passes as admin", async () => {
+      const owner = await createPipelineUser({ name: "Oona Owner", tag: "o-owner" });
+      const admin = await createPipelineUser({ name: "Ada Admin", tag: "o-admin", roleNames: ["Admin"] });
+      const sup = await createPipelineUser({ name: "Sal Super", tag: "o-super", roleNames: ["Super Admin"] });
+      expect(await check(owner.id, owner.id)).toEqual({ isOwner: true, isAdmin: false });
+      expect(await check(admin.id, owner.id)).toEqual({ isOwner: false, isAdmin: true });
+      expect(await check(sup.id, owner.id)).toEqual({ isOwner: false, isAdmin: true });
+    });
+
+    it("a plain member, an INACTIVE Admin and a soft-deleted Admin are 403 NOT_OWNER_OR_ADMIN", async () => {
+      const owner = await createPipelineUser({ name: "Oli Owner", tag: "o-owner2" });
+      const plain = await createPipelineUser({ name: "Pat Plain", tag: "o-plain", roleNames: ["Employee"] });
+      const inactive = await createPipelineUser({ name: "Ira Inactive", tag: "o-inactive", roleNames: ["Admin"], status: "INACTIVE" });
+      const deleted = await createPipelineUser({ name: "Dev Deleted", tag: "o-deleted", roleNames: ["Super Admin"], deleted: true });
+      for (const actor of [plain, inactive, deleted]) {
+        await expect(check(actor.id, owner.id)).rejects.toMatchObject({ statusCode: 403, code: "NOT_OWNER_OR_ADMIN" });
+      }
     });
   });
 

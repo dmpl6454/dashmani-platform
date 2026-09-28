@@ -33,6 +33,36 @@ import {
 
 const U = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const SHARED_PIPELINE = path.resolve(__dirname, "../../../../packages/shared/src/pipeline");
+const API_SRC = path.resolve(__dirname, "../../src");
+
+/** Every .ts file under `dir` (recursive); [] when it does not exist. */
+function tsFilesUnder(dir: string): string[] {
+  if (!fs.existsSync(dir)) return [];
+  const out: string[] = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...tsFilesUnder(full));
+    else if (entry.name.endsWith(".ts")) out.push(full);
+  }
+  return out;
+}
+
+/** The pipeline's API source: services/pipeline/**, middleware/pipeline-*.ts, routes/pipeline*. */
+function pipelineApiSources(): string[] {
+  const inDir = (sub: string, prefix: string) =>
+    fs.existsSync(path.join(API_SRC, sub))
+      ? fs
+          .readdirSync(path.join(API_SRC, sub))
+          .filter((f) => f.startsWith(prefix) && f.endsWith(".ts"))
+          .map((f) => path.join(API_SRC, sub, f))
+      : [];
+  return [
+    ...tsFilesUnder(path.join(API_SRC, "services/pipeline")),
+    ...inDir("middleware", "pipeline-"),
+    ...inDir("routes", "pipeline"),
+    ...tsFilesUnder(path.join(API_SRC, "routes/pipeline")),
+  ];
+}
 
 describe("rank (fractional indexing)", () => {
   it("keyBetween(null, null) returns a key", () => {
@@ -134,6 +164,39 @@ describe("rank (fractional indexing)", () => {
   });
 });
 
+describe("pipeline source guards", () => {
+  // ⚠️ DB ACCESS RULE 1 (spec §2): services/pipeline/db.ts is the ONLY pipeline file that
+  // may import @dashmani/db or @prisma/client. A global `prisma` call inside a pipeline
+  // transaction breaks the pool arithmetic the bulkhead relies on (max = connections) and
+  // can deadlock at connection_limit=1. PR 4 adds a CI grep for the same rule; this test
+  // enforces it on every branch, whatever lands first.
+  it("only services/pipeline/db.ts imports @dashmani/db or @prisma/client", () => {
+    const files = pipelineApiSources();
+    const dbFile = path.join(API_SRC, "services/pipeline/db.ts");
+    expect(files).toContain(dbFile);
+    expect(files.length).toBeGreaterThan(5);
+    const importsDb = (src: string) => /["']@dashmani\/db["']|@prisma\/client/.test(src);
+    const offenders = files.filter((f) => f !== dbFile && importsDb(fs.readFileSync(f, "utf8")));
+    expect(offenders.map((f) => path.relative(API_SRC, f))).toEqual([]);
+    expect(importsDb(fs.readFileSync(dbFile, "utf8"))).toBe(true); // the guard is not vacuous
+  });
+
+  it("pipeline sources contain no literal bidi control characters (write them as \\u escapes)", () => {
+    // Literal U+202A–202E / U+2066–2069 / U+200E/F / U+061C are invisible in editors and
+    // reviews (GitHub flags them as hidden bidi text) and are easily mangled by tooling.
+    const bidi = /[\u202A-\u202E\u2066-\u2069\u200E\u200F\u061C]/;
+    const files = [
+      ...pipelineApiSources(),
+      ...tsFilesUnder(SHARED_PIPELINE),
+      path.resolve(SHARED_PIPELINE, "../validators/pipeline.ts"),
+      path.resolve(SHARED_PIPELINE, "../types/pipeline.ts"),
+      ...tsFilesUnder(__dirname),
+    ];
+    const offenders = files.filter((f) => bidi.test(fs.readFileSync(f, "utf8")));
+    expect(offenders.map((f) => path.basename(f))).toEqual([]);
+  });
+});
+
 describe("mentions", () => {
   it("returns the unique ids in first-seen order", () => {
     const a = U(1);
@@ -183,13 +246,13 @@ describe("mentions", () => {
 
 describe("text", () => {
   it("stripBidi removes every bidi control listed in §3.5", () => {
-    const controls = ["‪", "‫", "‬", "‭", "‮", "⁦", "⁧", "⁨", "⁩", "‎", "‏", "؜"];
+    const controls = ["\u202A", "\u202B", "\u202C", "\u202D", "\u202E", "\u2066", "\u2067", "\u2068", "\u2069", "\u200E", "\u200F", "\u061C"];
     expect(stripBidi(`a${controls.join("")}b`)).toBe("ab");
   });
 
   it("normalizeText strips bidi and C0 controls (except \\n and \\t), applies NFC, converts CRLF and trims", () => {
     const decomposed = "é"; // é as e + combining acute
-    const input = `  ‮hello\u0000\u0007 ${decomposed}\r\nline2\tTab‏  `;
+    const input = `  \u202Ehello\u0000\u0007 ${decomposed}\r\nline2\tTab\u200F  `;
     expect(normalizeText(input)).toBe(`hello é\nline2\tTab`);
     expect(normalizeText("a\r\n\r\nb")).toBe("a\n\nb");
     expect(normalizeText("   ")).toBe("");
@@ -222,7 +285,7 @@ describe("text", () => {
       notificationSnippet("lone \uD800 high and \uDC00 low", {}, 100),
       notificationSnippet("😀😀\uD83D", {}, 100),
       notificationSnippet(`${"😀".repeat(30)}`, {}, 5),
-      notificationSnippet("‮spoof‬", {}, 100),
+      notificationSnippet("\u202Espoof\u202C", {}, 100),
     ];
     for (const s of outputs) {
       expect(s.includes("@{")).toBe(false);
@@ -236,7 +299,7 @@ describe("text", () => {
           expect(c >= 0xdc00 && c <= 0xdfff).toBe(false);
         }
       }
-      expect(/[‪-‮⁦-⁩‎‏؜]/.test(s)).toBe(false);
+      expect(/[\u202A-\u202E\u2066-\u2069\u200E\u200F\u061C]/.test(s)).toBe(false);
     }
     expect(outputs[0]).toBe("@someone unknown user");
   });
@@ -252,7 +315,7 @@ describe("validators", () => {
   });
 
   it("title: bidi and tags stripped, 1–120 characters after the transform", () => {
-    expect(v.pipelineTitle.parse("  ‮Diwali <b>campaign</b> ")).toBe("Diwali campaign");
+    expect(v.pipelineTitle.parse("  \u202EDiwali <b>campaign</b> ")).toBe("Diwali campaign");
     expect(v.pipelineTitle.safeParse("<i></i>").success).toBe(false);
     expect(v.pipelineTitle.safeParse("x".repeat(121)).success).toBe(false);
     expect(v.pipelineTitle.safeParse("x".repeat(120)).success).toBe(true);
@@ -294,7 +357,7 @@ describe("validators", () => {
   it("body: over 4,000 characters fails; empty after normalisation fails; normalised on success", () => {
     expect(v.pipelineBody.safeParse("x".repeat(4001)).success).toBe(false);
     expect(v.pipelineBody.safeParse("x".repeat(4000)).success).toBe(true);
-    expect(v.pipelineBody.safeParse(" ‮ \r\n ").success).toBe(false);
+    expect(v.pipelineBody.safeParse(" \u202E \r\n ").success).toBe(false);
     expect(v.pipelineBody.parse("hi\r\nthere\u0000")).toBe("hi\nthere");
     // 1 MB of '<' is rejected by the length bound in well under 50 ms.
     const t0 = performance.now();

@@ -36,4 +36,8 @@ export const NOTIFICATION_AUDIENCE: Record<NotificationType, Array<"ADMINS" | "R
 
   // Task assigned to a specific employee
   TASK_ASSIGNED:        ["RECIPIENT"],
+
+  // ⚠️ EMPTY on purpose: dispatchNotification must never fan a pipeline row out (and
+  // `[] ?? ["ADMINS"]` stays `[]`, so there is no admin fallback either).
+  PIPELINE:             [], // written only by services/pipeline/notify.ts
 };

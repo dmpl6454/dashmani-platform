@@ -10,6 +10,7 @@ import { runSocialInsightsRefresh } from "./cron/social-insights.cron";
 import { runEntityExtraction } from "./cron/entity-extraction.cron";
 import { runIgCaptionBackfill } from "./cron/ig-caption-backfill.cron";
 import { runMetaTokenHealth } from "./cron/meta-token-health.cron";
+import { startPipelineSelfCheck } from "./services/pipeline";
 
 // ── Process-level crash backstops (defense-in-depth) ────────────────────────────
 // The 2026-07-08 outage was an unhandled promise rejection (a P2024 pool timeout in an
@@ -30,6 +31,12 @@ const PORT = process.env.PORT || 4000;
 
 app.listen(PORT, () => {
   console.log(`API server running on port ${PORT}`);
+
+  // Pipeline schema self-check (spec §3.2): one LIMIT-0 probe per pipeline table on the
+  // pipeline's own 3-connection pool. A missing DDL pauses the feature (403
+  // PIPELINE_DISABLED) instead of producing 500s; success bumps the board version once.
+  // Never throws, never touches the main pool.
+  startPipelineSelfCheck();
 
   // Run follower sync once on startup, then every hour
   const runFollowerSync = () => {

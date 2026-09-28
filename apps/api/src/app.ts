@@ -6,7 +6,9 @@ import path from "path";
 import rateLimit from "express-rate-limit";
 import routes from "./routes";
 import { errorHandler } from "./middleware/error-handler";
-import { rateLimitKey, loginRateLimitKey, isHealthProbe, envInt } from "./middleware/rate-limit-key";
+import { rateLimitKey, loginRateLimitKey, isHealthProbe, isPipelinePath, envInt } from "./middleware/rate-limit-key";
+import { pipelineRateLimiter, pipelineJson, skipPipelineSyncLog } from "./middleware/pipeline-rate-limit";
+import { pipelineErrorMiddleware } from "./services/pipeline/errors";
 import { bigintJsonReplacer } from "./utils/bigint-json";
 
 const app = express();
@@ -55,15 +57,21 @@ app.use(cors({
 // `trust proxy 1` behind Cloudflare, req.ip is the Cloudflare EDGE IP, so keying on it
 // made every employee share one bucket and produced "Too many requests" storms).
 // Health probes are exempt so monitors never eat a user's budget.
+// Pipeline paths are exempt too: they are counted by the pipeline's own per-minute
+// buckets mounted right below, so pipeline polling can never 429 HR submit, Link
+// History, accounts or login (spec §3.1, §8.1).
 app.use(rateLimit({
   windowMs: 15 * 60 * 1000,
   max: envInt("RATE_LIMIT_MAX", 1000),
   keyGenerator: rateLimitKey,
-  skip: isHealthProbe,
+  skip: (req) => isHealthProbe(req) || isPipelinePath(req),
   standardHeaders: true,
   legacyHeaders: false,
   message: { success: false, error: { code: "RATE_LIMIT", message: "Too many requests, please try again later" } },
 }));
+
+// Pipeline read / write / message buckets (after cors, so preflights never count).
+app.use("/v1/pipeline", pipelineRateLimiter);
 
 // Stricter rate limit on login endpoints — keyed per (client, account). Mounted
 // further down, AFTER express.json(), because the key reads the request body.
@@ -85,6 +93,11 @@ const publicLimiter = rateLimit({
 app.use("/v1/jobs/:id/apply", publicLimiter);
 app.use("/v1/internship/apply", publicLimiter);
 
+// Pipeline body parser: 64 kb, BEFORE the global 10 mb parser (which then skips the
+// already-parsed request). Its 413 / malformed-JSON errors are answered in JSON by the
+// pipeline error middleware here — they would otherwise reach the global 500.
+app.use("/v1/pipeline", pipelineJson, pipelineErrorMiddleware);
+
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true }));
 
@@ -93,7 +106,9 @@ app.use("/v1/auth/login", authLimiter);
 app.use("/v1/hr/auth/login", authLimiter);
 
 if (process.env.NODE_ENV !== "test") {
-  app.use(morgan("combined"));
+  // P13: successful POST /v1/pipeline/sync polls are not logged (hundreds of thousands
+  // of lines a day); failures still are.
+  app.use(morgan("combined", { skip: skipPipelineSyncLog }));
 }
 
 // Serve uploaded files (documents, profile pictures)

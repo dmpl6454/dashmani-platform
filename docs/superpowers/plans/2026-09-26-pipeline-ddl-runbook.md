@@ -14,6 +14,7 @@
   - That lock blocks **writes** to `users`. It does not block reads (login's user lookup) or login's refresh-token insert, whose FK check only needs `ROW SHARE`.
   - `lock_timeout = '3s'` caps any wait. If the lock is not granted within 3 s, the script aborts and rolls back. Writes to `users` can queue behind the waiting request for at most those 3 s.
 - The column and index definitions are byte-identical to `prisma migrate diff` output, so after the apply Prisma sees **no pipeline drift**.
+- The apply window runs **no full database dump**. The only dump inside it is schema-only, which takes seconds. The full backup is the recent scheduled weekly one, checked read-only in Step 0.
 
 ---
 
@@ -22,8 +23,54 @@
 - [ ] It is a **working weekday** (Mon–Sat), inside **11:00–12:30 IST** or **14:30–16:00 IST**.
   - Never 09:00–10:00 (login rush). Never 17:30–00:30 (HR submit rush).
 - [ ] PR 5 is reviewed, and CI is green on its head commit. Record that head SHA as `$PR5_SHA`.
+  - CI includes the "Rehearse the pipeline DDL script" step. It executes the script twice on a scratch database and requires no Prisma drift, so a green run means every statement in it has actually run.
 - [ ] The P10 sandbox result is recorded in `.planning/PIPELINE-P9-BASELINE.md`. It is the rollback evidence for the permanent enum value (spec §12, sequence step 2).
+- [ ] **A recent full backup exists.** The scheduled weekly `scripts/backup.sh` run (crontab, Sunday 02:00 UTC = 07:30 IST, a quiet hour) succeeded within the last 7 days. The check is read-only and runs no dump:
+
+  ```bash
+  ssh dashmani-prod
+  LAST_OK=$(grep -oE '\[[0-9]{8}_[0-9]{6}\] BACKUP OK' /var/log/dashmani-backup.log | tail -1 | tr -dc '0-9_')
+  echo "last BACKUP OK: ${LAST_OK:-none}"
+  find /opt/backups/dashmani -maxdepth 1 -name "db_${LAST_OK}.sql.gz" -mtime -7 -size +1M | grep -q . \
+    && echo FULL-BACKUP-RECENT-OK || echo "STOP: no successful full backup in the last 7 days"
+  ```
+
+  If it prints `STOP`, do not start a dump in the business window. Either wait for the next Sunday run, or ask the owner to approve a fresh full backup **the night before** (see "Full backup, only if Step 0 says STOP" below).
 - [ ] The owner has given approval #1 (apply).
+
+### Full backup: why it never runs in a business window
+
+`scripts/backup.sh` runs `nice -n 19 ionice -c3 pg_dump … | nice -n 19 gzip`. That lowers the priority of the **pg_dump client and gzip only**:
+- The Postgres backend that executes the dump's `COPY` is a separate server process. It runs at normal CPU and I/O priority.
+- It reads every table, including about 10–11 GB of `link_metrics` (as of 2026-09-19), through the page cache of a 2 GB, 1-vCPU box. That evicts the indexes the portals depend on.
+- The dump holds **one snapshot for its whole duration**. Until it ends, vacuum cannot clean up after the tables the insights sweep writes continuously (`link_metrics`, `link_metrics_latest`).
+- The same script then tars `uploads/` with no `nice` or `ionice` at all.
+
+This DDL is additive and single-transaction. Its rollback is `DROP TABLE` (§7), never a data restore, so a full dump adds no rollback capability for this change. The schema-only dump in Step 2c plus the recent weekly full backup are enough.
+
+### Full backup, only if Step 0 says STOP (owner-approved, the night before)
+
+Start it inside **01:00–05:00 IST**, early enough that it finishes by 06:00 IST. Never run it in 17:30–00:30 (the submit rush) or 09:00–10:00 (the login rush). To estimate how long it takes, subtract the timestamp in the newest `manifest_*.txt` name from that file's modification time: that is how long the Sunday run took. If it would not finish by 06:00 IST, wait for the next Sunday run instead.
+
+```bash
+ssh dashmani-prod
+mkdir -p /root/pipeline-m1
+# 1. Disk. The dump lands on the same disk as Postgres, and backup.sh deletes the oldest of
+#    its 8 sets only AFTER it has written the new one. Size it from the LARGEST retained dump:
+#    a failed run can leave a small partial file as the newest. No previous dump: stop and ask.
+df -h /opt/backups/dashmani
+LARGEST=$(ls -1S /opt/backups/dashmani/db_*.sql.gz | head -1)
+NEED_KB=$(( $(stat -c%s "$LARGEST") * 2 / 1024 ))
+AVAIL_KB=$(df --output=avail -k /opt/backups/dashmani | tail -1 | tr -d ' ')
+echo "need more than ${NEED_KB} KB free, have ${AVAIL_KB} KB"
+[ "$AVAIL_KB" -gt "$NEED_KB" ] && echo DISK-OK || echo "STOP: not enough free disk for a full dump"
+
+# 2. Only after DISK-OK. nohup, so a dropped SSH session cannot kill the dump half-way.
+nohup bash /opt/dashmani-platform/scripts/backup.sh > /root/pipeline-m1/backup.log 2>&1 &
+
+# 3. Before the apply window opens:
+grep -q "BACKUP OK" /root/pipeline-m1/backup.log && echo FULL-BACKUP-OK
+```
 
 ## 1. Stage the reviewed files on the box
 
@@ -69,19 +116,16 @@ pm2 logs api --lines 3000 --nostream 2>&1 | grep -cE "PrismaClientValidationErro
 psql "$DBURL" -Atc "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database()"
 ```
 
-**2c. Backup** (spec §12: the `scripts/backup.sh` method, not `pre-deploy-backup.sh`).
+**2c. Backup** (spec §12: the `scripts/backup.sh` URL extraction and `pipefail` from 2a, not `pre-deploy-backup.sh`). Inside the window this is a **schema-only** dump. The full backup is the Step 0 check; see "Full backup: why it never runs in a business window".
 
 ```bash
-# Always: schema-only dump. Seconds, negligible load.
-pg_dump "$DBURL" --schema-only --no-owner --no-privileges > /root/pipeline-m1/pre-ddl-schema.sql
+# Schema-only dump: seconds, negligible load. --lock-wait-timeout makes pg_dump give up
+# instead of queueing if a table lock is not granted within 5 s.
+pg_dump "$DBURL" --schema-only --no-owner --no-privileges --lock-wait-timeout=5s > /root/pipeline-m1/pre-ddl-schema.sql
 test -s /root/pipeline-m1/pre-ddl-schema.sql && echo SCHEMA-DUMP-OK
-
-# Full backup: the script runs pg_dump at nice 19 / ionice idle and prints "BACKUP OK" on success.
-bash /opt/dashmani-platform/scripts/backup.sh 2>&1 | tee /root/pipeline-m1/backup.log
-grep -q "BACKUP OK" /root/pipeline-m1/backup.log && echo FULL-BACKUP-OK
 ```
 
-The full dump of a database this size can take a long time, even at idle priority. If it would push the apply outside the window, start it earlier the same morning, before 09:00 IST, and confirm `BACKUP OK` before Step 3. The DDL adds objects only, so any failure is a rollback, never a data rewrite.
+**Never** run the full `scripts/backup.sh` here. The DDL adds objects only, so any failure is a rollback, never a data rewrite.
 
 **2d. Read-only DB checks.** Each line states the expected result.
 
@@ -89,11 +133,12 @@ The full dump of a database this size can take a long time, even at idle priorit
 psql "$DBURL" -At <<'SQL'
 SHOW server_version;                                                          -- >= 13 (gen_random_uuid is built in)
 SELECT current_user;                                                          -- the app role, e.g. dashmani
+SELECT current_schema();                                                      -- public (the script also pins it)
 SELECT typowner::regrole = current_user::regrole FROM pg_type WHERE typname = 'NotificationType';  -- t
-SELECT tableowner = current_user FROM pg_tables WHERE tablename = 'users';    -- t
+SELECT tableowner = current_user FROM pg_tables WHERE schemaname = 'public' AND tablename = 'users';  -- t
 SELECT has_schema_privilege('public', 'CREATE');                              -- t
-SELECT has_table_privilege('users', 'REFERENCES');                            -- t
-SELECT count(*) FROM pg_tables WHERE tablename LIKE 'pipeline\_%';           -- 0 (first apply)
+SELECT has_table_privilege('public.users', 'REFERENCES');                     -- t
+SELECT count(*) FROM pg_tables WHERE tablename LIKE 'pipeline\_%';           -- 0 (first apply; any schema)
 SELECT count(*) FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid
   WHERE t.typname = 'NotificationType' AND e.enumlabel = 'PIPELINE';           -- 0 (first apply)
 SELECT count(*) FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid
@@ -108,7 +153,8 @@ SQL
 **Stop here, apply nothing, and investigate if any of these hold:**
 - health is not 200, or an app is not online;
 - `BASE_ERR` shows P2024 or `does not exist` lines from the last hour;
-- either backup did not print its OK marker;
+- 2c did not print `SCHEMA-DUMP-OK`, or Step 0 did not print `FULL-BACKUP-RECENT-OK` (or, after an owner-approved night-before run, `FULL-BACKUP-OK`);
+- `current_schema()` is not `public`. The script pins `public` itself, but the other checks here would then be reading another schema;
 - the server is older than PG 13;
 - an ownership or privilege check is `f`;
 - any `pipeline_*` table already exists. `IF NOT EXISTS` would **silently skip** a table of a different shape, so an existing one must be diffed first. It must not be papered over.
@@ -122,7 +168,7 @@ PGAPPNAME=pipeline-ddl psql "$DBURL" -v ON_ERROR_STOP=1 -f /root/pipeline-m1/pip
 echo "exit=${PIPESTATUS[0]}"    # must be 0
 ```
 
-**Expected output:** `BEGIN`, `SET`, `SET`, `ALTER TYPE`, 5× `CREATE TABLE`, 14× `CREATE INDEX`, 4× `DO`, `INSERT 0 1`, `INSERT 0 7`, 4× `DO`, `COMMIT`. The whole run takes well under a second.
+**Expected output:** `BEGIN`, 3× `SET` (lock_timeout, statement_timeout, search_path), `ALTER TYPE`, 5× `CREATE TABLE`, 14× `CREATE INDEX`, 4× `DO`, `INSERT 0 1`, `INSERT 0 7`, 4× `DO`, `COMMIT`. The whole run takes well under a second.
 
 **Abort criteria** (the script has already rolled itself back in every case):
 
@@ -140,7 +186,7 @@ psql "$DBURL" <<'SQL'
 SELECT key, name, position, color, is_terminal FROM pipeline_phases ORDER BY position;   -- 7 rows, Brief..Done, only done terminal
 SELECT * FROM pipeline_board_state;                                                   -- (1, 0, <utc now>)
 SELECT unnest(enum_range(NULL::"NotificationType"));                                  -- 19 values, last = PIPELINE
-SELECT tablename, tableowner FROM pg_tables WHERE tablename LIKE 'pipeline\_%' ORDER BY 1;  -- 5 rows, owner = app role
+SELECT schemaname, tablename, tableowner FROM pg_tables WHERE tablename LIKE 'pipeline\_%' ORDER BY 2;  -- 5 rows, schema public, owner = app role
 SELECT count(*) FROM notifications WHERE type = 'PIPELINE';                           -- 0
 SQL
 curl -s -o /dev/null -w "health %{http_code}\n" https://api.digitalsukoon.com/v1/health    # still 200
@@ -200,7 +246,10 @@ The last grep must show **zero hits** stamped after the restart. pm2 lines carry
   - To remove them anyway, run `DROP TABLE pipeline_messages, pipeline_participants, pipeline_projects, pipeline_phases, pipeline_board_state;` in one transaction. They hold no data.
   - `PIPELINE` **stays in the enum forever**. Postgres cannot remove an enum value, and nothing writes it.
 - **After merge:** never revert PR 5 (spec §12 rollback). A client generated without `PIPELINE` may fail on such rows (see the P10 result). Later PRs ship dark behind `pipeline.mode`; the kill switch is how the feature is turned off.
-- **After any DB restore:** re-check the Step 4 verification. The DDL can be re-run safely; it is idempotent.
+- **After any DB restore:** re-run the Step 4 verification first. Re-run the DDL **only if an object is actually missing**.
+  - It is idempotent for data, but a re-run is **not lock-free**. Each of its 14 `CREATE INDEX IF NOT EXISTS` statements takes a `SHARE` lock on its table *before* it discovers the index exists, and holds it until `COMMIT` (measured in the rehearsal below). `CREATE TABLE IF NOT EXISTS` and the FK guards take no lock on an existing table.
+  - On a live pipeline, that blocks every write to `pipeline_phases`, `pipeline_projects`, `pipeline_participants` and `pipeline_messages` for the rest of the transaction, including the per-sync read-state update. Each statement can also wait up to the 3 s `lock_timeout` behind in-flight pipeline writers, while new writers queue behind it. Pipeline writers run with a 1 s `lock_timeout` (spec §8.3), so they would answer 503.
+  - So if the feature is live, first set `pipeline.mode=off` (the kill switch takes effect within 15 s). Re-run outside 09:00–10:00 and 17:30–00:30 IST, then restore the mode. Until PR 6 ships, nothing touches these tables, so there is nothing to switch off.
 
 ---
 
@@ -222,3 +271,22 @@ Scratch DB `dashmani_t_ddl`, built by `prisma db push` from `origin/main` (`2056
 5. **Reverse diff** (scratch DB against the `origin/main` schema). It showed the table drops and the `notifications.type` enum rebuild described in Step 4. That is the evidence for the no-`db push` warning.
 6. The §12 safety grep printed nothing on both the generated and the hand-edited script. `apps/api/tests/pipeline/ddl-script.test.ts` locks these rules for any later edit.
 7. The scratch DB was dropped afterwards.
+
+## Re-rehearsal after the review fixes (local, 2026-09-28, PG 16.14 in `dashmani-db`)
+
+The script now pins `search_path` to `public`, and each FK guard checks `conname` **and** `conrelid`. Column and index text is unchanged.
+
+1. **The search_path trap, reproduced.** Scratch DB built from the `origin/main` (`20564db`) schema, with one `users` row, plus `CREATE SCHEMA "user"` (a schema named after the local app role, so psql's default `"$user", public` path picks it first).
+   - Pre-fix script: exit 0, and **all 5 tables landed in schema `user`**, not `public`.
+   - Fixed script: exit 0, all 5 tables in `public`, schema `user` empty.
+2. **Apply #1** (fixed script): `ALTER TYPE`, 5 `CREATE TABLE`, 14 `CREATE INDEX`, 8 `DO`, `INSERT 0 1`, `INSERT 0 7`, `COMMIT`. 7 phases (only `done` terminal), board row `(1, 0, utc now)`, 8 FKs.
+3. **Apply #2:** exit 0, no `ERROR` or `WARNING`. 20 `already exists, skipping` notices and both inserts `INSERT 0 0`. The `pg_dump --schema-only` output was identical to the one after apply #1, apart from the per-dump `\restrict` token. The phase rows were identical, timestamps included.
+4. **Drift:** `prisma migrate diff --from-url <scratch> --to-schema-datamodel packages/db/prisma/schema.prisma` printed `-- This is an empty migration.`; with `--exit-code` it exited 0.
+5. **Re-run locks** (the §7 rule), probed on the applied DB inside a transaction:
+   - `CREATE INDEX IF NOT EXISTS` on an existing index printed "already exists, skipping", yet `pg_locks` showed `ShareLock` on the table.
+   - `CREATE TABLE IF NOT EXISTS` plus an FK guard: no lock on the table.
+6. **The CI step's exact `run:` body**, run locally against the `dashmani-db` container with only the scratch database names changed:
+   - It exited 0. Apply #1 printed 1 notice: the enum value exists because `db push` built it, so every CREATE, index, FK and seed path ran. Apply #2 printed 20.
+   - With one column type typo'd (`TIMESTAMPP(3)`), it stopped at apply #1 with `ERROR: type "timestampp" does not exist`.
+   - With one index dropped after the apply, `migrate diff --exit-code` returned 2.
+7. The scratch DBs were dropped afterwards.

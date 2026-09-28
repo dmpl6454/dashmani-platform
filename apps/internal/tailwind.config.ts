@@ -8,45 +8,87 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        /* ── v3 Zen-Brutalist tokens ── */
-        bg:      '#FDFCF0',
-        surface: '#FFFFFF',
-        muted:   '#F3EED8',
-        rule:    '#EDE7D2',
-        border:  '#D4CBBA',
-        ink: { DEFAULT: '#1A1A1A', 2: '#3A3A3A', 3: '#6C6555', 4: '#9C947C' },
+        /* ──────────────────────────────────────────────────────────────
+           DARK NAVY THEME — mapped from the "Dashboard.dc.html" design.
+           Portal was previously a cream/light theme; these tokens flip the
+           whole shell + every token-driven page to dark. The /overview page
+           is a self-contained dark plane (its own overview.css) and is NOT
+           affected by anything in this file.
+           Primary accent = sky #38BDF8 (design's lead interactive colour).
+           ────────────────────────────────────────────────────────────── */
+        bg:      '#060D14',   /* page background            (design body)   */
+        surface: '#0C151F',   /* card surface               (design card)   */
+        muted:   '#0B1720',   /* secondary surface / inputs / hover         */
+        rule:    '#131E28',   /* subtle divider                             */
+        border:  '#1C2A38',   /* default border                             */
+        /* `ink` is now the FOREGROUND (light) — it was near-black before.
+           text-ink* reads on the dark surfaces. Opacity uses (border-ink/10,
+           bg-ink/5) become subtle light tints, which is correct on dark.
+           The two OPAQUE idioms that relied on ink being dark — `bg-ink
+           text-white` (primary buttons) and `bg-ink/40` (scrims) — are
+           re-mapped in the compat sweep, not here. */
+        ink: { DEFAULT: '#F4F6F8', 2: '#A7B3C2', 3: '#738395', 4: '#6B7A8A' },
         action: {
-          DEFAULT: '#F5D547',
-          soft:   '#FFF3C4',
-          deep:   '#E8C83A',
-          ring:   'rgba(245,213,71,.32)',
+          DEFAULT: '#38BDF8',
+          soft:   '#10222E',
+          deep:   '#5CCBFF',
+          ring:   'rgba(56,189,248,.32)',
         },
-        neutral:   { DEFAULT: '#6C6555', bg: '#F0EAD8' },
-        attention: { DEFAULT: '#C05826', bg: '#FDF0EC' },
-        success:   { DEFAULT: '#4A7C52', bg: '#EDF4EE' },
-        danger:    { DEFAULT: '#B83728', bg: '#FDECEA' },
-        indigo:    { DEFAULT: '#5D5FEF', soft: '#EDEDFD', deep: '#4547D4' },
-        sage:      { DEFAULT: '#8BA888', soft: '#EEF4ED' },
-        terra:     { DEFAULT: '#E07A5F', soft: '#FDF0EC' },
+        neutral:   { DEFAULT: '#738395', bg: '#0B1720' },
+        attention: { DEFAULT: '#FBBF24', bg: '#2A2410' },
+        success:   { DEFAULT: '#34D399', bg: '#0E2A22' },
+        danger:    { DEFAULT: '#FB7185', bg: '#2A1116' },
+        /* indigo is the portal's dominant accent slot → mapped to the design's
+           lead sky. Kept as an object that MERGES with Tailwind's default
+           indigo scale (below), so both bg-indigo (sky) and any bg-indigo-700
+           keep working. */
+        indigo:    { DEFAULT: '#38BDF8', soft: '#10222E', deep: '#7DD3FC',
+                     50: '#10222E', 100: '#16303E', 600: '#38BDF8', 700: '#7DD3FC', 800: '#7DD3FC', 900: '#BAE6FD' },
+        sage:      { DEFAULT: '#34D399', soft: '#0E2A22' },
+        terra:     { DEFAULT: '#9B7EDE', soft: '#1B1630' },
+        gold:      { DEFAULT: '#E9BD62', soft: '#241E12' },
 
-        /* ── Legacy aliases ── */
-        background: '#FDFCF0',
-        foreground: '#1A1A1A',
+        /* ── Tailwind default pastel scales, re-tuned for dark ──
+           In this codebase the 50/100 rungs are used ONLY as backgrounds and
+           the 600–900 rungs ONLY as text (verified), so flipping 50/100 → dark
+           tint and 600–900 → light shade re-themes every status chip
+           (`bg-red-50 text-red-700` …) with no per-file edits and no conflict.
+           400/500 (saturated mids) are left as Tailwind defaults — they read
+           fine on dark for dots/icons. `extend` merges, so untouched rungs
+           keep their defaults. */
+        red:     { 50: '#2A1116', 100: '#3A1620', 600: '#FB7185', 700: '#F87186', 800: '#FCA5B4', 900: '#FECDD6' },
+        rose:    { 50: '#2A1116', 100: '#3A1620', 600: '#FB7185', 700: '#FB7185', 800: '#FDA4B4', 900: '#FECDD6' },
+        orange:  { 50: '#2A1B10', 100: '#3A2616', 600: '#FBA94C', 700: '#FBBF24', 800: '#FCD34D', 900: '#FDE68A' },
+        amber:   { 50: '#2A2410', 100: '#3A3216', 600: '#FBBF24', 700: '#FBBF24', 800: '#FCD34D', 900: '#FDE68A' },
+        yellow:  { 50: '#2A2410', 100: '#3A3216', 600: '#E9BD62', 700: '#E9BD62', 800: '#F1D08A', 900: '#F7E3B5' },
+        green:   { 50: '#0E2A22', 100: '#123A2E', 600: '#34D399', 700: '#34D399', 800: '#6EE7B7', 900: '#A7F3D0' },
+        emerald: { 50: '#0E2A22', 100: '#123A2E', 600: '#34D399', 700: '#34D399', 800: '#6EE7B7', 900: '#A7F3D0' },
+        teal:    { 50: '#0E2A28', 100: '#123A36', 600: '#2DD4BF', 700: '#2DD4BF', 800: '#5EEAD4', 900: '#99F6E4' },
+        lime:    { 50: '#1E2A10', 100: '#2A3A16', 600: '#A3E635', 700: '#A3E635', 800: '#BEF264', 900: '#D9F99D' },
+        blue:    { 50: '#10222E', 100: '#16303E', 600: '#38BDF8', 700: '#38BDF8', 800: '#7DD3FC', 900: '#BAE6FD' },
+        sky:     { 50: '#10222E', 100: '#16303E', 600: '#38BDF8', 700: '#38BDF8', 800: '#7DD3FC', 900: '#BAE6FD' },
+        cyan:    { 50: '#0E2A2E', 100: '#123A3E', 600: '#22D3EE', 700: '#22D3EE', 800: '#67E8F9', 900: '#A5F3FC' },
+        purple:  { 50: '#1B1630', 100: '#241B40', 600: '#9B7EDE', 700: '#9B7EDE', 800: '#C4B5FD', 900: '#DDD6FE' },
+        violet:  { 50: '#1B1630', 100: '#241B40', 600: '#9B7EDE', 700: '#9B7EDE', 800: '#C4B5FD', 900: '#DDD6FE' },
+
+        /* ── Legacy aliases (retinted to the dark palette) ── */
+        background: '#060D14',
+        foreground: '#F4F6F8',
         brand: {
-          yellow:       '#F5D547',
-          'yellow-light': '#FFF3C4',
-          'yellow-muted': '#FAE89E',
-          purple:       '#5D5FEF',
-          'purple-deep':  '#4547D4',
-          'purple-light': '#EDEDFD',
-          dark:         '#1A1A1A',
-          'dark-card':    '#2B2B2B',
-          cream:        '#FDFCF0',
+          yellow:       '#38BDF8',
+          'yellow-light': '#10222E',
+          'yellow-muted': '#12212B',
+          purple:       '#38BDF8',
+          'purple-deep':  '#5CCBFF',
+          'purple-light': '#10222E',
+          dark:         '#0C151F',
+          'dark-card':    '#1D2C3A',
+          cream:        '#060D14',
         },
         sidebar: {
-          DEFAULT: '#1A1A1A',
-          foreground: '#FFFFFF',
-          accent: '#2B2B2B',
+          DEFAULT: '#050A10',
+          foreground: '#F4F6F8',
+          accent: '#0B1720',
         },
       },
       fontFamily: {
@@ -64,15 +106,18 @@ const config: Config = {
         pill: '999px',
       },
       boxShadow: {
-        card:         '3px 3px 0 rgba(93,95,239,0.12)',
-        'card-lg':    '6px 6px 0 rgba(93,95,239,0.20)',
-        pop:          '0 16px 48px rgba(0,0,0,0.13)',
-        hard:         '4px 4px 0 rgba(93,95,239,0.18)',
-        'hard-hover': '6px 6px 0 rgba(93,95,239,0.22)',
-        'hard-ink':   '3px 3px 0 rgba(26,26,26,0.14)',
-        focus:        '0 0 0 3px rgba(93,95,239,0.28)',
-        btn:          '3px 3px 0 #1A1A1A',
-        'btn-hover':  '4px 4px 0 #1A1A1A',
+        /* Soft depth shadows (design uses soft drop shadows on dark cards,
+           not the old hard indigo offsets which are invisible on dark). */
+        card:         '0 10px 26px rgba(0,0,0,.35)',
+        'card-lg':    '0 14px 34px rgba(0,0,0,.45)',
+        pop:          '0 16px 48px rgba(0,0,0,.55)',
+        hard:         '0 8px 22px rgba(0,0,0,.40)',
+        'hard-hover': '0 12px 30px rgba(0,0,0,.50)',
+        'hard-ink':   '0 6px 18px rgba(0,0,0,.40)',
+        focus:        '0 0 0 3px rgba(56,189,248,.28)',
+        /* Buttons keep the offset "pop" idiom, recoloured for dark. */
+        btn:          '3px 3px 0 rgba(0,0,0,.55)',
+        'btn-hover':  '4px 4px 0 rgba(0,0,0,.55)',
       },
       spacing: {
         rail:  '220px',

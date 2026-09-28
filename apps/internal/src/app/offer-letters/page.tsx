@@ -6,7 +6,7 @@ import useSWR from "swr";
 import { FileText, Plus, ChevronUp, Eye } from "lucide-react";
 
 const inputClass =
-  "w-full border border-[#E8E0D0] bg-white rounded-lg px-4 py-2.5 text-sm text-[#1A1A1A] placeholder:text-[#B0B0B0] focus:outline-none focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547] transition-colors";
+  "w-full border border-border bg-surface rounded-lg px-4 py-2.5 text-sm text-ink placeholder:text-ink-4 focus:outline-none focus:ring-2 focus:ring-action focus:border-action transition-colors";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/v1";
 
@@ -82,10 +82,10 @@ export default function OfferLettersPage() {
   return (
     <div className="space-y-6 crx-animate-fade">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="font-serif text-4xl font-light text-[#1A1A1A]">Offer Letters</h1>
+        <h1 className="font-serif text-4xl font-light text-ink">Offer Letters</h1>
         <button
           onClick={() => setShowForm((p) => !p)}
-          className="bg-[#1A1A1A] text-white py-2.5 px-6 rounded-full font-semibold hover:bg-[#2B2B2B] transition-all flex items-center gap-2"
+          className="bg-action text-[#06121B] py-2.5 px-6 rounded-full font-semibold hover:bg-[#243645] transition-all flex items-center gap-2"
         >
           {showForm ? <ChevronUp size={16} /> : <Plus size={16} />}
           {showForm ? "Close Form" : "Generate Offer Letter"}
@@ -96,12 +96,12 @@ export default function OfferLettersPage() {
       {showForm && (
         <form
           onSubmit={handleSubmit}
-          className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-[#E8E0D0] p-5 crx-animate-slide"
+          className="bg-surface rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-border p-5 crx-animate-slide"
         >
-          <p className="font-medium text-[#1A1A1A] mb-4">New Offer Letter</p>
+          <p className="font-medium text-ink mb-4">New Offer Letter</p>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             <div>
-              <label className="block text-xs font-medium text-[#7A7A7A] mb-1">Employee</label>
+              <label className="block text-xs font-medium text-ink-3 mb-1">Employee</label>
               <select
                 value={form.employeeId}
                 onChange={(e) => updateForm("employeeId", e.target.value)}
@@ -117,7 +117,7 @@ export default function OfferLettersPage() {
               </select>
             </div>
             <div>
-              <label className="block text-xs font-medium text-[#7A7A7A] mb-1">Offer Date</label>
+              <label className="block text-xs font-medium text-ink-3 mb-1">Offer Date</label>
               <input
                 type="date"
                 value={form.offerDate}
@@ -127,7 +127,7 @@ export default function OfferLettersPage() {
               />
             </div>
             <div>
-              <label className="block text-xs font-medium text-[#7A7A7A] mb-1">Joining Date</label>
+              <label className="block text-xs font-medium text-ink-3 mb-1">Joining Date</label>
               <input
                 type="date"
                 value={form.joiningDate}
@@ -137,7 +137,7 @@ export default function OfferLettersPage() {
               />
             </div>
             <div>
-              <label className="block text-xs font-medium text-[#7A7A7A] mb-1">Designation</label>
+              <label className="block text-xs font-medium text-ink-3 mb-1">Designation</label>
               <input
                 type="text"
                 placeholder="e.g., Software Engineer"
@@ -148,7 +148,7 @@ export default function OfferLettersPage() {
               />
             </div>
             <div>
-              <label className="block text-xs font-medium text-[#7A7A7A] mb-1">Department</label>
+              <label className="block text-xs font-medium text-ink-3 mb-1">Department</label>
               <input
                 type="text"
                 placeholder="e.g., Engineering"
@@ -159,7 +159,7 @@ export default function OfferLettersPage() {
               />
             </div>
             <div>
-              <label className="block text-xs font-medium text-[#7A7A7A] mb-1">Salary (Monthly)</label>
+              <label className="block text-xs font-medium text-ink-3 mb-1">Salary (Monthly)</label>
               <input
                 type="number"
                 placeholder="e.g., 50000"
@@ -170,7 +170,7 @@ export default function OfferLettersPage() {
               />
             </div>
             <div>
-              <label className="block text-xs font-medium text-[#7A7A7A] mb-1">Probation (Months)</label>
+              <label className="block text-xs font-medium text-ink-3 mb-1">Probation (Months)</label>
               <input
                 type="number"
                 min="0"
@@ -182,7 +182,7 @@ export default function OfferLettersPage() {
               />
             </div>
             <div>
-              <label className="block text-xs font-medium text-[#7A7A7A] mb-1">Location</label>
+              <label className="block text-xs font-medium text-ink-3 mb-1">Location</label>
               <input
                 type="text"
                 placeholder="e.g., New Delhi"
@@ -200,7 +200,7 @@ export default function OfferLettersPage() {
             <button
               type="submit"
               disabled={submitting}
-              className="bg-[#1A1A1A] text-white py-2.5 px-6 rounded-full font-semibold hover:bg-[#2B2B2B] transition-all disabled:opacity-50"
+              className="bg-action text-[#06121B] py-2.5 px-6 rounded-full font-semibold hover:bg-[#243645] transition-all disabled:opacity-50"
             >
               {submitting ? "Generating..." : "Generate Offer Letter"}
             </button>
@@ -209,45 +209,45 @@ export default function OfferLettersPage() {
       )}
 
       {/* Table */}
-      <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-[#E8E0D0]">
+      <div className="bg-surface rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-border">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-[#F0EAD8]">
-                <th className="text-left p-4 text-[#7A7A7A] text-xs font-medium">Employee</th>
-                <th className="text-left p-4 text-[#7A7A7A] text-xs font-medium">Designation</th>
-                <th className="text-left p-4 text-[#7A7A7A] text-xs font-medium">Salary</th>
-                <th className="text-left p-4 text-[#7A7A7A] text-xs font-medium">Offer Date</th>
-                <th className="text-left p-4 text-[#7A7A7A] text-xs font-medium">Joining Date</th>
-                <th className="text-left p-4 text-[#7A7A7A] text-xs font-medium">Actions</th>
+              <tr className="border-b border-border">
+                <th className="text-left p-4 text-ink-3 text-xs font-medium">Employee</th>
+                <th className="text-left p-4 text-ink-3 text-xs font-medium">Designation</th>
+                <th className="text-left p-4 text-ink-3 text-xs font-medium">Salary</th>
+                <th className="text-left p-4 text-ink-3 text-xs font-medium">Offer Date</th>
+                <th className="text-left p-4 text-ink-3 text-xs font-medium">Joining Date</th>
+                <th className="text-left p-4 text-ink-3 text-xs font-medium">Actions</th>
               </tr>
             </thead>
             <tbody>
               {letters.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="p-8 text-center text-[#7A7A7A]">
+                  <td colSpan={6} className="p-8 text-center text-ink-3">
                     <FileText size={24} className="mx-auto mb-2 opacity-30" />
                     No offer letters generated yet
                   </td>
                 </tr>
               ) : (
                 letters.map((letter: any) => (
-                  <tr key={letter.id} className="border-b border-[#F0EAD8] last:border-0 hover:bg-[rgba(255,248,225,0.5)] transition-colors">
-                    <td className="p-4 text-[#1A1A1A] font-medium">{letter.employeeName || letter.employee?.name || "—"}</td>
-                    <td className="p-4 text-[#1A1A1A]">{letter.designation || "—"}</td>
-                    <td className="p-4 text-[#1A1A1A] font-semibold">
+                  <tr key={letter.id} className="border-b border-border last:border-0 hover:bg-[rgba(255,248,225,0.5)] transition-colors">
+                    <td className="p-4 text-ink font-medium">{letter.employeeName || letter.employee?.name || "—"}</td>
+                    <td className="p-4 text-ink">{letter.designation || "—"}</td>
+                    <td className="p-4 text-ink font-semibold">
                       {letter.salary != null ? `₹${Number(letter.salary).toLocaleString()}` : "—"}
                     </td>
-                    <td className="p-4 text-[#7A7A7A]">
+                    <td className="p-4 text-ink-3">
                       {letter.offerDate ? new Date(letter.offerDate).toLocaleDateString() : "—"}
                     </td>
-                    <td className="p-4 text-[#7A7A7A]">
+                    <td className="p-4 text-ink-3">
                       {letter.joiningDate ? new Date(letter.joiningDate).toLocaleDateString() : "—"}
                     </td>
                     <td className="p-4">
                       <button
                         onClick={() => viewHtml(letter.id)}
-                        className="flex items-center gap-1.5 rounded-full bg-[rgba(245,213,71,0.15)] text-[#1A1A1A] px-3 py-1.5 text-xs font-medium hover:bg-[rgba(245,213,71,0.3)] transition-colors"
+                        className="flex items-center gap-1.5 rounded-full bg-[rgba(245,213,71,0.15)] text-ink px-3 py-1.5 text-xs font-medium hover:bg-[rgba(245,213,71,0.3)] transition-colors"
                       >
                         <Eye size={13} /> View
                       </button>

@@ -126,45 +126,45 @@ export function EmployeeForm({ employee, roles, profile, onSaved }: EmployeeForm
   }
 
   return (
-    <Card className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-[#E8E0D0]">
+    <Card className="bg-surface rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-border">
       <CardHeader>
-        <CardTitle className="font-serif text-[#1A1A1A]">{isEdit ? "Edit Employee" : "Add New Employee"}</CardTitle>
+        <CardTitle className="font-serif text-ink">{isEdit ? "Edit Employee" : "Add New Employee"}</CardTitle>
       </CardHeader>
       <CardContent>
         <form onSubmit={handleSubmit} className="space-y-4 max-w-lg">
           {error && <p className="text-sm text-red-500">{error}</p>}
-          <Input label="Full Name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required className="border border-[#E8E0D0] rounded-lg focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547]" />
-          {!isEdit && <Input label="Email" type="email" autoComplete="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} required className="border border-[#E8E0D0] rounded-lg focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547]" />}
-          {!isEdit && <Input label="Password" type="password" autoComplete="new-password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} required className="border border-[#E8E0D0] rounded-lg focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547]" />}
-          <Input label="Phone" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} className="border border-[#E8E0D0] rounded-lg focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547]" />
+          <Input label="Full Name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required className="border border-border rounded-lg focus:ring-2 focus:ring-action focus:border-action" />
+          {!isEdit && <Input label="Email" type="email" autoComplete="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} required className="border border-border rounded-lg focus:ring-2 focus:ring-action focus:border-action" />}
+          {!isEdit && <Input label="Password" type="password" autoComplete="new-password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} required className="border border-border rounded-lg focus:ring-2 focus:ring-action focus:border-action" />}
+          <Input label="Phone" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} className="border border-border rounded-lg focus:ring-2 focus:ring-action focus:border-action" />
 
           <div className="grid grid-cols-2 gap-4">
             <Input
               label="Designation"
               value={form.designation}
               onChange={(e) => setForm({ ...form, designation: e.target.value })}
-              className="border border-[#E8E0D0] rounded-lg focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547]"
+              className="border border-border rounded-lg focus:ring-2 focus:ring-action focus:border-action"
             />
             <Input
               label="Join Date"
               type="date"
               value={form.joinDate}
               onChange={(e) => setForm({ ...form, joinDate: e.target.value })}
-              className="border border-[#E8E0D0] rounded-lg focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547]"
+              className="border border-border rounded-lg focus:ring-2 focus:ring-action focus:border-action"
             />
             <Input
               label="Salary (₹)"
               type="number"
               value={form.salary}
               onChange={(e) => setForm({ ...form, salary: e.target.value })}
-              className="border border-[#E8E0D0] rounded-lg focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547]"
+              className="border border-border rounded-lg focus:ring-2 focus:ring-action focus:border-action"
             />
             <div className="space-y-1">
-              <label className="text-sm font-medium text-[#1A1A1A]">Team</label>
+              <label className="text-sm font-medium text-ink">Team</label>
               <select
                 value={form.orgUnitId}
                 onChange={(e) => setForm({ ...form, orgUnitId: e.target.value })}
-                className="flex h-10 w-full rounded-lg border border-[#E8E0D0] bg-white px-3 py-2 text-sm focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547] outline-none"
+                className="flex h-10 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm focus:ring-2 focus:ring-action focus:border-action outline-none"
               >
                 <option value="">No team</option>
                 {teams.map((t: any) => <option key={t.id} value={t.id}>{t.name}</option>)}
@@ -172,11 +172,11 @@ export function EmployeeForm({ employee, roles, profile, onSaved }: EmployeeForm
             </div>
             {isEdit && (
               <div className="space-y-1">
-                <label className="text-sm font-medium text-[#1A1A1A]">Status</label>
+                <label className="text-sm font-medium text-ink">Status</label>
                 <select
                   value={form.status}
                   onChange={(e) => setForm({ ...form, status: e.target.value })}
-                  className="flex h-10 w-full rounded-lg border border-[#E8E0D0] bg-white px-3 py-2 text-sm focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547] outline-none"
+                  className="flex h-10 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm focus:ring-2 focus:ring-action focus:border-action outline-none"
                 >
                   <option value="ACTIVE">Active</option>
                   <option value="ONBOARDING">Onboarding</option>
@@ -188,7 +188,7 @@ export function EmployeeForm({ employee, roles, profile, onSaved }: EmployeeForm
 
           {!isEdit && (
             <div className="space-y-2">
-              <label className="text-sm font-medium text-[#1A1A1A]">Roles</label>
+              <label className="text-sm font-medium text-ink">Roles</label>
               <div className="flex flex-wrap gap-2">
                 {roles.map((role: any) => {
                   const active = form.roleIds.includes(role.id);
@@ -202,9 +202,9 @@ export function EmployeeForm({ employee, roles, profile, onSaved }: EmployeeForm
                     className={`px-3 py-1 rounded-full text-sm border transition-colors ${
                       active
                         ? isLast
-                          ? "bg-[#1A1A1A] text-white border-[#1A1A1A] opacity-60 cursor-not-allowed"
-                          : "bg-[#1A1A1A] text-white border-[#1A1A1A]"
-                        : "bg-white text-[#7A7A7A] border-[#E8E0D0] hover:border-[#F5D547]"
+                          ? "bg-action text-[#06121B] border-[#33506A] opacity-60 cursor-not-allowed"
+                          : "bg-action text-[#06121B] border-[#33506A]"
+                        : "bg-surface text-ink-3 border-border hover:border-action"
                     }`}
                   >
                     {role.name}
@@ -216,11 +216,11 @@ export function EmployeeForm({ employee, roles, profile, onSaved }: EmployeeForm
           )}
 
           <div className="flex items-center gap-3">
-            <Button type="submit" disabled={loading} className="bg-[#1A1A1A] text-white rounded-full hover:bg-[#2B2B2B]">
+            <Button type="submit" disabled={loading} className="bg-action text-[#06121B] rounded-full hover:bg-[#243645]">
               {loading ? "Saving..." : isEdit ? "Update Employee" : "Create Employee"}
             </Button>
             {!isEdit && (
-              <Button type="button" variant="outline" onClick={() => router.back()} className="border border-[#E8E0D0] rounded-full text-[#1A1A1A] hover:bg-[#FEFCF7]">
+              <Button type="button" variant="outline" onClick={() => router.back()} className="border border-border rounded-full text-ink hover:bg-surface">
                 Cancel
               </Button>
             )}

@@ -224,7 +224,7 @@ export default function SettingsPage() {
               onClick={() => fileInputRef.current?.click()}
               disabled={isPhotoLoading}
               title="Change photo"
-              className="absolute -bottom-1 -right-1 h-7 w-7 rounded-full bg-ink text-white grid place-items-center hover:bg-ink/80 transition-colors disabled:opacity-50 shadow-sm"
+              className="absolute -bottom-1 -right-1 h-7 w-7 rounded-full bg-action text-[#06121B] grid place-items-center hover:bg-action-deep transition-colors disabled:opacity-50 shadow-sm"
             >
               <Camera size={13} />
             </button>
@@ -243,7 +243,7 @@ export default function SettingsPage() {
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
                 disabled={isPhotoLoading}
-                className="bg-ink text-white px-5 py-2 rounded-full text-sm font-semibold hover:bg-ink/80 disabled:opacity-50 transition-colors flex items-center gap-2"
+                className="bg-action text-[#06121B] px-5 py-2 rounded-full text-sm font-semibold hover:bg-action-deep disabled:opacity-50 transition-colors flex items-center gap-2"
               >
                 <Camera size={14} />
                 {previewUrl ? "Change photo" : "Upload photo"}
@@ -300,7 +300,7 @@ export default function SettingsPage() {
           {profileError && <div className="flex items-center gap-2 text-danger text-sm font-medium"><AlertCircle size={14} /> {profileError}</div>}
           {profileState === "success" && <div className="flex items-center gap-2 text-success text-sm font-medium"><Check size={14} /> Profile updated.</div>}
           <button type="submit" disabled={profileState === "loading"}
-            className="bg-ink text-white px-6 py-2.5 rounded-full text-sm font-semibold hover:bg-ink/80 disabled:opacity-50 transition-colors">
+            className="bg-action text-[#06121B] px-6 py-2.5 rounded-full text-sm font-semibold hover:bg-action-deep disabled:opacity-50 transition-colors">
             {profileState === "loading" ? "Saving…" : "Save profile"}
           </button>
         </form>
@@ -333,7 +333,7 @@ export default function SettingsPage() {
           {pwError && <div className="flex items-center gap-2 text-danger text-sm font-medium"><AlertCircle size={14} /> {pwError}</div>}
           {pwState === "success" && <div className="flex items-center gap-2 text-success text-sm font-medium"><Check size={14} /> Password changed successfully.</div>}
           <button type="submit" disabled={pwState === "loading"}
-            className="bg-ink text-white px-6 py-2.5 rounded-full text-sm font-semibold hover:bg-ink/80 disabled:opacity-50 transition-colors">
+            className="bg-action text-[#06121B] px-6 py-2.5 rounded-full text-sm font-semibold hover:bg-action-deep disabled:opacity-50 transition-colors">
             {pwState === "loading" ? "Saving…" : "Update password"}
           </button>
         </form>
@@ -353,7 +353,7 @@ export default function SettingsPage() {
           <div className="flex items-center gap-2">
             <button type="button" onClick={() => { setLightboxOpen(false); fileInputRef.current?.click(); }}
               disabled={isPhotoLoading}
-              className="h-9 px-4 rounded-full bg-white/15 hover:bg-white/25 text-white text-sm font-semibold flex items-center gap-1.5 disabled:opacity-50">
+              className="h-9 px-4 rounded-full bg-surface/15 hover:bg-surface/25 text-white text-sm font-semibold flex items-center gap-1.5 disabled:opacity-50">
               <Camera size={13} /> Change
             </button>
             <button type="button" onClick={handleRemovePhoto} disabled={isPhotoLoading}
@@ -363,7 +363,7 @@ export default function SettingsPage() {
           </div>
         </div>
         <button type="button" onClick={() => setLightboxOpen(false)}
-          className="absolute top-5 right-5 h-9 w-9 rounded-full bg-white/15 hover:bg-white/25 text-white grid place-items-center"
+          className="absolute top-5 right-5 h-9 w-9 rounded-full bg-surface/15 hover:bg-surface/25 text-white grid place-items-center"
           aria-label="Close preview">
           <X size={18} />
         </button>
@@ -373,7 +373,7 @@ export default function SettingsPage() {
     {/* ── Crop modal with border handles ── */}
     {editor && (
       <div className="fixed inset-0 z-[300] bg-black/80 flex items-center justify-center p-4">
-        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden"
+        <div className="bg-surface rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden"
           onClick={(e) => e.stopPropagation()}>
 
           {/* Header */}
@@ -432,7 +432,7 @@ export default function SettingsPage() {
               Cancel
             </button>
             <button type="button" onClick={confirmAndUpload} disabled={isPhotoLoading || !croppedAreaPixels}
-              className="px-5 py-2 rounded-full bg-ink text-white text-sm font-semibold hover:bg-ink/80 disabled:opacity-50 transition-colors flex items-center gap-1.5">
+              className="px-5 py-2 rounded-full bg-action text-[#06121B] text-sm font-semibold hover:bg-action-deep disabled:opacity-50 transition-colors flex items-center gap-1.5">
               {isPhotoLoading
                 ? <><Clock size={13} /> Uploading…</>
                 : <><Check size={13} /> Save Photo</>}

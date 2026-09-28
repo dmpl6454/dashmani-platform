@@ -6,7 +6,7 @@ import { Laptop, Smartphone, Monitor, Headphones, Plus, X, RotateCcw, Trash2, Ed
 import { toTitleCase } from "@dashmani/shared";
 import Link from "next/link";
 
-const inputClass = "w-full border border-[#E8E0D0] bg-white rounded-lg px-4 py-2.5 text-sm text-[#1A1A1A] placeholder:text-[#B0B0B0] focus:outline-none focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547] transition-colors";
+const inputClass = "w-full border border-border bg-surface rounded-lg px-4 py-2.5 text-sm text-ink placeholder:text-ink-4 focus:outline-none focus:ring-2 focus:ring-action focus:border-action transition-colors";
 
 const DEVICE_TYPES = ["LAPTOP", "PHONE", "TABLET", "MONITOR", "KEYBOARD", "MOUSE", "HEADSET", "OTHER"];
 
@@ -91,41 +91,41 @@ export default function DevicesPage() {
     <div className="space-y-6 crx-animate-fade">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="font-serif text-3xl font-light text-[#1A1A1A]">Assigned Devices</h1>
-          <p className="text-sm text-[#7A7A7A] mt-1">Track laptops, phones, and other devices assigned to employees</p>
+          <h1 className="font-serif text-3xl font-light text-ink">Assigned Devices</h1>
+          <p className="text-sm text-ink-3 mt-1">Track laptops, phones, and other devices assigned to employees</p>
         </div>
-        <button onClick={() => { setShowForm(true); setEditingId(null); setForm({ employeeId: "", type: "LAPTOP", brand: "", model: "", serialNumber: "", assetTag: "", condition: "Good", notes: "" }); }} className="flex items-center gap-2 bg-[#1A1A1A] text-white py-2.5 px-5 rounded-full text-sm font-semibold hover:bg-[#2B2B2B] transition-all">
+        <button onClick={() => { setShowForm(true); setEditingId(null); setForm({ employeeId: "", type: "LAPTOP", brand: "", model: "", serialNumber: "", assetTag: "", condition: "Good", notes: "" }); }} className="flex items-center gap-2 bg-action text-[#06121B] py-2.5 px-5 rounded-full text-sm font-semibold hover:bg-[#243645] transition-all">
           <Plus className="h-4 w-4" /> Assign Device
         </button>
       </div>
 
       {/* Stats */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        <div className="bg-white rounded-xl border border-[#E8E0D0] p-4">
-          <p className="text-xs text-[#7A7A7A]">Active Devices</p>
-          <p className="text-2xl font-semibold text-[#1A1A1A]">{activeCount}</p>
+        <div className="bg-surface rounded-xl border border-border p-4">
+          <p className="text-xs text-ink-3">Active Devices</p>
+          <p className="text-2xl font-semibold text-ink">{activeCount}</p>
         </div>
-        <div className="bg-white rounded-xl border border-[#E8E0D0] p-4">
-          <p className="text-xs text-[#7A7A7A]">Laptops</p>
-          <p className="text-2xl font-semibold text-[#1A1A1A]">{laptopCount}</p>
+        <div className="bg-surface rounded-xl border border-border p-4">
+          <p className="text-xs text-ink-3">Laptops</p>
+          <p className="text-2xl font-semibold text-ink">{laptopCount}</p>
         </div>
-        <div className="bg-white rounded-xl border border-[#E8E0D0] p-4">
-          <p className="text-xs text-[#7A7A7A]">Phones</p>
-          <p className="text-2xl font-semibold text-[#1A1A1A]">{phoneCount}</p>
+        <div className="bg-surface rounded-xl border border-border p-4">
+          <p className="text-xs text-ink-3">Phones</p>
+          <p className="text-2xl font-semibold text-ink">{phoneCount}</p>
         </div>
-        <div className="bg-white rounded-xl border border-[#E8E0D0] p-4">
-          <p className="text-xs text-[#7A7A7A]">Total (incl. returned)</p>
-          <p className="text-2xl font-semibold text-[#1A1A1A]">{devices.length}</p>
+        <div className="bg-surface rounded-xl border border-border p-4">
+          <p className="text-xs text-ink-3">Total (incl. returned)</p>
+          <p className="text-2xl font-semibold text-ink">{devices.length}</p>
         </div>
       </div>
 
       {/* Add/Edit Form Modal */}
       {showForm && (
         <div className="fixed inset-0 bg-black/30 z-50 flex items-center justify-center p-4" onClick={() => setShowForm(false)}>
-          <div className="bg-white rounded-2xl shadow-xl border border-[#E8E0D0] w-full max-w-lg p-6" onClick={(e) => e.stopPropagation()}>
+          <div className="bg-surface rounded-2xl shadow-xl border border-border w-full max-w-lg p-6" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-5">
-              <h2 className="text-lg font-semibold text-[#1A1A1A]">{editingId ? "Edit Device" : "Assign New Device"}</h2>
-              <button onClick={() => setShowForm(false)} className="text-[#7A7A7A] hover:text-[#1A1A1A]"><X className="h-5 w-5" /></button>
+              <h2 className="text-lg font-semibold text-ink">{editingId ? "Edit Device" : "Assign New Device"}</h2>
+              <button onClick={() => setShowForm(false)} className="text-ink-3 hover:text-ink"><X className="h-5 w-5" /></button>
             </div>
             <form onSubmit={handleSubmit} className="space-y-3">
               {!editingId && (
@@ -155,8 +155,8 @@ export default function DevicesPage() {
               </div>
               <textarea placeholder="Notes (optional)" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} rows={2} className={inputClass} />
               <div className="flex justify-end gap-2 pt-2">
-                <button type="button" onClick={() => setShowForm(false)} className="px-5 py-2.5 rounded-full text-sm text-[#7A7A7A] hover:bg-[#F5F5F5] transition-colors">Cancel</button>
-                <button type="submit" className="bg-[#1A1A1A] text-white px-5 py-2.5 rounded-full text-sm font-semibold hover:bg-[#2B2B2B] transition-all">
+                <button type="button" onClick={() => setShowForm(false)} className="px-5 py-2.5 rounded-full text-sm text-ink-3 hover:bg-muted transition-colors">Cancel</button>
+                <button type="submit" className="bg-action text-[#06121B] px-5 py-2.5 rounded-full text-sm font-semibold hover:bg-[#243645] transition-all">
                   {editingId ? "Update Device" : "Assign Device"}
                 </button>
               </div>
@@ -168,7 +168,7 @@ export default function DevicesPage() {
       {/* Filters */}
       <div className="flex flex-wrap gap-2">
         {(["active", "returned", "all"] as const).map((f) => (
-          <button key={f} onClick={() => setFilter(f)} className={`px-4 py-2 rounded-full text-sm font-medium transition-all ${filter === f ? "bg-[#1A1A1A] text-white" : "bg-white text-[#7A7A7A] border border-[#E8E0D0] hover:bg-[#FFF8E1]"}`}>
+          <button key={f} onClick={() => setFilter(f)} className={`px-4 py-2 rounded-full text-sm font-medium transition-all ${filter === f ? "bg-action text-[#06121B]" : "bg-surface text-ink-3 border border-border hover:bg-action-soft"}`}>
             {f.charAt(0).toUpperCase() + f.slice(1)}
           </button>
         ))}
@@ -176,48 +176,48 @@ export default function DevicesPage() {
 
       {/* Devices List */}
       {isLoading ? (
-        <div className="flex items-center justify-center h-40"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#F5D547]" /></div>
+        <div className="flex items-center justify-center h-40"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-action" /></div>
       ) : filteredDevices.length === 0 ? (
-        <div className="bg-white rounded-2xl border border-[#E8E0D0] p-12 text-center">
-          <Laptop className="h-12 w-12 mx-auto mb-3 text-[#B0B0B0]" />
-          <p className="text-[#7A7A7A] font-medium">No devices found</p>
+        <div className="bg-surface rounded-2xl border border-border p-12 text-center">
+          <Laptop className="h-12 w-12 mx-auto mb-3 text-ink-4" />
+          <p className="text-ink-3 font-medium">No devices found</p>
         </div>
       ) : (
-        <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-[#E8E0D0]">
+        <div className="bg-surface rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-border">
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-[#F0EAD8]">
-                  <th className="text-left p-4 text-[#7A7A7A] text-xs font-medium">Device</th>
-                  <th className="text-left p-4 text-[#7A7A7A] text-xs font-medium">Employee</th>
-                  <th className="text-left p-4 text-[#7A7A7A] text-xs font-medium">Serial / Tag</th>
-                  <th className="text-left p-4 text-[#7A7A7A] text-xs font-medium">Condition</th>
-                  <th className="text-left p-4 text-[#7A7A7A] text-xs font-medium">Assigned</th>
-                  <th className="text-left p-4 text-[#7A7A7A] text-xs font-medium">Status</th>
-                  <th className="text-left p-4 text-[#7A7A7A] text-xs font-medium">Actions</th>
+                <tr className="border-b border-border">
+                  <th className="text-left p-4 text-ink-3 text-xs font-medium">Device</th>
+                  <th className="text-left p-4 text-ink-3 text-xs font-medium">Employee</th>
+                  <th className="text-left p-4 text-ink-3 text-xs font-medium">Serial / Tag</th>
+                  <th className="text-left p-4 text-ink-3 text-xs font-medium">Condition</th>
+                  <th className="text-left p-4 text-ink-3 text-xs font-medium">Assigned</th>
+                  <th className="text-left p-4 text-ink-3 text-xs font-medium">Status</th>
+                  <th className="text-left p-4 text-ink-3 text-xs font-medium">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredDevices.map((device: any) => {
                   const Icon = deviceIcon(device.type);
                   return (
-                    <tr key={device.id} className="border-b border-[#F0EAD8] last:border-0 hover:bg-[rgba(255,248,225,0.5)]">
+                    <tr key={device.id} className="border-b border-border last:border-0 hover:bg-[rgba(255,248,225,0.5)]">
                       <td className="p-4">
                         <div className="flex items-center gap-3">
-                          <div className="h-9 w-9 rounded-lg bg-[#FFF3C4] flex items-center justify-center">
-                            <Icon className="h-4 w-4 text-[#B8960C]" />
+                          <div className="h-9 w-9 rounded-lg bg-action-soft flex items-center justify-center">
+                            <Icon className="h-4 w-4 text-gold" />
                           </div>
                           <div>
-                            <p className="font-semibold text-[#1A1A1A]">{toTitleCase(device.brand)} {toTitleCase(device.model)}</p>
-                            <p className="text-xs text-[#7A7A7A]">{device.type}</p>
+                            <p className="font-semibold text-ink">{toTitleCase(device.brand)} {toTitleCase(device.model)}</p>
+                            <p className="text-xs text-ink-3">{device.type}</p>
                           </div>
                         </div>
                       </td>
                       <td className="p-4">
-                        <Link href={`/employees/${device.employee.id}`} className="text-[#1A1A1A] font-medium hover:text-blue-600">{toTitleCase(device.employee.name)}</Link>
-                        <p className="text-xs text-[#7A7A7A]">ID: {device.employee.id.slice(0, 8)}</p>
+                        <Link href={`/employees/${device.employee.id}`} className="text-ink font-medium hover:text-blue-600">{toTitleCase(device.employee.name)}</Link>
+                        <p className="text-xs text-ink-3">ID: {device.employee.id.slice(0, 8)}</p>
                       </td>
-                      <td className="p-4 text-[#7A7A7A]">
+                      <td className="p-4 text-ink-3">
                         {device.serialNumber && <p className="text-xs">S/N: {device.serialNumber}</p>}
                         {device.assetTag && <p className="text-xs">Tag: {device.assetTag}</p>}
                         {!device.serialNumber && !device.assetTag && "—"}
@@ -230,7 +230,7 @@ export default function DevicesPage() {
                           "bg-red-50 text-red-700"
                         }`}>{device.condition}</span>
                       </td>
-                      <td className="p-4 text-[#7A7A7A] text-xs">{new Date(device.assignedAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}</td>
+                      <td className="p-4 text-ink-3 text-xs">{new Date(device.assignedAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}</td>
                       <td className="p-4">
                         {device.returnedAt ? (
                           <span className="px-2.5 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-600">Returned {new Date(device.returnedAt).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}</span>
@@ -240,15 +240,15 @@ export default function DevicesPage() {
                       </td>
                       <td className="p-4">
                         <div className="flex gap-1.5">
-                          <button onClick={() => startEdit(device)} className="p-1.5 rounded-lg hover:bg-[#FFF3C4] text-[#7A7A7A] hover:text-[#1A1A1A] transition-colors" title="Edit">
+                          <button onClick={() => startEdit(device)} className="p-1.5 rounded-lg hover:bg-action-soft text-ink-3 hover:text-ink transition-colors" title="Edit">
                             <Edit3 className="h-3.5 w-3.5" />
                           </button>
                           {!device.returnedAt && (
-                            <button onClick={() => handleReturn(device.id)} className="p-1.5 rounded-lg hover:bg-blue-50 text-[#7A7A7A] hover:text-blue-700 transition-colors" title="Mark Returned">
+                            <button onClick={() => handleReturn(device.id)} className="p-1.5 rounded-lg hover:bg-blue-50 text-ink-3 hover:text-blue-700 transition-colors" title="Mark Returned">
                               <RotateCcw className="h-3.5 w-3.5" />
                             </button>
                           )}
-                          <button onClick={() => handleDelete(device.id)} className="p-1.5 rounded-lg hover:bg-red-50 text-[#7A7A7A] hover:text-red-600 transition-colors" title="Delete">
+                          <button onClick={() => handleDelete(device.id)} className="p-1.5 rounded-lg hover:bg-red-50 text-ink-3 hover:text-red-600 transition-colors" title="Delete">
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
                         </div>

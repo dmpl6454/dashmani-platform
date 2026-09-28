@@ -130,7 +130,7 @@ export default function TeamsPage() {
     return (
       <div key={team.id} style={{ marginLeft: depth * 24 }}>
         <div className={`flex items-center gap-3 p-3 rounded-xl border mb-2 transition-all hover:shadow-[0_2px_12px_rgba(0,0,0,0.06)] ${
-          isSelected ? "bg-indigo-soft border-indigo/30" : "bg-white border-[#E8E0D0]"
+          isSelected ? "bg-indigo-soft border-indigo/30" : "bg-surface border-border"
         }`}>
           {/* Checkbox */}
           <button
@@ -142,26 +142,26 @@ export default function TeamsPage() {
           </button>
 
           <button onClick={() => toggleExpand(team.id)} className="shrink-0">
-            {hasContent ? (isExpanded ? <ChevronDown className="h-4 w-4 text-[#7A7A7A]" /> : <ChevronRight className="h-4 w-4 text-[#7A7A7A]" />) : <div className="w-4" />}
+            {hasContent ? (isExpanded ? <ChevronDown className="h-4 w-4 text-ink-3" /> : <ChevronRight className="h-4 w-4 text-ink-3" />) : <div className="w-4" />}
           </button>
-          <div className="h-9 w-9 rounded-xl bg-[#FFF3C4] flex items-center justify-center shrink-0">
-            <Users className="h-4 w-4 text-[#1A1A1A]" />
+          <div className="h-9 w-9 rounded-xl bg-action-soft flex items-center justify-center shrink-0">
+            <Users className="h-4 w-4 text-ink" />
           </div>
           <div className="flex-1 min-w-0">
-            <p className="font-medium text-[#1A1A1A] text-sm">{toTitleCase(team.name)}</p>
-            <p className="text-xs text-[#7A7A7A]">{team.type} &middot; {pluralize(team._count?.members ?? members.length, "member")}</p>
+            <p className="font-medium text-ink text-sm">{toTitleCase(team.name)}</p>
+            <p className="text-xs text-ink-3">{team.type} &middot; {pluralize(team._count?.members ?? members.length, "member")}</p>
           </div>
           <div className="flex items-center gap-1.5">
             <button
               onClick={() => setAssignModal({ teamId: team.id, teamName: team.name })}
-              className="p-1.5 rounded-lg hover:bg-[#FFF8E1] text-[#7A7A7A] hover:text-[#1A1A1A] transition-colors"
+              className="p-1.5 rounded-lg hover:bg-action-soft text-ink-3 hover:text-ink transition-colors"
               title="Add member"
             >
               <UserPlus className="h-4 w-4" />
             </button>
             <button
               onClick={() => handleDelete(team.id)}
-              className="p-1.5 rounded-lg hover:bg-red-50 text-[#7A7A7A] hover:text-red-600 transition-colors"
+              className="p-1.5 rounded-lg hover:bg-red-50 text-ink-3 hover:text-red-600 transition-colors"
               title="Delete"
             >
               <Trash2 className="h-4 w-4" />
@@ -183,15 +183,15 @@ export default function TeamsPage() {
                       </div>
                     )}
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-[#1A1A1A]">{toTitleCase(m.name)}</p>
-                      <p className="text-xs text-[#7A7A7A]">{m.email}</p>
+                      <p className="text-sm font-medium text-ink">{toTitleCase(m.name)}</p>
+                      <p className="text-xs text-ink-3">{m.email}</p>
                     </div>
                     {m.isPrimary && (
                       <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold bg-indigo-soft text-indigo" title="This is the member's primary team">
                         Primary
                       </span>
                     )}
-                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${m.status === "ACTIVE" ? "bg-green-50 text-green-700" : "bg-[#FFF3C4] text-[#1A1A1A]"}`}>
+                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${m.status === "ACTIVE" ? "bg-green-50 text-green-700" : "bg-action-soft text-ink"}`}>
                       {formatStatus(m.status)}
                     </span>
                     {/* Member actions — visible on hover */}
@@ -226,12 +226,12 @@ export default function TeamsPage() {
     <div className="space-y-6 crx-animate-fade">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="font-serif text-4xl font-light text-[#1A1A1A]">Team Structure</h1>
-          <p className="text-[#7A7A7A] mt-1">Organization hierarchy and team management</p>
+          <h1 className="font-serif text-4xl font-light text-ink">Team Structure</h1>
+          <p className="text-ink-3 mt-1">Organization hierarchy and team management</p>
         </div>
         <button
           onClick={() => { setCreateOpen(!createOpen); setCreateError(null); }}
-          className="inline-flex items-center gap-2 bg-[#F5D547] text-[#1A1A1A] rounded-full px-5 py-2.5 text-sm font-medium shadow-[0_4px_16px_rgba(245,213,71,0.35)] hover:shadow-[0_6px_24px_rgba(245,213,71,0.45)] hover:-translate-y-0.5 transition-all"
+          className="inline-flex items-center gap-2 bg-action text-[#06121B] rounded-full px-5 py-2.5 text-sm font-medium shadow-[0_4px_16px_rgba(245,213,71,0.35)] hover:shadow-[0_6px_24px_rgba(245,213,71,0.45)] hover:-translate-y-0.5 transition-all"
         >
           <Plus className="h-4 w-4" /> Create Team
         </button>
@@ -262,39 +262,39 @@ export default function TeamsPage() {
 
       {/* Create Form */}
       {createOpen && (
-        <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0] p-6">
-          <h3 className="font-serif text-lg font-medium text-[#1A1A1A] mb-4">Create New Team</h3>
+        <div className="bg-surface rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-border p-6">
+          <h3 className="font-serif text-lg font-medium text-ink mb-4">Create New Team</h3>
           <form onSubmit={handleCreate} className="flex flex-wrap gap-4 items-end">
             <div className="flex flex-col gap-1">
-              <label className="text-xs font-medium text-[#7A7A7A]">Name</label>
+              <label className="text-xs font-medium text-ink-3">Name</label>
               <Input
                 value={form.name}
                 onChange={(e) => { setForm({ ...form, name: e.target.value }); setCreateError(null); }}
                 required
-                className={`w-52 border rounded-lg ${createError ? "border-red-400 focus:ring-red-400" : "border-[#E8E0D0]"}`}
+                className={`w-52 border rounded-lg ${createError ? "border-red-400 focus:ring-red-400" : "border-border"}`}
               />
               {createError && (
                 <p className="text-xs text-red-600 mt-0.5">{createError}</p>
               )}
             </div>
             <div className="flex flex-col gap-1">
-              <label className="text-xs font-medium text-[#7A7A7A]">Type</label>
-              <select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })} className="h-9 rounded-lg border border-[#E8E0D0] bg-white px-3 py-1 text-sm w-40">
+              <label className="text-xs font-medium text-ink-3">Type</label>
+              <select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })} className="h-9 rounded-lg border border-border bg-surface px-3 py-1 text-sm w-40">
                 <option value="DEPARTMENT">Department</option>
                 <option value="TEAM">Team</option>
                 <option value="SUB_TEAM">Sub Team</option>
               </select>
             </div>
             <div className="flex flex-col gap-1">
-              <label className="text-xs font-medium text-[#7A7A7A]">Parent (optional)</label>
-              <select value={form.parentId} onChange={(e) => setForm({ ...form, parentId: e.target.value })} className="h-9 rounded-lg border border-[#E8E0D0] bg-white px-3 py-1 text-sm w-52">
+              <label className="text-xs font-medium text-ink-3">Parent (optional)</label>
+              <select value={form.parentId} onChange={(e) => setForm({ ...form, parentId: e.target.value })} className="h-9 rounded-lg border border-border bg-surface px-3 py-1 text-sm w-52">
                 <option value="">None (Top-level)</option>
                 {allUnits.map((u: any) => (
                   <option key={u.id} value={u.id}>{u.name} ({u.type})</option>
                 ))}
               </select>
             </div>
-            <button type="submit" disabled={creating} className="bg-[#1A1A1A] text-white px-5 py-2 rounded-full text-sm font-semibold hover:bg-[#2B2B2B] transition-all disabled:opacity-50">
+            <button type="submit" disabled={creating} className="bg-action text-[#06121B] px-5 py-2 rounded-full text-sm font-semibold hover:bg-[#243645] transition-all disabled:opacity-50">
               {creating ? "Creating..." : "Create"}
             </button>
           </form>
@@ -303,29 +303,29 @@ export default function TeamsPage() {
 
       {/* Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <div className="bg-white rounded-2xl p-5 shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0]">
-          <p className="text-sm text-[#7A7A7A]">Departments</p>
-          <p className="text-[32px] font-light font-num text-[#1A1A1A]">{allUnits.filter((u: any) => u.type === "DEPARTMENT").length}</p>
+        <div className="bg-surface rounded-2xl p-5 shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-border">
+          <p className="text-sm text-ink-3">Departments</p>
+          <p className="text-[32px] font-light font-num text-ink">{allUnits.filter((u: any) => u.type === "DEPARTMENT").length}</p>
         </div>
-        <div className="bg-white rounded-2xl p-5 shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0]">
-          <p className="text-sm text-[#7A7A7A]">Teams</p>
-          <p className="text-[32px] font-light font-num text-[#1A1A1A]">{allUnits.filter((u: any) => u.type === "TEAM").length}</p>
+        <div className="bg-surface rounded-2xl p-5 shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-border">
+          <p className="text-sm text-ink-3">Teams</p>
+          <p className="text-[32px] font-light font-num text-ink">{allUnits.filter((u: any) => u.type === "TEAM").length}</p>
         </div>
-        <div className="bg-white rounded-2xl p-5 shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0]">
-          <p className="text-sm text-[#7A7A7A]">Sub Teams</p>
-          <p className="text-[32px] font-light font-num text-[#1A1A1A]">{allUnits.filter((u: any) => u.type === "SUB_TEAM").length}</p>
+        <div className="bg-surface rounded-2xl p-5 shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-border">
+          <p className="text-sm text-ink-3">Sub Teams</p>
+          <p className="text-[32px] font-light font-num text-ink">{allUnits.filter((u: any) => u.type === "SUB_TEAM").length}</p>
         </div>
-        <div className="bg-white rounded-2xl p-5 shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0]">
-          <p className="text-sm text-[#7A7A7A]">Total Members</p>
-          <p className="text-[32px] font-light font-num text-[#1A1A1A]">{allUnits.reduce((s: number, u: any) => s + (u._count?.members ?? u.members?.length ?? 0), 0)}</p>
+        <div className="bg-surface rounded-2xl p-5 shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-border">
+          <p className="text-sm text-ink-3">Total Members</p>
+          <p className="text-[32px] font-light font-num text-ink">{allUnits.reduce((s: number, u: any) => s + (u._count?.members ?? u.members?.length ?? 0), 0)}</p>
         </div>
       </div>
 
       {/* Hierarchy */}
-      <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0] p-6">
-        <h3 className="font-serif text-lg font-medium text-[#1A1A1A] mb-4">Organization Hierarchy</h3>
+      <div className="bg-surface rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-border p-6">
+        <h3 className="font-serif text-lg font-medium text-ink mb-4">Organization Hierarchy</h3>
         {teams.length === 0 ? (
-          <p className="text-sm text-[#7A7A7A]">No teams created yet. Click "Create Team" to get started.</p>
+          <p className="text-sm text-ink-3">No teams created yet. Click "Create Team" to get started.</p>
         ) : (
           <div className="space-y-1">
             {teams.map((team: any) => renderTeam(team))}
@@ -336,13 +336,13 @@ export default function TeamsPage() {
       {/* Move Member Modal */}
       {moveModal && (
         <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50" onClick={() => setMoveModal(null)}>
-          <div className="bg-white rounded-2xl p-6 w-96 shadow-xl" onClick={(e) => e.stopPropagation()}>
-            <h3 className="font-serif text-lg font-medium text-[#1A1A1A] mb-1">Add to Another Team</h3>
-            <p className="text-sm text-[#7A7A7A] mb-4">Add <span className="font-semibold text-[#1A1A1A]">{moveModal.memberName}</span> to an additional team. They stay in their current team(s).</p>
+          <div className="bg-surface rounded-2xl p-6 w-96 shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <h3 className="font-serif text-lg font-medium text-ink mb-1">Add to Another Team</h3>
+            <p className="text-sm text-ink-3 mb-4">Add <span className="font-semibold text-ink">{moveModal.memberName}</span> to an additional team. They stay in their current team(s).</p>
             <select
               value={moveTargetTeamId}
               onChange={(e) => setMoveTargetTeamId(e.target.value)}
-              className="w-full h-10 rounded-lg border border-[#E8E0D0] bg-white px-3 text-sm mb-4"
+              className="w-full h-10 rounded-lg border border-border bg-surface px-3 text-sm mb-4"
             >
               <option value="">Select a team</option>
               {allUnits.map((u: any) => (
@@ -350,11 +350,11 @@ export default function TeamsPage() {
               ))}
             </select>
             <div className="flex gap-2 justify-end">
-              <button onClick={() => setMoveModal(null)} className="px-4 py-2 text-sm text-[#7A7A7A] hover:text-[#1A1A1A]">Cancel</button>
+              <button onClick={() => setMoveModal(null)} className="px-4 py-2 text-sm text-ink-3 hover:text-ink">Cancel</button>
               <button
                 onClick={handleMoveMember}
                 disabled={!moveTargetTeamId}
-                className="bg-[#1A1A1A] text-white px-5 py-2 rounded-full text-sm font-semibold hover:bg-[#2B2B2B] disabled:opacity-50"
+                className="bg-action text-[#06121B] px-5 py-2 rounded-full text-sm font-semibold hover:bg-[#243645] disabled:opacity-50"
               >
                 Add to Team
               </button>
@@ -366,12 +366,12 @@ export default function TeamsPage() {
       {/* Assign Member Modal */}
       {assignModal && (
         <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50" onClick={() => setAssignModal(null)}>
-          <div className="bg-white rounded-2xl p-6 w-96 shadow-xl" onClick={(e) => e.stopPropagation()}>
-            <h3 className="font-serif text-lg font-medium text-[#1A1A1A] mb-4">Add Member to {assignModal.teamName}</h3>
+          <div className="bg-surface rounded-2xl p-6 w-96 shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <h3 className="font-serif text-lg font-medium text-ink mb-4">Add Member to {assignModal.teamName}</h3>
             <select
               value={assignEmployeeId}
               onChange={(e) => setAssignEmployeeId(e.target.value)}
-              className="w-full h-10 rounded-lg border border-[#E8E0D0] bg-white px-3 text-sm mb-4"
+              className="w-full h-10 rounded-lg border border-border bg-surface px-3 text-sm mb-4"
             >
               <option value="">Select an employee</option>
               {employees.map((emp: any) => (
@@ -379,11 +379,11 @@ export default function TeamsPage() {
               ))}
             </select>
             <div className="flex gap-2 justify-end">
-              <button onClick={() => setAssignModal(null)} className="px-4 py-2 text-sm text-[#7A7A7A] hover:text-[#1A1A1A]">Cancel</button>
+              <button onClick={() => setAssignModal(null)} className="px-4 py-2 text-sm text-ink-3 hover:text-ink">Cancel</button>
               <button
                 onClick={handleAssign}
                 disabled={!assignEmployeeId}
-                className="bg-[#1A1A1A] text-white px-5 py-2 rounded-full text-sm font-semibold hover:bg-[#2B2B2B] disabled:opacity-50"
+                className="bg-action text-[#06121B] px-5 py-2 rounded-full text-sm font-semibold hover:bg-[#243645] disabled:opacity-50"
               >
                 Add to Team
               </button>

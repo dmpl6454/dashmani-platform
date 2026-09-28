@@ -16,13 +16,13 @@ const STATUS_LABELS: Record<string, string> = {
 };
 
 const STATUS_DOT_COLOR: Record<string, string> = {
-  DRAFT: "bg-[#B0B0B0]",
-  PENDING_APPROVAL: "bg-[#F5D547]",
-  APPROVED: "bg-[#6BCB77]",
+  DRAFT: "bg-[#243645]",
+  PENDING_APPROVAL: "bg-action",
+  APPROVED: "bg-success",
   SCHEDULED: "bg-[#3498DB]",
-  PUBLISHED: "bg-[#6BCB77]",
-  FAILED: "bg-[#E74C3C]",
-  REJECTED: "bg-[#E74C3C]",
+  PUBLISHED: "bg-success",
+  FAILED: "bg-danger",
+  REJECTED: "bg-danger",
 };
 
 const MONTH_NAMES = [
@@ -73,31 +73,31 @@ export default function ContentCalendarPage() {
   return (
     <div className="space-y-6 crx-animate-fade">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="font-serif text-4xl font-light text-[#1A1A1A]">Content Calendar</h1>
+        <h1 className="font-serif text-4xl font-light text-ink">Content Calendar</h1>
         <div className="flex items-center gap-2">
           <Link href="/content">
-            <Button variant="outline" className="border border-[#E8E0D0] rounded-full text-[#1A1A1A] hover:bg-[rgba(255,248,225,0.5)]">List View</Button>
+            <Button variant="outline" className="border border-border rounded-full text-ink hover:bg-[rgba(255,248,225,0.5)]">List View</Button>
           </Link>
           <Link href="/content/new">
-            <Button className="bg-[#1A1A1A] text-white rounded-full hover:bg-[#2B2B2B]">+ New Content</Button>
+            <Button className="bg-action text-[#06121B] rounded-full hover:bg-[#243645]">+ New Content</Button>
           </Link>
         </div>
       </div>
 
       <div className="flex flex-wrap items-center gap-3 sm:gap-4 crx-animate-slide crx-delay-1">
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={prevMonth} className="border border-[#E8E0D0] rounded-full text-[#1A1A1A] hover:bg-[rgba(255,248,225,0.5)]">
+          <Button variant="outline" size="sm" onClick={prevMonth} className="border border-border rounded-full text-ink hover:bg-[rgba(255,248,225,0.5)]">
             &larr;
           </Button>
-          <span className="text-lg font-semibold font-serif min-w-[180px] text-center text-[#1A1A1A]">
+          <span className="text-lg font-semibold font-serif min-w-[180px] text-center text-ink">
             {MONTH_NAMES[month - 1]} {year}
           </span>
-          <Button variant="outline" size="sm" onClick={nextMonth} className="border border-[#E8E0D0] rounded-full text-[#1A1A1A] hover:bg-[rgba(255,248,225,0.5)]">
+          <Button variant="outline" size="sm" onClick={nextMonth} className="border border-border rounded-full text-ink hover:bg-[rgba(255,248,225,0.5)]">
             &rarr;
           </Button>
         </div>
         <select
-          className="h-10 max-w-full rounded-lg border border-[#E8E0D0] bg-white px-3 py-2 text-sm focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547] outline-none"
+          className="h-10 max-w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm focus:ring-2 focus:ring-action focus:border-action outline-none"
           value={projectId}
           onChange={(e) => setProjectId(e.target.value)}
         >
@@ -109,18 +109,18 @@ export default function ContentCalendarPage() {
       </div>
 
       {isLoading ? (
-        <div className="text-center text-[#7A7A7A] py-8">Loading calendar...</div>
+        <div className="text-center text-ink-3 py-8">Loading calendar...</div>
       ) : (
-        <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0] overflow-hidden crx-animate-slide crx-delay-2">
-          <div className="grid grid-cols-7 border-b border-[#F0EAD8]">
+        <div className="bg-surface rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-border overflow-hidden crx-animate-slide crx-delay-2">
+          <div className="grid grid-cols-7 border-b border-border">
             {DAY_NAMES.map((d) => (
-              <div key={d} className="p-2 text-center text-[#7A7A7A] text-xs font-medium border-r border-[#F0EAD8] last:border-r-0">
+              <div key={d} className="p-2 text-center text-ink-3 text-xs font-medium border-r border-border last:border-r-0">
                 {d}
               </div>
             ))}
           </div>
           {weeks.map((week, wi) => (
-            <div key={wi} className="grid grid-cols-7 border-b border-[#F0EAD8] last:border-b-0">
+            <div key={wi} className="grid grid-cols-7 border-b border-border last:border-b-0">
               {week.map((day, di) => {
                 const posts = day ? getPostsForDay(day) : [];
                 const isToday =
@@ -130,8 +130,8 @@ export default function ContentCalendarPage() {
                 return (
                   <div
                     key={di}
-                    className={`min-h-[100px] p-1.5 border-r border-[#F0EAD8] last:border-r-0 ${
-                      day ? "bg-white" : "bg-[rgba(255,248,225,0.3)]"
+                    className={`min-h-[100px] p-1.5 border-r border-border last:border-r-0 ${
+                      day ? "bg-surface" : "bg-[rgba(255,248,225,0.3)]"
                     }`}
                   >
                     {day && (
@@ -139,8 +139,8 @@ export default function ContentCalendarPage() {
                         <div
                           className={`text-xs font-medium mb-1 ${
                             isToday
-                              ? "bg-[#F5D547] text-[#1A1A1A] w-6 h-6 rounded-full flex items-center justify-center font-bold"
-                              : "text-[#7A7A7A]"
+                              ? "bg-action text-[#06121B] w-6 h-6 rounded-full flex items-center justify-center font-bold"
+                              : "text-ink-3"
                           }`}
                         >
                           {day}
@@ -149,13 +149,13 @@ export default function ContentCalendarPage() {
                           {posts.slice(0, 3).map((post: any) => (
                             <Link key={post.id} href={`/content/${post.id}`} className="block">
                               <div className="flex items-center gap-1 px-1 py-0.5 rounded text-xs hover:bg-[rgba(255,248,225,0.5)] truncate transition-colors">
-                                <span className={`w-2 h-2 rounded-full flex-shrink-0 ${STATUS_DOT_COLOR[post.status] || "bg-[#B0B0B0]"}`} />
-                                <span className="truncate text-[#1A1A1A]">{post.title}</span>
+                                <span className={`w-2 h-2 rounded-full flex-shrink-0 ${STATUS_DOT_COLOR[post.status] || "bg-[#243645]"}`} />
+                                <span className="truncate text-ink">{post.title}</span>
                               </div>
                             </Link>
                           ))}
                           {posts.length > 3 && (
-                            <div className="text-xs text-[#B0B0B0] px-1">+{posts.length - 3} more</div>
+                            <div className="text-xs text-ink-4 px-1">+{posts.length - 3} more</div>
                           )}
                         </div>
                       </>
@@ -173,7 +173,7 @@ export default function ContentCalendarPage() {
         {Object.entries(STATUS_DOT_COLOR).map(([status, color]) => (
           <div key={status} className="flex items-center gap-1.5">
             <span className={`w-2.5 h-2.5 rounded-full ${color}`} />
-            <span className="text-[#7A7A7A]">{STATUS_LABELS[status]}</span>
+            <span className="text-ink-3">{STATUS_LABELS[status]}</span>
           </div>
         ))}
       </div>

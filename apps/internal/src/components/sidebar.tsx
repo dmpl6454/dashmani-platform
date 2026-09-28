@@ -123,7 +123,7 @@ export function Sidebar() {
             <span className="absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-attention" />
           )}
           {!expanded && (
-            <div className="pointer-events-none absolute left-full ml-3 top-1/2 -translate-y-1/2 z-50 opacity-0 group-hover:opacity-100 transition-opacity px-2.5 py-1 bg-ink text-white text-xs font-medium rounded-lg whitespace-nowrap shadow-hard">
+            <div className="pointer-events-none absolute left-full ml-3 top-1/2 -translate-y-1/2 z-50 opacity-0 group-hover:opacity-100 transition-opacity px-2.5 py-1 bg-action text-[#06121B] text-xs font-medium rounded-lg whitespace-nowrap shadow-hard">
               {label}
               {badge > 0 && <span className="ml-1.5 bg-attention px-1.5 py-0.5 rounded-full text-[10px]">{badge}</span>}
             </div>
@@ -168,7 +168,7 @@ export function Sidebar() {
             "w-full flex items-center rounded-xl h-10 transition-all border",
             (collapsed && !mobile) ? "justify-center" : "gap-3 px-3",
             pathname === "/overview"
-              ? "bg-ink text-white border-ink"
+              ? "bg-action text-[#06121B] border-ink"
               : "bg-ink/[0.04] text-ink border-ink/10 hover:bg-ink/[0.08]",
           )}
         >
@@ -247,12 +247,12 @@ export function Sidebar() {
           >
             <div
               className="mx-1 mb-1 rounded-xl overflow-hidden"
-              style={{ background: "#F3EED8", border: "1.5px solid rgba(26,26,26,0.09)" }}
+              style={{ background: "#0B1720", border: "1px solid #182C39" }}
             >
               {/* Grid header */}
               <div
                 className="px-3 py-2"
-                style={{ borderBottom: "1px solid rgba(26,26,26,0.07)" }}
+                style={{ borderBottom: "1px solid #182C39" }}
               >
                 <span className="text-[9.5px] font-bold text-ink-4 uppercase tracking-widest">All Features</span>
               </div>
@@ -269,13 +269,13 @@ export function Sidebar() {
                       className={cn(
                         "group flex flex-col items-center gap-1.5 px-1 py-2.5 rounded-lg text-center transition-all duration-150",
                         isActive
-                          ? "bg-indigo text-white shadow-sm"
-                          : "hover:bg-white/70 text-ink-3 hover:text-ink"
+                          ? "bg-action text-[#06121B] shadow-sm"
+                          : "hover:bg-surface/70 text-ink-3 hover:text-ink"
                       )}
                     >
                       <div className={cn(
                         "h-7 w-7 rounded-lg grid place-items-center shrink-0 transition-colors",
-                        isActive ? "bg-white/20" : "bg-white/50 group-hover:bg-white/80"
+                        isActive ? "bg-surface/20" : "bg-surface/50 group-hover:bg-surface/80"
                       )}>
                         <Icon className="h-3.5 w-3.5" strokeWidth={isActive ? 2.2 : 1.8} />
                       </div>

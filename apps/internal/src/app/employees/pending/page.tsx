@@ -62,7 +62,7 @@ export default function PendingEmployeesPage() {
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#F5D547]" />
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-action" />
       </div>
     );
   }
@@ -70,28 +70,28 @@ export default function PendingEmployeesPage() {
   return (
     <div className="max-w-5xl mx-auto space-y-6 crx-animate-fade">
       <div className="flex items-center gap-3">
-        <Link href="/employees" className="text-[#B0B0B0] hover:text-[#1A1A1A] transition-colors">
+        <Link href="/employees" className="text-ink-4 hover:text-ink transition-colors">
           <ArrowLeft className="h-5 w-5" />
         </Link>
         <div>
-          <h1 className="font-serif text-4xl font-light text-[#1A1A1A]">Pending Approvals</h1>
-          <p className="text-[#7A7A7A] mt-1">
+          <h1 className="font-serif text-4xl font-light text-ink">Pending Approvals</h1>
+          <p className="text-ink-3 mt-1">
             {employees.length} employee{employees.length !== 1 ? "s" : ""} waiting for approval
           </p>
         </div>
       </div>
 
       {employees.length === 0 ? (
-        <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0] p-12 text-center crx-animate-slide crx-delay-1">
-          <Clock className="h-12 w-12 text-[#B0B0B0] mx-auto mb-3" />
-          <p className="text-[#7A7A7A]">No pending employee registrations</p>
+        <div className="bg-surface rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-border p-12 text-center crx-animate-slide crx-delay-1">
+          <Clock className="h-12 w-12 text-ink-4 mx-auto mb-3" />
+          <p className="text-ink-3">No pending employee registrations</p>
         </div>
       ) : (
         <div className="space-y-3">
           {employees.map((emp, i) => (
             <div
               key={emp.id}
-              className={`bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0] p-5 flex items-center justify-between transition-all hover:shadow-[0_4px_24px_rgba(0,0,0,0.07)] crx-animate-slide crx-delay-${Math.min(i + 1, 6)}`}
+              className={`bg-surface rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-border p-5 flex items-center justify-between transition-all hover:shadow-[0_4px_24px_rgba(0,0,0,0.07)] crx-animate-slide crx-delay-${Math.min(i + 1, 6)}`}
             >
               <div className="flex items-center gap-4 flex-1">
                 <div
@@ -101,10 +101,10 @@ export default function PendingEmployeesPage() {
                   {emp.name?.[0]?.toUpperCase()}
                 </div>
                 <div>
-                  <p className="font-medium text-[#1A1A1A]">{emp.name}</p>
-                  <p className="text-sm text-[#7A7A7A]">{emp.email}</p>
-                  {emp.phone && <p className="text-sm text-[#B0B0B0]">{emp.phone}</p>}
-                  <p className="text-xs text-[#B0B0B0] mt-1">
+                  <p className="font-medium text-ink">{emp.name}</p>
+                  <p className="text-sm text-ink-3">{emp.email}</p>
+                  {emp.phone && <p className="text-sm text-ink-4">{emp.phone}</p>}
+                  <p className="text-xs text-ink-4 mt-1">
                     Registered: {new Date(emp.createdAt).toLocaleDateString("en-IN", {
                       day: "numeric",
                       month: "short",
@@ -120,7 +120,7 @@ export default function PendingEmployeesPage() {
                 <button
                   onClick={() => handleApprove(emp.id)}
                   disabled={actionLoading === emp.id}
-                  className="flex items-center gap-1.5 bg-[#6BCB77] text-white px-4 py-2 rounded-full text-sm font-medium hover:bg-[#5ab868] disabled:opacity-50 transition-colors"
+                  className="flex items-center gap-1.5 bg-success text-white px-4 py-2 rounded-full text-sm font-medium hover:bg-success disabled:opacity-50 transition-colors"
                 >
                   <Check className="h-4 w-4" />
                   Approve
@@ -128,7 +128,7 @@ export default function PendingEmployeesPage() {
                 <button
                   onClick={() => handleReject(emp.id)}
                   disabled={actionLoading === emp.id}
-                  className="flex items-center gap-1.5 bg-[rgba(231,76,60,0.1)] text-[#E74C3C] px-4 py-2 rounded-full text-sm font-medium hover:bg-[rgba(231,76,60,0.18)] disabled:opacity-50 transition-colors"
+                  className="flex items-center gap-1.5 bg-[rgba(231,76,60,0.1)] text-danger px-4 py-2 rounded-full text-sm font-medium hover:bg-[rgba(231,76,60,0.18)] disabled:opacity-50 transition-colors"
                 >
                   <X className="h-4 w-4" />
                   Reject

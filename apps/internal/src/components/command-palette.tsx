@@ -101,7 +101,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
 
   return (
     <div
-      className="fixed inset-0 z-[90] bg-ink/20 backdrop-blur-[2px] flex items-start justify-center pt-[12vh] px-4 pop-in"
+      className="fixed inset-0 z-[90] bg-black/50 backdrop-blur-[2px] flex items-start justify-center pt-[12vh] px-4 pop-in"
       onClick={onClose}
     >
       <div

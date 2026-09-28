@@ -12,7 +12,7 @@ import {
   ExternalLink, StickyNote, CheckCircle, XCircle, Eye, RefreshCw,
 } from "lucide-react";
 
-const inputClass = "w-full border border-[#E8E0D0] bg-white rounded-lg px-4 py-2.5 text-sm text-[#1A1A1A] placeholder:text-[#B0B0B0] focus:outline-none focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547] transition-colors";
+const inputClass = "w-full border border-border bg-surface rounded-lg px-4 py-2.5 text-sm text-ink placeholder:text-ink-4 focus:outline-none focus:ring-2 focus:ring-action focus:border-action transition-colors";
 
 const DEPARTMENTS = [
   "Social Media", "Content Writing", "Graphic Design", "Video Production",
@@ -153,9 +153,9 @@ export default function JobsPage() {
     <div className="space-y-6 crx-animate-fade">
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="font-serif text-4xl font-light text-[#1A1A1A]">Job Listings</h1>
+        <h1 className="font-serif text-4xl font-light text-ink">Job Listings</h1>
         <div className="flex items-center gap-3">
-          <button onClick={() => { if (showForm) resetForm(); else { setShowForm(true); setView("jobs"); } }} className="bg-[#1A1A1A] text-white py-2.5 px-6 rounded-full font-semibold hover:bg-[#2B2B2B] transition-all flex items-center gap-2">
+          <button onClick={() => { if (showForm) resetForm(); else { setShowForm(true); setView("jobs"); } }} className="bg-action text-[#06121B] py-2.5 px-6 rounded-full font-semibold hover:bg-[#243645] transition-all flex items-center gap-2">
             {showForm ? <ChevronUp size={16} /> : <Plus size={16} />}
             {showForm ? "Close" : "Post New Job"}
           </button>
@@ -165,20 +165,20 @@ export default function JobsPage() {
       {/* View Toggle */}
       <div className="flex flex-wrap gap-2">
         <button onClick={() => setView("applications")}
-          className={`flex items-center gap-2 px-5 py-2.5 rounded-full text-sm font-medium transition-all ${view === "applications" ? "bg-[#1A1A1A] text-white" : "bg-white text-[#7A7A7A] border border-[#E8E0D0] hover:border-[#F5D547]"}`}>
+          className={`flex items-center gap-2 px-5 py-2.5 rounded-full text-sm font-medium transition-all ${view === "applications" ? "bg-action text-[#06121B]" : "bg-surface text-ink-3 border border-border hover:border-action"}`}>
           <Users size={16} />Applications
           {newAppsCount > 0 && <span className="bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">{newAppsCount}</span>}
         </button>
         <button onClick={() => setView("jobs")}
-          className={`flex items-center gap-2 px-5 py-2.5 rounded-full text-sm font-medium transition-all ${view === "jobs" ? "bg-[#1A1A1A] text-white" : "bg-white text-[#7A7A7A] border border-[#E8E0D0] hover:border-[#F5D547]"}`}>
+          className={`flex items-center gap-2 px-5 py-2.5 rounded-full text-sm font-medium transition-all ${view === "jobs" ? "bg-action text-[#06121B]" : "bg-surface text-ink-3 border border-border hover:border-action"}`}>
           <Briefcase size={16} />Job Listings ({jobs.length})
         </button>
       </div>
 
       {/* Create / Edit Form */}
       {showForm && view === "jobs" && (
-        <form onSubmit={handleSubmit} className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-[#E8E0D0] p-5">
-          <p className="font-medium text-[#1A1A1A] mb-4">{editingJob ? "Edit Job Listing" : "Create Job Listing"}</p>
+        <form onSubmit={handleSubmit} className="bg-surface rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-border p-5">
+          <p className="font-medium text-ink mb-4">{editingJob ? "Edit Job Listing" : "Create Job Listing"}</p>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             <input type="text" placeholder="Job Title *" value={form.title} onChange={(e) => updateForm("title", e.target.value)} required className={inputClass} />
             <select value={form.department} onChange={(e) => updateForm("department", e.target.value)} className={inputClass}>
@@ -202,8 +202,8 @@ export default function JobsPage() {
             <textarea placeholder="Benefits (one per line)" value={form.benefits} onChange={(e) => updateForm("benefits", e.target.value)} rows={4} className={inputClass + " resize-none"} />
           </div>
           <div className="mt-5 flex justify-end gap-3">
-            {editingJob && <button type="button" onClick={resetForm} className="text-sm text-[#7A7A7A] hover:text-[#1A1A1A]">Cancel</button>}
-            <button type="submit" disabled={submitting} className="bg-[#1A1A1A] text-white py-2.5 px-6 rounded-full font-semibold hover:bg-[#2B2B2B] disabled:opacity-50">
+            {editingJob && <button type="button" onClick={resetForm} className="text-sm text-ink-3 hover:text-ink">Cancel</button>}
+            <button type="submit" disabled={submitting} className="bg-action text-[#06121B] py-2.5 px-6 rounded-full font-semibold hover:bg-[#243645] disabled:opacity-50">
               {submitting ? "Saving..." : editingJob ? "Update Job" : "Post Job"}
             </button>
           </div>
@@ -212,15 +212,15 @@ export default function JobsPage() {
 
       {/* ===== APPLICATIONS VIEW ===== */}
       {view === "applications" && (
-        <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-[#E8E0D0]">
-          <div className="p-5 border-b border-[#F0EAD8]">
+        <div className="bg-surface rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-border">
+          <div className="p-5 border-b border-border">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="font-semibold text-[#1A1A1A] text-lg">All Applications</h3>
+              <h3 className="font-semibold text-ink text-lg">All Applications</h3>
               <div className="flex items-center gap-3">
-                <p className="text-xs text-[#7A7A7A]">{allApps.length} total</p>
+                <p className="text-xs text-ink-3">{allApps.length} total</p>
                 <button
                   onClick={() => mutateApps()}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-white border border-[#E8E0D0] text-[#7A7A7A] hover:border-[#F5D547] transition-colors"
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-surface border border-border text-ink-3 hover:border-action transition-colors"
                 >
                   <RefreshCw size={12} />
                   Refresh
@@ -236,7 +236,7 @@ export default function JobsPage() {
               <div className="flex gap-1.5 flex-wrap">
                 {["", "RECEIVED", "REVIEWING", "SHORTLISTED", "INTERVIEW", "OFFERED", "HIRED", "REJECTED"].map((s) => (
                   <button key={s} onClick={() => setAppStatusFilter(s)}
-                    className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${appStatusFilter === s ? "bg-[#1A1A1A] text-white" : "bg-white text-[#7A7A7A] border border-[#E8E0D0] hover:border-[#F5D547]"}`}
+                    className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${appStatusFilter === s ? "bg-action text-[#06121B]" : "bg-surface text-ink-3 border border-border hover:border-action"}`}
                   >{s || "All"}</button>
                 ))}
               </div>
@@ -245,9 +245,9 @@ export default function JobsPage() {
 
           <div className="flex">
             {/* Applications List */}
-            <div className={`${selectedApp ? "w-2/5 border-r border-[#F0EAD8]" : "w-full"} divide-y divide-[#F0EAD8] max-h-[700px] overflow-y-auto`}>
+            <div className={`${selectedApp ? "w-2/5 border-r border-border" : "w-full"} divide-y divide-[#F0EAD8] max-h-[700px] overflow-y-auto`}>
               {allApps.length === 0 ? (
-                <div className="p-10 text-center text-[#7A7A7A]">
+                <div className="p-10 text-center text-ink-3">
                   <Users size={32} className="mx-auto mb-3 opacity-30" />
                   <p className="font-medium mb-1">No applications yet</p>
                   <p className="text-sm">Applications from jobs.digitalsukoon.com will appear here</p>
@@ -255,16 +255,16 @@ export default function JobsPage() {
               ) : allApps.map((app: any) => (
                 <div key={app.id}
                   onClick={() => openAppReview(app)}
-                  className={`p-4 cursor-pointer hover:bg-[#FEFCF7] transition-colors ${selectedApp?.id === app.id ? "bg-[rgba(245,213,71,0.08)] border-l-2 border-l-[#F5D547]" : ""}`}>
+                  className={`p-4 cursor-pointer hover:bg-surface transition-colors ${selectedApp?.id === app.id ? "bg-[rgba(245,213,71,0.08)] border-l-2 border-l-[#F5D547]" : ""}`}>
                   <div className="flex items-start justify-between">
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
-                        <p className="font-semibold text-[#1A1A1A] truncate">{app.applicantName}</p>
+                        <p className="font-semibold text-ink truncate">{app.applicantName}</p>
                         {app.status === "RECEIVED" && <span className="h-2 w-2 rounded-full bg-red-500 animate-pulse" title="New" />}
                       </div>
-                      <p className="text-xs text-[#7A7A7A] truncate">{app.applicantEmail}</p>
+                      <p className="text-xs text-ink-3 truncate">{app.applicantEmail}</p>
                       <p className="text-xs text-blue-600 mt-0.5">{app.job?.title || "Unknown"} {app.job?.department ? `· ${app.job.department}` : ""}</p>
-                      {app.experience && <p className="text-xs text-[#999] mt-0.5">{app.experience} exp {app.currentCompany ? `at ${app.currentCompany}` : ""}</p>}
+                      {app.experience && <p className="text-xs text-ink-3 mt-0.5">{app.experience} exp {app.currentCompany ? `at ${app.currentCompany}` : ""}</p>}
                     </div>
                     <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium whitespace-nowrap ${appStatusColors[app.status] || ""}`}>{formatStatus(app.status)}</span>
                   </div>
@@ -274,7 +274,7 @@ export default function JobsPage() {
                     {app.portfolioUrl && <span className="text-[10px] text-blue-600 flex items-center gap-0.5"><Globe size={10} />Portfolio</span>}
                     {app.notes && <span className="text-[10px] text-amber-600 flex items-center gap-0.5"><StickyNote size={10} />Notes</span>}
                   </div>
-                  <p className="text-[10px] text-[#B0B0B0] mt-1">{new Date(app.createdAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}</p>
+                  <p className="text-[10px] text-ink-4 mt-1">{new Date(app.createdAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}</p>
                 </div>
               ))}
             </div>
@@ -285,19 +285,19 @@ export default function JobsPage() {
                 <div className="p-5 space-y-5">
                   {/* Close */}
                   <div className="flex justify-end">
-                    <button onClick={() => setSelectedApp(null)} className="text-[#7A7A7A] hover:text-[#1A1A1A]"><X size={16} /></button>
+                    <button onClick={() => setSelectedApp(null)} className="text-ink-3 hover:text-ink"><X size={16} /></button>
                   </div>
 
                   {/* Applicant Header */}
                   <div>
                     <p className="text-xs text-blue-600 font-medium mb-1">Applied for: {selectedApp.job?.title || "Unknown Position"}</p>
-                    <h4 className="text-xl font-semibold text-[#1A1A1A]">{selectedApp.applicantName}</h4>
-                    <div className="flex items-center gap-3 mt-1 text-sm text-[#7A7A7A]">
+                    <h4 className="text-xl font-semibold text-ink">{selectedApp.applicantName}</h4>
+                    <div className="flex items-center gap-3 mt-1 text-sm text-ink-3">
                       <span className="flex items-center gap-1"><Mail size={13} />{selectedApp.applicantEmail}</span>
                       {selectedApp.applicantPhone && <span className="flex items-center gap-1"><Phone size={13} />{selectedApp.applicantPhone}</span>}
                     </div>
                     {(selectedApp.experience || selectedApp.currentCompany) && (
-                      <div className="flex items-center gap-3 mt-1 text-sm text-[#7A7A7A]">
+                      <div className="flex items-center gap-3 mt-1 text-sm text-ink-3">
                         {selectedApp.experience && <span className="flex items-center gap-1"><Clock size={13} />{selectedApp.experience}</span>}
                         {selectedApp.currentCompany && <span className="flex items-center gap-1"><Building2 size={13} />{selectedApp.currentCompany}</span>}
                       </div>
@@ -305,8 +305,8 @@ export default function JobsPage() {
                   </div>
 
                   {/* Status Pipeline */}
-                  <div className="bg-[#FEFCF7] rounded-xl p-4">
-                    <p className="text-xs font-medium text-[#7A7A7A] mb-3">Application Pipeline</p>
+                  <div className="bg-surface rounded-xl p-4">
+                    <p className="text-xs font-medium text-ink-3 mb-3">Application Pipeline</p>
                     <div className="flex items-center gap-1">
                       {appStatusSteps.map((step, i) => {
                         const currentIdx = appStatusSteps.indexOf(selectedApp.status);
@@ -314,7 +314,7 @@ export default function JobsPage() {
                         const isCurrent = step === selectedApp.status;
                         return (
                           <button key={step} onClick={() => updateAppStatus(selectedApp.id, step)}
-                            className={`flex-1 py-1.5 rounded text-[10px] font-medium transition-all ${isCurrent ? "bg-[#1A1A1A] text-white" : isActive ? "bg-[rgba(245,213,71,0.3)] text-[#1A1A1A]" : "bg-white border border-[#E8E0D0] text-[#B0B0B0] hover:border-[#F5D547] hover:text-[#7A7A7A]"}`}
+                            className={`flex-1 py-1.5 rounded text-[10px] font-medium transition-all ${isCurrent ? "bg-action text-[#06121B]" : isActive ? "bg-[rgba(245,213,71,0.3)] text-ink" : "bg-surface border border-border text-ink-4 hover:border-action hover:text-ink-3"}`}
                           >{step === "RECEIVED" ? "New" : step.charAt(0) + step.slice(1).toLowerCase()}</button>
                         );
                       })}
@@ -336,37 +336,37 @@ export default function JobsPage() {
                   <div className="grid grid-cols-3 gap-3">
                     {selectedApp.resumeUrl ? (
                       <a href={`${API_BASE}${selectedApp.resumeUrl}`} target="_blank" rel="noopener noreferrer"
-                        className="flex items-center justify-center gap-2 p-3 rounded-xl border border-[#E8E0D0] hover:border-[#F5D547] hover:bg-[rgba(245,213,71,0.08)] transition-colors">
+                        className="flex items-center justify-center gap-2 p-3 rounded-xl border border-border hover:border-action hover:bg-[rgba(245,213,71,0.08)] transition-colors">
                         <FileText size={16} className="text-red-500" />
                         <span className="text-sm font-medium">View CV</span>
-                        <ExternalLink size={12} className="text-[#B0B0B0]" />
+                        <ExternalLink size={12} className="text-ink-4" />
                       </a>
                     ) : (
-                      <div className="flex items-center justify-center gap-2 p-3 rounded-xl border border-[#E8E0D0] bg-gray-50 text-[#B0B0B0]">
+                      <div className="flex items-center justify-center gap-2 p-3 rounded-xl border border-border bg-gray-50 text-ink-4">
                         <FileText size={16} /><span className="text-sm">No Resume</span>
                       </div>
                     )}
                     {selectedApp.linkedinUrl ? (
                       <a href={selectedApp.linkedinUrl} target="_blank" rel="noopener noreferrer"
-                        className="flex items-center justify-center gap-2 p-3 rounded-xl border border-[#E8E0D0] hover:border-[#0077B5] hover:bg-[rgba(0,119,181,0.05)] transition-colors">
+                        className="flex items-center justify-center gap-2 p-3 rounded-xl border border-border hover:border-[#0077B5] hover:bg-[rgba(0,119,181,0.05)] transition-colors">
                         <Linkedin size={16} className="text-[#0077B5]" />
                         <span className="text-sm font-medium">LinkedIn</span>
-                        <ExternalLink size={12} className="text-[#B0B0B0]" />
+                        <ExternalLink size={12} className="text-ink-4" />
                       </a>
                     ) : (
-                      <div className="flex items-center justify-center gap-2 p-3 rounded-xl border border-[#E8E0D0] bg-gray-50 text-[#B0B0B0]">
+                      <div className="flex items-center justify-center gap-2 p-3 rounded-xl border border-border bg-gray-50 text-ink-4">
                         <Linkedin size={16} /><span className="text-sm">No LinkedIn</span>
                       </div>
                     )}
                     {selectedApp.portfolioUrl ? (
                       <a href={selectedApp.portfolioUrl} target="_blank" rel="noopener noreferrer"
-                        className="flex items-center justify-center gap-2 p-3 rounded-xl border border-[#E8E0D0] hover:border-[#F5D547] hover:bg-[rgba(245,213,71,0.08)] transition-colors">
+                        className="flex items-center justify-center gap-2 p-3 rounded-xl border border-border hover:border-action hover:bg-[rgba(245,213,71,0.08)] transition-colors">
                         <Globe size={16} className="text-purple-500" />
                         <span className="text-sm font-medium">Portfolio</span>
-                        <ExternalLink size={12} className="text-[#B0B0B0]" />
+                        <ExternalLink size={12} className="text-ink-4" />
                       </a>
                     ) : (
-                      <div className="flex items-center justify-center gap-2 p-3 rounded-xl border border-[#E8E0D0] bg-gray-50 text-[#B0B0B0]">
+                      <div className="flex items-center justify-center gap-2 p-3 rounded-xl border border-border bg-gray-50 text-ink-4">
                         <Globe size={16} /><span className="text-sm">No Portfolio</span>
                       </div>
                     )}
@@ -375,8 +375,8 @@ export default function JobsPage() {
                   {/* Cover Letter */}
                   {selectedApp.coverLetter && (
                     <div>
-                      <p className="text-xs font-medium text-[#7A7A7A] mb-2">Cover Letter</p>
-                      <div className="bg-[#FEFCF7] rounded-xl p-4 text-sm text-[#555] whitespace-pre-line leading-relaxed">
+                      <p className="text-xs font-medium text-ink-3 mb-2">Cover Letter</p>
+                      <div className="bg-surface rounded-xl p-4 text-sm text-ink-3 whitespace-pre-line leading-relaxed">
                         {selectedApp.coverLetter}
                       </div>
                     </div>
@@ -384,18 +384,18 @@ export default function JobsPage() {
 
                   {/* Admin Notes */}
                   <div>
-                    <p className="text-xs font-medium text-[#7A7A7A] mb-2">Review Notes</p>
+                    <p className="text-xs font-medium text-ink-3 mb-2">Review Notes</p>
                     <textarea value={notesText} onChange={(e) => setNotesText(e.target.value)}
                       placeholder="Add internal notes about this applicant..." rows={3} className={inputClass + " resize-none"} />
                     <div className="flex justify-end mt-2">
                       <button onClick={() => saveNotes(selectedApp.id)} disabled={savingNotes}
-                        className="bg-[#1A1A1A] text-white py-1.5 px-4 rounded-full text-xs font-medium hover:bg-[#2B2B2B] disabled:opacity-50">
+                        className="bg-action text-[#06121B] py-1.5 px-4 rounded-full text-xs font-medium hover:bg-[#243645] disabled:opacity-50">
                         {savingNotes ? "Saving..." : "Save Notes"}
                       </button>
                     </div>
                   </div>
 
-                  <p className="text-xs text-[#B0B0B0]">Applied on {new Date(selectedApp.createdAt).toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" })}</p>
+                  <p className="text-xs text-ink-4">Applied on {new Date(selectedApp.createdAt).toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" })}</p>
                 </div>
               </div>
             )}
@@ -405,29 +405,29 @@ export default function JobsPage() {
 
       {/* ===== JOBS VIEW ===== */}
       {view === "jobs" && (
-        <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-[#E8E0D0]">
+        <div className="bg-surface rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-border">
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-[#F0EAD8]">
-                  <th className="text-left p-4 text-[#7A7A7A] text-xs font-medium">Title</th>
-                  <th className="text-left p-4 text-[#7A7A7A] text-xs font-medium">Department</th>
-                  <th className="text-left p-4 text-[#7A7A7A] text-xs font-medium">Location</th>
-                  <th className="text-left p-4 text-[#7A7A7A] text-xs font-medium">Type</th>
-                  <th className="text-left p-4 text-[#7A7A7A] text-xs font-medium">Status</th>
-                  <th className="text-left p-4 text-[#7A7A7A] text-xs font-medium">Applicants</th>
-                  <th className="text-left p-4 text-[#7A7A7A] text-xs font-medium">Actions</th>
+                <tr className="border-b border-border">
+                  <th className="text-left p-4 text-ink-3 text-xs font-medium">Title</th>
+                  <th className="text-left p-4 text-ink-3 text-xs font-medium">Department</th>
+                  <th className="text-left p-4 text-ink-3 text-xs font-medium">Location</th>
+                  <th className="text-left p-4 text-ink-3 text-xs font-medium">Type</th>
+                  <th className="text-left p-4 text-ink-3 text-xs font-medium">Status</th>
+                  <th className="text-left p-4 text-ink-3 text-xs font-medium">Applicants</th>
+                  <th className="text-left p-4 text-ink-3 text-xs font-medium">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {jobs.length === 0 ? (
-                  <tr><td colSpan={7} className="p-8 text-center text-[#7A7A7A]"><Briefcase size={24} className="mx-auto mb-2 opacity-30" />No job listings yet.</td></tr>
+                  <tr><td colSpan={7} className="p-8 text-center text-ink-3"><Briefcase size={24} className="mx-auto mb-2 opacity-30" />No job listings yet.</td></tr>
                 ) : jobs.map((job: any) => (
-                  <tr key={job.id} className="border-b border-[#F0EAD8] last:border-0 hover:bg-[rgba(255,248,225,0.5)] transition-colors">
-                    <td className="p-4 font-medium text-[#1A1A1A]">{job.title}</td>
-                    <td className="p-4 text-[#7A7A7A]">{job.department || "—"}</td>
-                    <td className="p-4 text-[#7A7A7A]">{job.location || "—"}</td>
-                    <td className="p-4 text-[#7A7A7A]">{formatStatus(job.type)}</td>
+                  <tr key={job.id} className="border-b border-border last:border-0 hover:bg-[rgba(255,248,225,0.5)] transition-colors">
+                    <td className="p-4 font-medium text-ink">{job.title}</td>
+                    <td className="p-4 text-ink-3">{job.department || "—"}</td>
+                    <td className="p-4 text-ink-3">{job.location || "—"}</td>
+                    <td className="p-4 text-ink-3">{formatStatus(job.type)}</td>
                     <td className="p-4"><span className={`px-2.5 py-1 rounded-full text-xs font-medium ${statusColors[job.status] || ""}`}>{formatStatus(job.status)}</span></td>
                     <td className="p-4">
                       <button onClick={() => { setAppJobFilter(job.id); setView("applications"); }}
@@ -437,16 +437,16 @@ export default function JobsPage() {
                     </td>
                     <td className="p-4">
                       <div className="flex items-center gap-2">
-                        <button onClick={() => startEdit(job)} className="text-xs text-[#7A7A7A] hover:text-[#1A1A1A] font-medium">Edit</button>
+                        <button onClick={() => startEdit(job)} className="text-xs text-ink-3 hover:text-ink font-medium">Edit</button>
                         {job.status === "ACTIVE" ? (
-                          <button onClick={() => toggleJobStatus(job.id, "PAUSED")} className="text-xs text-[#7A7A7A] hover:text-yellow-600">Pause</button>
+                          <button onClick={() => toggleJobStatus(job.id, "PAUSED")} className="text-xs text-ink-3 hover:text-yellow-600">Pause</button>
                         ) : job.status !== "CLOSED" ? (
-                          <button onClick={() => toggleJobStatus(job.id, "ACTIVE")} className="text-xs text-[#7A7A7A] hover:text-green-600">Activate</button>
+                          <button onClick={() => toggleJobStatus(job.id, "ACTIVE")} className="text-xs text-ink-3 hover:text-green-600">Activate</button>
                         ) : null}
                         {job.status === "ACTIVE" && (
-                          <button onClick={() => toggleJobStatus(job.id, "CLOSED")} className="text-xs text-[#7A7A7A] hover:text-red-600">Close</button>
+                          <button onClick={() => toggleJobStatus(job.id, "CLOSED")} className="text-xs text-ink-3 hover:text-red-600">Close</button>
                         )}
-                        <button onClick={() => setDeleteJobId(job.id)} className="text-xs text-[#7A7A7A] hover:text-red-600"><Trash2 size={13} /></button>
+                        <button onClick={() => setDeleteJobId(job.id)} className="text-xs text-ink-3 hover:text-red-600"><Trash2 size={13} /></button>
                       </div>
                     </td>
                   </tr>

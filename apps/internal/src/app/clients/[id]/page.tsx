@@ -16,15 +16,15 @@ import { useRouter } from "next/navigation";
 
 const statusBadge: Record<string, string> = {
   ACTIVE: "bg-emerald-100 text-emerald-700",
-  INACTIVE: "bg-[rgba(0,0,0,0.06)] text-[#7A7A7A]",
-  PAUSED: "bg-[#FFF3C4] text-[#B8960C]",
+  INACTIVE: "bg-[rgba(0,0,0,0.06)] text-ink-3",
+  PAUSED: "bg-action-soft text-gold",
 };
 
 const projectStatusBadge: Record<string, string> = {
   ACTIVE: "bg-emerald-100 text-emerald-700",
-  PAUSED: "bg-[#FFF3C4] text-[#B8960C]",
+  PAUSED: "bg-action-soft text-gold",
   COMPLETED: "bg-indigo-100 text-indigo-700",
-  ARCHIVED: "bg-[rgba(0,0,0,0.06)] text-[#7A7A7A]",
+  ARCHIVED: "bg-[rgba(0,0,0,0.06)] text-ink-3",
 };
 
 export default function ClientDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -109,7 +109,7 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
     return (
       <div className="space-y-4 crx-animate-fade">
         {[1, 2, 3].map((i) => (
-          <div key={i} className="h-24 bg-[#F5F0E8] rounded-2xl animate-pulse" />
+          <div key={i} className="h-24 bg-muted rounded-2xl animate-pulse" />
         ))}
       </div>
     );
@@ -139,7 +139,7 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
             <button
               onClick={sendInvite}
               disabled={inviting}
-              className="flex items-center gap-1.5 text-sm border border-[#E8E0D0] rounded-full px-4 py-2 hover:bg-[rgba(245,213,71,0.1)] transition-colors font-medium"
+              className="flex items-center gap-1.5 text-sm border border-border rounded-full px-4 py-2 hover:bg-[rgba(245,213,71,0.1)] transition-colors font-medium"
             >
               <Send size={14} /> {inviting ? "Sending…" : "Invite to Portal"}
             </button>
@@ -148,7 +148,7 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
             <>
               <button
                 onClick={startEdit}
-                className="flex items-center gap-1.5 text-sm border border-[#E8E0D0] rounded-full px-4 py-2 hover:bg-[rgba(245,213,71,0.1)] transition-colors font-medium"
+                className="flex items-center gap-1.5 text-sm border border-border rounded-full px-4 py-2 hover:bg-[rgba(245,213,71,0.1)] transition-colors font-medium"
               >
                 <Pencil size={14} /> Edit
               </button>
@@ -202,10 +202,10 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
           </div>
           {saveError && <p className="text-danger text-sm font-medium">{saveError}</p>}
           <div className="flex gap-3 pt-2">
-            <button type="submit" disabled={saving} className="bg-ink text-white px-6 py-2.5 rounded-full text-sm font-semibold hover:bg-ink/80 disabled:opacity-50 transition-colors">
+            <button type="submit" disabled={saving} className="bg-action text-[#06121B] px-6 py-2.5 rounded-full text-sm font-semibold hover:bg-action-deep disabled:opacity-50 transition-colors">
               {saving ? "Saving…" : "Save"}
             </button>
-            <button type="button" onClick={() => setEditing(false)} className="border border-[#E8E0D0] px-6 py-2.5 rounded-full text-sm font-semibold text-ink-3 hover:bg-[rgba(0,0,0,0.04)] transition-colors">
+            <button type="button" onClick={() => setEditing(false)} className="border border-border px-6 py-2.5 rounded-full text-sm font-semibold text-ink-3 hover:bg-[rgba(0,0,0,0.04)] transition-colors">
               Cancel
             </button>
           </div>
@@ -213,13 +213,13 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
       ) : (
         <div className="v3-card p-6">
           <div className="flex items-start gap-4">
-            <div className="h-14 w-14 rounded-2xl bg-[#FFF3C4] flex items-center justify-center shrink-0">
+            <div className="h-14 w-14 rounded-2xl bg-action-soft flex items-center justify-center shrink-0">
               <Building2 size={28} className="text-ink" />
             </div>
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-3 flex-wrap">
                 <h1 className="font-serif text-3xl font-light text-ink">{client.companyName}</h1>
-                <span className={`rounded-full px-3 py-1 text-xs font-medium ${statusBadge[client.status] ?? "bg-[rgba(0,0,0,0.06)] text-[#7A7A7A]"}`}>
+                <span className={`rounded-full px-3 py-1 text-xs font-medium ${statusBadge[client.status] ?? "bg-[rgba(0,0,0,0.06)] text-ink-3"}`}>
                   {formatStatus(client.status)}
                 </span>
               </div>
@@ -265,13 +265,13 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
               <Link
                 key={p.id}
                 href={`/projects/${p.id}`}
-                className="flex items-center justify-between p-3 rounded-xl border border-[#F0EAD8] hover:bg-[rgba(245,213,71,0.06)] transition-colors"
+                className="flex items-center justify-between p-3 rounded-xl border border-border hover:bg-[rgba(245,213,71,0.06)] transition-colors"
               >
                 <div>
                   <p className="font-medium text-ink text-sm">{p.name}</p>
                   {p.description && <p className="text-xs text-ink-4 truncate max-w-xs">{p.description}</p>}
                 </div>
-                <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${projectStatusBadge[p.status] ?? "bg-[rgba(0,0,0,0.06)] text-[#7A7A7A]"}`}>
+                <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${projectStatusBadge[p.status] ?? "bg-[rgba(0,0,0,0.06)] text-ink-3"}`}>
                   {formatStatus(p.status)}
                 </span>
               </Link>

@@ -42,7 +42,7 @@ function DeltaLine({ value, days, absentTitle, unreliable }: {
   unreliable?: boolean;
 }) {
   if (value === null || value === undefined) {
-    return <span title={absentTitle} className="text-[#B0B0B0]">—</span>;
+    return <span title={absentTitle} className="text-ink-4">—</span>;
   }
   if (unreliable) {
     // ⚠️ Deliberately NOT hidden. This number is the visible evidence that the row's stored
@@ -51,7 +51,7 @@ function DeltaLine({ value, days, absentTitle, unreliable }: {
     // that never happened. So it is shown, struck through, and explained.
     return (
       <span
-        className="text-[#B0B0B0] line-through decoration-[#C2861D]"
+        className="text-ink-4 line-through decoration-[#C2861D]"
         title={`This change (${fmtDelta(value)}) is larger than the figure it was measured from, so it cannot be growth — the stored history for this channel jumps between two different channels that share a name. It is excluded from the totals above and needs the channel's handle corrected here. The current subscriber figure itself is fine.`}
       >
         {fmtDelta(value)}
@@ -61,7 +61,7 @@ function DeltaLine({ value, days, absentTitle, unreliable }: {
   return (
     <span
       className={
-        value > 0 ? "text-[#3E9B4F]" : value < 0 ? "text-[#C0504D]" : "text-[#B0B0B0]"
+        value > 0 ? "text-success" : value < 0 ? "text-danger" : "text-ink-4"
       }
     >
       {fmtDelta(value)}
@@ -70,7 +70,7 @@ function DeltaLine({ value, days, absentTitle, unreliable }: {
           row may genuinely be a 12-day change — printing "90d" would understate growth
           while sounding authoritative. */}
       {days != null && (
-        <span className="block text-[9px] font-normal text-[#B0B0B0] leading-tight">
+        <span className="block text-[9px] font-normal text-ink-4 leading-tight">
           {days === 1 ? "24h" : `${days}d`}
         </span>
       )}
@@ -94,7 +94,7 @@ export function YouTubePanel() {
       subtitle="Subscribers, lifetime views and video counts for the channels we track"
       sourceNote={
         <>
-          Read from <strong className="font-medium text-[#8A8A8A]">YouTube&apos;s official Data
+          Read from <strong className="font-medium text-ink-3">YouTube&apos;s official Data
           API</strong> — the same numbers YouTube itself publishes on the channel page. Nothing
           here is scraped or entered by hand.
         </>
@@ -123,11 +123,11 @@ export function YouTubePanel() {
       })}
       columnNote={
         <>
-          <strong className="font-medium text-[#5A5A5A]">YouTube rounds subscriber counts to
+          <strong className="font-medium text-ink-3">YouTube rounds subscriber counts to
           three significant figures</strong>, so a channel at 10.5m shows no movement until it
           gains a full 100,000 — a dash under Change means the movement is smaller than that
           rounding step, not that there was none.{" "}
-          <strong className="font-medium text-[#5A5A5A]">Views change is exact</strong>: the
+          <strong className="font-medium text-ink-3">Views change is exact</strong>: the
           lifetime view counter is a precise number, so that is the column to read growth from.
         </>
       }
@@ -135,13 +135,13 @@ export function YouTubePanel() {
         <>
           Every figure comes from YouTube&apos;s Data API and is refreshed on a schedule, so the
           badge beside each channel says how fresh it actually is rather than implying it is
-          live. <strong className="font-medium text-[#7A7A7A]">Subscribers</strong> is a live
+          live. <strong className="font-medium text-ink-3">Subscribers</strong> is a live
           total and does not move with the period — it is how many the channel has right now —
-          while <strong className="font-medium text-[#7A7A7A]">Change</strong> beside it is the
+          while <strong className="font-medium text-ink-3">Change</strong> beside it is the
           movement across the selected one, measured from our own stored history and labelled
           with the span it truly covers (often shorter than the period you picked, because
           history only reaches back so far). A dash anywhere means no number was published, not
-          a zero. <strong className="font-medium text-[#7A7A7A]">Views</strong> is the channel&apos;s
+          a zero. <strong className="font-medium text-ink-3">Views</strong> is the channel&apos;s
           all-time view count, which is why it is far larger than anything on the Meta tab —
           that one counts a chosen period, this one counts forever.
         </>
@@ -182,12 +182,12 @@ function YouTubeTable({ rows, sort, onSort, manageMode, onRemove, busy }: {
         {/* ⚠️ The column COUNT is dynamic (Manage adds a Remove column), so header and
             body must gate that cell on the same flag — a mismatch shifts every cell in
             the row one column across. */}
-        <tr className="text-[11px] text-[#7A7A7A] border-b border-[#F0EAE0]">
+        <tr className="text-[11px] text-ink-3 border-b border-border">
           <SortTh label="Channel" colKey="name" sort={sort} onSort={onSort} align="left" pad="px-5" />
           <SortTh
             colKey="subs" sort={sort} onSort={onSort}
             title="A live total, not a period figure — how many subscribers the channel has right now. YouTube publishes it rounded to three significant figures."
-            label={<>Subscribers <span className="text-[#B0B0B0] font-normal">(now)</span></>}
+            label={<>Subscribers <span className="text-ink-4 font-normal">(now)</span></>}
           />
           <SortTh
             label="Change" colKey="subsDelta" sort={sort} onSort={onSort}
@@ -208,27 +208,27 @@ function YouTubeTable({ rows, sort, onSort, manageMode, onRemove, busy }: {
       </thead>
       <tbody>
         {sorted.map((c) => (
-          <tr key={c.id} className="border-b border-[#F8F5EF] hover:bg-[#FCFBF8]">
+          <tr key={c.id} className="border-b border-border hover:bg-surface">
             <td className="px-5 py-2">
               {/* min-w-0 on the flex child AND truncate on the name: the parent can only
                   clip what its children are willing to shrink. */}
               <div className="flex items-center gap-1.5 min-w-0">
-                <span className="text-xs font-medium text-[#1A1A1A] truncate max-w-[220px]">
+                <span className="text-xs font-medium text-ink truncate max-w-[220px]">
                   {c.displayName || c.handle}
                 </span>
-                <span className="text-[10px] text-[#B0B0B0] truncate">@{c.handle}</span>
+                <span className="text-[10px] text-ink-4 truncate">@{c.handle}</span>
                 <ChannelLink url={c.profileUrl} name={c.displayName || c.handle} />
                 {c.metricsError && <ErrorMark message={c.metricsError} />}
               </div>
             </td>
-            <td className="px-2 py-2 text-right text-xs font-semibold text-[#1A1A1A]">
+            <td className="px-2 py-2 text-right text-xs font-semibold text-ink">
               {fmtMetric(c.followers)}
               {/* The rounding step, said out loud. Without it the reader has no way to
                   know that "10.5m" is a bucket rather than a measurement. */}
               {c.followersPrecision != null && c.followersPrecision > 1 && (
                 <span
                   title={`YouTube publishes this channel's subscriber count rounded to the nearest ${c.followersPrecision.toLocaleString()}, so the true figure is within ±${fmtStep(c.followersPrecision)} of what is shown and any smaller change is invisible.`}
-                  className="block font-normal text-[10px] text-[#B0B0B0] leading-tight"
+                  className="block font-normal text-[10px] text-ink-4 leading-tight"
                 >
                   ±{fmtStep(c.followersPrecision)}
                 </span>
@@ -261,7 +261,7 @@ function YouTubeTable({ rows, sort, onSort, manageMode, onRemove, busy }: {
                 absentTitle="No view change to show for this period — we hold fewer than two days of view-count history for this channel. It is not a zero, and it fills in on its own as history accumulates."
               />
             </td>
-            <td className="px-2 py-2 text-right text-xs text-[#7A7A7A]">{fmtExact(c.videoCount)}</td>
+            <td className="px-2 py-2 text-right text-xs text-ink-3">{fmtExact(c.videoCount)}</td>
             <td className="px-5 py-2">
               {/* flex-wrap, not shrink-0, on a cell holding two pills: at a narrow width
                   they stack instead of painting over the column beside them. */}

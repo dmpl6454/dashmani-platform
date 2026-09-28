@@ -64,9 +64,9 @@ export function TaskForm({ task }: TaskFormProps) {
   }
 
   return (
-    <Card className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-[#E8E0D0]">
+    <Card className="bg-surface rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-border">
       <CardHeader>
-        <CardTitle className="font-serif text-[#1A1A1A]">{isEdit ? "Edit Task" : "Create New Task"}</CardTitle>
+        <CardTitle className="font-serif text-ink">{isEdit ? "Edit Task" : "Create New Task"}</CardTitle>
       </CardHeader>
       <CardContent>
         <form onSubmit={handleSubmit} className="space-y-4 max-w-lg">
@@ -76,7 +76,7 @@ export function TaskForm({ task }: TaskFormProps) {
               label="Title"
               value={form.title}
               onChange={(e) => { setForm({ ...form, title: e.target.value }); if (titleError) setTitleError(""); }}
-              className={`border rounded-lg focus:ring-2 focus:border-[#F5D547] ${titleError ? "border-red-400 focus:ring-red-200" : "border-[#E8E0D0] focus:ring-[#F5D547]"}`}
+              className={`border rounded-lg focus:ring-2 focus:border-action ${titleError ? "border-red-400 focus:ring-red-200" : "border-border focus:ring-action"}`}
             />
             {titleError && (
               <p role="alert" className="mt-1.5 text-xs text-red-500 font-semibold flex items-center gap-1">
@@ -86,18 +86,18 @@ export function TaskForm({ task }: TaskFormProps) {
             )}
           </div>
           <div className="space-y-1">
-            <label className="text-sm font-medium text-[#1A1A1A]">Description</label>
+            <label className="text-sm font-medium text-ink">Description</label>
             <textarea
-              className="flex w-full rounded-lg border border-[#E8E0D0] bg-white px-3 py-2 text-sm min-h-[80px] focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547] outline-none"
+              className="flex w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm min-h-[80px] focus:ring-2 focus:ring-action focus:border-action outline-none"
               value={form.description}
               onChange={(e) => setForm({ ...form, description: e.target.value })}
             />
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1">
-              <label className="text-sm font-medium text-[#1A1A1A]">Priority</label>
+              <label className="text-sm font-medium text-ink">Priority</label>
               <select
-                className="flex h-10 w-full rounded-lg border border-[#E8E0D0] bg-white px-3 py-2 text-sm focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547] outline-none"
+                className="flex h-10 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm focus:ring-2 focus:ring-action focus:border-action outline-none"
                 value={form.priority}
                 onChange={(e) => setForm({ ...form, priority: e.target.value })}
               >
@@ -108,14 +108,14 @@ export function TaskForm({ task }: TaskFormProps) {
               </select>
             </div>
             <div>
-              <Input label="Due Date" type="date" value={form.dueDate} onChange={(e) => { setForm({ ...form, dueDate: e.target.value }); if (dueDateError) setDueDateError(""); }} className={`border rounded-lg focus:ring-2 focus:border-[#F5D547] ${dueDateError ? "border-red-400 focus:ring-red-200" : "border-[#E8E0D0] focus:ring-[#F5D547]"}`} />
+              <Input label="Due Date" type="date" value={form.dueDate} onChange={(e) => { setForm({ ...form, dueDate: e.target.value }); if (dueDateError) setDueDateError(""); }} className={`border rounded-lg focus:ring-2 focus:border-action ${dueDateError ? "border-red-400 focus:ring-red-200" : "border-border focus:ring-action"}`} />
               {dueDateError && <p role="alert" className="mt-1 text-xs text-red-500 font-semibold">{dueDateError}</p>}
             </div>
           </div>
           <div className="space-y-1">
-            <label className="text-sm font-medium text-[#1A1A1A]">Assign To</label>
+            <label className="text-sm font-medium text-ink">Assign To</label>
             <select
-              className="flex h-10 w-full rounded-lg border border-[#E8E0D0] bg-white px-3 py-2 text-sm focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547] outline-none"
+              className="flex h-10 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm focus:ring-2 focus:ring-action focus:border-action outline-none"
               value={form.assigneeId}
               onChange={(e) => setForm({ ...form, assigneeId: e.target.value })}
             >
@@ -126,9 +126,9 @@ export function TaskForm({ task }: TaskFormProps) {
             </select>
           </div>
           <div className="space-y-1">
-            <label className="text-sm font-medium text-[#1A1A1A]">Linked Account{!isEdit && <span className="text-red-500 ml-0.5">*</span>}</label>
+            <label className="text-sm font-medium text-ink">Linked Account{!isEdit && <span className="text-red-500 ml-0.5">*</span>}</label>
             <select
-              className={`flex h-10 w-full rounded-lg border bg-white px-3 py-2 text-sm focus:ring-2 focus:border-[#F5D547] outline-none ${accountError ? "border-red-400 focus:ring-red-200" : "border-[#E8E0D0] focus:ring-[#F5D547]"}`}
+              className={`flex h-10 w-full rounded-lg border bg-surface px-3 py-2 text-sm focus:ring-2 focus:border-action outline-none ${accountError ? "border-red-400 focus:ring-red-200" : "border-border focus:ring-action"}`}
               value={form.accountId}
               onChange={(e) => { setForm({ ...form, accountId: e.target.value }); if (accountError) setAccountError(""); }}
             >
@@ -140,10 +140,10 @@ export function TaskForm({ task }: TaskFormProps) {
             {accountError && <p role="alert" className="mt-1 text-xs text-red-500 font-semibold">{accountError}</p>}
           </div>
           <div className="flex gap-3">
-            <Button type="submit" disabled={loading} className="bg-[#1A1A1A] text-white rounded-full hover:bg-[#2B2B2B]">
+            <Button type="submit" disabled={loading} className="bg-action text-[#06121B] rounded-full hover:bg-[#243645]">
               {loading ? "Saving..." : isEdit ? "Update Task" : "Create Task"}
             </Button>
-            <Button type="button" variant="outline" onClick={() => router.back()} className="border border-[#E8E0D0] rounded-full text-[#1A1A1A] hover:bg-[#FEFCF7]">Cancel</Button>
+            <Button type="button" variant="outline" onClick={() => router.back()} className="border border-border rounded-full text-ink hover:bg-surface">Cancel</Button>
           </div>
         </form>
       </CardContent>

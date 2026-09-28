@@ -52,14 +52,14 @@ export default function AccountsImportPage() {
 
   return (
     <div className="space-y-6 crx-animate-fade max-w-3xl">
-      <h1 className="font-serif text-4xl font-light text-[#1A1A1A]">Import Social Media Accounts</h1>
+      <h1 className="font-serif text-4xl font-light text-ink">Import Social Media Accounts</h1>
 
       {/* Instructions Card */}
-      <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-[#E8E0D0] p-5">
+      <div className="bg-surface rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-border p-5">
         <div className="flex items-start gap-3">
-          <Info size={20} className="text-[#F5D547] mt-0.5 shrink-0" />
-          <div className="text-sm text-[#5A5A5A] space-y-2">
-            <p className="font-medium text-[#1A1A1A]">Excel Format Instructions</p>
+          <Info size={20} className="text-action mt-0.5 shrink-0" />
+          <div className="text-sm text-ink-3 space-y-2">
+            <p className="font-medium text-ink">Excel Format Instructions</p>
             <p>Upload an <strong>.xlsx</strong>, <strong>.xls</strong>, or <strong>.csv</strong> file with the following columns:</p>
             <ul className="list-disc pl-5 space-y-1">
               <li><strong>platform</strong> - Social media platform (e.g., instagram, twitter, linkedin, facebook)</li>
@@ -70,7 +70,7 @@ export default function AccountsImportPage() {
             </ul>
             <a
               href={`${API_URL}/admin/accounts/import/template`}
-              className="inline-flex items-center gap-1.5 text-[#1A1A1A] font-medium hover:text-[#F5D547] transition-colors mt-1"
+              className="inline-flex items-center gap-1.5 text-ink font-medium hover:text-action transition-colors mt-1"
             >
               <Download size={14} />
               Download Template
@@ -80,7 +80,7 @@ export default function AccountsImportPage() {
       </div>
 
       {/* Upload Area */}
-      <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-[#E8E0D0] p-5">
+      <div className="bg-surface rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-border p-5">
         <div
           onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
           onDragLeave={() => setDragOver(false)}
@@ -92,8 +92,8 @@ export default function AccountsImportPage() {
           onClick={() => fileRef.current?.click()}
           className={`border-2 border-dashed rounded-xl p-10 text-center cursor-pointer transition-all ${
             dragOver
-              ? "border-[#F5D547] bg-[rgba(245,213,71,0.06)]"
-              : "border-[#E8E0D0] hover:border-[#F5D547] hover:bg-[rgba(245,213,71,0.03)]"
+              ? "border-action bg-[rgba(245,213,71,0.06)]"
+              : "border-border hover:border-action hover:bg-[rgba(245,213,71,0.03)]"
           }`}
         >
           <input
@@ -103,13 +103,13 @@ export default function AccountsImportPage() {
             onChange={(e) => { if (e.target.files?.[0]) handleFile(e.target.files[0]); }}
             className="hidden"
           />
-          <FileSpreadsheet size={36} className="mx-auto mb-3 text-[#B0B0B0]" />
+          <FileSpreadsheet size={36} className="mx-auto mb-3 text-ink-4" />
           {file ? (
-            <p className="text-sm text-[#1A1A1A] font-medium">{file.name}</p>
+            <p className="text-sm text-ink font-medium">{file.name}</p>
           ) : (
             <>
-              <p className="text-sm text-[#1A1A1A] font-medium">Drop your file here or click to browse</p>
-              <p className="text-xs text-[#B0B0B0] mt-1">Supports .xlsx, .xls, .csv</p>
+              <p className="text-sm text-ink font-medium">Drop your file here or click to browse</p>
+              <p className="text-xs text-ink-4 mt-1">Supports .xlsx, .xls, .csv</p>
             </>
           )}
         </div>
@@ -117,7 +117,7 @@ export default function AccountsImportPage() {
         <button
           onClick={handleUpload}
           disabled={!file || uploading}
-          className="mt-4 bg-[#1A1A1A] text-white py-2.5 px-6 rounded-full font-semibold hover:bg-[#2B2B2B] transition-all disabled:opacity-50 flex items-center gap-2"
+          className="mt-4 bg-action text-[#06121B] py-2.5 px-6 rounded-full font-semibold hover:bg-[#243645] transition-all disabled:opacity-50 flex items-center gap-2"
         >
           <Upload size={16} />
           {uploading ? "Importing..." : "Upload & Import"}
@@ -126,31 +126,31 @@ export default function AccountsImportPage() {
 
       {/* Results */}
       {result && (
-        <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-[#E8E0D0] p-5 space-y-4">
-          <p className="font-medium text-[#1A1A1A]">Import Results</p>
+        <div className="bg-surface rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-border p-5 space-y-4">
+          <p className="font-medium text-ink">Import Results</p>
           <div className="grid grid-cols-3 gap-4">
             <div className="rounded-xl bg-[rgba(107,203,119,0.08)] p-4 text-center">
-              <p className="text-2xl font-semibold text-[#2E7D32]">{result.created}</p>
-              <p className="text-xs text-[#7A7A7A] mt-1">Created</p>
+              <p className="text-2xl font-semibold text-success">{result.created}</p>
+              <p className="text-xs text-ink-3 mt-1">Created</p>
             </div>
             <div className="rounded-xl bg-[rgba(245,213,71,0.1)] p-4 text-center">
-              <p className="text-2xl font-semibold text-[#B8960C]">{result.skipped}</p>
-              <p className="text-xs text-[#7A7A7A] mt-1">Skipped</p>
+              <p className="text-2xl font-semibold text-gold">{result.skipped}</p>
+              <p className="text-xs text-ink-3 mt-1">Skipped</p>
             </div>
             <div className="rounded-xl bg-[rgba(0,0,0,0.04)] p-4 text-center">
-              <p className="text-2xl font-semibold text-[#1A1A1A]">{result.total}</p>
-              <p className="text-xs text-[#7A7A7A] mt-1">Total Rows</p>
+              <p className="text-2xl font-semibold text-ink">{result.total}</p>
+              <p className="text-xs text-ink-3 mt-1">Total Rows</p>
             </div>
           </div>
           {result.errors && result.errors.length > 0 && (
             <div className="space-y-2">
-              <p className="text-sm font-medium text-[#E74C3C] flex items-center gap-1.5">
+              <p className="text-sm font-medium text-danger flex items-center gap-1.5">
                 <AlertCircle size={14} /> Errors ({result.errors.length})
               </p>
-              <ul className="text-xs text-[#7A7A7A] space-y-1 max-h-40 overflow-y-auto">
+              <ul className="text-xs text-ink-3 space-y-1 max-h-40 overflow-y-auto">
                 {result.errors.map((err, i) => (
                   <li key={i} className="flex items-start gap-1.5 bg-[rgba(231,76,60,0.04)] rounded-lg px-3 py-2">
-                    <AlertCircle size={12} className="text-[#E74C3C] mt-0.5 shrink-0" />
+                    <AlertCircle size={12} className="text-danger mt-0.5 shrink-0" />
                     {err}
                   </li>
                 ))}
@@ -158,7 +158,7 @@ export default function AccountsImportPage() {
             </div>
           )}
           {result.errors.length === 0 && (
-            <p className="text-sm text-[#2E7D32] flex items-center gap-1.5">
+            <p className="text-sm text-success flex items-center gap-1.5">
               <CheckCircle2 size={14} /> All rows imported successfully
             </p>
           )}

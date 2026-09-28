@@ -18,13 +18,13 @@ function monogram(name: string) {
   return (name || "?").charAt(0).toUpperCase();
 }
 function avatarBg(name: string) {
-  const colors = ["#EDEDFD","#EEF4ED","#FDF0EC","#FFF3C4","#FDECEA"];
+  const colors = ["#10222E","#0E2A22","#1B1630","#2A2410","#2A1116"];
   let h = 0;
   for (let i = 0; i < name.length; i++) h = name.charCodeAt(i) + ((h << 5) - h);
   return colors[Math.abs(h) % colors.length];
 }
 function avatarText(name: string) {
-  const colors = ["#5D5FEF","#4A7C52","#E07A5F","#C05826","#B83728"];
+  const colors = ["#38BDF8","#34D399","#9B7EDE","#E9BD62","#FB7185"];
   let h = 0;
   for (let i = 0; i < name.length; i++) h = name.charCodeAt(i) + ((h << 5) - h);
   return colors[Math.abs(h) % colors.length];
@@ -82,7 +82,7 @@ export default function EmployeesPage() {
             </button>
           </Link>
           <Link href="/employees/new">
-            <button className="h-9 px-4 rounded-full bg-ink text-white text-sm font-bold btn-3d hover:bg-ink-2 transition-colors flex items-center gap-1.5">
+            <button className="h-9 px-4 rounded-full bg-action text-[#06121B] text-sm font-bold btn-3d hover:bg-action-deep transition-colors flex items-center gap-1.5">
               <Plus className="h-4 w-4" /> Add Employee
             </button>
           </Link>
@@ -97,7 +97,7 @@ export default function EmployeesPage() {
             onClick={() => { setViewTab(tab); setStatusFilter("ALL"); }}
             className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${
               viewTab === tab
-                ? "bg-white shadow text-ink"
+                ? "bg-surface shadow text-ink"
                 : "text-ink-4 hover:text-ink"
             }`}
           >
@@ -125,7 +125,7 @@ export default function EmployeesPage() {
                 onClick={() => setStatusFilter(pill.key)}
                 className={`h-8 px-4 rounded-full text-xs font-bold transition-all border-2 ${
                   statusFilter === pill.key
-                    ? "bg-ink text-white border-ink"
+                    ? "bg-action text-[#06121B] border-ink"
                     : "bg-surface text-ink-3 border-ink/12 hover:border-ink/25 hover:text-ink"
                 }`}
               >

@@ -60,7 +60,7 @@ function AnnouncementModal({
   const audienceLabel = selectedTeam ? `Team: ${selectedTeam.name}` : "All active employees";
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4 overflow-y-auto" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 overflow-y-auto" onClick={onClose}>
       <div className="v3-card shadow-pop w-full max-w-lg overflow-hidden pop-in max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-6 py-4 border-b-2 border-ink/10">
           <h2 className="font-bold text-ink flex items-center gap-2">
@@ -103,7 +103,7 @@ function AnnouncementModal({
                 type="button"
                 onClick={doSend}
                 disabled={sending}
-                className="px-5 py-2.5 rounded-full bg-ink text-white text-sm font-bold btn-3d hover:bg-ink-2 transition-colors disabled:opacity-50 flex items-center gap-2"
+                className="px-5 py-2.5 rounded-full bg-action text-[#06121B] text-sm font-bold btn-3d hover:bg-action-deep transition-colors disabled:opacity-50 flex items-center gap-2"
               >
                 <Megaphone size={15} />
                 {sending ? "Sending…" : "Yes, send now"}
@@ -182,7 +182,7 @@ function AnnouncementModal({
               </button>
               <button
                 type="submit"
-                className="px-5 py-2.5 rounded-full bg-ink text-white text-sm font-bold btn-3d hover:bg-ink-2 transition-colors flex items-center gap-2"
+                className="px-5 py-2.5 rounded-full bg-action text-[#06121B] text-sm font-bold btn-3d hover:bg-action-deep transition-colors flex items-center gap-2"
               >
                 <Megaphone size={15} />
                 Review &amp; send
@@ -233,7 +233,7 @@ export default function AnnouncementsPage() {
         </div>
         <button
           onClick={() => setModalOpen(true)}
-          className="hidden sm:flex items-center gap-2 px-4 py-2.5 rounded-full bg-ink text-white text-sm font-bold btn-3d hover:bg-ink-2 transition-colors"
+          className="hidden sm:flex items-center gap-2 px-4 py-2.5 rounded-full bg-action text-[#06121B] text-sm font-bold btn-3d hover:bg-action-deep transition-colors"
         >
           <Plus size={16} />
           New Announcement

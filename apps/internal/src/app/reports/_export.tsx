@@ -30,8 +30,8 @@ interface DownloadButtonProps {
 
 function skinFor(variant: Variant) {
   return variant === "dark"
-    ? "bg-[#1A1A1A] text-white shadow-[0_4px_16px_rgba(0,0,0,0.18)] hover:shadow-[0_6px_24px_rgba(0,0,0,0.22)]"
-    : "bg-white border border-[#E8E0D0] text-[#1A1A1A] hover:shadow-[0_4px_12px_rgba(0,0,0,0.08)]";
+    ? "bg-action text-[#06121B] shadow-[0_4px_16px_rgba(0,0,0,0.18)] hover:shadow-[0_6px_24px_rgba(0,0,0,0.22)]"
+    : "bg-surface border border-border text-ink hover:shadow-[0_4px_12px_rgba(0,0,0,0.08)]";
 }
 
 const BASE =

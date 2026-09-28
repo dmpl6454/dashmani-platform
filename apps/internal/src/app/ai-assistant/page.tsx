@@ -10,7 +10,7 @@ import {
   Loader2, Copy, Check, ExternalLink, Send,
 } from "lucide-react";
 
-const inputClass = "w-full border border-[#E8E0D0] bg-white rounded-lg px-4 py-2.5 text-sm text-[#1A1A1A] placeholder:text-[#B0B0B0] focus:outline-none focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547] transition-colors";
+const inputClass = "w-full border border-border bg-surface rounded-lg px-4 py-2.5 text-sm text-ink placeholder:text-ink-4 focus:outline-none focus:ring-2 focus:ring-action focus:border-action transition-colors";
 
 type Tab = "vacancy" | "offer" | "appointment" | "contract" | "salary" | "assist";
 
@@ -51,12 +51,12 @@ export default function AIAssistantPage() {
   return (
     <div className="space-y-6 crx-animate-fade">
       <div className="flex items-center gap-3">
-        <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-[#F5D547] to-[#E8B830] flex items-center justify-center">
-          <Sparkles size={20} className="text-[#1A1A1A]" />
+        <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-action to-action-deep flex items-center justify-center">
+          <Sparkles size={20} className="text-ink" />
         </div>
         <div>
-          <h1 className="font-serif text-4xl font-light text-[#1A1A1A]">AI Assistant</h1>
-          <p className="text-sm text-[#7A7A7A]">Powered by Claude AI — Generate documents, job postings, and more</p>
+          <h1 className="font-serif text-4xl font-light text-ink">AI Assistant</h1>
+          <p className="text-sm text-ink-3">Powered by Claude AI — Generate documents, job postings, and more</p>
         </div>
       </div>
 
@@ -64,13 +64,13 @@ export default function AIAssistantPage() {
       <div className="flex gap-2 flex-wrap">
         {tabs.map((tab) => (
           <button key={tab.id} onClick={() => { setActiveTab(tab.id); setResult(null); }}
-            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium transition-all ${activeTab === tab.id ? "bg-[#1A1A1A] text-white shadow-lg" : "bg-white text-[#7A7A7A] border border-[#E8E0D0] hover:border-[#F5D547]"}`}>
+            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium transition-all ${activeTab === tab.id ? "bg-action text-[#06121B] shadow-lg" : "bg-surface text-ink-3 border border-border hover:border-action"}`}>
             <tab.icon size={16} />{tab.label}
           </button>
         ))}
       </div>
 
-      <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-[#E8E0D0] p-6">
+      <div className="bg-surface rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-border p-6">
         {activeTab === "vacancy" && <VacancyGenerator loading={loading} setLoading={setLoading} result={result} setResult={setResult} copyText={copyText} copied={copied} />}
         {activeTab === "offer" && <OfferLetterGenerator employees={employees} loading={loading} setLoading={setLoading} result={result} setResult={setResult} openHtml={openHtmlWindow} />}
         {activeTab === "appointment" && <AppointmentGenerator employees={employees} loading={loading} setLoading={setLoading} result={result} setResult={setResult} openHtml={openHtmlWindow} />}
@@ -113,8 +113,8 @@ function VacancyGenerator({ loading, setLoading, result, setResult, copyText, co
   return (
     <div className="space-y-5">
       <div>
-        <h2 className="text-lg font-semibold text-[#1A1A1A] mb-1">Generate Job Vacancy</h2>
-        <p className="text-sm text-[#7A7A7A]">AI will create a complete job description with requirements, responsibilities, and benefits</p>
+        <h2 className="text-lg font-semibold text-ink mb-1">Generate Job Vacancy</h2>
+        <p className="text-sm text-ink-3">AI will create a complete job description with requirements, responsibilities, and benefits</p>
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         <input type="text" placeholder="Job Title *" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} className={inputClass} />
@@ -131,17 +131,17 @@ function VacancyGenerator({ loading, setLoading, result, setResult, copyText, co
         <input type="text" placeholder="Location" value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} className={inputClass} />
       </div>
       <textarea placeholder="Additional notes or specific requirements..." value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} rows={2} className={inputClass + " resize-none"} />
-      <button onClick={generate} disabled={loading} className="bg-[#1A1A1A] text-white py-2.5 px-6 rounded-full font-semibold hover:bg-[#2B2B2B] disabled:opacity-50 flex items-center gap-2">
+      <button onClick={generate} disabled={loading} className="bg-action text-[#06121B] py-2.5 px-6 rounded-full font-semibold hover:bg-[#243645] disabled:opacity-50 flex items-center gap-2">
         {loading ? <><Loader2 size={16} className="animate-spin" />Generating...</> : <><Sparkles size={16} />Generate with AI</>}
       </button>
 
       {result && (
-        <div className="space-y-4 border-t border-[#F0EAD8] pt-5">
+        <div className="space-y-4 border-t border-border pt-5">
           <div className="flex items-center justify-between">
-            <h3 className="font-semibold text-[#1A1A1A]">Generated Job Description</h3>
+            <h3 className="font-semibold text-ink">Generated Job Description</h3>
             <div className="flex flex-wrap gap-2">
               <button onClick={() => copyText(`${result.description}\n\nRequirements:\n${result.requirements}\n\nResponsibilities:\n${result.responsibilities}\n\nBenefits:\n${result.benefits}`)}
-                className="flex items-center gap-1 text-xs text-[#7A7A7A] hover:text-[#1A1A1A] border border-[#E8E0D0] rounded-full px-3 py-1.5">
+                className="flex items-center gap-1 text-xs text-ink-3 hover:text-ink border border-border rounded-full px-3 py-1.5">
                 {copied ? <Check size={12} /> : <Copy size={12} />}{copied ? "Copied" : "Copy All"}
               </button>
               <button onClick={postJob} className="flex items-center gap-1 text-xs font-medium bg-green-50 text-green-700 rounded-full px-4 py-1.5 hover:bg-green-100">
@@ -156,8 +156,8 @@ function VacancyGenerator({ loading, setLoading, result, setResult, copyText, co
             { label: "Benefits", value: result.benefits },
           ].map((section) => (
             <div key={section.label}>
-              <p className="text-xs font-medium text-[#7A7A7A] mb-1">{section.label}</p>
-              <div className="bg-[#FEFCF7] rounded-xl p-4 text-sm text-[#555] whitespace-pre-line">{section.value}</div>
+              <p className="text-xs font-medium text-ink-3 mb-1">{section.label}</p>
+              <div className="bg-surface rounded-xl p-4 text-sm text-ink-3 whitespace-pre-line">{section.value}</div>
             </div>
           ))}
         </div>
@@ -223,8 +223,8 @@ function OfferLetterGenerator({ employees, loading, setLoading, result, setResul
   return (
     <div className="space-y-5">
       <div>
-        <h2 className="text-lg font-semibold text-[#1A1A1A] mb-1">Generate Offer Letter</h2>
-        <p className="text-sm text-[#7A7A7A]">AI will create a professional offer letter ready for printing</p>
+        <h2 className="text-lg font-semibold text-ink mb-1">Generate Offer Letter</h2>
+        <p className="text-sm text-ink-3">AI will create a professional offer letter ready for printing</p>
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         <EmployeeSelect employees={employees} value={form.employeeId} onChange={(v) => { setForm({ ...form, employeeId: v }); setSentAt(null); }} />
@@ -236,13 +236,13 @@ function OfferLetterGenerator({ employees, loading, setLoading, result, setResul
         <input type="text" placeholder="Location" value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} className={inputClass} />
       </div>
       <textarea placeholder="Special terms or conditions..." value={form.specialTerms} onChange={(e) => setForm({ ...form, specialTerms: e.target.value })} rows={2} className={inputClass + " resize-none"} />
-      <button onClick={generate} disabled={loading} className="bg-[#1A1A1A] text-white py-2.5 px-6 rounded-full font-semibold hover:bg-[#2B2B2B] disabled:opacity-50 flex items-center gap-2">
+      <button onClick={generate} disabled={loading} className="bg-action text-[#06121B] py-2.5 px-6 rounded-full font-semibold hover:bg-[#243645] disabled:opacity-50 flex items-center gap-2">
         {loading ? <><Loader2 size={16} className="animate-spin" />Generating...</> : <><Sparkles size={16} />Generate Offer Letter</>}
       </button>
       {result?.html && (
-        <div className="border-t border-[#F0EAD8] pt-5">
+        <div className="border-t border-border pt-5">
           <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
-            <p className="font-semibold text-[#1A1A1A]">Offer Letter for {result.employeeName}</p>
+            <p className="font-semibold text-ink">Offer Letter for {result.employeeName}</p>
             <div className="flex items-center gap-2">
               {sentAt ? (
                 <span className="flex items-center gap-1.5 bg-green-50 border border-green-200 text-green-700 rounded-full px-4 py-1.5 text-sm font-medium">
@@ -255,7 +255,7 @@ function OfferLetterGenerator({ employees, loading, setLoading, result, setResul
                 </button>
               )}
               <button onClick={() => openHtml(result.html, `Offer Letter - ${result.employeeName}`)}
-                className="flex items-center gap-1 bg-[#1A1A1A] text-white rounded-full px-4 py-2 text-sm font-medium hover:bg-[#2B2B2B]">
+                className="flex items-center gap-1 bg-action text-[#06121B] rounded-full px-4 py-2 text-sm font-medium hover:bg-[#243645]">
                 <ExternalLink size={14} />Open & Print
               </button>
             </div>
@@ -265,7 +265,7 @@ function OfferLetterGenerator({ employees, loading, setLoading, result, setResul
               Preview only — click <strong>Send to Employee</strong> to save this offer letter so they can view it in the HR portal.
             </p>
           )}
-          <div className="border border-[#E8E0D0] rounded-xl overflow-hidden h-[400px]">
+          <div className="border border-border rounded-xl overflow-hidden h-[400px]">
             <iframe srcDoc={DOMPurify.sanitize(result.html)} className="w-full h-full" title="Offer Letter Preview" sandbox="allow-same-origin" />
           </div>
         </div>
@@ -321,8 +321,8 @@ function AppointmentGenerator({ employees, loading, setLoading, result, setResul
   return (
     <div className="space-y-5">
       <div>
-        <h2 className="text-lg font-semibold text-[#1A1A1A] mb-1">Generate Appointment Letter</h2>
-        <p className="text-sm text-[#7A7A7A]">AI will create a comprehensive appointment letter with all legal clauses</p>
+        <h2 className="text-lg font-semibold text-ink mb-1">Generate Appointment Letter</h2>
+        <p className="text-sm text-ink-3">AI will create a comprehensive appointment letter with all legal clauses</p>
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         <EmployeeSelect employees={employees} value={form.employeeId} onChange={(v) => { setForm({ ...form, employeeId: v }); setSentAt(null); }} />
@@ -335,13 +335,13 @@ function AppointmentGenerator({ employees, loading, setLoading, result, setResul
         <input type="text" placeholder="Location" value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} className={inputClass} />
       </div>
       <textarea placeholder="Special clauses or conditions..." value={form.specialClauses} onChange={(e) => setForm({ ...form, specialClauses: e.target.value })} rows={2} className={inputClass + " resize-none"} />
-      <button onClick={generate} disabled={loading} className="bg-[#1A1A1A] text-white py-2.5 px-6 rounded-full font-semibold hover:bg-[#2B2B2B] disabled:opacity-50 flex items-center gap-2">
+      <button onClick={generate} disabled={loading} className="bg-action text-[#06121B] py-2.5 px-6 rounded-full font-semibold hover:bg-[#243645] disabled:opacity-50 flex items-center gap-2">
         {loading ? <><Loader2 size={16} className="animate-spin" />Generating...</> : <><Sparkles size={16} />Generate Appointment Letter</>}
       </button>
       {result?.html && (
-        <div className="border-t border-[#F0EAD8] pt-5">
+        <div className="border-t border-border pt-5">
           <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
-            <p className="font-semibold text-[#1A1A1A]">Appointment Letter for {result.employeeName}</p>
+            <p className="font-semibold text-ink">Appointment Letter for {result.employeeName}</p>
             <div className="flex items-center gap-2">
               {sentAt ? (
                 <span className="flex items-center gap-1.5 bg-green-50 border border-green-200 text-green-700 rounded-full px-4 py-1.5 text-sm font-medium">
@@ -354,7 +354,7 @@ function AppointmentGenerator({ employees, loading, setLoading, result, setResul
                 </button>
               )}
               <button onClick={() => openHtml(result.html, `Appointment Letter - ${result.employeeName}`)}
-                className="flex items-center gap-1 bg-[#1A1A1A] text-white rounded-full px-4 py-2 text-sm font-medium hover:bg-[#2B2B2B]">
+                className="flex items-center gap-1 bg-action text-[#06121B] rounded-full px-4 py-2 text-sm font-medium hover:bg-[#243645]">
                 <ExternalLink size={14} />Open & Print
               </button>
             </div>
@@ -364,7 +364,7 @@ function AppointmentGenerator({ employees, loading, setLoading, result, setResul
               Preview only — click <strong>Send to Employee</strong> to save this appointment letter so they can view it in the HR portal.
             </p>
           )}
-          <div className="border border-[#E8E0D0] rounded-xl overflow-hidden h-[400px]">
+          <div className="border border-border rounded-xl overflow-hidden h-[400px]">
             <iframe srcDoc={DOMPurify.sanitize(result.html)} className="w-full h-full" title="Appointment Letter Preview" sandbox="allow-same-origin" />
           </div>
         </div>
@@ -417,8 +417,8 @@ function ContractGenerator({ employees, loading, setLoading, result, setResult, 
   return (
     <div className="space-y-5">
       <div>
-        <h2 className="text-lg font-semibold text-[#1A1A1A] mb-1">Generate Employment Contract</h2>
-        <p className="text-sm text-[#7A7A7A]">AI will create a legally sound employment contract with all standard clauses</p>
+        <h2 className="text-lg font-semibold text-ink mb-1">Generate Employment Contract</h2>
+        <p className="text-sm text-ink-3">AI will create a legally sound employment contract with all standard clauses</p>
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         <EmployeeSelect employees={employees} value={form.employeeId} onChange={(v) => { setForm({ ...form, employeeId: v }); setSentAt(null); }} />
@@ -430,13 +430,13 @@ function ContractGenerator({ employees, loading, setLoading, result, setResult, 
         <input type="number" placeholder="Notice Period (days)" value={form.noticePeriod} onChange={(e) => setForm({ ...form, noticePeriod: e.target.value })} className={inputClass} />
       </div>
       <textarea placeholder="Special clauses..." value={form.specialClauses} onChange={(e) => setForm({ ...form, specialClauses: e.target.value })} rows={2} className={inputClass + " resize-none"} />
-      <button onClick={generate} disabled={loading} className="bg-[#1A1A1A] text-white py-2.5 px-6 rounded-full font-semibold hover:bg-[#2B2B2B] disabled:opacity-50 flex items-center gap-2">
+      <button onClick={generate} disabled={loading} className="bg-action text-[#06121B] py-2.5 px-6 rounded-full font-semibold hover:bg-[#243645] disabled:opacity-50 flex items-center gap-2">
         {loading ? <><Loader2 size={16} className="animate-spin" />Generating...</> : <><Sparkles size={16} />Generate Contract</>}
       </button>
       {result?.html && (
-        <div className="border-t border-[#F0EAD8] pt-5">
+        <div className="border-t border-border pt-5">
           <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
-            <p className="font-semibold text-[#1A1A1A]">Employment Contract for {result.employeeName}</p>
+            <p className="font-semibold text-ink">Employment Contract for {result.employeeName}</p>
             <div className="flex items-center gap-2">
               {sentAt ? (
                 <span className="flex items-center gap-1.5 bg-green-50 border border-green-200 text-green-700 rounded-full px-4 py-1.5 text-sm font-medium">
@@ -449,7 +449,7 @@ function ContractGenerator({ employees, loading, setLoading, result, setResult, 
                 </button>
               )}
               <button onClick={() => openHtml(result.html, `Contract - ${result.employeeName}`)}
-                className="flex items-center gap-1 bg-[#1A1A1A] text-white rounded-full px-4 py-2 text-sm font-medium hover:bg-[#2B2B2B]">
+                className="flex items-center gap-1 bg-action text-[#06121B] rounded-full px-4 py-2 text-sm font-medium hover:bg-[#243645]">
                 <ExternalLink size={14} />Open & Print
               </button>
             </div>
@@ -459,7 +459,7 @@ function ContractGenerator({ employees, loading, setLoading, result, setResult, 
               Preview only — click <strong>Send to Employee</strong> to save this contract so they can review and sign it in the HR portal.
             </p>
           )}
-          <div className="border border-[#E8E0D0] rounded-xl overflow-hidden h-[400px]">
+          <div className="border border-border rounded-xl overflow-hidden h-[400px]">
             <iframe srcDoc={DOMPurify.sanitize(result.html)} className="w-full h-full" title="Contract Preview" sandbox="allow-same-origin" />
           </div>
         </div>
@@ -575,8 +575,8 @@ function SalarySlipGenerator({ employees, loading, setLoading, result, setResult
   return (
     <div className="space-y-5">
       <div>
-        <h2 className="text-lg font-semibold text-[#1A1A1A] mb-1">Generate Salary Slip</h2>
-        <p className="text-sm text-[#7A7A7A]">AI-styled salary slip — preview, then send to the employee. They'll see it in the HR portal under 'Salary Slips'.</p>
+        <h2 className="text-lg font-semibold text-ink mb-1">Generate Salary Slip</h2>
+        <p className="text-sm text-ink-3">AI-styled salary slip — preview, then send to the employee. They'll see it in the HR portal under 'Salary Slips'.</p>
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         <EmployeeSelect employees={employees} value={form.employeeId} onChange={handleEmployeeChange} />
@@ -594,7 +594,7 @@ function SalarySlipGenerator({ employees, loading, setLoading, result, setResult
         </div>
       </div>
       <div>
-        <p className="text-xs font-semibold text-[#7A7A7A] uppercase tracking-wide mb-2">Earnings</p>
+        <p className="text-xs font-semibold text-ink-3 uppercase tracking-wide mb-2">Earnings</p>
         <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
           {[
             { key: "basicSalary", label: "Basic Salary *" },
@@ -612,7 +612,7 @@ function SalarySlipGenerator({ employees, loading, setLoading, result, setResult
         </div>
       </div>
       <div>
-        <p className="text-xs font-semibold text-[#7A7A7A] uppercase tracking-wide mb-2">Deductions</p>
+        <p className="text-xs font-semibold text-ink-3 uppercase tracking-wide mb-2">Deductions</p>
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           {[
             { key: "pf", label: "PF" },
@@ -628,13 +628,13 @@ function SalarySlipGenerator({ employees, loading, setLoading, result, setResult
         </div>
       </div>
       <textarea placeholder="Remarks (optional)" value={form.remarks} onChange={(e) => setForm({ ...form, remarks: e.target.value })} rows={2} className={inputClass + " resize-none"} />
-      <button onClick={generate} disabled={loading} className="bg-[#1A1A1A] text-white py-2.5 px-6 rounded-full font-semibold hover:bg-[#2B2B2B] disabled:opacity-50 flex items-center gap-2">
+      <button onClick={generate} disabled={loading} className="bg-action text-[#06121B] py-2.5 px-6 rounded-full font-semibold hover:bg-[#243645] disabled:opacity-50 flex items-center gap-2">
         {loading ? <><Loader2 size={16} className="animate-spin" />Generating...</> : <><Sparkles size={16} />Generate Salary Slip</>}
       </button>
       {result?.html && (
-        <div className="border-t border-[#F0EAD8] pt-5">
+        <div className="border-t border-border pt-5">
           <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
-            <p className="font-semibold text-[#1A1A1A]">Salary Slip for {result.employeeName}</p>
+            <p className="font-semibold text-ink">Salary Slip for {result.employeeName}</p>
             <div className="flex items-center gap-2">
               {sentAt ? (
                 <span className="flex items-center gap-1.5 bg-green-50 border border-green-200 text-green-700 rounded-full px-4 py-1.5 text-sm font-medium">
@@ -647,7 +647,7 @@ function SalarySlipGenerator({ employees, loading, setLoading, result, setResult
                 </button>
               )}
               <button onClick={() => openHtml(result.html, `Salary Slip - ${result.employeeName}`)}
-                className="flex items-center gap-1 bg-[#1A1A1A] text-white rounded-full px-4 py-2 text-sm font-medium hover:bg-[#2B2B2B]">
+                className="flex items-center gap-1 bg-action text-[#06121B] rounded-full px-4 py-2 text-sm font-medium hover:bg-[#243645]">
                 <ExternalLink size={14} />Open & Print
               </button>
             </div>
@@ -657,7 +657,7 @@ function SalarySlipGenerator({ employees, loading, setLoading, result, setResult
               Preview only — click <strong>Send to Employee</strong> to save this salary slip. It will appear in /salary-slips for approval and in the employee's HR portal.
             </p>
           )}
-          <div className="border border-[#E8E0D0] rounded-xl overflow-hidden h-[400px]">
+          <div className="border border-border rounded-xl overflow-hidden h-[400px]">
             <iframe srcDoc={DOMPurify.sanitize(result.html)} className="w-full h-full" title="Salary Slip Preview" sandbox="allow-same-origin" />
           </div>
         </div>
@@ -703,41 +703,41 @@ function AIChat({ loading, setLoading, employees }: any) {
   return (
     <div className="space-y-4">
       <div>
-        <h2 className="text-lg font-semibold text-[#1A1A1A] mb-1">AI Chat Assistant</h2>
-        <p className="text-sm text-[#7A7A7A]">Ask anything — HR policies, email drafts, performance feedback, warning letters, etc.</p>
+        <h2 className="text-lg font-semibold text-ink mb-1">AI Chat Assistant</h2>
+        <p className="text-sm text-ink-3">Ask anything — HR policies, email drafts, performance feedback, warning letters, etc.</p>
       </div>
       <div className="space-y-1">
         <EmployeeSelect employees={employees} value={employeeId} onChange={(v) => { setEmployeeId(v); if (v) setEmployeeError(""); }} />
         {employeeError && <p role="alert" className="text-xs text-red-500 font-semibold">{employeeError}</p>}
       </div>
-      <div className="border border-[#E8E0D0] rounded-xl h-[350px] overflow-y-auto p-4 bg-[#FEFCF7] space-y-3">
+      <div className="border border-border rounded-xl h-[350px] overflow-y-auto p-4 bg-surface space-y-3">
         {messages.length === 0 && (
-          <div className="text-center text-[#B0B0B0] py-10">
+          <div className="text-center text-ink-4 py-10">
             <Sparkles size={24} className="mx-auto mb-2 opacity-30" />
             <p className="text-sm">Ask me anything HR-related</p>
             <div className="flex flex-wrap gap-2 justify-center mt-4">
               {["Draft a warning letter", "Write a promotion announcement email", "Suggest interview questions for a designer", "Draft work-from-home policy"].map((s) => (
-                <button key={s} onClick={() => setInput(s)} className="text-xs bg-white border border-[#E8E0D0] rounded-full px-3 py-1.5 text-[#7A7A7A] hover:border-[#F5D547]">{s}</button>
+                <button key={s} onClick={() => setInput(s)} className="text-xs bg-surface border border-border rounded-full px-3 py-1.5 text-ink-3 hover:border-action">{s}</button>
               ))}
             </div>
           </div>
         )}
         {messages.map((msg, i) => (
           <div key={i} className={`${msg.role === "user" ? "text-right" : ""}`}>
-            <div className={`inline-block max-w-[80%] rounded-xl px-4 py-2.5 text-sm ${msg.role === "user" ? "bg-[#1A1A1A] text-white" : "bg-white border border-[#E8E0D0] text-[#555]"}`}>
+            <div className={`inline-block max-w-[80%] rounded-xl px-4 py-2.5 text-sm ${msg.role === "user" ? "bg-action text-[#06121B]" : "bg-surface border border-border text-ink-3"}`}>
               <div className="whitespace-pre-wrap">{msg.content}</div>
             </div>
           </div>
         ))}
         {loading && (
-          <div className="flex items-center gap-2 text-[#7A7A7A] text-sm"><Loader2 size={14} className="animate-spin" />Thinking...</div>
+          <div className="flex items-center gap-2 text-ink-3 text-sm"><Loader2 size={14} className="animate-spin" />Thinking...</div>
         )}
         <div ref={messagesEndRef} />
       </div>
       <div className="flex gap-3">
         <input type="text" value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => e.key === "Enter" && !loading && send()}
           placeholder="Type your question..." className={inputClass} />
-        <button onClick={send} disabled={loading || !input.trim()} className="bg-[#1A1A1A] text-white py-2.5 px-6 rounded-full font-semibold hover:bg-[#2B2B2B] disabled:opacity-50 whitespace-nowrap">
+        <button onClick={send} disabled={loading || !input.trim()} className="bg-action text-[#06121B] py-2.5 px-6 rounded-full font-semibold hover:bg-[#243645] disabled:opacity-50 whitespace-nowrap">
           Send
         </button>
       </div>

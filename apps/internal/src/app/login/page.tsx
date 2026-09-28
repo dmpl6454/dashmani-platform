@@ -121,10 +121,10 @@ export default function LoginPage() {
         {/* Left: hero + form */}
         <div className="flex flex-col min-w-0">
           <div
-            className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white border-2 border-ink self-start text-[11.5px] font-semibold text-ink-2 auth-fade-up d2"
-            style={{ boxShadow: "2px 2px 0 #5D5FEF" }}
+            className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-surface border-2 border-ink self-start text-[11.5px] font-semibold text-ink-2 auth-fade-up d2"
+            style={{ boxShadow: "2px 2px 0 #38BDF8" }}
           >
-            <span className="live-dot" style={{ background: "#5D5FEF", boxShadow: "0 0 0 3px rgba(93,95,239,.22)" }} />
+            <span className="live-dot" style={{ background: "#38BDF8", boxShadow: "0 0 0 3px rgba(56,189,248,.22)" }} />
             <span className="font-mono uppercase tracking-[0.16em]">v3.4 · {new Date().toLocaleString("en-US", { month: "short", year: "numeric" })} release</span>
           </div>
 
@@ -143,7 +143,7 @@ export default function LoginPage() {
             <button
               type="button"
               onClick={() => formRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })}
-              className="btn-3d inline-flex items-center gap-2 px-5 py-3 rounded-full bg-indigo text-white font-semibold text-[14px]"
+              className="btn-3d inline-flex items-center gap-2 px-5 py-3 rounded-full bg-action text-[#06121B] font-semibold text-[14px]"
             >
               Sign in to portal <ArrowRight size={16} />
             </button>
@@ -151,8 +151,8 @@ export default function LoginPage() {
               href="https://client.digitalsukoon.com"
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-2 px-5 py-3 rounded-full bg-white border-2 border-ink text-ink font-semibold text-[14px] hover:bg-indigo-soft transition-colors"
-              style={{ boxShadow: "3px 3px 0 #1A1A1A" }}
+              className="inline-flex items-center gap-2 px-5 py-3 rounded-full bg-surface border-2 border-ink text-ink font-semibold text-[14px] hover:bg-indigo-soft transition-colors"
+              style={{ boxShadow: "3px 3px 0 rgba(0,0,0,.55)" }}
             >
               I'm a client
             </a>
@@ -160,17 +160,17 @@ export default function LoginPage() {
               <span className="text-[12px] text-ink-3 ml-1 flex items-center gap-1.5">
                 <Command size={13} /> Press
                 {isMac ? (
-                  <><kbd className="px-1.5 py-0.5 border border-border bg-white rounded text-[10.5px] font-mono">⌘</kbd>+</>
+                  <><kbd className="px-1.5 py-0.5 border border-border bg-surface rounded text-[10.5px] font-mono">⌘</kbd>+</>
                 ) : (
-                  <><kbd className="px-1.5 py-0.5 border border-border bg-white rounded text-[10.5px] font-mono">Ctrl</kbd>+</>
+                  <><kbd className="px-1.5 py-0.5 border border-border bg-surface rounded text-[10.5px] font-mono">Ctrl</kbd>+</>
                 )}
-                <kbd className="px-1.5 py-0.5 border border-border bg-white rounded text-[10.5px] font-mono">K</kbd>
+                <kbd className="px-1.5 py-0.5 border border-border bg-surface rounded text-[10.5px] font-mono">K</kbd>
                 in the app to search
               </span>
             )}
           </div>
 
-          <div className="mt-9 auth-fade-up d6 pt-6" style={{ borderTop: "1.5px dashed #D4CBBA" }}>
+          <div className="mt-9 auth-fade-up d6 pt-6" style={{ borderTop: "1.5px dashed #1C2A38" }}>
             <p className="text-[10.5px] uppercase tracking-[0.22em] font-semibold text-ink-4 mb-3">Trusted by the studio</p>
             <div className="flex flex-wrap items-center gap-x-7 gap-y-3 text-[13px] font-display text-ink-3 italic">
               <span>Meher &amp; Co</span><span className="text-ink-4">·</span>
@@ -286,7 +286,7 @@ export default function LoginPage() {
               className="reveal v3-card-sm p-5 hover:-translate-y-0.5 transition-all"
               style={{ transitionDelay: `${i * 40}ms` }}
             >
-              <div className={`w-10 h-10 rounded-xl ${f.color} flex items-center justify-center text-ink font-display text-[18px] mb-4`} style={{ border: "1.5px solid rgba(26,26,26,.14)" }}>
+              <div className={`w-10 h-10 rounded-xl ${f.color} flex items-center justify-center text-ink font-display text-[18px] mb-4`} style={{ border: "1px solid #1C2A38" }}>
                 {f.icon}
               </div>
               <p className="text-[10.5px] uppercase tracking-[0.18em] font-semibold text-ink-3 mb-1.5">{f.tag}</p>
@@ -298,7 +298,7 @@ export default function LoginPage() {
       </section>
 
       {/* Marquee strip */}
-      <section className="relative z-10 py-8 overflow-hidden" style={{ borderTop: "1.5px dashed #D4CBBA", borderBottom: "1.5px dashed #D4CBBA" }}>
+      <section className="relative z-10 py-8 overflow-hidden" style={{ borderTop: "1.5px dashed #1C2A38", borderBottom: "1.5px dashed #1C2A38" }}>
         <div className="marquee whitespace-nowrap font-display italic text-ink-3 text-[34px] lg:text-[44px] tracking-tight">
           {[0, 1].map((k) => (
             <span key={k} className="flex items-center gap-12 pr-12">
@@ -333,8 +333,8 @@ export default function LoginPage() {
 function Logo({ size = 40 }: { size?: number }) {
   return (
     <div className="relative inline-flex items-center justify-center" style={{ width: size, height: size }}>
-      <div className="absolute inset-0 rounded-full bg-indigo" style={{ boxShadow: "2px 2px 0 #1A1A1A" }} />
-      <span className="relative font-display font-bold text-white" style={{ fontSize: size * 0.32, letterSpacing: "-.03em" }}>DS</span>
+      <div className="absolute inset-0 rounded-full bg-indigo" style={{ boxShadow: "2px 2px 0 rgba(0,0,0,.6)" }} />
+      <span className="relative font-display font-bold text-[#06121B]" style={{ fontSize: size * 0.32, letterSpacing: "-.03em" }}>DS</span>
     </div>
   );
 }
@@ -411,12 +411,12 @@ function SubmitBtn({ state }: { state: "idle" | "loading" | "success" }) {
     <button
       type="submit"
       disabled={state !== "idle"}
-      className="btn-3d w-full flex items-center justify-center gap-2 px-5 py-3.5 rounded-full bg-ink text-white font-semibold text-[14.5px] tracking-tight disabled:opacity-70 disabled:cursor-not-allowed"
+      className="btn-3d w-full flex items-center justify-center gap-2 px-5 py-3.5 rounded-full bg-action text-[#06121B] font-semibold text-[14.5px] tracking-tight disabled:opacity-70 disabled:cursor-not-allowed"
       aria-live="polite"
     >
       {state === "idle" && (<><span>Sign in to portal</span><ArrowRight size={16} /></>)}
       {state === "loading" && (<><span className="auth-spinner" aria-hidden /><span>Signing you in…</span></>)}
-      {state === "success" && (<><Check size={20} color="#F5D547" strokeWidth={3} /><span>Welcome back</span></>)}
+      {state === "success" && (<><Check size={20} color="#06121B" strokeWidth={3} /><span>Welcome back</span></>)}
     </button>
   );
 }
@@ -463,7 +463,7 @@ function OpsPanel() {
   }, []);
 
   return (
-    <div className="relative w-full h-full rounded-[28px] overflow-hidden bg-[#0F0F1A] text-white" style={{ border: "2px solid #1A1A1A", boxShadow: "8px 8px 0 rgba(93,95,239,.55)" }}>
+    <div className="relative w-full h-full rounded-[28px] overflow-hidden bg-[#0F0F1A] text-white" style={{ border: "1px solid #1C2A38", boxShadow: "0 20px 48px rgba(0,0,0,.55)" }}>
       <div className="absolute -top-32 -left-20 w-[420px] h-[420px] aurora" />
       <div className="absolute -bottom-40 -right-24 w-[440px] h-[440px] aurora aurora-2" />
       <div className="absolute inset-0 opacity-[0.25]" style={{ backgroundImage: "radial-gradient(rgba(255,255,255,.18) 1px,transparent 1px)", backgroundSize: "22px 22px" }} />
@@ -495,7 +495,7 @@ function OpsPanel() {
             { k: "Live projects", v: liveProj, sub: "in flight", accent: "text-sage-soft" },
             { k: "Approvals", v: approvals, sub: "waiting", accent: "text-action" },
           ].map((s, i) => (
-            <div key={s.k} className={`auth-fade-up d${i + 4} ops-tile rounded-2xl p-3 sm:p-4 bg-white/[0.04] backdrop-blur-sm`} style={{ border: "1px solid rgba(255,255,255,.10)" }}>
+            <div key={s.k} className={`auth-fade-up d${i + 4} ops-tile rounded-2xl p-3 sm:p-4 bg-surface/[0.04] backdrop-blur-sm`} style={{ border: "1px solid rgba(255,255,255,.10)" }}>
               {/* tighter size/tracking below sm — at 0.14em the labels outgrow the narrow tiles */}
               <p className="text-[9px] sm:text-[10.5px] uppercase tracking-[0.04em] sm:tracking-[0.14em] text-white/55 font-semibold mb-3">{s.k}</p>
               <p className={`font-num text-[32px] leading-none font-semibold tabular-nums ${s.accent}`}>{s.v}</p>
@@ -505,7 +505,7 @@ function OpsPanel() {
         </div>
 
         <div className="grid grid-cols-5 gap-3">
-          <div className="col-span-3 auth-fade-up d7 ops-tile rounded-2xl p-4 bg-white/[0.04]" style={{ border: "1px solid rgba(255,255,255,.10)" }}>
+          <div className="col-span-3 auth-fade-up d7 ops-tile rounded-2xl p-4 bg-surface/[0.04]" style={{ border: "1px solid rgba(255,255,255,.10)" }}>
             <div className="flex items-center justify-between mb-2">
               <p className="text-[9.5px] sm:text-[10.5px] uppercase tracking-[0.06em] sm:tracking-[0.14em] text-white/55 font-semibold">Throughput · 14d</p>
               <span className="text-[10.5px] font-mono text-action">+18.4%</span>
@@ -513,22 +513,22 @@ function OpsPanel() {
             <svg viewBox="0 0 240 60" className="w-full h-[60px]">
               <defs>
                 <linearGradient id="ops-grad" x1="0" x2="0" y1="0" y2="1">
-                  <stop offset="0%" stopColor="#F5D547" stopOpacity="0.45" />
-                  <stop offset="100%" stopColor="#F5D547" stopOpacity="0" />
+                  <stop offset="0%" stopColor="#38BDF8" stopOpacity="0.45" />
+                  <stop offset="100%" stopColor="#38BDF8" stopOpacity="0" />
                 </linearGradient>
               </defs>
               <path d="M0 42 L18 38 L36 41 L54 30 L72 33 L90 26 L108 28 L126 20 L144 24 L162 18 L180 14 L198 19 L216 10 L234 12 L240 8 L240 60 L0 60 Z" fill="url(#ops-grad)" />
-              <path d="M0 42 L18 38 L36 41 L54 30 L72 33 L90 26 L108 28 L126 20 L144 24 L162 18 L180 14 L198 19 L216 10 L234 12 L240 8" stroke="#F5D547" strokeWidth="1.8" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M0 42 L18 38 L36 41 L54 30 L72 33 L90 26 L108 28 L126 20 L144 24 L162 18 L180 14 L198 19 L216 10 L234 12 L240 8" stroke="#38BDF8" strokeWidth="1.8" fill="none" strokeLinecap="round" strokeLinejoin="round" />
               {[42, 38, 41, 30, 33, 26, 28, 20, 24, 18, 14, 19, 10, 12, 8].map((y, i) => (
-                <circle key={i} cx={i * 18} cy={y} r="1.8" fill="#F5D547" />
+                <circle key={i} cx={i * 18} cy={y} r="1.8" fill="#38BDF8" />
               ))}
             </svg>
           </div>
-          <div className="col-span-2 auth-fade-up d8 ops-tile rounded-2xl p-4 bg-white/[0.04]" style={{ border: "1px solid rgba(255,255,255,.10)" }}>
+          <div className="col-span-2 auth-fade-up d8 ops-tile rounded-2xl p-4 bg-surface/[0.04]" style={{ border: "1px solid rgba(255,255,255,.10)" }}>
             <p className="text-[9.5px] sm:text-[10.5px] uppercase tracking-[0.06em] sm:tracking-[0.14em] text-white/55 font-semibold mb-3">Today</p>
             <div className="flex items-end gap-1.5 h-[44px]">
               {[14, 22, 18, 30, 26, 38, 33].map((h, i) => (
-                <div key={i} className="flex-1 rounded-t" style={{ height: `${h * 1.1}px`, background: i === 6 ? "#5D5FEF" : "rgba(255,255,255,.18)" }} />
+                <div key={i} className="flex-1 rounded-t" style={{ height: `${h * 1.1}px`, background: i === 6 ? "#38BDF8" : "rgba(255,255,255,.18)" }} />
               ))}
             </div>
             <div className="flex justify-between mt-2 text-[9.5px] text-white/40 font-mono uppercase tracking-wider">
@@ -537,7 +537,7 @@ function OpsPanel() {
           </div>
         </div>
 
-        <div className="auth-fade-up d9 ops-tile rounded-2xl p-4 bg-white/[0.04]" style={{ border: "1px solid rgba(255,255,255,.10)" }}>
+        <div className="auth-fade-up d9 ops-tile rounded-2xl p-4 bg-surface/[0.04]" style={{ border: "1px solid rgba(255,255,255,.10)" }}>
           <p className="text-[9.5px] sm:text-[10.5px] uppercase tracking-[0.06em] sm:tracking-[0.14em] text-white/55 font-semibold mb-2.5">Live activity</p>
           <div className="space-y-2 min-h-[60px]">
             {[0, 1].map((off) => {
@@ -602,7 +602,7 @@ function ForgotPasswordModal({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 backdrop-blur-sm p-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
       <div className="v3-card-auth p-7 w-full max-w-sm relative">
         <button onClick={onClose} className="absolute top-4 right-4 text-ink-4 hover:text-ink" aria-label="Close">
           <X size={16} />
@@ -616,7 +616,7 @@ function ForgotPasswordModal({ onClose }: { onClose: () => void }) {
             <button
               type="button"
               onClick={onClose}
-              className="btn-3d w-full py-3 rounded-full bg-ink text-white text-sm font-bold"
+              className="btn-3d w-full py-3 rounded-full bg-action text-[#06121B] text-sm font-bold"
             >
               Back to sign in
             </button>
@@ -643,7 +643,7 @@ function ForgotPasswordModal({ onClose }: { onClose: () => void }) {
             {error && <p className="text-xs text-danger font-semibold">{error}</p>}
             <button
               type="submit" disabled={loading}
-              className="btn-3d w-full py-3 rounded-full bg-ink text-white text-sm font-bold disabled:opacity-50"
+              className="btn-3d w-full py-3 rounded-full bg-action text-[#06121B] text-sm font-bold disabled:opacity-50"
             >
               {loading ? "Sending…" : "Send reset link"}
             </button>
@@ -676,56 +676,56 @@ function AuthStyles() {
       .d10 { animation-delay: .94s; }
 
       .dot-grid {
-        background-image: radial-gradient(rgba(93,95,239,.18) 1px, transparent 1px);
+        background-image: radial-gradient(rgba(56,189,248,.16) 1px, transparent 1px);
         background-size: 22px 22px;
         background-position: 0 0;
         animation: auth-meshDrift 28s cubic-bezier(0.22,1,0.36,1) infinite;
       }
       .aurora {
         position: absolute;
-        background: radial-gradient(ellipse at center, rgba(93,95,239,.32) 0%, rgba(93,95,239,0) 60%);
+        background: radial-gradient(ellipse at center, rgba(56,189,248,.24) 0%, rgba(56,189,248,0) 60%);
         filter: blur(40px);
         animation: auth-meshDrift 22s cubic-bezier(0.22,1,0.36,1) infinite alternate;
         border-radius: 50%;
       }
       .aurora-2 {
-        background: radial-gradient(ellipse at center, rgba(245,213,71,.28) 0%, rgba(245,213,71,0) 60%);
+        background: radial-gradient(ellipse at center, rgba(155,126,222,.24) 0%, rgba(155,126,222,0) 60%);
         animation-duration: 34s;
         animation-direction: alternate-reverse;
       }
 
-      .v3-card-auth { background: #FFFFFF; border: 2px solid #1A1A1A; border-radius: 20px; box-shadow: 6px 6px 0 rgba(93,95,239,0.15); }
+      .v3-card-auth { background: linear-gradient(180deg,#0C151F 0%,#08111A 100%); border: 1px solid #1C2A38; border-radius: 20px; box-shadow: 0 1px 0 rgba(255,255,255,.03) inset, 0 14px 34px rgba(0,0,0,.45); }
 
-      .live-dot { width: 7px; height: 7px; border-radius: 99px; background: #4A7C52; box-shadow: 0 0 0 3px rgba(74,124,82,.22); animation: auth-pulseDot 1.8s ease-in-out infinite; display: inline-block; }
+      .live-dot { width: 7px; height: 7px; border-radius: 99px; background: #34D399; box-shadow: 0 0 0 3px rgba(52,211,153,.22); animation: auth-pulseDot 1.8s ease-in-out infinite; display: inline-block; }
 
       .auth-field-wrap { position: relative; }
       .auth-field {
-        width: 100%; background: #FDFCF0; border: 1.5px solid #D4CBBA; border-radius: 14px;
+        width: 100%; background: #0B1720; border: 1.5px solid #1C2A38; border-radius: 14px;
         /* right padding leaves room for the eye/success icons (right:12px + 16px) so long
            emails don't collide with them or clip at the border, esp. at the mobile 16px font floor */
-        padding: 22px 42px 8px 42px; font: 500 14px/1.2 'Plus Jakarta Sans','Instagram Sans',sans-serif; color: #1A1A1A;
+        padding: 22px 42px 8px 42px; font: 500 14px/1.2 'Plus Jakarta Sans','Instagram Sans',sans-serif; color: #F4F6F8;
         text-overflow: ellipsis;
         transition: border-color .2s, box-shadow .2s, background-color .2s; outline: none;
       }
-      .auth-field:hover:not(:focus) { border-color: #9C947C; }
-      .auth-field:focus { border-color: #5D5FEF; background: #FFFFFF; box-shadow: 0 0 0 4px rgba(93,95,239,.18); }
-      .auth-field.error { border-color: #B83728; background: #FDECEA; box-shadow: 0 0 0 4px rgba(184,55,40,.12); }
-      .auth-field.success { border-color: #4A7C52; background: #EDF4EE; }
+      .auth-field:hover:not(:focus) { border-color: #33506A; }
+      .auth-field:focus { border-color: #38BDF8; background: #0C151F; box-shadow: 0 0 0 4px rgba(56,189,248,.18); }
+      .auth-field.error { border-color: #FB7185; background: rgba(251,113,133,.08); box-shadow: 0 0 0 4px rgba(251,113,133,.14); }
+      .auth-field.success { border-color: #34D399; background: rgba(52,211,153,.08); }
       .auth-field-label {
-        position: absolute; left: 42px; top: 13px; font-size: 13px; color: #6C6555; font-weight: 500;
+        position: absolute; left: 42px; top: 13px; font-size: 13px; color: #738395; font-weight: 500;
         pointer-events: none; transition: transform .2s, color .2s, font-size .2s; transform-origin: left top;
       }
       .auth-field-wrap.is-focused .auth-field-label,
       .auth-field-wrap.is-filled .auth-field-label {
         transform: translateY(-9px) scale(.78);
-        color: #5D5FEF; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
+        color: #38BDF8; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
       }
-      .auth-field-wrap.error .auth-field-label { color: #B83728; }
-      .auth-field-icon { position: absolute; left: 14px; top: 17px; transform: none; color: #9C947C; transition: color .2s; pointer-events: none; }
-      .auth-field-wrap.is-focused .auth-field-icon { color: #5D5FEF; }
-      .auth-field-wrap.error .auth-field-icon { color: #B83728; }
+      .auth-field-wrap.error .auth-field-label { color: #FB7185; }
+      .auth-field-icon { position: absolute; left: 14px; top: 17px; transform: none; color: #738395; transition: color .2s; pointer-events: none; }
+      .auth-field-wrap.is-focused .auth-field-icon { color: #38BDF8; }
+      .auth-field-wrap.error .auth-field-icon { color: #FB7185; }
 
-      .auth-spinner { width: 18px; height: 18px; border: 2.5px solid rgba(255,255,255,.35); border-top-color: #FFFFFF; border-radius: 50%; animation: auth-spin .7s linear infinite; }
+      .auth-spinner { width: 18px; height: 18px; border: 2.5px solid rgba(6,18,27,.30); border-top-color: #06121B; border-radius: 50%; animation: auth-spin .7s linear infinite; }
 
       .ops-tile { transition: transform .35s cubic-bezier(0.34,1.45,0.64,1); }
       .ops-tile:hover { transform: translate(-2px,-3px); }

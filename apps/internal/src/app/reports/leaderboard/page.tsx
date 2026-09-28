@@ -23,13 +23,13 @@ const fmtCompact = (n: number | null | undefined): string => {
 // no shrink/width constraints), "sm" is the compact muted style used inside mobile cards.
 function RankBadge({ rank, size = "sm" }: { rank: number; size?: "sm" | "lg" }) {
   return rank <= 3 ? (
-    <span className="inline-flex items-center justify-center h-8 w-8 shrink-0 rounded-full bg-[#FFF3C4] text-[#1A1A1A] font-bold text-sm">
+    <span className="inline-flex items-center justify-center h-8 w-8 shrink-0 rounded-full bg-action-soft text-ink font-bold text-sm">
       {MEDALS[rank - 1]}
     </span>
   ) : size === "lg" ? (
-    <span className="text-lg font-num text-[#1A1A1A]">{`#${rank}`}</span>
+    <span className="text-lg font-num text-ink">{`#${rank}`}</span>
   ) : (
-    <span className="text-sm font-num text-[#7A7A7A] shrink-0 w-8 text-center">{`#${rank}`}</span>
+    <span className="text-sm font-num text-ink-3 shrink-0 w-8 text-center">{`#${rank}`}</span>
   );
 }
 
@@ -50,26 +50,26 @@ function MobileRankCard({
   metrics: { label: string; value: ReactNode }[];
 }) {
   const nameEl = href ? (
-    <Link href={href} className="font-medium text-[#1A1A1A] hover:text-[#F5D547] truncate block">
+    <Link href={href} className="font-medium text-ink hover:text-action truncate block">
       {name}
     </Link>
   ) : (
-    <p className="font-medium text-[#1A1A1A] truncate">{name}</p>
+    <p className="font-medium text-ink truncate">{name}</p>
   );
   return (
-    <div className="rounded-xl border border-[#E8E0D0] bg-white p-3">
+    <div className="rounded-xl border border-border bg-surface p-3">
       <div className="flex items-center gap-3 min-w-0">
         <RankBadge rank={rank} />
         <div className="min-w-0 flex-1">
           {nameEl}
-          {subtitle && <p className="text-xs text-[#B0B0B0] break-all">{subtitle}</p>}
+          {subtitle && <p className="text-xs text-ink-4 break-all">{subtitle}</p>}
         </div>
       </div>
       <div className="mt-3 grid grid-cols-2 gap-x-3 gap-y-1.5 pl-11">
         {metrics.map((m) => (
           <div key={m.label} className="flex items-baseline justify-between gap-2 text-xs">
-            <span className="text-[#7A7A7A]">{m.label}</span>
-            <span className="font-medium text-[#1A1A1A] font-num text-right">{m.value}</span>
+            <span className="text-ink-3">{m.label}</span>
+            <span className="font-medium text-ink font-num text-right">{m.value}</span>
           </div>
         ))}
       </div>
@@ -137,46 +137,46 @@ export default function AdminLeaderboardPage() {
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="font-serif text-4xl font-light text-[#1A1A1A] flex items-center gap-3">
-            <Trophy className="h-8 w-8 text-[#F5D547]" />
+          <h1 className="font-serif text-4xl font-light text-ink flex items-center gap-3">
+            <Trophy className="h-8 w-8 text-action" />
             Leaderboard
           </h1>
-          <p className="text-[#7A7A7A] mt-1">
+          <p className="text-ink-3 mt-1">
             Employee ranking by reports, streaks, and engagement
           </p>
         </div>
         <Link
           href="/reports"
-          className="text-sm text-[#1A1A1A] hover:text-[#F5D547] font-medium"
+          className="text-sm text-ink hover:text-action font-medium"
         >
           &larr; Back to Reports
         </Link>
       </div>
 
       {/* Date Range Filter */}
-      <div className="flex flex-wrap gap-4 items-end p-5 bg-white rounded-2xl border border-[#E8E0D0] shadow-[0_2px_16px_rgba(0,0,0,0.05)] crx-animate-slide crx-delay-1">
+      <div className="flex flex-wrap gap-4 items-end p-5 bg-surface rounded-2xl border border-border shadow-[0_2px_16px_rgba(0,0,0,0.05)] crx-animate-slide crx-delay-1">
         <div className="flex flex-col gap-1">
-          <label className="text-xs font-medium text-[#7A7A7A]">Start Date</label>
+          <label className="text-xs font-medium text-ink-3">Start Date</label>
           <Input
             type="date"
             value={startDate}
             onChange={(e) => setStartDate(e.target.value)}
-            className="w-44 border border-[#E8E0D0] rounded-lg focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547]"
+            className="w-44 border border-border rounded-lg focus:ring-2 focus:ring-action focus:border-action"
           />
         </div>
         <div className="flex flex-col gap-1">
-          <label className="text-xs font-medium text-[#7A7A7A]">End Date</label>
+          <label className="text-xs font-medium text-ink-3">End Date</label>
           <Input
             type="date"
             value={endDate}
             onChange={(e) => setEndDate(e.target.value)}
-            className="w-44 border border-[#E8E0D0] rounded-lg focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547]"
+            className="w-44 border border-border rounded-lg focus:ring-2 focus:ring-action focus:border-action"
           />
         </div>
         {(startDate || endDate) && (
           <button
             onClick={() => { setStartDate(""); setEndDate(""); }}
-            className="text-sm text-[#1A1A1A] hover:text-[#F5D547] self-end pb-1"
+            className="text-sm text-ink hover:text-action self-end pb-1"
           >
             Clear filters
           </button>
@@ -190,53 +190,53 @@ export default function AdminLeaderboardPage() {
           return (
             <div
               key={card.title}
-              className={`bg-white rounded-2xl p-5 shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0] transition-all hover:shadow-[0_4px_24px_rgba(0,0,0,0.07)] crx-animate-slide crx-delay-${i + 2}`}
+              className={`bg-surface rounded-2xl p-5 shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-border transition-all hover:shadow-[0_4px_24px_rgba(0,0,0,0.07)] crx-animate-slide crx-delay-${i + 2}`}
             >
               <div className="flex items-center justify-between mb-3">
-                <span className="text-sm text-[#7A7A7A]">{card.title}</span>
-                <div className="h-10 w-10 rounded-xl bg-[#FFF3C4] flex items-center justify-center">
-                  <Icon className="h-5 w-5 text-[#1A1A1A]" />
+                <span className="text-sm text-ink-3">{card.title}</span>
+                <div className="h-10 w-10 rounded-xl bg-action-soft flex items-center justify-center">
+                  <Icon className="h-5 w-5 text-ink" />
                 </div>
               </div>
-              <p className="text-[40px] font-light font-num text-[#1A1A1A] leading-tight truncate">
+              <p className="text-[40px] font-light font-num text-ink leading-tight truncate">
                 {isLoading ? "--" : card.value}
               </p>
-              <p className="text-xs text-[#B0B0B0] mt-1">{card.sub}</p>
+              <p className="text-xs text-ink-4 mt-1">{card.sub}</p>
             </div>
           );
         })}
       </div>
 
       {/* Leaderboard Table */}
-      <div className="rounded-2xl border border-[#E8E0D0] bg-white overflow-hidden shadow-[0_2px_16px_rgba(0,0,0,0.05)] crx-animate-slide crx-delay-6">
-        <div className="px-6 py-4 border-b border-[#F0EAD8]">
-          <h3 className="font-semibold font-serif text-[#1A1A1A]">Rankings</h3>
+      <div className="rounded-2xl border border-border bg-surface overflow-hidden shadow-[0_2px_16px_rgba(0,0,0,0.05)] crx-animate-slide crx-delay-6">
+        <div className="px-6 py-4 border-b border-border">
+          <h3 className="font-semibold font-serif text-ink">Rankings</h3>
         </div>
         {isLoading ? (
-          <p className="py-8 text-center text-sm text-[#B0B0B0]">Loading...</p>
+          <p className="py-8 text-center text-sm text-ink-4">Loading...</p>
         ) : entries.length === 0 ? (
-          <p className="py-8 text-center text-sm text-[#B0B0B0]">No data found.</p>
+          <p className="py-8 text-center text-sm text-ink-4">No data found.</p>
         ) : (
           <>
             <div className="hidden sm:block overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b border-[#F0EAD8]">
-                    <th className="text-left py-3 px-5 text-[#7A7A7A] text-xs font-medium w-16">Rank</th>
-                    <th className="text-left py-3 px-4 text-[#7A7A7A] text-xs font-medium">Employee</th>
-                    <th className="text-right py-3 px-4 text-[#7A7A7A] text-xs font-medium">Reports</th>
-                    <th className="text-right py-3 px-4 text-[#7A7A7A] text-xs font-medium">Links</th>
-                    <th className="text-right py-3 px-4 text-[#7A7A7A] text-xs font-medium" title="Average links per reporting day (days the employee submitted), not per calendar day">Avg/Report</th>
-                    <th className="text-center py-3 px-4 text-[#7A7A7A] text-xs font-medium">Streak</th>
-                    <th className="text-center py-3 px-4 text-[#7A7A7A] text-xs font-medium">Best Streak</th>
-                    <th className="text-right py-3 px-4 text-[#7A7A7A] text-xs font-medium" title="Views + likes + comments from collected link metrics (YouTube views; IG/FB/Snapchat likes+comments).">Engagement</th>
+                  <tr className="border-b border-border">
+                    <th className="text-left py-3 px-5 text-ink-3 text-xs font-medium w-16">Rank</th>
+                    <th className="text-left py-3 px-4 text-ink-3 text-xs font-medium">Employee</th>
+                    <th className="text-right py-3 px-4 text-ink-3 text-xs font-medium">Reports</th>
+                    <th className="text-right py-3 px-4 text-ink-3 text-xs font-medium">Links</th>
+                    <th className="text-right py-3 px-4 text-ink-3 text-xs font-medium" title="Average links per reporting day (days the employee submitted), not per calendar day">Avg/Report</th>
+                    <th className="text-center py-3 px-4 text-ink-3 text-xs font-medium">Streak</th>
+                    <th className="text-center py-3 px-4 text-ink-3 text-xs font-medium">Best Streak</th>
+                    <th className="text-right py-3 px-4 text-ink-3 text-xs font-medium" title="Views + likes + comments from collected link metrics (YouTube views; IG/FB/Snapchat likes+comments).">Engagement</th>
                   </tr>
                 </thead>
                 <tbody>
                   {entries.map((entry: any) => (
                     <tr
                       key={entry.employee.id}
-                      className="border-b border-[#F0EAD8] last:border-0 hover:bg-[rgba(255,248,225,0.5)] transition-colors"
+                      className="border-b border-border last:border-0 hover:bg-[rgba(255,248,225,0.5)] transition-colors"
                     >
                       <td className="py-3 px-5 text-center">
                         <RankBadge rank={entry.rank} size="lg" />
@@ -252,25 +252,25 @@ export default function AdminLeaderboardPage() {
                           <div>
                             <Link
                               href={`/reports/${entry.employee.id}`}
-                              className="font-medium text-[#1A1A1A] hover:text-[#F5D547]"
+                              className="font-medium text-ink hover:text-action"
                             >
                               {entry.employee.name}
                             </Link>
-                            <p className="text-xs text-[#B0B0B0]">{entry.employee.email}</p>
+                            <p className="text-xs text-ink-4">{entry.employee.email}</p>
                           </div>
                         </div>
                       </td>
-                      <td className="py-3 px-4 text-right font-medium text-[#1A1A1A]">{entry.totalReports}</td>
-                      <td className="py-3 px-4 text-right text-[#1A1A1A]">{entry.totalLinks}</td>
-                      <td className="py-3 px-4 text-right text-[#1A1A1A]">{entry.avgLinksPerReport ?? entry.avgLinksPerDay}</td>
+                      <td className="py-3 px-4 text-right font-medium text-ink">{entry.totalReports}</td>
+                      <td className="py-3 px-4 text-right text-ink">{entry.totalLinks}</td>
+                      <td className="py-3 px-4 text-right text-ink">{entry.avgLinksPerReport ?? entry.avgLinksPerDay}</td>
                       <td className="py-3 px-4 text-center">
                         <span className="flex items-center justify-center gap-1">
-                          <Flame className="h-4 w-4 text-[#F5A623]" />
-                          <span className="font-medium text-[#1A1A1A]">{entry.currentStreak}</span>
+                          <Flame className="h-4 w-4 text-gold" />
+                          <span className="font-medium text-ink">{entry.currentStreak}</span>
                         </span>
                       </td>
-                      <td className="py-3 px-4 text-center font-medium text-[#1A1A1A]">{entry.longestStreak}</td>
-                      <td className="py-3 px-4 text-right text-[#1A1A1A]" title={`${(entry.engagementViews ?? 0).toLocaleString()} views · ${(entry.engagementLikes ?? 0).toLocaleString()} likes · ${(entry.engagementComments ?? 0).toLocaleString()} comments`}>{fmtCompact(entry.totalEngagement)}</td>
+                      <td className="py-3 px-4 text-center font-medium text-ink">{entry.longestStreak}</td>
+                      <td className="py-3 px-4 text-right text-ink" title={`${(entry.engagementViews ?? 0).toLocaleString()} views · ${(entry.engagementLikes ?? 0).toLocaleString()} likes · ${(entry.engagementComments ?? 0).toLocaleString()} comments`}>{fmtCompact(entry.totalEngagement)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -292,7 +292,7 @@ export default function AdminLeaderboardPage() {
                       label: "Streak",
                       value: (
                         <span className="inline-flex items-center gap-1">
-                          <Flame className="h-3.5 w-3.5 text-[#F5A623]" />
+                          <Flame className="h-3.5 w-3.5 text-gold" />
                           {entry.currentStreak}
                         </span>
                       ),
@@ -308,16 +308,16 @@ export default function AdminLeaderboardPage() {
       </div>
 
       {/* ============ Top Links Leaderboard (engagement ranking) ============ */}
-      <div className="rounded-2xl border border-[#E8E0D0] bg-white overflow-hidden shadow-[0_2px_16px_rgba(0,0,0,0.05)] crx-animate-slide crx-delay-6">
-        <div className="px-6 py-4 border-b border-[#F0EAD8] flex items-center gap-2">
-          <TrendingUp className="h-5 w-5 text-[#F5A623]" />
-          <h3 className="font-semibold font-serif text-[#1A1A1A]">Total Collected Engagement</h3>
-          <span className="text-xs text-[#B0B0B0] font-normal">raw cross-platform volume &mdash; not a fair ranking</span>
+      <div className="rounded-2xl border border-border bg-surface overflow-hidden shadow-[0_2px_16px_rgba(0,0,0,0.05)] crx-animate-slide crx-delay-6">
+        <div className="px-6 py-4 border-b border-border flex items-center gap-2">
+          <TrendingUp className="h-5 w-5 text-gold" />
+          <h3 className="font-semibold font-serif text-ink">Total Collected Engagement</h3>
+          <span className="text-xs text-ink-4 font-normal">raw cross-platform volume &mdash; not a fair ranking</span>
         </div>
         {/* Honest coverage note */}
-        <div className="px-6 py-3 bg-[#FFFBEF] border-b border-[#F0EAD8] flex items-start gap-2">
-          <Info className="h-4 w-4 text-[#B0B0B0] mt-0.5 shrink-0" />
-          <p className="text-xs text-[#7A7A7A] leading-relaxed">
+        <div className="px-6 py-3 bg-surface border-b border-border flex items-start gap-2">
+          <Info className="h-4 w-4 text-ink-4 mt-0.5 shrink-0" />
+          <p className="text-xs text-ink-3 leading-relaxed">
             <span className="font-medium">This is raw total volume, not a fair ranking</span> &mdash; it sums views&nbsp;+&nbsp;likes&nbsp;+&nbsp;comments across platforms, but platforms don&rsquo;t expose the same metrics or scales (Facebook&rsquo;s raw numbers dwarf YouTube&rsquo;s, and Instagram has no views at all), so it structurally favors some platforms. <span className="font-medium">For a fair comparison, use the per-platform boards below.</span> It&rsquo;s the same data behind the Top&nbsp;Links panels.
             YouTube and Facebook contribute <span className="font-medium">views&nbsp;+&nbsp;likes&nbsp;+&nbsp;comments</span>; Instagram contributes <span className="font-medium">likes&nbsp;+&nbsp;comments</span> only (Instagram doesn&rsquo;t expose a view count &mdash; so a 0 in Views is correct for an Instagram post, not missing data; a 0 on a YouTube or Facebook post means its metrics haven&rsquo;t been collected yet).
             {" "}Snapchat links are counted in submission totals but engagement metrics are not collected via API.
@@ -332,29 +332,29 @@ export default function AdminLeaderboardPage() {
           </p>
         </div>
         {tlLoading ? (
-          <p className="py-8 text-center text-sm text-[#B0B0B0]">Loading...</p>
+          <p className="py-8 text-center text-sm text-ink-4">Loading...</p>
         ) : tlEntries.length === 0 ? (
-          <p className="py-8 text-center text-sm text-[#B0B0B0]">No engagement data yet for this period.</p>
+          <p className="py-8 text-center text-sm text-ink-4">No engagement data yet for this period.</p>
         ) : (
           <>
             <div className="hidden sm:block overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b border-[#F0EAD8]">
-                    <th className="text-left py-3 px-5 text-[#7A7A7A] text-xs font-medium w-16">Rank</th>
-                    <th className="text-left py-3 px-4 text-[#7A7A7A] text-xs font-medium">Employee</th>
-                    <th className="text-right py-3 px-4 text-[#7A7A7A] text-xs font-medium">Views</th>
-                    <th className="text-right py-3 px-4 text-[#7A7A7A] text-xs font-medium">Likes</th>
-                    <th className="text-right py-3 px-4 text-[#7A7A7A] text-xs font-medium">Comments</th>
-                    <th className="text-right py-3 px-4 text-[#7A7A7A] text-xs font-medium" title="Links with metrics collected / total links submitted. Coverage fills in over time as the metrics job runs.">Links (metrics&nbsp;/&nbsp;sent)</th>
-                    <th className="text-right py-3 px-4 text-[#7A7A7A] text-xs font-medium">Total Engagement</th>
+                  <tr className="border-b border-border">
+                    <th className="text-left py-3 px-5 text-ink-3 text-xs font-medium w-16">Rank</th>
+                    <th className="text-left py-3 px-4 text-ink-3 text-xs font-medium">Employee</th>
+                    <th className="text-right py-3 px-4 text-ink-3 text-xs font-medium">Views</th>
+                    <th className="text-right py-3 px-4 text-ink-3 text-xs font-medium">Likes</th>
+                    <th className="text-right py-3 px-4 text-ink-3 text-xs font-medium">Comments</th>
+                    <th className="text-right py-3 px-4 text-ink-3 text-xs font-medium" title="Links with metrics collected / total links submitted. Coverage fills in over time as the metrics job runs.">Links (metrics&nbsp;/&nbsp;sent)</th>
+                    <th className="text-right py-3 px-4 text-ink-3 text-xs font-medium">Total Engagement</th>
                   </tr>
                 </thead>
                 <tbody>
                   {tlEntries.map((entry: any) => (
                     <tr
                       key={entry.employee.id}
-                      className="border-b border-[#F0EAD8] last:border-0 hover:bg-[rgba(255,248,225,0.5)] transition-colors"
+                      className="border-b border-border last:border-0 hover:bg-[rgba(255,248,225,0.5)] transition-colors"
                     >
                       <td className="py-3 px-5 text-center">
                         <RankBadge rank={entry.rank} size="lg" />
@@ -370,30 +370,30 @@ export default function AdminLeaderboardPage() {
                           <div>
                             <Link
                               href={`/reports/${entry.employee.id}`}
-                              className="font-medium text-[#1A1A1A] hover:text-[#F5D547]"
+                              className="font-medium text-ink hover:text-action"
                             >
                               {entry.employee.name}
                             </Link>
-                            <p className="text-xs text-[#B0B0B0]">{entry.employee.email}</p>
+                            <p className="text-xs text-ink-4">{entry.employee.email}</p>
                           </div>
                         </div>
                       </td>
-                      <td className="py-3 px-4 text-right text-[#1A1A1A]">
+                      <td className="py-3 px-4 text-right text-ink">
                         <span className="inline-flex items-center justify-end gap-1" title={`${(entry.views ?? 0).toLocaleString()} views`}>
-                          <Eye className="h-3.5 w-3.5 text-[#B0B0B0]" />{fmtCompact(entry.views)}
+                          <Eye className="h-3.5 w-3.5 text-ink-4" />{fmtCompact(entry.views)}
                         </span>
                       </td>
-                      <td className="py-3 px-4 text-right text-[#1A1A1A]">
+                      <td className="py-3 px-4 text-right text-ink">
                         <span className="inline-flex items-center justify-end gap-1" title={`${(entry.likes ?? 0).toLocaleString()} likes`}>
-                          <Heart className="h-3.5 w-3.5 text-[#B0B0B0]" />{fmtCompact(entry.likes)}
+                          <Heart className="h-3.5 w-3.5 text-ink-4" />{fmtCompact(entry.likes)}
                         </span>
                       </td>
-                      <td className="py-3 px-4 text-right text-[#1A1A1A]">
+                      <td className="py-3 px-4 text-right text-ink">
                         <span className="inline-flex items-center justify-end gap-1" title={`${(entry.comments ?? 0).toLocaleString()} comments`}>
-                          <MessageCircle className="h-3.5 w-3.5 text-[#B0B0B0]" />{fmtCompact(entry.comments)}
+                          <MessageCircle className="h-3.5 w-3.5 text-ink-4" />{fmtCompact(entry.comments)}
                         </span>
                       </td>
-                      <td className="py-3 px-4 text-right text-[#7A7A7A]">
+                      <td className="py-3 px-4 text-right text-ink-3">
                         {(() => {
                           const covered = entry.engagedLinkCount ?? 0;
                           const submitted = entry.submittedLinkCount ?? covered;
@@ -404,15 +404,15 @@ export default function AdminLeaderboardPage() {
                                 ? `Metrics collected on ${covered.toLocaleString()} of ${submitted.toLocaleString()} submitted links — the rest are still being collected (Instagram metrics lag the most).`
                                 : `Metrics on all ${covered.toLocaleString()} links`}
                             >
-                              <span className="text-[#1A1A1A]">{covered.toLocaleString()}</span>
+                              <span className="text-ink">{covered.toLocaleString()}</span>
                               {partial && (
-                                <span className="text-[#B0B0B0]"> / {submitted.toLocaleString()}</span>
+                                <span className="text-ink-4"> / {submitted.toLocaleString()}</span>
                               )}
                             </span>
                           );
                         })()}
                       </td>
-                      <td className="py-3 px-4 text-right font-semibold text-[#1A1A1A]" title={`${(entry.totalEngagement ?? 0).toLocaleString()} total`}>{fmtCompact(entry.totalEngagement)}</td>
+                      <td className="py-3 px-4 text-right font-semibold text-ink" title={`${(entry.totalEngagement ?? 0).toLocaleString()} total`}>{fmtCompact(entry.totalEngagement)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -435,7 +435,7 @@ export default function AdminLeaderboardPage() {
                         label: "Views",
                         value: (
                           <span className="inline-flex items-center gap-1 justify-end">
-                            <Eye className="h-3.5 w-3.5 text-[#B0B0B0]" />{fmtCompact(entry.views)}
+                            <Eye className="h-3.5 w-3.5 text-ink-4" />{fmtCompact(entry.views)}
                           </span>
                         ),
                       },
@@ -443,7 +443,7 @@ export default function AdminLeaderboardPage() {
                         label: "Likes",
                         value: (
                           <span className="inline-flex items-center gap-1 justify-end">
-                            <Heart className="h-3.5 w-3.5 text-[#B0B0B0]" />{fmtCompact(entry.likes)}
+                            <Heart className="h-3.5 w-3.5 text-ink-4" />{fmtCompact(entry.likes)}
                           </span>
                         ),
                       },
@@ -451,7 +451,7 @@ export default function AdminLeaderboardPage() {
                         label: "Comments",
                         value: (
                           <span className="inline-flex items-center gap-1 justify-end">
-                            <MessageCircle className="h-3.5 w-3.5 text-[#B0B0B0]" />{fmtCompact(entry.comments)}
+                            <MessageCircle className="h-3.5 w-3.5 text-ink-4" />{fmtCompact(entry.comments)}
                           </span>
                         ),
                       },
@@ -483,33 +483,33 @@ export default function AdminLeaderboardPage() {
       ] as const).map(({ key, label, rankBy, showViews, showLikes }) => {
         const board = platBoards[key] ?? [];
         return (
-          <div key={key} className="rounded-2xl border border-[#E8E0D0] bg-white overflow-hidden shadow-[0_2px_16px_rgba(0,0,0,0.05)]">
-            <div className="px-6 py-4 border-b border-[#F0EAD8] flex items-center gap-2">
-              <TrendingUp className="h-5 w-5 text-[#F5A623]" />
-              <h3 className="font-semibold font-serif text-[#1A1A1A]">{label} Leaderboard</h3>
-              <span className="text-xs text-[#B0B0B0] font-normal">ranked by {rankBy}{!showViews && " (Instagram exposes no view count)"}{!showLikes && " (Snapchat exposes no like count)"}</span>
+          <div key={key} className="rounded-2xl border border-border bg-surface overflow-hidden shadow-[0_2px_16px_rgba(0,0,0,0.05)]">
+            <div className="px-6 py-4 border-b border-border flex items-center gap-2">
+              <TrendingUp className="h-5 w-5 text-gold" />
+              <h3 className="font-semibold font-serif text-ink">{label} Leaderboard</h3>
+              <span className="text-xs text-ink-4 font-normal">ranked by {rankBy}{!showViews && " (Instagram exposes no view count)"}{!showLikes && " (Snapchat exposes no like count)"}</span>
             </div>
             {platLoading ? (
-              <p className="py-8 text-center text-sm text-[#B0B0B0]">Loading...</p>
+              <p className="py-8 text-center text-sm text-ink-4">Loading...</p>
             ) : board.length === 0 ? (
-              <p className="py-8 text-center text-sm text-[#B0B0B0]">No {label} engagement data yet for this period.</p>
+              <p className="py-8 text-center text-sm text-ink-4">No {label} engagement data yet for this period.</p>
             ) : (
               <>
                 <div className="hidden sm:block overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
-                      <tr className="border-b border-[#F0EAD8]">
-                        <th className="text-left py-3 px-5 text-[#7A7A7A] text-xs font-medium w-16">Rank</th>
-                        <th className="text-left py-3 px-4 text-[#7A7A7A] text-xs font-medium">Employee</th>
-                        {showViews && <th className="text-right py-3 px-4 text-[#7A7A7A] text-xs font-medium">Views</th>}
-                        {showLikes && <th className="text-right py-3 px-4 text-[#7A7A7A] text-xs font-medium">Likes</th>}
-                        <th className="text-right py-3 px-4 text-[#7A7A7A] text-xs font-medium">Comments</th>
-                        <th className="text-right py-3 px-4 text-[#7A7A7A] text-xs font-medium">Links</th>
+                      <tr className="border-b border-border">
+                        <th className="text-left py-3 px-5 text-ink-3 text-xs font-medium w-16">Rank</th>
+                        <th className="text-left py-3 px-4 text-ink-3 text-xs font-medium">Employee</th>
+                        {showViews && <th className="text-right py-3 px-4 text-ink-3 text-xs font-medium">Views</th>}
+                        {showLikes && <th className="text-right py-3 px-4 text-ink-3 text-xs font-medium">Likes</th>}
+                        <th className="text-right py-3 px-4 text-ink-3 text-xs font-medium">Comments</th>
+                        <th className="text-right py-3 px-4 text-ink-3 text-xs font-medium">Links</th>
                       </tr>
                     </thead>
                     <tbody>
                       {board.map((entry: any) => (
-                        <tr key={entry.employee.id} className="border-b border-[#F0EAD8] last:border-0 hover:bg-[rgba(255,248,225,0.5)] transition-colors">
+                        <tr key={entry.employee.id} className="border-b border-border last:border-0 hover:bg-[rgba(255,248,225,0.5)] transition-colors">
                           <td className="py-3 px-5 text-center">
                             <RankBadge rank={entry.rank} size="lg" />
                           </td>
@@ -517,31 +517,31 @@ export default function AdminLeaderboardPage() {
                             <div className="flex items-center gap-3">
                               <UserAvatar name={entry.employee.name} imageUrl={entry.employee.profileImageUrl} size={7} textClassName="text-xs" />
                               <div>
-                                <Link href={`/reports/${entry.employee.id}`} className="font-medium text-[#1A1A1A] hover:text-[#F5D547]">{entry.employee.name}</Link>
-                                <p className="text-xs text-[#B0B0B0]">{entry.employee.email}</p>
+                                <Link href={`/reports/${entry.employee.id}`} className="font-medium text-ink hover:text-action">{entry.employee.name}</Link>
+                                <p className="text-xs text-ink-4">{entry.employee.email}</p>
                               </div>
                             </div>
                           </td>
                           {showViews && (
-                            <td className="py-3 px-4 text-right text-[#1A1A1A]">
+                            <td className="py-3 px-4 text-right text-ink">
                               <span className="inline-flex items-center justify-end gap-1" title={`${(entry.views ?? 0).toLocaleString()} views`}>
-                                <Eye className="h-3.5 w-3.5 text-[#B0B0B0]" />{fmtCompact(entry.views)}
+                                <Eye className="h-3.5 w-3.5 text-ink-4" />{fmtCompact(entry.views)}
                               </span>
                             </td>
                           )}
                           {showLikes && (
-                            <td className="py-3 px-4 text-right text-[#1A1A1A]">
+                            <td className="py-3 px-4 text-right text-ink">
                               <span className="inline-flex items-center justify-end gap-1" title={`${(entry.likes ?? 0).toLocaleString()} likes`}>
-                                <Heart className="h-3.5 w-3.5 text-[#B0B0B0]" />{fmtCompact(entry.likes)}
+                                <Heart className="h-3.5 w-3.5 text-ink-4" />{fmtCompact(entry.likes)}
                               </span>
                             </td>
                           )}
-                          <td className="py-3 px-4 text-right text-[#1A1A1A]">
+                          <td className="py-3 px-4 text-right text-ink">
                             <span className="inline-flex items-center justify-end gap-1" title={`${(entry.comments ?? 0).toLocaleString()} comments`}>
-                              <MessageCircle className="h-3.5 w-3.5 text-[#B0B0B0]" />{fmtCompact(entry.comments)}
+                              <MessageCircle className="h-3.5 w-3.5 text-ink-4" />{fmtCompact(entry.comments)}
                             </span>
                           </td>
-                          <td className="py-3 px-4 text-right text-[#7A7A7A]" title={`Metrics collected on ${(entry.engagedLinkCount ?? 0).toLocaleString()} ${label} links`}>{(entry.engagedLinkCount ?? 0).toLocaleString()}</td>
+                          <td className="py-3 px-4 text-right text-ink-3" title={`Metrics collected on ${(entry.engagedLinkCount ?? 0).toLocaleString()} ${label} links`}>{(entry.engagedLinkCount ?? 0).toLocaleString()}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -562,7 +562,7 @@ export default function AdminLeaderboardPage() {
                                 label: "Views",
                                 value: (
                                   <span className="inline-flex items-center gap-1 justify-end">
-                                    <Eye className="h-3.5 w-3.5 text-[#B0B0B0]" />{fmtCompact(entry.views)}
+                                    <Eye className="h-3.5 w-3.5 text-ink-4" />{fmtCompact(entry.views)}
                                   </span>
                                 ),
                               },
@@ -574,7 +574,7 @@ export default function AdminLeaderboardPage() {
                                 label: "Likes",
                                 value: (
                                   <span className="inline-flex items-center gap-1 justify-end">
-                                    <Heart className="h-3.5 w-3.5 text-[#B0B0B0]" />{fmtCompact(entry.likes)}
+                                    <Heart className="h-3.5 w-3.5 text-ink-4" />{fmtCompact(entry.likes)}
                                   </span>
                                 ),
                               },
@@ -584,7 +584,7 @@ export default function AdminLeaderboardPage() {
                           label: "Comments",
                           value: (
                             <span className="inline-flex items-center gap-1 justify-end">
-                              <MessageCircle className="h-3.5 w-3.5 text-[#B0B0B0]" />{fmtCompact(entry.comments)}
+                              <MessageCircle className="h-3.5 w-3.5 text-ink-4" />{fmtCompact(entry.comments)}
                             </span>
                           ),
                         },

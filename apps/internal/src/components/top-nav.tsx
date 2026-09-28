@@ -58,14 +58,14 @@ function QuickAnnounceModal({ onClose }: { onClose: () => void }) {
   if (typeof document === "undefined") return null;
 
   if (done !== null) return createPortal((
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
       <div className="v3-card shadow-pop p-8 text-center w-full max-w-sm">
         <div className="h-14 w-14 rounded-xl border-2 border-ink bg-action flex items-center justify-center mx-auto mb-4">
           <Megaphone className="h-7 w-7 text-ink" />
         </div>
         <p className="text-lg font-bold text-ink font-display">Announcement sent!</p>
         <p className="text-sm text-ink-3 mt-1">Notified {done} employee{done !== 1 ? "s" : ""} via portal and email.</p>
-        <button onClick={onClose} className="mt-6 px-6 py-2.5 rounded-full bg-ink text-white text-sm font-bold btn-3d hover:bg-ink-2 transition-colors">
+        <button onClick={onClose} className="mt-6 px-6 py-2.5 rounded-full bg-action text-[#06121B] text-sm font-bold btn-3d hover:bg-action-deep transition-colors">
           Done
         </button>
       </div>
@@ -73,7 +73,7 @@ function QuickAnnounceModal({ onClose }: { onClose: () => void }) {
   ), document.body);
 
   return createPortal((
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
       <div className="v3-card shadow-pop w-full max-w-lg max-h-[calc(100dvh-2rem)] flex flex-col overflow-hidden pop-in" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-6 py-4 border-b-2 border-ink/10 shrink-0">
           <h2 className="font-bold text-ink flex items-center gap-2">
@@ -100,7 +100,7 @@ function QuickAnnounceModal({ onClose }: { onClose: () => void }) {
               <button type="button" onClick={() => setConfirming(false)} disabled={sending} className="w-full sm:w-auto px-5 py-2 rounded-full border-2 border-ink/15 text-sm text-ink-3 hover:bg-muted transition-colors disabled:opacity-50">
                 Back
               </button>
-              <button type="button" onClick={doSend} disabled={sending} className="w-full sm:w-auto justify-center px-5 py-2 rounded-full bg-ink text-white text-sm font-bold btn-3d hover:bg-ink-2 transition-colors disabled:opacity-50 inline-flex items-center gap-2 whitespace-nowrap">
+              <button type="button" onClick={doSend} disabled={sending} className="w-full sm:w-auto justify-center px-5 py-2 rounded-full bg-action text-[#06121B] text-sm font-bold btn-3d hover:bg-action-deep transition-colors disabled:opacity-50 inline-flex items-center gap-2 whitespace-nowrap">
                 <Megaphone size={15} className="shrink-0" />
                 {sending ? "Sending…" : "Yes, send to all"}
               </button>
@@ -140,7 +140,7 @@ function QuickAnnounceModal({ onClose }: { onClose: () => void }) {
             </div>
             <div className="flex flex-col gap-2.5 pt-1 sm:flex-row sm:items-center sm:justify-end sm:gap-3">
               <button type="button" onClick={onClose} className="w-full sm:w-auto px-5 py-2 rounded-full border-2 border-ink/15 text-sm text-ink-3 hover:bg-muted transition-colors">Cancel</button>
-              <button type="submit" disabled={!title.trim() || !message.trim()} className="w-full sm:w-auto justify-center px-5 py-2 rounded-full bg-ink text-white text-sm font-bold btn-3d hover:bg-ink-2 transition-colors disabled:opacity-50 inline-flex items-center gap-2 whitespace-nowrap">
+              <button type="submit" disabled={!title.trim() || !message.trim()} className="w-full sm:w-auto justify-center px-5 py-2 rounded-full bg-action text-[#06121B] text-sm font-bold btn-3d hover:bg-action-deep transition-colors disabled:opacity-50 inline-flex items-center gap-2 whitespace-nowrap">
                 <Megaphone size={15} className="shrink-0" />
                 Review &amp; send
               </button>

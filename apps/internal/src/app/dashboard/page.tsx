@@ -41,7 +41,7 @@ const moreStats: { key: string; label: string; icon: any; href: string }[] = [
 function CustomTooltip({ active, payload, label }: any) {
   if (!active || !payload?.length) return null;
   return (
-    <div className="bg-ink text-white text-xs rounded-lg px-3 py-2 shadow-lg">
+    <div className="bg-action text-[#06121B] text-xs rounded-lg px-3 py-2 shadow-lg">
       <p className="font-semibold mb-0.5">{label}</p>
       <p>{payload[0].value} link{payload[0].value !== 1 ? "s" : ""}</p>
     </div>
@@ -378,7 +378,7 @@ export default function DashboardPage() {
             </div>
             <Link
               href="/employees/pending"
-              className="flex items-center gap-1.5 px-4 py-2 rounded-full bg-ink text-white text-sm font-bold btn-3d hover:bg-ink-2 transition-colors"
+              className="flex items-center gap-1.5 px-4 py-2 rounded-full bg-action text-[#06121B] text-sm font-bold btn-3d hover:bg-action-deep transition-colors"
             >
               Review <ArrowRight className="h-3.5 w-3.5" />
             </Link>
@@ -421,7 +421,7 @@ export default function DashboardPage() {
                 onClick={() => setShowDatePicker((v) => !v)}
                 className={`h-7 px-3 rounded-full text-xs font-semibold transition-all border-2 flex items-center gap-1.5 ${
                   showDatePicker
-                    ? "bg-ink text-white border-ink"
+                    ? "bg-action text-[#06121B] border-ink"
                     : "bg-surface text-ink-4 border-ink/12 hover:border-ink/25 hover:text-ink"
                 }`}
               >
@@ -449,7 +449,7 @@ export default function DashboardPage() {
                   value={linkStart}
                   max={linkEnd}
                   onChange={(e) => setLinkStart(e.target.value)}
-                  className="h-8 rounded-lg border-2 border-ink/15 bg-white text-xs px-2 focus:outline-none focus:border-indigo transition-colors"
+                  className="h-8 rounded-lg border-2 border-ink/15 bg-surface text-xs px-2 focus:outline-none focus:border-indigo transition-colors"
                 />
               </div>
               <div className="flex items-center gap-2">
@@ -460,12 +460,12 @@ export default function DashboardPage() {
                   min={linkStart}
                   max={toISO(today)}
                   onChange={(e) => setLinkEnd(e.target.value)}
-                  className="h-8 rounded-lg border-2 border-ink/15 bg-white text-xs px-2 focus:outline-none focus:border-indigo transition-colors"
+                  className="h-8 rounded-lg border-2 border-ink/15 bg-surface text-xs px-2 focus:outline-none focus:border-indigo transition-colors"
                 />
               </div>
               <button
                 onClick={() => setShowDatePicker(false)}
-                className="h-8 px-3 rounded-lg bg-ink text-white text-xs font-semibold hover:bg-ink-2 transition-colors"
+                className="h-8 px-3 rounded-lg bg-action text-[#06121B] text-xs font-semibold hover:bg-action-deep transition-colors"
               >
                 Apply
               </button>
@@ -1020,7 +1020,7 @@ export default function DashboardPage() {
                     .slice()
                     .sort((a, b) => (b.totalViews + b.totalLikes + b.totalComments) - (a.totalViews + a.totalLikes + a.totalComments))
                     .map((p) => (
-                      <div key={p.platform} className="flex flex-wrap items-center gap-x-4 gap-y-1 py-1.5 border-t border-[#F0EAD8] first:border-t-0">
+                      <div key={p.platform} className="flex flex-wrap items-center gap-x-4 gap-y-1 py-1.5 border-t border-border first:border-t-0">
                         {/* w-24 is 96px of a ~300px phone row, which squeezed the four
                             metrics into a ragged wrap. Full width on phones gives the
                             platform its own line and the metrics a clean one below;

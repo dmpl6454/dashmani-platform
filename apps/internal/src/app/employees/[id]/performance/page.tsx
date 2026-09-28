@@ -20,18 +20,18 @@ const PLATFORM_COLORS: Record<string, string> = {
 };
 
 function getPlatformColor(slug: string) {
-  return PLATFORM_COLORS[slug?.toLowerCase()] ?? "bg-[#FFF3C4] text-[#1A1A1A]";
+  return PLATFORM_COLORS[slug?.toLowerCase()] ?? "bg-action-soft text-ink";
 }
 
 function HeatCell({ count }: { count: number }) {
   const bg =
     count === 0
-      ? "bg-[#F0EAD8]"
+      ? "bg-muted"
       : count <= 3
-        ? "bg-[#FAE89E]"
+        ? "bg-action-soft"
         : count <= 8
-          ? "bg-[#F5D547]"
-          : "bg-[#1A1A1A]";
+          ? "bg-action"
+          : "bg-[#1D2C3A]";
   return (
     <div
       className={`w-3 h-3 rounded-[2px] ${bg} transition-colors`}
@@ -48,7 +48,7 @@ export default function EmployeePerformancePage() {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#F5D547]" />
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-action" />
       </div>
     );
   }
@@ -56,10 +56,10 @@ export default function EmployeePerformancePage() {
   if (!perf) {
     return (
       <div className="space-y-4">
-        <Link href="/employees" className="flex items-center gap-1 text-sm text-[#7A7A7A] hover:text-[#1A1A1A]">
+        <Link href="/employees" className="flex items-center gap-1 text-sm text-ink-3 hover:text-ink">
           <ArrowLeft className="h-4 w-4" /> Back to Employees
         </Link>
-        <p className="text-[#7A7A7A]">Employee not found.</p>
+        <p className="text-ink-3">Employee not found.</p>
       </div>
     );
   }
@@ -100,11 +100,11 @@ export default function EmployeePerformancePage() {
     <div className="space-y-6 crx-animate-fade">
       {/* Header */}
       <div className="flex items-center gap-4">
-        <Link href="/employees" className="flex items-center gap-1 text-sm text-[#7A7A7A] hover:text-[#1A1A1A] transition-colors">
+        <Link href="/employees" className="flex items-center gap-1 text-sm text-ink-3 hover:text-ink transition-colors">
           <ArrowLeft className="h-4 w-4" /> Employees
         </Link>
-        <span className="text-[#E8E0D0]">/</span>
-        <Link href={`/reports/${id}`} className="text-sm text-[#7A7A7A] hover:text-[#1A1A1A] transition-colors">
+        <span className="text-ink-4">/</span>
+        <Link href={`/reports/${id}`} className="text-sm text-ink-3 hover:text-ink transition-colors">
           Reports
         </Link>
       </div>
@@ -120,31 +120,31 @@ export default function EmployeePerformancePage() {
             {employee.name?.[0]?.toUpperCase()}
           </div>
           <div className="min-w-0">
-            <h1 className="font-serif text-xl sm:text-4xl font-light text-[#1A1A1A] truncate">{employee.name}</h1>
+            <h1 className="font-serif text-xl sm:text-4xl font-light text-ink truncate">{employee.name}</h1>
             <div className="flex flex-wrap items-center gap-2 sm:gap-3 mt-1">
-              <span className="text-[#7A7A7A] text-xs sm:text-sm truncate">{employee.email}</span>
+              <span className="text-ink-3 text-xs sm:text-sm truncate">{employee.email}</span>
               {employee.designation && (
-                <span className="bg-[#FFF3C4] text-[#1A1A1A] px-2.5 py-0.5 rounded-full text-xs font-medium">{employee.designation}</span>
+                <span className="bg-action-soft text-ink px-2.5 py-0.5 rounded-full text-xs font-medium">{employee.designation}</span>
               )}
               {employee.team && (
-                <span className="text-xs text-[#7A7A7A] flex items-center gap-1">
+                <span className="text-xs text-ink-3 flex items-center gap-1">
                   <Briefcase className="h-3 w-3" /> {employee.team}
                 </span>
               )}
             </div>
             <div className="flex gap-1.5 mt-2">
               {employee.roles.map((role: string) => (
-                <span key={role} className="bg-[#1A1A1A] text-white px-2.5 py-0.5 rounded-full text-[10px] font-medium">{role}</span>
+                <span key={role} className="bg-action text-[#06121B] px-2.5 py-0.5 rounded-full text-[10px] font-medium">{role}</span>
               ))}
               <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-medium ${
-                employee.status === "ACTIVE" ? "bg-[rgba(107,203,119,0.12)] text-[#6BCB77]" : "bg-[rgba(0,0,0,0.06)] text-[#7A7A7A]"
+                employee.status === "ACTIVE" ? "bg-[rgba(107,203,119,0.12)] text-success" : "bg-[rgba(0,0,0,0.06)] text-ink-3"
               }`}>{employee.status}</span>
             </div>
           </div>
         </div>
         <Link
           href={`/reports/${id}`}
-          className="inline-flex items-center gap-2 bg-[#1A1A1A] text-white rounded-full px-5 py-2.5 text-sm font-medium hover:bg-[#2B2B2B] transition-all shrink-0 w-fit"
+          className="inline-flex items-center gap-2 bg-action text-[#06121B] rounded-full px-5 py-2.5 text-sm font-medium hover:bg-[#243645] transition-all shrink-0 w-fit"
         >
           <FileText className="h-4 w-4" /> View All Reports
         </Link>
@@ -155,13 +155,13 @@ export default function EmployeePerformancePage() {
         {statCards.map((card, i) => {
           const Icon = card.icon;
           return (
-            <div key={card.title} className={`bg-white rounded-2xl p-5 shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0] crx-animate-slide crx-delay-${Math.min(i + 1, 6)}`}>
+            <div key={card.title} className={`bg-surface rounded-2xl p-5 shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-border crx-animate-slide crx-delay-${Math.min(i + 1, 6)}`}>
               <div className="flex items-center justify-between mb-2">
-                <span className="text-xs text-[#7A7A7A]">{card.title}</span>
-                <Icon className="h-4 w-4 text-[#B0B0B0]" />
+                <span className="text-xs text-ink-3">{card.title}</span>
+                <Icon className="h-4 w-4 text-ink-4" />
               </div>
-              <p className="text-[28px] font-light font-num text-[#1A1A1A] leading-tight">{card.value}</p>
-              <p className="text-[10px] text-[#B0B0B0] mt-1">{card.sub}</p>
+              <p className="text-[28px] font-light font-num text-ink leading-tight">{card.value}</p>
+              <p className="text-[10px] text-ink-4 mt-1">{card.sub}</p>
             </div>
           );
         })}
@@ -172,13 +172,13 @@ export default function EmployeePerformancePage() {
         {engagementCards.map((card) => {
           const Icon = card.icon;
           return (
-            <div key={card.label} className="bg-white rounded-2xl p-3 sm:p-4 shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0] flex items-center gap-2 sm:gap-3 min-w-0">
-              <div className="h-9 w-9 sm:h-10 sm:w-10 rounded-xl bg-[#FFF8E1] flex items-center justify-center shrink-0">
+            <div key={card.label} className="bg-surface rounded-2xl p-3 sm:p-4 shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-border flex items-center gap-2 sm:gap-3 min-w-0">
+              <div className="h-9 w-9 sm:h-10 sm:w-10 rounded-xl bg-action-soft flex items-center justify-center shrink-0">
                 <Icon className={`h-4 w-4 sm:h-5 sm:w-5 ${card.color}`} />
               </div>
               <div className="min-w-0">
-                <p className="text-lg sm:text-xl font-light font-num text-[#1A1A1A]">{card.value.toLocaleString()}</p>
-                <p className="text-xs text-[#7A7A7A] truncate">{card.label}</p>
+                <p className="text-lg sm:text-xl font-light font-num text-ink">{card.value.toLocaleString()}</p>
+                <p className="text-xs text-ink-3 truncate">{card.label}</p>
               </div>
             </div>
           );
@@ -187,38 +187,38 @@ export default function EmployeePerformancePage() {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Submission Heatmap */}
-        <div className="lg:col-span-2 bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0] p-5">
+        <div className="lg:col-span-2 bg-surface rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-border p-5">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="font-serif text-[#1A1A1A] font-medium">Submission Activity</h3>
-            <span className="text-xs text-[#B0B0B0]">Last 90 days</span>
+            <h3 className="font-serif text-ink font-medium">Submission Activity</h3>
+            <span className="text-xs text-ink-4">Last 90 days</span>
           </div>
           <div className="flex gap-[3px] flex-wrap">
             {calendar.map((day: any) => (
               <div key={day.date} className="relative group">
                 <HeatCell count={day.linkCount} />
                 <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover:block z-10">
-                  <div className="bg-[#1A1A1A] text-white text-[10px] px-2 py-1 rounded-lg whitespace-nowrap">
+                  <div className="bg-action text-[#06121B] text-[10px] px-2 py-1 rounded-lg whitespace-nowrap">
                     {new Date(day.date).toLocaleDateString("en-IN", { month: "short", day: "numeric" })} — {day.linkCount} links
                   </div>
                 </div>
               </div>
             ))}
           </div>
-          <div className="flex items-center gap-2 mt-3 text-[10px] text-[#B0B0B0]">
+          <div className="flex items-center gap-2 mt-3 text-[10px] text-ink-4">
             <span>Less</span>
-            <div className="w-3 h-3 rounded-[2px] bg-[#F0EAD8]" />
-            <div className="w-3 h-3 rounded-[2px] bg-[#FAE89E]" />
-            <div className="w-3 h-3 rounded-[2px] bg-[#F5D547]" />
-            <div className="w-3 h-3 rounded-[2px] bg-[#1A1A1A]" />
+            <div className="w-3 h-3 rounded-[2px] bg-muted" />
+            <div className="w-3 h-3 rounded-[2px] bg-action-soft" />
+            <div className="w-3 h-3 rounded-[2px] bg-action" />
+            <div className="w-3 h-3 rounded-[2px] bg-[#1D2C3A]" />
             <span>More</span>
           </div>
         </div>
 
         {/* Platform Breakdown */}
-        <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0] p-5">
-          <h3 className="font-serif text-[#1A1A1A] font-medium mb-4">Platform Breakdown</h3>
+        <div className="bg-surface rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-border p-5">
+          <h3 className="font-serif text-ink font-medium mb-4">Platform Breakdown</h3>
           {platformBreakdown.length === 0 ? (
-            <p className="text-sm text-[#B0B0B0]">No platform data yet.</p>
+            <p className="text-sm text-ink-4">No platform data yet.</p>
           ) : (
             <div className="space-y-3">
               {platformBreakdown.map((p: any) => {
@@ -227,12 +227,12 @@ export default function EmployeePerformancePage() {
                   <div key={p.slug}>
                     <div className="flex items-center justify-between mb-1">
                       <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${getPlatformColor(p.slug)}`}>{p.name}</span>
-                      <span className="text-xs text-[#7A7A7A]">{p.links} links</span>
+                      <span className="text-xs text-ink-3">{p.links} links</span>
                     </div>
-                    <div className="h-2 bg-[#F0EAD8] rounded-full overflow-hidden">
-                      <div className="h-full bg-[#F5D547] rounded-full transition-all" style={{ width: `${pct}%` }} />
+                    <div className="h-2 bg-muted rounded-full overflow-hidden">
+                      <div className="h-full bg-action rounded-full transition-all" style={{ width: `${pct}%` }} />
                     </div>
-                    <p className="text-[10px] text-[#B0B0B0] mt-0.5">{pct}% — {p.engagement.toLocaleString()} engagement</p>
+                    <p className="text-[10px] text-ink-4 mt-0.5">{pct}% — {p.engagement.toLocaleString()} engagement</p>
                   </div>
                 );
               })}
@@ -242,12 +242,12 @@ export default function EmployeePerformancePage() {
       </div>
 
       {/* Weekly Trend */}
-      <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0] p-5">
+      <div className="bg-surface rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-border p-5">
         <div className="flex items-center justify-between mb-4">
-          <h3 className="font-serif text-[#1A1A1A] font-medium flex items-center gap-2">
-            <BarChart3 className="h-4 w-4 text-[#B0B0B0]" /> Weekly Trend
+          <h3 className="font-serif text-ink font-medium flex items-center gap-2">
+            <BarChart3 className="h-4 w-4 text-ink-4" /> Weekly Trend
           </h3>
-          <span className="text-xs text-[#B0B0B0]">Last 12 weeks</span>
+          <span className="text-xs text-ink-4">Last 12 weeks</span>
         </div>
         {/* min-w-0 on each column: flex items default to min-width:auto, so 12 columns
             of content-sized labels overflowed the container instead of shrinking. */}
@@ -258,16 +258,16 @@ export default function EmployeePerformancePage() {
               <div key={i} className="flex-1 min-w-0 flex flex-col items-center gap-1 group">
                 <div className="relative w-full flex justify-center">
                   <div className="absolute -top-6 hidden group-hover:block">
-                    <span className="bg-[#1A1A1A] text-white text-[10px] px-2 py-0.5 rounded-lg whitespace-nowrap">
+                    <span className="bg-action text-[#06121B] text-[10px] px-2 py-0.5 rounded-lg whitespace-nowrap">
                       {w.reports}r / {w.links}l
                     </span>
                   </div>
                   <div
-                    className="w-full max-w-[28px] rounded-t-lg bg-[#F5D547] hover:bg-[#E8C83A] transition-all"
+                    className="w-full max-w-[28px] rounded-t-lg bg-action hover:bg-action transition-all"
                     style={{ height: `${Math.max(h, 4)}%` }}
                   />
                 </div>
-                <span className="text-[9px] text-[#B0B0B0] truncate w-full text-center">{w.week}</span>
+                <span className="text-[9px] text-ink-4 truncate w-full text-center">{w.week}</span>
               </div>
             );
           })}
@@ -276,36 +276,36 @@ export default function EmployeePerformancePage() {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Recent Reports */}
-        <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0] p-5">
+        <div className="bg-surface rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-border p-5">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="font-serif text-[#1A1A1A] font-medium">Recent Reports</h3>
-            <Link href={`/reports/${id}`} className="text-xs text-[#1A1A1A] hover:text-[#F5D547] font-medium">View all</Link>
+            <h3 className="font-serif text-ink font-medium">Recent Reports</h3>
+            <Link href={`/reports/${id}`} className="text-xs text-ink hover:text-action font-medium">View all</Link>
           </div>
           {recentReports.length === 0 ? (
-            <p className="text-sm text-[#B0B0B0]">No reports yet.</p>
+            <p className="text-sm text-ink-4">No reports yet.</p>
           ) : (
             <div className="space-y-2">
               {recentReports.map((r: any) => (
-                <div key={r.id} className="flex items-center justify-between p-3 rounded-xl bg-[#FEFCF7] border border-[#F0EAD8] hover:bg-[#FFF8E1] transition-colors">
+                <div key={r.id} className="flex items-center justify-between p-3 rounded-xl bg-surface border border-border hover:bg-action-soft transition-colors">
                   <div className="flex items-center gap-3">
-                    <div className="h-9 w-9 rounded-lg bg-[#FFF3C4] flex items-center justify-center text-sm font-bold text-[#1A1A1A]">
+                    <div className="h-9 w-9 rounded-lg bg-action-soft flex items-center justify-center text-sm font-bold text-ink">
                       {r.linkCount}
                     </div>
                     <div>
-                      <p className="text-sm font-medium text-[#1A1A1A]">
+                      <p className="text-sm font-medium text-ink">
                         {new Date(r.date).toLocaleDateString("en-IN", { weekday: "short", month: "short", day: "numeric" })}
                       </p>
                       <div className="flex gap-1 mt-0.5">
                         {r.platforms.slice(0, 3).map((p: string) => (
-                          <span key={p} className="text-[9px] text-[#7A7A7A]">{p}</span>
+                          <span key={p} className="text-[9px] text-ink-3">{p}</span>
                         ))}
                       </div>
                     </div>
                   </div>
                   <div className="text-right">
-                    <p className="text-xs text-[#7A7A7A]">{r.linkCount} links</p>
+                    <p className="text-xs text-ink-3">{r.linkCount} links</p>
                     {r.totalEngagement > 0 && (
-                      <p className="text-[10px] text-[#B0B0B0]">{r.totalEngagement.toLocaleString()} views+likes+cmts</p>
+                      <p className="text-[10px] text-ink-4">{r.totalEngagement.toLocaleString()} views+likes+cmts</p>
                     )}
                   </div>
                 </div>
@@ -315,19 +315,19 @@ export default function EmployeePerformancePage() {
         </div>
 
         {/* Assigned Accounts */}
-        <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0] p-5">
+        <div className="bg-surface rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-border p-5">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="font-serif text-[#1A1A1A] font-medium flex items-center gap-2">
-              <Globe className="h-4 w-4 text-[#B0B0B0]" /> Assigned Accounts
+            <h3 className="font-serif text-ink font-medium flex items-center gap-2">
+              <Globe className="h-4 w-4 text-ink-4" /> Assigned Accounts
             </h3>
-            <span className="text-xs text-[#B0B0B0]">{assignedAccounts.length} active</span>
+            <span className="text-xs text-ink-4">{assignedAccounts.length} active</span>
           </div>
           {assignedAccounts.length === 0 ? (
-            <p className="text-sm text-[#B0B0B0]">No accounts assigned.</p>
+            <p className="text-sm text-ink-4">No accounts assigned.</p>
           ) : (
             <div className="space-y-2">
               {assignedAccounts.map((acc: any) => (
-                <div key={acc.id} className="flex items-center justify-between p-3 rounded-xl bg-[#FEFCF7] border border-[#F0EAD8]">
+                <div key={acc.id} className="flex items-center justify-between p-3 rounded-xl bg-surface border border-border">
                   <div className="flex items-center gap-3">
                     <div
                       className="h-9 w-9 rounded-full flex items-center justify-center text-white text-xs font-semibold"
@@ -336,12 +336,12 @@ export default function EmployeePerformancePage() {
                       {(acc.handle || acc.displayName)?.[0]?.toUpperCase()}
                     </div>
                     <div>
-                      <p className="text-sm font-medium text-[#1A1A1A]">{acc.handle || acc.displayName}</p>
-                      <p className="text-xs text-[#7A7A7A]">{acc.platform}</p>
+                      <p className="text-sm font-medium text-ink">{acc.handle || acc.displayName}</p>
+                      <p className="text-xs text-ink-3">{acc.platform}</p>
                     </div>
                   </div>
                   {acc.followerCount != null && (
-                    <span className="text-xs text-[#7A7A7A]">{acc.followerCount.toLocaleString()} followers</span>
+                    <span className="text-xs text-ink-3">{acc.followerCount.toLocaleString()} followers</span>
                   )}
                 </div>
               ))}

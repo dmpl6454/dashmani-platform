@@ -124,14 +124,14 @@ export function SyncBadge({
 
   const map = {
     LIVE: {
-      dot: "bg-[#3E9B4F]", cls: "text-[#3E9B4F] border-[#C6E8CB]",
+      dot: "bg-success", cls: "text-success border-success",
       label: ago ? `Live · ${ago}` : "Live",
       title: measured
         ? "Live — collected automatically from the platform within the last two days."
         : "Live — we checked this profile within the last two days. The platform published no follower count for it, which is why that column shows a dash.",
     },
     STALE: {
-      dot: "bg-[#C2861D]", cls: "text-[#C2861D] border-[#F3D9A4]",
+      dot: "bg-gold", cls: "text-gold border-border",
       label: ago ? `Stale · ${ago}` : "Stale",
       title:
         "Stale — we last MEASURED this figure more than two days ago, so it may have moved since. " +
@@ -140,12 +140,12 @@ export function SyncBadge({
         "Live-verified on Snapchat: a profile can simply begin withholding a count it used to publish.",
     },
     MANUAL: {
-      dot: "bg-[#7A7A7A]", cls: "text-[#7A7A7A] border-[#DCDCDC]",
+      dot: "bg-[#243645]", cls: "text-ink-3 border-border",
       label: "Manual",
       title: "Manual — never collected automatically, so this figure is whatever was entered by hand.",
     },
     UNAVAILABLE: {
-      dot: "bg-[#C2861D]", cls: "text-[#C2861D] border-[#F3D9A4]",
+      dot: "bg-gold", cls: "text-gold border-border",
       label: ago ? `No data · ${ago}` : "No data",
       title:
         "We check this channel automatically and the platform keeps returning nothing for it — so there has never been a " +
@@ -183,8 +183,8 @@ export function SourceBadge({ source }: { source: string | null | undefined }) {
         : "Scraper — parsed from the channel's public page because no API covers it. Accurate in practice, but best-effort: the platform can change the page and withhold a figure at any time."}
       className={`inline-flex items-center text-[10px] font-medium border rounded-full px-1.5 py-0.5 leading-none whitespace-nowrap ${
         isApi
-          ? "bg-[#EAF0FB] text-[#2F5FAE] border-[#CBDCF5]"
-          : "bg-[#F3EEF8] text-[#6B4E9B] border-[#DFD2EC]"}`}
+          ? "bg-action-soft text-[#2F5FAE] border-border"
+          : "bg-terra-soft text-terra border-border"}`}
     >
       {isApi ? "API" : "Scraper"}
     </span>
@@ -201,7 +201,7 @@ export function SourceBadge({ source }: { source: string | null | undefined }) {
 export function ErrorMark({ message }: { message: string }) {
   return (
     <span title={`The most recent collection for this channel failed, so any figures shown are from the last successful one. It is re-attempted on the next run; if the mark persists, the handle has most likely changed or the channel is gone, and someone needs to fix it here. The platform's reply: ${message}`}>
-      <AlertTriangle className="h-3 w-3 text-[#C2861D] shrink-0" />
+      <AlertTriangle className="h-3 w-3 text-gold shrink-0" />
     </span>
   );
 }
@@ -248,11 +248,11 @@ export function SortTh<K extends string>({
       <button
         onClick={() => onSort(colKey)}
         aria-pressed={active}
-        className={`inline-flex items-center gap-0.5 hover:text-[#1A1A1A] ${active ? "text-[#1A1A1A]" : ""}`}
+        className={`inline-flex items-center gap-0.5 hover:text-ink ${active ? "text-ink" : ""}`}
       >
         {label}
         {/* Fixed-width slot so headers do not shift as the arrow moves between columns. */}
-        <span className="inline-block w-2.5 text-[9px] leading-none text-[#5B4BF5]">
+        <span className="inline-block w-2.5 text-[9px] leading-none text-indigo">
           {active ? (sort.dir === "desc" ? "▼" : "▲") : ""}
         </span>
       </button>
@@ -289,7 +289,7 @@ export function ChannelLink({ url, name }: { url: string | null | undefined; nam
       aria-label={`Open ${name}`}
       // Bounded 12px icon, so shrink-0 is safe here — the documented trap is shrink-0 on
       // UNBOUNDED text, which can never wrap and therefore overflows its container.
-      className="shrink-0 text-[#C4C4C4] hover:text-[#5B4BF5] transition-colors"
+      className="shrink-0 text-ink-4 hover:text-indigo transition-colors"
     >
       <ExternalLink className="h-3 w-3" />
     </a>
@@ -340,7 +340,7 @@ export function ChangeLine({ change, days }: { change: TileChange | null | undef
   if (uncertainty != null && uncertainty > 0 && Math.abs(value) < uncertainty) {
     return (
       <p
-        className="mt-1 text-[10px] leading-tight text-[#B0B0B0]"
+        className="mt-1 text-[10px] leading-tight text-ink-4"
         title={
           `Across the ${channels + (suppressed ?? 0)} channel(s) measured over this period the platform ` +
           `publishes rounded figures, and those roundings add up to ±${fmtMetric(uncertainty)} — larger than the ` +
@@ -353,9 +353,9 @@ export function ChangeLine({ change, days }: { change: TileChange | null | undef
     );
   }
 
-  const tone = value > 0 ? "text-[#3E9B4F]" : value < 0 ? "text-[#C0504D]" : "text-[#8A8A8A]";
+  const tone = value > 0 ? "text-success" : value < 0 ? "text-danger" : "text-ink-3";
   return (
-    <p className="mt-1 text-[10px] leading-tight text-[#B0B0B0]" title={change.title}>
+    <p className="mt-1 text-[10px] leading-tight text-ink-4" title={change.title}>
       <span className={`font-medium ${tone}`}>{fmtDelta(value)}</span>{" "}
       <span>
         over {days}d · {channels} channel{channels === 1 ? "" : "s"}
@@ -477,24 +477,24 @@ export function ChannelBoardShell({
   const extra = board ? extraTotal(board) : null;
 
   return (
-    <section className="bg-white rounded-2xl border border-[#E8E0D0] shadow-[0_2px_16px_rgba(0,0,0,0.05)] overflow-hidden">
-      <div className="px-5 py-4 border-b border-[#F0EAE0]">
-        <h2 className="font-serif text-lg text-[#1A1A1A]">{title}</h2>
-        <p className="text-xs text-[#7A7A7A] mt-0.5">{subtitle}</p>
-        <p className="text-[11px] text-[#B0B0B0] mt-1 leading-snug max-w-3xl">{sourceNote}</p>
+    <section className="bg-surface rounded-2xl border border-border shadow-[0_2px_16px_rgba(0,0,0,0.05)] overflow-hidden">
+      <div className="px-5 py-4 border-b border-border">
+        <h2 className="font-serif text-lg text-ink">{title}</h2>
+        <p className="text-xs text-ink-3 mt-0.5">{subtitle}</p>
+        <p className="text-[11px] text-ink-4 mt-1 leading-snug max-w-3xl">{sourceNote}</p>
       </div>
 
       {err && (
-        <div className="mx-5 mt-4 flex items-start gap-2 text-xs text-[#C0504D] bg-[#FDF1F1] border border-[#F3C7C6] rounded-lg px-3 py-2">
+        <div className="mx-5 mt-4 flex items-start gap-2 text-xs text-danger bg-danger-bg border border-danger rounded-lg px-3 py-2">
           <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" /><span className="min-w-0">{err}</span>
         </div>
       )}
 
       {loadError && (
-        <p className="px-5 py-8 text-center text-xs text-[#C0504D]">
+        <p className="px-5 py-8 text-center text-xs text-danger">
           This board could not be loaded. Your submitted channels are safe — this is a loading
           problem, not a data problem.{" "}
-          <button onClick={() => void mutate()} className="underline hover:text-[#1A1A1A]">Retry</button>
+          <button onClick={() => void mutate()} className="underline hover:text-ink">Retry</button>
         </p>
       )}
 
@@ -502,7 +502,7 @@ export function ChannelBoardShell({
         // 3 tiles: one column on a phone, three from `sm`. ⚠️ Never two — with three
         // tiles a two-column grid orphans the last one onto a row of its own, which is
         // exactly what had to be fixed on the Meta board.
-        <div className="px-5 py-5 grid grid-cols-1 sm:grid-cols-3 gap-x-4 gap-y-5 border-b border-[#F0EAE0]">
+        <div className="px-5 py-5 grid grid-cols-1 sm:grid-cols-3 gap-x-4 gap-y-5 border-b border-border">
           {[
             {
               label: "Channels",
@@ -551,33 +551,33 @@ export function ChannelBoardShell({
               // Hairline between tiles only where all three are guaranteed to share a
               // row — at phone width the grid stacks and a leading border would land
               // mid-column and read as a bug.
-              className={`min-w-0 sm:border-l sm:border-[#F0EAE0] sm:pl-4 ${i === 0 ? "sm:border-l-0 sm:pl-0" : ""}`}
+              className={`min-w-0 sm:border-l sm:border-border sm:pl-4 ${i === 0 ? "sm:border-l-0 sm:pl-0" : ""}`}
             >
               <p
                 // ⚠️ clamp, not a fixed size, and the coefficient is deliberately small:
                 // `vw` is the WINDOW and the portal sidebar takes ~340px of it, so a
                 // generous coefficient ellipsises at 1024px inside a narrow tile.
-                className="font-num text-[clamp(1.5rem,2.2vw,2rem)] font-semibold tracking-tight leading-none text-[#1A1A1A] truncate"
+                className="font-num text-[clamp(1.5rem,2.2vw,2rem)] font-semibold tracking-tight leading-none text-ink truncate"
               >
                 {s.raw ? fmtExact(s.value) : fmtMetric(s.value)}
               </p>
-              <p className="mt-2 text-[10px] font-medium uppercase tracking-[0.08em] text-[#8A8A8A] truncate">
+              <p className="mt-2 text-[10px] font-medium uppercase tracking-[0.08em] text-ink-3 truncate">
                 {s.label}
               </p>
-              {s.note && <p className="mt-0.5 text-[10px] leading-tight text-[#B0B0B0]">{s.note}</p>}
+              {s.note && <p className="mt-0.5 text-[10px] leading-tight text-ink-4">{s.note}</p>}
               <ChangeLine change={s.change} days={days} />
             </div>
           ))}
         </div>
       )}
 
-      <div className="px-5 py-2.5 border-b border-[#F0EAE0] flex flex-wrap items-center gap-2">
+      <div className="px-5 py-2.5 border-b border-border flex flex-wrap items-center gap-2">
         {/* ⚠️ Each board owns its own period. They are not hoisted onto the page,
             because the Meta tab's windows are Meta's own (which it can answer at all)
             while these are day counts over our stored snapshots — the same "30" would
             mean two different things. */}
         <div className="flex flex-wrap items-center gap-1 mr-1" role="group" aria-label="Reporting period">
-          <span className="text-[11px] text-[#B0B0B0] mr-0.5">Period</span>
+          <span className="text-[11px] text-ink-4 mr-0.5">Period</span>
           {CHANNEL_PERIODS.map((d) => (
             <button
               key={d}
@@ -585,8 +585,8 @@ export function ChannelBoardShell({
               aria-pressed={days === d}
               className={`text-[11px] rounded-full px-2.5 py-1 border ${
                 days === d
-                  ? "bg-[#5B4BF5] text-white border-[#5B4BF5]"
-                  : "border-[#DCDCDC] text-[#7A7A7A] hover:bg-[#FAFAFA]"}`}
+                  ? "bg-indigo text-white border-indigo"
+                  : "border-border text-ink-3 hover:bg-surface"}`}
             >
               {d}d
             </button>
@@ -599,35 +599,35 @@ export function ChannelBoardShell({
           placeholder="Search channels…"
           // ⚠️ 16px on phones. iOS Safari auto-zooms into any focused input below that
           // and then pans the viewport, which is how controls end up off-screen.
-          className="text-[16px] sm:text-[11px] border border-[#DCDCDC] rounded-full px-3 py-1 w-40 focus:outline-none focus:border-[#B0B0B0]"
+          className="text-[16px] sm:text-[11px] border border-border rounded-full px-3 py-1 w-40 focus:outline-none focus:border-border"
         />
         <button
           onClick={() => { setManageMode((v) => !v); setAdded(null); setErr(null); }}
           aria-pressed={manageMode}
           title="Add a channel to this board, or remove one. Removing stops collection and hides it from every figure here; it can be restored anytime."
           className={`text-[11px] rounded-full px-2.5 py-1 border ${
-            manageMode ? "bg-[#1A1A1A] text-white border-[#1A1A1A]"
-            : "border-[#DCDCDC] text-[#7A7A7A] hover:bg-[#FAFAFA]"}`}
+            manageMode ? "bg-action text-[#06121B] border-[#33506A]"
+            : "border-border text-ink-3 hover:bg-surface"}`}
         >
           {manageMode ? "Done" : "Manage"}
         </button>
         <button
           onClick={() => setShowRemoved((v) => !v)}
           aria-expanded={showRemoved}
-          className="text-[11px] rounded-full px-2.5 py-1 border border-[#DCDCDC] text-[#7A7A7A] hover:bg-[#FAFAFA]"
+          className="text-[11px] rounded-full px-2.5 py-1 border border-border text-ink-3 hover:bg-surface"
         >
           Removed channels
         </button>
-        <span className="text-[11px] text-[#B0B0B0] ml-auto">
+        <span className="text-[11px] text-ink-4 ml-auto">
           {rows.length} channel(s)
           {needle && allRows.length !== rows.length && (
-            <span className="text-[#B0B0B0]"> of {allRows.length}</span>
+            <span className="text-ink-4"> of {allRows.length}</span>
           )}
         </span>
       </div>
 
       {manageMode && (
-        <div className="px-5 py-3 border-b border-[#F0EAE0] bg-[#FDF8EC]">
+        <div className="px-5 py-3 border-b border-border bg-action-soft">
           <form onSubmit={handleAdd} className="flex flex-wrap items-center gap-2">
             <input
               value={addHandle}
@@ -636,17 +636,17 @@ export function ChannelBoardShell({
               aria-label="Channel handle to add"
               disabled={busy !== null}
               // 16px on phones for the same iOS reason as the search box above.
-              className="text-[16px] sm:text-[12px] border border-[#DCDCDC] rounded-lg px-3 py-1.5 w-full sm:w-72 bg-white focus:outline-none focus:border-[#B0B0B0] disabled:opacity-50"
+              className="text-[16px] sm:text-[12px] border border-border rounded-lg px-3 py-1.5 w-full sm:w-72 bg-surface focus:outline-none focus:border-border disabled:opacity-50"
             />
             <button
               type="submit"
               disabled={!addHandle.trim() || busy !== null}
-              className="inline-flex items-center gap-1 text-[12px] font-medium rounded-full px-3 py-1.5 bg-[#5B4BF5] text-white disabled:opacity-40"
+              className="inline-flex items-center gap-1 text-[12px] font-medium rounded-full px-3 py-1.5 bg-indigo text-white disabled:opacity-40"
             >
               {busy === "add" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
               {busy === "add" ? "Looking it up…" : "Add channel"}
             </button>
-            <span className="basis-full sm:basis-auto text-[10px] text-[#B0B0B0] leading-snug">{addHint}</span>
+            <span className="basis-full sm:basis-auto text-[10px] text-ink-4 leading-snug">{addHint}</span>
           </form>
 
           {/* ⚠️ Say WHAT was resolved, not just "added". A handle that resolves proves a
@@ -654,7 +654,7 @@ export function ChannelBoardShell({
               back is what makes a wrong channel visible immediately instead of silently
               sitting on the board. */}
           {added && (
-            <p className="mt-2 text-[11px] text-[#3E9B4F] leading-snug">
+            <p className="mt-2 text-[11px] text-success leading-snug">
               {added.restored ? "Restored" : "Added"}{" "}
               <strong className="font-medium">{added.name}</strong>
               {added.followers !== null
@@ -666,14 +666,14 @@ export function ChannelBoardShell({
       )}
 
       {showRemoved && (
-        <div className="px-5 py-3 border-b border-[#F0EAE0] bg-[#FCFBF8]">
-          <p className="text-xs font-medium text-[#1A1A1A] mb-1.5">
+        <div className="px-5 py-3 border-b border-border bg-surface">
+          <p className="text-xs font-medium text-ink mb-1.5">
             Removed channels{removed ? ` (${removed.rows.length})` : ""}
           </p>
           {!removed ? (
-            <p className="text-[11px] text-[#B0B0B0]">Loading…</p>
+            <p className="text-[11px] text-ink-4">Loading…</p>
           ) : removed.rows.length === 0 ? (
-            <p className="text-[11px] text-[#B0B0B0]">
+            <p className="text-[11px] text-ink-4">
               Nothing here — removing a channel (via Manage) hides it from every figure on this
               board and stops collecting it, without deleting its history.
             </p>
@@ -681,12 +681,12 @@ export function ChannelBoardShell({
             <ul className="space-y-1">
               {removed.rows.map((r) => (
                 <li key={r.id} className="flex items-center gap-2 text-xs">
-                  <span className="truncate max-w-[260px] text-[#1A1A1A]">{r.displayName || r.handle}</span>
-                  <span className="text-[10px] text-[#B0B0B0] shrink-0">{fmtMetric(r.followerCount)} {followerNoun}</span>
+                  <span className="truncate max-w-[260px] text-ink">{r.displayName || r.handle}</span>
+                  <span className="text-[10px] text-ink-4 shrink-0">{fmtMetric(r.followerCount)} {followerNoun}</span>
                   <button
                     disabled={busy !== null}
                     onClick={() => void setActive(r, true)}
-                    className="ml-auto inline-flex items-center gap-1 text-[11px] text-[#5B4BF5] hover:underline disabled:opacity-40"
+                    className="ml-auto inline-flex items-center gap-1 text-[11px] text-indigo hover:underline disabled:opacity-40"
                   >
                     <RotateCcw className="h-3 w-3" />
                     {busy === `restore-${r.id}` ? "Restoring…" : "Restore"}
@@ -702,14 +702,14 @@ export function ChannelBoardShell({
           channel yet has history spanning the window, say so and say since when — the
           figures are not missing, they are still being collected. */}
       {board && board.totals.withHistory === 0 && board.totals.channels > 0 && (
-        <div className="px-5 py-2 border-b border-[#F6F2EA] text-[10px] text-[#7A7A7A] leading-snug">
+        <div className="px-5 py-2 border-b border-border text-[10px] text-ink-3 leading-snug">
           {/* ⚠️ `board.days`, the period the SERVER echoed — never the local `days` state.
               Mid-fetch the two disagree, and this is the only sentence on the board that
               names a period, so it is the only place that could mislabel one. */}
           No channel has {board.days} days of history yet, so every change reads as a dash.
           {board.historyFrom
             ? <> We have been collecting since{" "}
-                <strong className="font-medium text-[#5A5A5A]">
+                <strong className="font-medium text-ink-3">
                   {new Date(`${board.historyFrom.slice(0, 10)}T00:00:00Z`).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" })}
                 </strong>, so the shorter periods fill in first.</>
             : <> Collection has only just started — the shorter periods fill in first.</>}
@@ -717,16 +717,16 @@ export function ChannelBoardShell({
       )}
 
       {columnNote && board && rows.length > 0 && (
-        <p className="px-5 py-2 border-b border-[#F6F2EA] text-[10px] text-[#7A7A7A] leading-snug">
+        <p className="px-5 py-2 border-b border-border text-[10px] text-ink-3 leading-snug">
           {columnNote}
         </p>
       )}
 
       <div className="overflow-x-auto">
         {isLoading && !board ? (
-          <p className="px-5 py-8 text-center text-xs text-[#7A7A7A]">Loading channels…</p>
+          <p className="px-5 py-8 text-center text-xs text-ink-3">Loading channels…</p>
         ) : !board ? null : rows.length === 0 ? (
-          <p className="px-5 py-8 text-center text-xs text-[#7A7A7A]">
+          <p className="px-5 py-8 text-center text-xs text-ink-3">
             {allRows.length === 0
               ? "No channels on this board yet — use Manage to add one."
               : "No channels match that search."}
@@ -736,7 +736,7 @@ export function ChannelBoardShell({
         )}
       </div>
 
-      <p className="px-5 py-3 text-[11px] text-[#B0B0B0] leading-snug border-t border-[#F0EAE0]">
+      <p className="px-5 py-3 text-[11px] text-ink-4 leading-snug border-t border-border">
         {footnote}
       </p>
     </section>
@@ -754,7 +754,7 @@ export function RemoveCell({ row, busy, onRemove }: {
         disabled={busy !== null}
         title={`Remove ${row.displayName || row.handle} from this board`}
         aria-label={`Remove ${row.displayName || row.handle} from this board`}
-        className="inline-flex items-center gap-1 text-[11px] text-[#C0504D] hover:underline disabled:opacity-40"
+        className="inline-flex items-center gap-1 text-[11px] text-danger hover:underline disabled:opacity-40"
       >
         <Trash2 className="h-3 w-3" />
         {busy === `remove-${row.id}` ? "Removing…" : "Remove"}

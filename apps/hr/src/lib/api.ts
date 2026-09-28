@@ -227,9 +227,35 @@ export async function apiUpload<T>(path: string, formData: FormData, _retried = 
  */
 let refreshInFlight: Promise<RefreshOutcome> | null = null;
 
+/**
+ * P1 cooldown. A transient refresh no longer ends the session, so without this every
+ * SWR error-retry of every hook on the page would call /hr/auth/refresh again during an
+ * outage. That endpoint carries no verified token, so in production it is rate-limited
+ * on the Cloudflare edge IP, in one bucket shared with every anonymous request behind
+ * that edge (login included). For 5 s after a transient outcome we answer "transient"
+ * without a request — unless the access token changed meanwhile (another tab refreshed
+ * or the user signed in again), in which case the refresh is attempted normally with the
+ * fresh pair. A successful refresh clears the cooldown.
+ */
+const TRANSIENT_REFRESH_COOLDOWN_MS = 5_000;
+let lastTransient: { at: number; access: string | null } | null = null;
+
 function tryRefresh(): Promise<RefreshOutcome> {
   if (!refreshInFlight) {
-    refreshInFlight = doRefresh().finally(() => { refreshInFlight = null; });
+    if (
+      lastTransient &&
+      Date.now() - lastTransient.at < TRANSIENT_REFRESH_COOLDOWN_MS &&
+      localStorage.getItem("hrAccessToken") === lastTransient.access
+    ) {
+      return Promise.resolve("transient");
+    }
+    const accessAtStart = localStorage.getItem("hrAccessToken");
+    refreshInFlight = doRefresh()
+      .then((outcome) => {
+        lastTransient = outcome === "transient" ? { at: Date.now(), access: accessAtStart } : null;
+        return outcome;
+      })
+      .finally(() => { refreshInFlight = null; });
   }
   return refreshInFlight;
 }

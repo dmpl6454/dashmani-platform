@@ -26,6 +26,8 @@ export * from "./pipeline/mentions";
 export * from "./pipeline/text";
 export * from "./pipeline/sync-state";
 export * from "./pipeline/store";
+export * from "./pipeline/body-tokens";
+export * from "./pipeline/compose";
 export * as pipelineValidators from "./validators/pipeline";
 
 // Utils

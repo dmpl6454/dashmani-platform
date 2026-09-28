@@ -55,8 +55,11 @@ import {
   editMessage,
   deleteMessage,
   setReaction,
+  listTopLevel,
+  listReplies,
   type PipelineActor as MessageActor,
 } from "../services/pipeline/messages.service";
+import { markRead } from "../services/pipeline/sync.service";
 
 const router = Router();
 
@@ -271,6 +274,42 @@ async function messageActorOf(req: Request): Promise<MessageActor> {
   const { userId, settings, access } = req.pipeline!;
   return { userId, name: access.name, settings, directory: await getPipelineDirectory() };
 }
+
+// ── #15 GET /pipeline/projects/:id/messages (top-level history) ──────────────────────
+router.get(
+  "/pipeline/projects/:id/messages",
+  ...G,
+  pv(V.projectParamsSchema, "params"),
+  pv(V.messagesQuerySchema, "query"),
+  asyncHandler(async (req: Request, res: Response) => {
+    const q = req.query as unknown as { before?: number; limit: number };
+    return ok(res, await listTopLevel(await messageActorOf(req), req.params.id, q.before, q.limit));
+  }),
+);
+
+// ── #16 GET /pipeline/messages/:mid/replies ──────────────────────────────────────────
+router.get(
+  "/pipeline/messages/:mid/replies",
+  ...G,
+  pv(V.messageParamsSchema, "params"),
+  pv(V.repliesQuerySchema, "query"),
+  asyncHandler(async (req: Request, res: Response) => {
+    const q = req.query as unknown as { after: number; limit: number };
+    return ok(res, await listReplies(await messageActorOf(req), req.params.mid, q.after, q.limit));
+  }),
+);
+
+// ── #21 POST /pipeline/projects/:id/read (keepalive read marker) ─────────────────────
+router.post(
+  "/pipeline/projects/:id/read",
+  ...G,
+  pv(V.projectParamsSchema, "params"),
+  pv(V.readSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const { seq, leaving } = req.body as { seq: number; leaving?: boolean };
+    return ok(res, await markRead(req.pipeline!.userId, req.params.id, seq, leaving === true));
+  }),
+);
 
 // ── #17 POST /pipeline/projects/:id/messages ─────────────────────────────────────────
 router.post(

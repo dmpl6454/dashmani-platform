@@ -59,6 +59,39 @@ describe("safeNextPath (P5 allowlist)", () => {
     expect(safeNextPath(p as string | null | undefined)).toBe("/dashboard");
   });
 
+  // ⚠️ Dot segments. The raw string starts with /pipeline, but the URL parser resolves
+  // "..", so the path the router actually navigates to is somewhere else — and
+  // "/pipeline/..//evil.com" resolves to "//evil.com", a scheme-relative URL. The
+  // allowlist must judge the NORMALISED path, not the raw one.
+  it.each([
+    ["/pipeline/../report"],
+    ["/pipeline/..//evil.com"],
+    ["/pipeline/..//evil.com/phish"],
+    ["/pipeline/%2e%2e//evil.com"],
+    ["/pipeline/%2E%2E//evil.com"],
+    ["/pipeline/.%2e//evil.com"],
+    ["/pipeline/./../x"],
+    ["/pipeline/p1/../../dashboard"],
+    ["/pipeline/.."],
+    ["/pipeline/..?next=x"],
+  ])("rejects dot-segment escape %j → /dashboard", (p) => {
+    expect(safeNextPath(p)).toBe("/dashboard");
+  });
+
+  it("an encoded dot-segment escape inside ?next= is refused", () => {
+    expect(nextPathFromSearch("?next=/pipeline/%2e%2e//evil.com/phish")).toBe("/dashboard");
+    expect(nextPathFromSearch("?next=%2Fpipeline%2F..%2F%2Fevil.com")).toBe("/dashboard");
+  });
+
+  it("dot segments that stay inside /pipeline normalise to the resolved path", () => {
+    expect(safeNextPath("/pipeline/./p1")).toBe("/pipeline/p1");
+    expect(safeNextPath("/pipeline/a/../p1?view=board")).toBe("/pipeline/p1?view=board");
+  });
+
+  it("returns an already-normal deep link byte-unchanged", () => {
+    expect(safeNextPath("/pipeline/p1?view=board")).toBe("/pipeline/p1?view=board");
+  });
+
   it("rejects a non-string", () => {
     expect(safeNextPath(42 as unknown as string)).toBe("/dashboard");
     expect(safeNextPath({} as unknown as string)).toBe("/dashboard");

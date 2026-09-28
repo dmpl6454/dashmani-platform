@@ -235,6 +235,59 @@ describe("classifyDbError on real statements", () => {
   });
 });
 
+describe("data exceptions (SQLSTATE class 22) are the client's fault, never a 500", () => {
+  const capture = (p: Promise<unknown>) =>
+    p.then(
+      () => null,
+      (e: unknown) => e,
+    );
+
+  it("NUL in a raw parameter (P2010 22021) and through the ORM (UnknownRequestError) → 400 VALIDATION_ERROR", async () => {
+    const raw = await capture(pipelineDb.$queryRaw`SELECT ${"a\u0000b"}::text AS t`);
+    expect(classifyDbError(raw).sqlstate).toBe("22021");
+    expect(toPipelineError(raw)).toMatchObject({ statusCode: 400, code: "VALIDATION_ERROR" });
+    const orm = await capture(pipelineDb.systemSetting.findMany({ where: { key: "a\u0000b" } }));
+    expect(orm).toBeInstanceOf(Prisma.PrismaClientUnknownRequestError);
+    expect(toPipelineError(orm)).toMatchObject({ statusCode: 400, code: "VALIDATION_ERROR" });
+    // Through the wrapper and the middleware: a clean 400, not PIPELINE_INTERNAL.
+    const wrapped = await capture(pipelineRead((db) => db.$queryRaw`SELECT ${"a\u0000b"}::text AS t`));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { res, body } = runMiddleware(wrapped);
+    warn.mockRestore();
+    expect(res.statusCode).toBe(400);
+    expect(body.error.code).toBe("VALIDATION_ERROR");
+  });
+
+  it("int4 overflow (22003), a bad date (22008 / 22007), a \\u0000 in jsonb (22P05) and varchar overflow (22001) → 400", async () => {
+    const errs = [
+      await capture(pipelineDb.$queryRaw`SELECT (${2147483647}::int4 + 1) AS n`),
+      await capture(pipelineDb.$queryRaw`SELECT ${"2026-13-40"}::date AS d`),
+      await capture(pipelineDb.$queryRaw`SELECT ${"not a date"}::date AS d`),
+      await capture(pipelineDb.$queryRaw`SELECT ${'{"a":"\\u0000"}'}::jsonb AS j`),
+      await capture(
+        pipelineDb.$executeRaw`INSERT INTO pipeline_phases (id, key, name, position, updated_at)
+                               VALUES (gen_random_uuid()::text, 'zz_overflow', ${"n".repeat(500)}, 1, timezone('utc', now()))`,
+      ),
+    ];
+    expect(errs.map((e) => classifyDbError(e).sqlstate)).toEqual(["22003", "22008", "22007", "22P05", "22001"]);
+    for (const e of errs) expect(toPipelineError(e)).toMatchObject({ statusCode: 400, code: "VALIDATION_ERROR" });
+  });
+
+  it("text the validators accepted — even from NUL or lone-surrogate input — is always storable", async () => {
+    const { pipelineValidators: pv } = await import("@dashmani/shared");
+    const values = [
+      pv.pipelineTitle.parse("Launch\u0000plan \ud83d"),
+      pv.pipelineBody.parse("hello \ud83d\u0000"),
+      pv.pipelineDescription.parse("x\udc00y"),
+      pv.deleteProjectSchema.parse({ confirmTitle: "a\u0000\ud800" }).confirmTitle,
+    ];
+    for (const s of values) {
+      const rows = await pipelineDb.$queryRaw<Array<{ t: string }>>`SELECT ${s}::text AS t`;
+      expect(rows[0].t).toBe(s);
+    }
+  });
+});
+
 describe("classifyDbError on stubbed shapes", () => {
   it("P2024 (pool timeout) and P2028 (transaction API error) → 503", () => {
     for (const code of ["P2024", "P2028"]) {

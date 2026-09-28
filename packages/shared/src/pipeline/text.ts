@@ -13,28 +13,47 @@ import { scanMentionTokens } from "./mentions";
  * Bidirectional-override and isolate controls that can visually reorder text (spoofed
  * names, disguised links): U+202A–202E, U+2066–2069, U+200E/200F and U+061C.
  */
-const BIDI_CONTROLS = /[‪-‮⁦-⁩‎‏؜]/g;
+const BIDI_CONTROLS = /[\u202A-\u202E\u2066-\u2069\u200E\u200F\u061C]/g;
 
 /** C0 controls except TAB (U+0009) and LF (U+000A). */
 const C0_EXCEPT_TAB_LF = /[\u0000-\u0008\u000B-\u001F]/g;
+
+/** Every C0 control and DEL — none belongs in a single-line field such as a title. */
+const LINE_CONTROLS = /[\u0000-\u001F\u007F]/g;
 
 export function stripBidi(s: string): string {
   return s.replace(BIDI_CONTROLS, "");
 }
 
 /**
- * Description and message bodies: NFC, CRLF → LF, C0 controls stripped (TAB and LF kept),
- * bidi controls stripped, trimmed. Never tag-strips: these fields are user text rendered
- * only as text, and `safeString` would silently delete anything between `<` and `>`.
- * Callers MUST bound the length before calling (the validators do).
+ * Description and message bodies: lone surrogates → U+FFFD, NFC, CRLF → LF, C0 controls
+ * stripped (TAB and LF kept), bidi controls stripped, trimmed. Never tag-strips: these
+ * fields are user text rendered only as text, and `safeString` would silently delete
+ * anything between `<` and `>`. Callers MUST bound the length before calling (the
+ * validators do).
+ *
+ * ⚠️ The surrogate and NUL handling is what keeps these fields STORABLE: Postgres text
+ * rejects NUL (SQLSTATE 22021) and Prisma cannot serialise a lone surrogate at all — both
+ * would otherwise surface as an unrecognised error (500) instead of a clean 400. A
+ * composer that cuts an emoji pair at the length limit produces a lone surrogate.
  */
 export function normalizeText(s: string): string {
-  return s
+  return toWellFormed(s)
     .normalize("NFC")
     .replace(/\r\n/g, "\n")
     .replace(C0_EXCEPT_TAB_LF, "")
     .replace(BIDI_CONTROLS, "")
     .trim();
+}
+
+/**
+ * Single-line fields (titles, the delete confirmation): lone surrogates → U+FFFD, bidi
+ * controls stripped, and every C0 control and DEL — NUL, TAB, CR, LF — replaced by a space.
+ * Linear; callers MUST bound the length first. Does not trim or tag-strip (the title
+ * validator pipes the result into `safeString`, which does both).
+ */
+export function cleanLine(s: string): string {
+  return toWellFormed(stripBidi(s)).replace(LINE_CONTROLS, " ");
 }
 
 /** Replace unpaired UTF-16 surrogates with U+FFFD (a lone surrogate cannot be stored or rendered). */

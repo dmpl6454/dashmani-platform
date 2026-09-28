@@ -258,6 +258,39 @@ describe("validators", () => {
     expect(v.pipelineTitle.safeParse("x".repeat(120)).success).toBe(true);
   });
 
+  // ⚠️ Postgres text cannot hold NUL (22021 "invalid byte sequence") and Prisma cannot even
+  // serialise a lone UTF-16 surrogate (a ValidationError before the query is sent). Both
+  // would reach the error mapper as an unrecognised error → 500 PIPELINE_INTERNAL, so the
+  // validators must never hand either to a handler. A composer cutting an emoji pair at the
+  // 4,000-code-unit limit produces a lone surrogate quite realistically.
+  it("title: NUL and other controls become spaces, a lone surrogate becomes U+FFFD", () => {
+    expect(v.pipelineTitle.parse("Launch\u0000plan")).toBe("Launch plan");
+    expect(v.pipelineTitle.parse("Launch\tplan\r\nnow\u007F")).toBe("Launch plan  now");
+    expect(v.pipelineTitle.parse("Launch \ud83d")).toBe("Launch �");
+    expect(v.pipelineTitle.parse("x\udc00y")).toBe("x�y");
+    expect(v.pipelineTitle.parse("ok 😀")).toBe("ok 😀"); // a real pair is kept
+    expect(v.pipelineTitle.safeParse("\u0000\u0001").success).toBe(false); // nothing left
+    expect(v.createProjectSchema.parse({ clientId: U(1), title: "A\u0000B" }).title).toBe("A B");
+    expect(v.editProjectSchema.parse({ changes: { title: "N\u0000" }, base: { title: "O\ud800" } })).toEqual({
+      changes: { title: "N" },
+      base: { title: "O�" },
+    });
+  });
+
+  it("body and description: a lone surrogate becomes U+FFFD, NUL is removed", () => {
+    expect(v.pipelineBody.parse("hello \ud83d")).toBe("hello �");
+    expect(v.pipelineBody.parse("a\u0000b 😀")).toBe("ab 😀");
+    expect(v.pipelineDescription.parse("x\udc00y")).toBe("x�y");
+    expect(v.postMessageSchema.parse({ clientId: U(1), body: "hi \ud83d" }).body).toBe("hi �");
+    expect(v.editMessageSchema.parse({ body: "\udc00" }).body).toBe("�");
+    expect(normalizeText("a\ud83d\u0000b")).toBe("a�b");
+  });
+
+  it("the delete confirmation title is cleaned the same way (it may be compared in SQL)", () => {
+    expect(v.deleteProjectSchema.parse({ confirmTitle: "Launch\u0000plan \ud83d" }).confirmTitle).toBe("Launch plan �");
+    expect(v.deleteProjectSchema.safeParse({ confirmTitle: "x".repeat(241) }).success).toBe(false);
+  });
+
   it("body: over 4,000 characters fails; empty after normalisation fails; normalised on success", () => {
     expect(v.pipelineBody.safeParse("x".repeat(4001)).success).toBe(false);
     expect(v.pipelineBody.safeParse("x".repeat(4000)).success).toBe(true);

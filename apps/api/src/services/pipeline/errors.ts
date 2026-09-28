@@ -16,6 +16,8 @@
  *                                                keys BEFORE this, by constraint name)
  *   P2025                                      → 404 <MODEL>_NOT_FOUND
  *   P2003 / 23503                              → 404 PHASE_ / PROJECT_ / MESSAGE_ / USER_NOT_FOUND
+ *   22021, 22P05, 22001, 22003, 22007, 22008   → 400 VALIDATION_ERROR (a value the validators
+ *                                                should have cleaned — logged, throttled)
  *   40P01, 40001 (after withRetryOnce), P2024, P2028, 57014, 55P03, connection loss,
  *   server shutdown or out of resources        → 503 PIPELINE_BUSY + retryAfterSec
  *   anything else                              → 500 PIPELINE_INTERNAL, logged with the
@@ -25,6 +27,7 @@ import type { Request, Response, NextFunction } from "express";
 import { ZodError } from "zod";
 import { MentionLimitError } from "@dashmani/shared";
 import { AppError } from "../../middleware/error-handler";
+import { warnThrottled } from "../../utils/throttled-warn";
 import { Prisma } from "./db";
 
 /** How long a client should wait before retrying a 503 from the pipeline. */
@@ -214,6 +217,18 @@ function fkNotFoundCode(info: DbErrorInfo): string {
 
 const BUSY_MESSAGE = "The pipeline is busy — retrying shortly";
 
+/**
+ * Data exceptions (SQLSTATE class 22) a client value can cause: NUL in text (22021), an
+ * unconvertible escape in jsonb (22P05), a string over a VarChar limit (22001), an integer
+ * out of range (22003), a bad or out-of-range date (22007 / 22008). The validators clean
+ * or bound every one of these, so reaching the mapper means a validator gap — still the
+ * request's fault (400, never a generic 500), and logged so the gap is noticed.
+ * ⚠️ A lone UTF-16 surrogate never reaches Postgres: Prisma refuses to serialise it
+ * (PrismaClientValidationError / "InvalidArg"). That stays a logged 500 on purpose — it
+ * is indistinguishable from a real argument bug — and the validators replace them.
+ */
+const DATA_EXCEPTIONS = new Set(["22021", "22P05", "22001", "22003", "22007", "22008"]);
+
 /** Map a DB error to its HTTP meaning; null when it is not one we recognise. */
 function dbToPipelineError(err: unknown, info: DbErrorInfo): PipelineDbError | null {
   const s = info.sqlstate;
@@ -222,6 +237,9 @@ function dbToPipelineError(err: unknown, info: DbErrorInfo): PipelineDbError | n
     return new PipelineDbError(503, "PIPELINE_BUSY", BUSY_MESSAGE, info, err, {
       retryAfterSec: PIPELINE_RETRY_AFTER_SEC,
     });
+  }
+  if (DATA_EXCEPTIONS.has(s)) {
+    return new PipelineDbError(400, "VALIDATION_ERROR", "Some of that can't be saved — please check it and try again", info, err);
   }
   if (s === "23505") return new PipelineDbError(409, "CONFLICT", "That was changed at the same time — please retry", info, err);
   if (s === "P2025") {
@@ -291,20 +309,23 @@ export async function withRetryOnce<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 // ── Logging ──────────────────────────────────────────────────────────────────────────
-// 503s are expected under load and must not flood the log (morgan already logs every
-// request), so each (code, sqlstate) pair is logged at most once per 10 s.
-const BUSY_LOG_EVERY_MS = 10_000;
-const lastBusyLog = new Map<string, number>();
+// These are expected under load or from a misbehaving client, and must stay visible
+// without flooding the log. ⚠️ morgan is mounted AFTER the pipeline limiter and parser, so
+// a 413 / INVALID_JSON answered at app level never reaches it — this line is the only
+// trace. Each (status, code, sqlstate) is logged at most once per 10 s, with a count.
+function shouldLog(err: AppError): boolean {
+  if (err.statusCode >= 500) return true;
+  if (err.code === "PAYLOAD_TOO_LARGE" || err.code === "INVALID_JSON") return true;
+  // A class-22 data exception: a validator let something unstorable through.
+  return err instanceof PipelineDbError && err.code === "VALIDATION_ERROR";
+}
 
-function logBusy(err: AppError): void {
+function logMapped(err: AppError): void {
   const sqlstate = err instanceof PipelineDbError ? err.info.sqlstate : null;
-  const key = `${err.code}:${sqlstate ?? "-"}`;
-  const now = Date.now();
-  const last = lastBusyLog.get(key) ?? 0;
-  if (now - last < BUSY_LOG_EVERY_MS) return;
-  lastBusyLog.set(key, now);
-  if (lastBusyLog.size > 100) lastBusyLog.clear();
-  console.warn(`[pipeline] ${err.statusCode} ${err.code}${sqlstate ? ` (${sqlstate})` : ""}`);
+  warnThrottled(
+    `err:${err.statusCode}:${err.code}:${sqlstate ?? "-"}`,
+    `[pipeline] ${err.statusCode} ${err.code}${sqlstate ? ` (${sqlstate})` : ""}`,
+  );
 }
 
 function routeLabel(req: Request): string {
@@ -333,7 +354,7 @@ export function pipelineErrorMiddleware(err: unknown, req: Request, res: Respons
     });
     return;
   }
-  if (mapped.statusCode >= 500) logBusy(mapped);
+  if (shouldLog(mapped)) logMapped(mapped);
   const extra = mapped as AppError & { retryAfterSec?: unknown; current?: unknown };
   const body: Record<string, unknown> = { code: mapped.code, message: mapped.message };
   if (mapped.details) body.details = mapped.details;

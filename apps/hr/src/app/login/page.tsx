@@ -844,7 +844,7 @@ export default function LoginPage() {
       });
       const data = await res.json();
       if (!data.success) throw new Error(data.error?.message || "Registration failed");
-      setSuccessMsg(data.data.message || "Account created! An admin will approve it shortly.");
+      setSuccessMsg(data.data.message || "Account created! You can sign in now.");
       setSubmitState("success");
       setTimeout(() => {
         setTab("signin");
@@ -952,7 +952,7 @@ export default function LoginPage() {
                     {tab === "signin" ? "Sign in to clock in." : "Get on the team."}
                   </h2>
                   <p className="text-[12.5px] text-[#6C6555] mt-1 font-medium">
-                    {tab === "signin" ? "Use your studio email or phone to pick up where you left off." : "An admin will approve your account once you're in."}
+                    {tab === "signin" ? "Use your studio email or phone to pick up where you left off." : "Create your account to get started."}
                   </p>
                 </div>
               </div>
@@ -1093,7 +1093,7 @@ export default function LoginPage() {
                       {submitState === "success" && (<><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#F5D547" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="m5 12 4.5 4.5L19 7" strokeDasharray="24" style={{ animation: "auth-checkmark .42s cubic-bezier(0.22,1,0.36,1) forwards" }}/></svg><span>Account requested!</span></>)}
                     </button>
                   </div>
-                  <p className="text-[11px] text-[#9C947C] text-center mt-1">After registration, an admin must approve your account before you can log in.</p>
+                  <p className="text-[11px] text-[#9C947C] text-center mt-1">You can sign in as soon as your account is created.</p>
                 </form>
               )}
 

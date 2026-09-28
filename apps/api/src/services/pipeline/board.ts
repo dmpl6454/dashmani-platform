@@ -57,9 +57,28 @@ export async function bumpBoard(): Promise<number | null> {
   }
 }
 
-/** Called by the access gate: retry a bump that failed after its writer committed. */
+/** A pending bump is retried at most this often, so a persistent failure cannot tax every request. */
+const HEAL_MIN_INTERVAL_MS = 5_000;
+let healInflight: Promise<void> | null = null;
+let lastHealAttempt = 0;
+
+/**
+ * Called by the access gate: retry a bump that failed after its writer committed.
+ * Awaited (the feature has no fire-and-forget writes), but single-flight and throttled:
+ * while one request is healing, or within 5 s of the last attempt, others skip it — so a
+ * board row stuck behind a lock costs one request per 5 s, never every request.
+ */
 export async function healPendingBoardBump(): Promise<void> {
-  if (boardBumpPending) await bumpBoard();
+  if (!boardBumpPending || healInflight) return;
+  const now = Date.now();
+  if (now - lastHealAttempt < HEAL_MIN_INTERVAL_MS) return;
+  lastHealAttempt = now;
+  healInflight = bumpBoard()
+    .then(() => undefined)
+    .finally(() => {
+      healInflight = null;
+    });
+  await healInflight;
 }
 
 // ── Live phases (bootstrap; the board snapshot reads phases in its own statement) ────
@@ -97,4 +116,5 @@ export function invalidatePhases(): void {
 export function resetBoardStateForTests(): void {
   boardBumpPending = false;
   warnedMissingRow = false;
+  lastHealAttempt = 0;
 }

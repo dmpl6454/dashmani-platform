@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { useState, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
+import { bellListView, pipelineNotificationUrl } from "@dashmani/shared";
 
 /* ── Compose-announcement modal (moved from dashboard — the only place it's used) ── */
 function QuickAnnounceModal({ onClose }: { onClose: () => void }) {
@@ -197,11 +198,15 @@ export function TopNav({ onOpenSearch }: { onOpenSearch?: () => void }) {
   const unreadCount = countData?.data?.count ?? 0;
 
   /* ── Notification list (only when panel open) ── */
-  const { data: notifsData, mutate: mutateNotifs } = useSWR(
+  const { data: notifsData, error: notifsError, isValidating: notifsValidating, mutate: mutateNotifs } = useSWR(
     bellOpen ? "/admin/notifications" : null,
-    (url: string) => apiFetch<any>(url)
+    (url: string) => apiFetch<any>(url),
+    { keepPreviousData: true, revalidateOnFocus: false, errorRetryCount: 3 }
   );
-  const notifications = notifsData?.data || [];
+  // Only a LOADED response may claim emptiness (P4, same rules as the HR bell —
+  // packages/shared/src/pipeline/bell.ts): loading, failed and empty are distinct.
+  const notifView = bellListView<any>(notifsData, notifsError);
+  const notifications = notifView.rows;
 
   async function markAllRead() {
     try {
@@ -358,8 +363,25 @@ export function TopNav({ onOpenSearch }: { onOpenSearch?: () => void }) {
                     <p className="text-sm font-semibold text-ink leading-snug">{selectedNotif.title}</p>
                     <p className="text-xs text-ink-4">{new Date(selectedNotif.createdAt).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}</p>
                     <p className="text-sm text-ink-3 leading-relaxed whitespace-pre-wrap">{selectedNotif.message}</p>
+                    {/* PIPELINE rows open the HR-portal project in a new tab — only for an
+                        allowlisted origin and a /pipeline/ path (never the title heuristic). */}
+                    {(() => {
+                      const url = pipelineNotificationUrl(selectedNotif);
+                      return url ? (
+                        <a
+                          href={url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          className="inline-flex items-center gap-1.5 mt-1 px-3 py-1.5 rounded-lg bg-indigo text-white text-xs font-semibold hover:bg-indigo-deep transition-colors"
+                        >
+                          Open in Employee Portal ↗
+                        </a>
+                      ) : null;
+                    })()}
                     {/* Deep-link to approval page for employee registration notifications */}
-                    {(selectedNotif.title?.toLowerCase().includes("registration") ||
+                    {selectedNotif.type !== "PIPELINE" &&
+                     (selectedNotif.title?.toLowerCase().includes("registration") ||
                       selectedNotif.title?.toLowerCase().includes("approval") ||
                       selectedNotif.message?.toLowerCase().includes("awaiting approval")) && (
                       <Link
@@ -384,12 +406,55 @@ export function TopNav({ onOpenSearch }: { onOpenSearch?: () => void }) {
                     )}
                   </div>
                   <div className="max-h-96 overflow-y-auto divide-y divide-rule">
-                    {notifications.length === 0 ? (
+                    {notifView.loading ? (
+                      /* Loading: skeleton, never a false "No notifications yet" */
+                      <div role="status" className="divide-y divide-rule">
+                        <span className="sr-only">Loading notifications…</span>
+                        {[0, 1, 2].map((i) => (
+                          <div key={i} className="px-4 py-3" aria-hidden="true">
+                            <div className="ml-4 space-y-1.5">
+                              <div className="h-3.5 w-2/3 rounded bg-muted motion-safe:animate-pulse" />
+                              <div className="h-3 w-full rounded bg-muted/70 motion-safe:animate-pulse" />
+                              <div className="h-2.5 w-14 rounded bg-muted/70 motion-safe:animate-pulse" />
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : notifView.failed && notifications.length === 0 ? (
+                      /* Failed with nothing loaded: say so, offer Retry */
+                      <div role="alert" className="p-8 text-center">
+                        <p className="text-sm text-ink-3">Couldn&apos;t load notifications</p>
+                        <button
+                          type="button"
+                          onClick={() => mutateNotifs()}
+                          disabled={notifsValidating}
+                          className="mt-3 inline-flex items-center justify-center min-h-[44px] px-5 rounded-xl border-2 border-ink/15 text-sm font-semibold text-ink btn-3d hover:bg-muted transition-colors disabled:opacity-60"
+                        >
+                          {notifsValidating ? "Retrying…" : "Retry"}
+                        </button>
+                      </div>
+                    ) : notifView.empty ? (
+                      /* Loaded [] — the only state allowed to claim emptiness */
                       <div className="p-8 text-center">
                         <BellOff className="h-8 w-8 mx-auto mb-2 text-ink-4 opacity-40" />
                         <p className="text-sm text-ink-4">No notifications yet</p>
                       </div>
-                    ) : notifications.map((n: any) => (
+                    ) : (<>
+                    {notifView.failed && (
+                      /* A refresh failed: keep the last loaded rows, say so */
+                      <div role="alert" className="flex items-center justify-between gap-2 px-4 py-2 bg-action-soft/40">
+                        <p className="text-xs text-ink-3 min-w-0">Couldn&apos;t refresh notifications</p>
+                        <button
+                          type="button"
+                          onClick={() => mutateNotifs()}
+                          disabled={notifsValidating}
+                          className="shrink-0 inline-flex items-center min-h-[44px] px-2 text-xs font-semibold text-indigo hover:text-indigo-deep disabled:opacity-60"
+                        >
+                          {notifsValidating ? "Retrying…" : "Retry"}
+                        </button>
+                      </div>
+                    )}
+                    {notifications.map((n: any) => (
                       <div
                         key={n.id}
                         onClick={() => openNotif(n)}
@@ -401,7 +466,22 @@ export function TopNav({ onOpenSearch }: { onOpenSearch?: () => void }) {
                             <p className={`text-sm ${!n.read ? "font-semibold text-ink" : "text-ink-3"}`}>{n.title}</p>
                             <p className="text-xs text-ink-4 mt-0.5 line-clamp-2">{n.message}</p>
                             <p className="text-[10px] text-ink-4 mt-1">{timeAgo(n.createdAt)}</p>
-                            {(n.title?.toLowerCase().includes("registration") ||
+                            {(() => {
+                              const url = pipelineNotificationUrl(n);
+                              return url ? (
+                                <a
+                                  href={url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="inline-flex items-center gap-1 mt-1.5 text-[10px] font-bold text-indigo hover:underline"
+                                >
+                                  Open in Employee Portal ↗
+                                </a>
+                              ) : null;
+                            })()}
+                            {n.type !== "PIPELINE" &&
+                             (n.title?.toLowerCase().includes("registration") ||
                               n.message?.toLowerCase().includes("awaiting approval")) && (
                               <Link
                                 href="/employees/pending"
@@ -416,6 +496,7 @@ export function TopNav({ onOpenSearch }: { onOpenSearch?: () => void }) {
                         </div>
                       </div>
                     ))}
+                    </>)}
                   </div>
                 </>
               )}

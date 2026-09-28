@@ -35,6 +35,8 @@ import {
   type PipelineEditMessageResponse,
   type PipelineDeleteMessageResponse,
   type PipelineReactionResponse,
+  type PipelineMessagesPage,
+  type PipelineRepliesPage,
 } from "@dashmani/shared";
 import { Prisma, type PipelineTx } from "./db";
 import { pipelineRead, pipelineWrite } from "./tx";
@@ -622,4 +624,74 @@ export async function setReaction(
    RETURNING m.reactions, m.rev`;
     return { messageId: mid, reactions: cleanReactions(updated[0].reactions), rev: updated[0].rev };
   });
+}
+
+// ── Route #15: top-level history (§3.4; keyset on seq, never OFFSET) ─────────────────
+
+/**
+ * One statement: the live project and ≤ limit+1 top-level messages below `before`,
+ * newest first through (project_id, parent_id, seq). Archived projects stay readable.
+ */
+export async function listTopLevel(
+  actor: PipelineActor,
+  projectId: string,
+  before: number | undefined,
+  limit: number,
+): Promise<PipelineMessagesPage> {
+  const beforeSql = before !== undefined ? Prisma.sql`AND m.seq < ${before}::int` : Prisma.empty;
+  const rows = await pipelineRead((db) =>
+    db.$queryRaw<Array<Partial<MessageRow> & { pid: string }>>`
+      SELECT p.id AS pid, h.*
+        FROM pipeline_projects p
+        LEFT JOIN LATERAL (
+          SELECT ${MESSAGE_COLUMNS} FROM pipeline_messages m
+           WHERE m.project_id = p.id AND m.parent_id IS NULL ${beforeSql}
+           ORDER BY m.seq DESC
+           LIMIT ${limit + 1}::int) h ON true
+       WHERE p.id = ${projectId} AND p.deleted_at IS NULL`,
+  );
+  if (rows.length === 0) throw notFoundProject();
+  const found = rows.filter((r) => r.id != null) as unknown as MessageRow[];
+  const page = found.slice(0, limit).reverse();
+  return { messages: page.map((r) => toWireMessage(r, actor)), hasOlder: found.length > limit };
+}
+
+// ── Route #16: a thread's replies (§3.4; keyset on seq) ──────────────────────────────
+
+/**
+ * One statement: the root (a reply id resolves to its root) and ≤ limit+1 replies after
+ * `after`, through (project_id, parent_id, seq). A soft-deleted project is a 404.
+ */
+export async function listReplies(
+  actor: PipelineActor,
+  mid: string,
+  after: number,
+  limit: number,
+): Promise<PipelineRepliesPage> {
+  const rows = await pipelineRead((db) =>
+    db.$queryRaw<Array<MessageRow & { kind: string }>>`
+      WITH tgt AS (
+        SELECT COALESCE(x.parent_id, x.id) AS root_id, x.project_id
+          FROM pipeline_messages x
+          JOIN pipeline_projects p ON p.id = x.project_id AND p.deleted_at IS NULL
+         WHERE x.id = ${mid})
+      SELECT 'root' AS kind, r.*
+        FROM tgt CROSS JOIN LATERAL (
+          SELECT ${MESSAGE_COLUMNS} FROM pipeline_messages m WHERE m.id = tgt.root_id) r
+      UNION ALL
+      SELECT 'reply' AS kind, c.*
+        FROM tgt CROSS JOIN LATERAL (
+          SELECT ${MESSAGE_COLUMNS} FROM pipeline_messages m
+           WHERE m.project_id = tgt.project_id AND m.parent_id = tgt.root_id AND m.seq > ${after}::int
+           ORDER BY m.seq
+           LIMIT ${limit + 1}::int) c`,
+  );
+  const root = rows.find((r) => r.kind === "root");
+  if (!root) throw notFoundMessage();
+  const replies = rows.filter((r) => r.kind === "reply").sort((a, b) => a.seq - b.seq);
+  return {
+    root: toWireMessage(root, actor),
+    replies: replies.slice(0, limit).map((r) => toWireMessage(r, actor)),
+    hasMore: replies.length > limit,
+  };
 }

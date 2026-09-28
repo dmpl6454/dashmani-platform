@@ -350,6 +350,132 @@ describe("pipeline messages", () => {
     });
   });
 
+  /** n top-level messages by `authorId` inserted directly (seq = rev = 1..n), counters set. */
+  async function seedTopLevel(projectId: string, authorId: string, n: number) {
+    await pipelineDb.pipelineMessage.createMany({
+      data: Array.from({ length: n }, (_, i) => ({
+        clientId: randomUUID(),
+        projectId,
+        seq: i + 1,
+        rev: i + 1,
+        authorId,
+        body: `m${i + 1}`,
+      })),
+    });
+    await pipelineDb.pipelineProject.update({ where: { id: projectId }, data: { lastMessageSeq: n, threadRev: n } });
+  }
+
+  describe("GET /projects/:id/messages (route #15)", () => {
+    const history = (userId: string, projectId: string, qs = "") =>
+      request(app).get(`/v1/pipeline/projects/${projectId}/messages${qs}`).set(auth(userId));
+
+    it("pages 30 at a time with ?before= and hasOlder, top-level only, oldest first", async () => {
+      const { owner, bob, project } = await setup();
+      await seedTopLevel(project.id, owner.id, 65);
+      const reply = await post(bob.id, project.id, {
+        clientId: randomUUID(),
+        body: "a reply",
+        parentId: (await messagesOf(project.id))[64].id,
+      });
+      expect(reply.status).toBe(201);
+
+      const p1 = await history(bob.id, project.id);
+      expect(p1.status).toBe(200);
+      expect(p1.headers["cache-control"]).toBe("no-store");
+      expect(p1.body.data.hasOlder).toBe(true);
+      expect(p1.body.data.messages.map((m: { seq: number }) => m.seq)).toEqual(Array.from({ length: 30 }, (_, i) => 36 + i));
+      const p2 = await history(bob.id, project.id, "?before=36");
+      expect(p2.body.data.messages.map((m: { seq: number }) => m.seq)).toEqual(Array.from({ length: 30 }, (_, i) => 6 + i));
+      expect(p2.body.data.hasOlder).toBe(true);
+      const p3 = await history(bob.id, project.id, "?before=6");
+      expect(p3.body.data.messages.map((m: { seq: number }) => m.seq)).toEqual([1, 2, 3, 4, 5]);
+      expect(p3.body.data.hasOlder).toBe(false);
+      // clientId only on the viewer's own messages.
+      expect(p1.body.data.messages[0].clientId).toBeUndefined();
+      expect((await history(owner.id, project.id)).body.data.messages[0].clientId).toEqual(expect.any(String));
+    });
+
+    it("honours ?limit (≤ 50) and 404s a deleted or unknown project", async () => {
+      const { owner, project } = await setup();
+      await seedTopLevel(project.id, owner.id, 3);
+      const r = await history(owner.id, project.id, "?limit=2");
+      expect(r.body.data.messages).toHaveLength(2);
+      expect(r.body.data.hasOlder).toBe(true);
+      expect((await history(owner.id, project.id, "?limit=51")).status).toBe(400);
+      await setProjectState(project.id, { deleted: true });
+      const gone = await history(owner.id, project.id);
+      expect(gone.status).toBe(404);
+      expect(gone.body.error.code).toBe("PROJECT_NOT_FOUND");
+      expect((await history(owner.id, randomUUID())).status).toBe(404);
+    });
+
+    it("an archived project is still readable", async () => {
+      const { owner, project } = await setup();
+      await seedTopLevel(project.id, owner.id, 2);
+      await setProjectState(project.id, { archived: true });
+      const r = await history(owner.id, project.id);
+      expect(r.status).toBe(200);
+      expect(r.body.data.messages).toHaveLength(2);
+    });
+  });
+
+  describe("GET /messages/:mid/replies (route #16)", () => {
+    it("returns the root and pages replies with ?after=", async () => {
+      const { owner, bob, project } = await setup();
+      const root = (await post(owner.id, project.id, { clientId: randomUUID(), body: "root" })).body.data.message;
+      const replies: string[] = [];
+      for (let i = 0; i < 5; i++) {
+        const r = await post(bob.id, project.id, { clientId: randomUUID(), body: `r${i}`, parentId: root.id });
+        replies.push(r.body.data.message.id);
+      }
+      await post(owner.id, project.id, { clientId: randomUUID(), body: "unrelated top-level" });
+      const get = (mid: string, qs = "") => request(app).get(`/v1/pipeline/messages/${mid}/replies${qs}`).set(auth(owner.id));
+      const a = await get(root.id, "?limit=2");
+      expect(a.status).toBe(200);
+      expect(a.body.data.root).toMatchObject({ id: root.id, replyCount: 5 });
+      expect(a.body.data.replies.map((m: { id: string }) => m.id)).toEqual(replies.slice(0, 2));
+      expect(a.body.data.hasMore).toBe(true);
+      const lastSeq = a.body.data.replies[1].seq;
+      const b = await get(root.id, `?after=${lastSeq}&limit=10`);
+      expect(b.body.data.replies.map((m: { id: string }) => m.id)).toEqual(replies.slice(2));
+      expect(b.body.data.hasMore).toBe(false);
+      // A reply id resolves to its root's thread.
+      const c = await get(replies[0]);
+      expect(c.body.data.root.id).toBe(root.id);
+      expect(c.body.data.replies).toHaveLength(5);
+      expect((await get(randomUUID())).status).toBe(404);
+    });
+  });
+
+  describe("POST /projects/:id/read (route #21)", () => {
+    const read = (userId: string, projectId: string, body: Record<string, unknown>) =>
+      request(app).post(`/v1/pipeline/projects/${projectId}/read`).set(auth(userId)).send(body);
+
+    it("advances last_read_seq monotonically, capped at last_message_seq; {leaving:true} nulls seen_at", async () => {
+      const { owner, bob, project } = await setup();
+      await seedTopLevel(project.id, owner.id, 10);
+      const a = await read(bob.id, project.id, { seq: 4 });
+      expect(a.status).toBe(200);
+      expect(a.body.data).toEqual({ lastReadSeq: 4 });
+      expect((await participantRow(project.id, bob.id))!.seenAt).not.toBeNull();
+      expect((await read(bob.id, project.id, { seq: 2 })).body.data).toEqual({ lastReadSeq: 4 });
+      expect((await read(bob.id, project.id, { seq: 999 })).body.data).toEqual({ lastReadSeq: 10 });
+      const leave = await read(bob.id, project.id, { seq: 10, leaving: true });
+      expect(leave.body.data).toEqual({ lastReadSeq: 10 });
+      expect((await participantRow(project.id, bob.id))!.seenAt).toBeNull();
+    });
+
+    it("a non-participant gets lastReadSeq 0 and no row is created", async () => {
+      const { owner, project } = await setup();
+      const zed = await createPipelineUser({ name: "Zed Six", tag: "msg-zed" });
+      await seedTopLevel(project.id, owner.id, 3);
+      const r = await read(zed.id, project.id, { seq: 3 });
+      expect(r.status).toBe(200);
+      expect(r.body.data).toEqual({ lastReadSeq: 0 });
+      expect(await participantRow(project.id, zed.id)).toBeNull();
+    });
+  });
+
   describe("PUT /messages/:mid/reactions/:emoji (route #20)", () => {
     it("{on:true} twice gives one entry and one rev bump; {on:false} removes it", async () => {
       const { owner, bob, project } = await setup();

@@ -24,6 +24,8 @@ export * from "./pipeline/constants";
 export * from "./pipeline/rank";
 export * from "./pipeline/mentions";
 export * from "./pipeline/text";
+export * from "./pipeline/sync-state";
+export * from "./pipeline/store";
 export * as pipelineValidators from "./validators/pipeline";
 
 // Utils

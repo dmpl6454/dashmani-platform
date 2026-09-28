@@ -59,7 +59,7 @@ import {
   listReplies,
   type PipelineActor as MessageActor,
 } from "../services/pipeline/messages.service";
-import { markRead } from "../services/pipeline/sync.service";
+import { markRead, syncPipeline } from "../services/pipeline/sync.service";
 
 const router = Router();
 
@@ -274,6 +274,16 @@ async function messageActorOf(req: Request): Promise<MessageActor> {
   const { userId, settings, access } = req.pipeline!;
   return { userId, name: access.name, settings, directory: await getPipelineDirectory() };
 }
+
+// ── #3 POST /pipeline/sync (literal path) ────────────────────────────────────────────
+router.post(
+  "/pipeline/sync",
+  ...G,
+  pv(V.syncRequestSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    return ok(res, await syncPipeline(await messageActorOf(req), req.body));
+  }),
+);
 
 // ── #15 GET /pipeline/projects/:id/messages (top-level history) ──────────────────────
 router.get(

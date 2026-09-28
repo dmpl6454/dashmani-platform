@@ -216,6 +216,84 @@ describe("pipeline gates", () => {
       expect((await get(DIR, hrToken(u.id))).status).toBe(200);
     });
 
+    it("while serving the last-known value after a failed read, settings are re-read at most every 2 s", async () => {
+      // Without a backoff every gated request after the 15 s TTL would start (and wait
+      // for) a fresh failing load before falling back — doubling time-to-answer and
+      // occupying a read slot per retry during exactly the blip it is riding out.
+      const u = await createPipelineUser({ name: "Bea Backoff", tag: "f-backoff" });
+      await setPipelineSetting("pipeline.mode", "on");
+      expect((await get(DIR, hrToken(u.id))).status).toBe(200);
+      __expirePipelineSettingsMemoForTests();
+      let calls = 0;
+      __setPipelineSettingsLoaderForTests(async () => {
+        calls++;
+        throw new Error("connection reset");
+      });
+      for (let i = 0; i < 3; i++) expect((await get(DIR, hrToken(u.id))).status).toBe(200);
+      expect(calls).toBe(1);
+      vi.useFakeTimers({ toFake: ["Date"] });
+      try {
+        vi.setSystemTime(Date.now() + 2_500);
+        expect((await get(DIR, hrToken(u.id))).status).toBe(200);
+      } finally {
+        vi.useRealTimers();
+      }
+      expect(calls).toBe(2);
+    });
+
+    it("with no last-known value, a failed settings read answers 503 fast for 2 s instead of re-reading per request", async () => {
+      const u = await createPipelineUser({ name: "Fio Fast", tag: "f-fastfail" });
+      let calls = 0;
+      __setPipelineSettingsLoaderForTests(async () => {
+        calls++;
+        throw new Error("connection reset");
+      });
+      for (let i = 0; i < 3; i++) {
+        const r = await get(DIR, hrToken(u.id));
+        expect(r.status).toBe(503);
+        expect(r.body.error.code).toBe("PIPELINE_BUSY");
+      }
+      expect(calls).toBe(1);
+      __setPipelineSettingsLoaderForTests(null);
+      await setPipelineSetting("pipeline.mode", "on");
+      vi.useFakeTimers({ toFake: ["Date"] });
+      try {
+        vi.setSystemTime(Date.now() + 2_500);
+        expect((await get(DIR, hrToken(u.id))).status).toBe(200);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("a transient self-check failure answers 503 without re-probing for 5 s, then checks again", async () => {
+      const u = await createPipelineUser({ name: "Tom Transient", tag: "f-transient" });
+      await setPipelineSetting("pipeline.mode", "on");
+      // A full gate makes the probe's pipelineRead fail with queue_full: transient (503),
+      // so the verdict stays unknown.
+      const s = pipelineGate.stats();
+      const held = await Promise.all(Array.from({ length: s.max }, () => pipelineGate.acquire("read")));
+      const fillers = Array.from({ length: s.queue }, () => pipelineGate.run("read", async () => undefined));
+      expect((await get(DIR, hrToken(u.id))).status).toBe(503);
+      for (const release of held) release();
+      await Promise.all(fillers);
+      expect(isPipelineSchemaOk()).toBeNull();
+
+      const granted = pipelineGate.stats().granted;
+      const again = await get(DIR, hrToken(u.id));
+      expect(again.status).toBe(503);
+      expect(again.body.error.code).toBe("PIPELINE_BUSY");
+      expect(pipelineGate.stats().granted).toBe(granted); // no probe was attempted
+
+      vi.useFakeTimers({ toFake: ["Date"] });
+      try {
+        vi.setSystemTime(Date.now() + 5_500);
+        expect((await get(DIR, hrToken(u.id))).status).toBe(200);
+      } finally {
+        vi.useRealTimers();
+      }
+      expect(isPipelineSchemaOk()).toBe(true);
+    });
+
     it("a failed schema self-check is 403 PIPELINE_DISABLED (paused), not 500", async () => {
       const u = await createPipelineUser({ name: "Sam Schema", tag: "f-schema" });
       await setPipelineSetting("pipeline.mode", "on");

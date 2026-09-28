@@ -12,11 +12,14 @@
  *     PIPELINE_DISABLED (clients show "paused" and re-check), no job runs, and the check
  *     is repeated every 10 minutes until it passes.
  * A TRANSIENT failure (pool busy, DB restarting) is not a schema verdict: the state stays
- * unknown and the next request checks again.
+ * unknown, gated requests answer 503 at once (no re-probe) for TRANSIENT_BACKOFF_MS, and
+ * the first request after that checks again — so a blip costs one 6-statement probe per
+ * 5 s, not one per request.
  *
  * Runs after `listen` (index.ts) and lazily on the first gated request, single-flight.
  */
 import { AppError } from "../../middleware/error-handler";
+import { PipelineError, PIPELINE_RETRY_AFTER_SEC } from "./errors";
 import { pipelineRead } from "./tx";
 import { bumpBoard } from "./board";
 
@@ -43,11 +46,14 @@ export const PIPELINE_TABLE_COLUMNS: Readonly<Record<string, readonly string[]>>
 };
 
 const RECHECK_MS = 10 * 60_000;
+const TRANSIENT_BACKOFF_MS = 5_000;
 
 /** null = not checked yet in this process. */
 let schemaOk: boolean | null = null;
 let inflight: Promise<boolean> | null = null;
 let recheckTimer: ReturnType<typeof setInterval> | null = null;
+/** When the last check could not run (transient); 0 = never / cleared. */
+let lastTransientAt = 0;
 
 export function isPipelineSchemaOk(): boolean | null {
   return schemaOk;
@@ -102,7 +108,10 @@ async function checkOnce(): Promise<boolean> {
   try {
     await probe();
   } catch (err) {
-    if (isTransient(err)) throw err;
+    if (isTransient(err)) {
+      lastTransientAt = Date.now();
+      throw err;
+    }
     schemaOk = false;
     console.error(
       "[pipeline] ⚠️ SCHEMA SELF-CHECK FAILED — the pipeline is PAUSED (403 PIPELINE_DISABLED) until the pipeline DDL is applied. Re-checking every 10 min.",
@@ -126,6 +135,12 @@ async function checkOnce(): Promise<boolean> {
 /** The gate's view: the verdict, checking first if this process has not checked yet. */
 export async function ensurePipelineSchemaChecked(): Promise<boolean> {
   if (schemaOk !== null) return schemaOk;
+  if (!inflight && Date.now() - lastTransientAt < TRANSIENT_BACKOFF_MS) {
+    // The last check could not run moments ago: answer 503 without probing again.
+    throw new PipelineError(503, "PIPELINE_BUSY", "The pipeline is busy — retrying shortly", {
+      retryAfterSec: PIPELINE_RETRY_AFTER_SEC,
+    });
+  }
   return runPipelineSelfCheck();
 }
 
@@ -139,6 +154,7 @@ export function startPipelineSelfCheck(): void {
 /** Forget the verdict so the next gated request checks again (a cheap re-check). */
 export function resetPipelineSchemaCheck(): void {
   schemaOk = null;
+  lastTransientAt = 0;
   stopRecheck();
 }
 

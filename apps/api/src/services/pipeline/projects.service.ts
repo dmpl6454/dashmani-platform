@@ -1,0 +1,253 @@
+/**
+ * Pipeline projects: create, list, detail, edit, move, archive/unarchive/delete/restore
+ * and owner transfer (spec §3.4 routes #4–#11, §4, §6).
+ *
+ * ⚠️ Rules every function here follows (spec §2 "DB access rules", §6):
+ *   - only `pipelineRead` / `pipelineWrite`; transaction callbacks use `tx` only;
+ *   - statement 1 of every write locks the project row FOR UPDATE and re-checks the
+ *     actor's status in SQL; later statements read after the lock;
+ *   - no `Promise.all` over queries; ranks ordered only with COLLATE "C";
+ *   - raw writes set `updated_at = timezone('utc', now())`;
+ *   - owner/admin is decided from the LOCKED row plus a fresh DB admin check, never the JWT;
+ *   - the board is bumped AFTER the transaction commits (bumpBoard), never inside it.
+ */
+import { randomUUID } from "node:crypto";
+import {
+  keyBetween,
+  rankNeedsRebalance,
+  PIPELINE_LIMITS,
+  type PipelineCard,
+  type PipelineCreateProjectResponse,
+  type PipelineProjectListResponse,
+} from "@dashmani/shared";
+import type { PipelineDbClient, PipelineTx } from "./db";
+import { pipelineRead, pipelineWrite } from "./tx";
+import { PipelineDbError, PipelineError, isIdempotencyKeyViolation } from "./errors";
+import { bumpBoard } from "./board";
+import { notifier } from "./notifier";
+import { cardFromRow } from "./wire";
+import { isPilotUser, type PipelineSettings } from "./settings";
+
+type Row = Record<string, unknown>;
+type Db = PipelineDbClient | PipelineTx;
+
+/** Who is acting, resolved by the G gate BEFORE any slot is taken. */
+export interface PipelineActor {
+  userId: string;
+  name: string;
+  /** From the 60 s access memo: button visibility and read scoping only, never actions. */
+  isAdminHint: boolean;
+  settings: PipelineSettings;
+}
+
+/** The pilot allowlist a notifier must honour, or null outside pilot mode (spec §7.3). */
+export function allowList(settings: PipelineSettings): string[] | null {
+  return settings.mode === "pilot" ? [...settings.pilotUserIds] : null;
+}
+
+/** True when `userId` may be added, mentioned or made owner under the current mode (JS half). */
+export function pickableByMode(settings: PipelineSettings, userId: string): boolean {
+  return settings.mode !== "pilot" || isPilotUser(settings, userId);
+}
+
+// ── Shared SQL pieces ────────────────────────────────────────────────────────────────
+
+/** Card columns plus the ≤3 MEMBER avatar preview (oldest first). */
+async function readCard(db: Db, projectId: string): Promise<PipelineCard | null> {
+  const rows = await db.$queryRaw<Row[]>`
+    SELECT p.id, p.phase_id, p.title, p.rank, p.owner_id, p.start_date, p.due_date, p.member_count,
+           ARRAY(SELECT pp.user_id FROM pipeline_participants pp
+                  WHERE pp.project_id = p.id AND pp.role = 'MEMBER'
+                  ORDER BY pp.created_at, pp.user_id LIMIT 3) AS preview
+      FROM pipeline_projects p
+     WHERE p.id = ${projectId}`;
+  return rows[0] ? cardFromRow(rows[0]) : null;
+}
+
+export { readCard };
+
+// ── Route #5: create (spec §6 "Create project") ──────────────────────────────────────
+
+export interface CreateProjectInput {
+  clientId: string;
+  title: string;
+  description?: string;
+  phaseId?: string;
+  startDate?: string | null;
+  dueDate?: string | null;
+  memberIds?: string[];
+}
+
+export async function createProject(
+  actor: PipelineActor,
+  input: CreateProjectInput,
+): Promise<{ status: 200 | 201; data: PipelineCreateProjectResponse }> {
+  const me = actor.userId;
+  // Deduped by the validator; the creator is always the owner, never an "added" member.
+  const memberIds = [...new Set(input.memberIds ?? [])].filter((id) => id !== me);
+  if (memberIds.some((id) => !pickableByMode(actor.settings, id))) {
+    throw new PipelineError(409, "MEMBER_NOT_PICKABLE", "Someone you picked can't be added right now");
+  }
+  const phaseId = input.phaseId ?? null;
+
+  const replay = async (): Promise<{ status: 200; data: PipelineCreateProjectResponse }> => {
+    const card = await pipelineRead(async (db) => {
+      const rows = await db.$queryRaw<Array<{ id: string }>>`
+        SELECT id FROM pipeline_projects WHERE created_by_id = ${me} AND client_id = ${input.clientId}`;
+      return rows[0] ? readCard(db, rows[0].id) : null;
+    });
+    if (!card) throw new PipelineError(503, "PIPELINE_BUSY", "The pipeline is busy — retrying shortly", { retryAfterSec: 2 });
+    return { status: 200, data: { card, replayed: true } };
+  };
+
+  let result: { replayedId: string } | { card: PipelineCard };
+  try {
+    result = await pipelineWrite(async (tx) => {
+      // S1: the key, the phase, the actor, the members and the phase's first rank.
+      const [s1] = await tx.$queryRaw<Row[]>`
+        WITH ph AS (
+          SELECT id, name, archived_at
+            FROM pipeline_phases
+           WHERE CASE WHEN ${phaseId}::text IS NULL THEN archived_at IS NULL ELSE id = ${phaseId}::text END
+           ORDER BY position, id
+           LIMIT 1)
+        SELECT (SELECT id FROM pipeline_projects WHERE created_by_id = ${me} AND client_id = ${input.clientId}) AS existing_id,
+               ph.id AS phase_id, ph.name AS phase_name, ph.archived_at AS phase_archived_at,
+               (SELECT (u.status = 'ACTIVE' AND u.deleted_at IS NULL) FROM users u WHERE u.id = ${me}) AS actor_active,
+               (SELECT count(*)::int FROM users u
+                 WHERE u.id = ANY(${memberIds}::text[]) AND u.status = 'ACTIVE' AND u.deleted_at IS NULL) AS active_members,
+               (SELECT p.rank FROM pipeline_projects p
+                 WHERE p.phase_id = ph.id AND p.archived_at IS NULL AND p.deleted_at IS NULL
+                 ORDER BY p.rank COLLATE "C", p.id LIMIT 1) AS first_rank
+          FROM (SELECT 1) one
+          LEFT JOIN ph ON true`;
+      if (s1.existing_id) return { replayedId: String(s1.existing_id) };
+      if (!s1.phase_id) throw new PipelineError(404, "PHASE_NOT_FOUND", "That phase doesn't exist");
+      if (s1.phase_archived_at) throw new PipelineError(409, "PHASE_ARCHIVED", "That phase is no longer in use");
+      if (s1.actor_active !== true) throw new PipelineError(403, "ACCOUNT_INACTIVE", "Your account is inactive");
+      if (Number(s1.active_members) !== memberIds.length) {
+        throw new PipelineError(409, "MEMBER_NOT_PICKABLE", "Someone you picked can't be added right now");
+      }
+      const targetPhase = String(s1.phase_id);
+      let rank = keyBetween(null, (s1.first_rank as string | null) ?? null);
+      if (rankNeedsRebalance(rank)) {
+        // The top of the phase is exhausted (vanishingly rare): place it at the bottom instead.
+        const [last] = await tx.$queryRaw<Array<{ rank: string }>>`
+          SELECT rank FROM pipeline_projects
+           WHERE phase_id = ${targetPhase} AND archived_at IS NULL AND deleted_at IS NULL
+           ORDER BY rank COLLATE "C" DESC, id DESC LIMIT 1`;
+        rank = keyBetween(last?.rank ?? null, null);
+      }
+
+      // S2: the project and its participant rows (owner first, then members in order).
+      // created_at is offset 1 ms per row so the avatar preview keeps that order.
+      const id = randomUUID();
+      const everyone = [me, ...memberIds];
+      await tx.$queryRaw`
+        WITH proj AS (
+          INSERT INTO pipeline_projects
+                 (id, client_id, title, description, owner_id, created_by_id, phase_id, rank,
+                  start_date, due_date, member_count, created_at, updated_at)
+          VALUES (${id}, ${input.clientId}, ${input.title}, ${input.description ?? ""}, ${me}, ${me}, ${targetPhase}, ${rank},
+                  ${input.startDate ?? null}::date, ${input.dueDate ?? null}::date, ${everyone.length},
+                  timezone('utc', now()), timezone('utc', now()))
+          RETURNING id, created_at),
+        parts AS (
+          INSERT INTO pipeline_participants
+                 (project_id, user_id, role, notify, member_added_by_id, member_added_at, created_at, updated_at)
+          SELECT proj.id, v.uid, 'MEMBER', true,
+                 CASE WHEN v.ord = 1 THEN NULL ELSE ${me} END,
+                 CASE WHEN v.ord = 1 THEN NULL ELSE proj.created_at END,
+                 proj.created_at + ((v.ord - 1) * interval '1 millisecond'),
+                 proj.created_at
+            FROM proj, unnest(${everyone}::text[]) WITH ORDINALITY AS v(uid, ord)
+          ON CONFLICT DO NOTHING
+          RETURNING user_id)
+        SELECT (SELECT count(*)::int FROM parts) AS inserted`;
+
+      await notifier.onProjectCreated(tx, {
+        projectId: id,
+        projectTitle: input.title,
+        actorId: me,
+        actorName: actor.name,
+        allow: allowList(actor.settings),
+        phaseId: targetPhase,
+        phaseName: String(s1.phase_name ?? ""),
+        dueDate: input.dueDate ?? null,
+        addedUserIds: memberIds,
+      });
+
+      const card: PipelineCard = {
+        id,
+        phaseId: targetPhase,
+        title: input.title,
+        rank,
+        ownerId: me,
+        startDate: input.startDate ?? null,
+        dueDate: input.dueDate ?? null,
+        memberCount: everyone.length,
+        preview: everyone.slice(0, 3),
+      };
+      return { card };
+    });
+  } catch (err) {
+    // Two concurrent creates with one key: the loser's INSERT hits the unique key → replay.
+    if (err instanceof PipelineDbError && isIdempotencyKeyViolation(err.info)) return replay();
+    throw err;
+  }
+  if ("replayedId" in result) return replay();
+  await bumpBoard();
+  return { status: 201, data: { card: result.card, replayed: false } };
+}
+
+// ── Route #4: archived / deleted lists (keyset) ──────────────────────────────────────
+
+export interface ListProjectsInput {
+  view: "archived" | "deleted";
+  cursor?: { at: string; id: string };
+  limit: number;
+}
+
+export async function listProjects(actor: PipelineActor, input: ListProjectsInput): Promise<PipelineProjectListResponse> {
+  const limit = Math.min(Math.max(1, input.limit), PIPELINE_LIMITS.listPageMax);
+  const at = input.cursor?.at ?? null;
+  const cid = input.cursor?.id ?? null;
+  const rows = await pipelineRead((db) =>
+    input.view === "archived"
+      ? db.$queryRaw<Row[]>`
+          SELECT p.id, p.phase_id, p.title, p.rank, p.owner_id, p.start_date, p.due_date, p.member_count,
+                 ARRAY(SELECT pp.user_id FROM pipeline_participants pp
+                        WHERE pp.project_id = p.id AND pp.role = 'MEMBER'
+                        ORDER BY pp.created_at, pp.user_id LIMIT 3) AS preview,
+                 p.archived_at, p.archived_by_admin, p.deleted_at, p.deleted_by_admin
+            FROM pipeline_projects p
+           WHERE p.archived_at IS NOT NULL AND p.deleted_at IS NULL
+             AND (${at}::timestamptz IS NULL
+                  OR (p.archived_at, p.id) < ((${at}::timestamptz AT TIME ZONE 'UTC'), ${cid}::text))
+           ORDER BY p.archived_at DESC, p.id DESC
+           LIMIT ${limit + 1}`
+      : db.$queryRaw<Row[]>`
+          SELECT p.id, p.phase_id, p.title, p.rank, p.owner_id, p.start_date, p.due_date, p.member_count,
+                 ARRAY(SELECT pp.user_id FROM pipeline_participants pp
+                        WHERE pp.project_id = p.id AND pp.role = 'MEMBER'
+                        ORDER BY pp.created_at, pp.user_id LIMIT 3) AS preview,
+                 p.archived_at, p.archived_by_admin, p.deleted_at, p.deleted_by_admin
+            FROM pipeline_projects p
+           WHERE p.deleted_at IS NOT NULL
+             AND p.deleted_at > timezone('utc', now()) - make_interval(days => ${PIPELINE_LIMITS.restoreWindowDays}::int)
+             AND (${actor.isAdminHint}::boolean OR p.owner_id = ${actor.userId})
+             AND (${at}::timestamptz IS NULL
+                  OR (p.deleted_at, p.id) < ((${at}::timestamptz AT TIME ZONE 'UTC'), ${cid}::text))
+           ORDER BY p.deleted_at DESC, p.id DESC
+           LIMIT ${limit + 1}`,
+  );
+  const page = rows.slice(0, limit);
+  const items = page.map((r) => cardFromRow(r, { listFields: true }));
+  let nextCursor: string | null = null;
+  if (rows.length > limit) {
+    const last = items[items.length - 1];
+    const stamp = input.view === "archived" ? last.archivedAt : last.deletedAt;
+    nextCursor = `${stamp},${last.id}`;
+  }
+  return { items, nextCursor };
+}

@@ -57,6 +57,9 @@ export interface BulkheadStats {
   maxWaitMs: number;
   /** Highest number of queued callers seen since the last reset. */
   maxQueuedSeen: number;
+  /** Slots handed out (fast path + from the queue) since the last reset. Every pipeline
+   *  statement takes one, so tests use it to prove a hit path runs ZERO statements. */
+  granted: number;
   /** Callers that had to wait at all. */
   waits: number;
   /** Callers refused (queue full or wait timeout). */
@@ -94,6 +97,7 @@ export function createBulkhead(opts: BulkheadOptions): Bulkhead {
   let maxQueuedSeen = 0;
   let waits = 0;
   let rejected = 0;
+  let granted = 0;
 
   function makeRelease(): () => void {
     let released = false;
@@ -120,6 +124,7 @@ export function createBulkhead(opts: BulkheadOptions): Bulkhead {
   function acquire(kind: BulkheadKind): Promise<() => void> {
     if (active < max && waiters.length === 0) {
       active++;
+      granted++;
       return Promise.resolve(makeRelease());
     }
     if (waiters.length >= queueCap) {
@@ -133,6 +138,7 @@ export function createBulkhead(opts: BulkheadOptions): Bulkhead {
         grant: () => {
           clearTimeout(waiter.timer);
           active++;
+          granted++;
           resolve(makeRelease());
         },
         reject,
@@ -169,6 +175,7 @@ export function createBulkhead(opts: BulkheadOptions): Bulkhead {
       queue: queueCap,
       maxWaitMs,
       maxQueuedSeen,
+      granted,
       waits,
       rejected,
     };
@@ -181,6 +188,7 @@ export function createBulkhead(opts: BulkheadOptions): Bulkhead {
     }
     active = 0;
     maxQueuedSeen = 0;
+    granted = 0;
     waits = 0;
     rejected = 0;
   }

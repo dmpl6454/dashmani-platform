@@ -347,6 +347,93 @@ describe("apiFetch — 401 handling", () => {
   });
 });
 
+// ── Cooldown after a transient refresh ──────────────────────────────────────────
+//
+// A transient refresh no longer ends the session, so every SWR error-retry of every
+// hook on the page would otherwise call /hr/auth/refresh again during an outage. That
+// endpoint carries no verified token, so in production it is keyed on the Cloudflare
+// edge IP and shares one bucket with every anonymous request behind that edge.
+
+describe("apiFetch — cooldown after a transient refresh", () => {
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  it("401s within 5 s of a transient refresh do not call the refresh endpoint again; after 5 s they do", async () => {
+    let now = 1_000_000;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    let refreshCalls = 0;
+    installFetch((url) => {
+      if (url === REFRESH_URL) { refreshCalls++; throw new TypeError("Load failed"); }
+      return unauthorized();
+    });
+    const { apiFetch } = await loadApi();
+
+    const e1 = await apiFetch("/a").catch((e) => e);
+    expect(e1.code).toBe("NETWORK_RETRY");
+    expect(refreshCalls).toBe(1);
+
+    now += 2_000;
+    const e2 = await apiFetch("/b").catch((e) => e);
+    expect(e2.code).toBe("NETWORK_RETRY");
+    expect(e2.status).toBe(503);
+    expect(refreshCalls).toBe(1); // throttled: no second refresh
+
+    now += 3_001;
+    const e3 = await apiFetch("/c").catch((e) => e);
+    expect(e3.code).toBe("NETWORK_RETRY");
+    expect(refreshCalls).toBe(2); // cooldown over: tried again
+
+    expectSignedIn();
+  });
+
+  it("a new access token (another tab refreshed) bypasses the cooldown", async () => {
+    let now = 1_000_000;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    let refreshCalls = 0;
+    let failRefresh = true;
+    installFetch((url, init) => {
+      if (url === REFRESH_URL) {
+        refreshCalls++;
+        if (failRefresh) throw new TypeError("Load failed");
+        return refreshed(2);
+      }
+      if (url === `${API}/b` && authHeader(init) === "Bearer access-0") {
+        // another tab rotates the pair while this request is in flight
+        storage.setItem("hrAccessToken", "access-from-other-tab");
+        storage.setItem("hrRefreshToken", "refresh-from-other-tab");
+        failRefresh = false;
+        return unauthorized();
+      }
+      return authHeader(init) === "Bearer access-2" ? ok({ v: 2 }) : unauthorized();
+    });
+    const { apiFetch } = await loadApi();
+
+    await apiFetch("/a").catch(() => undefined); // transient, starts the cooldown
+    expect(refreshCalls).toBe(1);
+
+    now += 1_000;
+    const res = await apiFetch<{ data: { v: number } }>("/b");
+    expect(res.data.v).toBe(2);
+    expect(refreshCalls).toBe(2);
+    expectSignedIn();
+  });
+
+  it("a successful refresh is never throttled", async () => {
+    let now = 1_000_000;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    let refreshes = 0;
+    installFetch((url, init) => {
+      if (url === REFRESH_URL) return refreshed(++refreshes);
+      return authHeader(init) === `Bearer access-${refreshes}` && refreshes > 0 ? ok({}) : unauthorized();
+    });
+    const { apiFetch } = await loadApi();
+    await apiFetch("/one");
+    storage.setItem("hrAccessToken", "expired-again");
+    now += 100;
+    await apiFetch("/two");
+    expect(refreshes).toBe(2);
+  });
+});
+
 // ── apiUpload gets the same treatment ───────────────────────────────────────────
 
 describe("apiUpload — same P1 rules", () => {

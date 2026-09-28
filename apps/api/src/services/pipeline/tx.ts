@@ -51,6 +51,18 @@ export async function pipelineRead<T>(fn: (db: PipelineDbClient) => Promise<T>):
   }
 }
 
+/**
+ * One WRITE slot, one AUTOCOMMIT statement (no transaction): the post-commit board bump
+ * and the sync ack (spec §5.1, §5.4). Write priority, because it completes a user action.
+ */
+export async function pipelineWriteStatement<T>(fn: (db: PipelineDbClient) => Promise<T>): Promise<T> {
+  try {
+    return await pipelineGate.run("write", () => fn(pipelineDb));
+  } catch (err) {
+    throw normalizePipelineError(err);
+  }
+}
+
 export interface PipelineWriteOptions {
   /**
    * Retry once after 50–150 ms on a deadlock (40P01) or serialization failure (40001).

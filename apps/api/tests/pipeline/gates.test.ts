@@ -19,6 +19,7 @@ import { __setPipelineSettingsLoaderForTests, __expirePipelineSettingsMemoForTes
 import { __setPipelineSchemaOkForTests, isPipelineSchemaOk } from "../../src/services/pipeline/self-check";
 import { bumpBoard, isBoardBumpPending } from "../../src/services/pipeline/board";
 import { pipelineDb, buildPipelineDbUrl } from "../../src/services/pipeline/db";
+import { pipelineGate } from "../../src/services/pipeline/tx";
 import {
   hrToken,
   tokenFor,
@@ -276,6 +277,49 @@ describe("pipeline gates", () => {
       await get(DIR, hrToken(u.id));
       expect(isBoardBumpPending()).toBe(false);
       expect(await seq()).toBe(2);
+    });
+
+    it("a bump that fails while another bump is in flight stays pending when that other bump succeeds", async () => {
+      // Spec §5.1: a success may only clear failures that happened BEFORE it started. A bump
+      // whose UPDATE ran before writer B committed cannot cover B's change, so B's failed
+      // bump must stay pending even though a bump succeeded after it failed.
+      const u = await createPipelineUser({ name: "Rae Race", tag: "b-race" });
+      await setPipelineSetting("pipeline.mode", "on");
+      await get(DIR, hrToken(u.id)); // self-check bump → seq 1
+      expect(await seq()).toBe(1);
+
+      // Hold every slot so bump A queues (it has started), then fill the queue so bump B
+      // is refused immediately (queue_full) while A is still in flight.
+      const s = pipelineGate.stats();
+      const held = await Promise.all(Array.from({ length: s.max }, () => pipelineGate.acquire("read")));
+      const a = bumpBoard();
+      const fillers = Array.from({ length: s.queue - 1 }, () => pipelineGate.run("read", async () => undefined));
+      expect(pipelineGate.stats().queued).toBe(s.queue);
+      expect(await bumpBoard()).toBeNull(); // B fails → pending
+      expect(isBoardBumpPending()).toBe(true);
+
+      for (const release of held) release();
+      expect(await a).toBe(2); // A succeeds (queued writes go first)…
+      await Promise.all(fillers);
+      expect(isBoardBumpPending()).toBe(true); // …but must not clear B's failure
+
+      // The next gated request heals it.
+      await get(DIR, hrToken(u.id));
+      expect(isBoardBumpPending()).toBe(false);
+      expect(await seq()).toBe(3);
+    });
+
+    it("a bump that succeeds after an earlier failure clears the pending flag", async () => {
+      await setPipelineSetting("pipeline.mode", "on");
+      const s = pipelineGate.stats();
+      const held = await Promise.all(Array.from({ length: s.max }, () => pipelineGate.acquire("read")));
+      const fillers = Array.from({ length: s.queue }, () => pipelineGate.run("read", async () => undefined));
+      expect(await bumpBoard()).toBeNull();
+      expect(isBoardBumpPending()).toBe(true);
+      for (const release of held) release();
+      await Promise.all(fillers);
+      expect(await bumpBoard()).not.toBeNull(); // started after the failure → covers it
+      expect(isBoardBumpPending()).toBe(false);
     });
 
     it("a failing heal is attempted at most once per 5 s, so a stuck board row cannot slow every request", async () => {

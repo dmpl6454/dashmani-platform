@@ -325,6 +325,17 @@ describe("store: merges are idempotent and never destructive", () => {
     expect(s.projects[PID].rev).toBe(5);
   });
 
+  it("projectDetail replaces by default; merge keeps earlier rows and the older cursor", () => {
+    const base = loaded();
+    const page = detail([msg({ id: "m2", seq: 2, rev: 2 }), msg({ id: "m3", seq: 3, rev: 5 })], { threadRev: 6, hasNewer: false });
+    const replaced = pipelineReducer(base, { type: "projectDetail", detail: page, now: 1 });
+    expect(Object.keys(replaced.projects[PID].messages).sort()).toEqual(["m2", "m3"]);
+    expect(replaced.projects[PID].rev).toBe(6);
+    const merged = pipelineReducer(base, { type: "projectDetail", detail: page, now: 1, merge: true });
+    expect(Object.keys(merged.projects[PID].messages).sort()).toEqual(["m1", "m2", "m3"]);
+    expect(merged.projects[PID].rev).toBe(2);
+  });
+
   it("a reply arriving before its root is kept, and both show once the root lands", () => {
     const reply = msg({ id: "r1", seq: 4, rev: 3, parentId: "m9" });
     let s = pipelineReducer(loaded(), { type: "syncOk", ...delta([reply], 3, 2, true), now: 1 });

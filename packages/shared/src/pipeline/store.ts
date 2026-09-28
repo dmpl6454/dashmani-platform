@@ -149,7 +149,12 @@ export type PipelineAction =
   | { type: "syncOk"; req: PipelineSyncRequest; res: PipelineSyncResponse; now: number }
   | { type: "syncFailed" }
   | { type: "boardSnapshot"; snapshot: PipelineBoardSnapshot; now: number }
-  | { type: "projectDetail"; detail: PipelineProjectDetail; now: number }
+  /**
+   * Route 6. Default: REPLACE the project's rows (a fresh load or a deep-link jump).
+   * `merge: true` (load newer, `around` = the last loaded message): merge the page and
+   * KEEP the older cursor, so the next delta also refreshes rows loaded earlier.
+   */
+  | { type: "projectDetail"; detail: PipelineProjectDetail; now: number; merge?: boolean }
   | { type: "olderMessages"; projectId: string; page: PipelineMessagesPage }
   | { type: "repliesPage"; projectId: string; page: PipelineRepliesPage }
   | { type: "messageUpsert"; message: PipelineMessage; root?: PipelineMessage }
@@ -347,8 +352,10 @@ export function pipelineReducer(state: PipelineState, action: PipelineAction): P
       const d = action.detail;
       const id = d.header.id;
       const prev = state.projects[id];
-      const messages: Record<string, PipelineMessage> = {};
-      for (const m of d.messages) messages[m.id] = mergeMessage(prev?.messages[m.id], m);
+      const merging = action.merge === true && !!prev?.header;
+      let messages: Record<string, PipelineMessage> = {};
+      if (merging) messages = mergeMessages(prev!.messages, d.messages);
+      else for (const m of d.messages) messages[m.id] = mergeMessage(prev?.messages[m.id], m);
       const status: PipelineProjectStatus = d.header.deletedAt ? "deleted" : d.header.archivedAt ? "archived" : "ok";
       const p: ProjectState = {
         ...(prev ?? emptyProject(id)),
@@ -358,10 +365,10 @@ export function pipelineReducer(state: PipelineState, action: PipelineAction): P
         participants: d.participants,
         me: d.me,
         can: d.can,
-        rev: d.threadRev,
+        rev: merging ? Math.min(prev!.rev, d.threadRev) : d.threadRev,
         hv: d.headerRev,
         messages,
-        hasOlder: d.hasOlder,
+        hasOlder: merging ? prev!.hasOlder : d.hasOlder,
         hasNewer: d.hasNewer,
         lastReadSeq: Math.max(prev?.lastReadSeq ?? 0, d.me.lastReadSeq),
         dividerSeq: prev?.dividerSeq ?? d.me.lastReadSeq,

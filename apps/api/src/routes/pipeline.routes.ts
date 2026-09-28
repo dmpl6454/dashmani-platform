@@ -18,8 +18,10 @@
  *     carry it too);
  *   - the unknown-path 404 and pipelineErrorMiddleware stay LAST.
  */
-import { Router, type Request, type Response } from "express";
+import { Router, type Request, type Response, type NextFunction, type RequestHandler } from "express";
+import type { ZodSchema } from "zod";
 import {
+  pipelineValidators as V,
   PIPELINE_LIMITS,
   PIPELINE_REACTION_EMOJI,
   PIPELINE_REACTION_KEYS,
@@ -29,16 +31,44 @@ import {
 import { success } from "../utils/response";
 import { asyncHandler } from "../utils/async-handler";
 import { G, G0, evaluatePipelineAccess } from "../middleware/pipeline-gates";
-import { pipelineErrorMiddleware } from "../services/pipeline/errors";
+import { PipelineError, pipelineErrorMiddleware } from "../services/pipeline/errors";
 import { getPipelineDirectory } from "../services/pipeline/access";
 import { isPilotUser } from "../services/pipeline/settings";
 import { getLivePhases } from "../services/pipeline/board";
+import { createProject, listProjects, type PipelineActor } from "../services/pipeline/projects.service";
 
 const router = Router();
 
 function ok<T>(res: Response, data: T, status = 200) {
   res.setHeader("Cache-Control", "no-store");
   return success(res, data, undefined, status);
+}
+
+/**
+ * `validate(schema, source)` for pipeline routes: a Zod failure goes to the pipeline error
+ * middleware (400 VALIDATION_ERROR + details), except a start-after-due refinement, which
+ * is answered as 400 DATE_ORDER (spec §3.4 route #7).
+ */
+function pv(schema: ZodSchema, source: "body" | "query" | "params" = "body"): RequestHandler {
+  return (req: Request, _res: Response, next: NextFunction) => {
+    const parsed = schema.safeParse(req[source] ?? {});
+    if (!parsed.success) {
+      if (parsed.error.issues.some((i) => i.message === V.DATE_ORDER)) {
+        next(new PipelineError(400, "DATE_ORDER", "The due date can't be before the start date"));
+        return;
+      }
+      next(parsed.error);
+      return;
+    }
+    (req as unknown as Record<string, unknown>)[source] = parsed.data;
+    next();
+  };
+}
+
+/** The acting user, from the G gate's memo reads (no statements). */
+function actorOf(req: Request): PipelineActor {
+  const ctx = req.pipeline!;
+  return { userId: ctx.userId, name: ctx.access.name, isAdminHint: ctx.access.isAdmin, settings: ctx.settings };
 }
 
 // ── #1 GET /pipeline/bootstrap (G0; the feature check is inside) ─────────────────────
@@ -90,6 +120,28 @@ router.get(
       return entry;
     });
     return ok(res, data);
+  }),
+);
+
+// ── #4 GET /pipeline/projects (archived / deleted lists; literal path before /:id) ────
+router.get(
+  "/pipeline/projects",
+  ...G,
+  pv(V.listProjectsQuerySchema, "query"),
+  asyncHandler(async (req: Request, res: Response) => {
+    const q = req.query as unknown as { view: "archived" | "deleted"; cursor?: { at: string; id: string }; limit: number };
+    return ok(res, await listProjects(actorOf(req), q));
+  }),
+);
+
+// ── #5 POST /pipeline/projects ───────────────────────────────────────────────────────
+router.post(
+  "/pipeline/projects",
+  ...G,
+  pv(V.createProjectSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const { status, data } = await createProject(actorOf(req), req.body);
+    return ok(res, data, status);
   }),
 );
 

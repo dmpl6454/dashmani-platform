@@ -32,6 +32,9 @@ export * from "./utils/facebook";
 export * from "./utils/canonical-url";
 export * from "./utils/snapchat";
 
+// Notification bells (P3/P4) — pure rules shared by the HR and internal bells
+export * from "./pipeline/bell";
+
 // Validators
 export * as authValidators from "./validators/auth";
 export * as employeeValidators from "./validators/employee";

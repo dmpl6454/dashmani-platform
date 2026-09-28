@@ -1,7 +1,10 @@
 "use client";
 import { useState, useRef, useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { useSWRConfig } from "swr";
 import { Bell, BellOff, CheckCheck } from "lucide-react";
-import { useNotifications, useUnreadCount } from "@/lib/hooks/use-notifications";
+import { bellListView, pipelineNotificationPath } from "@dashmani/shared";
+import { useNotificationCount, useNotificationList, NOTIFICATION_LIST_KEY } from "@/lib/hooks/use-notifications";
 import { apiFetch } from "@/lib/api";
 
 export function NotificationBell() {
@@ -9,11 +12,17 @@ export function NotificationBell() {
   const [selectedNotif, setSelectedNotif] = useState<any>(null);
   const ref = useRef<HTMLDivElement>(null);
   const [rightOffset, setRightOffset] = useState(0);
-  const { data: countData, mutate: mutateCount } = useUnreadCount();
-  const { data: notifData, mutate: mutateNotifs } = useNotifications();
+  const router = useRouter();
+  const { mutate: globalMutate } = useSWRConfig();
+  const { data: countData, mutate: mutateCount } = useNotificationCount();
+  // The list is fetched ONLY while the panel is open (P3); the count keeps polling.
+  const { data: notifData, error: notifError, isValidating, mutate: mutateNotifs } = useNotificationList(open);
 
   const count = (countData as any)?.data?.count ?? 0;
-  const notifications: any[] = ((notifData as any)?.data ?? []).slice(0, 50);
+  // Only a LOADED response may claim emptiness: `view` separates loading,
+  // failed and a genuinely empty list (see packages/shared/src/pipeline/bell.ts).
+  const view = bellListView<any>(notifData, notifError);
+  const notifications: any[] = view.rows;
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -55,6 +64,33 @@ export function NotificationBell() {
   }, [open]);
 
   async function openNotif(n: any) {
+    // PIPELINE rows with a /pipeline/ path deep-link (spec §7.10): mark read,
+    // close the panel, navigate. Every other row opens the detail view as before.
+    const path = pipelineNotificationPath(n);
+    if (path) {
+      if (!n.read) {
+        apiFetch(`/hr/notifications/${n.id}/read`, { method: "PUT" })
+          .then(() => {
+            // The panel is closed by the time this resolves, so the list hook's
+            // key is null and its bound mutate would be a no-op. Update the
+            // cached list directly so a reopen shows the row as read at once.
+            globalMutate(
+              NOTIFICATION_LIST_KEY,
+              (cur: any) =>
+                cur && Array.isArray(cur.data)
+                  ? { ...cur, data: cur.data.map((r: any) => (r.id === n.id ? { ...r, read: true } : r)) }
+                  : cur,
+              { revalidate: false },
+            );
+            mutateCount();
+          })
+          .catch(() => { /* ignore — same as every other row */ });
+      }
+      setOpen(false);
+      setSelectedNotif(null);
+      router.push(path);
+      return;
+    }
     setSelectedNotif(n);
     if (!n.read) {
       try {
@@ -140,13 +176,56 @@ export function NotificationBell() {
               </div>
 
               <div className="max-h-[400px] overflow-y-auto divide-y divide-[#E8E0D0]">
-                {notifications.length === 0 ? (
+                {view.loading ? (
+                  /* ── Loading: skeleton, never a false "No notifications yet" ── */
+                  <div role="status" className="divide-y divide-[#E8E0D0]">
+                    <span className="sr-only">Loading notifications…</span>
+                    {[0, 1, 2].map((i) => (
+                      <div key={i} className="px-4 py-3" aria-hidden="true">
+                        <div className="ml-4 space-y-1.5">
+                          <div className="h-3.5 w-2/3 rounded bg-[#F0EAD8] motion-safe:animate-pulse" />
+                          <div className="h-3 w-full rounded bg-[#F5F0E6] motion-safe:animate-pulse" />
+                          <div className="h-2.5 w-14 rounded bg-[#F5F0E6] motion-safe:animate-pulse" />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : view.failed && notifications.length === 0 ? (
+                  /* ── Failed with nothing loaded: say so, offer Retry ── */
+                  <div role="alert" className="py-8 px-4 text-center">
+                    <p className="text-sm text-[#7A7A7A]">Couldn&apos;t load notifications</p>
+                    <button
+                      type="button"
+                      onClick={() => mutateNotifs()}
+                      disabled={isValidating}
+                      className="mt-3 inline-flex items-center justify-center min-h-[44px] px-5 rounded-full border border-[#E8E0D0] text-sm font-medium text-[#1A1A1A] hover:bg-[#FEFCF7] disabled:opacity-60 transition-colors"
+                    >
+                      {isValidating ? "Retrying…" : "Retry"}
+                    </button>
+                  </div>
+                ) : view.empty ? (
+                  /* ── Loaded [] — the only state allowed to claim emptiness ── */
                   <div className="py-8 text-center text-[#B0B0B0]">
                     <BellOff className="h-8 w-8 mx-auto mb-2 opacity-40" />
                     <p className="text-sm">No notifications yet</p>
                   </div>
                 ) : (
-                  notifications.map((notif: any) => (
+                  <>
+                  {view.failed && (
+                    /* ── A refresh failed: keep the last loaded rows, say so ── */
+                    <div role="alert" className="flex items-center justify-between gap-2 px-4 py-2 bg-[#FFF8E1]">
+                      <p className="text-xs text-[#7A5A00] min-w-0">Couldn&apos;t refresh notifications</p>
+                      <button
+                        type="button"
+                        onClick={() => mutateNotifs()}
+                        disabled={isValidating}
+                        className="shrink-0 inline-flex items-center min-h-[44px] px-2 text-xs font-semibold text-blue-600 hover:text-blue-800 disabled:opacity-60"
+                      >
+                        {isValidating ? "Retrying…" : "Retry"}
+                      </button>
+                    </div>
+                  )}
+                  {notifications.map((notif: any) => (
                     <div
                       key={notif.id}
                       onClick={() => openNotif(notif)}
@@ -170,7 +249,8 @@ export function NotificationBell() {
                         </svg>
                       </div>
                     </div>
-                  ))
+                  ))}
+                  </>
                 )}
               </div>
             </>

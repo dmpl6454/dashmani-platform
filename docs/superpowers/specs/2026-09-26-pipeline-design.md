@@ -491,6 +491,22 @@ The DDL script seeds these, not `seed.ts`:
 
 There is no reactions, mentions, events, outbox or due-alert table.
 
+**Per-user growth that the sync overlay pays for (an accepted bound, measured 2026-09-28).**
+- Archiving a project keeps its participant rows. Only the purge of a *deleted* project removes them. So each user's rows in `pipeline_participants` grow with that user's **lifetime** participations, not their live ones.
+- The §5.2 R1 overlay reads all of `$me`'s rows through `pipeline_participants_user_id_idx`. The live filter sits on `pipeline_projects`, served by `pipeline_projects_archived_at_id_idx` (a hash join), so `LIMIT 500` cannot stop the participant scan early.
+- Its cost is therefore O(my lifetime participations + live projects company-wide). This is the one R1 read that grows with history.
+- **Measured** on real, analysed tables with exactly the PR 5 indexes. Setup: local PG 16, warm cache, 12,000 projects of which 1,500 are live, and one user with 267 live participations. Median times (the last point also gives p95):
+
+  | Lifetime participations | 267 | 1,267 | 2,267 | 4,267 | 8,267 | 10,767 |
+  |---|---|---|---|---|---|---|
+  | Median | 0.87 ms | 1.05 ms | 1.20 ms | 1.54 ms | 2.17 ms | 2.52 ms (p95 3.19 ms) |
+
+- **Accepted bound:** up to about **2,000 lifetime participations per user**. The load harness seeds 300 projects in total, so reaching the bound means taking part in about 2,000 projects.
+  - These local numbers are a floor, not the 1-vCPU box. The load harness (§11) runs this heavy-user case in the 1-CPU cgroup, and that run is the gate.
+  - Before GA, and yearly after it, check the real maximum with one read-only query: `SELECT max(n) FROM (SELECT count(*) AS n FROM pipeline_participants GROUP BY user_id) s`.
+- **Not taken now, and why.** A denormalised `project_live` flag on participants, with a `(user_id, project_live, project_id)` index, was measured on the same data and was *slower*: 4.16 ms against 2.48 ms at 10,767 participations. With `ORDER BY project_id LIMIT 500`, the planner merge-joins it against the whole `pipeline_projects` primary key.
+  - If the bound is ever approached, choose the fix together with the R1 SQL in PR 8, for example a plan with one primary-key lookup per participant row. Verify it with EXPLAIN. If it needs a column or an index, ship it through the §12 DDL cycle.
+
 ---
 
 ### 3. API surface
@@ -1558,6 +1574,7 @@ Each item is its own small PR, deployed 11:00–16:00 IST on a working day unles
   - A background CPU and IO load of 20–30% stands in for co-tenants.
   - Prod settings: `connection_limit=10`, `DB_STATEMENT_TIMEOUT_MS=60000`, `NODE_ENV=production`, the pipeline pool at 3.
 - **Data and users:** 115 users, 300 projects, 60k messages, **120 distinct HR tokens**.
+  - Plus a **heavy-user case** for the §2 overlay bound: 2,000 extra archived projects, and one user who takes part in all of them plus 300 live ones (2,300 lifetime participations).
 - **Load:** 20 minutes at the real cadence mix (60% board, 40% project), about 1 message/s org-wide plus reactions and moves. At the same time:
   - evening-rush HR submits of up to **450 links**;
   - logins and Link History;
@@ -1572,6 +1589,7 @@ Each item is its own small PR, deployed 11:00–16:00 IST on a working day unles
   - 0 P2024/P2028 on the main pool;
   - pipeline connections ≤ 3 (sampled every second from `pg_stat_activity`);
   - sync p95 < 30 ms; post p95 < 100 ms;
+  - for the heavy user, the R1 statement's hold p95 stays within the §8.3 target (≤ 3 ms). If it does not, apply the §2 "not taken now" fix before the pilot;
   - login, HR-submit p95 and the **HR first-submit error rate** within 10% of a pipeline-disabled baseline run;
   - event-loop delay p99 < 50 ms (`monitorEventLoopDelay` under `PIPELINE_LOADTEST=1`);
   - **API RSS delta from `pipelineDb` ≤ 100 MB**, otherwise switch to the main-pool fallback (§3.2);

@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { AuthContext } from "@/lib/auth";
 import { apiFetch } from "@/lib/api";
+import { clearSwrCache } from "@/lib/swr-cache";
 import { Sidebar } from "@/components/sidebar";
 import { TopNav } from "@/components/top-nav";
 import { CommandPalette } from "@/components/command-palette";
@@ -69,6 +70,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     localStorage.setItem("accessToken", res.data.accessToken);
     localStorage.setItem("refreshToken", res.data.refreshToken);
     localStorage.setItem("user", JSON.stringify(res.data.user));
+    // Forget the previous user's cached SWR responses (bell list above all) —
+    // navigation is client-side, so the cache survives a user switch. lib/swr-cache.ts.
+    void clearSwrCache();
     setUser(res.data.user);
     router.push("/dashboard");
   }, [router]);
@@ -77,6 +81,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     localStorage.removeItem("accessToken");
     localStorage.removeItem("refreshToken");
     localStorage.removeItem("user");
+    void clearSwrCache();
     setUser(null);
     router.push("/login");
   }, [router]);

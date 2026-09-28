@@ -2,6 +2,7 @@
 import { useState, useEffect, useCallback, ReactNode } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { HrAuthContext, HrUser } from "@/lib/auth";
+import { clearSwrCache } from "@/lib/swr-cache";
 
 export function HrAuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<HrUser | null>(null);
@@ -30,11 +31,16 @@ export function HrAuthProvider({ children }: { children: ReactNode }) {
     }
   }, [isLoading, user, pathname, router]);
 
-  // Login: save tokens + user to localStorage AND update state
+  // Login: save tokens + user to localStorage AND update state.
+  // Both login and logout forget every cached SWR response first: navigation is
+  // client-side, so the cache would otherwise carry the previous user's bell rows
+  // (and reports, profile …) into the next session on a shared browser. Clearing on
+  // login too covers a /login visit that skipped logout. See lib/swr-cache.ts.
   const login = useCallback((accessToken: string, refreshToken: string, userData: HrUser) => {
     localStorage.setItem("hrAccessToken", accessToken);
     localStorage.setItem("hrRefreshToken", refreshToken);
     localStorage.setItem("hrUser", JSON.stringify(userData));
+    void clearSwrCache();
     setUser(userData);
   }, []);
 
@@ -42,6 +48,7 @@ export function HrAuthProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem("hrAccessToken");
     localStorage.removeItem("hrRefreshToken");
     localStorage.removeItem("hrUser");
+    void clearSwrCache();
     setUser(null);
     router.push("/login");
   }, [router]);

@@ -77,13 +77,15 @@ export function NotificationBell() {
             // The panel is closed by the time this resolves, so the list hook's
             // key is null and its bound mutate would be a no-op. Update the
             // cached list directly so a reopen shows the row as read at once.
-            globalMutate(
-              NOTIFICATION_LIST_KEY,
-              (cur: any) =>
-                cur && Array.isArray(cur.data)
-                  ? { ...cur, data: cur.data.map((r: any) => (r.id === n.id ? { ...r, read: true } : r)) }
-                  : cur,
-              { revalidate: false },
+            // ⚠️ Leave revalidate at its default (true). With the panel closed the
+            // key has no subscriber, so it costs no request; if the panel was
+            // REOPENED while this PUT was in flight, SWR discards that reopen's
+            // fetch (it started before this mutation) and only this revalidate
+            // replaces it — revalidate:false froze the panel on stale rows.
+            globalMutate(NOTIFICATION_LIST_KEY, (cur: any) =>
+              cur && Array.isArray(cur.data)
+                ? { ...cur, data: cur.data.map((r: any) => (r.id === n.id ? { ...r, read: true } : r)) }
+                : cur,
             );
             mutateCount();
           })

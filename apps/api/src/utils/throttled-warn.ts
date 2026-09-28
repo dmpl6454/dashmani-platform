@@ -20,7 +20,7 @@ export function warnThrottled(key: string, line: string, now: number = Date.now(
     s.suppressed++;
     return false;
   }
-  const held = s && s.suppressed > 0 ? ` (+${s.suppressed} more in the previous ${Math.round((now - s.at) / 1000)}s)` : "";
+  const held = s && s.suppressed > 0 ? ` (+${s.suppressed} held back since the line ${Math.round((now - s.at) / 1000)}s ago)` : "";
   if (!s && state.size >= MAX_KEYS) state.clear();
   state.set(key, { at: now, suppressed: 0 });
   console.warn(`${line}${held}`);

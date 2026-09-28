@@ -8,7 +8,8 @@ import { safeString, safeStringMin, stripTagsLinear } from "@dashmani/shared";
  * no later `>`, V8's backtracking engine rescans the rest of the string from EVERY `<`,
  * which is O(n²): measured locally, 40 KB of "<" took 1.9 s and 80 KB took 5.3 s, all of it
  * synchronous on the API's single main thread (the 2026-09-08 hang class). 32 validators
- * use it on free-text fields, and express.json() accepts 100 KB bodies.
+ * use it on free-text fields, express.json() accepts 10 MB bodies, and every caller's
+ * `.max()` runs only after the transform has already seen the whole string.
  *
  * The replacement must be BYTE-IDENTICAL to the regex, so the old expression is kept here
  * as the oracle and every case is compared against it.

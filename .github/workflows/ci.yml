@@ -77,6 +77,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # P8 source guards — plain greps, so they run before npm ci and fail fast:
+      # - no regex lookbehind in apps/hr/src, packages/shared/src or mobile/src (older
+      #   iOS Safari throws a SyntaxError at PARSE time, taking the whole page down);
+      # - apps/api/src/services/pipeline/** imports its DB client only from ./db, never
+      #   @dashmani/db or @prisma/client (the global pool inside a pipeline transaction
+      #   breaks the pool arithmetic and deadlocks at connection_limit=1);
+      # - no localeCompare in pipeline code (ranks are compared byte-wise).
+      # Directories that do not exist yet are skipped with a note; see the script header.
+      - name: Guards (lookbehind, pipeline DB import, rank ordering)
+        run: bash scripts/ci/guards.sh source
+
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -122,6 +133,11 @@ jobs:
       - name: Build all apps
         run: npm run build
 
+      # P8: the source scan cannot see third-party code (dnd-kit, markdown renderers,
+      # vendored libraries), so also scan the HR bundle that actually ships.
+      - name: Guard (no lookbehind in the built HR bundle)
+        run: bash scripts/ci/guards.sh bundle
+
       - name: Push schema to test database
         run: npm run db:push
 
@@ -133,3 +149,60 @@ jobs:
       - name: Run API test suite
         working-directory: apps/api
         run: npx vitest run --reporter=verbose
+
+  # Pipeline concurrency suite (P8; spec §11). A skeleton today — tests-concurrency/ holds
+  # one smoke file; the real races land with the pipeline (PR 12).
+  #
+  # Separate job, separate database: the main suite pins connection_limit=1 (see above),
+  # which serialises every query and so can never show interleaving. This job runs its own
+  # vitest config (pool: forks, singleFork: true — files still never run in parallel
+  # against one database) with the pipeline pool at its production size of 3.
+  pipeline-concurrency:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: user
+          POSTGRES_PASSWORD: password
+          # The container creates this database at startup — the job's own DB, never the
+          # main suite's.
+          POSTGRES_DB: dashmani_pipeline_cc
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U user -d dashmani_pipeline_cc"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://user:password@localhost:5432/dashmani_pipeline_cc?connection_limit=10
+      PIPELINE_DB_CONNECTIONS: "3"
+      JWT_SECRET: ci-test-secret
+      JWT_REFRESH_SECRET: ci-test-secret-refresh
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npm run db:generate
+
+      # `npm run -w` runs the Prisma CLI directly (not through turbo), so the job-level
+      # DATABASE_URL reaches it; no .env files are written in this job.
+      - name: Push schema to the concurrency database
+        run: npm run db:push -w @dashmani/db -- --skip-generate
+
+      - name: Run pipeline concurrency suite
+        working-directory: apps/api
+        run: npx vitest run -c vitest.concurrency.config.ts --reporter=verbose

@@ -11,6 +11,13 @@
  * gated pipeline request retry it (awaited — the feature has no fire-and-forget writes),
  * and the boot self-check bumps once, which covers a crash between commit and bump.
  *
+ * ⚠️ A SUCCESS MAY ONLY CLEAR FAILURES THAT HAPPENED BEFORE IT STARTED. Bumps run
+ * concurrently: bump A's UPDATE can execute before writer B commits, B's own bump can then
+ * fail (queue_full is immediate), and A resolves afterwards. A's seq predates B's commit,
+ * so it does not cover B — clearing the flag there would leave every board on a stale v.
+ * `bumpFailGen` counts failures; a success clears the flag only if none happened during
+ * its flight. The worst case is one redundant heal bump, which is harmless.
+ *
  * getBoardSnapshot(v) (§5.3) lands with the board routes.
  */
 import type { PipelinePhase } from "@dashmani/shared";
@@ -18,6 +25,8 @@ import { createSingleFlightMemo } from "../../utils/single-flight-memo";
 import { pipelineRead, pipelineWriteStatement } from "./tx";
 
 let boardBumpPending = false;
+/** Incremented on every failed bump (see the ⚠️ above). */
+let bumpFailGen = 0;
 let lastBumpWarn = 0;
 let warnedMissingRow = false;
 
@@ -30,6 +39,7 @@ export function isBoardBumpPending(): boolean {
  * @returns the new board version, or null when the bump failed or the row is missing.
  */
 export async function bumpBoard(): Promise<number | null> {
+  const genAtStart = bumpFailGen;
   try {
     const rows = await pipelineWriteStatement((db) =>
       db.$queryRaw<Array<{ seq: number }>>`
@@ -38,7 +48,8 @@ export async function bumpBoard(): Promise<number | null> {
          WHERE id = 1
      RETURNING seq`,
     );
-    boardBumpPending = false;
+    // Only failures from before this bump started are covered by it.
+    if (bumpFailGen === genAtStart) boardBumpPending = false;
     if (rows.length === 0) {
       if (!warnedMissingRow) {
         warnedMissingRow = true;
@@ -48,6 +59,7 @@ export async function bumpBoard(): Promise<number | null> {
     }
     return rows[0].seq;
   } catch (err) {
+    bumpFailGen++;
     boardBumpPending = true;
     if (Date.now() - lastBumpWarn > 10_000) {
       lastBumpWarn = Date.now();
@@ -115,6 +127,7 @@ export function invalidatePhases(): void {
 /** Tests only. */
 export function resetBoardStateForTests(): void {
   boardBumpPending = false;
+  bumpFailGen = 0;
   warnedMissingRow = false;
   lastHealAttempt = 0;
 }

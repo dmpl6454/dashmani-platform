@@ -28,6 +28,7 @@ import { loadOutbox, outboxPut, outboxRemove, OUTBOX_AUTO_REPLAY_MS } from "./ou
 import { useIdle } from "./hooks/use-idle";
 import { ToastProvider } from "./ui/Toast";
 import { GateScreen, PausedBanner } from "./header/GateScreen";
+import { Notices } from "./ui/Notices";
 
 export interface MoveArgs {
   projectId: string;
@@ -459,6 +460,7 @@ function EnabledProvider({
   return (
     <Ctx.Provider value={value}>
       {disabled && <PausedBanner />}
+      <Notices />
       {children}
     </Ctx.Provider>
   );

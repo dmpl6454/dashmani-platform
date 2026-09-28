@@ -27,6 +27,7 @@ import {
   PIPELINE_REACTION_KEYS,
   type PipelineBootstrap,
   type PipelineDirectoryEntry,
+  type PipelineReactionKey,
 } from "@dashmani/shared";
 import { success } from "../utils/response";
 import { asyncHandler } from "../utils/async-handler";
@@ -49,6 +50,13 @@ import {
   type PipelineActor,
 } from "../services/pipeline/projects.service";
 import { addMembers, removeMember, setFollow } from "../services/pipeline/participants";
+import {
+  postMessage,
+  editMessage,
+  deleteMessage,
+  setReaction,
+  type PipelineActor as MessageActor,
+} from "../services/pipeline/messages.service";
 
 const router = Router();
 
@@ -252,6 +260,64 @@ router.put(
   pv(V.followSchema),
   asyncHandler(async (req: Request, res: Response) => ok(res, await setFollow(actorOf(req), req.params.id, req.body.following))),
 );
+
+// ══════════════════════════════════════════════════════════════════════════════════════
+// PR 8 — messages and sync (routes #3, #15–21). Kept as one block so it rebases cleanly
+// next to the project routes (PR 7). None of these paths collide with /projects/:id.
+// Memos (settings, access, directory) are resolved here, BEFORE a service takes a slot.
+// ══════════════════════════════════════════════════════════════════════════════════════
+
+async function messageActorOf(req: Request): Promise<MessageActor> {
+  const { userId, settings, access } = req.pipeline!;
+  return { userId, name: access.name, settings, directory: await getPipelineDirectory() };
+}
+
+// ── #17 POST /pipeline/projects/:id/messages ─────────────────────────────────────────
+router.post(
+  "/pipeline/projects/:id/messages",
+  ...G,
+  pv(V.projectParamsSchema, "params"),
+  pv(V.postMessageSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const result = await postMessage(await messageActorOf(req), req.params.id, req.body);
+    return ok(res, result.data, result.status);
+  }),
+);
+
+// ── #18 PATCH /pipeline/messages/:mid ────────────────────────────────────────────────
+router.patch(
+  "/pipeline/messages/:mid",
+  ...G,
+  pv(V.messageParamsSchema, "params"),
+  pv(V.editMessageSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    return ok(res, await editMessage(await messageActorOf(req), req.params.mid, req.body.body));
+  }),
+);
+
+// ── #19 DELETE /pipeline/messages/:mid ───────────────────────────────────────────────
+router.delete(
+  "/pipeline/messages/:mid",
+  ...G,
+  pv(V.messageParamsSchema, "params"),
+  asyncHandler(async (req: Request, res: Response) => {
+    return ok(res, await deleteMessage(await messageActorOf(req), req.params.mid));
+  }),
+);
+
+// ── #20 PUT /pipeline/messages/:mid/reactions/:emoji ─────────────────────────────────
+router.put(
+  "/pipeline/messages/:mid/reactions/:emoji",
+  ...G,
+  pv(V.reactionParamsSchema, "params"),
+  pv(V.reactionBodySchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const { mid, emoji } = req.params as { mid: string; emoji: PipelineReactionKey };
+    return ok(res, await setReaction(await messageActorOf(req), mid, emoji, req.body.on));
+  }),
+);
+
+// ══ end PR 8 block ════════════════════════════════════════════════════════════════════
 
 // ── Unknown /pipeline paths (keep LAST, just above the error middleware) ─────────────
 // Behind G0 so an anonymous or wrong-portal caller learns nothing about which routes

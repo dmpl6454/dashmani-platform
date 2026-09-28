@@ -2,7 +2,8 @@ import { prisma } from "@dashmani/db";
 import { beforeEach, afterAll } from "vitest";
 
 const TRUNCATE_SQL = `
-    TRUNCATE TABLE content_posts, approvals, project_files, project_tasks, project_accounts, projects,
+    TRUNCATE TABLE pipeline_messages, pipeline_participants, pipeline_projects, pipeline_phases, pipeline_board_state,
+      content_posts, approvals, project_files, project_tasks, project_accounts, projects,
       client_refresh_tokens, clients,
       task_comments, tasks, link_metrics_latest, link_metrics, report_links, daily_reports, account_growth_snapshots, account_assignments,
       meta_asset_demographics, meta_asset_metrics, meta_asset_daily,

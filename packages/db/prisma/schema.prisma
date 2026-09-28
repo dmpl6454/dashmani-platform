@@ -68,6 +68,13 @@ model User {
   metaConnections    MetaConnection[]        @relation("MetaConnectionsCreated")
   metaOauthStates    MetaOAuthState[]
 
+  // Pipeline (HR portal v1) — Prisma-VIRTUAL back-relations only. They add no column and
+  // no DDL on "users"; the FKs live on the pipeline_* tables (spec §2).
+  pipelineOwned          PipelineProject[]     @relation("PipelineOwner")
+  pipelineCreated        PipelineProject[]     @relation("PipelineCreator")
+  pipelineParticipations PipelineParticipant[] @relation("PipelineParticipation")
+  pipelineMessages       PipelineMessage[]     @relation("PipelineMessageAuthor")
+
   @@map("users")
 }
 
@@ -853,6 +860,10 @@ enum NotificationType {
   GENERAL
   ANNOUNCEMENT
   TASK_ASSIGNED
+  // ONE value for every pipeline kind (the kind lives in metadata.kind). Written only by
+  // apps/api/src/services/pipeline/notify.ts. ⚠️ PERMANENT — Postgres cannot drop an enum
+  // value, and a client generated without it may fail on these rows (spec §12 rollback).
+  PIPELINE
 }
 
 // ============ ANNOUNCEMENTS ============
@@ -2022,4 +2033,138 @@ model MetaPost {
   @@index([postedAt(sort: Desc)])
   @@index([matchId])
   @@map("meta_posts")
+}
+
+// ============ PIPELINE (HR portal v1) ============
+// Spec: docs/superpowers/specs/2026-09-26-pipeline-design.md §2. These tables ship DARK:
+// nothing reads or writes them until the pipeline API lands behind `pipeline.mode`.
+// ⚠️ Prod DDL is applied by hand from scripts/pipeline-ddl.sql BEFORE merge, never by a
+// blanket `db:push` (prod carries the hand-built link_metrics_emp_url_fetched_ok_v2_idx).
+// Any later PR touching a pipeline_* model or NotificationType follows the same DDL cycle
+// (spec §12). The board row and the 7 phases are seeded by that script, not by seed.ts.
+
+/// Phases are DATA (owner will rename/reorder/add). Never hard-code phase ids.
+model PipelinePhase {
+  id         String    @id @default(uuid())
+  key        String    @unique @db.VarChar(40)       // stable slug for scripts/tests
+  name       String    @db.VarChar(40)
+  position   Int
+  color      String    @default("indigo") @db.VarChar(16) // design-token allowlist
+  isTerminal Boolean   @default(false) @map("is_terminal") // no due/overdue alerts
+  archivedAt DateTime? @map("archived_at")  // allowed only when NO project row (any state) references it
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+  projects   PipelineProject[]
+  @@index([position, id])
+  @@map("pipeline_phases")
+}
+
+/// Single row (id = 1). Version of everything the BOARD shows. Bumped AFTER commit (§5.1).
+model PipelineBoardState {
+  id        Int      @id
+  seq       Int      @default(0)
+  updatedAt DateTime @updatedAt @map("updated_at")
+  @@map("pipeline_board_state")
+}
+
+model PipelineProject {
+  id                 String    @id @default(uuid())
+  clientId           String    @map("client_id") @db.VarChar(64)   // create idempotency key (body field)
+  title              String    @db.VarChar(120)
+  description        String    @default("") @db.Text               // ≤ 5,000 chars (validator)
+  ownerId            String    @map("owner_id")                    // the ONLY source of ownership
+  createdById        String    @map("created_by_id")
+  phaseId            String    @map("phase_id")
+  rank               String    @db.VarChar(64)                     // fractional index; compare COLLATE "C"
+  startDate          DateTime? @map("start_date") @db.Date
+  dueDate            DateTime? @map("due_date") @db.Date
+  headerRev          Int       @default(1) @map("header_rev")       // header/participant change
+  threadRev          Int       @default(0) @map("thread_rev")       // thread change (delta cursor)
+  lastMessageSeq     Int       @default(0) @map("last_message_seq")
+  lastMessageAt      DateTime? @map("last_message_at")
+  memberCount        Int       @default(1) @map("member_count")     // MEMBER rows (owner always has one)
+  phaseChangedAt     DateTime? @map("phase_changed_at")
+  phaseChangedById   String?   @map("phase_changed_by_id")          // informational, no FK
+  moveGen            Int       @default(0) @map("move_gen")
+  moveActorId        String?   @map("move_actor_id")
+  moveStartedAt      DateTime? @map("move_started_at")
+  moveLastAt         DateTime? @map("move_last_at")
+  moveFromPhaseId    String?   @map("move_from_phase_id")
+  dueSoonNotifiedFor DateTime? @map("due_soon_notified_for") @db.Date
+  overdueNotifiedFor DateTime? @map("overdue_notified_for") @db.Date
+  archivedAt         DateTime? @map("archived_at")
+  archivedById       String?   @map("archived_by_id")
+  archivedByAdmin    Boolean   @default(false) @map("archived_by_admin") // non-owner admin acted
+  deletedAt          DateTime? @map("deleted_at")                   // soft delete; purged after 30 days
+  deletedById        String?   @map("deleted_by_id")
+  deletedByAdmin     Boolean   @default(false) @map("deleted_by_admin")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+
+  owner        User                  @relation("PipelineOwner",   fields: [ownerId],     references: [id], onDelete: Restrict)
+  createdBy    User                  @relation("PipelineCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  phase        PipelinePhase         @relation(fields: [phaseId], references: [id], onDelete: Restrict)
+  participants PipelineParticipant[]
+  messages     PipelineMessage[]
+
+  @@unique([createdById, clientId])
+  @@index([phaseId])
+  @@index([ownerId])
+  @@index([dueDate])
+  @@index([archivedAt, id])
+  @@index([deletedAt])
+  @@map("pipeline_projects")
+}
+
+/// One row per (project, user) for members and followers. Also holds read state.
+model PipelineParticipant {
+  projectId       String    @map("project_id")
+  userId          String    @map("user_id")
+  role            String    @db.VarChar(12)                  // "MEMBER" | "FOLLOWER" — never "OWNER"
+  notify          Boolean   @default(true)                   // false after unfollow; only the user changes it
+  lastReadSeq     Int       @default(0) @map("last_read_seq")
+  seenAt          DateTime? @map("seen_at")                  // active-reader suppression; NULL on leave
+  engagedAt       DateTime? @map("engaged_at")               // first post/reply/mention/explicit follow
+  memberAddedById String?   @map("member_added_by_id")       // set ONLY by create / add-members
+  memberAddedAt   DateTime? @map("member_added_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  project PipelineProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user    User            @relation("PipelineParticipation", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([projectId, userId])
+  @@index([userId])
+  @@map("pipeline_participants")
+}
+
+model PipelineMessage {
+  id          String    @id @default(uuid())
+  clientId    String    @map("client_id") @db.VarChar(64)    // send idempotency key (body field)
+  projectId   String    @map("project_id")
+  seq         Int                                             // creation order in project, immutable
+  rev         Int                                             // last-change stamp = delta cursor
+  parentId    String?   @map("parent_id")                     // null = top-level; replies point at the ROOT
+  authorId    String    @map("author_id")
+  body        String    @db.Text                              // ≤ 4,000; "" when deleted
+  mentionIds  String[]  @default([]) @map("mention_ids")      // delivered (valid) mentions only, ≤ 20
+  reactions   Json      @default("{}")                       // {"thumbs_up":["<userId>",…]}
+  replyCount  Int       @default(0) @map("reply_count")
+  lastReplyAt DateTime? @map("last_reply_at")
+  editedAt    DateTime? @map("edited_at")
+  deletedAt   DateTime? @map("deleted_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  project PipelineProject   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  parent  PipelineMessage?  @relation("PipelineReplies", fields: [parentId], references: [id], onDelete: Cascade)
+  replies PipelineMessage[] @relation("PipelineReplies")
+  author  User              @relation("PipelineMessageAuthor", fields: [authorId], references: [id], onDelete: Restrict)
+
+  @@unique([authorId, clientId])
+  @@unique([projectId, seq])
+  @@unique([projectId, rev])            // total order → unambiguous delta cursor
+  @@index([projectId, parentId, seq])   // top-level pages and reply lists
+  @@index([parentId])                   // FK cascade on purge must not full-scan
+  @@map("pipeline_messages")
 }

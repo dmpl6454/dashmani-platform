@@ -88,9 +88,12 @@ describe("pipeline gates", () => {
 
     it("no token and an expired token are 401", async () => {
       const u = await createPipelineUser({ name: "Ned NoToken", tag: "g0-none" });
-      for (const path of [BOOT, DIR]) {
-        expect((await get(path)).status).toBe(401);
-        expect((await get(path, hrToken(u.id, { expiresIn: -60 }))).status).toBe(401);
+      for (const path of [BOOT, DIR, "/v1/pipeline/nope"]) {
+        for (const r of [await get(path), await get(path, hrToken(u.id, { expiresIn: -60 }))]) {
+          expect(r.status).toBe(401);
+          // authenticate is not pipeline code, but every pipeline response is no-store.
+          expect(r.headers["cache-control"]).toBe("no-store");
+        }
       }
     });
   });

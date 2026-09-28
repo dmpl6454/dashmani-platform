@@ -7,7 +7,7 @@ import rateLimit from "express-rate-limit";
 import routes from "./routes";
 import { errorHandler } from "./middleware/error-handler";
 import { rateLimitKey, loginRateLimitKey, isHealthProbe, isPipelinePath, envInt } from "./middleware/rate-limit-key";
-import { pipelineRateLimiter, pipelineJson, skipPipelineSyncLog } from "./middleware/pipeline-rate-limit";
+import { pipelineNoStore, pipelineRateLimiter, pipelineJson, skipPipelineSyncLog } from "./middleware/pipeline-rate-limit";
 import { pipelineErrorMiddleware } from "./services/pipeline/errors";
 import { bigintJsonReplacer } from "./utils/bigint-json";
 
@@ -70,8 +70,9 @@ app.use(rateLimit({
   message: { success: false, error: { code: "RATE_LIMIT", message: "Too many requests, please try again later" } },
 }));
 
-// Pipeline read / write / message buckets (after cors, so preflights never count).
-app.use("/v1/pipeline", pipelineRateLimiter);
+// Pipeline: no-store on EVERY response (incl. authenticate's 401), then the read / write /
+// message buckets (after cors, so preflights never count).
+app.use("/v1/pipeline", pipelineNoStore, pipelineRateLimiter);
 
 // Stricter rate limit on login endpoints — keyed per (client, account). Mounted
 // further down, AFTER express.json(), because the key reads the request body.
@@ -107,7 +108,10 @@ app.use("/v1/hr/auth/login", authLimiter);
 
 if (process.env.NODE_ENV !== "test") {
   // P13: successful POST /v1/pipeline/sync polls are not logged (hundreds of thousands
-  // of lines a day); failures still are.
+  // of lines a day); failures that reach this point still are. ⚠️ Pipeline 429s and
+  // 413 / INVALID_JSON bodies are answered ABOVE this line and never reach morgan (as
+  // the global limiter's 429s never did) — the pipeline limiter and error middleware log
+  // those themselves, throttled (utils/throttled-warn.ts).
   app.use(morgan("combined", { skip: skipPipelineSyncLog }));
 }
 

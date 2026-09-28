@@ -1,12 +1,24 @@
 "use client";
-import { PipelineHeader } from "@/components/pipeline/header/PipelineHeader";
-import { EmptyState } from "@/components/pipeline/ui/EmptyState";
+/**
+ * /pipeline — the board, or the archived / deleted lists via ?view=. useSearchParams is
+ * read inside <Suspense>, whose fallback is real content (a skeleton board), not a spinner.
+ */
+import { Suspense } from "react";
+import { useSearchParams } from "next/navigation";
+import { Board } from "@/components/pipeline/board/Board";
+import { ProjectListView } from "@/components/pipeline/board/ProjectListView";
+import { GateScreen } from "@/components/pipeline/header/GateScreen";
+
+function Route() {
+  const view = useSearchParams().get("view");
+  if (view === "archived" || view === "deleted") return <ProjectListView view={view} />;
+  return <Board />;
+}
 
 export default function PipelinePage() {
   return (
-    <div className="flex flex-col min-h-0 flex-1">
-      <PipelineHeader title="Pipeline" />
-      <EmptyState title="Pipeline" body="The board is on its way." />
-    </div>
+    <Suspense fallback={<GateScreen kind="loading" />}>
+      <Route />
+    </Suspense>
   );
 }

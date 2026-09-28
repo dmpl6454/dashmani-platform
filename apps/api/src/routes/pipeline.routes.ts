@@ -13,7 +13,9 @@
  *   - every async handler/middleware is wrapped in asyncHandler;
  *   - no requirePermission, auditLog, dispatchNotification or withHeavyQuerySlot, and no
  *     global `prisma` — only pipelineRead / pipelineWrite;
- *   - responses go through `ok()` (Cache-Control: no-store);
+ *   - responses go through `ok()` (Cache-Control: no-store — app.ts also sets it on
+ *     every /v1/pipeline response up front, so authenticate's 401 and validate()'s 400
+ *     carry it too);
  *   - the unknown-path 404 and pipelineErrorMiddleware stay LAST.
  */
 import { Router, type Request, type Response } from "express";
@@ -29,6 +31,7 @@ import { asyncHandler } from "../utils/async-handler";
 import { G, G0, evaluatePipelineAccess } from "../middleware/pipeline-gates";
 import { pipelineErrorMiddleware } from "../services/pipeline/errors";
 import { getPipelineDirectory } from "../services/pipeline/access";
+import { isPilotUser } from "../services/pipeline/settings";
 import { getLivePhases } from "../services/pipeline/board";
 
 const router = Router();
@@ -81,7 +84,7 @@ router.get(
         name: e.name,
         initials: e.initials,
         active: e.active,
-        pickable: e.active && (!pilot || settings.pilotUserIds.has(e.id)),
+        pickable: e.active && (!pilot || isPilotUser(settings, e.id)),
       };
       if (e.hint) entry.hint = e.hint;
       return entry;

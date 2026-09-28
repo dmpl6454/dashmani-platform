@@ -19,6 +19,7 @@
 import express, { type Request, type Response, type RequestHandler } from "express";
 import rateLimit from "express-rate-limit";
 import { envInt, pipelineRateLimitKey } from "./rate-limit-key";
+import { warnThrottled } from "../utils/throttled-warn";
 
 export type PipelineBucket = "read" | "write" | "message";
 
@@ -64,6 +65,9 @@ function makeLimiter(bucket: PipelineBucket, limit: number): RequestHandler {
     legacyHeaders: false,
     handler: (req, res) => {
       const retryAfterSec = retryAfterSecOf(req);
+      // ⚠️ Answered before morgan is mounted: without this line a 429 storm (the
+      // 2026-09-18 class) leaves no trace in the API log. One line per bucket per 10 s.
+      warnThrottled(`429:${bucket}`, `[pipeline] 429 PIPELINE_RATE_LIMIT bucket=${bucket}`);
       res.setHeader("Cache-Control", "no-store");
       res.setHeader("Retry-After", String(retryAfterSec));
       res.status(429).json({
@@ -75,8 +79,18 @@ function makeLimiter(bucket: PipelineBucket, limit: number): RequestHandler {
 }
 
 /**
- * Mounted as `app.use("/v1/pipeline", pipelineRateLimiter)` right after the global
- * limiter (and after cors, so preflights never count).
+ * Every /v1/pipeline response is `Cache-Control: no-store` (spec §3.2) — including the
+ * ones pipeline code never writes: authenticate's 401 and validate()'s 400. Mounted first,
+ * before the limiters; later setHeader calls (ok(), the error middleware) agree with it.
+ */
+export const pipelineNoStore: RequestHandler = (_req, res, next) => {
+  res.setHeader("Cache-Control", "no-store");
+  next();
+};
+
+/**
+ * Mounted as `app.use("/v1/pipeline", pipelineNoStore, pipelineRateLimiter)` right after
+ * the global limiter (and after cors, so preflights never count).
  */
 export const pipelineRateLimiter: RequestHandler[] = [
   makeLimiter("read", envInt("PIPELINE_RATE_READ_MAX", 120)),

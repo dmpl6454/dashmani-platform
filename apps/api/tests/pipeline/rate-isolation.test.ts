@@ -52,7 +52,15 @@ describe("pipeline read bucket (PIPELINE_RATE_READ_MAX=3)", () => {
       const r = await request(app).post("/v1/pipeline/sync").set("Authorization", `Bearer ${tok}`).set("X-Forwarded-For", edge).send({ clientBuild: 1 });
       expect(r.status).not.toBe(429);
     }
+    // A 429 is answered before morgan is mounted, so the limiter itself leaves a trace —
+    // one line per bucket per 10 s (the 2026-09-18 storm left none).
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const limited = await request(app).post("/v1/pipeline/sync").set("Authorization", `Bearer ${tok}`).set("X-Forwarded-For", edge).send({ clientBuild: 1 });
+    const again = await request(app).post("/v1/pipeline/sync").set("Authorization", `Bearer ${tok}`).set("X-Forwarded-For", edge).send({ clientBuild: 1 });
+    const lines = warn.mock.calls.map((c) => String(c[0]));
+    warn.mockRestore();
+    expect(again.status).toBe(429);
+    expect(lines.filter((l) => l.includes("429 PIPELINE_RATE_LIMIT bucket=read"))).toHaveLength(1);
     expect(limited.status).toBe(429);
     expect(limited.body).toEqual({
       success: false,
@@ -109,6 +117,7 @@ describe("pipeline read bucket (PIPELINE_RATE_READ_MAX=3)", () => {
 
   it("a 65 KB JSON body gets 413 in JSON; malformed JSON gets 400 INVALID_JSON; both are pipeline-only", async () => {
     const big = { clientBuild: 1, pad: "x".repeat(65 * 1024) };
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const tooLarge = await request(app).post("/v1/pipeline/sync").set("X-Forwarded-For", "198.51.100.1").send(big);
     expect(tooLarge.status).toBe(413);
     expect(tooLarge.body).toMatchObject({ success: false, error: { code: "PAYLOAD_TOO_LARGE" } });
@@ -121,6 +130,12 @@ describe("pipeline read bucket (PIPELINE_RATE_READ_MAX=3)", () => {
       .send('{"clientBuild": 1,');
     expect(bad.status).toBe(400);
     expect(bad.body).toMatchObject({ success: false, error: { code: "INVALID_JSON" } });
+    // Both are answered at app level, before morgan, so they are logged (throttled) here.
+    const lines = warn.mock.calls.map((c) => String(c[0]));
+    warn.mockRestore();
+    expect(lines.some((l) => l.includes("413 PAYLOAD_TOO_LARGE"))).toBe(true);
+    expect(lines.some((l) => l.includes("400 INVALID_JSON"))).toBe(true);
+    for (const r of [tooLarge, bad]) expect(r.headers["cache-control"]).toBe("no-store");
 
     // A non-JSON content type is still bounded and parsed as JSON (the pipeline accepts JSON only).
     const text = await request(app).post("/v1/pipeline/sync").set("X-Forwarded-For", "198.51.100.3").set("Content-Type", "text/plain").send("hello");
@@ -130,6 +145,8 @@ describe("pipeline read bucket (PIPELINE_RATE_READ_MAX=3)", () => {
     // Just under the limit is accepted by the parser (then rejected by auth, not by size).
     const ok = await request(app).post("/v1/pipeline/sync").set("X-Forwarded-For", "198.51.100.4").send({ clientBuild: 1, pad: "x".repeat(60 * 1024) });
     expect(ok.status).toBe(401);
+    // Every pipeline response is no-store — including authenticate's 401.
+    expect(ok.headers["cache-control"]).toBe("no-store");
 
     // The global 10 mb parser still serves everything else.
     const hr = await request(app).post("/v1/hr/auth/login").set("X-Forwarded-For", "198.51.100.5").send({ identifier: "x@x.test", password: "y".repeat(70 * 1024) });

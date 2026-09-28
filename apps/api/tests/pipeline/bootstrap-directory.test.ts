@@ -166,6 +166,26 @@ describe("pipeline bootstrap and directory", () => {
       expect(byId.get(unlisted.id)!.pickable).toBe(false);
     });
 
+    it("pilot matching is case-insensitive in the directory exactly as in the gate", async () => {
+      // A hand-inserted mixed-case id: the gate lowercases the token's userId before the
+      // pilot lookup, so `pickable` must too, or the two disagree about the same person.
+      const mixed = await prisma.user.create({
+        data: {
+          id: "ABCDEF00-0000-4000-8000-00000000C0DE",
+          name: "Maya Mixed",
+          email: `pl-dir-mixed-${Date.now()}@test.com`,
+          passwordHash: "x",
+          status: "ACTIVE",
+        },
+      });
+      await setPipelineSetting("pipeline.mode", "pilot");
+      await setPipelineSetting("pipeline.pilotUserIds", JSON.stringify([mixed.id]));
+      invalidatePipelineCaches();
+      expect((await get(DIR, hrToken(mixed.id))).status).toBe(200); // the gate admits them…
+      const rows = (await get(DIR, hrToken(mixed.id))).body.data as Array<{ id: string; pickable: boolean }>;
+      expect(rows.find((x) => x.id === mixed.id)!.pickable).toBe(true); // …and so does the directory
+    });
+
     it("is served from a memo: a user added later appears only after invalidation", async () => {
       const me = await createPipelineUser({ name: "Memo Me", tag: "dir-memo" });
       expect((await get(DIR, hrToken(me.id))).body.data).toHaveLength(1);

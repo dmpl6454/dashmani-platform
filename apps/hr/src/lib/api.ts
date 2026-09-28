@@ -2,6 +2,8 @@
 // every HR page, and the barrel drags in every zod validator: measured +16-17 kB of
 // first-load JS on ~25 routes (e.g. /dashboard 115 -> 131 kB). The module is pure.
 import { classifyRefreshOutcome, type RefreshOutcome } from "@dashmani/shared/src/pipeline/refresh";
+import { purgePipelineStorage } from "./pipeline-storage";
+import { loginHrefWithNext } from "./return-path";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/v1";
 /** Base URL without /v1 — used for static file URLs like /uploads/ */
@@ -61,23 +63,8 @@ function endSession(): ApiError {
   localStorage.removeItem("hrRefreshToken");
   localStorage.removeItem("hrUser");
   purgePipelineStorage();
-  const { pathname, search } = window.location;
-  window.location.href = "/login?next=" + encodeURIComponent(pathname + search);
+  window.location.href = loginHrefWithNext(window.location);
   return new ApiError("Session expired. Please sign in again.", "UNAUTHORIZED", undefined, { status: 401 });
-}
-
-/** Remove every localStorage key starting `pl:` (Pipeline outbox, drafts, remembered views). */
-export function purgePipelineStorage(): void {
-  try {
-    const keys: string[] = [];
-    for (let i = 0; i < localStorage.length; i++) {
-      const k = localStorage.key(i);
-      if (k && k.startsWith("pl:")) keys.push(k);
-    }
-    for (const k of keys) localStorage.removeItem(k);
-  } catch {
-    /* storage blocked (private mode) — nothing to purge */
-  }
 }
 
 export async function apiFetch<T>(path: string, options: ApiFetchOptions = {}): Promise<T> {

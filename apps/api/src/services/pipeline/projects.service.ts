@@ -18,6 +18,7 @@ import {
   nKeysBetween,
   type PipelineEditableFields,
   type PipelineHeader,
+  type PipelineArchiveResponse,
   type PipelineMoveRequest,
   type PipelineMoveResponse,
   type PipelineProjectDetail,
@@ -36,6 +37,7 @@ import { notifier } from "./notifier";
 import { cardFromRow, headerFromRow, messageFromRow, participantFromRow } from "./wire";
 import type { PipelineDirectory } from "./access";
 import { isPilotUser, type PipelineSettings } from "./settings";
+import { assertOwnerOrAdmin } from "../../middleware/pipeline-gates";
 
 type Row = Record<string, unknown>;
 type Db = PipelineDbClient | PipelineTx;
@@ -639,4 +641,183 @@ async function rebalancePhase(tx: PipelineTx, phaseId: string, projectId: string
        WHERE p.id = v.id AND p.phase_id = ${phaseId} AND p.rank IS DISTINCT FROM v.rank`;
   }
   return keys[order.indexOf(projectId)];
+}
+
+// ── Routes #9–11: archive, unarchive, restore, delete, owner transfer (spec §4.5) ────
+
+/**
+ * Where an unarchived or restored card goes: its own phase if that is live, otherwise the
+ * TOP of the first live phase (`phaseAdjusted`), so every live card sits in a live phase.
+ */
+async function relocationFor(tx: PipelineTx, row: Row): Promise<{ phaseId: string; rank: string; adjusted: boolean }> {
+  const [r] = await tx.$queryRaw<Row[]>`
+    WITH first AS (
+      SELECT id FROM pipeline_phases WHERE archived_at IS NULL ORDER BY position, id LIMIT 1)
+    SELECT (SELECT archived_at IS NOT NULL FROM pipeline_phases WHERE id = ${String(row.phase_id)}) AS phase_archived,
+           (SELECT id FROM first) AS first_id,
+           (SELECT p.rank FROM pipeline_projects p
+             WHERE p.phase_id = (SELECT id FROM first) AND p.archived_at IS NULL AND p.deleted_at IS NULL
+             ORDER BY p.rank COLLATE "C", p.id LIMIT 1) AS first_rank`;
+  if (r.phase_archived !== true || !r.first_id) {
+    return { phaseId: String(row.phase_id), rank: String(row.rank), adjusted: false };
+  }
+  let rank = keyBetween(null, (r.first_rank as string | null) ?? null);
+  if (rankNeedsRebalance(rank)) rank = String(row.rank); // vanishingly rare; ties are allowed
+  return { phaseId: String(r.first_id), rank, adjusted: true };
+}
+
+/** The card from an `UPDATE … RETURNING <card columns>` result. */
+const firstCard = (rows: Row[]): PipelineCard => cardFromRow(rows[0]);
+
+export async function archiveProject(actor: PipelineActor, projectId: string): Promise<PipelineArchiveResponse> {
+  const me = actor.userId;
+  const out = await pipelineWrite(async (tx) => {
+    const row = await lockProject(tx, projectId, me);
+    assertWritable(row, { allowArchived: true });
+    const { isOwner, isAdmin } = await assertOwnerOrAdmin(tx, { actorId: me, ownerId: String(row.owner_id) });
+    if (row.archived_at) return { card: (await readCard(tx, projectId))!, changed: false };
+    const card = firstCard(
+      await tx.$queryRaw<Row[]>`
+        UPDATE pipeline_projects p SET
+               archived_at = timezone('utc', now()), archived_by_id = ${me},
+               archived_by_admin = ${!isOwner && isAdmin}::boolean,
+               header_rev = p.header_rev + 1, updated_at = timezone('utc', now())
+         WHERE p.id = ${projectId}
+     RETURNING p.id, p.phase_id, p.title, p.rank, p.owner_id, p.start_date, p.due_date, p.member_count,
+               ARRAY(SELECT pp.user_id FROM pipeline_participants pp
+                      WHERE pp.project_id = p.id AND pp.role = 'MEMBER'
+                      ORDER BY pp.created_at, pp.user_id LIMIT 3) AS preview`,
+    );
+    return { card, changed: true };
+  });
+  if (out.changed) await bumpBoard();
+  return { card: out.card, phaseAdjusted: false };
+}
+
+export async function unarchiveProject(actor: PipelineActor, projectId: string): Promise<PipelineArchiveResponse> {
+  const me = actor.userId;
+  const out = await pipelineWrite(async (tx) => {
+    const row = await lockProject(tx, projectId, me);
+    assertWritable(row, { allowArchived: true });
+    const { isAdmin } = await assertOwnerOrAdmin(tx, { actorId: me, ownerId: String(row.owner_id) });
+    if (!row.archived_at) return { card: (await readCard(tx, projectId))!, adjusted: false, changed: false };
+    if (row.archived_by_admin === true && !isAdmin) {
+      throw new PipelineError(403, "REMOVED_BY_ADMIN", "An admin archived this project — ask an admin to unarchive it");
+    }
+    const to = await relocationFor(tx, row);
+    const card = firstCard(
+      await tx.$queryRaw<Row[]>`
+        UPDATE pipeline_projects p SET
+               archived_at = NULL, archived_by_id = NULL, archived_by_admin = false,
+               phase_id = ${to.phaseId}, rank = ${to.rank},
+               header_rev = p.header_rev + 1, updated_at = timezone('utc', now())
+         WHERE p.id = ${projectId}
+     RETURNING p.id, p.phase_id, p.title, p.rank, p.owner_id, p.start_date, p.due_date, p.member_count,
+               ARRAY(SELECT pp.user_id FROM pipeline_participants pp
+                      WHERE pp.project_id = p.id AND pp.role = 'MEMBER'
+                      ORDER BY pp.created_at, pp.user_id LIMIT 3) AS preview`,
+    );
+    return { card, adjusted: to.adjusted, changed: true };
+  });
+  if (out.changed) await bumpBoard();
+  return { card: out.card, phaseAdjusted: out.adjusted };
+}
+
+export async function restoreProject(actor: PipelineActor, projectId: string): Promise<PipelineArchiveResponse> {
+  const me = actor.userId;
+  const out = await pipelineWrite(async (tx) => {
+    const row = await lockProject(tx, projectId, me);
+    if (!row) throw new PipelineError(404, "PROJECT_NOT_FOUND", "This project doesn't exist");
+    if (row.actor_active !== true) throw new PipelineError(403, "ACCOUNT_INACTIVE", "Your account is inactive");
+    const { isAdmin } = await assertOwnerOrAdmin(tx, { actorId: me, ownerId: String(row.owner_id) });
+    if (!row.deleted_at) return { card: (await readCard(tx, projectId))!, adjusted: false, changed: false };
+    if (row.deleted_by_admin === true && !isAdmin) {
+      throw new PipelineError(403, "REMOVED_BY_ADMIN", "An admin deleted this project — ask an admin to restore it");
+    }
+    const windowMs = PIPELINE_LIMITS.restoreWindowDays * 86_400_000;
+    if (asDate(row.db_now)!.getTime() - asDate(row.deleted_at)!.getTime() >= windowMs) {
+      throw new PipelineError(409, "RESTORE_WINDOW_PASSED", "Projects can be restored for 30 days after deletion");
+    }
+    const to = await relocationFor(tx, row);
+    const card = firstCard(
+      await tx.$queryRaw<Row[]>`
+        UPDATE pipeline_projects p SET
+               deleted_at = NULL, deleted_by_id = NULL, deleted_by_admin = false,
+               phase_id = ${to.phaseId}, rank = ${to.rank},
+               header_rev = p.header_rev + 1, updated_at = timezone('utc', now())
+         WHERE p.id = ${projectId}
+     RETURNING p.id, p.phase_id, p.title, p.rank, p.owner_id, p.start_date, p.due_date, p.member_count,
+               ARRAY(SELECT pp.user_id FROM pipeline_participants pp
+                      WHERE pp.project_id = p.id AND pp.role = 'MEMBER'
+                      ORDER BY pp.created_at, pp.user_id LIMIT 3) AS preview`,
+    );
+    return { card, adjusted: to.adjusted, changed: true };
+  });
+  if (out.changed) await bumpBoard();
+  return { card: out.card, phaseAdjusted: out.adjusted };
+}
+
+/** Soft delete (idempotent). The title must be retyped exactly (surrounding spaces ignored). */
+export async function deleteProject(actor: PipelineActor, projectId: string, confirmTitle: string): Promise<{ deleted: true }> {
+  const me = actor.userId;
+  const changed = await pipelineWrite(async (tx) => {
+    const row = await lockProject(tx, projectId, me);
+    if (!row) throw new PipelineError(404, "PROJECT_NOT_FOUND", "This project doesn't exist");
+    if (row.actor_active !== true) throw new PipelineError(403, "ACCOUNT_INACTIVE", "Your account is inactive");
+    const { isOwner, isAdmin } = await assertOwnerOrAdmin(tx, { actorId: me, ownerId: String(row.owner_id) });
+    if (row.deleted_at) return false;
+    if (confirmTitle.trim() !== String(row.title)) {
+      throw new PipelineError(409, "CONFIRM_MISMATCH", "Type the project's title exactly to delete it");
+    }
+    const parts = await tx.$queryRaw<Array<{ user_id: string }>>`
+      SELECT user_id FROM pipeline_participants WHERE project_id = ${projectId}
+       ORDER BY user_id LIMIT ${PIPELINE_LIMITS.participantsMax}`;
+    await tx.$executeRaw`
+      UPDATE pipeline_projects SET
+             deleted_at = timezone('utc', now()), deleted_by_id = ${me},
+             deleted_by_admin = ${!isOwner && isAdmin}::boolean,
+             header_rev = header_rev + 1, updated_at = timezone('utc', now())
+       WHERE id = ${projectId}`;
+    await notifier.onProjectDeleted(tx, { projectId, actorId: me, participantIds: parts.map((p) => p.user_id) });
+    return true;
+  });
+  if (changed) await bumpBoard();
+  return { deleted: true };
+}
+
+/**
+ * Owner transfer (+O). The target must be ACTIVE and pickable. In one transaction: upsert
+ * the new owner's row as MEMBER with notify=true, then set owner_id and the exact
+ * member_count. The old owner keeps a plain MEMBER row (and becomes removable).
+ */
+export async function transferOwner(actor: PipelineActor, projectId: string, targetId: string): Promise<{ header: PipelineHeader }> {
+  const me = actor.userId;
+  const notPickable = () => new PipelineError(409, "USER_NOT_PICKABLE", "That person can't own a project right now");
+  const out = await pipelineWrite(async (tx) => {
+    const row = await lockProject(tx, projectId, me);
+    assertWritable(row);
+    await assertOwnerOrAdmin(tx, { actorId: me, ownerId: String(row.owner_id) });
+    if (String(row.owner_id) === targetId) return { header: headerFromRow(row), changed: false };
+    if (!pickableByMode(actor.settings, targetId)) throw notPickable();
+    const up = await tx.$queryRaw<Array<{ user_id: string }>>`
+      INSERT INTO pipeline_participants (project_id, user_id, role, notify, created_at, updated_at)
+      SELECT ${projectId}, u.id, 'MEMBER', true, timezone('utc', now()), timezone('utc', now())
+        FROM users u
+       WHERE u.id = ${targetId} AND u.status = 'ACTIVE' AND u.deleted_at IS NULL
+      ON CONFLICT (project_id, user_id) DO UPDATE
+         SET role = 'MEMBER', notify = true, updated_at = timezone('utc', now())
+      RETURNING user_id`;
+    if (up.length === 0) throw notPickable();
+    const [updated] = await tx.$queryRaw<Row[]>`
+      UPDATE pipeline_projects SET
+             owner_id = ${targetId},
+             member_count = (SELECT count(*)::int FROM pipeline_participants
+                              WHERE project_id = ${projectId} AND role = 'MEMBER'),
+             header_rev = header_rev + 1, updated_at = timezone('utc', now())
+       WHERE id = ${projectId}
+   RETURNING *`;
+    return { header: headerFromRow(updated), changed: true };
+  });
+  if (out.changed) await bumpBoard();
+  return { header: out.header };
 }

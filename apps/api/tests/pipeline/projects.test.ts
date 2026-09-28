@@ -523,4 +523,117 @@ describe("pipeline projects", () => {
       expect(r.body.data.card.rank).toBe(ordered[1].rank);
     });
   });
+
+  // ── Task 7.4: archive, unarchive, delete, restore, owner transfer (routes #9–11) ──
+  describe("archive / unarchive / delete / restore / owner transfer", () => {
+    const act = (id: string, token: string, what: "archive" | "unarchive" | "restore") => call("post", `${P}/${id}/${what}`, token, {});
+    const del = (id: string, token: string, confirmTitle: string) => call("delete", `${P}/${id}`, token, { confirmTitle });
+
+    it("a non-owner non-admin gets 403 NOT_OWNER_OR_ADMIN; archive is idempotent and bumps the board once", async () => {
+      const owner = await user("Arch Owner");
+      const other = await user("Arch Other");
+      const card = await create(owner.token);
+      const denied = await act(card.id, other.token, "archive");
+      expect(denied.status).toBe(403);
+      expect(denied.body.error.code).toBe("NOT_OWNER_OR_ADMIN");
+
+      const v = await boardSeq();
+      const r = await act(card.id, owner.token, "archive");
+      expect(r.status).toBe(200);
+      expect(r.body.data).toMatchObject({ card: { id: card.id }, phaseAdjusted: false });
+      const again = await act(card.id, owner.token, "archive");
+      expect(again.status).toBe(200);
+      expect(await boardSeq()).toBe(v + 1);
+      const row = await prisma.pipelineProject.findUniqueOrThrow({ where: { id: card.id } });
+      expect(row).toMatchObject({ archivedById: owner.id, archivedByAdmin: false });
+      expect(row.archivedAt).not.toBeNull();
+    });
+
+    it("admin status comes from the DB: empty JWT roles still admit an admin; JWT-only roles admit no one", async () => {
+      const owner = await user("Roles Owner");
+      const admin = await createPipelineUser({ name: "Roles Admin", tag: "roles-admin", roleNames: ["Admin"] });
+      const pretender = await createPipelineUser({ name: "Roles Pretender", tag: "roles-pretender" });
+      const card = await create(owner.token);
+      const fake = await act(card.id, hrToken(pretender.id, { roles: ["Admin", "Super Admin"] }), "archive");
+      expect(fake.status).toBe(403);
+      const real = await act(card.id, hrToken(admin.id, { roles: [] }), "archive");
+      expect(real.status).toBe(200);
+      expect((await prisma.pipelineProject.findUniqueOrThrow({ where: { id: card.id } })).archivedByAdmin).toBe(true);
+      const ownerUnarchive = await act(card.id, owner.token, "unarchive");
+      expect(ownerUnarchive.status).toBe(403);
+      expect(ownerUnarchive.body.error.code).toBe("REMOVED_BY_ADMIN");
+    });
+
+    it("after an admin delete, the owner's restore is 403 REMOVED_BY_ADMIN and the admin's is 200", async () => {
+      const owner = await user("Del Owner");
+      const admin = await user("Del Admin", { roleNames: ["Super Admin"] });
+      const card = await create(owner.token, { title: "Launch plan" });
+      const r = await del(card.id, admin.token, "Launch plan");
+      expect(r.status).toBe(200);
+      expect(r.body.data).toEqual({ deleted: true });
+      expect((await del(card.id, admin.token, "Launch plan")).status).toBe(200); // idempotent
+      expect((await call("get", `${P}/${card.id}`, owner.token)).body.error.code).toBe("PROJECT_DELETED");
+
+      const byOwner = await act(card.id, owner.token, "restore");
+      expect(byOwner.status).toBe(403);
+      expect(byOwner.body.error.code).toBe("REMOVED_BY_ADMIN");
+      const byAdmin = await act(card.id, admin.token, "restore");
+      expect(byAdmin.status).toBe(200);
+      const row = await prisma.pipelineProject.findUniqueOrThrow({ where: { id: card.id } });
+      expect(row).toMatchObject({ deletedAt: null, deletedById: null, deletedByAdmin: false });
+    });
+
+    it("a restore after 30 days is 409 RESTORE_WINDOW_PASSED; a wrong confirmTitle is 409 CONFIRM_MISMATCH", async () => {
+      const owner = await user("Win Owner");
+      const card = await create(owner.token, { title: "Old campaign" });
+      const wrong = await del(card.id, owner.token, "Old campaig");
+      expect(wrong.status).toBe(409);
+      expect(wrong.body.error.code).toBe("CONFIRM_MISMATCH");
+      expect((await del(card.id, owner.token, "  Old campaign ")).status).toBe(200);
+      await prisma.pipelineProject.update({ where: { id: card.id }, data: { deletedAt: new Date(Date.now() - 31 * 86_400_000) } });
+      const late = await act(card.id, owner.token, "restore");
+      expect(late.status).toBe(409);
+      expect(late.body.error.code).toBe("RESTORE_WINDOW_PASSED");
+    });
+
+    it("unarchiving into an archived phase relocates the card to the first live phase at the top", async () => {
+      const owner = await user("Reloc Owner");
+      const old = await prisma.pipelinePhase.create({ data: { key: "old", name: "Old", position: 99 } });
+      const brief = await phase("brief");
+      const top = await create(owner.token, { title: "Top of Brief" });
+      const card = await create(owner.token, { phaseId: old.id, title: "In old phase" });
+      await act(card.id, owner.token, "archive");
+      await prisma.pipelineProject.update({ where: { id: card.id }, data: { phaseId: old.id } });
+      await prisma.pipelinePhase.update({ where: { id: old.id }, data: { archivedAt: new Date() } });
+      const r = await act(card.id, owner.token, "unarchive");
+      expect(r.status).toBe(200);
+      expect(r.body.data.phaseAdjusted).toBe(true);
+      expect(r.body.data.card.phaseId).toBe(brief.id);
+      expect(compareRank(r.body.data.card.rank, top.rank)).toBe(-1);
+      expect((await prisma.pipelineProject.findUniqueOrThrow({ where: { id: card.id } })).archivedAt).toBeNull();
+    });
+
+    it("owner transfer sets owner_id, gives the new owner a MEMBER row with notify, and refuses an inactive target", async () => {
+      const owner = await user("Xfer Owner");
+      const next = await user("Xfer Next");
+      const gone = await user("Xfer Gone", { status: "INACTIVE" });
+      const stranger = await user("Xfer Stranger");
+      const card = await create(owner.token);
+      const denied = await call("put", `${P}/${card.id}/owner`, stranger.token, { userId: stranger.id });
+      expect(denied.status).toBe(403);
+      const inactive = await call("put", `${P}/${card.id}/owner`, owner.token, { userId: gone.id });
+      expect(inactive.status).toBe(409);
+      expect(inactive.body.error.code).toBe("USER_NOT_PICKABLE");
+
+      const v = await boardSeq();
+      const r = await call("put", `${P}/${card.id}/owner`, owner.token, { userId: next.id });
+      expect(r.status).toBe(200);
+      expect(r.body.data.header).toMatchObject({ ownerId: next.id, memberCount: 2 });
+      expect(await boardSeq()).toBe(v + 1);
+      const row = await prisma.pipelineParticipant.findUniqueOrThrow({ where: { projectId_userId: { projectId: card.id, userId: next.id } } });
+      expect(row).toMatchObject({ role: "MEMBER", notify: true });
+      // The old owner may no longer act as owner.
+      expect((await act(card.id, owner.token, "archive")).status).toBe(403);
+    });
+  });
 });

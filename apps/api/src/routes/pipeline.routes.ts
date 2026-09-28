@@ -41,6 +41,11 @@ import {
   getProjectDetail,
   listProjects,
   moveProject,
+  archiveProject,
+  unarchiveProject,
+  restoreProject,
+  deleteProject,
+  transferOwner,
   type PipelineActor,
 } from "../services/pipeline/projects.service";
 
@@ -185,6 +190,38 @@ router.post(
   asyncHandler(async (req: Request, res: Response) => {
     return ok(res, await moveProject(actorOf(req), req.params.id, req.body));
   }),
+);
+
+// ── #9 POST …/archive, …/unarchive, …/restore (+O; admin-only after an admin action) ─
+const LIFECYCLE = { archive: archiveProject, unarchive: unarchiveProject, restore: restoreProject } as const;
+for (const [action, fn] of Object.entries(LIFECYCLE)) {
+  router.post(
+    `/pipeline/projects/:id/${action}`,
+    ...G,
+    pv(V.projectParamsSchema, "params"),
+    pv(V.emptyBodySchema),
+    asyncHandler(async (req: Request, res: Response) => ok(res, await fn(actorOf(req), req.params.id))),
+  );
+}
+
+// ── #10 DELETE /pipeline/projects/:id (+O; soft delete) ──────────────────────────────
+router.delete(
+  "/pipeline/projects/:id",
+  ...G,
+  pv(V.projectParamsSchema, "params"),
+  pv(V.deleteProjectSchema),
+  asyncHandler(async (req: Request, res: Response) =>
+    ok(res, await deleteProject(actorOf(req), req.params.id, req.body.confirmTitle)),
+  ),
+);
+
+// ── #11 PUT /pipeline/projects/:id/owner (+O) ────────────────────────────────────────
+router.put(
+  "/pipeline/projects/:id/owner",
+  ...G,
+  pv(V.projectParamsSchema, "params"),
+  pv(V.transferOwnerSchema),
+  asyncHandler(async (req: Request, res: Response) => ok(res, await transferOwner(actorOf(req), req.params.id, req.body.userId))),
 );
 
 // ── Unknown /pipeline paths (keep LAST, just above the error middleware) ─────────────

@@ -1,4 +1,4 @@
-import { prisma } from "@dashmani/db";
+import { prisma, Prisma } from "@dashmani/db";
 import crypto from "crypto";
 import bcrypt from "bcrypt";
 import { AppError } from "../middleware/error-handler";
@@ -21,6 +21,8 @@ function normalizeIdentifier(raw: string): string {
 
 // ===== Self-Registration =====
 
+const ALREADY_EXISTS_MESSAGE = "An account with this email or phone already exists";
+
 export async function registerEmployee(data: {
   name: string;
   email: string;
@@ -33,79 +35,52 @@ export async function registerEmployee(data: {
   const existing = await prisma.user.findFirst({
     where: {
       OR: [
-        { email },
+        // Case-INSENSITIVE, like every other auth lookup: the unique index on email is
+        // case-sensitive, so an exact match misses a legacy mixed-case row and the create
+        // below would then mint a SECOND account under the same address (CLAUDE.md,
+        // "Email-case lockouts"). Prisma escapes ILIKE wildcards; the table is small.
+        { email: { equals: email, mode: "insensitive" } },
         ...(phone ? [{ phone }] : []),
       ],
     },
+    select: { id: true },
   });
 
-  // If an ONBOARDING row exists for this email, promote it to ACTIVE rather than
-  // throwing a conflict. This mirrors the admin-invite collision fix: a user who
-  // registered but was stuck in ONBOARDING can retry with a new password and be
-  // unblocked without admin intervention.
+  // ⚠️ P0 (pipeline spec §10, 2026-09-26): registration NEVER touches an existing row.
+  // An existing email or phone in ANY status — ONBOARDING included — gets the same 409.
+  // This used to promote an ONBOARDING row to ACTIVE with the registrant's password and
+  // replace its roles, so anyone who knew an admin-created pending hire's email could
+  // take over that account. Pending hires are activated only through the admin flow.
+  // Do not re-add a "promote on retry" branch here.
   if (existing) {
-    if (existing.status === "ONBOARDING") {
-      const passwordHash = await bcrypt.hash(data.password, 12);
-      const employeeRole = await prisma.role.findUnique({ where: { name: "Employee" } });
-
-      const updated = await prisma.user.update({
-        where: { id: existing.id },
-        data: {
-          name: data.name,
-          email,
-          phone,
-          passwordHash,
-          status: "ACTIVE",
-          ...(employeeRole ? {
-            roles: {
-              deleteMany: {},
-              create: [{ roleId: employeeRole.id }],
-            },
-          } : {}),
-        },
-      });
-
-      // Ensure a profile row exists
-      await prisma.employeeProfile.upsert({
-        where: { userId: existing.id },
-        create: { userId: existing.id },
-        update: {},
-      });
-
-      dispatchNotification({
-        type: "GENERAL",
-        title: "New Employee Registration",
-        message: `${data.name} (${email}) has created an account and is now active`,
-        metadata: { userId: updated.id, name: data.name, email },
-      }).catch((err) => console.error("Admin notification failed:", err));
-
-      return {
-        message: "Account created successfully. You can now log in.",
-        user: {
-          id: updated.id,
-          name: updated.name,
-          email: updated.email,
-          status: updated.status,
-        },
-      };
-    }
-
-    throw new AppError(409, "ALREADY_EXISTS", "An account with this email or phone already exists");
+    throw new AppError(409, "ALREADY_EXISTS", ALREADY_EXISTS_MESSAGE);
   }
 
   const passwordHash = await bcrypt.hash(data.password, 12);
   const employeeRole = await prisma.role.findUnique({ where: { name: "Employee" } });
 
-  const user = await prisma.user.create({
-    data: {
-      name: data.name,
-      email,
-      phone,
-      passwordHash,
-      status: "ACTIVE",
-      ...(employeeRole ? { roles: { create: [{ roleId: employeeRole.id }] } } : {}),
-    },
-  });
+  // Owner decision 2026-09-26: new sign-ups stay instant (ACTIVE).
+  let user;
+  try {
+    user = await prisma.user.create({
+      data: {
+        name: data.name,
+        email,
+        phone,
+        passwordHash,
+        status: "ACTIVE",
+        ...(employeeRole ? { roles: { create: [{ roleId: employeeRole.id }] } } : {}),
+      },
+    });
+  } catch (err) {
+    // Two concurrent registrations for one new email both pass the check above (bcrypt
+    // sits between it and this insert); the loser hits the unique index. That is the same
+    // "already exists" outcome, not a server fault — never let it surface as a 500.
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
+      throw new AppError(409, "ALREADY_EXISTS", ALREADY_EXISTS_MESSAGE);
+    }
+    throw err;
+  }
 
   // Create empty profile
   await prisma.employeeProfile.create({

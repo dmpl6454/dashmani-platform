@@ -12,10 +12,14 @@
  *
  * Bodies and descriptions use `normalizeText`, never `safeString`: they are rendered as
  * React text only, and tag-stripping would delete legitimate text such as "a<b and c>d".
+ *
+ * Every free-text output here is STORABLE: no NUL, no lone surrogate (see cleanLine /
+ * normalizeText). `mineH` is deliberately left raw — it is only compared in Node with the
+ * server's own overlay hash and never reaches the database.
  */
 import { z } from "zod";
 import { safeString } from "../utils/sanitize";
-import { normalizeText, stripBidi } from "../pipeline/text";
+import { cleanLine, normalizeText } from "../pipeline/text";
 import { PIPELINE_LIMITS, PIPELINE_REACTION_KEYS } from "../pipeline/constants";
 
 /** Postgres int4 ceiling — every cursor/seq/rev compared with an Int column stays under it. */
@@ -39,10 +43,17 @@ export function pipelineIdArray(max: number, min = 0) {
     .transform((a) => [...new Set(a)]);
 }
 
+/**
+ * Titles: bounded, then `cleanLine` (bidi stripped, lone surrogates → U+FFFD, NUL and every
+ * other control → a space), then tag-stripped and trimmed. ⚠️ Spec §3.5 names only
+ * `stripBidi` here; `cleanLine` is a superset that also keeps the value STORABLE — a NUL
+ * (Postgres 22021) or a lone surrogate (unserialisable by Prisma) would otherwise become a
+ * 500 in the handler instead of being cleaned at the boundary.
+ */
 export const pipelineTitle = z
   .string()
   .max(PIPELINE_LIMITS.titleRawMax)
-  .transform(stripBidi)
+  .transform(cleanLine)
   .pipe(safeString)
   .pipe(z.string().min(1).max(PIPELINE_LIMITS.titleMax));
 
@@ -210,7 +221,10 @@ export const moveProjectSchema = z.object({
 /** archive / unarchive / restore take `{}`; unknown keys are dropped. */
 export const emptyBodySchema = z.object({});
 
-export const deleteProjectSchema = z.object({ confirmTitle: z.string().max(PIPELINE_LIMITS.titleRawMax) });
+/** `confirmTitle` is cleaned like a title's first step so it is storable/queryable too. */
+export const deleteProjectSchema = z.object({
+  confirmTitle: z.string().max(PIPELINE_LIMITS.titleRawMax).transform(cleanLine),
+});
 
 export const transferOwnerSchema = z.object({ userId: pipelineId });
 

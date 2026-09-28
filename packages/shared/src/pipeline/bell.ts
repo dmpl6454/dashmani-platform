@@ -90,3 +90,41 @@ export function pipelineNotificationPath(n: unknown): string | null {
   if (typeof path !== "string" || path.length > MAX_LINK_LENGTH) return null;
   return path.startsWith("/pipeline/") ? path : null;
 }
+
+/**
+ * Internal bell (P4): the only origins a PIPELINE row may link to.
+ *
+ * ⚠️ A CODE CONSTANT, deliberately not an env var: `scripts/deploy.sh` rewrites
+ * every app's `.env.local` with only NEXT_PUBLIC_API_URL on each deploy, so an
+ * env-driven allowlist would silently vanish in production.
+ */
+export const PIPELINE_ORIGINS: readonly string[] = Object.freeze([
+  "https://hr.digitalsukoon.com",
+  "http://localhost:3002",
+]);
+
+/**
+ * Internal bell (P4): the HR-portal URL a PIPELINE row should open in a new tab,
+ * or null. `metadata.url` must parse, have an allowlisted origin (exact match,
+ * scheme and port included), carry no credentials, and have a pathname under
+ * `/pipeline/`. Never throws.
+ */
+export function pipelineNotificationUrl(
+  n: unknown,
+  origins: readonly string[] = PIPELINE_ORIGINS,
+): string | null {
+  const meta = pipelineMetadata(n);
+  if (!meta) return null;
+  const raw = meta.url;
+  if (typeof raw !== "string" || raw.length === 0 || raw.length > MAX_LINK_LENGTH) return null;
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    return null;
+  }
+  if (!origins.includes(u.origin)) return null;
+  if (u.username || u.password) return null;
+  if (!u.pathname.startsWith("/pipeline/")) return null;
+  return u.href;
+}

@@ -2,6 +2,8 @@ import { describe, it, expect } from "vitest";
 import {
   bellListView,
   pipelineNotificationPath,
+  pipelineNotificationUrl,
+  PIPELINE_ORIGINS,
   BELL_LIST_LIMIT,
 } from "@dashmani/shared";
 
@@ -130,5 +132,87 @@ describe("pipelineNotificationPath — HR bell deep link (P3)", () => {
     expect(pipelineNotificationPath(null as unknown as object)).toBeNull();
     expect(pipelineNotificationPath(undefined as unknown as object)).toBeNull();
     expect(pipelineNotificationPath("x" as unknown as object)).toBeNull();
+  });
+});
+
+describe("pipelineNotificationUrl — internal bell new-tab link (P4)", () => {
+  const pipe = (url: unknown, extra: Record<string, unknown> = {}) =>
+    row(1, { type: "PIPELINE", metadata: { v: 1, kind: "messages", url }, ...extra });
+
+  it("the allowlist is exactly the two code-constant origins (not an env var)", () => {
+    expect([...PIPELINE_ORIGINS]).toEqual(["https://hr.digitalsukoon.com", "http://localhost:3002"]);
+  });
+
+  it("returns the href for an allowlisted origin with a /pipeline/ path", () => {
+    expect(pipelineNotificationUrl(pipe("https://hr.digitalsukoon.com/pipeline/abc?m=m1&t=r1")))
+      .toBe("https://hr.digitalsukoon.com/pipeline/abc?m=m1&t=r1");
+    expect(pipelineNotificationUrl(pipe("http://localhost:3002/pipeline/abc")))
+      .toBe("http://localhost:3002/pipeline/abc");
+  });
+
+  it("returns null for a lookalike or foreign origin", () => {
+    for (const bad of [
+      "https://evil.com/pipeline/abc",
+      "https://hr.digitalsukoon.com.evil.com/pipeline/abc",
+      "https://evilhr.digitalsukoon.com/pipeline/abc",
+      "http://hr.digitalsukoon.com/pipeline/abc", // http, not https
+      "https://hr.digitalsukoon.com:8443/pipeline/abc",
+      "http://localhost:3000/pipeline/abc", // the internal portal, not HR
+      "http://127.0.0.1:3002/pipeline/abc",
+    ]) {
+      expect(pipelineNotificationUrl(pipe(bad)), bad).toBeNull();
+    }
+  });
+
+  it("returns null when the pathname is not under /pipeline/", () => {
+    for (const bad of [
+      "https://hr.digitalsukoon.com/",
+      "https://hr.digitalsukoon.com/pipeline",
+      "https://hr.digitalsukoon.com/dashboard?next=/pipeline/x",
+      "https://hr.digitalsukoon.com/pipelines/x",
+    ]) {
+      expect(pipelineNotificationUrl(pipe(bad)), bad).toBeNull();
+    }
+  });
+
+  it("returns null (never throws) for invalid, non-http or non-string urls", () => {
+    for (const bad of [
+      "not a url",
+      "",
+      "/pipeline/abc", // relative: no origin to check
+      "javascript:alert(1)",
+      "data:text/html,<script>alert(1)</script>",
+      undefined,
+      null,
+      42,
+      { href: "https://hr.digitalsukoon.com/pipeline/x" },
+    ]) {
+      expect(() => pipelineNotificationUrl(pipe(bad))).not.toThrow();
+      expect(pipelineNotificationUrl(pipe(bad)), String(bad)).toBeNull();
+    }
+  });
+
+  it("rejects embedded credentials", () => {
+    expect(pipelineNotificationUrl(pipe("https://user:pw@hr.digitalsukoon.com/pipeline/abc"))).toBeNull();
+  });
+
+  it("rejects an unreasonably long url without parsing it (length-bounded)", () => {
+    expect(pipelineNotificationUrl(pipe("https://hr.digitalsukoon.com/pipeline/" + "a".repeat(5000)))).toBeNull();
+  });
+
+  it("returns null for every non-PIPELINE row, even one carrying an allowlisted url", () => {
+    for (const type of ["GENERAL", "EMPLOYEE_REGISTRATION", undefined, "Pipeline"]) {
+      expect(pipelineNotificationUrl(row(1, {
+        type,
+        metadata: { url: "https://hr.digitalsukoon.com/pipeline/abc" },
+      }))).toBeNull();
+    }
+  });
+
+  it("accepts a caller-supplied allowlist (for tests / future portals)", () => {
+    expect(pipelineNotificationUrl(pipe("https://x.test/pipeline/1"), ["https://x.test"]))
+      .toBe("https://x.test/pipeline/1");
+    expect(pipelineNotificationUrl(pipe("https://hr.digitalsukoon.com/pipeline/1"), ["https://x.test"]))
+      .toBeNull();
   });
 });

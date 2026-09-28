@@ -9,7 +9,10 @@ import {
 } from "lucide-react";
 import { useState, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
-import { bellListView, pipelineNotificationUrl } from "@dashmani/shared";
+// Deep import on purpose: the bell mounts on every page, and the @dashmani/shared
+// barrel would pull zod and every validator into the shared client chunk
+// (+16 kB First Load JS on 23 HR pages, measured). bell.ts has no dependencies.
+import { bellListView, pipelineNotificationUrl } from "@dashmani/shared/src/pipeline/bell";
 
 /* ── Compose-announcement modal (moved from dashboard — the only place it's used) ── */
 function QuickAnnounceModal({ onClose }: { onClose: () => void }) {

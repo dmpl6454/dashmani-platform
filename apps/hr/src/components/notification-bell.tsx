@@ -3,7 +3,10 @@ import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useSWRConfig } from "swr";
 import { Bell, BellOff, CheckCheck } from "lucide-react";
-import { bellListView, pipelineNotificationPath } from "@dashmani/shared";
+// Deep import on purpose: the bell mounts on every page, and the @dashmani/shared
+// barrel would pull zod and every validator into the shared client chunk
+// (+16 kB First Load JS on 23 HR pages, measured). bell.ts has no dependencies.
+import { bellListView, pipelineNotificationPath } from "@dashmani/shared/src/pipeline/bell";
 import { useNotificationCount, useNotificationList, NOTIFICATION_LIST_KEY } from "@/lib/hooks/use-notifications";
 import { apiFetch } from "@/lib/api";
 

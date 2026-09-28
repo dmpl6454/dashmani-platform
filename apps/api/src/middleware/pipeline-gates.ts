@@ -120,12 +120,20 @@ export const G: RequestHandler[] = [authenticate, requirePipelineToken, requireP
 
 const ADMIN_ROLE_NAMES = [DEFAULT_ROLES.SUPER_ADMIN.name, DEFAULT_ROLES.ADMIN.name];
 
-/** Admin status from the database at action time — never the JWT, never a memo. */
+/**
+ * Admin status from the database at action time — never the JWT, never a memo. Self-
+ * contained: the admin must also be ACTIVE and not soft-deleted, because the actor gate
+ * before it is a 60 s memo and a deactivated admin keeps their role rows.
+ */
 export async function isPipelineAdmin(tx: PipelineTx, userId: string): Promise<boolean> {
   const rows = await tx.$queryRaw<Array<{ is_admin: boolean }>>`
     SELECT EXISTS (
-      SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id
-       WHERE ur.user_id = ${userId} AND r.name = ANY(${ADMIN_ROLE_NAMES}::text[])
+      SELECT 1 FROM user_roles ur
+        JOIN roles r ON r.id = ur.role_id
+        JOIN users u ON u.id = ur.user_id
+       WHERE ur.user_id = ${userId}
+         AND u.status = 'ACTIVE' AND u.deleted_at IS NULL
+         AND r.name = ANY(${ADMIN_ROLE_NAMES}::text[])
     ) AS is_admin`;
   return rows[0]?.is_admin === true;
 }

@@ -10,11 +10,11 @@
  * FAILS must answer 503 (retried silently) — never 403 PIPELINE_DISABLED, which the client
  * shows as "paused". A missing schema (the boot self-check failed) shows as paused.
  */
-import { describe, it, expect, beforeEach, afterAll } from "vitest";
+import { describe, it, expect, beforeEach, afterAll, vi } from "vitest";
 import request from "supertest";
 import { prisma, PrismaClient } from "@dashmani/db";
 import app from "../../src/app";
-import { invalidatePipelineCaches } from "../../src/services/pipeline";
+import { invalidatePipelineCaches, resetPipelineStateForTests } from "../../src/services/pipeline";
 import { __setPipelineSettingsLoaderForTests, __expirePipelineSettingsMemoForTests } from "../../src/services/pipeline/settings";
 import { __setPipelineSchemaOkForTests, isPipelineSchemaOk } from "../../src/services/pipeline/self-check";
 import { bumpBoard, isBoardBumpPending } from "../../src/services/pipeline/board";
@@ -37,7 +37,8 @@ const DIR = "/v1/pipeline/directory";
 // touches the database lives inside this describe, whose hooks run after the root's.
 describe("pipeline gates", () => {
   beforeEach(async () => {
-    invalidatePipelineCaches();
+    // Caches AND the bulkhead / pending-bump / heal-throttle state (the board tests use them).
+    resetPipelineStateForTests();
     __setPipelineSettingsLoaderForTests(null);
     await clearPipelineSettings();
     await seedPipelinePhases();
@@ -273,6 +274,61 @@ describe("pipeline gates", () => {
       expect(await seq()).toBe(1);
 
       await get(DIR, hrToken(u.id));
+      expect(isBoardBumpPending()).toBe(false);
+      expect(await seq()).toBe(2);
+    });
+
+    it("a failing heal is attempted at most once per 5 s, so a stuck board row cannot slow every request", async () => {
+      const u = await createPipelineUser({ name: "Tia Throttle", tag: "b-throttle" });
+      await setPipelineSetting("pipeline.mode", "on");
+      await get(DIR, hrToken(u.id)); // self-check bump → seq 1
+
+      const locker = new PrismaClient({ datasources: { db: { url: buildPipelineDbUrl(process.env.DATABASE_URL, 1)! } } });
+      let release!: () => void;
+      const hold = new Promise<void>((r) => (release = r));
+      let markLocked!: () => void;
+      const locked = new Promise<void>((r) => (markLocked = r));
+      const holder = locker.$transaction(
+        async (tx) => {
+          await tx.$queryRaw`SELECT seq FROM pipeline_board_state WHERE id = 1 FOR UPDATE`;
+          markLocked();
+          await hold;
+        },
+        { maxWait: 5000, timeout: 20000 },
+      );
+      try {
+        await locked;
+        expect(await bumpBoard()).toBeNull(); // fails on lock_timeout → pending
+        expect(isBoardBumpPending()).toBe(true);
+
+        // The next request tries the heal once (and pays the 1 s lock_timeout)…
+        let t0 = Date.now();
+        expect((await get(DIR, hrToken(u.id))).status).toBe(200);
+        expect(Date.now() - t0).toBeGreaterThanOrEqual(900);
+        // …the one right after does not retry it and is fast.
+        t0 = Date.now();
+        expect((await get(DIR, hrToken(u.id))).status).toBe(200);
+        expect(Date.now() - t0).toBeLessThan(500);
+        expect(isBoardBumpPending()).toBe(true);
+      } finally {
+        release();
+        await holder;
+        await locker.$disconnect();
+      }
+
+      // Unlocked, but still inside the 5 s window: no attempt yet.
+      await get(DIR, hrToken(u.id));
+      expect(isBoardBumpPending()).toBe(true);
+      expect(await seq()).toBe(1);
+
+      // After the window the next request heals it.
+      vi.useFakeTimers({ toFake: ["Date"] });
+      try {
+        vi.setSystemTime(Date.now() + 6_000);
+        await get(DIR, hrToken(u.id));
+      } finally {
+        vi.useRealTimers();
+      }
       expect(isBoardBumpPending()).toBe(false);
       expect(await seq()).toBe(2);
     });

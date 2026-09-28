@@ -2,7 +2,8 @@
  * Pipeline service entry points shared by the routes, the boot sequence and tests.
  *
  * ⚠️ Every pipeline cache is module-level. Test files MUST call
- * `beforeEach(invalidatePipelineCaches)` — the documented cross-test cache-pollution class.
+ * `beforeEach(invalidatePipelineCaches)` — the documented cross-test cache-pollution class —
+ * or `resetPipelineStateForTests()` when they also exercise the bulkhead or board bumps.
  */
 import { invalidatePipelineSettings } from "./settings";
 import { invalidatePipelineAccess } from "./access";

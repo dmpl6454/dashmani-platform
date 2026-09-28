@@ -32,6 +32,17 @@ export function verifyAccessToken(token: string): JwtPayload {
   return jwt.verify(token, JWT_SECRET) as JwtPayload;
 }
 
+/**
+ * Signature check ONLY (expiry ignored). For rate-limit KEYING, never for authentication:
+ * the pipeline limiter keys an expired-but-genuine token by its user so the request
+ * reaches `authenticate`, gets its 401 and the client refreshes — instead of being keyed
+ * on the shared Cloudflare edge IP and 429'd first (spec §3.1). A forged token still
+ * throws here.
+ */
+export function verifyAccessTokenSignature(token: string): Partial<JwtPayload> {
+  return jwt.verify(token, JWT_SECRET, { ignoreExpiration: true }) as Partial<JwtPayload>;
+}
+
 export function verifyRefreshToken(token: string): { userId: string; remember?: boolean } {
   return jwt.verify(token, JWT_REFRESH_SECRET) as { userId: string; remember?: boolean };
 }

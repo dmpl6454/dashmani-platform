@@ -161,7 +161,7 @@ describe("pipeline bootstrap and directory", () => {
     });
 
     it("names are bidi-stripped and capped at 60 characters", async () => {
-      const spoof = await createPipelineUser({ name: "‮evil‬ Name", tag: "dir-bidi" });
+      const spoof = await createPipelineUser({ name: "\u202Eevil\u202C Name", tag: "dir-bidi" });
       const long = await createPipelineUser({ name: "L".repeat(80), tag: "dir-long" });
       const rows = (await get(DIR, hrToken(spoof.id))).body.data as Array<{ id: string; name: string }>;
       const byId = new Map(rows.map((x) => [x.id, x]));

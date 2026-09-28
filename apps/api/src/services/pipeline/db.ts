@@ -15,12 +15,13 @@
  * so a slow plan or a lock queue costs at most seconds on 3 connections and answers 503,
  * never a stuck request and never a main-pool connection.
  *
- * ⚠️ DB ACCESS RULE 1 (CI-enforced by scripts/ci/guards.sh "pipeline-db-import"): this is
- * the ONLY pipeline file that may import from @dashmani/db / @prisma/client. Everything
- * else under services/pipeline, routes/pipeline.routes.ts and middleware/pipeline-*.ts
- * imports `pipelineDb` (and the Prisma types re-exported below) from here. A call on the
- * global `prisma` inside a pipeline transaction would break the pool arithmetic and can
- * deadlock at connection_limit=1.
+ * ⚠️ DB ACCESS RULE 1 (enforced by tests/pipeline/shared-pipeline.test.ts "pipeline source
+ * guards"; PR 4 adds the same rule as a CI grep): this is the ONLY pipeline file that may
+ * import from @dashmani/db / @prisma/client. Everything else under services/pipeline,
+ * routes/pipeline.routes.ts and middleware/pipeline-*.ts imports `pipelineDb` (and the
+ * Prisma types re-exported below) from here. A call on the global `prisma` inside a
+ * pipeline transaction would break the pool arithmetic and can deadlock at
+ * connection_limit=1.
  */
 import { PrismaClient, Prisma } from "@dashmani/db";
 

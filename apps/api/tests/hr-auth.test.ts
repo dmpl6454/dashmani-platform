@@ -217,6 +217,117 @@ describe("HR Auth API", () => {
       expect(loser.body.error.code).toBe("ALREADY_EXISTS");
       expect(await prisma.user.count({ where: { email: "double@test.com" } })).toBe(1);
     });
+
+    // Prisma sends `equals` + `mode: "insensitive"` as `ILIKE $1` WITHOUT escaping, so an
+    // unescaped '_' in the registrant's email matches ANY character of a stored address.
+    // That made register a public enumeration oracle (probe `a_b@…`, `___@…` and read the
+    // 409s) and refused real addresses that only resemble an existing one. zod's email
+    // regex admits '_' in the local part ('%' and '\' are rejected), so '_' is the live case.
+    it("treats '_' in a registrant's email literally, not as a LIKE wildcard", async () => {
+      await createTestUser({ email: "axb@test.com", roleNames: ["Employee"] });
+
+      const underscore = await request(app).post(REGISTER).send({
+        name: "Real Underscore",
+        email: "a_b@test.com",
+        password: "UnderscorePass123!",
+      });
+      expect(underscore.status).toBe(201);
+
+      const allWildcards = await request(app).post(REGISTER).send({
+        name: "All Wildcards",
+        email: "___@test.com",
+        password: "WildcardPass123!",
+      });
+      expect(allWildcards.status).toBe(201);
+
+      expect(await prisma.user.count()).toBe(3);
+    });
+
+    it("still refuses a stored email that contains a literal '_', case-insensitively", async () => {
+      const row = await prisma.user.create({
+        data: {
+          name: "Legacy Underscore",
+          email: "Real_Name@Test.com",
+          passwordHash: "legacy-hash",
+          status: "ONBOARDING",
+        },
+      });
+      const before = await snapshotAccount(row.id);
+
+      const res = await request(app).post(REGISTER).send({
+        name: "Someone Else",
+        email: "real_name@test.com",
+        password: "AttackerPass123!",
+      });
+
+      expect(res.status).toBe(409);
+      expect(res.body.error.code).toBe("ALREADY_EXISTS");
+      expect(await snapshotAccount(row.id)).toEqual(before);
+      expect(await prisma.user.count()).toBe(1);
+    });
+
+    // ⚠️ Every register field is length-bounded BEFORE trim/lowercase/regex or any DB use.
+    // Without it: a >2.7 KB email reached `user.create`, failed the unique btree with
+    // Postgres 54000 and surfaced as a generic 500 (after a full bcrypt); a multi-MB email
+    // made the case-insensitive ILIKE lowercase the whole pattern once per users row while
+    // holding a pool connection; and an unbounded phone was stored verbatim.
+    it("rejects an over-long email, phone or password with 400 and creates nothing", async () => {
+      const cases: Array<{ label: string; body: Record<string, string> }> = [
+        { label: "255-char email", body: { email: `${"e".repeat(255 - "@test.com".length)}@test.com` } },
+        { label: "3000-char email", body: { email: `${"e".repeat(3000)}@test.com` } },
+        { label: "21-char phone", body: { phone: "9".repeat(21) } },
+        { label: "200k-char phone", body: { phone: "9".repeat(200_000) } },
+        { label: "129-char password", body: { password: "p".repeat(129) } },
+      ];
+
+      for (const c of cases) {
+        const res = await request(app).post(REGISTER).send({
+          name: "Bounded Field",
+          email: "bounded@test.com",
+          password: "BoundedPass123!",
+          ...c.body,
+        });
+        expect(res.status, c.label).toBe(400);
+        expect(res.body.error.code, c.label).toBe("VALIDATION_ERROR");
+      }
+      expect(await prisma.user.count()).toBe(0);
+    });
+
+    it("rejects a 9 MB email with 400 quickly, before any database work", async () => {
+      const email = `${"e".repeat(9 * 1024 * 1024)}@test.com`;
+      const t0 = performance.now();
+      const res = await request(app).post(REGISTER).send({
+        name: "Huge Email",
+        email,
+        password: "HugeEmailPass123!",
+      });
+      const elapsed = performance.now() - t0;
+
+      expect(res.status).toBe(400);
+      expect(res.body.error.code).toBe("VALIDATION_ERROR");
+      // Generous: this bounds serialisation + body parsing, not the old failure mode, which
+      // on prod-sized tables was a >10 s ILIKE holding a pool connection.
+      expect(elapsed).toBeLessThan(2000);
+      expect(await prisma.user.count()).toBe(0);
+    });
+
+    it("accepts fields exactly at their bounds (254-char email, 20-char phone, 128-char password)", async () => {
+      const email = `${"e".repeat(254 - "@test.com".length)}@test.com`;
+      expect(email.length).toBe(254);
+      const password = `Aa1!${"p".repeat(124)}`;
+      expect(password.length).toBe(128);
+
+      const res = await request(app).post(REGISTER).send({
+        name: "At The Bound",
+        email,
+        phone: "+91 98000 00003 0000",
+        password,
+      });
+      expect(res.status).toBe(201);
+
+      const login = await request(app).post("/v1/hr/auth/login").send({ identifier: email, password });
+      expect(login.status).toBe(200);
+    });
   });
 
   describe("POST /v1/hr/auth/request-otp", () => {

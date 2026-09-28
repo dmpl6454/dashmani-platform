@@ -25,9 +25,24 @@ export const registerEmployeeSchema = z.object({
         .min(2, "Name must be at least 2 characters")
         .max(120, "Name must be at most 120 characters"),
     ),
-  email: normalizedEmail,
-  phone: z.string().min(10, "Phone must be at least 10 digits").optional(),
-  password: z.string().min(6, "Password must be at least 6 characters"),
+  // ⚠️ Bound BEFORE normalizedEmail's trim/lowercase/regex, for the same reason as `name`.
+  // 254 is the RFC 5321 maximum and sits far below the 2704-byte btree limit on
+  // users_email_key (a longer email used to fail user.create with Postgres 54000, which
+  // surfaced as a generic 500). It also keeps the service's case-insensitive ILIKE lookup,
+  // which cannot use that index and lowercases the pattern once per users row, cheap.
+  email: z.string().max(254, "Email is too long").pipe(normalizedEmail),
+  // Stored verbatim (the service only trims), so an unbounded phone let one public request
+  // write megabytes into users.phone. 20 covers "+91 98000 00001" and similar formatting.
+  phone: z
+    .string()
+    .max(20, "Phone is too long")
+    .min(10, "Phone must be at least 10 digits")
+    .optional(),
+  // bcrypt only reads the first 72 bytes; the bound just stops a multi-MB body.
+  password: z
+    .string()
+    .max(128, "Password is too long")
+    .min(6, "Password must be at least 6 characters"),
 });
 
 export const passwordLoginSchema = z.object({

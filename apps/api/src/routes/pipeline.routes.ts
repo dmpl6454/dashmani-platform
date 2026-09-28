@@ -48,6 +48,7 @@ import {
   transferOwner,
   type PipelineActor,
 } from "../services/pipeline/projects.service";
+import { addMembers, removeMember, setFollow } from "../services/pipeline/participants";
 
 const router = Router();
 
@@ -222,6 +223,34 @@ router.put(
   pv(V.projectParamsSchema, "params"),
   pv(V.transferOwnerSchema),
   asyncHandler(async (req: Request, res: Response) => ok(res, await transferOwner(actorOf(req), req.params.id, req.body.userId))),
+);
+
+// ── #12 POST /pipeline/projects/:id/members ──────────────────────────────────────────
+router.post(
+  "/pipeline/projects/:id/members",
+  ...G,
+  pv(V.projectParamsSchema, "params"),
+  pv(V.addMembersSchema),
+  asyncHandler(async (req: Request, res: Response) => ok(res, await addMembers(actorOf(req), req.params.id, req.body.userIds))),
+);
+
+// ── #13 DELETE /pipeline/projects/:id/members/:userId (removal rule §4.6) ────────────
+router.delete(
+  "/pipeline/projects/:id/members/:userId",
+  ...G,
+  pv(V.memberParamsSchema, "params"),
+  asyncHandler(async (req: Request, res: Response) =>
+    ok(res, await removeMember(actorOf(req), req.params.id, req.params.userId)),
+  ),
+);
+
+// ── #14 PUT /pipeline/projects/:id/follow (self only) ────────────────────────────────
+router.put(
+  "/pipeline/projects/:id/follow",
+  ...G,
+  pv(V.projectParamsSchema, "params"),
+  pv(V.followSchema),
+  asyncHandler(async (req: Request, res: Response) => ok(res, await setFollow(actorOf(req), req.params.id, req.body.following))),
 );
 
 // ── Unknown /pipeline paths (keep LAST, just above the error middleware) ─────────────

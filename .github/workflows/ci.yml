@@ -144,6 +144,34 @@ jobs:
       - name: Push schema to test database
         run: npm run db:push
 
+      # scripts/pipeline-ddl.sql is applied to production BY HAND, before its PR merges (spec
+      # §12). tests/pipeline/ddl-script.test.ts only reads it as text, so a broken statement
+      # inside a DO block or a CREATE would otherwise first fail during the production apply.
+      # Execute it for real on a scratch database of its own (never the suite's database):
+      # build the full schema, drop ONLY the five pipeline tables so every CREATE / index /
+      # FK / seed path runs, apply the script twice (the second run must be a clean no-op),
+      # then require that Prisma sees no drift against schema.prisma (`--exit-code`: 0 = none).
+      # The PIPELINE enum value survives the drop (Postgres cannot remove one), so ADD VALUE
+      # takes its IF NOT EXISTS path here; the static test locks that statement's text.
+      - name: Rehearse the pipeline DDL script
+        env:
+          DDL_DB_URL: postgresql://user:password@localhost:5432/dashmani_ddl_rehearsal
+          PG_CONTAINER: ${{ job.services.postgres.id }}
+        run: |
+          set -euo pipefail
+          PG="docker exec -i -e PGPASSWORD=password $PG_CONTAINER psql -U user -v ON_ERROR_STOP=1 -q"
+          $PG -d dashmani -c "CREATE DATABASE dashmani_ddl_rehearsal"
+          DATABASE_URL="$DDL_DB_URL" npx prisma db push --schema packages/db/prisma/schema.prisma --skip-generate
+          $PG -d dashmani_ddl_rehearsal -c "DROP TABLE pipeline_messages, pipeline_participants, pipeline_projects, pipeline_phases, pipeline_board_state"
+          for run in 1 2; do
+            echo "apply #$run"
+            $PG -d dashmani_ddl_rehearsal -f - < scripts/pipeline-ddl.sql
+          done
+          $PG -d dashmani_ddl_rehearsal -Atc "SELECT count(*) FROM pipeline_phases" | grep -qx 7
+          $PG -d dashmani_ddl_rehearsal -Atc "SELECT count(*) FROM pipeline_board_state" | grep -qx 1
+          npx prisma migrate diff --from-url "$DDL_DB_URL" \
+            --to-schema-datamodel packages/db/prisma/schema.prisma --exit-code
+
       # ⚠️ Run from apps/api, never the repo root. There is no root vitest.config.*, so a
       # root-level run globs stale test copies under .claude/worktrees/ and executes them
       # in parallel against one Postgres, fabricating failures. apps/api/vitest.config.ts

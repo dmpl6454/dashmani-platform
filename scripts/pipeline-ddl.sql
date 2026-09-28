@@ -7,14 +7,19 @@
 --   prisma migrate diff --from-schema-datamodel <origin/main schema.prisma>
 --     --to-schema-datamodel packages/db/prisma/schema.prisma --script
 -- then hand-edited per §12 step 2:
---   * one transaction, lock_timeout 3s, statement_timeout 60s;
---   * ADD VALUE IF NOT EXISTS, CREATE ... IF NOT EXISTS, every FK behind a guard;
+--   * one transaction, lock_timeout 3s, statement_timeout 60s, search_path pinned to public;
+--   * ADD VALUE IF NOT EXISTS, CREATE ... IF NOT EXISTS, every FK behind a guard scoped to
+--     its own table (conname AND conrelid);
 --   * the board row and the 7 phases seeded ON CONFLICT DO NOTHING.
 -- The column and index definitions are byte-identical to the generated output, so
 -- after this runs, `prisma migrate diff --from-url <db> --to-schema-datamodel ...`
 -- shows no pipeline drift.
 --
 -- Safe to run twice: the second run changes nothing and raises no error.
+-- ⚠️ But a re-run is NOT lock-free: CREATE INDEX IF NOT EXISTS takes a SHARE lock on its
+-- table BEFORE it finds the index already exists, and holds it until COMMIT. On a live
+-- pipeline that blocks every write to pipeline_phases/projects/participants/messages for
+-- the rest of the transaction. Re-run only as the runbook's §7 says (pipeline.mode=off).
 -- Touches ONLY pipeline_* tables plus one enum value. No existing table gets DDL.
 --
 -- LOCKS. The four FKs that reference "users" take a brief SHARE ROW EXCLUSIVE lock on
@@ -29,6 +34,9 @@
 BEGIN;
 SET LOCAL lock_timeout = '3s';
 SET LOCAL statement_timeout = '60s';
+-- Every name below is unqualified and psql's default search_path is "$user", public: a
+-- schema named after the app role would otherwise receive the tables. Prisma uses public.
+SET LOCAL search_path = public;
 
 -- AlterEnum. Allowed inside a transaction on PG >= 12; unusable until COMMIT, and
 -- nothing below uses it. ⚠️ PERMANENT: an enum value cannot be removed.
@@ -179,25 +187,25 @@ CREATE UNIQUE INDEX IF NOT EXISTS "pipeline_messages_project_id_rev_key" ON "pip
 
 -- AddForeignKey (pipeline -> pipeline; no lock on any existing table)
 DO $$ BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'pipeline_projects_phase_id_fkey') THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'pipeline_projects_phase_id_fkey' AND conrelid = '"public"."pipeline_projects"'::regclass) THEN
     ALTER TABLE "pipeline_projects" ADD CONSTRAINT "pipeline_projects_phase_id_fkey" FOREIGN KEY ("phase_id") REFERENCES "pipeline_phases"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
   END IF;
 END $$;
 
 DO $$ BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'pipeline_participants_project_id_fkey') THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'pipeline_participants_project_id_fkey' AND conrelid = '"public"."pipeline_participants"'::regclass) THEN
     ALTER TABLE "pipeline_participants" ADD CONSTRAINT "pipeline_participants_project_id_fkey" FOREIGN KEY ("project_id") REFERENCES "pipeline_projects"("id") ON DELETE CASCADE ON UPDATE CASCADE;
   END IF;
 END $$;
 
 DO $$ BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'pipeline_messages_project_id_fkey') THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'pipeline_messages_project_id_fkey' AND conrelid = '"public"."pipeline_messages"'::regclass) THEN
     ALTER TABLE "pipeline_messages" ADD CONSTRAINT "pipeline_messages_project_id_fkey" FOREIGN KEY ("project_id") REFERENCES "pipeline_projects"("id") ON DELETE CASCADE ON UPDATE CASCADE;
   END IF;
 END $$;
 
 DO $$ BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'pipeline_messages_parent_id_fkey') THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'pipeline_messages_parent_id_fkey' AND conrelid = '"public"."pipeline_messages"'::regclass) THEN
     ALTER TABLE "pipeline_messages" ADD CONSTRAINT "pipeline_messages_parent_id_fkey" FOREIGN KEY ("parent_id") REFERENCES "pipeline_messages"("id") ON DELETE CASCADE ON UPDATE CASCADE;
   END IF;
 END $$;
@@ -222,25 +230,25 @@ ON CONFLICT ("key") DO NOTHING;
 -- AddForeignKey (pipeline -> "users"). LAST on purpose: each takes the SHARE ROW EXCLUSIVE
 -- lock on "users" described in the header, held from here until COMMIT.
 DO $$ BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'pipeline_projects_owner_id_fkey') THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'pipeline_projects_owner_id_fkey' AND conrelid = '"public"."pipeline_projects"'::regclass) THEN
     ALTER TABLE "pipeline_projects" ADD CONSTRAINT "pipeline_projects_owner_id_fkey" FOREIGN KEY ("owner_id") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
   END IF;
 END $$;
 
 DO $$ BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'pipeline_projects_created_by_id_fkey') THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'pipeline_projects_created_by_id_fkey' AND conrelid = '"public"."pipeline_projects"'::regclass) THEN
     ALTER TABLE "pipeline_projects" ADD CONSTRAINT "pipeline_projects_created_by_id_fkey" FOREIGN KEY ("created_by_id") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
   END IF;
 END $$;
 
 DO $$ BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'pipeline_participants_user_id_fkey') THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'pipeline_participants_user_id_fkey' AND conrelid = '"public"."pipeline_participants"'::regclass) THEN
     ALTER TABLE "pipeline_participants" ADD CONSTRAINT "pipeline_participants_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
   END IF;
 END $$;
 
 DO $$ BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'pipeline_messages_author_id_fkey') THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'pipeline_messages_author_id_fkey' AND conrelid = '"public"."pipeline_messages"'::regclass) THEN
     ALTER TABLE "pipeline_messages" ADD CONSTRAINT "pipeline_messages_author_id_fkey" FOREIGN KEY ("author_id") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
   END IF;
 END $$;

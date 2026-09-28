@@ -18,9 +18,13 @@
  * `bumpFailGen` counts failures; a success clears the flag only if none happened during
  * its flight. The worst case is one redundant heal bump, which is harmless.
  *
- * getBoardSnapshot(v) (§5.3) lands with the board routes.
+ * getBoardSnapshot(v) (§5.3) builds the whole board in ONE statement, so its label equals
+ * its rows, and caches it: the cache is served only while `cache.v === board_v` (a newer
+ * OR a regressed v — e.g. after a DB restore — forces a rebuild), and a rebuild is
+ * single-flight: one rebuild per board change for the whole company.
  */
-import type { PipelinePhase } from "@dashmani/shared";
+import { PIPELINE_LIMITS, type PipelineBoardSnapshot, type PipelinePhase, type PipelinePhaseCount } from "@dashmani/shared";
+import { cardFromRow } from "./wire";
 import { createSingleFlightMemo } from "../../utils/single-flight-memo";
 import { pipelineRead, pipelineWriteStatement } from "./tx";
 
@@ -122,10 +126,92 @@ export function getLivePhases(): Promise<PipelinePhase[]> {
 
 export function invalidatePhases(): void {
   phasesMemo.clear();
+  snapshotCache = null;
+}
+
+// ── Board snapshot (§5.3) ────────────────────────────────────────────────────────────
+
+let snapshotCache: PipelineBoardSnapshot | null = null;
+let snapshotInflight: Promise<PipelineBoardSnapshot> | null = null;
+
+type SnapRow = { v: number | null; phases: Array<Record<string, unknown>> | null; cards: Array<Record<string, unknown>> | null };
+
+async function buildBoardSnapshot(): Promise<PipelineBoardSnapshot> {
+  const cap = PIPELINE_LIMITS.cardsPerPhase;
+  const rows = await pipelineRead((db) =>
+    db.$queryRaw<SnapRow[]>`
+      SELECT (SELECT seq FROM pipeline_board_state WHERE id = 1) AS v,
+             (SELECT json_agg(ph ORDER BY ph.position, ph.id)
+                FROM pipeline_phases ph WHERE ph.archived_at IS NULL) AS phases,
+             (SELECT json_agg(c) FROM (
+                SELECT ph.id AS phase_id, cards.*
+                  FROM pipeline_phases ph
+                 CROSS JOIN LATERAL (
+                   SELECT p.id, p.title, p.rank, p.owner_id, p.start_date, p.due_date, p.member_count,
+                          ARRAY(SELECT pp.user_id FROM pipeline_participants pp
+                                 WHERE pp.project_id = p.id AND pp.role = 'MEMBER'
+                                 ORDER BY pp.created_at, pp.user_id LIMIT 3) AS preview,
+                          count(*) OVER ()::int AS phase_total
+                     FROM pipeline_projects p
+                    WHERE p.phase_id = ph.id AND p.archived_at IS NULL AND p.deleted_at IS NULL
+                    ORDER BY p.rank COLLATE "C", p.id
+                    LIMIT ${cap + 1}) cards
+                 WHERE ph.archived_at IS NULL
+                 ORDER BY ph.position, ph.id, cards.rank COLLATE "C", cards.id) c) AS cards`,
+  );
+  const row = rows[0];
+  const phases: PipelinePhase[] = (row?.phases ?? []).map((r) => ({
+    id: String(r.id),
+    key: String(r.key),
+    name: String(r.name),
+    position: Number(r.position),
+    color: String(r.color),
+    isTerminal: r.is_terminal === true,
+  }));
+  const perPhase: Record<string, PipelinePhaseCount> = {};
+  for (const ph of phases) perPhase[ph.id] = { shown: 0, total: 0, truncated: false };
+  const cards = [];
+  for (const r of row?.cards ?? []) {
+    const phaseId = String(r.phase_id);
+    const count = perPhase[phaseId] ?? (perPhase[phaseId] = { shown: 0, total: 0, truncated: false });
+    count.total = Number(r.phase_total);
+    count.truncated = count.total > cap;
+    if (count.shown >= cap) continue; // the 101st row only proves truncation
+    count.shown++;
+    cards.push(cardFromRow(r));
+  }
+  return { v: Number(row?.v ?? 0), phases, cards, perPhase };
+}
+
+/**
+ * The board at `boardV` (the caller's freshly read `pipeline_board_state.seq`). A cache hit
+ * costs zero statements. A snapshot's `v` is the seq read in the SAME statement as its rows,
+ * so it may be newer than `boardV` (never older than what it shows).
+ */
+export async function getBoardSnapshot(boardV: number): Promise<PipelineBoardSnapshot> {
+  if (snapshotCache && snapshotCache.v === boardV) return snapshotCache;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (!snapshotInflight) {
+      snapshotInflight = buildBoardSnapshot().finally(() => {
+        snapshotInflight = null;
+      });
+    }
+    const snap = await snapshotInflight;
+    snapshotCache = snap;
+    // A rebuild that started before boardV's bump may carry an older v: build once more.
+    // (A NEWER v is fine: the snapshot is at worst newer than the caller's read.)
+    if (snap.v >= boardV || attempt === 1) return snap;
+  }
+  return snapshotCache!;
+}
+
+export function invalidateBoardSnapshot(): void {
+  snapshotCache = null;
 }
 
 /** Tests only. */
 export function resetBoardStateForTests(): void {
+  snapshotCache = null;
   boardBumpPending = false;
   bumpFailGen = 0;
   warnedMissingRow = false;

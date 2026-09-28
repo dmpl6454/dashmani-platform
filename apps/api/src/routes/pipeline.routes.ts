@@ -35,7 +35,7 @@ import { PipelineError, pipelineErrorMiddleware } from "../services/pipeline/err
 import { getPipelineDirectory } from "../services/pipeline/access";
 import { isPilotUser } from "../services/pipeline/settings";
 import { getLivePhases } from "../services/pipeline/board";
-import { createProject, listProjects, type PipelineActor } from "../services/pipeline/projects.service";
+import { createProject, getProjectDetail, listProjects, type PipelineActor } from "../services/pipeline/projects.service";
 
 const router = Router();
 
@@ -142,6 +142,19 @@ router.post(
   asyncHandler(async (req: Request, res: Response) => {
     const { status, data } = await createProject(actorOf(req), req.body);
     return ok(res, data, status);
+  }),
+);
+
+// ── #6 GET /pipeline/projects/:id ────────────────────────────────────────────────────
+router.get(
+  "/pipeline/projects/:id",
+  ...G,
+  pv(V.projectParamsSchema, "params"),
+  pv(V.projectDetailQuerySchema, "query"),
+  asyncHandler(async (req: Request, res: Response) => {
+    const dir = await getPipelineDirectory(); // memo: resolved BEFORE the handler takes a slot
+    const { around } = req.query as { around?: string };
+    return ok(res, await getProjectDetail(actorOf(req), req.params.id, around, dir));
   }),
 );
 

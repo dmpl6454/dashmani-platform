@@ -7,14 +7,18 @@
  *      a hot table);
  *   2. everything runs in ONE transaction with a 3 s lock_timeout and a 60 s
  *      statement_timeout, so a lock that is not granted aborts cleanly instead of queueing
- *      behind (and in front of) login traffic on "users";
- *   3. it is idempotent: every create is IF NOT EXISTS, every FK is guarded, the enum value
- *      is ADD VALUE IF NOT EXISTS, every seed is ON CONFLICT DO NOTHING;
+ *      behind (and in front of) login traffic on "users"; and it pins search_path to public,
+ *      because every name in it is unqualified and psql's default is `"$user", public` (a
+ *      schema named after the app role would otherwise receive the tables);
+ *   3. it is idempotent: every create is IF NOT EXISTS, every FK is guarded by a check scoped
+ *      to ITS table (a same-named constraint elsewhere must not skip it), the enum value is
+ *      ADD VALUE IF NOT EXISTS, every seed is ON CONFLICT DO NOTHING;
  *   4. it only ever touches pipeline_* objects plus the one enum value;
  *   5. it seeds the board row and exactly the 7 §2 phases, Done being the only terminal one;
  *   6. raw timestamps are timezone('utc', now()), never a bare now() (spec §2 DB rule 2).
- * The live proof (apply twice to a scratch DB built from origin/main, then an empty
- * `prisma migrate diff`) is the rehearsal in docs/superpowers/plans/2026-09-26-pipeline-ddl-runbook.md.
+ * This file reads the script as text. The live proof — every statement executed, twice, then
+ * an empty `prisma migrate diff` — runs in CI (the "Rehearse the pipeline DDL script" step in
+ * .github/workflows/ci.yml) and is recorded in docs/superpowers/plans/2026-09-26-pipeline-ddl-runbook.md.
  */
 import { describe, it, expect, beforeAll } from "vitest";
 import fs from "fs";
@@ -66,13 +70,14 @@ describe("scripts/pipeline-ddl.sql (spec §12)", () => {
     expect(hits).toEqual([]);
   });
 
-  it("runs in one transaction with a 3 s lock_timeout and a 60 s statement_timeout", () => {
+  it("runs in one transaction with a 3 s lock_timeout, a 60 s statement_timeout and search_path pinned", () => {
     const st = statements();
     // psql meta-commands carry no ';' — strip a leading \set line before comparing.
     const first = st[0].replace(/^\\set ON_ERROR_STOP on\s*/, "");
     expect(first).toBe("BEGIN");
     expect(st[1]).toBe("SET LOCAL lock_timeout = '3s'");
     expect(st[2]).toBe("SET LOCAL statement_timeout = '60s'");
+    expect(st[3]).toBe("SET LOCAL search_path = public");
     expect(st[st.length - 1]).toBe("COMMIT");
     // Exactly one top-level transaction (DO-block bodies split into fragments that start
     // with "DO $$" / "END", never with a bare BEGIN or COMMIT).
@@ -101,12 +106,23 @@ describe("scripts/pipeline-ddl.sql (spec §12)", () => {
     }
   });
 
-  it("adds the 8 foreign keys only inside guards, so a second run is a no-op", () => {
+  it("adds the 8 foreign keys only inside guards scoped to their own table, so a second run is a no-op", () => {
     const adds = [...sql.matchAll(/ADD CONSTRAINT "([a-z_]+)"/g)].map((m) => m[1]);
     expect(adds.length).toBe(8);
-    for (const name of adds) {
-      expect(sql).toContain(`IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = '${name}')`);
-      expect(name.startsWith("pipeline_")).toBe(true);
+    // Each ADD CONSTRAINT must sit directly under the guard for THAT name on THAT table. A
+    // name-only guard would also match a same-named constraint on another table or schema
+    // and silently skip the FK.
+    const flat = sql.replace(/\s+/g, " ");
+    const guarded = [
+      ...flat.matchAll(
+        /DO \$\$ BEGIN IF NOT EXISTS \(SELECT 1 FROM pg_constraint WHERE conname = '([a-z_]+)' AND conrelid = '"public"\."([a-z_]+)"'::regclass\) THEN ALTER TABLE "([a-z_]+)" ADD CONSTRAINT "([a-z_]+)"/g,
+      ),
+    ].map((m) => ({ guardName: m[1], guardTable: m[2], table: m[3], name: m[4] }));
+    expect(guarded.map((g) => g.name).sort()).toEqual([...adds].sort());
+    for (const g of guarded) {
+      expect(g.guardName).toBe(g.name);
+      expect(g.guardTable).toBe(g.table);
+      expect(g.name.startsWith("pipeline_")).toBe(true);
     }
   });
 

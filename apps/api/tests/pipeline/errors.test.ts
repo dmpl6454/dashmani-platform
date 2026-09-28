@@ -416,6 +416,26 @@ describe("pipelineErrorMiddleware", () => {
     expect(res.headers["cache-control"]).toBe("no-store");
   });
 
+  it("warnThrottled writes one line per key per 10 s and reports how many it held back", async () => {
+    const { warnThrottled, resetThrottledWarnForTests } = await import("../../src/utils/throttled-warn");
+    resetThrottledWarnForTests();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const t0 = 1_000_000;
+    expect(warnThrottled("k", "[pipeline] 429 x", t0)).toBe(true);
+    expect(warnThrottled("k", "[pipeline] 429 x", t0 + 1_000)).toBe(false);
+    expect(warnThrottled("k", "[pipeline] 429 x", t0 + 9_999)).toBe(false);
+    expect(warnThrottled("other", "[pipeline] 413 y", t0 + 5_000)).toBe(true); // keys are independent
+    expect(warnThrottled("k", "[pipeline] 429 x", t0 + 10_000)).toBe(true);
+    const lines = warn.mock.calls.map((c) => String(c[0]));
+    warn.mockRestore();
+    resetThrottledWarnForTests();
+    expect(lines).toEqual([
+      "[pipeline] 429 x",
+      "[pipeline] 413 y",
+      "[pipeline] 429 x (+2 held back since the line 10s ago)",
+    ]);
+  });
+
   it("defers to Express when the response has already started", () => {
     const res = mockRes();
     res.headersSent = true;

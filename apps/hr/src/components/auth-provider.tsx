@@ -3,7 +3,7 @@ import { useState, useEffect, useCallback, useRef, ReactNode } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { HrAuthContext, HrUser } from "@/lib/auth";
 import { loginHrefWithNext } from "@/lib/return-path";
-import { purgePipelineStorage } from "@/lib/pipeline-storage";
+import { purgePipelineStorage, purgePipelineStorageOnUserSwitch } from "@/lib/pipeline-storage";
 
 export function HrAuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<HrUser | null>(null);
@@ -41,6 +41,9 @@ export function HrAuthProvider({ children }: { children: ReactNode }) {
   // Login: save tokens + user to localStorage AND update state
   const login = useCallback((accessToken: string, refreshToken: string, userData: HrUser) => {
     explicitLogoutRef.current = false;
+    // Spec §9.3: a DIFFERENT person signing in over a stored session must not inherit the
+    // previous person's Pipeline drafts / outbox. Must run before hrUser is overwritten.
+    purgePipelineStorageOnUserSwitch(userData.id);
     localStorage.setItem("hrAccessToken", accessToken);
     localStorage.setItem("hrRefreshToken", refreshToken);
     localStorage.setItem("hrUser", JSON.stringify(userData));

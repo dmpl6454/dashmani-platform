@@ -45,8 +45,10 @@ function readRetryAfterSec(data: unknown): number | undefined {
   return typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : undefined;
 }
 
+// ⚠️ Thrown for GETs as well as writes, so it must not claim anything about saving. No
+// trailing period: /report's "couldn't load" banner appends its own sentence after it.
 const TRANSIENT_REFRESH_MESSAGE =
-  "Couldn't reach the server to renew your session. You're still signed in — please try again in a moment. Nothing was saved.";
+  "Couldn't reach the server to renew your session. You're still signed in — please try again in a moment";
 
 /** A refresh that failed for a reason that says nothing about the session (P1). */
 function transientRefreshError(): ApiError {
@@ -99,7 +101,9 @@ export async function apiFetch<T>(path: string, options: ApiFetchOptions = {}): 
   // burning the rate-limit bucket on every lap. A second consecutive 401 ends the session.
   if (res.status === 401 && typeof window !== "undefined") {
     if (!_retried) {
-      const outcome = await tryRefresh();
+      // Pass the token THIS request sent: if a newer pair is already stored (another
+      // request or tab refreshed meanwhile) the retry just uses it — no refresh spent.
+      const outcome = await tryRefresh(token);
       if (outcome === "ok") return apiFetch<T>(path, { ...init, _retried: true });
       // A network blip / 5xx / 429 during the refresh says nothing about the session:
       // keep the tokens and let the caller show its own retryable error.
@@ -166,7 +170,7 @@ export async function apiUpload<T>(path: string, formData: FormData, _retried = 
   // Same P1 rules as apiFetch: refresh at most once, keep the session on a transient failure.
   if (res.status === 401 && typeof window !== "undefined") {
     if (!_retried) {
-      const outcome = await tryRefresh();
+      const outcome = await tryRefresh(token);
       if (outcome === "ok") return apiUpload<T>(path, formData, true);
       if (outcome === "transient") throw transientRefreshError();
     }
@@ -234,25 +238,38 @@ let refreshInFlight: Promise<RefreshOutcome> | null = null;
  * on the Cloudflare edge IP, in one bucket shared with every anonymous request behind
  * that edge (login included). For 5 s after a transient outcome we answer "transient"
  * without a request — unless the access token changed meanwhile (another tab refreshed
- * or the user signed in again), in which case the refresh is attempted normally with the
- * fresh pair. A successful refresh clears the cooldown.
+ * or the user signed in again). Then a request that was sent with the OLD token simply
+ * retries with the new one (no refresh at all), and a request that 401s with the NEW
+ * token refreshes normally. A successful refresh clears the cooldown.
  */
 const TRANSIENT_REFRESH_COOLDOWN_MS = 5_000;
 let lastTransient: { at: number; access: string | null } | null = null;
 
-function tryRefresh(): Promise<RefreshOutcome> {
+/**
+ * `sent` is the access token the failing request carried (null if it carried none).
+ *
+ * ⚠️ Compare against `sent`, never against whatever localStorage holds now. A 401 can land
+ * AFTER this tab (or another tab) already stored a fresh pair — the request simply went
+ * out before the refresh finished. Re-reading localStorage at that point would see the
+ * fresh token, treat it as "the stale one", and spend the new single-use refresh token for
+ * nothing; without Web Locks that extra spend can race another tab, whose loser then gets a
+ * JSON 401 and logs the user out (the 2026-08-31 "losers log out" class).
+ */
+function tryRefresh(sent: string | null): Promise<RefreshOutcome> {
+  const current = localStorage.getItem("hrAccessToken");
+  // A newer pair is already stored: retry with it — no refresh, no cooldown.
+  if (current && current !== sent) return Promise.resolve("ok");
   if (!refreshInFlight) {
     if (
       lastTransient &&
       Date.now() - lastTransient.at < TRANSIENT_REFRESH_COOLDOWN_MS &&
-      localStorage.getItem("hrAccessToken") === lastTransient.access
+      current === lastTransient.access
     ) {
       return Promise.resolve("transient");
     }
-    const accessAtStart = localStorage.getItem("hrAccessToken");
-    refreshInFlight = doRefresh()
+    refreshInFlight = doRefresh(sent)
       .then((outcome) => {
-        lastTransient = outcome === "transient" ? { at: Date.now(), access: accessAtStart } : null;
+        lastTransient = outcome === "transient" ? { at: Date.now(), access: current } : null;
         return outcome;
       })
       .finally(() => { refreshInFlight = null; });
@@ -267,14 +284,18 @@ function tryRefresh(): Promise<RefreshOutcome> {
  *   transient  fetch threw, 429, any 5xx, or a non-JSON body — the session is NOT over
  * Never throws.
  */
-async function doRefresh(): Promise<RefreshOutcome> {
+async function doRefresh(staleAccess: string | null): Promise<RefreshOutcome> {
   if (typeof window === "undefined") return "transient";
-  const staleAccess = localStorage.getItem("hrAccessToken");
+  /** True once some other request or tab has stored a pair newer than `staleAccess`. */
+  const rotatedElsewhere = () => {
+    const cur = localStorage.getItem("hrAccessToken");
+    return cur !== null && cur !== staleAccess;
+  };
   const run = async (): Promise<RefreshOutcome> => {
     // Another tab may have refreshed while we waited on the lock — its new
     // tokens are already in localStorage. Use them rather than consuming the
     // rotated (already-spent) refresh token and logging everyone out.
-    if (localStorage.getItem("hrAccessToken") !== staleAccess) return "ok";
+    if (rotatedElsewhere()) return "ok";
     const refreshToken = localStorage.getItem("hrRefreshToken");
     if (!refreshToken) return "rejected";
     let res: Response;
@@ -296,6 +317,10 @@ async function doRefresh(): Promise<RefreshOutcome> {
       isJson = data !== null && typeof data === "object";
     } catch { isJson = false; }
     const outcome = classifyRefreshOutcome({ threw: false, status: res.status, isJson });
+    // Without Web Locks two tabs can race the same refresh token. The loser is refused,
+    // but the winner's fresh pair is already stored — retry with it instead of letting
+    // endSession() delete it.
+    if (outcome === "rejected" && rotatedElsewhere()) return "ok";
     if (outcome !== "ok") return outcome;
     const body = data as { success?: boolean; data?: { accessToken?: unknown; refreshToken?: unknown } };
     const next = body.success ? body.data : undefined;

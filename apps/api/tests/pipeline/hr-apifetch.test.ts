@@ -285,6 +285,10 @@ describe("apiFetch — 401 handling", () => {
       expect(err).toBeInstanceOf(ApiError);
       expect(err.status).toBe(503);
       expect(err.code).toBe("NETWORK_RETRY");
+      // Thrown for GETs too, so it must not claim anything about saving; and it carries
+      // no trailing period because /report appends its own sentence after it.
+      expect(err.message).not.toMatch(/saved/i);
+      expect(err.message.endsWith(".")).toBe(false);
       expect(calls).toHaveLength(2); // no retry of the original request, no loop
       expectSignedIn();
       // tokens are byte-unchanged (not rotated, not cleared)
@@ -330,6 +334,52 @@ describe("apiFetch — 401 handling", () => {
     const res = await apiFetch<{ data: { v: number } }>("/hr/profile");
     expect(res.data.v).toBe(2);
     expect(calls.map((c) => c.url)).toEqual([`${API}/hr/profile`, `${API}/hr/profile`]);
+  });
+
+  it("LATE 401: a request sent with the old token whose 401 lands after the refresh finished retries with the new token — ONE refresh", async () => {
+    let refreshCalls = 0;
+    let releaseB!: () => void;
+    const bGate = new Promise<void>((r) => { releaseB = r; });
+    installFetch(async (url, init) => {
+      if (url === REFRESH_URL) return refreshed(++refreshCalls);
+      if (authHeader(init) === "Bearer access-1") return ok({ url });
+      if (url === `${API}/b`) { await bGate; return unauthorized(); } // slow 401, sent with access-0
+      return unauthorized();
+    });
+    const { apiFetch } = await loadApi();
+    const pA = apiFetch<{ data: { url: string } }>("/a");
+    const pB = apiFetch<{ data: { url: string } }>("/b"); // both sent with access-0
+    const a = await pA; // refresh done, access-1 / refresh-1 stored
+    expect(a.data.url).toBe(`${API}/a`);
+    releaseB();
+    const b = await pB;
+    expect(b.data.url).toBe(`${API}/b`);
+    // The single-use refresh-1 was NOT spent: /b simply retried with access-1.
+    expect(refreshCalls).toBe(1);
+    expect(storage.getItem("hrAccessToken")).toBe("access-1");
+    expect(storage.getItem("hrRefreshToken")).toBe("refresh-1");
+    expectSignedIn();
+  });
+
+  it("LOCK-FREE LOSER: the refresh endpoint rejects because another tab already rotated → keeps the winner's pair and retries", async () => {
+    // navigator.locks is absent (beforeEach), so two tabs can race the same refresh-0.
+    installFetch((url, init) => {
+      if (url === REFRESH_URL) {
+        // The other tab won: its fresh pair lands in shared localStorage, and our
+        // attempt with the now-spent refresh-0 is refused.
+        storage.setItem("hrAccessToken", "access-from-other-tab");
+        storage.setItem("hrRefreshToken", "refresh-from-other-tab");
+        return json(401, { success: false, error: { code: "INVALID_TOKEN", message: "Refresh token already used" } });
+      }
+      return authHeader(init) === "Bearer access-from-other-tab" ? ok({ v: 3 }) : unauthorized();
+    });
+    const { apiFetch } = await loadApi();
+    const res = await apiFetch<{ data: { v: number } }>("/hr/profile");
+    expect(res.data.v).toBe(3);
+    expect(storage.getItem("hrAccessToken")).toBe("access-from-other-tab");
+    expect(storage.getItem("hrRefreshToken")).toBe("refresh-from-other-tab");
+    expect(storage.keys().filter((k) => k.startsWith("pl:"))).toHaveLength(2);
+    expectSignedIn();
   });
 
   it("a later, unrelated 401 can refresh again (the cap is per request, not per page)", async () => {
@@ -385,7 +435,35 @@ describe("apiFetch — cooldown after a transient refresh", () => {
     expectSignedIn();
   });
 
-  it("a new access token (another tab refreshed) bypasses the cooldown", async () => {
+  it("another tab refreshed during the cooldown: a request sent with the OLD token retries with the new one — no refresh at all", async () => {
+    let now = 1_000_000;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    let refreshCalls = 0;
+    installFetch((url, init) => {
+      if (url === REFRESH_URL) { refreshCalls++; throw new TypeError("Load failed"); }
+      if (url === `${API}/b` && authHeader(init) === "Bearer access-0") {
+        // another tab rotates the pair while this request is in flight
+        storage.setItem("hrAccessToken", "access-from-other-tab");
+        storage.setItem("hrRefreshToken", "refresh-from-other-tab");
+        return unauthorized();
+      }
+      return authHeader(init) === "Bearer access-from-other-tab" ? ok({ v: 2 }) : unauthorized();
+    });
+    const { apiFetch } = await loadApi();
+
+    await apiFetch("/a").catch(() => undefined); // transient, starts the cooldown
+    expect(refreshCalls).toBe(1);
+
+    now += 1_000;
+    const res = await apiFetch<{ data: { v: number } }>("/b");
+    expect(res.data.v).toBe(2);
+    // The other tab's fresh refresh token is NOT spent a second time.
+    expect(refreshCalls).toBe(1);
+    expect(storage.getItem("hrRefreshToken")).toBe("refresh-from-other-tab");
+    expectSignedIn();
+  });
+
+  it("a request sent with a NEW access token (another tab refreshed) bypasses the cooldown and refreshes normally", async () => {
     let now = 1_000_000;
     vi.spyOn(Date, "now").mockImplementation(() => now);
     let refreshCalls = 0;
@@ -396,13 +474,6 @@ describe("apiFetch — cooldown after a transient refresh", () => {
         if (failRefresh) throw new TypeError("Load failed");
         return refreshed(2);
       }
-      if (url === `${API}/b` && authHeader(init) === "Bearer access-0") {
-        // another tab rotates the pair while this request is in flight
-        storage.setItem("hrAccessToken", "access-from-other-tab");
-        storage.setItem("hrRefreshToken", "refresh-from-other-tab");
-        failRefresh = false;
-        return unauthorized();
-      }
       return authHeader(init) === "Bearer access-2" ? ok({ v: 2 }) : unauthorized();
     });
     const { apiFetch } = await loadApi();
@@ -410,6 +481,10 @@ describe("apiFetch — cooldown after a transient refresh", () => {
     await apiFetch("/a").catch(() => undefined); // transient, starts the cooldown
     expect(refreshCalls).toBe(1);
 
+    // another tab rotated the pair; this request is SENT with the new token and 401s
+    storage.setItem("hrAccessToken", "access-from-other-tab");
+    storage.setItem("hrRefreshToken", "refresh-from-other-tab");
+    failRefresh = false;
     now += 1_000;
     const res = await apiFetch<{ data: { v: number } }>("/b");
     expect(res.data.v).toBe(2);
@@ -472,6 +547,23 @@ describe("apiUpload — same P1 rules", () => {
     expect(err.status).toBe(401);
     expect(calls).toHaveLength(3);
     expectSignedOutWithReturnPath();
+  });
+
+  it("another tab rotated the pair while the upload was in flight → retried with the new token, no refresh", async () => {
+    installFetch((url, init) => {
+      if (url === REFRESH_URL) throw new Error("must not refresh");
+      if (authHeader(init) === "Bearer access-0") {
+        storage.setItem("hrAccessToken", "access-from-other-tab");
+        storage.setItem("hrRefreshToken", "refresh-from-other-tab");
+        return unauthorized();
+      }
+      return authHeader(init) === "Bearer access-from-other-tab" ? ok({ uploaded: true }) : unauthorized();
+    });
+    const { apiUpload } = await loadApi();
+    const res = await apiUpload<{ data: { uploaded: boolean } }>("/hr/documents", form());
+    expect(res.data.uploaded).toBe(true);
+    expect(calls.map((c) => c.url)).toEqual([`${API}/hr/documents`, `${API}/hr/documents`]);
+    expectSignedIn();
   });
 
   it("refresh ok → retried upload succeeds with the new token", async () => {

@@ -6,9 +6,15 @@ import Link from "next/link";
 
 interface PortalShellProps {
   children: React.ReactNode;
+  /**
+   * Opt-in (pipeline only): bound the shell to the visual viewport instead of growing
+   * with its content, so inner scrollers and a keyboard-safe composer work. The default
+   * is unchanged for every other layout.
+   */
+  fitViewport?: boolean;
 }
 
-export function PortalShell({ children }: PortalShellProps) {
+export function PortalShell({ children, fitViewport = false }: PortalShellProps) {
   const { user, isLoading } = useHrAuth();
 
   if (isLoading) {
@@ -20,6 +26,17 @@ export function PortalShell({ children }: PortalShellProps) {
   }
 
   if (!user) return null;
+
+  if (fitViewport) {
+    return (
+      <div className="flex bg-bg text-ink overflow-hidden" style={{ height: "var(--pl-vh, 100dvh)" }}>
+        <HrSidebar />
+        <main className="flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden pt-14 lg:pt-0">
+          {children}
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen flex bg-bg text-ink">

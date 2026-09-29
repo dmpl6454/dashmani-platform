@@ -19,6 +19,7 @@
 import express, { type Request, type Response, type RequestHandler } from "express";
 import rateLimit from "express-rate-limit";
 import { envInt, pipelineRateLimitKey } from "./rate-limit-key";
+import { pipelineStats } from "../services/pipeline/stats";
 import { warnThrottled } from "../utils/throttled-warn";
 
 export type PipelineBucket = "read" | "write" | "message";
@@ -68,6 +69,7 @@ function makeLimiter(bucket: PipelineBucket, limit: number): RequestHandler {
       // ⚠️ Answered before morgan is mounted: without this line a 429 storm (the
       // 2026-09-18 class) leaves no trace in the API log. One line per bucket per 10 s.
       warnThrottled(`429:${bucket}`, `[pipeline] 429 PIPELINE_RATE_LIMIT bucket=${bucket}`);
+      pipelineStats.rateLimited(bucket);
       res.setHeader("Cache-Control", "no-store");
       res.setHeader("Retry-After", String(retryAfterSec));
       res.status(429).json({

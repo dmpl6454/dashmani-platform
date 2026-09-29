@@ -11,6 +11,7 @@ import { getBoardSnapshot, invalidatePhases, resetBoardStateForTests } from "./b
 import { resetPipelineSchemaCheck } from "./self-check";
 import { resetPipelineBulkheadForTests } from "./tx";
 import { installPipelineNotifier } from "./notify";
+import { resetPipelineStatsForTests } from "./stats";
 import { setBoardSnapshotProvider } from "./sync.service";
 
 // The real notifier replaces the PR 7/8 no-op seam as soon as the pipeline services load.
@@ -31,12 +32,15 @@ export function invalidatePipelineCaches(): void {
   resetPipelineSchemaCheck();
 }
 
-/** Tests only: caches, the bulkhead and the pending board-bump flag. */
+/** Tests only: caches, the bulkhead, the pending board-bump flag and the stats window. */
 export function resetPipelineStateForTests(): void {
   invalidatePipelineCaches();
   resetPipelineBulkheadForTests();
   resetBoardStateForTests();
+  resetPipelineStatsForTests();
 }
 
 export { resetPipelineBulkheadForTests };
 export { startPipelineSelfCheck } from "./self-check";
+/** Boot only: the hourly `[pipeline] stats` line (spec §12 step 8). */
+export { startPipelineStatsLog } from "./stats";

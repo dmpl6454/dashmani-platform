@@ -62,6 +62,7 @@ import {
   type PipelineActor as MessageActor,
 } from "../services/pipeline/messages.service";
 import { markRead, syncPipeline } from "../services/pipeline/sync.service";
+import { pipelineStats } from "../services/pipeline/stats";
 
 const router = Router();
 
@@ -283,7 +284,10 @@ router.post(
   ...G,
   pv(V.syncRequestSchema),
   asyncHandler(async (req: Request, res: Response) => {
-    return ok(res, await syncPipeline(await messageActorOf(req), req.body));
+    const t0 = performance.now();
+    const data = await syncPipeline(await messageActorOf(req), req.body);
+    pipelineStats.sync(performance.now() - t0);
+    return ok(res, data);
   }),
 );
 

@@ -21,6 +21,7 @@
 import { createBulkhead } from "../../utils/bulkhead";
 import { pipelineDb, pipelineDbConnections, type PipelineDbClient, type PipelineTx } from "./db";
 import { normalizePipelineError, withRetryOnce } from "./errors";
+import { pipelineStats } from "./stats";
 
 /**
  * Sized from the pipeline pool (3 in production, 1 in the main test suite): a slot is a
@@ -82,6 +83,7 @@ export async function pipelineWrite<T>(
   fn: (tx: PipelineTx) => Promise<T>,
   opts: PipelineWriteOptions = {},
 ): Promise<T> {
+  pipelineStats.write();
   const attempt = () =>
     pipelineGate.run("write", () => pipelineDb.$transaction((tx) => fn(tx), { maxWait: 1500, timeout: opts.timeoutMs ?? 4000 }));
   try {

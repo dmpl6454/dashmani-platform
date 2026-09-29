@@ -27,6 +27,7 @@ import { PIPELINE_LIMITS, type PipelineBoardSnapshot, type PipelinePhase, type P
 import { cardFromRow } from "./wire";
 import { createSingleFlightMemo } from "../../utils/single-flight-memo";
 import { pipelineRead, pipelineWriteStatement } from "./tx";
+import { pipelineStats } from "./stats";
 
 let boardBumpPending = false;
 /** Incremented on every failed bump (see the ⚠️ above). */
@@ -65,6 +66,7 @@ export async function bumpBoard(): Promise<number | null> {
   } catch (err) {
     bumpFailGen++;
     boardBumpPending = true;
+    pipelineStats.bumpFailure();
     if (Date.now() - lastBumpWarn > 10_000) {
       lastBumpWarn = Date.now();
       console.warn("[pipeline] board bump failed — will retry on the next pipeline request:", String(err));

@@ -50,7 +50,9 @@ const KEEP_PARAMS = ["schema", "sslmode", "sslcert", "sslidentity", "sslpassword
 
 /**
  * DATABASE_URL → the pipeline URL: the query string is replaced by the pipeline pool and
- * timeout settings. `options` is encoded by hand (%20 / %3D) exactly like
+ * timeout settings, and every connection is tagged `application_name=dashmani-pipeline`
+ * so `pg_stat_activity` can count the pipeline pool on its own (the load harness's
+ * "pipeline connections ≤ 3" criterion, and the pilot's monitoring). `options` is encoded by hand (%20 / %3D) exactly like
  * withConnectionPool — URLSearchParams would emit "+" for the space, which Postgres
  * does not read as a space inside `options`. Fail-open: empty/undefined is returned as is.
  */
@@ -61,7 +63,7 @@ export function buildPipelineDbUrl(url: string | undefined, connections: number)
   const existing = new URLSearchParams(q >= 0 ? url.slice(q + 1) : "");
   let qs =
     `connection_limit=${connections}&pool_timeout=2&connect_timeout=5` +
-    `&options=-c%20statement_timeout%3D2500%20-c%20lock_timeout%3D1000`;
+    `&options=-c%20statement_timeout%3D2500%20-c%20lock_timeout%3D1000%20-c%20application_name%3Ddashmani-pipeline`;
   for (const key of KEEP_PARAMS) {
     const value = existing.get(key);
     if (value !== null) qs += `&${key}=${encodeURIComponent(value)}`;

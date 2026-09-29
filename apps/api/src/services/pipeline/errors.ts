@@ -29,6 +29,7 @@ import { MentionLimitError } from "@dashmani/shared";
 import { AppError } from "../../middleware/error-handler";
 import { warnThrottled } from "../../utils/throttled-warn";
 import { Prisma } from "./db";
+import { pipelineStats } from "./stats";
 
 /** How long a client should wait before retrying a 503 from the pipeline. */
 export const PIPELINE_RETRY_AFTER_SEC = 2;
@@ -354,6 +355,7 @@ export function pipelineErrorMiddleware(err: unknown, req: Request, res: Respons
     });
     return;
   }
+  pipelineStats.errorStatus(mapped.statusCode, String(mapped.code));
   if (shouldLog(mapped)) logMapped(mapped);
   const extra = mapped as AppError & { retryAfterSec?: unknown; current?: unknown };
   const body: Record<string, unknown> = { code: mapped.code, message: mapped.message };

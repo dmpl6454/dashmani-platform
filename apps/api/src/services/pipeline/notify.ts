@@ -24,6 +24,7 @@ import {
   type MessageEditedArgs,
   type MessageDeletedArgs,
 } from "./notifier";
+import { pipelineStats } from "./stats";
 import { Prisma, type PipelineTx } from "./db";
 
 export const PLN_KINDS = ["messages", "mention", "reply", "added", "moved", "due_soon", "overdue"] as const;
@@ -131,7 +132,7 @@ async function insertDirect(
   if (ids.length === 0) return;
   const id =
     o.kind === "reply" ? plnIdSql("reply", o.key) : plnIdSql(o.kind, o.key, Prisma.sql`r.uid`);
-  await tx.$executeRaw`
+  const n = await tx.$executeRaw`
     INSERT INTO notifications (id, user_id, type, title, message, read, metadata, created_at)
     SELECT ${id}, r.uid, ${PIPELINE_TYPE}, ${clip(o.title, TITLE_MAX)}, ${clip(o.message, MESSAGE_MAX)},
            false, ${o.meta}::jsonb, ${NOW}
@@ -140,6 +141,7 @@ async function insertDirect(
      WHERE ${recipientFragment(Prisma.sql`r.uid`, o.actorId, o.allow)}
      ORDER BY r.uid
     ${o.conflict}`;
+  pipelineStats.notificationRows(n);
 }
 
 const DO_NOTHING = Prisma.sql`ON CONFLICT (id) DO NOTHING`;
@@ -231,7 +233,7 @@ async function onMessagePosted(tx: PipelineTx, a: MessagePostedArgs): Promise<vo
   const preview = clip(`${a.actorName}: ${a.snippet}`, MESSAGE_MAX);
   const path = projectPath(a.projectId);
   const meta = pipelineMeta("messages", a.projectId, { n: 1, seq: a.seq, lastMid: a.messageId }, path);
-  await tx.$executeRaw`
+  const written = await tx.$executeRaw`
     INSERT INTO notifications AS n (id, user_id, type, title, message, read, metadata, created_at)
     SELECT ${plnIdSql("messages", a.projectId, Prisma.sql`r.user_id`)}, r.user_id, ${PIPELINE_TYPE},
            ${prefix} || '1 new message', ${preview}, false, ${meta}::jsonb, ${NOW}
@@ -248,6 +250,7 @@ async function onMessagePosted(tx: PipelineTx, a: MessagePostedArgs): Promise<vo
         CASE WHEN n.read THEN 1 ELSE COALESCE((n.metadata->>'n')::int, 0) + 1 END),
       title = ${prefix} || (CASE WHEN n.read THEN '1 new message'
                                  ELSE (COALESCE((n.metadata->>'n')::int, 0) + 1)::text || ' new messages' END)`;
+  pipelineStats.notificationRows(written);
 }
 
 async function onMessageEdited(tx: PipelineTx, a: MessageEditedArgs): Promise<void> {
@@ -308,7 +311,7 @@ async function onMoved(tx: PipelineTx, a: MovedArgs): Promise<void> {
   const title = clip(`${a.actorName} moved ${quotedTitle(a.projectTitle)} to ${a.toPhaseName}`, TITLE_MAX);
   const message = clip(`From ${a.fromPhaseName} → ${a.toPhaseName}`, MESSAGE_MAX);
   const meta = pipelineMeta("moved", a.projectId, { gen: a.gen, from: a.fromPhaseId, to: a.toPhaseId }, path);
-  await tx.$executeRaw`
+  const moved = await tx.$executeRaw`
     INSERT INTO notifications (id, user_id, type, title, message, read, metadata, created_at)
     SELECT ${idOf}, pp.user_id, ${PIPELINE_TYPE}, ${title}, ${message}, false, ${meta}::jsonb, ${NOW}
       FROM pipeline_participants pp
@@ -319,6 +322,7 @@ async function onMoved(tx: PipelineTx, a: MovedArgs): Promise<void> {
     ON CONFLICT (id) DO UPDATE SET
       read = false, created_at = EXCLUDED.created_at, title = EXCLUDED.title,
       message = EXCLUDED.message, metadata = EXCLUDED.metadata`;
+  pipelineStats.notificationRows(moved);
 }
 
 export const realNotifier: PipelineNotifier = {

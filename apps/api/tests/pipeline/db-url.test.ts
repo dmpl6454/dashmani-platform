@@ -11,7 +11,8 @@ import { describe, it, expect, afterAll } from "vitest";
 import { buildPipelineDbUrl, parsePipelineDbConnections, pipelineDb } from "../../src/services/pipeline/db";
 
 const SUFFIX =
-  "connection_limit=3&pool_timeout=2&connect_timeout=5&options=-c%20statement_timeout%3D2500%20-c%20lock_timeout%3D1000";
+  "connection_limit=3&pool_timeout=2&connect_timeout=5" +
+  "&options=-c%20statement_timeout%3D2500%20-c%20lock_timeout%3D1000%20-c%20application_name%3Ddashmani-pipeline";
 
 describe("buildPipelineDbUrl", () => {
   it("strips the existing pool params and applies the pipeline ceilings", () => {
@@ -46,7 +47,7 @@ describe("buildPipelineDbUrl", () => {
   it("hand-encodes the options value (%20 / %3D), never '+'", () => {
     const out = buildPipelineDbUrl("postgresql://u:p@h/d", 3)!;
     expect(out.includes("+")).toBe(false);
-    expect(out).toContain("options=-c%20statement_timeout%3D2500%20-c%20lock_timeout%3D1000");
+    expect(out).toContain("options=-c%20statement_timeout%3D2500%20-c%20lock_timeout%3D1000%20-c%20application_name%3Ddashmani-pipeline");
   });
 
   it("is fail-open on a missing URL", () => {
@@ -72,6 +73,13 @@ describe("parsePipelineDbConnections", () => {
 describe("pipelineDb", () => {
   afterAll(async () => {
     await pipelineDb.$disconnect();
+  });
+
+  it("tags its connections application_name=dashmani-pipeline (pg_stat_activity can count them)", async () => {
+    const rows = await pipelineDb.$queryRaw<Array<{ app: string; seen: number }>>`
+      SELECT current_setting('application_name') AS app,
+             (SELECT count(*)::int FROM pg_stat_activity WHERE application_name = 'dashmani-pipeline' AND pid = pg_backend_pid()) AS seen`;
+    expect(rows[0]).toEqual({ app: "dashmani-pipeline", seen: 1 });
   });
 
   it("runs with the pipeline statement and lock timeouts, not the main process's", async () => {

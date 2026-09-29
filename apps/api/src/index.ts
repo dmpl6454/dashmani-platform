@@ -11,6 +11,7 @@ import { runEntityExtraction } from "./cron/entity-extraction.cron";
 import { runIgCaptionBackfill } from "./cron/ig-caption-backfill.cron";
 import { runMetaTokenHealth } from "./cron/meta-token-health.cron";
 import { startPipelineSelfCheck } from "./services/pipeline";
+import { startPipelineDueCron } from "./cron/pipeline-due.cron";
 
 // ── Process-level crash backstops (defense-in-depth) ────────────────────────────
 // The 2026-07-08 outage was an unhandled promise rejection (a P2024 pool timeout in an
@@ -37,6 +38,10 @@ app.listen(PORT, () => {
   // PIPELINE_DISABLED) instead of producing 500s; success bumps the board version once.
   // Never throws, never touches the main pool.
   startPipelineSelfCheck();
+
+  // Pipeline due-soon / overdue alerts (spec §7.8): first tick at +17 min, then hourly;
+  // each tick sends only on a working day, 09:30–20:00 IST, with the feature on.
+  startPipelineDueCron();
 
   // Run follower sync once on startup, then every hour
   const runFollowerSync = () => {

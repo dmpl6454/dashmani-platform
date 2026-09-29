@@ -70,6 +70,11 @@ export interface PipelineWriteOptions {
    * The slot is released during the pause and re-acquired for the retry.
    */
   retryOnce?: boolean;
+  /**
+   * The interactive-transaction budget (default 4000 ms). Only the background jobs raise
+   * it (trim: SET LOCAL statement_timeout = 5 s), never a request path.
+   */
+  timeoutMs?: number;
 }
 
 /** One write slot; `fn` runs in an interactive transaction on the pipeline client. */
@@ -78,7 +83,7 @@ export async function pipelineWrite<T>(
   opts: PipelineWriteOptions = {},
 ): Promise<T> {
   const attempt = () =>
-    pipelineGate.run("write", () => pipelineDb.$transaction((tx) => fn(tx), { maxWait: 1500, timeout: 4000 }));
+    pipelineGate.run("write", () => pipelineDb.$transaction((tx) => fn(tx), { maxWait: 1500, timeout: opts.timeoutMs ?? 4000 }));
   try {
     return await (opts.retryOnce ? withRetryOnce(attempt) : attempt());
   } catch (err) {

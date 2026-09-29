@@ -188,7 +188,8 @@ export function Composer({
   return (
     <div className="shrink-0 border-t border-rule bg-surface px-3 py-2" style={{ paddingBottom: "max(8px, env(safe-area-inset-bottom))" }}>
       {readOnly && readOnlyReason && (
-        <p className="mb-1.5 text-[12.5px] text-ink-3" role="status">
+        // The page banner is the live region; this repeat by the composer is visual only.
+        <p className="mb-1.5 text-[12.5px] text-ink-3">
           {readOnlyReason}
         </p>
       )}

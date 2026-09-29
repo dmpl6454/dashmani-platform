@@ -71,6 +71,7 @@ export function MembersPanel({
         <Initials userId={p.userId} name={d?.name} initials={d?.initials} size={28} />
         <span className="pl-name min-w-0 flex-1 truncate text-[13.5px] text-ink">
           {d?.name ?? "Former member"}
+          {d?.hint && <span className="text-ink-4"> · {d.hint}</span>}
           {d && !d.active && <span className="text-ink-4"> · inactive</span>}
         </span>
         {p.isOwner && <span className="text-[11px] font-bold text-indigo">Owner</span>}
@@ -120,7 +121,6 @@ export function MembersPanel({
               })
             }
             className="h-11 px-3 rounded-xl border border-border text-[12.5px] font-semibold disabled:opacity-50"
-            aria-pressed={me.notify}
           >
             {me.notify ? "Mute notifications" : "Get notifications"}
           </button>

@@ -141,6 +141,9 @@ function MessageItemImpl({
         {!grouped && (
           <div className="flex items-baseline gap-2 min-w-0">
             <span className="pl-name min-w-0 truncate text-[13.5px] font-bold text-ink">{author}</span>
+            {dirById.get(m.authorId)?.hint && (
+              <span className="min-w-0 max-w-[40%] truncate text-[11.5px] text-ink-4">{dirById.get(m.authorId)?.hint}</span>
+            )}
             <time dateTime={m.createdAt} className="text-[11.5px] text-ink-4 whitespace-nowrap">
               {timeLabel(m.createdAt)}
             </time>

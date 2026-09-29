@@ -4,8 +4,8 @@
  * Project and message services call `notifier.<event>(tx, args)` INSIDE their
  * transaction, after the participant upserts, so a notification is written exactly once
  * with the change it describes (no fire-and-forget, no dispatchNotification). Until
- * services/pipeline/notify.ts lands (PR 9) the default is `noopNotifier`, so PRs 7–8 ship
- * with notifications switched off by construction.
+ * services/pipeline/index.ts installs notify.ts's realNotifier (PR 9) the default is
+ * `noopNotifier`.
  *
  * Rules for an implementation (spec §7):
  *   - write only through `tx`; ids only via plnId()/plnIdSql();
@@ -73,8 +73,10 @@ export interface MessagePostedArgs extends NotifyBase {
   /** The root for a reply, else null. */
   rootId: string | null;
   seq: number;
-  /** notificationSnippet(body, names, 100) — already token-free. */
+  /** notificationSnippet(body, names, 100) — already token-free (the grouped preview). */
   snippet: string;
+  /** notificationSnippet(body, names, 140) — the mention / reply row text (§7.5). */
+  directSnippet: string;
   /** Mentioned users that passed the ACTIVE/pickable filter (stored in mention_ids). */
   deliveredMentionIds: string[];
   /** The root's author for a reply (gets a reply row unless mentioned or the actor), else null. */
@@ -87,10 +89,14 @@ export interface MessageEditedArgs extends NotifyBase {
   rootId: string | null;
   seq: number;
   snippet: string;
+  /** notificationSnippet(body, names, 140). */
+  directSnippet: string;
   /** Delivered mentions not present before the edit. */
   addedMentionIds: string[];
   /** Every delivered mention after the edit (their rows get the new snippet). */
   mentionIds: string[];
+  /** mention_ids BEFORE the edit (a dropped mention's row is rewritten too, §7.11). */
+  oldMentionIds: string[];
   replyToAuthorId: string | null;
   /** Current participants (≤ 200), whose grouped rows may carry this message's preview. */
   participantIds: string[];

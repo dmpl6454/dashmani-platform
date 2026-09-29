@@ -10,6 +10,10 @@ import { invalidatePipelineAccess } from "./access";
 import { invalidatePhases, resetBoardStateForTests } from "./board";
 import { resetPipelineSchemaCheck } from "./self-check";
 import { resetPipelineBulkheadForTests } from "./tx";
+import { installPipelineNotifier } from "./notify";
+
+// The real notifier replaces the PR 7/8 no-op seam as soon as the pipeline services load.
+installPipelineNotifier();
 
 /**
  * Drop every memo: settings, access, directory and phases, and the schema verdict (the

@@ -1,0 +1,49 @@
+/* Pipeline styles (spec §9). Every class is prefixed .pl- so nothing leaks into the
+   rest of the HR portal. Layout is Tailwind; this file holds what Tailwind can't say. */
+
+/* Date fields: containment everywhere (the half that prevents overflow), native
+   appearance reset only on touch (iOS sizes date inputs from its shadow DOM). */
+.pl-date { min-width: 0; max-width: 100%; }
+@media (hover: none) and (pointer: coarse) {
+  .pl-date { -webkit-appearance: none; appearance: none; }
+}
+
+/* Cards: long-press drags, so no callout / selection; manipulation keeps taps fast. */
+.pl-card {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+  touch-action: manipulation;
+}
+
+/* The card title is a real button stretched over the whole card. */
+.pl-stretch::after { content: ""; position: absolute; inset: 0; border-radius: inherit; }
+
+/* Names never let bidi text reorder the surrounding sentence. */
+.pl-name { unicode-bidi: isolate; }
+
+/* Fixed surfaces sized by the visualViewport contract (keyboard-safe on iOS). */
+.pl-vv {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: var(--pl-vvtop, 0px);
+  height: var(--pl-vh, 100dvh);
+}
+
+.pl-scroll { min-height: 0; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+
+.pl-clamp2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.pl-highlight { animation: pl-flash 2s ease-out 1; }
+@keyframes pl-flash { 0% { background: #FFF3C4; } 100% { background: transparent; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .pl-anim, .pl-highlight { animation: none !important; transition: none !important; }
+}

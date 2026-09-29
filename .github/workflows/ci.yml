@@ -181,8 +181,11 @@ jobs:
         working-directory: apps/api
         run: npx vitest run --reporter=verbose
 
-  # Pipeline concurrency suite (P8; spec §11). A skeleton today — tests-concurrency/ holds
-  # one smoke file; the real races land with the pipeline (PR 12).
+  # Pipeline concurrency suite (P8; spec §11): tests-concurrency/pipeline/ — the wiring
+  # smoke test, the races (parallel posts, moves, adds, rebalance, fan-out vs ack) and the
+  # skip-freedom proof. vitest.concurrency.config.ts never reads the repo-root .env and
+  # refuses a non-localhost DATABASE_URL or the dev database, so this job's own
+  # DATABASE_URL below is the only one it can use.
   #
   # Separate job, separate database: the main suite pins connection_limit=1 (see above),
   # which serialises every query and so can never show interleaving. This job runs its own

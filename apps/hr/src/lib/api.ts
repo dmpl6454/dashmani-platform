@@ -22,11 +22,13 @@ export class ApiError extends Error {
   details?: Array<{ field: string; message: string }>;
   status: number;
   retryAfterSec?: number;
+  /** The current server row, sent on some 409s (EDIT_CONFLICT / MOVE_CONFLICT) by the pipeline routes. */
+  current?: unknown;
   constructor(
     message: string,
     code?: string,
     details?: Array<{ field: string; message: string }>,
-    opts: { status?: number; retryAfterSec?: number } = {},
+    opts: { status?: number; retryAfterSec?: number; current?: unknown } = {},
   ) {
     super(message);
     this.name = "ApiError";
@@ -34,6 +36,7 @@ export class ApiError extends Error {
     this.details = details;
     this.status = opts.status ?? 0;
     this.retryAfterSec = opts.retryAfterSec;
+    this.current = opts.current;
   }
 }
 
@@ -139,7 +142,7 @@ export async function apiFetch<T>(path: string, options: ApiFetchOptions = {}): 
       data.error?.message || "API error",
       data.error?.code,
       data.error?.details,
-      { status: res.status, retryAfterSec: readRetryAfterSec(data) },
+      { status: res.status, retryAfterSec: readRetryAfterSec(data), current: data.error?.current },
     );
   }
 

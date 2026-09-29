@@ -1,34 +1,51 @@
-import { configDefaults, defineConfig } from "vitest/config";
-import base from "./vitest.config";
-
 /**
- * Pipeline concurrency suite (P8; spec §11): tests-concurrency/** ONLY.
+ * The pipeline concurrency suite (spec §11 "Concurrency suite", plan Task 12.1).
  *
  *   cd apps/api && DATABASE_URL="postgresql://user:password@localhost:5432/dashmani_pipeline_cc?connection_limit=10" \
  *     PIPELINE_DB_CONNECTIONS=3 npx vitest run -c vitest.concurrency.config.ts
  *
- * Derived from vitest.config.ts rather than copied, so the safety env block there (the FB
- * scraper kill switch, zeroed sleeps, the dummy token key) can never drift out of this one.
- * What differs:
- * - include: only tests-concurrency/ (which the main config excludes);
- * - PIPELINE_DB_CONNECTIONS defaults to 3 (the production pipeline pool), not 1 — the
- *   main suite's single connection cannot show real interleaving;
- * - it keeps pool: "forks" + singleFork: true and tests/setup.ts, so files never run in
- *   parallel against the one database and every test starts from a TRUNCATEd state.
+ * ⚠️ Unlike vitest.config.ts this config does NOT read the repo-root .env: that file
+ * points at the owner's dev database, and tests/setup.ts TRUNCATEs every table in
+ * beforeEach. DATABASE_URL must be exported explicitly and must name a database other
+ * than the dev one — otherwise the config refuses to start.
  *
- * ⚠️ Run it against its OWN database (CI: dashmani_pipeline_cc) — tests/setup.ts
- * TRUNCATEs whatever DATABASE_URL points at.
+ * The pipeline pool runs at its production size (3) so the races are real, and the
+ * pipeline + global rate limits are raised so a 20 ms poller measures the protocol, not
+ * the limiter (bucket isolation has its own tests in the main suite).
  */
+import { defineConfig } from "vitest/config";
+
+const url = process.env.DATABASE_URL ?? "";
+let dbName = "";
+try {
+  const u = new URL(url);
+  dbName = u.pathname.replace(/^\//, "");
+  if (!["localhost", "127.0.0.1", "::1", "[::1]"].includes(u.hostname)) {
+    throw new Error(`refusing a non-localhost DATABASE_URL (${u.hostname})`);
+  }
+} catch (err) {
+  throw new Error(`vitest.concurrency.config: set DATABASE_URL to a local scratch database (${String(err)})`);
+}
+if (!dbName || dbName === "dashmani") {
+  throw new Error("vitest.concurrency.config: refusing the dev database 'dashmani' — use e.g. dashmani_pipeline_cc");
+}
+
 export default defineConfig({
-  ...base,
   test: {
-    ...base.test,
     include: ["tests-concurrency/**/*.test.ts"],
-    exclude: [...configDefaults.exclude],
     env: {
-      ...base.test?.env,
+      NODE_ENV: "test",
       PIPELINE_DB_CONNECTIONS: process.env.PIPELINE_DB_CONNECTIONS || "3",
+      PIPELINE_RATE_READ_MAX: "1000000",
+      PIPELINE_RATE_WRITE_MAX: "1000000",
+      PIPELINE_RATE_MSG_MAX: "1000000",
+      RATE_LIMIT_MAX: "1000000",
+      JWT_SECRET: process.env.JWT_SECRET || "cc-test-secret",
+      META_TOKEN_ENC_KEY: "test-only-meta-token-encryption-key-do-not-ship",
     },
+    setupFiles: ["./tests/setup.ts"],
+    testTimeout: 600_000,
+    hookTimeout: 60_000,
     pool: "forks",
     poolOptions: {
       forks: { singleFork: true },

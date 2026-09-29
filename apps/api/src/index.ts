@@ -10,6 +10,9 @@ import { runSocialInsightsRefresh } from "./cron/social-insights.cron";
 import { runEntityExtraction } from "./cron/entity-extraction.cron";
 import { runIgCaptionBackfill } from "./cron/ig-caption-backfill.cron";
 import { runMetaTokenHealth } from "./cron/meta-token-health.cron";
+import { startPipelineSelfCheck, startPipelineStatsLog } from "./services/pipeline";
+import { startPipelineDueCron } from "./cron/pipeline-due.cron";
+import { schedulePipelineMaintenance } from "./services/pipeline/jobs";
 
 // ── Process-level crash backstops (defense-in-depth) ────────────────────────────
 // The 2026-07-08 outage was an unhandled promise rejection (a P2024 pool timeout in an
@@ -30,6 +33,23 @@ const PORT = process.env.PORT || 4000;
 
 app.listen(PORT, () => {
   console.log(`API server running on port ${PORT}`);
+
+  // Pipeline schema self-check (spec §3.2): one LIMIT-0 probe per pipeline table on the
+  // pipeline's own 3-connection pool. A missing DDL pauses the feature (403
+  // PIPELINE_DISABLED) instead of producing 500s; success bumps the board version once.
+  // Never throws, never touches the main pool.
+  startPipelineSelfCheck();
+
+  // Pipeline due-soon / overdue alerts (spec §7.8): first tick at +17 min, then hourly;
+  // each tick sends only on a working day, 09:30–20:00 IST, with the feature on.
+  startPipelineDueCron();
+
+  // Pipeline notification trim + 30-day soft-delete purge (spec §7.12): scheduled by WALL
+  // CLOCK for the next 04:00 IST — never at boot — and once per IST day (marker).
+  schedulePipelineMaintenance();
+
+  // Pipeline hourly `[pipeline] stats` line (spec §12 step 8): counters only, no DB.
+  startPipelineStatsLog(Number(process.env.PIPELINE_STATS_INTERVAL_MS) || 60 * 60 * 1000);
 
   // Run follower sync once on startup, then every hour
   const runFollowerSync = () => {

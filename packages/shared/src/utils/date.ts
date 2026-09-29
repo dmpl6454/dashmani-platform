@@ -82,3 +82,36 @@ export function avgIstTimeOfDay(dates: Date[]): string {
   const m = String(mean % 60).padStart(2, "0");
   return `${h}:${m}`;
 }
+
+// ── IST calendar helpers for the pipeline due alerts (spec §7.8) ─────────────────────
+// Keys are IST calendar days as `YYYY-MM-DD` (todayIST() / dateToIST()). The working week
+// is Monday–Saturday: Sunday is the ONLY weekend day.
+
+/** 0 = Sunday … 6 = Saturday, for an IST day key. */
+export function dayOfWeekIST(key: string): number {
+  return new Date(`${key}T00:00:00.000Z`).getUTCDay();
+}
+
+/** Every day except Sunday. */
+export function isWorkingDayIST(key: string): boolean {
+  return dayOfWeekIST(key) !== 0;
+}
+
+/** The IST day key `n` calendar days after `key`. */
+export function addDaysIST(key: string, n: number): string {
+  const d = new Date(`${key}T00:00:00.000Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10); // calendar arithmetic on a key — not "today"
+}
+
+/** The first working day strictly after `key` (Saturday → Monday). */
+export function nextWorkingDayIST(key: string): string {
+  let next = addDaysIST(key, 1);
+  while (!isWorkingDayIST(next)) next = addDaysIST(next, 1);
+  return next;
+}
+
+/** Minutes since IST midnight, 0–1439. */
+export function istMinutesOfDay(d: Date = new Date()): number {
+  return (d.getUTCHours() * 60 + d.getUTCMinutes() + 330) % 1440;
+}

@@ -8,10 +8,14 @@ import {
   Wallet, FolderOpen, Calendar, PlaneTakeoff, Home, Gift, ListTodo, Receipt,
   Presentation, ClipboardList, Timer, Award, AlertCircle, Building2, ScrollText,
   FileCheck, Bug, Mail, ChevronLeft, ChevronRight, ChevronDown, Grid3x3,
-  LogOut, Menu, X as CloseIcon,
+  LogOut, Menu, X as CloseIcon, SquareKanban,
 } from "lucide-react";
+import { usePipelineBootstrap } from "@/lib/pipeline-swr";
 
 type NavItem = { href: string; label: string; icon: React.ElementType; group?: string };
+
+/** Shown only when bootstrap says the feature is on for everyone (mode "on"). */
+const NAV_PIPELINE: NavItem = { href: "/pipeline", label: "Pipeline", icon: SquareKanban };
 
 const NAV_MAIN: NavItem[] = [
   { href: "/dashboard",    label: "Dashboard",      icon: LayoutDashboard },
@@ -121,11 +125,16 @@ interface SidebarInnerProps {
   onCollapse?: () => void;
   onClose?: () => void;
   onLogout: () => void;
+  showPipeline: boolean;
 }
 
-function SidebarInner({ collapsed, mobile, pathname, userName, userEmail, initial, onCollapse, onClose, onLogout }: SidebarInnerProps) {
+function SidebarInner({ collapsed, mobile, pathname, userName, userEmail, initial, onCollapse, onClose, onLogout, showPipeline }: SidebarInnerProps) {
   const expanded = !collapsed || !!mobile;
   let lastGroup: string | undefined;
+  // Pipeline sits right after "Daily Update", inside the Daily group.
+  const navItems = showPipeline
+    ? NAV_MAIN.flatMap((n) => (n.href === "/plan" ? [n, NAV_PIPELINE] : [n]))
+    : NAV_MAIN;
 
   return (
     <>
@@ -152,7 +161,7 @@ function SidebarInner({ collapsed, mobile, pathname, userName, userEmail, initia
 
       {/* Nav */}
       <nav className="flex-1 px-2 py-3 overflow-y-auto min-h-0">
-        {NAV_MAIN.map((n) => {
+        {navItems.map((n) => {
           const isActive = pathname.startsWith(n.href);
           const I = n.icon;
           const showGroup = expanded && n.group && n.group !== lastGroup;
@@ -234,8 +243,11 @@ export function HrSidebar() {
     setMobileOpen(false);
   }, [pathname]);
 
+  const { data: boot } = usePipelineBootstrap(user?.id);
+  const showPipeline = !!boot && boot.enabled && boot.navVisible;
+
   const initial = user?.name?.charAt(0)?.toUpperCase() || "U";
-  const sharedProps = { pathname, userName: user?.name, userEmail: user?.email, initial, onLogout: logout };
+  const sharedProps = { pathname, userName: user?.name, userEmail: user?.email, initial, onLogout: logout, showPipeline };
 
   return (
     <>

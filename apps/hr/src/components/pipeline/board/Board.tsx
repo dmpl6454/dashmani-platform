@@ -67,10 +67,26 @@ function safeRank(prev: PipelineCard | null, next: PipelineCard | null): string 
   }
 }
 
-/** Tray targets win when the pointer is over one; otherwise nearest card / column. */
+/**
+ * Tray targets win when the pointer is over one. Inside a column, only THAT column's cards
+ * compete (an empty column, or a point below its last card, is the column itself, i.e.
+ * "append"). Plain closestCorners over every droppable let the dragged card's own small
+ * rect at its origin beat any full-height target column, so a cross-column mouse drop
+ * always snapped back. No pointer (keyboard) → nearest card / column as before.
+ */
 const collision: CollisionDetection = (args) => {
-  const within = pointerWithin(args).filter((c) => String(c.id).startsWith(TRAY_PREFIX));
-  return within.length ? within : closestCorners(args);
+  const within = pointerWithin(args);
+  const tray = within.filter((c) => String(c.id).startsWith(TRAY_PREFIX));
+  if (tray.length) return tray;
+  const col = within.find((c) => String(c.id).startsWith(COLUMN_PREFIX));
+  if (!col) return closestCorners(args);
+  const phaseId = String(col.id).slice(COLUMN_PREFIX.length);
+  const cards = args.droppableContainers.filter((d) => d.data.current?.sortable?.containerId === phaseId);
+  if (cards.length === 0) return [col];
+  const y = args.pointerCoordinates?.y;
+  const bottom = Math.max(...cards.map((d) => args.droppableRects.get(d.id)?.bottom ?? -Infinity));
+  if (y !== undefined && y > bottom) return [col];
+  return closestCorners({ ...args, droppableContainers: cards });
 };
 
 export function Board() {
@@ -264,6 +280,7 @@ export function Board() {
     if (s.startsWith(TRAY_PREFIX) || s.startsWith(COLUMN_PREFIX)) {
       toPhaseId = s.slice(s.indexOf(":") + 1);
       if (toPhaseId === card.phaseId && s.startsWith(TRAY_PREFIX)) return; // dropped on its own phase
+      if (toPhaseId === card.phaseId && origin.next === null) return; // already last in its own column
       const list = (byPhase[toPhaseId] ?? []).filter((c) => c.id !== card.id);
       prev = list[list.length - 1] ?? null;
       next = null;

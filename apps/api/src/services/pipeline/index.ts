@@ -7,13 +7,18 @@
  */
 import { invalidatePipelineSettings } from "./settings";
 import { invalidatePipelineAccess } from "./access";
-import { invalidatePhases, resetBoardStateForTests } from "./board";
+import { getBoardSnapshot, invalidatePhases, resetBoardStateForTests } from "./board";
 import { resetPipelineSchemaCheck } from "./self-check";
 import { resetPipelineBulkheadForTests } from "./tx";
 import { installPipelineNotifier } from "./notify";
+import { setBoardSnapshotProvider } from "./sync.service";
 
 // The real notifier replaces the PR 7/8 no-op seam as soon as the pipeline services load.
 installPipelineNotifier();
+// The real board snapshot builder (route #6, §5.3) behind route #3's `board` field. Without
+// it every board-mounted client gets `board: null` and its own v back forever — the HR
+// board never leaves its loading skeleton.
+setBoardSnapshotProvider(getBoardSnapshot);
 
 /**
  * Drop every memo: settings, access, directory and phases, and the schema verdict (the

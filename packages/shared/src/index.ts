@@ -32,6 +32,9 @@ export * from "./utils/facebook";
 export * from "./utils/canonical-url";
 export * from "./utils/snapchat";
 
+// Pipeline (pure, shared by the API tests and the HR portal)
+export * from "./pipeline/refresh";
+
 // Notification bells (P3/P4) — pure rules shared by the HR and internal bells
 export * from "./pipeline/bell";
 

@@ -61,6 +61,16 @@ export function recipientFragment(col: Prisma.Sql, actor: string | null, allow: 
 
 const NOW = Prisma.sql`timezone('utc', now())`;
 const PIPELINE_TYPE = Prisma.sql`'PIPELINE'::"NotificationType"`;
+
+/**
+ * §7.11: a participant row that is DELETED (a leave, or removing someone never engaged)
+ * takes that user's grouped "N new messages" row with it. Edit and delete redaction only
+ * reach current participants, so a row left behind would keep the preview of a message
+ * that is later edited or deleted. One primary-key probe, in the caller's transaction.
+ */
+export async function dropGroupedRowFor(tx: PipelineTx, projectId: string, userId: string): Promise<void> {
+  await tx.$executeRaw`DELETE FROM notifications WHERE id = ${plnId("messages", projectId, userId)} AND type = ${PIPELINE_TYPE}`;
+}
 const NO_NAMES: Record<string, string> = {};
 const TITLE_MAX = 120;
 const MESSAGE_MAX = 200;
@@ -223,6 +233,12 @@ function directRecipients(actorId: string, mentionIds: string[], replyToAuthorId
   return { mentions, replyTo };
 }
 
+/**
+ * §7.4: a participant whose seen_at is younger than this is watching the thread live and
+ * gets no grouped bump. sync.service.ts SEEN_REFRESH_MS must keep active readers inside it.
+ */
+export const ACTIVE_READER_WINDOW_MS = 45_000;
+
 async function onMessagePosted(tx: PipelineTx, a: MessagePostedArgs): Promise<void> {
   const { mentions, replyTo } = directRecipients(a.actorId, a.deliveredMentionIds, a.replyToAuthorId);
   await notifyDirectForMessage(tx, a, mentions, replyTo);
@@ -242,7 +258,7 @@ async function onMessagePosted(tx: PipelineTx, a: MessagePostedArgs): Promise<vo
              WHERE pp.project_id = ${a.projectId} AND pp.notify
                AND ${recipientFragment(Prisma.sql`pp.user_id`, a.actorId, a.allow)}
                AND NOT (pp.user_id = ANY(${direct}::text[]))
-               AND (pp.seen_at IS NULL OR pp.seen_at < ${NOW} - interval '45 seconds')
+               AND (pp.seen_at IS NULL OR pp.seen_at < ${NOW} - (${ACTIVE_READER_WINDOW_MS / 1000}::int * interval '1 second'))
              ORDER BY pp.user_id) r
     ON CONFLICT (id) DO UPDATE SET
       read = false, created_at = EXCLUDED.created_at, message = EXCLUDED.message,
@@ -258,11 +274,18 @@ async function onMessageEdited(tx: PipelineTx, a: MessageEditedArgs): Promise<vo
   const { mentions } = directRecipients(a.actorId, a.addedMentionIds, null);
   await notifyDirectForMessage(tx, a, mentions, null);
 
-  // §7.11: rewrite the text wherever this message is quoted — mention rows (old and new
-  // mentions: an edit that drops a mention must not leave the old words behind), the
-  // reply row, and grouped rows whose preview came from it. All by primary key.
+  // §7.11: an edit that drops a mention DELETES that user's mention row — the message no
+  // longer mentions them, and a rewritten row would outlive a later leave + delete (the
+  // delete only reaches current mentions and current participants).
+  const dropped = uniq(a.oldMentionIds.filter((uid) => !a.mentionIds.includes(uid)));
+  if (dropped.length) {
+    const droppedIds = dropped.map((uid) => plnId("mention", a.messageId, uid));
+    await tx.$executeRaw`DELETE FROM notifications WHERE id = ANY(${droppedIds}::text[]) AND type = ${PIPELINE_TYPE}`;
+  }
+  // Then rewrite the text wherever this message is still quoted — the kept mention rows,
+  // the reply row, and grouped rows whose preview came from it. All by primary key.
   const quoted = clip(`“${a.directSnippet}”`, MESSAGE_MAX);
-  const mentionRowIds = uniq([...a.mentionIds, ...a.oldMentionIds]).map((uid) => plnId("mention", a.messageId, uid));
+  const mentionRowIds = uniq(a.mentionIds).map((uid) => plnId("mention", a.messageId, uid));
   const directIds = [...mentionRowIds, plnId("reply", a.messageId)];
   await tx.$executeRaw`
     UPDATE notifications SET message = ${quoted}

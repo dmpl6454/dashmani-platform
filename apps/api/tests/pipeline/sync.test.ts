@@ -12,7 +12,12 @@ import { randomUUID } from "crypto";
 import app from "../../src/app";
 import { resetPipelineStateForTests } from "../../src/services/pipeline";
 import { pipelineDb } from "../../src/services/pipeline/db";
-import { __setSyncDeltaLimitForTests, setBoardSnapshotProvider } from "../../src/services/pipeline/sync.service";
+import { __setSyncDeltaLimitForTests, setBoardSnapshotProvider, SEEN_REFRESH_MS } from "../../src/services/pipeline/sync.service";
+import { ACTIVE_READER_WINDOW_MS } from "../../src/services/pipeline/notify";
+import { toWireMessage, UNKNOWN_AUTHOR_NAME, type MessageRow, type PipelineActor } from "../../src/services/pipeline/messages.service";
+import { messageFromRow } from "../../src/services/pipeline/wire";
+import type { PipelineDirectory } from "../../src/services/pipeline/access";
+import { PIPELINE_DEFAULT_POLL_MS } from "@dashmani/shared";
 import { hrToken, setPipelineSetting, clearPipelineSettings, createPipelineUser, seedPipelinePhases } from "./pipeline-helpers";
 import { createProjectFixture, setProjectState, participantRow } from "./fixtures-messages";
 
@@ -81,7 +86,19 @@ describe("pipeline sync", () => {
       messages: [],
       hasMore: false,
     });
-    expect(typeof b.pollMs).toBe("number");
+    expect(b.pollMs).toEqual({ project: 10000, projectBg: 20000, board: 15000, boardBg: 30000, idle: 30000 });
+  });
+
+  it("every sync carries the whole pollMs set, so a pipeline.pollMs stretch reaches an already-open tab", async () => {
+    // Spec §8.5: the evening-rush stretch works with no deploy. Bootstrap is fetched once
+    // per tab, so the only way a change reaches an OPEN tab is the sync response.
+    const { owner, project } = await setup();
+    const a = (await sync(owner.id, { board: { v: 0 }, project: { id: project.id, rev: 0, hv: 0 } })).body.data;
+    expect(a.pollMs).toEqual({ project: 10000, projectBg: 20000, board: 15000, boardBg: 30000, idle: 30000 });
+    await setPipelineSetting("pipeline.pollMs", "120000");
+    resetPipelineStateForTests();
+    const b = (await sync(owner.id, { board: { v: a.v } })).body.data;
+    expect(b.pollMs).toEqual({ project: 120000, projectBg: 120000, board: 120000, boardBg: 120000, idle: 120000 });
   });
 
   it("a post committed between two syncs always appears", async () => {
@@ -223,6 +240,7 @@ describe("pipeline sync", () => {
     });
     const a = (await sync(owner.id, { board: { v: -1 } })).body.data;
     expect(a.board).toEqual({ v: a.v, phases: [], cards: [], perPhase: {} });
+    expect(a.boardUnavailable).toBeUndefined();
     expect(calls).toEqual([a.v]);
     const b = (await sync(owner.id, { board: { v: a.v } })).body.data;
     expect(b.board).toBeNull();
@@ -236,12 +254,60 @@ describe("pipeline sync", () => {
     });
     const r = await sync(owner.id, { board: { v: -1 } });
     expect(r.status).toBe(200);
-    expect(r.body.data).toMatchObject({ v: -1, board: null });
+    // Honest states (§9.8): the client can tell "the snapshot failed" from "still loading",
+    // so a snapshot that keeps failing ends in "Couldn't load the pipeline", not a skeleton.
+    expect(r.body.data).toMatchObject({ v: -1, board: null, boardUnavailable: true });
+    // No board requested → nothing to be unavailable.
+    expect((await sync(owner.id, {})).body.data.boardUnavailable).toBeUndefined();
   });
 
   it("rejects a malformed body with 400", async () => {
     const { owner } = await setup();
     const r = await request(app).post("/v1/pipeline/sync").set(auth(owner.id)).send({ project: { id: "nope" } });
     expect(r.status).toBe(400);
+  });
+
+  it("an active reader's seen_at never ages past the grouped-row suppression window at the default cadences", () => {
+    // seen_at is re-stamped on the first visible poll where it is older than SEEN_REFRESH_MS.
+    // A view polling every Δ (±20%) therefore leaves it at most Δmax old when Δ ≥ R, and
+    // R + Δmax old when Δ < R. Plus ~2 s of request latency, all of it must stay under the
+    // 45 s window, or a visible viewer gets "N new messages" + a bell ping (§7.4).
+    const R = SEEN_REFRESH_MS;
+    const d = PIPELINE_DEFAULT_POLL_MS;
+    const worst = Math.max(
+      ...[d.project, d.projectBg, d.idle].map((base) => {
+        const max = base * 1.2;
+        return max >= R ? max : R + max;
+      }),
+    );
+    expect(worst + 2_000).toBeLessThan(ACTIVE_READER_WINDOW_MS);
+  });
+
+  it("route #6 and sync render the same stored message identically (reactions cleaned, same unknown name)", () => {
+    const known = { id: "u-known", name: "Known Person", initials: "KP", active: true };
+    const dir: PipelineDirectory = { entries: [known], byId: new Map([[known.id, known]]), builtAt: 0 };
+    const actor = { userId: "u-viewer", name: "Viewer", settings: {} as PipelineActor["settings"], directory: dir } as PipelineActor;
+    const row: MessageRow = {
+      id: "m1",
+      client_id: "c1",
+      project_id: "p1",
+      seq: 3,
+      rev: 9,
+      parent_id: null,
+      author_id: "u-gone",
+      body: "hi",
+      mention_ids: [known.id, "u-gone"],
+      reactions: { thumbs_up: ["u-known", 7], "not-a-reaction": ["u-known"], heart: [] },
+      reply_count: 0,
+      last_reply_at: null,
+      edited_at: null,
+      deleted_at: null,
+      created_at: "2026-09-28T11:51:00.123",
+    };
+    const viaSync = toWireMessage(row, actor);
+    const viaDetail = messageFromRow(row as unknown as Record<string, unknown>, actor.userId, dir);
+    expect(viaDetail).toEqual(viaSync);
+    expect(viaDetail.authorName).toBe(UNKNOWN_AUTHOR_NAME);
+    expect(viaDetail.reactions).toEqual({ thumbs_up: ["u-known"] });
   });
 });

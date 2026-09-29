@@ -95,7 +95,7 @@ export interface MessageEditedArgs extends NotifyBase {
   addedMentionIds: string[];
   /** Every delivered mention after the edit (their rows get the new snippet). */
   mentionIds: string[];
-  /** mention_ids BEFORE the edit (a dropped mention's row is rewritten too, §7.11). */
+  /** mention_ids BEFORE the edit (a dropped mention's row is DELETED, §7.11). */
   oldMentionIds: string[];
   replyToAuthorId: string | null;
   /** Current participants (≤ 200), whose grouped rows may carry this message's preview. */

@@ -5,7 +5,7 @@
  *
  * `rand` is always injected (a () => number in [0, 1)) so jitter is testable.
  */
-import type { PipelinePollMs, PipelineErrorCode } from "../types/pipeline";
+import type { PipelinePollMs, PipelineErrorCode, PipelineSyncRequest, PipelineSyncResponse } from "../types/pipeline";
 
 export type Rand = () => number;
 
@@ -89,6 +89,59 @@ export function onlineWakeDelayMs(rand: Rand): number {
 /** Should a visible / focus wake sync immediately? */
 export function shouldSyncOnWake(lastSyncStartedAt: number | null, now: number): boolean {
   return lastSyncStartedAt === null || now - lastSyncStartedAt >= PIPELINE_WAKE_MIN_GAP_MS;
+}
+
+/**
+ * The instant before which a wake must not sync: a failed attempt's back-off, a 429
+ * pause or a PIPELINE_DISABLED re-check. null after a 200 (or a terminal stop, which
+ * never polls again). Without it every alt-tab during an outage re-polled, defeating the
+ * 10 → 60 s back-off and `retryAfterSec` across every open tab.
+ */
+export function holdUntilAfter(outcome: SyncOutcome, delayMs: number | null, now: number): number | null {
+  if (outcome.kind === "ok" || outcome.kind === "terminal" || delayMs === null) return null;
+  return now + delayMs;
+}
+
+/**
+ * A visible / focus / back-from-idle wake: 0 = sync now; a positive number = a hold is
+ * pending, wait that long; null = not due yet (the last sync started < 3 s ago).
+ */
+export function wakeDelayMs(lastSyncStartedAt: number | null, holdUntil: number | null, now: number): number | null {
+  if (holdUntil !== null && now < holdUntil) return holdUntil - now;
+  return shouldSyncOnWake(lastSyncStartedAt, now) ? 0 : null;
+}
+
+const POLL_KEYS = ["project", "projectBg", "board", "boardBg", "idle"] as const;
+
+/**
+ * The server's cadence from a sync response (§8.5: `pipeline.pollMs` must reach open
+ * tabs). Only a complete set of positive finite numbers is adopted; anything else (an
+ * older server's bare number, a partial or junk object) keeps `current`. An unchanged
+ * set keeps identity.
+ */
+export function adoptServerPollMs(current: PipelinePollMs | null, incoming: unknown): PipelinePollMs | null {
+  if (!incoming || typeof incoming !== "object" || Array.isArray(incoming)) return current;
+  const o = incoming as Record<string, unknown>;
+  const next = {} as Record<(typeof POLL_KEYS)[number], number>;
+  for (const k of POLL_KEYS) {
+    const v = o[k];
+    if (typeof v !== "number" || !Number.isFinite(v) || v <= 0) return current;
+    next[k] = v;
+  }
+  if (current && POLL_KEYS.every((k) => current[k] === next[k])) return current;
+  return next as PipelinePollMs;
+}
+
+/**
+ * True when a complete (no hasMore) answer to OUR thread cursor reports a head BEHIND it
+ * — only possible after a DB restore. The store never moves a cursor down, so without a
+ * reload of the thread every newer message would be skipped until a manual refresh.
+ */
+export function threadCursorRegressed(req: PipelineSyncRequest, res: PipelineSyncResponse): boolean {
+  const q = req.project;
+  const r = res.project;
+  if (!q || !r || r.id !== q.id || r.status === "deleted" || r.hasMore) return false;
+  return r.rev < q.rev;
 }
 
 /** Should a post-write sync fire now (at most once per 2 s)? */

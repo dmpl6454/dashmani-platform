@@ -14,9 +14,11 @@ import type {
   PipelineMessage,
   PipelineParticipant,
   PipelineParticipantRole,
-  PipelineReactions,
 } from "@dashmani/shared";
 import type { PipelineDirectory } from "./access";
+// One message shape on every route: route #6 must clean reactions and name unknown
+// users exactly as sync/history (toWireMessage) do.
+import { cleanReactions, UNKNOWN_AUTHOR_NAME } from "./messages.service";
 
 type Raw = Record<string, unknown>;
 
@@ -110,7 +112,7 @@ export function participantFromRow(r: Raw, ownerId: string): PipelineParticipant
 }
 
 function nameOf(dir: PipelineDirectory, id: string): string {
-  return dir.byId.get(id)?.name ?? "Unknown";
+  return dir.byId.get(id)?.name ?? UNKNOWN_AUTHOR_NAME;
 }
 
 /**
@@ -130,7 +132,7 @@ export function messageFromRow(r: Raw, viewerId: string, dir: PipelineDirectory)
     authorName: nameOf(dir, authorId),
     body: str(r.body),
     mentions: mentionIds.map((id) => ({ id, name: nameOf(dir, id) })),
-    reactions: (r.reactions && typeof r.reactions === "object" ? r.reactions : {}) as PipelineReactions,
+    reactions: cleanReactions(r.reactions),
     replyCount: int(r.reply_count),
     lastReplyAt: ts(r.last_reply_at),
     editedAt: ts(r.edited_at),

@@ -293,6 +293,29 @@ describe("pipeline notifications", () => {
       expect(await rows({ id: plnId("reply", mid) })).toHaveLength(0);
     });
 
+    it("an edit that drops a mention deletes that user's mention row (a later leave + delete can't strand it)", async () => {
+      const { owner, others, project } = await setup([{ name: "Cara Third" }]);
+      const cara = others[0];
+      const r = await post(owner.id, project.id, `plan for ${mention(cara.id)}`);
+      const mid = r.body.data.message.id;
+      expect(await rows({ id: plnId("mention", mid, cara.id) })).toHaveLength(1);
+      const e = await request(app).patch(`/v1/pipeline/messages/${mid}`).set(auth(owner.id)).send({ body: "plan for later" });
+      expect(e.status).toBe(200);
+      expect(await rows({ id: plnId("mention", mid, cara.id) })).toHaveLength(0);
+    });
+
+    it("leaving a project removes your grouped row, so its preview can't outlive a later delete", async () => {
+      const { owner, bob, project } = await setup();
+      const r = await post(owner.id, project.id, "private words");
+      expect(r.status).toBe(201);
+      expect(await rows({ id: plnId("messages", project.id, bob.id) })).toHaveLength(1);
+      const left = await request(app).delete(`/v1/pipeline/projects/${project.id}/members/${bob.id}`).set(auth(bob.id));
+      expect(left.status).toBe(200);
+      expect(await rows({ userId: bob.id })).toHaveLength(0);
+      expect((await request(app).delete(`/v1/pipeline/messages/${r.body.data.message.id}`).set(auth(owner.id))).status).toBe(200);
+      expect((await rows({ userId: bob.id })).some((x) => x.message.includes("private words"))).toBe(false);
+    });
+
     it("a grouped preview from a deleted message is rewritten; a project delete removes grouped rows", async () => {
       const { owner, bob, project } = await setup();
       const r = await post(owner.id, project.id, "to be deleted");

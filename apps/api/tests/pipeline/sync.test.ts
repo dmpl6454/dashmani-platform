@@ -24,6 +24,8 @@ describe("pipeline sync", () => {
     await clearPipelineSettings();
     await seedPipelinePhases();
     await setPipelineSetting("pipeline.mode", "on");
+    // These tests drive the provider seam themselves; the real one is installed at load.
+    setBoardSnapshotProvider(null);
   });
 
   afterEach(() => {

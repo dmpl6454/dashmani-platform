@@ -1,0 +1,10 @@
+**/node_modules
+**/.next
+**/.env
+**/.env.*
+.git
+.claude
+mobile
+docs
+.planning
+scripts/load/.run

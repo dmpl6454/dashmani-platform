@@ -1,5 +1,5 @@
 import type { Request } from "express";
-import { verifyAccessToken } from "../utils/jwt";
+import { verifyAccessToken, verifyAccessTokenSignature } from "../utils/jwt";
 
 // ── Rate-limit keying ───────────────────────────────────────────────────────────
 //
@@ -57,6 +57,40 @@ export function loginRateLimitKey(req: Request): string {
   const raw = typeof body.email === "string" ? body.email : typeof body.identifier === "string" ? body.identifier : "";
   const account = raw.trim().toLowerCase().slice(0, 200);
   return `login:${req.ip ?? "unknown"}:${account}`;
+}
+
+/**
+ * True for `/v1/pipeline` and everything under it, in any letter case (Express routing is
+ * case-insensitive, so `/V1/Pipeline/sync` reaches the pipeline routes and must be counted
+ * by the pipeline buckets, not the global one). Called at APP level, where `req.path` is
+ * the full path. The global limiter skips these; the pipeline limiters count them.
+ */
+export function isPipelinePath(req: Pick<Request, "path">): boolean {
+  const p = (req.path ?? "").toLowerCase();
+  return p === "/v1/pipeline" || p.startsWith("/v1/pipeline/");
+}
+
+/**
+ * Key for the pipeline's own limiters (spec §3.1, §8.1): `p:<bucket>:<type>:<userId>` for a
+ * token whose SIGNATURE is valid — even when it has EXPIRED, so an expired token is still
+ * counted per user and reaches `authenticate` for its 401 → refresh, instead of sharing
+ * the edge-IP bucket with every other user behind that Cloudflare edge. Unsigned or forged
+ * tokens fall back to `p:<bucket>:ip:<req.ip>`. This is keying only; `authenticate` still
+ * rejects expired tokens. Pure: runs before body parsing.
+ */
+export function pipelineRateLimitKey(req: Request, bucket: string): string {
+  const auth = req.headers.authorization;
+  if (typeof auth === "string" && auth.startsWith("Bearer ")) {
+    try {
+      const payload = verifyAccessTokenSignature(auth.slice(7));
+      if (payload && typeof payload.userId === "string" && payload.userId) {
+        return `p:${bucket}:${payload.type ?? "x"}:${payload.userId}`;
+      }
+    } catch {
+      // bad signature / malformed → IP keying below
+    }
+  }
+  return `p:${bucket}:ip:${req.ip ?? "unknown"}`;
 }
 
 /** Health probes never count against anyone's bucket (uptime monitors, pm2 watchdog). */

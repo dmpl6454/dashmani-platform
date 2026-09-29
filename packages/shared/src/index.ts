@@ -18,6 +18,18 @@ export * from "./constants/roles";
 export * from "./types/hr";
 export * from "./validators/hr";
 
+// Pipeline (HR portal v1) — spec docs/superpowers/specs/2026-09-26-pipeline-design.md
+export * from "./types/pipeline";
+export * from "./pipeline/constants";
+export * from "./pipeline/rank";
+export * from "./pipeline/mentions";
+export * from "./pipeline/text";
+export * from "./pipeline/sync-state";
+export * from "./pipeline/store";
+export * from "./pipeline/body-tokens";
+export * from "./pipeline/compose";
+export * as pipelineValidators from "./validators/pipeline";
+
 // Utils
 export * from "./utils/status";
 export * from "./utils/sanitize";

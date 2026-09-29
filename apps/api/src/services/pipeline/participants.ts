@@ -29,6 +29,7 @@ import { pipelineWrite } from "./tx";
 import { PipelineError } from "./errors";
 import { bumpBoard } from "./board";
 import { notifier } from "./notifier";
+import { dropGroupedRowFor } from "./notify";
 import { day, participantFromRow } from "./wire";
 import { isPipelineAdmin } from "../../middleware/pipeline-gates";
 import { allowList, assertWritable, lockProject, pickableByMode, type PipelineActor } from "./projects.service";
@@ -164,6 +165,7 @@ export async function removeMember(actor: PipelineActor, projectId: string, targ
         DELETE FROM pipeline_participants
          WHERE project_id = ${projectId} AND user_id = ${targetId} AND user_id <> ${ownerId}`;
       result = n > 0 ? "removed" : "none";
+      if (n > 0) await dropGroupedRowFor(tx, projectId, targetId);
     } else if (target.role === "MEMBER") {
       const n = await tx.$executeRaw`
         UPDATE pipeline_participants

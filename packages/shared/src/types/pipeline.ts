@@ -359,10 +359,15 @@ export interface PipelineSyncResponse {
   /** null when unchanged from the request's mineH. */
   mine: PipelineMineEntry[] | null;
   project: PipelineSyncProject | null;
-  /** Server-suggested base interval for the current view. */
-  pollMs: number;
+  /**
+   * The server's current base intervals (same shape as bootstrap's). Sent on every sync
+   * so a `pipeline.pollMs` change reaches open tabs with no deploy and no re-bootstrap.
+   */
+  pollMs: PipelinePollMs;
   /** true → one hard reload (the client build is too old). */
   reload: boolean;
+  /** Present when a board was asked for and no snapshot could be built this tick. */
+  boardUnavailable?: true;
 }
 
 // ── Routes #4–14: projects ───────────────────────────────────────────────────────────

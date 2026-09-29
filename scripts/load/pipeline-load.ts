@@ -379,7 +379,10 @@ async function run() {
         tab.cursor.hv = d.project.hv;
         for (const m of d.project.messages) if (m.seq > tab.cursor.seq) tab.cursor.seq = m.seq;
       }
-      return d.pollMs as number;
+      // The sync carries the whole cadence set (as bootstrap does); pick this tab's view.
+      const pm = d.pollMs;
+      if (typeof pm === "number") return pm;
+      return (tab.kind === "board" ? pm?.board : pm?.project) ?? null;
     }
     return null;
   }

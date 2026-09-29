@@ -343,7 +343,7 @@ export function Board() {
   let content: React.ReactNode;
   if (!board) {
     content =
-      status.failures >= FIRST_LOAD_FAILURES ? (
+      status.failures >= FIRST_LOAD_FAILURES || status.boardUnavailable >= FIRST_LOAD_FAILURES ? (
         <LoadError
           title="Couldn't load the pipeline — your projects are safe."
           reason={!status.online ? "You're offline. It will load when you're back online." : "The server didn't answer. It keeps retrying on its own."}

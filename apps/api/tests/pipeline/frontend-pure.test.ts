@@ -33,6 +33,10 @@ import {
   buildSyncRequest,
   makeClientId,
   keyBetween,
+  adoptServerPollMs,
+  threadCursorRegressed,
+  holdUntilAfter,
+  wakeDelayMs,
   type IntervalContext,
   type PipelineState,
   type PipelineMessage,
@@ -263,7 +267,7 @@ function snapshot(v: number, cards: PipelineCard[]): PipelineBoardSnapshot {
 }
 
 function syncRes(o: Partial<PipelineSyncResponse> = {}): PipelineSyncResponse {
-  return { v: 1, board: null, mineH: "h0", mine: null, project: null, pollMs: 10_000, reload: false, ...o };
+  return { v: 1, board: null, mineH: "h0", mine: null, project: null, pollMs: { ...PIPELINE_DEFAULT_POLL_MS }, reload: false, ...o };
 }
 
 function loaded(): PipelineState {
@@ -465,5 +469,52 @@ describe("store: board, pending moves and reactions", () => {
     const a = makeClientId();
     expect(a).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
     expect(makeClientId()).not.toBe(a);
+  });
+});
+
+describe("review fixes: server cadence, cursor regression, wake gate", () => {
+  it("adoptServerPollMs takes a complete, sane server set and ignores anything else", () => {
+    const stretched = { project: 120_000, projectBg: 120_000, board: 120_000, boardBg: 120_000, idle: 120_000 };
+    expect(adoptServerPollMs(null, stretched)).toEqual(stretched);
+    // An older server (a bare number), a partial or junk object keeps what we had.
+    expect(adoptServerPollMs(POLL, 10_000)).toBe(POLL);
+    expect(adoptServerPollMs(POLL, { project: 5_000 })).toBe(POLL);
+    expect(adoptServerPollMs(POLL, { ...stretched, idle: -1 })).toBe(POLL);
+    expect(adoptServerPollMs(POLL, { ...stretched, board: Number.NaN })).toBe(POLL);
+    expect(adoptServerPollMs(null, undefined)).toBeNull();
+    // An unchanged set keeps identity (no churn per tick).
+    expect(adoptServerPollMs(POLL, { ...POLL })).toBe(POLL);
+  });
+
+  it("threadCursorRegressed: only a complete answer to OUR cursor whose head is behind it (a DB restore)", () => {
+    const req: PipelineSyncRequest = { clientBuild: 1, project: { id: PID, rev: 50, hv: 1 } };
+    const res = (rev: number, o: Partial<NonNullable<PipelineSyncResponse["project"]>> = {}) =>
+      syncRes({ project: { id: PID, status: "ok", rev, hv: 1, header: null, participants: null, messages: [], hasMore: false, lastReadSeq: 0, ...o } });
+    expect(threadCursorRegressed(req, res(40))).toBe(true);
+    expect(threadCursorRegressed(req, res(50))).toBe(false);
+    expect(threadCursorRegressed(req, res(60))).toBe(false);
+    expect(threadCursorRegressed(req, res(40, { hasMore: true }))).toBe(false);
+    expect(threadCursorRegressed(req, res(40, { status: "deleted" }))).toBe(false);
+    expect(threadCursorRegressed(req, res(40, { id: "other" }))).toBe(false);
+    expect(threadCursorRegressed({ clientBuild: 1 }, res(40))).toBe(false);
+  });
+
+  it("a wake never cuts a back-off, 429 pause or disabled re-check short; it syncs once the hold has passed", () => {
+    const T = 1_000_000;
+    // A 200 leaves no hold.
+    expect(holdUntilAfter({ kind: "ok" }, null, T)).toBeNull();
+    expect(holdUntilAfter({ kind: "transient" }, 10_000, T)).toBe(T + 10_000);
+    expect(holdUntilAfter({ kind: "rate_limited", retryAfterSec: 20 }, 20_000, T)).toBe(T + 20_000);
+    expect(holdUntilAfter({ kind: "disabled" }, 180_000, T)).toBe(T + 180_000);
+    expect(holdUntilAfter({ kind: "terminal", code: "FORBIDDEN" }, null, T)).toBeNull();
+
+    // No hold: the ≥ 3 s rule decides (0 = now, null = not due).
+    expect(wakeDelayMs(null, null, T)).toBe(0);
+    expect(wakeDelayMs(T - 5_000, null, T)).toBe(0);
+    expect(wakeDelayMs(T - 1_000, null, T)).toBeNull();
+    // A pending hold: wait out the rest of it, however long ago the last sync started.
+    expect(wakeDelayMs(T - 60_000, T + 7_000, T)).toBe(7_000);
+    // Once it has passed, a wake syncs immediately again.
+    expect(wakeDelayMs(T - 60_000, T - 1, T)).toBe(0);
   });
 });

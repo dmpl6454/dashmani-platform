@@ -10,6 +10,7 @@
  *   - a merge exception reloads that project from route 6 instead of throwing.
  */
 import {
+  adoptServerPollMs,
   buildSyncRequest,
   classifySyncResult,
   connectionIndicator,
@@ -17,9 +18,11 @@ import {
   nextTickMs,
   onlineWakeDelayMs,
   planAfterAttempt,
+  holdUntilAfter,
   planHasMore,
   postWriteSyncAllowed,
-  shouldSyncOnWake,
+  threadCursorRegressed,
+  wakeDelayMs,
   PIPELINE_IDLE_AFTER_MS,
   type ConnectionIndicator,
   type PipelinePollMs,
@@ -42,6 +45,8 @@ export interface EngineStatus {
   waking: boolean;
   /** Consecutive transient failures. */
   failures: number;
+  /** Consecutive 200s that asked for the board and got `boardUnavailable` back. */
+  boardUnavailable: number;
   /** Terminal 403 code, when stopped. */
   terminalCode: string | null;
 }
@@ -93,6 +98,11 @@ export class SyncEngine {
   private lastInputAt = Date.now();
   private hasMoreChain = 0;
   private waking = false;
+  /** The server's latest cadence (every sync carries it); bootstrap's until the first 200. */
+  private serverPoll: PipelinePollMs | null = null;
+  /** A back-off / 429 pause / disabled re-check that wakes must not cut short. */
+  private holdUntil: number | null = null;
+  private boardUnavailable = 0;
   private statusListeners = new Set<() => void>();
   private status: EngineStatus;
 
@@ -148,7 +158,8 @@ export class SyncEngine {
     const now = Date.now();
     const wasIdle = now - this.lastInputAt >= PIPELINE_IDLE_AFTER_MS;
     this.lastInputAt = now;
-    if (wasIdle) this.kick(0);
+    // A pending back-off or 429 pause keeps its timer; input never cuts it short.
+    if (wasIdle && wakeDelayMs(null, this.holdUntil, now) === 0) this.kick(0);
   }
 
   /** Sync as soon as possible (a wake, a manual Retry, a newly loaded project). */
@@ -167,6 +178,7 @@ export class SyncEngine {
   /** Manual Retry from the terminal page. */
   retry() {
     this.sched = { ...this.sched, mode: "running", terminalCode: null, failures: 0 };
+    this.holdUntil = null;
     this.emit();
     this.kick(0);
   }
@@ -200,12 +212,15 @@ export class SyncEngine {
     }
     this.waking = true;
     this.emit();
-    if (shouldSyncOnWake(this.lastStartedAt, Date.now())) this.kick(0);
-    else this.schedule(null);
+    // The hide cleared the timer: sync now, resume a pending hold, or fall back to the interval.
+    const w = wakeDelayMs(this.lastStartedAt, this.holdUntil, Date.now());
+    if (w === 0) this.kick(0);
+    else this.schedule(w);
   };
 
   private onFocus = () => {
-    if (shouldSyncOnWake(this.lastStartedAt, Date.now())) this.kick(0);
+    // A pending hold keeps its timer (focus never cuts a back-off or 429 pause short).
+    if (wakeDelayMs(this.lastStartedAt, this.holdUntil, Date.now()) === 0) this.kick(0);
   };
 
   private onOnline = () => {
@@ -243,7 +258,7 @@ export class SyncEngine {
       const focused = typeof document !== "undefined" && document.hasFocus();
       delayMs = nextTickMs(
         { view: this.view(), visible: this.visible(), focused, idle, online: this.online() },
-        this.o.getPollMs(),
+        this.serverPoll ?? this.o.getPollMs(),
         Math.random,
       );
       if (delayMs === null) return; // paused: the visibility / online listeners wake us
@@ -286,8 +301,12 @@ export class SyncEngine {
 
     let followUp = false;
     if (res) {
+      this.serverPoll = adoptServerPollMs(this.serverPoll, res.pollMs);
+      if (req.board) this.boardUnavailable = res.boardUnavailable ? this.boardUnavailable + 1 : 0;
       try {
         this.o.store.dispatch({ type: "syncOk", req, res, now: startedAt });
+        // After a DB restore the head can sit behind our cursor; only a reload re-reads it.
+        if (threadCursorRegressed(req, res)) this.o.onReloadProject(res.project!.id);
       } catch {
         if (req.project) this.o.onReloadProject(req.project.id);
       }
@@ -312,6 +331,7 @@ export class SyncEngine {
       reloadRequested: res?.reload === true,
     });
     this.sched = decision.state;
+    this.holdUntil = holdUntilAfter(outcome, decision.delayMs, Date.now());
     if (decision.action === "reload") {
       try {
         sessionStorage.setItem(RELOAD_KEY, String(Date.now()));
@@ -341,6 +361,7 @@ export class SyncEngine {
       online: this.online(),
       waking: this.waking,
       failures: this.sched.failures,
+      boardUnavailable: this.boardUnavailable,
       terminalCode: this.sched.terminalCode,
     };
   }
@@ -354,6 +375,7 @@ export class SyncEngine {
       cur.online === next.online &&
       cur.waking === next.waking &&
       cur.failures === next.failures &&
+      cur.boardUnavailable === next.boardUnavailable &&
       cur.terminalCode === next.terminalCode
     ) {
       return;

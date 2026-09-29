@@ -146,8 +146,14 @@ export function __setSyncDeltaLimitForTests(n: number | null): void {
 
 /** The overlay is capped (spec §5.2); the accepted per-user bound is documented in §2. */
 const MINE_LIMIT = 500;
-/** Re-stamp seen_at at most this often while nothing else changes (§5.2 A1). */
-const SEEN_REFRESH_MS = 30_000;
+/**
+ * Re-stamp seen_at at most this often while nothing else changes (§5.2 A1).
+ * ⚠️ Must keep an active reader's seen_at younger than notify.ts ACTIVE_READER_WINDOW_MS
+ * at every default cadence: at 30 s a visible-unfocused viewer (20 s ± 20% polls) could
+ * reach ~54 s and get a grouped "N new messages" ping for a thread they were watching.
+ * Locked by sync.test.ts ("an active reader's seen_at never ages past…").
+ */
+export const SEEN_REFRESH_MS = 15_000;
 
 /**
  * The board snapshot builder (route #6 / §5.3). It lands with the project routes (PR 7,
@@ -345,9 +351,12 @@ export async function syncPipeline(actor: PipelineActor, body: PipelineSyncReque
     }
   }
 
-  // The board, outside the slot. A failure keeps the client's v so it asks again.
+  // The board, outside the slot. A failure keeps the client's v so it asks again, and
+  // says so (`boardUnavailable`), so a snapshot that keeps failing surfaces as an honest
+  // "Couldn't load the pipeline" instead of an endless skeleton (§9.8).
   let v = boardV;
   let board: PipelineBoardSnapshot | null = null;
+  let boardUnavailable = false;
   if (body.board && body.board.v !== boardV) {
     if (boardSnapshotProvider) {
       try {
@@ -356,9 +365,11 @@ export async function syncPipeline(actor: PipelineActor, body: PipelineSyncReque
       } catch (err) {
         warnThrottled("sync-board", `[pipeline] sync: board snapshot unavailable — ${String(err)}`);
         v = body.board.v;
+        boardUnavailable = true;
       }
     } else {
       v = body.board.v;
+      boardUnavailable = true;
     }
   }
 
@@ -369,7 +380,10 @@ export async function syncPipeline(actor: PipelineActor, body: PipelineSyncReque
     mineH: hash,
     mine: body.mineH === hash ? null : mine,
     project,
-    pollMs: p ? settings.pollMs.project : settings.pollMs.board,
+    // The WHOLE set, every tick: bootstrap is fetched once per tab, so this is the only way
+    // a `pipeline.pollMs` stretch (§8.5, evening rush) reaches tabs that are already open.
+    pollMs: settings.pollMs,
     reload: body.clientBuild < settings.minClientBuild,
+    ...(boardUnavailable ? { boardUnavailable: true as const } : {}),
   };
 }

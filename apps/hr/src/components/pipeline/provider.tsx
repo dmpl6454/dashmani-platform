@@ -286,11 +286,12 @@ function EnabledProvider({
             clientId,
             patch: { status: "held", note: `Sending is slowed down — retrying in ${Math.round(wait / 1000)} s`, lastAttemptEndedAt: ended },
           });
-          // One at a time, in clientId order: stagger by position among held sends.
+          // One at a time, in the order they were WRITTEN (clientId is a random UUID, so
+          // sorting by it could post B before A): stagger by position among held sends.
           const held = Object.values(store.getState().sends)
             .filter((x) => x.status === "held")
-            .map((x) => x.clientId)
-            .sort();
+            .sort((x, y) => x.createdAt - y.createdAt || (x.clientId < y.clientId ? -1 : 1))
+            .map((x) => x.clientId);
           later(() => void execute(clientId), wait + Math.max(0, held.indexOf(clientId)) * 750);
           return;
         }
@@ -347,14 +348,21 @@ function EnabledProvider({
     if (replayed.current) return;
     replayed.current = true;
     const now = Date.now();
-    for (const item of loadOutbox(userId)) {
+    const toReplay: string[] = [];
+    // Oldest first, and one at a time: `seq` is assigned at commit, so firing them all at
+    // once could post messages written offline out of the order they were written.
+    const items = [...loadOutbox(userId)].sort((a, b) => a.createdAt - b.createdAt);
+    for (const item of items) {
       const fresh = now - item.createdAt < OUTBOX_AUTO_REPLAY_MS;
       store.dispatch({
         type: "sendAdd",
         send: { ...item, status: fresh ? "sending" : "failed", attempts: 0, lastAttemptEndedAt: null, note: null },
       });
-      if (fresh) void execute(item.clientId);
+      if (fresh) toReplay.push(item.clientId);
     }
+    void (async () => {
+      for (const clientId of toReplay) await execute(clientId);
+    })();
   }, [store, userId, execute]);
 
   // ── moves (spec §9.4) ─────────────────────────────────────────────────────────

@@ -31,8 +31,9 @@ function MessageBodyImpl({ body, mentions, meId }: { body: string; mentions: Pip
         }
         const name = delivered.get(t.id);
         if (name !== undefined) {
+          const hint = dirById.get(t.id)?.hint;
           return (
-            <span key={i} className={`pl-name inline rounded-md px-1 font-semibold ${t.id === meId ? "bg-action-soft text-ink" : "bg-indigo-soft text-indigo-deep"}`}>
+            <span key={i} title={hint ? `${name} (${hint})` : undefined} className={`pl-name inline rounded-md px-1 font-semibold ${t.id === meId ? "bg-action-soft text-ink" : "bg-indigo-soft text-indigo-deep"}`}>
               @{name}
             </span>
           );

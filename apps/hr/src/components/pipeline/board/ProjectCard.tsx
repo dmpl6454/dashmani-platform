@@ -90,7 +90,7 @@ export function CardFace({
           )}
         </div>
         <div className="mt-2 flex items-center gap-2 min-w-0">
-          <div className="flex items-center -space-x-1.5" aria-label={`${card.memberCount} member${card.memberCount === 1 ? "" : "s"}`}>
+          <div className="flex items-center -space-x-1.5" role="img" aria-label={`${card.memberCount} member${card.memberCount === 1 ? "" : "s"}`}>
             <Initials userId={card.ownerId} name={nameOf(dirById, card.ownerId)} initials={owner?.initials} size={24} className="ring-2 ring-surface" />
             {members.map((id) => (
               <Initials key={id} userId={id} name={nameOf(dirById, id)} initials={dirById.get(id)?.initials} size={24} className="ring-2 ring-surface" />

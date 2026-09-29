@@ -49,13 +49,15 @@ export function PeoplePicker({
         <ul className="flex flex-wrap gap-1.5 mb-2">
           {value.map((id) => {
             const d = dirById.get(id);
+            // Same-name people carry a team hint (spec row 20): tooltip + remove label.
+            const who = d ? (d.hint ? `${d.name} (${d.hint})` : d.name) : "person";
             return (
-              <li key={id} className="inline-flex items-center gap-1.5 h-11 pl-1.5 pr-0.5 rounded-full bg-muted max-w-full min-w-0">
+              <li key={id} title={d?.hint ? who : undefined} className="inline-flex items-center gap-1.5 h-11 pl-1.5 pr-0.5 rounded-full bg-muted max-w-full min-w-0">
                 <Initials userId={id} name={d?.name} initials={d?.initials} size={28} />
                 <span className="pl-name min-w-0 truncate text-[13px] font-medium text-ink">{d?.name ?? "Someone"}</span>
                 <button
                   type="button"
-                  aria-label={`Remove ${d?.name ?? "person"}`}
+                  aria-label={`Remove ${who}`}
                   onClick={() => onChange(value.filter((v) => v !== id))}
                   className="h-10 w-10 grid place-items-center rounded-full text-ink-3 hover:bg-white"
                 >

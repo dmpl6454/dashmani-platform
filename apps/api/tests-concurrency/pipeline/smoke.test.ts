@@ -2,7 +2,8 @@ import { describe, it, expect } from "vitest";
 import { prisma } from "@dashmani/db";
 
 /**
- * Skeleton for the pipeline concurrency suite (P8). The real races land in PR 12.
+ * Wiring check for the pipeline concurrency suite (P8). The races themselves live in
+ * races.test.ts and skip-freedom.test.ts next to this file.
  *
  * It proves the job's wiring: this file is picked up ONLY by vitest.concurrency.config.ts
  * (the main suite excludes tests-concurrency/), tests/setup.ts has already TRUNCATEd the

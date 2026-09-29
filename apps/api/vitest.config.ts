@@ -1,4 +1,4 @@
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 import fs from "fs";
 import path from "path";
 
@@ -45,7 +45,15 @@ export default defineConfig({
       // construct a live authorize URL or attempt a real token exchange. Tests that
       // need the configured path set those vars explicitly and restore them after.
       META_TOKEN_ENC_KEY: "test-only-meta-token-encryption-key-do-not-ship",
+      // The pipeline's own Prisma pool (services/pipeline/db.ts) runs at ONE connection in
+      // the main suite, matching the main pool's connection_limit=1 (see the TRUNCATE
+      // deadlock note in tests/setup.ts). The concurrency suite runs it at 3
+      // (vitest.concurrency.config.ts). An explicitly exported value still wins.
+      PIPELINE_DB_CONNECTIONS: process.env.PIPELINE_DB_CONNECTIONS || "1",
     },
+    // tests-concurrency/ has its own config, database and pool size — keep it out of
+    // the main run, which pins connection_limit=1 and so cannot show interleaving.
+    exclude: [...configDefaults.exclude, "tests-concurrency/**"],
     setupFiles: ["./tests/setup.ts"],
     pool: "forks",
     poolOptions: {

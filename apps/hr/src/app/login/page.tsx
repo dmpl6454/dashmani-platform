@@ -2,6 +2,7 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { useHrAuth } from "@/lib/auth";
+import { nextPathFromSearch } from "@/lib/return-path";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/v1";
 
@@ -800,6 +801,10 @@ export default function LoginPage() {
       });
       const data = await res.json();
       if (!data.success) throw new Error(data.error?.message || "Login failed");
+      // P5: go back to the /pipeline deep link that sent the user here, if any. Read in
+      // the handler from window.location (never useSearchParams — it breaks the static
+      // build); anything that is not an allowlisted /pipeline path goes to /dashboard.
+      const destination = nextPathFromSearch(window.location.search);
       setSubmitState("success");
       const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
       if (!reduce) {
@@ -817,7 +822,7 @@ export default function LoginPage() {
       }
       setTimeout(() => {
         login(data.data.accessToken, data.data.refreshToken, data.data.user);
-        router.push("/dashboard");
+        router.push(destination);
       }, 800);
     } catch (err: unknown) {
       setErrs({ general: err instanceof Error ? err.message : "Login failed" });

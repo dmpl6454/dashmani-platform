@@ -17,8 +17,8 @@
  * THE ACK (A1, §5.4) is ONE autocommit statement: it advances my `last_read_seq`
  * monotonically (never past the project's `last_message_seq`) and stamps `seen_at` —
  * or NULLs it on leave, so the next message is not suppressed as "being read". It also
- * re-checks that the actor is ACTIVE in SQL (§4.3). PR 9 appends the notification
- * clearing to this same statement.
+ * re-checks that the actor is ACTIVE in SQL (§4.3). The same statement marks my
+ * notifications read by primary key (ackStatement).
  */
 import { createHash } from "crypto";
 import type {
@@ -36,28 +36,85 @@ import { Prisma, type PipelineDbClient } from "./db";
 import { pipelineRead, pipelineWriteStatement } from "./tx";
 import { MESSAGE_COLUMNS, isoUtc, toWireMessage, type MessageRow, type PipelineActor } from "./messages.service";
 import { warnThrottled } from "../../utils/throttled-warn";
+import { plnId, plnIdSql } from "./notify";
 
 const NOW = Prisma.sql`timezone('utc', now())`;
 
+/** How many earlier move generations a project view still clears (§5.4). */
+const MOVE_GENS_CLEARED = 5;
+
+export interface AckInput {
+  projectId: string;
+  userId: string;
+  seq: number;
+  leaving: boolean;
+  /** Rendered message ids that mention me or reply to my message (§5.4), ≤ 50. */
+  seen?: readonly string[];
+}
+
 /**
- * A1. Returns my new `last_read_seq`, or null when I have no participant row (the
- * statement then changes nothing) or the project is deleted.
+ * A1 as ONE autocommit statement (spec §5.4): advance my read marker and stamp or clear
+ * `seen_at`, then mark notifications read — by PRIMARY KEY only:
+ *   - project-level ids (grouped, added, the current move generation and the 4 before it,
+ *     due-soon / overdue for the current due date, computed in SQL from the locked-free
+ *     project row), the grouped one only up to my new marker (or
+ *     LEAST(ack.seq, last_message_seq) when I have no participant row);
+ *   - `mention:<mid>:<me>` and `reply:<mid>` for each seen id — the ONLY way those clear.
+ * ≤ ~110 PK probes; no scan, no new index. `prefix` = "EXPLAIN" for the plan test.
  */
-export async function runAck(
-  db: Pick<PipelineDbClient, "$queryRaw">,
-  a: { projectId: string; userId: string; seq: number; leaving: boolean },
-): Promise<number | null> {
-  const rows = await db.$queryRaw<Array<{ last_read_seq: number }>>`
-    UPDATE pipeline_participants pp
-       SET last_read_seq = GREATEST(pp.last_read_seq, LEAST(${a.seq}::int, p.last_message_seq)),
-           seen_at = CASE WHEN ${a.leaving}::boolean THEN NULL ELSE ${NOW} END,
-           updated_at = ${NOW}
-      FROM pipeline_projects p
-     WHERE p.id = pp.project_id AND pp.project_id = ${a.projectId} AND pp.user_id = ${a.userId}
-       AND p.deleted_at IS NULL
-       AND EXISTS (SELECT 1 FROM users u
-                    WHERE u.id = ${a.userId} AND u.status = 'ACTIVE' AND u.deleted_at IS NULL)
- RETURNING pp.last_read_seq`;
+export function ackStatement(a: AckInput, prefix: "" | "EXPLAIN" = ""): Prisma.Sql {
+  const pid = a.projectId;
+  const me = a.userId;
+  const gens = Array.from({ length: MOVE_GENS_CLEARED }, (_, i) =>
+    plnIdSql("moved", pid, me, Prisma.sql`(p.move_gen - ${i}::int)::text`),
+  );
+  const due = Prisma.sql`to_char(p.due_date, 'YYYY-MM-DD')`;
+  // The grouped row is the only project-level row with a `seq`: it clears only up to my
+  // new marker. One `id = ANY(...)` over ≤ ~110 primary keys keeps the plan a PK probe.
+  const groupedId = plnId("messages", pid, me);
+  const projectIds = Prisma.join([
+    Prisma.sql`${groupedId}::text`,
+    plnIdSql("added", pid, me),
+    ...gens,
+    plnIdSql("due_soon", pid, me, due),
+    plnIdSql("overdue", pid, me, due),
+  ]);
+  const seenIds = [...new Set(a.seen ?? [])].flatMap((mid) => [plnId("mention", mid, me), plnId("reply", mid)]);
+  return Prisma.sql`${prefix === "EXPLAIN" ? Prisma.sql`EXPLAIN` : Prisma.empty}
+    WITH proj AS (
+      SELECT p.id, p.last_message_seq, ARRAY[${projectIds}] AS ids
+        FROM pipeline_projects p
+       WHERE p.id = ${pid} AND p.deleted_at IS NULL
+    ), adv AS (
+      UPDATE pipeline_participants pp
+         SET last_read_seq = GREATEST(pp.last_read_seq, LEAST(${a.seq}::int, p.last_message_seq)),
+             seen_at = CASE WHEN ${a.leaving}::boolean THEN NULL ELSE ${NOW} END,
+             updated_at = ${NOW}
+        FROM proj p
+       WHERE pp.project_id = p.id AND pp.user_id = ${me}
+         AND EXISTS (SELECT 1 FROM users u
+                      WHERE u.id = ${me} AND u.status = 'ACTIVE' AND u.deleted_at IS NULL)
+   RETURNING pp.last_read_seq
+    ), clr AS (
+      UPDATE notifications n SET read = true
+       WHERE n.id = ANY((SELECT ids FROM proj)::text[] || ${seenIds}::text[])
+         AND n.user_id = ${me} AND n.read = false
+         AND ( n.id <> ${groupedId}
+               OR n.metadata->>'seq' IS NULL
+               OR (n.metadata->>'seq')::int <= COALESCE(
+                    (SELECT last_read_seq FROM adv),
+                    (SELECT LEAST(${a.seq}::int, last_message_seq) FROM proj)) )
+   RETURNING 1
+    )
+    SELECT (SELECT last_read_seq FROM adv) AS last_read_seq, (SELECT count(*)::int FROM clr) AS cleared`;
+}
+
+/**
+ * A1. Returns my new `last_read_seq`, or null when I have no participant row (only
+ * `seen` rows can then clear) or the project is deleted.
+ */
+export async function runAck(db: Pick<PipelineDbClient, "$queryRaw">, a: AckInput): Promise<number | null> {
+  const rows = await db.$queryRaw<Array<{ last_read_seq: number | null }>>(ackStatement(a));
   return rows[0]?.last_read_seq ?? null;
 }
 
@@ -186,8 +243,8 @@ function shouldAck(
   now: number,
 ): boolean {
   const seenCount = ack.seen?.length ?? 0;
-  // Without a participant row there is no read state to move; PR 9's clearing of
-  // mention/reply rows through `seen` is the only thing an ack can then do.
+  // Without a participant row there is no read state to move; clearing mention/reply
+  // rows through `seen` is the only thing an ack can then do.
   if (!meRow) return seenCount > 0;
   if (ack.seq > meRow.lastReadSeq) return true;
   if (seenCount > 0 || ack.open === true || ack.leaving === true) return true;
@@ -220,7 +277,13 @@ export async function syncPipeline(actor: PipelineActor, body: PipelineSyncReque
     let acked: number | null = null;
     const liveHead = r1.head && !r1.head.deleted ? r1.head : null;
     if (p?.ack && liveHead && shouldAck(p.ack, r1.me_row, Date.now())) {
-      acked = await runAck(db, { projectId: p.id, userId: me, seq: p.ack.seq, leaving: p.ack.leaving === true });
+      acked = await runAck(db, {
+        projectId: p.id,
+        userId: me,
+        seq: p.ack.seq,
+        leaving: p.ack.leaving === true,
+        seen: p.ack.seen ?? [],
+      });
     }
     return { row: r1, lastReadSeqAfterAck: acked };
   });

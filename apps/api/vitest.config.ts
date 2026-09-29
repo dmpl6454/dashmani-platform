@@ -51,8 +51,11 @@ export default defineConfig({
       // (vitest.concurrency.config.ts). An explicitly exported value still wins.
       PIPELINE_DB_CONNECTIONS: process.env.PIPELINE_DB_CONNECTIONS || "1",
     },
-    // tests-concurrency/ has its own config, database and pool size — keep it out of
-    // the main run, which pins connection_limit=1 and so cannot show interleaving.
+    // tests-concurrency/ has its own config (vitest.concurrency.config.ts: own DB, pipeline
+    // pool at 3, limits raised) — keep it out of the main run, which pins
+    // connection_limit=1 and so cannot show interleaving. Under this config it would run at
+    // pool 1 with prod rate limits and fail on 429s, so the main suite (and CI) never
+    // picks it up.
     exclude: [...configDefaults.exclude, "tests-concurrency/**"],
     setupFiles: ["./tests/setup.ts"],
     pool: "forks",

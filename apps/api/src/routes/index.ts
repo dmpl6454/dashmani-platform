@@ -23,6 +23,7 @@ import metaOauthRoutes from "./meta-oauth.routes";
 import metaRoutes from "./meta.routes";
 import channelRoutes from "./channel.routes";
 import overviewRoutes from "./overview.routes";
+import pipelineRoutes from "./pipeline.routes";
 
 const router = Router();
 
@@ -40,6 +41,9 @@ router.use(contentRoutes);
 router.use(analyticsRoutes);
 router.use(hrAuthRoutes);
 router.use(hrRoutes);
+// Pipeline (spec §3.1): directly after hrRoutes. Owns only /pipeline/*; its error
+// middleware is scoped to /pipeline so it never sees another router's errors.
+router.use(pipelineRoutes);
 // Meta OAuth mounts BEFORE the admin routers: /admin/meta/oauth/start must not
 // be captured by any parameterised /admin/:x route declared later.
 router.use(metaOauthRoutes);

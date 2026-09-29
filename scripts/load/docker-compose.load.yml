@@ -1,0 +1,60 @@
+# Pipeline load harness (spec §11 "Load harness", plan Task 12.2).
+# Every service is pinned to ONE CPU (cpuset "0") and the memory limits sum to 2 GB,
+# like the prod box. Run through scripts/load/run-load.sh — never against real data.
+name: dashmani-load
+services:
+  postgres:
+    image: postgres:16-alpine
+    cpuset: "0"
+    mem_limit: 640m
+    environment:
+      POSTGRES_USER: load
+      POSTGRES_PASSWORD: load
+      POSTGRES_DB: dashmani_load
+    ports: ["127.0.0.1:55432:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U load -d dashmani_load"]
+      interval: 2s
+      retries: 30
+  api:
+    image: dashmani-load-api
+    build:
+      context: ../..
+      dockerfile: scripts/load/api.Dockerfile
+    cpuset: "0"
+    mem_limit: 1216m
+    depends_on:
+      postgres: { condition: service_healthy }
+    environment:
+      NODE_ENV: production
+      PORT: "4000"
+      DATABASE_URL: postgresql://load:load@postgres:5432/dashmani_load?connection_limit=10&pool_timeout=20&connect_timeout=15
+      DB_STATEMENT_TIMEOUT_MS: "60000"
+      PIPELINE_DB_CONNECTIONS: "3"
+      JWT_SECRET: load-harness-secret
+      JWT_REFRESH_SECRET: load-harness-refresh
+      PIPELINE_LOADTEST: "1"
+      PIPELINE_LOADTEST_HEAVY_USER: "00000000-0000-4000-8000-00000000beef"
+      PIPELINE_STATS_INTERVAL_MS: "600000"
+      INSIGHTS_ENABLED: "0"
+      FB_SCRAPER_ENABLED: "0"
+      NEXT_PUBLIC_API_URL: https://localhost:8443/v1
+    volumes:
+      # The harness-only files are mounted so they can change without an image rebuild;
+      # the API code itself is baked into the image (rebuild after any src change).
+      - ./api-entry.ts:/app/scripts/load/api-entry.ts:ro
+      - ./api-supervisor.sh:/app/scripts/load/api-supervisor.sh:ro
+  nginx:
+    image: nginx:1.27-alpine
+    cpuset: "0"
+    mem_limit: 64m
+    depends_on: [api]
+    ports: ["127.0.0.1:8443:443"]
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./.run/certs:/certs:ro
+  cotenant:
+    image: dashmani-load-api
+    cpuset: "0"
+    mem_limit: 128m
+    command: ["node", "scripts/load/cotenant.js"]

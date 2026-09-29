@@ -10,7 +10,7 @@ import { runSocialInsightsRefresh } from "./cron/social-insights.cron";
 import { runEntityExtraction } from "./cron/entity-extraction.cron";
 import { runIgCaptionBackfill } from "./cron/ig-caption-backfill.cron";
 import { runMetaTokenHealth } from "./cron/meta-token-health.cron";
-import { startPipelineSelfCheck } from "./services/pipeline";
+import { startPipelineSelfCheck, startPipelineStatsLog } from "./services/pipeline";
 import { startPipelineDueCron } from "./cron/pipeline-due.cron";
 import { schedulePipelineMaintenance } from "./services/pipeline/jobs";
 
@@ -47,6 +47,9 @@ app.listen(PORT, () => {
   // Pipeline notification trim + 30-day soft-delete purge (spec §7.12): scheduled by WALL
   // CLOCK for the next 04:00 IST — never at boot — and once per IST day (marker).
   schedulePipelineMaintenance();
+
+  // Pipeline hourly `[pipeline] stats` line (spec §12 step 8): counters only, no DB.
+  startPipelineStatsLog(Number(process.env.PIPELINE_STATS_INTERVAL_MS) || 60 * 60 * 1000);
 
   // Run follower sync once on startup, then every hour
   const runFollowerSync = () => {

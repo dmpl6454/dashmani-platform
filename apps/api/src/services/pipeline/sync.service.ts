@@ -37,6 +37,7 @@ import { pipelineRead, pipelineWriteStatement } from "./tx";
 import { MESSAGE_COLUMNS, isoUtc, toWireMessage, type MessageRow, type PipelineActor } from "./messages.service";
 import { warnThrottled } from "../../utils/throttled-warn";
 import { plnId, plnIdSql } from "./notify";
+import { pipelineStats } from "./stats";
 
 const NOW = Prisma.sql`timezone('utc', now())`;
 
@@ -258,6 +259,7 @@ export async function syncPipeline(actor: PipelineActor, body: PipelineSyncReque
   const limit = deltaLimit;
 
   const { row, lastReadSeqAfterAck } = await pipelineRead(async (db) => {
+    const holdStart = performance.now();
     const rows = await db.$queryRaw<R1Row[]>`
       WITH mine AS (
         SELECT pp.project_id, pp.role, pp.notify,
@@ -285,6 +287,7 @@ export async function syncPipeline(actor: PipelineActor, body: PipelineSyncReque
         seen: p.ack.seen ?? [],
       });
     }
+    pipelineStats.syncHold(me, performance.now() - holdStart);
     return { row: r1, lastReadSeqAfterAck: acked };
   });
 

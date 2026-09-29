@@ -35,6 +35,9 @@ export * from "./utils/snapchat";
 // Pipeline (pure, shared by the API tests and the HR portal)
 export * from "./pipeline/refresh";
 
+// Notification bells (P3/P4) — pure rules shared by the HR and internal bells
+export * from "./pipeline/bell";
+
 // Validators
 export * as authValidators from "./validators/auth";
 export * as employeeValidators from "./validators/employee";

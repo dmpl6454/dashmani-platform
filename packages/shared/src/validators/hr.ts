@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { normalizedEmail } from "../utils/sanitize";
+import { normalizedEmail, safeString } from "../utils/sanitize";
 
 export const otpRequestSchema = z.object({
   identifier: z.string().trim().min(1, "Identifier (email or phone) is required"),
@@ -12,10 +12,37 @@ export const otpVerifySchema = z.object({
 });
 
 export const registerEmployeeSchema = z.object({
-  name: z.string().min(2, "Name must be at least 2 characters"),
-  email: normalizedEmail,
-  phone: z.string().min(10, "Phone must be at least 10 digits").optional(),
-  password: z.string().min(6, "Password must be at least 6 characters"),
+  // ⚠️ The max(240) MUST come before safeString. Its /<[^>]*>/g strip is quadratic on a
+  // run of '<' (measured: 40k chars = 757 ms, so 1 MB ≈ 8–9 minutes of main thread) and
+  // this is a PUBLIC endpoint. 240 raw leaves room for tags around a 120-char name.
+  name: z
+    .string()
+    .max(240, "Name is too long")
+    .pipe(safeString)
+    .pipe(
+      z
+        .string()
+        .min(2, "Name must be at least 2 characters")
+        .max(120, "Name must be at most 120 characters"),
+    ),
+  // ⚠️ Bound BEFORE normalizedEmail's trim/lowercase/regex, for the same reason as `name`.
+  // 254 is the RFC 5321 maximum and sits far below the 2704-byte btree limit on
+  // users_email_key (a longer email used to fail user.create with Postgres 54000, which
+  // surfaced as a generic 500). It also keeps the service's case-insensitive ILIKE lookup,
+  // which cannot use that index and lowercases the pattern once per users row, cheap.
+  email: z.string().max(254, "Email is too long").pipe(normalizedEmail),
+  // Stored verbatim (the service only trims), so an unbounded phone let one public request
+  // write megabytes into users.phone. 20 covers "+91 98000 00001" and similar formatting.
+  phone: z
+    .string()
+    .max(20, "Phone is too long")
+    .min(10, "Phone must be at least 10 digits")
+    .optional(),
+  // bcrypt only reads the first 72 bytes; the bound just stops a multi-MB body.
+  password: z
+    .string()
+    .max(128, "Password is too long")
+    .min(6, "Password must be at least 6 characters"),
 });
 
 export const passwordLoginSchema = z.object({

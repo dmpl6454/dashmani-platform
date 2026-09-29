@@ -1,7 +1,9 @@
 "use client";
-import { useState, useEffect, useCallback, ReactNode } from "react";
+import { useState, useEffect, useCallback, useRef, ReactNode } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { HrAuthContext, HrUser } from "@/lib/auth";
+import { loginHrefWithNext } from "@/lib/return-path";
+import { purgePipelineStorage, purgePipelineStorageOnUserSwitch } from "@/lib/pipeline-storage";
 import { clearSwrCache } from "@/lib/swr-cache";
 
 export function HrAuthProvider({ children }: { children: ReactNode }) {
@@ -24,10 +26,16 @@ export function HrAuthProvider({ children }: { children: ReactNode }) {
     setIsLoading(false);
   }, []);
 
-  // Redirect unauthenticated users to login
+  // Set by an explicit sign-out, so the guard below does not carry the page being left
+  // into ?next= (the next person to sign in on this device must not land on it).
+  const explicitLogoutRef = useRef(false);
+
+  // Redirect unauthenticated users to login, carrying the page they asked for (P5).
+  // ⚠️ Read window.location, never useSearchParams(): that hook breaks the static build.
+  // The login page honours ?next= only for /pipeline paths (lib/return-path.ts).
   useEffect(() => {
     if (!isLoading && !user && pathname !== "/login" && pathname !== "/reset-password") {
-      router.push("/login");
+      router.push(explicitLogoutRef.current ? "/login" : loginHrefWithNext(window.location));
     }
   }, [isLoading, user, pathname, router]);
 
@@ -37,6 +45,10 @@ export function HrAuthProvider({ children }: { children: ReactNode }) {
   // (and reports, profile …) into the next session on a shared browser. Clearing on
   // login too covers a /login visit that skipped logout. See lib/swr-cache.ts.
   const login = useCallback((accessToken: string, refreshToken: string, userData: HrUser) => {
+    explicitLogoutRef.current = false;
+    // Spec §9.3: a DIFFERENT person signing in over a stored session must not inherit the
+    // previous person's Pipeline drafts / outbox. Must run before hrUser is overwritten.
+    purgePipelineStorageOnUserSwitch(userData.id);
     localStorage.setItem("hrAccessToken", accessToken);
     localStorage.setItem("hrRefreshToken", refreshToken);
     localStorage.setItem("hrUser", JSON.stringify(userData));
@@ -45,9 +57,11 @@ export function HrAuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const logout = useCallback(() => {
+    explicitLogoutRef.current = true;
     localStorage.removeItem("hrAccessToken");
     localStorage.removeItem("hrRefreshToken");
     localStorage.removeItem("hrUser");
+    purgePipelineStorage();
     void clearSwrCache();
     setUser(null);
     router.push("/login");

@@ -267,6 +267,7 @@ export async function postMessage(actor: PipelineActor, projectId: string, input
   const targets = [me, ...mentionIds.filter((id) => id !== me)];
   const names = new Map(mentionIds.map((id) => [id, nameOf(actor, id)]));
   const snippet = notificationSnippet(input.body, names, 100);
+  const directSnippet = notificationSnippet(input.body, names, 140);
   const parentId = input.parentId ?? null;
 
   try {
@@ -407,6 +408,7 @@ export async function postMessage(actor: PipelineActor, projectId: string, input
         rootId,
         seq: message.seq,
         snippet,
+        directSnippet,
         deliveredMentionIds: delivered,
         replyToAuthorId: parent && parent.rootAuthorId !== me ? parent.rootAuthorId : null,
       });
@@ -486,6 +488,7 @@ export async function editMessage(actor: PipelineActor, mid: string, body: strin
   const mentionIds = extractMentionIds(body);
   const names = new Map(mentionIds.map((id) => [id, nameOf(actor, id)]));
   const snippet = notificationSnippet(body, names, 100);
+  const directSnippet = notificationSnippet(body, names, 140);
 
   return pipelineWrite(async (tx) => {
     const project = await lockProjectOfMessage(tx, mid);
@@ -522,8 +525,10 @@ export async function editMessage(actor: PipelineActor, mid: string, body: strin
       rootId: row.parent_id,
       seq: row.seq,
       snippet,
+      directSnippet,
       addedMentionIds: delivered.filter((id) => !before.has(id)),
       mentionIds: delivered,
+      oldMentionIds: [...before],
       replyToAuthorId: row.root_author_id && row.root_author_id !== me ? row.root_author_id : null,
       participantIds: row.participant_ids,
     });

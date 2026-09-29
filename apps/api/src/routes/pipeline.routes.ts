@@ -36,6 +36,8 @@ import { PipelineError, pipelineErrorMiddleware } from "../services/pipeline/err
 import { getPipelineDirectory } from "../services/pipeline/access";
 import { isPilotUser } from "../services/pipeline/settings";
 import { getLivePhases } from "../services/pipeline/board";
+// Side effect: installs the real notifier (services/pipeline/index.ts) wherever the routes load.
+import "../services/pipeline";
 import {
   createProject,
   editProject,

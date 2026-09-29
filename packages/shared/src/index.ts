@@ -32,6 +32,9 @@ export * from "./utils/facebook";
 export * from "./utils/canonical-url";
 export * from "./utils/snapchat";
 
+// Pipeline (pure, shared by the API tests and the HR portal)
+export * from "./pipeline/refresh";
+
 // Validators
 export * as authValidators from "./validators/auth";
 export * as employeeValidators from "./validators/employee";

@@ -498,12 +498,53 @@ const MOVE_MERGE_SPAN_MS = 10 * 60_000;
 
 const asDate = (v: unknown): Date | null => (v instanceof Date ? v : v ? new Date(String(v)) : null);
 
+/**
+ * Thrown inside the first move attempt when the new key needs the locked rebalance: the
+ * attempt rolls back (releasing its single card lock) and the move re-runs in
+ * `lockPhaseFirst` mode. Never leaves this file.
+ */
+class NeedsRebalance extends Error {}
+
 export async function moveProject(actor: PipelineActor, projectId: string, input: PipelineMoveRequest): Promise<PipelineMoveResponse> {
+  let out: Awaited<ReturnType<typeof moveAttempt>>;
+  try {
+    out = await moveAttempt(actor, projectId, input, false);
+  } catch (err) {
+    if (!(err instanceof NeedsRebalance)) throw err;
+    out = await moveAttempt(actor, projectId, input, true);
+  }
+  if (out.changed) await bumpBoard();
+  return { card: out.card!, placementAdjusted: out.placementAdjusted };
+}
+
+/**
+ * One move transaction (spec §6 "Card move").
+ *
+ * ⚠️ LOCK ORDER — why there are two modes. The common path locks ONE row (the card) and
+ * never waits for another, so it cannot be part of a cycle. The rebalance locks every
+ * live row of the target phase in id order — but a mover that has ALREADY locked its
+ * own card and then asks for the phase in id order breaks that order: two movers in the
+ * same phase each hold their card and wait for the other's (proven by the PR 12
+ * concurrency suite: 5 concurrent rebalancing moves → 5 × 503 on lock_timeout). So a
+ * move that discovers it needs a rebalance aborts (NeedsRebalance, holding nothing) and
+ * re-runs with `lockPhaseFirst`: the card AND the target phase's live rows are locked in
+ * ONE id-ordered statement before anything else. Every multi-row locker then uses the
+ * same global id order (a cross-phase swap included), so no cycle can form.
+ */
+async function moveAttempt(actor: PipelineActor, projectId: string, input: PipelineMoveRequest, lockPhaseFirst: boolean) {
   const me = actor.userId;
   const { toPhaseId, basePhaseId } = input;
   const afterId = input.afterId === projectId ? null : input.afterId;
-  const out = await pipelineWrite(async (tx) => {
-    // S1: lock the card.
+  return pipelineWrite(async (tx) => {
+    if (lockPhaseFirst) {
+      await tx.$queryRaw`
+        SELECT id FROM pipeline_projects
+         WHERE id = ${projectId}
+            OR (phase_id = ${toPhaseId} AND archived_at IS NULL AND deleted_at IS NULL)
+         ORDER BY id
+           FOR UPDATE`;
+    }
+    // S1: lock the card (already held in lockPhaseFirst mode; re-reads it fresh).
     const row = await lockProject(tx, projectId, me);
     assertWritable(row);
     const curPhase = String(row.phase_id);
@@ -568,7 +609,10 @@ export async function moveProject(actor: PipelineActor, projectId: string, input
     }
 
     let rank = keyBetween(a, b);
-    if (rankNeedsRebalance(rank)) rank = await rebalancePhase(tx, toPhaseId, projectId, afterId);
+    if (rankNeedsRebalance(rank)) {
+      if (!lockPhaseFirst) throw new NeedsRebalance("rebalance needed");
+      rank = await rebalancePhase(tx, toPhaseId, projectId, afterId);
+    }
 
     // S3: the card, with the move bookkeeping only when the phase changed.
     const [updated] = await tx.$queryRaw<Row[]>`
@@ -608,8 +652,6 @@ export async function moveProject(actor: PipelineActor, projectId: string, input
     }
     return { card: cardFromRow(updated), placementAdjusted, changed: true };
   });
-  if (out.changed) await bumpBoard();
-  return { card: out.card!, placementAdjusted: out.placementAdjusted };
 }
 
 /**

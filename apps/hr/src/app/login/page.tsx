@@ -114,9 +114,10 @@ interface FieldProps {
   autoComplete?: string;
   onBlur?: () => void;
   optional?: boolean;
+  maxLength?: number;
 }
 
-function Field({ id, label, type = "text", Icon, value, onChange, error, success, hint, autoComplete, onBlur, optional }: FieldProps) {
+function Field({ id, label, type = "text", Icon, value, onChange, error, success, hint, autoComplete, onBlur, optional, maxLength }: FieldProps) {
   const [focused, setFocused] = useState(false);
   const [show, setShow] = useState(false);
   const isPw = type === "password";
@@ -133,6 +134,7 @@ function Field({ id, label, type = "text", Icon, value, onChange, error, success
         type={realType}
         value={value}
         autoComplete={autoComplete}
+        maxLength={maxLength}
         onChange={(e) => onChange(e.target.value)}
         onFocus={() => setFocused(true)}
         onBlur={() => { setFocused(false); onBlur?.(); }}
@@ -827,6 +829,7 @@ export default function LoginPage() {
     e.preventDefault();
     const next: Record<string, string | null> = {};
     if (!name.trim()) next.name = "Tell us who you are";
+    else if (name.trim().length < 2) next.name = "Name must be at least 2 characters";
     if (!email) next.email = "Email is required";
     else if (!emailOk(email)) next.email = "Please enter a valid email";
     if (!phoneOk(phone)) next.phone = "That doesn't look like a phone";
@@ -843,8 +846,10 @@ export default function LoginPage() {
         body: JSON.stringify({ name, email, phone: phone || undefined, password: pw }),
       });
       const data = await res.json();
-      if (!data.success) throw new Error(data.error?.message || "Registration failed");
-      setSuccessMsg(data.data.message || "Account created! An admin will approve it shortly.");
+      // A 400 carries the field-level reason in details (the top-level message is the generic
+      // "Invalid request data"), so show that when present.
+      if (!data.success) throw new Error(data.error?.details?.[0]?.message || data.error?.message || "Registration failed");
+      setSuccessMsg(data.data.message || "Account created! You can sign in now.");
       setSubmitState("success");
       setTimeout(() => {
         setTab("signin");
@@ -952,7 +957,7 @@ export default function LoginPage() {
                     {tab === "signin" ? "Sign in to clock in." : "Get on the team."}
                   </h2>
                   <p className="text-[12.5px] text-[#6C6555] mt-1 font-medium">
-                    {tab === "signin" ? "Use your studio email or phone to pick up where you left off." : "An admin will approve your account once you're in."}
+                    {tab === "signin" ? "Use your studio email or phone to pick up where you left off." : "Create your account to get started."}
                   </p>
                 </div>
               </div>
@@ -1037,7 +1042,7 @@ export default function LoginPage() {
                   <div style={{ animation: "auth-fadeUp .42s cubic-bezier(0.34,1.45,0.64,1) both" }}>
                     <Field id="r-name" label="Full name" Icon={IcUser} value={name}
                       onChange={(v) => { setName(v); if (errs.name) setErrs({ ...errs, name: null }); }}
-                      error={errs.name as string | null} autoComplete="name" />
+                      error={errs.name as string | null} autoComplete="name" maxLength={120} />
                   </div>
                   <div style={{ animation: "auth-fadeUp .42s cubic-bezier(0.34,1.45,0.64,1) .04s both" }}>
                     <Field id="r-email" label="Work email" type="email" Icon={IcMail} value={email}
@@ -1088,12 +1093,12 @@ export default function LoginPage() {
                       className="btn-3d w-full flex items-center justify-center gap-2 px-5 py-3.5 rounded-full bg-[#1A1A1A] text-white font-bold text-[14px]"
                       aria-live="polite"
                     >
-                      {submitState === "idle" && (<><span>Request my account</span><IcArrow /></>)}
+                      {submitState === "idle" && (<><span>Create my account</span><IcArrow /></>)}
                       {submitState === "loading" && (<><span className="h-[18px] w-[18px] border-[2.5px] border-white/35 border-t-white rounded-full" style={{ animation: "auth-spin .7s linear infinite" }} /><span>One moment…</span></>)}
-                      {submitState === "success" && (<><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#F5D547" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="m5 12 4.5 4.5L19 7" strokeDasharray="24" style={{ animation: "auth-checkmark .42s cubic-bezier(0.22,1,0.36,1) forwards" }}/></svg><span>Account requested!</span></>)}
+                      {submitState === "success" && (<><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#F5D547" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="m5 12 4.5 4.5L19 7" strokeDasharray="24" style={{ animation: "auth-checkmark .42s cubic-bezier(0.22,1,0.36,1) forwards" }}/></svg><span>Account created!</span></>)}
                     </button>
                   </div>
-                  <p className="text-[11px] text-[#9C947C] text-center mt-1">After registration, an admin must approve your account before you can log in.</p>
+                  <p className="text-[11px] text-[#9C947C] text-center mt-1">You can sign in as soon as your account is created.</p>
                 </form>
               )}
 

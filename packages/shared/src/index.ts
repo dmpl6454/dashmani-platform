@@ -44,6 +44,11 @@ export * from "./utils/facebook";
 export * from "./utils/canonical-url";
 export * from "./utils/snapchat";
 
+// Submission gaps (Links Analytics) — response shapes + the pure selection / day-series /
+// CSV-row logic shared by the API export and the internal portal panel.
+export * from "./types/submission-gaps";
+export * from "./utils/submission-gaps";
+
 // Pipeline (pure, shared by the API tests and the HR portal)
 export * from "./pipeline/refresh";
 

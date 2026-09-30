@@ -1,8 +1,39 @@
+import { createHash } from "crypto";
 import { prisma, Prisma } from "@dashmani/db";
-import { todayIST, dateToIST } from "@dashmani/shared";
+import {
+  todayIST,
+  dateToIST,
+  GAP_EXACT_TIME_SINCE,
+  GAP_MAX_RANGE_DAYS,
+  GAP_DAYS_CSV_HEADERS,
+  GAP_SEARCH_MAX_LENGTH,
+  buildGapDaySeries,
+  gapCsvPairInfo,
+  gapDayStatus,
+  gapDaysCsvRow,
+  gapFileSlug,
+  gapSpanDays,
+  gapTimeIsApproximate,
+  normalizeGapMinMissed,
+  normalizeGapSearch,
+  selectGapExportPairs,
+  type GapDay,
+  type GapEmployeeRow,
+  type GapPairRow,
+  type GapPostedDay,
+  type GapTeam,
+  type GapView,
+  type SubmissionGapDaysResult,
+  type SubmissionGapsResult,
+} from "@dashmani/shared";
 import { AppError } from "../middleware/error-handler";
 import { withHeavyQuerySlot } from "../utils/heavy-query";
 import { createSingleFlightMemo } from "../utils/single-flight-memo";
+import { csvCell } from "./report-links-csv.service";
+
+// The response shapes live in @dashmani/shared (one definition for the API, the panel and
+// the shared filters); re-exported so existing importers of this module keep working.
+export type { GapDay, GapEmployeeRow, GapPairRow, GapTeam, SubmissionGapDaysResult, SubmissionGapsResult };
 
 /**
  * Submission gaps — who did NOT submit links for the channels assigned to them, on
@@ -42,8 +73,8 @@ import { createSingleFlightMemo } from "../utils/single-flight-memo";
  *     absent filters bind NULL and are tested with `IS NULL OR`, no conditional SQL.
  */
 
-export const EXACT_TIME_SINCE = "2026-06-03";
-export const MAX_RANGE_DAYS = 366;
+export const EXACT_TIME_SINCE = GAP_EXACT_TIME_SINCE;
+export const MAX_RANGE_DAYS = GAP_MAX_RANGE_DAYS;
 /**
  * Most recent missed ranges kept per row; the day-by-day endpoint has the rest. A
  * sporadic submitter produces one range per missed day, so this is what bounds the
@@ -88,123 +119,22 @@ export interface SubmissionGapDaysParams {
   today: string;
 }
 
-export interface GapTeam {
-  id: string;
-  name: string;
-}
-
-export interface GapPairRow {
-  employee: { id: string; name: string; team: GapTeam | null };
-  account: { id: string; handle: string; displayName: string; platform: string; platformName: string };
-  /** IST day the current assignment began. */
-  assignedSince: string;
-  /** First / last counted day; null when nothing in the window is countable yet. */
-  countedFrom: string | null;
-  countedThrough: string | null;
-  countedDays: number;
-  activeDays: number;
-  missedDays: number;
-  /** activeDays / countedDays, or null when countedDays is 0. */
-  activeRate: number | null;
-  /** Missed runs as [first, last] IST days, chronological; the newest MAX_RANGES_PER_ROW. */
-  missedRanges: [string, string][];
-  missedRangeCount: number;
-  missedRangesTruncated: boolean;
-  longestGapDays: number;
-  /** Consecutive missed days ending on the last counted day (yesterday for a window ending today). */
-  currentGapDays: number;
-  /** The current gap runs back to the window start while the assignment is older — it may be longer. */
-  currentGapOpenEnded: boolean;
-  /** Latest report day (IST) with a link on counted days or today, and the last posting time that day. */
-  lastPostedDay: string | null;
-  lastPostedAt: string | null;
-  lastPostedIST: string | null;
-  lastPostedApprox: boolean;
-  /** Links on counted days (today excluded). */
-  linkCount: number;
-  todayStatus: "posted" | "not_yet" | null;
-  todayLinks: number;
-}
-
-export interface GapEmployeeRow {
-  employee: { id: string; name: string; team: GapTeam | null };
-  accountCount: number;
-  countedFrom: string | null;
-  countedThrough: string | null;
-  /** Days on which at least one assigned channel was being counted. */
-  countedDays: number;
-  /** Days with a link on at least one assigned channel. */
-  activeDays: number;
-  /** Days with NO link on ANY assigned channel. */
-  missedDays: number;
-  /** Days with links on some, but not all, of the channels being counted that day. */
-  partialDays: number;
-  /** Sum of the per-channel missed days. */
-  missedChannelDays: number;
-  activeRate: number | null;
-  missedRanges: [string, string][];
-  missedRangeCount: number;
-  missedRangesTruncated: boolean;
-  longestGapDays: number;
-  currentGapDays: number;
-  currentGapOpenEnded: boolean;
-  /** Latest report day (IST) with a link on counted days or today, and the last posting time that day. */
-  lastPostedDay: string | null;
-  lastPostedAt: string | null;
-  lastPostedIST: string | null;
-  lastPostedApprox: boolean;
-  linkCount: number;
-  todayStatus: "posted" | "partial" | "not_yet" | null;
-  todayPostedAccounts: number;
-  todayLinks: number;
-}
-
-export interface SubmissionGapsResult {
-  range: {
-    startDate: string;
-    endDate: string;
-    today: string;
-    includesToday: boolean;
-    /** The last day that can be counted in this window (min(endDate, yesterday)). */
-    countedThrough: string;
-    exactTimesSince: string;
-  };
-  rows: GapPairRow[];
-  employees: GapEmployeeRow[];
-  totals: {
-    assignments: number;
-    employees: number;
-    countedDays: number;
-    missedDays: number;
-    /** Pairs not yet posted today, or null when the window does not include today. */
-    notYetToday: number | null;
-    truncated: boolean;
-  };
-  excluded: {
-    /** Current assignments to PAUSED / ARCHIVED channels — nobody is expected to post there. */
-    inactiveChannelAssignments: number;
-  };
-  filters: { teams: GapTeam[]; platforms: { slug: string; name: string }[] };
-}
-
-export interface GapDay {
-  date: string;
-  status: "posted" | "missed" | "today_posted" | "today_pending";
-  linkCount: number;
-  firstPostedAt: string | null;
-  lastPostedAt: string | null;
-  firstPostedIST: string | null;
-  lastPostedIST: string | null;
-  approximate: boolean;
-}
-
-export interface SubmissionGapDaysResult {
-  employee: { id: string; name: string };
-  account: { id: string; handle: string; displayName: string; platform: string; platformName: string; status: string };
-  assignedSince: string;
-  range: { startDate: string; endDate: string; today: string; includesToday: boolean; exactTimesSince: string };
-  /** Newest first, from max(startDate, assignedSince) to min(endDate, today). */
-  days: GapDay[];
+/** GET /admin/reports/submission-gaps/days.csv — the summary's filters plus the panel's own. */
+export interface SubmissionGapDaysCsvParams {
+  startDate: string;
+  endDate: string;
+  today: string;
+  teamId: string | null;
+  platform: string | null;
+  /** Person dropdown. */
+  employeeId: string | null;
+  /** Channel dropdown. */
+  accountId: string | null;
+  view: GapView;
+  /** Normalised search text (normalizeGapSearch). */
+  q: string;
+  /** Normalised "at least N missed days" (normalizeGapMinMissed). */
+  minMissed: number;
 }
 
 // ─── Parameter validation ────────────────────────────────────────────────────────
@@ -297,6 +227,53 @@ export function parseSubmissionGapDaysQuery(
   return { employeeId, accountId, startDate, endDate, today };
 }
 
+/**
+ * The all-rows day-by-day CSV takes the summary's filters (range, team, platform) plus
+ * the panel's client-side ones (view, person, channel, search, minimum missed days), so
+ * the file covers exactly the rows on screen. The search text and the threshold are
+ * normalised with the SAME shared functions the panel filters with.
+ */
+export function parseSubmissionGapDaysCsvQuery(
+  query: Record<string, unknown>,
+  today: string = todayIST(),
+): SubmissionGapDaysCsvParams {
+  const base = parseSubmissionGapsQuery(query, today);
+  let view: GapView = "channels";
+  if (query.view !== undefined && query.view !== null && query.view !== "") {
+    if (query.view !== "channels" && query.view !== "people") {
+      throw badRequest("view must be channels or people", "view");
+    }
+    view = query.view;
+  }
+  let q = "";
+  if (query.q !== undefined && query.q !== null && query.q !== "") {
+    // An array (?q=a&q=b) or an over-long value is not a search box's input.
+    if (typeof query.q !== "string" || query.q.length > GAP_SEARCH_MAX_LENGTH * 2) {
+      throw badRequest(`q must be a search text of at most ${GAP_SEARCH_MAX_LENGTH} characters`, "q");
+    }
+    q = normalizeGapSearch(query.q);
+  }
+  let minMissed = 0;
+  if (query.minMissed !== undefined && query.minMissed !== null && query.minMissed !== "") {
+    if (typeof query.minMissed !== "string" || !/^\d{1,5}$/.test(query.minMissed)) {
+      throw badRequest("minMissed must be a whole number of days", "minMissed");
+    }
+    minMissed = normalizeGapMinMissed(query.minMissed);
+  }
+  return {
+    startDate: base.startDate,
+    endDate: base.endDate,
+    today,
+    teamId: base.teamId,
+    platform: base.platform,
+    employeeId: base.employeeId,
+    accountId: parseId(query.accountId, "accountId", false),
+    view,
+    q,
+    minMissed,
+  };
+}
+
 // ─── Summary ─────────────────────────────────────────────────────────────────────
 
 // ⚠️ maxEntries is a MEMORY bound. One cached 90-day result retained 1.13 MB of heap
@@ -307,9 +284,10 @@ export function parseSubmissionGapDaysQuery(
 // keys inside the 60 s TTL; hitting the cap costs one extra cold compute, nothing more.
 const memo = createSingleFlightMemo({ ttlMs: 60_000, maxEntries: 20 });
 
-/** Tests only (module-level cache — the documented cross-test pollution class). */
+/** Tests only (module-level caches — the documented cross-test pollution class). */
 export function invalidateSubmissionGapsCache(): void {
   memo.clear();
+  csvMemo.clear();
 }
 
 export function getSubmissionGaps(params: SubmissionGapsParams): Promise<SubmissionGapsResult> {
@@ -940,18 +918,245 @@ export async function getSubmissionGapDays(p: SubmissionGapDaysParams): Promise<
       includesToday: start <= today && today <= end,
       exactTimesSince: EXACT_TIME_SINCE,
     },
-    days: days.map((d) => {
-      const isToday = d.day === today;
-      return {
-        date: d.day,
-        status: isToday ? (d.n > 0 ? "today_posted" : "today_pending") : d.n > 0 ? "posted" : "missed",
-        linkCount: d.n,
-        firstPostedAt: d.first_at,
-        lastPostedAt: d.last_at,
-        firstPostedIST: d.first_ist,
-        lastPostedIST: d.last_ist,
-        approximate: d.n > 0 && d.day < EXACT_TIME_SINCE,
-      };
-    }),
+    // The status / approximate rules are the shared ones, so this view, the in-view CSV
+    // and the all-rows CSV (buildGapDaySeries) can never classify a day differently.
+    days: days.map((d) => ({
+      date: d.day,
+      status: gapDayStatus(d.day, d.n, today),
+      linkCount: d.n,
+      firstPostedAt: d.first_at,
+      lastPostedAt: d.last_at,
+      firstPostedIST: d.first_ist,
+      lastPostedIST: d.last_ist,
+      approximate: gapTimeIsApproximate(d.day, d.n),
+    })),
   };
+}
+
+// ─── Day-by-day CSV for ALL rows on screen (GET /submission-gaps/days.csv) ─────────
+
+/**
+ * Output bound: rows = selected pairs × days in the window. 250k rows is ≈ 30 MB of CSV
+ * and covers a full year for ~680 assignments (prod has ~450). Above it the request is a
+ * clean 400 that says how to narrow it — never an unbounded read or response.
+ */
+export const MAX_CSV_DAY_ROWS = 250_000;
+
+// ⚠️ maxEntries is a MEMORY bound. An entry holds only the POSTED days of the exported
+// pairs, as one compact text value per pair (~46 bytes a posted day): a full year for
+// 450 assignments that post every day is ≈ 7.6 MB. 4 entries covers a double-click and a
+// couple of admins exporting at once; a miss costs one bounded recompute, nothing more.
+const csvMemo = createSingleFlightMemo({ ttlMs: 60_000, maxEntries: 4 });
+
+interface RawPostedPair {
+  employeeId: string;
+  accountId: string;
+  /** "YYYY-MM-DD|n|first IST|last IST;…" for the days with links, chronological. */
+  days: string;
+}
+
+const pairKey = (employeeId: string, accountId: string): string => `${employeeId}|${accountId}`;
+
+/**
+ * ONE statement for every exported pair: the days WITH links, grouped per (pair, day) in
+ * the database — link rows never reach Node. It is the summary's `posted` shape (per
+ * person, that person's reports from their earliest counted day through the
+ * daily_reports (employee_id, date) index, then each report's links by report_id), with
+ * the first AND the last posting time. The pairs arrive as three parallel arrays.
+ * Exported so a plan check can run the exact SQL.
+ */
+export function submissionGapDaysCsvSql(
+  sel: { employeeIds: string[]; accountIds: string[]; fromDays: string[] },
+  toDay: string,
+): Prisma.Sql {
+  const cutover = EXACT_TIME_SINCE;
+  return Prisma.sql`
+    WITH sel AS MATERIALIZED (
+      SELECT s.employee_id, s.account_id, s.from_day::date AS from_day
+      FROM unnest(${sel.employeeIds}::text[], ${sel.accountIds}::text[], ${sel.fromDays}::text[])
+        AS s(employee_id, account_id, from_day)
+    ),
+    emp AS MATERIALIZED (
+      SELECT employee_id, MIN(from_day) AS from_day FROM sel GROUP BY employee_id
+    ),
+    posted AS MATERIALIZED (
+      SELECT x.employee_id, x.account_id, x.day, x.n, x.first_at, x.last_at
+      FROM emp e
+      CROSS JOIN LATERAL (
+        SELECT dr.employee_id, rl.account_id, dr.date AS day,
+               COUNT(*)::int AS n,
+               MIN(CASE WHEN dr.date < ${cutover}::date THEN dr.created_at ELSE rl.first_seen_at END) AS first_at,
+               MAX(CASE WHEN dr.date < ${cutover}::date THEN dr.created_at ELSE rl.first_seen_at END) AS last_at
+        FROM daily_reports dr
+        JOIN report_links rl ON rl.report_id = dr.id
+        WHERE dr.employee_id = e.employee_id
+          AND dr.date >= e.from_day
+          AND dr.date <= ${toDay}::date
+          AND rl.url IS NOT NULL
+          AND btrim(rl.url) <> ''
+          AND rl.is_scheduled = FALSE
+        GROUP BY dr.employee_id, rl.account_id, dr.date
+      ) x
+      JOIN sel s ON s.employee_id = x.employee_id AND s.account_id = x.account_id AND x.day >= s.from_day
+    )
+    SELECT employee_id AS "employeeId",
+           account_id AS "accountId",
+           string_agg(
+             to_char(day, 'YYYY-MM-DD') || '|' || n::text || '|' ||
+               COALESCE(to_char(first_at + INTERVAL '330 minutes', 'YYYY-MM-DD HH24:MI'), '') || '|' ||
+               COALESCE(to_char(last_at + INTERVAL '330 minutes', 'YYYY-MM-DD HH24:MI'), ''),
+             ';' ORDER BY day
+           ) AS days
+    FROM posted
+    GROUP BY employee_id, account_id
+  `;
+}
+
+function parsePostedDays(text: string | undefined): Map<string, GapPostedDay> {
+  const m = new Map<string, GapPostedDay>();
+  if (!text) return m;
+  for (const item of text.split(";")) {
+    const [date, n, first, last] = item.split("|");
+    if (!date) continue;
+    m.set(date, { linkCount: Number(n) || 0, firstPostedIST: first || null, lastPostedIST: last || null });
+  }
+  return m;
+}
+
+/** Long format sorts by person, then channel; days run oldest → newest within a pair. */
+function byPersonThenChannel(a: GapPairRow, b: GapPairRow): number {
+  return (
+    a.employee.name.localeCompare(b.employee.name) ||
+    a.employee.id.localeCompare(b.employee.id) ||
+    a.account.displayName.localeCompare(b.account.displayName) ||
+    a.account.id.localeCompare(b.account.id)
+  );
+}
+
+export interface SubmissionGapDaysCsv {
+  filename: string;
+  /** Data rows (header excluded): pairs × days in the window. */
+  rowCount: number;
+  pairCount: number;
+  /** The CSV, one chunk per pair (the first chunk is the BOM + header). Pure — no I/O. */
+  chunks(): Generator<string>;
+}
+
+/**
+ * Everything the export needs, computed BEFORE a byte is written — so a failure is a
+ * clean JSON error, and no database connection is held while a slow client downloads.
+ *
+ *  1. The rows on screen: the same memoised summary the panel loaded (employeeId is left
+ *     out of the key on purpose — the panel's request had none, so this is normally a
+ *     cache hit), filtered by the SAME shared selection functions the panel uses.
+ *  2. The output bound (MAX_CSV_DAY_ROWS) — checked before any aggregation runs.
+ *  3. ONE aggregation of the posted days for exactly those pairs, inside the heavy-query
+ *     bulkhead, behind a 60 s single-flight memo keyed by the exact pair set and window.
+ *     ⚠️ The summary is fetched OUTSIDE this slot: holding one bulkhead slot while waiting
+ *     for another (the summary takes its own) can deadlock the 2-slot gate.
+ */
+export async function buildSubmissionGapDaysCsv(
+  p: SubmissionGapDaysCsvParams,
+  opts: { maxRows?: number } = {},
+): Promise<SubmissionGapDaysCsv> {
+  const maxRows = opts.maxRows ?? MAX_CSV_DAY_ROWS;
+  const summary = await getSubmissionGaps({
+    startDate: p.startDate,
+    endDate: p.endDate,
+    today: p.today,
+    teamId: p.teamId,
+    platform: p.platform,
+    employeeId: null,
+  });
+  const pairs = selectGapExportPairs(summary, p.view, {
+    q: p.q,
+    minMissed: p.minMissed,
+    employeeId: p.employeeId,
+    accountId: p.accountId,
+  }).sort(byPersonThenChannel);
+
+  // Every pair has a row for every day from the window start to min(end, today) —
+  // including the days before its assignment ("Not assigned yet").
+  const toDay = p.endDate < p.today ? p.endDate : p.today;
+  const daysPerPair = Math.max(0, gapSpanDays(p.startDate, toDay));
+  const rowCount = pairs.length * daysPerPair;
+  if (rowCount > maxRows) {
+    const nf = new Intl.NumberFormat("en-IN");
+    throw new AppError(
+      400,
+      "EXPORT_TOO_LARGE",
+      `This export would have ${nf.format(rowCount)} rows — at most ${nf.format(maxRows)} can be exported at once. ` +
+        "Narrow the date range, or filter by team, platform, person or channel.",
+    );
+  }
+
+  // Only pairs with a countable or reportable day in the window need the query: a pair
+  // assigned after the window's last day is "Not assigned yet" throughout.
+  const employeeIds: string[] = [];
+  const accountIds: string[] = [];
+  const fromDays: string[] = [];
+  for (const r of pairs) {
+    const from = r.assignedSince > p.startDate ? r.assignedSince : p.startDate;
+    if (from > toDay) continue;
+    employeeIds.push(r.employee.id);
+    accountIds.push(r.account.id);
+    fromDays.push(from);
+  }
+
+  let posted = new Map<string, string>();
+  if (employeeIds.length > 0) {
+    const digest = createHash("sha1")
+      .update(employeeIds.map((e, i) => `${e}:${accountIds[i]}:${fromDays[i]}`).join(","))
+      .digest("hex");
+    const key = [p.startDate, toDay, p.today, digest].join("|");
+    posted = await csvMemo.memo(key, () =>
+      withHeavyQuerySlot("submission-gaps-days-csv", async () => {
+        const rows = await prisma.$queryRaw<RawPostedPair[]>(
+          submissionGapDaysCsvSql({ employeeIds, accountIds, fromDays }, toDay),
+        );
+        return new Map(rows.map((r) => [pairKey(r.employeeId, r.accountId), r.days]));
+      }),
+    );
+  }
+
+  const filename = daysCsvFilename(p, pairs);
+  return {
+    filename,
+    rowCount,
+    pairCount: pairs.length,
+    *chunks() {
+      yield "﻿" + GAP_DAYS_CSV_HEADERS.map(csvCell).join(",") + "\r\n";
+      for (const r of pairs) {
+        const cells = buildGapDaySeries({
+          startDate: p.startDate,
+          endDate: p.endDate,
+          today: p.today,
+          assignedSince: r.assignedSince,
+          posted: parsePostedDays(posted.get(pairKey(r.employee.id, r.account.id))),
+        });
+        const info = gapCsvPairInfo(r);
+        let out = "";
+        // The series is newest-first (the on-screen order); a long-format file reads
+        // oldest → newest.
+        for (let i = cells.length - 1; i >= 0; i--) out += gapDaysCsvRow(info, cells[i]).map(csvCell).join(",") + "\r\n";
+        yield out;
+      }
+    },
+  };
+}
+
+/** submission-gaps-day-by-day-<start>_<end>[-<platform>][-<person>][-<channel>][-filtered].csv */
+function daysCsvFilename(p: SubmissionGapDaysCsvParams, pairs: GapPairRow[]): string {
+  const parts = ["submission-gaps-day-by-day", p.view === "people" ? "by-person" : "by-channel", `${p.startDate}_${p.endDate}`];
+  if (p.platform) parts.push(gapFileSlug(p.platform));
+  if (p.employeeId) {
+    const r = pairs.find((x) => x.employee.id === p.employeeId);
+    parts.push(r ? gapFileSlug(r.employee.name) || "person" : "person");
+  }
+  if (p.accountId) {
+    const r = pairs.find((x) => x.account.id === p.accountId);
+    parts.push(r ? gapFileSlug(r.account.displayName) || "channel" : "channel");
+  }
+  if (p.teamId || p.q || p.minMissed > 0) parts.push("filtered");
+  return `${parts.filter(Boolean).join("-")}.csv`;
 }

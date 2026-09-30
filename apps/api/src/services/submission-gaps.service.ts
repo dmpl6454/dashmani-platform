@@ -458,21 +458,45 @@ export function submissionGapsSql(p: SubmissionGapsParams): Prisma.Sql {
       WHERE channel_active
       GROUP BY employee_id, account_id
     ),
+    emp_win AS MATERIALIZED (
+      SELECT employee_id,
+             COUNT(*)::int AS account_count,
+             MIN(assigned_day) AS assigned_day,
+             MIN(from_day) AS from_day
+      FROM win
+      GROUP BY employee_id
+    ),
+    -- Each report's links are read ONCE, and only through indexes. Per person (the
+    -- LATERAL), that person's reports from their earliest counted day — the
+    -- daily_reports (employee_id, date) index — and each report's links by report_id,
+    -- grouped per (channel, day); then only the groups of their assigned channels
+    -- from each assignment's own first counted day are kept.
+    -- ⚠️ Two shapes measured and rejected (450-assignment, 90-person, 341k-link seed):
+    --   • joining daily_reports per (employee, CHANNEL) re-reads every report's links
+    --     once per channel the person holds — 31,857 index-scan loops for 6,880
+    --     reports over 90 days;
+    --   • a plain "employee_id IN (SELECT … FROM win)" filter lets the planner
+    --     sequentially scan ALL of report_links (every link ever submitted) and filter
+    --     afterwards — a read that grows with total history, not with the window.
+    -- Same rows either way: win is unique per (employee, account), from_day ≥ start.
     posted AS MATERIALIZED (
-      SELECT dr.employee_id, rl.account_id, dr.date AS day,
-             COUNT(*)::int AS n,
-             MAX(CASE WHEN dr.date < ${cutover}::date THEN dr.created_at ELSE rl.first_seen_at END) AS last_at
-      FROM win w
-      JOIN daily_reports dr
-        ON dr.employee_id = w.employee_id
-       AND dr.date >= w.from_day
-       AND dr.date >= ${start}::date
-       AND dr.date <= ${postedThrough}::date
-      JOIN report_links rl ON rl.report_id = dr.id AND rl.account_id = w.account_id
-      WHERE rl.url IS NOT NULL
-        AND btrim(rl.url) <> ''
-        AND rl.is_scheduled = FALSE
-      GROUP BY dr.employee_id, rl.account_id, dr.date
+      SELECT x.employee_id, x.account_id, x.day, x.n, x.last_at
+      FROM emp_win ew
+      CROSS JOIN LATERAL (
+        SELECT dr.employee_id, rl.account_id, dr.date AS day,
+               COUNT(*)::int AS n,
+               MAX(CASE WHEN dr.date < ${cutover}::date THEN dr.created_at ELSE rl.first_seen_at END) AS last_at
+        FROM daily_reports dr
+        JOIN report_links rl ON rl.report_id = dr.id
+        WHERE dr.employee_id = ew.employee_id
+          AND dr.date >= ew.from_day
+          AND dr.date <= ${postedThrough}::date
+          AND rl.url IS NOT NULL
+          AND btrim(rl.url) <> ''
+          AND rl.is_scheduled = FALSE
+        GROUP BY dr.employee_id, rl.account_id, dr.date
+      ) x
+      JOIN win w ON w.employee_id = x.employee_id AND w.account_id = x.account_id AND x.day >= w.from_day
     ),
     flags AS MATERIALIZED (
       SELECT w.employee_id, w.account_id, w.from_day, w.assigned_day,
@@ -532,14 +556,6 @@ export function submissionGapsSql(p: SubmissionGapsParams): Prisma.Sql {
              BOOL_AND(n > 0) AS all_posted
       FROM flags
       GROUP BY employee_id, day
-    ),
-    emp_win AS MATERIALIZED (
-      SELECT employee_id,
-             COUNT(*)::int AS account_count,
-             MIN(assigned_day) AS assigned_day,
-             MIN(from_day) AS from_day
-      FROM win
-      GROUP BY employee_id
     ),
     emp_runs AS MATERIALIZED (
       SELECT employee_id,

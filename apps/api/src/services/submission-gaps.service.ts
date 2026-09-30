@@ -299,7 +299,13 @@ export function parseSubmissionGapDaysQuery(
 
 // ─── Summary ─────────────────────────────────────────────────────────────────────
 
-const memo = createSingleFlightMemo({ ttlMs: 60_000, maxEntries: 100 });
+// ⚠️ maxEntries is a MEMORY bound. One cached 90-day result retained 1.13 MB of heap
+// (measured with --expose-gc: 453 assignments, 90 people), and the shared memo only
+// sweeps expired entries when a new key arrives AT the cap — so stale keys (every
+// window × team × platform, and every `today`) pile up to the cap: at 100 that is
+// ~110 MB of API heap on the 2 GB box. A few admins cannot need more than ~20 live
+// keys inside the 60 s TTL; hitting the cap costs one extra cold compute, nothing more.
+const memo = createSingleFlightMemo({ ttlMs: 60_000, maxEntries: 20 });
 
 /** Tests only (module-level cache — the documented cross-test pollution class). */
 export function invalidateSubmissionGapsCache(): void {

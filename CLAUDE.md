@@ -741,6 +741,21 @@ Pre-2026-06-03 links carry the approximate-time flag.
 
 **Also in #177.** `_range.tsx` `toISODate()` now builds "today" from the IST day. Before, all three Reports pages treated yesterday as today between 00:00 and 05:30 IST.
 
+**Follow-up (2026-09-30).**
+- **Day-by-day view:** it has ◀/▶ month navigation (disabled past the current IST month) and its own custom From/To (≤366 days) plus "Reset to report range". It makes one `/submission-gaps/days` request per step (`keepPreviousData`), so months already seen are free.
+- **By person:** shows one calendar per assigned channel under a shared navigation.
+- **Filters:** searchable **Person** and **Channel** selects, keyed by id and client-side, with no request. The tab can also take its own From/To, overriding the page pills.
+- **Exports:**
+  - "Gaps CSV", whose first row is a `# range · filters` comment;
+  - a per-row "Day-by-day CSV";
+  - "Day-by-day CSV (all rows)".
+- **`GET /admin/reports/submission-gaps/days.csv`** backs the all-rows export.
+  - It reads the memoised summary and applies the same shared selection functions as the panel (`@dashmani/shared` `utils/submission-gaps.ts`), so the file equals the rows on screen.
+  - It runs ONE grouped SQL statement inside `withHeavyQuerySlot`. The summary is awaited *outside* the slot, which keeps the 2-slot gate deadlock-free.
+  - It streams with backpressure, and every cell goes through `csvCell`.
+  - Clean 400s for more than 366 days (`INVALID_PARAMS`) and more than 250,000 rows (`EXPORT_TOO_LARGE`).
+  - Measured at production scale: 30 days = 120 ms; 366 days = 2.5 s and 19 MB (the worst case).
+
 ### Still open (known remaining issues)
 
 - **F-TOKEN-STORAGE (deferred XL):** Auth tokens still in `localStorage` — httpOnly cookie migration is 1+ week, high blast radius across all 4 portals + API. Explicitly deferred per user decision 2026-05-21.

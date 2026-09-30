@@ -22,10 +22,12 @@ import {
 } from "../services/employee-profile.service";
 import { getEmployeePerformance } from "../services/employee-performance.service";
 import {
+  buildSubmissionGapDaysCsv,
   getSubmissionGaps,
   getSubmissionGapDays,
   parseSubmissionGapsQuery,
   parseSubmissionGapDaysQuery,
+  parseSubmissionGapDaysCsvQuery,
 } from "../services/submission-gaps.service";
 import { asyncHandler } from "../utils/async-handler";
 import { success, error } from "../utils/response";
@@ -328,6 +330,57 @@ router.get(
     return success(res, await getSubmissionGapDays(params));
   }),
 );
+
+// GET /admin/reports/submission-gaps/days.csv — the long-format day-by-day CSV (one line
+// per person × channel × day) for EVERY row the panel shows: the summary's filters
+// (range, team, platform) plus the panel's own (view, person, channel, search, minimum
+// missed days), applied with the same shared functions the panel uses. All database work
+// — the memoised summary and ONE bounded aggregation in the heavy-query bulkhead — is
+// done BEFORE the first byte, so an error is a clean JSON 4xx/5xx and no connection is
+// held while the file downloads; the body is then streamed per pair with backpressure.
+// Ranges above 366 days and exports above MAX_CSV_DAY_ROWS are a clean 400.
+// MUST be before /:reportId.
+router.get(
+  "/admin/reports/submission-gaps/days.csv",
+  authenticate,
+  requirePermission("reports", "view"),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const params = parseSubmissionGapDaysCsvQuery(req.query as Record<string, unknown>);
+      const csv = await buildSubmissionGapDaysCsv(params);
+      res.status(200);
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
+      res.setHeader("Content-Disposition", `attachment; filename="${csv.filename}"`);
+      res.setHeader("Access-Control-Expose-Headers", "Content-Disposition");
+      res.setHeader("Cache-Control", "no-store");
+      for (const chunk of csv.chunks()) {
+        if (!(await writeWithBackpressure(res, chunk))) return; // the client went away
+      }
+      res.end();
+    } catch (err) {
+      // Nothing is written before the data is ready, so this is normally a clean error
+      // envelope; if streaming had begun, terminate the (truncated) response instead.
+      if (res.headersSent) res.end();
+      else next(err);
+    }
+  },
+);
+
+/** res.write that waits for 'drain' when the socket buffer is full; false if the client left. */
+function writeWithBackpressure(res: Response, chunk: string): Promise<boolean> {
+  if (res.write(chunk)) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const done = (ok: boolean) => {
+      res.off("drain", onDrain);
+      res.off("close", onClose);
+      resolve(ok);
+    };
+    const onDrain = () => done(true);
+    const onClose = () => done(false);
+    res.on("drain", onDrain);
+    res.on("close", onClose);
+  });
+}
 
 // GET /admin/reports/links-by-account — all accounts ranked by links, with per-employee breakdown
 router.get(

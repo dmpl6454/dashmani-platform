@@ -56,6 +56,19 @@ const DEFAULT_RANGE_DAYS = 30;
 
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 const ID_MAX = 64;
+/**
+ * The accepted calendar. A sanity bound, not a data bound (report data starts in 2025):
+ * JavaScript happily parses year 0000, but Postgres rejects it (SQLSTATE 22008), and a
+ * Prisma error there would surface as a generic 500. Every day that reaches SQL —
+ * including a defaulted start — stays inside these edges.
+ */
+export const MIN_DAY = "2000-01-01";
+export const MAX_DAY = "2100-12-31";
+/**
+ * People whose ONLY roles are these are not counted (the employeeWhere convention).
+ * ⚠️ Must match the literal `r.name NOT IN ('Super Admin', 'Admin')` in the summary SQL.
+ */
+const ADMIN_ONLY_ROLES = ["Super Admin", "Admin"];
 
 export interface SubmissionGapsParams {
   startDate: string;
@@ -221,6 +234,9 @@ function parseDay(raw: unknown, field: string): string | null {
   if (!Number.isFinite(ms) || new Date(ms).toISOString().slice(0, 10) !== raw) {
     throw badRequest(`${field} is not a real calendar date`, field);
   }
+  if (raw < MIN_DAY || raw > MAX_DAY) {
+    throw badRequest(`${field} must be between ${MIN_DAY} and ${MAX_DAY}`, field);
+  }
   return raw;
 }
 
@@ -237,7 +253,10 @@ function parseId(raw: unknown, field: string, required: boolean): string | null 
 
 function parseRange(query: Record<string, unknown>, today: string): { startDate: string; endDate: string } {
   const endDate = parseDay(query.endDate, "endDate") ?? today;
-  const startDate = parseDay(query.startDate, "startDate") ?? shiftDay(endDate, -(DEFAULT_RANGE_DAYS - 1));
+  // A defaulted start is clamped, not rejected: the caller never sent it, so a 400
+  // naming startDate would blame a parameter that is not in the request.
+  const defaultStart = shiftDay(endDate, -(DEFAULT_RANGE_DAYS - 1));
+  const startDate = parseDay(query.startDate, "startDate") ?? (defaultStart < MIN_DAY ? MIN_DAY : defaultStart);
   if (startDate > endDate) throw badRequest("startDate must be on or before endDate", "startDate");
   const span = dayDiff(startDate, endDate) + 1;
   if (span > MAX_RANGE_DAYS) {
@@ -799,7 +818,16 @@ export async function getSubmissionGapDays(p: SubmissionGapDaysParams): Promise<
     orderBy: { assignedAt: "asc" },
     select: {
       assignedAt: true,
-      employee: { select: { id: true, name: true } },
+      employee: {
+        select: {
+          id: true,
+          name: true,
+          status: true,
+          deletedAt: true,
+          // A person holds a handful of roles — bounded.
+          roles: { select: { role: { select: { name: true } } } },
+        },
+      },
       account: {
         select: {
           id: true,
@@ -813,6 +841,25 @@ export async function getSubmissionGapDays(p: SubmissionGapDaysParams): Promise<
   });
   if (!assignment) {
     throw new AppError(404, "NOT_FOUND", "This person is not currently assigned to this channel.");
+  }
+  // The summary's eligibility rules (emp / win CTEs), so a pair the summary hides has
+  // no day-by-day view either. Distinct messages: the pair IS assigned, and a channel
+  // paused (or a person deactivated) after the summary loaded must not read as "not
+  // assigned".
+  const emp = assignment.employee;
+  const counted =
+    emp.status === "ACTIVE" &&
+    emp.deletedAt === null &&
+    emp.roles.some((r) => !ADMIN_ONLY_ROLES.includes(r.role.name));
+  if (!counted) {
+    throw new AppError(
+      404,
+      "NOT_FOUND",
+      "This person is not counted in submission gaps (inactive, removed, or an administrator only).",
+    );
+  }
+  if (assignment.account.status !== "ACTIVE") {
+    throw new AppError(404, "NOT_FOUND", "This channel is paused or archived, so it is not counted in submission gaps.");
   }
 
   const assignedSince = dateToIST(assignment.assignedAt);
@@ -854,7 +901,7 @@ export async function getSubmissionGapDays(p: SubmissionGapDaysParams): Promise<
         `;
 
   return {
-    employee: assignment.employee,
+    employee: { id: emp.id, name: emp.name },
     account: {
       id: assignment.account.id,
       handle: assignment.account.handle,

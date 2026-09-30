@@ -212,8 +212,11 @@ describe("pipeline email — worker", () => {
     expect(rows.map((x) => x.status)).toEqual(["pending", "pending"]);
     expect(rows.map((x) => x.attempts).sort()).toEqual([0, 1]);
 
+    // The SMTP account is shared with every other platform email: no retry hammering.
     failWith = null;
     await makeDue();
+    expect(await tick()).toEqual({ status: "skipped", reason: "smtp_cooldown" });
+    resetPipelineEmailWorkerForTests(); // the cooldown has passed
     expect(await tick()).toMatchObject({ emails: 2 });
   });
 

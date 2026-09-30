@@ -2,10 +2,35 @@
 import { useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
-  AlertCircle, CalendarX2, CheckCircle2, ChevronDown, ChevronUp, Clock, Download, Hourglass, RefreshCw, Search, Users,
+  AlertCircle, CalendarX2, CheckCircle2, ChevronDown, ChevronUp, Clock, Download, FileText, Hourglass, Loader2, RefreshCw,
+  Search, Users,
 } from "lucide-react";
-import { useSubmissionGaps, useSubmissionGapDays } from "@/lib/hooks/use-reports";
+import {
+  filterGapPairs,
+  filterGapPeople,
+  gapChannelsOfPerson,
+  gapRangeProblem,
+  gapShiftDay,
+  gapSpanDays,
+  istDateTime,
+  normalizeGapMinMissed,
+  normalizeGapSearch,
+  selectGapExportPairs,
+  type GapEmployeeRow,
+  type GapPairRow,
+  type GapRange,
+  type GapRowFilters,
+  type GapView,
+  type GapWindowRange,
+  type SubmissionGapsResult,
+} from "@dashmani/shared";
+import { useSubmissionGaps } from "@/lib/hooks/use-reports";
+import { apiFetchBlob, downloadBlob } from "@/lib/api";
 import { downloadCsv } from "@/lib/csv";
+import { todayISO } from "../_range";
+import { fmtDay, fmtRange, nf, pct, plural, rangeDays, timeFor } from "./_gap-format";
+import { PairDayByDay, PersonDayByDay, RangeInputs, RangeProblem, useRangeDraft } from "./_gap-days";
+import { SearchableSelect, type SelectOption } from "./_searchable-select";
 
 /**
  * Submission gaps — who did NOT submit links for the channels assigned to them.
@@ -19,98 +44,14 @@ import { downloadCsv } from "@/lib/csv";
  *     today is never "missed" — it is its own column.
  *   • A number renders only from loaded data. "—" means "nothing to show" (no countable
  *     days, no post in the window, window without today) — never a fabricated 0.
- *   • Team / platform are server-side filters (they change the per-person aggregates);
- *     search, "≥ N missed" and sorting are client-side over the loaded rows.
+ *   • Range, team and platform are server-side (they change the per-person aggregates).
+ *     Person, channel, search and "≥ N missed" are client-side over the loaded rows —
+ *     through the SAME shared functions (@dashmani/shared) the server's all-rows CSV uses,
+ *     so that file covers exactly the rows on screen. Sorting is client-side.
+ *   • The tab may override the page's range pills with its own dates ("Use page range"
+ *     returns to them). Each expanded row can move month by month or to its own dates.
  */
 
-interface Team { id: string; name: string }
-type Range = [string, string];
-
-interface PairRow {
-  employee: { id: string; name: string; team: Team | null };
-  account: { id: string; handle: string; displayName: string; platform: string; platformName: string };
-  assignedSince: string;
-  countedFrom: string | null;
-  countedThrough: string | null;
-  countedDays: number;
-  activeDays: number;
-  missedDays: number;
-  activeRate: number | null;
-  missedRanges: Range[];
-  missedRangeCount: number;
-  missedRangesTruncated: boolean;
-  longestGapDays: number;
-  currentGapDays: number;
-  currentGapOpenEnded: boolean;
-  lastPostedDay: string | null;
-  lastPostedAt: string | null;
-  lastPostedIST: string | null;
-  lastPostedApprox: boolean;
-  linkCount: number;
-  todayStatus: "posted" | "not_yet" | null;
-  todayLinks: number;
-}
-
-interface PersonRow {
-  employee: { id: string; name: string; team: Team | null };
-  accountCount: number;
-  countedFrom: string | null;
-  countedThrough: string | null;
-  countedDays: number;
-  activeDays: number;
-  missedDays: number;
-  partialDays: number;
-  missedChannelDays: number;
-  activeRate: number | null;
-  missedRanges: Range[];
-  missedRangeCount: number;
-  missedRangesTruncated: boolean;
-  longestGapDays: number;
-  currentGapDays: number;
-  currentGapOpenEnded: boolean;
-  lastPostedDay: string | null;
-  lastPostedAt: string | null;
-  lastPostedIST: string | null;
-  lastPostedApprox: boolean;
-  linkCount: number;
-  todayStatus: "posted" | "partial" | "not_yet" | null;
-  todayPostedAccounts: number;
-  todayLinks: number;
-}
-
-interface GapsData {
-  range: {
-    startDate: string;
-    endDate: string;
-    today: string;
-    includesToday: boolean;
-    countedThrough: string;
-    exactTimesSince: string;
-  };
-  rows: PairRow[];
-  employees: PersonRow[];
-  totals: {
-    assignments: number;
-    employees: number;
-    countedDays: number;
-    missedDays: number;
-    notYetToday: number | null;
-    truncated: boolean;
-  };
-  excluded: { inactiveChannelAssignments: number };
-  filters: { teams: Team[]; platforms: { slug: string; name: string }[] };
-}
-
-interface GapDay {
-  date: string;
-  status: "posted" | "missed" | "today_posted" | "today_pending";
-  linkCount: number;
-  firstPostedIST: string | null;
-  lastPostedIST: string | null;
-  approximate: boolean;
-}
-
-type View = "channels" | "people";
 type SortKey = "missed" | "gap" | "rate" | "last" | "name";
 
 const SORTS: { key: SortKey; label: string }[] = [
@@ -122,59 +63,7 @@ const SORTS: { key: SortKey; label: string }[] = [
 ];
 
 const PAGE = 100;
-const DAYS_PREVIEW = 62;
 const RANGE_CHIPS = 6;
-
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-const nf = new Intl.NumberFormat("en-IN");
-
-// All formatting works on the strings the API sends (IST calendar days and IST
-// "YYYY-MM-DD HH:MM" times). Nothing goes through new Date(...) + the browser's
-// timezone, so a device outside India still shows the IST day.
-function fmtDay(iso: string, currentYear: string): string {
-  const [y, m, d] = iso.split("-");
-  return `${Number(d)} ${MONTHS[Number(m) - 1] ?? m}${y !== currentYear ? ` ${y}` : ""}`;
-}
-
-function fmtRange([s, e]: Range, currentYear: string): string {
-  if (s === e) return fmtDay(s, currentYear);
-  const [sy, sm, sd] = s.split("-");
-  const [ey, em, ed] = e.split("-");
-  if (sy === ey && sm === em) return `${Number(sd)}–${Number(ed)} ${MONTHS[Number(em) - 1]}${ey !== currentYear ? ` ${ey}` : ""}`;
-  return `${fmtDay(s, currentYear)} – ${fmtDay(e, currentYear)}`;
-}
-
-function rangeDays([s, e]: Range): number {
-  return Math.round((Date.parse(`${e}T00:00:00Z`) - Date.parse(`${s}T00:00:00Z`)) / 86_400_000) + 1;
-}
-
-function shiftDay(iso: string, delta: number): string {
-  const d = new Date(`${iso}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + delta);
-  return d.toISOString().slice(0, 10);
-}
-
-/** Mirrors the server's validation so an impossible window never becomes a request. */
-function rangeProblem(start: string, end: string): string | null {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) return "Pick a start and an end date.";
-  if (start > end) return "The start date must be on or before the end date.";
-  if (start < "2025-01-01") return "Pick a start date in 2025 or later — there is no report data before that.";
-  if (rangeDays([start, end]) > 366) return "Pick a window of at most 366 days — longer ranges are not analysed at once.";
-  return null;
-}
-
-function weekday(iso: string): string {
-  return WEEKDAYS[new Date(`${iso}T00:00:00Z`).getUTCDay()] ?? "";
-}
-
-function pct(rate: number | null): string {
-  return rate == null ? "—" : `${Math.round(rate * 100)}%`;
-}
-
-function plural(n: number, one: string, many = `${one}s`): string {
-  return `${nf.format(n)} ${n === 1 ? one : many}`;
-}
 
 function compareRows<T extends { countedDays: number; missedDays: number; currentGapDays: number; activeRate: number | null; lastPostedDay: string | null; lastPostedAt: string | null; employee: { name: string } }>(
   key: SortKey,
@@ -206,7 +95,7 @@ function MetricLabel({ children }: { children: React.ReactNode }) {
   return <span className="xl:hidden block text-[10px] font-semibold uppercase tracking-wide text-ink-4">{children}</span>;
 }
 
-function TodayChip({ status, links, of }: { status: PairRow["todayStatus"] | PersonRow["todayStatus"]; links: number; of?: string }) {
+function TodayChip({ status, links, of }: { status: GapPairRow["todayStatus"] | GapEmployeeRow["todayStatus"]; links: number; of?: string }) {
   if (status == null) return <span className="text-sm text-ink-4" title="This window does not include today">—</span>;
   if (status === "posted") {
     return (
@@ -242,13 +131,6 @@ function GapValue({ days, open, counted }: { days: number; open: boolean; counte
   );
 }
 
-/** A time with its own IST day appended when it is not the report day (a late submission). */
-function timeFor(reportDay: string, ist: string | null, year: string): string {
-  if (!ist) return "";
-  const [date, time] = ist.split(" ");
-  return date === reportDay ? time : `${time} (${fmtDay(date, year)})`;
-}
-
 function LastPosted({ day, ist, approx, year }: { day: string | null; ist: string | null; approx: boolean; year: string }) {
   if (!day) return <span className="text-sm text-ink-4" title="No link in this window">—</span>;
   return (
@@ -262,7 +144,7 @@ function LastPosted({ day, ist, approx, year }: { day: string | null; ist: strin
   );
 }
 
-function MissedRanges({ ranges, total, truncated, year }: { ranges: Range[]; total: number; truncated: boolean; year: string }) {
+function MissedRanges({ ranges, total, truncated, year }: { ranges: GapRange[]; total: number; truncated: boolean; year: string }) {
   if (total === 0) return null;
   const shown = ranges.slice(-RANGE_CHIPS);
   const hidden = total - shown.length;
@@ -284,154 +166,198 @@ function MissedRanges({ ranges, total, truncated, year }: { ranges: Range[]; tot
   );
 }
 
-function DayByDay({
-  employeeId, accountId, startDate, endDate, year,
-}: { employeeId: string; accountId: string; startDate: string; endDate: string; year: string }) {
-  const { data, error, isLoading, mutate } = useSubmissionGapDays({ employeeId, accountId, startDate, endDate });
-  const [showAll, setShowAll] = useState(false);
-  const res = (data as { data?: { days: GapDay[]; assignedSince: string } } | undefined)?.data;
-
-  if (!res && isLoading) return <p className="px-1 py-3 text-xs text-ink-4">Loading days…</p>;
-  if (!res && error) {
-    return (
-      <div className="flex flex-wrap items-center gap-2 px-1 py-3 text-xs text-attention">
-        <AlertCircle className="h-3.5 w-3.5" aria-hidden />
-        <span className="min-w-0 break-words">Couldn&apos;t load the days: {(error as Error).message}</span>
-        <button type="button" onClick={() => mutate()} className="rounded-full border border-ink/10 px-2.5 py-1 text-ink hover:bg-ink/5">
-          Retry
-        </button>
-      </div>
-    );
-  }
-  if (!res) return null;
-  if (res.days.length === 0) {
-    return <p className="px-1 py-3 text-xs text-ink-4">No countable days in this window (assigned {fmtDay(res.assignedSince, year)}).</p>;
-  }
-  const days = showAll ? res.days : res.days.slice(0, DAYS_PREVIEW);
+function ExpandButton({ open, onClick }: { open: boolean; onClick: () => void }) {
   return (
-    <div className="pt-3">
-      <ul className="grid grid-cols-1 gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
-        {days.map((d) => {
-          const posted = d.status === "posted" || d.status === "today_posted";
-          const isToday = d.status === "today_posted" || d.status === "today_pending";
-          const first = timeFor(d.date, d.firstPostedIST, year);
-          const last = timeFor(d.date, d.lastPostedIST, year);
-          const times = first && last ? (first === last ? first : `${first}–${last}`) : "";
-          return (
-            <li
-              key={d.date}
-              className={`flex min-w-0 items-center gap-2 rounded-lg border px-2.5 py-1.5 text-xs ${
-                posted ? "border-sage/20 bg-sage-soft/40" : isToday ? "border-amber-200 bg-amber-50/60" : "border-attention/20 bg-attention/5"
-              }`}
-            >
-              <span className="min-w-[4.5rem] shrink-0 whitespace-nowrap font-num text-ink">
-                {weekday(d.date)} {fmtDay(d.date, year)}
-              </span>
-              <span className={`min-w-0 break-words ${posted ? "text-sage" : isToday ? "text-amber-700" : "text-attention"}`}>
-                {isToday ? "Today · " : ""}
-                {posted
-                  ? `${plural(d.linkCount, "link")}${times ? ` · ${d.approximate ? "~" : ""}${times}` : ""}`
-                  : isToday ? "not yet" : "No link"}
-              </span>
-            </li>
-          );
-        })}
-      </ul>
-      {res.days.length > DAYS_PREVIEW && (
-        <button
-          type="button"
-          onClick={() => setShowAll((v) => !v)}
-          className="mt-2 text-xs font-medium text-indigo hover:underline"
-        >
-          {showAll ? "Show fewer days" : `Show all ${nf.format(res.days.length)} days`}
-        </button>
-      )}
-      <p className="pt-2 text-[11px] text-ink-4">Newest first. Times are IST; ~ marks an approximate time (before 3 Jun 2026).</p>
-    </div>
+    <button
+      type="button"
+      onClick={onClick}
+      aria-expanded={open}
+      aria-label={open ? "Hide day by day" : "Show day by day"}
+      className="inline-flex h-9 items-center gap-1 rounded-full border border-ink/10 px-2.5 text-xs font-medium text-ink hover:bg-ink/5"
+    >
+      <span className="xl:hidden">Days</span>
+      {open ? <ChevronUp className="h-3.5 w-3.5" aria-hidden /> : <ChevronDown className="h-3.5 w-3.5" aria-hidden />}
+    </button>
   );
 }
 
 const GRID =
   "grid grid-cols-2 gap-x-3 gap-y-2 sm:grid-cols-6 xl:grid-cols-[minmax(0,1.25fr)_minmax(0,1.5fr)_4.5rem_5.5rem_6rem_7rem_6.5rem_2.5rem] xl:items-center";
 
+const toolbarBtn =
+  "inline-flex items-center gap-1.5 rounded-full border border-ink/10 px-3 py-1.5 text-xs font-semibold text-ink hover:bg-ink/5 disabled:opacity-40";
+
 export function SubmissionGapsPanel({
   startDate, endDate, windowLabel,
 }: { startDate: string; endDate: string; windowLabel: string }) {
-  const [view, setView] = useState<View>("channels");
+  const [view, setView] = useState<GapView>("channels");
   const [search, setSearch] = useState("");
   const [teamId, setTeamId] = useState("");
   const [platform, setPlatform] = useState("");
+  const [personId, setPersonId] = useState("");
+  const [accountId, setAccountId] = useState("");
   const [minMissed, setMinMissed] = useState("0");
   const [sortKey, setSortKey] = useState<SortKey>("missed");
   const [expanded, setExpanded] = useState<string | null>(null);
   const [limit, setLimit] = useState(PAGE);
+  // Dates for THIS tab only; null = follow the page's range pills.
+  const [custom, setCustom] = useState<GapWindowRange | null>(null);
+  const [allCsv, setAllCsv] = useState<{ busy: boolean; error: string | null }>({ busy: false, error: null });
 
-  const { data, error, isLoading, mutate } = useSubmissionGaps(true, {
-    startDate,
-    endDate,
+  const resetList = () => {
+    setExpanded(null);
+    setLimit(PAGE);
+    // A failed export's message describes the old filters (e.g. "too many rows").
+    setAllCsv((s) => (s.error ? { ...s, error: null } : s));
+  };
+
+  const clientToday = todayISO();
+  const pageRange = useMemo(() => ({ startDate, endDate }), [startDate, endDate]);
+  const applied = custom ?? pageRange;
+  const rangeDraft = useRangeDraft(applied, clientToday, (r) => {
+    setCustom(r);
+    resetList();
+  });
+  const problem = gapRangeProblem(applied.startDate, applied.endDate, clientToday);
+
+  const { data, error, isLoading, mutate } = useSubmissionGaps(!problem, {
+    startDate: applied.startDate,
+    endDate: applied.endDate,
     teamId: teamId || undefined,
     platform: platform || undefined,
   });
-  const d = (data as { data?: GapsData } | undefined)?.data;
-  const year = (d?.range.today ?? endDate).slice(0, 4);
-  const problem = rangeProblem(startDate, endDate);
+  const d = (data as { data?: SubmissionGapsResult } | undefined)?.data;
+  // The server's IST "today" once loaded (it decides what is counted), the browser's IST
+  // day before that.
+  const today = d?.range.today ?? clientToday;
+  const year = today.slice(0, 4);
+  const report = useMemo<GapWindowRange | null>(
+    () => (d ? { startDate: d.range.startDate, endDate: d.range.endDate } : null),
+    [d],
+  );
   // Keep the last filter options while a new filter loads, so a selected team never
   // appears to reset to "All teams" mid-request.
-  const optionsRef = useRef<GapsData["filters"]>({ teams: [], platforms: [] });
+  const optionsRef = useRef<SubmissionGapsResult["filters"]>({ teams: [], platforms: [] });
   if (d) optionsRef.current = d.filters;
   const options = optionsRef.current;
 
-  const q = search.trim().toLowerCase();
-  const min = Math.max(0, Number.parseInt(minMissed, 10) || 0);
+  const filters = useMemo<GapRowFilters>(
+    () => ({
+      q: normalizeGapSearch(search),
+      minMissed: normalizeGapMinMissed(minMissed),
+      employeeId: personId || null,
+      accountId: accountId || null,
+    }),
+    [search, minMissed, personId, accountId],
+  );
 
-  const pairs = useMemo(() => {
-    const rows = (d?.rows ?? []).filter(
-      (r) =>
-        r.missedDays >= min &&
-        (!q ||
-          r.employee.name.toLowerCase().includes(q) ||
-          r.account.displayName.toLowerCase().includes(q) ||
-          r.account.handle.toLowerCase().includes(q)),
-    );
-    return rows.sort(compareRows<PairRow>(sortKey, (a, b) => a.account.displayName.localeCompare(b.account.displayName)));
-  }, [d, q, min, sortKey]);
+  const pairs = useMemo(
+    () =>
+      d
+        ? filterGapPairs(d.rows, filters).sort(
+            compareRows<GapPairRow>(sortKey, (a, b) => a.account.displayName.localeCompare(b.account.displayName) || a.account.id.localeCompare(b.account.id)),
+          )
+        : [],
+    [d, filters, sortKey],
+  );
 
-  const people = useMemo(() => {
-    const rows = (d?.employees ?? []).filter((r) => r.missedDays >= min && (!q || r.employee.name.toLowerCase().includes(q)));
-    return rows.sort(compareRows<PersonRow>(sortKey, (a, b) => a.employee.id.localeCompare(b.employee.id)));
-  }, [d, q, min, sortKey]);
+  const people = useMemo(
+    () => (d ? filterGapPeople(d, filters).sort(compareRows<GapEmployeeRow>(sortKey, (a, b) => a.employee.id.localeCompare(b.employee.id))) : []),
+    [d, filters, sortKey],
+  );
 
-  const channelsByPerson = useMemo(() => {
-    const m = new Map<string, PairRow[]>();
+  // Person / channel dropdowns, from the loaded rows. Each narrows the other's LIST (a
+  // person's channels; a channel's people), so no pairing can be picked that has no row;
+  // the counts on each option stay the totals (a person's channels, a channel's people).
+  const personOptions = useMemo<SelectOption[]>(() => {
+    const m = new Map<string, { name: string; team: string | null; channels: number; inFacet: boolean }>();
     for (const r of d?.rows ?? []) {
-      const list = m.get(r.employee.id) ?? [];
-      list.push(r);
-      m.set(r.employee.id, list);
+      const inFacet = !filters.accountId || r.account.id === filters.accountId;
+      const cur = m.get(r.employee.id);
+      if (cur) {
+        cur.channels++;
+        cur.inFacet ||= inFacet;
+      } else m.set(r.employee.id, { name: r.employee.name, team: r.employee.team?.name ?? null, channels: 1, inFacet });
     }
-    return m;
-  }, [d]);
+    return [...m]
+      .filter(([, p]) => p.inFacet)
+      .map(([id, p]) => ({ value: id, label: p.name, detail: `${p.team ?? "No team"} · ${plural(p.channels, "channel")}` }))
+      .sort((a, b) => a.label.localeCompare(b.label) || a.value.localeCompare(b.value));
+  }, [d, filters.accountId]);
+
+  const channelOptions = useMemo<SelectOption[]>(() => {
+    const m = new Map<string, { name: string; platform: string; handle: string; people: number; inFacet: boolean }>();
+    for (const r of d?.rows ?? []) {
+      const inFacet = !filters.employeeId || r.employee.id === filters.employeeId;
+      const cur = m.get(r.account.id);
+      if (cur) {
+        cur.people++;
+        cur.inFacet ||= inFacet;
+      } else {
+        m.set(r.account.id, { name: r.account.displayName, platform: r.account.platformName, handle: r.account.handle, people: 1, inFacet });
+      }
+    }
+    return [...m]
+      .filter(([, c]) => c.inFacet)
+      .map(([id, c]) => ({
+        value: id,
+        label: c.name,
+        detail: `${c.platform} · @${c.handle.replace(/^@/, "")} · ${plural(c.people, "person", "people")}`,
+      }))
+      .sort((a, b) => a.label.localeCompare(b.label) || a.value.localeCompare(b.value));
+  }, [d, filters.employeeId]);
+
+  // Remember a selection's label, so it still reads correctly when a team / platform /
+  // range change takes it out of the loaded rows (the list then says nothing matches).
+  const labels = useRef(new Map<string, string>());
+  for (const o of personOptions) labels.current.set(`p:${o.value}`, o.label);
+  for (const o of channelOptions) labels.current.set(`c:${o.value}`, o.label);
+  const personLabel = personId ? labels.current.get(`p:${personId}`) ?? "Selected person" : "";
+  const channelLabel = accountId ? labels.current.get(`c:${accountId}`) ?? "Selected channel" : "";
 
   const list = view === "channels" ? pairs : people;
   const total = view === "channels" ? d?.rows.length ?? 0 : d?.employees.length ?? 0;
-  const filtersNarrow = q !== "" || min > 0;
+  const filtersNarrow = filters.q !== "" || filters.minMissed > 0 || !!filters.employeeId || !!filters.accountId;
 
   const inGapNow = d ? d.employees.filter((e) => e.currentGapDays > 0).length : null;
-  const endsYesterday = !!d && d.range.countedThrough === shiftDay(d.range.today, -1);
+  const endsYesterday = !!d && d.range.countedThrough === gapShiftDay(d.range.today, -1);
   const notYetPeople = d && d.range.includesToday ? d.employees.filter((e) => e.todayStatus === "not_yet").length : null;
   const onlyToday = !!d && d.range.countedThrough < d.range.startDate;
   // Nothing in this window can be counted yet (only today, or every assignment starts
   // today). A 0 would read as "measured, and zero" — the tiles show "—" instead.
   const nothingCounted = !!d && (onlyToday || d.totals.countedDays === 0);
 
+  const teamName = teamId ? options.teams.find((t) => t.id === teamId)?.name ?? "selected team" : "";
+  const platformName = platform ? options.platforms.find((p) => p.slug === platform)?.name ?? platform : "";
+
+  /** The active filters in words — the Gaps CSV's comment row. */
+  function filtersText(): string {
+    const parts = [
+      teamName && `team ${teamName}`,
+      platformName && `platform ${platformName}`,
+      personLabel && `person ${personLabel}`,
+      channelLabel && `channel ${channelLabel}`,
+      filters.q && `search "${search.trim()}"`,
+      filters.minMissed > 0 && `at least ${nf.format(filters.minMissed)} missed ${view === "channels" ? "days" : "days with no link on any channel"}`,
+    ].filter(Boolean);
+    return parts.length ? `Filters: ${parts.join("; ")}` : "Filters: none";
+  }
+
   function exportCsv() {
     if (!d) return;
     const yes = (b: boolean) => (b ? "Yes" : "");
-    const rangesText = (rs: Range[]) => rs.map(([s, e]) => (s === e ? s : `${s}..${e}`)).join("; ");
+    const rangesText = (rs: GapRange[]) => rs.map(([s, e]) => (s === e ? s : `${s}..${e}`)).join("; ");
     const todayText = (s: string | null) => (s == null ? "" : s === "not_yet" ? "Not yet" : s === "partial" ? "Some channels" : "Posted");
     const rate = (r: number | null) => (r == null ? "" : (r * 100).toFixed(1));
+    const narrowed = filtersNarrow || !!teamId || !!platform;
+    const base = `submission-gaps-${view}-${d.range.startDate}_${d.range.endDate}${narrowed ? "-filtered" : ""}.csv`;
+    // One comment row above the header: a file opened later still says what it covers.
+    const preamble = [[
+      `# Submission gaps (${view === "channels" ? "by channel" : "by person"}) · ${d.range.startDate} to ${d.range.endDate} (IST) · ${filtersText()} · exported ${istDateTime(new Date())} IST`,
+    ]];
     if (view === "channels") {
       downloadCsv(
-        `submission-gaps-channels-${d.range.startDate}_${d.range.endDate}.csv`,
+        base,
         [
           "Person", "Team", "Channel", "Handle", "Platform", "Assigned since (IST)", "Counted from", "Counted through",
           "Counted days", "Active days", "Missed days", "Active rate %", "Longest gap (days)", "Current gap (days)",
@@ -445,10 +371,11 @@ export function SubmissionGapsPanel({
           yes(r.currentGapOpenEnded), r.lastPostedDay ?? "", r.lastPostedIST ?? "", yes(r.lastPostedApprox), r.linkCount,
           todayText(r.todayStatus), d.range.includesToday ? r.todayLinks : "", rangesText(r.missedRanges), r.missedRangeCount,
         ]),
+        preamble,
       );
     } else {
       downloadCsv(
-        `submission-gaps-people-${d.range.startDate}_${d.range.endDate}.csv`,
+        base,
         [
           "Person", "Team", "Channels", "Counted days", "Active days", "Days with no link on any channel", "Partial days",
           "Missed channel-days", "Active rate %", "Longest gap (days)", "Current gap (days)", "Current gap may be longer?",
@@ -462,15 +389,46 @@ export function SubmissionGapsPanel({
           r.linkCount, todayText(r.todayStatus), d.range.includesToday ? r.todayPostedAccounts : "",
           rangesText(r.missedRanges), r.missedRangeCount,
         ]),
+        preamble,
       );
     }
   }
+
+  // Rows the all-rows day-by-day CSV will have: every exported pair × every day of the
+  // window through today (days before an assignment included, as "Not assigned yet").
+  const exportPairs = useMemo(() => (d ? selectGapExportPairs(d, view, filters).length : 0), [d, view, filters]);
+  const exportDays = d ? Math.max(0, gapSpanDays(d.range.startDate, d.range.endDate < d.range.today ? d.range.endDate : d.range.today)) : 0;
+  const exportRows = exportPairs * exportDays;
+
+  async function exportAllDaysCsv() {
+    if (!d || allCsv.busy) return;
+    setAllCsv({ busy: true, error: null });
+    try {
+      // Exactly the request behind the rows on screen, plus the client-side filters —
+      // the server applies them with the same shared functions.
+      const qs = new URLSearchParams({ startDate: d.range.startDate, endDate: d.range.endDate, view });
+      if (teamId) qs.set("teamId", teamId);
+      if (platform) qs.set("platform", platform);
+      if (filters.employeeId) qs.set("employeeId", filters.employeeId);
+      if (filters.accountId) qs.set("accountId", filters.accountId);
+      if (filters.q) qs.set("q", filters.q);
+      if (filters.minMissed > 0) qs.set("minMissed", String(filters.minMissed));
+      const { blob, filename } = await apiFetchBlob(`/admin/reports/submission-gaps/days.csv?${qs.toString()}`);
+      downloadBlob(blob, filename || `submission-gaps-day-by-day-${d.range.startDate}_${d.range.endDate}.csv`);
+      setAllCsv({ busy: false, error: null });
+    } catch (e) {
+      setAllCsv({ busy: false, error: e instanceof Error ? e.message : "The export failed — please try again." });
+    }
+  }
+
+  // The range this tab shows: the page's pills, or its own dates.
+  const rangeShort = custom ? fmtRange([custom.startDate, custom.endDate], year) : windowLabel;
 
   const tiles: { label: string; value: string; sub: string; icon: React.ReactNode; tone: string }[] = [
     {
       label: "Channel assignments",
       value: d ? nf.format(d.totals.assignments) : "—",
-      sub: d ? plural(d.totals.employees, "person", "people") : windowLabel.toLowerCase(),
+      sub: d ? plural(d.totals.employees, "person", "people") : rangeShort.toLowerCase(),
       icon: <Users className="h-3.5 w-3.5 text-indigo" aria-hidden />,
       tone: "bg-indigo-soft",
     },
@@ -507,6 +465,7 @@ export function SubmissionGapsPanel({
 
   const inputCls =
     "h-10 w-full min-w-0 rounded-lg border border-ink/10 bg-white px-3 text-base text-ink focus:outline-none focus:ring-2 focus:ring-[#F5D547]";
+  const rangeText = custom ? `${rangeShort} (this tab's own dates)` : windowLabel;
 
   return (
     <div className="space-y-4">
@@ -514,18 +473,18 @@ export function SubmissionGapsPanel({
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
             <p className="font-semibold text-ink">Submission gaps</p>
-            <p className="text-xs text-ink-4 mt-0.5">
-              Who did not submit links for the channels assigned to them · {windowLabel}
+            <p className="text-xs text-ink-4 mt-0.5 break-words">
+              Who did not submit links for the channels assigned to them · {rangeText}
             </p>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
             <div role="group" aria-label="View" className="inline-flex rounded-full border border-ink/10 p-0.5">
-              {(["channels", "people"] as View[]).map((v) => (
+              {(["channels", "people"] as GapView[]).map((v) => (
                 <button
                   key={v}
                   type="button"
                   aria-pressed={view === v}
-                  onClick={() => { setView(v); setExpanded(null); setLimit(PAGE); }}
+                  onClick={() => { setView(v); resetList(); }}
                   className={`rounded-full px-3 py-1.5 text-xs font-semibold transition-colors ${
                     view === v ? "bg-[#1A1A1A] text-white" : "text-ink-4 hover:text-ink"
                   }`}
@@ -538,21 +497,42 @@ export function SubmissionGapsPanel({
               type="button"
               onClick={exportCsv}
               disabled={!d || list.length === 0}
-              className="inline-flex items-center gap-1.5 rounded-full border border-ink/10 px-3 py-1.5 text-xs font-semibold text-ink hover:bg-ink/5 disabled:opacity-40"
-              title="Download the rows below (after search and filters) as CSV"
+              className={toolbarBtn}
+              title="Download the rows below (after every filter) as CSV — one row per channel or person"
             >
               <Download className="h-3.5 w-3.5" aria-hidden /> Gaps CSV
             </button>
+            <button
+              type="button"
+              onClick={exportAllDaysCsv}
+              disabled={!d || list.length === 0 || allCsv.busy}
+              aria-live="polite"
+              className={toolbarBtn}
+              title={
+                d
+                  ? `One line per person × channel × day for every row below (${plural(exportRows, "line")}), built on the server`
+                  : "Available once the rows have loaded"
+              }
+            >
+              {allCsv.busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : <FileText className="h-3.5 w-3.5" aria-hidden />}
+              {allCsv.busy ? "Preparing…" : "Day-by-day CSV (all rows)"}
+            </button>
           </div>
         </div>
+        {allCsv.error && (
+          <p role="alert" className="flex items-start gap-1.5 text-xs text-attention">
+            <AlertCircle className="mt-0.5 h-3.5 w-3.5 flex-none" aria-hidden />
+            <span className="min-w-0 break-words">Couldn&apos;t build the day-by-day CSV: {allCsv.error}</span>
+          </p>
+        )}
 
         <p className="text-[11px] leading-relaxed text-ink-4">
           <span className="font-semibold text-ink">How this is counted:</span> every calendar day counts — 7 days a week;
           weekends, holidays and leave are <em>not</em> excluded. Days before a channel was assigned to the person are not
-          counted. Today is still in progress, so it is never counted as missed — it has its own column. Only live links
-          on the assigned channel itself count — scheduled or blank links, and links on other channels, don&apos;t.
-          Last posted only looks inside the selected window: a dash means no link in the window, not never.
-          Times are IST; a <span className="font-num">~</span> marks an
+          counted (the day-by-day view marks them &ldquo;not assigned yet&rdquo;). Today is still in progress, so it is never
+          counted as missed — it has its own column. Only live links on the assigned channel itself count — scheduled or
+          blank links, and links on other channels, don&apos;t. Last posted only looks inside the selected window: a dash
+          means no link in the window, not never. Times are IST; a <span className="font-num">~</span> marks an
           approximate time (before 3 Jun 2026 only the report&apos;s first-submit time is known).
           {d && d.excluded.inactiveChannelAssignments > 0
             ? ` ${plural(d.excluded.inactiveChannelAssignments, "assignment")} to paused or archived channels ${d.excluded.inactiveChannelAssignments === 1 ? "is" : "are"} not shown.`
@@ -570,23 +550,29 @@ export function SubmissionGapsPanel({
           </div>
         ))}
       </div>
+      {d && filtersNarrow && (
+        <p className="-mt-2 text-[11px] text-ink-4">
+          These totals cover the whole range, team and platform; the person, channel, search and minimum filters narrow
+          the list below and both CSVs.
+        </p>
+      )}
 
       <div className="v3-card p-4 space-y-3">
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-5">
-          <label className="relative block min-w-0 lg:col-span-2">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+          <label className="relative block min-w-0">
             <span className="sr-only">Search person or channel</span>
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-4" aria-hidden />
             <input
               type="search"
               value={search}
-              onChange={(e) => { setSearch(e.target.value); setLimit(PAGE); }}
+              onChange={(e) => { setSearch(e.target.value); resetList(); }}
               placeholder={view === "channels" ? "Search person or channel" : "Search person"}
               className={`${inputCls} pl-9`}
             />
           </label>
           <label className="block min-w-0">
             <span className="sr-only">Team</span>
-            <select value={teamId} onChange={(e) => { setTeamId(e.target.value); setExpanded(null); setLimit(PAGE); }} className={inputCls}>
+            <select value={teamId} onChange={(e) => { setTeamId(e.target.value); resetList(); }} className={inputCls}>
               <option value="">All teams</option>
               {options.teams.map((t) => (
                 <option key={t.id} value={t.id}>{t.name}</option>
@@ -595,13 +581,31 @@ export function SubmissionGapsPanel({
           </label>
           <label className="block min-w-0">
             <span className="sr-only">Platform</span>
-            <select value={platform} onChange={(e) => { setPlatform(e.target.value); setExpanded(null); setLimit(PAGE); }} className={inputCls}>
+            <select value={platform} onChange={(e) => { setPlatform(e.target.value); resetList(); }} className={inputCls}>
               <option value="">All platforms</option>
               {options.platforms.map((p) => (
                 <option key={p.slug} value={p.slug}>{p.name}</option>
               ))}
             </select>
           </label>
+          <SearchableSelect
+            label="Person"
+            allLabel="All people"
+            value={personId}
+            options={personOptions}
+            onChange={(v) => { setPersonId(v); resetList(); }}
+            searchPlaceholder="Search people"
+            staleLabel={personLabel ? `${personLabel} (not in this scope)` : undefined}
+          />
+          <SearchableSelect
+            label="Channel"
+            allLabel="All channels"
+            value={accountId}
+            options={channelOptions}
+            onChange={(v) => { setAccountId(v); resetList(); }}
+            searchPlaceholder="Search channels or @handles"
+            staleLabel={channelLabel ? `${channelLabel} (not in this scope)` : undefined}
+          />
           <label className="block min-w-0">
             <span className="sr-only">Sort</span>
             <select value={sortKey} onChange={(e) => setSortKey(e.target.value as SortKey)} className={inputCls}>
@@ -611,8 +615,39 @@ export function SubmissionGapsPanel({
             </select>
           </label>
         </div>
+
+        <div className="grid grid-cols-2 gap-2 border-t border-ink/10 pt-3 sm:grid-cols-[10.5rem_10.5rem_minmax(0,1fr)] sm:items-end">
+          <p className="col-span-2 min-w-0 break-words text-xs text-ink-4 sm:col-span-3">
+            <span className="font-semibold text-ink">Dates for this tab:</span>{" "}
+            {custom
+              ? "custom — they override the page's range pills here only."
+              : `following the page's range pills (${windowLabel}). Pick dates to override them for this tab.`}
+          </p>
+          <RangeInputs range={rangeDraft} today={clientToday} label="Submission gaps dates" />
+          <div className="col-span-2 flex min-w-0 flex-wrap items-center gap-2 sm:col-span-1">
+            {(custom || rangeDraft.dirty) && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (custom) {
+                    setCustom(null);
+                    resetList();
+                  }
+                  rangeDraft.discard();
+                }}
+                className="inline-flex h-10 items-center rounded-full border border-ink/10 bg-white px-3 text-xs font-semibold text-ink hover:bg-ink/5"
+              >
+                Use page range
+              </button>
+            )}
+          </div>
+          <div className="col-span-2 sm:col-span-3">
+            <RangeProblem message={rangeDraft.problem} />
+          </div>
+        </div>
+
         <div className="flex flex-wrap items-center gap-2 text-xs text-ink-4">
-          <label className="inline-flex items-center gap-2">
+          <label className="inline-flex flex-wrap items-center gap-2">
             <span>Only rows with at least</span>
             <input
               type="number"
@@ -620,7 +655,7 @@ export function SubmissionGapsPanel({
               min={0}
               max={366}
               value={minMissed}
-              onChange={(e) => { setMinMissed(e.target.value); setLimit(PAGE); }}
+              onChange={(e) => { setMinMissed(e.target.value); resetList(); }}
               className="h-10 w-20 rounded-lg border border-ink/10 bg-white px-2 text-base text-ink focus:outline-none focus:ring-2 focus:ring-[#F5D547]"
             />
             <span>missed {view === "channels" ? "days" : "days (no link on any channel)"}</span>
@@ -637,7 +672,7 @@ export function SubmissionGapsPanel({
       {/* States: invalid window → loading → failed → only-today note → empty → list. */}
       {problem && (
         <div className="v3-card p-5 flex items-center gap-3 text-sm text-ink">
-          <AlertCircle className="h-4 w-4 text-attention" aria-hidden />
+          <AlertCircle className="h-4 w-4 flex-none text-attention" aria-hidden />
           <span className="min-w-0 break-words">{problem}</span>
         </div>
       )}
@@ -651,7 +686,7 @@ export function SubmissionGapsPanel({
 
       {!problem && !d && !isLoading && error && (
         <div className="v3-card p-5 flex flex-wrap items-center gap-3">
-          <AlertCircle className="h-4 w-4 text-attention" aria-hidden />
+          <AlertCircle className="h-4 w-4 flex-none text-attention" aria-hidden />
           <p className="min-w-0 flex-1 break-words text-sm text-ink">
             Couldn&apos;t load submission gaps. <span className="text-ink-4">{(error as Error).message}</span>
           </p>
@@ -687,10 +722,10 @@ export function SubmissionGapsPanel({
 
       {d && total > 0 && list.length === 0 && (
         <div className="v3-card p-5 flex flex-wrap items-center gap-3 text-sm text-ink-4">
-          <span className="min-w-0 flex-1">No rows match the search or the minimum-missed filter.</span>
+          <span className="min-w-0 flex-1">No rows match the person, channel, search or minimum-missed filters.</span>
           <button
             type="button"
-            onClick={() => { setSearch(""); setMinMissed("0"); }}
+            onClick={() => { setSearch(""); setMinMissed("0"); setPersonId(""); setAccountId(""); resetList(); }}
             className="rounded-full border border-ink/10 px-3 py-1.5 text-xs font-semibold text-ink hover:bg-ink/5"
           >
             Clear
@@ -698,7 +733,7 @@ export function SubmissionGapsPanel({
         </div>
       )}
 
-      {d && list.length > 0 && (
+      {d && report && list.length > 0 && (
         <div className="v3-card p-3 sm:p-4">
           <div className={`hidden xl:grid ${GRID} px-3 pb-2 text-[10px] font-semibold uppercase tracking-wide text-ink-4`}>
             <span>Person</span>
@@ -762,35 +797,17 @@ export function SubmissionGapsPanel({
                           <TodayChip status={r.todayStatus} links={r.todayLinks} />
                         </div>
                         <div className="flex min-w-0 items-end justify-end xl:items-center">
-                          <button
-                            type="button"
-                            onClick={() => setExpanded(open ? null : key)}
-                            aria-expanded={open}
-                            aria-label={open ? "Hide day by day" : "Show day by day"}
-                            className="inline-flex h-9 items-center gap-1 rounded-full border border-ink/10 px-2.5 text-xs font-medium text-ink hover:bg-ink/5"
-                          >
-                            <span className="xl:hidden">Days</span>
-                            {open ? <ChevronUp className="h-3.5 w-3.5" aria-hidden /> : <ChevronDown className="h-3.5 w-3.5" aria-hidden />}
-                          </button>
+                          <ExpandButton open={open} onClick={() => setExpanded(open ? null : key)} />
                         </div>
                       </div>
                       <MissedRanges ranges={r.missedRanges} total={r.missedRangeCount} truncated={r.missedRangesTruncated} year={year} />
-                      {open && (
-                        <DayByDay
-                          employeeId={r.employee.id}
-                          accountId={r.account.id}
-                          startDate={d.range.startDate}
-                          endDate={d.range.endDate}
-                          year={year}
-                        />
-                      )}
+                      {open && <PairDayByDay row={r} report={report} today={today} year={year} />}
                     </li>
                   );
                 })
               : people.slice(0, limit).map((r) => {
                   const key = `p:${r.employee.id}`;
                   const open = expanded === key;
-                  const channels = channelsByPerson.get(r.employee.id) ?? [];
                   return (
                     <li key={key} className="rounded-xl border border-ink/10 px-3 py-3">
                       <div className={GRID}>
@@ -801,7 +818,9 @@ export function SubmissionGapsPanel({
                           <p className="truncate text-xs text-ink-4">{r.employee.team?.name ?? "No team"}</p>
                         </div>
                         <div className="col-span-2 min-w-0 sm:col-span-3 xl:col-span-1">
-                          <p className="text-sm text-ink">{plural(r.accountCount, "channel")}</p>
+                          <p className="truncate text-sm text-ink">
+                            {filters.accountId ? channelLabel || plural(r.accountCount, "channel") : plural(r.accountCount, "channel")}
+                          </p>
                           <p className="truncate text-xs text-ink-4">
                             {r.missedChannelDays > 0 ? `${plural(r.missedChannelDays, "missed channel-day")}` : "no missed channel-days"}
                           </p>
@@ -813,7 +832,7 @@ export function SubmissionGapsPanel({
                           ) : (
                             <span
                               className={`font-num text-lg font-semibold leading-none ${r.missedDays > 0 ? "text-attention" : "text-sage"}`}
-                              title="Days with no link on ANY assigned channel"
+                              title={filters.accountId ? "Days with no link on the selected channel" : "Days with no link on ANY assigned channel"}
                             >
                               {nf.format(r.missedDays)}
                             </span>
@@ -846,40 +865,18 @@ export function SubmissionGapsPanel({
                           />
                         </div>
                         <div className="flex min-w-0 items-end justify-end xl:items-center">
-                          <button
-                            type="button"
-                            onClick={() => setExpanded(open ? null : key)}
-                            aria-expanded={open}
-                            aria-label={open ? "Hide channels" : "Show channels"}
-                            className="inline-flex h-9 items-center gap-1 rounded-full border border-ink/10 px-2.5 text-xs font-medium text-ink hover:bg-ink/5"
-                          >
-                            <span className="xl:hidden">Channels</span>
-                            {open ? <ChevronUp className="h-3.5 w-3.5" aria-hidden /> : <ChevronDown className="h-3.5 w-3.5" aria-hidden />}
-                          </button>
+                          <ExpandButton open={open} onClick={() => setExpanded(open ? null : key)} />
                         </div>
                       </div>
                       <MissedRanges ranges={r.missedRanges} total={r.missedRangeCount} truncated={r.missedRangesTruncated} year={year} />
                       {open && (
-                        <ul className="mt-3 space-y-1.5 border-t border-ink/10 pt-3">
-                          {channels.map((c) => (
-                            <li key={c.account.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
-                              <span className="min-w-0 max-w-full truncate font-medium text-ink">{c.account.displayName}</span>
-                              <span className="text-ink-4">{c.account.platformName}</span>
-                              <span className={c.missedDays > 0 ? "font-semibold text-attention" : "text-sage"}>
-                                {c.countedDays === 0 ? "nothing counted yet" : `${plural(c.missedDays, "missed day")} of ${nf.format(c.countedDays)}`}
-                              </span>
-                              {c.currentGapDays > 0 && (
-                                <span className="text-attention">
-                                  gap {c.currentGapOpenEnded ? "≥ " : ""}{plural(c.currentGapDays, "day")}
-                                </span>
-                              )}
-                              <TodayChip status={c.todayStatus} links={c.todayLinks} />
-                            </li>
-                          ))}
-                          <li className="pt-1 text-[11px] text-ink-4">
-                            Switch to <button type="button" className="font-medium text-indigo hover:underline" onClick={() => { setView("channels"); setSearch(r.employee.name); setExpanded(null); }}>By channel</button> for the day-by-day view of each channel.
-                          </li>
-                        </ul>
+                        <PersonDayByDay
+                          person={r}
+                          channels={gapChannelsOfPerson(d.rows, r.employee.id, filters.accountId)}
+                          report={report}
+                          today={today}
+                          year={year}
+                        />
                       )}
                     </li>
                   );

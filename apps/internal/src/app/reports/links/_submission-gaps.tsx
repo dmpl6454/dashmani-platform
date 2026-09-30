@@ -419,6 +419,9 @@ export function SubmissionGapsPanel({
   const endsYesterday = !!d && d.range.countedThrough === shiftDay(d.range.today, -1);
   const notYetPeople = d && d.range.includesToday ? d.employees.filter((e) => e.todayStatus === "not_yet").length : null;
   const onlyToday = !!d && d.range.countedThrough < d.range.startDate;
+  // Nothing in this window can be counted yet (only today, or every assignment starts
+  // today). A 0 would read as "measured, and zero" — the tiles show "—" instead.
+  const nothingCounted = !!d && (onlyToday || d.totals.countedDays === 0);
 
   function exportCsv() {
     if (!d) return;
@@ -473,15 +476,19 @@ export function SubmissionGapsPanel({
     },
     {
       label: "Missed channel-days",
-      value: d ? nf.format(d.totals.missedDays) : "—",
-      sub: d ? `of ${nf.format(d.totals.countedDays)} counted` : "every calendar day counts",
+      value: !d || nothingCounted ? "—" : nf.format(d.totals.missedDays),
+      sub: !d ? "every calendar day counts" : nothingCounted ? "nothing counted yet" : `of ${nf.format(d.totals.countedDays)} counted`,
       icon: <CalendarX2 className="h-3.5 w-3.5 text-attention" aria-hidden />,
       tone: "bg-attention/10",
     },
     {
       label: endsYesterday || !d ? "People in a gap now" : "People in a gap at window end",
-      value: inGapNow == null ? "—" : nf.format(inGapNow),
-      sub: d && !onlyToday ? `no link on any channel on ${fmtDay(d.range.countedThrough, year)}` : "nothing counted yet",
+      value: inGapNow == null || nothingCounted ? "—" : nf.format(inGapNow),
+      sub: !d
+        ? "no link on any assigned channel"
+        : nothingCounted
+          ? "nothing counted yet"
+          : `no link on any channel on ${fmtDay(d.range.countedThrough, year)}`,
       icon: <Hourglass className="h-3.5 w-3.5 text-terra" aria-hidden />,
       tone: "bg-terra-soft",
     },

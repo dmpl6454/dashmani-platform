@@ -1,6 +1,7 @@
 "use client";
 import { useState, useMemo } from "react";
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { ArrowLeft, TrendingUp, TrendingDown, Link2, Users, Trophy, AlertCircle, ChevronDown, ChevronUp, BarChart2, Eye, Heart, MessageCircle } from "lucide-react";
 import { useLinksAnalytics, useLinksAllAccounts, useTopYouTubeLinks } from "@/lib/hooks/use-reports";
 import { usePageTitle } from "@/lib/hooks/use-page-title";
@@ -10,6 +11,15 @@ import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip,
   ResponsiveContainer, CartesianGrid,
 } from "recharts";
+
+// Loaded only when the "Submission gaps" tab is opened — its code AND its request stay
+// off the page's normal load (the panel's SWR key exists only while it is mounted).
+const SubmissionGapsPanel = dynamic(
+  () => import("./_submission-gaps").then((m) => m.SubmissionGapsPanel),
+  { ssr: false, loading: () => <div className="v3-card p-5 text-xs text-ink-4">Loading submission gaps…</div> },
+);
+
+type Tab = "overview" | "gaps";
 
 function fmtCompact(n: number | null | undefined): string {
   if (n == null) return "—";
@@ -58,6 +68,7 @@ export default function LinksAnalyticsPage() {
   const [endDate, setEndDate] = useState(() => todayISO());
 
   const windowLabel = rangeLabel(startDate, endDate);
+  const [tab, setTab] = useState<Tab>("overview");
 
   const { data, isLoading } = useLinksAnalytics(startDate, endDate);
   const { data: accountsData, isLoading: accountsLoading } = useLinksAllAccounts(startDate, endDate);
@@ -114,6 +125,36 @@ export default function LinksAnalyticsPage() {
         </div>
       </div>
 
+      {/* Tabs — the range pills above drive both. */}
+      <div role="tablist" aria-label="Links analytics views" className="inline-flex rounded-full border border-ink/10 bg-white p-1">
+        {([
+          ["overview", "Overview"],
+          ["gaps", "Submission gaps"],
+        ] as [Tab, string][]).map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            role="tab"
+            id={`links-tab-${id}`}
+            aria-selected={tab === id}
+            aria-controls={`links-panel-${id}`}
+            onClick={() => setTab(id)}
+            className={`rounded-full px-4 py-1.5 text-xs font-semibold transition-colors ${
+              tab === id ? "bg-[#1A1A1A] text-white" : "text-ink-4 hover:text-ink"
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {tab === "gaps" && (
+        <div role="tabpanel" id="links-panel-gaps" aria-labelledby="links-tab-gaps">
+          <SubmissionGapsPanel startDate={startDate} endDate={endDate} windowLabel={windowLabel} />
+        </div>
+      )}
+
+      {tab === "overview" && (<>
       {/* Top stats */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <div className="v3-card-sm p-4 space-y-1">
@@ -465,6 +506,7 @@ export default function LinksAnalyticsPage() {
         })()}
 
       </div>
+      </>)}
     </div>
   );
 }

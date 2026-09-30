@@ -77,23 +77,27 @@ export function useEmployeeReportStats(employeeId?: string, startDate?: string, 
   );
 }
 
-export function useLinksAnalytics(startDate?: string, endDate?: string) {
+// `enabled` (default true) lets a page keep the hook mounted while its panel is hidden
+// (Links Analytics' "Submission gaps" tab): false = null SWR key = no request, so
+// changing the range there does not also refetch the hidden Overview. That matters
+// here: links-analytics loads every link in the window.
+export function useLinksAnalytics(startDate?: string, endDate?: string, enabled = true) {
   const params = new URLSearchParams();
   if (startDate) params.set("startDate", startDate);
   if (endDate) params.set("endDate", endDate);
   const query = params.toString() ? `?${params.toString()}` : "";
-  return useSWR(`/admin/reports/links-analytics${query}`, (url) => apiFetch(url), {
+  return useSWR(enabled ? `/admin/reports/links-analytics${query}` : null, (url) => apiFetch(url), {
     revalidateOnFocus: false,
     dedupingInterval: 60_000,
   });
 }
 
-export function useLinksAllAccounts(startDate?: string, endDate?: string) {
+export function useLinksAllAccounts(startDate?: string, endDate?: string, enabled = true) {
   const params = new URLSearchParams();
   if (startDate) params.set("startDate", startDate);
   if (endDate) params.set("endDate", endDate);
   const query = params.toString() ? `?${params.toString()}` : "";
-  return useSWR(`/admin/reports/links-by-account${query}`, (url) => apiFetch(url), {
+  return useSWR(enabled ? `/admin/reports/links-by-account${query}` : null, (url) => apiFetch(url), {
     revalidateOnFocus: false,
     dedupingInterval: 120_000,
   });
@@ -125,13 +129,13 @@ export function usePlatformLeaderboards(startDate?: string, endDate?: string) {
   });
 }
 
-export function useTopYouTubeLinks(startDate?: string, endDate?: string, limit = 20) {
+export function useTopYouTubeLinks(startDate?: string, endDate?: string, limit = 20, enabled = true) {
   const params = new URLSearchParams();
   if (startDate) params.set("startDate", startDate);
   if (endDate) params.set("endDate", endDate);
   params.set("limit", String(limit));
   const query = `?${params.toString()}`;
-  return useSWR(`/admin/reports/top-youtube-links${query}`, (url) => apiFetch(url), {
+  return useSWR(enabled ? `/admin/reports/top-youtube-links${query}` : null, (url) => apiFetch(url), {
     revalidateOnFocus: false,
     dedupingInterval: 300_000,
   });

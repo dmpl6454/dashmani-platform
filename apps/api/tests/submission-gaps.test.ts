@@ -512,6 +512,33 @@ describe("submission gaps", () => {
         getSubmissionGapDays({ employeeId: ids.bilal, accountId: ids.fbB, startDate: START, endDate: END, today: TODAY }),
       ).rejects.toMatchObject({ statusCode: 404 });
     });
+
+    it("applies the summary's eligibility rules — a pair the summary hides has no day-by-day view", async () => {
+      const employeeRole = await prisma.role.findUniqueOrThrow({ where: { name: "Employee" } });
+      const removed = await mkUser("Gita", [employeeRole.id]);
+      await prisma.user.update({ where: { id: removed }, data: { deletedAt: new Date("2026-09-15T00:00:00.000Z") } });
+      await assign(removed, ids.igA, "2026-09-01T04:00:00.000Z");
+
+      const excluded: [string, string, string, RegExp][] = [
+        [adminId, ids.igA, "pure admin", /not counted in submission gaps/i],
+        [ids.inactive, ids.igA, "inactive person", /not counted in submission gaps/i],
+        [removed, ids.igA, "removed person", /not counted in submission gaps/i],
+        [ids.asha, ids.igP, "paused channel", /paused or archived/i],
+      ];
+      for (const [employeeId, accountId, label, message] of excluded) {
+        await expect(
+          getSubmissionGapDays({ employeeId, accountId, startDate: START, endDate: END, today: TODAY }),
+          label,
+        ).rejects.toMatchObject({ statusCode: 404, message: expect.stringMatching(message) });
+      }
+
+      // Admin AND Employee roles: counted by the summary, so the drill-down serves her too.
+      const divya = await getSubmissionGapDays({
+        employeeId: ids.divya, accountId: ids.fbB, startDate: START, endDate: END, today: TODAY,
+      });
+      expect(divya.days[0].date).toBe(TODAY);
+      expect(divya.days.find((d) => d.date === "2026-09-19")?.status).toBe("posted");
+    });
   });
 
   describe("submission gaps — parameter validation", () => {
@@ -529,13 +556,39 @@ describe("submission gaps", () => {
         { startDate: "2025-09-19", endDate: "2026-09-20" }, // 367 days
         { platform: "Instagram; DROP" },
         { teamId: "x".repeat(65) },
+        // Year 0 parses in JavaScript but Postgres rejects it (SQLSTATE 22008) — it
+        // must be a clean 400 here, never a Prisma error surfacing as a 500.
+        { startDate: "0000-01-01", endDate: "0000-01-05" },
+        // Only endDate given: the default start (end − 29 days) would land in year 0.
+        { endDate: "0001-01-10" },
+        { startDate: "1999-12-31", endDate: "2000-01-05" },
+        { startDate: "2100-12-31", endDate: "2101-01-01" },
       ];
       for (const q of bad) expect400(() => parseSubmissionGapsQuery(q, TODAY), JSON.stringify(q));
       // Exactly 366 days is allowed.
       expect(parseSubmissionGapsQuery({ startDate: "2025-09-20", endDate: "2026-09-20" }, TODAY).startDate).toBe(
         "2025-09-20",
       );
+      // The calendar's edges are accepted.
+      expect(parseSubmissionGapsQuery({ startDate: "2000-01-01", endDate: "2000-01-05" }, TODAY).startDate).toBe(
+        "2000-01-01",
+      );
+      expect(parseSubmissionGapsQuery({ startDate: "2100-12-01", endDate: "2100-12-31" }, TODAY).endDate).toBe(
+        "2100-12-31",
+      );
       expect400(() => parseSubmissionGapDaysQuery({ employeeId: "a" }, TODAY), "missing accountId");
+      expect400(
+        () => parseSubmissionGapDaysQuery({ employeeId: "a", accountId: "b", startDate: "0000-01-01", endDate: "0000-01-05" }, TODAY),
+        "day-by-day year 0",
+      );
+    });
+
+    it("clamps a defaulted start to the first accepted day instead of rejecting a start nobody sent", () => {
+      // 30 days ending 2000-01-10 would start on 1999-12-12; the caller only sent endDate.
+      expect(parseSubmissionGapsQuery({ endDate: "2000-01-10" }, TODAY)).toMatchObject({
+        startDate: "2000-01-01",
+        endDate: "2000-01-10",
+      });
     });
   });
 
@@ -575,6 +628,15 @@ describe("submission gaps", () => {
       expect(bad.status).toBe(400);
       expect(bad.body.success).toBe(false);
       expect(bad.body.error.code).toBe("INVALID_PARAMS");
+
+      // Dates Postgres cannot represent are rejected before any SQL runs.
+      for (const qs of ["startDate=0000-01-01&endDate=0000-01-05", "endDate=0001-01-10"]) {
+        const yearZero = await request(app)
+          .get(`/v1/admin/reports/submission-gaps?${qs}`)
+          .set("Authorization", `Bearer ${adminToken}`);
+        expect(yearZero.status, qs).toBe(400);
+        expect(yearZero.body.error.code, qs).toBe("INVALID_PARAMS");
+      }
     });
 
     it("serves the day-by-day view, 400 without ids and 404 for a non-current pair", async () => {

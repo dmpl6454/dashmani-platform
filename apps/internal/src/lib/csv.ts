@@ -15,10 +15,15 @@ export function csvCell(v: unknown): string {
   return /[",\n\r]/.test(str) ? `"${str.replace(/"/g, '""')}"` : str;
 }
 
-/** Build and download a UTF-8 CSV (with BOM so Excel reads non-Latin names correctly). */
-export function downloadCsv(filename: string, header: string[], rows: unknown[][]): void {
+/**
+ * Build and download a UTF-8 CSV (with BOM so Excel reads non-Latin names correctly).
+ * `preamble` rows go ABOVE the header — e.g. a single "# range · filters" comment row, so
+ * a file opened later still says what it covers. Leave it out for files meant to be
+ * pivoted, whose first row must be the header.
+ */
+export function downloadCsv(filename: string, header: string[], rows: unknown[][], preamble: unknown[][] = []): void {
   if (typeof window === "undefined") return;
-  const csv = "﻿" + [header, ...rows].map((r) => r.map(csvCell).join(",")).join("\r\n");
+  const csv = "﻿" + [...preamble, header, ...rows].map((r) => r.map(csvCell).join(",")).join("\r\n");
   const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8;" }));
   const a = document.createElement("a");
   a.href = url;

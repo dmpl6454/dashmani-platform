@@ -186,11 +186,24 @@ export function useSubmissionGaps(
   );
 }
 
-// Day-by-day drill-down for one (employee, channel) — fetched only when a row expands.
+// Day-by-day drill-down for one (employee, channel) — fetched only when a row expands,
+// then ONE small request per navigation (a month arrow, or a custom range once the
+// debounced dates are valid). Months already seen come back from SWR's cache.
+//
+// keepPreviousData keeps the last window's days on screen while the next one loads, so
+// the view never flashes empty. ⚠️ It also means `data` can describe the PREVIOUS window:
+// callers must compare the response's echoed range/pair with the one they asked for
+// before labelling or exporting it (see ChannelDays in _gap-days.tsx).
 export function useSubmissionGapDays(
   key: { employeeId: string; accountId: string; startDate: string; endDate: string } | null,
 ) {
-  const url = key
+  // Same plausibility gate as useSubmissionGaps: a window the API would 400 never becomes
+  // a request (the view validates first; this is the backstop).
+  const span = key
+    ? (Date.parse(`${key.endDate}T00:00:00Z`) - Date.parse(`${key.startDate}T00:00:00Z`)) / 86_400_000 + 1
+    : 0;
+  const plausible = !!key && key.startDate >= "2025-01-01" && span >= 1 && span <= 366;
+  const url = plausible && key
     ? `/admin/reports/submission-gaps/days?${new URLSearchParams(key).toString()}`
     : null;
   return useSWR(url, (u: string) => apiFetch(u), {
@@ -198,5 +211,6 @@ export function useSubmissionGapDays(
     dedupingInterval: 60_000,
     errorRetryCount: 2,
     errorRetryInterval: 4_000,
+    keepPreviousData: true,
   });
 }

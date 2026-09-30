@@ -70,13 +70,18 @@ export default function LinksAnalyticsPage() {
   const windowLabel = rangeLabel(startDate, endDate);
   const [tab, setTab] = useState<Tab>("overview");
 
-  const { data, isLoading } = useLinksAnalytics(startDate, endDate);
-  const { data: accountsData, isLoading: accountsLoading } = useLinksAllAccounts(startDate, endDate);
+  // The Overview's requests exist only while the Overview is showing: with the Gaps tab
+  // open, changing the range must not also refetch these (links-analytics loads every
+  // link in the window). Overview is the default tab, so the first load is unchanged.
+  const overviewShown = tab === "overview";
+  const { data, isLoading } = useLinksAnalytics(startDate, endDate, overviewShown);
+  const { data: accountsData, isLoading: accountsLoading } = useLinksAllAccounts(startDate, endDate, overviewShown);
   const [ytAllTime, setYtAllTime] = useState(false);
   const { data: topYouTubeData, isLoading: topYouTubeLoading } = useTopYouTubeLinks(
     ytAllTime ? undefined : startDate,
     ytAllTime ? undefined : endDate,
     20,
+    overviewShown,
   );
   const allAccounts: any[] = useMemo(() => (accountsData as any)?.data ?? [], [accountsData]);
   const [expandedAccount, setExpandedAccount] = useState<string | null>(null);

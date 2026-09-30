@@ -10,7 +10,7 @@ import {
   Menu, X as CloseIcon, CalendarOff, ClipboardList, Search, Receipt,
 } from "lucide-react";
 import { useOverviewStats } from "@/lib/hooks/use-analytics";
-import { useState, useEffect } from "react";
+import { useState, useEffect, Fragment } from "react";
 
 /* ── Primary nav — grouped, always visible ── */
 const primaryNav = [
@@ -50,6 +50,18 @@ const moreNav = [
   { href: "/settings",      label: "Settings",      icon: Settings        },
 ];
 
+/* A nav item is active when the path is its href or beneath it — but only if no OTHER
+   nav item matches more specifically. Without this, /accounts/growth also lit up
+   "Accounts" (prefix match), and /reports/link-search lit up "Link Reports". */
+const ALL_NAV_HREFS = [...primaryNav, ...moreNav].map((n) => n.href);
+function matchesRoute(pathname: string, href: string) {
+  return pathname === href || (href !== "/" && pathname.startsWith(href + "/"));
+}
+function isRouteActive(pathname: string, href: string) {
+  if (!matchesRoute(pathname, href)) return false;
+  return !ALL_NAV_HREFS.some((other) => other.length > href.length && matchesRoute(pathname, other));
+}
+
 export function Sidebar() {
   const pathname = usePathname();
   const { data } = useOverviewStats();
@@ -67,6 +79,15 @@ export function Sidebar() {
 
   useEffect(() => { setMobileOpen(false); }, [pathname]);
 
+  // Keep the active item visible inside the sidebar (e.g. landing directly on a deep
+  // route). block:"nearest" is a no-op when it is already in view, so it never yanks
+  // the user’s scroll position while they browse the list.
+  useEffect(() => {
+    document
+      .querySelectorAll("aside a[aria-current=\"page\"]")
+      .forEach((el) => (el as HTMLElement).scrollIntoView({ block: "nearest" }));
+  }, [pathname]);
+
   function toggleCollapsed() {
     setCollapsed(v => {
       localStorage.setItem("int-rail-collapsed", String(!v));
@@ -81,12 +102,12 @@ export function Sidebar() {
     });
   }
 
-  const isMoreActive = moreNav.some(n => pathname === n.href || pathname.startsWith(n.href + "/"));
+  const isMoreActive = moreNav.some(n => isRouteActive(pathname, n.href));
 
   function NavItem({ href, label, icon: Icon, badgeKey, group, prevGroup, mobile }: {
     href: string; label: string; icon: any; badgeKey?: "pendingEmployees"; group: string | null; prevGroup: string | null; mobile?: boolean;
   }) {
-    const isActive = pathname === href || (href !== "/" && pathname.startsWith(href + "/"));
+    const isActive = isRouteActive(pathname, href);
     const badge = badgeKey && stats ? stats[badgeKey] : 0;
     const expanded = !collapsed || !!mobile;
     const showGroupLabel = expanded && group && group !== prevGroup;
@@ -100,6 +121,7 @@ export function Sidebar() {
         )}
         <Link
           href={href}
+          aria-current={isActive ? "page" : undefined}
           title={!expanded ? label : undefined}
           className={cn(
             "group relative flex items-center gap-3 rounded-xl text-sm transition-all duration-150 select-none mb-0.5",
@@ -123,7 +145,7 @@ export function Sidebar() {
             <span className="absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-attention" />
           )}
           {!expanded && (
-            <div className="pointer-events-none absolute left-full ml-3 top-1/2 -translate-y-1/2 z-50 opacity-0 group-hover:opacity-100 transition-opacity px-2.5 py-1 bg-ink text-white text-xs font-medium rounded-lg whitespace-nowrap shadow-hard">
+            <div className="pointer-events-none absolute left-full ml-3 top-1/2 -translate-y-1/2 z-50 opacity-0 group-hover:opacity-100 transition-opacity px-2.5 py-1 bg-action text-[#06121B] text-xs font-medium rounded-lg whitespace-nowrap shadow-hard">
               {label}
               {badge > 0 && <span className="ml-1.5 bg-attention px-1.5 py-0.5 rounded-full text-[10px]">{badge}</span>}
             </div>
@@ -133,11 +155,11 @@ export function Sidebar() {
     );
   }
 
-  const SidebarBody = ({ mobile }: { mobile?: boolean }) => (
+  const renderSidebarBody = ({ mobile }: { mobile?: boolean }) => (
     <aside
       className={cn(
-        "relative flex flex-col min-h-screen border-r-2 border-ink/10 bg-bg transition-[width] duration-200 ease-out shrink-0",
-        mobile ? "w-[280px]" : collapsed ? "w-[58px]" : "w-[220px]"
+        "relative flex flex-col border-r-2 border-ink/10 bg-bg transition-[width] duration-200 ease-out shrink-0",
+        mobile ? "min-h-screen w-[280px]" : cn("h-screen", collapsed ? "w-[58px]" : "w-[220px]")
       )}
     >
       {/* Logo */}
@@ -168,7 +190,7 @@ export function Sidebar() {
             "w-full flex items-center rounded-xl h-10 transition-all border",
             (collapsed && !mobile) ? "justify-center" : "gap-3 px-3",
             pathname === "/overview"
-              ? "bg-ink text-white border-ink"
+              ? "bg-action text-[#06121B] border-ink"
               : "bg-ink/[0.04] text-ink border-ink/10 hover:bg-ink/[0.08]",
           )}
         >
@@ -185,16 +207,17 @@ export function Sidebar() {
           let prevGroup: string | null = null;
           return primaryNav.map(item => {
             const el = (
-              <NavItem
-                key={item.href}
-                href={item.href}
-                label={item.label}
-                icon={item.icon}
-                badgeKey={item.badgeKey}
-                group={item.group}
-                prevGroup={prevGroup}
-                mobile={mobile}
-              />
+              <Fragment key={item.href}>
+                {NavItem({
+                  href: item.href,
+                  label: item.label,
+                  icon: item.icon,
+                  badgeKey: item.badgeKey,
+                  group: item.group,
+                  prevGroup,
+                  mobile,
+                })}
+              </Fragment>
             );
             if (item.group) prevGroup = item.group;
             return el;
@@ -247,12 +270,12 @@ export function Sidebar() {
           >
             <div
               className="mx-1 mb-1 rounded-xl overflow-hidden"
-              style={{ background: "#F3EED8", border: "1.5px solid rgba(26,26,26,0.09)" }}
+              style={{ background: "rgb(var(--t-muted))", border: "1px solid rgb(var(--t-border))" }}
             >
               {/* Grid header */}
               <div
                 className="px-3 py-2"
-                style={{ borderBottom: "1px solid rgba(26,26,26,0.07)" }}
+                style={{ borderBottom: "1px solid rgb(var(--t-border))" }}
               >
                 <span className="text-[9.5px] font-bold text-ink-4 uppercase tracking-widest">All Features</span>
               </div>
@@ -260,7 +283,7 @@ export function Sidebar() {
               {/* 3-col icon grid */}
               <div className="grid grid-cols-3 gap-1 p-2">
                 {moreNav.map(item => {
-                  const isActive = pathname === item.href || pathname.startsWith(item.href + "/");
+                  const isActive = isRouteActive(pathname, item.href);
                   const Icon = item.icon;
                   return (
                     <Link
@@ -269,13 +292,13 @@ export function Sidebar() {
                       className={cn(
                         "group flex flex-col items-center gap-1.5 px-1 py-2.5 rounded-lg text-center transition-all duration-150",
                         isActive
-                          ? "bg-indigo text-white shadow-sm"
-                          : "hover:bg-white/70 text-ink-3 hover:text-ink"
+                          ? "bg-action text-[#06121B] shadow-sm"
+                          : "hover:bg-surface/70 text-ink-3 hover:text-ink"
                       )}
                     >
                       <div className={cn(
                         "h-7 w-7 rounded-lg grid place-items-center shrink-0 transition-colors",
-                        isActive ? "bg-white/20" : "bg-white/50 group-hover:bg-white/80"
+                        isActive ? "bg-surface/20" : "bg-surface/50 group-hover:bg-surface/80"
                       )}>
                         <Icon className="h-3.5 w-3.5" strokeWidth={isActive ? 2.2 : 1.8} />
                       </div>
@@ -336,14 +359,14 @@ export function Sidebar() {
                 <CloseIcon className="h-4 w-4" />
               </button>
             </div>
-            <SidebarBody mobile />
+            {renderSidebarBody({ mobile: true })}
           </div>
         </div>
       )}
 
       {/* Desktop sidebar */}
-      <div className="hidden lg:flex">
-        <SidebarBody />
+      <div className="hidden lg:flex sticky top-0 h-screen self-start">
+        {renderSidebarBody({})}
       </div>
     </>
   );

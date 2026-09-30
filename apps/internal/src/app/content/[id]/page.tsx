@@ -19,13 +19,13 @@ const STATUS_LABELS: Record<string, string> = {
 };
 
 const STATUS_BADGE: Record<string, string> = {
-  DRAFT: "bg-[rgba(0,0,0,0.06)] text-[#7A7A7A]",
-  PENDING_APPROVAL: "bg-[#FFF3C4] text-[#1A1A1A]",
-  APPROVED: "bg-[rgba(107,203,119,0.12)] text-[#6BCB77]",
+  DRAFT: "bg-[rgba(0,0,0,0.06)] text-ink-3",
+  PENDING_APPROVAL: "bg-action-soft text-ink",
+  APPROVED: "bg-[rgba(107,203,119,0.12)] text-success",
   SCHEDULED: "bg-[rgba(52,152,219,0.12)] text-[#3498DB]",
-  PUBLISHED: "bg-[rgba(107,203,119,0.12)] text-[#6BCB77]",
-  FAILED: "bg-[rgba(231,76,60,0.1)] text-[#E74C3C]",
-  REJECTED: "bg-[rgba(231,76,60,0.1)] text-[#E74C3C]",
+  PUBLISHED: "bg-[rgba(107,203,119,0.12)] text-success",
+  FAILED: "bg-[rgba(231,76,60,0.1)] text-danger",
+  REJECTED: "bg-[rgba(231,76,60,0.1)] text-danger",
 };
 
 const STATUS_ACTIONS: Record<string, { label: string; status: string; variant: "default" | "outline" }[]> = {
@@ -69,9 +69,9 @@ export default function ContentDetailPage() {
   );
   const comments: any[] = commentsData?.data || [];
 
-  if (isLoading) return <div className="flex items-center justify-center h-64"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#F5D547]" /></div>;
+  if (isLoading) return <div className="flex items-center justify-center h-64"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-action" /></div>;
   const post = (data as any)?.data;
-  if (!post) return <div className="py-8 text-center text-[#7A7A7A]">Content not found</div>;
+  if (!post) return <div className="py-8 text-center text-ink-3">Content not found</div>;
 
   async function handleStatusChange(newStatus: string) {
     setTransitioning(true);
@@ -130,9 +130,9 @@ export default function ContentDetailPage() {
     <div className="max-w-3xl space-y-6 crx-animate-fade">
       <div className="flex items-start justify-between">
         <div>
-          <h1 className="font-serif text-4xl font-light text-[#1A1A1A]">{post.title}</h1>
+          <h1 className="font-serif text-4xl font-light text-ink">{post.title}</h1>
           <div className="flex gap-2 mt-3">
-            <span className={`rounded-full px-3 py-1 text-xs font-medium ${STATUS_BADGE[post.status] || "bg-[rgba(0,0,0,0.06)] text-[#7A7A7A]"}`}>
+            <span className={`rounded-full px-3 py-1 text-xs font-medium ${STATUS_BADGE[post.status] || "bg-[rgba(0,0,0,0.06)] text-ink-3"}`}>
               {STATUS_LABELS[post.status] || post.status}
             </span>
           </div>
@@ -140,45 +140,45 @@ export default function ContentDetailPage() {
         <div className="flex flex-wrap gap-2">
           {post.status !== "PUBLISHED" && (
             <>
-              <Button variant="outline" onClick={() => setIsEditing(true)} className="border border-[#E8E0D0] rounded-full text-[#1A1A1A] hover:bg-[rgba(255,248,225,0.5)]">Edit</Button>
-              <Button variant="outline" onClick={handleDelete} className="border border-[#E8E0D0] rounded-full text-[#1A1A1A] hover:bg-[rgba(255,248,225,0.5)]">Delete</Button>
+              <Button variant="outline" onClick={() => setIsEditing(true)} className="border border-border rounded-full text-ink hover:bg-action/[0.06]">Edit</Button>
+              <Button variant="outline" onClick={handleDelete} className="border border-border rounded-full text-ink hover:bg-action/[0.06]">Delete</Button>
             </>
           )}
-          <Button variant="outline" onClick={() => router.push("/content")} className="border border-[#E8E0D0] rounded-full text-[#1A1A1A] hover:bg-[rgba(255,248,225,0.5)]">Back</Button>
+          <Button variant="outline" onClick={() => router.push("/content")} className="border border-border rounded-full text-ink hover:bg-action/[0.06]">Back</Button>
         </div>
       </div>
 
-      <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0] crx-animate-slide crx-delay-1">
+      <div className="bg-surface rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-border crx-animate-slide crx-delay-1">
         <div className="p-6 space-y-4">
           {post.caption && (
             <div>
-              <h4 className="text-xs font-medium text-[#7A7A7A] mb-1 uppercase tracking-wide">Caption</h4>
-              <p className="text-sm whitespace-pre-wrap text-[#1A1A1A]">{post.caption}</p>
+              <h4 className="text-xs font-medium text-ink-3 mb-1 uppercase tracking-wide">Caption</h4>
+              <p className="text-sm whitespace-pre-wrap text-ink">{post.caption}</p>
             </div>
           )}
           <div className="grid grid-cols-2 gap-4 text-sm">
-            <div><span className="text-[#7A7A7A]">Project:</span> <span className="text-[#1A1A1A]">{post.project?.name}</span></div>
-            <div><span className="text-[#7A7A7A]">Client:</span> <span className="text-[#1A1A1A]">{post.project?.client?.companyName || "--"}</span></div>
-            <div><span className="text-[#7A7A7A]">Account:</span> <span className="text-[#1A1A1A]">{post.account ? `${post.account.platform?.name}: ${post.account.handle}` : "--"}</span></div>
-            <div><span className="text-[#7A7A7A]">Created by:</span> <span className="text-[#1A1A1A]">{post.createdBy?.name}</span></div>
-            <div><span className="text-[#7A7A7A]">Scheduled:</span> <span className="text-[#1A1A1A]">{post.scheduledAt ? new Date(post.scheduledAt).toLocaleString() : "--"}</span></div>
-            <div><span className="text-[#7A7A7A]">Published:</span> <span className="text-[#1A1A1A]">{post.publishedAt ? new Date(post.publishedAt).toLocaleString() : "--"}</span></div>
-            <div><span className="text-[#7A7A7A]">Created:</span> <span className="text-[#1A1A1A]">{new Date(post.createdAt).toLocaleString()}</span></div>
-            <div><span className="text-[#7A7A7A]">Updated:</span> <span className="text-[#1A1A1A]">{new Date(post.updatedAt).toLocaleString()}</span></div>
+            <div><span className="text-ink-3">Project:</span> <span className="text-ink">{post.project?.name}</span></div>
+            <div><span className="text-ink-3">Client:</span> <span className="text-ink">{post.project?.client?.companyName || "--"}</span></div>
+            <div><span className="text-ink-3">Account:</span> <span className="text-ink">{post.account ? `${post.account.platform?.name}: ${post.account.handle}` : "--"}</span></div>
+            <div><span className="text-ink-3">Created by:</span> <span className="text-ink">{post.createdBy?.name}</span></div>
+            <div><span className="text-ink-3">Scheduled:</span> <span className="text-ink">{post.scheduledAt ? new Date(post.scheduledAt).toLocaleString() : "--"}</span></div>
+            <div><span className="text-ink-3">Published:</span> <span className="text-ink">{post.publishedAt ? new Date(post.publishedAt).toLocaleString() : "--"}</span></div>
+            <div><span className="text-ink-3">Created:</span> <span className="text-ink">{new Date(post.createdAt).toLocaleString()}</span></div>
+            <div><span className="text-ink-3">Updated:</span> <span className="text-ink">{new Date(post.updatedAt).toLocaleString()}</span></div>
           </div>
         </div>
       </div>
 
       {/* Media URLs */}
       {post.mediaUrls?.length > 0 && (
-        <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0] crx-animate-slide crx-delay-2">
-          <div className="px-6 py-4 border-b border-[#F0EAD8]">
-            <h3 className="text-base font-serif text-[#1A1A1A] font-medium">Media ({post.mediaUrls.length})</h3>
+        <div className="bg-surface rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-border crx-animate-slide crx-delay-2">
+          <div className="px-6 py-4 border-b border-border">
+            <h3 className="text-base font-serif text-ink font-medium">Media ({post.mediaUrls.length})</h3>
           </div>
           <div className="p-6">
             <div className="grid grid-cols-2 gap-3">
               {post.mediaUrls.map((url: string, i: number) => (
-                <div key={i} className="border border-[#E8E0D0] rounded-xl overflow-hidden">
+                <div key={i} className="border border-border rounded-xl overflow-hidden">
                   <img
                     src={url}
                     alt={`Media ${i + 1}`}
@@ -187,7 +187,7 @@ export default function ContentDetailPage() {
                       const img = e.target as HTMLImageElement;
                       img.style.display = "none";
                       const fallback = document.createElement("div");
-                      fallback.className = "flex items-center justify-center h-40 bg-[rgba(255,248,225,0.5)] text-xs text-[#7A7A7A] p-2 break-all";
+                      fallback.className = "flex items-center justify-center h-40 bg-muted/60 text-xs text-ink-3 p-2 break-all";
                       fallback.textContent = url;
                       img.parentElement?.appendChild(fallback);
                     }}
@@ -196,7 +196,7 @@ export default function ContentDetailPage() {
                     href={url}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="block p-2 text-xs text-[#1A1A1A] hover:text-[#F5D547] truncate"
+                    className="block p-2 text-xs text-ink hover:text-action truncate"
                   >
                     {url}
                   </a>
@@ -209,9 +209,9 @@ export default function ContentDetailPage() {
 
       {/* Status Actions */}
       {actions.length > 0 && (
-        <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0] crx-animate-slide crx-delay-3">
-          <div className="px-6 py-4 border-b border-[#F0EAD8]">
-            <h3 className="text-base font-serif text-[#1A1A1A] font-medium">Actions</h3>
+        <div className="bg-surface rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-border crx-animate-slide crx-delay-3">
+          <div className="px-6 py-4 border-b border-border">
+            <h3 className="text-base font-serif text-ink font-medium">Actions</h3>
           </div>
           <div className="p-6">
             <div className="flex flex-wrap gap-2">
@@ -222,7 +222,7 @@ export default function ContentDetailPage() {
                   size="sm"
                   onClick={() => handleStatusChange(action.status)}
                   disabled={transitioning}
-                  className={action.variant === "default" ? "bg-[#1A1A1A] text-white rounded-full hover:bg-[#2B2B2B]" : "border border-[#E8E0D0] rounded-full text-[#1A1A1A] hover:bg-[rgba(255,248,225,0.5)]"}
+                  className={action.variant === "default" ? "bg-action text-[#06121B] rounded-full hover:opacity-90" : "border border-border rounded-full text-ink hover:bg-action/[0.06]"}
                 >
                   {action.label}
                 </Button>
@@ -233,43 +233,43 @@ export default function ContentDetailPage() {
       )}
 
       {/* Comments */}
-      <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0]">
-        <div className="px-6 py-4 border-b border-[#F0EAD8]">
-          <h3 className="text-base font-serif text-[#1A1A1A] font-medium">Comments {comments.length > 0 && <span className="text-[#7A7A7A] font-sans text-sm font-normal">({comments.length})</span>}</h3>
+      <div className="bg-surface rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-border">
+        <div className="px-6 py-4 border-b border-border">
+          <h3 className="text-base font-serif text-ink font-medium">Comments {comments.length > 0 && <span className="text-ink-3 font-sans text-sm font-normal">({comments.length})</span>}</h3>
         </div>
         <div className="p-6 space-y-4">
           {comments.length === 0 ? (
-            <p className="text-sm text-[#B0B0B0] text-center py-4">No comments yet</p>
+            <p className="text-sm text-ink-4 text-center py-4">No comments yet</p>
           ) : (
             <div className="space-y-4">
               {comments.map((c: any) => (
                 <div key={c.id} className="flex gap-3">
-                  <div className="h-8 w-8 rounded-full bg-[#FFF3C4] flex items-center justify-center text-xs font-bold text-[#B8960C] shrink-0">
+                  <div className="h-8 w-8 rounded-full bg-action-soft flex items-center justify-center text-xs font-bold text-gold shrink-0">
                     {c.author?.name?.[0]?.toUpperCase() || "?"}
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-baseline gap-2 mb-1">
-                      <span className="text-sm font-medium text-[#1A1A1A]">{c.author?.name || "Unknown"}</span>
-                      <span className="text-xs text-[#B0B0B0]">{new Date(c.createdAt).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</span>
+                      <span className="text-sm font-medium text-ink">{c.author?.name || "Unknown"}</span>
+                      <span className="text-xs text-ink-4">{new Date(c.createdAt).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</span>
                     </div>
-                    <p className="text-sm text-[#3A3A3A] whitespace-pre-wrap">{c.body}</p>
+                    <p className="text-sm text-ink-2 whitespace-pre-wrap">{c.body}</p>
                   </div>
                 </div>
               ))}
             </div>
           )}
-          <form onSubmit={handleAddComment} className="flex gap-3 pt-2 border-t border-[#F0EAD8]">
+          <form onSubmit={handleAddComment} className="flex gap-3 pt-2 border-t border-border">
             <textarea
               value={commentBody}
               onChange={(e) => setCommentBody(e.target.value)}
               placeholder="Add a comment..."
               rows={2}
-              className="flex-1 border border-[#E8E0D0] bg-white rounded-lg px-3 py-2 text-sm text-[#1A1A1A] placeholder:text-[#B0B0B0] focus:outline-none focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547] transition-colors resize-none"
+              className="flex-1 border border-border bg-surface rounded-lg px-3 py-2 text-sm text-ink placeholder:text-ink-4 focus:outline-none focus:ring-2 focus:ring-action focus:border-action transition-colors resize-none"
             />
             <button
               type="submit"
               disabled={submittingComment || !commentBody.trim()}
-              className="self-end flex items-center gap-1.5 bg-[#1A1A1A] text-white py-2 px-4 rounded-full text-sm font-semibold hover:bg-[#2B2B2B] disabled:opacity-40 transition-all"
+              className="self-end flex items-center gap-1.5 bg-action text-[#06121B] py-2 px-4 rounded-full text-sm font-semibold hover:opacity-90 disabled:opacity-40 transition-all"
             >
               <Send size={14} /> {submittingComment ? "Posting..." : "Post"}
             </button>

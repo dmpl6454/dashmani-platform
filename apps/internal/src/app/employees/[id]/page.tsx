@@ -16,7 +16,7 @@ import { useAuth } from "@/lib/auth";
 import { useRouter } from "next/navigation";
 import { formatStatus } from "@dashmani/shared";
 
-const inputClass = "w-full border border-[#E8E0D0] bg-white rounded-lg px-4 py-2.5 text-sm text-[#1A1A1A] placeholder:text-[#B0B0B0] focus:outline-none focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547] transition-colors";
+const inputClass = "w-full border border-border bg-surface rounded-lg px-4 py-2.5 text-sm text-ink placeholder:text-ink-4 focus:outline-none focus:ring-2 focus:ring-action focus:border-action transition-colors";
 
 function formatCurrency(n: number) {
   return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(n);
@@ -71,10 +71,10 @@ export default function EmployeeDetailPage() {
     if (profileData?.data?.jobDescription) setJdForm(profileData.data.jobDescription);
   }, [profileData]);
 
-  if (isLoading) return <div className="flex items-center justify-center h-64"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#F5D547]" /></div>;
+  if (isLoading) return <div className="flex items-center justify-center h-64"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-action" /></div>;
 
   const employee = (data as any)?.data;
-  if (!employee) return <div className="text-[#7A7A7A] text-center py-8">Employee not found</div>;
+  if (!employee) return <div className="text-ink-3 text-center py-8">Employee not found</div>;
 
   const profile = profileData?.data;
   const docs = docsData?.data || [];
@@ -221,16 +221,16 @@ export default function EmployeeDetailPage() {
         <div className="flex items-center gap-3 sm:gap-4 min-w-0">
           <div className="relative shrink-0">
             {employee.profileImageUrl ? (
-              <img src={employee.profileImageUrl.startsWith("http") ? employee.profileImageUrl : `${API_BASE}${employee.profileImageUrl}`} alt="" className="h-12 w-12 sm:h-16 sm:w-16 rounded-2xl object-cover border-2 border-[#E8E0D0]" />
+              <img src={employee.profileImageUrl.startsWith("http") ? employee.profileImageUrl : `${API_BASE}${employee.profileImageUrl}`} alt="" className="h-12 w-12 sm:h-16 sm:w-16 rounded-2xl object-cover border-2 border-border" />
             ) : (
-              <div className="h-12 w-12 sm:h-16 sm:w-16 rounded-2xl bg-[#FFF3C4] flex items-center justify-center border-2 border-[#E8E0D0]">
-                <User className="h-5 w-5 sm:h-7 sm:w-7 text-[#7A7A7A]" />
+              <div className="h-12 w-12 sm:h-16 sm:w-16 rounded-2xl bg-action-soft flex items-center justify-center border-2 border-border">
+                <User className="h-5 w-5 sm:h-7 sm:w-7 text-ink-3" />
               </div>
             )}
           </div>
           <div className="min-w-0">
-            <h1 className="font-serif text-xl sm:text-3xl font-light text-[#1A1A1A] truncate">{employee.name}</h1>
-            <p className="text-xs sm:text-sm text-[#7A7A7A] truncate">{employee.email} {profile?.designation ? `· ${profile.designation}` : ""}</p>
+            <h1 className="font-serif text-xl sm:text-3xl font-light text-ink truncate">{employee.name}</h1>
+            <p className="text-xs sm:text-sm text-ink-3 truncate">{employee.email} {profile?.designation ? `· ${profile.designation}` : ""}</p>
             {employee.roles?.length > 0 && (
               <div className="flex flex-wrap gap-1.5 mt-2">
                 {employee.roles.map((r: any) => {
@@ -243,9 +243,9 @@ export default function EmployeeDetailPage() {
             )}
             {employee.teams?.length > 0 && (
               <div className="flex flex-wrap items-center gap-1.5 mt-2">
-                <span className="text-[11px] text-[#7A7A7A]">Teams:</span>
+                <span className="text-[11px] text-ink-3">Teams:</span>
                 {employee.teams.map((t: any) => (
-                  <span key={t.id} className={`rounded-full px-2.5 py-0.5 text-[11px] font-medium border ${t.isPrimary ? "bg-indigo-soft text-indigo border-indigo/30" : "bg-[#FFF8E1] text-[#1A1A1A] border-[#E8E0D0]"}`}>
+                  <span key={t.id} className={`rounded-full px-2.5 py-0.5 text-[11px] font-medium border ${t.isPrimary ? "bg-indigo-soft text-indigo border-indigo/30" : "bg-action-soft text-ink border-border"}`}>
                     {t.name}{t.isPrimary ? " · Primary" : ""}
                   </span>
                 ))}
@@ -256,7 +256,7 @@ export default function EmployeeDetailPage() {
         <div className="flex flex-wrap gap-2 sm:shrink-0">
           <Link
             href={`/employees/${id}/performance`}
-            className="flex items-center gap-2 bg-[#1A1A1A] text-white py-2.5 px-5 rounded-full text-sm font-semibold hover:bg-[#2B2B2B] transition-all"
+            className="flex items-center gap-2 bg-action text-[#06121B] py-2.5 px-5 rounded-full text-sm font-semibold hover:opacity-90 transition-all"
           >
             <BarChart3 className="h-4 w-4" /> Performance
           </Link>
@@ -274,31 +274,31 @@ export default function EmployeeDetailPage() {
       {/* Quick Stats */}
       {profile && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-          <div className="bg-white rounded-xl border border-[#E8E0D0] p-4">
-            <p className="text-xs text-[#7A7A7A]">Salary</p>
-            <p className="text-lg font-semibold text-[#1A1A1A]">{profile.salary ? formatCurrency(profile.salary) : "—"}</p>
+          <div className="bg-surface rounded-xl border border-border p-4">
+            <p className="text-xs text-ink-3">Salary</p>
+            <p className="text-lg font-semibold text-ink">{profile.salary ? formatCurrency(profile.salary) : "—"}</p>
           </div>
-          <div className="bg-white rounded-xl border border-[#E8E0D0] p-4">
-            <p className="text-xs text-[#7A7A7A]">Status</p>
+          <div className="bg-surface rounded-xl border border-border p-4">
+            <p className="text-xs text-ink-3">Status</p>
             <span className={`inline-block text-xs font-semibold px-3 py-1 rounded-full ${
               employee.status === "ACTIVE" ? "bg-green-50 text-green-700" :
-              employee.status === "ONBOARDING" ? "bg-[#FFF3C4] text-[#1A1A1A]" :
+              employee.status === "ONBOARDING" ? "bg-action-soft text-ink" :
               "bg-red-50 text-red-700"
             }`}>{formatStatus(employee.status)}</span>
           </div>
-          <div className="bg-white rounded-xl border border-[#E8E0D0] p-4">
-            <p className="text-xs text-[#7A7A7A]">Total Incentives</p>
-            <p className="text-lg font-semibold text-[#1A1A1A]">{formatCurrency(incentives.reduce((s: number, i: any) => s + i.amount, 0))}</p>
+          <div className="bg-surface rounded-xl border border-border p-4">
+            <p className="text-xs text-ink-3">Total Incentives</p>
+            <p className="text-lg font-semibold text-ink">{formatCurrency(incentives.reduce((s: number, i: any) => s + i.amount, 0))}</p>
           </div>
-          <div className="bg-white rounded-xl border border-[#E8E0D0] p-4">
-            <p className="text-xs text-[#7A7A7A]">Avg Review Rating</p>
-            <p className="text-lg font-semibold text-[#1A1A1A]">{reviews.length ? (reviews.reduce((s: number, r: any) => s + r.rating, 0) / reviews.length).toFixed(1) + "/5" : "—"}</p>
+          <div className="bg-surface rounded-xl border border-border p-4">
+            <p className="text-xs text-ink-3">Avg Review Rating</p>
+            <p className="text-lg font-semibold text-ink">{reviews.length ? (reviews.reduce((s: number, r: any) => s + r.rating, 0) / reviews.length).toFixed(1) + "/5" : "—"}</p>
           </div>
         </div>
       )}
 
       {/* Tabs */}
-      <div className="flex gap-2 border-b border-[#E8E0D0] overflow-x-auto">
+      <div className="flex gap-2 border-b border-border overflow-x-auto">
         {tabs.map((tab) => {
           const Icon = tab.icon;
           return (
@@ -307,14 +307,14 @@ export default function EmployeeDetailPage() {
               onClick={() => setActiveTab(tab.key)}
               className={`flex items-center gap-2 px-5 py-3 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
                 activeTab === tab.key
-                  ? "border-[#F5D547] text-[#1A1A1A]"
-                  : "border-transparent text-[#7A7A7A] hover:text-[#1A1A1A]"
+                  ? "border-action text-ink"
+                  : "border-transparent text-ink-3 hover:text-ink"
               }`}
             >
               <Icon size={16} />
               {tab.label}
               {tab.count != null && tab.count > 0 && (
-                <span className="ml-1 bg-[rgba(245,213,71,0.25)] text-[#B8960C] text-xs font-semibold rounded-full px-2 py-0.5">{tab.count}</span>
+                <span className="ml-1 bg-[rgb(var(--t-action)/0.25)] text-gold text-xs font-semibold rounded-full px-2 py-0.5">{tab.count}</span>
               )}
             </button>
           );
@@ -335,20 +335,20 @@ export default function EmployeeDetailPage() {
           )}
 
           {/* Job Description */}
-          <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-[#E8E0D0] p-6">
+          <div className="bg-surface rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-border p-6">
             <div className="flex items-center gap-3 mb-4">
-              <Briefcase className="h-5 w-5 text-[#7A7A7A]" />
-              <h3 className="text-lg font-semibold text-[#1A1A1A]">Job Description</h3>
+              <Briefcase className="h-5 w-5 text-ink-3" />
+              <h3 className="text-lg font-semibold text-ink">Job Description</h3>
             </div>
             <textarea
               value={jdForm}
               onChange={(e) => setJdForm(e.target.value)}
               rows={5}
               placeholder="Enter job description, responsibilities, and expectations..."
-              className="w-full border border-[#E8E0D0] bg-white rounded-lg px-4 py-2.5 text-sm text-[#1A1A1A] placeholder:text-[#B0B0B0] focus:outline-none focus:ring-2 focus:ring-[#F5D547] transition-colors resize-none"
+              className="w-full border border-border bg-surface rounded-lg px-4 py-2.5 text-sm text-ink placeholder:text-ink-4 focus:outline-none focus:ring-2 focus:ring-action transition-colors resize-none"
             />
             <div className="mt-3 flex justify-end">
-              <button onClick={saveJobDescription} disabled={savingJd} className="bg-[#1A1A1A] text-white py-2 px-5 rounded-full text-sm font-semibold hover:bg-[#2B2B2B] disabled:opacity-50 transition-all">
+              <button onClick={saveJobDescription} disabled={savingJd} className="bg-action text-[#06121B] py-2 px-5 rounded-full text-sm font-semibold hover:opacity-90 disabled:opacity-50 transition-all">
                 {savingJd ? "Saving..." : "Save Job Description"}
               </button>
             </div>
@@ -356,11 +356,11 @@ export default function EmployeeDetailPage() {
 
           {/* Employee Submitted Data — editable by admin */}
           {profile && (
-            <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-[#E8E0D0] p-6 space-y-4">
+            <div className="bg-surface rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-border p-6 space-y-4">
               <div className="flex items-center justify-between">
-                <h3 className="text-lg font-semibold text-[#1A1A1A] flex items-center gap-2"><CreditCard className="h-5 w-5 text-[#7A7A7A]" /> Employee Submitted Data</h3>
+                <h3 className="text-lg font-semibold text-ink flex items-center gap-2"><CreditCard className="h-5 w-5 text-ink-3" /> Employee Submitted Data</h3>
                 {!isEditingProfile && (
-                  <button onClick={startEditProfile} className="flex items-center gap-1.5 text-xs text-[#7A7A7A] hover:text-[#1A1A1A] border border-[#F0EAD8] hover:border-[#E8D8B4] rounded-lg px-3 py-1.5 transition-all">
+                  <button onClick={startEditProfile} className="flex items-center gap-1.5 text-xs text-ink-3 hover:text-ink border border-border hover:border-border rounded-lg px-3 py-1.5 transition-all">
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
                     Edit
                   </button>
@@ -370,7 +370,7 @@ export default function EmployeeDetailPage() {
               {isEditingProfile ? (
                 <form onSubmit={saveProfileData} className="space-y-4">
                   <div>
-                    <p className="text-xs font-semibold text-[#7A7A7A] uppercase tracking-wider mb-3">Bank Details</p>
+                    <p className="text-xs font-semibold text-ink-3 uppercase tracking-wider mb-3">Bank Details</p>
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                       {[
                         { key: "bankName", label: "Bank Name" },
@@ -380,33 +380,33 @@ export default function EmployeeDetailPage() {
                         { key: "ifscCode", label: "IFSC Code" },
                       ].map(({ key, label }) => (
                         <div key={key}>
-                          <label className="block text-xs text-[#7A7A7A] mb-1">{label}</label>
+                          <label className="block text-xs text-ink-3 mb-1">{label}</label>
                           <input className={inputClass} value={profileEditForm[key] || ""} onChange={(e) => setProfileEditForm({ ...profileEditForm, [key]: e.target.value })} placeholder={label} />
                         </div>
                       ))}
                     </div>
                   </div>
                   <div>
-                    <p className="text-xs font-semibold text-[#7A7A7A] uppercase tracking-wider mb-3">ID Documents</p>
+                    <p className="text-xs font-semibold text-ink-3 uppercase tracking-wider mb-3">ID Documents</p>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       {[{ key: "aadhaarNumber", label: "Aadhaar Number" }, { key: "panNumber", label: "PAN Number" }].map(({ key, label }) => (
                         <div key={key}>
-                          <label className="block text-xs text-[#7A7A7A] mb-1">{label}</label>
+                          <label className="block text-xs text-ink-3 mb-1">{label}</label>
                           <input className={inputClass} value={profileEditForm[key] || ""} onChange={(e) => setProfileEditForm({ ...profileEditForm, [key]: e.target.value })} placeholder={label} />
                         </div>
                       ))}
                     </div>
                   </div>
                   <div>
-                    <label className="block text-xs text-[#7A7A7A] mb-1">Mailing Address</label>
+                    <label className="block text-xs text-ink-3 mb-1">Mailing Address</label>
                     <textarea rows={2} className={inputClass + " resize-none"} value={profileEditForm.mailingAddress || ""} onChange={(e) => setProfileEditForm({ ...profileEditForm, mailingAddress: e.target.value })} placeholder="Full mailing address" />
                   </div>
                   <div>
-                    <p className="text-xs font-semibold text-[#7A7A7A] uppercase tracking-wider mb-3">Emergency Contacts</p>
+                    <p className="text-xs font-semibold text-ink-3 uppercase tracking-wider mb-3">Emergency Contacts</p>
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
                       {[{ key: "familyContact1Name", label: "Contact 1 Name" }, { key: "familyContact1Relation", label: "Relation" }, { key: "familyContact1Phone", label: "Phone" }].map(({ key, label }) => (
                         <div key={key}>
-                          <label className="block text-xs text-[#7A7A7A] mb-1">{label}</label>
+                          <label className="block text-xs text-ink-3 mb-1">{label}</label>
                           <input className={inputClass} value={profileEditForm[key] || ""} onChange={(e) => setProfileEditForm({ ...profileEditForm, [key]: e.target.value })} placeholder={label} />
                         </div>
                       ))}
@@ -414,17 +414,17 @@ export default function EmployeeDetailPage() {
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                       {[{ key: "familyContact2Name", label: "Contact 2 Name" }, { key: "familyContact2Relation", label: "Relation" }, { key: "familyContact2Phone", label: "Phone" }].map(({ key, label }) => (
                         <div key={key}>
-                          <label className="block text-xs text-[#7A7A7A] mb-1">{label}</label>
+                          <label className="block text-xs text-ink-3 mb-1">{label}</label>
                           <input className={inputClass} value={profileEditForm[key] || ""} onChange={(e) => setProfileEditForm({ ...profileEditForm, [key]: e.target.value })} placeholder={label} />
                         </div>
                       ))}
                     </div>
                   </div>
                   <div className="flex gap-3 pt-2">
-                    <button type="submit" disabled={savingProfile} className="flex items-center gap-2 bg-[#1A1A1A] text-white py-2 px-5 rounded-full text-sm font-semibold hover:bg-[#2B2B2B] disabled:opacity-50 transition-all">
+                    <button type="submit" disabled={savingProfile} className="flex items-center gap-2 bg-action text-[#06121B] py-2 px-5 rounded-full text-sm font-semibold hover:opacity-90 disabled:opacity-50 transition-all">
                       <Check className="h-3.5 w-3.5" /> {savingProfile ? "Saving..." : "Save Changes"}
                     </button>
-                    <button type="button" onClick={() => setIsEditingProfile(false)} className="flex items-center gap-2 border border-[#F0EAD8] text-[#7A7A7A] py-2 px-5 rounded-full text-sm hover:border-[#E8D8B4] transition-all">
+                    <button type="button" onClick={() => setIsEditingProfile(false)} className="flex items-center gap-2 border border-border text-ink-3 py-2 px-5 rounded-full text-sm hover:border-border transition-all">
                       <X className="h-3.5 w-3.5" /> Cancel
                     </button>
                   </div>
@@ -443,7 +443,7 @@ export default function EmployeeDetailPage() {
                   </div>
                   {(profile.familyContact1Name || profile.familyContact2Name) && (
                     <>
-                      <h4 className="text-sm font-semibold text-[#1A1A1A] flex items-center gap-2 pt-2"><UsersIcon className="h-4 w-4 text-[#7A7A7A]" /> Emergency Contacts</h4>
+                      <h4 className="text-sm font-semibold text-ink flex items-center gap-2 pt-2"><UsersIcon className="h-4 w-4 text-ink-3" /> Emergency Contacts</h4>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
                         {profile.familyContact1Name && <InfoField label="Contact 1" value={`${profile.familyContact1Name} (${profile.familyContact1Relation || "—"}) - ${profile.familyContact1Phone || "—"}`} />}
                         {profile.familyContact2Name && <InfoField label="Contact 2" value={`${profile.familyContact2Name} (${profile.familyContact2Relation || "—"}) - ${profile.familyContact2Phone || "—"}`} />}
@@ -459,26 +459,26 @@ export default function EmployeeDetailPage() {
 
       {/* Tasks Tab */}
       {activeTab === "tasks" && (
-        <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-[#E8E0D0]">
+        <div className="bg-surface rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-border">
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-[#F0EAD8]">
-                  <th className="text-left p-4 text-[#7A7A7A] text-xs font-medium">Task</th>
-                  <th className="text-left p-4 text-[#7A7A7A] text-xs font-medium">Priority</th>
-                  <th className="text-left p-4 text-[#7A7A7A] text-xs font-medium">Status</th>
-                  <th className="text-left p-4 text-[#7A7A7A] text-xs font-medium">Due Date</th>
-                  <th className="text-left p-4 text-[#7A7A7A] text-xs font-medium">Account</th>
+                <tr className="border-b border-border">
+                  <th className="text-left p-4 text-ink-3 text-xs font-medium">Task</th>
+                  <th className="text-left p-4 text-ink-3 text-xs font-medium">Priority</th>
+                  <th className="text-left p-4 text-ink-3 text-xs font-medium">Status</th>
+                  <th className="text-left p-4 text-ink-3 text-xs font-medium">Due Date</th>
+                  <th className="text-left p-4 text-ink-3 text-xs font-medium">Account</th>
                 </tr>
               </thead>
               <tbody>
                 {tasks.length === 0 ? (
-                  <tr><td colSpan={5} className="p-8 text-center text-[#7A7A7A]"><ListTodo className="h-8 w-8 mx-auto mb-2 opacity-30" />No tasks assigned</td></tr>
+                  <tr><td colSpan={5} className="p-8 text-center text-ink-3"><ListTodo className="h-8 w-8 mx-auto mb-2 opacity-30" />No tasks assigned</td></tr>
                 ) : tasks.map((task: any) => (
-                  <tr key={task.id} className="border-b border-[#F0EAD8] last:border-0 hover:bg-[rgba(255,248,225,0.5)]">
+                  <tr key={task.id} className="border-b border-border last:border-0 hover:bg-action/[0.06]">
                     <td className="p-4">
-                      <p className="font-medium text-[#1A1A1A]">{task.title}</p>
-                      {task.description && <p className="text-xs text-[#7A7A7A] mt-0.5 line-clamp-1">{task.description}</p>}
+                      <p className="font-medium text-ink">{task.title}</p>
+                      {task.description && <p className="text-xs text-ink-3 mt-0.5 line-clamp-1">{task.description}</p>}
                     </td>
                     <td className="p-4">
                       <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${
@@ -494,8 +494,8 @@ export default function EmployeeDetailPage() {
                         "bg-gray-100 text-gray-700"
                       }`}>{formatStatus(task.status)}</span>
                     </td>
-                    <td className="p-4 text-[#7A7A7A]">{task.dueDate ? new Date(task.dueDate).toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : "\u2014"}</td>
-                    <td className="p-4 text-[#7A7A7A]">{task.account?.handle || task.account?.displayName || "\u2014"}</td>
+                    <td className="p-4 text-ink-3">{task.dueDate ? new Date(task.dueDate).toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : "\u2014"}</td>
+                    <td className="p-4 text-ink-3">{task.account?.handle || task.account?.displayName || "\u2014"}</td>
                   </tr>
                 ))}
               </tbody>
@@ -506,9 +506,9 @@ export default function EmployeeDetailPage() {
 
       {/* Accounts Tab */}
       {activeTab === "accounts" && (
-        <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-[#E8E0D0]">
+        <div className="bg-surface rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-border">
           {assignedAccounts.length === 0 ? (
-            <div className="p-10 text-center text-[#7A7A7A]">
+            <div className="p-10 text-center text-ink-3">
               <MonitorSmartphone className="h-10 w-10 mx-auto mb-3 opacity-30" />
               <p className="font-medium mb-1">No accounts assigned</p>
               <p className="text-sm">Assign social media accounts from the <Link href="/accounts" className="text-blue-600 hover:underline">Accounts</Link> page.</p>
@@ -516,21 +516,21 @@ export default function EmployeeDetailPage() {
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 p-5">
               {assignedAccounts.map((a: any) => (
-                <div key={a.id} className="border border-[#E8E0D0] rounded-xl p-4 hover:border-[#F5D547] transition-colors">
+                <div key={a.id} className="border border-border rounded-xl p-4 hover:border-action transition-colors">
                   <div className="flex items-center gap-3 mb-3">
-                    <div className="h-10 w-10 rounded-xl bg-[#FFF3C4] flex items-center justify-center">
-                      <PlatformIcon slug={a.account?.platform?.slug} className="h-5 w-5 text-[#B8960C]" />
+                    <div className="h-10 w-10 rounded-xl bg-action-soft flex items-center justify-center">
+                      <PlatformIcon slug={a.account?.platform?.slug} className="h-5 w-5 text-gold" />
                     </div>
                     <div className="min-w-0 flex-1">
-                      <p className="font-semibold text-[#1A1A1A] truncate">{a.account?.displayName || a.account?.handle}</p>
-                      <p className="text-xs text-[#7A7A7A]">{a.account?.platform?.name} · @{a.account?.handle}</p>
+                      <p className="font-semibold text-ink truncate">{a.account?.displayName || a.account?.handle}</p>
+                      <p className="text-xs text-ink-3">{a.account?.platform?.name} · @{a.account?.handle}</p>
                     </div>
                   </div>
-                  <div className="space-y-1.5 text-xs text-[#7A7A7A]">
-                    {a.account?.clientName && <p>Client: <span className="text-[#1A1A1A] font-medium">{a.account.clientName}</span></p>}
-                    <p>Followers: <span className="text-[#1A1A1A] font-medium">{(a.account?.followerCount || 0).toLocaleString()}</span></p>
-                    <p>Assigned: <span className="text-[#1A1A1A] font-medium">{new Date(a.assignedAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}</span></p>
-                    {a.assigner && <p>By: <span className="text-[#1A1A1A] font-medium">{a.assigner.name}</span></p>}
+                  <div className="space-y-1.5 text-xs text-ink-3">
+                    {a.account?.clientName && <p>Client: <span className="text-ink font-medium">{a.account.clientName}</span></p>}
+                    <p>Followers: <span className="text-ink font-medium">{(a.account?.followerCount || 0).toLocaleString()}</span></p>
+                    <p>Assigned: <span className="text-ink font-medium">{new Date(a.assignedAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}</span></p>
+                    {a.assigner && <p>By: <span className="text-ink font-medium">{a.assigner.name}</span></p>}
                   </div>
                   {a.account?.profileUrl && (
                     <a href={a.account.profileUrl} target="_blank" rel="noopener noreferrer" className="mt-3 flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 font-medium">
@@ -546,23 +546,23 @@ export default function EmployeeDetailPage() {
 
       {/* Documents Tab */}
       {activeTab === "documents" && (
-        <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-[#E8E0D0]">
+        <div className="bg-surface rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-border">
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-[#F0EAD8]">
-                  <th className="text-left p-4 text-[#7A7A7A] text-xs font-medium">Type</th>
-                  <th className="text-left p-4 text-[#7A7A7A] text-xs font-medium">Filename</th>
-                  <th className="text-left p-4 text-[#7A7A7A] text-xs font-medium">Status</th>
-                  <th className="text-left p-4 text-[#7A7A7A] text-xs font-medium">Uploaded</th>
-                  <th className="text-left p-4 text-[#7A7A7A] text-xs font-medium">Actions</th>
+                <tr className="border-b border-border">
+                  <th className="text-left p-4 text-ink-3 text-xs font-medium">Type</th>
+                  <th className="text-left p-4 text-ink-3 text-xs font-medium">Filename</th>
+                  <th className="text-left p-4 text-ink-3 text-xs font-medium">Status</th>
+                  <th className="text-left p-4 text-ink-3 text-xs font-medium">Uploaded</th>
+                  <th className="text-left p-4 text-ink-3 text-xs font-medium">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {docs.length === 0 ? (
-                  <tr><td colSpan={5} className="p-8 text-center text-[#7A7A7A]">No documents uploaded</td></tr>
+                  <tr><td colSpan={5} className="p-8 text-center text-ink-3">No documents uploaded</td></tr>
                 ) : docs.map((doc: any) => (
-                  <tr key={doc.id} className="border-b border-[#F0EAD8] last:border-0 hover:bg-[rgba(255,248,225,0.5)]">
+                  <tr key={doc.id} className="border-b border-border last:border-0 hover:bg-action/[0.06]">
                     <td className="p-4 font-medium">{doc.documentType}</td>
                     <td className="p-4">{doc.fileName}</td>
                     <td className="p-4">
@@ -572,14 +572,14 @@ export default function EmployeeDetailPage() {
                         "bg-yellow-50 text-yellow-700"
                       }`}>{formatStatus(doc.status)}</span>
                     </td>
-                    <td className="p-4 text-[#7A7A7A]">{new Date(doc.createdAt).toLocaleDateString()}</td>
+                    <td className="p-4 text-ink-3">{new Date(doc.createdAt).toLocaleDateString()}</td>
                     <td className="p-4">
                       {doc.filePath && (
                         <a
                           href={doc.filePath.startsWith("http") ? doc.filePath : `${API_BASE}${doc.filePath}`}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="flex items-center gap-1 text-xs font-medium text-[#1A1A1A] hover:text-[#F5D547] transition-colors"
+                          className="flex items-center gap-1 text-xs font-medium text-ink hover:text-action transition-colors"
                         >
                           <Eye size={13} /> View
                         </a>
@@ -595,26 +595,26 @@ export default function EmployeeDetailPage() {
 
       {/* Extra Hours Tab */}
       {activeTab === "hours" && (
-        <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-[#E8E0D0]">
+        <div className="bg-surface rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-border">
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-[#F0EAD8]">
-                  <th className="text-left p-4 text-[#7A7A7A] text-xs font-medium">Date</th>
-                  <th className="text-left p-4 text-[#7A7A7A] text-xs font-medium">Hours</th>
-                  <th className="text-left p-4 text-[#7A7A7A] text-xs font-medium">Description</th>
-                  <th className="text-left p-4 text-[#7A7A7A] text-xs font-medium">Status</th>
-                  <th className="text-left p-4 text-[#7A7A7A] text-xs font-medium">Actions</th>
+                <tr className="border-b border-border">
+                  <th className="text-left p-4 text-ink-3 text-xs font-medium">Date</th>
+                  <th className="text-left p-4 text-ink-3 text-xs font-medium">Hours</th>
+                  <th className="text-left p-4 text-ink-3 text-xs font-medium">Description</th>
+                  <th className="text-left p-4 text-ink-3 text-xs font-medium">Status</th>
+                  <th className="text-left p-4 text-ink-3 text-xs font-medium">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {extraHours.length === 0 ? (
-                  <tr><td colSpan={5} className="p-8 text-center text-[#7A7A7A]">No extra work hours logged</td></tr>
+                  <tr><td colSpan={5} className="p-8 text-center text-ink-3">No extra work hours logged</td></tr>
                 ) : extraHours.map((eh: any) => (
-                  <tr key={eh.id} className="border-b border-[#F0EAD8] last:border-0 hover:bg-[rgba(255,248,225,0.5)]">
+                  <tr key={eh.id} className="border-b border-border last:border-0 hover:bg-action/[0.06]">
                     <td className="p-4 font-medium">{new Date(eh.date).toLocaleDateString()}</td>
                     <td className="p-4">{eh.hours}h</td>
-                    <td className="p-4 text-[#7A7A7A] max-w-[200px] truncate">{eh.description || "—"}</td>
+                    <td className="p-4 text-ink-3 max-w-[200px] truncate">{eh.description || "—"}</td>
                     <td className="p-4">
                       <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${
                         eh.status === "APPROVED" ? "bg-green-50 text-green-700" :
@@ -625,10 +625,10 @@ export default function EmployeeDetailPage() {
                     <td className="p-4">
                       {eh.status === "PENDING" && (
                         <div className="flex gap-2">
-                          <button onClick={() => handleExtraHourAction(eh.id, "approve")} className="flex items-center gap-1 rounded-full bg-[rgba(107,203,119,0.12)] text-[#2E7D32] px-3 py-1.5 text-xs font-medium hover:bg-[rgba(107,203,119,0.25)]">
+                          <button onClick={() => handleExtraHourAction(eh.id, "approve")} className="flex items-center gap-1 rounded-full bg-[rgba(107,203,119,0.12)] text-success px-3 py-1.5 text-xs font-medium hover:bg-[rgba(107,203,119,0.25)]">
                             <Check size={13} /> Approve
                           </button>
-                          <button onClick={() => handleExtraHourAction(eh.id, "reject")} className="flex items-center gap-1 rounded-full bg-[rgba(231,76,60,0.1)] text-[#E74C3C] px-3 py-1.5 text-xs font-medium hover:bg-[rgba(231,76,60,0.2)]">
+                          <button onClick={() => handleExtraHourAction(eh.id, "reject")} className="flex items-center gap-1 rounded-full bg-[rgba(231,76,60,0.1)] text-danger px-3 py-1.5 text-xs font-medium hover:bg-[rgba(231,76,60,0.2)]">
                             <X size={13} /> Reject
                           </button>
                         </div>
@@ -645,8 +645,8 @@ export default function EmployeeDetailPage() {
       {/* Incentives Tab */}
       {activeTab === "incentives" && (
         <div className="space-y-5">
-          <form onSubmit={handleAddIncentive} className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-[#E8E0D0] p-5">
-            <p className="font-medium text-[#1A1A1A] mb-3 flex items-center gap-2"><Plus size={16} /> Award Incentive</p>
+          <form onSubmit={handleAddIncentive} className="bg-surface rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-border p-5">
+            <p className="font-medium text-ink mb-3 flex items-center gap-2"><Plus size={16} /> Award Incentive</p>
             <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
               <input type="number" placeholder="Amount (₹)" value={incentiveForm.amount} onChange={(e) => setIncentiveForm({ ...incentiveForm, amount: e.target.value })} required className={inputClass} />
               <input type="text" placeholder="Reason" value={incentiveForm.reason} onChange={(e) => setIncentiveForm({ ...incentiveForm, reason: e.target.value })} required className={inputClass} />
@@ -654,32 +654,32 @@ export default function EmployeeDetailPage() {
               <input type="number" placeholder="Year" value={incentiveForm.year} onChange={(e) => setIncentiveForm({ ...incentiveForm, year: e.target.value })} className={inputClass} />
             </div>
             <div className="mt-3 flex justify-end">
-              <button type="submit" disabled={addingIncentive} className="bg-[#1A1A1A] text-white py-2 px-5 rounded-full text-sm font-semibold hover:bg-[#2B2B2B] disabled:opacity-50">
+              <button type="submit" disabled={addingIncentive} className="bg-action text-[#06121B] py-2 px-5 rounded-full text-sm font-semibold hover:opacity-90 disabled:opacity-50">
                 {addingIncentive ? "Adding..." : "Award Incentive"}
               </button>
             </div>
           </form>
 
-          <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-[#E8E0D0]">
+          <div className="bg-surface rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-border">
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b border-[#F0EAD8]">
-                    <th className="text-left p-4 text-[#7A7A7A] text-xs font-medium">Amount</th>
-                    <th className="text-left p-4 text-[#7A7A7A] text-xs font-medium">Reason</th>
-                    <th className="text-left p-4 text-[#7A7A7A] text-xs font-medium">Period</th>
-                    <th className="text-left p-4 text-[#7A7A7A] text-xs font-medium">Date</th>
+                  <tr className="border-b border-border">
+                    <th className="text-left p-4 text-ink-3 text-xs font-medium">Amount</th>
+                    <th className="text-left p-4 text-ink-3 text-xs font-medium">Reason</th>
+                    <th className="text-left p-4 text-ink-3 text-xs font-medium">Period</th>
+                    <th className="text-left p-4 text-ink-3 text-xs font-medium">Date</th>
                   </tr>
                 </thead>
                 <tbody>
                   {incentives.length === 0 ? (
-                    <tr><td colSpan={4} className="p-8 text-center text-[#7A7A7A]">No incentives awarded</td></tr>
+                    <tr><td colSpan={4} className="p-8 text-center text-ink-3">No incentives awarded</td></tr>
                   ) : incentives.map((inc: any) => (
-                    <tr key={inc.id} className="border-b border-[#F0EAD8] last:border-0 hover:bg-[rgba(255,248,225,0.5)]">
-                      <td className="p-4 font-semibold text-[#1A1A1A]">{formatCurrency(inc.amount)}</td>
+                    <tr key={inc.id} className="border-b border-border last:border-0 hover:bg-action/[0.06]">
+                      <td className="p-4 font-semibold text-ink">{formatCurrency(inc.amount)}</td>
                       <td className="p-4">{inc.reason}</td>
-                      <td className="p-4 text-[#7A7A7A]">{inc.month && inc.year ? `${inc.month}/${inc.year}` : "—"}</td>
-                      <td className="p-4 text-[#7A7A7A]">{new Date(inc.createdAt).toLocaleDateString()}</td>
+                      <td className="p-4 text-ink-3">{inc.month && inc.year ? `${inc.month}/${inc.year}` : "—"}</td>
+                      <td className="p-4 text-ink-3">{new Date(inc.createdAt).toLocaleDateString()}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -692,8 +692,8 @@ export default function EmployeeDetailPage() {
       {/* Reviews Tab */}
       {activeTab === "reviews" && (
         <div className="space-y-5">
-          <form onSubmit={handleAddReview} className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-[#E8E0D0] p-5">
-            <p className="font-medium text-[#1A1A1A] mb-3 flex items-center gap-2"><Plus size={16} /> Add Performance Review</p>
+          <form onSubmit={handleAddReview} className="bg-surface rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-border p-5">
+            <p className="font-medium text-ink mb-3 flex items-center gap-2"><Plus size={16} /> Add Performance Review</p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <input type="text" placeholder="Review Period (e.g., Q1 2026)" value={reviewForm.period} onChange={(e) => setReviewForm({ ...reviewForm, period: e.target.value })} required className={inputClass} />
               <select value={reviewForm.rating} onChange={(e) => setReviewForm({ ...reviewForm, rating: e.target.value })} className={inputClass}>
@@ -709,7 +709,7 @@ export default function EmployeeDetailPage() {
               <textarea placeholder="Goals for Next Period..." value={reviewForm.goals} onChange={(e) => setReviewForm({ ...reviewForm, goals: e.target.value })} rows={2} className={inputClass} />
             </div>
             <div className="mt-3 flex justify-end">
-              <button type="submit" disabled={addingReview} className="bg-[#1A1A1A] text-white py-2 px-5 rounded-full text-sm font-semibold hover:bg-[#2B2B2B] disabled:opacity-50">
+              <button type="submit" disabled={addingReview} className="bg-action text-[#06121B] py-2 px-5 rounded-full text-sm font-semibold hover:opacity-90 disabled:opacity-50">
                 {addingReview ? "Submitting..." : "Submit Review"}
               </button>
             </div>
@@ -717,26 +717,26 @@ export default function EmployeeDetailPage() {
 
           <div className="space-y-4">
             {reviews.length === 0 ? (
-              <div className="bg-white rounded-2xl border border-[#E8E0D0] p-8 text-center text-[#7A7A7A]">No reviews yet</div>
+              <div className="bg-surface rounded-2xl border border-border p-8 text-center text-ink-3">No reviews yet</div>
             ) : reviews.map((review: any) => (
-              <div key={review.id} className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-[#E8E0D0] p-5">
+              <div key={review.id} className="bg-surface rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-border p-5">
                 <div className="flex items-center justify-between mb-3">
                   <div>
-                    <p className="font-semibold text-[#1A1A1A]">{review.period}</p>
-                    <p className="text-xs text-[#7A7A7A]">by {review.reviewer?.name ?? "Unknown Reviewer"} · {new Date(review.createdAt).toLocaleDateString()}</p>
+                    <p className="font-semibold text-ink">{review.period}</p>
+                    <p className="text-xs text-ink-3">by {review.reviewer?.name ?? "Unknown Reviewer"} · {new Date(review.createdAt).toLocaleDateString()}</p>
                   </div>
                   <div className="flex items-center gap-1">
                     {[1,2,3,4,5].map(s => (
-                      <div key={s} className={`h-3 w-3 rounded-full ${s <= review.rating ? "bg-[#F5D547]" : "bg-[#E8E0D0]"}`} />
+                      <div key={s} className={`h-3 w-3 rounded-full ${s <= review.rating ? "bg-action" : "bg-border"}`} />
                     ))}
                     <span className="ml-2 text-sm font-semibold">{review.rating}/5</span>
                   </div>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
-                  {review.strengths && <div><p className="text-xs text-[#7A7A7A] mb-1">Strengths</p><p>{review.strengths}</p></div>}
-                  {review.improvements && <div><p className="text-xs text-[#7A7A7A] mb-1">Improvements</p><p>{review.improvements}</p></div>}
-                  {review.comments && <div><p className="text-xs text-[#7A7A7A] mb-1">Comments</p><p>{review.comments}</p></div>}
-                  {review.goals && <div><p className="text-xs text-[#7A7A7A] mb-1">Goals</p><p>{review.goals}</p></div>}
+                  {review.strengths && <div><p className="text-xs text-ink-3 mb-1">Strengths</p><p>{review.strengths}</p></div>}
+                  {review.improvements && <div><p className="text-xs text-ink-3 mb-1">Improvements</p><p>{review.improvements}</p></div>}
+                  {review.comments && <div><p className="text-xs text-ink-3 mb-1">Comments</p><p>{review.comments}</p></div>}
+                  {review.goals && <div><p className="text-xs text-ink-3 mb-1">Goals</p><p>{review.goals}</p></div>}
                 </div>
               </div>
             ))}
@@ -746,9 +746,9 @@ export default function EmployeeDetailPage() {
 
       {/* Devices Tab */}
       {activeTab === "devices" && (
-        <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-[#E8E0D0]">
+        <div className="bg-surface rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-border">
           {employeeDevices.length === 0 ? (
-            <div className="p-10 text-center text-[#7A7A7A]">
+            <div className="p-10 text-center text-ink-3">
               <Laptop className="h-10 w-10 mx-auto mb-3 opacity-30" />
               <p className="font-medium mb-1">No devices assigned</p>
               <p className="text-sm">Assign devices from the <Link href="/devices" className="text-blue-600 hover:underline">Devices</Link> page.</p>
@@ -758,22 +758,22 @@ export default function EmployeeDetailPage() {
               {employeeDevices.map((d: any) => {
                 const Icon = d.type === "PHONE" || d.type === "TABLET" ? Smartphone : d.type === "MONITOR" ? Monitor : d.type === "HEADSET" ? Headphones : Laptop;
                 return (
-                  <div key={d.id} className="border border-[#E8E0D0] rounded-xl p-4 hover:border-[#F5D547] transition-colors">
+                  <div key={d.id} className="border border-border rounded-xl p-4 hover:border-action transition-colors">
                     <div className="flex items-center gap-3 mb-3">
-                      <div className="h-10 w-10 rounded-xl bg-[#FFF3C4] flex items-center justify-center">
-                        <Icon className="h-5 w-5 text-[#B8960C]" />
+                      <div className="h-10 w-10 rounded-xl bg-action-soft flex items-center justify-center">
+                        <Icon className="h-5 w-5 text-gold" />
                       </div>
                       <div className="min-w-0 flex-1">
-                        <p className="font-semibold text-[#1A1A1A] truncate">{d.brand} {d.model}</p>
-                        <p className="text-xs text-[#7A7A7A]">{d.type}</p>
+                        <p className="font-semibold text-ink truncate">{d.brand} {d.model}</p>
+                        <p className="text-xs text-ink-3">{d.type}</p>
                       </div>
                     </div>
-                    <div className="space-y-1.5 text-xs text-[#7A7A7A]">
-                      <p>Condition: <span className="text-[#1A1A1A] font-medium">{d.condition}</span></p>
-                      {d.serialNumber && <p>S/N: <span className="text-[#1A1A1A] font-medium">{d.serialNumber}</span></p>}
-                      {d.assetTag && <p>Tag: <span className="text-[#1A1A1A] font-medium">{d.assetTag}</span></p>}
-                      <p>Assigned: <span className="text-[#1A1A1A] font-medium">{new Date(d.assignedAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}</span></p>
-                      {d.notes && <p className="text-[#7A7A7A] italic mt-1">{d.notes}</p>}
+                    <div className="space-y-1.5 text-xs text-ink-3">
+                      <p>Condition: <span className="text-ink font-medium">{d.condition}</span></p>
+                      {d.serialNumber && <p>S/N: <span className="text-ink font-medium">{d.serialNumber}</span></p>}
+                      {d.assetTag && <p>Tag: <span className="text-ink font-medium">{d.assetTag}</span></p>}
+                      <p>Assigned: <span className="text-ink font-medium">{new Date(d.assignedAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}</span></p>
+                      {d.notes && <p className="text-ink-3 italic mt-1">{d.notes}</p>}
                     </div>
                   </div>
                 );
@@ -789,8 +789,8 @@ export default function EmployeeDetailPage() {
 function InfoField({ label, value }: { label: string; value?: string | null }) {
   return (
     <div>
-      <p className="text-xs text-[#7A7A7A] mb-0.5">{label}</p>
-      <p className="text-[#1A1A1A] bg-[#FEFCF7] rounded-lg px-3 py-2 border border-[#E8E0D0]">{value || "—"}</p>
+      <p className="text-xs text-ink-3 mb-0.5">{label}</p>
+      <p className="text-ink bg-surface rounded-lg px-3 py-2 border border-border">{value || "—"}</p>
     </div>
   );
 }
@@ -832,12 +832,12 @@ function RoleManager({ employeeId, allRoles, currentRoles }: { employeeId: strin
   }
 
   return (
-    <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-[#E8E0D0] p-6 max-w-2xl">
+    <div className="bg-surface rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-border p-6 max-w-2xl">
       <div className="flex items-center gap-3 mb-4">
-        <UsersIcon className="h-5 w-5 text-[#7A7A7A]" />
-        <h3 className="text-lg font-semibold text-[#1A1A1A]">Role Assignment</h3>
+        <UsersIcon className="h-5 w-5 text-ink-3" />
+        <h3 className="text-lg font-semibold text-ink">Role Assignment</h3>
       </div>
-      <p className="text-xs text-[#7A7A7A] mb-4">Roles control what this employee can see and do. Every employee must have at least one role.</p>
+      <p className="text-xs text-ink-3 mb-4">Roles control what this employee can see and do. Every employee must have at least one role.</p>
       <div className="flex flex-wrap gap-2 mb-5">
         {allRoles.map((role: any) => {
           const active = selected.has(role.id);
@@ -850,9 +850,9 @@ function RoleManager({ employeeId, allRoles, currentRoles }: { employeeId: strin
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border transition-all ${
                 active
                   ? isLast
-                    ? "bg-[#1A1A1A] text-white border-[#1A1A1A] opacity-60 cursor-not-allowed"
-                    : "bg-[#1A1A1A] text-white border-[#1A1A1A]"
-                  : "bg-white text-[#7A7A7A] border-[#E8E0D0] hover:border-[#B0B0B0]"
+                    ? "bg-action text-[#06121B] border-[#33506A] opacity-60 cursor-not-allowed"
+                    : "bg-action text-[#06121B] border-[#33506A]"
+                  : "bg-surface text-ink-3 border-border hover:border-border"
               }`}
             >
               {active ? <Check size={11} /> : <Plus size={11} />}
@@ -871,7 +871,7 @@ function RoleManager({ employeeId, allRoles, currentRoles }: { employeeId: strin
         <button
           onClick={handleSave}
           disabled={saving || noneSelected}
-          className="bg-[#1A1A1A] text-white py-2 px-5 rounded-full text-sm font-semibold hover:bg-[#2B2B2B] disabled:opacity-50 transition-all"
+          className="bg-action text-[#06121B] py-2 px-5 rounded-full text-sm font-semibold hover:opacity-90 disabled:opacity-50 transition-all"
         >
           {saving ? "Saving..." : "Save Roles"}
         </button>

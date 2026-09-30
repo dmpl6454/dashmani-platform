@@ -140,22 +140,22 @@ export function TrueLinksPanel({
     : null;
 
   return (
-    <div className="bg-white rounded-2xl border border-[#E8E0D0] transition-shadow duration-200 hover:shadow-[0_8px_32px_rgba(0,0,0,0.06)]">
+    <div className="bg-surface rounded-2xl border border-border transition-shadow duration-200 hover:shadow-[0_8px_32px_rgba(0,0,0,0.06)]">
       {/* Header / collapsed summary */}
       <div className="p-5 flex flex-wrap items-center gap-x-4 gap-y-3">
         <div className="h-10 w-10 rounded-xl bg-emerald-50 shadow-[0_2px_8px_rgba(16,185,129,0.12)] flex items-center justify-center shrink-0">
           <Link2 className="h-5 w-5 text-emerald-600" />
         </div>
         <div className="min-w-0 flex-1">
-          <p className="text-xs text-[#7A7A7A] font-medium">{headline.label}</p>
+          <p className="text-xs text-ink-3 font-medium">{headline.label}</p>
           {/* Raw (ungrouped) headline number — matches the neighboring stat cards,
               which render values unformatted. Grouped formatting stays in the
               chips/table below where digit density is higher. headline.value is
               already "—" for every no-data state (loading/failed/gated). */}
-          <p className="font-num font-light text-[32px] text-[#1A1A1A] leading-tight">
+          <p className="font-num font-light text-[32px] text-ink leading-tight">
             {headline.value}
           </p>
-          <p className="text-xs text-[#B0B0B0] mt-0.5">{headline.sub}</p>
+          <p className="text-xs text-ink-4 mt-0.5">{headline.sub}</p>
         </div>
         {!isLoading && dupChip && (
           <span className="text-xs font-medium text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-full px-3 py-1.5">
@@ -170,20 +170,20 @@ export function TrueLinksPanel({
             type="button"
             onClick={() => setExpanded((v) => !v)}
             aria-expanded={expanded}
-            className="inline-flex items-center gap-1.5 text-xs font-medium text-[#1A1A1A] bg-[#FEFCF8] border border-[#E8E0D0] rounded-full px-3 py-1.5 hover:shadow-sm transition-shadow"
+            className="inline-flex items-center gap-1.5 text-xs font-medium text-ink bg-surface border border-border rounded-full px-3 py-1.5 hover:shadow-sm transition-shadow"
           >
             {expanded ? "Hide breakdown" : "By employee"}
             {expanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
           </button>
         )}
         {failed && (
-          <span className="text-xs text-[#B0B0B0]">Couldn&apos;t load — retrying quietly</span>
+          <span className="text-xs text-ink-4">Couldn&apos;t load — retrying quietly</span>
         )}
       </div>
 
       {/* Expanded: sortable per-employee leaderboard (team-wide; selected employee highlighted) */}
       {expanded && rows.length > 0 && (
-        <div className="border-t border-[#F0EAD9]">
+        <div className="border-t border-border">
           <div className="overflow-x-auto">
             <table className="w-full text-sm min-w-[640px]">
               <thead>
@@ -196,7 +196,7 @@ export function TrueLinksPanel({
                         key={col.key}
                         title={col.title}
                         className={`px-5 py-3 text-[11px] font-semibold uppercase tracking-wide select-none cursor-pointer whitespace-nowrap ${
-                          active ? "text-[#1A1A1A]" : "text-[#9A9A9A]"
+                          active ? "text-ink" : "text-ink-3"
                         } ${col.key !== "name" ? "text-right" : ""}`}
                         onClick={() => toggleSort(col.key)}
                       >
@@ -216,11 +216,11 @@ export function TrueLinksPanel({
                   return (
                     <tr
                       key={r.id}
-                      className={`border-t border-[#F5F0E4] ${
-                        isSelected ? "bg-amber-50/60" : "hover:bg-[#FEFCF8]"
+                      className={`border-t border-border ${
+                        isSelected ? "bg-amber-50/60" : "hover:bg-surface"
                       }`}
                     >
-                      <td className="px-5 py-2.5 font-medium text-[#1A1A1A] whitespace-nowrap">
+                      <td className="px-5 py-2.5 font-medium text-ink whitespace-nowrap">
                         {r.name}
                         {isSelected && (
                           <span className="ml-2 text-[10px] font-semibold text-amber-600 uppercase">selected</span>
@@ -232,13 +232,13 @@ export function TrueLinksPanel({
                             {nf.format(r.sharedDupLinks)}
                           </span>
                         ) : (
-                          <span className="text-[#C9C2B2]">0</span>
+                          <span className="text-ink-4">0</span>
                         )}
                       </td>
                       <td className="px-5 py-2.5 text-right font-num tabular-nums">{nf.format(r.trueUniqueLinks)}</td>
-                      <td className="px-5 py-2.5 text-right font-num tabular-nums text-[#7A7A7A]">{nf.format(r.distinctLinks)}</td>
-                      <td className="px-5 py-2.5 text-right font-num tabular-nums text-[#7A7A7A]">{nf.format(r.totalSubmissions)}</td>
-                      <td className="px-5 py-2.5 text-right font-num tabular-nums text-[#7A7A7A]">
+                      <td className="px-5 py-2.5 text-right font-num tabular-nums text-ink-3">{nf.format(r.distinctLinks)}</td>
+                      <td className="px-5 py-2.5 text-right font-num tabular-nums text-ink-3">{nf.format(r.totalSubmissions)}</td>
+                      <td className="px-5 py-2.5 text-right font-num tabular-nums text-ink-3">
                         {(rate * 100).toFixed(1)}%
                       </td>
                     </tr>
@@ -247,7 +247,7 @@ export function TrueLinksPanel({
               </tbody>
             </table>
           </div>
-          <p className="px-5 py-3 text-[11px] text-[#B0B0B0] border-t border-[#F5F0E4]">
+          <p className="px-5 py-3 text-[11px] text-ink-4 border-t border-border">
             &ldquo;Shared&rdquo; means at least one <em>other</em> employee posted the same post (any team) —
             allowed, shown for visibility. Counting uses the same link-identity rules as submission dedupe,
             so tracking-token variants of one post count once.

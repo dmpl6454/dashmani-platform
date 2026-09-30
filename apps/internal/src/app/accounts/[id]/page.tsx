@@ -30,7 +30,7 @@ function fmtDate(d: string) {
 function BarTip({ active, payload, label }: any) {
   if (!active || !payload?.length) return null;
   return (
-    <div className="bg-ink text-white text-xs rounded-lg px-3 py-2 shadow-lg">
+    <div className="bg-action text-[#06121B] text-xs rounded-lg px-3 py-2 shadow-lg">
       <p className="font-semibold mb-0.5">{label}</p>
       <p>{payload[0].value} links</p>
     </div>
@@ -40,7 +40,7 @@ function BarTip({ active, payload, label }: any) {
 function FollowerTip({ active, payload, label }: any) {
   if (!active || !payload?.length) return null;
   return (
-    <div className="bg-ink text-white text-xs rounded-lg px-3 py-2 shadow-lg">
+    <div className="bg-action text-[#06121B] text-xs rounded-lg px-3 py-2 shadow-lg">
       <p className="font-semibold mb-0.5">{label}</p>
       <p>{Number(payload[0].value).toLocaleString()} followers</p>
     </div>
@@ -112,17 +112,17 @@ export default function AccountDetailPage() {
     });
   }, []);
 
-  if (isLoading) return <div className="flex items-center justify-center h-64"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#F5D547]" /></div>;
+  if (isLoading) return <div className="flex items-center justify-center h-64"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-action" /></div>;
   const account = (data as any)?.data;
-  if (!account) return <div className="text-[#7A7A7A] text-center py-8">Account not found</div>;
+  if (!account) return <div className="text-ink-3 text-center py-8">Account not found</div>;
 
   const activeAssignments = account.assignments?.filter((a: any) => !a.unassignedAt) || [];
   const pastAssignments = account.assignments?.filter((a: any) => a.unassignedAt) || [];
 
   const statusBadge: Record<string, string> = {
-    ACTIVE: "bg-[rgba(107,203,119,0.12)] text-[#6BCB77]",
-    PAUSED: "bg-[#FFF3C4] text-[#1A1A1A]",
-    ARCHIVED: "bg-[rgba(0,0,0,0.06)] text-[#7A7A7A]",
+    ACTIVE: "bg-[rgba(107,203,119,0.12)] text-success",
+    PAUSED: "bg-action-soft text-ink",
+    ARCHIVED: "bg-[rgba(0,0,0,0.06)] text-ink-3",
   };
 
   async function handleAssign() {
@@ -165,45 +165,45 @@ export default function AccountDetailPage() {
       {/* Header */}
       <div className="flex items-start justify-between">
         <div>
-          <h1 className="font-serif text-4xl font-light text-[#1A1A1A]">{account.displayName}</h1>
-          <p className="text-[#7A7A7A] mt-1">{account.handle} on {account.platform?.name}</p>
+          <h1 className="font-serif text-4xl font-light text-ink">{account.displayName}</h1>
+          <p className="text-ink-3 mt-1">{account.handle} on {account.platform?.name}</p>
           <div className="flex gap-2 mt-3">
-            <span className={`rounded-full px-3 py-1 text-xs font-medium ${statusBadge[account.status] || "bg-[rgba(0,0,0,0.06)] text-[#7A7A7A]"}`}>{account.status}</span>
-            <span className="rounded-full px-3 py-1 text-xs font-medium bg-[#FFF3C4] text-[#1A1A1A]">{account.followerCount?.toLocaleString()} followers</span>
+            <span className={`rounded-full px-3 py-1 text-xs font-medium ${statusBadge[account.status] || "bg-[rgba(0,0,0,0.06)] text-ink-3"}`}>{account.status}</span>
+            <span className="rounded-full px-3 py-1 text-xs font-medium bg-action-soft text-ink">{account.followerCount?.toLocaleString()} followers</span>
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <button
             onClick={() => router.push(`/accounts/${id}/edit`)}
-            className="flex items-center gap-1.5 border border-[#E8E0D0] rounded-full text-[#1A1A1A] hover:bg-[#F0EEFF] hover:border-[#5B4BF5]/30 hover:text-[#5B4BF5] px-4 py-2 text-sm font-medium transition-colors"
+            className="flex items-center gap-1.5 border border-border rounded-full text-ink hover:bg-indigo-soft hover:border-indigo/30 hover:text-indigo px-4 py-2 text-sm font-medium transition-colors"
           >
             <Pencil className="h-4 w-4" /> Edit
           </button>
           <button
             onClick={() => setShowDeleteConfirm(true)}
-            className="flex items-center gap-1.5 border border-[#E8E0D0] rounded-full text-[#1A1A1A] hover:bg-red-50 hover:border-red-200 hover:text-red-600 px-4 py-2 text-sm font-medium transition-colors"
+            className="flex items-center gap-1.5 border border-border rounded-full text-ink hover:bg-red-50 hover:border-red-200 hover:text-red-600 px-4 py-2 text-sm font-medium transition-colors"
           >
             <Trash2 className="h-4 w-4" /> Delete
           </button>
-          <Button variant="outline" onClick={() => router.push("/accounts")} className="border border-[#E8E0D0] rounded-full text-[#1A1A1A] hover:bg-[rgba(255,248,225,0.5)]">Back</Button>
+          <Button variant="outline" onClick={() => router.push("/accounts")} className="border border-border rounded-full text-ink hover:bg-action/[0.06]">Back</Button>
         </div>
       </div>
 
       {account.clientName && (
-        <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0] p-6 crx-animate-slide crx-delay-1">
-          <span className="text-sm text-[#7A7A7A]">Client:</span>{" "}
-          <span className="font-medium text-[#1A1A1A]">{account.clientName}</span>
+        <div className="bg-surface rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-border p-6 crx-animate-slide crx-delay-1">
+          <span className="text-sm text-ink-3">Client:</span>{" "}
+          <span className="font-medium text-ink">{account.clientName}</span>
         </div>
       )}
 
       {/* Active assignments */}
-      <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0] crx-animate-slide crx-delay-2">
-        <div className="px-6 py-4 border-b border-[#F0EAD8]">
-          <h3 className="text-base font-serif text-[#1A1A1A] font-medium">Active Assignments ({activeAssignments.length})</h3>
+      <div className="bg-surface rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-border crx-animate-slide crx-delay-2">
+        <div className="px-6 py-4 border-b border-border">
+          <h3 className="text-base font-serif text-ink font-medium">Active Assignments ({activeAssignments.length})</h3>
         </div>
         <div className="p-6 space-y-3">
           {activeAssignments.map((a: any) => (
-            <div key={a.id} className="flex items-center justify-between border-b border-[#F0EAD8] pb-2 last:border-0">
+            <div key={a.id} className="flex items-center justify-between border-b border-border pb-2 last:border-0">
               <div className="flex items-center gap-3">
                 <div
                   className="h-7 w-7 rounded-full flex items-center justify-center text-white text-xs font-semibold shrink-0"
@@ -212,17 +212,17 @@ export default function AccountDetailPage() {
                   {a.employee?.name?.[0]?.toUpperCase()}
                 </div>
                 <div>
-                  <span className="font-medium text-sm text-[#1A1A1A]">{a.employee?.name}</span>
-                  <span className="text-xs text-[#B0B0B0] ml-2">since {new Date(a.assignedAt).toLocaleDateString()}</span>
-                  {a.reason && <p className="text-xs text-[#7A7A7A]">{a.reason}</p>}
+                  <span className="font-medium text-sm text-ink">{a.employee?.name}</span>
+                  <span className="text-xs text-ink-4 ml-2">since {new Date(a.assignedAt).toLocaleDateString()}</span>
+                  {a.reason && <p className="text-xs text-ink-3">{a.reason}</p>}
                 </div>
               </div>
-              <Button variant="outline" size="sm" onClick={() => handleUnassign(a.employee.id)} className="border border-[#E8E0D0] rounded-full text-[#1A1A1A] hover:bg-[rgba(255,248,225,0.5)]">Remove</Button>
+              <Button variant="outline" size="sm" onClick={() => handleUnassign(a.employee.id)} className="border border-border rounded-full text-ink hover:bg-action/[0.06]">Remove</Button>
             </div>
           ))}
           <div className="flex gap-2 pt-2">
             <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[#B0B0B0] pointer-events-none" />
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-ink-4 pointer-events-none" />
               <input
                 type="text"
                 value={empOpen ? empSearch : (employees.find((e: any) => e.id === selectedEmployee)?.name || empSearch)}
@@ -230,7 +230,7 @@ export default function AccountDetailPage() {
                 onFocus={() => { setEmpOpen(true); setEmpSearch(""); }}
                 onBlur={() => setTimeout(() => setEmpOpen(false), 150)}
                 placeholder={`Search ${employees.length} employees…`}
-                className="w-full h-10 rounded-lg border border-[#E8E0D0] bg-white pl-9 pr-3 text-sm focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547] outline-none"
+                className="w-full h-10 rounded-lg border border-border bg-surface pl-9 pr-3 text-sm focus:ring-2 focus:ring-action focus:border-action outline-none"
                 autoComplete="off"
               />
               {empOpen && (() => {
@@ -238,19 +238,19 @@ export default function AccountDetailPage() {
                 const q = empSearch.trim().toLowerCase();
                 const filtered = q ? available.filter((e: any) => (e.name || "").toLowerCase().includes(q) || (e.email || "").toLowerCase().includes(q)) : available;
                 return (
-                  <div className="absolute z-10 mt-1 w-full max-h-60 overflow-y-auto bg-white border border-[#E8E0D0] rounded-lg shadow-lg">
+                  <div className="absolute z-10 mt-1 w-full max-h-60 overflow-y-auto bg-surface border border-border rounded-lg shadow-lg">
                     {filtered.length === 0 ? (
-                      <div className="px-4 py-3 text-sm text-[#7A7A7A]">{q ? `No employees match "${empSearch}"` : "All employees are already assigned"}</div>
+                      <div className="px-4 py-3 text-sm text-ink-3">{q ? `No employees match "${empSearch}"` : "All employees are already assigned"}</div>
                     ) : (
                       filtered.map((e: any) => (
                         <button
                           key={e.id}
                           type="button"
                           onMouseDown={(ev) => { ev.preventDefault(); setSelectedEmployee(e.id); setEmpSearch(""); setEmpOpen(false); }}
-                          className={`w-full text-left px-4 py-2 text-sm hover:bg-[rgba(255,248,225,0.5)] transition-colors flex items-center justify-between ${selectedEmployee === e.id ? "bg-[#FFF3C4]" : ""}`}
+                          className={`w-full text-left px-4 py-2 text-sm hover:bg-action/[0.06] transition-colors flex items-center justify-between ${selectedEmployee === e.id ? "bg-action-soft" : ""}`}
                         >
-                          <span className="text-[#1A1A1A]">{e.name}</span>
-                          {e.email && <span className="text-xs text-[#B0B0B0] ml-2 truncate">{e.email}</span>}
+                          <span className="text-ink">{e.name}</span>
+                          {e.email && <span className="text-xs text-ink-4 ml-2 truncate">{e.email}</span>}
                         </button>
                       ))
                     )}
@@ -258,7 +258,7 @@ export default function AccountDetailPage() {
                 );
               })()}
             </div>
-            <Button onClick={handleAssign} disabled={!selectedEmployee || assigning} className="bg-[#1A1A1A] text-white rounded-full hover:bg-[#2B2B2B]">
+            <Button onClick={handleAssign} disabled={!selectedEmployee || assigning} className="bg-action text-[#06121B] rounded-full hover:opacity-90">
               {assigning ? "..." : "Assign"}
             </Button>
           </div>
@@ -423,8 +423,8 @@ export default function AccountDetailPage() {
                 onClick={() => setGrowthDays(w)}
                 className={`text-[11px] px-2.5 py-0.5 rounded-full border transition-colors ${
                   growthDays === w
-                    ? "bg-[#1A1A1A] text-white border-[#1A1A1A]"
-                    : "text-[#7A7A7A] border-[#E8E0D0] hover:border-[#1A1A1A]"
+                    ? "bg-action text-[#06121B] border-[#33506A]"
+                    : "text-ink-3 border-border hover:border-[#33506A]"
                 }`}
               >
                 {w}d
@@ -447,7 +447,7 @@ export default function AccountDetailPage() {
                 <p className="font-num text-2xl font-semibold text-ink leading-none">{fmtCompact(growthLast)}</p>
                 <p className="text-[10px] text-ink-4 mt-1">current followers</p>
               </div>
-              <span className={`inline-flex items-center gap-1 text-sm font-semibold pb-0.5 ${growthUp ? "text-[#3E9B4F]" : growthDown ? "text-[#D14343]" : "text-ink-4"}`}>
+              <span className={`inline-flex items-center gap-1 text-sm font-semibold pb-0.5 ${growthUp ? "text-success" : growthDown ? "text-danger" : "text-ink-4"}`}>
                 {growthUp && <TrendingUp className="h-4 w-4 shrink-0" />}
                 {growthDown && <TrendingDown className="h-4 w-4 shrink-0" />}
                 {(growthDelta ?? 0) > 0 ? "+" : ""}{fmtCompact(growthDelta)}
@@ -488,25 +488,25 @@ export default function AccountDetailPage() {
       {/* Delete Confirmation Modal */}
       {showDeleteConfirm && (
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => !deleting && setShowDeleteConfirm(false)}>
-          <div className="bg-white rounded-2xl border border-[#E8E0D0] shadow-[0_8px_40px_rgba(0,0,0,0.12)] w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+          <div className="bg-surface rounded-2xl border border-border shadow-[0_8px_40px_rgba(0,0,0,0.12)] w-full max-w-md" onClick={(e) => e.stopPropagation()}>
             <div className="px-6 py-5">
               <div className="flex items-start gap-4">
                 <div className="h-10 w-10 rounded-xl bg-red-50 flex items-center justify-center shrink-0">
                   <Trash2 className="h-5 w-5 text-red-600" />
                 </div>
                 <div className="flex-1">
-                  <h3 className="font-medium text-[#1A1A1A]">Delete account?</h3>
-                  <p className="text-sm text-[#7A7A7A] mt-1">
+                  <h3 className="font-medium text-ink">Delete account?</h3>
+                  <p className="text-sm text-ink-3 mt-1">
                     This will permanently delete <strong>{account.displayName}</strong> ({account.handle}). If the account has tasks, posts, or report links, you'll need to archive it instead.
                   </p>
                 </div>
               </div>
             </div>
-            <div className="px-6 py-4 border-t border-[#F0EAD8] flex items-center justify-end gap-2">
+            <div className="px-6 py-4 border-t border-border flex items-center justify-end gap-2">
               <button
                 onClick={() => setShowDeleteConfirm(false)}
                 disabled={deleting}
-                className="px-4 py-2 text-sm text-[#7A7A7A] hover:text-[#1A1A1A] transition-colors disabled:opacity-50"
+                className="px-4 py-2 text-sm text-ink-3 hover:text-ink transition-colors disabled:opacity-50"
               >
                 Cancel
               </button>
@@ -524,18 +524,18 @@ export default function AccountDetailPage() {
 
       {/* Past assignments */}
       {pastAssignments.length > 0 && (
-        <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0] crx-animate-slide crx-delay-3">
-          <div className="px-6 py-4 border-b border-[#F0EAD8]">
-            <h3 className="text-base font-serif text-[#1A1A1A] font-medium">Assignment History</h3>
+        <div className="bg-surface rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-border crx-animate-slide crx-delay-3">
+          <div className="px-6 py-4 border-b border-border">
+            <h3 className="text-base font-serif text-ink font-medium">Assignment History</h3>
           </div>
           <div className="p-6">
             {pastAssignments.map((a: any) => (
-              <div key={a.id} className="text-sm border-b border-[#F0EAD8] pb-2 mb-2 last:border-0">
-                <span className="font-medium text-[#1A1A1A]">{a.employee?.name}</span>
-                <span className="text-[#7A7A7A] ml-2">
+              <div key={a.id} className="text-sm border-b border-border pb-2 mb-2 last:border-0">
+                <span className="font-medium text-ink">{a.employee?.name}</span>
+                <span className="text-ink-3 ml-2">
                   {new Date(a.assignedAt).toLocaleDateString()} &mdash; {new Date(a.unassignedAt).toLocaleDateString()}
                 </span>
-                {a.assigner && <span className="text-xs text-[#B0B0B0] ml-2">by {a.assigner.name}</span>}
+                {a.assigner && <span className="text-xs text-ink-4 ml-2">by {a.assigner.name}</span>}
               </div>
             ))}
           </div>

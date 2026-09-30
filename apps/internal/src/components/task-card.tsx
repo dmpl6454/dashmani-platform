@@ -9,13 +9,13 @@ const PRIORITY_BADGE: Record<string, string> = {
 };
 
 function avatarBg(name: string) {
-  const colors = ["#EDEDFD","#EEF4ED","#FDF0EC","#FFF3C4"];
+  const colors = ["#10222E","#0E2A22","#1B1630","#2A2410"];
   let h = 0;
   for (let i = 0; i < name.length; i++) h = name.charCodeAt(i) + ((h << 5) - h);
   return colors[Math.abs(h) % colors.length];
 }
 function avatarText(name: string) {
-  const colors = ["#5D5FEF","#4A7C52","#E07A5F","#C05826"];
+  const colors = ["#38BDF8","#34D399","#9B7EDE","#E9BD62"];
   let h = 0;
   for (let i = 0; i < name.length; i++) h = name.charCodeAt(i) + ((h << 5) - h);
   return colors[Math.abs(h) % colors.length];

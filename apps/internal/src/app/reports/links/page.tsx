@@ -31,7 +31,7 @@ function fmtWeek(d: string) {
 function AreaTooltip({ active, payload, label }: any) {
   if (!active || !payload?.length) return null;
   return (
-    <div className="bg-ink text-white text-xs rounded-lg px-3 py-2 shadow-lg">
+    <div className="bg-action text-[#06121B] text-xs rounded-lg px-3 py-2 shadow-lg">
       <p className="font-semibold mb-0.5">{label}</p>
       {payload.map((p: any) => (
         <p key={p.dataKey}>{p.name}: {p.value}</p>
@@ -43,7 +43,7 @@ function AreaTooltip({ active, payload, label }: any) {
 function BarTip({ active, payload, label }: any) {
   if (!active || !payload?.length) return null;
   return (
-    <div className="bg-ink text-white text-xs rounded-lg px-3 py-2 shadow-lg">
+    <div className="bg-action text-[#06121B] text-xs rounded-lg px-3 py-2 shadow-lg">
       <p className="font-semibold mb-0.5">Wk of {label}</p>
       <p>{payload[0].value} links</p>
     </div>
@@ -412,33 +412,33 @@ export default function LinksAnalyticsPage() {
           if (!topYouTubeLoading && topLinks.length === 0) return null;
           const windowLbl = rangeLabel(startDate, endDate);
           return (
-            <div className="bg-white rounded-2xl border border-[#E8E0D0] shadow-[0_2px_16px_rgba(0,0,0,0.05)]">
-              <div className="px-6 py-4 border-b border-[#F0EAD8] flex items-center gap-2 flex-wrap">
+            <div className="bg-surface rounded-2xl border border-border shadow-[0_2px_16px_rgba(0,0,0,0.05)]">
+              <div className="px-6 py-4 border-b border-border flex items-center gap-2 flex-wrap">
                 <div className="h-8 w-8 rounded-lg bg-red-50 flex items-center justify-center shrink-0">
                   <Eye className="h-4 w-4 text-red-500" />
                 </div>
-                <h3 className="font-serif text-[#1A1A1A] font-medium">Top YouTube Links</h3>
+                <h3 className="font-serif text-ink font-medium">Top YouTube Links</h3>
                 <div className="flex items-center gap-1 ml-2">
                   <button
                     onClick={() => setYtAllTime(false)}
-                    className={`text-[11px] px-2.5 py-0.5 rounded-full border transition-colors ${!ytAllTime ? "bg-[#1A1A1A] text-white border-[#1A1A1A]" : "text-[#7A7A7A] border-[#E8E0D0] hover:border-[#1A1A1A]"}`}
+                    className={`text-[11px] px-2.5 py-0.5 rounded-full border transition-colors ${!ytAllTime ? "bg-action text-[#06121B] border-[#33506A]" : "text-ink-3 border-border hover:border-[#33506A]"}`}
                   >
                     {windowLbl}
                   </button>
                   <button
                     onClick={() => setYtAllTime(true)}
-                    className={`text-[11px] px-2.5 py-0.5 rounded-full border transition-colors ${ytAllTime ? "bg-[#1A1A1A] text-white border-[#1A1A1A]" : "text-[#7A7A7A] border-[#E8E0D0] hover:border-[#1A1A1A]"}`}
+                    className={`text-[11px] px-2.5 py-0.5 rounded-full border transition-colors ${ytAllTime ? "bg-action text-[#06121B] border-[#33506A]" : "text-ink-3 border-border hover:border-[#33506A]"}`}
                   >
                     All time
                   </button>
                 </div>
-                <span className="ml-auto text-[10px] text-[#B0B0B0] shrink-0">YouTube only</span>
+                <span className="ml-auto text-[10px] text-ink-4 shrink-0">YouTube only</span>
               </div>
               {topYouTubeLoading ? (
-                <div className="px-6 py-4 text-xs text-[#B0B0B0]">Loading…</div>
+                <div className="px-6 py-4 text-xs text-ink-4">Loading…</div>
               ) : (
                 <>
-                  <div className="px-6 py-2 grid grid-cols-[1.5rem_1fr_8rem_5rem_5rem_5rem] gap-3 text-[10px] font-medium text-[#B0B0B0] uppercase tracking-wide border-b border-[#F5F0E8]">
+                  <div className="px-6 py-2 grid grid-cols-[1.5rem_1fr_8rem_5rem_5rem_5rem] gap-3 text-[10px] font-medium text-ink-4 uppercase tracking-wide border-b border-border">
                     <span>#</span>
                     <span>Link</span>
                     <span>Employee</span>
@@ -449,9 +449,9 @@ export default function LinksAnalyticsPage() {
                   <ul className="divide-y divide-[#F5F0E8]">
                     {topLinks.map((link: any, i: number) => (
                       <li key={`${link.linkId ?? link.url}-${i}`} className="px-6 py-3 grid grid-cols-[1.5rem_1fr_8rem_5rem_5rem_5rem] gap-3 items-center">
-                        <span className="text-xs font-medium text-[#B0B0B0]">{i + 1}</span>
-                        <a href={link.url} target="_blank" rel="noopener noreferrer" className="text-xs text-[#1A1A1A] hover:underline truncate min-w-0" title={link.url}>{link.url}</a>
-                        <span className="text-xs text-[#7A7A7A] truncate">{link.employeeName}</span>
+                        <span className="text-xs font-medium text-ink-4">{i + 1}</span>
+                        <a href={link.url} target="_blank" rel="noopener noreferrer" className="text-xs text-ink hover:underline truncate min-w-0" title={link.url}>{link.url}</a>
+                        <span className="text-xs text-ink-3 truncate">{link.employeeName}</span>
                         <span className="inline-flex items-center justify-end gap-1 text-[11px] font-semibold text-rose-700"><Eye className="h-3 w-3 shrink-0" />{fmtCompact(link.views)}</span>
                         <span className="inline-flex items-center justify-end gap-1 text-[11px] font-semibold text-pink-600"><Heart className="h-3 w-3 shrink-0" />{fmtCompact(link.likes)}</span>
                         <span className="inline-flex items-center justify-end gap-1 text-[11px] font-semibold text-slate-500"><MessageCircle className="h-3 w-3 shrink-0" />{fmtCompact(link.comments)}</span>

@@ -52,14 +52,14 @@ export default function TasksPage() {
           {/* View toggle */}
           <div className="flex border-2 border-ink/12 rounded-xl overflow-hidden">
             <button
-              className={`p-2 transition-colors ${view === "kanban" ? "bg-ink text-white" : "text-ink-4 hover:bg-muted"}`}
+              className={`p-2 transition-colors ${view === "kanban" ? "bg-action text-[#06121B]" : "text-ink-4 hover:bg-muted"}`}
               onClick={() => setView("kanban")}
               title="Kanban"
             >
               <LayoutGrid className="h-4 w-4" />
             </button>
             <button
-              className={`p-2 transition-colors ${view === "list" ? "bg-ink text-white" : "text-ink-4 hover:bg-muted"}`}
+              className={`p-2 transition-colors ${view === "list" ? "bg-action text-[#06121B]" : "text-ink-4 hover:bg-muted"}`}
               onClick={() => setView("list")}
               title="List"
             >
@@ -67,7 +67,7 @@ export default function TasksPage() {
             </button>
           </div>
           <Link href="/tasks/new">
-            <button className="h-9 px-4 rounded-full bg-ink text-white text-sm font-bold btn-3d hover:bg-ink-2 transition-colors flex items-center gap-1.5">
+            <button className="h-9 px-4 rounded-full bg-action text-[#06121B] text-sm font-bold btn-3d hover:bg-action-deep transition-colors flex items-center gap-1.5">
               <Plus className="h-4 w-4" /> New Task
             </button>
           </Link>

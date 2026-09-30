@@ -59,7 +59,7 @@ function InstagramGridCard({ link }: { link: LinkData }) {
   const hasEngagement = link.likes != null || link.comments != null || link.shares != null || link.views != null;
 
   return (
-    <div className="rounded-xl border border-[#E8E0D0] bg-white overflow-hidden hover:border-pink-300 hover:shadow-[0_4px_20px_rgba(0,0,0,0.08)] transition-all w-[306px] inline-block align-top">
+    <div className="rounded-xl border border-border bg-surface overflow-hidden hover:border-pink-300 hover:shadow-[0_4px_20px_rgba(0,0,0,0.08)] transition-all w-[306px] inline-block align-top">
       <a href={link.url} target="_blank" rel="noopener noreferrer" className="block relative group">
         <div className="relative w-[306px] h-[180px] overflow-hidden bg-gradient-to-br from-purple-500 via-pink-500 to-orange-400 flex flex-col items-center justify-center gap-3">
           <img src={PLATFORM_ICONS.instagram} alt="" className="h-14 w-14 opacity-80" />
@@ -70,7 +70,7 @@ function InstagramGridCard({ link }: { link: LinkData }) {
               Open Post
             </span>
           </div>
-          <div className="absolute top-2.5 right-2.5 h-7 w-7 rounded-lg bg-white/90 shadow flex items-center justify-center">
+          <div className="absolute top-2.5 right-2.5 h-7 w-7 rounded-lg bg-surface/90 shadow flex items-center justify-center">
             <img src={PLATFORM_ICONS.instagram} alt="" className="h-4 w-4" />
           </div>
         </div>
@@ -82,23 +82,23 @@ function InstagramGridCard({ link }: { link: LinkData }) {
             <div className="h-6 w-6 rounded-full bg-gradient-to-br from-purple-500 via-pink-500 to-orange-400 flex items-center justify-center shrink-0">
               <span className="text-white text-[10px] font-bold">{accountName?.[0]?.toUpperCase() || "I"}</span>
             </div>
-            <span className="text-sm font-medium text-[#1A1A1A] truncate">{accountName || "Instagram"}</span>
+            <span className="text-sm font-medium text-ink truncate">{accountName || "Instagram"}</span>
           </div>
           <a
             href={link.url}
             target="_blank"
             rel="noopener noreferrer"
-            className="shrink-0 h-7 w-7 rounded-lg bg-[#FEFCF7] border border-[#E8E0D0] flex items-center justify-center text-[#7A7A7A] hover:text-pink-600 hover:border-pink-200 transition-all"
+            className="shrink-0 h-7 w-7 rounded-lg bg-surface border border-border flex items-center justify-center text-ink-3 hover:text-pink-600 hover:border-pink-200 transition-all"
           >
             <ExternalLink className="h-3.5 w-3.5" />
           </a>
         </div>
         {link.description && (
-          <p className="text-xs text-[#555] line-clamp-1 mt-1">{link.description}</p>
+          <p className="text-xs text-ink-3 line-clamp-1 mt-1">{link.description}</p>
         )}
-        <p className="text-[10px] text-[#B0B0B0] truncate mt-1">{link.url}</p>
+        <p className="text-[10px] text-ink-4 truncate mt-1">{link.url}</p>
         {hasEngagement && (
-          <div className="flex items-center gap-3 mt-2 pt-2 border-t border-[#F0EAD8]">
+          <div className="flex items-center gap-3 mt-2 pt-2 border-t border-border">
             {link.likes != null && (
               <div className="flex items-center gap-1 text-xs">
                 <Heart className="h-3 w-3 text-red-400" />
@@ -119,7 +119,7 @@ function InstagramGridCard({ link }: { link: LinkData }) {
             )}
             {link.views != null && (
               <div className="flex items-center gap-1 text-xs">
-                <Eye className="h-3 w-3 text-[#7A7A7A]" />
+                <Eye className="h-3 w-3 text-ink-3" />
                 <span className="font-medium">{formatNumber(link.views)}</span>
               </div>
             )}
@@ -137,7 +137,7 @@ function LinkPreviewCardInner({ link }: { link: LinkData }) {
   // Instagram gets its own grid-style card
   if (platform === "instagram") return <InstagramGridCard link={link} />;
 
-  const badgeClass = PLATFORM_COLORS[platform] ?? "bg-[#FFF3C4] text-[#1A1A1A] border-[#E8E0D0]";
+  const badgeClass = PLATFORM_COLORS[platform] ?? "bg-action-soft text-ink border-border";
   const faviconUrl = PLATFORM_ICONS[platform];
   const staticThumb = link.mediaUrl || getStaticThumbnail(link.url, platform);
   const hasEngagement = link.likes != null || link.comments != null || link.shares != null || link.views != null;
@@ -183,7 +183,7 @@ function LinkPreviewCardInner({ link }: { link: LinkData }) {
   const ogTitle = ogData?.title;
 
   return (
-    <div ref={cardRef} className="rounded-xl border border-[#E8E0D0] bg-white overflow-hidden hover:border-[#F5D547] hover:shadow-[0_2px_12px_rgba(0,0,0,0.06)] transition-all group">
+    <div ref={cardRef} className="rounded-xl border border-border bg-surface overflow-hidden hover:border-action hover:shadow-[0_2px_12px_rgba(0,0,0,0.06)] transition-all group">
       <div className="flex">
         {/* Thumbnail */}
         {thumbnail && !imgError ? (
@@ -200,7 +200,7 @@ function LinkPreviewCardInner({ link }: { link: LinkData }) {
               onError={() => setImgError(true)}
             />
             {faviconUrl && (
-              <div className="absolute bottom-1.5 left-1.5 h-5 w-5 rounded bg-white/90 shadow-sm flex items-center justify-center">
+              <div className="absolute bottom-1.5 left-1.5 h-5 w-5 rounded bg-surface/90 shadow-sm flex items-center justify-center">
                 <img src={faviconUrl} alt="" className="h-3 w-3" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
               </div>
             )}
@@ -210,12 +210,12 @@ function LinkPreviewCardInner({ link }: { link: LinkData }) {
             href={link.url}
             target="_blank"
             rel="noopener noreferrer"
-            className="shrink-0 w-[60px] flex items-center justify-center bg-gray-50 border-r border-[#F0EAD8]"
+            className="shrink-0 w-[60px] flex items-center justify-center bg-gray-50 border-r border-border"
           >
             {faviconUrl ? (
               <img src={faviconUrl} alt="" className="h-6 w-6 opacity-60" onError={(e) => { (e.target as HTMLImageElement).replaceWith(Object.assign(document.createElement("div"), { className: "h-6 w-6" })); }} />
             ) : (
-              <ImageIcon className="h-5 w-5 text-[#D0D0D0]" />
+              <ImageIcon className="h-5 w-5 text-ink-3" />
             )}
           </a>
         )}
@@ -228,21 +228,21 @@ function LinkPreviewCardInner({ link }: { link: LinkData }) {
                 <span className={`rounded-full px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide border ${badgeClass}`}>
                   {link.platform ?? "—"}
                 </span>
-                <span className="text-sm font-medium text-[#1A1A1A] truncate">
+                <span className="text-sm font-medium text-ink truncate">
                   {link.accountName ?? link.account?.name ?? "—"}
                 </span>
               </div>
               {(ogTitle || link.description) && (
-                <p className="text-xs text-[#555] line-clamp-2 mb-1">{link.description || ogTitle}</p>
+                <p className="text-xs text-ink-3 line-clamp-2 mb-1">{link.description || ogTitle}</p>
               )}
-              <p className="text-[10px] text-[#B0B0B0] truncate">{link.url}</p>
+              <p className="text-[10px] text-ink-4 truncate">{link.url}</p>
             </div>
             <div className="flex items-center gap-1.5 shrink-0">
               <a
                 href={link.url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="shrink-0 h-8 w-8 rounded-lg bg-[#FEFCF7] border border-[#E8E0D0] flex items-center justify-center text-[#7A7A7A] hover:text-[#1A1A1A] hover:border-[#F5D547] transition-all"
+                className="shrink-0 h-8 w-8 rounded-lg bg-surface border border-border flex items-center justify-center text-ink-3 hover:text-ink hover:border-action transition-all"
               >
                 <ExternalLink className="h-3.5 w-3.5" />
               </a>
@@ -250,33 +250,33 @@ function LinkPreviewCardInner({ link }: { link: LinkData }) {
           </div>
 
           {hasEngagement && (
-            <div className="flex items-center gap-4 mt-2 pt-2 border-t border-[#F0EAD8]">
+            <div className="flex items-center gap-4 mt-2 pt-2 border-t border-border">
               {link.likes != null && (
                 <div className="flex items-center gap-1 text-xs">
                   <Heart className="h-3 w-3 text-red-400" />
-                  <span className="font-medium text-[#1A1A1A]">{formatNumber(link.likes)}</span>
+                  <span className="font-medium text-ink">{formatNumber(link.likes)}</span>
                 </div>
               )}
               {link.comments != null && (
                 <div className="flex items-center gap-1 text-xs">
                   <MessageCircle className="h-3 w-3 text-blue-400" />
-                  <span className="font-medium text-[#1A1A1A]">{formatNumber(link.comments)}</span>
+                  <span className="font-medium text-ink">{formatNumber(link.comments)}</span>
                 </div>
               )}
               {link.shares != null && (
                 <div className="flex items-center gap-1 text-xs">
                   <Share2 className="h-3 w-3 text-green-500" />
-                  <span className="font-medium text-[#1A1A1A]">{formatNumber(link.shares)}</span>
+                  <span className="font-medium text-ink">{formatNumber(link.shares)}</span>
                 </div>
               )}
               {link.views != null && (
                 <div className="flex items-center gap-1 text-xs">
-                  <Eye className="h-3 w-3 text-[#7A7A7A]" />
-                  <span className="font-medium text-[#1A1A1A]">{formatNumber(link.views)}</span>
+                  <Eye className="h-3 w-3 text-ink-3" />
+                  <span className="font-medium text-ink">{formatNumber(link.views)}</span>
                 </div>
               )}
               {totalEngagement > 0 && (
-                <span className="ml-auto text-[10px] text-[#B0B0B0]">
+                <span className="ml-auto text-[10px] text-ink-4">
                   {formatNumber(totalEngagement)} total
                 </span>
               )}

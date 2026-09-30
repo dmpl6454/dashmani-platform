@@ -41,7 +41,7 @@ const moreStats: { key: string; label: string; icon: any; href: string }[] = [
 function CustomTooltip({ active, payload, label }: any) {
   if (!active || !payload?.length) return null;
   return (
-    <div className="bg-ink text-white text-xs rounded-lg px-3 py-2 shadow-lg">
+    <div className="bg-action text-[#06121B] text-xs rounded-lg px-3 py-2 shadow-lg">
       <p className="font-semibold mb-0.5">{label}</p>
       <p>{payload[0].value} link{payload[0].value !== 1 ? "s" : ""}</p>
     </div>
@@ -328,8 +328,8 @@ export default function DashboardPage() {
 
         {/* Quick nav cards */}
         <Link href="/employees" className="v3-card-sm p-5 flex items-center gap-4 v3-card-lift group">
-          <div className="h-12 w-12 rounded-xl border-2 border-ink/12 bg-indigo-soft flex items-center justify-center">
-            <Users className="h-6 w-6 text-indigo" />
+          <div className="icon-chip h-12 w-12 rounded-[10px] flex items-center justify-center shrink-0">
+            <Users className="h-6 w-6 text-action" />
           </div>
           <div className="flex-1 min-w-0">
             <p className="font-bold text-ink">{isLoading ? "—" : (stats.totalUsersCount ?? 0)}</p>
@@ -340,8 +340,8 @@ export default function DashboardPage() {
 
         {/* Accounts hub card */}
         <Link href="/accounts" className="v3-card-sm p-5 flex items-center gap-4 v3-card-lift group">
-          <div className="h-12 w-12 rounded-xl border-2 border-ink/12 bg-indigo-soft flex items-center justify-center shrink-0">
-            <Globe className="h-6 w-6 text-indigo" />
+          <div className="icon-chip h-12 w-12 rounded-[10px] flex items-center justify-center shrink-0">
+            <Globe className="h-6 w-6 text-action" />
           </div>
           <div className="flex-1 min-w-0">
             <p className="font-bold text-ink">Manage Accounts</p>
@@ -352,7 +352,7 @@ export default function DashboardPage() {
 
         {/* Assign Account shortcut */}
         <Link href="/accounts?tab=by-employee" className="v3-card-sm p-5 flex items-center gap-4 v3-card-lift group">
-          <div className="h-12 w-12 rounded-xl border-2 border-ink/12 bg-sage-soft flex items-center justify-center shrink-0">
+          <div className="icon-chip h-12 w-12 rounded-[10px] flex items-center justify-center shrink-0">
             <Share2 className="h-6 w-6 text-sage" />
           </div>
           <div className="flex-1 min-w-0">
@@ -378,7 +378,7 @@ export default function DashboardPage() {
             </div>
             <Link
               href="/employees/pending"
-              className="flex items-center gap-1.5 px-4 py-2 rounded-full bg-ink text-white text-sm font-bold btn-3d hover:bg-ink-2 transition-colors"
+              className="flex items-center gap-1.5 px-4 py-2 rounded-full bg-action text-[#06121B] text-sm font-bold btn-3d hover:bg-action-deep transition-colors"
             >
               Review <ArrowRight className="h-3.5 w-3.5" />
             </Link>
@@ -389,8 +389,8 @@ export default function DashboardPage() {
         <div className="lg:col-span-3 v3-card p-5 space-y-4 v3-card-lift">
           <div className="flex items-center justify-between flex-wrap gap-3">
             <div className="flex items-center gap-3">
-              <div className="h-10 w-10 rounded-xl bg-terra-soft flex items-center justify-center">
-                <Link2 className="h-5 w-5 text-terra" />
+              <div className="icon-chip h-10 w-10 rounded-[10px] flex items-center justify-center">
+                <Link2 className="h-5 w-5 text-action" />
               </div>
               <div>
                 <p className="font-bold text-ink">Links Activity</p>
@@ -408,8 +408,8 @@ export default function DashboardPage() {
                     onClick={() => { applyQuickRange(r.days); setShowDatePicker(false); }}
                     className={`h-7 px-3 rounded-full text-xs font-semibold transition-all border-2 ${
                       isActive
-                        ? "bg-terra text-white border-terra"
-                        : "bg-surface text-ink-4 border-ink/12 hover:border-terra/30 hover:text-terra"
+                        ? "bg-action text-[#06121B] border-action"
+                        : "bg-surface text-ink-4 border-ink/12 hover:border-action/40 hover:text-action"
                     }`}
                   >
                     {r.label}
@@ -421,7 +421,7 @@ export default function DashboardPage() {
                 onClick={() => setShowDatePicker((v) => !v)}
                 className={`h-7 px-3 rounded-full text-xs font-semibold transition-all border-2 flex items-center gap-1.5 ${
                   showDatePicker
-                    ? "bg-ink text-white border-ink"
+                    ? "bg-action text-[#06121B] border-ink"
                     : "bg-surface text-ink-4 border-ink/12 hover:border-ink/25 hover:text-ink"
                 }`}
               >
@@ -449,7 +449,7 @@ export default function DashboardPage() {
                   value={linkStart}
                   max={linkEnd}
                   onChange={(e) => setLinkStart(e.target.value)}
-                  className="h-8 rounded-lg border-2 border-ink/15 bg-white text-xs px-2 focus:outline-none focus:border-indigo transition-colors"
+                  className="h-8 rounded-lg border-2 border-ink/15 bg-surface text-xs px-2 focus:outline-none focus:border-indigo transition-colors"
                 />
               </div>
               <div className="flex items-center gap-2">
@@ -460,12 +460,12 @@ export default function DashboardPage() {
                   min={linkStart}
                   max={toISO(today)}
                   onChange={(e) => setLinkEnd(e.target.value)}
-                  className="h-8 rounded-lg border-2 border-ink/15 bg-white text-xs px-2 focus:outline-none focus:border-indigo transition-colors"
+                  className="h-8 rounded-lg border-2 border-ink/15 bg-surface text-xs px-2 focus:outline-none focus:border-indigo transition-colors"
                 />
               </div>
               <button
                 onClick={() => setShowDatePicker(false)}
-                className="h-8 px-3 rounded-lg bg-ink text-white text-xs font-semibold hover:bg-ink-2 transition-colors"
+                className="h-8 px-3 rounded-lg bg-action text-[#06121B] text-xs font-semibold hover:bg-action-deep transition-colors"
               >
                 Apply
               </button>
@@ -523,11 +523,11 @@ export default function DashboardPage() {
               <p className="text-xs text-ink-4">
                 {isLoading ? "—" : submittedToday} / {isLoading ? "—" : totalEmployees} employees submitted today
               </p>
-              <p className="text-xs font-semibold text-terra">{isLoading ? "—" : submissionRate}%</p>
+              <p className="text-xs font-semibold text-action">{isLoading ? "—" : submissionRate}%</p>
             </div>
             <div className="h-1.5 rounded-full bg-ink/8 overflow-hidden">
               <div
-                className="h-full rounded-full bg-terra transition-all duration-700"
+                className="h-full rounded-full bg-action transition-all duration-700"
                 style={{ width: `${submissionRate}%` }}
               />
             </div>
@@ -546,21 +546,21 @@ export default function DashboardPage() {
             ) : (
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={trendData} barSize={18} margin={{ top: 4, right: 4, left: -24, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.06)" vertical={false} />
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgb(var(--t-border))" vertical={false} />
                   <XAxis
                     dataKey="date"
-                    tick={{ fontSize: 10, fill: "var(--color-ink-4, #888)" }}
+                    tick={{ fontSize: 10, fill: "rgb(var(--t-ink-3))" }}
                     axisLine={false}
                     tickLine={false}
                   />
                   <YAxis
-                    tick={{ fontSize: 10, fill: "var(--color-ink-4, #888)" }}
+                    tick={{ fontSize: 10, fill: "rgb(var(--t-ink-3))" }}
                     axisLine={false}
                     tickLine={false}
                     allowDecimals={false}
                   />
-                  <Tooltip content={<CustomTooltip />} cursor={{ fill: "rgba(0,0,0,0.04)" }} />
-                  <Bar dataKey="links" fill="var(--color-terra, #c97c3a)" radius={[4, 4, 0, 0]} />
+                  <Tooltip content={<CustomTooltip />} cursor={{ fill: "rgba(56,189,248,0.08)" }} />
+                  <Bar dataKey="links" fill="#38BDF8" radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             )}
@@ -569,7 +569,7 @@ export default function DashboardPage() {
           <div className="flex justify-end">
             <Link
               href="/reports"
-              className="flex items-center gap-1.5 text-xs font-semibold text-terra hover:underline"
+              className="flex items-center gap-1.5 text-xs font-semibold text-action hover:underline"
             >
               View full reports <ArrowRight className="h-3.5 w-3.5" />
             </Link>
@@ -580,8 +580,8 @@ export default function DashboardPage() {
         <div className="lg:col-span-2 v3-card p-5 space-y-4 v3-card-lift">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-3">
-              <div className="h-10 w-10 rounded-xl bg-indigo-soft flex items-center justify-center">
-                <Users className="h-5 w-5 text-indigo" />
+              <div className="icon-chip h-10 w-10 rounded-[10px] flex items-center justify-center">
+                <Users className="h-5 w-5 text-terra" />
               </div>
               <div>
                 <p className="font-bold text-ink">Account Growth</p>
@@ -594,7 +594,7 @@ export default function DashboardPage() {
               {GROWTH_WINDOWS.map((w) => (
                 <Pill
                   key={w.key}
-                  accent="indigo"
+                  accent="terra"
                   active={growthDays === w.key}
                   onClick={() => setGrowthDays(w.key)}
                 >
@@ -617,22 +617,31 @@ export default function DashboardPage() {
             </div>
           ) : (
             <div className="space-y-3">
-              <div className="flex items-end gap-3 flex-wrap">
-                <p className="font-num text-3xl font-semibold text-ink leading-none">
-                  {fmtCompact(g?.totalFollowers)}
-                </p>
-                <DeltaBadge delta={g?.totalDelta} />
+              {/* 3-column stat header (Dashboard.dc.html): total │ growth │ accounts */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-y-4">
+                <div className="flex flex-col gap-0.5 sm:pr-4 min-w-0">
+                  <p className="font-num text-[26px] font-semibold text-ink leading-none truncate">
+                    {fmtCompact(g?.totalFollowers)}
+                  </p>
+                  <p className="text-[11px] text-ink-4">Total followers</p>
+                </div>
+                <div className="flex flex-col gap-0.5 sm:px-4 sm:border-l border-border min-w-0">
+                  <div className="leading-none"><DeltaBadge delta={g?.totalDelta} /></div>
+                  <p className="text-[11px] text-ink-4">{growthDays}-day growth</p>
+                </div>
+                <div className="flex flex-col gap-0.5 sm:pl-4 sm:border-l border-border min-w-0">
+                  <p className="font-num text-[26px] font-semibold text-ink leading-none">{growthAccountCount}</p>
+                  <p className="text-[11px] text-ink-4">
+                    Account{growthAccountCount !== 1 ? "s" : ""}
+                    {(growthLive !== undefined || growthStale !== undefined || growthManual !== undefined) &&
+                      ` · ${growthLive ?? 0} live, ${growthStale ?? 0} stale, ${growthManual ?? 0} manual`}
+                  </p>
+                </div>
               </div>
-              <p className="text-xs text-ink-4">{growthAccountCount} account{growthAccountCount !== 1 ? "s" : ""} tracked</p>
-              {(growthLive !== undefined || growthStale !== undefined || growthManual !== undefined) && (
-                <p className="text-[11px] text-ink-4">
-                  {growthLive ?? 0} live · {growthStale ?? 0} stale · {growthManual ?? 0} manual
-                </p>
-              )}
 
               {/* Follower split by platform — fills the card, accurate (current-count sum). */}
               {growthByPlatform.length > 0 && growthByPlatformMax > 0 && (
-                <div className="pt-1 space-y-2">
+                <div className="pt-3.5 border-t border-rule space-y-2.5">
                   <p className="text-[10px] font-semibold uppercase tracking-wider text-ink-4">Followers by platform</p>
                   {growthByPlatform.map((row) => (
                     <div key={row.platform} className="flex items-center gap-3">
@@ -641,7 +650,7 @@ export default function DashboardPage() {
                       </span>
                       <div className="flex-1 h-2 rounded-full bg-ink/5 overflow-hidden">
                         <div
-                          className="h-full rounded-full bg-indigo/70 transition-all duration-500"
+                          className="h-full rounded-full bg-terra transition-all duration-500"
                           style={{ width: `${Math.max(2, Math.round((row.followers / growthByPlatformMax) * 100))}%` }}
                         />
                       </div>
@@ -656,7 +665,7 @@ export default function DashboardPage() {
           )}
 
           <div className="flex justify-end">
-            <Link href="/accounts/growth" className="flex items-center gap-1.5 text-xs font-semibold text-indigo hover:underline">
+            <Link href="/accounts/growth" className="flex items-center gap-1.5 text-xs font-semibold text-terra hover:underline">
               View all <ArrowRight className="h-3.5 w-3.5" />
             </Link>
           </div>
@@ -665,8 +674,8 @@ export default function DashboardPage() {
         {/* Top Movers — right half */}
         <div className="lg:col-span-1 v3-card p-5 space-y-4 v3-card-lift">
           <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-xl bg-indigo-soft flex items-center justify-center">
-              <Trophy className="h-5 w-5 text-indigo" />
+            <div className="icon-chip h-10 w-10 rounded-[10px] flex items-center justify-center">
+              <Trophy className="h-5 w-5 text-terra" />
             </div>
             <div>
               <p className="font-bold text-ink">Top Movers</p>
@@ -677,13 +686,13 @@ export default function DashboardPage() {
           </div>
           {growthPlatformOptions.length > 0 && (
             <PillGroup>
-              <Pill accent="indigo" active={growthPlatform === "all"} onClick={() => setGrowthPlatform("all")}>
+              <Pill accent="terra" active={growthPlatform === "all"} onClick={() => setGrowthPlatform("all")}>
                 All
               </Pill>
               {growthPlatformOptions.map((plat) => (
                 <Pill
                   key={plat}
-                  accent="indigo"
+                  accent="terra"
                   active={growthPlatform === plat}
                   onClick={() => setGrowthPlatform(plat)}
                 >
@@ -708,7 +717,7 @@ export default function DashboardPage() {
                 return (
                   <li key={m.accountId} className="flex flex-col gap-1">
                     <div className="flex items-center gap-2 min-w-0">
-                      <span className="text-xs font-bold text-ink-4 w-4 shrink-0">{i + 1}</span>
+                      <span className="text-xs font-bold text-gold w-4 shrink-0">{i + 1}</span>
                       <Link
                         href={`/accounts/${m.accountId}`}
                         className="flex-1 min-w-0 text-xs font-semibold text-ink hover:underline truncate"
@@ -741,7 +750,7 @@ export default function DashboardPage() {
           )}
 
           <div className="flex justify-end">
-            <Link href="/accounts/growth" className="flex items-center gap-1.5 text-xs font-semibold text-indigo hover:underline">
+            <Link href="/accounts/growth" className="flex items-center gap-1.5 text-xs font-semibold text-terra hover:underline">
               View all <ArrowRight className="h-3.5 w-3.5" />
             </Link>
           </div>
@@ -751,7 +760,7 @@ export default function DashboardPage() {
         <div className="lg:col-span-2 v3-card p-5 space-y-4 v3-card-lift">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-3">
-              <div className="h-10 w-10 rounded-xl bg-sage-soft flex items-center justify-center">
+              <div className="icon-chip h-10 w-10 rounded-[10px] flex items-center justify-center">
                 <Trophy className="h-5 w-5 text-sage" />
               </div>
               <div>
@@ -793,7 +802,7 @@ export default function DashboardPage() {
             <ul className="space-y-2">
               {topPerformers.map((p, i) => (
                 <li key={p.employeeId} className="flex items-center gap-2">
-                  <span className="text-xs font-bold text-ink-4 w-4 shrink-0">{i + 1}</span>
+                  <span className="text-xs font-bold text-gold w-4 shrink-0">{i + 1}</span>
                   <Link
                     href={`/reports/${p.employeeId}`}
                     className="flex-1 min-w-0 text-xs font-semibold text-ink hover:underline truncate"
@@ -821,8 +830,8 @@ export default function DashboardPage() {
             (backend sorts per-platform) — see /reports for the full breakdown. */}
         <div className="lg:col-span-1 v3-card p-5 space-y-4 v3-card-lift">
           <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-xl bg-terra-soft flex items-center justify-center">
-              <Eye className="h-5 w-5 text-terra" />
+            <div className="icon-chip h-10 w-10 rounded-[10px] flex items-center justify-center">
+              <Eye className="h-5 w-5 text-action" />
             </div>
             <div>
               <p className="font-bold text-ink">Top Links</p>
@@ -833,7 +842,7 @@ export default function DashboardPage() {
             {TOP_LINK_PLATFORMS.map((p) => (
               <Pill
                 key={p.key}
-                accent="terra"
+                accent="action"
                 active={topLinkPlatform === p.key}
                 onClick={() => setTopLinkPlatform(p.key)}
               >
@@ -861,7 +870,7 @@ export default function DashboardPage() {
                     : (link.likes ?? 0) + (link.comments ?? 0);
                 return (
                   <li key={link.linkId ?? link.url} className="flex items-center gap-2">
-                    <span className="text-xs font-bold text-ink-4 w-4 shrink-0">{i + 1}</span>
+                    <span className="text-xs font-bold text-gold w-4 shrink-0">{i + 1}</span>
                     {safeLinkUrl ? (
                       <a
                         href={safeLinkUrl}
@@ -881,7 +890,7 @@ export default function DashboardPage() {
                       </span>
                     )}
                     <span className="text-[10px] text-ink-4 truncate max-w-[5rem] shrink-0">{link.employeeName}</span>
-                    <span className="text-xs font-semibold text-terra shrink-0">{fmtCompact(metricValue)}</span>
+                    <span className="text-xs font-semibold text-action shrink-0">{fmtCompact(metricValue)}</span>
                   </li>
                 );
               })}
@@ -895,7 +904,7 @@ export default function DashboardPage() {
           </p>
 
           <div className="flex justify-end">
-            <Link href="/reports" className="flex items-center gap-1.5 text-xs font-semibold text-terra hover:underline">
+            <Link href="/reports" className="flex items-center gap-1.5 text-xs font-semibold text-action hover:underline">
               View all <ArrowRight className="h-3.5 w-3.5" />
             </Link>
           </div>
@@ -905,8 +914,8 @@ export default function DashboardPage() {
             Data reused from the Top Performers useLinksAnalytics payload (no extra fetch). */}
         <div className="lg:col-span-3 v3-card p-5 space-y-4 v3-card-lift">
           <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-xl bg-indigo-soft flex items-center justify-center">
-              <Users className="h-5 w-5 text-indigo" />
+            <div className="icon-chip h-10 w-10 rounded-[10px] flex items-center justify-center">
+              <Users className="h-5 w-5 text-terra" />
             </div>
             <div>
               <p className="font-bold text-ink">Teams &amp; Accountability</p>
@@ -914,9 +923,9 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
             {/* Team leaderboard */}
-            <div className="space-y-2">
+            <div className="v3-card-inset p-4 space-y-2.5 self-start">
               <p className="text-[10px] font-semibold uppercase tracking-wider text-ink-4">Top teams by links</p>
               {topPerformersLoading ? (
                 <div className="space-y-2 animate-pulse">{[0,1,2].map((i) => <div key={i} className="h-7 bg-muted rounded-lg" />)}</div>
@@ -926,10 +935,10 @@ export default function DashboardPage() {
                 <ul className="space-y-2">
                   {teamRanks.slice(0, 5).map((t, i) => (
                     <li key={t.teamId} className="flex items-center gap-2">
-                      <span className="text-xs font-bold text-ink-4 w-4 shrink-0">{i + 1}</span>
+                      <span className="text-xs font-bold text-gold w-4 shrink-0">{i + 1}</span>
                       <span className="flex-1 min-w-0 text-xs font-semibold text-ink truncate" title={t.teamName}>{t.teamName}</span>
                       <span className="text-[10px] text-ink-4 bg-ink/5 rounded-full px-2 py-0.5 shrink-0">{t.avgLinksPerMember}/member</span>
-                      <span className="text-xs font-semibold text-indigo shrink-0">{fmtCompact(t.totalLinks)}</span>
+                      <span className="text-xs font-bold text-terra shrink-0">{fmtCompact(t.totalLinks)}</span>
                     </li>
                   ))}
                 </ul>
@@ -937,7 +946,7 @@ export default function DashboardPage() {
             </div>
 
             {/* Non-submitters */}
-            <div className="space-y-2">
+            <div className="v3-card-inset p-4 space-y-2.5 self-start">
               <p className="text-[10px] font-semibold uppercase tracking-wider text-ink-4">
                 Haven't submitted {nonSubmitters.length > 0 ? `(${nonSubmitters.length})` : ""}
               </p>
@@ -966,7 +975,7 @@ export default function DashboardPage() {
           </div>
 
           <div className="flex justify-end">
-            <Link href="/reports/links" className="flex items-center gap-1.5 text-xs font-semibold text-indigo hover:underline">
+            <Link href="/reports/links" className="flex items-center gap-1.5 text-xs font-semibold text-terra hover:underline">
               View full analytics <ArrowRight className="h-3.5 w-3.5" />
             </Link>
           </div>
@@ -975,8 +984,8 @@ export default function DashboardPage() {
         {/* Total Engagement (30d) — org-wide, per platform. Full width. */}
         <div className="lg:col-span-3 v3-card p-5 space-y-4 v3-card-lift">
           <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-xl bg-terra-soft flex items-center justify-center">
-              <TrendingUp className="h-5 w-5 text-terra" />
+            <div className="icon-chip h-10 w-10 rounded-[10px] flex items-center justify-center">
+              <TrendingUp className="h-5 w-5 text-action" />
             </div>
             <div>
               <p className="font-bold text-ink">Total Engagement</p>
@@ -1020,7 +1029,7 @@ export default function DashboardPage() {
                     .slice()
                     .sort((a, b) => (b.totalViews + b.totalLikes + b.totalComments) - (a.totalViews + a.totalLikes + a.totalComments))
                     .map((p) => (
-                      <div key={p.platform} className="flex flex-wrap items-center gap-x-4 gap-y-1 py-1.5 border-t border-[#F0EAD8] first:border-t-0">
+                      <div key={p.platform} className="flex flex-wrap items-center gap-x-4 gap-y-1 py-1.5 border-t border-border first:border-t-0">
                         {/* w-24 is 96px of a ~300px phone row, which squeezed the four
                             metrics into a ragged wrap. Full width on phones gives the
                             platform its own line and the metrics a clean one below;
@@ -1040,7 +1049,7 @@ export default function DashboardPage() {
           )}
 
           <div className="flex justify-end">
-            <Link href="/reports" className="flex items-center gap-1.5 text-xs font-semibold text-terra hover:underline">
+            <Link href="/reports" className="flex items-center gap-1.5 text-xs font-semibold text-action hover:underline">
               View full reports <ArrowRight className="h-3.5 w-3.5" />
             </Link>
           </div>

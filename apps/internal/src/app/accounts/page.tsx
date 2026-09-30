@@ -101,7 +101,7 @@ function AccountPanel({
   return (
     <div className="fixed inset-0 z-50 flex" onClick={onClose}>
       {/* Dim backdrop */}
-      <div className="flex-1 bg-ink/40" />
+      <div className="flex-1 bg-black/60" />
 
       {/* Slide-in panel */}
       <div
@@ -190,7 +190,7 @@ function AccountPanel({
             <button
               type="submit"
               disabled={saving}
-              className="px-5 py-2.5 rounded-full bg-ink text-white text-sm font-bold btn-3d hover:bg-ink-2 transition-colors disabled:opacity-50 flex items-center gap-2"
+              className="px-5 py-2.5 rounded-full bg-action text-[#06121B] text-sm font-bold btn-3d hover:bg-action-deep transition-colors disabled:opacity-50 flex items-center gap-2"
             >
               <Check size={14} />
               {saving ? "Saving…" : isEdit ? "Save Changes" : "Add Account"}
@@ -267,7 +267,7 @@ function AssignModal({
   }
 
   if (done) return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
       <div className="v3-card shadow-pop p-8 text-center w-full max-w-sm pop-in">
         <div className="h-14 w-14 rounded-xl bg-sage flex items-center justify-center mx-auto mb-4">
           <Share2 className="h-7 w-7 text-white" />
@@ -283,7 +283,7 @@ function AssignModal({
           >
             Assign another
           </button>
-          <button onClick={onClose} className="px-6 py-2.5 rounded-full bg-ink text-white text-sm font-bold btn-3d hover:bg-ink-2 transition-colors">
+          <button onClick={onClose} className="px-6 py-2.5 rounded-full bg-action text-[#06121B] text-sm font-bold btn-3d hover:bg-action-deep transition-colors">
             Done
           </button>
         </div>
@@ -292,7 +292,7 @@ function AssignModal({
   );
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
       <div className="v3-card shadow-pop w-full max-w-lg overflow-hidden pop-in" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-6 py-4 border-b-2 border-ink/10">
           <h2 className="font-bold text-ink flex items-center gap-2">
@@ -322,7 +322,7 @@ function AssignModal({
                 <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-ink-4 pointer-events-none" />
               </div>
               {empOpen && (
-                <div className="absolute z-10 mt-1 w-full max-h-60 overflow-y-auto bg-white border-2 border-ink/15 rounded-xl shadow-lg">
+                <div className="absolute z-10 mt-1 w-full max-h-60 overflow-y-auto bg-surface border-2 border-ink/15 rounded-xl shadow-lg">
                   {filteredEmployees.length === 0 ? (
                     <div className="px-4 py-3 text-sm text-ink-4">No employees match "{empSearch}"</div>
                   ) : (
@@ -381,7 +381,7 @@ function AssignModal({
             <button
               onClick={handleAssign}
               disabled={!selectedEmployee || !selectedAccount || submitting}
-              className="px-5 py-2.5 rounded-full bg-ink text-white text-sm font-bold btn-3d hover:bg-ink-2 transition-colors disabled:opacity-50 flex items-center gap-2"
+              className="px-5 py-2.5 rounded-full bg-action text-[#06121B] text-sm font-bold btn-3d hover:bg-action-deep transition-colors disabled:opacity-50 flex items-center gap-2"
             >
               <Share2 size={14} />
               {submitting ? "Assigning…" : "Assign"}
@@ -398,7 +398,7 @@ function DeleteModal({ target, onCancel, onConfirm, deleting }: {
   target: any; onCancel: () => void; onConfirm: () => void; deleting: boolean;
 }) {
   return (
-    <div className="fixed inset-0 bg-ink/40 z-50 flex items-center justify-center p-4" onClick={() => !deleting && onCancel()}>
+    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={() => !deleting && onCancel()}>
       <div className="v3-card shadow-pop w-full max-w-md pop-in" onClick={(e) => e.stopPropagation()}>
         <div className="px-6 py-5 flex items-start gap-4">
           <div className="h-10 w-10 rounded-xl bg-danger/10 flex items-center justify-center shrink-0">
@@ -627,7 +627,7 @@ function AccountsPageInner() {
           </button>
           <button
             onClick={() => setCreateOpen(true)}
-            className="flex items-center gap-2 h-9 px-4 rounded-full bg-ink text-white text-sm font-bold btn-3d hover:bg-ink-2 transition-colors"
+            className="flex items-center gap-2 h-9 px-4 rounded-full bg-action text-[#06121B] text-sm font-bold btn-3d hover:bg-action-deep transition-colors"
           >
             <Plus className="h-3.5 w-3.5" /> Add Account
           </button>

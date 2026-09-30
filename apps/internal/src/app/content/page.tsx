@@ -53,7 +53,7 @@ export default function ContentListPage() {
             </button>
           </Link>
           <Link href="/content/new">
-            <button className="h-9 px-4 rounded-full bg-ink text-white text-sm font-bold btn-3d hover:bg-ink-2 transition-colors flex items-center gap-1.5">
+            <button className="h-9 px-4 rounded-full bg-action text-[#06121B] text-sm font-bold btn-3d hover:bg-action-deep transition-colors flex items-center gap-1.5">
               <Plus className="h-4 w-4" /> New Content
             </button>
           </Link>

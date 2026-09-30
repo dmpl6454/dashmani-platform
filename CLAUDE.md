@@ -317,9 +317,12 @@ npm run test:watch -w @dashmani/api
 # else you run against that DB concurrently (a manual E2E, a dev server you are poking)
 # gets silently wiped mid-test — which looks exactly like the bug you are hunting. Use a
 # separate database for concurrent manual work (see the PR #127 entry for the pattern).
-# Current baseline: 567/567 as of 2026-07-31 (PR #127 audit). Earlier recorded figures
-# were 551/551 (2026-07-18, PR #106), 554/554 (PR #108), 561/561 (PR #120) — the drift
-# is upward and fully attributed to tests added by PRs #122/#124.
+# Current baseline: 1,378/1,378 on main after the Pipeline merge (PR #175, 2026-09-29).
+# PR #176 (email) measured 1,440/1,440 and PR #177 (submission gaps) 1,401/1,401 on their
+# branches, so ~1,463 is expected once both are on main — re-measure to confirm. Earlier
+# recorded figures: 567/567 (2026-07-31, PR #127), 551/551 (2026-07-18, PR #106). The
+# pipeline concurrency suite is SEPARATE (apps/api/tests-concurrency, own config and DB)
+# and is excluded from this count.
 # The apps/api suite is FULLY GREEN — the old
 # "~36 pre-existing failures (content/analytics/task/team), not your bug" note is
 # OBSOLETE. Those were tests that silently rotted after deliberate 2026-05/06
@@ -470,11 +473,157 @@ Postgres unique constraints on `email` are case-**sensitive**. If `User.email` i
 - **The DB query itself must be case-insensitive, not just the input.** Pre-existing mixed-case rows survive even after the input is normalized. All three auth services (`auth.service.ts`, `hr-auth.service.ts`, `client-auth.service.ts`) use `findFirst({ where: { email: { equals: x, mode: "insensitive" } } })` — never plain `findUnique({ where: { email: x } })` on user-supplied email. **If you add a new auth code path, copy this pattern.** A 2026-05-21 regression hit Diksha because `hr-auth.service.ts` was still doing exact-match while the input was normalized — silent miss.
 - One-time DB backfill: [packages/db/prisma/normalize-emails.ts](packages/db/prisma/normalize-emails.ts) lowercases existing mixed-case rows. Safe to re-run; reports collisions without writing if any rows would conflict. **Last run on prod: 2026-05-21** — 4 users normalized, 2 collision pairs flagged for manual resolution (see [.planning/AUTH-LOCKOUT-FIXES.md](.planning/AUTH-LOCKOUT-FIXES.md)).
 
-### HR self-register vs admin-invite collision — handled
+### HR self-registration — instant access; it can never take over an existing account (PR #169, 2026-09-29)
 
-A user who self-registers at `POST /v1/hr/auth/register` is created with `status: "ONBOARDING"`. If an admin then invites the same email via `POST /v1/admin/users/invite`, the endpoint detects the existing pending row and **promotes it to ACTIVE** with the requested roles/designation rather than 409'ing. This closes the trap where a user was "registered" but admin had no way to unblock them through the invite flow.
+⚠️ **This section used to say self-registration creates `ONBOARDING` users. That was wrong.**
+
+**Instant access (owner decision, 2026-09-26).** `POST /v1/hr/auth/register` (public) creates the user **`ACTIVE`** with the Employee role, and the new account can sign in immediately.
+
+**The takeover path is closed.** Before PR #169, registering with the email of an existing `ONBOARDING` row (an admin-created pending hire) **promoted that row to `ACTIVE` and replaced its password with the registrant's**. Anyone who knew a pending hire's email could claim the account. Now **any** existing email or phone, in any status, gets the same `409 ALREADY_EXISTS` that active accounts get. Registration never modifies an existing row. The lookup also escapes LIKE wildcards, because Prisma's `equals` + `mode: "insensitive"` compiles to `ILIKE`.
+
+**Behaviour change.**
+- Pending hires can no longer activate themselves by "signing up". An admin activates them.
+- The admin-invite path, `POST /v1/admin/users/invite`, still detects an existing pending row and **promotes it to ACTIVE** with the requested roles and designation. That route is authenticated and admin-only, so it is safe.
+
+**Why this matters under the Pipeline's open access.** Anyone who can register can read every pipeline project.
+
+⚠️ Never reintroduce promote-on-register.
 
 See [.planning/AUTH-LOCKOUT-FIXES.md](.planning/AUTH-LOCKOUT-FIXES.md) for the full lockout-trap matrix and how each one was closed.
+
+---
+
+## Pipeline: internal project/campaign lifecycle board (HR portal, shipped 2026-09-29, PRs #169–#175)
+
+**What it is.** The HR portal serves `/pipeline` (the board) and `/pipeline/[id]` (the project page).
+- **Phases:** a kanban of lifecycle phases, stored as **data** in `pipeline_phases`: Brief → Planning → In Production → Review → Approved → Live → Done (terminal). Never turn the phases into a code enum.
+- **Conversation:** each project has one isolated thread with messages, one level of replies, `@{uuid}` mentions, 8 fixed reactions, and author-only edit/delete.
+- **Access is open (owner decision).** Any active HR user can view, move, edit and post on any project.
+- **Owner/admin actions:** only the owner or an Admin/Super Admin can archive, delete, restore or transfer a project. Admin status is **checked in the DB, never from the JWT**.
+- **Membership** decides only who is notified and the "My projects" filter. Posting, replying or being mentioned makes you a follower.
+- **Documents:**
+  - `docs/superpowers/specs/2026-09-26-pipeline-design.md` is the authoritative design.
+  - `docs/superpowers/plans/2026-09-26-pipeline.md` is the plan.
+  - `docs/superpowers/plans/2026-09-26-pipeline-load-report.md` has the measured load numbers.
+
+**Status.** Live in **pilot** mode since 2026-09-29 for 5 named users:
+- admin@digitalsukoon.com
+- sudhanshu6454@gmail.com
+- priyanshu@digitalsukoon.com
+- siddharth@dashmani.com
+- tabish@dashmani.com
+
+The nav entry stays hidden until `pipeline.mode='on'`, so pilot users open `https://hr.digitalsukoon.com/pipeline` directly.
+
+**Switches** live in `system_settings`, are read through a 15 s memo, and change without a deploy:
+
+| Key | Values |
+|---|---|
+| `pipeline.mode` | `off` (absent = off), `pilot`, `on` |
+| `pipeline.pilotUserIds` | the pilot allowlist |
+| `pipeline.pollMs` | client polling cadence |
+| `pipeline.minClientBuild` | minimum client build |
+
+Change them **only** with `cd packages/db && npx tsx ../../scripts/pipeline-flag.ts …`. It is a dry run by default; `--apply --confirm-prod` writes. The **kill switch** is `--mode=off --apply --confirm-prod`: it takes effect in ≤15 s, clients show "Pipeline is paused", and they resume automatically.
+
+**Performance isolation: why it cannot degrade login, HR submit, Link History or accounts.**
+
+1. **Own Prisma client.** `pipelineDb` (`services/pipeline/db.ts`) has 3 connections, `statement_timeout 2.5s`, `lock_timeout 1s` and `application_name=dashmani-pipeline`. It is separate from the main 10-connection pool. A CI grep forbids the main `prisma` import anywhere under `services/pipeline/**` except `db.ts`.
+2. **Own bulkhead.** 3 slots with write priority; a wait over 2 s returns 503 `PIPELINE_BUSY`. It **never** uses `withHeavyQuerySlot`.
+3. **Own rate-limit buckets**, per user, in 1-minute windows: read 120/min, write 120/min, messages 40/min. The global limiter **skips** `/v1/pipeline/*`, so pipeline polling cannot 429 anything else.
+4. **Router-local body parsing and errors.** A 64 KB JSON parser, plus router-local error middleware (`classifyDbError`). No expected DB error becomes a generic 500.
+5. **One consolidated poll.** Clients poll `POST /v1/pipeline/sync`:
+   - 10 s when focused, 20 s when unfocused, 15–30 s for the board, paused while the tab is hidden;
+   - the cadence is server-tunable through `pipeline.pollMs`.
+6. **Skip-free, commit-ordered cursors.**
+   - `thread_rev` is bumped under the project row lock.
+   - `pipeline_board_state.seq` is bumped after commit.
+   - Proven: 57k syncs with 0 skips and 0 duplicates.
+   - The board snapshot is rebuilt once per change for the whole company.
+7. **No read aggregates an append-only table.** Unread = `last_message_seq − last_read_seq`, and counts are denormalised onto the rows.
+8. **Forbidden on pipeline paths:** `requirePermission`, `auditLog`, `dispatchNotification`, `withHeavyQuerySlot`, `/admin/link-preview`, `/uploads` avatars (initials only), and any global `SWRConfig`.
+
+**Auth.** The gate chain is `authenticate` → `requirePipelineToken` → the settings and access memos.
+- `requirePipelineToken` checks the allowlist `PIPELINE_TOKEN_TYPES=["hr"]`, a **code constant**.
+- Client-portal refresh tokens carry no `type` and must stay rejected.
+- Never gate on `[authenticate]` alone.
+- Phase 2 (the internal portal) only needs `"employee"` added to the allowlist, with no schema change.
+
+**Notifications.**
+- **One permanent enum value, `NotificationType.PIPELINE`,** with the sub-type in `metadata.kind`: `messages`, `mention`, `reply`, `added`, `moved`, `due_soon`, `overdue`.
+  - `messages` is grouped per user+project and updated in place.
+  - `moved` rows from rapid moves merge within 2 minutes.
+- **Written only by `services/pipeline/notify.ts`.** `NOTIFICATION_AUDIENCE.PIPELINE = []`, so `dispatchNotification` never writes these rows. Ids are deterministic: `md5('pln:<kind>:…')::uuid`.
+- **Clients:**
+  - the HR bell deep-links `metadata.path`;
+  - the internal bell opens `metadata.url` in a new tab, behind an origin allowlist;
+  - mobile shows the text only (the row shape is unchanged).
+- **Trim:** rows read more than 30 days ago, or older than 90 days, are deleted by a wall-clock job at 04:00 IST. It never runs at boot.
+
+**Schema and deploy rules.**
+- ⚠️ **NEVER revert the schema PR (#173) or drop `PIPELINE` from the enum.**
+  - Proven (P10): a Prisma client without the value **throws** on `notification.findMany` once a `PIPELINE` row exists, so the bell list 500s for those users.
+  - To abandon the feature: set `mode=off`, run `UPDATE notifications SET type='GENERAL' WHERE type='PIPELINE'` (or delete those rows), and only **then** revert the code.
+- **Every `pipeline_*` schema change follows the DDL cycle:**
+  1. generate a feature-only `prisma migrate diff` script and review it;
+  2. apply it on prod **by hand before the merge**, per `docs/superpowers/plans/2026-09-26-pipeline-ddl-runbook.md`;
+  3. CI rehearses the script twice.
+
+  Never a blanket `db:push`.
+- **Boot self-check.** It logs `[pipeline] schema self-check passed`. If the DDL is missing, the feature shows as "paused" (403 `PIPELINE_DISABLED`) rather than 500s.
+
+**Tests.**
+- `apps/api/tests/pipeline/*` runs in the main suite (`connection_limit=1`).
+- `apps/api/tests-concurrency/pipeline/*` has its own config (`vitest.concurrency.config.ts`), its own DB and a pool of 3. The main suite excludes it; it runs in the CI job `pipeline-concurrency`.
+- The load harness is `scripts/load/`, a 1-CPU Docker replica.
+- Pure frontend logic lives in `packages/shared/src/pipeline/*` and is tested through the apps/api vitest suite, because apps/hr has no test runner.
+
+**Email notifications (PR #176, ships dark).**
+- **Triggers (owner):**
+  - a project's stage changes;
+  - someone is @mentioned;
+  - a deadline is approaching (the due-soon rule);
+  - a deadline changes, including being removed. This also writes the in-portal `due_changed` bell row.
+- **Recipients** are exactly the in-portal recipients:
+  - participants with notify on, for stage, due-soon and due-changed;
+  - the mentioned user, for a mention;
+  - active users only, the pilot allowlist in pilot mode, and never the actor.
+- **Never on the request path.**
+  - Each event adds ONE `INSERT…SELECT` into `pipeline_email_outbox`, inside the existing transaction, and nothing at all while email is off.
+  - A **partial** unique index `(user_id, project_id, kind) WHERE status='pending'` coalesces pending items.
+  - ⚠️ The partial unique index lives **only** in `scripts/pipeline-email-ddl.sql`. Prisma cannot express it and ignores it.
+  - Items settle for 2–3 minutes before they can be sent.
+- **Worker** `cron/pipeline-email.cron.ts`:
+  - runs every 60 s, on the **pipeline pool only**, at background priority;
+  - sends one digest per person per tick, and at most one email per person every 10 minutes;
+  - sends SMTP **outside** any DB transaction, through a pooled, rate-limited nodemailer transport;
+  - caps sending at 30 per tick and `PIPELINE_EMAIL_DAILY_CAP` per day (default 300);
+  - retries with exponential backoff and marks a row `failed` after 5 attempts;
+  - pauses 5–15 minutes after connection, auth or account-level rejections. The Gmail account `hr@digitalsukoon.com` is shared with password-reset and HR mail, so it must never be hammered.
+- **Skipped at send time:** anything that no longer applies (a deleted message, a stage or date changed back, an archived or deleted project, an item more than a day stale).
+- **Retention:** sent, skipped and failed rows are trimmed after 30 days.
+- **Switch:** `pipeline.email` (`on` / `off`, absent = off), set with `pipeline-flag.ts --email=on|off --apply --confirm-prod`. It is independent of `pipeline.mode`, and `--email=off` is its kill switch.
+- **Runbook:** `docs/superpowers/plans/2026-09-30-pipeline-email-runbook.md`.
+- ⚠️ Never drop the outbox table while `pipeline.email=on`.
+
+**Known and accepted.**
+- The heavy-user sync hold is 8–22 ms against a 3 ms design target. It stays inside the isolated pool, and the owner accepted it.
+- The shared HR tokens `text-ink-4` and the initials palette fail the axe contrast check. That is a portal-wide design decision.
+- Not yet checked on a real iPhone.
+
+**Shipped alongside (PRs #169–#172).**
+- **HR `apiFetch`:**
+  - at most one 401 retry;
+  - `ApiError` carries `status` and `retryAfterSec`;
+  - a transient refresh failure (network, 5xx, 429) **keeps** the session;
+  - a rejected refresh returns via `/login?next=`, allowlisted to `/pipeline`.
+- **Both bells:** fetch the list only while the panel is open, show honest loading/error/empty states, and clear SWR caches on sign-in and sign-out.
+- **API:** `cors({ maxAge: 600 })`.
+- **`safeString`:** now a linear scan, byte-identical to the old regex. The quadratic-hang vector is gone.
+- **CI guards** in `scripts/ci/guards.sh`:
+  - no regex lookbehind in HR, shared or mobile sources, or in the built HR bundle;
+  - no main-`prisma` import in `services/pipeline`;
+  - no `localeCompare` on ranks.
 
 ---
 
@@ -565,6 +714,30 @@ All phases (1–13) + Waves 7–9 + v2 production test remediation complete. See
 **Employees:** Active/Archived tab toggle — `includeDeleted` API param shows soft-deleted employees in Archived view.
 
 **Cascade deletes:** Prisma schema updated — all employee-owned data (Attendance, LeaveRequest, DailyReport, SalarySlip, EmploymentContract, OfferLetter, etc.) now has `onDelete: Cascade`; `AuditLog` intentionally kept `onDelete: Restrict` for compliance. ⚠️ **`db:push` required on Linode after deploy** — FK constraints only, no column drops.
+
+### Links Analytics: Submission gaps tab (PR #177, 2026-09-30)
+
+**What it shows.** `/reports/links` → the **Submission gaps** tab lists, per (person, assigned channel):
+- every day they posted, with link count and first/last posting time in IST;
+- every day they did not;
+- missed-day ranges, the current gap streak, the active rate, the last posted time and today's status.
+
+A **By person** view covers days with no link on any assigned channel. Filters: range pills or custom dates, person, team, platform, and a minimum missed-days threshold. The tab also offers sorting, day-by-day expansion and a client-side CSV export.
+
+**Counting rules (owner decision).** **Every calendar day counts, 7 days a week.** This is deliberately different from the Mon–Sat rule used by attendance and submission rate, because people post every day. Only two things are excluded:
+- days before the channel was assigned to that person;
+- **today**, shown as "posted / not yet" and never counted as missed.
+
+Pre-2026-06-03 links carry the approximate-time flag.
+
+**Performance.**
+- The tab loads lazily. The page's normal load is unchanged, and the panel code is in its own chunk.
+- The summary is **one bounded SQL aggregation**, a linear pipeline of `MATERIALIZED` CTEs. ⚠️ An inlined CTE re-ran once per pair: the first draft took 2.1 s. The query never hydrates link rows into Node.
+- It runs in `withHeavyQuerySlot` behind a 60 s single-flight memo capped at 20 entries (about 1.1 MB each).
+- Ranges above 366 days, and invalid dates, return a clean 400.
+- There is no schema change. It uses the existing `daily_reports (employee_id, date)` and `report_links (report_id)` indexes.
+
+**Also in #177.** `_range.tsx` `toISODate()` now builds "today" from the IST day. Before, all three Reports pages treated yesterday as today between 00:00 and 05:30 IST.
 
 ### Still open (known remaining issues)
 

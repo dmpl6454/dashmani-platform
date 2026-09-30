@@ -754,7 +754,7 @@ export function SubmissionGapsPanel({
                           <GapValue days={r.currentGapDays} open={r.currentGapOpenEnded} counted={r.countedDays} />
                         </div>
                         <div className="min-w-0">
-                          <MetricLabel>Last posted (in window)</MetricLabel>
+                          <MetricLabel>Last posted <span className="whitespace-nowrap">(in window)</span></MetricLabel>
                           <LastPosted day={r.lastPostedDay} ist={r.lastPostedIST} approx={r.lastPostedApprox} year={year} />
                         </div>
                         <div className="min-w-0">
@@ -834,7 +834,7 @@ export function SubmissionGapsPanel({
                           <GapValue days={r.currentGapDays} open={r.currentGapOpenEnded} counted={r.countedDays} />
                         </div>
                         <div className="min-w-0">
-                          <MetricLabel>Last posted (in window)</MetricLabel>
+                          <MetricLabel>Last posted <span className="whitespace-nowrap">(in window)</span></MetricLabel>
                           <LastPosted day={r.lastPostedDay} ist={r.lastPostedIST} approx={r.lastPostedApprox} year={year} />
                         </div>
                         <div className="min-w-0">

@@ -84,6 +84,10 @@ describe("pipeline email — mailer", () => {
     vi.stubEnv("NODE_ENV", "development"); // the real (mocked) transport, not the test refusal
     vi.stubEnv("SMTP_USER", "pipeline-test@example.test");
     vi.stubEnv("SMTP_PASS", "not-a-real-password");
+    // A literal IP: this test is about the pool's lifecycle, not DNS. With a hostname, the
+    // pool is created after a REAL IPv4 lookup (utils/smtp-host.ts), which fake timers cannot
+    // advance — the 30 s ceiling would fire before the transport even exists.
+    vi.stubEnv("SMTP_HOST", "127.0.0.1");
     vi.useFakeTimers();
     const mail = { from: "a@example.test", to: "b@example.test", subject: "s", html: "<p>h</p>", text: "t" };
 
@@ -93,6 +97,10 @@ describe("pipeline email — mailer", () => {
     await outcome;
     expect(h.transports).toHaveLength(1);
     expect(h.transports[0].close).toHaveBeenCalledTimes(1);
+    // The pool was built through ipv4SmtpHost: a literal IP passes straight through, no TLS override.
+    const nodemailer = (await import("nodemailer")).default as unknown as { createTransport: ReturnType<typeof vi.fn> };
+    expect(nodemailer.createTransport.mock.calls[0][0]).toMatchObject({ host: "127.0.0.1", pool: true });
+    expect(nodemailer.createTransport.mock.calls[0][0]).not.toHaveProperty("tls");
 
     h.next = async () => ({ messageId: "<ok@test>" });
     await sendPipelineMail(mail);

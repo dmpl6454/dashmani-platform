@@ -9,6 +9,8 @@
  * chore/platform-guards adds an equivalent generateHrToken() to tests/helpers.ts; this
  * file keeps the pipeline tests independent of that branch landing first.
  */
+import fs from "fs";
+import path from "path";
 import jwt from "jsonwebtoken";
 import { prisma } from "@dashmani/db";
 
@@ -88,4 +90,21 @@ export async function seedPipelinePhases() {
     })),
   });
   await prisma.pipelineBoardState.upsert({ where: { id: 1 }, create: { id: 1, seq: 0 }, update: {} });
+}
+
+/**
+ * The email outbox's partial unique index, read VERBATIM from scripts/pipeline-email-ddl.sql
+ * (Prisma cannot express it, so a `db push` database — CI's included — lacks it). Tests
+ * that exercise email call this once; it is idempotent (IF NOT EXISTS) and TRUNCATE never
+ * drops an index, so it persists for the rest of the run.
+ */
+export function pendingKeyIndexSql(): string {
+  const ddl = fs.readFileSync(path.resolve(__dirname, "../../../../scripts/pipeline-email-ddl.sql"), "utf8");
+  const m = /CREATE UNIQUE INDEX IF NOT EXISTS "pipeline_email_outbox_pending_key"[^;]*;/.exec(ddl);
+  if (!m) throw new Error("pipeline-email-ddl.sql: the pending-key index statement is missing");
+  return m[0];
+}
+
+export async function ensurePipelineEmailSchema(): Promise<void> {
+  await prisma.$executeRawUnsafe(pendingKeyIndexSql());
 }

@@ -17,9 +17,18 @@
  * 5 s, not one per request.
  *
  * Runs after `listen` (index.ts) and lazily on the first gated request, single-flight.
+ *
+ * THE EMAIL OUTBOX HAS ITS OWN VERDICT (isPipelineEmailSchemaOk). The same probe checks
+ * pipeline_email_outbox's columns and EXPLAINs the exact `ON CONFLICT ... WHERE status =
+ * 'pending'` clause the enqueue uses — EXPLAIN plans without executing, and planning fails
+ * when the partial unique index (scripts/pipeline-email-ddl.sql) is missing. A missing
+ * outbox or index turns EMAIL off (enqueue and worker both no-op) but NEVER pauses the
+ * pipeline itself: email is an add-on, so its missing DDL must not take the board down,
+ * and an enqueue can never fail an action's transaction. While the email verdict is false
+ * the worker re-probes it at most once a minute (recheckPipelineEmailSchema).
  */
 import { AppError } from "../../middleware/error-handler";
-import { PipelineError, PIPELINE_RETRY_AFTER_SEC } from "./errors";
+import { PipelineError, PIPELINE_RETRY_AFTER_SEC, normalizePipelineError } from "./errors";
 import { pipelineRead } from "./tx";
 import { bumpBoard } from "./board";
 
@@ -45,7 +54,23 @@ export const PIPELINE_TABLE_COLUMNS: Readonly<Record<string, readonly string[]>>
   ],
 };
 
+/** The email outbox (email-outbox.ts). Keep in step with schema.prisma. */
+export const PIPELINE_EMAIL_TABLE_COLUMNS: readonly string[] = [
+  "id", "user_id", "project_id", "kind", "payload", "status", "attempts", "send_after",
+  "last_error", "sent_at", "created_at", "updated_at",
+];
+
+/**
+ * Planned, never executed: fails at plan time with "there is no unique or exclusion
+ * constraint matching the ON CONFLICT specification" when the partial index is missing.
+ */
+export const PIPELINE_EMAIL_ARBITER_PROBE = `EXPLAIN INSERT INTO "pipeline_email_outbox"
+  ("id", "user_id", "project_id", "kind", "payload", "status", "attempts", "send_after", "created_at", "updated_at")
+  SELECT 'probe', 'probe', 'probe', 'moved', '{}'::jsonb, 'pending', 0, now(), now(), now() WHERE false
+  ON CONFLICT ("user_id", "project_id", "kind") WHERE "status" = 'pending' DO NOTHING`;
+
 const RECHECK_MS = 10 * 60_000;
+const EMAIL_RECHECK_MS = 60_000;
 const TRANSIENT_BACKOFF_MS = 5_000;
 
 /** null = not checked yet in this process. */
@@ -54,9 +79,18 @@ let inflight: Promise<boolean> | null = null;
 let recheckTimer: ReturnType<typeof setInterval> | null = null;
 /** When the last check could not run (transient); 0 = never / cleared. */
 let lastTransientAt = 0;
+/** The email outbox verdict: null = not checked yet. Never affects `schemaOk`. */
+let emailSchemaOk: boolean | null = null;
+let emailCheckedAt = 0;
+let emailFailureLogged = false;
 
 export function isPipelineSchemaOk(): boolean | null {
   return schemaOk;
+}
+
+/** True only when pipeline_email_outbox and its partial unique index are both present. */
+export function isPipelineEmailSchemaOk(): boolean | null {
+  return emailSchemaOk;
 }
 
 function isTransient(err: unknown): boolean {
@@ -80,6 +114,36 @@ function scheduleRecheck(): void {
   recheckTimer.unref?.();
 }
 
+type ProbeDb = { $queryRawUnsafe: (sql: string) => Promise<unknown> };
+
+/** The email half of the probe. Throws the raw DB error when the schema is missing. */
+async function probeEmail(db: ProbeDb): Promise<void> {
+  await db.$queryRawUnsafe(
+    `SELECT ${PIPELINE_EMAIL_TABLE_COLUMNS.map((c) => `"${c}"`).join(", ")} FROM "pipeline_email_outbox" LIMIT 0`,
+  );
+  await db.$queryRawUnsafe(PIPELINE_EMAIL_ARBITER_PROBE);
+}
+
+/** Record an email verdict from a probe outcome; a transient failure leaves it unknown. */
+function recordEmailVerdict(err: unknown | null): void {
+  emailCheckedAt = Date.now();
+  if (err === null) {
+    if (emailSchemaOk === false && process.env.NODE_ENV !== "test") console.log("[pipeline] email schema check passed");
+    emailSchemaOk = true;
+    emailFailureLogged = false;
+    return;
+  }
+  if (isTransient(normalizePipelineError(err))) return;
+  emailSchemaOk = false;
+  if (!emailFailureLogged) {
+    emailFailureLogged = true;
+    console.warn(
+      "[pipeline] ⚠️ EMAIL SCHEMA CHECK FAILED — pipeline emails are OFF (the board is unaffected) until scripts/pipeline-email-ddl.sql is applied:",
+      String(err),
+    );
+  }
+}
+
 async function probe(): Promise<void> {
   await pipelineRead(async (db) => {
     // Sequential on purpose (one connection; no Promise.all over queries).
@@ -88,7 +152,38 @@ async function probe(): Promise<void> {
       await db.$queryRawUnsafe(`SELECT ${cols.map((c) => `"${c}"`).join(", ")} FROM "${table}" LIMIT 0`);
     }
     await db.$queryRawUnsafe(`SELECT 'PIPELINE'::"NotificationType"::text AS t`);
+    // Autocommit statements: a failure here costs nothing above and never fails the check.
+    let emailErr: unknown | null = null;
+    try {
+      await probeEmail(db);
+    } catch (err) {
+      emailErr = err;
+    }
+    recordEmailVerdict(emailErr);
   });
+}
+
+/**
+ * The email worker, while the email verdict is false (or unknown after a transient
+ * failure): re-probe the email half alone, at most once a minute. Resolves the verdict.
+ */
+export async function recheckPipelineEmailSchema(): Promise<boolean | null> {
+  if (emailSchemaOk === true) return true;
+  if (Date.now() - emailCheckedAt < EMAIL_RECHECK_MS && emailSchemaOk !== null) return emailSchemaOk;
+  try {
+    await pipelineRead(async (db) => {
+      let emailErr: unknown | null = null;
+      try {
+        await probeEmail(db);
+      } catch (err) {
+        emailErr = err;
+      }
+      recordEmailVerdict(emailErr);
+    });
+  } catch {
+    // the slot itself was refused (busy) — the verdict stays as it was
+  }
+  return emailSchemaOk;
 }
 
 /**
@@ -155,7 +250,15 @@ export function startPipelineSelfCheck(): void {
 export function resetPipelineSchemaCheck(): void {
   schemaOk = null;
   lastTransientAt = 0;
+  emailSchemaOk = null;
+  emailCheckedAt = 0;
   stopRecheck();
+}
+
+/** Tests only: force the email verdict (false = the outbox or its partial index is missing). */
+export function __setPipelineEmailSchemaOkForTests(value: boolean | null): void {
+  emailSchemaOk = value;
+  emailCheckedAt = value === null ? 0 : Date.now();
 }
 
 /** Tests only: force a verdict (false = the schema is missing → paused). */

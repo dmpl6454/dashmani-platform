@@ -79,6 +79,43 @@ describe("createBulkhead({ max: 2, queue: 3, maxWaitMs: 100, writePriority: true
     expect(b.stats()).toMatchObject({ active: 0, queued: 0 });
   });
 
+  it("a background acquire (the email worker) waits behind every queued read and write", async () => {
+    const b = make();
+    const s1 = await b.acquire("read");
+    const s2 = await b.acquire("read");
+    const order: string[] = [];
+    const track = (kind: "read" | "write" | "background") =>
+      b.acquire(kind).then((rel) => {
+        order.push(kind);
+        return rel;
+      });
+    const bgWait = track("background");
+    await tick();
+    const readWait = track("read");
+    const writeWait = track("write");
+    await tick();
+    expect(b.stats()).toMatchObject({ queued: 3, queuedBackground: 1, queuedReads: 1, queuedWrites: 1 });
+    s1();
+    await tick();
+    s2();
+    await tick();
+    // Queued first, granted last.
+    expect(order).toEqual(["write", "read"]);
+    (await writeWait)();
+    await tick();
+    expect(order).toEqual(["write", "read", "background"]);
+    (await readWait)();
+    (await bgWait)();
+    expect(b.stats()).toMatchObject({ active: 0, queued: 0 });
+  });
+
+  it("a background acquire with a free slot and an empty queue is granted at once", async () => {
+    const b = make();
+    const rel = await b.acquire("background");
+    expect(b.stats()).toMatchObject({ active: 1, queued: 0 });
+    rel();
+  });
+
   it("stats().granted counts every slot handed out (fast path and from the queue), never a refusal", async () => {
     const b = createBulkhead({ max: 1, queue: 1, maxWaitMs: 100, writePriority: true });
     const r1 = await b.acquire("read"); // fast path

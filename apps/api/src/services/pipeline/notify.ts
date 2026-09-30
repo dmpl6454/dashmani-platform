@@ -19,6 +19,7 @@ import {
   type ProjectCreatedArgs,
   type MembersAddedArgs,
   type MovedArgs,
+  type DueChangedArgs,
   type ProjectDeletedArgs,
   type MessagePostedArgs,
   type MessageEditedArgs,
@@ -26,8 +27,10 @@ import {
 } from "./notifier";
 import { pipelineStats } from "./stats";
 import { Prisma, type PipelineTx } from "./db";
+import { recipientFragment } from "./recipients";
+import { enqueueDueChangedEmails, enqueueMentionEmails, enqueueMovedEmails } from "./email-outbox";
 
-export const PLN_KINDS = ["messages", "mention", "reply", "added", "moved", "due_soon", "overdue"] as const;
+export const PLN_KINDS = ["messages", "mention", "reply", "added", "moved", "due_soon", "overdue", "due_changed"] as const;
 export type PlnKind = (typeof PLN_KINDS)[number];
 
 /** md5('pln:<kind>:' || parts joined by ':')::uuid::text — the TypeScript half. */
@@ -47,15 +50,10 @@ export function plnIdSql(kind: PlnKind, ...parts: Array<string | Prisma.Sql>): P
 }
 
 /**
- * The one recipient predicate every notification INSERT uses (spec §7.3). `u` must be the
- * joined `users` row of the recipient `col`. `actor` is null for the due cron; `allow` is
- * the pilot allowlist in pilot mode, else null.
+ * The one recipient predicate every notification INSERT uses (spec §7.3) — defined in
+ * recipients.ts so the email outbox shares it; re-exported here for existing importers.
  */
-export function recipientFragment(col: Prisma.Sql, actor: string | null, allow: string[] | null): Prisma.Sql {
-  return Prisma.sql`(u.status = 'ACTIVE' AND u.deleted_at IS NULL
-    AND ${col} IS DISTINCT FROM ${actor}::text
-    AND (${allow}::text[] IS NULL OR ${col} = ANY(${allow}::text[])))`;
-}
+export { recipientFragment };
 
 // ══ The real notifier (spec §7.4–§7.7, §7.11) ═════════════════════════════════════════
 
@@ -242,6 +240,10 @@ export const ACTIVE_READER_WINDOW_MS = 45_000;
 async function onMessagePosted(tx: PipelineTx, a: MessagePostedArgs): Promise<void> {
   const { mentions, replyTo } = directRecipients(a.actorId, a.deliveredMentionIds, a.replyToAuthorId);
   await notifyDirectForMessage(tx, a, mentions, replyTo);
+  // Email for the same mention recipients (a reply alone does not email).
+  if (a.email && mentions.length) {
+    await enqueueMentionEmails(tx, { projectId: a.projectId, actorId: a.actorId, allow: a.allow, messageId: a.messageId, recipients: mentions });
+  }
 
   // §7.4 grouped row, in place and race-safe.
   const direct = replyTo ? [...mentions, replyTo] : mentions;
@@ -273,6 +275,9 @@ async function onMessageEdited(tx: PipelineTx, a: MessageEditedArgs): Promise<vo
   // Rows for NEWLY added mentions only; the reply row already exists (or never will).
   const { mentions } = directRecipients(a.actorId, a.addedMentionIds, null);
   await notifyDirectForMessage(tx, a, mentions, null);
+  if (a.email && mentions.length) {
+    await enqueueMentionEmails(tx, { projectId: a.projectId, actorId: a.actorId, allow: a.allow, messageId: a.messageId, recipients: mentions });
+  }
 
   // §7.11: an edit that drops a mention DELETES that user's mention row — the message no
   // longer mentions them, and a rewritten row would outlive a later leave + delete (the
@@ -320,6 +325,11 @@ async function onProjectDeleted(tx: PipelineTx, a: ProjectDeletedArgs): Promise<
 }
 
 async function onMoved(tx: PipelineTx, a: MovedArgs): Promise<void> {
+  // Email first: every phase change is queued (a net-zero one too — the worker compares the
+  // FIRST pending from-phase with the phase at send time and skips a round trip).
+  if (a.email) {
+    await enqueueMovedEmails(tx, { projectId: a.projectId, actorId: a.actorId, allow: a.allow, fromPhaseId: a.prevPhaseId });
+  }
   const gen = String(a.gen);
   const idOf = plnIdSql("moved", a.projectId, Prisma.sql`pp.user_id`, gen);
   if (a.netZero) {
@@ -348,10 +358,70 @@ async function onMoved(tx: PipelineTx, a: MovedArgs): Promise<void> {
   pipelineStats.notificationRows(moved);
 }
 
+/** `YYYY-MM-DD` → "Sat 3 Oct", or null. */
+const dayOrNull = (key: string | null) => (key ? shortDay(key) : null);
+
+/**
+ * "Priya changed the due date of “X” to Sat 3 Oct (was Mon 28 Sep)", "Priya removed the due
+ * date of “X” (was Mon 28 Sep)", "Priya set the due date of “X” to Sat 3 Oct". The project
+ * title is cut further when needed so the dates — the point of the row — always survive
+ * the 120-character title limit.
+ */
+export function dueChangedTitle(actorName: string, projectTitle: string, fromDue: string | null, toDue: string | null): string {
+  const from = dayOrNull(fromDue);
+  const to = dayOrNull(toDue);
+  const build = (who: string, qt: string) =>
+    to === null
+      ? `${who} removed the due date of ${qt}${from ? ` (was ${from})` : ""}`
+      : from === null
+        ? `${who} set the due date of ${qt} to ${to}`
+        : `${who} changed the due date of ${qt} to ${to} (was ${from})`;
+  const len = (s: string) => Array.from(s).length;
+  let who = actorName;
+  let title = clip(projectTitle, 60);
+  let over = len(build(who, `“${title}”`)) - TITLE_MAX;
+  // Shrink the project title first (down to 12), then the name (down to 12).
+  if (over > 0) {
+    title = clip(projectTitle, Math.max(12, len(title) - over));
+    over = len(build(who, `“${title}”`)) - TITLE_MAX;
+  }
+  if (over > 0) who = clip(actorName, Math.max(12, len(who) - over));
+  return clip(build(who, `“${title}”`), TITLE_MAX);
+}
+
+/**
+ * The bell row for a due-date change: `due_changed:<pid>:<uid>`, one per participant with
+ * notify (minus the actor), upserted and RE-ARMED IN PLACE like the grouped row — it
+ * always describes the latest change. Cleared by the project-level ack (sync.service.ts).
+ */
+async function onDueChanged(tx: PipelineTx, a: DueChangedArgs): Promise<void> {
+  const path = projectPath(a.projectId);
+  const title = dueChangedTitle(a.actorName, a.projectTitle, a.fromDue, a.toDue);
+  const message = clip(`Phase: ${a.phaseName}`, MESSAGE_MAX);
+  const meta = pipelineMeta("due_changed", a.projectId, { from: a.fromDue, to: a.toDue }, path);
+  const written = await tx.$executeRaw`
+    INSERT INTO notifications (id, user_id, type, title, message, read, metadata, created_at)
+    SELECT ${plnIdSql("due_changed", a.projectId, Prisma.sql`pp.user_id`)}, pp.user_id, ${PIPELINE_TYPE},
+           ${title}, ${message}, false, ${meta}::jsonb, ${NOW}
+      FROM pipeline_participants pp
+      JOIN users u ON u.id = pp.user_id
+     WHERE pp.project_id = ${a.projectId} AND pp.notify
+       AND ${recipientFragment(Prisma.sql`pp.user_id`, a.actorId, a.allow)}
+     ORDER BY pp.user_id
+    ON CONFLICT (id) DO UPDATE SET
+      read = false, created_at = EXCLUDED.created_at, title = EXCLUDED.title,
+      message = EXCLUDED.message, metadata = EXCLUDED.metadata`;
+  pipelineStats.notificationRows(written);
+  if (a.email) {
+    await enqueueDueChangedEmails(tx, { projectId: a.projectId, actorId: a.actorId, allow: a.allow, fromDue: a.fromDue });
+  }
+}
+
 export const realNotifier: PipelineNotifier = {
   onProjectCreated: (tx, a: ProjectCreatedArgs) => notifyAdded(tx, a),
   onMembersAdded: (tx, a: MembersAddedArgs) => notifyAdded(tx, a),
   onMoved,
+  onDueChanged,
   onProjectDeleted,
   onMessagePosted,
   onMessageEdited,

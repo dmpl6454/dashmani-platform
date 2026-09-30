@@ -26,6 +26,11 @@ interface NotifyBase {
   actorName: string;
   /** Pilot allowlist when `pipeline.mode = pilot`, else null (spec §7.3 `$allow`). */
   allow: string[] | null;
+  /**
+   * Also queue EMAIL for this event (email-outbox.ts pipelineEmailOn(settings), resolved
+   * before the transaction). Absent = false. Only moved, mention and due_changed email.
+   */
+  email?: boolean;
 }
 
 /** §7.7 "added" rows for the members added at creation (never the creator). */
@@ -57,6 +62,17 @@ export interface MovedArgs extends NotifyBase {
   fromPhaseName: string;
   toPhaseId: string;
   toPhaseName: string;
+  /** The phase immediately before THIS move (the email compares its first one with the current phase). */
+  prevPhaseId: string;
+}
+
+/** A due-date change through the field edit (route #7): the in-portal row and, if on, the email. */
+export interface DueChangedArgs extends NotifyBase {
+  /** `YYYY-MM-DD` before and after; null = no due date. Never equal. */
+  fromDue: string | null;
+  toDue: string | null;
+  /** The project's current phase (the row's "Phase: …" line). */
+  phaseName: string;
 }
 
 /** §7.11: a project soft delete removes the grouped rows of its current participants. */
@@ -118,6 +134,7 @@ export interface PipelineNotifier {
   onProjectCreated(tx: PipelineTx, a: ProjectCreatedArgs): Promise<void>;
   onMembersAdded(tx: PipelineTx, a: MembersAddedArgs): Promise<void>;
   onMoved(tx: PipelineTx, a: MovedArgs): Promise<void>;
+  onDueChanged(tx: PipelineTx, a: DueChangedArgs): Promise<void>;
   onProjectDeleted(tx: PipelineTx, a: ProjectDeletedArgs): Promise<void>;
   onMessagePosted(tx: PipelineTx, a: MessagePostedArgs): Promise<void>;
   onMessageEdited(tx: PipelineTx, a: MessageEditedArgs): Promise<void>;
@@ -129,6 +146,7 @@ export const noopNotifier: PipelineNotifier = {
   onProjectCreated: async () => {},
   onMembersAdded: async () => {},
   onMoved: async () => {},
+  onDueChanged: async () => {},
   onProjectDeleted: async () => {},
   onMessagePosted: async () => {},
   onMessageEdited: async () => {},

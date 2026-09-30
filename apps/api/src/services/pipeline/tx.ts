@@ -64,6 +64,20 @@ export async function pipelineWriteStatement<T>(fn: (db: PipelineDbClient) => Pr
   }
 }
 
+/**
+ * One BACKGROUND slot, one AUTOCOMMIT statement (no transaction): the email worker
+ * (cron/pipeline-email.cron.ts). A background waiter is granted only when no read or
+ * write is queued (utils/bulkhead.ts), so the worker never delays a user's request, and
+ * under load it gives up after the gate's 2 s wait (503 → the tick simply stops early).
+ */
+export async function pipelineBackground<T>(fn: (db: PipelineDbClient) => Promise<T>): Promise<T> {
+  try {
+    return await pipelineGate.run("background", () => fn(pipelineDb));
+  } catch (err) {
+    throw normalizePipelineError(err);
+  }
+}
+
 export interface PipelineWriteOptions {
   /**
    * Retry once after 50–150 ms on a deadlock (40P01) or serialization failure (40001).

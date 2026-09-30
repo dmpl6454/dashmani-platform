@@ -37,6 +37,7 @@ import { notifier } from "./notifier";
 import { cardFromRow, headerFromRow, messageFromRow, participantFromRow } from "./wire";
 import type { PipelineDirectory } from "./access";
 import { isPilotUser, type PipelineSettings } from "./settings";
+import { pipelineEmailOn } from "./email-outbox";
 import { assertOwnerOrAdmin } from "../../middleware/pipeline-gates";
 
 type Row = Record<string, unknown>;
@@ -449,6 +450,7 @@ export async function editProject(
   changes: PipelineEditableFields,
   base: PipelineEditableFields,
 ): Promise<{ header: PipelineHeader }> {
+  const email = pipelineEmailOn(actor.settings); // memo only — before the slot
   const out = await pipelineWrite(async (tx) => {
     const row = await lockProject(tx, projectId, actor.userId);
     assertWritable(row);
@@ -481,9 +483,24 @@ export async function editProject(
              header_rev  = header_rev + 1,
              updated_at  = timezone('utc', now())
        WHERE id = ${projectId}
-   RETURNING *`;
+   RETURNING *, (SELECT ph.name FROM pipeline_phases ph WHERE ph.id = pipeline_projects.phase_id) AS phase_name`;
+    const header = headerFromRow(updated);
+    if (has("dueDate")) {
+      // (d) a due date set, changed or removed: the bell row (re-armed in place) and the email.
+      await notifier.onDueChanged(tx, {
+        projectId,
+        projectTitle: header.title,
+        actorId: actor.userId,
+        actorName: actor.name,
+        allow: allowList(actor.settings),
+        email,
+        fromDue: cur.dueDate,
+        toDue: header.dueDate,
+        phaseName: String(updated.phase_name ?? ""),
+      });
+    }
     return {
-      header: headerFromRow(updated),
+      header,
       boardChanged: has("title") || has("startDate") || has("dueDate"),
     };
   });
@@ -533,6 +550,7 @@ export async function moveProject(actor: PipelineActor, projectId: string, input
  */
 async function moveAttempt(actor: PipelineActor, projectId: string, input: PipelineMoveRequest, lockPhaseFirst: boolean) {
   const me = actor.userId;
+  const email = pipelineEmailOn(actor.settings); // memo only — before the slot
   const { toPhaseId, basePhaseId } = input;
   const afterId = input.afterId === projectId ? null : input.afterId;
   return pipelineWrite(async (tx) => {
@@ -648,6 +666,8 @@ async function moveAttempt(actor: PipelineActor, projectId: string, input: Pipel
         fromPhaseName: String(s2.from_name ?? ""),
         toPhaseId,
         toPhaseName: String(s2.phase_name ?? ""),
+        prevPhaseId: curPhase,
+        email,
       });
     }
     return { card: cardFromRow(updated), placementAdjusted, changed: true };

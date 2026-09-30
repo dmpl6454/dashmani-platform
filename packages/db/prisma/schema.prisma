@@ -74,6 +74,7 @@ model User {
   pipelineCreated        PipelineProject[]     @relation("PipelineCreator")
   pipelineParticipations PipelineParticipant[] @relation("PipelineParticipation")
   pipelineMessages       PipelineMessage[]     @relation("PipelineMessageAuthor")
+  pipelineEmails         PipelineEmailOutbox[] @relation("PipelineEmailRecipient")
 
   @@map("users")
 }
@@ -2106,6 +2107,7 @@ model PipelineProject {
   phase        PipelinePhase         @relation(fields: [phaseId], references: [id], onDelete: Restrict)
   participants PipelineParticipant[]
   messages     PipelineMessage[]
+  emailOutbox  PipelineEmailOutbox[]
 
   @@unique([createdById, clientId])
   @@index([phaseId])
@@ -2167,4 +2169,40 @@ model PipelineMessage {
   @@index([projectId, parentId, seq])   // top-level pages and reply lists
   @@index([parentId])                   // FK cascade on purge must not full-scan
   @@map("pipeline_messages")
+}
+
+/// Pipeline EMAIL outbox (owner request 2026-09-30): one row per (recipient, project, kind)
+/// while PENDING, so a burst of events coalesces into it; the worker
+/// (cron/pipeline-email.cron.ts) turns due rows into ONE digest email per recipient.
+/// Written only inside the action's own transaction (services/pipeline/email-outbox.ts).
+///
+/// ⚠️ THE COALESCING KEY IS A PARTIAL UNIQUE INDEX that Prisma 5 cannot express:
+///   CREATE UNIQUE INDEX "pipeline_email_outbox_pending_key"
+///       ON "pipeline_email_outbox" ("user_id", "project_id", "kind") WHERE "status" = 'pending';
+/// It lives in scripts/pipeline-email-ddl.sql. Prisma's introspection IGNORES partial
+/// indexes (verified 2026-09-30 on 5.22: `migrate diff` stays empty and `db push` leaves it
+/// in place), so it is deliberately NOT declared here — declaring it as @@unique would make
+/// `db push` build a FULL unique index and the Prisma client expose a compound key that is
+/// not unique. A database built by `db push` alone lacks it; the boot self-check then keeps
+/// email OFF (never a failed write), and the tests create it from the DDL script.
+model PipelineEmailOutbox {
+  id        String    @id @default(uuid())
+  userId    String    @map("user_id")
+  projectId String    @map("project_id")
+  kind      String    @db.VarChar(16)                   // moved | mention | due_soon | due_changed
+  payload   Json      @default("{}")                    // moved {fromPhaseId, actorIds}; mention {messageIds ≤ 20}; due_changed {fromDue, actorIds}; due_soon {due}
+  status    String    @default("pending") @db.VarChar(12) // pending | sending | sent | skipped | failed
+  attempts  Int       @default(0)
+  sendAfter DateTime  @map("send_after")
+  lastError String?   @map("last_error") @db.Text
+  sentAt    DateTime? @map("sent_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+
+  user    User            @relation("PipelineEmailRecipient", fields: [userId], references: [id], onDelete: Cascade)
+  project PipelineProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([status, sendAfter])
+  @@index([projectId])
+  @@map("pipeline_email_outbox")
 }

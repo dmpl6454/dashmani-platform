@@ -154,7 +154,7 @@ export default function LinksAnalyticsPage() {
         </div>
       )}
 
-      {tab === "overview" && (<>
+      {tab === "overview" && (<div role="tabpanel" id="links-panel-overview" aria-labelledby="links-tab-overview" className="space-y-6">
       {/* Top stats */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <div className="v3-card-sm p-4 space-y-1">
@@ -506,7 +506,7 @@ export default function LinksAnalyticsPage() {
         })()}
 
       </div>
-      </>)}
+      </div>)}
     </div>
   );
 }

@@ -265,7 +265,9 @@ All three `.env` files (root, api, db) need the same `DATABASE_URL` and `JWT_SEC
 | `SMTP_PORT` | `587` | Standard submission port; pairs with `SMTP_SECURE=false` (STARTTLS) |
 | `SMTP_SECURE` | `false` | `false`=STARTTLS on 587, `true`=implicit TLS on 465. STARTTLS is the modern standard despite the name |
 | `SMTP_USER` | `hr@digitalsukoon.com` | Gmail sender address — must match the Google account the App Password was generated under |
-| `SMTP_PASS` | *(blank)* | Gmail **App Password** (16 chars, no spaces). Generate at Google Account → Security → 2-Step Verification → App passwords |
+| `SMTP_PASS` | *(blank)* | Gmail **App Password** (16 chars, no spaces). Generate at Google Account → Security → 2-Step Verification → App passwords. ⚠️ **A `535 5.7.8 Username and Password not accepted` from prod does NOT prove the password is wrong** — see the note below the table. |
+
+> ⚠️ **SMTP must connect over IPv4 (verified live 2026-09-30).** Gmail rejects `hr@digitalsukoon.com`'s login from the prod box over **IPv6** with a misleading `535 5.7.8 BadCredentials`, while the *same* password succeeds over IPv4 (and from a laptop). nodemailer 8 resolves both families and connects to a **random** address, so about half of all prod emails — password resets included — had been failing silently. Both mailers (`services/email.service.ts`, `services/pipeline/email-mailer.ts`) now go through `utils/smtp-host.ts` `ipv4SmtpHost()`, which connects to an A record and keeps TLS verification on the real hostname via `tls.servername`. **Never create a nodemailer transport with a bare hostname.** To diagnose a 535, test the login from the box over IPv4 and IPv6 separately before touching the password.
 
 ### Switching between local dev and production API
 

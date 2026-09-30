@@ -20,6 +20,7 @@
  */
 import nodemailer from "nodemailer";
 import type SMTPPool from "nodemailer/lib/smtp-pool";
+import { ipv4SmtpHost } from "../../utils/smtp-host";
 
 export interface PipelineMail {
   from: string;
@@ -107,26 +108,43 @@ function dropPooledTransport(): void {
   }
 }
 
-function realMailer(): PipelineMailer {
-  if (!pooled) {
-    const options: SMTPPool.Options = {
-      pool: true,
-      maxConnections: 1,
-      maxMessages: 100,
-      rateDelta: 1000,
-      rateLimit: ratePerSec(),
-      host: process.env.SMTP_HOST || "smtp.gmail.com",
-      port: parseInt(process.env.SMTP_PORT || "587", 10),
-      secure: process.env.SMTP_SECURE === "true",
-      auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
-      connectionTimeout: 10_000,
-      greetingTimeout: 10_000,
-      socketTimeout: 20_000,
-    };
-    pooled = nodemailer.createTransport(options);
+let pooling: Promise<nodemailer.Transporter> | null = null;
+
+/**
+ * The pooled transport, created on first use. The SMTP host is resolved to an IPv4 address
+ * first (utils/smtp-host.ts): Gmail rejects this account's logins from the prod box over IPv6,
+ * and nodemailer would otherwise pick IPv4 or IPv6 at random. Concurrent first sends share one
+ * creation; after dropPooledTransport() the next send resolves and creates a fresh pool.
+ */
+function pooledTransport(): Promise<nodemailer.Transporter> {
+  if (pooled) return Promise.resolve(pooled);
+  if (!pooling) {
+    pooling = (async () => {
+      const options: SMTPPool.Options = {
+        pool: true,
+        maxConnections: 1,
+        maxMessages: 100,
+        rateDelta: 1000,
+        rateLimit: ratePerSec(),
+        ...(await ipv4SmtpHost(process.env.SMTP_HOST || "smtp.gmail.com")),
+        port: parseInt(process.env.SMTP_PORT || "587", 10),
+        secure: process.env.SMTP_SECURE === "true",
+        auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+        connectionTimeout: 10_000,
+        greetingTimeout: 10_000,
+        socketTimeout: 20_000,
+      };
+      pooled = nodemailer.createTransport(options);
+      return pooled;
+    })().finally(() => {
+      pooling = null;
+    });
   }
-  const t = pooled;
-  return { sendMail: (mail) => t.sendMail(mail) };
+  return pooling;
+}
+
+function realMailer(): PipelineMailer {
+  return { sendMail: async (mail) => (await pooledTransport()).sendMail(mail) };
 }
 
 function getMailer(): PipelineMailer {

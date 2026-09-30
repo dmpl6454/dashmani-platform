@@ -1,20 +1,19 @@
 import nodemailer from "nodemailer";
+import { ipv4SmtpHost } from "../utils/smtp-host";
 
-let _transporter: nodemailer.Transporter | null = null;
-
-function getTransporter() {
-  if (!_transporter) {
-    _transporter = nodemailer.createTransport({
-      host: process.env.SMTP_HOST || "smtp.gmail.com",
-      port: parseInt(process.env.SMTP_PORT || "587"),
-      secure: process.env.SMTP_SECURE === "true",
-      auth: {
-        user: process.env.SMTP_USER,
-        pass: process.env.SMTP_PASS,
-      },
-    });
-  }
-  return _transporter;
+// A fresh (non-pooled) transport per send, so every send uses a current IPv4 address for the
+// SMTP host. Gmail rejects this account's logins from the prod box over IPv6 — see
+// utils/smtp-host.ts. A non-pooled transport opens one connection per sendMail anyway.
+async function createTransporter() {
+  return nodemailer.createTransport({
+    ...(await ipv4SmtpHost(process.env.SMTP_HOST || "smtp.gmail.com")),
+    port: parseInt(process.env.SMTP_PORT || "587"),
+    secure: process.env.SMTP_SECURE === "true",
+    auth: {
+      user: process.env.SMTP_USER,
+      pass: process.env.SMTP_PASS,
+    },
+  });
 }
 
 export async function sendEmail(options: {
@@ -29,7 +28,7 @@ export async function sendEmail(options: {
   }
 
   try {
-    const transporter = getTransporter();
+    const transporter = await createTransporter();
     const result = await transporter.sendMail({
       from: `"Digital Sukoon HR" <${process.env.SMTP_USER}>`,
       to: options.to,

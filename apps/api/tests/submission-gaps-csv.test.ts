@@ -2,7 +2,14 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import request from "supertest";
 import app from "../src/app";
 import { prisma } from "@dashmani/db";
-import { GAP_DAYS_CSV_HEADERS, todayIST } from "@dashmani/shared";
+import {
+  GAP_DAYS_CSV_HEADERS,
+  buildGapDaySeries,
+  gapCsvPairInfo,
+  gapDaysCsvRow,
+  gapPostedFromDays,
+  todayIST,
+} from "@dashmani/shared";
 import {
   buildSubmissionGapDaysCsv,
   getSubmissionGapDays,
@@ -273,6 +280,29 @@ describe("submission gaps — day-by-day CSV (all rows)", () => {
       const fromCsv = Object.fromEntries(lines.map((l) => [l["Date (IST)"], [l.Status, l.Links, l["First posted (IST)"], l["Last posted (IST)"]]]));
       for (const d of view.days) {
         expect(fromCsv[d.date], d.date).toEqual([label[d.status], String(d.linkCount), d.firstPostedIST ?? "", d.lastPostedIST ?? ""]);
+      }
+    });
+
+    it("produces exactly the rows of the in-view CSV, which the panel builds from /days", async () => {
+      // The panel's path (_gap-days.tsx): the /days response → the shared day series →
+      // the shared row format. The server's path: one aggregation → the same series and
+      // format. Same pair, same window ⇒ the same rows, cell for cell.
+      const summary = await getSubmissionGaps({ startDate: START, endDate: END, today: TODAY, teamId: null, platform: null, employeeId: null });
+      for (const accountId of [ids.igA, ids.fbB]) {
+        const view = await getSubmissionGapDays({ employeeId: ids.asha, accountId, startDate: START, endDate: END, today: TODAY });
+        const cells = buildGapDaySeries({
+          startDate: view.range.startDate,
+          endDate: view.range.endDate,
+          today: view.range.today,
+          assignedSince: view.assignedSince,
+          posted: gapPostedFromDays(view.days),
+        });
+        const pair = summary.rows.find((r) => r.employee.id === ids.asha && r.account.id === accountId)!;
+        const inView = [...cells].reverse().map((c) => gapDaysCsvRow(gapCsvPairInfo(pair), c).map(String));
+
+        const csv = await buildSubmissionGapDaysCsv(params({ employeeId: ids.asha, accountId }));
+        const [, ...body] = parseCsv([...csv.chunks()].join(""));
+        expect(body, accountId).toEqual(inView);
       }
     });
 

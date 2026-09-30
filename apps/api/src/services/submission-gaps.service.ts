@@ -102,6 +102,8 @@ export interface GapPairRow {
   currentGapDays: number;
   /** The current gap runs back to the window start while the assignment is older — it may be longer. */
   currentGapOpenEnded: boolean;
+  /** Latest report day (IST) with a link on counted days or today, and the last posting time that day. */
+  lastPostedDay: string | null;
   lastPostedAt: string | null;
   lastPostedIST: string | null;
   lastPostedApprox: boolean;
@@ -133,6 +135,8 @@ export interface GapEmployeeRow {
   longestGapDays: number;
   currentGapDays: number;
   currentGapOpenEnded: boolean;
+  /** Latest report day (IST) with a link on counted days or today, and the last posting time that day. */
+  lastPostedDay: string | null;
   lastPostedAt: string | null;
   lastPostedIST: string | null;
   lastPostedApprox: boolean;
@@ -320,6 +324,7 @@ interface RawPair {
   currentGapOpenEnded: boolean;
   lastPostedAt: string | null;
   lastPostedIST: string | null;
+  lastPostedDay: string | null;
   lastPostedApprox: boolean | null;
   todayLinks: number;
 }
@@ -344,6 +349,7 @@ interface RawEmployee {
   currentGapOpenEnded: boolean;
   lastPostedAt: string | null;
   lastPostedIST: string | null;
+  lastPostedDay: string | null;
   lastPostedApprox: boolean | null;
   todayPostedAccounts: number;
   todayLinks: number;
@@ -491,7 +497,11 @@ export function submissionGapsSql(p: SubmissionGapsParams): Prisma.Sql {
     ),
     pair_last AS MATERIALIZED (
       SELECT employee_id, account_id,
-             MAX(last_at) AS last_at,
+             -- "Last posted" = the latest REPORT day with a link, and the last posting
+             -- time ON THAT DAY. Not MAX(last_at): a report restored or submitted late
+             -- can carry a later timestamp than a newer day's, which would name the wrong
+             -- day as the last one posted.
+             (ARRAY_AGG(last_at ORDER BY day DESC))[1] AS last_at,
              MAX(day) AS last_day,
              COALESCE(SUM(n) FILTER (WHERE day = ${today}::date), 0)::int AS today_links
       FROM posted
@@ -555,7 +565,7 @@ export function submissionGapsSql(p: SubmissionGapsParams): Prisma.Sql {
     ),
     emp_last AS MATERIALIZED (
       SELECT employee_id,
-             MAX(last_at) AS last_at,
+             (ARRAY_AGG(last_at ORDER BY last_day DESC, last_at DESC))[1] AS last_at,
              MAX(last_day) AS last_day,
              (COUNT(*) FILTER (WHERE today_links > 0))::int AS today_posted_accounts,
              SUM(today_links)::int AS today_links
@@ -588,6 +598,7 @@ export function submissionGapsSql(p: SubmissionGapsParams): Prisma.Sql {
                  COALESCE(pa.gap_open, FALSE) AS "currentGapOpenEnded",
                  to_char(pl.last_at, 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "lastPostedAt",
                  to_char(pl.last_at + INTERVAL '330 minutes', 'YYYY-MM-DD HH24:MI') AS "lastPostedIST",
+                 to_char(pl.last_day, 'YYYY-MM-DD') AS "lastPostedDay",
                  (pl.last_day < ${cutover}::date) AS "lastPostedApprox",
                  COALESCE(pl.today_links, 0) AS "todayLinks"
           FROM win w
@@ -622,6 +633,7 @@ export function submissionGapsSql(p: SubmissionGapsParams): Prisma.Sql {
                  COALESCE(ea.gap_open, FALSE) AS "currentGapOpenEnded",
                  to_char(el.last_at, 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "lastPostedAt",
                  to_char(el.last_at + INTERVAL '330 minutes', 'YYYY-MM-DD HH24:MI') AS "lastPostedIST",
+                 to_char(el.last_day, 'YYYY-MM-DD') AS "lastPostedDay",
                  (el.last_day < ${cutover}::date) AS "lastPostedApprox",
                  COALESCE(el.today_posted_accounts, 0) AS "todayPostedAccounts",
                  COALESCE(el.today_links, 0) AS "todayLinks"
@@ -687,6 +699,7 @@ async function computeSubmissionGaps(p: SubmissionGapsParams): Promise<Submissio
       longestGapDays: r.longestGapDays ?? 0,
       currentGapDays: r.currentGapDays,
       currentGapOpenEnded: r.currentGapOpenEnded,
+      lastPostedDay: r.lastPostedDay,
       lastPostedAt: r.lastPostedAt,
       lastPostedIST: r.lastPostedIST,
       lastPostedApprox: r.lastPostedAt ? r.lastPostedApprox === true : false,
@@ -730,6 +743,7 @@ async function computeSubmissionGaps(p: SubmissionGapsParams): Promise<Submissio
       longestGapDays: r.longestGapDays ?? 0,
       currentGapDays: r.currentGapDays,
       currentGapOpenEnded: r.currentGapOpenEnded,
+      lastPostedDay: r.lastPostedDay,
       lastPostedAt: r.lastPostedAt,
       lastPostedIST: r.lastPostedIST,
       lastPostedApprox: r.lastPostedAt ? r.lastPostedApprox === true : false,

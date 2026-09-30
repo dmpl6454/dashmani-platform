@@ -410,6 +410,27 @@ describe("submission gaps", () => {
       expect(withJune4.rows[0].lastPostedIST).toBe("2026-06-04 14:45");
     });
 
+    it("names the latest report day as last posted, with that day's last time", async () => {
+      // The 14th's report gains a link stamped LATER than anything on the 15th (a late or
+      // restored submission), and the 15th gains one just after midnight IST.
+      await post(ids.asha, ids.igA, "2026-09-14", { firstSeenAt: "2026-09-18T05:00:00.000Z" });
+      await post(ids.asha, ids.igA, "2026-09-15", { firstSeenAt: "2026-09-15T19:10:00.000Z" });
+      const res = await getSubmissionGaps(params({ startDate: "2026-09-13", endDate: "2026-09-15" }));
+      const r = row(res.rows, ids.asha, ids.igA);
+      expect(r.lastPostedDay).toBe("2026-09-15");
+      // The 15th's last link was at 00:40 IST on the 16th — shown as such, not the 14th's.
+      expect(r.lastPostedIST).toBe("2026-09-16 00:40");
+      const asha = res.employees.find((e) => e.employee.id === ids.asha)!;
+      expect(asha.lastPostedDay).toBe("2026-09-15");
+      expect(asha.lastPostedIST).toBe("2026-09-16 00:40");
+
+      const days = await getSubmissionGapDays({
+        employeeId: ids.asha, accountId: ids.igA, startDate: "2026-09-13", endDate: "2026-09-15", today: TODAY,
+      });
+      const d15 = days.days.find((x) => x.date === "2026-09-15")!;
+      expect(d15).toMatchObject({ linkCount: 2, firstPostedIST: "2026-09-15 18:15", lastPostedIST: "2026-09-16 00:40" });
+    });
+
     it("keeps only the most recent missed ranges per row and says so", async () => {
       const employeeRole = await prisma.role.findUniqueOrThrow({ where: { name: "Employee" } });
       const farah = await mkUser("Farah", [employeeRole.id]);

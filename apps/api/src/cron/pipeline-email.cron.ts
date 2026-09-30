@@ -2,7 +2,7 @@
  * Pipeline EMAIL worker (owner request 2026-09-30): turns due outbox rows into ONE digest
  * email per recipient. The enqueue half is services/pipeline/email-outbox.ts.
  *
- * SCHEDULE: a tick every 60 s; the first 4 minutes after boot (index.ts), so a deploy
+ * SCHEDULE: a tick every 60 s, the first one 4 minutes after boot (index.ts), so a deploy
  * restart never lands a burst of mail on top of the boot work. The overlap flag is claimed
  * SYNCHRONOUSLY, before the first await.
  *
@@ -11,8 +11,9 @@
  *         set, and the schema self-check passed for the pipeline AND the email outbox;
  *   (ii)  rows stuck in 'sending' for > 10 min (a crash mid-send) go back to pending —
  *         counted as an attempt, so a row that keeps crashing the process ends 'failed';
- *   (iii) claim ≤ 100 due pending rows for ≤ min(30, daily cap left) recipients with
- *         FOR UPDATE SKIP LOCKED in ONE autocommit UPDATE → 'sending';
+ *   (iii) claim ≤ 100 due pending rows for ≤ min(30, daily cap left) recipients, one
+ *         recipient at a time, with FOR UPDATE SKIP LOCKED in ONE autocommit UPDATE →
+ *         'sending';
  *   (iv)  read the CURRENT state in bulk — one query each for projects+phases, messages and
  *         users (names from the directory memo) — and build one digest per recipient,
  *         skipping what no longer applies: a deleted message or withdrawn mention, a
@@ -23,7 +24,8 @@
  *         PIPELINE_EMAIL_DAILY_CAP (default 300) per IST day;
  *   (vi)  mark sent / skipped; a failure is retried with exponential backoff (2, 4, 8,
  *         16 min) and after 5 attempts becomes 'failed' with last_error. A broken
- *         transport stops the tick; the rest go back to pending unharmed.
+ *         transport stops the tick, the rest go back to pending unharmed, and no send is
+ *         tried for 5 min (15 for a login failure) — the SMTP account is shared.
  *
  * DB RULES: only pipelineDb, only through pipelineBackground — ONE short autocommit
  * statement per call at BACKGROUND priority (a slot is granted only when no request is

@@ -47,7 +47,7 @@ function tsFilesUnder(dir: string): string[] {
   return out;
 }
 
-/** The pipeline's API source: services/pipeline/**, middleware/pipeline-*.ts, routes/pipeline*. */
+/** The pipeline's API source: services/pipeline/**, middleware/pipeline-*.ts, routes/pipeline*, cron/pipeline-*. */
 function pipelineApiSources(): string[] {
   const inDir = (sub: string, prefix: string) =>
     fs.existsSync(path.join(API_SRC, sub))
@@ -61,6 +61,7 @@ function pipelineApiSources(): string[] {
     ...inDir("middleware", "pipeline-"),
     ...inDir("routes", "pipeline"),
     ...tsFilesUnder(path.join(API_SRC, "routes/pipeline")),
+    ...inDir("cron", "pipeline-"),
   ];
 }
 

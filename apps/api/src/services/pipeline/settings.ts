@@ -7,6 +7,9 @@
  *   pipeline.pollMs          a number (a floor for every interval) or a JSON object with
  *                            any of project/projectBg/board/boardBg/idle; clamped 2 s–10 min
  *   pipeline.minClientBuild  integer; older HR tabs are told to reload
+ *   pipeline.email           "on" enables pipeline EMAIL notifications (the outbox and its
+ *                            worker, cron/pipeline-email.cron.ts); anything else, or no
+ *                            row, = off. The in-portal bell is unaffected either way.
  *
  * FAILURE SEMANTICS (review item 8): a read that FAILS must never look like "off" — the
  * client would show "paused" for a DB blip. A failed read is served from the last value
@@ -27,6 +30,7 @@ export const PIPELINE_SETTING_KEYS = [
   "pipeline.pilotUserIds",
   "pipeline.pollMs",
   "pipeline.minClientBuild",
+  "pipeline.email",
 ] as const;
 
 export interface PipelineSettings {
@@ -34,6 +38,8 @@ export interface PipelineSettings {
   pilotUserIds: ReadonlySet<string>;
   pollMs: PipelinePollMs;
   minClientBuild: number;
+  /** `pipeline.email = on`. Enqueue and send ALSO need SMTP and the email schema (email-outbox.ts). */
+  email: boolean;
 }
 
 const MEMO_MS = 15_000;
@@ -127,6 +133,7 @@ export function parsePipelineSettings(rows: SettingRow[]): PipelineSettings {
     pilotUserIds: parsePilotIds(byKey.get("pipeline.pilotUserIds")),
     pollMs: parsePollMs(byKey.get("pipeline.pollMs")),
     minClientBuild: parseMinClientBuild(byKey.get("pipeline.minClientBuild")),
+    email: (byKey.get("pipeline.email") ?? "").trim().toLowerCase() === "on",
   };
 }
 

@@ -88,18 +88,20 @@ case "$mode" in
     # module reference — import, export-from, require or dynamic import, either quote
     # style — to @dashmani/db or @prisma/client counts, except in services/pipeline/db.ts
     # itself. The scan covers services/pipeline/** plus the pipeline files that live
-    # outside it (plan file map): the router, its gates and limiters, and the due cron.
+    # outside it (plan file map): the router, its gates and limiters, the due cron and the
+    # email worker.
     check "pipeline-db-import" \
-      "Pipeline code (services/pipeline/**, routes/pipeline.routes.ts, middleware/pipeline-*.ts, cron/pipeline-due.cron.ts) may import pipelineDb (and any Prisma types) only via services/pipeline/db.ts — never @dashmani/db or @prisma/client directly." \
+      "Pipeline code (services/pipeline/**, routes/pipeline.routes.ts, middleware/pipeline-*.ts, cron/pipeline-*.cron.ts) may import pipelineDb (and any Prisma types) only via services/pipeline/db.ts — never @dashmani/db or @prisma/client directly." \
       "[\"'](@dashmani/db|@prisma/client)[\"'/]" optional \
       '^apps/api/src/services/pipeline/db\.ts:' \
       apps/api/src/services/pipeline \
       apps/api/src/routes/pipeline.routes.ts \
       apps/api/src/middleware/pipeline-*.ts \
-      apps/api/src/cron/pipeline-due.cron.ts
-    # ↑ The unquoted glob is deliberate (pipeline-gates.ts, pipeline-rate-limit.ts and any
-    # later pipeline middleware). With no match bash passes it through literally, `-e`
-    # fails, and check() notes the skip — it never silently scans nothing.
+      apps/api/src/cron/pipeline-*.cron.ts
+    # ↑ The unquoted globs are deliberate (pipeline-gates.ts, pipeline-rate-limit.ts and any
+    # later pipeline middleware; the due cron and the email worker). With no match bash
+    # passes a glob through literally, `-e` fails, and check() notes the skip — it never
+    # silently scans nothing.
 
     # Ranks are ordered byte-wise (COLLATE "C" in SQL, compareRank's plain < and > in
     # JS). localeCompare orders them differently and silently scrambles the board.

@@ -12,10 +12,11 @@ import {
   runPipelineMaintenanceIfDue,
   schedulePipelineMaintenance,
   trimPipelineNotifications,
+  trimPipelineEmailOutbox,
   purgeDeletedProjects,
   TRIM_MARKER_KEY,
 } from "../../src/services/pipeline/jobs";
-import { clearPipelineSettings, createPipelineUser, seedPipelinePhases } from "./pipeline-helpers";
+import { clearPipelineSettings, createPipelineUser, seedPipelinePhases, ensurePipelineEmailSchema } from "./pipeline-helpers";
 import { createProjectFixture } from "./fixtures-messages";
 
 const ist = (day: string, hhmm: string) => new Date(`${day}T${hhmm}:00.000+05:30`);
@@ -77,6 +78,37 @@ describe("pipeline maintenance jobs", () => {
       expect((await prisma.systemSetting.findUnique({ where: { key: TRIM_MARKER_KEY } }))?.value).toBe("2026-09-29");
       expect(await runPipelineMaintenanceIfDue({ now: ist("2026-09-29", "04:30"), pauseMs: 0 })).toMatchObject({ status: "skipped", reason: "done" });
       expect(await runPipelineMaintenanceIfDue({ now: ist("2026-09-30", "03:45"), pauseMs: 0 })).toMatchObject({ status: "ran" });
+    });
+  });
+
+  describe("email outbox trim", () => {
+    it("deletes sent / skipped / failed rows older than 30 days; never pending or sending ones; runs in the maintenance run", async () => {
+      await ensurePipelineEmailSchema();
+      const u = await createPipelineUser({ name: "U", tag: "trim-ob" });
+      const p = await createProjectFixture({ ownerId: u.id });
+      const row = async (status: string, ageDays: number, kind = "moved") =>
+        (
+          await prisma.pipelineEmailOutbox.create({
+            data: {
+              userId: u.id,
+              projectId: p.id,
+              kind,
+              status,
+              sendAfter: new Date(),
+              createdAt: new Date(Date.now() - ageDays * 86_400_000),
+            },
+          })
+        ).id;
+      const gone = [await row("sent", 31), await row("skipped", 40, "mention"), await row("failed", 60, "due_soon")];
+      const kept = [await row("sent", 29), await row("pending", 45, "due_changed"), await row("sending", 45, "mention")];
+      expect(await trimPipelineEmailOutbox({ pauseMs: 0 })).toBe(3);
+      const left = (await prisma.pipelineEmailOutbox.findMany({ select: { id: true } })).map((r) => r.id).sort();
+      expect(left).toEqual([...kept].sort());
+      expect(gone.some((id) => left.includes(id))).toBe(false);
+
+      await row("failed", 35, "moved");
+      const r = await runPipelineMaintenanceIfDue({ now: ist("2026-09-29", "04:00"), pauseMs: 0 });
+      expect(r).toMatchObject({ status: "ran", outboxTrimmed: 1 });
     });
   });
 

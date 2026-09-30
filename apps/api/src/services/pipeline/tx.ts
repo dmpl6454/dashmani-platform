@@ -55,10 +55,28 @@ export async function pipelineRead<T>(fn: (db: PipelineDbClient) => Promise<T>):
 /**
  * One WRITE slot, one AUTOCOMMIT statement (no transaction): the post-commit board bump
  * and the sync ack (spec §5.1, §5.4). Write priority, because it completes a user action.
+ * The email worker's book-keeping (mark sent / skipped, return rows to pending) uses it
+ * too: each is one short, id-bounded statement completing work that already happened, and
+ * losing it to a busy gate would re-send a delivered email.
  */
 export async function pipelineWriteStatement<T>(fn: (db: PipelineDbClient) => Promise<T>): Promise<T> {
   try {
     return await pipelineGate.run("write", () => fn(pipelineDb));
+  } catch (err) {
+    throw normalizePipelineError(err);
+  }
+}
+
+/**
+ * One BACKGROUND slot, one AUTOCOMMIT statement (no transaction): the email worker's
+ * reads, claim and recovery (cron/pipeline-email.cron.ts). A background waiter is granted
+ * only when no read or write is queued (utils/bulkhead.ts), so the worker never delays a
+ * user's request, and under load it gives up after the gate's 2 s wait (503 → the tick
+ * stops early; rows it had already claimed go back to pending, see the worker header).
+ */
+export async function pipelineBackground<T>(fn: (db: PipelineDbClient) => Promise<T>): Promise<T> {
+  try {
+    return await pipelineGate.run("background", () => fn(pipelineDb));
   } catch (err) {
     throw normalizePipelineError(err);
   }

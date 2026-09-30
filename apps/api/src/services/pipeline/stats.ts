@@ -9,6 +9,7 @@
  *   [pipeline] stats 60m syncs=… sync_p95=…ms slow_syncs=… hold_p95=…ms writes=…
  *     429_read=… 429_write=… 429_message=… 503_busy=… bulkhead_waits=… max_queue=…
  *     conflicts=… notif_rows=… bump_failures=… bump_pending=…
+ *     email_queued=… emails_sent=… emails_failed=… email_skipped=…
  *
  * Counters reset after each line; `max_queue` is the highest bulkhead queue seen since boot
  * (the bulkhead keeps it; resetting it would also refuse its waiters).
@@ -32,6 +33,10 @@ interface Window {
   conflicts409: number;
   notifRows: number;
   bumpFailures: number;
+  emailQueued: number;
+  emailsSent: number;
+  emailsFailed: number;
+  emailRowsSkipped: number;
   syncMs: number[];
   holdMs: number[];
   heavyHoldMs: number[];
@@ -48,6 +53,10 @@ function fresh(): Window {
     conflicts409: 0,
     notifRows: 0,
     bumpFailures: 0,
+    emailQueued: 0,
+    emailsSent: 0,
+    emailsFailed: 0,
+    emailRowsSkipped: 0,
     syncMs: [],
     holdMs: [],
     heavyHoldMs: [],
@@ -100,6 +109,21 @@ export const pipelineStats = {
   bumpFailure(): void {
     w.bumpFailures++;
   },
+  /** Outbox rows inserted or coalesced by an action (email-outbox.ts). */
+  emailQueued(n: number): void {
+    if (Number.isFinite(n) && n > 0) w.emailQueued += n;
+  },
+  /** Digest emails the worker handed to SMTP successfully / that failed. */
+  emailSent(): void {
+    w.emailsSent++;
+  },
+  emailFailed(): void {
+    w.emailsFailed++;
+  },
+  /** Outbox rows the worker skipped because they no longer applied. */
+  emailSkipped(n: number): void {
+    if (Number.isFinite(n) && n > 0) w.emailRowsSkipped += n;
+  },
 };
 
 export interface PipelineStatsSnapshot {
@@ -119,6 +143,10 @@ export interface PipelineStatsSnapshot {
   notifRows: number;
   bumpFailures: number;
   bumpPending: boolean;
+  emailQueued: number;
+  emailsSent: number;
+  emailsFailed: number;
+  emailRowsSkipped: number;
 }
 
 /** Read the current window; `reset` starts a new one (the hourly line does). */
@@ -141,6 +169,10 @@ export function snapshotPipelineStats(reset = false): PipelineStatsSnapshot {
     notifRows: w.notifRows,
     bumpFailures: w.bumpFailures,
     bumpPending: isBoardBumpPending(),
+    emailQueued: w.emailQueued,
+    emailsSent: w.emailsSent,
+    emailsFailed: w.emailsFailed,
+    emailRowsSkipped: w.emailRowsSkipped,
   };
   if (reset) {
     w = fresh();
@@ -157,7 +189,8 @@ export function formatPipelineStats(s: PipelineStatsSnapshot): string {
     ` hold_p95=${f(s.holdP95Ms)} writes=${s.writes}` +
     ` 429_read=${s.rateLimited.read} 429_write=${s.rateLimited.write} 429_message=${s.rateLimited.message}` +
     ` 503_busy=${s.busy503} bulkhead_waits=${s.bulkheadWaits} max_queue=${s.maxQueue}` +
-    ` conflicts=${s.conflicts409} notif_rows=${s.notifRows} bump_failures=${s.bumpFailures} bump_pending=${s.bumpPending}`
+    ` conflicts=${s.conflicts409} notif_rows=${s.notifRows} bump_failures=${s.bumpFailures} bump_pending=${s.bumpPending}` +
+    ` email_queued=${s.emailQueued} emails_sent=${s.emailsSent} emails_failed=${s.emailsFailed} email_skipped=${s.emailRowsSkipped}`
   );
 }
 

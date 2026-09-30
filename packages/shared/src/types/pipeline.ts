@@ -551,7 +551,9 @@ export type PipelineNotificationKind =
   | "added"
   | "moved"
   | "due_soon"
-  | "overdue";
+  | "overdue"
+  /** A due date set, changed or removed (route #7); re-armed in place. */
+  | "due_changed";
 
 /** `notifications.metadata` for rows of type PIPELINE. */
 export interface PipelineNotificationMetadata {

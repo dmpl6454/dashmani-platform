@@ -81,7 +81,7 @@ jobs:
       # - no regex lookbehind in apps/hr/src, packages/shared/src or mobile/src (older
       #   iOS Safari throws a SyntaxError at PARSE time, taking the whole page down);
       # - pipeline API code (services/pipeline/**, routes/pipeline.routes.ts,
-      #   middleware/pipeline-*.ts, cron/pipeline-due.cron.ts) imports its DB client only
+      #   middleware/pipeline-*.ts, cron/pipeline-*.cron.ts) imports its DB client only
       #   via services/pipeline/db.ts, never @dashmani/db or @prisma/client (the global
       #   pool inside a pipeline transaction breaks the pool arithmetic and deadlocks at
       #   connection_limit=1, and draws from the pool login and HR submit share);
@@ -144,16 +144,21 @@ jobs:
       - name: Push schema to test database
         run: npm run db:push
 
-      # scripts/pipeline-ddl.sql is applied to production BY HAND, before its PR merges (spec
-      # §12). tests/pipeline/ddl-script.test.ts only reads it as text, so a broken statement
-      # inside a DO block or a CREATE would otherwise first fail during the production apply.
-      # Execute it for real on a scratch database of its own (never the suite's database):
-      # build the full schema, drop ONLY the five pipeline tables so every CREATE / index /
-      # FK / seed path runs, apply the script twice (the second run must be a clean no-op),
-      # then require that Prisma sees no drift against schema.prisma (`--exit-code`: 0 = none).
+      # scripts/pipeline-ddl.sql and scripts/pipeline-email-ddl.sql are applied to production
+      # BY HAND, before their PRs merge (spec §12; docs/superpowers/plans/
+      # 2026-09-30-pipeline-email-runbook.md). tests/pipeline/ddl-script.test.ts and
+      # email-ddl-script.test.ts only read them as text, so a broken statement inside a DO
+      # block or a CREATE would otherwise first fail during the production apply. Execute them
+      # for real on a scratch database of their own (never the suite's database): build the
+      # full schema, drop ONLY the six pipeline tables (the outbox first — it references
+      # pipeline_projects) so every CREATE / index / FK / seed path runs, apply each script
+      # twice (the second run must be a clean no-op), check the outbox's PARTIAL unique index
+      # (Prisma cannot express it — it exists only because the email script built it), then
+      # require that Prisma sees no drift against schema.prisma (`--exit-code`: 0 = none;
+      # Prisma ignores partial indexes, so the hand-built one is not drift).
       # The PIPELINE enum value survives the drop (Postgres cannot remove one), so ADD VALUE
       # takes its IF NOT EXISTS path here; the static test locks that statement's text.
-      - name: Rehearse the pipeline DDL script
+      - name: Rehearse the pipeline DDL scripts
         env:
           DDL_DB_URL: postgresql://user:password@localhost:5432/dashmani_ddl_rehearsal
           PG_CONTAINER: ${{ job.services.postgres.id }}
@@ -162,13 +167,17 @@ jobs:
           PG="docker exec -i -e PGPASSWORD=password $PG_CONTAINER psql -U user -v ON_ERROR_STOP=1 -q"
           $PG -d dashmani -c "CREATE DATABASE dashmani_ddl_rehearsal"
           DATABASE_URL="$DDL_DB_URL" npx prisma db push --schema packages/db/prisma/schema.prisma --skip-generate
-          $PG -d dashmani_ddl_rehearsal -c "DROP TABLE pipeline_messages, pipeline_participants, pipeline_projects, pipeline_phases, pipeline_board_state"
-          for run in 1 2; do
-            echo "apply #$run"
-            $PG -d dashmani_ddl_rehearsal -f - < scripts/pipeline-ddl.sql
+          $PG -d dashmani_ddl_rehearsal -c "DROP TABLE pipeline_email_outbox, pipeline_messages, pipeline_participants, pipeline_projects, pipeline_phases, pipeline_board_state"
+          for script in scripts/pipeline-ddl.sql scripts/pipeline-email-ddl.sql; do
+            for run in 1 2; do
+              echo "apply $script #$run"
+              $PG -d dashmani_ddl_rehearsal -f - < "$script"
+            done
           done
           $PG -d dashmani_ddl_rehearsal -Atc "SELECT count(*) FROM pipeline_phases" | grep -qx 7
           $PG -d dashmani_ddl_rehearsal -Atc "SELECT count(*) FROM pipeline_board_state" | grep -qx 1
+          $PG -d dashmani_ddl_rehearsal -Atc "SELECT indexdef FROM pg_indexes WHERE indexname = 'pipeline_email_outbox_pending_key'" \
+            | grep -qF "CREATE UNIQUE INDEX pipeline_email_outbox_pending_key ON public.pipeline_email_outbox USING btree (user_id, project_id, kind) WHERE ((status)::text = 'pending'::text)"
           npx prisma migrate diff --from-url "$DDL_DB_URL" \
             --to-schema-datamodel packages/db/prisma/schema.prisma --exit-code
 

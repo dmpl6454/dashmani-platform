@@ -538,7 +538,8 @@ export function SubmissionGapsPanel({
           <span className="font-semibold text-ink">How this is counted:</span> every calendar day counts — 7 days a week;
           weekends, holidays and leave are <em>not</em> excluded. Days before a channel was assigned to the person are not
           counted. Today is still in progress, so it is never counted as missed — it has its own column. Only live links
-          count (scheduled and blank ones don&apos;t). Times are IST; a <span className="font-num">~</span> marks an
+          on the assigned channel itself count — scheduled or blank links, and links on other channels, don&apos;t.
+          Times are IST; a <span className="font-num">~</span> marks an
           approximate time (before 3 Jun 2026 only the report&apos;s first-submit time is known).
           {d && d.excluded.inactiveChannelAssignments > 0
             ? ` ${plural(d.excluded.inactiveChannelAssignments, "assignment")} to paused or archived channels ${d.excluded.inactiveChannelAssignments === 1 ? "is" : "are"} not shown.`

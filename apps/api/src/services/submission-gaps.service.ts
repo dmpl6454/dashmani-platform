@@ -943,9 +943,12 @@ export async function getSubmissionGapDays(p: SubmissionGapDaysParams): Promise<
 export const MAX_CSV_DAY_ROWS = 250_000;
 
 // ⚠️ maxEntries is a MEMORY bound. An entry holds only the POSTED days of the exported
-// pairs, as one compact text value per pair (~46 bytes a posted day): a full year for
-// 450 assignments that post every day is ≈ 7.6 MB. 4 entries covers a double-click and a
-// couple of admins exporting at once; a miss costs one bounded recompute, nothing more.
+// pairs, as one compact text value per pair (~46 bytes a posted day). Measured with
+// --expose-gc on a 459-assignment, 90-person, 258k-link seed: the worst case — every
+// row for 366 days (168k CSV lines, 19 MB) — retains 8.4 MB per entry (the summary it
+// reads retains 3.4 MB in its own memo), and repeated exports do not grow the heap.
+// 4 entries covers a double-click and a couple of admins exporting at once; a miss costs
+// one bounded recompute (0.7 s for that worst case), nothing more.
 const csvMemo = createSingleFlightMemo({ ttlMs: 60_000, maxEntries: 4 });
 
 interface RawPostedPair {

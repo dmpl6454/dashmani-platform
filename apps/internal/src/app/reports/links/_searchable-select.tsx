@@ -160,8 +160,12 @@ export function SearchableSelect({
               aria-activedescendant={items[active] ? `${baseId}-opt-${active}` : undefined}
               value={query}
               onChange={(e) => {
-                setQuery(e.target.value);
-                setActive(0);
+                const v = e.target.value;
+                setQuery(v);
+                // While searching, highlight the first MATCH (index 0 is "All …"), so
+                // typing a name and pressing Enter picks it. No match → items[1] is
+                // undefined and Enter does nothing.
+                setActive(v.trim() ? 1 : 0);
               }}
               onKeyDown={onKeyDown}
               placeholder={searchPlaceholder}

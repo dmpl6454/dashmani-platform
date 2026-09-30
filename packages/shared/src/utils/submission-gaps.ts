@@ -340,9 +340,15 @@ export interface GapRowFilters {
   accountId: string | null;
 }
 
+/**
+ * ⚠️ Must be IDEMPOTENT: the panel filters with the normalised text and sends it, and the
+ * server normalises it again. The final trim matters — a cut at GAP_SEARCH_MAX_LENGTH can
+ * end on a space, which a second pass would trim, so the file would match rows the
+ * screen does not.
+ */
 export function normalizeGapSearch(raw: unknown): string {
   if (typeof raw !== "string") return "";
-  return raw.trim().toLowerCase().slice(0, GAP_SEARCH_MAX_LENGTH);
+  return raw.trim().toLowerCase().slice(0, GAP_SEARCH_MAX_LENGTH).trim();
 }
 
 /** "5" → 5; "", "abc", "-3" → 0; "5.7" → 5; capped at GAP_MIN_MISSED_MAX. */

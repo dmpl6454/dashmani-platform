@@ -302,6 +302,13 @@ describe("submission gaps — row selection (panel filters = CSV filters)", () =
     expect(normalizeGapSearch(normalizeGapSearch("  AsHa  "))).toBe("asha");
     expect(normalizeGapSearch(["a"])).toBe("");
     expect(normalizeGapSearch("x".repeat(150))).toHaveLength(100);
+    // Idempotent even when the 100-character cut ends on a space: the panel filters with
+    // the normalised text and the server normalises it again — both must agree.
+    const long = `${"a".repeat(99)} b`;
+    expect(normalizeGapSearch(long)).toBe("a".repeat(99));
+    for (const s of [long, "  AsHa  ", "İstanbul", `${"x ".repeat(80)}`]) {
+      expect(normalizeGapSearch(normalizeGapSearch(s)), JSON.stringify(s)).toBe(normalizeGapSearch(s));
+    }
     expect(normalizeGapMinMissed("5")).toBe(5);
     expect(normalizeGapMinMissed("5.7")).toBe(5);
     expect(normalizeGapMinMissed("")).toBe(0);

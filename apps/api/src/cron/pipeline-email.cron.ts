@@ -164,15 +164,23 @@ async function requeueRows(items: Requeue[]): Promise<void> {
       SELECT * FROM jsonb_to_recordset(${JSON.stringify(payload)}::jsonb)
         AS g(keep_id text, drop_ids text[], user_id text, project_id text, kind text, payload jsonb,
              attempts int, delay_ms int, err text, final text)
+    ), lk AS (
+      -- Pending siblings, locked in (user, project, kind) order: an action's enqueue locks
+      -- the same rows in user order, so the two can never wait on each other in a cycle.
+      SELECT s.id AS sid, g.keep_id, g.payload AS gpayload, g.delay_ms
+        FROM pipeline_email_outbox s
+        JOIN g ON s.user_id = g.user_id AND s.project_id = g.project_id AND s.kind = g.kind
+       WHERE g.final = 'pending' AND s.status = 'pending'
+       ORDER BY s.user_id, s.project_id, s.kind
+         FOR UPDATE OF s
     ), sib AS (
       UPDATE pipeline_email_outbox s
-         SET payload = ${mergePayloadSql(Prisma.sql`g.payload`, Prisma.sql`s.payload`)},
-             send_after = LEAST(s.send_after, ${NOW} + (g.delay_ms * interval '1 millisecond')),
+         SET payload = ${mergePayloadSql(Prisma.sql`lk.gpayload`, Prisma.sql`s.payload`)},
+             send_after = LEAST(s.send_after, ${NOW} + (lk.delay_ms * interval '1 millisecond')),
              updated_at = ${NOW}
-        FROM g
-       WHERE g.final = 'pending' AND s.status = 'pending'
-         AND s.user_id = g.user_id AND s.project_id = g.project_id AND s.kind = g.kind
-   RETURNING g.keep_id AS id
+        FROM lk
+       WHERE s.id = lk.sid
+   RETURNING lk.keep_id AS id
     ), dropped AS (
       UPDATE pipeline_email_outbox d
          SET status = 'skipped', last_error = 'merged into another row for the same email', updated_at = ${NOW}
@@ -217,21 +225,29 @@ async function emailsSentToday(day: string): Promise<number> {
 
 // ── (iii) the claim ──────────────────────────────────────────────────────────────────
 
-/** The claim statement (exported for the EXPLAIN in the load measurement). */
-export function claimStatement(users: number, prefix: "" | "EXPLAIN" | "EXPLAIN ANALYZE" = ""): Prisma.Sql {
+/**
+ * The claim statement (exported for the EXPLAIN in the load measurement): the `users`
+ * recipients whose mail has waited longest, then ≤ 100 of their due rows taken ONE
+ * RECIPIENT AT A TIME (ordered by that recipient's first due row), so a recipient's due
+ * rows land in one digest — at most the last recipient of a full claim is split.
+ */
+export function claimStatement(users: number, prefix: "" | "EXPLAIN" | "EXPLAIN (ANALYZE, BUFFERS)" = ""): Prisma.Sql {
   return Prisma.sql`${prefix ? Prisma.raw(prefix) : Prisma.empty}
+    WITH u AS (
+      SELECT y.user_id, min(y.send_after) AS first_due
+        FROM pipeline_email_outbox y
+       WHERE y.status = 'pending' AND y.send_after <= ${NOW}
+       GROUP BY y.user_id
+       ORDER BY first_due, y.user_id
+       LIMIT ${users}::int)
     UPDATE pipeline_email_outbox o SET status = 'sending', updated_at = ${NOW}
      WHERE o.id IN (
        SELECT x.id FROM pipeline_email_outbox x
+         JOIN u ON u.user_id = x.user_id
         WHERE x.status = 'pending' AND x.send_after <= ${NOW}
-          AND x.user_id IN (SELECT y.user_id FROM pipeline_email_outbox y
-                             WHERE y.status = 'pending' AND y.send_after <= ${NOW}
-                             GROUP BY y.user_id
-                             ORDER BY min(y.send_after)
-                             LIMIT ${users}::int)
-        ORDER BY x.send_after
+        ORDER BY u.first_due, x.user_id, x.send_after
         LIMIT ${CLAIM_ROWS}::int
-          FOR UPDATE SKIP LOCKED)
+          FOR UPDATE OF x SKIP LOCKED)
        AND o.status = 'pending'
  RETURNING o.id, o.user_id, o.project_id, o.kind, o.payload, o.attempts, o.created_at`;
 }
@@ -473,7 +489,7 @@ export function runPipelineEmailTick(opts: { now?: Date } = {}): Promise<EmailTi
         d.items.push(resolved.item);
         digests.set(user!.id, d);
       }
-      await markSkipped(skips);
+      await settle(() => markSkipped(skips), "mark rows skipped");
 
       let emails = 0;
       let failed = 0;

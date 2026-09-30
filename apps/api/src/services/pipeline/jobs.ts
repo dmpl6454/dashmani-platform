@@ -1,6 +1,7 @@
 /**
- * Pipeline background maintenance (spec §7.12): the notification trim and the purge of
- * projects soft-deleted more than 30 days ago.
+ * Pipeline background maintenance (spec §7.12): the notification trim, the email-outbox
+ * trim (sent / skipped / failed rows older than 30 days) and the purge of projects
+ * soft-deleted more than 30 days ago.
  *
  * SCHEDULED BY WALL CLOCK, NEVER AT BOOT: index.ts calls schedulePipelineMaintenance(),
  * which sets a timer for the next 04:00 IST. A run proceeds only when the IST time is in
@@ -14,7 +15,7 @@
 import { dateToIST, istMinutesOfDay } from "@dashmani/shared";
 import { Prisma, type PipelineTx } from "./db";
 import { pipelineRead, pipelineWrite, pipelineWriteStatement } from "./tx";
-import { ensurePipelineSchemaChecked } from "./self-check";
+import { ensurePipelineSchemaChecked, isPipelineEmailSchemaOk } from "./self-check";
 
 export const TRIM_MARKER_KEY = "pipeline.trimLastRunIST";
 const TARGET_MIN = 240; // 04:00 IST
@@ -64,6 +65,37 @@ export async function trimPipelineNotifications(opts: { pauseMs?: number } = {})
            WHERE n.id IN (SELECT x.id FROM notifications x WHERE ${TRIM_PREDICATE("x")}
                            LIMIT ${TRIM_BATCH}::int FOR UPDATE SKIP LOCKED)
              AND ${TRIM_PREDICATE("n")}`;
+      },
+      { timeoutMs: 7000 },
+    );
+    total += n;
+    if (n === 0) break;
+  }
+  return total;
+}
+
+/**
+ * The email outbox keeps its history 30 days: sent, skipped and failed rows older than
+ * that are deleted in the same batched, SKIP LOCKED shape as the notification trim.
+ * 'pending' and 'sending' rows are never trimmed (the worker settles them). Rows of a
+ * purged project go with it (ON DELETE CASCADE, indexed on project_id).
+ */
+const OUTBOX_TRIM_PREDICATE = (a: string) => Prisma.sql`${Prisma.raw(a)}.status IN ('sent', 'skipped', 'failed')
+  AND ${Prisma.raw(a)}.created_at < timezone('utc', now()) - interval '30 days'`;
+
+export async function trimPipelineEmailOutbox(opts: { pauseMs?: number } = {}): Promise<number> {
+  const pauseMs = opts.pauseMs ?? 500;
+  let total = 0;
+  for (let i = 0; i < TRIM_MAX_ITERATIONS; i++) {
+    if (i > 0) await sleep(pauseMs);
+    const n = await pipelineWrite(
+      async (tx) => {
+        await tx.$executeRaw`SET LOCAL statement_timeout = '5s'`;
+        return tx.$executeRaw`
+          DELETE FROM pipeline_email_outbox o
+           WHERE o.id IN (SELECT x.id FROM pipeline_email_outbox x WHERE ${OUTBOX_TRIM_PREDICATE("x")}
+                           LIMIT ${TRIM_BATCH}::int FOR UPDATE SKIP LOCKED)
+             AND ${OUTBOX_TRIM_PREDICATE("o")}`;
       },
       { timeoutMs: 7000 },
     );
@@ -167,7 +199,7 @@ export async function purgeDeletedProjects(opts: { onChunk?: (c: PurgeChunk) => 
 
 export type MaintenanceResult =
   | { status: "skipped"; reason: "hours" | "done" | "schema" | "running" }
-  | { status: "ran"; trimmed: number; purged: number };
+  | { status: "ran"; trimmed: number; outboxTrimmed: number; purged: number };
 
 let running = false;
 
@@ -185,6 +217,16 @@ export function runPipelineMaintenanceIfDue(opts: { now?: Date; pauseMs?: number
       if (marker?.value === today) return { status: "skipped", reason: "done" };
       if (!(await ensurePipelineSchemaChecked())) return { status: "skipped", reason: "schema" };
       const trimmed = await trimPipelineNotifications({ pauseMs: opts.pauseMs });
+      // The outbox table exists only once scripts/pipeline-email-ddl.sql ran: skip it when
+      // the email schema check did not pass, and never let it fail the rest of the run.
+      let outboxTrimmed = 0;
+      if (isPipelineEmailSchemaOk() === true) {
+        try {
+          outboxTrimmed = await trimPipelineEmailOutbox({ pauseMs: opts.pauseMs });
+        } catch (err) {
+          console.warn("[pipeline-jobs] email outbox trim failed (the purge still runs):", String(err));
+        }
+      }
       const { purged } = await purgeDeletedProjects();
       await pipelineWriteStatement((db) =>
         db.systemSetting.upsert({
@@ -193,7 +235,7 @@ export function runPipelineMaintenanceIfDue(opts: { now?: Date; pauseMs?: number
           update: { value: today },
         }),
       );
-      return { status: "ran", trimmed, purged };
+      return { status: "ran", trimmed, outboxTrimmed, purged };
     } finally {
       running = false;
     }
@@ -214,7 +256,7 @@ export function schedulePipelineMaintenance(
     timer = setTimeout(() => {
       run()
         .then((r) => {
-          if (r.status === "ran") console.log(`[pipeline-jobs] trimmed=${r.trimmed} purged=${r.purged}`);
+          if (r.status === "ran") console.log(`[pipeline-jobs] trimmed=${r.trimmed} outbox_trimmed=${r.outboxTrimmed} purged=${r.purged}`);
         })
         .catch((err) => console.warn("[pipeline-jobs] maintenance failed:", String(err)))
         .finally(arm);

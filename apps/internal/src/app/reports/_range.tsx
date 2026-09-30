@@ -1,5 +1,6 @@
 "use client";
 import { X } from "lucide-react";
+import { dateToIST } from "@dashmani/shared";
 
 export interface RangePreset {
   label: string;
@@ -17,8 +18,12 @@ export const RANGE_PRESETS: RangePreset[] = [
   { label: "Year", days: 365 },
 ];
 
+// The IST calendar day (YYYY-MM-DD) of an instant.
+// ⚠️ Never d.toISOString().slice(0, 10): that is the UTC day, which is still YESTERDAY
+// between 00:00 and 05:30 IST — "Today"/"24h" then silently selected the previous day
+// every night, and the To-date picker refused the real today (CLAUDE.md IST rule).
 export function toISODate(d: Date): string {
-  return d.toISOString().slice(0, 10);
+  return dateToIST(d);
 }
 
 export function todayISO(): string {

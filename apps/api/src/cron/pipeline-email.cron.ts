@@ -66,6 +66,14 @@ export const STALE_SENDING_MS = 10 * 60_000;
 export const STALE_ROW_MS = 24 * 60 * 60_000;
 /** Stop starting new sends after this much of a tick (the tick interval is 60 s). */
 export const TICK_BUDGET_MS = 45_000;
+/**
+ * After the transport itself fails, pause sending (not enqueueing) for a while: the SMTP
+ * account is SHARED with every other platform email (password resets, HR mail), and a
+ * worker retrying a bad password every minute could get that account rate-limited or
+ * locked. EAUTH waits longest.
+ */
+export const TRANSPORT_COOLDOWN_MS = 5 * 60_000;
+export const AUTH_COOLDOWN_MS = 15 * 60_000;
 const RELEASE_DELAY_MS = 60_000;
 const RECOVER_BATCH = 200;
 const SNIPPET_MAX = 280;
@@ -86,7 +94,7 @@ export function backoffMs(attempts: number): number {
 }
 
 export type EmailTickResult =
-  | { status: "skipped"; reason: "running" | "off" | "email_off" | "smtp" | "schema" | "busy" | "cap" }
+  | { status: "skipped"; reason: "running" | "off" | "email_off" | "smtp" | "smtp_cooldown" | "schema" | "busy" | "cap" }
   | {
       status: "ran";
       recovered: number;
@@ -112,6 +120,8 @@ const ROW_COLUMNS = Prisma.sql`id, user_id, project_id, kind, payload, attempts,
 let running = false;
 /** Emails sent in the current IST day by this process (seeded from the DB once per day). */
 let sentToday: { day: string; n: number } | null = null;
+/** No send is attempted before this time (set after a transport failure). */
+let transportCooldownUntil = 0;
 
 const bg = <T>(fn: (db: PipelineDbClient) => Promise<T>) => pipelineBackground(fn);
 
@@ -451,6 +461,7 @@ export function runPipelineEmailTick(opts: { now?: Date } = {}): Promise<EmailTi
       } catch {
         return { status: "skipped", reason: "busy" };
       }
+      if (Date.now() < transportCooldownUntil) return { status: "skipped", reason: "smtp_cooldown" };
 
       const recovered = await recoverStale();
 
@@ -535,7 +546,12 @@ export function runPipelineEmailTick(opts: { now?: Date } = {}): Promise<EmailTi
           "requeue a failed send",
         );
         if (sendError instanceof MailTransportError) {
-          warnThrottled("pipeline-email-transport", `[pipeline-email] SMTP unavailable (${reason}) — stopping this tick`);
+          const pause = sendError.code === "EAUTH" ? AUTH_COOLDOWN_MS : TRANSPORT_COOLDOWN_MS;
+          transportCooldownUntil = Date.now() + pause;
+          warnThrottled(
+            "pipeline-email-transport",
+            `[pipeline-email] SMTP unavailable (${reason}) — stopping this tick; no send for ${Math.round(pause / 60_000)} min`,
+          );
           const rest = queue.slice(i + 1).flatMap((x) => x.rows);
           await settle(
             () => requeueRows(rest.map((row) => ({ row, attempts: row.attempts, delayMs: RELEASE_DELAY_MS, err: "SMTP unavailable" }))),
@@ -581,8 +597,9 @@ export function startPipelineEmailCron(): { stop(): void } {
   };
 }
 
-/** Tests only: forget the daily counter and the overlap flag. */
+/** Tests only: forget the daily counter, the transport cooldown and the overlap flag. */
 export function resetPipelineEmailWorkerForTests(): void {
   sentToday = null;
+  transportCooldownUntil = 0;
   running = false;
 }

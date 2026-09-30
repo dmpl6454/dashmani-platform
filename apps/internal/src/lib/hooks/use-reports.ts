@@ -77,23 +77,27 @@ export function useEmployeeReportStats(employeeId?: string, startDate?: string, 
   );
 }
 
-export function useLinksAnalytics(startDate?: string, endDate?: string) {
+// `enabled` (default true) lets a page keep the hook mounted while its panel is hidden
+// (Links Analytics' "Submission gaps" tab): false = null SWR key = no request, so
+// changing the range there does not also refetch the hidden Overview. That matters
+// here: links-analytics loads every link in the window.
+export function useLinksAnalytics(startDate?: string, endDate?: string, enabled = true) {
   const params = new URLSearchParams();
   if (startDate) params.set("startDate", startDate);
   if (endDate) params.set("endDate", endDate);
   const query = params.toString() ? `?${params.toString()}` : "";
-  return useSWR(`/admin/reports/links-analytics${query}`, (url) => apiFetch(url), {
+  return useSWR(enabled ? `/admin/reports/links-analytics${query}` : null, (url) => apiFetch(url), {
     revalidateOnFocus: false,
     dedupingInterval: 60_000,
   });
 }
 
-export function useLinksAllAccounts(startDate?: string, endDate?: string) {
+export function useLinksAllAccounts(startDate?: string, endDate?: string, enabled = true) {
   const params = new URLSearchParams();
   if (startDate) params.set("startDate", startDate);
   if (endDate) params.set("endDate", endDate);
   const query = params.toString() ? `?${params.toString()}` : "";
-  return useSWR(`/admin/reports/links-by-account${query}`, (url) => apiFetch(url), {
+  return useSWR(enabled ? `/admin/reports/links-by-account${query}` : null, (url) => apiFetch(url), {
     revalidateOnFocus: false,
     dedupingInterval: 120_000,
   });
@@ -125,13 +129,13 @@ export function usePlatformLeaderboards(startDate?: string, endDate?: string) {
   });
 }
 
-export function useTopYouTubeLinks(startDate?: string, endDate?: string, limit = 20) {
+export function useTopYouTubeLinks(startDate?: string, endDate?: string, limit = 20, enabled = true) {
   const params = new URLSearchParams();
   if (startDate) params.set("startDate", startDate);
   if (endDate) params.set("endDate", endDate);
   params.set("limit", String(limit));
   const query = `?${params.toString()}`;
-  return useSWR(`/admin/reports/top-youtube-links${query}`, (url) => apiFetch(url), {
+  return useSWR(enabled ? `/admin/reports/top-youtube-links${query}` : null, (url) => apiFetch(url), {
     revalidateOnFocus: false,
     dedupingInterval: 300_000,
   });
@@ -153,5 +157,46 @@ export function useTopLinks(platform: string, startDate?: string, endDate?: stri
   return useSWR(`/admin/reports/top-links${query}`, (url) => apiFetch(url), {
     revalidateOnFocus: false,
     dedupingInterval: 300_000,
+  });
+}
+
+// Submission gaps (Links Analytics → "Submission gaps" tab). ⚠️ LAZY by contract: the
+// caller passes enabled=false until the tab is opened, so the Links Analytics page's
+// normal load never fires this request. team/platform are server-side filters (they
+// change the per-employee "no link on ANY channel" aggregates); name search, the
+// minimum-missed filter and sorting are client-side over the loaded rows.
+// Capped error retries: a 503 REPORTS_BUSY is worth two quiet retries, not a loop.
+export function useSubmissionGaps(
+  enabled: boolean,
+  params: { startDate: string; endDate: string; teamId?: string; platform?: string },
+) {
+  const qs = new URLSearchParams({ startDate: params.startDate, endDate: params.endDate });
+  if (params.teamId) qs.set("teamId", params.teamId);
+  if (params.platform) qs.set("platform", params.platform);
+  // Same plausibility gate as useTrueLinks: a half-typed custom year must not mint a
+  // request (the server would 400 an over-long range anyway).
+  const span =
+    (Date.parse(`${params.endDate}T00:00:00Z`) - Date.parse(`${params.startDate}T00:00:00Z`)) / 86_400_000 + 1;
+  const plausible =
+    params.startDate >= "2025-01-01" && params.endDate >= params.startDate && span >= 1 && span <= 366;
+  return useSWR(
+    enabled && plausible ? `/admin/reports/submission-gaps?${qs.toString()}` : null,
+    (url: string) => apiFetch(url),
+    { revalidateOnFocus: false, dedupingInterval: 60_000, errorRetryCount: 2, errorRetryInterval: 4_000 },
+  );
+}
+
+// Day-by-day drill-down for one (employee, channel) — fetched only when a row expands.
+export function useSubmissionGapDays(
+  key: { employeeId: string; accountId: string; startDate: string; endDate: string } | null,
+) {
+  const url = key
+    ? `/admin/reports/submission-gaps/days?${new URLSearchParams(key).toString()}`
+    : null;
+  return useSWR(url, (u: string) => apiFetch(u), {
+    revalidateOnFocus: false,
+    dedupingInterval: 60_000,
+    errorRetryCount: 2,
+    errorRetryInterval: 4_000,
   });
 }

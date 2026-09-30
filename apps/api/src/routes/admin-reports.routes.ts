@@ -21,6 +21,13 @@ import {
   adminUpdateProfile,
 } from "../services/employee-profile.service";
 import { getEmployeePerformance } from "../services/employee-performance.service";
+import {
+  getSubmissionGaps,
+  getSubmissionGapDays,
+  parseSubmissionGapsQuery,
+  parseSubmissionGapDaysQuery,
+} from "../services/submission-gaps.service";
+import { asyncHandler } from "../utils/async-handler";
 import { success, error } from "../utils/response";
 import { calcStreaks } from "../utils/streak";
 import { prisma } from "@dashmani/db";
@@ -290,6 +297,36 @@ router.get(
       });
     } catch (err) { next(err); }
   },
+);
+
+// GET /admin/reports/submission-gaps — per (employee, assigned channel): counted /
+// active / missed days, missed ranges, current gap, last posted, today's status; plus
+// per-employee aggregates. Every calendar day counts; days before the assignment and
+// today (in progress) are not counted — see submission-gaps.service.ts. ONE bounded SQL
+// aggregation behind the heavy-query bulkhead + a 60s single-flight memo. Invalid or
+// over-long ranges are a clean 400. MUST be before /:reportId.
+router.get(
+  "/admin/reports/submission-gaps",
+  authenticate,
+  requirePermission("reports", "view"),
+  asyncHandler(async (req: Request, res: Response) => {
+    const params = parseSubmissionGapsQuery(req.query as Record<string, unknown>);
+    return success(res, await getSubmissionGaps(params));
+  }),
+);
+
+// GET /admin/reports/submission-gaps/days?employeeId&accountId&startDate&endDate — one
+// row per day for one CURRENT assignment (posted / missed, link count, first & last
+// posting time in IST, approximate flag). Bounded by the range length. 404 when the
+// pair is not a current assignment. MUST be before /:reportId.
+router.get(
+  "/admin/reports/submission-gaps/days",
+  authenticate,
+  requirePermission("reports", "view"),
+  asyncHandler(async (req: Request, res: Response) => {
+    const params = parseSubmissionGapDaysQuery(req.query as Record<string, unknown>);
+    return success(res, await getSubmissionGapDays(params));
+  }),
 );
 
 // GET /admin/reports/links-by-account — all accounts ranked by links, with per-employee breakdown

@@ -176,7 +176,7 @@ function plural(n: number, one: string, many = `${one}s`): string {
   return `${nf.format(n)} ${n === 1 ? one : many}`;
 }
 
-function compareRows<T extends { missedDays: number; currentGapDays: number; activeRate: number | null; lastPostedDay: string | null; lastPostedAt: string | null; employee: { name: string } }>(
+function compareRows<T extends { countedDays: number; missedDays: number; currentGapDays: number; activeRate: number | null; lastPostedDay: string | null; lastPostedAt: string | null; employee: { name: string } }>(
   key: SortKey,
   tiebreak: (a: T, b: T) => number,
 ) {
@@ -189,9 +189,14 @@ function compareRows<T extends { missedDays: number; currentGapDays: number; act
       if (a.activeRate == null || b.activeRate == null) d = a.activeRate == null ? (b.activeRate == null ? 0 : 1) : -1;
       else d = a.activeRate - b.activeRate;
     } else if (key === "last") {
-      // Never posted in this window sorts FIRST — it is older than any post in it.
-      if (a.lastPostedDay == null || b.lastPostedDay == null) d = a.lastPostedDay == null ? (b.lastPostedDay == null ? 0 : -1) : 1;
-      else d = a.lastPostedDay.localeCompare(b.lastPostedDay) || (a.lastPostedAt ?? "").localeCompare(b.lastPostedAt ?? "");
+      // Never posted in this window, with days to count, sorts FIRST — it is older than
+      // any post in it. Nothing countable yet AND no post (e.g. assigned today) sorts
+      // LAST: it cannot be neglected yet, so it must not top "Oldest last post".
+      const rank = (r: T) => (r.lastPostedDay != null ? 1 : r.countedDays === 0 ? 2 : 0);
+      d = rank(a) - rank(b);
+      if (d === 0 && a.lastPostedDay != null && b.lastPostedDay != null) {
+        d = a.lastPostedDay.localeCompare(b.lastPostedDay) || (a.lastPostedAt ?? "").localeCompare(b.lastPostedAt ?? "");
+      }
     }
     return d || a.employee.name.localeCompare(b.employee.name) || tiebreak(a, b);
   };
@@ -427,7 +432,7 @@ export function SubmissionGapsPanel({
         [
           "Person", "Team", "Channel", "Handle", "Platform", "Assigned since (IST)", "Counted from", "Counted through",
           "Counted days", "Active days", "Missed days", "Active rate %", "Longest gap (days)", "Current gap (days)",
-          "Current gap may be longer?", "Last posted day (IST)", "Last posted at (IST)", "Last posted time approx?", "Links (counted days)",
+          "Current gap may be longer?", "Last posted day in window (IST)", "Last posted at in window (IST)", "Last posted time approx?", "Links (counted days)",
           "Today", "Links today", "Missed ranges (most recent, up to 20)", "Missed ranges (total)",
         ],
         pairs.map((r) => [
@@ -444,7 +449,7 @@ export function SubmissionGapsPanel({
         [
           "Person", "Team", "Channels", "Counted days", "Active days", "Days with no link on any channel", "Partial days",
           "Missed channel-days", "Active rate %", "Longest gap (days)", "Current gap (days)", "Current gap may be longer?",
-          "Last posted day (IST)", "Last posted at (IST)", "Last posted time approx?", "Links (counted days)", "Today", "Channels posted today",
+          "Last posted day in window (IST)", "Last posted at in window (IST)", "Last posted time approx?", "Links (counted days)", "Today", "Channels posted today",
           "Missed ranges (most recent, up to 20)", "Missed ranges (total)",
         ],
         people.map((r) => [
@@ -539,6 +544,7 @@ export function SubmissionGapsPanel({
           weekends, holidays and leave are <em>not</em> excluded. Days before a channel was assigned to the person are not
           counted. Today is still in progress, so it is never counted as missed — it has its own column. Only live links
           on the assigned channel itself count — scheduled or blank links, and links on other channels, don&apos;t.
+          Last posted only looks inside the selected window: a dash means no link in the window, not never.
           Times are IST; a <span className="font-num">~</span> marks an
           approximate time (before 3 Jun 2026 only the report&apos;s first-submit time is known).
           {d && d.excluded.inactiveChannelAssignments > 0
@@ -693,7 +699,7 @@ export function SubmissionGapsPanel({
             <span className="text-right">Missed</span>
             <span>Active</span>
             <span>Current gap</span>
-            <span>Last posted</span>
+            <span>Last posted <span className="whitespace-nowrap">(in window)</span></span>
             <span>Today</span>
             <span className="sr-only">Details</span>
           </div>
@@ -741,7 +747,7 @@ export function SubmissionGapsPanel({
                           <GapValue days={r.currentGapDays} open={r.currentGapOpenEnded} counted={r.countedDays} />
                         </div>
                         <div className="min-w-0">
-                          <MetricLabel>Last posted</MetricLabel>
+                          <MetricLabel>Last posted (in window)</MetricLabel>
                           <LastPosted day={r.lastPostedDay} ist={r.lastPostedIST} approx={r.lastPostedApprox} year={year} />
                         </div>
                         <div className="min-w-0">
@@ -821,7 +827,7 @@ export function SubmissionGapsPanel({
                           <GapValue days={r.currentGapDays} open={r.currentGapOpenEnded} counted={r.countedDays} />
                         </div>
                         <div className="min-w-0">
-                          <MetricLabel>Last posted</MetricLabel>
+                          <MetricLabel>Last posted (in window)</MetricLabel>
                           <LastPosted day={r.lastPostedDay} ist={r.lastPostedIST} approx={r.lastPostedApprox} year={year} />
                         </div>
                         <div className="min-w-0">

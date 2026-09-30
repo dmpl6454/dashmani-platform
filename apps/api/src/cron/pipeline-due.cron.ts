@@ -18,6 +18,10 @@
  * CTE statement; two statements in one transaction keep the same atomicity and let the
  * text be built grapheme-safely in TypeScript.)
  *
+ * EMAIL (owner request 2026-09-30): a due-soon batch also queues one outbox row per
+ * recipient (email-outbox.ts enqueueDueSoonEmails) in the SAME transaction, from exactly
+ * what the claim returned — when pipeline.email is on. Overdue does not email.
+ *
  * ⚠️ The overlap flag is claimed synchronously, before the first await.
  */
 import {
@@ -31,6 +35,7 @@ import {
 import { Prisma, type PipelineTx } from "../services/pipeline/db";
 import { pipelineWrite } from "../services/pipeline/tx";
 import { getPipelineSettings } from "../services/pipeline/settings";
+import { enqueueDueSoonEmails, pipelineEmailOn } from "../services/pipeline/email-outbox";
 import { ensurePipelineSchemaChecked } from "../services/pipeline/self-check";
 import {
   DAYS_LONG,
@@ -114,12 +119,17 @@ async function insertRows(tx: PipelineTx, kind: Kind, claimed: Claimed[], today:
     ON CONFLICT (id) DO NOTHING`;
 }
 
-async function runKind(kind: Kind, today: string, nextWorking: string, allow: string[] | null): Promise<number> {
+async function runKind(kind: Kind, today: string, nextWorking: string, allow: string[] | null, email: boolean): Promise<number> {
   let total = 0;
   for (let i = 0; i < MAX_BATCHES; i++) {
     const n = await pipelineWrite(async (tx) => {
       const claimed = await claimBatch(tx, kind, today, nextWorking);
-      if (claimed.length) await insertRows(tx, kind, claimed, today, allow);
+      if (claimed.length) {
+        await insertRows(tx, kind, claimed, today, allow);
+        if (email && kind === "due_soon") {
+          await enqueueDueSoonEmails(tx, claimed.map((c) => ({ pid: c.id, due: c.due })), allow);
+        }
+      }
       return claimed.length;
     });
     total += n;
@@ -149,8 +159,9 @@ export function runPipelineDueTick(opts: { now?: Date } = {}): Promise<DueTickRe
       }
       const allow = settings.mode === "pilot" ? [...settings.pilotUserIds] : null;
       const nextWorking = nextWorkingDayIST(today);
-      const dueSoon = await runKind("due_soon", today, nextWorking, allow);
-      const overdue = await runKind("overdue", today, nextWorking, allow);
+      const email = pipelineEmailOn(settings);
+      const dueSoon = await runKind("due_soon", today, nextWorking, allow, email);
+      const overdue = await runKind("overdue", today, nextWorking, allow, false);
       return { status: "ran", dueSoon, overdue };
     } finally {
       running = false;

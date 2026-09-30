@@ -57,7 +57,7 @@ export interface AckInput {
  * A1 as ONE autocommit statement (spec §5.4): advance my read marker and stamp or clear
  * `seen_at`, then mark notifications read — by PRIMARY KEY only:
  *   - project-level ids (grouped, added, the current move generation and the 4 before it,
- *     due-soon / overdue for the current due date, computed in SQL from the locked-free
+ *     due-soon / overdue for the current due date, due_changed, computed in SQL from the locked-free
  *     project row), the grouped one only up to my new marker (or
  *     LEAST(ack.seq, last_message_seq) when I have no participant row);
  *   - `mention:<mid>:<me>` and `reply:<mid>` for each seen id — the ONLY way those clear.
@@ -79,6 +79,7 @@ export function ackStatement(a: AckInput, prefix: "" | "EXPLAIN" = ""): Prisma.S
     ...gens,
     plnIdSql("due_soon", pid, me, due),
     plnIdSql("overdue", pid, me, due),
+    plnIdSql("due_changed", pid, me),
   ]);
   const seenIds = [...new Set(a.seen ?? [])].flatMap((mid) => [plnId("mention", mid, me), plnId("reply", mid)]);
   return Prisma.sql`${prefix === "EXPLAIN" ? Prisma.sql`EXPLAIN` : Prisma.empty}

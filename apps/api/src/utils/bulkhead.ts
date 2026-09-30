@@ -12,11 +12,14 @@ import { AppError } from "../middleware/error-handler";
 //   • a waiter gives up after `maxWaitMs` with a clean 503 + retryAfterSec that the
 //     client retries silently — never a 500 and never a minute-long stall;
 //   • with `writePriority`, a queued write (a user's send, move or edit) is granted ahead
-//     of queued reads (polls), so a poll burst cannot starve a real action.
+//     of queued reads (polls), so a poll burst cannot starve a real action;
+//   • a "background" waiter (the pipeline email worker) is granted only when no read or
+//     write is waiting, so background work never delays a user's request. With a free slot
+//     and an empty queue it is granted at once like anything else.
 //
 // Single-threaded state, no timers except each waiter's own give-up timer.
 
-export type BulkheadKind = "read" | "write";
+export type BulkheadKind = "read" | "write" | "background";
 
 export class BulkheadBusyError extends AppError {
   constructor(
@@ -52,6 +55,7 @@ export interface BulkheadStats {
   queued: number;
   queuedReads: number;
   queuedWrites: number;
+  queuedBackground: number;
   max: number;
   queue: number;
   maxWaitMs: number;
@@ -111,11 +115,10 @@ export function createBulkhead(opts: BulkheadOptions): Bulkhead {
 
   function grantNext(): void {
     while (active < max && waiters.length > 0) {
-      let idx = 0;
-      if (opts.writePriority) {
-        const w = waiters.findIndex((x) => x.kind === "write");
-        if (w >= 0) idx = w;
-      }
+      // writes first (with writePriority), then reads in FIFO order, then background.
+      let idx = opts.writePriority ? waiters.findIndex((x) => x.kind === "write") : -1;
+      if (idx < 0) idx = waiters.findIndex((x) => x.kind !== "background");
+      if (idx < 0) idx = 0;
       const next = waiters.splice(idx, 1)[0];
       next.grant();
     }
@@ -165,12 +168,17 @@ export function createBulkhead(opts: BulkheadOptions): Bulkhead {
 
   function stats(): BulkheadStats {
     let queuedWrites = 0;
-    for (const w of waiters) if (w.kind === "write") queuedWrites++;
+    let queuedBackground = 0;
+    for (const w of waiters) {
+      if (w.kind === "write") queuedWrites++;
+      else if (w.kind === "background") queuedBackground++;
+    }
     return {
       active,
       queued: waiters.length,
-      queuedReads: waiters.length - queuedWrites,
+      queuedReads: waiters.length - queuedWrites - queuedBackground,
       queuedWrites,
+      queuedBackground,
       max,
       queue: queueCap,
       maxWaitMs,

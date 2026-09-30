@@ -24,8 +24,18 @@
  *   - An event by X also withdraws X's OWN pending row of the same kind for that project
  *     (moved, due_changed): X just made the change, so an email about the earlier state is
  *     noise. Same statement (a data-modifying CTE), different rows.
- *   - Gated (pipelineEmailOn) on `pipeline.email = on`, SMTP configured and the email
- *     schema self-check: with any of them off, NOTHING is written — email ships dark.
+ *   - LOCK ORDER. Every enqueue runs after its action locked the project row, so two
+ *     enqueues for one project never interleave. Within a statement, rows are written in
+ *     user order — except the withdrawal DELETE, which Postgres runs after the INSERT (an
+ *     unreferenced data-modifying CTE). The only other writer, the worker's requeue, takes
+ *     its sibling locks with SKIP LOCKED: a pending row an enqueue holds is skipped and the
+ *     requeue retried, never waited for. Its one remaining wait — returning a row to
+ *     pending while an enqueue's UNCOMMITTED new row has the same key (the unique check) —
+ *     is bounded by the pipeline pool's 1 s lock_timeout; the worker retries, and an action
+ *     that lost a deadlock gets the usual clean 503.
+ *   - Gated (pipelineEmailOn) on `pipeline.email = on`, SMTP and HR_APP_URL configured and
+ *     the email schema self-check: with any of them off, NOTHING is written — email ships
+ *     dark.
  *   - Writes only through the caller's `tx`; ids from gen_random_uuid(); timestamps are
  *     timezone('utc', now()) (spec §2 DB rules 1–2).
  */
@@ -58,13 +68,29 @@ export function smtpConfigured(): boolean {
 }
 
 /**
+ * Every link in a pipeline email is built from HR_APP_URL (notify.ts hrUrl), whose
+ * fallback is http://localhost:3002 — right for a local bell row, a dead link in a real
+ * inbox. In production an unset HR_APP_URL therefore keeps email OFF (the worker says so
+ * in the log) instead of mailing localhost links to everyone.
+ */
+export function emailLinksConfigured(): boolean {
+  return process.env.NODE_ENV !== "production" || Boolean(process.env.HR_APP_URL?.trim());
+}
+
+/**
  * Should an action enqueue email? Resolved from memos BEFORE the transaction, zero
- * statements: the feature is on, `pipeline.email = on`, SMTP is configured and the
- * self-check found the outbox and its partial index. Anything else → false, so a missing
- * DDL can never fail an action's transaction.
+ * statements: the feature is on, `pipeline.email = on`, SMTP and the link base are
+ * configured and the self-check found the outbox and its partial index. Anything else →
+ * false, so a missing DDL can never fail an action's transaction.
  */
 export function pipelineEmailOn(settings: Pick<PipelineSettings, "mode" | "email">): boolean {
-  return settings.mode !== "off" && settings.email === true && smtpConfigured() && isPipelineEmailSchemaOk() === true;
+  return (
+    settings.mode !== "off" &&
+    settings.email === true &&
+    smtpConfigured() &&
+    emailLinksConfigured() &&
+    isPipelineEmailSchemaOk() === true
+  );
 }
 
 // ── The payload merge (one definition, used by the enqueue AND the worker's requeue) ──
@@ -230,7 +256,9 @@ export async function enqueueDueSoonEmails(
       JOIN pipeline_participants pp ON pp.project_id = t.pid AND pp.notify
       JOIN users u ON u.id = pp.user_id
      WHERE ${recipientFragment(Prisma.sql`pp.user_id`, null, allow)}
-     ORDER BY t.pid, pp.user_id
+     -- (user, project) order — the order the worker's requeue walks pending siblings in —
+     -- so this multi-project batch never takes outbox row locks in the opposite order.
+     ORDER BY pp.user_id, t.pid
     ${ON_PENDING_CONFLICT}`;
   pipelineStats.emailQueued(n);
   return n;

@@ -11,6 +11,13 @@
  * attribute-escaped too. Snippets come from notificationSnippet(), so they are already
  * token-free, whitespace-collapsed and bidi-stripped (spec §7.9). Headers (the subject) get
  * no newline. There are NO images and NO tracking pixels.
+ *
+ * ⚠️ LINKS. These emails come from the company's own mailbox, and anyone who can log into
+ * HR (self-registration included) can put text into them: a project title, a message, a
+ * display name. Mail clients auto-link bare URLs and domains in BOTH parts, so every
+ * person-written string is DEFANGED (defangLinks: "https[:]//evil[.]example") before it is
+ * rendered — only the "Open in Pipeline" links, built from server ids + HR_APP_URL, are
+ * clickable. The in-portal bell rows are unaffected.
  */
 import { DAYS_LONG, clip, dayMonth, hrUrl, projectPath, quotedTitle, shortDay } from "./notify";
 import { addDaysIST } from "@dashmani/shared";
@@ -44,6 +51,21 @@ export function escapeHtml(s: string): string {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
+}
+
+/**
+ * Break auto-linking in person-written text: "://" → "[:]//", and a dot (ASCII or the
+ * ideographic / full-width forms some linkers accept) between a letter or digit and at
+ * least two letters → "[.]" — every domain label a TLD can start ("evil[.]example",
+ * "www[.]x[.]io", "x@y[.]com") — plus the dots of a dotted-quad address. Ordinary prose
+ * ("e.g.", "i.e.", "U.S.", "v1.2", "3.5 lakh") is left alone. Lookahead only (no
+ * lookbehind), linear, on inputs that are already length-bounded.
+ */
+export function defangLinks(s: string): string {
+  return s
+    .replace(/:\/\//g, "[:]//")
+    .replace(/([\p{L}\p{N}])[.\u3002\uFF0E\uFF61](?=\p{L}{2})/gu, "$1[.]")
+    .replace(/\b(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\b/g, "$1[.]$2[.]$3[.]$4");
 }
 
 /** A subject line: one line, bounded. */
@@ -131,18 +153,39 @@ function render(item: DigestItem, today: string): Rendered {
   }
 }
 
-export const DIGEST_FOOTER =
-  "You're receiving this because you're part of this project. Unfollow it in the Pipeline to stop these emails.";
+/**
+ * Why this email came, one line per reason present. Following explains itself; a mention
+ * says it is delivered even without following (as the bell is — spec §7.3), so the
+ * "unfollow to stop" advice never promises something it cannot do.
+ */
+export function digestFooter(items: DigestItem[]): string[] {
+  const followed = new Set(items.filter((i) => i.kind !== "mention").map((i) => i.projectId));
+  const lines: string[] = [];
+  if (followed.size === 1) {
+    lines.push("You're receiving this because you follow this project in the Pipeline. Unfollow it there to stop these updates.");
+  } else if (followed.size > 1) {
+    lines.push("You're receiving this because you follow these projects in the Pipeline. Unfollow a project there to stop its updates.");
+  }
+  if (items.some((i) => i.kind === "mention")) {
+    lines.push("You were @mentioned in a Pipeline message. Mention emails arrive even if you don't follow the project.");
+  }
+  return lines;
+}
 
 /**
  * One digest for one recipient. `items` must be non-empty. `today` is the IST date key at
  * send time (relative due dates are computed against it).
  */
 export function renderPipelineDigest(o: { recipientName: string; items: DigestItem[]; today: string }): DigestEmail {
-  const rendered = o.items.map((it) => ({ it, r: render(it, o.today) }));
+  const rendered = o.items.map((it) => {
+    const r = render(it, o.today);
+    // Person-written text is in the headline and details only; the links are ours.
+    return { it, r: { ...r, headline: defangLinks(r.headline), details: r.details.map(defangLinks) } };
+  });
   const subject = oneLine(rendered.length === 1 ? rendered[0].r.headline : `Pipeline: ${rendered.length} updates`);
   const heading = rendered.length === 1 ? "Pipeline update" : `${rendered.length} Pipeline updates`;
-  const firstName = clip(o.recipientName.split(" ")[0] || o.recipientName, 40) || "there";
+  const firstName = defangLinks(clip(o.recipientName.split(" ")[0] || o.recipientName, 40) || "there");
+  const footer = digestFooter(o.items);
 
   const itemHtml = rendered
     .map(({ r }) => {
@@ -179,7 +222,7 @@ export function renderPipelineDigest(o: { recipientName: string; items: DigestIt
     `<p style="margin:16px 0;font-size:14px;color:#1a1a1a;">Hi ${escapeHtml(firstName)},</p>` +
     itemHtml +
     `</div>` +
-    `<div style="padding:16px 24px;background:#f8f9fa;font-size:12px;line-height:1.5;color:#777777;">${escapeHtml(DIGEST_FOOTER)}</div>` +
+    `<div style="padding:16px 24px;background:#f8f9fa;font-size:12px;line-height:1.5;color:#777777;">${footer.map(escapeHtml).join("<br>")}</div>` +
     `</div></body></html>`;
 
   const textItems = rendered
@@ -190,7 +233,7 @@ export function renderPipelineDigest(o: { recipientName: string; items: DigestIt
       return lines.join("\n");
     })
     .join("\n\n");
-  const text = `Hi ${firstName},\n\n${textItems}\n\n--\n${DIGEST_FOOTER}\n`;
+  const text = `Hi ${firstName},\n\n${textItems}\n\n--\n${footer.join("\n")}\n`;
 
   return { subject, html, text };
 }

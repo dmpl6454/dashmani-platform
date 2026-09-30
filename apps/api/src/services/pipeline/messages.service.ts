@@ -43,6 +43,7 @@ import { pipelineRead, pipelineWrite } from "./tx";
 import { PipelineError, classifyDbError, isIdempotencyKeyViolation } from "./errors";
 import { notifier } from "./notifier";
 import { isPilotUser, type PipelineSettings } from "./settings";
+import { pipelineEmailOn } from "./email-outbox";
 import type { PipelineDirectory } from "./access";
 import { warnThrottled } from "../../utils/throttled-warn";
 
@@ -269,6 +270,7 @@ export async function postMessage(actor: PipelineActor, projectId: string, input
   const snippet = notificationSnippet(input.body, names, 100);
   const directSnippet = notificationSnippet(input.body, names, 140);
   const parentId = input.parentId ?? null;
+  const email = pipelineEmailOn(actor.settings);
 
   try {
     return await pipelineWrite(async (tx) => {
@@ -411,6 +413,7 @@ export async function postMessage(actor: PipelineActor, projectId: string, input
         directSnippet,
         deliveredMentionIds: delivered,
         replyToAuthorId: parent && parent.rootAuthorId !== me ? parent.rootAuthorId : null,
+        email,
       });
 
       const result: PostMessageResult = {
@@ -489,6 +492,7 @@ export async function editMessage(actor: PipelineActor, mid: string, body: strin
   const names = new Map(mentionIds.map((id) => [id, nameOf(actor, id)]));
   const snippet = notificationSnippet(body, names, 100);
   const directSnippet = notificationSnippet(body, names, 140);
+  const email = pipelineEmailOn(actor.settings);
 
   return pipelineWrite(async (tx) => {
     const project = await lockProjectOfMessage(tx, mid);
@@ -531,6 +535,7 @@ export async function editMessage(actor: PipelineActor, mid: string, body: strin
       oldMentionIds: [...before],
       replyToAuthorId: row.root_author_id && row.root_author_id !== me ? row.root_author_id : null,
       participantIds: row.participant_ids,
+      email,
     });
     return { message: toWireMessage(updated[0], actor), notNotified };
   });

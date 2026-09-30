@@ -62,6 +62,28 @@ describe("scripts/pipeline-flag.ts", () => {
     expect(JSON.parse((await setting("pipeline.pilotUserIds"))!)).toEqual([a.id, c.id].sort()); // kept for the next pilot
   });
 
+  it("--email=on|off upserts pipeline.email (dry run by default) and leaves everything else alone", async () => {
+    const dry = await runPipelineFlag(prisma, { email: "on" });
+    expect(dry).toMatchObject({ changed: true, applied: false });
+    expect(dry.before.email).toBe("off (absent)");
+    expect(dry.after.email).toBe("on");
+    expect(await setting("pipeline.email")).toBeNull();
+
+    const on = await runPipelineFlag(prisma, { email: "on", apply: true });
+    expect(on.applied).toBe(true);
+    expect(await setting("pipeline.email")).toBe("on");
+    expect(await setting("pipeline.mode")).toBeNull(); // untouched without --mode
+    expect((await runPipelineFlag(prisma, { email: "on", apply: true })).changed).toBe(false);
+
+    const off = await runPipelineFlag(prisma, { email: "off", apply: true });
+    expect(off.applied).toBe(true);
+    expect(await setting("pipeline.email")).toBe("off");
+
+    const bad = await runPipelineFlag(prisma, { email: "maybe" as never, apply: true });
+    expect(bad.errors[0]).toMatch(/--email must be one of/);
+    expect(await setting("pipeline.email")).toBe("off");
+  });
+
   it("an unknown email or a bad mode writes nothing", async () => {
     const a = await createPipelineUser({ name: "Pilot A", tag: "flag-a" });
     const res = await runPipelineFlag(prisma, { mode: "pilot", add: [a.email, "nobody@nowhere.test"], apply: true });

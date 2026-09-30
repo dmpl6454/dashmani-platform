@@ -15,8 +15,9 @@
  *     pipeline row out to admins (pipeline rows are written only by services/pipeline/notify.ts);
  *   - the tables are in the test TRUNCATE list, so pipeline fixtures cannot leak across tests.
  */
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeAll } from "vitest";
 import { prisma, NotificationType } from "@dashmani/db";
+import { ensurePipelineEmailSchema } from "./pipeline-helpers";
 import { NOTIFICATION_AUDIENCE } from "../../src/services/notification-routing";
 import { dispatchNotification } from "../../src/services/notification.service";
 
@@ -40,6 +41,11 @@ const COLUMNS: Record<string, string[]> = {
   pipeline_messages: [
     "id", "client_id", "project_id", "seq", "rev", "parent_id", "author_id", "body", "mention_ids",
     "reactions", "reply_count", "last_reply_at", "edited_at", "deleted_at", "created_at", "updated_at",
+  ],
+  // The email outbox (owner request 2026-09-30).
+  pipeline_email_outbox: [
+    "id", "user_id", "project_id", "kind", "payload", "status", "attempts", "send_after",
+    "last_error", "sent_at", "created_at", "updated_at",
   ],
 };
 
@@ -65,10 +71,20 @@ const INDEXES: Record<string, string[]> = {
     "pipeline_messages_project_id_parent_id_seq_idx",
     "pipeline_messages_parent_id_idx",
   ],
+  // + the hand-written partial unique index (scripts/pipeline-email-ddl.sql; Prisma cannot
+  // express it — beforeAll creates it from that script, as CI's db-push database lacks it).
+  pipeline_email_outbox: [
+    "pipeline_email_outbox_pkey",
+    "pipeline_email_outbox_status_send_after_idx",
+    "pipeline_email_outbox_project_id_idx",
+    "pipeline_email_outbox_pending_key",
+  ],
 };
 
 // §2 "onDelete rules and why". confdeltype: r = RESTRICT, c = CASCADE.
 const FOREIGN_KEYS = [
+  "pipeline_email_outbox.project_id -> pipeline_projects : c",
+  "pipeline_email_outbox.user_id -> users : c",
   "pipeline_messages.author_id -> users : r",
   "pipeline_messages.parent_id -> pipeline_messages : c",
   "pipeline_messages.project_id -> pipeline_projects : c",
@@ -80,6 +96,10 @@ const FOREIGN_KEYS = [
 ];
 
 describe("pipeline schema (spec §2)", () => {
+  beforeAll(async () => {
+    await ensurePipelineEmailSchema();
+  });
+
   for (const [table, cols] of Object.entries(COLUMNS)) {
     it(`${table} has every §2 column`, async () => {
       // Identifiers come from the constant above, never from input.
@@ -102,6 +122,14 @@ describe("pipeline schema (spec §2)", () => {
       expect(rows.map((r) => r.indexname).sort()).toEqual([...names].sort());
     });
   }
+
+  it("the outbox coalescing key is UNIQUE and PARTIAL on status = 'pending'", async () => {
+    const [row] = await prisma.$queryRaw<Array<{ indexdef: string }>>`
+      SELECT indexdef FROM pg_indexes WHERE indexname = 'pipeline_email_outbox_pending_key'`;
+    expect(row.indexdef).toBe(
+      "CREATE UNIQUE INDEX pipeline_email_outbox_pending_key ON public.pipeline_email_outbox USING btree (user_id, project_id, kind) WHERE ((status)::text = 'pending'::text)",
+    );
+  });
 
   it("foreign keys follow the §2 onDelete table, and informational actor ids have no FK", async () => {
     const rows = await prisma.$queryRaw<Array<{ fk: string }>>`
@@ -184,7 +212,11 @@ describe("pipeline schema (spec §2)", () => {
     await prisma.pipelineMessage.create({
       data: { clientId: "m1", projectId: project.id, seq: 1, rev: 1, authorId: owner.id, body: "hi" },
     });
+    await prisma.pipelineEmailOutbox.create({
+      data: { userId: owner.id, projectId: project.id, kind: "moved", sendAfter: new Date() },
+    });
     expect(await prisma.pipelineMessage.count()).toBe(1);
+    expect(await prisma.pipelineEmailOutbox.count()).toBe(1);
   });
 
   it("the pipeline tables are truncated between tests", async () => {
@@ -193,5 +225,6 @@ describe("pipeline schema (spec §2)", () => {
     expect(await prisma.pipelineProject.count()).toBe(0);
     expect(await prisma.pipelineParticipant.count()).toBe(0);
     expect(await prisma.pipelineMessage.count()).toBe(0);
+    expect(await prisma.pipelineEmailOutbox.count()).toBe(0);
   });
 });

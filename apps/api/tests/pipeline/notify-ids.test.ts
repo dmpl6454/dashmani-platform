@@ -31,6 +31,7 @@ describe("pipeline notification ids", () => {
     ["moved", [pid, uid, "7"]],
     ["due_soon", [pid, uid, "2026-09-27"]],
     ["overdue", [pid, uid, "2026-09-27"]],
+    ["due_changed", [pid, uid]],
   ];
 
   it("plnId() equals SELECT plnIdSql(...) on the DB for every kind in §7.2", async () => {

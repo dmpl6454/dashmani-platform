@@ -8,13 +8,13 @@ import { usePageTitle } from "@/lib/hooks/use-page-title";
 import { formatStatus } from "@dashmani/shared";
 
 const inputClass =
-  "w-full border border-[#E8E0D0] bg-white rounded-lg px-4 py-2.5 text-sm text-[#1A1A1A] placeholder:text-[#B0B0B0] focus:outline-none focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547] transition-colors";
+  "w-full border border-border bg-surface rounded-lg px-4 py-2.5 text-sm text-ink placeholder:text-ink-4 focus:outline-none focus:ring-2 focus:ring-action focus:border-action transition-colors";
 
 const statusBadge: Record<string, string> = {
-  DRAFT: "bg-[rgba(0,0,0,0.06)] text-[#7A7A7A]",
-  PENDING_APPROVAL: "bg-[rgba(245,213,71,0.18)] text-[#B8960C]",
-  APPROVED: "bg-[rgba(107,203,119,0.12)] text-[#6BCB77]",
-  REJECTED: "bg-[rgba(231,76,60,0.1)] text-[#E74C3C]",
+  DRAFT: "bg-[rgba(0,0,0,0.06)] text-ink-3",
+  PENDING_APPROVAL: "bg-[rgb(var(--t-action)/0.18)] text-gold",
+  APPROVED: "bg-[rgba(107,203,119,0.12)] text-success",
+  REJECTED: "bg-[rgba(231,76,60,0.1)] text-danger",
 };
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/v1";
@@ -77,11 +77,11 @@ export default function SalarySlipsPage() {
   return (
     <div className="space-y-6 crx-animate-fade">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="font-serif text-4xl font-light text-[#1A1A1A]">Salary Slips</h1>
+        <h1 className="font-serif text-4xl font-light text-ink">Salary Slips</h1>
         <button
           onClick={handleGenerateBulk}
           disabled={generating}
-          className="bg-[#1A1A1A] text-white py-2.5 px-6 rounded-full font-semibold hover:bg-[#2B2B2B] transition-all disabled:opacity-50 flex items-center gap-2"
+          className="bg-action text-[#06121B] py-2.5 px-6 rounded-full font-semibold hover:opacity-90 transition-all disabled:opacity-50 flex items-center gap-2"
         >
           <Download size={16} />
           {generating ? "Generating..." : `Generate for ${new Date(bulkYear, bulkMonth - 1).toLocaleString("default", { month: "long" })} ${bulkYear}`}
@@ -89,10 +89,10 @@ export default function SalarySlipsPage() {
       </div>
 
       {/* Filter Bar */}
-      <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-[#E8E0D0] p-5">
+      <div className="bg-surface rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-border p-5">
         <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
           <div>
-            <label className="block text-xs font-medium text-[#7A7A7A] mb-1">Month</label>
+            <label className="block text-xs font-medium text-ink-3 mb-1">Month</label>
             <select value={month} onChange={(e) => setMonth(Number(e.target.value))} className={inputClass}>
               {Array.from({ length: 12 }, (_, i) => (
                 <option key={i + 1} value={i + 1}>
@@ -102,7 +102,7 @@ export default function SalarySlipsPage() {
             </select>
           </div>
           <div>
-            <label className="block text-xs font-medium text-[#7A7A7A] mb-1">Year</label>
+            <label className="block text-xs font-medium text-ink-3 mb-1">Year</label>
             <input
               type="number"
               value={year}
@@ -111,7 +111,7 @@ export default function SalarySlipsPage() {
             />
           </div>
           <div>
-            <label className="block text-xs font-medium text-[#7A7A7A] mb-1">Status</label>
+            <label className="block text-xs font-medium text-ink-3 mb-1">Status</label>
             <select value={status} onChange={(e) => setStatus(e.target.value)} className={inputClass}>
               <option value="">All</option>
               <option value="DRAFT">Draft</option>
@@ -121,9 +121,9 @@ export default function SalarySlipsPage() {
             </select>
           </div>
           <div>
-            <label className="block text-xs font-medium text-[#7A7A7A] mb-1">Employee</label>
+            <label className="block text-xs font-medium text-ink-3 mb-1">Employee</label>
             <div className="relative">
-              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#B0B0B0]" />
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-4" />
               <input
                 type="text"
                 placeholder="Search employee..."
@@ -137,40 +137,40 @@ export default function SalarySlipsPage() {
       </div>
 
       {/* Table */}
-      <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-[#E8E0D0]">
+      <div className="bg-surface rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-border">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-[#F0EAD8]">
-                <th className="text-left p-4 text-[#7A7A7A] text-xs font-medium">Employee Name</th>
-                <th className="text-left p-4 text-[#7A7A7A] text-xs font-medium">Month/Year</th>
-                <th className="text-left p-4 text-[#7A7A7A] text-xs font-medium">Basic</th>
-                <th className="text-left p-4 text-[#7A7A7A] text-xs font-medium">Net Salary</th>
-                <th className="text-left p-4 text-[#7A7A7A] text-xs font-medium">Status</th>
-                <th className="text-left p-4 text-[#7A7A7A] text-xs font-medium">Actions</th>
+              <tr className="border-b border-border">
+                <th className="text-left p-4 text-ink-3 text-xs font-medium">Employee Name</th>
+                <th className="text-left p-4 text-ink-3 text-xs font-medium">Month/Year</th>
+                <th className="text-left p-4 text-ink-3 text-xs font-medium">Basic</th>
+                <th className="text-left p-4 text-ink-3 text-xs font-medium">Net Salary</th>
+                <th className="text-left p-4 text-ink-3 text-xs font-medium">Status</th>
+                <th className="text-left p-4 text-ink-3 text-xs font-medium">Actions</th>
               </tr>
             </thead>
             <tbody>
               {isLoading ? (
                 <tr>
-                  <td colSpan={6} className="p-4 text-center text-[#7A7A7A]">Loading...</td>
+                  <td colSpan={6} className="p-4 text-center text-ink-3">Loading...</td>
                 </tr>
               ) : slips.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="p-4 text-center text-[#7A7A7A]">
+                  <td colSpan={6} className="p-4 text-center text-ink-3">
                     <FileText size={24} className="mx-auto mb-2 opacity-30" />
                     No salary slips found
                   </td>
                 </tr>
               ) : (
                 slips.map((slip: any) => (
-                  <tr key={slip.id} className="border-b border-[#F0EAD8] last:border-0 hover:bg-[rgba(255,248,225,0.5)] transition-colors">
-                    <td className="p-4 text-[#1A1A1A] font-medium">{slip.employee?.name || "—"}</td>
-                    <td className="p-4 text-[#1A1A1A]">
+                  <tr key={slip.id} className="border-b border-border last:border-0 hover:bg-action/[0.06] transition-colors">
+                    <td className="p-4 text-ink font-medium">{slip.employee?.name || "—"}</td>
+                    <td className="p-4 text-ink">
                       {new Date(slip.year || new Date().getFullYear(), (slip.month || 1) - 1).toLocaleString("default", { month: "short" })} {slip.year}
                     </td>
-                    <td className="p-4 text-[#1A1A1A]">{slip.basicSalary != null ? `₹${Number(slip.basicSalary).toLocaleString()}` : "—"}</td>
-                    <td className="p-4 text-[#1A1A1A] font-semibold">{slip.netSalary != null ? `₹${Number(slip.netSalary).toLocaleString()}` : "—"}</td>
+                    <td className="p-4 text-ink">{slip.basicSalary != null ? `₹${Number(slip.basicSalary).toLocaleString()}` : "—"}</td>
+                    <td className="p-4 text-ink font-semibold">{slip.netSalary != null ? `₹${Number(slip.netSalary).toLocaleString()}` : "—"}</td>
                     <td className="p-4">
                       <span className={`rounded-full px-3 py-1 text-xs font-medium ${statusBadge[slip.status] || statusBadge.DRAFT}`}>
                         {formatStatus(slip.status || "DRAFT")}
@@ -182,14 +182,14 @@ export default function SalarySlipsPage() {
                           href={`${API_URL}/admin/ai/salary-slip/${slip.id}/html`}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="flex items-center gap-1 rounded-full bg-[rgba(0,0,0,0.06)] text-[#7A7A7A] px-3 py-1.5 text-xs font-medium hover:bg-[rgba(0,0,0,0.12)] transition-colors"
+                          className="flex items-center gap-1 rounded-full bg-[rgba(0,0,0,0.06)] text-ink-3 px-3 py-1.5 text-xs font-medium hover:bg-[rgba(0,0,0,0.12)] transition-colors"
                         >
                           <FileText size={13} /> View
                         </a>
                         {slip.status !== "APPROVED" && (
                           <button
                             onClick={() => setEditSlip(slip)}
-                            className="flex items-center gap-1 rounded-full bg-[rgba(99,102,241,0.1)] text-[#6366F1] px-3 py-1.5 text-xs font-medium hover:bg-[rgba(99,102,241,0.2)] transition-colors"
+                            className="flex items-center gap-1 rounded-full bg-[rgba(99,102,241,0.1)] text-indigo px-3 py-1.5 text-xs font-medium hover:bg-[rgba(99,102,241,0.2)] transition-colors"
                           >
                             <Pencil size={13} /> Edit
                           </button>
@@ -198,13 +198,13 @@ export default function SalarySlipsPage() {
                           <>
                             <button
                               onClick={() => handleAction(slip.id, "approve")}
-                              className="flex items-center gap-1 rounded-full bg-[rgba(107,203,119,0.12)] text-[#2E7D32] px-3 py-1.5 text-xs font-medium hover:bg-[rgba(107,203,119,0.25)] transition-colors"
+                              className="flex items-center gap-1 rounded-full bg-[rgba(107,203,119,0.12)] text-success px-3 py-1.5 text-xs font-medium hover:bg-[rgba(107,203,119,0.25)] transition-colors"
                             >
                               <Check size={13} /> Approve
                             </button>
                             <button
                               onClick={() => handleAction(slip.id, "reject")}
-                              className="flex items-center gap-1 rounded-full bg-[rgba(231,76,60,0.1)] text-[#E74C3C] px-3 py-1.5 text-xs font-medium hover:bg-[rgba(231,76,60,0.2)] transition-colors"
+                              className="flex items-center gap-1 rounded-full bg-[rgba(231,76,60,0.1)] text-danger px-3 py-1.5 text-xs font-medium hover:bg-[rgba(231,76,60,0.2)] transition-colors"
                             >
                               <X size={13} /> Reject
                             </button>
@@ -282,25 +282,25 @@ function EditSlipModal({ slip, onClose, onSaved }: { slip: any; onClose: () => v
     }
   }
 
-  const fieldClass = "w-full border border-[#E8E0D0] bg-white rounded-lg px-3 py-2 text-sm text-[#1A1A1A] focus:outline-none focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547] transition-colors";
+  const fieldClass = "w-full border border-border bg-surface rounded-lg px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-action focus:border-action transition-colors";
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+      <div className="bg-surface rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
         <div className="p-6">
           <div className="flex items-center justify-between mb-4">
             <div>
-              <h2 className="text-lg font-semibold text-[#1A1A1A]">Edit Salary Slip</h2>
-              <p className="text-sm text-[#7A7A7A]">{slip.employee?.name} — {new Date(slip.year, slip.month - 1).toLocaleString("default", { month: "long" })} {slip.year}</p>
+              <h2 className="text-lg font-semibold text-ink">Edit Salary Slip</h2>
+              <p className="text-sm text-ink-3">{slip.employee?.name} — {new Date(slip.year, slip.month - 1).toLocaleString("default", { month: "long" })} {slip.year}</p>
             </div>
-            <button onClick={onClose} className="text-[#7A7A7A] hover:text-[#1A1A1A] transition-colors">
+            <button onClick={onClose} className="text-ink-3 hover:text-ink transition-colors">
               <X size={20} />
             </button>
           </div>
 
           <div className="space-y-4">
             <div>
-              <p className="text-xs font-semibold text-[#7A7A7A] uppercase tracking-wide mb-2">Earnings</p>
+              <p className="text-xs font-semibold text-ink-3 uppercase tracking-wide mb-2">Earnings</p>
               <div className="grid grid-cols-2 gap-3">
                 {[
                   { key: "basicSalary", label: "Basic Salary" },
@@ -311,7 +311,7 @@ function EditSlipModal({ slip, onClose, onSaved }: { slip: any; onClose: () => v
                   { key: "otherEarnings", label: "Other Earnings" },
                 ].map(({ key, label }) => (
                   <div key={key}>
-                    <label className="block text-xs text-[#7A7A7A] mb-1">{label}</label>
+                    <label className="block text-xs text-ink-3 mb-1">{label}</label>
                     <input
                       type="number"
                       step="0.01"
@@ -325,7 +325,7 @@ function EditSlipModal({ slip, onClose, onSaved }: { slip: any; onClose: () => v
             </div>
 
             <div>
-              <p className="text-xs font-semibold text-[#7A7A7A] uppercase tracking-wide mb-2">Deductions</p>
+              <p className="text-xs font-semibold text-ink-3 uppercase tracking-wide mb-2">Deductions</p>
               <div className="grid grid-cols-2 gap-3">
                 {[
                   { key: "pf", label: "PF" },
@@ -334,7 +334,7 @@ function EditSlipModal({ slip, onClose, onSaved }: { slip: any; onClose: () => v
                   { key: "otherDeductions", label: "Other Deductions" },
                 ].map(({ key, label }) => (
                   <div key={key}>
-                    <label className="block text-xs text-[#7A7A7A] mb-1">{label}</label>
+                    <label className="block text-xs text-ink-3 mb-1">{label}</label>
                     <input
                       type="number"
                       step="0.01"
@@ -348,7 +348,7 @@ function EditSlipModal({ slip, onClose, onSaved }: { slip: any; onClose: () => v
             </div>
 
             <div>
-              <label className="block text-xs text-[#7A7A7A] mb-1">Remarks</label>
+              <label className="block text-xs text-ink-3 mb-1">Remarks</label>
               <textarea
                 value={form.remarks}
                 onChange={(e) => setForm({ ...form, remarks: e.target.value })}
@@ -358,22 +358,22 @@ function EditSlipModal({ slip, onClose, onSaved }: { slip: any; onClose: () => v
             </div>
 
             <div className="flex items-center justify-between rounded-xl bg-[rgba(107,203,119,0.08)] border border-[rgba(107,203,119,0.3)] px-4 py-3">
-              <span className="text-sm font-medium text-[#1A1A1A]">Net Salary</span>
-              <span className="text-lg font-bold text-[#2E7D32]">₹{netSalary.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</span>
+              <span className="text-sm font-medium text-ink">Net Salary</span>
+              <span className="text-lg font-bold text-success">₹{netSalary.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</span>
             </div>
 
             {editError && (
-              <p className="text-sm text-[#E74C3C] bg-[rgba(231,76,60,0.06)] border border-[rgba(231,76,60,0.2)] rounded-lg px-3 py-2">{editError}</p>
+              <p className="text-sm text-danger bg-[rgba(231,76,60,0.06)] border border-[rgba(231,76,60,0.2)] rounded-lg px-3 py-2">{editError}</p>
             )}
 
             <div className="flex justify-end gap-3 pt-2">
-              <button onClick={onClose} className="px-5 py-2.5 rounded-full border border-[#E8E0D0] text-sm font-medium text-[#7A7A7A] hover:border-[#1A1A1A] transition-colors">
+              <button onClick={onClose} className="px-5 py-2.5 rounded-full border border-border text-sm font-medium text-ink-3 hover:border-[#33506A] transition-colors">
                 Cancel
               </button>
               <button
                 onClick={handleSave}
                 disabled={saving}
-                className="px-5 py-2.5 rounded-full bg-[#1A1A1A] text-white text-sm font-medium hover:bg-[#2B2B2B] disabled:opacity-50 transition-colors"
+                className="px-5 py-2.5 rounded-full bg-action text-[#06121B] text-sm font-medium hover:opacity-90 disabled:opacity-50 transition-colors"
               >
                 {saving ? "Saving..." : "Save Changes"}
               </button>

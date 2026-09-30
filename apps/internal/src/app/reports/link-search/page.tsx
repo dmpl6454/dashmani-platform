@@ -180,7 +180,7 @@ export default function LinkSearchPage() {
           </div>
           <button
             type="submit"
-            className="h-11 px-5 rounded-xl bg-ink text-white text-sm font-medium hover:bg-ink/90 transition-colors shrink-0"
+            className="h-11 px-5 rounded-xl bg-action text-[#06121B] text-sm font-medium hover:bg-action-deep transition-colors shrink-0"
           >
             Search
           </button>

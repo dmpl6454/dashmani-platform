@@ -173,7 +173,7 @@ export default function ApiCostsPage() {
     <div className="space-y-6 pop-in">
       {/* Header */}
       <div className="flex items-center gap-3">
-        <Link href="/dashboard" className="flex items-center gap-1 text-sm text-[#7A7A7A] hover:text-[#1A1A1A] transition-colors">
+        <Link href="/dashboard" className="flex items-center gap-1 text-sm text-ink-3 hover:text-ink transition-colors">
           <ArrowLeft className="h-4 w-4" /> Dashboard
         </Link>
       </div>
@@ -197,7 +197,7 @@ export default function ApiCostsPage() {
               key={r}
               onClick={() => setDays(r)}
               className={`px-3 py-1 rounded-lg text-xs font-medium transition-colors ${
-                days === r ? "bg-ink text-white" : "text-ink-4 hover:text-ink"
+                days === r ? "bg-action text-[#06121B]" : "text-ink-4 hover:text-ink"
               }`}
             >
               {r}d
@@ -235,7 +235,7 @@ export default function ApiCostsPage() {
           }`}
         >
           <span
-            className={`absolute top-0.5 left-0.5 h-6 w-6 rounded-full bg-white shadow transition-transform ${
+            className={`absolute top-0.5 left-0.5 h-6 w-6 rounded-full bg-surface shadow transition-transform ${
               enrichmentEnabled ? "translate-x-5" : "translate-x-0"
             }`}
           />
@@ -276,7 +276,7 @@ export default function ApiCostsPage() {
             type="button"
             onClick={saveCeiling}
             disabled={ceilingState === "loading"}
-            className="px-3 py-1.5 rounded-lg bg-ink text-white text-xs font-medium disabled:opacity-50"
+            className="px-3 py-1.5 rounded-lg bg-action text-[#06121B] text-xs font-medium disabled:opacity-50"
           >
             {ceilingState === "loading" ? "Saving…" : "Save"}
           </button>

@@ -27,7 +27,7 @@ export function InsightBadge({ platform, metric }: InsightBadgeProps) {
     return (
       <span
         title={`Insights not yet supported for ${platform}`}
-        className="inline-flex items-center gap-1 text-[10px] text-[#B0B0B0] cursor-help select-none"
+        className="inline-flex items-center gap-1 text-[10px] text-ink-4 cursor-help select-none"
       >
         <Info className="h-2.5 w-2.5 flex-shrink-0" />
         Insights soon

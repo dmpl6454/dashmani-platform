@@ -81,7 +81,7 @@ export default function LeavePage() {
             key={t}
             onClick={() => setTab(t)}
             className={`px-4 py-2 rounded-full text-sm font-medium transition-all ${
-              tab === t ? "bg-ink text-white" : "bg-white text-ink-3 border border-ink/10 hover:bg-muted"
+              tab === t ? "bg-action text-[#06121B]" : "bg-surface text-ink-3 border border-ink/10 hover:bg-muted"
             }`}
           >
             {t === "ALL" ? "All" : formatStatus(t)}

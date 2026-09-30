@@ -122,7 +122,7 @@ export default function AddAdminPage() {
     }
   }
 
-  const inputClass = "w-full rounded-xl border border-[#F0EAD8] bg-[#FFF8E1]/60 px-4 py-3 text-sm outline-none focus:border-[#F5D547] focus:ring-2 focus:ring-[#F5D547]/20 transition-all placeholder:text-[#B0B0B0]";
+  const inputClass = "w-full rounded-xl border border-border bg-action-soft/60 px-4 py-3 text-sm outline-none focus:border-action focus:ring-2 focus:ring-action/20 transition-all placeholder:text-ink-4";
 
   function DupWarning({ dups, onDismiss }: { dups: Employee[]; onDismiss: () => void }) {
     return (
@@ -141,23 +141,23 @@ export default function AddAdminPage() {
   return (
     <div className="max-w-2xl mx-auto">
       <div className="flex items-center gap-3 mb-6">
-        <Link href="/employees" className="p-2 rounded-lg hover:bg-white/60 transition-colors">
-          <ArrowLeft className="h-5 w-5 text-[#7A7A7A]" />
+        <Link href="/employees" className="p-2 rounded-lg hover:bg-surface/60 transition-colors">
+          <ArrowLeft className="h-5 w-5 text-ink-3" />
         </Link>
         <div>
-          <h1 className="text-2xl font-semibold text-[#1A1A1A]">Add Admin User</h1>
-          <p className="text-sm text-[#7A7A7A] mt-0.5">Create a new admin directly or send an email invite</p>
+          <h1 className="text-2xl font-semibold text-ink">Add Admin User</h1>
+          <p className="text-sm text-ink-3 mt-0.5">Create a new admin directly or send an email invite</p>
         </div>
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1 bg-white/60 rounded-xl p-1 border border-white/50 mb-6 w-fit">
+      <div className="flex gap-1 bg-surface/60 rounded-xl p-1 border border-white/50 mb-6 w-fit">
         {(["create", "invite"] as const).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
             className={`px-5 py-2 rounded-lg text-sm font-medium transition-all ${
-              tab === t ? "bg-[#F5D547] text-[#1A1A1A] shadow-sm" : "text-[#7A7A7A] hover:text-[#1A1A1A]"
+              tab === t ? "bg-action text-[#06121B] shadow-sm" : "text-ink-3 hover:text-ink"
             }`}
           >
             {t === "create" ? "Direct Create" : "Send Invite"}
@@ -165,16 +165,16 @@ export default function AddAdminPage() {
         ))}
       </div>
 
-      <div className="bg-white/60 backdrop-blur-xl rounded-2xl border border-white/50 shadow-[0_8px_40px_rgba(0,0,0,0.06)] p-7">
+      <div className="bg-surface/60 backdrop-blur-xl rounded-2xl border border-white/50 shadow-[0_8px_40px_rgba(0,0,0,0.06)] p-7">
         {tab === "create" ? (
           <form onSubmit={handleCreate} className="space-y-5">
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-xs text-[#7A7A7A] mb-1.5 font-medium">Full Name *</label>
+                <label className="block text-xs text-ink-3 mb-1.5 font-medium">Full Name *</label>
                 <input className={inputClass} required placeholder="Jane Doe" value={createForm.name} onChange={(e) => updateCreateForm({ name: e.target.value })} />
               </div>
               <div>
-                <label className="block text-xs text-[#7A7A7A] mb-1.5 font-medium">Email *</label>
+                <label className="block text-xs text-ink-3 mb-1.5 font-medium">Email *</label>
                 <input type="email" className={inputClass} required placeholder="jane@digitalsukoon.com" value={createForm.email} onChange={(e) => updateCreateForm({ email: e.target.value })} />
               </div>
             </div>
@@ -184,10 +184,10 @@ export default function AddAdminPage() {
             )}
 
             <div>
-              <label className="block text-xs text-[#7A7A7A] mb-1.5 font-medium">Password *</label>
+              <label className="block text-xs text-ink-3 mb-1.5 font-medium">Password *</label>
               <div className="relative">
                 <input type={showPass ? "text" : "password"} className={inputClass + " pr-10"} required placeholder="Set initial password" value={createForm.password} onChange={(e) => setCreateForm({ ...createForm, password: e.target.value })} />
-                <button type="button" onClick={() => setShowPass(!showPass)} className="absolute right-3 top-1/2 -translate-y-1/2 text-[#B0B0B0] hover:text-[#7A7A7A]">
+                <button type="button" onClick={() => setShowPass(!showPass)} className="absolute right-3 top-1/2 -translate-y-1/2 text-ink-4 hover:text-ink-3">
                   {showPass ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
                 </button>
               </div>
@@ -195,24 +195,24 @@ export default function AddAdminPage() {
 
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-xs text-[#7A7A7A] mb-1.5 font-medium">Designation</label>
+                <label className="block text-xs text-ink-3 mb-1.5 font-medium">Designation</label>
                 <input className={inputClass} placeholder="e.g. Senior Manager" value={createForm.designation} onChange={(e) => setCreateForm({ ...createForm, designation: e.target.value })} />
               </div>
               <div>
-                <label className="block text-xs text-[#7A7A7A] mb-1.5 font-medium">Monthly Salary (₹)</label>
+                <label className="block text-xs text-ink-3 mb-1.5 font-medium">Monthly Salary (₹)</label>
                 <input type="number" className={inputClass} placeholder="0" value={createForm.salary} onChange={(e) => setCreateForm({ ...createForm, salary: e.target.value })} />
               </div>
             </div>
 
             <div>
-              <label className="block text-xs text-[#7A7A7A] mb-2 font-medium">Roles</label>
+              <label className="block text-xs text-ink-3 mb-2 font-medium">Roles</label>
               <div className="flex flex-wrap gap-2">
                 {roles.map((role) => (
                   <button key={role.id} type="button" onClick={() => toggleRole(role.id, createRoleIds, setCreateRoleIds)}
                     className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${
                       createRoleIds.includes(role.id)
-                        ? "bg-[#F5D547] border-[#F5D547] text-[#1A1A1A]"
-                        : "bg-white/60 border-[#F0EAD8] text-[#7A7A7A] hover:border-[#F5D547]"
+                        ? "bg-action border-action text-ink"
+                        : "bg-surface/60 border-border text-ink-3 hover:border-action"
                     }`}
                   >
                     {role.name}
@@ -221,32 +221,32 @@ export default function AddAdminPage() {
               </div>
             </div>
 
-            {createError && <div className="flex items-center gap-2 text-sm text-[#E74C3C] bg-red-50/60 border border-red-100 rounded-lg px-3 py-2">{createError}</div>}
+            {createError && <div className="flex items-center gap-2 text-sm text-danger bg-red-50/60 border border-red-100 rounded-lg px-3 py-2">{createError}</div>}
             {createSuccess && <div className="flex items-center gap-2 text-sm text-emerald-700 bg-emerald-50/60 border border-emerald-100 rounded-lg px-3 py-2">{createSuccess}</div>}
 
             <div className="flex gap-3 pt-2">
               <button type="submit" disabled={createLoading}
-                className="flex items-center gap-2 px-6 py-3 rounded-full bg-[#F5D547] text-[#1A1A1A] text-sm font-semibold shadow-[0_4px_16px_rgba(245,213,71,0.35)] hover:shadow-[0_8px_32px_rgba(245,213,71,0.45)] hover:-translate-y-0.5 disabled:opacity-50 transition-all"
+                className="flex items-center gap-2 px-6 py-3 rounded-full bg-action text-[#06121B] text-sm font-semibold shadow-[0_4px_16px_rgb(var(--t-action)/0.35)] hover:shadow-[0_8px_32px_rgb(var(--t-action)/0.45)] hover:-translate-y-0.5 disabled:opacity-50 transition-all"
               >
                 <UserPlus className="h-4 w-4" />
                 {createLoading ? "Creating..." : "Create Admin User"}
               </button>
-              <Link href="/employees" className="px-6 py-3 rounded-full border border-[#F0EAD8] text-sm text-[#7A7A7A] hover:border-[#E8D8B4] transition-colors">
+              <Link href="/employees" className="px-6 py-3 rounded-full border border-border text-sm text-ink-3 hover:border-border transition-colors">
                 Cancel
               </Link>
             </div>
           </form>
         ) : (
           <form onSubmit={handleInvite} className="space-y-5">
-            <p className="text-sm text-[#7A7A7A]">The recipient will receive an email with a signup link valid for 7 days.</p>
+            <p className="text-sm text-ink-3">The recipient will receive an email with a signup link valid for 7 days.</p>
 
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-xs text-[#7A7A7A] mb-1.5 font-medium">Email Address *</label>
+                <label className="block text-xs text-ink-3 mb-1.5 font-medium">Email Address *</label>
                 <input type="email" className={inputClass} required placeholder="newadmin@digitalsukoon.com" value={inviteForm.email} onChange={(e) => updateInviteForm({ email: e.target.value })} />
               </div>
               <div>
-                <label className="block text-xs text-[#7A7A7A] mb-1.5 font-medium">Designation</label>
+                <label className="block text-xs text-ink-3 mb-1.5 font-medium">Designation</label>
                 <input className={inputClass} placeholder="e.g. Content Manager" value={inviteForm.designation} onChange={(e) => setInviteForm({ ...inviteForm, designation: e.target.value })} />
               </div>
             </div>
@@ -256,14 +256,14 @@ export default function AddAdminPage() {
             )}
 
             <div>
-              <label className="block text-xs text-[#7A7A7A] mb-2 font-medium">Roles</label>
+              <label className="block text-xs text-ink-3 mb-2 font-medium">Roles</label>
               <div className="flex flex-wrap gap-2">
                 {roles.map((role) => (
                   <button key={role.id} type="button" onClick={() => toggleRole(role.id, inviteRoleIds, setInviteRoleIds)}
                     className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${
                       inviteRoleIds.includes(role.id)
-                        ? "bg-[#F5D547] border-[#F5D547] text-[#1A1A1A]"
-                        : "bg-white/60 border-[#F0EAD8] text-[#7A7A7A] hover:border-[#F5D547]"
+                        ? "bg-action border-action text-ink"
+                        : "bg-surface/60 border-border text-ink-3 hover:border-action"
                     }`}
                   >
                     {role.name}
@@ -272,17 +272,17 @@ export default function AddAdminPage() {
               </div>
             </div>
 
-            {inviteError && <div className="flex items-center gap-2 text-sm text-[#E74C3C] bg-red-50/60 border border-red-100 rounded-lg px-3 py-2">{inviteError}</div>}
+            {inviteError && <div className="flex items-center gap-2 text-sm text-danger bg-red-50/60 border border-red-100 rounded-lg px-3 py-2">{inviteError}</div>}
             {inviteSuccess && <div className="flex items-center gap-2 text-sm text-emerald-700 bg-emerald-50/60 border border-emerald-100 rounded-lg px-3 py-2">{inviteSuccess}</div>}
 
             <div className="flex gap-3 pt-2">
               <button type="submit" disabled={inviteLoading}
-                className="flex items-center gap-2 px-6 py-3 rounded-full bg-[#F5D547] text-[#1A1A1A] text-sm font-semibold shadow-[0_4px_16px_rgba(245,213,71,0.35)] hover:shadow-[0_8px_32px_rgba(245,213,71,0.45)] hover:-translate-y-0.5 disabled:opacity-50 transition-all"
+                className="flex items-center gap-2 px-6 py-3 rounded-full bg-action text-[#06121B] text-sm font-semibold shadow-[0_4px_16px_rgb(var(--t-action)/0.35)] hover:shadow-[0_8px_32px_rgb(var(--t-action)/0.45)] hover:-translate-y-0.5 disabled:opacity-50 transition-all"
               >
                 <Send className="h-4 w-4" />
                 {inviteLoading ? "Sending..." : "Send Invite Email"}
               </button>
-              <Link href="/employees" className="px-6 py-3 rounded-full border border-[#F0EAD8] text-sm text-[#7A7A7A] hover:border-[#E8D8B4] transition-colors">
+              <Link href="/employees" className="px-6 py-3 rounded-full border border-border text-sm text-ink-3 hover:border-border transition-colors">
                 Cancel
               </Link>
             </div>

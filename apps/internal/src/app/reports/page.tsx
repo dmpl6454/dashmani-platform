@@ -22,10 +22,10 @@ function SnapchatTopLinksIcon({ className }: { className?: string }) {
 const PLATFORM_COLORS: Record<string, string> = {
   instagram: "bg-pink-100 text-pink-700",
   twitter: "bg-sky-100 text-sky-700",
-  linkedin: "bg-[#FFF3C4] text-[#1A1A1A]",
-  facebook: "bg-[#FFF3C4] text-[#1A1A1A]",
+  linkedin: "bg-action-soft text-ink",
+  facebook: "bg-action-soft text-ink",
   youtube: "bg-red-100 text-red-700",
-  tiktok: "bg-[#F0E4C4] text-[#1A1A1A]",
+  tiktok: "bg-action-soft text-ink",
   snapchat: "bg-yellow-100 text-yellow-700",
 };
 
@@ -41,12 +41,12 @@ const PLATFORM_CARD_STYLES: Record<string, { bg: string; labelColor: string; lab
 
 function platformCardStyle(platform: string) {
   return PLATFORM_CARD_STYLES[platform?.toLowerCase()] ?? {
-    bg: "from-[#FFFBF0] to-[#FFF8E1]", labelColor: "text-amber-700", labelBg: "bg-amber-100", bar: "bg-amber-400", border: "border-[#F0EAD8]",
+    bg: "from-surface to-action-soft", labelColor: "text-amber-700", labelBg: "bg-amber-100", bar: "bg-amber-400", border: "border-border",
   };
 }
 
 function platformBadgeClass(platform: string) {
-  return PLATFORM_COLORS[platform?.toLowerCase()] ?? "bg-[#FFF3C4] text-[#1A1A1A]";
+  return PLATFORM_COLORS[platform?.toLowerCase()] ?? "bg-action-soft text-ink";
 }
 
 
@@ -80,8 +80,8 @@ interface SortIconProps { col: SortKey; sortKey: SortKey; sortDir: SortDir; }
 function SortIcon({ col, sortKey, sortDir }: SortIconProps) {
   if (col !== sortKey) return <ArrowUpDown className="h-3 w-3 opacity-30 ml-0.5 inline-block" />;
   return sortDir === "asc"
-    ? <ArrowUp className="h-3 w-3 ml-0.5 inline-block text-[#1A1A1A]" />
-    : <ArrowDown className="h-3 w-3 ml-0.5 inline-block text-[#1A1A1A]" />;
+    ? <ArrowUp className="h-3 w-3 ml-0.5 inline-block text-ink" />
+    : <ArrowDown className="h-3 w-3 ml-0.5 inline-block text-ink" />;
 }
 
 interface EmployeeRowProps {
@@ -92,7 +92,7 @@ interface EmployeeRowProps {
 
 const EmployeeRow = memo(function EmployeeRow({ emp, onOpenEmpModal, onOpenTodayModal }: EmployeeRowProps) {
   return (
-    <tr className="border-b border-[#F0EAD8] last:border-0 hover:bg-[rgba(255,248,225,0.5)] transition-colors group">
+    <tr className="border-b border-border last:border-0 hover:bg-action/[0.06] transition-colors group">
       <td className="py-3 pr-4">
         <div className="flex items-center gap-3">
           <UserAvatar
@@ -102,10 +102,10 @@ const EmployeeRow = memo(function EmployeeRow({ emp, onOpenEmpModal, onOpenToday
             className="ring-2 ring-white shadow-sm"
             textClassName="text-xs"
           />
-          <span className="font-medium text-[#1A1A1A] group-hover:text-[#F5D547] transition-colors">{emp.name}</span>
+          <span className="font-medium text-ink group-hover:text-action transition-colors">{emp.name}</span>
         </div>
       </td>
-      <td className="py-3 pr-4 text-[#7A7A7A]">{emp.email}</td>
+      <td className="py-3 pr-4 text-ink-3">{emp.email}</td>
       <td className="py-3 pr-4 text-right">
         <span className="inline-flex items-center justify-center min-w-[28px] h-6 rounded-full bg-purple-50 text-purple-700 text-xs font-semibold px-2">
           {emp.reportCount}
@@ -128,7 +128,7 @@ const EmployeeRow = memo(function EmployeeRow({ emp, onOpenEmpModal, onOpenToday
           className={`inline-flex items-center gap-1 min-w-[28px] h-6 rounded-full text-xs font-semibold px-2 transition-colors cursor-pointer border ${
             (emp.linksToday ?? 0) > 0
               ? "bg-blue-50 text-blue-700 border-transparent hover:bg-blue-100 hover:border-blue-300"
-              : "bg-transparent text-[#B0B0B0] border-transparent hover:bg-[#F5F5F5] hover:border-[#E8E0D0]"
+              : "bg-transparent text-ink-4 border-transparent hover:bg-muted hover:border-border"
           }`}
         >
           {(emp.linksToday ?? 0) > 0 ? emp.linksToday : "—"}
@@ -136,14 +136,14 @@ const EmployeeRow = memo(function EmployeeRow({ emp, onOpenEmpModal, onOpenToday
         </button>
       </td>
       <td className="py-3 pr-4 text-right">
-        <span className="text-xs text-[#7A7A7A]">{emp.avgLinksPerDay ?? "—"}</span>
+        <span className="text-xs text-ink-3">{emp.avgLinksPerDay ?? "—"}</span>
       </td>
       <td className="py-3 pr-4 text-right">
         <span className="inline-flex items-center gap-1 text-xs font-semibold text-orange-600">
           {emp.currentStreak ?? 0} 🔥
         </span>
       </td>
-      <td className="py-3 pr-4 text-xs text-[#7A7A7A]">
+      <td className="py-3 pr-4 text-xs text-ink-3">
         {emp.lastSubmittedAt
           ? new Date(emp.lastSubmittedAt).toLocaleDateString("en-IN", { day: "numeric", month: "short" })
           : "—"}
@@ -151,7 +151,7 @@ const EmployeeRow = memo(function EmployeeRow({ emp, onOpenEmpModal, onOpenToday
       <td className="py-3">
         <Link
           href={`/reports/${emp.id}`}
-          className="text-[#1A1A1A] hover:text-[#F5D547] text-xs font-medium transition-colors"
+          className="text-ink hover:text-action text-xs font-medium transition-colors"
         >
           View Details
         </Link>
@@ -174,7 +174,7 @@ const ReportCard = memo(function ReportCard({ report, isAdmin, deletingLinkId, o
   const shownLinks = showAllLinks ? allLinks : allLinks.slice(0, LINK_CAP);
   return (
     <div
-      className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0] transition-shadow duration-200 hover:shadow-[0_8px_32px_rgba(0,0,0,0.07)]"
+      className="bg-surface rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-border transition-shadow duration-200 hover:shadow-[0_8px_32px_rgba(0,0,0,0.07)]"
       style={{ contentVisibility: "auto", containIntrinsicSize: "300px" } as any}
     >
       <div className="p-5">
@@ -187,12 +187,12 @@ const ReportCard = memo(function ReportCard({ report, isAdmin, deletingLinkId, o
               className="ring-2 ring-white shadow-sm"
             />
             <div className="min-w-0">
-              <p className="font-semibold text-[#1A1A1A] truncate">{report.employee?.name ?? "Unknown"}</p>
-              <p className="text-xs text-[#7A7A7A] truncate">{report.employee?.email}</p>
+              <p className="font-semibold text-ink truncate">{report.employee?.name ?? "Unknown"}</p>
+              <p className="text-xs text-ink-3 truncate">{report.employee?.email}</p>
             </div>
           </div>
           <div className="flex items-center gap-2 shrink-0">
-            <span className="rounded-full px-3 py-1 text-xs font-medium bg-[#FFF8E1] text-[#1A1A1A] border border-[#F0EAD8]">
+            <span className="rounded-full px-3 py-1 text-xs font-medium bg-action-soft text-ink border border-border">
               {new Date(report.date ?? report.createdAt).toLocaleDateString()}
             </span>
             <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium bg-emerald-50 text-emerald-700">
@@ -205,7 +205,7 @@ const ReportCard = memo(function ReportCard({ report, isAdmin, deletingLinkId, o
         {report.notes && (
           // break-words: notes are free text and occasionally contain an unbroken URL,
           // which has no spaces for the browser to wrap on and overflows the card.
-          <p className="text-sm text-[#7A7A7A] mb-4 italic pl-0 sm:pl-[52px] break-words">{report.notes}</p>
+          <p className="text-sm text-ink-3 mb-4 italic pl-0 sm:pl-[52px] break-words">{report.notes}</p>
         )}
 
         {/* pl-[52px] aligns the list under the avatar on desktop, but that is 52px of
@@ -216,7 +216,7 @@ const ReportCard = memo(function ReportCard({ report, isAdmin, deletingLinkId, o
                full-width below. Everything except the URL was shrink-0, so on a narrow
                row the URL truncated to nothing while the non-shrinkable items still
                overflowed and painted over each other. sm+ keeps the single-line row. */
-            <div key={link.id ?? i} className="flex flex-wrap sm:flex-nowrap items-center gap-x-2 gap-y-0.5 group/link py-1 px-2 rounded-lg hover:bg-[#FEFCF7] transition-colors">
+            <div key={link.id ?? i} className="flex flex-wrap sm:flex-nowrap items-center gap-x-2 gap-y-0.5 group/link py-1 px-2 rounded-lg hover:bg-surface transition-colors">
               <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide border ${platformBadgeClass(link.platform)}`}>
                 {link.platform ?? "—"}
               </span>
@@ -246,17 +246,17 @@ const ReportCard = memo(function ReportCard({ report, isAdmin, deletingLinkId, o
                          usually space for the whole name, and capping it there
                          would truncate names that fit perfectly well (measured: a
                          345px name needlessly cut to 269px at an 800px viewport). */
-                  <span className="text-xs font-medium text-[#1A1A1A] min-w-0 max-w-[55%] truncate sm:max-w-none group-hover/url:text-[#F5D547] transition-colors">{link.accountName}</span>
+                  <span className="text-xs font-medium text-ink min-w-0 max-w-[55%] truncate sm:max-w-none group-hover/url:text-action transition-colors">{link.accountName}</span>
                 )}
-                <span className="text-[10px] text-[#B0B0B0] truncate group-hover/url:underline">{link.url}</span>
+                <span className="text-[10px] text-ink-4 truncate group-hover/url:underline">{link.url}</span>
               </a>
               {link.description && (
-                <span className="text-xs text-[#B0B0B0] truncate max-w-[200px] hidden md:block">{link.description}</span>
+                <span className="text-xs text-ink-4 truncate max-w-[200px] hidden md:block">{link.description}</span>
               )}
               {report.submittedAt && (
                 /* ml-auto right-aligns the time on the phone's first line; on sm+ the
                    anchor already absorbs the free space, so it resolves to zero. */
-                <span className="ml-auto text-[10px] text-[#B0B0B0] shrink-0 tabular-nums whitespace-nowrap">
+                <span className="ml-auto text-[10px] text-ink-4 shrink-0 tabular-nums whitespace-nowrap">
                   {new Date(report.submittedAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}
                 </span>
               )}
@@ -265,7 +265,7 @@ const ReportCard = memo(function ReportCard({ report, isAdmin, deletingLinkId, o
                   onClick={() => onDeleteLink(link.id)}
                   disabled={deletingLinkId === link.id}
                   title="Delete this link"
-                  className="h-6 w-6 rounded-lg flex items-center justify-center text-[#B0B0B0] hover:text-red-500 hover:bg-red-50 transition-colors opacity-0 group-hover/link:opacity-100 disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+                  className="h-6 w-6 rounded-lg flex items-center justify-center text-ink-4 hover:text-red-500 hover:bg-red-50 transition-colors opacity-0 group-hover/link:opacity-100 disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
                 >
                   {deletingLinkId === link.id ? (
                     <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
@@ -279,7 +279,7 @@ const ReportCard = memo(function ReportCard({ report, isAdmin, deletingLinkId, o
           {allLinks.length > LINK_CAP && (
             <button
               onClick={() => setShowAllLinks((v) => !v)}
-              className="mt-1 text-xs font-medium text-[#7A7A7A] hover:text-[#1A1A1A] underline"
+              className="mt-1 text-xs font-medium text-ink-3 hover:text-ink underline"
             >
               {showAllLinks ? "Show fewer" : `Show all ${allLinks.length} links`}
             </button>
@@ -491,22 +491,22 @@ export default function ReportsPage() {
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="font-serif text-4xl font-light text-[#1A1A1A]">Link Reports</h1>
-          <p className="text-sm text-[#7A7A7A] mt-1">Employee daily link submission reports</p>
+          <h1 className="font-serif text-4xl font-light text-ink">Link Reports</h1>
+          <p className="text-sm text-ink-3 mt-1">Employee daily link submission reports</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <ExportButton startDate={startDate} endDate={endDate} employeeId={employeeId || undefined} variant="light" />
           <AllLinksCsvButton startDate={startDate} endDate={endDate} employeeId={employeeId || undefined} variant="light" />
           <Link
             href="/reports/links"
-            className="inline-flex items-center gap-2 bg-white border border-[#E8E0D0] text-[#1A1A1A] rounded-full px-4 py-2 text-sm font-medium hover:shadow-[0_4px_12px_rgba(0,0,0,0.08)] transition-shadow"
+            className="inline-flex items-center gap-2 bg-surface border border-border text-ink rounded-full px-4 py-2 text-sm font-medium hover:shadow-[0_4px_12px_rgba(0,0,0,0.08)] transition-shadow"
           >
             <TrendingUp className="h-4 w-4 text-emerald-600" />
             Links Analytics
           </Link>
           <Link
             href="/reports/leaderboard"
-            className="inline-flex items-center gap-2 bg-[#1A1A1A] text-white rounded-full px-5 py-2.5 text-sm font-medium shadow-[0_4px_16px_rgba(0,0,0,0.18)] hover:shadow-[0_6px_24px_rgba(0,0,0,0.22)] transition-shadow"
+            className="inline-flex items-center gap-2 bg-action text-[#06121B] rounded-full px-5 py-2.5 text-sm font-medium shadow-[0_4px_16px_rgba(0,0,0,0.18)] hover:shadow-[0_6px_24px_rgba(0,0,0,0.22)] transition-shadow"
           >
             <Trophy className="h-4 w-4" />
             Leaderboard
@@ -515,15 +515,15 @@ export default function ReportsPage() {
       </div>
 
       {/* Filters — above the cards so you choose the window/employee first, then read the numbers */}
-      <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0]">
-        <div className="px-6 py-4 border-b border-[#F0EAD8] flex flex-wrap items-center justify-between gap-2">
+      <div className="bg-surface rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-border">
+        <div className="px-6 py-4 border-b border-border flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2">
-            <div className="h-8 w-8 rounded-lg bg-[#FFF8E1] flex items-center justify-center">
-              <Filter className="h-4 w-4 text-[#B0B0B0]" />
+            <div className="h-8 w-8 rounded-lg bg-action-soft flex items-center justify-center">
+              <Filter className="h-4 w-4 text-ink-4" />
             </div>
-            <h3 className="font-serif text-[#1A1A1A] font-medium">Filters</h3>
+            <h3 className="font-serif text-ink font-medium">Filters</h3>
           </div>
-          <span className="text-xs font-medium text-[#7A7A7A] bg-[#FFF8E1] px-3 py-1 rounded-full border border-[#F0EAD8]">
+          <span className="text-xs font-medium text-ink-3 bg-action-soft px-3 py-1 rounded-full border border-border">
             {windowLabel}
           </span>
         </div>
@@ -536,13 +536,13 @@ export default function ReportsPage() {
           />
           {/* Employee selector */}
           <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-medium text-[#7A7A7A] flex items-center gap-1">
+            <label className="text-xs font-medium text-ink-3 flex items-center gap-1">
               <Users className="h-3 w-3" /> Employee
             </label>
             <select
               value={employeeId}
               onChange={(e) => setEmployeeId(e.target.value)}
-              className="h-10 rounded-xl border border-[#E8E0D0] bg-[#FEFCF8] px-3 py-1 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547] w-full sm:w-52"
+              className="h-10 rounded-xl border border-border bg-surface px-3 py-1 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-action focus:border-action w-full sm:w-52"
             >
               <option value="">All Employees</option>
               {employees.map((emp: any) => (
@@ -567,10 +567,10 @@ export default function ReportsPage() {
             <div
               key={card.title}
               onClick={onClickHandler}
-              className={`bg-white rounded-2xl p-5 border border-[#E8E0D0] transition-shadow duration-200 hover:shadow-[0_8px_32px_rgba(0,0,0,0.06)] ${isClickable ? "cursor-pointer hover:border-amber-300" : ""}`}
+              className={`bg-surface rounded-2xl p-5 border border-border transition-shadow duration-200 hover:shadow-[0_8px_32px_rgba(0,0,0,0.06)] ${isClickable ? "cursor-pointer hover:border-amber-300" : ""}`}
             >
               <div className="flex items-center justify-between mb-3">
-                <span className="text-xs text-[#7A7A7A] font-medium flex items-center gap-1.5">
+                <span className="text-xs text-ink-3 font-medium flex items-center gap-1.5">
                   {card.title}
                   {isClickable && <BarChart2 className="h-3 w-3 text-amber-500" />}
                 </span>
@@ -578,10 +578,10 @@ export default function ReportsPage() {
                   <Icon className={`h-5 w-5 ${card.iconColor}`} />
                 </div>
               </div>
-              <p className={`font-light font-num text-[#1A1A1A] leading-tight ${typeof card.value === "number" ? "text-[40px]" : "text-xl"}`}>
+              <p className={`font-light font-num text-ink leading-tight ${typeof card.value === "number" ? "text-[40px]" : "text-xl"}`}>
                 {summaryLoading ? "\u2014" : card.value}
               </p>
-              <p className="text-xs text-[#B0B0B0] mt-1">{card.sub}</p>
+              <p className="text-xs text-ink-4 mt-1">{card.sub}</p>
             </div>
           );
         })}
@@ -610,18 +610,18 @@ export default function ReportsPage() {
                 >
                   {/* Header — name left, colored icon right (same pattern as stat cards) */}
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-medium text-[#7A7A7A] capitalize">{platform}</span>
+                    <span className="text-xs font-medium text-ink-3 capitalize">{platform}</span>
                     <div className={`h-10 w-10 rounded-xl ${style.labelBg} flex items-center justify-center`}>
                       <Link2 className={`h-5 w-5 ${style.labelColor}`} />
                     </div>
                   </div>
 
                   {/* Count — left aligned like stat cards */}
-                  <p className="font-num font-light text-[40px] text-[#1A1A1A] leading-tight">{count}</p>
-                  <p className="text-xs text-[#B0B0B0] -mt-2">links · {windowLabel.toLowerCase()}</p>
+                  <p className="font-num font-light text-[40px] text-ink leading-tight">{count}</p>
+                  <p className="text-xs text-ink-4 -mt-2">links · {windowLabel.toLowerCase()}</p>
 
                   {/* Progress bar */}
-                  <div className="h-1 w-full rounded-full bg-white/70">
+                  <div className="h-1 w-full rounded-full bg-surface/70">
                     <div
                       className={`h-1 rounded-full ${style.bar} transition-all duration-700`}
                       style={{ width: `${pct}%` }}
@@ -723,23 +723,23 @@ export default function ReportsPage() {
                 ? "grid-cols-[1.5rem_1fr_8rem_5rem_5rem_5rem]"
                 : "grid-cols-[1.5rem_1fr_8rem_5rem_5rem]";
               return (
-                <div key={p.key} className="bg-white rounded-2xl border border-[#E8E0D0] shadow-[0_2px_16px_rgba(0,0,0,0.05)]">
-                  <div className="px-6 py-4 border-b border-[#F0EAD8] flex items-center gap-2 flex-wrap">
+                <div key={p.key} className="bg-surface rounded-2xl border border-border shadow-[0_2px_16px_rgba(0,0,0,0.05)]">
+                  <div className="px-6 py-4 border-b border-border flex items-center gap-2 flex-wrap">
                     <div className={`h-8 w-8 rounded-lg ${p.iconBg} flex items-center justify-center shrink-0`}>
                       <p.Icon className={`h-4 w-4 ${p.iconColor}`} />
                     </div>
-                    <h3 className="font-serif text-[#1A1A1A] font-medium">{p.label}</h3>
+                    <h3 className="font-serif text-ink font-medium">{p.label}</h3>
                     {showToggle && (
                       <div className="flex items-center gap-1 ml-2">
                         <button
                           onClick={() => setYtAllTime(false)}
-                          className={`text-[11px] px-2.5 py-0.5 rounded-full border transition-colors ${!ytAllTime ? "bg-[#1A1A1A] text-white border-[#1A1A1A]" : "text-[#7A7A7A] border-[#E8E0D0] hover:border-[#1A1A1A]"}`}
+                          className={`text-[11px] px-2.5 py-0.5 rounded-full border transition-colors ${!ytAllTime ? "bg-action text-[#06121B] border-[#33506A]" : "text-ink-3 border-border hover:border-[#33506A]"}`}
                         >
                           {windowLabel}
                         </button>
                         <button
                           onClick={() => setYtAllTime(true)}
-                          className={`text-[11px] px-2.5 py-0.5 rounded-full border transition-colors ${ytAllTime ? "bg-[#1A1A1A] text-white border-[#1A1A1A]" : "text-[#7A7A7A] border-[#E8E0D0] hover:border-[#1A1A1A]"}`}
+                          className={`text-[11px] px-2.5 py-0.5 rounded-full border transition-colors ${ytAllTime ? "bg-action text-[#06121B] border-[#33506A]" : "text-ink-3 border-border hover:border-[#33506A]"}`}
                         >
                           All time
                         </button>
@@ -752,7 +752,7 @@ export default function ReportsPage() {
                         short notes ("YouTube · views") happened to fit. Shrinking is now
                         allowed, so long notes wrap onto their own line inside the card
                         and short ones still sit right-aligned on the header line. */}
-                    <span className="ml-auto min-w-0 max-w-full text-[10px] text-[#B0B0B0] sm:text-right">
+                    <span className="ml-auto min-w-0 max-w-full text-[10px] text-ink-4 sm:text-right">
                       {p.note}
                       {(() => {
                         const rel = relativeUpdated(p.data);
@@ -761,11 +761,11 @@ export default function ReportsPage() {
                     </span>
                   </div>
                   {p.loading ? (
-                    <div className="px-6 py-4 text-xs text-[#B0B0B0]">Loading…</div>
+                    <div className="px-6 py-4 text-xs text-ink-4">Loading…</div>
                   ) : p.key === "facebook" && p.data.length === 0 ? (
                     /* Facebook empty state — honest: metrics are collected gradually by the
                        insights job, so this fills in over time rather than being unavailable. */
-                    <div className="px-6 py-5 text-xs text-[#7A7A7A] leading-relaxed max-w-prose">
+                    <div className="px-6 py-5 text-xs text-ink-3 leading-relaxed max-w-prose">
                       Facebook views, reactions and comments are collected in the background and
                       refresh periodically. Recently submitted reels appear here once the next
                       insights run picks them up &mdash; check back shortly.
@@ -776,7 +776,7 @@ export default function ReportsPage() {
                        sm+ keeps the original single-line grid table. */
                     <div className="overflow-x-auto">
                     <div className={showViewsCol ? "sm:min-w-[620px]" : "sm:min-w-[540px]"}>
-                      <div className={`hidden sm:grid px-6 py-2 ${cols} gap-3 text-[10px] font-medium text-[#B0B0B0] uppercase tracking-wide border-b border-[#F5F0E8]`}>
+                      <div className={`hidden sm:grid px-6 py-2 ${cols} gap-3 text-[10px] font-medium text-ink-4 uppercase tracking-wide border-b border-border`}>
                         <span>#</span>
                         <span>Link</span>
                         <span>Employee</span>
@@ -787,7 +787,7 @@ export default function ReportsPage() {
                       <ul className="divide-y divide-[#F5F0E8]">
                         {p.data.map((link: any, i: number) => (
                           <li key={`${link.linkId ?? link.url}-${i}`} className={`px-4 sm:px-6 py-3 flex flex-wrap items-center gap-x-3 gap-y-1.5 sm:grid ${cols} sm:gap-3`}>
-                            <span className="text-xs font-medium text-[#B0B0B0]">{i + 1}</span>
+                            <span className="text-xs font-medium text-ink-4">{i + 1}</span>
                             {/* ⚠️ The URL and the staleness chip share ONE grid cell — the chip
                                 must NOT be a direct child of the <li>. At sm+ the row is
                                 `sm:grid ${cols}` with exactly as many tracks as it has children
@@ -804,7 +804,7 @@ export default function ReportsPage() {
                                 href={link.url}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="text-xs text-[#1A1A1A] hover:underline truncate min-w-0"
+                                className="text-xs text-ink hover:underline truncate min-w-0"
                                 title={link.url}
                               >
                                 {link.url}
@@ -826,7 +826,7 @@ export default function ReportsPage() {
                             </span>
                             {/* forces the wrap onto line 2 on phones; absent from the sm grid */}
                             <span aria-hidden className="basis-full h-0 sm:hidden" />
-                            <span className="text-xs text-[#7A7A7A] truncate flex-1 min-w-0 sm:flex-none">{link.employeeName}</span>
+                            <span className="text-xs text-ink-3 truncate flex-1 min-w-0 sm:flex-none">{link.employeeName}</span>
                             {showViewsCol && (
                               <span className="inline-flex items-center justify-end gap-1 text-[11px] font-semibold text-rose-700">
                                 <Eye className="h-3 w-3 shrink-0" />
@@ -856,34 +856,34 @@ export default function ReportsPage() {
 
       {/* Summary Table */}
       {!employeeId && (
-        <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0]">
-          <div className="px-6 py-4 border-b border-[#F0EAD8] flex items-center gap-2">
-            <div className="h-8 w-8 rounded-lg bg-[#FFF8E1] flex items-center justify-center">
-              <TrendingUp className="h-4 w-4 text-[#B0B0B0]" />
+        <div className="bg-surface rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-border">
+          <div className="px-6 py-4 border-b border-border flex items-center gap-2">
+            <div className="h-8 w-8 rounded-lg bg-action-soft flex items-center justify-center">
+              <TrendingUp className="h-4 w-4 text-ink-4" />
             </div>
-            <h3 className="font-serif text-[#1A1A1A] font-medium">Employee Summary</h3>
+            <h3 className="font-serif text-ink font-medium">Employee Summary</h3>
             {!summaryLoading && (summary?.employees ?? []).length > 0 && (
-              <span className="ml-auto text-xs text-[#B0B0B0]">
+              <span className="ml-auto text-xs text-ink-4">
                 {(summary?.employees ?? []).length} employee{(summary?.employees ?? []).length !== 1 ? "s" : ""}
               </span>
             )}
           </div>
           <div className="p-6">
             {summaryLoading ? (
-              <div className="flex items-center justify-center gap-2 py-4 text-sm text-[#7A7A7A]">
-                <svg className="animate-spin h-4 w-4 text-[#F5D547]" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+              <div className="flex items-center justify-center gap-2 py-4 text-sm text-ink-3">
+                <svg className="animate-spin h-4 w-4 text-action" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
                 Loading summary...
               </div>
             ) : (summary?.employees ?? []).length === 0 ? (
-              <div className="flex flex-col items-center gap-2 py-6 text-sm text-[#7A7A7A]">
-                <FileText className="h-8 w-8 text-[#E8E0D0]" />
+              <div className="flex flex-col items-center gap-2 py-6 text-sm text-ink-3">
+                <FileText className="h-8 w-8 text-ink-4" />
                 <span>No report data found.</span>
               </div>
             ) : (
               <div className="overflow-x-auto overflow-y-auto max-h-[560px]">
                 <table className="w-full text-sm">
-                  <thead className="sticky top-0 z-10 bg-white">
-                    <tr className="border-b border-[#F0EAD8]">
+                  <thead className="sticky top-0 z-10 bg-surface">
+                    <tr className="border-b border-border">
                       {(
                         [
                           { key: "name",            label: "Employee",       align: "left"  },
@@ -906,7 +906,7 @@ export default function ReportsPage() {
                               setSortDir(key === "name" || key === "email" ? "asc" : "desc");
                             }
                           }}
-                          className={`py-2 pr-4 text-[#7A7A7A] text-xs font-medium cursor-pointer select-none whitespace-nowrap hover:text-[#1A1A1A] transition-colors ${align === "right" ? "text-right" : "text-left"} ${sortKey === key ? "text-[#1A1A1A]" : ""}`}
+                          className={`py-2 pr-4 text-ink-3 text-xs font-medium cursor-pointer select-none whitespace-nowrap hover:text-ink transition-colors ${align === "right" ? "text-right" : "text-left"} ${sortKey === key ? "text-ink" : ""}`}
                         >
                           {key === "linksToday" ? (
                             <span className="inline-flex items-center gap-1" title="Links submitted today — always today, ignores the date filter">
@@ -923,7 +923,7 @@ export default function ReportsPage() {
                         </th>
                       ))}
                       {/* non-sortable actions column */}
-                      <th className="py-2 text-[#7A7A7A] text-xs font-medium" />
+                      <th className="py-2 text-ink-3 text-xs font-medium" />
                     </tr>
                   </thead>
                   <tbody>
@@ -957,26 +957,26 @@ export default function ReportsPage() {
       {/* Recent Reports */}
       <div>
         <div className="flex items-center gap-2 mb-4">
-          <div className="h-8 w-8 rounded-lg bg-[#FFF8E1] flex items-center justify-center">
-            <FileText className="h-4 w-4 text-[#B0B0B0]" />
+          <div className="h-8 w-8 rounded-lg bg-action-soft flex items-center justify-center">
+            <FileText className="h-4 w-4 text-ink-4" />
           </div>
-          <h3 className="text-lg font-semibold font-serif text-[#1A1A1A]">
+          <h3 className="text-lg font-semibold font-serif text-ink">
             {employeeId ? "Filtered Reports" : "Recent Reports"}
           </h3>
           {!reportsLoading && reports.length > 0 && (
-            <span className="text-xs text-[#B0B0B0] ml-auto">
+            <span className="text-xs text-ink-4 ml-auto">
               {reportsMeta?.total ?? reports.length} report{(reportsMeta?.total ?? reports.length) !== 1 ? "s" : ""}
             </span>
           )}
         </div>
         {reportsLoading ? (
-          <div className="flex items-center justify-center gap-2 py-8 text-sm text-[#7A7A7A]">
-            <svg className="animate-spin h-4 w-4 text-[#F5D547]" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+          <div className="flex items-center justify-center gap-2 py-8 text-sm text-ink-3">
+            <svg className="animate-spin h-4 w-4 text-action" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
             Loading reports...
           </div>
         ) : reports.length === 0 ? (
-          <div className="flex flex-col items-center gap-2 py-10 text-sm text-[#7A7A7A] bg-white rounded-2xl border border-[#E8E0D0]">
-            <FileText className="h-10 w-10 text-[#E8E0D0]" />
+          <div className="flex flex-col items-center gap-2 py-10 text-sm text-ink-3 bg-surface rounded-2xl border border-border">
+            <FileText className="h-10 w-10 text-ink-4" />
             <span>No reports found.</span>
           </div>
         ) : (
@@ -997,15 +997,15 @@ export default function ReportsPage() {
                 <button
                   onClick={() => setReportsPage((p) => Math.max(1, p - 1))}
                   disabled={reportsPage <= 1 || reportsLoading}
-                  className="rounded-full px-5 py-2 text-sm font-medium bg-white border border-[#E8E0D0] text-[#1A1A1A] disabled:opacity-40 disabled:cursor-not-allowed"
+                  className="rounded-full px-5 py-2 text-sm font-medium bg-surface border border-border text-ink disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   Previous
                 </button>
-                <span className="text-xs text-[#7A7A7A]">Page {reportsPage}</span>
+                <span className="text-xs text-ink-3">Page {reportsPage}</span>
                 <button
                   onClick={() => setReportsPage((p) => p + 1)}
                   disabled={!reportsMeta?.hasMore || reportsLoading}
-                  className="rounded-full px-5 py-2 text-sm font-medium bg-[#1A1A1A] text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="rounded-full px-5 py-2 text-sm font-medium bg-action text-[#06121B] disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {reportsLoading ? "Loading…" : "Next"}
                 </button>
@@ -1023,7 +1023,7 @@ export default function ReportsPage() {
         onClick={() => setPlatformModal(null)}
       >
         <div
-          className="bg-white rounded-2xl border border-[#E8E0D0] shadow-[0_16px_48px_rgba(0,0,0,0.16)] w-full max-w-sm mx-4 p-6"
+          className="bg-surface rounded-2xl border border-border shadow-[0_16px_48px_rgba(0,0,0,0.16)] w-full max-w-sm mx-4 p-6"
           onClick={(e) => e.stopPropagation()}
         >
           {/* Header */}
@@ -1033,13 +1033,13 @@ export default function ReportsPage() {
                 <Link2 className={`h-4 w-4 ${platformCardStyle(platformModal.platform).labelColor}`} />
               </div>
               <div>
-                <h2 className="font-serif text-[#1A1A1A] font-medium text-base capitalize">{platformModal.platform}</h2>
-                <p className="text-xs text-[#B0B0B0]">{platformModal.count} total links</p>
+                <h2 className="font-serif text-ink font-medium text-base capitalize">{platformModal.platform}</h2>
+                <p className="text-xs text-ink-4">{platformModal.count} total links</p>
               </div>
             </div>
             <button
               onClick={() => setPlatformModal(null)}
-              className="h-7 w-7 rounded-lg flex items-center justify-center text-[#B0B0B0] hover:text-[#1A1A1A] hover:bg-[#F5F5F5] transition-colors"
+              className="h-7 w-7 rounded-lg flex items-center justify-center text-ink-4 hover:text-ink hover:bg-muted transition-colors"
             >
               <X className="h-4 w-4" />
             </button>
@@ -1047,7 +1047,7 @@ export default function ReportsPage() {
 
           {/* Daily breakdown table */}
           {!platformModal.dailyBreakdown.length ? (
-            <p className="text-sm text-[#B0B0B0] text-center py-6">No data available.</p>
+            <p className="text-sm text-ink-4 text-center py-6">No data available.</p>
           ) : (
             <div className="max-h-72 overflow-y-auto pr-1 space-y-2">
               {platformModal.dailyBreakdown.map(({ date, count }) => {
@@ -1055,14 +1055,14 @@ export default function ReportsPage() {
                 const label = new Date(date).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
                 return (
                   <div key={date} className="flex items-center gap-3">
-                    <span className="text-xs text-[#7A7A7A] w-24 shrink-0">{label}</span>
-                    <div className="flex-1 h-1.5 rounded-full bg-[#F0EAD8]">
+                    <span className="text-xs text-ink-3 w-24 shrink-0">{label}</span>
+                    <div className="flex-1 h-1.5 rounded-full bg-muted">
                       <div
                         className={`h-1.5 rounded-full ${platformCardStyle(platformModal.platform).bar} transition-all duration-500`}
                         style={{ width: `${pct}%` }}
                       />
                     </div>
-                    <span className="text-sm font-semibold text-[#1A1A1A] w-8 text-right">{count}</span>
+                    <span className="text-sm font-semibold text-ink w-8 text-right">{count}</span>
                   </div>
                 );
               })}
@@ -1079,7 +1079,7 @@ export default function ReportsPage() {
         onClick={() => setEmpModal(null)}
       >
         <div
-          className="bg-white rounded-2xl border border-[#E8E0D0] shadow-[0_16px_48px_rgba(0,0,0,0.16)] w-full max-w-sm mx-4 p-6"
+          className="bg-surface rounded-2xl border border-border shadow-[0_16px_48px_rgba(0,0,0,0.16)] w-full max-w-sm mx-4 p-6"
           onClick={(e) => e.stopPropagation()}
         >
           <div className="flex items-center justify-between mb-5">
@@ -1088,20 +1088,20 @@ export default function ReportsPage() {
                 <Link2 className="h-5 w-5 text-emerald-600" />
               </div>
               <div>
-                <h2 className="font-serif text-[#1A1A1A] font-medium text-base">{empModal.name}</h2>
-                <p className="text-xs text-[#B0B0B0]">{empModal.totalLinks} links · by platform</p>
+                <h2 className="font-serif text-ink font-medium text-base">{empModal.name}</h2>
+                <p className="text-xs text-ink-4">{empModal.totalLinks} links · by platform</p>
               </div>
             </div>
             <button
               onClick={() => setEmpModal(null)}
-              className="h-7 w-7 rounded-lg flex items-center justify-center text-[#B0B0B0] hover:text-[#1A1A1A] hover:bg-[#F5F5F5] transition-colors"
+              className="h-7 w-7 rounded-lg flex items-center justify-center text-ink-4 hover:text-ink hover:bg-muted transition-colors"
             >
               <X className="h-4 w-4" />
             </button>
           </div>
 
           {!empModal.platformBreakdown.length ? (
-            <p className="text-sm text-[#B0B0B0] text-center py-6">No links submitted yet.</p>
+            <p className="text-sm text-ink-4 text-center py-6">No links submitted yet.</p>
           ) : (
             <div className="space-y-3">
               {empModal.platformBreakdown.map(({ platform, count }) => {
@@ -1112,11 +1112,11 @@ export default function ReportsPage() {
                       <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium capitalize ${platformBadgeClass(platform)}`}>
                         {platform}
                       </span>
-                      <span className="text-sm font-semibold text-[#1A1A1A]">
-                        {count} <span className="text-xs font-normal text-[#B0B0B0]">({pct}%)</span>
+                      <span className="text-sm font-semibold text-ink">
+                        {count} <span className="text-xs font-normal text-ink-4">({pct}%)</span>
                       </span>
                     </div>
-                    <div className="h-1.5 w-full rounded-full bg-[#F0EAD8]">
+                    <div className="h-1.5 w-full rounded-full bg-muted">
                       <div
                         className="h-1.5 rounded-full bg-emerald-400 transition-all duration-500"
                         style={{ width: `${pct}%` }}
@@ -1138,7 +1138,7 @@ export default function ReportsPage() {
         onClick={() => setTodayModal(null)}
       >
         <div
-          className="bg-white rounded-2xl border border-[#E8E0D0] shadow-[0_16px_48px_rgba(0,0,0,0.16)] w-full max-w-sm mx-4 p-6"
+          className="bg-surface rounded-2xl border border-border shadow-[0_16px_48px_rgba(0,0,0,0.16)] w-full max-w-sm mx-4 p-6"
           onClick={(e) => e.stopPropagation()}
         >
           <div className="flex items-center justify-between mb-5">
@@ -1147,20 +1147,20 @@ export default function ReportsPage() {
                 <BarChart2 className="h-5 w-5 text-blue-600" />
               </div>
               <div>
-                <h2 className="font-serif text-[#1A1A1A] font-medium text-base">{todayModal.name}</h2>
-                <p className="text-xs text-[#B0B0B0]">{todayModal.linksToday} links today · by platform</p>
+                <h2 className="font-serif text-ink font-medium text-base">{todayModal.name}</h2>
+                <p className="text-xs text-ink-4">{todayModal.linksToday} links today · by platform</p>
               </div>
             </div>
             <button
               onClick={() => setTodayModal(null)}
-              className="h-7 w-7 rounded-lg flex items-center justify-center text-[#B0B0B0] hover:text-[#1A1A1A] hover:bg-[#F5F5F5] transition-colors"
+              className="h-7 w-7 rounded-lg flex items-center justify-center text-ink-4 hover:text-ink hover:bg-muted transition-colors"
             >
               <X className="h-4 w-4" />
             </button>
           </div>
 
           {!todayModal.platformBreakdown.length ? (
-            <p className="text-sm text-[#B0B0B0] text-center py-6">No links submitted today.</p>
+            <p className="text-sm text-ink-4 text-center py-6">No links submitted today.</p>
           ) : (
             <div className="space-y-3">
               {todayModal.platformBreakdown.map(({ platform, count }) => {
@@ -1171,11 +1171,11 @@ export default function ReportsPage() {
                       <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium capitalize ${platformBadgeClass(platform)}`}>
                         {platform}
                       </span>
-                      <span className="text-sm font-semibold text-[#1A1A1A]">
-                        {count} <span className="text-xs font-normal text-[#B0B0B0]">({pct}%)</span>
+                      <span className="text-sm font-semibold text-ink">
+                        {count} <span className="text-xs font-normal text-ink-4">({pct}%)</span>
                       </span>
                     </div>
-                    <div className="h-1.5 w-full rounded-full bg-[#F0EAD8]">
+                    <div className="h-1.5 w-full rounded-full bg-muted">
                       <div
                         className="h-1.5 rounded-full bg-blue-400 transition-all duration-500"
                         style={{ width: `${pct}%` }}
@@ -1197,7 +1197,7 @@ export default function ReportsPage() {
         onClick={() => setTeamTodayModal(null)}
       >
         <div
-          className="bg-white rounded-2xl border border-[#E8E0D0] shadow-[0_16px_48px_rgba(0,0,0,0.16)] w-full max-w-sm mx-4 p-6"
+          className="bg-surface rounded-2xl border border-border shadow-[0_16px_48px_rgba(0,0,0,0.16)] w-full max-w-sm mx-4 p-6"
           onClick={(e) => e.stopPropagation()}
         >
           <div className="flex items-center justify-between mb-5">
@@ -1206,20 +1206,20 @@ export default function ReportsPage() {
                 <Calendar className="h-5 w-5 text-amber-600" />
               </div>
               <div>
-                <h2 className="font-serif text-[#1A1A1A] font-medium text-base">{isEmployeeView ? selectedEmployeeName : "Team"} · {windowLabel}</h2>
-                <p className="text-xs text-[#B0B0B0]">{teamTodayModal.totalLinks} links · {isEmployeeView ? "by platform" : "across team · by platform"}</p>
+                <h2 className="font-serif text-ink font-medium text-base">{isEmployeeView ? selectedEmployeeName : "Team"} · {windowLabel}</h2>
+                <p className="text-xs text-ink-4">{teamTodayModal.totalLinks} links · {isEmployeeView ? "by platform" : "across team · by platform"}</p>
               </div>
             </div>
             <button
               onClick={() => setTeamTodayModal(null)}
-              className="h-7 w-7 rounded-lg flex items-center justify-center text-[#B0B0B0] hover:text-[#1A1A1A] hover:bg-[#F5F5F5] transition-colors"
+              className="h-7 w-7 rounded-lg flex items-center justify-center text-ink-4 hover:text-ink hover:bg-muted transition-colors"
             >
               <X className="h-4 w-4" />
             </button>
           </div>
 
           {!teamTodayModal.platformBreakdown.length ? (
-            <p className="text-sm text-[#B0B0B0] text-center py-6">No links submitted in this window.</p>
+            <p className="text-sm text-ink-4 text-center py-6">No links submitted in this window.</p>
           ) : (
             <div className="space-y-3">
               {teamTodayModal.platformBreakdown.map(({ platform, count }) => {
@@ -1230,11 +1230,11 @@ export default function ReportsPage() {
                       <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium capitalize ${platformBadgeClass(platform)}`}>
                         {platform}
                       </span>
-                      <span className="text-sm font-semibold text-[#1A1A1A]">
-                        {count} <span className="text-xs font-normal text-[#B0B0B0]">({pct}%)</span>
+                      <span className="text-sm font-semibold text-ink">
+                        {count} <span className="text-xs font-normal text-ink-4">({pct}%)</span>
                       </span>
                     </div>
-                    <div className="h-1.5 w-full rounded-full bg-[#F0EAD8]">
+                    <div className="h-1.5 w-full rounded-full bg-muted">
                       <div
                         className="h-1.5 rounded-full bg-amber-400 transition-all duration-500"
                         style={{ width: `${pct}%` }}

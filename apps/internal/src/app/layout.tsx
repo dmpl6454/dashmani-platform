@@ -8,6 +8,16 @@ import { TopNav } from "@/components/top-nav";
 import { CommandPalette } from "@/components/command-palette";
 import "./globals.css";
 
+/* Sets data-theme on <html> before first paint so there is no light/dark flash.
+   Reads the same localStorage key the ThemeToggle writes ("ds-theme"); anything
+   missing or blocked falls back to the shipped default (dark). */
+const THEME_INIT =
+  "(function(){try{var t=localStorage.getItem('ds-theme');document.documentElement.setAttribute('data-theme',t==='light'?'light':'dark');}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();";
+
+function ThemeInit() {
+  return <script dangerouslySetInnerHTML={{ __html: THEME_INIT }} />;
+}
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -83,8 +93,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
   if (isLoading) {
     return (
-      <html lang="en">
+      <html lang="en" suppressHydrationWarning>
         <head>
+          <ThemeInit />
           <meta name="viewport" content="width=device-width, initial-scale=1" />
         </head>
         <body>
@@ -102,8 +113,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   if (!user && !isPublicPage) {
     // useEffect above handles the redirect — just show spinner while it fires.
     return (
-      <html lang="en">
+      <html lang="en" suppressHydrationWarning>
         <head>
+          <ThemeInit />
           <meta name="viewport" content="width=device-width, initial-scale=1" />
         </head>
         <body>
@@ -119,8 +131,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   }
 
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <head>
+        <ThemeInit />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <title>Dashmani Portal</title>
       </head>

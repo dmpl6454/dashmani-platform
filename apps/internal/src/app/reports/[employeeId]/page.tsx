@@ -53,7 +53,7 @@ function StatCard({ label, value, icon: Icon, sub, color = "indigo" }: {
 function ChartTooltip({ active, payload, label }: any) {
   if (!active || !payload?.length) return null;
   return (
-    <div className="bg-ink text-white text-xs rounded-lg px-3 py-2 shadow-lg">
+    <div className="bg-action text-[#06121B] text-xs rounded-lg px-3 py-2 shadow-lg">
       <p className="font-semibold mb-0.5">{label}</p>
       <p>{payload[0].value} link{payload[0].value !== 1 ? "s" : ""}</p>
     </div>

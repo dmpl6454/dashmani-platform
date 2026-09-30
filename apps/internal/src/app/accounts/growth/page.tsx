@@ -64,18 +64,18 @@ export default function AccountGrowthPage() {
       <div className="flex items-center gap-3">
         <Link
           href="/accounts"
-          className="flex items-center gap-1 text-sm text-[#7A7A7A] hover:text-[#1A1A1A] transition-colors"
+          className="flex items-center gap-1 text-sm text-ink-3 hover:text-ink transition-colors"
         >
           <ArrowLeft className="h-4 w-4" /> Accounts
         </Link>
       </div>
 
       <div>
-        <h1 className="font-serif text-2xl font-medium text-[#1A1A1A]">Account Growth</h1>
-        <p className="text-sm text-[#7A7A7A] mt-0.5">
+        <h1 className="font-serif text-2xl font-medium text-ink">Account Growth</h1>
+        <p className="text-sm text-ink-3 mt-0.5">
           Followers, views and engagement across every channel we track
         </p>
-        <p className="text-xs text-[#B0B0B0] mt-1 max-w-3xl leading-snug">
+        <p className="text-xs text-ink-4 mt-1 max-w-3xl leading-snug">
           Three boards, and they do not share a source. Each tab says where its own numbers
           come from and what its platform refuses to publish, so a dash always means &ldquo;not
           published&rdquo; — never zero, and never missing data on our side. Pick a period
@@ -98,7 +98,7 @@ export default function AccountGrowthPage() {
 function TabStrip({ tab, onSelect }: { tab: GrowthTab; onSelect: (t: GrowthTab) => void }) {
   return (
     <div
-      className="flex flex-wrap items-center gap-1 border-b border-[#E8E0D0] -mb-px"
+      className="flex flex-wrap items-center gap-1 border-b border-border -mb-px"
       role="tablist"
       aria-label="Channel source"
     >
@@ -112,8 +112,8 @@ function TabStrip({ tab, onSelect }: { tab: GrowthTab; onSelect: (t: GrowthTab) 
             onClick={() => onSelect(t.key)}
             className={`text-sm font-medium px-3.5 py-2 border-b-2 -mb-px transition-colors ${
               active
-                ? "border-[#5B4BF5] text-[#1A1A1A]"
-                : "border-transparent text-[#7A7A7A] hover:text-[#1A1A1A]"}`}
+                ? "border-indigo text-ink"
+                : "border-transparent text-ink-3 hover:text-ink"}`}
           >
             {t.label}
           </button>
@@ -172,7 +172,7 @@ function GrowthTabs() {
           true of this board — see the file header. */}
       {tab === "meta" && (
         <>
-          <p className="text-xs text-[#B0B0B0] max-w-3xl leading-snug -mt-2">
+          <p className="text-xs text-ink-4 max-w-3xl leading-snug -mt-2">
             Every channel below belongs to the connected Meta account, and every figure comes
             from Meta&apos;s own API — nothing on this tab is scraped or entered by hand. Pick a
             time window to see views, reach and engagement over that period.

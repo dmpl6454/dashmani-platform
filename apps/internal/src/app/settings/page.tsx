@@ -4,12 +4,12 @@ import { useState, useRef, useCallback } from "react";
 import { useAuth } from "@/lib/auth";
 import { apiFetch, apiUpload, API_BASE } from "@/lib/api";
 import { usePageTitle } from "@/lib/hooks/use-page-title";
-import { User, Lock, AlertCircle, Check, Eye, EyeOff, Camera, ZoomIn, Trash2, X, Clock } from "lucide-react";
+import { User, Lock, AlertCircle, Check, Eye, EyeOff, Camera, ZoomIn, Trash2, X, Clock, Mail, ShieldCheck } from "lucide-react";
 import { UserAvatar } from "@/components/user-avatar";
 import Cropper from "react-easy-crop";
 
 const inputCls =
-  "w-full border-2 border-ink/15 bg-surface rounded-xl px-4 py-2.5 text-sm text-ink placeholder:text-ink-4 focus:outline-none focus:border-indigo transition-colors";
+  "w-full border border-border bg-muted rounded-xl px-4 py-2.5 text-sm text-ink placeholder:text-ink-4 focus:outline-none focus:border-action transition-colors";
 
 type Area = { x: number; y: number; width: number; height: number };
 
@@ -44,6 +44,9 @@ export default function SettingsPage() {
   const [photoState, setPhotoState] = useState<"idle" | "loading" | "success" | "error">("idle");
   const [photoError, setPhotoError] = useState("");
   const [previewUrl, setPreviewUrl] = useState<string | null>(user?.profileImageUrl ?? null);
+  // Remember WHICH url failed to load so a broken/expired photo falls back to the initials avatar
+  // (instead of showing the raw alt text), and a newly uploaded url is tried again.
+  const [brokenUrl, setBrokenUrl] = useState<string | null>(null);
 
   // Lightbox — click avatar to preview full-size
   const [lightboxOpen, setLightboxOpen] = useState(false);
@@ -183,23 +186,23 @@ export default function SettingsPage() {
   }
 
   const isPhotoLoading = photoState === "loading";
+  const showPhoto = !!previewUrl && brokenUrl !== previewUrl;
+  const roleList: string[] = Array.isArray(user?.roles) ? user.roles : [];
+
 
   return (
     <>
-    <div className="space-y-8 crx-animate-fade max-w-2xl">
+    <div className="max-w-5xl space-y-6 crx-animate-fade">
       <div>
-        <h1 className="font-serif text-4xl font-light text-ink">Settings</h1>
-        <p className="text-sm text-ink-3 mt-1">Manage your account preferences.</p>
+        <h1 className="font-display text-[30px] font-semibold text-ink leading-tight">Settings</h1>
+        <p className="text-[13px] text-ink-4 mt-1">Manage your account preferences.</p>
       </div>
 
-      {/* Profile photo card */}
-      <div className="v3-card p-6 space-y-4">
-        <h2 className="font-semibold text-ink flex items-center gap-2 text-base">
-          <Camera size={16} className="text-ink-4" /> Profile Photo
-        </h2>
-        <div className="flex items-center gap-5">
-          <div className="relative shrink-0">
-            {previewUrl ? (
+      {/* Account overview + photo */}
+      <section className="v3-card p-6">
+        <div className="flex flex-col sm:flex-row sm:items-center gap-5">
+          <div className="relative shrink-0 self-start sm:self-auto">
+            {showPhoto ? (
               <button
                 type="button"
                 onClick={() => setLightboxOpen(true)}
@@ -208,29 +211,46 @@ export default function SettingsPage() {
                 disabled={isPhotoLoading}
               >
                 <img
-                  src={previewUrl.startsWith("http") ? previewUrl : `${API_BASE}${previewUrl}`}
+                  src={previewUrl!.startsWith("http") ? previewUrl! : `${API_BASE}${previewUrl}`}
                   alt="Profile"
-                  className="h-20 w-20 rounded-2xl object-cover ring-2 ring-white shadow-md"
+                  onError={() => setBrokenUrl(previewUrl)}
+                  className="h-24 w-24 rounded-2xl object-cover ring-2 ring-border shadow-md bg-muted"
                 />
                 <span className="absolute inset-0 rounded-2xl bg-black/0 group-hover:bg-black/30 transition-colors grid place-items-center">
                   <ZoomIn size={18} className="text-white opacity-0 group-hover:opacity-100 transition-opacity" />
                 </span>
               </button>
             ) : (
-              <UserAvatar name={user?.name} imageUrl={null} size={20} textClassName="text-2xl" />
+              <UserAvatar name={user?.name} imageUrl={null} size={24} textClassName="text-3xl" />
             )}
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
               disabled={isPhotoLoading}
               title="Change photo"
-              className="absolute -bottom-1 -right-1 h-7 w-7 rounded-full bg-ink text-white grid place-items-center hover:bg-ink/80 transition-colors disabled:opacity-50 shadow-sm"
+              className="absolute -bottom-1 -right-1 h-8 w-8 rounded-full bg-action text-[#06121B] grid place-items-center hover:opacity-90 transition-opacity disabled:opacity-50 shadow-sm ring-2 ring-surface"
             >
-              <Camera size={13} />
+              <Camera size={14} />
             </button>
           </div>
 
-          <div className="flex flex-col gap-2">
+          <div className="flex-1 min-w-0 space-y-3">
+            <div className="min-w-0">
+              <p className="font-display text-xl font-semibold text-ink truncate">{user?.name ?? "—"}</p>
+              <p className="flex items-center gap-1.5 text-[13px] text-ink-3 mt-0.5 truncate">
+                <Mail size={13} className="shrink-0 text-ink-4" /> <span className="truncate">{user?.email ?? "—"}</span>
+              </p>
+              {roleList.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 mt-2.5">
+                  {roleList.map((r) => (
+                    <span key={r} className="inline-flex items-center gap-1 text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-terra/15 text-terra">
+                      <ShieldCheck size={11} /> {r}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+
             <input
               ref={fileInputRef}
               type="file"
@@ -243,23 +263,23 @@ export default function SettingsPage() {
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
                 disabled={isPhotoLoading}
-                className="bg-ink text-white px-5 py-2 rounded-full text-sm font-semibold hover:bg-ink/80 disabled:opacity-50 transition-colors flex items-center gap-2"
+                className="h-9 px-4 rounded-xl bg-gradient-to-b from-action-deep to-action text-[#06121B] text-[13px] font-bold hover:opacity-90 disabled:opacity-50 transition-opacity flex items-center gap-2"
               >
                 <Camera size={14} />
-                {previewUrl ? "Change photo" : "Upload photo"}
+                {showPhoto ? "Change photo" : "Upload photo"}
               </button>
-              {previewUrl && (
+              {showPhoto && (
                 <button
                   type="button"
                   onClick={handleRemovePhoto}
                   disabled={isPhotoLoading}
-                  className="px-4 py-2 rounded-full text-sm font-semibold text-danger hover:bg-danger/10 disabled:opacity-50 transition-colors flex items-center gap-1.5 border border-danger/20"
+                  className="h-9 px-4 rounded-xl text-[13px] font-semibold text-danger hover:bg-danger/10 disabled:opacity-50 transition-colors flex items-center gap-1.5 border border-danger/30"
                 >
                   <Trash2 size={13} /> Remove
                 </button>
               )}
+              <span className="text-xs text-ink-4">JPG, PNG or WebP · crop and zoom before uploading</span>
             </div>
-            <p className="text-xs text-ink-4">JPG, PNG, or WebP. Crop and zoom before uploading.</p>
             {photoError && (
               <div className="flex items-center gap-2 text-danger text-xs font-medium">
                 <AlertCircle size={12} /> {photoError}
@@ -272,71 +292,108 @@ export default function SettingsPage() {
             )}
           </div>
         </div>
-      </div>
+      </section>
 
-      {/* Profile card */}
-      <div className="v3-card p-6 space-y-4">
-        <h2 className="font-semibold text-ink flex items-center gap-2 text-base">
-          <User size={16} className="text-ink-4" /> Profile
-        </h2>
-        <form onSubmit={handleUpdateProfile} className="space-y-4">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      <div className="space-y-6">
+        {/* Profile details */}
+        <section className="v3-card p-6">
+        <div className="flex items-center gap-3 mb-5">
+          <div className="icon-chip h-9 w-9 rounded-[10px] flex items-center justify-center shrink-0">
+            <User size={16} className="text-action" />
+          </div>
+          <div className="min-w-0">
+            <h2 className="font-bold text-ink text-[15px] leading-tight">Profile details</h2>
+            <p className="text-xs text-ink-4 mt-0.5">Your name as it appears across the portal.</p>
+          </div>
+        </div>
+          <form onSubmit={handleUpdateProfile} className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-5 items-start">
             <div>
-              <label className="block text-xs font-medium text-ink-3 mb-1">Name</label>
-              <input type="text" value={profileForm.name} onChange={(e) => setProfileForm({ name: e.target.value })}
+              <label htmlFor="settings-name" className="block text-[11px] font-semibold text-ink-4 mb-1.5 uppercase tracking-wider">Name</label>
+              <input id="settings-name" type="text" value={profileForm.name} onChange={(e) => setProfileForm({ name: e.target.value })}
                 required autoComplete="name" className={inputCls} />
             </div>
             <div>
-              <label className="block text-xs font-medium text-ink-3 mb-1">Email</label>
-              <p className="w-full border-2 border-ink/10 bg-surface/60 rounded-xl px-4 py-2.5 text-sm text-ink-3 select-all truncate" title={user?.email ?? undefined}>
-                {user?.email ?? "—"}
-              </p>
+              <label className="block text-[11px] font-semibold text-ink-4 mb-1.5 uppercase tracking-wider">Email</label>
+              <div className="flex items-center gap-2 w-full border border-border bg-muted/40 rounded-xl px-4 py-2.5 text-sm text-ink-3" title={user?.email ?? undefined}>
+                <span className="flex-1 truncate select-all">{user?.email ?? "—"}</span>
+                <Lock size={13} className="shrink-0 text-ink-4" aria-hidden />
+              </div>
+              <p className="text-[11px] text-ink-4 mt-1.5">Your email is your sign-in and can’t be changed here. Ask an admin if it needs updating.</p>
             </div>
-            <div>
-              <label className="block text-xs font-medium text-ink-3 mb-1">Roles</label>
-              <p className="text-ink font-semibold text-sm">{user?.roles?.join(", ") ?? "—"}</p>
+            </div>
+            {profileError && <div className="flex items-center gap-2 text-danger text-sm font-medium"><AlertCircle size={14} /> {profileError}</div>}
+            {profileState === "success" && <div className="flex items-center gap-2 text-success text-sm font-medium"><Check size={14} /> Profile updated.</div>}
+            <div className="flex justify-end">
+              <button type="submit" disabled={profileState === "loading"}
+                className="h-10 px-6 rounded-xl bg-gradient-to-b from-action-deep to-action text-[#06121B] text-[13px] font-bold hover:opacity-90 disabled:opacity-50 transition-opacity">
+                {profileState === "loading" ? "Saving…" : "Save profile"}
+              </button>
+            </div>
+          </form>
+        </section>
+
+        {/* Security */}
+        <section className="v3-card p-6">
+          <div className="flex items-center gap-3 mb-5">
+            <div className="icon-chip h-9 w-9 rounded-[10px] flex items-center justify-center shrink-0">
+              <Lock size={16} className="text-action" />
+            </div>
+            <div className="min-w-0">
+              <h2 className="font-bold text-ink text-[15px] leading-tight">Change password</h2>
+              <p className="text-xs text-ink-4 mt-0.5">Use at least 8 characters.</p>
             </div>
           </div>
-          {profileError && <div className="flex items-center gap-2 text-danger text-sm font-medium"><AlertCircle size={14} /> {profileError}</div>}
-          {profileState === "success" && <div className="flex items-center gap-2 text-success text-sm font-medium"><Check size={14} /> Profile updated.</div>}
-          <button type="submit" disabled={profileState === "loading"}
-            className="bg-ink text-white px-6 py-2.5 rounded-full text-sm font-semibold hover:bg-ink/80 disabled:opacity-50 transition-colors">
-            {profileState === "loading" ? "Saving…" : "Save profile"}
-          </button>
-        </form>
-      </div>
 
-      {/* Change password */}
-      <div className="v3-card p-6">
-        <h2 className="font-semibold text-ink flex items-center gap-2 text-base mb-4">
-          <Lock size={16} className="text-ink-4" /> Change Password
-        </h2>
-        <form onSubmit={handleChangePassword} className="space-y-4">
-          {[
-            { label: "Current password", key: "current" as const, show: showCurrent, toggle: () => setShowCurrent(v => !v), auto: "current-password" },
-            { label: "New password",     key: "next"    as const, show: showNext,    toggle: () => setShowNext(v => !v),    auto: "new-password" },
-            { label: "Confirm new password", key: "confirm" as const, show: showConfirm, toggle: () => setShowConfirm(v => !v), auto: "new-password" },
-          ].map(({ label, key, show, toggle, auto }) => (
-            <div key={key}>
-              <label className="block text-xs font-medium text-ink-3 mb-1">{label}</label>
+          <form onSubmit={handleChangePassword} className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-5 items-start">
+            <div>
+              <label htmlFor="pw-current" className="block text-[11px] font-semibold text-ink-4 mb-1.5 uppercase tracking-wider">Current password</label>
               <div className="relative">
-                <input type={show ? "text" : "password"} value={pwForm[key]}
-                  onChange={(e) => setPwForm((f) => ({ ...f, [key]: e.target.value }))}
-                  required autoComplete={auto} className={inputCls + " pr-10"} />
-                <button type="button" onClick={toggle}
+                <input id="pw-current" type={showCurrent ? "text" : "password"} value={pwForm.current}
+                  onChange={(e) => setPwForm((f) => ({ ...f, current: e.target.value }))}
+                  required autoComplete="current-password" className={inputCls + " pr-10"} />
+                <button type="button" onClick={() => setShowCurrent(v => !v)} aria-label={showCurrent ? "Hide password" : "Show password"}
                   className="absolute right-3 top-1/2 -translate-y-1/2 text-ink-4 hover:text-ink">
-                  {show ? <EyeOff size={16} /> : <Eye size={16} />}
+                  {showCurrent ? <EyeOff size={16} /> : <Eye size={16} />}
                 </button>
               </div>
             </div>
-          ))}
-          {pwError && <div className="flex items-center gap-2 text-danger text-sm font-medium"><AlertCircle size={14} /> {pwError}</div>}
-          {pwState === "success" && <div className="flex items-center gap-2 text-success text-sm font-medium"><Check size={14} /> Password changed successfully.</div>}
-          <button type="submit" disabled={pwState === "loading"}
-            className="bg-ink text-white px-6 py-2.5 rounded-full text-sm font-semibold hover:bg-ink/80 disabled:opacity-50 transition-colors">
-            {pwState === "loading" ? "Saving…" : "Update password"}
-          </button>
-        </form>
+            <div>
+              <label htmlFor="pw-new" className="block text-[11px] font-semibold text-ink-4 mb-1.5 uppercase tracking-wider">New password</label>
+              <div className="relative">
+                <input id="pw-new" type={showNext ? "text" : "password"} value={pwForm.next}
+                  onChange={(e) => setPwForm((f) => ({ ...f, next: e.target.value }))}
+                  required autoComplete="new-password" className={inputCls + " pr-10"} />
+                <button type="button" onClick={() => setShowNext(v => !v)} aria-label={showNext ? "Hide password" : "Show password"}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-ink-4 hover:text-ink">
+                  {showNext ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+              </div>
+            </div>
+            <div>
+              <label htmlFor="pw-confirm" className="block text-[11px] font-semibold text-ink-4 mb-1.5 uppercase tracking-wider">Confirm new password</label>
+              <div className="relative">
+                <input id="pw-confirm" type={showConfirm ? "text" : "password"} value={pwForm.confirm}
+                  onChange={(e) => setPwForm((f) => ({ ...f, confirm: e.target.value }))}
+                  required autoComplete="new-password" className={inputCls + " pr-10"} />
+                <button type="button" onClick={() => setShowConfirm(v => !v)} aria-label={showConfirm ? "Hide password" : "Show password"}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-ink-4 hover:text-ink">
+                  {showConfirm ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+              </div>
+            </div>
+            </div>
+            {pwError && <div className="flex items-center gap-2 text-danger text-sm font-medium"><AlertCircle size={14} /> {pwError}</div>}
+            {pwState === "success" && <div className="flex items-center gap-2 text-success text-sm font-medium"><Check size={14} /> Password changed successfully.</div>}
+            <div className="flex justify-end">
+              <button type="submit" disabled={pwState === "loading"}
+                className="h-10 px-6 rounded-xl bg-gradient-to-b from-action-deep to-action text-[#06121B] text-[13px] font-bold hover:opacity-90 disabled:opacity-50 transition-opacity">
+                {pwState === "loading" ? "Saving…" : "Update password"}
+              </button>
+            </div>
+          </form>
+        </section>
       </div>
     </div>
 
@@ -353,7 +410,7 @@ export default function SettingsPage() {
           <div className="flex items-center gap-2">
             <button type="button" onClick={() => { setLightboxOpen(false); fileInputRef.current?.click(); }}
               disabled={isPhotoLoading}
-              className="h-9 px-4 rounded-full bg-white/15 hover:bg-white/25 text-white text-sm font-semibold flex items-center gap-1.5 disabled:opacity-50">
+              className="h-9 px-4 rounded-full bg-surface/15 hover:bg-surface/25 text-white text-sm font-semibold flex items-center gap-1.5 disabled:opacity-50">
               <Camera size={13} /> Change
             </button>
             <button type="button" onClick={handleRemovePhoto} disabled={isPhotoLoading}
@@ -363,7 +420,7 @@ export default function SettingsPage() {
           </div>
         </div>
         <button type="button" onClick={() => setLightboxOpen(false)}
-          className="absolute top-5 right-5 h-9 w-9 rounded-full bg-white/15 hover:bg-white/25 text-white grid place-items-center"
+          className="absolute top-5 right-5 h-9 w-9 rounded-full bg-surface/15 hover:bg-surface/25 text-white grid place-items-center"
           aria-label="Close preview">
           <X size={18} />
         </button>
@@ -373,7 +430,7 @@ export default function SettingsPage() {
     {/* ── Crop modal with border handles ── */}
     {editor && (
       <div className="fixed inset-0 z-[300] bg-black/80 flex items-center justify-center p-4">
-        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden"
+        <div className="bg-surface rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden"
           onClick={(e) => e.stopPropagation()}>
 
           {/* Header */}
@@ -432,7 +489,7 @@ export default function SettingsPage() {
               Cancel
             </button>
             <button type="button" onClick={confirmAndUpload} disabled={isPhotoLoading || !croppedAreaPixels}
-              className="px-5 py-2 rounded-full bg-ink text-white text-sm font-semibold hover:bg-ink/80 disabled:opacity-50 transition-colors flex items-center gap-1.5">
+              className="px-5 py-2 rounded-full bg-action text-[#06121B] text-sm font-semibold hover:bg-action-deep disabled:opacity-50 transition-colors flex items-center gap-1.5">
               {isPhotoLoading
                 ? <><Clock size={13} /> Uploading…</>
                 : <><Check size={13} /> Save Photo</>}

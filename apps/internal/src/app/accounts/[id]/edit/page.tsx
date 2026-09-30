@@ -11,12 +11,12 @@ export default function EditAccountPage() {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#F5D547]" />
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-action" />
       </div>
     );
   }
   if (!account) {
-    return <div className="text-[#7A7A7A] text-center py-8">Account not found</div>;
+    return <div className="text-ink-3 text-center py-8">Account not found</div>;
   }
 
   return (

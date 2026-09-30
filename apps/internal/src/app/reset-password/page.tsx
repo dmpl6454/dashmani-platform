@@ -85,7 +85,7 @@ function ResetPasswordForm() {
             {error && <p className="text-xs text-danger bg-danger-bg border border-danger/20 rounded-xl px-3 py-2">{error}</p>}
             <button
               type="submit" disabled={loading}
-              className="w-full py-3.5 rounded-full bg-ink text-white text-sm font-bold hover:bg-ink-2 disabled:opacity-50 transition-all"
+              className="w-full py-3.5 rounded-full bg-action text-[#06121B] text-sm font-bold hover:bg-action-deep disabled:opacity-50 transition-all"
             >
               {loading ? "Resetting…" : "Reset Password"}
             </button>

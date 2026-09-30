@@ -67,8 +67,8 @@ export function RangePills({ startDate, endDate, onChange, defaultLabel = "30d" 
               onClick={() => onChange(presetStart(p.days), todayISO())}
               className={`h-8 px-3.5 rounded-full text-xs font-semibold transition-all border ${
                 isActive
-                  ? "bg-[#1A1A1A] text-white border-[#1A1A1A] shadow-sm"
-                  : "bg-white text-[#7A7A7A] border-[#E8E0D0] hover:border-[#1A1A1A]/30 hover:text-[#1A1A1A]"
+                  ? "bg-action text-[#06121B] border-[#33506A] shadow-sm"
+                  : "bg-surface text-ink-3 border-border hover:border-[#33506A]/30 hover:text-ink"
               }`}
             >
               {p.label}
@@ -76,34 +76,34 @@ export function RangePills({ startDate, endDate, onChange, defaultLabel = "30d" 
           );
         })}
 
-        <span className="mx-1 h-5 w-px bg-[#E8E0D0]" />
+        <span className="mx-1 h-5 w-px bg-border" />
 
         <div className="flex items-center gap-1.5">
-          <label className="text-[10px] font-medium text-[#B0B0B0] uppercase tracking-wide">From</label>
+          <label className="text-[10px] font-medium text-ink-4 uppercase tracking-wide">From</label>
           <input
             type="date"
             value={startDate}
             max={endDate}
             onChange={(e) => onChange(e.target.value, endDate)}
-            className="h-8 rounded-lg border border-[#E8E0D0] bg-[#FEFCF8] text-xs px-2 focus:outline-none focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547]"
+            className="h-8 rounded-lg border border-border bg-surface text-xs px-2 focus:outline-none focus:ring-2 focus:ring-action focus:border-action"
           />
         </div>
         <div className="flex items-center gap-1.5">
-          <label className="text-[10px] font-medium text-[#B0B0B0] uppercase tracking-wide">To</label>
+          <label className="text-[10px] font-medium text-ink-4 uppercase tracking-wide">To</label>
           <input
             type="date"
             value={endDate}
             min={startDate}
             max={todayISO()}
             onChange={(e) => onChange(startDate, e.target.value)}
-            className="h-8 rounded-lg border border-[#E8E0D0] bg-[#FEFCF8] text-xs px-2 focus:outline-none focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547]"
+            className="h-8 rounded-lg border border-border bg-surface text-xs px-2 focus:outline-none focus:ring-2 focus:ring-action focus:border-action"
           />
         </div>
 
         {isCustom && (
           <button
             onClick={() => onChange(presetStart(defPreset.days), todayISO())}
-            className="h-8 flex items-center gap-1 rounded-lg border border-[#E8E0D0] bg-white px-2.5 text-[11px] text-[#7A7A7A] hover:text-[#E74C3C] hover:border-red-200 transition-colors"
+            className="h-8 flex items-center gap-1 rounded-lg border border-border bg-surface px-2.5 text-[11px] text-ink-3 hover:text-danger hover:border-red-200 transition-colors"
             title={`Reset to last ${defaultLabel}`}
           >
             <X className="h-3 w-3" /> Reset

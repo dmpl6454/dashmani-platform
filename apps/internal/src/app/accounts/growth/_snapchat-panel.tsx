@@ -57,7 +57,7 @@ export function SnapchatPanel() {
       sourceNote={
         <>
           Read from each channel&apos;s{" "}
-          <strong className="font-medium text-[#8A8A8A]">public Snapchat profile page</strong>.
+          <strong className="font-medium text-ink-3">public Snapchat profile page</strong>.
           Snapchat publishes no API for profiles we do not own, so this is unofficial and
           best-effort — a profile can withhold a figure, and then we show a dash rather than
           guess at it.
@@ -78,7 +78,7 @@ export function SnapchatPanel() {
       })}
       columnNote={
         <>
-          <strong className="font-medium text-[#5A5A5A]">Spotlight views cannot be compared
+          <strong className="font-medium text-ink-3">Spotlight views cannot be compared
           between channels</strong>, so this column cannot be sorted. Snapchat withholds the
           view count on most posts and chooses how many posts each profile page returns, so the
           figure is a sum over a different slice of posts for every channel. Read the Coverage
@@ -90,14 +90,14 @@ export function SnapchatPanel() {
           These figures are read from public Snapchat profile pages rather than an API, because
           Snapchat offers none for profiles we do not own — so they are best-effort and the
           badge beside each channel says how fresh each one actually is.{" "}
-          <strong className="font-medium text-[#7A7A7A]">Followers</strong> is a live total and
-          does not move with the period; <strong className="font-medium text-[#7A7A7A]">Change</strong>{" "}
+          <strong className="font-medium text-ink-3">Followers</strong> is a live total and
+          does not move with the period; <strong className="font-medium text-ink-3">Change</strong>{" "}
           beside it is the movement across the selected one, measured from our own stored
           history and labelled with the span it truly covers. A dash in Followers means
           Snapchat publishes no count for that profile — not a zero, and not a fault.{" "}
-          <strong className="font-medium text-[#7A7A7A]">Spotlight views</strong> is the summed
+          <strong className="font-medium text-ink-3">Spotlight views</strong> is the summed
           view count of the recent Spotlight posts on the profile page that published one, and
-          the <strong className="font-medium text-[#7A7A7A]">Coverage</strong> beside it says
+          the <strong className="font-medium text-ink-3">Coverage</strong> beside it says
           how many of the posts we saw that was. Because both the number of posts shown and the
           share publishing a count differ per channel, it is a rough sense of recent reach for
           one channel over time — never a ranking between channels.
@@ -139,12 +139,12 @@ function SnapchatTable({ rows, sort, onSort, manageMode, onRemove, busy }: {
         {/* ⚠️ The column COUNT is dynamic (Manage adds a Remove column), so header and
             body must gate that cell on the same flag — a mismatch shifts every cell in
             the row one column across. */}
-        <tr className="text-[11px] text-[#7A7A7A] border-b border-[#F0EAE0]">
+        <tr className="text-[11px] text-ink-3 border-b border-border">
           <SortTh label="Channel" colKey="name" sort={sort} onSort={onSort} align="left" pad="px-5" />
           <SortTh
             colKey="followers" sort={sort} onSort={onSort}
             title="A live total, not a period figure — how many followers the profile has right now. A dash means Snapchat publishes no public count for it."
-            label={<>Followers <span className="text-[#B0B0B0] font-normal">(now)</span></>}
+            label={<>Followers <span className="text-ink-4 font-normal">(now)</span></>}
           />
           <SortTh
             label="Change" colKey="followersDelta" sort={sort} onSort={onSort}
@@ -164,15 +164,15 @@ function SnapchatTable({ rows, sort, onSort, manageMode, onRemove, busy }: {
       </thead>
       <tbody>
         {sorted.map((c) => (
-          <tr key={c.id} className="border-b border-[#F8F5EF] hover:bg-[#FCFBF8]">
+          <tr key={c.id} className="border-b border-border hover:bg-surface">
             <td className="px-5 py-2">
               {/* min-w-0 on the flex child AND truncate on the name: the parent can only
                   clip what its children are willing to shrink. */}
               <div className="flex items-center gap-1.5 min-w-0">
-                <span className="text-xs font-medium text-[#1A1A1A] truncate max-w-[220px]">
+                <span className="text-xs font-medium text-ink truncate max-w-[220px]">
                   {c.displayName || c.handle}
                 </span>
-                <span className="text-[10px] text-[#B0B0B0] truncate">@{c.handle}</span>
+                <span className="text-[10px] text-ink-4 truncate">@{c.handle}</span>
                 <ChannelLink url={c.profileUrl} name={c.displayName || c.handle} />
                 {c.metricsError && <ErrorMark message={c.metricsError} />}
               </div>
@@ -180,11 +180,11 @@ function SnapchatTable({ rows, sort, onSort, manageMode, onRemove, busy }: {
             {/* ⚠️ A withheld follower count is a dash with an explanation, never a 0.
                 Several of our profiles genuinely publish none, and "0 followers" would
                 be a confident statement of something that is not true. */}
-            <td className="px-2 py-2 text-right text-xs font-semibold text-[#1A1A1A]">
+            <td className="px-2 py-2 text-right text-xs font-semibold text-ink">
               {c.followers === null ? (
                 <span
                   title="Snapchat does not publish a public follower count for this profile. That is Snapchat's choice — the channel is tracked normally and this is not an error or a zero."
-                  className="text-[#B0B0B0] font-normal"
+                  className="text-ink-4 font-normal"
                 >
                   —
                 </span>
@@ -205,7 +205,7 @@ function SnapchatTable({ rows, sort, onSort, manageMode, onRemove, busy }: {
                     : c.followerDeltaDays != null
                       ? "No change to show: Snapchat publishes follower counts rounded to the nearest 100, and this profile moved less than that across the period. It is not a zero — we simply cannot see movement finer than Snapchat's own rounding."
                       : "No change to show for this period — we have not been collecting this profile long enough yet. This is not a zero."}
-                  className="text-[#B0B0B0]"
+                  className="text-ink-4"
                 >
                   —
                 </span>
@@ -215,16 +215,16 @@ function SnapchatTable({ rows, sort, onSort, manageMode, onRemove, busy }: {
                 // jumped between two profiles, not growth; hiding it would hide the
                 // evidence that this row's identity needs correcting.
                 <span
-                  className="text-[#B0B0B0] line-through decoration-[#C2861D]"
+                  className="text-ink-4 line-through decoration-[#C2861D]"
                   title={`This change (${fmtDelta(c.followerDelta)}) is larger than the figure it was measured from, so it cannot be growth — the stored history for this profile spans two different accounts. It is excluded from the total above and the handle stored here needs correcting. The current follower figure itself is fine.`}
                 >
                   {fmtDelta(c.followerDelta)}
                 </span>
               ) : (
                 <span className={
-                  c.followerDelta > 0 ? "text-[#3E9B4F]"
-                  : c.followerDelta < 0 ? "text-[#C0504D]"
-                  : "text-[#B0B0B0]"
+                  c.followerDelta > 0 ? "text-success"
+                  : c.followerDelta < 0 ? "text-danger"
+                  : "text-ink-4"
                 }>
                   {fmtDelta(c.followerDelta)}
                   {/* ⚠️ Labelled from the change's OWN span, not the selected period —
@@ -232,7 +232,7 @@ function SnapchatTable({ rows, sort, onSort, manageMode, onRemove, busy }: {
                       and calling a 12-day change "90d" understates growth while
                       sounding authoritative. */}
                   {c.followerDeltaDays != null && (
-                    <span className="block text-[9px] font-normal text-[#B0B0B0] leading-tight">
+                    <span className="block text-[9px] font-normal text-ink-4 leading-tight">
                       {c.followerDeltaDays === 1 ? "24h" : `${c.followerDeltaDays}d`}
                     </span>
                   )}
@@ -243,7 +243,7 @@ function SnapchatTable({ rows, sort, onSort, manageMode, onRemove, busy }: {
               {c.recentViews === null ? (
                 <span
                   title="None of the Spotlight posts on this profile published a view count, so there is nothing to sum. Snapchat withholds it on most posts."
-                  className="text-[#B0B0B0]"
+                  className="text-ink-4"
                 >
                   —
                 </span>
@@ -251,13 +251,13 @@ function SnapchatTable({ rows, sort, onSort, manageMode, onRemove, busy }: {
                 fmtMetric(c.recentViews)
               )}
             </td>
-            <td className="px-2 py-2 text-right text-[11px] text-[#7A7A7A] whitespace-nowrap">
+            <td className="px-2 py-2 text-right text-[11px] text-ink-3 whitespace-nowrap">
               {c.recentPostsSeen === null || c.recentPostsSeen === undefined ? (
-                <span className="text-[#B0B0B0]">—</span>
+                <span className="text-ink-4">—</span>
               ) : (
                 <span title={`${c.recentViewsCovered ?? 0} of ${c.recentPostsSeen} Spotlight posts published a view count. The rest withhold it, so the Spotlight views figure covers only those ${c.recentViewsCovered ?? 0}.`}>
                   {c.recentViewsCovered ?? 0} of {c.recentPostsSeen}
-                  <span className="block text-[9px] text-[#B0B0B0] leading-tight">posts w/ views</span>
+                  <span className="block text-[9px] text-ink-4 leading-tight">posts w/ views</span>
                 </span>
               )}
             </td>

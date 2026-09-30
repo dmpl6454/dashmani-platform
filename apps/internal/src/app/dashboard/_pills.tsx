@@ -5,24 +5,29 @@
 "use client";
 import type { ReactNode } from "react";
 
-// Accent lets each card tint its active pill to match the card's icon color:
-// terra for links, indigo for growth, sage for performers.
-type Accent = "terra" | "indigo" | "sage";
+// Accent lets each card tint its active pill to match the card's icon color
+// (Dashboard.dc.html): action (sky) for links, terra (purple) for growth/movers,
+// sage (green) for performers. `indigo` is kept as an alias of the sky accent.
+type Accent = "action" | "terra" | "indigo" | "sage";
 
+// Active = accent-tinted fill + accent border + accent text (mockup's tinted pill),
+// which reads correctly in both light and dark themes.
 const ACTIVE: Record<Accent, string> = {
-  terra: "bg-terra text-white border-terra",
-  indigo: "bg-indigo text-white border-indigo",
-  sage: "bg-sage text-white border-sage",
+  action: "bg-action/15 text-action border-action/50",
+  terra: "bg-terra/15 text-terra border-terra/50",
+  indigo: "bg-action/15 text-action border-action/50",
+  sage: "bg-sage/15 text-sage border-sage/50",
 };
 const HOVER: Record<Accent, string> = {
-  terra: "hover:border-terra/30 hover:text-terra",
-  indigo: "hover:border-indigo/30 hover:text-indigo",
-  sage: "hover:border-sage/30 hover:text-sage",
+  action: "hover:border-action/40 hover:text-ink",
+  terra: "hover:border-terra/40 hover:text-ink",
+  indigo: "hover:border-action/40 hover:text-ink",
+  sage: "hover:border-sage/40 hover:text-ink",
 };
 
 export function Pill({
   active,
-  accent = "indigo",
+  accent = "action",
   onClick,
   children,
 }: {
@@ -36,8 +41,8 @@ export function Pill({
       type="button"
       onClick={onClick}
       aria-pressed={active}
-      className={`h-7 px-3 rounded-full text-xs font-semibold transition-all border-2 whitespace-nowrap ${
-        active ? ACTIVE[accent] : `bg-surface text-ink-4 border-ink/12 ${HOVER[accent]}`
+      className={`h-7 px-3 rounded-xl text-xs font-semibold transition-all border whitespace-nowrap ${
+        active ? ACTIVE[accent] : `bg-muted text-ink-4 border-border ${HOVER[accent]}`
       }`}
     >
       {children}

@@ -11,18 +11,18 @@ interface StatCardProps {
 
 export function StatCard({ title, value, change, icon, className }: StatCardProps) {
   return (
-    <div className={cn("bg-white rounded-lg p-6 shadow-card", className)}>
+    <div className={cn("bg-surface border border-border rounded-lg p-6 shadow-card", className)}>
       <div className="flex items-center justify-between">
         <div>
-          <p className="text-sm text-[#7A7A7A] font-medium">{title}</p>
-          <p className="text-3xl font-light mt-1 font-serif text-[#1A1A1A]">{value}</p>
+          <p className="text-sm text-ink-3 font-medium">{title}</p>
+          <p className="text-3xl font-light mt-1 font-serif text-ink">{value}</p>
           {change && (
-            <p className={cn("text-xs mt-1 font-medium", change.value >= 0 ? "text-green-600" : "text-red-600")}>
+            <p className={cn("text-xs mt-1 font-medium", change.value >= 0 ? "text-success" : "text-danger")}>
               {change.value >= 0 ? "+" : ""}{change.value}% {change.label}
             </p>
           )}
         </div>
-        {icon && <div className="text-[#B0B0B0]">{icon}</div>}
+        {icon && <div className="text-ink-4">{icon}</div>}
       </div>
     </div>
   );

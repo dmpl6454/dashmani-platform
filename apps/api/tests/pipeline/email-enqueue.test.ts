@@ -155,11 +155,23 @@ describe("pipeline email — enqueue", () => {
       expect(await outbox({ kind: { not: "mention" } })).toHaveLength(0);
     });
 
-    it("self-mentions, inactive users and non-pilot users get nothing", async () => {
+    it("self-mentions and inactive users get nothing", async () => {
       const { priya, dan, project } = await team();
       const r = await post(priya.id, project.id, `${mention(priya.id)} ${mention(dan.id)}`);
       expect(r.status).toBe(201);
       expect(await outbox()).toHaveLength(0);
+    });
+
+    it("pilot mode: a mentioned user outside the allowlist gets nothing, one inside does", async () => {
+      const { priya, bob, project } = await team();
+      const eve = await createPipelineUser({ name: "Eve Outside", tag: "em-eve-m" });
+      await addParticipantFixture(project.id, eve.id, { role: "MEMBER" });
+      await setPipelineSetting("pipeline.mode", "pilot");
+      await setPipelineSetting("pipeline.pilotUserIds", JSON.stringify([priya.id, bob.id]));
+      resetPipelineStateForTests();
+      const r = await post(priya.id, project.id, `${mention(eve.id)} and ${mention(bob.id)}`);
+      expect(r.status).toBe(201);
+      expect((await outbox({ kind: "mention" })).map((x) => x.userId)).toEqual([bob.id]);
     });
 
     it("an edit that ADDS a mention queues it; re-saving an unchanged mention does not duplicate", async () => {
@@ -248,6 +260,17 @@ describe("pipeline email — enqueue", () => {
   });
 
   describe("due soon (c) — the due cron", () => {
+    it("pilot mode: only allowlisted participants get a due_soon row", async () => {
+      const { priya, bob, project } = await team();
+      await setPipelineSetting("pipeline.mode", "pilot");
+      await setPipelineSetting("pipeline.pilotUserIds", JSON.stringify([bob.id]));
+      resetPipelineStateForTests();
+      await pipelineDb.$executeRaw`UPDATE pipeline_projects SET due_date = DATE '2026-09-30' WHERE id = ${project.id}`;
+      expect(await runPipelineDueTick({ now: new Date("2026-09-29T10:00:00.000+05:30") })).toMatchObject({ status: "ran", dueSoon: 1 });
+      expect((await outbox()).map((x) => x.userId)).toEqual([bob.id]);
+      expect(await outbox({ userId: priya.id })).toHaveLength(0);
+    });
+
     it("queues an immediate due_soon row per notify=true participant", async () => {
       const { priya, bob, project } = await team();
       await pipelineDb.$executeRaw`UPDATE pipeline_projects SET due_date = DATE '2026-09-30' WHERE id = ${project.id}`;
@@ -279,6 +302,20 @@ describe("pipeline email — enqueue", () => {
       expect((await move(priya.id, project.id, "review", "planning")).status).toBe(200);
       expect(await outbox()).toHaveLength(0);
       vi.stubEnv("SMTP_PASS", "not-a-real-password");
+
+      // Production without HR_APP_URL: every link would point at localhost — email stays off.
+      vi.stubEnv("NODE_ENV", "production");
+      vi.stubEnv("HR_APP_URL", "");
+      resetPipelineStateForTests();
+      await request(app).get("/v1/pipeline/bootstrap").set(auth(priya.id)); // runs the self-check
+      try {
+        expect((await move(priya.id, project.id, "planning", "review")).status).toBe(200);
+        expect((await move(priya.id, project.id, "review", "planning")).status).toBe(200);
+        expect(await outbox()).toHaveLength(0);
+      } finally {
+        vi.stubEnv("NODE_ENV", "test");
+        vi.stubEnv("HR_APP_URL", "https://hr.example.test");
+      }
 
       // The self-check found no outbox/partial index: email off, board unaffected.
       resetPipelineStateForTests();

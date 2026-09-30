@@ -12,6 +12,7 @@ import { runIgCaptionBackfill } from "./cron/ig-caption-backfill.cron";
 import { runMetaTokenHealth } from "./cron/meta-token-health.cron";
 import { startPipelineSelfCheck, startPipelineStatsLog } from "./services/pipeline";
 import { startPipelineDueCron } from "./cron/pipeline-due.cron";
+import { startPipelineEmailCron } from "./cron/pipeline-email.cron";
 import { schedulePipelineMaintenance } from "./services/pipeline/jobs";
 
 // ── Process-level crash backstops (defense-in-depth) ────────────────────────────
@@ -43,6 +44,12 @@ app.listen(PORT, () => {
   // Pipeline due-soon / overdue alerts (spec §7.8): first tick at +17 min, then hourly;
   // each tick sends only on a working day, 09:30–20:00 IST, with the feature on.
   startPipelineDueCron();
+
+  // Pipeline EMAIL worker (owner request 2026-09-30): first tick at +4 min, then every 60 s.
+  // A no-op until pipeline.email = on AND SMTP is configured AND the email DDL is applied
+  // (scripts/pipeline-email-ddl.sql). Sends outside any DB transaction, on the pipeline
+  // pool at background priority; never touches the main pool.
+  startPipelineEmailCron();
 
   // Pipeline notification trim + 30-day soft-delete purge (spec §7.12): scheduled by WALL
   // CLOCK for the next 04:00 IST — never at boot — and once per IST day (marker).

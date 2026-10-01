@@ -173,6 +173,10 @@ export interface MetaChannel {
    *  window, because API follower history only reaches back so far. Label the
    *  chip from THIS, never from the window. */
   followerDeltaDays?: number | null;
+  /** Live windows only: the IST date ("YYYY-MM-DD") of the API snapshot the change is
+   *  measured FROM. Null for Meta's own accounting (Instagram follows − unfollows, which
+   *  spans the window) or no change. The change runs from here to the current count. */
+  followerDeltaFrom?: string | null;
   /** Range mode only: days inside the selected range with stored history. */
   coveredDays?: number | null;
   /** Range mode only: total days in the selected range. */
@@ -282,6 +286,9 @@ export function useMetaChannels(params?: {
          *  day, Instagram's last closed UTC day (they differ ~7 hours a day). Null for a
          *  platform with no healthy row and in today mode; absent in range mode. */
         dataThroughDayByPlatform?: { facebook: string | null; instagram: string | null };
+        /** Live windows only: the NEWEST covered day per platform. Later than the field
+         *  above while a sync is moving channels onto the next window. */
+        newestCoveredDayByPlatform?: { facebook: string | null; instagram: string | null };
         /** Live windows: each platform's most recent day start. Facebook's day is
          *  the Pacific day, Instagram's the UTC day; null in range mode. */
         dayStarts?: { facebook: string; instagram: string } | null;

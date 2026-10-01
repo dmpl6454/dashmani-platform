@@ -407,6 +407,21 @@ describe("GET /admin/meta/channels — followerDeltaDays reports the real span",
     expect(row.followerDelta).toBe(5000);
     expect(row.followerDeltaDays).toBe(5);
   });
+
+  it("names the snapshot date the change is measured FROM (the All tab prints it)", async () => {
+    // The Account Growth All tab dates each platform's change. Facebook's runs from our
+    // API snapshot to the current count, which is not the views window, so the start
+    // date has to come from the snapshot actually used, not from the period name.
+    const res = await request(app)
+      .get("/v1/admin/meta/channels?window=days_28")
+      .set("Authorization", `Bearer ${adminToken}`);
+    expect(res.status).toBe(200);
+    const row = res.body.data.items.find((i: { id: string }) => i.id === assetId);
+    const d = new Date();
+    d.setUTCHours(0, 0, 0, 0);
+    d.setUTCDate(d.getUTCDate() - 5);
+    expect(row.followerDeltaFrom).toBe(d.toISOString().slice(0, 10));
+  });
 });
 
 describe("channel sync — Instagram Today (so far)", () => {

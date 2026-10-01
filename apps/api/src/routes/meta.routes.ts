@@ -738,6 +738,16 @@ router.get(
      * own accounting figure is used instead, the span IS exactly the window.
      */
     const followerDeltaDays = new Map<string, number>();
+    /**
+     * The IST date key ("YYYY-MM-DD") of the snapshot each delta above is measured FROM.
+     *
+     * ⚠️ The Account Growth "All" tab (2026-10-01) prints the dates each figure covers, and
+     * this change does NOT cover the views window: it runs from our API snapshot to the
+     * channel's current count. Printing the window's start over it would state a span the
+     * figure does not have, so the start comes from the snapshot actually used. The column
+     * is a @db.Date (the IST date stored as UTC midnight), so its UTC date IS the key.
+     */
+    const followerDeltaFrom = new Map<string, string>();
     const accountIds = rows.map((r) => r.socialAccountId).filter((x): x is string => x !== null);
     if (accountIds.length > 0) {
       const since = new Date(Date.now() - windowDays * 86_400_000);
@@ -806,6 +816,7 @@ router.get(
           r.id,
           Math.max(1, Math.round((todayKey.getTime() - b.date.getTime()) / 86_400_000)),
         );
+        followerDeltaFrom.set(r.id, b.date.toISOString().slice(0, 10));
       }
     }
 
@@ -947,13 +958,23 @@ router.get(
     // days — and the page-wide value above is the earlier one, which would understate how
     // current Instagram is. Errored rows are left out for the reason given above; a
     // platform with no healthy row is null, never borrowed from the other platform.
+    //
+    // The NEWEST healthy periodEnd per platform is kept too. A sync refreshes channels
+    // oldest-first, so right after a platform's day closes some of its channels already
+    // hold the next window while the rest still hold the previous one — for minutes on a
+    // normal run, for hours when Meta rate-limits it mid-way. Earliest ≠ newest is how the
+    // All tab knows a platform's channels are on different windows and says so, instead of
+    // printing one window's dates over a total that mixes two.
     const earliestByPlatform: { facebook: Date | null; instagram: Date | null } = { facebook: null, instagram: null };
+    const newestByPlatform: { facebook: Date | null; instagram: Date | null } = { facebook: null, instagram: null };
     for (const r of rows) {
       const w = win(r);
       if (!w || w.error || !w.periodEnd) continue;
       const p = r.kind === "FACEBOOK_PAGE" ? "facebook" : "instagram";
       const cur = earliestByPlatform[p];
       if (cur === null || w.periodEnd.getTime() < cur.getTime()) earliestByPlatform[p] = w.periodEnd;
+      const top = newestByPlatform[p];
+      if (top === null || w.periodEnd.getTime() > top.getTime()) newestByPlatform[p] = w.periodEnd;
     }
     const coveredOrNull = (d: Date | null) => (window === "today" || !d ? null : coveredDayOf(d));
     // Where each platform's partial "today" began — Facebook's day is the
@@ -1011,6 +1032,16 @@ router.get(
           facebook: coveredOrNull(earliestByPlatform.facebook),
           instagram: coveredOrNull(earliestByPlatform.instagram),
         },
+        /**
+         * The NEWEST covered day per platform, by the same rule. Equal to the field above
+         * when every healthy channel is on one window; a later day means a sync is part-way
+         * through moving channels onto the next window (or a restored channel lags). Same
+         * nulls, same live-mode-only scope. ⚠️ ADDITIVE.
+         */
+        newestCoveredDayByPlatform: {
+          facebook: coveredOrNull(newestByPlatform.facebook),
+          instagram: coveredOrNull(newestByPlatform.instagram),
+        },
         /** ISO instants of each platform's most recent day start — Facebook's Pacific
          *  midnight, Instagram's UTC midnight. Every live window ends on these. */
         dayStarts,
@@ -1048,6 +1079,13 @@ router.get(
           followerDeltaDays: followerDelta.has(r.id)
             ? (followerDeltaDays.get(r.id) ?? null)
             : (win(r)?.followerDelta != null ? windowDays : null),
+          /**
+           * The IST date of the API snapshot the change is measured FROM ("YYYY-MM-DD").
+           * Null when the change is Meta's own accounting for the window (Instagram's
+           * follows − unfollows, which spans the window itself) or there is no change.
+           * ⚠️ ADDITIVE, live mode only.
+           */
+          followerDeltaFrom: followerDelta.has(r.id) ? (followerDeltaFrom.get(r.id) ?? null) : null,
           /** Approximate earnings for the window, in cents. Facebook only. */
           earningsCents: win(r)?.earningsCents ?? null,
           /** Gross churn behind the net follower change. Both platforms. */

@@ -10,7 +10,7 @@ import app from "../../src/app";
 import { resetPipelineStateForTests } from "../../src/services/pipeline";
 import { pipelineDb } from "../../src/services/pipeline/db";
 import { snapshotPipelineStats, formatPipelineStats, percentile } from "../../src/services/pipeline/stats";
-import { runPipelineFlag } from "../../../../scripts/pipeline-flag";
+import { runPipelineFlag, runPipelineFlagCli, WARNING_PAUSE_MS, type PipelineFlagIo } from "../../../../scripts/pipeline-flag";
 import { hrToken, setPipelineSetting, clearPipelineSettings, createPipelineUser, seedPipelinePhases } from "./pipeline-helpers";
 
 const setting = async (key: string) => (await prisma.systemSetting.findUnique({ where: { key } }))?.value ?? null;
@@ -103,6 +103,40 @@ describe("scripts/pipeline-flag.ts", () => {
     expect((await runPipelineFlag(prisma, { mode: "on", apply: true })).warnings).toEqual([]); // pilot → on
     expect((await runPipelineFlag(prisma, { mode: "on" })).warnings).toEqual([]); // on → on (no change)
     expect((await runPipelineFlag(prisma, { email: "on" })).warnings).toEqual([]);
+  });
+
+  it("the CLI prints the on → pilot WARNING, and pauses, BEFORE it writes anything — then writes (never a refusal)", async () => {
+    const a = await createPipelineUser({ name: "Pilot A", tag: "flag-a" });
+    await runPipelineFlag(prisma, { mode: "on", apply: true });
+    const lines: string[] = [];
+    let modeDuringPause: string | null = "never paused";
+    const io: PipelineFlagIo = {
+      log: (s) => lines.push(s),
+      warn: (s) => lines.push(s),
+      error: (s) => lines.push(s),
+      pause: async (ms) => {
+        expect(ms).toBe(WARNING_PAUSE_MS);
+        expect(lines.join("\n")).toMatch(/not a safe rollback/i); // the warning is already out…
+        modeDuringPause = await setting("pipeline.mode"); // …and nothing is written yet
+      },
+    };
+    const res = await runPipelineFlagCli(prisma, { mode: "pilot", add: [a.email], apply: true }, io);
+    expect(modeDuringPause).toBe("on");
+    expect(res.applied).toBe(true);
+    expect(await setting("pipeline.mode")).toBe("pilot");
+    expect(lines.some((l) => l.startsWith("APPLIED"))).toBe(true);
+  });
+
+  it("the CLI never pauses a change with no warning — the kill switch is instant — and a dry run never writes", async () => {
+    await runPipelineFlag(prisma, { mode: "on", apply: true });
+    let paused = false;
+    const io: PipelineFlagIo = { log() {}, warn() {}, error() {}, pause: async () => void (paused = true) };
+    expect((await runPipelineFlagCli(prisma, { mode: "pilot" }, io)).applied).toBe(false); // dry: warns, no pause, no write
+    expect(paused).toBe(false);
+    expect(await setting("pipeline.mode")).toBe("on");
+    expect((await runPipelineFlagCli(prisma, { mode: "off", apply: true }, io)).applied).toBe(true);
+    expect(paused).toBe(false);
+    expect(await setting("pipeline.mode")).toBe("off");
   });
 
   it("an unknown email or a bad mode writes nothing", async () => {

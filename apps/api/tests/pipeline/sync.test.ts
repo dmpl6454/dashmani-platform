@@ -101,6 +101,21 @@ describe("pipeline sync", () => {
     expect(b.pollMs).toEqual({ project: 120000, projectBg: 120000, board: 120000, boardBg: 120000, idle: 120000 });
   });
 
+  it("every sync carries the mode, so a pilot → on flip reaches a /pipeline tab that never refocuses (GA)", async () => {
+    // The client re-checks bootstrap when this differs from the mode bootstrap gave it, which
+    // re-keys the directory: pilot users' cached pickable:false entries refresh (G3).
+    const { owner } = await setup();
+    await setPipelineSetting("pipeline.mode", "pilot");
+    await setPipelineSetting("pipeline.pilotUserIds", JSON.stringify([owner.id]));
+    resetPipelineStateForTests();
+    const a = (await sync(owner.id, { board: { v: 0 } })).body.data;
+    expect(a.mode).toBe("pilot");
+    await setPipelineSetting("pipeline.mode", "on");
+    resetPipelineStateForTests();
+    const b = (await sync(owner.id, { board: { v: a.v } })).body.data;
+    expect(b.mode).toBe("on");
+  });
+
   it("a post committed between two syncs always appears", async () => {
     const { owner, bob, project } = await setup();
     const s1 = (await sync(bob.id, { project: { id: project.id, rev: 0, hv: 0 } })).body.data;

@@ -23,7 +23,10 @@
  * No regex lookbehind anywhere in this file (CI guard: it ships in the HR bundle).
  */
 import type { PipelineBootstrap, PipelineDisabledReason } from "../types/pipeline";
-import { PIPELINE_LIMITS } from "./constants";
+import { PIPELINE_LIMITS, type PipelineMode } from "./constants";
+
+/** The modes an enabled bootstrap (and a sync) can report — "off" never gets that far. */
+type PipelineBootstrapMode = Exclude<PipelineMode, "off">;
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"] as const;
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
@@ -264,4 +267,25 @@ export function shouldRevalidateBootstrapOnMount(boot: PipelineBootstrap | null 
  */
 export function shouldRecheckBootstrapPeriodically(reason: PipelineDisabledReason | null | undefined): boolean {
   return reason === "off" || reason === "paused" || reason === "not_in_pilot";
+}
+
+/** How often a sync's mode mismatch may re-check bootstrap. */
+export const PIPELINE_MODE_RECHECK_MS = 2 * MINUTE_MS;
+
+/**
+ * G3 (GA): every sync carries the server's `pipeline.mode`. When it differs from the mode
+ * bootstrap gave this tab, re-check bootstrap — its new mode re-keys the directory, so a pilot
+ * user's cached `pickable: false` entries refresh even in a tab that never loses focus (focus
+ * is what revalidates bootstrap otherwise). At most once per PIPELINE_MODE_RECHECK_MS since
+ * `lastRecheckAtMs`: a re-check that fails or lags must not turn every sync into a bootstrap
+ * request. An older server sends no mode → never.
+ */
+export function shouldRecheckBootstrapForMode(
+  bootMode: PipelineBootstrapMode,
+  serverMode: PipelineBootstrapMode | null | undefined,
+  lastRecheckAtMs: number,
+  nowMs: number,
+): boolean {
+  if (!serverMode || serverMode === bootMode) return false;
+  return nowMs - lastRecheckAtMs >= PIPELINE_MODE_RECHECK_MS;
 }

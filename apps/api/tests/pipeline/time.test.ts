@@ -24,6 +24,8 @@ import {
   msUntilNextMinute,
   relativeAgo,
   relativeShort,
+  PIPELINE_MODE_RECHECK_MS,
+  shouldRecheckBootstrapForMode,
   shouldRecheckBootstrapPeriodically,
   shouldRevalidateBootstrapOnMount,
   startOfMinute,
@@ -274,5 +276,17 @@ describe("bootstrap re-checks (GA: a cached 'not enabled' must not outlive a pip
     expect(shouldRecheckBootstrapPeriodically("not_in_pilot")).toBe(true);
     expect(shouldRecheckBootstrapPeriodically("inactive")).toBe(false);
     expect(shouldRecheckBootstrapPeriodically(null)).toBe(false);
+  });
+  it("re-checks when a sync reports another mode (a focused /pipeline tab at the flip) — at most once per 2 minutes", () => {
+    const now = 1_790_000_000_000;
+    expect(PIPELINE_MODE_RECHECK_MS).toBe(2 * MIN);
+    expect(shouldRecheckBootstrapForMode("pilot", undefined, 0, now)).toBe(false); // an older server says nothing
+    expect(shouldRecheckBootstrapForMode("pilot", "pilot", 0, now)).toBe(false);
+    expect(shouldRecheckBootstrapForMode("on", "on", 0, now)).toBe(false);
+    expect(shouldRecheckBootstrapForMode("pilot", "on", 0, now)).toBe(true); // the GA flip
+    expect(shouldRecheckBootstrapForMode("on", "pilot", 0, now)).toBe(true);
+    // A failed or lagging re-check must not make every sync hit bootstrap.
+    expect(shouldRecheckBootstrapForMode("pilot", "on", now - PIPELINE_MODE_RECHECK_MS + 1, now)).toBe(false);
+    expect(shouldRecheckBootstrapForMode("pilot", "on", now - PIPELINE_MODE_RECHECK_MS, now)).toBe(true);
   });
 });

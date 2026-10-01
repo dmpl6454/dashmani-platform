@@ -71,6 +71,11 @@ export interface SyncEngineOptions {
   onReloadProject(projectId: string): void;
   /** reload:true or an unexpected 4xx: one hard reload (≤ once / 10 min). */
   onHardReload(): void;
+  /**
+   * Every successful sync's `pipeline.mode` (GA): the provider re-checks bootstrap when it
+   * differs from the tab's (shouldRecheckBootstrapForMode), which re-keys the directory.
+   */
+  onServerMode?(mode: NonNullable<PipelineSyncResponse["mode"]>): void;
 }
 
 const RELOAD_KEY = "pl-reload-at";
@@ -302,6 +307,7 @@ export class SyncEngine {
     let followUp = false;
     if (res) {
       this.serverPoll = adoptServerPollMs(this.serverPoll, res.pollMs);
+      if (res.mode) this.o.onServerMode?.(res.mode);
       if (req.board) this.boardUnavailable = res.boardUnavailable ? this.boardUnavailable + 1 : 0;
       try {
         this.o.store.dispatch({ type: "syncOk", req, res, now: startedAt });

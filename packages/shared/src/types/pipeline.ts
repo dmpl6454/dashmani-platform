@@ -372,6 +372,13 @@ export interface PipelineSyncResponse {
    * so a `pipeline.pollMs` change reaches open tabs with no deploy and no re-bootstrap.
    */
   pollMs: PipelinePollMs;
+  /**
+   * The current `pipeline.mode` (never "off": an off server refuses the sync). Sent on every
+   * sync for the same reason as pollMs: when it differs from the mode bootstrap gave the tab,
+   * the client re-checks bootstrap, whose new mode re-keys the directory — so a pilot → on
+   * flip reaches a /pipeline tab that never refocuses (GA). Optional: an older server omits it.
+   */
+  mode?: Exclude<PipelineMode, "off">;
   /** true → one hard reload (the client build is too old). */
   reload: boolean;
   /** Present when a board was asked for and no snapshot could be built this tick. */

@@ -375,8 +375,11 @@ export async function withdrawDueRows(tx: PipelineTx, projectId: string, due: st
   // statement whose plan (a bitmap heap scan) takes them in heap order, so in a rare overlap
   // one side waits out the pool's 1 s lock_timeout (55P03). The edit and the move therefore
   // run with retryOnce (projects.service.ts) — the user's action always lands; a lost ack is
-  // idempotent and re-sent with the next poll. (Locking these rows in id order first does not
-  // help: no concurrent locker takes them in id order.)
+  // idempotent and re-sent with the next poll. The main pool's "Mark all read" (one statement
+  // over ALL of a user's unread rows) can close the same kind of cycle; Postgres's deadlock
+  // check then kills one side, and markAllAsRead retries a lost deadlock once
+  // (notification.service.ts) — so the bell click lands too. (Locking these rows in id order
+  // first does not help: no concurrent locker takes them in id order.)
   const [soon, overdue] = dueRowIds(projectId, due);
   await tx.$executeRaw`
     DELETE FROM notifications

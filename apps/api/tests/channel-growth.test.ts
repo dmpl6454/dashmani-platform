@@ -405,3 +405,117 @@ describe("totals movement — the sum must not inherit a corrupted series", () =
     expect(board.totals.followerDeltaChannels).toBe(0);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────────────
+// The Account Growth "All" tab (2026-10-01): a 28-day period shared with Meta's days_28,
+// and the exact snapshot dates each period total covers.
+// ─────────────────────────────────────────────────────────────────────────────────────
+
+/** The IST date key a `dayAgo(n)` snapshot is stored under. */
+const key = (days: number) => dayAgo(days).toISOString().slice(0, 10);
+
+describe("the 28-day period — the span every platform can measure alike", () => {
+  async function allTabAdmin() {
+    await createTestRole("Admin", [
+      { resource: "reports", action: "manage", scope: "global" },
+      { resource: "reports", action: "view", scope: "global" },
+    ]);
+    const u = await createTestUser({ roleNames: ["Admin"], email: "chan-all-admin@zz.test" });
+    return generateToken(u.id, u.email, ["Admin"]);
+  }
+
+  it("accepts days=28 and echoes it, instead of silently answering for 30", async () => {
+    // ⚠️ The All tab labels its YouTube and Snapchat figures "28d" beside Meta's own
+    // days_28 window. Before this, 28 was coerced to 30 and the label would have been a lie.
+    const token = await allTabAdmin();
+    const res = await request(app)
+      .get("/v1/admin/channels?platform=youtube&days=28")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(res.body.data.days).toBe(28);
+  });
+
+  it("still coerces a period it does not serve (29) to the default", async () => {
+    const token = await allTabAdmin();
+    const res = await request(app)
+      .get("/v1/admin/channels?platform=snapchat&days=29")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(res.body.data.days).toBe(30);
+  });
+
+  it("applies the 90% full-span rule at 26 days for a 28-day period", async () => {
+    // ceil(0.9 × 28) = 26: a 26-day history is the whole period, a 25-day one is not.
+    const in26 = await channel("youtube", "yt26", { followerCount: 5_000, followersPrecision: 10 });
+    await snapshot(in26, 27, 4_000);
+    await snapshot(in26, 1, 5_000);
+    const out25 = await channel("youtube", "yt25", { followerCount: 7_000, followersPrecision: 10 });
+    await snapshot(out25, 26, 6_000);
+    await snapshot(out25, 1, 7_000);
+    const board = await getChannelBoard("youtube", 28);
+    expect(board.days).toBe(28);
+    expect(board.rows.find((r) => r.handle === "yt26")!.followerDeltaDays).toBe(26);
+    expect(board.rows.find((r) => r.handle === "yt25")!.followerDeltaDays).toBe(25);
+    expect(board.totals.followerDeltaChannels).toBe(1);
+    expect(board.totals.followerDelta).toBe(1_000);
+    expect(board.totals.followerDeltaSpan).toEqual({ from: key(27), to: key(1) });
+  });
+});
+
+describe("totals carry the exact snapshot dates they cover", () => {
+  it("spans equal the CONTRIBUTORS' earliest first and latest last snapshot dates", async () => {
+    // Two full-span contributors with different start and end dates: the span runs from the
+    // earliest baseline (A, 85 days ago) to the latest reading (B, 2 days ago).
+    const a = await channel("youtube", "ytspanA", { followerCount: 5_000, followersPrecision: 10 });
+    await snapshot(a, 85, 4_000, 1_000);
+    await snapshot(a, 3, 5_000, 2_000);
+    const b = await channel("youtube", "ytspanB", { followerCount: 7_000, followersPrecision: 10 });
+    await snapshot(b, 84, 6_000);
+    await snapshot(b, 60, 6_500, 3_000); // B's view counter starts later …
+    await snapshot(b, 2, 7_000, 4_000);  // … so its 58-day views change is not full-span
+    const board = await getChannelBoard("youtube", 90);
+    expect(board.totals.followerDeltaChannels).toBe(2);
+    expect(board.totals.followerDeltaSpan).toEqual({ from: key(85), to: key(2) });
+    // The views span is measured over the view counter's OWN contributors: only A.
+    expect(board.totals.viewsDeltaChannels).toBe(1);
+    expect(board.totals.viewsDeltaSpan).toEqual({ from: key(85), to: key(3) });
+  });
+
+  it("is null, never a guessed range, when nothing contributed", async () => {
+    const id = await channel("snapchat", "scone", { followerCount: 39_300 });
+    await snapshot(id, 1, 39_300); // one day only — no change at all
+    const board = await getChannelBoard("snapchat", 28);
+    expect(board.totals.followerDelta).toBeNull();
+    expect(board.totals.followerDeltaSpan).toBeNull();
+    expect(board.totals.viewsDeltaSpan).toBeNull();
+
+    invalidateChannelGrowthCache();
+    const empty = await getChannelBoard("youtube", 7); // no channels at all
+    expect(empty.totals.followerDeltaSpan).toBeNull();
+    expect(empty.totals.viewsDeltaSpan).toBeNull();
+  });
+
+  it("does NOT widen the span with rows the total left out (artifact, rounding, short history)", async () => {
+    const kept = await channel("youtube", "ytkept", { followerCount: 5_000, followersPrecision: 10 });
+    await snapshot(kept, 85, 4_000);
+    await snapshot(kept, 3, 5_000);
+    // Full-span, but its change exceeds its own baseline → excluded by the artifact guard.
+    const jumpy = await channel("youtube", "ytjump2", { followerCount: 5_000, followersPrecision: 10 });
+    await snapshot(jumpy, 88, 100);
+    await snapshot(jumpy, 1, 5_000);
+    // Full-span, but it moved less than YouTube's rounding step → suppressed.
+    const flat = await channel("youtube", "ytflat2", { followerCount: 10_550_000, followersPrecision: 100_000 });
+    await snapshot(flat, 89, 10_500_000);
+    await snapshot(flat, 1, 10_550_000);
+    // A real change, but only 5 days of history → not full-span at 90 days.
+    const young = await channel("youtube", "ytyoung", { followerCount: 1_100, followersPrecision: 10 });
+    await snapshot(young, 5, 1_000);
+    await snapshot(young, 0, 1_100);
+    const board = await getChannelBoard("youtube", 90);
+    expect(board.totals.followerDeltaChannels).toBe(1);
+    expect(board.totals.followerDeltaExcluded).toBe(1);
+    expect(board.totals.followerDeltaSuppressed).toBe(1);
+    // Only `ytkept` contributed, so the span is its dates — not 89 days ago to today.
+    expect(board.totals.followerDeltaSpan).toEqual({ from: key(85), to: key(3) });
+  });
+});

@@ -45,9 +45,25 @@ import { subscriberPrecisionFor } from "./social-insights/youtube-followers";
 export const CHANNEL_PLATFORMS = ["youtube", "snapchat"] as const;
 export type ChannelPlatform = (typeof CHANNEL_PLATFORMS)[number];
 
-export const CHANNEL_PERIODS = [7, 14, 30, 90] as const;
+/**
+ * The periods the board serves.
+ *
+ * ⚠️ 28 is here for the Account Growth "All" tab (owner request 2026-10-01), NOT for the
+ * YouTube/Snapchat tabs' own pills, which stay 7/14/30/90 (see use-channels.tsx). The All
+ * tab adds these boards to Meta's native rolling windows, and Meta can only answer 7 and
+ * 28 days (`week` / `days_28`) — so 28 is the second span every platform can measure alike.
+ * Before it was listed, `days=28` was silently coerced to 30 and a "28d" label on the All
+ * tab would have sat over 30 days of figures.
+ */
+export const CHANNEL_PERIODS = [7, 14, 28, 30, 90] as const;
 export type ChannelPeriod = (typeof CHANNEL_PERIODS)[number];
 export const DEFAULT_CHANNEL_PERIOD: ChannelPeriod = 30;
+
+/** An inclusive range of IST snapshot date keys ("YYYY-MM-DD"). */
+export interface SnapshotSpan {
+  from: string;
+  to: string;
+}
 
 /**
  * A tripwire, not a limit. The estate is ~52 channels; an unbounded read is safe only
@@ -174,6 +190,21 @@ export interface ChannelBoard {
     /** Exact — the lifetime view counter is not rounded, so this total hides nothing. */
     viewsDelta: number | null;
     viewsDeltaChannels: number;
+    /**
+     * ── THE EXACT DATES EACH PERIOD TOTAL COVERS ─────────────────────────────────────
+     *
+     * The earliest first snapshot and the latest last snapshot over EXACTLY the rows that
+     * were summed into `followerDelta` (resp. `viewsDelta`) — so the All tab can print
+     * "3 Sep → 30 Sep" beside the figure instead of a period name the data only
+     * approximately fills. A row left out of the sum (artifact guard, below the rounding
+     * step, or too little history) is left out of the span too: its dates describe no part
+     * of the figure.
+     *
+     * IST date keys, because that is how every snapshot is keyed (istMidnight(todayIST())).
+     * null — never a guessed range — when nothing contributed.
+     */
+    followerDeltaSpan: SnapshotSpan | null;
+    viewsDeltaSpan: SnapshotSpan | null;
   };
   /** The earliest snapshot date we hold for this platform, so the UI can say "collecting since". */
   historyFrom: string | null;
@@ -192,6 +223,34 @@ function num(v: bigint | number | null | undefined): number | null {
 
 function daysBetween(a: Date, b: Date): number {
   return Math.max(0, Math.round((b.getTime() - a.getTime()) / 86_400_000));
+}
+
+/**
+ * A `@db.Date` value as its "YYYY-MM-DD" key.
+ *
+ * ⚠️ UTC getters only (toISOString is UTC). The column stores the IST calendar date as
+ * UTC midnight, so the UTC date IS the IST date key; a local getter on a server east of
+ * UTC would still agree, but one west of it would print the previous day.
+ */
+function dayKey(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+/** Grow a running [earliest, latest] span to include one contributor's two dates. */
+function widen(
+  span: { from: Date; to: Date } | null,
+  from: Date,
+  to: Date,
+): { from: Date; to: Date } {
+  if (!span) return { from, to };
+  return {
+    from: from.getTime() < span.from.getTime() ? from : span.from,
+    to: to.getTime() > span.to.getTime() ? to : span.to,
+  };
+}
+
+function toSnapshotSpan(span: { from: Date; to: Date } | null): SnapshotSpan | null {
+  return span ? { from: dayKey(span.from), to: dayKey(span.to) } : null;
 }
 
 /**
@@ -316,6 +375,9 @@ async function buildBoard(platform: ChannelPlatform, days: number): Promise<Chan
   let sumFollowerStep = 0;
   let sumViewsDelta = 0;
   let viewsDeltaChannels = 0;
+  // Dates of the rows actually summed — widened only where a row is added to a sum below.
+  let followerSpan: { from: Date; to: Date } | null = null;
+  let viewsSpan: { from: Date; to: Date } | null = null;
 
   const rows: ChannelRow[] = accounts.map((a) => {
     const f = first.get(a.id);
@@ -427,6 +489,8 @@ async function buildBoard(platform: ChannelPlatform, days: number): Promise<Chan
         } else {
           sumFollowerDelta += followerDelta;
           followerDeltaChannels++;
+          // f/l are set whenever followerDeltaDays is (both come from the same branch).
+          followerSpan = widen(followerSpan, f!.date, l!.date);
         }
       } else if (suppressedByStep) {
         // Counted separately, never as a 0: this channel DID have a full-span measurement,
@@ -437,6 +501,8 @@ async function buildBoard(platform: ChannelPlatform, days: number): Promise<Chan
     if (viewsDelta != null && viewsDeltaDays != null && viewsDeltaDays >= fullSpanMin) {
       sumViewsDelta += viewsDelta;
       viewsDeltaChannels++;
+      // fV/lV are set whenever viewsDelta is.
+      viewsSpan = widen(viewsSpan, fV!.date, lV!.date);
     }
 
     const tv = num(a.totalViews);
@@ -490,6 +556,8 @@ async function buildBoard(platform: ChannelPlatform, days: number): Promise<Chan
       followerDeltaUncertainty: sumFollowerStep,
       viewsDelta: viewsDeltaChannels > 0 ? sumViewsDelta : null,
       viewsDeltaChannels,
+      followerDeltaSpan: toSnapshotSpan(followerSpan),
+      viewsDeltaSpan: toSnapshotSpan(viewsSpan),
     },
     historyFrom: earliest ? earliest.toISOString().slice(0, 10) : null,
     generatedAt: new Date().toISOString(),

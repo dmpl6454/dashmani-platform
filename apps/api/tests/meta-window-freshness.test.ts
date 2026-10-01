@@ -27,6 +27,7 @@ import {
 } from "../src/services/meta-oauth/meta-channels.service";
 import { coveredDayOf, shiftDay, invalidateRangeCache } from "../src/services/meta-oauth/meta-range.service";
 import { oauthGraphFetch } from "../src/services/meta-oauth/oauth-graph";
+import { combineGrowth } from "@dashmani/shared";
 import "./setup";
 
 vi.mock("../src/services/meta-oauth/oauth-graph", async (importOriginal) => {
@@ -385,6 +386,37 @@ describe("GET /admin/meta/channels — honest totals, covered-day baseline, data
     const res = await get("/v1/admin/meta/channels?window=today");
     expect(res.status).toBe(200);
     expect(res.body.data.dataThroughDayByPlatform).toEqual({ facebook: null, instagram: null });
+  });
+
+  it("the All tab's Facebook/Instagram split partitions THIS route's own totals, end to end", async () => {
+    // The pure split is unit-tested against a restatement of the route's arithmetic; this
+    // feeds the REAL response through combineGrowth, so a change to the route's totals
+    // semantics cannot silently make the All tab disagree with the Meta tab.
+    const conn = await prisma.metaConnection.findFirstOrThrow({ where: { metaUserId: "mu-fresh-route" } });
+    const fb2 = await prisma.metaAsset.create({
+      data: { connectionId: conn.id, kind: "FACEBOOK_PAGE", metaId: "pg-fresh-2", name: "FB2", selected: true }, // no follower count
+    });
+    await prisma.metaAssetMetric.createMany({
+      data: [
+        { assetId: fbId, window: "days_28", views: 2_800n, fetchedAt: new Date(), periodEnd: new Date(`${dayIso(-1)}T07:00:00Z`) },
+        { assetId: fb2.id, window: "days_28", views: 100n, fetchedAt: new Date(), periodEnd: new Date(`${dayIso(-1)}T07:00:00Z`) },
+        { assetId: igId, window: "days_28", views: null, fetchedAt: new Date(), periodEnd: new Date(`${dayIso(0)}T00:00:00Z`) },
+      ],
+    });
+    const res = await get("/v1/admin/meta/channels?window=days_28");
+    expect(res.status).toBe(200);
+    const d = res.body.data;
+    const r = combineGrowth({ meta: d, youtube: undefined, snapchat: undefined, periodDays: 28 });
+    const fb = r.platforms.facebook, ig = r.platforms.instagram;
+    expect(fb.state).toBe("ready");
+    expect((fb.followers ?? 0) + (ig.followers ?? 0)).toBe(d.totals.followers);
+    expect((fb.views ?? 0) + (ig.views ?? 0)).toBe(d.totals.views);
+    expect((fb.viewsChannels ?? 0) + (ig.viewsChannels ?? 0)).toBe(d.contributing.views);
+    expect((fb.channels ?? 0) + (ig.channels ?? 0)).toBe(d.channelCount);
+    expect(ig.views).toBeNull(); // Instagram's only row published no views: a dash, not 0
+    // Each platform's window ends on its OWN covered day.
+    expect(fb.span).toEqual({ from: shiftDay(dayIso(-2), -27), to: dayIso(-2) });
+    expect(ig.span).toEqual({ from: shiftDay(dayIso(-1), -27), to: dayIso(-1) });
   });
 
   it("range mode omits it — its dataThroughDay means 'newest day', a different question", async () => {

@@ -252,7 +252,7 @@ describe("pipeline projects", () => {
       const r = await call("get", `${P}/${card.id}`, a.token);
       expect(r.body.data.participants).toHaveLength(2);
       for (const p of r.body.data.participants) {
-        expect(Object.keys(p).sort()).toEqual(["createdAt", "isOwner", "memberAddedById", "role", "userId"]);
+        expect(Object.keys(p).sort()).toEqual(["createdAt", "isOwner", "memberAddedAt", "memberAddedById", "role", "userId"]);
       }
       expect(r.body.data.participants[0]).toMatchObject({ userId: me.id, isOwner: true, role: "MEMBER" });
       expect(r.body.data.can.archive).toBe(false);
@@ -727,6 +727,29 @@ describe("pipeline projects", () => {
       expect(again.body.data.added).toEqual([]);
       expect((await project(card.id)).headerRev).toBe(hv);
       expect((await project(card.id)).memberCount).toBe(3);
+    });
+
+    it("every route carries memberAddedAt: a promoted follower's undo window starts at the ADD, not the follow (B8)", async () => {
+      const owner = await user("Wire Owner");
+      const f = await user("Wire Follower");
+      const card = await create(owner.token);
+      const followedAt = new Date(Date.now() - 3 * 86_400_000);
+      await prisma.pipelineParticipant.create({
+        data: { projectId: card.id, userId: f.id, role: "FOLLOWER", notify: true, engagedAt: followedAt, createdAt: followedAt },
+      });
+      type Part = { userId: string; createdAt: string; memberAddedAt: string | null; memberAddedById: string | null };
+      const r = await add(card.id, owner.token, [f.id]);
+      expect(r.status).toBe(200);
+      const viaAdd = (r.body.data.participants as Part[]).find((p) => p.userId === f.id)!;
+      expect(viaAdd.createdAt).toBe(followedAt.toISOString()); // the follow, unchanged by the promotion
+      expect(viaAdd.memberAddedById).toBe(owner.id);
+      expect(Math.abs(Date.now() - Date.parse(viaAdd.memberAddedAt!))).toBeLessThan(60_000); // the add
+      expect((r.body.data.participants as Part[]).find((p) => p.userId === owner.id)!.memberAddedAt).toBeNull();
+
+      const detail = await call("get", `${P}/${card.id}`, owner.token);
+      expect((detail.body.data.participants as Part[]).find((p) => p.userId === f.id)!.memberAddedAt).toBe(viaAdd.memberAddedAt);
+      const s = await call("post", "/v1/pipeline/sync", owner.token, { clientBuild: 1, project: { id: card.id, rev: 0, hv: 0 } });
+      expect((s.body.data.project.participants as Part[]).find((p) => p.userId === f.id)!.memberAddedAt).toBe(viaAdd.memberAddedAt);
     });
 
     it("refuses an archived project (409), an inactive user (409 MEMBER_NOT_PICKABLE) and a 201st participant (409 MEMBER_LIMIT)", async () => {

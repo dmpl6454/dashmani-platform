@@ -107,6 +107,7 @@ export function participantFromRow(r: Raw, ownerId: string): PipelineParticipant
     role: str(r.role) as PipelineParticipantRole,
     isOwner: userId === ownerId,
     memberAddedById: strOrNull(r.member_added_by_id),
+    memberAddedAt: ts(r.member_added_at),
     createdAt: ts(r.created_at) ?? "",
   };
 }

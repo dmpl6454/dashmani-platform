@@ -59,7 +59,7 @@ export async function recountMembers(
 
 async function listParticipants(tx: PipelineTx, projectId: string, ownerId: string) {
   const rows = await tx.$queryRaw<Row[]>`
-    SELECT user_id, role, member_added_by_id, created_at FROM pipeline_participants
+    SELECT user_id, role, member_added_by_id, member_added_at, created_at FROM pipeline_participants
      WHERE project_id = ${projectId}
      ORDER BY created_at, user_id
      LIMIT ${PIPELINE_LIMITS.participantsMax}`;

@@ -185,7 +185,13 @@ interface R1Row {
     createdAt: string;
     updatedAt: string;
   }) | null;
-  participants?: Array<{ userId: string; role: PipelineParticipantRole; memberAddedById: string | null; createdAt: string }>;
+  participants?: Array<{
+    userId: string;
+    role: PipelineParticipantRole;
+    memberAddedById: string | null;
+    memberAddedAt: JsonTs;
+    createdAt: string;
+  }>;
 }
 
 function projectPartSql(p: NonNullable<PipelineSyncRequest["project"]>, me: string, limit: number) {
@@ -218,9 +224,10 @@ function projectPartSql(p: NonNullable<PipelineSyncRequest["project"]>, me: stri
        FROM pipeline_projects h
       WHERE h.id = ${p.id} AND h.deleted_at IS NULL AND h.header_rev <> ${p.hv}::int) AS header,
     (SELECT COALESCE(json_agg(json_build_object('userId', x.user_id, 'role', x.role,
-                                                'memberAddedById', x.member_added_by_id, 'createdAt', x.created_at)
+                                                'memberAddedById', x.member_added_by_id,
+                                                'memberAddedAt', x.member_added_at, 'createdAt', x.created_at)
                               ORDER BY x.created_at, x.user_id), '[]'::json)
-       FROM (SELECT pp.user_id, pp.role, pp.member_added_by_id, pp.created_at
+       FROM (SELECT pp.user_id, pp.role, pp.member_added_by_id, pp.member_added_at, pp.created_at
                FROM pipeline_participants pp
               WHERE pp.project_id = ${p.id} AND ${headerMoved}
               ORDER BY pp.created_at, pp.user_id
@@ -329,6 +336,7 @@ export async function syncPipeline(actor: PipelineActor, body: PipelineSyncReque
             role: x.role,
             isOwner: x.userId === header.ownerId,
             memberAddedById: x.memberAddedById,
+            memberAddedAt: isoUtc(x.memberAddedAt),
             createdAt: isoUtc(x.createdAt)!,
           }))
         : null;

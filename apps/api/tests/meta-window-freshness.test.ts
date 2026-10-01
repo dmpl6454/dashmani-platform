@@ -27,7 +27,8 @@ import {
 } from "../src/services/meta-oauth/meta-channels.service";
 import { coveredDayOf, shiftDay, invalidateRangeCache } from "../src/services/meta-oauth/meta-range.service";
 import { oauthGraphFetch } from "../src/services/meta-oauth/oauth-graph";
-import { combineGrowth } from "@dashmani/shared";
+// By path, as the portal imports it — it is deliberately not in the shared barrel.
+import { combineGrowth } from "@dashmani/shared/src/growth/combine";
 import "./setup";
 
 vi.mock("../src/services/meta-oauth/oauth-graph", async (importOriginal) => {

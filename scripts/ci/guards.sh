@@ -121,6 +121,16 @@ case "$mode" in
       "Client code must order ranks with compareRank from packages/shared/src/pipeline/rank.ts, never localeCompare (it disagrees with COLLATE \"C\" and scrambles card order)." \
       '[Rr]ank[^;]{0,80}localeCompare|localeCompare[^;]{0,80}[Rr]ank' optional "" \
       apps/hr/src/components/pipeline apps/hr/src/app/pipeline
+
+    # The Account Growth page imports shared logic by MODULE PATH, never the barrel. The
+    # barrel drags zod and every validator into the first-load JS of all four tabs
+    # (measured: /accounts/growth 127 → 156 kB). Only an import/export-from, require or
+    # dynamic import of the exact barrel specifier matches, either quote style;
+    # "@dashmani/shared/src/…" paths and prose that mentions the package do not.
+    check "no-shared-barrel-growth" \
+      "Account Growth must import shared modules by path (e.g. \"@dashmani/shared/src/growth/combine\"), never the \"@dashmani/shared\" barrel — it pulls zod and every validator into the page's first load." \
+      "(from|import\\(?|require\\()[[:space:]]*[\"']@dashmani/shared[\"']" required "" \
+      apps/internal/src/app/accounts/growth
     ;;
   bundle)
     # The source scan cannot see third-party code (dnd-kit, markdown renderers, vendored

@@ -49,9 +49,11 @@ export * from "./utils/snapchat";
 export * from "./types/submission-gaps";
 export * from "./utils/submission-gaps";
 
-// Account Growth "All" tab — the pure composition of the Meta, YouTube and Snapchat boards'
-// OWN figures (no re-measuring), shared by the internal portal panel and the API's tests.
-export * from "./growth/combine";
+// Account Growth "All" tab — ⚠️ DELIBERATELY NOT RE-EXPORTED HERE. Import the module by
+// path, "@dashmani/shared/src/growth/combine". In this barrel it rode in the shared chunk
+// of every internal page that imports the barrel (+2.6 kB gz on 23 routes), and importing
+// the barrel from the growth page pulled zod and every validator into it (measured
+// /accounts/growth 127 → 156 kB First Load JS). scripts/ci/guards.sh enforces the path.
 
 // Pipeline (pure, shared by the API tests and the HR portal)
 export * from "./pipeline/refresh";

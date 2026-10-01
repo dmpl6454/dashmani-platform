@@ -13,6 +13,8 @@ import {
   jitter,
   makeClientId,
   PIPELINE_DISABLED_RECHECK_MS,
+  shouldRecheckBootstrapPeriodically,
+  shouldRevalidateBootstrapOnMount,
   type PipelineBootstrapEnabled,
   type PipelineCard,
   type PipelineDirectoryEntry,
@@ -88,12 +90,27 @@ export function PipelineProvider({ children }: { children: React.ReactNode }) {
   const { user } = useHrAuth();
   const userId = user?.id ?? null;
   const boot = usePipelineBootstrap(userId);
-
-  // Paused (off / self-check failed) is NOT terminal: re-check every 3 min ± jitter while visible.
   const reason = boot.data && !boot.data.enabled ? boot.data.reason : null;
   const mutateBoot = boot.mutate;
+
+  // G2 (GA): a cached "not enabled" answer — e.g. not_in_pilot, cached by the sidebar before
+  // the flip to on — is re-fetched ONCE when the gate mounts, so an in-app link (a bell row)
+  // never shows "isn't available for your account yet" from a stale cache. A bound mutate()
+  // with no arguments bypasses SWR's 10-minute dedupe (it drops the in-flight marker first);
+  // revalidateIfStale alone would be deduped for up to 10 minutes after the sidebar's fetch.
+  const mountChecked = useRef(false);
   useEffect(() => {
-    if (reason !== "off" && reason !== "paused") return;
+    if (mountChecked.current) return;
+    mountChecked.current = true;
+    if (shouldRevalidateBootstrapOnMount(boot.data)) void mutateBoot();
+    // Once, against what the cache held at mount — later answers are handled below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Paused (off / self-check failed) and not_in_pilot are NOT terminal: re-check every 3 min
+  // ± jitter while visible (not_in_pilot clears when the pilot becomes GA).
+  useEffect(() => {
+    if (!shouldRecheckBootstrapPeriodically(reason)) return;
     let t: ReturnType<typeof setTimeout>;
     const tick = () => {
       t = setTimeout(() => {
@@ -215,7 +232,7 @@ function EnabledProvider({
   useIdle(markInput);
 
   // ── directory ─────────────────────────────────────────────────────────────────
-  const dir = usePipelineDirectory(userId, true);
+  const dir = usePipelineDirectory(userId, true, boot.mode);
   const dirById = useMemo(() => {
     const m = new Map<string, PipelineDirectoryEntry>();
     for (const d of dir.data ?? []) m.set(d.id, d);

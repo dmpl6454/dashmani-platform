@@ -92,8 +92,9 @@ export default function AccountGrowthPage() {
         </p>
         <p className="text-xs text-[#B0B0B0] mt-1 max-w-3xl leading-snug">
           Three boards, and they do not share a source. Each tab says where its own numbers
-          come from and what its platform refuses to publish, so a dash always means &ldquo;not
-          published&rdquo; — never zero, and never missing data on our side. Pick a period
+          come from and what its platform refuses to publish. A dash is never a zero: the
+          platform published nothing, our history is too short so far, or a movement is finer
+          than the platform&apos;s rounding — each tab says which. Pick a period
           inside a tab; each one keeps its own. The All tab adds the boards up wherever a figure
           means the same thing on every platform.
         </p>

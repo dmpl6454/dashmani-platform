@@ -6,12 +6,13 @@
  *     page opened with; a "↓ N new" pill appears when more than 120 px from the bottom.
  *   - "Load earlier" (30 at a time) keeps the reading position (scrollHeight before/after).
  *   - No content-visibility; at most ~100 rows render at once.
- *   - One author within 5 minutes is grouped.
+ *   - One author within 5 minutes, on the same local day, is grouped.
+ *   - "Today" / "Yesterday" / a date separates the rows wherever the local day changes.
  *   - A polite live region announces new messages only when you are not at the bottom.
  */
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ArrowDown } from "lucide-react";
-import { selectPendingSends, selectTopLevel, type PipelineMessage } from "@dashmani/shared";
+import { daySeparatorBefore, groupsWithPrevious, selectPendingSends, selectTopLevel, type PipelineMessage } from "@dashmani/shared";
 import { usePipeline } from "../provider";
 import { useStoreSelector } from "../store";
 import { describeError, plApi } from "../api";
@@ -19,11 +20,12 @@ import { EmptyState } from "../ui/EmptyState";
 import { LoadError } from "../ui/LoadError";
 import { Skeleton } from "../ui/Skeleton";
 import { type AckLedger, useSeenObserver } from "../hooks/use-seen-observer";
+import { useLocalDayKey } from "../hooks/use-local-day-key";
 import { MessageItem, PendingRow } from "./MessageItem";
+import { DaySeparator } from "./DaySeparator";
 import { Composer } from "./Composer";
 
 const RENDER_WINDOW = 100;
-const GROUP_MS = 5 * 60_000;
 const NEAR_BOTTOM_PX = 120;
 
 export function Thread({
@@ -44,6 +46,8 @@ export function Thread({
   onLoadNewer: () => Promise<void>;
 }) {
   const { store, meId, notNotified } = usePipeline();
+  // Changes once a day (local midnight): every row's time label and the separators follow it.
+  const today = useLocalDayKey();
   const project = useStoreSelector(store, (s) => s.projects[projectId]);
   const top = useStoreSelector(store, (s) => (s.projects[projectId] ? selectTopLevel(s.projects[projectId]) : []));
   const pending = useStoreSelector(store, (s) => selectPendingSends(s, projectId, null));
@@ -229,12 +233,17 @@ export function Thread({
         )}
         {shown.map((m, i) => {
           const prev = shown[i - 1];
-          const grouped =
-            !!prev && !prev.deletedAt && prev.authorId === m.authorId && new Date(m.createdAt).getTime() - new Date(prev.createdAt).getTime() < GROUP_MS && m.id !== firstUnread?.id;
+          // Same author, < 5 min, same local day, not after a tombstone (shared rule, R8).
+          const grouped = groupsWithPrevious(prev, m) && m.id !== firstUnread?.id;
           return (
-            <FragmentWithDivider key={m.id} showDivider={m.id === firstUnread?.id}>
+            <FragmentWithDivider
+              key={m.id}
+              showDivider={m.id === firstUnread?.id}
+              dayLabel={daySeparatorBefore(prev?.createdAt ?? null, m.createdAt, today)}
+            >
               <MessageItem
                 message={m}
+                today={today}
                 grouped={grouped}
                 readOnly={readOnly}
                 highlight={m.id === highlightId}
@@ -264,9 +273,17 @@ export function Thread({
             )}
           </li>
         )}
-        {pending.map((p) => (
-          <PendingRow key={p.clientId} send={p} />
-        ))}
+        {pending.map((p, i) => {
+          // Pending sends follow the server rows; a separator only if the day changes there too.
+          const prevAt = i > 0 ? pending[i - 1].createdAt : shown.length > 0 ? shown[shown.length - 1].createdAt : null;
+          const dayLabel = daySeparatorBefore(prevAt, p.createdAt, today);
+          return (
+            <Fragment key={p.clientId}>
+              {dayLabel && <DaySeparator label={dayLabel} />}
+              <PendingRow send={p} today={today} />
+            </Fragment>
+          );
+        })}
       </ul>
     );
   }
@@ -300,9 +317,19 @@ export function Thread({
   );
 }
 
-function FragmentWithDivider({ showDivider, children }: { showDivider: boolean; children: React.ReactNode }) {
+function FragmentWithDivider({
+  showDivider,
+  dayLabel,
+  children,
+}: {
+  showDivider: boolean;
+  /** "Today" / "Yesterday" / a date when the local day changes before this row, else null. */
+  dayLabel: string | null;
+  children: React.ReactNode;
+}) {
   return (
     <>
+      {dayLabel && <DaySeparator label={dayLabel} />}
       {showDivider && (
         <li data-divider className="list-none flex items-center gap-2 px-3 py-2" aria-label="New messages">
           <span className="h-px flex-1 bg-danger/40" />

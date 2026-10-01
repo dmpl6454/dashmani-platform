@@ -338,8 +338,9 @@ export function AllPanel({ onOpenTab }: { onOpenTab?: (tab: SiblingTab) => void 
           <strong className="font-medium text-[#7A7A7A]">Follower change</strong> counts only channels
           whose own history covers at least {combo.platforms.facebook.followerDeltaMinDays} of the{" "}
           {periodDays} days — a shorter history is left out rather than counted as flat. For Facebook and
-          Instagram it runs from our daily API follower snapshots to each channel&apos;s current count;
-          YouTube and Snapchat publish rounded counts, so their part carries the ± shown.{" "}
+          Instagram it runs from our daily API follower snapshots to each channel&apos;s current count
+          (an Instagram account without that history uses Meta&apos;s own follows-minus-unfollows for the
+          period); YouTube and Snapchat publish rounded counts, so their part carries the ± shown.{" "}
           <strong className="font-medium text-[#7A7A7A]">Followers</strong> is a live total and reads
           the same on both periods. <strong className="font-medium text-[#7A7A7A]">Views</strong> are
           each platform&apos;s own count: Meta counts every time content was shown or played, including
@@ -527,7 +528,7 @@ function Tiles({ combo, currentYear }: { combo: GrowthCombination; currentYear: 
               missing,
       title:
         `Follower change over the ${n} days, summed only over channels whose own history covers at least ` +
-        `${P.facebook.followerDeltaMinDays} of them. Facebook and Instagram: Meta's exact counts. YouTube ` +
+        `${P.facebook.followerDeltaMinDays} of them. Facebook and Instagram: Meta's own counts, not rounded. YouTube ` +
         `(${spanText("youtube")}) and Snapchat (${spanText("snapchat")}): our daily snapshots of counts the ` +
         "platforms publish rounded, so the sum carries a ± error bar" +
         (c.followerDeltaApprox
@@ -699,7 +700,9 @@ function PlatformRow({ a, periodDays, currentYear, refreshFailed, onRetry }: {
         className="px-2 py-2 text-right text-xs"
         title={
           isMeta
-            ? `Summed over the ${a.followerDeltaChannels ?? 0} channel(s) whose own API follower history covers at least ${a.followerDeltaMinDays} of the ${periodDays} days, up to each channel's current count. Meta's counts are exact.`
+            ? `Summed over the ${a.followerDeltaChannels ?? 0} channel(s) whose own API follower history covers at least ${a.followerDeltaMinDays} of the ${periodDays} days, up to each channel's current count` +
+              (a.platform === "instagram" ? " — or, for an account without that history, Meta's own follows-minus-unfollows for the period." : ".") +
+              " Meta's counts are not rounded, so there is no ± here."
             : `Summed by the ${label} board over the ${a.followerDeltaChannels ?? 0} channel(s) whose own snapshots span at least ${a.followerDeltaMinDays} of the ${periodDays} days.` +
               (a.uncertainty > 0 ? ` ${label} publishes rounded counts, so this carries ±${fmtMetric(a.uncertainty)}.` : "")
         }
@@ -801,10 +804,8 @@ function TotalRow({ c, periodDays }: { c: GrowthCombined; periodDays: number }) 
         <span className={c.followerDelta === null ? "text-[#B0B0B0]" : changeTone(c.followerDelta, c.followerDeltaApprox)}>
           {fmtChange(c.followerDelta, c.followerDeltaApprox)}
         </span>
-        {c.followerDelta !== null && (
-          <span className={SUB}>
-            {c.uncertainty > 0 ? `±${fmtMetric(c.uncertainty)} from rounded counts` : "exact"}
-          </span>
+        {c.followerDelta !== null && c.uncertainty > 0 && (
+          <span className={SUB}>±{fmtMetric(c.uncertainty)} from rounded counts</span>
         )}
       </td>
       <td className="px-2 py-2 text-right text-xs font-semibold text-[#1A1A1A]">

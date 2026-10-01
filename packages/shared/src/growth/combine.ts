@@ -247,7 +247,7 @@ export interface GrowthPlatformAggregate {
   followerDeltaSuppressed: number | null;
   /** Full-span channels left out because their change exceeds their own baseline (boards). */
   followerDeltaExcluded: number | null;
-  /** ± error bar on followerDelta from rounded counts. 0 = exact (Meta). */
+  /** ± error bar on followerDelta from rounded counts. 0 = no rounding (Meta). */
   uncertainty: number;
   /** |followerDelta| < uncertainty: show it as approximate, with the ± beside it. */
   followerDeltaApprox: boolean;

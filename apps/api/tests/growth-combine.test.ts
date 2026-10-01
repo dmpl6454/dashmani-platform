@@ -265,7 +265,7 @@ describe("Meta — the Facebook/Instagram split of the Meta board's own figures"
     expect(r.platforms.facebook.followerDeltaMinDays).toBe(26);
     expect(r.platforms.instagram.followerDelta).toBe(-30);
     expect(r.combined.followerDelta).toBe(80);
-    expect(r.platforms.facebook.uncertainty).toBe(0); // Meta's counts are exact
+    expect(r.platforms.facebook.uncertainty).toBe(0); // Meta's counts are not rounded
   });
 
   it("follows the same rule at 7 days, where it means the full 7", () => {

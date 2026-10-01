@@ -54,6 +54,12 @@ describe("pipeline concurrency", () => {
     const proj = await prisma.pipelineProject.findUniqueOrThrow({ where: { id: p.id } });
     expect(proj.lastMessageSeq).toBe(30);
     expect(proj.threadRev).toBe(Math.max(...msgs.map((m) => m.rev)));
+    // R1: times are taken at S3's start, after the project lock that assigns seq, so they
+    // never go backwards in seq order (a transaction-start now() could: "11:00" then "10:59").
+    for (let i = 1; i < msgs.length; i++) {
+      expect(msgs[i].createdAt.getTime()).toBeGreaterThanOrEqual(msgs[i - 1].createdAt.getTime());
+    }
+    expect(proj.lastMessageAt?.getTime()).toBe(msgs[msgs.length - 1].createdAt.getTime());
   });
 
   it("8 parallel duplicate clientId posts → one message", async () => {

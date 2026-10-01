@@ -3,10 +3,14 @@
  * Create a project (route #5). The idempotency key (clientId) is minted when the sheet
  * opens and kept across retries, so a double tap or a retry after a lost response never
  * creates two projects. Nothing the user typed is lost on any error.
+ *
+ * Dates (2026-10-01): bounded to the years the server accepts (1900–2999) and checked with the
+ * SAME validator before the start ≤ due check, which compares strings and is only right for
+ * 4-digit years; each date's own error is shown under its own field.
  */
 import { useEffect, useId, useState } from "react";
 import { useRouter } from "next/navigation";
-import { makeClientId, PIPELINE_LIMITS, type PipelinePhase } from "@dashmani/shared";
+import { makeClientId, PIPELINE_LIMITS, pipelineValidators, type PipelinePhase } from "@dashmani/shared";
 import { Sheet } from "../ui/Sheet";
 import { useToast } from "../ui/Toast";
 import { usePipeline } from "../provider";
@@ -15,6 +19,13 @@ import { describeError, isApiError, plApi } from "../api";
 
 const inputCls =
   "w-full h-11 px-3 rounded-xl border border-border bg-surface text-[16px] text-ink placeholder:text-ink-4 focus:outline-none focus:ring-2 focus:ring-indigo";
+
+/** The years the server's pipelineDate accepts (validators/pipeline.ts). */
+const DATE_MIN = "1900-01-01";
+const DATE_MAX = "2999-12-31";
+const DATE_INVALID = "Pick a valid date between 1900 and 2999.";
+/** A filled date the shared validator rejects (empty = no date). */
+const badDate = (v: string) => v !== "" && !pipelineValidators.pipelineDate.safeParse(v).success;
 
 export function NewProjectSheet({
   open,
@@ -62,7 +73,11 @@ export function NewProjectSheet({
     if (busy) return;
     const fe: Record<string, string> = {};
     if (!title.trim()) fe.title = "Give the project a title.";
-    if (startDate && dueDate && startDate > dueDate) fe.dueDate = "The due date must be on or after the start date.";
+    if (badDate(startDate)) fe.startDate = DATE_INVALID;
+    if (badDate(dueDate)) fe.dueDate = DATE_INVALID;
+    if (!fe.startDate && !fe.dueDate && startDate && dueDate && startDate > dueDate) {
+      fe.dueDate = "The due date must be on or after the start date.";
+    }
     setFieldErr(fe);
     if (Object.keys(fe).length) return;
     setBusy(true);
@@ -179,7 +194,17 @@ export function NewProjectSheet({
             <label htmlFor={ids.start} className="block text-[12.5px] font-semibold text-ink-2 mb-1.5">
               Start
             </label>
-            <input id={ids.start} type="date" value={startDate} onChange={(e) => setStart(e.target.value)} className={`${inputCls} pl-date`} />
+            <input
+              id={ids.start}
+              type="date"
+              min={DATE_MIN}
+              max={DATE_MAX}
+              value={startDate}
+              onChange={(e) => setStart(e.target.value)}
+              aria-invalid={!!fieldErr.startDate}
+              aria-describedby={fieldErr.startDate ? `${ids.start}-err` : undefined}
+              className={`${inputCls} pl-date`}
+            />
           </div>
           <div className="min-w-0">
             <label htmlFor={ids.due} className="block text-[12.5px] font-semibold text-ink-2 mb-1.5">
@@ -188,14 +213,27 @@ export function NewProjectSheet({
             <input
               id={ids.due}
               type="date"
+              min={DATE_MIN}
+              max={DATE_MAX}
               value={dueDate}
               onChange={(e) => setDue(e.target.value)}
               aria-invalid={!!fieldErr.dueDate}
+              aria-describedby={fieldErr.dueDate ? `${ids.due}-err` : undefined}
               className={`${inputCls} pl-date`}
             />
           </div>
         </div>
-        {fieldErr.dueDate && <p className="-mt-2 text-[12px] text-danger">{fieldErr.dueDate}</p>}
+        {fieldErr.startDate && (
+          <p id={`${ids.start}-err`} className="-mt-2 text-[12px] text-danger">
+            Start: {fieldErr.startDate}
+          </p>
+        )}
+        {fieldErr.dueDate && (
+          <p id={`${ids.due}-err`} className="-mt-2 text-[12px] text-danger">
+            {fieldErr.startDate ? "Due: " : ""}
+            {fieldErr.dueDate}
+          </p>
+        )}
         <PeoplePicker value={members} onChange={setMembers} exclude={[meId]} max={PIPELINE_LIMITS.membersPerRequestMax} label="Members" />
       </form>
     </Sheet>

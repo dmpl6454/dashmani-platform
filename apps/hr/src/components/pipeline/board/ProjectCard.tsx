@@ -7,20 +7,24 @@
  * Drag activation is split by input: mouse (distance 6) and touch (250 ms long-press)
  * start from anywhere on the card; the keyboard (Space) only from the grip, so Enter on
  * the title still opens the project.
+ *
+ * The due chip is computed against `today` (useLocalDayKey, passed down from the Board) —
+ * a PROP, so the memoised card re-renders at local midnight by design, not by luck.
  */
 import { memo } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { AlertCircle, CalendarClock, Ellipsis, GripVertical } from "lucide-react";
-import type { PipelineCard, PipelineDirectoryEntry, PipelineMineEntry } from "@dashmani/shared";
+import { dayMonthShort, dueState, type PipelineCard, type PipelineDirectoryEntry, type PipelineMineEntry } from "@dashmani/shared";
 import { Initials } from "../ui/Initials";
-import { dueState, shortDay } from "./due";
 
 export interface CardViewProps {
   card: PipelineCard;
   mine: PipelineMineEntry | undefined;
   dirById: ReadonlyMap<string, PipelineDirectoryEntry>;
   isTerminal: boolean;
+  /** The browser-local today key the due chip is relative to. */
+  today: string;
   checking?: boolean;
   onOpen?: (id: string) => void;
   onMenu?: (card: PipelineCard) => void;
@@ -35,13 +39,14 @@ export function CardFace({
   mine,
   dirById,
   isTerminal,
+  today,
   checking,
   onOpen,
   onMenu,
   grip,
   overlay = false,
 }: CardViewProps & { grip?: React.ReactNode; overlay?: boolean }) {
-  const due = dueState(card.dueDate, isTerminal);
+  const due = dueState(card.dueDate, isTerminal, today);
   const owner = dirById.get(card.ownerId);
   const members = card.preview.filter((id) => id !== card.ownerId).slice(0, 3);
   // memberCount includes the owner (the owner always holds a MEMBER row).
@@ -68,6 +73,11 @@ export function CardFace({
               <AlertCircle size={12} aria-hidden /> Overdue
             </span>
           )}
+          {due === "today" && (
+            <span className="inline-flex items-center gap-1 h-6 px-2 rounded-full bg-attention-bg text-attention text-[11.5px] font-bold">
+              <CalendarClock size={12} aria-hidden /> Due today
+            </span>
+          )}
           {due === "tomorrow" && (
             <span className="inline-flex items-center gap-1 h-6 px-2 rounded-full bg-attention-bg text-attention text-[11.5px] font-bold">
               <CalendarClock size={12} aria-hidden /> Due tomorrow
@@ -75,7 +85,7 @@ export function CardFace({
           )}
           {due === "later" && card.dueDate && (
             <span className="inline-flex items-center h-6 px-2 rounded-full bg-muted text-ink-3 text-[11.5px] font-semibold">
-              Due {shortDay(card.dueDate)}
+              Due {dayMonthShort(card.dueDate, today)}
             </span>
           )}
           {owner && !owner.active && (

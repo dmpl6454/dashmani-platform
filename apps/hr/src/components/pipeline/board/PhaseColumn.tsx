@@ -21,6 +21,7 @@ export function CardList({
   cards,
   mine,
   dirById,
+  today,
   checking,
   onOpen,
   onMenu,
@@ -30,6 +31,8 @@ export function CardList({
   cards: PipelineCard[];
   mine: Record<string, PipelineMineEntry> | null;
   dirById: ReadonlyMap<string, PipelineDirectoryEntry>;
+  /** The browser-local today key (useLocalDayKey) for the due chips. */
+  today: string;
   checking: ReadonlySet<string>;
   onOpen: (id: string) => void;
   onMenu: (c: PipelineCard) => void;
@@ -48,6 +51,7 @@ export function CardList({
               mine={mine?.[c.id]}
               dirById={dirById}
               isTerminal={phase.isTerminal}
+              today={today}
               checking={checking.has(c.id)}
               onOpen={onOpen}
               onMenu={onMenu}
@@ -66,6 +70,7 @@ export function PhaseColumn(props: {
   count: PipelinePhaseCount | undefined;
   mine: Record<string, PipelineMineEntry> | null;
   dirById: ReadonlyMap<string, PipelineDirectoryEntry>;
+  today: string;
   checking: ReadonlySet<string>;
   onOpen: (id: string) => void;
   onMenu: (c: PipelineCard) => void;

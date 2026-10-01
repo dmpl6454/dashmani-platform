@@ -4,10 +4,13 @@
  * side panel on desktop. It is opened by pushing `?t=<rootId>`, so the browser / Android
  * back button closes it. Honest states: its own skeleton, and "Couldn't load replies ·
  * Retry" — never an empty list under "3 replies".
+ *
+ * Replies group and separate by local day exactly like the main thread (shared rules): a reply
+ * after a deleted one always shows its author and time (the tombstone shows neither).
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronLeft, X } from "lucide-react";
-import { selectPendingSends, selectReplies, type PipelineMessage } from "@dashmani/shared";
+import { daySeparatorBefore, groupsWithPrevious, selectPendingSends, selectReplies, type PipelineMessage } from "@dashmani/shared";
 import { usePipeline } from "../provider";
 import { useStoreSelector } from "../store";
 import { describeError, isApiError, plApi } from "../api";
@@ -16,7 +19,9 @@ import { Skeleton } from "../ui/Skeleton";
 import { Surface } from "../ui/Surface";
 import { Z } from "../constants";
 import { type AckLedger, useSeenObserver } from "../hooks/use-seen-observer";
+import { useLocalDayKey } from "../hooks/use-local-day-key";
 import { MessageItem, PendingRow } from "./MessageItem";
+import { DaySeparator } from "./DaySeparator";
 import { Composer } from "./Composer";
 
 export function ReplySheet({
@@ -39,6 +44,7 @@ export function ReplySheet({
   onClose: () => void;
 }) {
   const { store, meId, notNotified } = usePipeline();
+  const today = useLocalDayKey();
   const root = useStoreSelector(store, (s) => s.projects[projectId]?.messages[rootId] ?? null);
   const replies = useStoreSelector(store, (s) => (s.projects[projectId] ? selectReplies(s.projects[projectId], rootId) : []));
   const hasMore = useStoreSelector(store, (s) => s.projects[projectId]?.replyPages[rootId]?.hasMore ?? false);
@@ -122,7 +128,15 @@ export function ReplySheet({
   } else {
     body = (
       <ul className="py-2">
-        <MessageItem message={root} grouped={false} readOnly={replyReadOnly} highlight={root.id === highlightId} inReplies notNotified={notNotified[root.id]} />
+        <MessageItem
+          message={root}
+          today={today}
+          grouped={false}
+          readOnly={replyReadOnly}
+          highlight={root.id === highlightId}
+          inReplies
+          notNotified={notNotified[root.id]}
+        />
         <li className="list-none px-3 py-1.5 text-[12px] font-semibold text-ink-3 border-b border-rule">
           {root.replyCount} {root.replyCount === 1 ? "reply" : "replies"}
         </li>
@@ -138,18 +152,22 @@ export function ReplySheet({
         )}
         {replies.map((m, i) => {
           const prev = replies[i - 1];
-          const grouped = !!prev && prev.authorId === m.authorId && new Date(m.createdAt).getTime() - new Date(prev.createdAt).getTime() < 5 * 60_000;
+          // The first reply is separated from the ROOT only if it is on another day.
+          const dayLabel = daySeparatorBefore((prev ?? root).createdAt, m.createdAt, today);
           return (
-            <MessageItem
-              key={m.id}
-              message={m}
-              grouped={grouped}
-              readOnly={replyReadOnly}
-              highlight={m.id === highlightId}
-              inReplies
-              notNotified={notNotified[m.id]}
-              observeRef={seen.observe({ seq: m.seq, id: m.id, interesting: interesting(m) })}
-            />
+            <Fragment key={m.id}>
+              {dayLabel && <DaySeparator label={dayLabel} />}
+              <MessageItem
+                message={m}
+                today={today}
+                grouped={groupsWithPrevious(prev, m)}
+                readOnly={replyReadOnly}
+                highlight={m.id === highlightId}
+                inReplies
+                notNotified={notNotified[m.id]}
+                observeRef={seen.observe({ seq: m.seq, id: m.id, interesting: interesting(m) })}
+              />
+            </Fragment>
           );
         })}
         {hasMore && (
@@ -163,9 +181,16 @@ export function ReplySheet({
             )}
           </li>
         )}
-        {pending.map((p) => (
-          <PendingRow key={p.clientId} send={p} />
-        ))}
+        {pending.map((p, i) => {
+          const prevAt = i > 0 ? pending[i - 1].createdAt : (replies[replies.length - 1] ?? root).createdAt;
+          const dayLabel = daySeparatorBefore(prevAt, p.createdAt, today);
+          return (
+            <Fragment key={p.clientId}>
+              {dayLabel && <DaySeparator label={dayLabel} />}
+              <PendingRow send={p} today={today} />
+            </Fragment>
+          );
+        })}
       </ul>
     );
   }

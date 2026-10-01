@@ -293,6 +293,41 @@ describe("pipeline email — enqueue", () => {
       expect(await outbox({ userId: priya.id })).toHaveLength(0);
     });
 
+    it("a re-armed alert (a drag into Done and back out, or A → B → A) re-alerts the bell but never re-mails someone already mailed about that date", async () => {
+      const { priya, bob, project } = await team();
+      await pipelineDb.$executeRaw`UPDATE pipeline_projects SET due_date = DATE '2026-09-30' WHERE id = ${project.id}`;
+      const tick = (hhmm: string) => runPipelineDueTick({ now: new Date(`2026-09-29T${hhmm}:00.000+05:30`) });
+      const dueSoon = () => outbox({ kind: "due_soon" });
+      expect(await tick("10:00")).toMatchObject({ status: "ran", dueSoon: 1 });
+      // The worker mailed Priya and Bob.
+      await pipelineDb.$executeRaw`UPDATE pipeline_email_outbox SET status = 'sent', sent_at = timezone('utc', now()) WHERE kind = 'due_soon'`;
+      // Eve joins after that mail, so she was never told.
+      const eve = await createPipelineUser({ name: "Eve Late", tag: "em-eve" });
+      await addParticipantFixture(project.id, eve.id);
+
+      // A drag into Done and straight back out withdraws the bell rows and re-arms them …
+      expect((await move(priya.id, project.id, "done", "brief")).status).toBe(200);
+      expect((await move(priya.id, project.id, "brief", "done")).status).toBe(200);
+      expect(await tick("11:00")).toMatchObject({ status: "ran", dueSoon: 1 });
+      expect(await prisma.notification.findUnique({ where: { id: plnId("due_soon", project.id, bob.id, "2026-09-30") } })).not.toBeNull();
+      // … but the mail goes ONLY to Eve: Priya and Bob already have it.
+      expect((await dueSoon()).map((x) => [x.userId, x.status]).sort()).toEqual(
+        [
+          [priya.id, "sent"],
+          [bob.id, "sent"],
+          [eve.id, "pending"],
+        ].sort(),
+      );
+
+      // A → B → A (the date came back): the same rule.
+      await pipelineDb.$executeRaw`UPDATE pipeline_email_outbox SET status = 'sent', sent_at = timezone('utc', now()) WHERE kind = 'due_soon'`;
+      expect((await patchDue(priya.id, project.id, "2026-09-30", "2026-10-09")).status).toBe(200);
+      expect((await patchDue(priya.id, project.id, "2026-10-09", "2026-09-30")).status).toBe(200);
+      expect(await tick("12:00")).toMatchObject({ status: "ran", dueSoon: 1 });
+      expect((await dueSoon()).every((x) => x.status === "sent")).toBe(true);
+      expect(await dueSoon()).toHaveLength(3);
+    });
+
     it("queues an immediate due_soon row per notify=true participant", async () => {
       const { priya, bob, project } = await team();
       await pipelineDb.$executeRaw`UPDATE pipeline_projects SET due_date = DATE '2026-09-30' WHERE id = ${project.id}`;

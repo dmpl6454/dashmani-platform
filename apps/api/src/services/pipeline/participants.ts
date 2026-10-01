@@ -29,7 +29,7 @@ import { pipelineWrite } from "./tx";
 import { PipelineError } from "./errors";
 import { bumpBoard } from "./board";
 import { notifier } from "./notifier";
-import { dropGroupedRowFor } from "./notify";
+import { dropLeaverRows } from "./notify";
 import { day, participantFromRow } from "./wire";
 import { isPipelineAdmin } from "../../middleware/pipeline-gates";
 import { allowList, assertWritable, lockProject, pickableByMode, type PipelineActor } from "./projects.service";
@@ -134,6 +134,10 @@ export async function addMembers(actor: PipelineActor, projectId: string, userId
 
 export async function removeMember(actor: PipelineActor, projectId: string, targetId: string): Promise<PipelineRemoveMemberResponse> {
   const me = actor.userId;
+  // retryOnce: a deletion writes several of the target's notification rows (dropLeaverRows),
+  // which a concurrent ack or "Mark all read" may hold — a lost lock race (55P03 / 40P01) is
+  // retried once, like the due edit and the move. Safe: the transaction rolled back whole,
+  // and the second attempt re-reads the participant row (one already gone is "none").
   const out = await pipelineWrite(async (tx) => {
     const row = await lockProject(tx, projectId, me);
     assertWritable(row);
@@ -165,7 +169,9 @@ export async function removeMember(actor: PipelineActor, projectId: string, targ
         DELETE FROM pipeline_participants
          WHERE project_id = ${projectId} AND user_id = ${targetId} AND user_id <> ${ownerId}`;
       result = n > 0 ? "removed" : "none";
-      if (n > 0) await dropGroupedRowFor(tx, projectId, targetId);
+      // Their grouped row and the current date's due rows go too (no later redaction or
+      // withdrawal can reach a non-participant).
+      if (n > 0) await dropLeaverRows(tx, projectId, targetId, day(row.due_date));
     } else if (target.role === "MEMBER") {
       const n = await tx.$executeRaw`
         UPDATE pipeline_participants
@@ -178,7 +184,7 @@ export async function removeMember(actor: PipelineActor, projectId: string, targ
     if (result === "none") return { result, changedCount: false };
     const { changedCount } = await recountMembers(tx, projectId);
     return { result, changedCount };
-  });
+  }, { retryOnce: true });
   if (out.changedCount) await bumpBoard();
   return { result: out.result };
 }

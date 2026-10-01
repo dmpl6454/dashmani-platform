@@ -61,13 +61,21 @@ const NOW = Prisma.sql`timezone('utc', now())`;
 const PIPELINE_TYPE = Prisma.sql`'PIPELINE'::"NotificationType"`;
 
 /**
- * §7.11: a participant row that is DELETED (a leave, or removing someone never engaged)
- * takes that user's grouped "N new messages" row with it. Edit and delete redaction only
- * reach current participants, so a row left behind would keep the preview of a message
- * that is later edited or deleted. One primary-key probe, in the caller's transaction.
+ * A participant row that is DELETED (a leave, or removing someone never engaged) takes with
+ * it that user's rows that only a CURRENT participant's row can ever correct:
+ *   - §7.11: the grouped "N new messages" row — edit and delete redaction only reach current
+ *     participants, so a row left behind would keep the preview of a message that is later
+ *     edited or deleted;
+ *   - the due-soon / overdue rows for the project's current due date (`dueDate`, or null when
+ *     it has none) — a later due change or a move into Done withdraws them only for current
+ *     participants (withdrawDueRows), so a leaver's row would keep a deadline that no longer
+ *     exists for up to 90 days. (Rows of an EARLIER date were withdrawn when it changed.)
+ * ONE statement of primary-key probes, in the caller's transaction.
  */
-export async function dropGroupedRowFor(tx: PipelineTx, projectId: string, userId: string): Promise<void> {
-  await tx.$executeRaw`DELETE FROM notifications WHERE id = ${plnId("messages", projectId, userId)} AND type = ${PIPELINE_TYPE}`;
+export async function dropLeaverRows(tx: PipelineTx, projectId: string, userId: string, dueDate: string | null): Promise<void> {
+  const ids = [plnId("messages", projectId, userId)];
+  if (dueDate) ids.push(plnId("due_soon", projectId, userId, dueDate), plnId("overdue", projectId, userId, dueDate));
+  await tx.$executeRaw`DELETE FROM notifications WHERE id = ANY(${ids}::text[]) AND type = ${PIPELINE_TYPE}`;
 }
 const NO_NAMES: Record<string, string> = {};
 const TITLE_MAX = 120;

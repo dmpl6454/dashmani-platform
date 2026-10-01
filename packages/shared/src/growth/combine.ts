@@ -1,5 +1,3 @@
-import { isGapDayKey, gapShiftDay } from "../utils/submission-gaps";
-
 /**
  * Account Growth — the "All" tab's combination logic (pure, shared).
  *
@@ -31,6 +29,31 @@ import { isGapDayKey, gapShiftDay } from "../utils/submission-gaps";
  * Kept free of React and the DOM so the API's vitest suite (the only test runner in the
  * repo) can lock it, and free of regex lookbehind (scripts/ci/guards.sh scans shared src).
  */
+
+// ─── Day keys ────────────────────────────────────────────────────────────────────
+//
+// ⚠️ DELIBERATELY NOT IMPORTED from ../utils/submission-gaps, which has the same two
+// helpers. That module sits in the shared-barrel chunk that 23 internal pages load;
+// importing it here made webpack split it (with lib/api.ts) into a NEW chunk shared by the
+// growth page and those 23 pages — one more request and ~0.5 kB gz on each of them,
+// measured from the build manifests. Two trivial functions are cheaper than that, and the
+// growth-combine tests lock their behaviour (impossible dates, year and leap boundaries).
+
+const DAY_KEY_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** A real calendar day "YYYY-MM-DD" ("2026-02-30" is not). */
+function isDayKey(value: unknown): value is string {
+  if (typeof value !== "string" || !DAY_KEY_RE.test(value)) return false;
+  const ms = Date.parse(`${value}T00:00:00Z`);
+  return Number.isFinite(ms) && new Date(ms).toISOString().slice(0, 10) === value;
+}
+
+/** The day key `delta` calendar days after `day`, in UTC days so no timezone can shift it. */
+function shiftDay(day: string, delta: number): string {
+  const d = new Date(`${day}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + delta);
+  return d.toISOString().slice(0, 10);
+}
 
 // ─── Platforms and periods ───────────────────────────────────────────────────────
 
@@ -425,7 +448,7 @@ function finiteOrNull(n: number | null | undefined): number | null {
 }
 
 function validSpan(s: GrowthSpan | null | undefined): GrowthSpan | null {
-  return s && isGapDayKey(s.from) && isGapDayKey(s.to) && s.from <= s.to ? { from: s.from, to: s.to } : null;
+  return s && isDayKey(s.from) && isDayKey(s.to) && s.from <= s.to ? { from: s.from, to: s.to } : null;
 }
 
 function isMetaPlatform(p: GrowthPlatform): p is "facebook" | "instagram" {
@@ -506,10 +529,10 @@ function metaAggregate(
   // ⚠️ The window is the platform's OWN last covered day back period−1 days. Facebook and
   // Instagram close on different boundaries, so one shared end date would mislabel one.
   const end = src.dataThroughDayByPlatform?.[platform] ?? null;
-  const span = isGapDayKey(end) ? { from: gapShiftDay(end, -(periodDays - 1)), to: end } : null;
+  const span = isDayKey(end) ? { from: shiftDay(end, -(periodDays - 1)), to: end } : null;
   // While a sync moves channels onto the next window, ends differ — see spanEnds.
   const newest = src.newestCoveredDayByPlatform?.[platform] ?? null;
-  const spanEnds = span && isGapDayKey(newest) && newest >= span.to ? { from: span.to, to: newest } : null;
+  const spanEnds = span && isDayKey(newest) && newest >= span.to ? { from: span.to, to: newest } : null;
 
   let followers = 0, followersReported = 0;
   let views = 0, viewsChannels = 0;
@@ -536,7 +559,7 @@ function metaAggregate(
       // spans the window, so starts on its first day. Absent or malformed: unknown — and
       // one unknown start makes the whole start unknown rather than quietly later.
       const from = i.followerDeltaFrom === null ? (span?.from ?? null)
-        : isGapDayKey(i.followerDeltaFrom) ? i.followerDeltaFrom : null;
+        : isDayKey(i.followerDeltaFrom) ? i.followerDeltaFrom : null;
       if (i.followerDeltaFrom === null) accounting++;
       if (from === null) sinceKnown = false;
       else if (since === null || from < since) since = from;
@@ -636,7 +659,7 @@ function boardAggregate(
     changeSince: span?.from ?? null,
     changeUntil: span?.to ?? null,
     followerDeltaAccounting: null,
-    historyFrom: isGapDayKey(historyKey) ? historyKey : null,
+    historyFrom: isDayKey(historyKey) ? historyKey : null,
     latestSyncedAt: latestIso,
     staleChannels: null,
   };
@@ -1147,7 +1170,7 @@ const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "
  * day west of UTC. The All tab's dates are the owner's explicit requirement.
  */
 export function fmtGrowthDay(key: string | null | undefined, currentYear: number): string {
-  if (!isGapDayKey(key)) return "—";
+  if (!isDayKey(key)) return "—";
   const [y, m, d] = key.split("-").map(Number);
   return `${d} ${MONTHS[m - 1]}${y === currentYear ? "" : ` ${y}`}`;
 }

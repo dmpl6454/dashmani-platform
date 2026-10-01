@@ -389,9 +389,14 @@ export async function syncPipeline(actor: PipelineActor, body: PipelineSyncReque
     mineH: hash,
     mine: body.mineH === hash ? null : mine,
     project,
-    // The WHOLE set, every tick: bootstrap is fetched once per tab, so this is the only way
-    // a `pipeline.pollMs` stretch (§8.5, evening rush) reaches tabs that are already open.
+    // The WHOLE set, every tick: bootstrap is re-fetched at most once per 10 minutes per tab,
+    // and only on a mount or a focus, so this is how a `pipeline.pollMs` stretch (§8.5,
+    // evening rush) reaches tabs that are already open.
     pollMs: settings.pollMs,
+    // The mode, every tick, for the same reason (GA): the client re-checks bootstrap when it
+    // differs from what bootstrap gave the tab, and the new mode re-keys the directory. The
+    // gate refused "off" before this point, so it is "pilot" or "on" (bootstrap's mapping).
+    mode: settings.mode === "on" ? "on" : "pilot",
     reload: body.clientBuild < settings.minClientBuild,
     ...(boardUnavailable ? { boardUnavailable: true as const } : {}),
   };

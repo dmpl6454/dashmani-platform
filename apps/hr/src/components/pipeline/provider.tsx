@@ -13,6 +13,7 @@ import {
   jitter,
   makeClientId,
   PIPELINE_DISABLED_RECHECK_MS,
+  shouldRecheckBootstrapForMode,
   shouldRecheckBootstrapPeriodically,
   shouldRevalidateBootstrapOnMount,
   type PipelineBootstrapEnabled,
@@ -184,6 +185,8 @@ function EnabledProvider({
 
   const recheckRef = useRef(recheckBootstrap);
   recheckRef.current = recheckBootstrap;
+  /** When a sync's mode mismatch last re-checked bootstrap (shouldRecheckBootstrapForMode). */
+  const lastModeRecheck = useRef(0);
 
   const [engine] = useState(
     () =>
@@ -196,6 +199,15 @@ function EnabledProvider({
           recheckRef.current();
         },
         onTerminal: (code) => setTerminal(code),
+        // G3 (GA): a sync reports a mode other than the one bootstrap gave this tab (the flip to
+        // "on" while the tab stayed focused): re-check bootstrap — its new mode re-keys the
+        // directory, so newly enabled colleagues become pickable without a reload or a refocus.
+        onServerMode: (mode) => {
+          const now = Date.now();
+          if (!shouldRecheckBootstrapForMode(bootRef.current.mode, mode, lastModeRecheck.current, now)) return;
+          lastModeRecheck.current = now;
+          recheckRef.current();
+        },
         onReloadProject: (id) => {
           loadProject(id).catch(() => {
             /* the next sync or a manual reload settles it */

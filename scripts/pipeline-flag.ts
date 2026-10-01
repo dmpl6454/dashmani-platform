@@ -21,6 +21,13 @@
  * matches no user, or more than one, is an error: nothing is written. The pilot list is
  * stored as a sorted JSON array of user ids; ids already on the list whose user no longer
  * exists are kept (and reported) — removing them is an explicit `--remove`.
+ *
+ * ⚠️ ROLL BACK WITH --mode=off, NEVER --mode=pilot. Going on → pilot strands everyone off the
+ * pilot list: they get 403 on projects they OWN (and nobody can transfer ownership to them —
+ * only pilot users are pickable), and every due alert the cron sends meanwhile stamps the whole
+ * project as notified for that date while writing rows only for pilot users, so the others
+ * never get it — not even after a later switch back to on. The script prints a warning for
+ * on → pilot (WARNINGS below) but does not refuse it: an operator may mean it.
  */
 import { prisma } from "@dashmani/db";
 
@@ -49,7 +56,16 @@ export interface PipelineFlagResult {
   changed: boolean;
   applied: boolean;
   errors: string[];
+  /** Cautions about a VALID change — printed prominently, never a reason not to write. */
+  warnings: string[];
 }
+
+/** The on → pilot caution (see the header). */
+export const ON_TO_PILOT_WARNING =
+  "on → pilot is NOT a safe rollback. Everyone off the pilot list is locked out of the projects they own " +
+  "(403, and ownership can't be transferred to them), and due alerts sent meanwhile are marked as sent for " +
+  "every participant, so they never get them — not even after you switch back to on. " +
+  "To roll back, use --mode=off (the kill switch): it pauses Pipeline for everyone and resumes cleanly.";
 
 type Db = typeof prisma;
 
@@ -128,6 +144,8 @@ export async function runPipelineFlag(db: Db, opts: PipelineFlagOptions): Promis
   const before = await describe(db, beforeMode, beforeEmail, beforeIds);
   const after = await describe(db, nextMode, nextEmail, nextIds);
   const modeChanged = opts.mode !== undefined && opts.mode !== beforeMode;
+  const warnings: string[] = [];
+  if (modeChanged && beforeMode === "on" && opts.mode === "pilot") warnings.push(ON_TO_PILOT_WARNING);
   const emailChanged = opts.email !== undefined && opts.email !== beforeEmail;
   const idsChanged = JSON.stringify([...beforeIds].sort()) !== JSON.stringify(nextIds);
   const changed = modeChanged || idsChanged || emailChanged;
@@ -160,7 +178,7 @@ export async function runPipelineFlag(db: Db, opts: PipelineFlagOptions): Promis
     });
     applied = true;
   }
-  return { before, after, changed, applied, errors };
+  return { before, after, changed, applied, errors, warnings };
 }
 
 function print(label: string, s: PipelineFlagState): void {
@@ -188,6 +206,10 @@ async function main() {
   const res = await runPipelineFlag(prisma, { mode, email, add: list(arg("add")), remove: list(arg("remove")), apply: apply && confirm });
   print("BEFORE", res.before);
   print("AFTER ", res.after);
+  for (const w of res.warnings) {
+    const bar = "!".repeat(78);
+    console.warn(`\n${bar}\nWARNING: ${w}\n${bar}\n`);
+  }
   for (const e of res.errors) console.error(`ERROR: ${e}`);
   if (res.errors.length) {
     console.error("Nothing written.");

@@ -9,8 +9,9 @@
  * e2e". The cross-platform roll-ups removed on 2026-08-24 were cut because they came from
  * follower SNAPSHOTS rather than each platform's own metrics, so this tab only composes the
  * three boards' OWN figures — from the same three endpoints the sibling tabs call — and
- * labels every figure with its source and the exact dates it covers. The composition is
- * the pure `combineGrowth` in @dashmani/shared (unit-tested in apps/api).
+ * labels every figure with its source and the exact dates it covers. The composition and
+ * every display rule (what may be shown as a number, why a figure is absent, which dates it
+ * covers) are pure functions in packages/shared/src/growth/combine.ts, tested in apps/api.
  *
  * ⚠️ PERIODS ARE 7 AND 28 DAYS ONLY. They are the spans every platform can measure alike:
  * Meta answers only its native rolling windows (`week`, `days_28`) and the YouTube/
@@ -28,22 +29,35 @@
  * ⚠️ A null renders as an em-dash, never 0 (fmtMetric / fmtExact / fmtDelta). Do not reach
  * for use-growth's fmtCompact or DeltaBadge: no billions tier, and DeltaBadge prints a null
  * delta as "0" — the fabricated-zero class.
+ *
+ * ⚠️ Prose that explains a state lives OUTSIDE the tables' horizontal scrollers. Inside one,
+ * the table's min-width stretches the sentence past a phone's edge and its Retry with it
+ * (measured at 375px: the error text cut off at 193px, Retry at x=807px).
  */
 
-import { useMemo, useState, type ReactNode } from "react";
+import { useDeferredValue, useMemo, useState, type ReactNode } from "react";
 import { AlertTriangle } from "lucide-react";
 import {
   combineGrowth,
   filterGrowthChannels,
   growthChannelSortValue,
   growthMetaWindow,
-  fmtGrowthDay,
-  fmtGrowthSpan,
+  growthPlatformChangeView,
+  growthCombinedChangeView,
+  growthHistoryRequirement,
+  growthPeriodText,
+  growthSourceProblems,
+  growthTableCountLabel,
+  growthTableEmpty,
+  growthRefreshFailureText,
+  growthListNames,
   fmtGrowthIstClock,
   GROWTH_ALL_PERIODS,
   DEFAULT_GROWTH_ALL_PERIOD,
   GROWTH_PLATFORMS,
   GROWTH_PLATFORM_LABEL,
+  GROWTH_PLATFORM_TAB,
+  GROWTH_SOURCE_OF,
   type GrowthAllPeriod,
   type GrowthPlatform,
   type GrowthPlatformAggregate,
@@ -51,6 +65,7 @@ import {
   type GrowthChannelSortKey,
   type GrowthCombined,
   type GrowthCombination,
+  type GrowthSource,
   type GrowthSourceInput,
   // ⚠️ The module, NOT the @dashmani/shared barrel: page.tsx imports this panel
   // statically, so the barrel would put zod and every validator into the first load of
@@ -87,27 +102,13 @@ const SOURCE: Record<GrowthPlatform, { badge: "api" | "scraper"; label: string }
   snapchat: { badge: "scraper", label: "Public profile pages" },
 };
 
-const SPAN_KIND_LABEL: Record<GrowthPlatform, string> = {
-  facebook: "Pacific days — Meta's day for Facebook",
-  instagram: "UTC days — Meta's day for Instagram",
-  youtube: "our daily snapshots, IST dates",
-  snapchat: "our daily snapshots, IST dates",
-};
+/** The sources in display order, with the platforms each one feeds. */
+const SOURCES: readonly GrowthSource[] = ["meta", "youtube", "snapchat"];
+const platformsOf = (s: GrowthSource) => GROWTH_PLATFORMS.filter((p) => GROWTH_SOURCE_OF[p] === s);
 
-/** The source request behind each platform: Facebook and Instagram share Meta's. */
-type SourceKey = "meta" | "youtube" | "snapchat";
-const SOURCE_OF: Record<GrowthPlatform, SourceKey> = {
-  facebook: "meta", instagram: "meta", youtube: "youtube", snapchat: "snapchat",
-};
-
-/** The sibling tab each platform lives on — Facebook and Instagram are both on "Meta". */
-const TAB_NAME: Record<GrowthPlatform, string> = {
-  facebook: "Meta", instagram: "Meta", youtube: "YouTube", snapchat: "Snapchat",
-};
-
-/** "Facebook", "Facebook and YouTube", "Facebook, Instagram and YouTube". */
-function listNames(ps: readonly GrowthPlatform[]): string {
-  const n = ps.map((p) => GROWTH_PLATFORM_LABEL[p]);
+/** "YouTube's", "YouTube's and Snapchat's" — for "±X from YouTube's and Snapchat's rounded counts". */
+function possessives(ps: readonly GrowthPlatform[]): string {
+  const n = ps.map((p) => `${GROWTH_PLATFORM_LABEL[p]}'s`);
   if (n.length <= 1) return n[0] ?? "";
   return `${n.slice(0, -1).join(", ")} and ${n[n.length - 1]}`;
 }
@@ -151,11 +152,12 @@ function PlatformPill({ platform }: { platform: GrowthPlatform }) {
 /**
  * The channel's latest refresh failed. Deliberately not the boards' ErrorMark: its tooltip
  * blames a changed handle, which is wrong for Meta, where a failure is usually lost admin
- * access. This one states only what is true for every platform.
+ * access. ⚠️ And worded by kind, never quoting the platform's reply — Meta's transient (#2)
+ * reads "An unexpected error has occurred", a phrase the owner banned from the screen.
  */
 function RefreshMark({ message, platform }: { message: string; platform: GrowthPlatform }) {
   return (
-    <span title={`This channel's most recent refresh failed, so any figures shown are from its last successful one. The ${TAB_NAME[platform]} tab says more. The platform's reply: ${message}`}>
+    <span title={growthRefreshFailureText(message, platform)}>
       <AlertTriangle className="h-3 w-3 text-[#C2861D] shrink-0" />
     </span>
   );
@@ -164,6 +166,10 @@ function RefreshMark({ message, platform }: { message: string; platform: GrowthP
 export function AllPanel({ onOpenTab }: { onOpenTab?: (tab: SiblingTab) => void }) {
   const [days, setDays] = useState<GrowthAllPeriod>(DEFAULT_GROWTH_ALL_PERIOD);
   const [q, setQ] = useState("");
+  // ⚠️ The table holds ~470 rows. Filtering on the DEFERRED query keeps typing responsive:
+  // React re-renders the table at low priority instead of inside each keystroke. Still
+  // client-side only — nothing is sent to the server.
+  const qDeferred = useDeferredValue(q);
   const [platformFilter, setPlatformFilter] = useState<GrowthPlatform | "all">("all");
   const [sort, setSort] = useState<{ key: GrowthChannelSortKey; dir: SortDir }>({ key: "followers", dir: "desc" });
 
@@ -189,18 +195,27 @@ export function AllPanel({ onOpenTab }: { onOpenTab?: (tab: SiblingTab) => void 
   );
 
   // Loaded data plus a failed REVALIDATION: the figures shown are still the last good ones.
-  const refreshFailed: Record<SourceKey, boolean> = {
+  const refreshFailed: Record<GrowthSource, boolean> = {
     meta: metaQ.data !== undefined && !!metaQ.error,
     youtube: ytQ.data !== undefined && !!ytQ.error,
     snapchat: scQ.data !== undefined && !!scQ.error,
   };
-  const retry: Record<SourceKey, () => void> = {
+  const retry: Record<GrowthSource, () => void> = {
     meta: () => void metaQ.mutate(),
     youtube: () => void ytQ.mutate(),
     snapchat: () => void scQ.mutate(),
   };
   const retrySources = (ps: readonly GrowthPlatform[]) => {
-    for (const s of new Set(ps.map((p) => SOURCE_OF[p]))) retry[s]();
+    for (const s of new Set(ps.map((p) => GROWTH_SOURCE_OF[p]))) retry[s]();
+  };
+  const openTab = (t: SiblingTab) => {
+    onOpenTab?.(t);
+    // ⚠️ The link sits a screen or more down the page, and switching panels keeps the
+    // scroll position — the reader would land part-way through the Meta table with the tab
+    // strip and its header out of view. Back to the top, where both are. Either element
+    // can be the scroller (the portal's <main> is overflow-y-auto), so ask both.
+    window.scrollTo({ top: 0 });
+    document.querySelector("main")?.scrollTo({ top: 0 });
   };
 
   const periodDays = combo.periodDays;
@@ -209,10 +224,11 @@ export function AllPanel({ onOpenTab }: { onOpenTab?: (tab: SiblingTab) => void 
   // shown here comes from SWR, so this never runs during prerender).
   const currentYear = new Date().getFullYear();
   const fbDayEnd = fmtGrowthIstClock(metaQ.data?.dayStarts?.facebook);
+  const requirement = growthHistoryRequirement(periodDays);
 
   const filtered = useMemo(
-    () => filterGrowthChannels(combo.channels, { q, platform: platformFilter }),
-    [combo.channels, q, platformFilter],
+    () => filterGrowthChannels(combo.channels, { q: qDeferred, platform: platformFilter }),
+    [combo.channels, qDeferred, platformFilter],
   );
   const sorted = useMemo(
     () => [...filtered].sort((a, b) =>
@@ -248,12 +264,13 @@ export function AllPanel({ onOpenTab }: { onOpenTab?: (tab: SiblingTab) => void 
             the same thing on every platform
           </p>
           <p className="text-[11px] text-[#B0B0B0] mt-1 leading-snug max-w-3xl">
-            Every number here is the one that platform&apos;s own tab shows —{" "}
+            Every number comes from that platform&apos;s own board, under the rules its own tab uses —{" "}
             <strong className="font-medium text-[#8A8A8A]">Meta&apos;s API</strong> for Facebook and
             Instagram, <strong className="font-medium text-[#8A8A8A]">YouTube&apos;s Data API</strong>,
             and <strong className="font-medium text-[#8A8A8A]">Snapchat&apos;s public profile
-            pages</strong> — added together. Nothing is re-measured or estimated, and each figure
-            says which dates it covers.
+            pages</strong> — added together. Nothing is re-measured, and each figure says which dates
+            it covers. The YouTube and Snapchat tabs offer 7, 14, 30 and 90 days: their 7-day figures
+            are the ones those tabs show, while 28 days is measured for this tab alone.
           </p>
         </div>
 
@@ -289,6 +306,8 @@ export function AllPanel({ onOpenTab }: { onOpenTab?: (tab: SiblingTab) => void 
             as zero.
           </p>
         </div>
+        <SourceStatus combo={combo} refreshFailed={refreshFailed} onRetry={(s) => retry[s]()} />
+        <DatesList combo={combo} currentYear={currentYear} />
         <div className="overflow-x-auto">
           <table className="w-full min-w-[860px]">
             <thead>
@@ -297,17 +316,17 @@ export function AllPanel({ onOpenTab }: { onOpenTab?: (tab: SiblingTab) => void 
                 <PlainTh label="Channels" />
                 <PlainTh
                   label={<>Followers <span className="text-[#B0B0B0] font-normal">(now)</span></>}
-                  title="A live total, not a period figure — how many followers (and YouTube subscribers) the channels have right now."
+                  title="A live total, not a period figure — how many followers (and YouTube subscribers) the channels have now, as each platform last reported them."
                 />
                 <PlainTh
                   label={`Change · ${periodDays}d`}
-                  title={`Follower change over the period, counting only channels whose own history covers at least ${combo.platforms.facebook.followerDeltaMinDays} of the ${periodDays} days.`}
+                  title={`Follower change over the period, counting only channels whose own history covers ${requirement}. A YouTube or Snapchat change smaller than its rounding is shown as that limit, not as a number — as on those tabs.`}
                 />
                 <PlainTh
                   label={`Views · ${periodDays}d`}
                   title="Views over the period, as each platform counts them. Snapchat publishes no period view count."
                 />
-                <PlainTh label="Period covered" align="left" title="The exact dates each platform's figures cover, and whose calendar they are on." />
+                <PlainTh label="Period covered" align="left" title="The exact dates each platform's change and views cover, and whose calendar they are on." />
                 <PlainTh label="Source" align="left" pad="px-5" />
               </tr>
             </thead>
@@ -316,13 +335,11 @@ export function AllPanel({ onOpenTab }: { onOpenTab?: (tab: SiblingTab) => void 
                 <PlatformRow
                   key={p}
                   a={combo.platforms[p]}
-                  periodDays={periodDays}
                   currentYear={currentYear}
-                  refreshFailed={refreshFailed[SOURCE_OF[p]]}
-                  onRetry={retry[SOURCE_OF[p]]}
+                  refreshFailed={refreshFailed[GROWTH_SOURCE_OF[p]]}
                 />
               ))}
-              <TotalRow c={c} periodDays={periodDays} />
+              <TotalRow c={c} />
             </tbody>
           </table>
         </div>
@@ -340,19 +357,23 @@ export function AllPanel({ onOpenTab }: { onOpenTab?: (tab: SiblingTab) => void 
           daily snapshots, dated on the Indian calendar; each figure names the snapshot dates it really
           covers, which can be shorter than the period while history builds up.{" "}
           <strong className="font-medium text-[#7A7A7A]">Follower change</strong> counts only channels
-          whose own history covers at least {combo.platforms.facebook.followerDeltaMinDays} of the{" "}
-          {periodDays} days — a shorter history is left out rather than counted as flat. For Facebook and
-          Instagram it runs from our daily API follower snapshots to each channel&apos;s current count
-          (an Instagram account without that history uses Meta&apos;s own follows-minus-unfollows for the
-          period); YouTube and Snapchat publish rounded counts, so their part carries the ± shown.{" "}
+          whose own history covers {requirement} — a shorter history is left out rather than counted as
+          flat. For Facebook and Instagram it runs from our daily API follower snapshots to each
+          channel&apos;s current count, so it has its own dates rather than the views window&apos;s:
+          Facebook&apos;s count is re-read on every Meta sync, Instagram&apos;s only when the channels
+          are refreshed (on connecting, or with Refresh channels on the Meta tab). An Instagram account
+          without that history uses Meta&apos;s own follows-minus-unfollows for the views window. YouTube
+          and Snapchat publish rounded counts, so a change smaller than their ± is shown as that limit
+          rather than as a number.{" "}
           <strong className="font-medium text-[#7A7A7A]">Followers</strong> is a live total and reads
           the same on both periods. <strong className="font-medium text-[#7A7A7A]">Views</strong> are
           each platform&apos;s own count: Meta counts every time content was shown or played, including
           repeats; YouTube&apos;s is the growth of its exact lifetime view counter; Snapchat publishes
-          no period view count, so it is left out. A dash means a platform published no figure — never
-          zero. Engagements, reach and revenue are Meta-only — see the{" "}
+          no period view count, so it is left out. A dash is never a zero: the platform published
+          nothing, our history does not cover the period yet, or the movement is finer than the
+          platform&apos;s rounding. Engagements, reach and revenue are Meta-only — see the{" "}
           {onOpenTab ? (
-            <button onClick={() => onOpenTab("meta")} className="underline hover:text-[#1A1A1A]">Meta tab</button>
+            <button onClick={() => openTab("meta")} className="underline hover:text-[#1A1A1A]">Meta tab</button>
           ) : (
             "Meta tab"
           )}
@@ -398,30 +419,21 @@ export function AllPanel({ onOpenTab }: { onOpenTab?: (tab: SiblingTab) => void 
             Totals cover every channel; search and the platform filter narrow this table only.
           </span>
           <span className="text-[11px] text-[#B0B0B0] ml-auto">
-            {/* ⚠️ Never "0 channels" before anything has loaded — only a loaded response may claim emptiness. */}
-            {combo.channels.length === 0 && !c.settled ? (
-              "Loading…"
-            ) : (
-              <>
-                {sorted.length} channel{sorted.length === 1 ? "" : "s"}
-                {sorted.length !== combo.channels.length && (
-                  <span className="text-[#B0B0B0]"> of {combo.channels.length}</span>
-                )}
-                {!c.settled && <span className="text-[#B0B0B0]"> so far</span>}
-              </>
-            )}
+            {/* ⚠️ Only a loaded response may claim a count: never "0 channels" over sources
+                that are still loading or failed (growthTableCountLabel). */}
+            {growthTableCountLabel(combo, { shown: sorted.length, platform: platformFilter })}
           </span>
         </div>
 
         {(c.loadingPlatforms.length > 0 || c.failedPlatforms.length > 0) && (
           <p className="px-5 py-2 border-b border-[#F6F2EA] text-[10px] text-[#7A7A7A] leading-snug">
             {c.loadingPlatforms.length > 0 && (
-              <>Still loading: <strong className="font-medium text-[#5A5A5A]">{listNames(c.loadingPlatforms)}</strong>. </>
+              <>Still loading: <strong className="font-medium text-[#5A5A5A]">{growthListNames(c.loadingPlatforms)}</strong>. </>
             )}
             {c.failedPlatforms.length > 0 && (
               <>
                 <span className="text-[#C0504D]">
-                  Not listed: {listNames(c.failedPlatforms)} — couldn&apos;t load.
+                  Not listed: {growthListNames(c.failedPlatforms)} — couldn&apos;t load.
                 </span>{" "}
                 <button onClick={() => retrySources(c.failedPlatforms)} className="underline hover:text-[#1A1A1A]">
                   Retry
@@ -434,10 +446,12 @@ export function AllPanel({ onOpenTab }: { onOpenTab?: (tab: SiblingTab) => void 
         {combo.channels.length > 0 && (
           <p className="px-5 py-2 border-b border-[#F6F2EA] text-[10px] text-[#7A7A7A] leading-snug">
             Each row shows its own platform&apos;s figures, so spans differ by platform; a small figure
-            under a value is that row&apos;s own span when it is not the period. A{" "}
+            under a value is that row&apos;s own span when it is not the period. A dash is never a zero:
+            the channel&apos;s history doesn&apos;t cover the period yet, its movement is finer than the
+            platform&apos;s rounding, or the platform publishes no such figure (Snapchat publishes no
+            period view count). A{" "}
             <span className="line-through decoration-[#C2861D]">struck-through</span> change jumped
             between two different channels and is left out of every total and of the Change sort.
-            Snapchat publishes no period view count, so its views are a dash.
           </p>
         )}
 
@@ -446,7 +460,7 @@ export function AllPanel({ onOpenTab }: { onOpenTab?: (tab: SiblingTab) => void 
             combo={combo}
             rows={sorted}
             platformFilter={platformFilter}
-            searching={q.trim() !== ""}
+            searching={qDeferred.trim() !== ""}
             sort={sort}
             onSort={onSort}
           />
@@ -465,25 +479,53 @@ function Tiles({ combo, currentYear }: { combo: GrowthCombination; currentYear: 
   // ⚠️ While ANY source is loading the combined figures are not final: a sum that jumps as
   // each request lands reads as data changing. Show the loading state until all answered.
   const settled = c.settled;
-  const missing = c.failedPlatforms.length > 0 ? ` · excluding ${listNames(c.failedPlatforms)} — couldn't load` : "";
   // Every source answered and none loaded: say that once rather than "across 0 platforms".
   const noneLoaded = settled && c.includedPlatforms.length === 0;
   const NONE = "no board could be loaded — see By platform below";
+  // ⚠️ A PARTIAL SUM MUST NOT READ AS THE ESTATE. Meta is ~90% of the followers, so with it
+  // missing the headline drops from ~368m to ~43m — which looks like wiped data. The values
+  // are muted and the exclusion gets its own red line above them, not a trailing grey clause.
+  const partial = settled && !noneLoaded && c.failedPlatforms.length > 0;
+  const warn = partial
+    ? `Partial totals — ${growthListNames(c.failedPlatforms)} couldn't load, so every figure below leaves ` +
+      `${c.failedPlatforms.length > 1 ? "them" : "it"} out rather than counting ${c.failedPlatforms.length > 1 ? "them" : "it"} as zero.`
+    : null;
 
   const syncedLine = (["youtube", "snapchat"] as const)
     .filter((p) => P[p].latestSyncedAt)
     .map((p) => `${GROWTH_PLATFORM_LABEL[p]} ${relativeTime(P[p].latestSyncedAt)}`)
     .join(", ");
+  const igListed = P.instagram.state === "ready" && (P.instagram.channels ?? 0) > 0;
 
-  const spanText = (p: GrowthPlatform) =>
-    P[p].span ? fmtGrowthSpan(P[p].span, currentYear, p === "youtube" || p === "snapchat" ? " → " : " – ") : "no dated figure";
+  /** "Facebook: 3 Sep → latest sync", from the same text the By-platform table prints. */
+  const datesOf = (p: GrowthPlatform, which: "change" | "views") => {
+    const t = growthPeriodText(P[p], currentYear);
+    const v = which === "change" ? (t.change ?? t.changeWhy) : (t.views ?? t.viewsWhy);
+    return `${GROWTH_PLATFORM_LABEL[p]}: ${v ?? "—"}`;
+  };
+  const datedReady = GROWTH_PLATFORMS.filter((p) => P[p].state === "ready" && (P[p].channels ?? 0) > 0);
 
-  // Why no change can be shown, from the data: a full-period measurement finer than the
-  // rounding step is a different absence from "not tracked long enough" — never say the latter for both.
-  const belowStep = c.includedPlatforms.reduce((acc, p) => acc + (P[p].followerDeltaSuppressed ?? 0), 0);
-  const noChangeNote = belowStep > 0
-    ? `${belowStep} channel${belowStep === 1 ? "" : "s"} moved less than the rounding step; none has a countable change`
-    : `no channel has ${n} days of history yet`;
+  const pm = c.uncertainty > 0 ? `±${fmtMetric(c.uncertainty)} from ${possessives(c.uncertaintyPlatforms)} rounded counts` : null;
+  const changeView = growthCombinedChangeView(c);
+  const changeChannels = `${c.followerDeltaChannels} channel${c.followerDeltaChannels === 1 ? "" : "s"}`;
+  const changeNote = (() => {
+    if (!settled) return "Loading…";
+    if (noneLoaded) return NONE;
+    if (changeView.kind === "value") {
+      // The ± leads when it is bigger than the change itself: it is the headline then.
+      return changeView.approx && pm
+        ? `${pm}, more than the change itself · ${changeChannels}`
+        : `${growthListNames(c.followerDeltaPlatforms)} · ${changeChannels}${pm ? ` · ${pm}` : ""}`;
+    }
+    if (changeView.kind === "absent" && changeView.reason === "below-step") {
+      return `${c.followerDeltaSuppressed} channel${c.followerDeltaSuppressed === 1 ? "" : "s"} moved less than the rounding step; none has a countable change${pm ? ` · ${pm}` : ""}`;
+    }
+    if (changeView.kind === "absent" && changeView.reason === "excluded") {
+      return `${c.followerDeltaExcluded} excluded as unreliable; none left to count`;
+    }
+    if (changeView.kind === "absent" && changeView.reason === "no-channels") return "no channels tracked yet";
+    return `no channel's own history covers ${growthHistoryRequirement(n)} yet`;
+  })();
 
   const tiles: Array<{ id: string; label: string; value: string; tone: string; note: ReactNode; title: string }> = [
     {
@@ -491,7 +533,7 @@ function Tiles({ combo, currentYear }: { combo: GrowthCombination; currentYear: 
       label: "Channels",
       value: settled ? fmtExact(c.channels) : "—",
       tone: "text-[#1A1A1A]",
-      note: !settled ? "Loading…" : noneLoaded ? NONE : `across ${c.includedPlatforms.length} platform${c.includedPlatforms.length === 1 ? "" : "s"}${missing}`,
+      note: !settled ? "Loading…" : noneLoaded ? NONE : `across ${c.includedPlatforms.length} platform${c.includedPlatforms.length === 1 ? "" : "s"}`,
       title:
         "How many channels the boards track: the Facebook Pages and Instagram accounts the connected " +
         "Meta account administers, plus the channels on the YouTube and Snapchat boards. Removed " +
@@ -508,36 +550,33 @@ function Tiles({ combo, currentYear }: { combo: GrowthCombination; currentYear: 
         ? "Loading…"
         : noneLoaded
           ? NONE
-          : `as of the latest sync · ${c.followersReported} of ${c.followersTotal} channels publish a count${missing}`,
+          : `${c.followersReported} of ${c.followersTotal} channels publish a count` +
+            (igListed ? " · Instagram as of the last channel refresh" : ""),
       title:
         "A live total, not a period figure — how many followers (and YouTube subscribers) these channels " +
-        "have right now, so it reads the same on both periods by design. YouTube rounds subscriber counts " +
-        "to three significant figures and Snapchat to the nearest 100, and a Snapchat profile can withhold " +
-        "its count entirely — which is why fewer channels publish one than the boards hold." +
-        (syncedLine ? ` Latest syncs: ${syncedLine}; Meta's counts are as of its latest sync.` : ""),
+        "have now, as each platform last reported them, so it reads the same on both periods by design. " +
+        "Facebook's counts are re-read on every Meta sync (about every 3 hours); Instagram's only when the " +
+        "channels are refreshed (on connecting, or with Refresh channels on the Meta tab)" +
+        (syncedLine ? `; YouTube's and Snapchat's on their own syncs (latest: ${syncedLine})` : "") +
+        ". YouTube rounds subscriber counts to three significant figures and Snapchat to the nearest 100, " +
+        "and a Snapchat profile can withhold its count entirely — which is why fewer channels publish one " +
+        "than the boards hold.",
     },
     {
       id: "change",
       label: `Follower change · ${n}d`,
-      value: settled ? fmtChange(c.followerDelta, c.followerDeltaApprox) : "—",
-      tone: settled ? changeTone(c.followerDelta, c.followerDeltaApprox) : "text-[#1A1A1A]",
-      note: !settled
-        ? "Loading…"
-        : noneLoaded
-          ? NONE
-          : c.followerDelta === null
-            ? `${noChangeNote}${missing}`
-            : `${listNames(c.followerDeltaPlatforms)} · ${c.followerDeltaChannels} channels` +
-              (c.uncertainty > 0 ? ` · ±${fmtMetric(c.uncertainty)} from rounded counts` : "") +
-              missing,
+      value: settled && changeView.kind === "value" ? fmtChange(changeView.value, changeView.approx) : "—",
+      tone: settled && changeView.kind === "value" ? changeTone(changeView.value, changeView.approx) : "text-[#1A1A1A]",
+      note: changeNote,
       title:
-        `Follower change over the ${n} days, summed only over channels whose own history covers at least ` +
-        `${P.facebook.followerDeltaMinDays} of them. Facebook and Instagram: Meta's own counts, not rounded. YouTube ` +
-        `(${spanText("youtube")}) and Snapchat (${spanText("snapchat")}): our daily snapshots of counts the ` +
-        "platforms publish rounded, so the sum carries a ± error bar" +
-        (c.followerDeltaApprox
+        `Follower change over the ${n} days, summed only over channels whose own history covers ` +
+        `${growthHistoryRequirement(n)}. Facebook and Instagram: Meta's own counts, not rounded, from our API ` +
+        "follower snapshots to each channel's current count. YouTube and Snapchat: our daily snapshots of " +
+        "counts the platforms publish rounded, so the sum carries a ± error bar" +
+        (changeView.kind === "value" && changeView.approx
           ? " — and this figure is smaller than it, so it is shown as approximate."
           : ".") +
+        (datedReady.length > 0 ? ` Dates — ${datedReady.map((p) => datesOf(p, "change")).join("; ")}.` : "") +
         " Channels we have not tracked that long are left out rather than counted as flat.",
     },
     {
@@ -550,51 +589,54 @@ function Tiles({ combo, currentYear }: { combo: GrowthCombination; currentYear: 
         : noneLoaded
           ? NONE
           : [
-              c.viewsPlatforms.length > 0 ? listNames(c.viewsPlatforms) : "no platform has a figure yet",
-              c.viewsPendingPlatforms.length > 0 ? `${listNames(c.viewsPendingPlatforms)}: not enough history yet` : null,
-              c.viewsUnpublishedPlatforms.length > 0 ? `${listNames(c.viewsUnpublishedPlatforms)} publishes none` : null,
-            ].filter(Boolean).join(" · ") + missing,
+              c.viewsPlatforms.length > 0 ? growthListNames(c.viewsPlatforms) : "no platform has a figure yet",
+              c.viewsPendingPlatforms.length > 0 ? `${growthListNames(c.viewsPendingPlatforms)}: not enough view history yet` : null,
+              c.viewsUnreportedPlatforms.length > 0 ? `${growthListNames(c.viewsUnreportedPlatforms)}: none reported` : null,
+              c.viewsUnpublishedPlatforms.length > 0 ? `${growthListNames(c.viewsUnpublishedPlatforms)} publishes none` : null,
+            ].filter(Boolean).join(" · "),
       title:
-        "Views over the period, as each platform counts them, added together. Facebook and Instagram " +
-        `(${spanText("facebook")} and ${spanText("instagram")}): every time content was shown or played, ` +
-        `including repeats. YouTube (${P.youtube.viewsSpan ? fmtGrowthSpan(P.youtube.viewsSpan, currentYear, " → ") : "no dated figure yet"}): ` +
-        "the growth of each channel's exact lifetime view counter. Snapchat publishes no period view count, " +
-        "so it is never part of this sum.",
+        "Views over the period, as each platform counts them, added together. Facebook and Instagram: every " +
+        "time content was shown or played, including repeats. YouTube: the growth of each channel's exact " +
+        "lifetime view counter. Snapchat publishes no period view count, so it is never part of this sum." +
+        (datedReady.length > 0 ? ` Dates — ${datedReady.map((p) => datesOf(p, "views")).join("; ")}.` : ""),
     },
   ];
 
   return (
-    // 4 tiles: two columns, then four from `xl` — the column count divides 4 at every
-    // breakpoint, so no tile is ever orphaned onto a row of its own. ⚠️ Four across only at
-    // `xl`: the sidebar takes ~340px, so at 1024px four columns would ellipsise the values.
-    <div
-      aria-busy={!settled}
-      className="px-5 py-5 grid grid-cols-2 xl:grid-cols-4 gap-x-4 gap-y-5 border-b border-[#F0EAE0]"
-    >
-      {tiles.map((t) => (
-        <div
-          key={t.id}
-          title={t.title}
-          // Hairlines only at `xl`, where all four are guaranteed to share one row.
-          className="min-w-0 xl:border-l xl:border-[#F0EAE0] xl:pl-4 xl:first:border-l-0 xl:first:pl-0"
-        >
-          <p
-            // ⚠️ clamp with the 2.2vw coefficient, as on the sibling boards: `vw` is the WINDOW
-            // and the sidebar takes ~340px of it, so a bigger coefficient ellipsises at 1024px.
-            className={`font-num text-[clamp(1.5rem,2.2vw,2rem)] font-semibold tracking-tight leading-none truncate ${
-              settled ? t.tone : "text-[#C4C4C4] animate-pulse"}`}
+    <>
+      {warn && <p className="px-5 pt-4 -mb-1 text-[11px] font-medium leading-snug text-[#C0504D]">{warn}</p>}
+      {/* 4 tiles: two columns, then four from `xl` — the column count divides 4 at every
+          breakpoint, so no tile is ever orphaned onto a row of its own. ⚠️ Four across only at
+          `xl`: the sidebar takes ~340px, so at 1024px four columns would ellipsise the values. */}
+      <div
+        aria-busy={!settled}
+        className="px-5 py-5 grid grid-cols-2 xl:grid-cols-4 gap-x-4 gap-y-5 border-b border-[#F0EAE0]"
+      >
+        {tiles.map((t) => (
+          <div
+            key={t.id}
+            title={t.title}
+            // Hairlines only at `xl`, where all four are guaranteed to share one row.
+            className="min-w-0 xl:border-l xl:border-[#F0EAE0] xl:pl-4 xl:first:border-l-0 xl:first:pl-0"
           >
-            {t.value}
-          </p>
-          {/* Labels wrap rather than truncate: a clipped "FOLLOWERS & SUBSCRI…" loses its
-              meaning on a phone, where the tooltip is out of reach. */}
-          <p className="mt-2 text-[10px] font-medium uppercase tracking-[0.08em] text-[#8A8A8A] leading-tight break-words">
-            {t.label}
-          </p>
-          <p className="mt-0.5 text-[10px] leading-tight text-[#B0B0B0] break-words">{t.note}</p>
-        </div>
-      ))}
-    </div>
+            <p
+              // ⚠️ clamp with the 2.2vw coefficient, as on the sibling boards: `vw` is the WINDOW
+              // and the sidebar takes ~340px of it, so a bigger coefficient ellipsises at 1024px.
+              className={`font-num text-[clamp(1.5rem,2.2vw,2rem)] font-semibold tracking-tight leading-none truncate ${
+                !settled ? "text-[#C4C4C4] animate-pulse" : partial ? "text-[#8A8A8A]" : t.tone}`}
+            >
+              {t.value}
+            </p>
+            {/* Labels wrap rather than truncate: a clipped "FOLLOWERS & SUBSCRI…" loses its
+                meaning on a phone, where the tooltip is out of reach. */}
+            <p className="mt-2 text-[10px] font-medium uppercase tracking-[0.08em] text-[#8A8A8A] leading-tight break-words">
+              {t.label}
+            </p>
+            <p className="mt-0.5 text-[10px] leading-tight text-[#B0B0B0] break-words">{t.note}</p>
+          </div>
+        ))}
+      </div>
+    </>
   );
 }
 
@@ -602,92 +644,161 @@ function Tiles({ combo, currentYear }: { combo: GrowthCombination; currentYear: 
 
 const SUB = "block text-[10px] font-normal text-[#B0B0B0] leading-tight";
 
-function PlatformRow({ a, periodDays, currentYear, refreshFailed, onRetry }: {
+/**
+ * What is loading, what failed and why, with Retry — ABOVE the table, outside its scroller,
+ * so a phone can read every word and reach every Retry. The rows keep only a short marker.
+ */
+function SourceStatus({ combo, refreshFailed, onRetry }: {
+  combo: GrowthCombination;
+  refreshFailed: Record<GrowthSource, boolean>;
+  onRetry: (s: GrowthSource) => void;
+}) {
+  const c = combo.combined;
+  const problems = growthSourceProblems(combo);
+  const stale = SOURCES.filter((s) => refreshFailed[s]);
+  if (c.loadingPlatforms.length === 0 && problems.length === 0 && stale.length === 0) return null;
+  return (
+    <div className="px-5 pb-2 space-y-1 text-[11px] leading-snug">
+      {c.loadingPlatforms.length > 0 && (
+        <p className="text-[#7A7A7A]">
+          Loading {growthListNames(c.loadingPlatforms)}… the Total waits for every platform, so it does not
+          change as each one arrives.
+        </p>
+      )}
+      {problems.map((p) => (
+        <p key={p.source} className="text-[#C0504D]">
+          {p.text}
+          {p.kind !== "forbidden" && (
+            <>
+              {" "}
+              <button onClick={() => onRetry(p.source)} className="underline hover:text-[#1A1A1A]">Retry</button>
+            </>
+          )}
+        </p>
+      ))}
+      {stale.map((s) => (
+        <p key={s} className="text-[#C2861D]">
+          Couldn&apos;t refresh {growthListNames(platformsOf(s))} just now, so the figures shown are the ones
+          loaded earlier.{" "}
+          <button onClick={() => onRetry(s)} className="underline hover:text-[#1A1A1A]">Retry</button>
+        </p>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * The same dates as the table's "Period covered" column, for screens where that column is
+ * scrolled off to the right (below `xl` the table is wider than its card). One text source
+ * — growthPeriodText — so the two can never disagree.
+ */
+function DatesList({ combo, currentYear }: { combo: GrowthCombination; currentYear: number }) {
+  const ready = GROWTH_PLATFORMS.filter((p) => combo.platforms[p].state === "ready" && (combo.platforms[p].channels ?? 0) > 0);
+  if (ready.length === 0) return null;
+  return (
+    <div className="xl:hidden px-5 pb-2 text-[10px] text-[#7A7A7A] leading-snug">
+      <p className="font-medium text-[#5A5A5A]">Dates each figure covers</p>
+      <ul className="mt-0.5 space-y-0.5">
+        {ready.map((p) => {
+          const t = growthPeriodText(combo.platforms[p], currentYear);
+          return (
+            <li key={p}>
+              <strong className="font-medium text-[#5A5A5A]">{GROWTH_PLATFORM_LABEL[p]}</strong>{" "}
+              — change {t.change ?? t.changeWhy ?? "—"} · views {t.views ?? t.viewsWhy ?? "—"}
+              <span className="text-[#B0B0B0]"> ({t.calendar})</span>
+              {t.windowsNote && <span className="text-[#C2861D]"> · {t.windowsNote}</span>}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
+function PlatformRow({ a, currentYear, refreshFailed }: {
   a: GrowthPlatformAggregate;
-  periodDays: number;
   currentYear: number;
   refreshFailed: boolean;
-  onRetry: () => void;
 }) {
   const label = GROWTH_PLATFORM_LABEL[a.platform];
   const platformCell = (
     <td className="px-5 py-2 align-top">
       <PlatformPill platform={a.platform} />
       {a.state === "ready" && refreshFailed && (
-        <span className="block mt-1 text-[10px] text-[#C2861D] leading-tight">
-          couldn&apos;t refresh — showing figures loaded earlier ·{" "}
-          <button onClick={onRetry} className="underline hover:text-[#1A1A1A]">Retry</button>
-        </span>
+        <span className="block mt-1 text-[10px] text-[#C2861D] leading-tight">couldn&apos;t refresh — see above</span>
       )}
     </td>
   );
 
+  // ⚠️ Short on purpose: the explanation and its Retry are in SourceStatus, above the table.
+  // A sentence here runs past a phone's edge inside the 860px scroller.
   if (a.state === "loading") {
     return (
       <tr className="border-b border-[#F8F5EF]">
         {platformCell}
-        <td colSpan={6} className="px-2 py-2 text-xs text-[#B0B0B0]">Loading {label}…</td>
+        <td colSpan={6} className="px-2 py-2 text-xs text-[#B0B0B0]">Loading…</td>
       </tr>
     );
   }
-
   if (a.state === "error") {
     return (
       <tr className="border-b border-[#F8F5EF]">
         {platformCell}
-        <td colSpan={6} className="px-2 py-2 text-xs text-[#C0504D] leading-snug">
-          {/* ⚠️ Worded by KIND, never the raw API text: the owner asked that "too many
-              requests", "something went wrong" and "unexpected error" never appear, and the
-              raw 429/500/HTML-page messages are exactly those. The mismatch sentence is this
-              tab's own and explains itself. */}
-          {a.errorKind === "forbidden" ? (
-            "Only administrators can see Account Growth."
-          ) : (
-            <>
-              {a.errorKind === "mismatch"
-                ? a.error
-                : a.errorKind === "busy"
-                  ? <>{label} asked us to slow down for a moment, so it is left out of every total rather than counted as zero. Wait a minute, then retry.</>
-                  : <>{label} couldn&apos;t be loaded just now, so it is left out of every total rather than counted as zero. Its channels and their history are safe — this is a loading problem, not a data problem.</>}{" "}
-              <button onClick={onRetry} className="underline hover:text-[#1A1A1A]">Retry</button>
-            </>
-          )}
+        <td colSpan={6} className="px-2 py-2 text-xs text-[#C0504D]">
+          {a.errorKind === "forbidden" ? "administrators only" : "couldn't load — see the note above"}
         </td>
       </tr>
     );
   }
 
   const isMeta = a.platform === "facebook" || a.platform === "instagram";
-  const isBoard = !isMeta;
 
-  // Followers sub-line: coverage, the platform's rounding, and how fresh the board is.
+  // Followers sub-line: coverage, the platform's rounding, and how current the count is.
+  // ⚠️ Instagram's count is NOT re-read on the 3-hourly sync — only discovery (connecting,
+  // or Refresh channels) writes it — so "as of the latest sync" would be false for it.
   const followersSub = [
     (a.followersReported ?? 0) < (a.followersTotal ?? 0) ? `${a.followersReported} of ${a.followersTotal} publish a count` : null,
     a.platform === "youtube" ? "rounded by YouTube" : a.platform === "snapchat" ? "rounded to 100s" : null,
-    a.latestSyncedAt ? `synced ${relativeTime(a.latestSyncedAt)}` : isMeta ? "as of the latest sync" : null,
+    a.latestSyncedAt
+      ? `synced ${relativeTime(a.latestSyncedAt)}`
+      : a.platform === "facebook" ? "as of Meta's latest sync" : a.platform === "instagram" ? "as of the last channel refresh" : null,
   ].filter(Boolean).join(" · ");
 
-  // Why a change is absent — told apart from the data, never guessed at.
-  const changeAbsent =
-    isBoard && (a.followerDeltaSuppressed ?? 0) > 0
-      ? `${a.followerDeltaSuppressed} moved less than the rounding step`
-      : isBoard && (a.followerDeltaExcluded ?? 0) > 0
-        ? `${a.followerDeltaExcluded} excluded as unreliable`
-        : (a.channels ?? 0) === 0
-          ? null
-          : `no channel has ${periodDays} days of history yet`;
+  // The change, gated exactly as the platform's own tab gates it (growthPlatformChangeView).
+  const view = growthPlatformChangeView(a);
+  const pm = a.uncertainty > 0 ? `±${fmtMetric(a.uncertainty)}` : null;
+  const measured = (a.followerDeltaChannels ?? 0) > 0 ? `${a.followerDeltaChannels} of ${a.channels} channels` : null;
+  const below = (a.followerDeltaSuppressed ?? 0) > 0 ? `${a.followerDeltaSuppressed} below the rounding step` : null;
+  const excluded = (a.followerDeltaExcluded ?? 0) > 0 ? `${a.followerDeltaExcluded} excluded as unreliable` : null;
+  const changeMain = view.kind === "value" ? fmtDelta(view.value) : "—";
+  const changeClass = view.kind === "value" ? changeTone(view.value, false) : "text-[#B0B0B0]";
+  // ⚠️ Every count the board discloses is shown beside a figure — "N below the rounding
+  // step" included: the server documents it as load-bearing, and the board's tab shows it.
+  const changeSub: Array<string | null> =
+    view.kind === "value"
+      ? [measured, pm, below, excluded]
+      : view.kind === "unresolved"
+        ? [`finer than ${label}'s ±${fmtMetric(view.uncertainty)} rounding`, measured, below, excluded]
+        : view.reason === "below-step"
+          ? [`${a.followerDeltaSuppressed} moved less than the rounding step`, pm, excluded]
+          : view.reason === "excluded"
+            ? [excluded, pm]
+            : view.reason === "no-history"
+              ? [`${isMeta ? "no API history" : "no channel's history"} covers ${growthHistoryRequirement(a.periodDays)} yet`]
+              : [];
+  const changeTitle =
+    view.kind === "unresolved"
+      ? `Across the channels measured over this period ${label} publishes rounded counts, and those roundings add up to ` +
+        `±${fmtMetric(view.uncertainty)} — more than the movement we can see. Showing that movement as a number would state ` +
+        `something we cannot resolve, so, as on the ${label} tab, it appears only once real movement is bigger than the rounding.`
+      : isMeta
+        ? `Summed over the ${a.followerDeltaChannels ?? 0} channel(s) whose own API follower history covers ${growthHistoryRequirement(a.periodDays)}, up to each channel's current count` +
+          (a.platform === "instagram" ? " — or, for an account without that history, Meta's own follows-minus-unfollows for the period." : ".") +
+          " Meta's counts are not rounded, so there is no ± here."
+        : `Summed by the ${label} board over the ${a.followerDeltaChannels ?? 0} channel(s) whose own snapshots cover ${growthHistoryRequirement(a.periodDays)}.` +
+          (a.uncertainty > 0 ? ` ${label} publishes rounded counts, so this carries ±${fmtMetric(a.uncertainty)}.` : "");
 
-  // A real date range never breaks across lines; the longer "why there is none" text may.
-  const spanOrWhy = (span: GrowthPlatformAggregate["span"], why: string) =>
-    span
-      ? <span className="whitespace-nowrap">{fmtGrowthSpan(span, currentYear, isBoard ? " → " : " – ")}</span>
-      : (a.channels ?? 0) === 0 ? "—" : why;
-  const followerSpanText = spanOrWhy(
-    a.span,
-    isMeta
-      ? "no completed window published yet"
-      : `not enough history yet${a.historyFrom ? ` · collecting since ${fmtGrowthDay(a.historyFrom, currentYear)}` : ""}`,
-  );
+  const pt = growthPeriodText(a, currentYear);
 
   return (
     <tr className="border-b border-[#F8F5EF] hover:bg-[#FCFBF8] align-top">
@@ -696,33 +807,23 @@ function PlatformRow({ a, periodDays, currentYear, refreshFailed, onRetry }: {
         {fmtExact(a.channels)}
         {isMeta && a.channels === 0 && <span className={SUB}>none connected</span>}
       </td>
-      <td className="px-2 py-2 text-right text-xs font-semibold text-[#1A1A1A]" title={a.followers !== null ? a.followers.toLocaleString() : undefined}>
+      <td
+        className="px-2 py-2 text-right text-xs font-semibold text-[#1A1A1A]"
+        title={
+          [
+            a.followers !== null ? a.followers.toLocaleString() : null,
+            a.platform === "instagram"
+              ? "Instagram follower counts are read when the channels are refreshed — on connecting, or with Refresh channels on the Meta tab — not on every sync."
+              : null,
+          ].filter(Boolean).join(" — ") || undefined
+        }
+      >
         {fmtMetric(a.followers)}
         {followersSub && <span className={SUB}>{followersSub}</span>}
       </td>
-      <td
-        className="px-2 py-2 text-right text-xs"
-        title={
-          isMeta
-            ? `Summed over the ${a.followerDeltaChannels ?? 0} channel(s) whose own API follower history covers at least ${a.followerDeltaMinDays} of the ${periodDays} days, up to each channel's current count` +
-              (a.platform === "instagram" ? " — or, for an account without that history, Meta's own follows-minus-unfollows for the period." : ".") +
-              " Meta's counts are not rounded, so there is no ± here."
-            : `Summed by the ${label} board over the ${a.followerDeltaChannels ?? 0} channel(s) whose own snapshots span at least ${a.followerDeltaMinDays} of the ${periodDays} days.` +
-              (a.uncertainty > 0 ? ` ${label} publishes rounded counts, so this carries ±${fmtMetric(a.uncertainty)}.` : "")
-        }
-      >
-        <span className={a.followerDelta === null ? "text-[#B0B0B0]" : changeTone(a.followerDelta, a.followerDeltaApprox)}>
-          {fmtChange(a.followerDelta, a.followerDeltaApprox)}
-        </span>
-        <span className={SUB}>
-          {a.followerDelta === null
-            ? changeAbsent
-            : [
-                `${a.followerDeltaChannels} of ${a.channels} channels`,
-                a.uncertainty > 0 ? `±${fmtMetric(a.uncertainty)}` : null,
-                isBoard && (a.followerDeltaExcluded ?? 0) > 0 ? `${a.followerDeltaExcluded} excluded` : null,
-              ].filter(Boolean).join(" · ")}
-        </span>
+      <td className="px-2 py-2 text-right text-xs" title={changeTitle}>
+        <span className={changeClass}>{changeMain}</span>
+        {changeSub.some(Boolean) && <span className={SUB}>{changeSub.filter(Boolean).join(" · ")}</span>}
       </td>
       <td className="px-2 py-2 text-right text-xs">
         {!a.viewsPublished ? (
@@ -749,23 +850,28 @@ function PlatformRow({ a, periodDays, currentYear, refreshFailed, onRetry }: {
         )}
       </td>
       <td className="px-2 py-2 text-left text-xs text-[#1A1A1A]">
-        {a.platform === "youtube" ? (
+        {(a.channels ?? 0) === 0 ? (
+          <span className="text-[#B0B0B0]">—</span>
+        ) : (
           <>
-            <span className="block"><span className="text-[#7A7A7A]">Subscribers</span> {followerSpanText}</span>
+            {/* ⚠️ Two lines, because the change and the views do NOT share dates: Meta's change
+                runs from our API snapshots to the current count, not over its views window. */}
             <span className="block">
-              <span className="text-[#7A7A7A]">Views</span> {spanOrWhy(a.viewsSpan, "not enough view history yet")}
+              <span className="text-[#7A7A7A]">Change</span>{" "}
+              {pt.change ? <span className="whitespace-nowrap">{pt.change}</span> : <span className="text-[#7A7A7A]">{pt.changeWhy ?? "—"}</span>}
+            </span>
+            <span className="block">
+              <span className="text-[#7A7A7A]">Views</span>{" "}
+              {pt.views ? <span className="whitespace-nowrap">{pt.views}</span> : <span className="text-[#7A7A7A]">{pt.viewsWhy ?? "—"}</span>}
             </span>
           </>
-        ) : a.platform === "snapchat" ? (
-          <span className="block"><span className="text-[#7A7A7A]">Followers</span> {followerSpanText}</span>
-        ) : (
-          <span className="block">{followerSpanText}</span>
         )}
-        <span className={SUB}>{SPAN_KIND_LABEL[a.platform]}</span>
+        <span className={SUB}>{pt.calendar}</span>
+        {pt.windowsNote && <span className="block text-[10px] text-[#C2861D] leading-tight">{pt.windowsNote}</span>}
         {(a.staleChannels ?? 0) > 0 && (
           <span
             className="block text-[10px] text-[#C2861D] leading-tight"
-            title="These channels' latest refresh failed, so their figures are from an earlier window than the dates shown. The Meta tab marks each one."
+            title={`These channels' latest refresh failed, so their figures are from an earlier window than the dates shown. The ${GROWTH_PLATFORM_TAB[a.platform]} tab marks each one.`}
           >
             {a.staleChannels} channel{a.staleChannels === 1 ? "" : "s"} couldn&apos;t refresh — older figures
           </span>
@@ -781,18 +887,20 @@ function PlatformRow({ a, periodDays, currentYear, refreshFailed, onRetry }: {
   );
 }
 
-function TotalRow({ c, periodDays }: { c: GrowthCombined; periodDays: number }) {
+function TotalRow({ c }: { c: GrowthCombined }) {
   if (!c.settled) {
+    // Short: the "waits for every platform" explanation is in SourceStatus, above the table.
     return (
       <tr className="border-t border-[#F0EAE0]">
         <td className="px-5 py-2 text-xs font-semibold text-[#1A1A1A]">Total</td>
-        <td colSpan={6} className="px-2 py-2 text-xs text-[#B0B0B0]">
-          Loading… the total waits for every platform so it does not change as each one arrives.
-        </td>
+        <td colSpan={6} className="px-2 py-2 text-xs text-[#B0B0B0]">Loading…</td>
       </tr>
     );
   }
-  const excluding = c.failedPlatforms.length > 0 ? `excluding ${listNames(c.failedPlatforms)}` : null;
+  const excluding = c.failedPlatforms.length > 0 ? `excluding ${growthListNames(c.failedPlatforms)}` : null;
+  const view = growthCombinedChangeView(c);
+  // The ± is named by its source, so it can be traced to the rows that carry it.
+  const pm = c.uncertainty > 0 ? `±${fmtMetric(c.uncertainty)} from ${possessives(c.uncertaintyPlatforms)} rounded counts` : null;
   return (
     <tr className="border-t border-[#F0EAE0] bg-[#FCFBF8] align-top">
       <td className="px-5 py-2 text-xs font-semibold text-[#1A1A1A]">
@@ -805,19 +913,19 @@ function TotalRow({ c, periodDays }: { c: GrowthCombined; periodDays: number }) 
         {c.followers !== null && <span className={SUB}>{c.followersReported} of {c.followersTotal} publish a count</span>}
       </td>
       <td className="px-2 py-2 text-right text-xs font-semibold">
-        <span className={c.followerDelta === null ? "text-[#B0B0B0]" : changeTone(c.followerDelta, c.followerDeltaApprox)}>
-          {fmtChange(c.followerDelta, c.followerDeltaApprox)}
-        </span>
-        {c.followerDelta !== null && c.uncertainty > 0 && (
-          <span className={SUB}>±{fmtMetric(c.uncertainty)} from rounded counts</span>
+        {view.kind === "value" ? (
+          <span className={changeTone(view.value, view.approx)}>{fmtChange(view.value, view.approx)}</span>
+        ) : (
+          <span className="text-[#B0B0B0]">—</span>
         )}
+        {pm && <span className={SUB}>{pm}</span>}
       </td>
       <td className="px-2 py-2 text-right text-xs font-semibold text-[#1A1A1A]">
         {fmtMetric(c.views)}
-        {c.views !== null && <span className={SUB}>{listNames(c.viewsPlatforms)}</span>}
+        {c.views !== null && <span className={SUB}>{growthListNames(c.viewsPlatforms)}</span>}
       </td>
       <td className="px-2 py-2 text-left text-xs text-[#B0B0B0]" colSpan={2}>
-        each platform&apos;s own dates, above · {periodDays}-day period
+        each platform&apos;s own dates, above
       </td>
     </tr>
   );
@@ -833,26 +941,13 @@ function ChannelsTable({ combo, rows, platformFilter, searching, sort, onSort }:
   sort: { key: GrowthChannelSortKey; dir: SortDir };
   onSort: (k: GrowthChannelSortKey) => void;
 }) {
-  const c = combo.combined;
   const n = combo.periodDays;
-  const empty = "px-5 py-8 text-center text-xs text-[#7A7A7A]";
 
   // ⚠️ Only a LOADED response may claim emptiness. A board still loading or failed is
-  // said to be so — never rendered as "No channels".
+  // said to be so — never rendered as "No channels" (growthTableEmpty).
   if (rows.length === 0) {
-    if (platformFilter !== "all") {
-      const st = combo.platforms[platformFilter].state;
-      const label = GROWTH_PLATFORM_LABEL[platformFilter];
-      if (st === "loading") return <p className={empty}>Loading {label} channels…</p>;
-      if (st === "error") return <p className={`${empty} text-[#C0504D]`}>{label} couldn&apos;t be loaded — see the note above.</p>;
-      return <p className={empty}>{searching ? "No channels match that search." : `No ${label} channels on this board.`}</p>;
-    }
-    if (combo.channels.length > 0) return <p className={empty}>No channels match that search.</p>;
-    if (c.loadingPlatforms.length > 0) return <p className={empty}>Loading channels…</p>;
-    if (c.includedPlatforms.length === 0) {
-      return <p className={`${empty} text-[#C0504D]`}>No board could be loaded, so there are no channels to list — see the note above.</p>;
-    }
-    return <p className={empty}>No channels tracked yet — add them on each platform&apos;s tab.</p>;
+    const e = growthTableEmpty(combo, { platform: platformFilter, searching });
+    return <p className={`px-5 py-8 text-center text-xs ${e.error ? "text-[#C0504D]" : "text-[#7A7A7A]"}`}>{e.text}</p>;
   }
 
   return (
@@ -865,7 +960,7 @@ function ChannelsTable({ combo, rows, platformFilter, searching, sort, onSort }:
           <SortTh label="Platform" colKey="platform" sort={sort} onSort={onSort} align="left" />
           <SortTh
             colKey="followers" sort={sort} onSort={onSort}
-            title="A live total, not a period figure — how many followers (or subscribers) the channel has right now."
+            title="A live total, not a period figure — how many followers (or subscribers) the channel has now, as its platform last reported."
             label={<>Followers <span className="text-[#B0B0B0] font-normal">(now)</span></>}
           />
           <SortTh
@@ -952,7 +1047,7 @@ function RowChange({ r, periodDays }: { r: GrowthChannelRow; periodDays: number 
     return (
       <span
         className="text-[#B0B0B0] line-through decoration-[#C2861D]"
-        title={`This change (${fmtDelta(v)}) is larger than the figure it was measured from, so it cannot be growth — the stored history for this channel spans two different channels. It is excluded from every total and from the Change sort; the ${TAB_NAME[r.platform]} tab is where the handle gets fixed.`}
+        title={`This change (${fmtDelta(v)}) is larger than the figure it was measured from, so it cannot be growth — the stored history for this channel spans two different channels. It is excluded from every total and from the Change sort; the ${GROWTH_PLATFORM_TAB[r.platform]} tab is where the handle gets fixed.`}
       >
         {fmtDelta(v)}
       </span>

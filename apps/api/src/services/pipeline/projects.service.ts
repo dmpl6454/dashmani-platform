@@ -487,8 +487,8 @@ export async function editProject(
              due_date    = CASE WHEN ${has("dueDate")}::boolean THEN ${changes.dueDate ?? null}::date ELSE due_date END,
              -- D1: onDueChanged (below, same transaction) withdraws the old date's due-soon /
              -- overdue rows, so the markers go too: an A → B → A change must re-arm the A alert
-             -- it just deleted (IS DISTINCT FROM re-arms B by itself). Side effect, accepted: such
-             -- a flip re-alerts (and re-emails the due-soon for) A.
+             -- it just deleted (IS DISTINCT FROM re-arms B by itself). Such a flip re-alerts A in
+             -- the bell; whoever was already mailed about A is not mailed again (enqueueDueSoonEmails).
              due_soon_notified_for = CASE WHEN ${has("dueDate")}::boolean THEN NULL ELSE due_soon_notified_for END,
              overdue_notified_for  = CASE WHEN ${has("dueDate")}::boolean THEN NULL ELSE overdue_notified_for END,
              header_rev  = header_rev + 1,
@@ -653,7 +653,8 @@ async function moveAttempt(actor: PipelineActor, projectId: string, input: Pipel
     }
     // D2: entering a terminal phase (Done) withdraws this due date's due-soon / overdue rows
     // (notifier.onMoved below), so its markers are cleared with them: moving back out of Done
-    // re-arms the alerts that were withdrawn (the due cron never alerts a terminal project).
+    // re-arms the alerts that were withdrawn (the due cron never alerts a terminal project) —
+    // in the bell; a recipient already mailed about this date is not mailed again.
     const toTerminal = phaseChanged && s2.phase_terminal === true;
 
     // S3: the card, with the move bookkeeping only when the phase changed.

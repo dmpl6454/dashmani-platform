@@ -335,6 +335,40 @@ describe("pipeline messages", () => {
       expect(storedRoot.rev).toBe(before + 2);
     });
 
+    it("deleting a reply recomputes the root's lastReplyAt from the LIVE replies — none left is null (B7)", async () => {
+      const { owner, bob, project } = await setup();
+      const root = (await post(owner.id, project.id, { clientId: randomUUID(), body: "root" })).body.data.message;
+      const r1 = (await post(bob.id, project.id, { clientId: randomUUID(), body: "first", parentId: root.id })).body.data.message;
+      const r2 = (await post(owner.id, project.id, { clientId: randomUUID(), body: "second", parentId: root.id })).body.data.message;
+      const r3 = (await post(bob.id, project.id, { clientId: randomUUID(), body: "third", parentId: root.id })).body.data.message;
+      // Distinct, ordered times: r1 30 min ago, r2 20 min ago, r3 10 min ago.
+      const ago = (min: number) => new Date(Date.now() - min * 60_000);
+      const [t1, t2, t3] = [ago(30), ago(20), ago(10)];
+      await pipelineDb.pipelineMessage.update({ where: { id: r1.id }, data: { createdAt: t1 } });
+      await pipelineDb.pipelineMessage.update({ where: { id: r2.id }, data: { createdAt: t2 } });
+      await pipelineDb.pipelineMessage.update({ where: { id: r3.id }, data: { createdAt: t3 } });
+      await pipelineDb.pipelineMessage.update({ where: { id: root.id }, data: { lastReplyAt: t3 } });
+      const storedRoot = async () => (await messagesOf(project.id)).find((x) => x.id === root.id)!;
+      const del = (uid: string, mid: string) => request(app).delete(`/v1/pipeline/messages/${mid}`).set(auth(uid));
+
+      // An older reply goes: the latest live one still dates the root.
+      expect((await del(bob.id, r1.id)).status).toBe(200);
+      expect((await storedRoot()).lastReplyAt?.toISOString()).toBe(t3.toISOString());
+      // The LATEST reply goes: the root now dates from r2, not from the deleted r3.
+      expect((await del(bob.id, r3.id)).status).toBe(200);
+      let rootNow = await storedRoot();
+      expect(rootNow.replyCount).toBe(1);
+      expect(rootNow.lastReplyAt?.toISOString()).toBe(t2.toISOString());
+      // The wire agrees (what "1 reply · 20m" is computed from).
+      const page = await request(app).get(`/v1/pipeline/messages/${root.id}/replies`).set(auth(owner.id));
+      expect(page.body.data.root.lastReplyAt).toBe(t2.toISOString());
+      // The last live reply goes: no reply, no time.
+      expect((await del(owner.id, r2.id)).status).toBe(200);
+      rootNow = await storedRoot();
+      expect(rootNow.replyCount).toBe(0);
+      expect(rootNow.lastReplyAt).toBeNull();
+    });
+
     it("message routes on a soft-deleted project give 404", async () => {
       const { owner, project } = await setup();
       const m = (await post(owner.id, project.id, { clientId: randomUUID(), body: "x" })).body.data.message;

@@ -320,6 +320,80 @@ describe("GET /admin/meta/channels — honest totals, covered-day baseline, data
     expect(res.body.data.previousTotals).toBeNull();
   });
 
+  // ── dataThroughDayByPlatform (the Account Growth "All" tab, 2026-10-01) ──────────
+  //
+  // The All tab prints each platform's window as exact dates, and Facebook and Instagram
+  // close on different boundaries (Pacific vs UTC midnight), so for ~7 hours a day they
+  // cover different calendar days. The page-wide dataThroughDay is the EARLIEST of them;
+  // labelling Instagram with it would understate how current Instagram's figures are.
+
+  it("dataThroughDayByPlatform names each platform's OWN covered day; dataThroughDay is unchanged", async () => {
+    // FB's week row closed at yesterday 07:00Z (covers the day before yesterday);
+    // IG's at today 00:00Z (covers yesterday).
+    await prisma.metaAssetMetric.createMany({
+      data: [
+        { assetId: fbId, window: "week", views: 700n, fetchedAt: new Date(), periodEnd: new Date(`${dayIso(-1)}T07:00:00Z`) },
+        { assetId: igId, window: "week", views: 300n, fetchedAt: new Date(), periodEnd: new Date(`${dayIso(0)}T00:00:00Z`) },
+      ],
+    });
+    const res = await get("/v1/admin/meta/channels?window=week");
+    expect(res.status).toBe(200);
+    expect(res.body.data.dataThroughDayByPlatform).toEqual({ facebook: dayIso(-2), instagram: dayIso(-1) });
+    expect(res.body.data.dataThroughDay).toBe(dayIso(-2)); // still the earliest of the two
+  });
+
+  it("a platform with no row for the window is null — never borrowed from the other platform", async () => {
+    await prisma.metaAssetMetric.create({
+      data: { assetId: fbId, window: "days_28", views: 2_800n, fetchedAt: new Date(), periodEnd: new Date(`${dayIso(-1)}T07:00:00Z`) },
+    });
+    const res = await get("/v1/admin/meta/channels?window=days_28");
+    expect(res.status).toBe(200);
+    expect(res.body.data.dataThroughDayByPlatform).toEqual({ facebook: dayIso(-2), instagram: null });
+  });
+
+  it("an errored row is excluded from its own platform's day — and only from that platform", async () => {
+    const conn = await prisma.metaConnection.findFirstOrThrow({ where: { metaUserId: "mu-fresh-route" } });
+    const ig2 = await prisma.metaAsset.create({
+      data: { connectionId: conn.id, kind: "INSTAGRAM_ACCOUNT", metaId: "ig-fresh-2", name: "IG2", selected: true, followerCount: 7 },
+    });
+    await prisma.metaAssetMetric.createMany({
+      data: [
+        { assetId: fbId, window: "week", views: 700n, fetchedAt: new Date(), periodEnd: new Date(`${dayIso(-1)}T07:00:00Z`) },
+        // Stuck on a permission error with an 11-day-old periodEnd — it must not backdate IG.
+        { assetId: igId, window: "week", views: 50n, fetchedAt: new Date(), periodEnd: new Date(`${dayIso(-11)}T00:00:00Z`),
+          error: "(#10) Application does not have permission for this action" },
+        { assetId: ig2.id, window: "week", views: 70n, fetchedAt: new Date(), periodEnd: new Date(`${dayIso(0)}T00:00:00Z`) },
+      ],
+    });
+    const res = await get("/v1/admin/meta/channels?window=week");
+    expect(res.status).toBe(200);
+    expect(res.body.data.dataThroughDayByPlatform).toEqual({ facebook: dayIso(-2), instagram: dayIso(-1) });
+
+    // With the healthy IG row gone, the only IG row left is the errored one → null, not its stale day.
+    await prisma.metaAssetMetric.delete({ where: { assetId_window: { assetId: ig2.id, window: "week" } } });
+    const res2 = await get("/v1/admin/meta/channels?window=week");
+    expect(res2.body.data.dataThroughDayByPlatform).toEqual({ facebook: dayIso(-2), instagram: null });
+  });
+
+  it("today: both platforms are null — a partial day has no completed-through day", async () => {
+    await prisma.metaAssetMetric.createMany({
+      data: [
+        { assetId: fbId, window: "today", views: 313n, fetchedAt: new Date(), periodEnd: new Date() },
+        { assetId: igId, window: "today", views: 42n, fetchedAt: new Date(), periodEnd: new Date() },
+      ],
+    });
+    const res = await get("/v1/admin/meta/channels?window=today");
+    expect(res.status).toBe(200);
+    expect(res.body.data.dataThroughDayByPlatform).toEqual({ facebook: null, instagram: null });
+  });
+
+  it("range mode omits it — its dataThroughDay means 'newest day', a different question", async () => {
+    const res = await get(`/v1/admin/meta/channels?window=days_28&start=${dayIso(-7)}&end=${dayIso(-1)}`);
+    expect(res.status).toBe(200);
+    expect(res.body.data.window).toBe("custom");
+    expect("dataThroughDayByPlatform" in res.body.data).toBe(false);
+  });
+
   it("today: once Facebook has an open-bucket row its revenue counts, a reported zero stays 0", async () => {
     await prisma.metaAssetMetric.createMany({
       data: [

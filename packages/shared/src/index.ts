@@ -49,6 +49,10 @@ export * from "./utils/snapchat";
 export * from "./types/submission-gaps";
 export * from "./utils/submission-gaps";
 
+// Account Growth "All" tab — the pure composition of the Meta, YouTube and Snapchat boards'
+// OWN figures (no re-measuring), shared by the internal portal panel and the API's tests.
+export * from "./growth/combine";
+
 // Pipeline (pure, shared by the API tests and the HR portal)
 export * from "./pipeline/refresh";
 

@@ -99,11 +99,16 @@ export function PipelineProvider({ children }: { children: React.ReactNode }) {
   // never shows "isn't available for your account yet" from a stale cache. A bound mutate()
   // with no arguments bypasses SWR's 10-minute dedupe (it drops the in-flight marker first);
   // revalidateIfStale alone would be deduped for up to 10 minutes after the sidebar's fetch.
+  // Until that re-fetch settles the gate shows "Loading", never the cached reason: true from
+  // the FIRST render (the cache is painted before any effect runs).
+  const [recheckPending, setRecheckPending] = useState(() => shouldRevalidateBootstrapOnMount(boot.data));
   const mountChecked = useRef(false);
   useEffect(() => {
     if (mountChecked.current) return;
     mountChecked.current = true;
-    if (shouldRevalidateBootstrapOnMount(boot.data)) void mutateBoot();
+    if (!recheckPending) return;
+    const settled = () => setRecheckPending(false);
+    void mutateBoot().then(settled, settled);
     // Once, against what the cache held at mount — later answers are handled below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -137,6 +142,20 @@ export function PipelineProvider({ children }: { children: React.ReactNode }) {
     );
   }
   if (!boot.data.enabled) {
+    if (recheckPending) return <GateScreen kind="loading" />;
+    // The latest check FAILED, so the cached not_in_pilot may be stale (GA): say we couldn't
+    // check, not "being tried out with a small group" — the next check (Retry, ~3 min) settles it.
+    if (boot.error && boot.data.reason === "not_in_pilot") {
+      return (
+        <GateScreen
+          kind="load_failed"
+          reason={describeError(boot.error)}
+          errorStatus={isApiError(boot.error) ? boot.error.status : undefined}
+          onRetry={() => void mutateBoot()}
+          retrying={boot.isValidating}
+        />
+      );
+    }
     return <GateScreen kind={boot.data.reason === "paused" ? "off" : boot.data.reason} onRetry={() => void mutateBoot()} retrying={boot.isValidating} />;
   }
   return (

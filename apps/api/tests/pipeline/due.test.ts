@@ -250,6 +250,22 @@ describe("pipeline due cron (§7.8)", () => {
       expect(await ofKind("overdue")).toHaveLength(2);
     });
 
+    it("a leaver's due rows go with them: no later withdrawal can reach someone who is no longer a participant", async () => {
+      // withdrawDueRows (a due change, a move into Done) reaches CURRENT participants only, so
+      // a row left behind would keep a deadline that no longer exists for up to 90 days.
+      const left = await project("2026-09-28"); // overdue; Bob leaves on his own
+      const removed = await project("2026-09-30", { title: "Year-end recap" }); // due soon; the owner removes Bob
+      await runPipelineDueTick({ now: ist("2026-09-29", "10:00") });
+      expect(await ofKind("overdue")).toHaveLength(2);
+      expect(await ofKind("due_soon")).toHaveLength(2);
+      const remove = (uid: string, pid: string, target: string) =>
+        request(app).delete(`/v1/pipeline/projects/${pid}/members/${target}`).set(auth(uid));
+      expect((await remove(left.bob.id, left.p.id, left.bob.id)).status).toBe(200);
+      expect((await remove(removed.owner.id, removed.p.id, removed.bob.id)).status).toBe(200);
+      expect((await ofKind("overdue")).map((r) => r.userId)).toEqual([left.owner.id]);
+      expect((await ofKind("due_soon")).map((r) => r.userId)).toEqual([removed.owner.id]);
+    });
+
     it("a move between live phases, or a same-phase reorder, leaves the due rows alone", async () => {
       const a = await project("2026-09-28", { phaseKey: "planning" });
       await runPipelineDueTick({ now: ist("2026-09-29", "10:00") });

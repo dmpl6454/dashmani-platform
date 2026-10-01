@@ -6,7 +6,7 @@
 import Link from "next/link";
 import useSWRInfinite from "swr/infinite";
 import { ChevronLeft } from "lucide-react";
-import type { PipelineCard, PipelineListView, PipelineProjectListResponse } from "@dashmani/shared";
+import { dayMonthShort, localDayKey, type PipelineCard, type PipelineListView, type PipelineProjectListResponse } from "@dashmani/shared";
 import { PL_SWR } from "@/lib/pipeline-swr";
 import { usePipeline, usePhases } from "../provider";
 import { PipelineHeader } from "../header/PipelineHeader";
@@ -15,17 +15,23 @@ import { LoadError } from "../ui/LoadError";
 import { EmptyState } from "../ui/EmptyState";
 import { useToast } from "../ui/Toast";
 import { describeError, plApi } from "../api";
+import { useLocalDayKey } from "../hooks/use-local-day-key";
 import { useState } from "react";
 
-function when(ts: string | null | undefined): string {
+/**
+ * The local day it was archived / deleted, as every pipeline date reads: "30 Sep", or
+ * "30 Sep 2025" in another year (time.ts — fixed English, never the browser's locale).
+ */
+function when(ts: string | null | undefined, today: string): string {
   if (!ts) return "";
   const d = new Date(ts);
-  return d.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+  return Number.isNaN(d.getTime()) ? "" : dayMonthShort(localDayKey(d), today);
 }
 
 export function ProjectListView({ view }: { view: PipelineListView }) {
   const { meId, store, engine } = usePipeline();
   const phases = usePhases();
+  const today = useLocalDayKey();
   const toast = useToast();
   const phaseName = (id: string) => phases.find((p) => p.id === id)?.name ?? "";
   const { data, error, size, setSize, isValidating, mutate } = useSWRInfinite<PipelineProjectListResponse>(
@@ -76,7 +82,7 @@ export function ProjectListView({ view }: { view: PipelineListView }) {
               <p className="pl-clamp2 text-[14px] font-semibold text-ink">{c.title}</p>
               <p className="text-[12px] text-ink-3 mt-0.5 min-w-0 truncate">
                 {phaseName(c.phaseId)}
-                {view === "archived" ? ` · archived ${when(c.archivedAt)}` : ` · deleted ${when(c.deletedAt)}`}
+                {view === "archived" ? ` · archived ${when(c.archivedAt, today)}` : ` · deleted ${when(c.deletedAt, today)}`}
                 {(view === "archived" ? c.archivedByAdmin : c.deletedByAdmin) ? " by an admin" : ""}
               </p>
             </div>

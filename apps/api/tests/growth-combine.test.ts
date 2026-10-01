@@ -37,7 +37,9 @@ import {
   type GrowthBoardInput,
   type GrowthBoardRowInput,
   type GrowthAllPeriod,
-} from "@dashmani/shared";
+  // By path, as the portal imports it — it is deliberately not in the shared barrel (zod
+  // and every validator would otherwise ride into the Account Growth page's first load).
+} from "@dashmani/shared/src/growth/combine";
 
 // ── Fixture builders ────────────────────────────────────────────────────────────────
 

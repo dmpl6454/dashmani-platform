@@ -229,6 +229,52 @@ describe("pipeline concurrency", () => {
     no5xx(statuses);
   });
 
+  it("due-date edits vs acks interleaved 150 times → every edit lands, no superseded due row survives, an ack can only lose a lock race cleanly (D1)", async () => {
+    // A due change writes FOUR of each participant's rows for the project (due-soon and
+    // overdue withdrawn, "added" rewritten, due_changed upserted) while each viewer's ack marks
+    // the same rows read in one statement that locks them in heap order. A rare overlap makes
+    // one side wait out lock_timeout (55P03): the EDIT retries once (retryOnce) and must always
+    // succeed; an ack may lose — it is idempotent and re-sent with the next poll — but only as a
+    // clean 503 PIPELINE_BUSY, and only rarely.
+    const [alice, bob, cara] = await users(3, "dlock");
+    const p = await createProject(alice.id, "Due lock race", [bob.id, cara.id]); // "added" rows for Bob and Cara
+    const days = ["2026-10-05", "2026-10-06"];
+    let due = days[0];
+    await pipelineDb.$executeRaw`UPDATE pipeline_projects SET due_date = ${due}::date WHERE id = ${p.id}`;
+    const dueRowIds = (d: string) => [bob, cara].flatMap((u) => [plnId("due_soon", p.id, u.id, d), plnId("overdue", p.id, u.id, d)]);
+    const seed = async (d: string) => {
+      for (const u of [bob, cara]) {
+        for (const kind of ["due_soon", "overdue"] as const) {
+          const id = plnId(kind, p.id, u.id, d);
+          await prisma.notification.upsert({
+            where: { id },
+            create: { id, userId: u.id, type: "PIPELINE", title: kind, message: "m", read: false, metadata: { v: 1, kind, pid: p.id, due: d } },
+            update: { read: false },
+          });
+        }
+      }
+    };
+    const statuses: Array<{ status: number; body: any }> = [];
+    for (let i = 0; i < 150; i++) {
+      await seed(due);
+      const next = days[(i + 1) % 2];
+      const [edit, ...acks] = await Promise.all([
+        call("PATCH", `/pipeline/projects/${p.id}`, alice.id, { changes: { dueDate: next }, base: { dueDate: due } }),
+        call("POST", `/pipeline/projects/${p.id}/read`, bob.id, { seq: 0, leaving: false }),
+        call("POST", `/pipeline/projects/${p.id}/read`, cara.id, { seq: 0, leaving: false }),
+        call("POST", "/pipeline/sync", cara.id, { clientBuild: 1, project: { id: p.id, rev: 0, hv: 0, ack: { seq: 0, open: true } } }),
+      ]);
+      statuses.push(edit, ...acks);
+      expect(edit.status).toBe(200);
+      const prev = due;
+      due = next;
+      expect(await prisma.notification.count({ where: { id: { in: dueRowIds(prev) } } })).toBe(0);
+    }
+    const lost = statuses.filter((r) => r.status >= 500);
+    expect(lost.every((r) => r.status === 503 && r.body?.error?.code === "PIPELINE_BUSY")).toBe(true);
+    expect(lost.length).toBeLessThanOrEqual(6); // ≤ ~1% of 600 requests; a systematic problem would be many
+  });
+
   it("a post-commit board-bump failure (injected lock) → the next request heals it", async () => {
     const [owner] = await users(1, "bump");
     const ph = await phases();

@@ -354,6 +354,11 @@ async function onProjectDeleted(tx: PipelineTx, a: ProjectDeletedArgs): Promise<
   if (ids.length) await tx.$executeRaw`DELETE FROM notifications WHERE id = ANY(${ids}::text[])`;
 }
 
+const dueRowIds = (projectId: string, due: string) => [
+  plnIdSql("due_soon", projectId, Prisma.sql`pp.user_id`, due),
+  plnIdSql("overdue", projectId, Prisma.sql`pp.user_id`, due),
+];
+
 /**
  * Withdraw the due-soon and overdue rows keyed on `due` for EVERY current participant (notify
  * on or off — a muted follower's stale row is just as false). Used when that date stops being
@@ -365,14 +370,20 @@ async function onProjectDeleted(tx: PipelineTx, a: ProjectDeletedArgs): Promise<
  * if the date comes back (A → B → A, or Done → back out).
  */
 export async function withdrawDueRows(tx: PipelineTx, projectId: string, due: string): Promise<void> {
+  // ⚠️ With the rewrite and upsert that follow it, a due change (or a move into Done) now
+  // writes SEVERAL of a participant's rows. A viewer's ack marks the same rows read in one
+  // statement whose plan (a bitmap heap scan) takes them in heap order, so in a rare overlap
+  // one side waits out the pool's 1 s lock_timeout (55P03). The edit and the move therefore
+  // run with retryOnce (projects.service.ts) — the user's action always lands; a lost ack is
+  // idempotent and re-sent with the next poll. (Locking these rows in id order first does not
+  // help: no concurrent locker takes them in id order.)
+  const [soon, overdue] = dueRowIds(projectId, due);
   await tx.$executeRaw`
     DELETE FROM notifications
      WHERE type = ${PIPELINE_TYPE}
-       AND id IN (SELECT ${plnIdSql("due_soon", projectId, Prisma.sql`pp.user_id`, due)}
-                    FROM pipeline_participants pp WHERE pp.project_id = ${projectId}
+       AND id IN (SELECT ${soon} FROM pipeline_participants pp WHERE pp.project_id = ${projectId}
                   UNION ALL
-                  SELECT ${plnIdSql("overdue", projectId, Prisma.sql`pp.user_id`, due)}
-                    FROM pipeline_participants pp WHERE pp.project_id = ${projectId})`;
+                  SELECT ${overdue} FROM pipeline_participants pp WHERE pp.project_id = ${projectId})`;
 }
 
 async function onMoved(tx: PipelineTx, a: MovedArgs): Promise<void> {

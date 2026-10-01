@@ -571,6 +571,7 @@ At GA an open HR tab picks up the flip by itself: bootstrap revalidates on mount
 - **Email** may say "due tomorrow": it is worded against the SEND day, computed per digest, because a tick can cross IST midnight.
 - **Client labels** come from `packages/shared/src/pipeline/time.ts`: fixed English, 12-hour am/pm, never `toLocale*`. "Today" is passed in from `useLocalDayKey()`, so memoised rows re-render exactly at local midnight. Relative ages tick once a minute through `<Ago>` and floor at every step, like the bells.
 - The send's S3 uses `statement_timestamp()`, taken after the project lock, so message times never go backwards against `seq`.
+- ⚠️ A due change or a move into Done writes several of each participant's notification rows, which a viewer's ack marks read in heap order. A rare overlap makes one side wait out the 1 s `lock_timeout`, so `editProject` and `moveAttempt` run with `retryOnce` (now also `55P03`). Never drop it: the concurrency race "due-date edits vs acks" proves the edit can otherwise come back 503. A lost ack is harmless.
 
 **Schema and deploy rules.**
 - ⚠️ **NEVER revert the schema PR (#173) or drop `PIPELINE` from the enum.**

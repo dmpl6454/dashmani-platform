@@ -451,6 +451,11 @@ export async function editProject(
   base: PipelineEditableFields,
 ): Promise<{ header: PipelineHeader }> {
   const email = pipelineEmailOn(actor.settings); // memo only — before the slot
+  // retryOnce: a due change writes several of each participant's notification rows (D1/D4),
+  // which a concurrent ack or mark-all-read may hold — a lost lock race (55P03 / 40P01) is
+  // retried once rather than shown as "not saved". The edit is safe to repeat: the whole
+  // transaction rolled back (outbox rows included), and a field already at the desired value
+  // is skipped as a no-op.
   const out = await pipelineWrite(async (tx) => {
     const row = await lockProject(tx, projectId, actor.userId);
     assertWritable(row);
@@ -509,7 +514,7 @@ export async function editProject(
       header,
       boardChanged: has("title") || has("startDate") || has("dueDate"),
     };
-  });
+  }, { retryOnce: true });
   if (out.boardChanged) await bumpBoard();
   return { header: out.header };
 }
@@ -559,6 +564,9 @@ async function moveAttempt(actor: PipelineActor, projectId: string, input: Pipel
   const email = pipelineEmailOn(actor.settings); // memo only — before the slot
   const { toPhaseId, basePhaseId } = input;
   const afterId = input.afterId === projectId ? null : input.afterId;
+  // retryOnce: a move into Done withdraws several rows per participant (D2) — a lost lock
+  // race is retried once (see editProject). Safe: the transaction rolled back whole, and an
+  // attempt that finds the card already in place returns without writing.
   return pipelineWrite(async (tx) => {
     if (lockPhaseFirst) {
       await tx.$queryRaw`
@@ -686,7 +694,7 @@ async function moveAttempt(actor: PipelineActor, projectId: string, input: Pipel
       });
     }
     return { card: cardFromRow(updated), placementAdjusted, changed: true };
-  });
+  }, { retryOnce: true });
 }
 
 /**

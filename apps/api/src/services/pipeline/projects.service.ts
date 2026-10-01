@@ -558,6 +558,11 @@ export async function moveProject(actor: PipelineActor, projectId: string, input
  * re-runs with `lockPhaseFirst`: the card AND the target phase's live rows are locked in
  * ONE id-ordered statement before anything else. Every multi-row locker then uses the
  * same global id order (a cross-phase swap included), so no cycle can form.
+ *
+ * That holds for PROJECT rows only. A move into Done also writes several of each
+ * participant's NOTIFICATION rows (withdrawDueRows, then the moved row), which a viewer's
+ * ack or the main pool's "Mark all read" can hold in another order — a rare lock cycle there
+ * is real. Both sides retry it once: this move (retryOnce below) and markAllAsRead.
  */
 async function moveAttempt(actor: PipelineActor, projectId: string, input: PipelineMoveRequest, lockPhaseFirst: boolean) {
   const me = actor.userId;

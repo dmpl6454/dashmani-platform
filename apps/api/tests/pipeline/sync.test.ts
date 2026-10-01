@@ -206,7 +206,7 @@ describe("pipeline sync", () => {
     expect(a.me).toEqual({ role: "MEMBER", notify: true, lastReadSeq: 0 });
     expect(a.participants).toHaveLength(2);
     for (const p of a.participants) {
-      expect(Object.keys(p).sort()).toEqual(["createdAt", "isOwner", "memberAddedById", "role", "userId"]);
+      expect(Object.keys(p).sort()).toEqual(["createdAt", "isOwner", "memberAddedAt", "memberAddedById", "role", "userId"]);
     }
     expect(a.participants.find((p: { userId: string }) => p.userId === owner.id).isOwner).toBe(true);
     const b = (await sync(bob.id, { project: { id: project.id, rev: a.rev, hv: a.hv } })).body.data.project;

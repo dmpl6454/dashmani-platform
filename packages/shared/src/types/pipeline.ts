@@ -183,6 +183,14 @@ export interface PipelineParticipant {
   role: PipelineParticipantRole;
   isOwner: boolean;
   memberAddedById: string | null;
+  /**
+   * When this row last BECAME a member through an add (`member_added_at`) — the start of the
+   * adder's 10-minute undo, exactly as the server measures it. null for the creator's own row
+   * and rows that never went through an add. ⚠️ Never measure the undo from `createdAt`: a
+   * promoted follower's createdAt is their original follow time. Added 2026-10-01 (additive;
+   * an older API omits it, so clients read `memberAddedAt ?? createdAt`).
+   */
+  memberAddedAt: PipelineTimestamp | null;
   createdAt: PipelineTimestamp;
 }
 

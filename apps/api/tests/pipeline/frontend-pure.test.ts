@@ -355,7 +355,7 @@ describe("store: merges are idempotent and never destructive", () => {
     const res = syncRes({
       project: {
         id: PID, status: "archived", rev: 2, hv: 3, header: header({ title: "Renamed", headerRev: 3, archivedAt: "2026-09-26T11:00:00.000Z" }),
-        participants: [{ userId: OTHER, role: "MEMBER", isOwner: false, memberAddedById: ME, createdAt: "2026-09-26T09:00:00.000Z" }],
+        participants: [{ userId: OTHER, role: "MEMBER", isOwner: false, memberAddedById: ME, memberAddedAt: "2026-09-26T09:00:00.000Z", createdAt: "2026-09-26T09:00:00.000Z" }],
         me: { role: "MEMBER", notify: false, lastReadSeq: 2 }, messages: [], hasMore: false, lastReadSeq: 2,
       },
     });

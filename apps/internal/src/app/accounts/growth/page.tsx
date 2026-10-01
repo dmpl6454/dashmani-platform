@@ -1,7 +1,8 @@
 "use client";
 
 /**
- * Account Growth — three boards, three different sources, one tab each.
+ * Account Growth — three boards, three different sources, one tab each, plus an All tab
+ * that adds them up.
  *
  * ⚠️ EACH TAB SPEAKS FOR A DIFFERENT ESTATE WITH DIFFERENT PROVENANCE, AND THE PAGE
  * HEADER MUST NOT SPEAK FOR ALL OF THEM. It used to say "every figure comes from Meta's
@@ -18,6 +19,10 @@
  *   YouTube   — the official YouTube Data API.
  *   Snapchat  — each channel's public profile page (unofficial; a profile can withhold
  *               a figure, and then we show a dash).
+ *   All       — not a fourth source: the three boards' OWN figures added up where a figure
+ *               means the same thing on every platform, each labelled with its source and
+ *               exact dates. 7d and 28d only — the periods every platform measures alike.
+ *               See _all-panel.tsx and packages/shared/src/growth/combine.ts.
  *
  * ⚠️ ONLY THE ACTIVE TAB IS MOUNTED — `{tab === "youtube" && <YouTubePanel />}`, never
  * mount-and-hide with CSS. Every mounted panel fires its own endpoint on every page load,
@@ -31,6 +36,14 @@
  * snapshots rather than each platform's own metrics. `useGrowthOverview` still backs the
  * DASHBOARD, so that hook and the /admin/growth endpoint stay — this page just stopped
  * being a second consumer of them.
+ *
+ * ⚠️ 2026-10-01: THE OWNER EXPLICITLY ASKED FOR A COMBINED VIEW ("a fourth tab that
+ * depicts 'All' the data in a combined format … with accurate date depicted e2e"), which
+ * supersedes the "must not come back" note above IN ONE SPECIFIC FORM: the All tab sums
+ * each board's OWN figures (Meta's API board, YouTube's Data API board, Snapchat's
+ * public-profile board), labels every figure with its source and the dates it covers, and
+ * never reads /admin/growth or snapshot roll-ups for Meta. The snapshot-driven cards, the
+ * All Accounts table and Top Movers stay removed.
  */
 
 import { Suspense, useEffect, useRef, useState } from "react";
@@ -41,11 +54,13 @@ import { usePageTitle } from "@/lib/hooks/use-page-title";
 import { MetaPanel } from "./_meta-panel";
 import { YouTubePanel } from "./_youtube-panel";
 import { SnapchatPanel } from "./_snapchat-panel";
+import { AllPanel } from "./_all-panel";
 
 const TABS = [
   { key: "meta", label: "Meta" },
   { key: "youtube", label: "YouTube" },
   { key: "snapchat", label: "Snapchat" },
+  { key: "all", label: "All" },
 ] as const;
 
 type GrowthTab = (typeof TABS)[number]["key"];
@@ -79,7 +94,8 @@ export default function AccountGrowthPage() {
           Three boards, and they do not share a source. Each tab says where its own numbers
           come from and what its platform refuses to publish, so a dash always means &ldquo;not
           published&rdquo; — never zero, and never missing data on our side. Pick a period
-          inside a tab; each one keeps its own.
+          inside a tab; each one keeps its own. The All tab adds the boards up wherever a figure
+          means the same thing on every platform.
         </p>
       </div>
 
@@ -184,6 +200,7 @@ function GrowthTabs() {
       {/* ⚠️ Rendered, not hidden. See the mounting note in the file header. */}
       {tab === "youtube" && <YouTubePanel />}
       {tab === "snapchat" && <SnapchatPanel />}
+      {tab === "all" && <AllPanel onOpenTab={selectTab} />}
     </div>
   );
 }

@@ -4,7 +4,8 @@
  * SyncEngine — and nothing here polls (no refreshInterval, no global SWRConfig).
  *
  * Bootstrap alone revalidates a stale cache (GA, 2026-10-01), so a `pipeline.mode` flip
- * reaches tabs that are already open — at most one bootstrap request per 10 minutes per tab.
+ * reaches tabs that are already open — at most one bootstrap request per 10 minutes per tab
+ * (see usePipelineBootstrap for exactly when).
  */
 import useSWR, { type SWRConfiguration } from "swr";
 import type { PipelineBootstrap, PipelineDirectoryEntry, PipelineMode } from "@dashmani/shared";
@@ -40,10 +41,15 @@ const TEN_MIN = 10 * 60_000;
  *
  * G1 (GA): a cached answer is revalidated on mount when stale and on window focus, both
  * bounded to once per 10 minutes per tab (the dedupe window and the focus throttle) — so after
- * `pipeline.mode` goes pilot → on, an open tab shows the nav at its next focus instead of only
- * after a reload or a sign-in. ⚠️ Cheap and isolated by design: the route is memo-backed, the
- * pipeline's own per-user "read" bucket counts it (120/min), and the global limiter SKIPS
- * /v1/pipeline/* (app.ts isPipelinePath) — it can never 429 login, HR submit or Link History.
+ * `pipeline.mode` goes pilot → on, an open tab shows the nav without a reload or a sign-in.
+ * ⚠️ WHEN, exactly (SWR 2.4.1): a reload shows it at once; an open tab shows it at its first
+ * focus or page change (the sidebar remounts per HR section) ≥ 10 minutes after the tab's last
+ * bootstrap request — the dedupe window — and a focus also needs ≥ 10 minutes since that hook
+ * MOUNTED (SWR starts the focus throttle at mount). So verify GA with a reload, not by watching
+ * an open tab. A /pipeline tab re-checks sooner on its own (provider.tsx).
+ * ⚠️ Cheap and isolated by design: the route is memo-backed, the pipeline's own per-user "read"
+ * bucket counts it (120/min), and the global limiter SKIPS /v1/pipeline/* (app.ts
+ * isPipelinePath) — it can never 429 login, HR submit or Link History.
  * Never add a refreshInterval here: focus is enough, and polling every HR tab is not.
  */
 export function usePipelineBootstrap(userId: string | null | undefined) {

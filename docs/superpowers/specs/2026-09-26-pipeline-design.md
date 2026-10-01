@@ -722,7 +722,7 @@ Response `data` when nothing changed (≈200 B):
 { "v": 41, "board": null, "mineH": "3f9a…", "mine": null,
   "project": { "id": "…", "status": "ok", "rev": 118, "hv": 7, "header": null,
                "participants": null, "messages": [], "hasMore": false, "lastReadSeq": 57 },
-  "pollMs": 10000, "reload": false }
+  "pollMs": 10000, "mode": "on", "reload": false }
 ```
 
 **Server steps** (one bulkhead slot, one connection; every statement autocommit, indexed and bounded):
@@ -743,6 +743,7 @@ Response `data` when nothing changed (≈200 B):
   - `open` or `leaving` is set.
 - **Board.** If `board` is present and `board_v !== board.v`, `getBoardSnapshot(board_v)` returns the cached snapshot when `cache.v === board_v`. Otherwise it runs a single-flight rebuild on its own slot: one rebuild per board change for the whole company.
 - **Build check.** If `clientBuild < pipeline.minClientBuild`, the response carries `reload:true`.
+- **Mode** (added 2026-10-01, GA; additive). Every response carries `mode` (`"pilot"` or `"on"`), like `pollMs`. A tab whose bootstrap gave it a different mode re-checks bootstrap (at most once per 2 minutes); the new mode re-keys the directory, so a pilot → on flip reaches a `/pipeline` tab that never loses focus.
 
 #### 5.3 Board snapshot
 
@@ -1041,7 +1042,7 @@ New pure helpers in `packages/shared/src/utils/date.ts`:
   - "“Diwali campaign” is due Saturday (27 Sep)", or "… is due Monday (29 Sep)" when sent on a Saturday. Always the ABSOLUTE day, never "tomorrow": the row is read for up to 90 days and mobile shows it verbatim. (The email keeps "due tomorrow (Sat 27 Sep)": it is read near send time and is worded against the send day.)
   - "“Diwali campaign” is overdue — was due Sat 27 Sep, still in Review".
   - Every stored or emailed date carries its year when that is not the current IST year ("is due Friday (1 Jan 2027)", "was due Tue 30 Dec 2025").
-  - A due-date change, or a move into a terminal phase, withdraws the superseded due-soon / overdue rows by primary key and clears the `*_notified_for` markers, so the alert re-arms if the date comes back.
+  - A due-date change, or a move into a terminal phase, withdraws the superseded due-soon / overdue rows by primary key and clears the `*_notified_for` markers, so the bell alert re-arms if the date comes back. The re-armed due-soon email skips anyone already mailed about that (project, date). A participant row that is deleted (a leave, or removing someone never engaged) takes that user's due rows for the current date with it — later withdrawals reach current participants only.
 - **Restart safety:** idempotent across restarts, and a tick with nothing to do costs one indexed probe.
 
 #### 7.9 Text and snippets
@@ -1231,7 +1232,7 @@ packages/shared/src/validators/pipeline.ts · packages/shared/src/types/pipeline
 
 #### 9.3 Data layer and identity scoping
 
-- **SWR** is used only for request-once data: `['/pipeline/bootstrap', userId]` and `['/pipeline/directory', userId]` (10-minute dedupe), and the archived and deleted lists (`useSWRInfinite`, limit 20). Options:
+- **SWR** is used only for request-once data: `['/pipeline/bootstrap', userId]` and `['/pipeline/directory', userId, mode]` (10-minute dedupe), and the archived and deleted lists (`useSWRInfinite`, limit 20). *Amended 2026-10-01 (GA):* bootstrap alone overrides the options below with `revalidateIfStale: true`, `revalidateOnFocus: true` and a 10-minute `focusThrottleInterval`, so a `pipeline.mode` flip reaches open tabs (at most one bootstrap request per 10 minutes per tab); the directory key includes the bootstrap mode, so pilot users' cached `pickable: false` entries are fetched again after GA; and every sync carries the mode, so an enabled `/pipeline` tab re-checks bootstrap when it differs. Options:
   ```ts
   export const PL_SWR = {
     revalidateOnFocus: false, revalidateOnReconnect: false, revalidateIfStale: false,
@@ -1658,7 +1659,7 @@ Each item is its own small PR, deployed 11:00–16:00 IST on a working day unles
    - `scripts/pipeline-flag.ts --mode=pilot --add=<emails>` (dry run by default; `--apply --confirm-prod`) upserts `system_settings`. It takes effect within 15 s.
    - **Monitor:** an hourly `[pipeline] stats` log line (syncs, sync p95, writes, 429 read/write/message, 503 busy, bulkhead waits and max queue, conflicts, notification rows written, slow syncs > 200 ms, pending board bumps); platform-wide P2024 = 0; global 429 and 502 not above the P9 baseline; HR-submit p95 within 10%; growth of `notifications WHERE type='PIPELINE'`; API RSS.
    - Run the real-iPhone checklist.
-9. **GA:** requires P0 live. Set `pipeline.mode='on'`; a reload shows the nav at once, and an already-open tab shows it the next time it regains focus (bootstrap revalidates on mount and on focus, at most once per 10 minutes per tab — amended 2026-10-01; before that it was fetched once per tab). A `/pipeline` tab holding a cached "not enabled" answer re-checks on mount and every ~3 minutes.
+9. **GA:** requires P0 live. Set `pipeline.mode='on'`; a reload shows the nav at once. An already-open tab shows it at its first focus or page change at least 10 minutes after that tab's last bootstrap request (bootstrap revalidates on mount and on focus, bounded by the 10-minute dedupe and a focus throttle that starts when the hook mounts — amended 2026-10-01; before that it was fetched once per tab), so verify GA with a reload. A `/pipeline` tab holding a cached "not enabled" answer shows "Loading" while it re-checks on mount, then re-checks every ~3 minutes; an enabled one re-checks when a sync reports a different mode.
 10. **Kill switches (no deploy):**
     - `mode=off` takes effect within 15 s: routes return 403 `PIPELINE_DISABLED`, clients show "paused" and re-check every 3 minutes, and jobs no-op.
     - `pipeline.pollMs` can be raised to 120 s.
@@ -1829,7 +1830,7 @@ Run the full suite from apps/api. After deploy, a registration attempt with a pe
 
 ### M7 — General availability
 
-**Scope.** Set pipeline.mode = 'on' after P0 (M0a) is live. The nav appears at once on a reload, and in an open tab at its next focus (bootstrap revalidates at most once per 10 minutes per tab). Roll back with `--mode=off`, never `--mode=pilot` (see `scripts/pipeline-flag.ts`).
+**Scope.** Set pipeline.mode = 'on' after P0 (M0a) is live. The nav appears at once on a reload, and in an open tab at its first focus or page change at least 10 minutes after that tab's last bootstrap request (§12 step 9) — verify with a reload. Roll back with `--mode=off`, never `--mode=pilot` (see `scripts/pipeline-flag.ts`).
 
 **Why it is safe to ship alone.** A settings flip; the kill switch and pollMs stretch remain available with no deploy.
 

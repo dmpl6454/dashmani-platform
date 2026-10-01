@@ -84,6 +84,27 @@ describe("scripts/pipeline-flag.ts", () => {
     expect(await setting("pipeline.email")).toBe("off");
   });
 
+  it("on → pilot WARNS that it strands non-pilot participants (roll back with --mode=off) but is not blocked", async () => {
+    const a = await createPipelineUser({ name: "Pilot A", tag: "flag-a" });
+    expect((await runPipelineFlag(prisma, { mode: "on", apply: true })).warnings).toEqual([]); // off → on
+    const dry = await runPipelineFlag(prisma, { mode: "pilot", add: [a.email] });
+    expect(dry.warnings).toHaveLength(1);
+    expect(dry.warnings[0]).toMatch(/not a safe rollback/i);
+    expect(dry.warnings[0]).toContain("--mode=off");
+    expect(dry.applied).toBe(false);
+    const res = await runPipelineFlag(prisma, { mode: "pilot", add: [a.email], apply: true });
+    expect(res.errors).toEqual([]);
+    expect(res.warnings).toHaveLength(1);
+    expect(res.applied).toBe(true); // a warning, never a refusal
+    expect(await setting("pipeline.mode")).toBe("pilot");
+    // Every other transition is silent.
+    expect((await runPipelineFlag(prisma, { mode: "off", apply: true })).warnings).toEqual([]); // pilot → off
+    expect((await runPipelineFlag(prisma, { mode: "pilot", apply: true })).warnings).toEqual([]); // off → pilot
+    expect((await runPipelineFlag(prisma, { mode: "on", apply: true })).warnings).toEqual([]); // pilot → on
+    expect((await runPipelineFlag(prisma, { mode: "on" })).warnings).toEqual([]); // on → on (no change)
+    expect((await runPipelineFlag(prisma, { email: "on" })).warnings).toEqual([]);
+  });
+
   it("an unknown email or a bad mode writes nothing", async () => {
     const a = await createPipelineUser({ name: "Pilot A", tag: "flag-a" });
     const res = await runPipelineFlag(prisma, { mode: "pilot", add: [a.email, "nobody@nowhere.test"], apply: true });

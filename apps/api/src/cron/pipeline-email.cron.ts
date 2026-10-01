@@ -658,8 +658,12 @@ function gateSkip(settings: PipelineSettings): EmailTickResult | null {
   return null;
 }
 
-/** One tick. `now` is injectable for tests (staleness, IST day, relative due dates, pauses). */
-export function runPipelineEmailTick(opts: { now?: Date } = {}): Promise<EmailTickResult> {
+/**
+ * One tick. `now` is injectable for tests (staleness, IST day, relative due dates, pauses);
+ * so is `clock` — what time it is at each SEND (default: `now` advanced by the real time the
+ * tick has taken), so a test can start a tick before IST midnight and send after it (D7).
+ */
+export function runPipelineEmailTick(opts: { now?: Date; clock?: () => number } = {}): Promise<EmailTickResult> {
   if (running) return Promise.resolve({ status: "skipped", reason: "running" });
   running = true; // claimed before the first await
   return (async (): Promise<EmailTickResult> => {
@@ -667,7 +671,7 @@ export function runPipelineEmailTick(opts: { now?: Date } = {}): Promise<EmailTi
       const started = Date.now();
       const now = opts.now ?? new Date();
       /** `now`, advanced by the real time this tick has taken. */
-      const clock = () => now.getTime() + (Date.now() - started);
+      const clock = opts.clock ?? (() => now.getTime() + (Date.now() - started));
 
       await flushUnsettled();
 
@@ -750,13 +754,28 @@ export function runPipelineEmailTick(opts: { now?: Date } = {}): Promise<EmailTi
           continue;
         }
 
-        const order = d.items.map((item, k) => ({ item, row: d.rows[k] }));
+        // D7 (R5): the SEND day, per digest — a tick (≤ 45 s of sends plus SMTP time) can cross
+        // IST midnight, and a digest worded against the tick's start would then say "due
+        // tomorrow (Thu 1 Oct)" on Thursday. A due-soon item whose date has passed by now is
+        // dropped (as buildDigests drops it against the tick's day) — never mailed as current.
+        const sendDay = dateToIST(new Date(clock()));
+        const order: Array<{ item: DigestItem; row: OutboxRow }> = [];
+        const passed: Array<{ id: string; reason: string }> = [];
+        d.items.forEach((item, k) => {
+          if (item.kind === "due_soon" && item.due < sendDay) passed.push({ id: d.rows[k].id, reason: "due date passed" });
+          else order.push({ item, row: d.rows[k] });
+        });
+        if (passed.length) {
+          await settleSkipped(passed);
+          skippedRows += passed.length;
+        }
+        if (order.length === 0) continue;
         order.sort(
           (a, b) =>
             KIND_ORDER[a.row.kind] - KIND_ORDER[b.row.kind] ||
             (a.item.projectTitle < b.item.projectTitle ? -1 : a.item.projectTitle > b.item.projectTitle ? 1 : 0),
         );
-        const mail = renderPipelineDigest({ recipientName: displayName(d.user.name ?? ""), items: order.map((o) => o.item), today });
+        const mail = renderPipelineDigest({ recipientName: displayName(d.user.name ?? ""), items: order.map((o) => o.item), today: sendDay });
         let sendError: unknown = null;
         try {
           // ⚠️ No DB slot and no transaction is held here (every statement above returned).
@@ -769,23 +788,24 @@ export function runPipelineEmailTick(opts: { now?: Date } = {}): Promise<EmailTi
           if (sentToday?.day === today) sentToday.n++;
           lastEmailedAt.set(d.user.id, clock());
           pipelineStats.emailSent();
-          await settleSent(d.rows.map((r) => r.id));
+          await settleSent(order.map((o) => o.row.id));
           continue;
         }
         failed++;
         pipelineStats.emailFailed();
         const reason = describeMailError(sendError);
+        const mailRows = order.map((o) => o.row); // exactly the rows this email carried
         if (sendError instanceof MailPermanentError) {
           // This recipient is refused for good (e.g. 550 5.1.1): no retries.
           await settleRequeue(
-            d.rows.map((row) => ({ row, attempts: row.attempts + 1, delayMs: 0, err: reason, permanent: true })),
+            mailRows.map((row) => ({ row, attempts: row.attempts + 1, delayMs: 0, err: reason, permanent: true })),
             "fail a refused recipient",
           );
           warnThrottled("pipeline-email-refused", `[pipeline-email] recipient refused by the mail server: ${reason}`);
           continue;
         }
         await settleRequeue(
-          d.rows.map((row) => ({ row, attempts: row.attempts + 1, delayMs: backoffMs(row.attempts + 1), err: reason })),
+          mailRows.map((row) => ({ row, attempts: row.attempts + 1, delayMs: backoffMs(row.attempts + 1), err: reason })),
           "requeue a failed send",
         );
         if (sendError instanceof MailTransportError) {

@@ -64,6 +64,10 @@ export interface MovedArgs extends NotifyBase {
   toPhaseName: string;
   /** The phase immediately before THIS move (the email compares its first one with the current phase). */
   prevPhaseId: string;
+  /** The target phase is terminal (Done): the due-soon and overdue rows for `dueDate` are withdrawn (D2). */
+  toTerminal: boolean;
+  /** The project's current due date (`YYYY-MM-DD`) or null — the date those rows are keyed on. */
+  dueDate: string | null;
 }
 
 /** A due-date change through the field edit (route #7): the in-portal row and, if on, the email. */

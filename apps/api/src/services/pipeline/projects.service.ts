@@ -34,7 +34,7 @@ import { pipelineRead, pipelineWrite } from "./tx";
 import { PipelineDbError, PipelineError, isIdempotencyKeyViolation } from "./errors";
 import { bumpBoard } from "./board";
 import { notifier } from "./notifier";
-import { cardFromRow, headerFromRow, messageFromRow, participantFromRow } from "./wire";
+import { cardFromRow, day, headerFromRow, messageFromRow, participantFromRow } from "./wire";
 import type { PipelineDirectory } from "./access";
 import { isPilotUser, type PipelineSettings } from "./settings";
 import { pipelineEmailOn } from "./email-outbox";
@@ -480,6 +480,12 @@ export async function editProject(
              description = CASE WHEN ${has("description")}::boolean THEN ${changes.description ?? null}::text ELSE description END,
              start_date  = CASE WHEN ${has("startDate")}::boolean THEN ${changes.startDate ?? null}::date ELSE start_date END,
              due_date    = CASE WHEN ${has("dueDate")}::boolean THEN ${changes.dueDate ?? null}::date ELSE due_date END,
+             -- D1: onDueChanged (below, same transaction) withdraws the old date's due-soon /
+             -- overdue rows, so the markers go too: an A → B → A change must re-arm the A alert
+             -- it just deleted (IS DISTINCT FROM re-arms B by itself). Side effect, accepted: such
+             -- a flip re-alerts (and re-emails the due-soon for) A.
+             due_soon_notified_for = CASE WHEN ${has("dueDate")}::boolean THEN NULL ELSE due_soon_notified_for END,
+             overdue_notified_for  = CASE WHEN ${has("dueDate")}::boolean THEN NULL ELSE overdue_notified_for END,
              header_rev  = header_rev + 1,
              updated_at  = timezone('utc', now())
        WHERE id = ${projectId}
@@ -590,7 +596,7 @@ async function moveAttempt(actor: PipelineActor, projectId: string, input: Pipel
     // S2: the target phase and the neighbours (a = after, b = the next rank above a).
     const [s2] = await tx.$queryRaw<Row[]>`
       WITH ph AS (
-        SELECT id, name, archived_at FROM pipeline_phases WHERE id = ${toPhaseId}),
+        SELECT id, name, archived_at, is_terminal FROM pipeline_phases WHERE id = ${toPhaseId}),
       aft AS (
         SELECT rank FROM pipeline_projects
          WHERE id = ${afterId}::text AND phase_id = ${toPhaseId}
@@ -610,6 +616,7 @@ async function moveAttempt(actor: PipelineActor, projectId: string, input: Pipel
            AND (a.rank IS NULL OR q.rank COLLATE "C" > a.rank COLLATE "C")
          ORDER BY q.rank COLLATE "C", q.id LIMIT 1)
       SELECT ph.id AS phase_id, ph.name AS phase_name, ph.archived_at AS phase_archived_at,
+             ph.is_terminal AS phase_terminal,
              (SELECT name FROM pipeline_phases WHERE id = ${fromPhaseId}) AS from_name,
              (SELECT rank FROM a) AS a_rank, (SELECT adjusted FROM a) AS adjusted, (SELECT rank FROM b) AS b_rank
         FROM (SELECT 1) one
@@ -631,6 +638,10 @@ async function moveAttempt(actor: PipelineActor, projectId: string, input: Pipel
       if (!lockPhaseFirst) throw new NeedsRebalance("rebalance needed");
       rank = await rebalancePhase(tx, toPhaseId, projectId, afterId);
     }
+    // D2: entering a terminal phase (Done) withdraws this due date's due-soon / overdue rows
+    // (notifier.onMoved below), so its markers are cleared with them: moving back out of Done
+    // re-arms the alerts that were withdrawn (the due cron never alerts a terminal project).
+    const toTerminal = phaseChanged && s2.phase_terminal === true;
 
     // S3: the card, with the move bookkeeping only when the phase changed.
     const [updated] = await tx.$queryRaw<Row[]>`
@@ -644,6 +655,8 @@ async function moveAttempt(actor: PipelineActor, projectId: string, input: Pipel
              move_from_phase_id  = CASE WHEN ${phaseChanged}::boolean THEN ${fromPhaseId}::text ELSE p.move_from_phase_id END,
              move_started_at     = CASE WHEN ${phaseChanged && !sameGen}::boolean THEN timezone('utc', now()) ELSE p.move_started_at END,
              move_last_at        = CASE WHEN ${phaseChanged}::boolean THEN timezone('utc', now()) ELSE p.move_last_at END,
+             due_soon_notified_for = CASE WHEN ${toTerminal}::boolean THEN NULL ELSE p.due_soon_notified_for END,
+             overdue_notified_for  = CASE WHEN ${toTerminal}::boolean THEN NULL ELSE p.overdue_notified_for END,
              header_rev          = p.header_rev + 1,
              updated_at          = timezone('utc', now())
        WHERE p.id = ${projectId}
@@ -667,6 +680,8 @@ async function moveAttempt(actor: PipelineActor, projectId: string, input: Pipel
         toPhaseId,
         toPhaseName: String(s2.phase_name ?? ""),
         prevPhaseId: curPhase,
+        toTerminal,
+        dueDate: day(row.due_date),
         email,
       });
     }

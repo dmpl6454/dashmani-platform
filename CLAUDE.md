@@ -528,6 +528,10 @@ The nav entry stays hidden until `pipeline.mode='on'`, so pilot users open `http
 
 Change them **only** with `cd packages/db && npx tsx ../../scripts/pipeline-flag.ts …`. It is a dry run by default; `--apply --confirm-prod` writes. The **kill switch** is `--mode=off --apply --confirm-prod`: it takes effect in ≤15 s, clients show "Pipeline is paused", and they resume automatically.
 
+⚠️ **Roll back with `--mode=off`, never `--mode=pilot`.** on → pilot locks everyone off the pilot list out of the projects they own (403, and ownership can't be transferred to them), and the due alerts stamped meanwhile never reach them, even after a switch back to on. The script prints a warning for on → pilot but does not refuse it.
+
+At GA an open HR tab picks up the flip by itself: bootstrap revalidates on mount and on focus, at most once per 10 minutes per tab, and a `/pipeline` tab holding a cached "not enabled" answer re-checks on mount and every ~3 minutes. The directory is keyed on the mode, so pilot users' cached `pickable:false` entries refresh too.
+
 **Performance isolation: why it cannot degrade login, HR submit, Link History or accounts.**
 
 1. **Own Prisma client.** `pipelineDb` (`services/pipeline/db.ts`) has 3 connections, `statement_timeout 2.5s`, `lock_timeout 1s` and `application_name=dashmani-pipeline`. It is separate from the main 10-connection pool. A CI grep forbids the main `prisma` import anywhere under `services/pipeline/**` except `db.ts`.
@@ -560,7 +564,13 @@ Change them **only** with `cd packages/db && npx tsx ../../scripts/pipeline-flag
   - the HR bell deep-links `metadata.path`;
   - the internal bell opens `metadata.url` in a new tab, behind an origin allowlist;
   - mobile shows the text only (the row shape is unchanged).
-- **Trim:** rows read more than 30 days ago, or older than 90 days, are deleted by a wall-clock job at 04:00 IST. It never runs at boot.
+- **Trim:** read rows whose `created_at` (the last re-arm) is more than 30 days old, and any row older than 90 days, are deleted by a wall-clock job at 04:00 IST. It never runs at boot. There is no `read_at` column.
+
+**Dates and times (2026-10-01).**
+- **Stored text stays true after it is written.** Bell rows use absolute days only ("is due Saturday (3 Oct)", never "tomorrow"), with the year when it differs from the IST year the row was written in. A due-date change, or a move into a terminal phase, withdraws the superseded due-soon and overdue rows by primary key (`withdrawDueRows` in notify.ts) and clears the `*_notified_for` markers. The "added" row's date is rewritten in place.
+- **Email** may say "due tomorrow": it is worded against the SEND day, computed per digest, because a tick can cross IST midnight.
+- **Client labels** come from `packages/shared/src/pipeline/time.ts`: fixed English, 12-hour am/pm, never `toLocale*`. "Today" is passed in from `useLocalDayKey()`, so memoised rows re-render exactly at local midnight. Relative ages tick once a minute through `<Ago>` and floor at every step, like the bells.
+- The send's S3 uses `statement_timestamp()`, taken after the project lock, so message times never go backwards against `seq`.
 
 **Schema and deploy rules.**
 - ⚠️ **NEVER revert the schema PR (#173) or drop `PIPELINE` from the enum.**

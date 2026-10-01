@@ -9,8 +9,8 @@
  * Deep links (`?m=<messageId>&t=<rootId>`) are handled by an effect keyed on the CURRENT
  * m and t values, so a bell click for the project already open still works.
  *
- * The header says who last changed the phase, and when (spec rule 7, §9.6): "Moved to Review
- * by Aisha · 3:20 pm", dated when it was not today.
+ * The header says who last changed the phase, and when (spec rule 7, §9.6): "3:20 pm · Moved
+ * to Review by Aisha", dated when it was not today.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
@@ -49,9 +49,11 @@ const RETRY_MS = [10_000, 20_000, 40_000];
 type LoadState = { kind: "loading" } | { kind: "ok" } | { kind: "failed"; reason: string; retrying: boolean } | { kind: "gone"; deleted: boolean };
 
 /**
- * "Moved to Review by Aisha · 3:20 pm" (H9) — "by you" for the viewer, no name when the
+ * "3:20 pm · Moved to Review by Aisha" (H9) — "by you" for the viewer, no name when the
  * directory does not know them, and nothing for a project still in the phase it was created
- * in (phaseChangedAt null). The time is dated when it was not today ("Wed, 30 Sep, 3:20 pm").
+ * in (phaseChangedAt null). The time is dated when it was not today ("Wed, 30 Sep, 3:20 pm ·
+ * …"). ⚠️ The WHEN leads: the line is cut to one row (phone ≈ 50 characters), and what a long
+ * name must cut is the name — never the date and time this line exists to show.
  */
 function phaseLine(
   header: ProjectHeaderData,
@@ -66,7 +68,7 @@ function phaseLine(
   const phase = phases.find((p) => p.id === header.phaseId)?.name;
   const byId = header.phaseChangedById;
   const who = byId === meId ? "you" : byId ? dirById.get(byId)?.name ?? null : null;
-  return `${phase ? `Moved to ${phase}` : "Moved"}${who ? ` by ${who}` : ""} · ${when}`;
+  return `${when} · ${phase ? `Moved to ${phase}` : "Moved"}${who ? ` by ${who}` : ""}`;
 }
 
 export function ProjectPage({ id }: { id: string }) {
@@ -312,7 +314,11 @@ export function ProjectPage({ id }: { id: string }) {
           {header && <ProjectMenu header={header} me={project!.me} can={project!.can} onShowDetails={() => setTab("details")} />}
         </div>
         <div className="px-3 pt-1 pb-0 flex flex-wrap items-center gap-x-2 gap-y-1 min-w-0">
-          {moved && <p className="min-w-0 truncate text-[12px] text-ink-3">{moved}</p>}
+          {moved && (
+            <p className="min-w-0 truncate text-[12px] text-ink-3" title={moved}>
+              {moved}
+            </p>
+          )}
           <StatusPill engine={engine} />
         </div>
         {header && (
@@ -343,7 +349,7 @@ export function ProjectPage({ id }: { id: string }) {
     <div className="flex flex-col min-h-0 flex-1 min-w-0">
       <PipelineHeader
         title={header?.title ?? "Project"}
-        sub={moved}
+        sub={moved ? <span title={moved}>{moved}</span> : null}
         left={back}
         status={<StatusPill engine={engine} />}
         actions={

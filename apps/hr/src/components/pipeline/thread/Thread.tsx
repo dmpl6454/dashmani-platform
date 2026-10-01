@@ -293,7 +293,18 @@ export function Thread({
   return (
     <div className="relative flex flex-col min-h-0 flex-1 min-w-0">
       <p ref={live} className="sr-only" aria-live="polite" />
-      <div ref={scroller} onScroll={onScroll} className="pl-scroll flex-1 min-w-0" role="log" aria-label="Conversation">
+      {/* role="log" is a live region; aria-relevant="additions" keeps it announcing NEW rows
+          only — not the in-place text changes that now happen on their own: the "· 5m" reply
+          ages tick every minute (<Ago>) and every time label and day separator relabels at
+          local midnight. */}
+      <div
+        ref={scroller}
+        onScroll={onScroll}
+        className="pl-scroll flex-1 min-w-0"
+        role="log"
+        aria-label="Conversation"
+        aria-relevant="additions"
+      >
         {body}
       </div>
       {newSinceBottom > 0 && !atBottom && (

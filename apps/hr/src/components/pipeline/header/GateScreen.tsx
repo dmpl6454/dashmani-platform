@@ -71,9 +71,14 @@ export function GateScreen({
   } else {
     const c = COPY[kind];
     body = (
-      <div role="status" className="flex flex-col items-center text-center gap-2 px-6 py-14">
-        <p className="text-[16px] font-bold text-ink">{c.title}</p>
-        <p className="text-[13px] text-ink-3 max-w-sm">{c.body}</p>
+      <div className="flex flex-col items-center text-center gap-2 px-6 py-14">
+        {/* Only the words are a live region. The button flips "Check again" ↔ "Checking…" on
+            every background re-check (~3 min while paused or not in the pilot), and that must
+            not be read out each time. */}
+        <div role="status" className="flex flex-col items-center gap-2">
+          <p className="text-[16px] font-bold text-ink">{c.title}</p>
+          <p className="text-[13px] text-ink-3 max-w-sm">{c.body}</p>
+        </div>
         {c.retry && onRetry && (
           <button
             type="button"

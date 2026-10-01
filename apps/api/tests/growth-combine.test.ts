@@ -936,7 +936,20 @@ describe("the dates each figure covers", () => {
     });
     expect(r.platforms.facebook.spanEnds).toEqual({ from: "2026-09-28", to: "2026-09-29" });
     expect(growthPeriodText(r.platforms.facebook, 2026).views).toBe("28-day windows ending 28 Sep – 29 Sep");
+    expect(growthPeriodText(r.platforms.facebook, 2026).windowsNote).toMatch(/a sync is moving channels onto the next window — some end a day later/);
     expect(growthPeriodText(r.platforms.instagram, 2026).views).toBe("3 Sep – 30 Sep");
+    expect(growthPeriodText(r.platforms.instagram, 2026).windowsNote).toBeNull();
+    // A channel weeks behind (restored after removal, say) is not "a day later".
+    const lag = combineGrowth({
+      ...allReady(28),
+      meta: meta({
+        dataThroughDayByPlatform: { facebook: "2026-09-10", instagram: "2026-09-30" },
+        newestCoveredDayByPlatform: { facebook: "2026-09-29", instagram: "2026-09-30" },
+        items: [metaItem({ id: "f1", platform: "facebook" })],
+      }),
+    });
+    expect(growthPeriodText(lag.platforms.facebook, 2026).windowsNote).toBe(
+      "channels' windows end up to 19 days apart — some haven't refreshed onto the latest one yet");
     // A response without the newest day reads as one window, as before.
     const old = combineGrowth({ ...allReady(28), meta: meta({ items: [metaItem({ id: "f1", platform: "facebook" })] }) });
     expect(old.platforms.facebook.spanEnds).toBeNull();

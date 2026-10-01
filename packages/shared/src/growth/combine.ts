@@ -914,6 +914,8 @@ export interface GrowthPeriodText {
   viewsWhy: string | null;
   /** Whose calendar those dates are on. */
   calendar: string;
+  /** Meta: why its channels' windows end on different days, when they do; else null. */
+  windowsNote: string | null;
 }
 
 /**
@@ -930,16 +932,25 @@ export function growthPeriodText(a: GrowthPlatformAggregate, currentYear: number
   const allAccounting = acc > 0 && acc === (a.followerDeltaChannels ?? 0);
   const calendar =
     a.platform === "facebook"
-      ? "views on Pacific days · change from our API follower snapshots (IST dates)"
+      ? "views on Pacific days · change from our API follower snapshots, IST dates"
       : a.platform === "instagram"
         ? allAccounting
           ? "UTC days · change is Meta's follows − unfollows for the same window"
-          : `views on UTC days · change from our API follower snapshots (IST dates)` +
+          : `views on UTC days · change from our API follower snapshots, IST dates` +
             (acc > 0 ? `; ${acc} by Meta's follows − unfollows for the views window` : "")
         : "our daily snapshots, IST dates";
   if (a.state !== "ready" || (a.channels ?? 0) === 0) {
-    return { change: null, changeWhy: null, views: null, viewsWhy: null, calendar };
+    return { change: null, changeWhy: null, views: null, viewsWhy: null, calendar, windowsNote: null };
   }
+
+  // Channels on different windows: a one-day gap is a sync part-way through moving them
+  // onto the next window; a longer one is a channel that has not refreshed in that time.
+  const lagDays = a.spanEnds && a.spanEnds.from !== a.spanEnds.to
+    ? Math.round((Date.parse(`${a.spanEnds.to}T00:00:00Z`) - Date.parse(`${a.spanEnds.from}T00:00:00Z`)) / 86_400_000)
+    : 0;
+  const windowsNote = lagDays <= 0 ? null
+    : lagDays === 1 ? "a sync is moving channels onto the next window — some end a day later"
+    : `channels' windows end up to ${lagDays} days apart — some haven't refreshed onto the latest one yet`;
 
   let views: string | null = null;
   let viewsWhy: string | null = null;
@@ -982,7 +993,7 @@ export function growthPeriodText(a: GrowthPlatformAggregate, currentYear: number
     changeWhy = "start date not reported";
   }
 
-  return { change, changeWhy, views, viewsWhy, calendar };
+  return { change, changeWhy, views, viewsWhy, calendar, windowsNote };
 }
 
 /** A source that failed to load, worded for the screen. */

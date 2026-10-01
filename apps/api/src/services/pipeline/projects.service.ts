@@ -29,7 +29,7 @@ import {
   type PipelineCreateProjectResponse,
   type PipelineProjectListResponse,
 } from "@dashmani/shared";
-import type { PipelineDbClient, PipelineTx } from "./db";
+import { Prisma, type PipelineDbClient, type PipelineTx } from "./db";
 import { pipelineRead, pipelineWrite } from "./tx";
 import { PipelineDbError, PipelineError, isIdempotencyKeyViolation } from "./errors";
 import { bumpBoard } from "./board";
@@ -757,6 +757,16 @@ async function relocationFor(tx: PipelineTx, row: Row): Promise<{ phaseId: strin
   return { phaseId: String(r.first_id), rank, adjusted: true };
 }
 
+/**
+ * A relocation IS a phase change: the header reads "<when> · Moved to <phase> by <who>" from
+ * phase_changed_*, and without this it would pair the NEW phase with an OLD move's person and
+ * time ("Moved to Brief by Aisha · 3 Aug", though Aisha moved it to the phase that is gone).
+ * Attributed to the actor whose unarchive / restore moved it. A card that stays put keeps them.
+ */
+const relocationStamp = (adjusted: boolean, actorId: string) => Prisma.sql`
+  phase_changed_at    = CASE WHEN ${adjusted}::boolean THEN timezone('utc', now()) ELSE p.phase_changed_at END,
+  phase_changed_by_id = CASE WHEN ${adjusted}::boolean THEN ${actorId}::text ELSE p.phase_changed_by_id END`;
+
 /** The card from an `UPDATE … RETURNING <card columns>` result. */
 const firstCard = (rows: Row[]): PipelineCard => cardFromRow(rows[0]);
 
@@ -801,6 +811,7 @@ export async function unarchiveProject(actor: PipelineActor, projectId: string):
         UPDATE pipeline_projects p SET
                archived_at = NULL, archived_by_id = NULL, archived_by_admin = false,
                phase_id = ${to.phaseId}, rank = ${to.rank},
+               ${relocationStamp(to.adjusted, me)},
                header_rev = p.header_rev + 1, updated_at = timezone('utc', now())
          WHERE p.id = ${projectId}
      RETURNING p.id, p.phase_id, p.title, p.rank, p.owner_id, p.start_date, p.due_date, p.member_count,
@@ -835,6 +846,7 @@ export async function restoreProject(actor: PipelineActor, projectId: string): P
         UPDATE pipeline_projects p SET
                deleted_at = NULL, deleted_by_id = NULL, deleted_by_admin = false,
                phase_id = ${to.phaseId}, rank = ${to.rank},
+               ${relocationStamp(to.adjusted, me)},
                header_rev = p.header_rev + 1, updated_at = timezone('utc', now())
          WHERE p.id = ${projectId}
      RETURNING p.id, p.phase_id, p.title, p.rank, p.owner_id, p.start_date, p.due_date, p.member_count,

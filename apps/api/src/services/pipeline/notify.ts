@@ -12,7 +12,7 @@
  *     pipelineDb, never the global prisma.
  */
 import { createHash } from "crypto";
-import { notificationSnippet } from "@dashmani/shared";
+import { notificationSnippet, todayIST } from "@dashmani/shared";
 import {
   setNotifier,
   type PipelineNotifier,
@@ -86,16 +86,41 @@ export function quotedTitle(title: string): string {
   return `“${clip(title, 60)}”`;
 }
 
-/** `YYYY-MM-DD` → "Sat 27 Sep". */
-export function shortDay(key: string): string {
-  const d = new Date(`${key}T00:00:00.000Z`);
-  return `${DAYS_SHORT[d.getUTCDay()]} ${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}`;
+/**
+ * STORED TEXT MUST STAY TRUE AFTER IT IS WRITTEN (owner request 2026-10-01). A bell row is
+ * read for up to 90 days and mobile shows it verbatim, so every date in it is ABSOLUTE ("Sat
+ * 3 Oct", never "tomorrow") and carries its year whenever that is not the IST year the row
+ * was written in ("Fri 1 Jan 2027"). The email may say "tomorrow" — it is read near send time
+ * — but it words every date against the SEND day (email-template.ts, cron D7).
+ *
+ * `textToday()` is that write-time IST day. Tests pin it (a suite that writes 2026 dates must
+ * not become a time bomb in 2027); production always reads the clock.
+ */
+let pinnedTextToday: string | null = null;
+export function textToday(): string {
+  return pinnedTextToday ?? todayIST();
+}
+/** Tests only: pin the IST day stored text is written against (null restores the clock). */
+export function __setPipelineTextTodayForTests(day: string | null): void {
+  pinnedTextToday = day;
 }
 
-/** `YYYY-MM-DD` → "29 Sep". */
-export function dayMonth(key: string): string {
+/** " 2027" when the day key's year is not `today`'s (the year rule above), else "". */
+function yearSuffix(key: string, today: string): string {
+  const y = key.slice(0, 4);
+  return y !== today.slice(0, 4) ? ` ${y}` : "";
+}
+
+/** `YYYY-MM-DD` → "Sat 27 Sep" — "Fri 1 Jan 2027" when its year is not `today`'s. */
+export function shortDay(key: string, today: string = textToday()): string {
   const d = new Date(`${key}T00:00:00.000Z`);
-  return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}`;
+  return `${DAYS_SHORT[d.getUTCDay()]} ${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}${yearSuffix(key, today)}`;
+}
+
+/** `YYYY-MM-DD` → "29 Sep" — "1 Jan 2027" when its year is not `today`'s. */
+export function dayMonth(key: string, today: string = textToday()): string {
+  const d = new Date(`${key}T00:00:00.000Z`);
+  return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}${yearSuffix(key, today)}`;
 }
 
 /** metadata.url is built server-side from HR_APP_URL (spec §7.1). */
@@ -160,6 +185,11 @@ const ADDED_CONFLICT = Prisma.sql`ON CONFLICT (id) DO UPDATE SET
   message = EXCLUDED.message, metadata = EXCLUDED.metadata
   WHERE notifications.created_at < timezone('utc', now()) - interval '24 hours'`;
 
+/** The "added" row's message: "Phase: Brief · due Sat 3 Oct" (one builder for the insert and the D4 rewrite). */
+export function addedMessage(phaseName: string, dueDate: string | null, today: string = textToday()): string {
+  return clip(`Phase: ${phaseName}${dueDate ? ` · due ${shortDay(dueDate, today)}` : ""}`, MESSAGE_MAX);
+}
+
 async function notifyAdded(
   tx: PipelineTx,
   a: { projectId: string; projectTitle: string; actorId: string; actorName: string; allow: string[] | null; phaseName: string; dueDate: string | null; addedUserIds: string[] },
@@ -172,7 +202,7 @@ async function notifyAdded(
     actorId: a.actorId,
     allow: a.allow,
     title: `${a.actorName} added you to ${quotedTitle(a.projectTitle)}`,
-    message: `Phase: ${a.phaseName}${a.dueDate ? ` · due ${shortDay(a.dueDate)}` : ""}`,
+    message: addedMessage(a.phaseName, a.dueDate),
     meta: pipelineMeta("added", a.projectId, {}, path),
     conflict: ADDED_CONFLICT,
   });
@@ -324,7 +354,31 @@ async function onProjectDeleted(tx: PipelineTx, a: ProjectDeletedArgs): Promise<
   if (ids.length) await tx.$executeRaw`DELETE FROM notifications WHERE id = ANY(${ids}::text[])`;
 }
 
+/**
+ * Withdraw the due-soon and overdue rows keyed on `due` for EVERY current participant (notify
+ * on or off — a muted follower's stale row is just as false). Used when that date stops being
+ * true: the due date changed (D1, B1 — the bell kept "due tomorrow (Tue 6 Oct)" for a deadline
+ * that no longer existed) and the project reached a terminal phase (D2 — "is overdue … still
+ * in Review" after Done). Unread or read, they go: the deadline they describe is gone. Primary-
+ * key probes only (≤ 2 × 200), in the caller's transaction; the caller also clears the
+ * project's *_notified_for markers, so a row withdrawn here can be re-armed by the due cron
+ * if the date comes back (A → B → A, or Done → back out).
+ */
+export async function withdrawDueRows(tx: PipelineTx, projectId: string, due: string): Promise<void> {
+  await tx.$executeRaw`
+    DELETE FROM notifications
+     WHERE type = ${PIPELINE_TYPE}
+       AND id IN (SELECT ${plnIdSql("due_soon", projectId, Prisma.sql`pp.user_id`, due)}
+                    FROM pipeline_participants pp WHERE pp.project_id = ${projectId}
+                  UNION ALL
+                  SELECT ${plnIdSql("overdue", projectId, Prisma.sql`pp.user_id`, due)}
+                    FROM pipeline_participants pp WHERE pp.project_id = ${projectId})`;
+}
+
 async function onMoved(tx: PipelineTx, a: MovedArgs): Promise<void> {
+  // D2: Done (terminal) gets no due alerts, so the ones already sent stop being true.
+  // Before the net-zero return: a generation that ends back IN Done withdraws them too.
+  if (a.toTerminal && a.dueDate) await withdrawDueRows(tx, a.projectId, a.dueDate);
   // Email first: every phase change is queued (a net-zero one too — the worker compares the
   // FIRST pending from-phase with the phase at send time and skips a round trip).
   if (a.email) {
@@ -358,8 +412,8 @@ async function onMoved(tx: PipelineTx, a: MovedArgs): Promise<void> {
   pipelineStats.notificationRows(moved);
 }
 
-/** `YYYY-MM-DD` → "Sat 3 Oct", or null. */
-const dayOrNull = (key: string | null) => (key ? shortDay(key) : null);
+/** `YYYY-MM-DD` → "Sat 3 Oct" (the year rule against `today`), or null. */
+const dayOrNull = (key: string | null, today: string) => (key ? shortDay(key, today) : null);
 
 /**
  * "Priya changed the due date of “X” to Sat 3 Oct (was Mon 28 Sep)", "Priya removed the due
@@ -367,9 +421,15 @@ const dayOrNull = (key: string | null) => (key ? shortDay(key) : null);
  * title is cut further when needed so the dates — the point of the row — always survive
  * the 120-character title limit.
  */
-export function dueChangedTitle(actorName: string, projectTitle: string, fromDue: string | null, toDue: string | null): string {
-  const from = dayOrNull(fromDue);
-  const to = dayOrNull(toDue);
+export function dueChangedTitle(
+  actorName: string,
+  projectTitle: string,
+  fromDue: string | null,
+  toDue: string | null,
+  today: string = textToday(),
+): string {
+  const from = dayOrNull(fromDue, today);
+  const to = dayOrNull(toDue, today);
   const build = (who: string, qt: string) =>
     to === null
       ? `${who} removed the due date of ${qt}${from ? ` (was ${from})` : ""}`
@@ -395,8 +455,25 @@ export function dueChangedTitle(actorName: string, projectTitle: string, fromDue
  * always describes the latest change. Cleared by the project-level ack (sync.service.ts).
  */
 async function onDueChanged(tx: PipelineTx, a: DueChangedArgs): Promise<void> {
+  const today = textToday();
+  // D1 (B1): the due-soon / overdue rows of the date that no longer exists go. (editProject
+  // cleared the *_notified_for markers in the same transaction.)
+  if (a.fromDue !== null) await withdrawDueRows(tx, a.projectId, a.fromDue);
+  // D4 (R11): an "added" row quotes the due date it was written with ("Phase: Brief · due Sat
+  // 3 Oct"). Rewrite it in place — by primary key, current participants, NOT re-armed (a read
+  // row stays read) — so it never shows a date that no longer exists. It takes the CURRENT
+  // phase too: the phase someone was added in is not stored, and the current one is true.
+  // (Simplest correct option: keeping the due date in "added" is useful context, and this one
+  // UPDATE keeps it true; dropping it would still need this rewrite for rows already written.)
+  const added = addedMessage(a.phaseName, a.toDue, today);
+  await tx.$executeRaw`
+    UPDATE notifications SET message = ${added}
+     WHERE type = ${PIPELINE_TYPE}
+       AND id IN (SELECT ${plnIdSql("added", a.projectId, Prisma.sql`pp.user_id`)}
+                    FROM pipeline_participants pp WHERE pp.project_id = ${a.projectId})
+       AND message <> ${added}`;
   const path = projectPath(a.projectId);
-  const title = dueChangedTitle(a.actorName, a.projectTitle, a.fromDue, a.toDue);
+  const title = dueChangedTitle(a.actorName, a.projectTitle, a.fromDue, a.toDue, today);
   const message = clip(`Phase: ${a.phaseName}`, MESSAGE_MAX);
   const meta = pipelineMeta("due_changed", a.projectId, { from: a.fromDue, to: a.toDue }, path);
   const written = await tx.$executeRaw`

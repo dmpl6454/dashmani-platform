@@ -116,7 +116,7 @@ describe("pipeline email — worker", () => {
     expect(r.status).toBe(200);
   };
   /** The tick, with fresh memos (names of users created in the test, current settings). */
-  const tick = async (opts: { now?: Date } = {}) => {
+  const tick = async (opts: { now?: Date; clock?: () => number } = {}) => {
     resetPipelineStateForTests();
     return runPipelineEmailTick(opts);
   };
@@ -200,7 +200,8 @@ describe("pipeline email — worker", () => {
     await patchDue(priya.id, project.id, null, "2026-10-03");
     await patchDue(priya.id, project.id, "2026-10-03", "2026-10-05");
     await makeDue();
-    await tick();
+    // The email words its dates against its SEND day (the year rule): pin it to 2026.
+    await tick({ now: new Date("2026-10-01T12:00:00.000+05:30") });
     expect(sent).toHaveLength(2); // Bob (mention + due change) and Cara (due change)
     const toBob = sent.find((m) => m.to === bob.email)!;
     expect(toBob.subject).toBe("Pipeline: 2 updates");
@@ -598,6 +599,32 @@ describe("pipeline email — worker", () => {
     expect(toBob.subject).toBe("“Diwali campaign” is due tomorrow (Wed 30 Sep)");
     expect(toBob.text).toContain("Phase: Brief");
     expect(toBob.html).toContain(`https://hr.example.test/pipeline/${project.id}`);
+  });
+
+  it("words and re-checks every digest against its SEND day: a tick that crosses IST midnight (D7)", async () => {
+    const { priya, bob, cara, project } = await team();
+    const holi = await createProjectFixture({ ownerId: priya.id, title: "Holi shoot", memberIds: [bob.id] });
+    // "Diwali campaign" is due Wed 30 Sep (queued Tuesday); "Holi shoot" Thu 1 Oct (queued Wednesday).
+    await pipelineDb.$executeRaw`UPDATE pipeline_projects SET due_date = DATE '2026-09-30' WHERE id = ${project.id}`;
+    await pipelineDb.$executeRaw`UPDATE pipeline_projects SET due_date = DATE '2026-10-01' WHERE id = ${holi.id}`;
+    expect(await runPipelineDueTick({ now: new Date("2026-09-29T10:00:00.000+05:30") })).toMatchObject({ dueSoon: 1 });
+    expect(await runPipelineDueTick({ now: new Date("2026-09-30T10:00:00.000+05:30") })).toMatchObject({ dueSoon: 1 });
+
+    // The tick STARTS at 23:59:30 IST on Wednesday; its sends happen at 00:00:30 on Thursday.
+    const sendAt = new Date("2026-10-01T00:00:30.000+05:30").getTime();
+    const r = await tick({ now: new Date("2026-09-30T23:59:30.000+05:30"), clock: () => sendAt });
+    expect(r).toMatchObject({ status: "ran", emails: 2 }); // Priya and Bob; Cara's only item had passed
+    for (const who of [priya, bob]) {
+      const m = sent.find((x) => x.to === who.email)!;
+      // Worded against Thursday: "due today", not the tick's "due tomorrow" …
+      expect(m.subject).toBe("“Holi shoot” is due today (Thu 1 Oct)");
+      // … and Wednesday's deadline, passed by the time it would arrive, is not mailed as current.
+      expect(m.text).not.toContain("Diwali campaign");
+    }
+    expect(sent.find((x) => x.to === cara.email)).toBeUndefined();
+    const diwali = await prisma.pipelineEmailOutbox.findMany({ where: { projectId: project.id } });
+    expect(diwali.map((x) => [x.status, x.lastError])).toEqual(diwali.map(() => ["skipped", "due date passed"]));
+    expect(diwali).toHaveLength(3);
   });
 
   it("two stranded 'sending' rows for the SAME email are recovered together: one row, both mentions, one email", async () => {

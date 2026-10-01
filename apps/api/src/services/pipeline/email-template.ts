@@ -83,11 +83,15 @@ export function joinNames(names: string[]): string {
   return `${n[0]}, ${n[1]} and ${n.length - 2} others`;
 }
 
-/** "due today (Sat 3 Oct)", "due tomorrow (Sat 3 Oct)", "due Monday (5 Oct)". */
+/**
+ * "due today (Sat 3 Oct)", "due tomorrow (Sat 3 Oct)", "due Monday (5 Oct)". Relative words
+ * are fine in an email (it is read near send time) — but only against the SEND day, which the
+ * worker passes per digest (D7). Dates carry their year when it is not `today`'s.
+ */
 export function dueWhen(due: string, today: string): string {
-  if (due === today) return `due today (${shortDay(due)})`;
-  if (due === addDaysIST(today, 1)) return `due tomorrow (${shortDay(due)})`;
-  return `due ${DAYS_LONG[new Date(`${due}T00:00:00.000Z`).getUTCDay()]} (${dayMonth(due)})`;
+  if (due === today) return `due today (${shortDay(due, today)})`;
+  if (due === addDaysIST(today, 1)) return `due tomorrow (${shortDay(due, today)})`;
+  return `due ${DAYS_LONG[new Date(`${due}T00:00:00.000Z`).getUTCDay()]} (${dayMonth(due, today)})`;
 }
 
 interface Rendered {
@@ -140,8 +144,8 @@ function render(item: DigestItem, today: string): Rendered {
       };
     case "due_changed": {
       const who = item.actorNames.length === 1 ? item.actorNames[0] : null;
-      const from = item.fromDue ? shortDay(item.fromDue) : null;
-      const to = item.toDue ? shortDay(item.toDue) : null;
+      const from = item.fromDue ? shortDay(item.fromDue, today) : null;
+      const to = item.toDue ? shortDay(item.toDue, today) : null;
       let headline: string;
       if (to === null) headline = who ? `${who} removed the due date of ${qt}` : `The due date of ${qt} was removed`;
       else if (from === null) headline = who ? `${who} set the due date of ${qt} to ${to}` : `The due date of ${qt} was set to ${to}`;
@@ -174,7 +178,8 @@ export function digestFooter(items: DigestItem[]): string[] {
 
 /**
  * One digest for one recipient. `items` must be non-empty. `today` is the IST date key at
- * send time (relative due dates are computed against it).
+ * SEND time — computed per digest by the worker, never once per tick (a tick can cross IST
+ * midnight): relative due words and the year rule are computed against it.
  */
 export function renderPipelineDigest(o: { recipientName: string; items: DigestItem[]; today: string }): DigestEmail {
   const rendered = o.items.map((it) => {

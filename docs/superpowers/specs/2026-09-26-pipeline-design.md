@@ -1037,9 +1037,11 @@ New pure helpers in `packages/shared/src/utils/date.ts`:
    WHERE <recipient fragment with $actor = NULL>
   ON CONFLICT (id) DO NOTHING;
   ```
-- **Text:**
-  - "“Diwali campaign” is due tomorrow (Sat 27 Sep)", or "… is due Monday (29 Sep)" when sent on a Saturday;
+- **Text (amended 2026-10-01 — stored text must stay true after it is written):**
+  - "“Diwali campaign” is due Saturday (27 Sep)", or "… is due Monday (29 Sep)" when sent on a Saturday. Always the ABSOLUTE day, never "tomorrow": the row is read for up to 90 days and mobile shows it verbatim. (The email keeps "due tomorrow (Sat 27 Sep)": it is read near send time and is worded against the send day.)
   - "“Diwali campaign” is overdue — was due Sat 27 Sep, still in Review".
+  - Every stored or emailed date carries its year when that is not the current IST year ("is due Friday (1 Jan 2027)", "was due Tue 30 Dec 2025").
+  - A due-date change, or a move into a terminal phase, withdraws the superseded due-soon / overdue rows by primary key and clears the `*_notified_for` markers, so the alert re-arms if the date comes back.
 - **Restart safety:** idempotent across restarts, and a tick with nothing to do costs one indexed probe.
 
 #### 7.9 Text and snippets
@@ -1656,7 +1658,7 @@ Each item is its own small PR, deployed 11:00–16:00 IST on a working day unles
    - `scripts/pipeline-flag.ts --mode=pilot --add=<emails>` (dry run by default; `--apply --confirm-prod`) upserts `system_settings`. It takes effect within 15 s.
    - **Monitor:** an hourly `[pipeline] stats` log line (syncs, sync p95, writes, 429 read/write/message, 503 busy, bulkhead waits and max queue, conflicts, notification rows written, slow syncs > 200 ms, pending board bumps); platform-wide P2024 = 0; global 429 and 502 not above the P9 baseline; HR-submit p95 within 10%; growth of `notifications WHERE type='PIPELINE'`; API RSS.
    - Run the real-iPhone checklist.
-9. **GA:** requires P0 live. Set `pipeline.mode='on'`; the nav appears within the 10-minute bootstrap dedupe.
+9. **GA:** requires P0 live. Set `pipeline.mode='on'`; a reload shows the nav at once, and an already-open tab shows it the next time it regains focus (bootstrap revalidates on mount and on focus, at most once per 10 minutes per tab — amended 2026-10-01; before that it was fetched once per tab). A `/pipeline` tab holding a cached "not enabled" answer re-checks on mount and every ~3 minutes.
 10. **Kill switches (no deploy):**
     - `mode=off` takes effect within 15 s: routes return 403 `PIPELINE_DISABLED`, clients show "paused" and re-check every 3 minutes, and jobs no-op.
     - `pipeline.pollMs` can be raised to 120 s.
@@ -1827,7 +1829,7 @@ Run the full suite from apps/api. After deploy, a registration attempt with a pe
 
 ### M7 — General availability
 
-**Scope.** Set pipeline.mode = 'on' (nav appears within the 10-minute bootstrap dedupe) after P0 (M0a) is live.
+**Scope.** Set pipeline.mode = 'on' after P0 (M0a) is live. The nav appears at once on a reload, and in an open tab at its next focus (bootstrap revalidates at most once per 10 minutes per tab). Roll back with `--mode=off`, never `--mode=pilot` (see `scripts/pipeline-flag.ts`).
 
 **Why it is safe to ship alone.** A settings flip; the kill switch and pollMs stretch remain available with no deploy.
 

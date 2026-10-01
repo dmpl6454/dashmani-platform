@@ -613,6 +613,36 @@ describe("pipeline projects", () => {
       expect((await prisma.pipelineProject.findUniqueOrThrow({ where: { id: card.id } })).archivedAt).toBeNull();
     });
 
+    it("a relocation (unarchive or restore out of an archived phase) records the phase change; a plain one leaves it alone", async () => {
+      // The header reads "<when> · Moved to <phase> by <who>" from phase_changed_*: after a
+      // relocation it must not pair the NEW phase with an OLD move's person and time.
+      const owner = await user("Stamp Owner");
+      const aisha = await user("Stamp Aisha");
+      const old = await prisma.pipelinePhase.create({ data: { key: "old-stamp", name: "Legacy review", position: 98 } });
+      const oldMove = { phaseChangedAt: new Date("2026-08-03T04:30:00.000Z"), phaseChangedById: aisha.id };
+      const unarchived = await create(owner.token, { phaseId: old.id, title: "Unarchive me" });
+      const restored = await create(owner.token, { phaseId: old.id, title: "Restore me" });
+      const plain = await create(owner.token, { title: "Stays put" });
+      for (const c of [unarchived, restored, plain]) {
+        await prisma.pipelineProject.update({ where: { id: c.id }, data: oldMove });
+      }
+      await act(unarchived.id, owner.token, "archive");
+      await act(plain.id, owner.token, "archive");
+      expect((await del(restored.id, owner.token, "Restore me")).status).toBe(200);
+      await prisma.pipelinePhase.update({ where: { id: old.id }, data: { archivedAt: new Date() } });
+
+      for (const [c, what] of [[unarchived, "unarchive"], [restored, "restore"]] as const) {
+        const r = await act(c.id, owner.token, what);
+        expect(r.status).toBe(200);
+        expect(r.body.data.phaseAdjusted).toBe(true);
+        const row = await prisma.pipelineProject.findUniqueOrThrow({ where: { id: c.id } });
+        expect(row.phaseChangedById).toBe(owner.id);
+        expect(Math.abs(Date.now() - row.phaseChangedAt!.getTime())).toBeLessThan(60_000);
+      }
+      expect((await act(plain.id, owner.token, "unarchive")).body.data.phaseAdjusted).toBe(false);
+      expect(await prisma.pipelineProject.findUniqueOrThrow({ where: { id: plain.id } })).toMatchObject(oldMove);
+    });
+
     it("owner transfer sets owner_id, gives the new owner a MEMBER row with notify, and refuses an inactive target", async () => {
       const owner = await user("Xfer Owner");
       const next = await user("Xfer Next");

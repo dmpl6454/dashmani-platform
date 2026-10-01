@@ -941,6 +941,21 @@ router.get(
       if (!f) return acc;
       return acc === null || f.getTime() < acc.getTime() ? f : acc;
     }, null);
+    // The SAME rule, per platform, for the Account Growth "All" tab (2026-10-01), which
+    // prints each platform's window as exact dates. Facebook closes at Pacific midnight
+    // and Instagram at UTC midnight, so for ~7 hours a day they cover DIFFERENT calendar
+    // days — and the page-wide value above is the earlier one, which would understate how
+    // current Instagram is. Errored rows are left out for the reason given above; a
+    // platform with no healthy row is null, never borrowed from the other platform.
+    const earliestByPlatform: { facebook: Date | null; instagram: Date | null } = { facebook: null, instagram: null };
+    for (const r of rows) {
+      const w = win(r);
+      if (!w || w.error || !w.periodEnd) continue;
+      const p = r.kind === "FACEBOOK_PAGE" ? "facebook" : "instagram";
+      const cur = earliestByPlatform[p];
+      if (cur === null || w.periodEnd.getTime() < cur.getTime()) earliestByPlatform[p] = w.periodEnd;
+    }
+    const coveredOrNull = (d: Date | null) => (window === "today" || !d ? null : coveredDayOf(d));
     // Where each platform's partial "today" began — Facebook's day is the
     // PACIFIC day, Instagram's the UTC day. At 2pm IST the Facebook bucket is
     // ~1.5h old, so a small revenue figure is the clock, not missing data; the
@@ -985,6 +1000,17 @@ router.get(
          * "today": a partial day has no completed-through day.
          */
         dataThroughDay: window === "today" || !earliestPeriodEnd ? null : coveredDayOf(earliestPeriodEnd),
+        /**
+         * dataThroughDay, per platform: the last calendar day each platform's figures are
+         * complete through (Facebook a Pacific day, Instagram a UTC day). Null for "today"
+         * and for a platform with no healthy row. ⚠️ ADDITIVE and live mode only — range
+         * mode omits it (there dataThroughDay means "newest day", a different question),
+         * and the mobile app reads neither.
+         */
+        dataThroughDayByPlatform: {
+          facebook: coveredOrNull(earliestByPlatform.facebook),
+          instagram: coveredOrNull(earliestByPlatform.instagram),
+        },
         /** ISO instants of each platform's most recent day start — Facebook's Pacific
          *  midnight, Instagram's UTC midnight. Every live window ends on these. */
         dayStarts,

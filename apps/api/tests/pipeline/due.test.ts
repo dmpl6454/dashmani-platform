@@ -126,9 +126,11 @@ describe("pipeline due cron (§7.8)", () => {
     expect(await runPipelineDueTick({ now: ist("2026-10-01", "10:00") })).toMatchObject({ overdue: 1 });
     const mine = (await pipelineRows()).filter((r) => r.userId === a.bob.id);
     expect(mine.map((r) => (r.metadata as { kind: string }).kind).sort()).toEqual(["due_soon", "overdue"]);
-    expect(mine.find((r) => (r.metadata as { kind: string }).kind === "overdue")!.title).toBe(
-      "“Diwali campaign” is overdue — was due Wed 30 Sep, still in Review",
-    );
+    const overdue = mine.find((r) => (r.metadata as { kind: string }).kind === "overdue")!;
+    // No "still in <phase>" in the title: a later move between live phases would make it false
+    // (the row stays). The phase lives in the message, like every other row's "Phase: …".
+    expect(overdue.title).toBe("“Diwali campaign” is overdue — was due Wed 30 Sep");
+    expect(overdue.message).toBe("Phase: Review");
   });
 
   it("terminal-phase and archived projects are excluded", async () => {
@@ -164,9 +166,7 @@ describe("pipeline due cron (§7.8)", () => {
     expect(await runPipelineDueTick({ now: ist("2026-12-31", "10:00") })).toMatchObject({ status: "ran", dueSoon: 1, overdue: 1 });
     const rows = await pipelineRows();
     expect(rows.find((r) => r.userId === next.bob.id)!.title).toBe("“Diwali campaign” is due Friday (1 Jan 2027)");
-    expect(rows.find((r) => r.userId === last.bob.id)!.title).toBe(
-      "“Year-end recap” is overdue — was due Tue 30 Dec 2025, still in Review",
-    );
+    expect(rows.find((r) => r.userId === last.bob.id)!.title).toBe("“Year-end recap” is overdue — was due Tue 30 Dec 2025");
   });
 
   it("pilot mode: due-soon and overdue rows go only to pilot participants (F16)", async () => {
@@ -271,7 +271,10 @@ describe("pipeline due cron (§7.8)", () => {
       await runPipelineDueTick({ now: ist("2026-09-29", "10:00") });
       const [planning, review] = [await phaseIdOf("planning"), await phaseIdOf("review")];
       expect((await move(a.owner.id, a.p.id, review, planning)).status).toBe(200);
-      expect(await ofKind("overdue")).toHaveLength(2);
+      const kept = await ofKind("overdue");
+      expect(kept).toHaveLength(2);
+      // …and their titles are still true: they never claimed the card was "still in Planning".
+      for (const r of kept) expect(r.title).toBe("“Diwali campaign” is overdue — was due Mon 28 Sep");
       expect((await markers(a.p.id)).overdue?.toISOString().slice(0, 10)).toBe("2026-09-28");
     });
   });

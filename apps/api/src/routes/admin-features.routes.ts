@@ -1561,6 +1561,11 @@ router.put("/admin/sop-content", authenticate, requireAdminRole, async (req: Req
 // GET /admin/api-usage/cost-sheet?days=30 — the API Usage / Cost Sheet.
 // Aggregates the api_usage ledger into per-provider + per-operation spend, a daily
 // series, and a forward projection. Admin-gated (financial/system data).
+// getCostSheet is ONE grouped SQL statement behind a 60s single-flight memo and the
+// heavy-query bulkhead (incident 2026-10-03: the old unbounded findMany over ~2M rows
+// OOM-killed the API). The bulkhead lives inside the service, around the compute only,
+// so memo hits never queue; a saturated bulkhead rejects with a clean 503 REPORTS_BUSY,
+// which next(err) hands to the error handler.
 router.get(
   "/admin/api-usage/cost-sheet",
   authenticate,

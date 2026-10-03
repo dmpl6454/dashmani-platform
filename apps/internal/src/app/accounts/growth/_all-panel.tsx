@@ -35,7 +35,7 @@
  * (measured at 375px: the error text cut off at 193px, Retry at x=807px).
  */
 
-import { useDeferredValue, useMemo, useState, type ReactNode } from "react";
+import { memo, useCallback, useDeferredValue, useMemo, useState, type ReactNode } from "react";
 import { AlertTriangle } from "lucide-react";
 import {
   combineGrowth,
@@ -167,8 +167,11 @@ export function AllPanel({ onOpenTab }: { onOpenTab?: (tab: SiblingTab) => void 
   const [days, setDays] = useState<GrowthAllPeriod>(DEFAULT_GROWTH_ALL_PERIOD);
   const [q, setQ] = useState("");
   // ⚠️ The table holds ~470 rows. Filtering on the DEFERRED query keeps typing responsive:
-  // React re-renders the table at low priority instead of inside each keystroke. Still
-  // client-side only — nothing is sent to the server.
+  // the keystroke's own render keeps the old query, and ChannelsTable is memo()'d with
+  // stable props (the memoised rows, a useCallback onSort), so it skips that render and the
+  // table re-renders once, at low priority, for the new query. Without the memo the table
+  // would render in BOTH passes — useDeferredValue only defers a child that can bail out.
+  // Still client-side only — nothing is sent to the server.
   const qDeferred = useDeferredValue(q);
   const [platformFilter, setPlatformFilter] = useState<GrowthPlatform | "all">("all");
   const [sort, setSort] = useState<{ key: GrowthChannelSortKey; dir: SortDir }>({ key: "followers", dir: "desc" });
@@ -235,11 +238,12 @@ export function AllPanel({ onOpenTab }: { onOpenTab?: (tab: SiblingTab) => void 
       compareCells(growthChannelSortValue(a, sort.key), growthChannelSortValue(b, sort.key), sort.dir)),
     [filtered, sort],
   );
-  const onSort = (k: GrowthChannelSortKey) =>
+  // Stable across renders (a functional update needs no deps), so the memo()'d table can skip.
+  const onSort = useCallback((k: GrowthChannelSortKey) =>
     setSort((cur) =>
       cur.key === k
         ? { key: k, dir: cur.dir === "desc" ? "asc" : "desc" }
-        : { key: k, dir: k === "name" || k === "platform" ? "asc" : "desc" });
+        : { key: k, dir: k === "name" || k === "platform" ? "asc" : "desc" }), []);
 
   // ⚠️ A non-admin's 403 is not an outage. Every endpoint here shares one admin-only gate,
   // so when all of them refuse, say that once instead of three "could not be loaded" boxes.
@@ -959,7 +963,10 @@ function TotalRow({ c }: { c: GrowthCombined }) {
 
 // ─── All channels ────────────────────────────────────────────────────────────────
 
-function ChannelsTable({ combo, rows, platformFilter, searching, sort, onSort }: {
+// ⚠️ memo() is load-bearing: it is what lets the search's useDeferredValue skip this
+// ~470-row table during each keystroke's urgent render (see AllPanel). Every prop is stable
+// between those renders — keep it that way (no inline objects or arrow functions here).
+const ChannelsTable = memo(function ChannelsTable({ combo, rows, platformFilter, searching, sort, onSort }: {
   combo: GrowthCombination;
   rows: GrowthChannelRow[];
   platformFilter: GrowthPlatform | "all";
@@ -1041,7 +1048,7 @@ function ChannelsTable({ combo, rows, platformFilter, searching, sort, onSort }:
       </tbody>
     </table>
   );
-}
+});
 
 function RowChange({ r, periodDays }: { r: GrowthChannelRow; periodDays: number }) {
   const v = r.followerDelta;

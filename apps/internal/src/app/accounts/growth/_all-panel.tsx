@@ -67,10 +67,11 @@ import {
   type GrowthCombination,
   type GrowthSource,
   type GrowthSourceInput,
-  // ⚠️ The module, NOT the @dashmani/shared barrel: page.tsx imports this panel
-  // statically, so the barrel would put zod and every validator into the first load of
-  // ALL four tabs (measured /accounts/growth 127 → 156 kB). combine.ts is pure and has
-  // only a type import. Enforced by scripts/ci/guards.sh (no-shared-barrel-growth).
+  // ⚠️ The module, NOT the @dashmani/shared barrel: the barrel drags zod and every
+  // validator along (measured /accounts/growth 127 → 156 kB First Load JS while this panel
+  // was a static import; page.tsx now loads it with next/dynamic, but the barrel would still
+  // bloat this tab's chunk). combine.ts is pure and imports nothing. Enforced by
+  // scripts/ci/guards.sh (no-shared-barrel-growth).
 } from "@dashmani/shared/src/growth/combine";
 import { useMetaChannels } from "@/lib/hooks/use-meta";
 import { useChannelBoard } from "@/lib/hooks/use-channels";

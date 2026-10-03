@@ -1,25 +1,50 @@
 /**
- * Cost Sheet (GET /admin/api-usage/cost-sheet): a characterization harness for getCostSheet.
+ * Cost Sheet (GET /admin/api-usage/cost-sheet): the SQL aggregation must return exactly what
+ * the old row-hydrating implementation returned.
  *
- * WHY (incident 2026-10-03): getCostSheet() hydrates EVERY api_usage row in the window with an
- * unbounded prisma.apiUsage.findMany (2,072,696 rows for 30 days on prod) and aggregates them in
+ * WHY (incident 2026-10-03): getCostSheet() hydrated EVERY api_usage row in the window with an
+ * unbounded prisma.apiUsage.findMany (2,072,696 rows for 30 days on prod) and aggregated them in
  * JS. Opening the API Costs page drove the API process to 1.2-1.76 GB; pm2's 800M cap and the
  * kernel OOM killer restarted it 8 times (33 user-facing 502s), and the page's SWR retries
- * re-triggered it after every restart. It is about to be rewritten as ONE grouped SQL
- * statement; this file pins what it returns today so the rewrite can be held to it.
+ * re-triggered it after every restart. The rewrite aggregates in Postgres (ONE grouped
+ * statement, one row per group) and prices each group in JS with the existing pricing functions.
  *
- * The contract, for every fixture and window: integers EQUAL, floats within 1e-9 relative (a
- * rewrite may add floats in a different order), every array in the SAME order, every object's
- * keys in the same order. `legacyCostSheet` below is today's getCostSheet copied verbatim
- * (only its name changed), run against the same database at the same frozen instant — on this
- * commit the two are the same code, which is what proves the harness itself.
+ * The contract proven here, for every fixture and window: integers EQUAL, floats within 1e-9
+ * relative (Postgres adds floats in a different order than the old loop did), every array in
+ * the SAME order, every object's keys in the same order. `legacyCostSheet` below is the old
+ * getCostSheet copied verbatim (only its name changed), run against the same database at the
+ * same frozen instant.
  */
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, afterAll, vi } from "vitest";
 import request from "supertest";
 import { prisma } from "@dashmani/db";
 import app from "../src/app";
-import { effectiveRowCostUsd, getCostSheet, llmCostUsd, type CostSheet, type ProviderCost } from "../src/services/api-usage.service";
+import {
+  costSheetGroupCostUsd,
+  effectiveRowCostUsd,
+  getCostSheet,
+  invalidateCostSheetCache,
+  llmCostUsd,
+  type CostSheet,
+  type ProviderCost,
+} from "../src/services/api-usage.service";
+import { heavyQueryGateStats, resetHeavyQueryGateForTests, withHeavyQuerySlot } from "../src/utils/heavy-query";
 import { createTestRole, createTestUser, generateToken } from "./helpers";
+
+// The bulkhead reads HEAVY_QUERY_MAX_WAIT_MS once, at module load: 400 ms instead of 15 s lets
+// the saturated-gate test see its 503 quickly. ⚠️ Restored in afterAll — process.env is shared
+// by every file in the single fork (the documented rate-limit stub leak).
+const hoistedEnv = vi.hoisted(() => {
+  const previous = process.env.HEAVY_QUERY_MAX_WAIT_MS;
+  process.env.HEAVY_QUERY_MAX_WAIT_MS = "400";
+  return { previous };
+});
+afterAll(() => {
+  if (hoistedEnv.previous === undefined) delete process.env.HEAVY_QUERY_MAX_WAIT_MS;
+  else process.env.HEAVY_QUERY_MAX_WAIT_MS = hoistedEnv.previous;
+});
+
+type GroupLike = Parameters<typeof costSheetGroupCostUsd>[0];
 
 // ─────────────────────────── the old implementation, verbatim ───────────────────────────
 // Copied from apps/api/src/services/api-usage.service.ts at origin/main 59422ec (lines
@@ -233,6 +258,7 @@ function sheetDiffs(actual: unknown, expected: unknown, path = "sheet", key: str
 /** Old vs new at the frozen instant, against the same rows. Returns both for extra checks. */
 async function expectSameAsLegacy(days: number, label = `days=${days}`): Promise<{ legacy: CostSheet; sheet: CostSheet }> {
   const legacy = await legacyCostSheet(days);
+  invalidateCostSheetCache();
   const sheet = await getCostSheet(days);
   expect(sheetDiffs(sheet, legacy), label).toEqual([]);
   return { legacy, sheet };
@@ -264,6 +290,14 @@ function row(r: Partial<FixtureRow> & Pick<FixtureRow, "provider" | "createdAt">
 const at = (iso: string): Date => new Date(iso);
 const ms = (t: number): Date => new Date(t);
 const sleep = (n: number): Promise<void> => new Promise((r) => setTimeout(r, n));
+
+function deferred<T = void>(): { promise: Promise<T>; resolve: (v: T) => void } {
+  let resolve!: (v: T) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
 
 /**
  * api_usage is not in tests/setup.ts's TRUNCATE list (other suites' fire-and-forget
@@ -438,6 +472,45 @@ function randomFixture(seedValue: number, n: number): FixtureRow[] {
   return rows;
 }
 
+/**
+ * Prod-shaped traffic: mostly free Graph/scraper calls plus one LLM extraction stream, so a
+ * window collapses to a few groups per operation per day — as on prod, where 2,072,696 rows
+ * in 30 days aggregate to a few thousand groups.
+ */
+function prodLikeFixture(seedValue: number, n: number, spanDays: number): FixtureRow[] {
+  const rand = mulberry32(seedValue);
+  const META_OPS = ["graph-media", "meta-oauth:posts", "meta-oauth:channels", "fb-reel-scraper", "snap-spotlight-scraper"];
+  const YOUTUBE_OPS = ["youtube-videos", "youtube-channels"];
+  const used = new Set<number>();
+  const rows: FixtureRow[] = [];
+  for (let i = 0; i < n; i++) {
+    let t: number;
+    do {
+      t = NOW - Math.floor(rand() * spanDays * DAY);
+    } while (used.has(t));
+    used.add(t);
+    const kind = rand();
+    if (kind < 0.7) {
+      rows.push(row({ provider: "meta", operation: META_OPS[Math.floor(rand() * META_OPS.length)], units: 1, createdAt: ms(t) }));
+    } else if (kind < 0.75) {
+      rows.push(row({ provider: "youtube", operation: YOUTUBE_OPS[Math.floor(rand() * YOUTUBE_OPS.length)], units: 1, createdAt: ms(t) }));
+    } else {
+      rows.push(
+        row({
+          provider: "deepseek",
+          model: "deepseek-v4-flash",
+          operation: "entity-extraction",
+          inputTokens: 18_000 + Math.floor(rand() * 4_000),
+          outputTokens: 40 + Math.floor(rand() * 60),
+          costUsd: rand() * 0.003,
+          createdAt: ms(t),
+        }),
+      );
+    }
+  }
+  return rows;
+}
+
 async function seedBacklog(pending: number): Promise<void> {
   const data: Array<{ canonicalKey: string; platform: string; status: string; extractedAt?: Date }> = [];
   for (let i = 0; i < pending; i++) data.push({ canonicalKey: `yt:pending-${i}`, platform: "youtube", status: "ok" });
@@ -445,6 +518,27 @@ async function seedBacklog(pending: number): Promise<void> {
   data.push({ canonicalKey: "yt:tagged", platform: "youtube", status: "ok", extractedAt: ms(NOW - DAY) });
   data.push({ canonicalKey: "yt:not-ok", platform: "youtube", status: "pending" });
   for (let i = 0; i < data.length; i += 1000) await prisma.linkContent.createMany({ data: data.slice(i, i + 1000) });
+}
+
+/**
+ * Count calls to prisma.apiUsage.findMany. vi.spyOn cannot wrap it: Prisma's model delegate is
+ * a Proxy that mints a fresh action function on every read and reports an own descriptor with
+ * `value: undefined`, so spyOn captures `undefined` as the original (and restoring it leaves
+ * findMany undefined for the rest of the file). An own property shadows the minted function.
+ * ⚠️ Restore by re-pointing it at a real minted function, never `delete`: the proxy remembers
+ * deleted keys, and this client is shared (globalThis) by every later file in the fork.
+ */
+function watchApiUsageFindMany(): { calls: () => number; restore: () => void } {
+  const delegate = prisma.apiUsage as unknown as Record<string, unknown>;
+  const real = delegate.findMany as (...args: unknown[]) => unknown;
+  let calls = 0;
+  const define = (value: unknown) =>
+    Object.defineProperty(delegate, "findMany", { configurable: true, enumerable: true, writable: true, value });
+  define((...args: unknown[]) => {
+    calls++;
+    return real(...args);
+  });
+  return { calls: () => calls, restore: () => define(real) };
 }
 
 async function adminToken(): Promise<string> {
@@ -458,12 +552,15 @@ const COST_SHEET_URL = "/v1/admin/api-usage/cost-sheet";
 beforeEach(async () => {
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(NOW);
+  invalidateCostSheetCache();
+  resetHeavyQueryGateForTests();
   await emptyApiUsage();
 });
 
 afterEach(() => {
   vi.restoreAllMocks();
   vi.useRealTimers();
+  resetHeavyQueryGateForTests();
 });
 
 // ───────────────────────────────────── equivalence ────────────────────────────────────────
@@ -632,9 +729,170 @@ describe("getCostSheet: the SQL aggregation returns exactly what the row loop re
     await seed(handBuiltFixture());
     const token = await adminToken();
     const legacy = JSON.parse(JSON.stringify(await legacyCostSheet(30))) as CostSheet;
+    invalidateCostSheetCache();
     const res = await request(app).get(`${COST_SHEET_URL}?days=30`).set("Authorization", `Bearer ${token}`);
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
     expect(sheetDiffs(res.body.data, legacy)).toEqual([]);
+  });
+});
+
+// ─────────────────────────────── bounded, memoised, bulkheaded ─────────────────────────────
+
+describe("getCostSheet: bounded, memoised and behind the heavy-query bulkhead", () => {
+  it("never hydrates rows: no apiUsage.findMany, ONE $queryRaw returning one row per group", async () => {
+    const rows = prodLikeFixture(7, 8_000, 35);
+    await seed(rows);
+    const findMany = watchApiUsageFindMany();
+    const raw = vi.spyOn(prisma, "$queryRaw");
+    let legacy!: CostSheet;
+    let sheet!: CostSheet;
+    try {
+      // Positive control: the watcher does see the old implementation's findMany (which
+      // issues no $queryRaw).
+      legacy = await legacyCostSheet(30);
+      expect(findMany.calls()).toBe(1);
+      sheet = await getCostSheet(30);
+      expect(findMany.calls()).toBe(1); // the new code added none
+    } finally {
+      findMany.restore();
+    }
+    expect(sheetDiffs(sheet, legacy)).toEqual([]);
+    expect(raw).toHaveBeenCalledTimes(1);
+    const groups = (await raw.mock.results[0].value) as unknown[];
+    const inWindow = rows.filter((r) => r.createdAt.getTime() >= sinceFor(30));
+    const expectedGroups = new Set(
+      inWindow.map((r) =>
+        [
+          r.provider,
+          r.operation,
+          r.model,
+          r.createdAt.toISOString().slice(0, 10),
+          r.inputTokens == null && r.outputTokens == null,
+          (r.inputTokens ?? 0) < 0,
+          r.createdAt.getTime() >= THREE_DAYS_AGO,
+        ].join("\u0000"),
+      ),
+    ).size;
+    expect(groups).toHaveLength(expectedGroups);
+    expect(groups.length).toBeLessThan(inWindow.length / 10);
+  });
+
+  it("serves a repeat within 60 s from the memo, shares one compute between concurrent cold callers, and recomputes after expiry", async () => {
+    await seed(handBuiltFixture());
+    const raw = vi.spyOn(prisma, "$queryRaw");
+    const [a, b] = await Promise.all([getCostSheet(30), getCostSheet(30)]);
+    expect(raw).toHaveBeenCalledTimes(1);
+    expect(b).toBe(a);
+
+    vi.setSystemTime(NOW + 59_999);
+    expect(await getCostSheet(30)).toBe(a);
+    expect(raw).toHaveBeenCalledTimes(1);
+
+    // Each window is its own entry; an out-of-range window shares its clamped one.
+    await getCostSheet(7);
+    expect(raw).toHaveBeenCalledTimes(2);
+    const year = await getCostSheet(365);
+    expect(await getCostSheet(1000)).toBe(year);
+    expect(raw).toHaveBeenCalledTimes(3);
+
+    vi.setSystemTime(NOW + 60_000);
+    const c = await getCostSheet(30);
+    expect(c).not.toBe(a);
+    expect(raw).toHaveBeenCalledTimes(4);
+  });
+
+  it("a cold compute waits for a heavy-query slot; a memo hit never touches the gate", async () => {
+    await seed(handBuiltFixture());
+    const raw = vi.spyOn(prisma, "$queryRaw");
+    const holds = [deferred(), deferred()];
+    const holders = holds.map((d, i) => withHeavyQuerySlot(`test-hold-${i}`, () => d.promise));
+
+    const cold = getCostSheet(30);
+    await sleep(50);
+    expect(heavyQueryGateStats()).toMatchObject({ active: 2, queued: 1 });
+    expect(raw).not.toHaveBeenCalled();
+    holds[0].resolve();
+    const sheet = await cold;
+    expect(raw).toHaveBeenCalledTimes(1);
+
+    // Saturate the gate again: the cached sheet still answers at once, without queueing.
+    const third = deferred();
+    const thirdHolder = withHeavyQuerySlot("test-hold-2", () => third.promise);
+    expect(heavyQueryGateStats()).toMatchObject({ active: 2, queued: 0 });
+    expect(await getCostSheet(30)).toBe(sheet);
+    expect(heavyQueryGateStats()).toMatchObject({ active: 2, queued: 0 });
+    expect(raw).toHaveBeenCalledTimes(1);
+
+    holds[1].resolve();
+    third.resolve();
+    await Promise.all([...holders, thirdHolder]);
+  });
+
+  it("a saturated gate answers 503 REPORTS_BUSY (never a 500 or a hang), and the failure is not cached", async () => {
+    await seed(handBuiltFixture());
+    const token = await adminToken();
+    const holds = [deferred(), deferred()];
+    const holders = holds.map((d, i) => withHeavyQuerySlot(`test-hold-${i}`, () => d.promise));
+
+    const busy = await request(app).get(`${COST_SHEET_URL}?days=30`).set("Authorization", `Bearer ${token}`);
+    expect(busy.status).toBe(503);
+    expect(busy.body).toMatchObject({ success: false, error: { code: "REPORTS_BUSY" } });
+
+    holds.forEach((d) => d.resolve());
+    await Promise.all(holders);
+    const ok = await request(app).get(`${COST_SHEET_URL}?days=30`).set("Authorization", `Bearer ${token}`);
+    expect(ok.status).toBe(200);
+    expect(sheetDiffs(ok.body.data, JSON.parse(JSON.stringify(await legacyCostSheet(30))))).toEqual([]);
+  });
+});
+
+// ─────────────────────────────────── the pure group price ──────────────────────────────────
+
+describe("costSheetGroupCostUsd: one group priced exactly as the sum of its rows", () => {
+  const base: GroupLike = {
+    provider: "openai",
+    model: "gpt-4o-mini",
+    operation: "entity-extraction",
+    tokensNull: false,
+    inputTokens: 3_000,
+    outputTokens: 200,
+    storedCostUsd: 7,
+  };
+
+  it("keeps the stored sum for an estimate, an unpriced or empty model, and a group with no token counts", () => {
+    expect(costSheetGroupCostUsd({ ...base, operation: "entity-extraction-reconstructed" })).toBe(7);
+    expect(costSheetGroupCostUsd({ ...base, model: "some-future-model" })).toBe(7);
+    expect(costSheetGroupCostUsd({ ...base, model: "" })).toBe(7);
+    expect(costSheetGroupCostUsd({ ...base, tokensNull: true, inputTokens: 0, outputTokens: 0 })).toBe(7);
+  });
+
+  it("prices a group with token counts from its token sums at the current table", () => {
+    expect(costSheetGroupCostUsd(base)).toBe(llmCostUsd("gpt-4o-mini", 3_000, 200, 0));
+  });
+
+  it("equals Σ effectiveRowCostUsd over the rows, for groups of either input sign", () => {
+    const rand = mulberry32(42);
+    for (const model of ["gpt-4o-mini", "gemini-2.5-flash-lite", "deepseek-v4-flash", "claude-haiku-4-5"]) {
+      for (const sign of [1, -1]) {
+        const rows = Array.from({ length: 200 }, () => {
+          const state = rand();
+          const input = state < 0.8 ? sign * Math.floor(1 + rand() * 30_000) : null;
+          const output = state < 0.4 || state >= 0.8 ? Math.floor(rand() * 500) : null;
+          return { provider: "x", model, operation: "entity-extraction", inputTokens: input, outputTokens: input == null && output == null ? 1 : output, costUsd: rand() };
+        });
+        const perRow = rows.reduce((s, r) => s + effectiveRowCostUsd(r), 0);
+        const group = costSheetGroupCostUsd({
+          provider: "x",
+          model,
+          operation: "entity-extraction",
+          tokensNull: false,
+          inputTokens: rows.reduce((s, r) => s + (r.inputTokens ?? 0), 0),
+          outputTokens: rows.reduce((s, r) => s + (r.outputTokens ?? 0), 0),
+          storedCostUsd: rows.reduce((s, r) => s + r.costUsd, 0),
+        });
+        expect(Math.abs(group - perRow) / Math.abs(perRow), `${model} sign=${sign}`).toBeLessThan(1e-12);
+      }
+    }
   });
 });

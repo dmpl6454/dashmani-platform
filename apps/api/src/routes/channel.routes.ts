@@ -62,7 +62,11 @@ function cleanHandle(raw: string): string {
   return (fromUrl ?? t).replace(/^@/, "").split(/[?#]/)[0].trim();
 }
 
-/** GET /admin/channels?platform=youtube|snapchat&days=30 */
+/**
+ * GET /admin/channels?platform=youtube|snapchat&days=7|14|28|30|90 (default 30).
+ * 28 is served for the All tab only — see CHANNEL_PERIODS. Any other value falls back to
+ * the default, and `data.days` echoes what was actually measured, so label from that.
+ */
 router.get(
   "/admin/channels",
   ...adminGate,

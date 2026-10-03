@@ -7,6 +7,11 @@
 @media (hover: none) and (pointer: coarse) {
   .pl-date { -webkit-appearance: none; appearance: none; }
 }
+/* A read-only (archived) project's date fields are `disabled` — some mobile browsers open the
+   picker on a readonly one — but iOS Safari fades disabled fields (opacity and a grey text
+   fill), and the start date is shown nowhere else on the page. Keep them as readable as the
+   other read-only fields: the muted background (read-only:) already says "can't edit". */
+.pl-date:disabled { opacity: 1; -webkit-text-fill-color: currentColor; }
 
 /* Cards: long-press drags, so no callout / selection; manipulation keeps taps fast. */
 .pl-card {

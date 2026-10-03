@@ -294,16 +294,21 @@ export function normalizePipelineError(err: unknown): unknown {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /**
- * Run `fn`; on a deadlock (40P01) or serialization failure (40001) wait 50–150 ms and run
- * it ONE more time. Only for operations that are safe to repeat. A second failure is
- * thrown as is (it maps to 503).
+ * Run `fn`; on a deadlock (40P01), a serialization failure (40001) or a lock timeout (55P03)
+ * wait 50–150 ms and run it ONE more time. Only for operations that are safe to repeat. A
+ * second failure is thrown as is (it maps to 503).
+ *
+ * 55P03 is the same lost race as 40P01 here: the pool's lock_timeout (1 s) equals Postgres's
+ * deadlock_timeout, so a lock cycle usually surfaces as a lock timeout, not a deadlock. The
+ * transaction rolled back whole, so the retry is a clean first attempt. (A statement timeout,
+ * 57014, is not retried — a second try would only wait again.)
  */
 export async function withRetryOnce<T>(fn: () => Promise<T>): Promise<T> {
   try {
     return await fn();
   } catch (err) {
     const { sqlstate } = classifyDbError(err);
-    if (sqlstate !== "40P01" && sqlstate !== "40001") throw err;
+    if (sqlstate !== "40P01" && sqlstate !== "40001" && sqlstate !== "55P03") throw err;
     await sleep(50 + Math.floor(Math.random() * 101));
     return fn();
   }

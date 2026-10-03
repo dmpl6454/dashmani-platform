@@ -13,6 +13,9 @@ import {
   jitter,
   makeClientId,
   PIPELINE_DISABLED_RECHECK_MS,
+  shouldRecheckBootstrapForMode,
+  shouldRecheckBootstrapPeriodically,
+  shouldRevalidateBootstrapOnMount,
   type PipelineBootstrapEnabled,
   type PipelineCard,
   type PipelineDirectoryEntry,
@@ -88,12 +91,32 @@ export function PipelineProvider({ children }: { children: React.ReactNode }) {
   const { user } = useHrAuth();
   const userId = user?.id ?? null;
   const boot = usePipelineBootstrap(userId);
-
-  // Paused (off / self-check failed) is NOT terminal: re-check every 3 min ± jitter while visible.
   const reason = boot.data && !boot.data.enabled ? boot.data.reason : null;
   const mutateBoot = boot.mutate;
+
+  // G2 (GA): a cached "not enabled" answer — e.g. not_in_pilot, cached by the sidebar before
+  // the flip to on — is re-fetched ONCE when the gate mounts, so an in-app link (a bell row)
+  // never shows "isn't available for your account yet" from a stale cache. A bound mutate()
+  // with no arguments bypasses SWR's 10-minute dedupe (it drops the in-flight marker first);
+  // revalidateIfStale alone would be deduped for up to 10 minutes after the sidebar's fetch.
+  // Until that re-fetch settles the gate shows "Loading", never the cached reason: true from
+  // the FIRST render (the cache is painted before any effect runs).
+  const [recheckPending, setRecheckPending] = useState(() => shouldRevalidateBootstrapOnMount(boot.data));
+  const mountChecked = useRef(false);
   useEffect(() => {
-    if (reason !== "off" && reason !== "paused") return;
+    if (mountChecked.current) return;
+    mountChecked.current = true;
+    if (!recheckPending) return;
+    const settled = () => setRecheckPending(false);
+    void mutateBoot().then(settled, settled);
+    // Once, against what the cache held at mount — later answers are handled below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Paused (off / self-check failed) and not_in_pilot are NOT terminal: re-check every 3 min
+  // ± jitter while visible (not_in_pilot clears when the pilot becomes GA).
+  useEffect(() => {
+    if (!shouldRecheckBootstrapPeriodically(reason)) return;
     let t: ReturnType<typeof setTimeout>;
     const tick = () => {
       t = setTimeout(() => {
@@ -119,6 +142,20 @@ export function PipelineProvider({ children }: { children: React.ReactNode }) {
     );
   }
   if (!boot.data.enabled) {
+    if (recheckPending) return <GateScreen kind="loading" />;
+    // The latest check FAILED, so the cached not_in_pilot may be stale (GA): say we couldn't
+    // check, not "being tried out with a small group" — the next check (Retry, ~3 min) settles it.
+    if (boot.error && boot.data.reason === "not_in_pilot") {
+      return (
+        <GateScreen
+          kind="load_failed"
+          reason={describeError(boot.error)}
+          errorStatus={isApiError(boot.error) ? boot.error.status : undefined}
+          onRetry={() => void mutateBoot()}
+          retrying={boot.isValidating}
+        />
+      );
+    }
     return <GateScreen kind={boot.data.reason === "paused" ? "off" : boot.data.reason} onRetry={() => void mutateBoot()} retrying={boot.isValidating} />;
   }
   return (
@@ -167,6 +204,8 @@ function EnabledProvider({
 
   const recheckRef = useRef(recheckBootstrap);
   recheckRef.current = recheckBootstrap;
+  /** When a sync's mode mismatch last re-checked bootstrap (shouldRecheckBootstrapForMode). */
+  const lastModeRecheck = useRef(0);
 
   const [engine] = useState(
     () =>
@@ -179,6 +218,15 @@ function EnabledProvider({
           recheckRef.current();
         },
         onTerminal: (code) => setTerminal(code),
+        // G3 (GA): a sync reports a mode other than the one bootstrap gave this tab (the flip to
+        // "on" while the tab stayed focused): re-check bootstrap — its new mode re-keys the
+        // directory, so newly enabled colleagues become pickable without a reload or a refocus.
+        onServerMode: (mode) => {
+          const now = Date.now();
+          if (!shouldRecheckBootstrapForMode(bootRef.current.mode, mode, lastModeRecheck.current, now)) return;
+          lastModeRecheck.current = now;
+          recheckRef.current();
+        },
         onReloadProject: (id) => {
           loadProject(id).catch(() => {
             /* the next sync or a manual reload settles it */
@@ -215,7 +263,7 @@ function EnabledProvider({
   useIdle(markInput);
 
   // ── directory ─────────────────────────────────────────────────────────────────
-  const dir = usePipelineDirectory(userId, true);
+  const dir = usePipelineDirectory(userId, true, boot.mode);
   const dirById = useMemo(() => {
     const m = new Map<string, PipelineDirectoryEntry>();
     for (const d of dir.data ?? []) m.set(d.id, d);

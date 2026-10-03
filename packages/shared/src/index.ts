@@ -57,6 +57,8 @@ export * from "./utils/submission-gaps";
 
 // Pipeline (pure, shared by the API tests and the HR portal)
 export * from "./pipeline/refresh";
+// Pipeline date / time labels and the bootstrap re-check decisions (2026-10-01)
+export * from "./pipeline/time";
 
 // Notification bells (P3/P4) — pure rules shared by the HR and internal bells
 export * from "./pipeline/bell";

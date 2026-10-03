@@ -112,11 +112,42 @@ export async function markAsRead(notificationId: string, userId: string) {
   });
 }
 
+/**
+ * Postgres killed this statement to break a lock cycle (40P01), or Prisma reports a write
+ * conflict (P2034). Prisma 5.22 surfaces a deadlock in updateMany as an UNKNOWN request
+ * error that carries the SQLSTATE only in its message (tests/pipeline/mark-all-read-race).
+ */
+function isLostLockRace(err: unknown): boolean {
+  const e = err as { code?: unknown; meta?: { code?: unknown }; message?: unknown } | null;
+  const message = typeof e?.message === "string" ? e.message : "";
+  return (
+    e?.code === "P2034" ||
+    e?.meta?.code === "40P01" ||
+    message.includes("deadlock detected") ||
+    message.includes('code: "40P01"')
+  );
+}
+
 export async function markAllAsRead(userId: string) {
-  return prisma.notification.updateMany({
-    where: { userId, read: false },
-    data: { read: true },
-  });
+  const run = () =>
+    prisma.notification.updateMany({
+      where: { userId, read: false },
+      data: { read: true },
+    });
+  try {
+    return await run();
+  } catch (err) {
+    // ⚠️ This marks EVERY unread row of the user read, in ONE statement (heap order). A
+    // pipeline write that touches several of the same user's rows in separate statements — a
+    // due-date change, a move into Done, a leave (services/pipeline/notify.ts) — can form a
+    // two-party lock cycle with it, and Postgres then kills ONE side (40P01). The pipeline
+    // side retries once (retryOnce); so does this: the UPDATE is idempotent (read=false →
+    // true) and the other side has moved on by now. Without it the bell click would come back
+    // 500 and the badge would stay. Only a lost race is retried — never anything else.
+    if (!isLostLockRace(err)) throw err;
+    await new Promise((r) => setTimeout(r, 50 + Math.floor(Math.random() * 101)));
+    return run();
+  }
 }
 
 export async function sendReportReminders() {

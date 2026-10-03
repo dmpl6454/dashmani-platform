@@ -241,6 +241,13 @@ export async function enqueueMentionEmails(
  * The due cron's claimed batch (spec §7.8): one due_soon row per notify=true participant
  * of each project, sent at once. Called in the SAME transaction as the claim and the bell
  * rows, from exactly what the claim returned.
+ *
+ * A claim can RE-ARM a date already alerted — the card left Done (D2 cleared the markers),
+ * or the date came back (A → B → A, D1). That re-alerts the BELL (its rows were withdrawn),
+ * but a recipient already mailed about this very (project, date) — a 'sent' row, or one
+ * being sent — is not mailed again: the same "due tomorrow" twice is noise. Someone who
+ * joined since, or whose earlier mail was skipped (e.g. the card was in Done at send time),
+ * is still mailed. The probe walks the outbox's project_id index (30-day history).
  */
 export async function enqueueDueSoonEmails(
   tx: PipelineTx,
@@ -256,6 +263,9 @@ export async function enqueueDueSoonEmails(
       JOIN pipeline_participants pp ON pp.project_id = t.pid AND pp.notify
       JOIN users u ON u.id = pp.user_id
      WHERE ${recipientFragment(Prisma.sql`pp.user_id`, null, allow)}
+       AND NOT EXISTS (SELECT 1 FROM pipeline_email_outbox x
+                        WHERE x.project_id = t.pid AND x.user_id = pp.user_id AND x.kind = 'due_soon'
+                          AND x.status IN ('sent', 'sending') AND x.payload->>'due' = t.due)
      -- (user, project) order — the order the worker's requeue walks pending siblings in —
      -- so this multi-project batch never takes outbox row locks in the opposite order.
      ORDER BY pp.user_id, t.pid

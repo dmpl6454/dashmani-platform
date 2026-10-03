@@ -183,6 +183,14 @@ export interface PipelineParticipant {
   role: PipelineParticipantRole;
   isOwner: boolean;
   memberAddedById: string | null;
+  /**
+   * When this row last BECAME a member through an add (`member_added_at`) — the start of the
+   * adder's 10-minute undo, exactly as the server measures it. null for the creator's own row
+   * and rows that never went through an add. ⚠️ Never measure the undo from `createdAt`: a
+   * promoted follower's createdAt is their original follow time. Added 2026-10-01 (additive;
+   * an older API omits it, so clients read `memberAddedAt ?? createdAt`).
+   */
+  memberAddedAt: PipelineTimestamp | null;
   createdAt: PipelineTimestamp;
 }
 
@@ -364,6 +372,13 @@ export interface PipelineSyncResponse {
    * so a `pipeline.pollMs` change reaches open tabs with no deploy and no re-bootstrap.
    */
   pollMs: PipelinePollMs;
+  /**
+   * The current `pipeline.mode` (never "off": an off server refuses the sync). Sent on every
+   * sync for the same reason as pollMs: when it differs from the mode bootstrap gave the tab,
+   * the client re-checks bootstrap, whose new mode re-keys the directory — so a pilot → on
+   * flip reaches a /pipeline tab that never refocuses (GA). Optional: an older server omits it.
+   */
+  mode?: Exclude<PipelineMode, "off">;
   /** true → one hard reload (the client build is too old). */
   reload: boolean;
   /** Present when a board was asked for and no snapshot could be built this tick. */

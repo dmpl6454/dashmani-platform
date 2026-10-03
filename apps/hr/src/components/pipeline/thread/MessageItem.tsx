@@ -3,11 +3,24 @@
  * One message row (spec §9.6). Every message has an always-rendered, tabbable "More
  * actions" button (React · Reply · Copy text · Copy link · Edit / Delete if yours); no
  * control is hover-only. Replies show "3 replies · 5m" which opens the ReplySheet.
+ *
+ * Times (2026-10-01): `today` (useLocalDayKey, from the list) is a PROP, so this memoised row
+ * re-renders at local midnight and "10:05 am" becomes "Wed, 30 Sep, 10:05 am"; the "· 5m"
+ * age is an <Ago> that ticks on its own, so only that span re-renders each minute.
  */
 import { memo, useState } from "react";
 import { Ellipsis, MessageSquare } from "lucide-react";
-import { parseDraft, serializeDraft, shiftRanges, type PendingSend, type PipelineMessage, type PipelineNotNotified } from "@dashmani/shared";
+import {
+  parseDraft,
+  serializeDraft,
+  shiftRanges,
+  timeLabel,
+  type PendingSend,
+  type PipelineMessage,
+  type PipelineNotNotified,
+} from "@dashmani/shared";
 import { usePipeline } from "../provider";
+import { Ago } from "../ui/Ago";
 import { Initials } from "../ui/Initials";
 import { Sheet } from "../ui/Sheet";
 import { useToast } from "../ui/Toast";
@@ -15,23 +28,6 @@ import { describeError, plApi } from "../api";
 import { MessageBody } from "./MessageBody";
 import { ReactionBar, useToggleReaction } from "./ReactionBar";
 import { ReactionPicker } from "./ReactionPicker";
-
-export function timeLabel(iso: string): string {
-  const d = new Date(iso);
-  const now = new Date();
-  const hm = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-  if (d.toDateString() === now.toDateString()) return hm;
-  return `${d.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" })} ${hm}`;
-}
-
-export function agoShort(iso: string): string {
-  const s = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000));
-  if (s < 60) return "now";
-  const m = Math.round(s / 60);
-  if (m < 60) return `${m}m`;
-  const h = Math.round(m / 60);
-  return h < 24 ? `${h}h` : `${Math.round(h / 24)}d`;
-}
 
 const REASON: Record<string, string> = { inactive: "account inactive", not_in_pilot: "not in the pilot yet", unknown: "unknown person" };
 
@@ -50,6 +46,7 @@ async function copy(text: string, toast: ReturnType<typeof useToast>, what: stri
 
 function MessageItemImpl({
   message: m,
+  today,
   grouped,
   readOnly,
   highlight,
@@ -59,6 +56,8 @@ function MessageItemImpl({
   onOpenReplies,
 }: {
   message: PipelineMessage;
+  /** The browser-local today key (useLocalDayKey) — what the time label is relative to. */
+  today: string;
   grouped: boolean;
   readOnly: boolean;
   highlight: boolean;
@@ -145,7 +144,7 @@ function MessageItemImpl({
               <span className="min-w-0 max-w-[40%] truncate text-[11.5px] text-ink-4">{dirById.get(m.authorId)?.hint}</span>
             )}
             <time dateTime={m.createdAt} className="text-[11.5px] text-ink-4 whitespace-nowrap">
-              {timeLabel(m.createdAt)}
+              {timeLabel(m.createdAt, today)}
             </time>
           </div>
         )}
@@ -161,7 +160,11 @@ function MessageItemImpl({
           <button type="button" onClick={() => onOpenReplies(m.id)} className="mt-1 h-11 inline-flex items-center gap-1.5 text-[12.5px] font-semibold text-indigo">
             <MessageSquare size={14} />
             {m.replyCount} {m.replyCount === 1 ? "reply" : "replies"}
-            {m.lastReplyAt && <span className="text-ink-4 font-medium">· {agoShort(m.lastReplyAt)}</span>}
+            {m.lastReplyAt && (
+              <span className="text-ink-4 font-medium">
+                · <Ago iso={m.lastReplyAt} />
+              </span>
+            )}
           </button>
         )}
       </div>
@@ -271,7 +274,7 @@ function ActionBtn({ children, onClick, danger = false }: { children: React.Reac
 export const MessageItem = memo(MessageItemImpl);
 
 /** A pending (optimistic) send, laid over the server rows. Nothing is ever dropped silently. */
-export function PendingRow({ send }: { send: PendingSend }) {
+export function PendingRow({ send, today }: { send: PendingSend; today: string }) {
   const { meId, dirById, retrySend, discardSend } = usePipeline();
   const toast = useToast();
   const me = dirById.get(meId);
@@ -290,7 +293,7 @@ export function PendingRow({ send }: { send: PendingSend }) {
     case "failed":
       status = (
         <span className="text-danger">
-          {stale ? `Unsent message from ${timeLabel(new Date(send.createdAt).toISOString())}` : "Couldn't send"}
+          {stale ? `Unsent message from ${timeLabel(send.createdAt, today)}` : "Couldn't send"}
           {" · "}
           <button type="button" onClick={() => retrySend(send.clientId)} className="h-11 px-1 font-semibold underline">
             {stale ? "Send" : "Tap to retry (it won't post twice)"}

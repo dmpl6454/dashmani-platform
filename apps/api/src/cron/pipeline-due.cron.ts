@@ -25,7 +25,6 @@
  * ⚠️ The overlap flag is claimed synchronously, before the first await.
  */
 import {
-  addDaysIST,
   dateToIST,
   dayOfWeekIST,
   isWorkingDayIST,
@@ -91,14 +90,25 @@ async function claimBatch(tx: PipelineTx, kind: Kind, today: string, nextWorking
            (SELECT ph.name FROM pipeline_phases ph WHERE ph.id = p.phase_id) AS phase_name`;
 }
 
+/**
+ * The row text. ⚠️ ABSOLUTE wording (owner request 2026-10-01): the row is read for up to 90
+ * days and mobile shows it verbatim, so "is due tomorrow" would be false from the next day on
+ * — "is due Saturday (3 Oct)" stays true. Dates carry their year when it is not `today`'s
+ * (notify.ts shortDay / dayMonth). The EMAIL keeps its send-time "due tomorrow" wording.
+ * ⚠️ The overdue TITLE names no phase: "still in Review" turns false at the next move between
+ * live phases, and the row stays (only a due change or Done withdraws it). The phase is in the
+ * message, "Phase: Review", as on every other row.
+ */
 function textFor(kind: Kind, c: Claimed, today: string): { title: string; message: string } {
   const qt = quotedTitle(c.title);
   const phase = c.phase_name ?? "";
   if (kind === "overdue") {
-    return { title: clip(`${qt} is overdue — was due ${shortDay(c.due)}, still in ${phase}`, 120), message: clip(`Phase: ${phase}`, 200) };
+    return {
+      title: clip(`${qt} is overdue — was due ${shortDay(c.due, today)}`, 120),
+      message: clip(`Phase: ${phase}`, 200),
+    };
   }
-  const when =
-    c.due === addDaysIST(today, 1) ? `tomorrow (${shortDay(c.due)})` : `${DAYS_LONG[dayOfWeekIST(c.due)]} (${dayMonth(c.due)})`;
+  const when = `${DAYS_LONG[dayOfWeekIST(c.due)]} (${dayMonth(c.due, today)})`;
   return { title: clip(`${qt} is due ${when}`, 120), message: clip(`Phase: ${phase}`, 200) };
 }
 

@@ -252,7 +252,7 @@ describe("pipeline projects", () => {
       const r = await call("get", `${P}/${card.id}`, a.token);
       expect(r.body.data.participants).toHaveLength(2);
       for (const p of r.body.data.participants) {
-        expect(Object.keys(p).sort()).toEqual(["createdAt", "isOwner", "memberAddedById", "role", "userId"]);
+        expect(Object.keys(p).sort()).toEqual(["createdAt", "isOwner", "memberAddedAt", "memberAddedById", "role", "userId"]);
       }
       expect(r.body.data.participants[0]).toMatchObject({ userId: me.id, isOwner: true, role: "MEMBER" });
       expect(r.body.data.can.archive).toBe(false);
@@ -613,6 +613,36 @@ describe("pipeline projects", () => {
       expect((await prisma.pipelineProject.findUniqueOrThrow({ where: { id: card.id } })).archivedAt).toBeNull();
     });
 
+    it("a relocation (unarchive or restore out of an archived phase) records the phase change; a plain one leaves it alone", async () => {
+      // The header reads "<when> · Moved to <phase> by <who>" from phase_changed_*: after a
+      // relocation it must not pair the NEW phase with an OLD move's person and time.
+      const owner = await user("Stamp Owner");
+      const aisha = await user("Stamp Aisha");
+      const old = await prisma.pipelinePhase.create({ data: { key: "old-stamp", name: "Legacy review", position: 98 } });
+      const oldMove = { phaseChangedAt: new Date("2026-08-03T04:30:00.000Z"), phaseChangedById: aisha.id };
+      const unarchived = await create(owner.token, { phaseId: old.id, title: "Unarchive me" });
+      const restored = await create(owner.token, { phaseId: old.id, title: "Restore me" });
+      const plain = await create(owner.token, { title: "Stays put" });
+      for (const c of [unarchived, restored, plain]) {
+        await prisma.pipelineProject.update({ where: { id: c.id }, data: oldMove });
+      }
+      await act(unarchived.id, owner.token, "archive");
+      await act(plain.id, owner.token, "archive");
+      expect((await del(restored.id, owner.token, "Restore me")).status).toBe(200);
+      await prisma.pipelinePhase.update({ where: { id: old.id }, data: { archivedAt: new Date() } });
+
+      for (const [c, what] of [[unarchived, "unarchive"], [restored, "restore"]] as const) {
+        const r = await act(c.id, owner.token, what);
+        expect(r.status).toBe(200);
+        expect(r.body.data.phaseAdjusted).toBe(true);
+        const row = await prisma.pipelineProject.findUniqueOrThrow({ where: { id: c.id } });
+        expect(row.phaseChangedById).toBe(owner.id);
+        expect(Math.abs(Date.now() - row.phaseChangedAt!.getTime())).toBeLessThan(60_000);
+      }
+      expect((await act(plain.id, owner.token, "unarchive")).body.data.phaseAdjusted).toBe(false);
+      expect(await prisma.pipelineProject.findUniqueOrThrow({ where: { id: plain.id } })).toMatchObject(oldMove);
+    });
+
     it("owner transfer sets owner_id, gives the new owner a MEMBER row with notify, and refuses an inactive target", async () => {
       const owner = await user("Xfer Owner");
       const next = await user("Xfer Next");
@@ -727,6 +757,29 @@ describe("pipeline projects", () => {
       expect(again.body.data.added).toEqual([]);
       expect((await project(card.id)).headerRev).toBe(hv);
       expect((await project(card.id)).memberCount).toBe(3);
+    });
+
+    it("every route carries memberAddedAt: a promoted follower's undo window starts at the ADD, not the follow (B8)", async () => {
+      const owner = await user("Wire Owner");
+      const f = await user("Wire Follower");
+      const card = await create(owner.token);
+      const followedAt = new Date(Date.now() - 3 * 86_400_000);
+      await prisma.pipelineParticipant.create({
+        data: { projectId: card.id, userId: f.id, role: "FOLLOWER", notify: true, engagedAt: followedAt, createdAt: followedAt },
+      });
+      type Part = { userId: string; createdAt: string; memberAddedAt: string | null; memberAddedById: string | null };
+      const r = await add(card.id, owner.token, [f.id]);
+      expect(r.status).toBe(200);
+      const viaAdd = (r.body.data.participants as Part[]).find((p) => p.userId === f.id)!;
+      expect(viaAdd.createdAt).toBe(followedAt.toISOString()); // the follow, unchanged by the promotion
+      expect(viaAdd.memberAddedById).toBe(owner.id);
+      expect(Math.abs(Date.now() - Date.parse(viaAdd.memberAddedAt!))).toBeLessThan(60_000); // the add
+      expect((r.body.data.participants as Part[]).find((p) => p.userId === owner.id)!.memberAddedAt).toBeNull();
+
+      const detail = await call("get", `${P}/${card.id}`, owner.token);
+      expect((detail.body.data.participants as Part[]).find((p) => p.userId === f.id)!.memberAddedAt).toBe(viaAdd.memberAddedAt);
+      const s = await call("post", "/v1/pipeline/sync", owner.token, { clientBuild: 1, project: { id: card.id, rev: 0, hv: 0 } });
+      expect((s.body.data.project.participants as Part[]).find((p) => p.userId === f.id)!.memberAddedAt).toBe(viaAdd.memberAddedAt);
     });
 
     it("refuses an archived project (409), an inactive user (409 MEMBER_NOT_PICKABLE) and a 201st participant (409 MEMBER_LIMIT)", async () => {

@@ -3,17 +3,35 @@
  * Project details with an explicit Save (route #7, spec §9.4). The request carries the
  * values the user started from (`base`); a 409 EDIT_CONFLICT opens a sheet with both
  * versions — "Keep theirs" / "Overwrite" — and the user's text is never lost.
+ *
+ * Dates (2026-10-01): inputs are bounded to the years the server accepts (1900–2999) and are
+ * checked with the SAME validator before the order check — a 5-digit year compared as a
+ * string used to report the wrong problem. Read-only (archived) date inputs are `disabled`,
+ * not only readOnly: some mobile browsers still open the picker on a readonly date field.
  */
 import { useEffect, useId, useMemo, useState } from "react";
-import { PIPELINE_LIMITS, type PipelineEditableFields, type PipelineHeader } from "@dashmani/shared";
+import {
+  PIPELINE_LIMITS,
+  dayMonthShort,
+  pipelineValidators,
+  type PipelineEditableFields,
+  type PipelineHeader,
+} from "@dashmani/shared";
 import { usePipeline, usePhases } from "../provider";
 import { Sheet } from "../ui/Sheet";
 import { describeError, isApiError, isRateLimited, plApi, retryAfterMs } from "../api";
-import { shortDay } from "../board/due";
+import { useLocalDayKey } from "../hooks/use-local-day-key";
 
 type Form = { title: string; description: string; startDate: string; dueDate: string };
 const KEYS: Array<keyof Form> = ["title", "description", "startDate", "dueDate"];
 const LABEL: Record<keyof Form, string> = { title: "Title", description: "Description", startDate: "Start", dueDate: "Due" };
+const DATE_KEYS = ["startDate", "dueDate"] as const;
+/** The years the server's pipelineDate accepts (validators/pipeline.ts). */
+const DATE_MIN = "1900-01-01";
+const DATE_MAX = "2999-12-31";
+
+/** A filled date field that the shared validator rejects (an empty field clears the date). */
+const badDate = (v: string) => v !== "" && !pipelineValidators.pipelineDate.safeParse(v).success;
 
 function fromHeader(h: PipelineHeader): Form {
   return { title: h.title, description: h.description ?? "", startDate: h.startDate ?? "", dueDate: h.dueDate ?? "" };
@@ -34,6 +52,7 @@ const inputCls =
 export function DetailsPanel({ header, readOnly }: { header: PipelineHeader; readOnly: boolean }) {
   const { store, engine, dirById } = usePipeline();
   const phases = usePhases();
+  const today = useLocalDayKey();
   const ids = { title: useId(), desc: useId(), start: useId(), due: useId() };
   const [base, setBase] = useState<Form>(() => fromHeader(header));
   const [form, setForm] = useState<Form>(() => fromHeader(header));
@@ -57,6 +76,11 @@ export function DetailsPanel({ header, readOnly }: { header: PipelineHeader; rea
     if (keys.length === 0) return;
     if (!form.title.trim()) {
       setMsg({ tone: "err", text: "The title can't be empty." });
+      return;
+    }
+    const bad = DATE_KEYS.find((k) => badDate(form[k]));
+    if (bad) {
+      setMsg({ tone: "err", text: `The ${LABEL[bad].toLowerCase()} date isn't valid — pick a date between 1900 and 2999.` });
       return;
     }
     if (form.startDate && form.dueDate && form.startDate > form.dueDate) {
@@ -97,6 +121,9 @@ export function DetailsPanel({ header, readOnly }: { header: PipelineHeader; rea
 
   const phase = phases.find((p) => p.id === header.phaseId);
   const owner = dirById.get(header.ownerId);
+  /** A field's value as the conflict sheet shows it: dates as "9 Oct" like every other surface (H10). */
+  const shown = (k: keyof Form, v: string) =>
+    !v ? "—" : (DATE_KEYS as readonly string[]).includes(k) ? dayMonthShort(v, today) : v;
 
   return (
     <section aria-label="Details" className="p-4 space-y-4">
@@ -111,7 +138,7 @@ export function DetailsPanel({ header, readOnly }: { header: PipelineHeader; rea
         {header.dueDate && (
           <>
             <dt className="text-ink-4">Due</dt>
-            <dd className="text-ink">{shortDay(header.dueDate)}</dd>
+            <dd className="text-ink">{dayMonthShort(header.dueDate, today)}</dd>
           </>
         )}
       </dl>
@@ -148,13 +175,33 @@ export function DetailsPanel({ header, readOnly }: { header: PipelineHeader; rea
             <label htmlFor={ids.start} className="block text-[12.5px] font-semibold text-ink-2 mb-1">
               Start
             </label>
-            <input id={ids.start} type="date" value={form.startDate} readOnly={readOnly} onChange={(e) => setForm({ ...form, startDate: e.target.value })} className={`${inputCls} pl-date`} />
+            <input
+              id={ids.start}
+              type="date"
+              min={DATE_MIN}
+              max={DATE_MAX}
+              value={form.startDate}
+              readOnly={readOnly}
+              disabled={readOnly}
+              onChange={(e) => setForm({ ...form, startDate: e.target.value })}
+              className={`${inputCls} pl-date`}
+            />
           </div>
           <div className="min-w-0">
             <label htmlFor={ids.due} className="block text-[12.5px] font-semibold text-ink-2 mb-1">
               Due
             </label>
-            <input id={ids.due} type="date" value={form.dueDate} readOnly={readOnly} onChange={(e) => setForm({ ...form, dueDate: e.target.value })} className={`${inputCls} pl-date`} />
+            <input
+              id={ids.due}
+              type="date"
+              min={DATE_MIN}
+              max={DATE_MAX}
+              value={form.dueDate}
+              readOnly={readOnly}
+              disabled={readOnly}
+              onChange={(e) => setForm({ ...form, dueDate: e.target.value })}
+              className={`${inputCls} pl-date`}
+            />
           </div>
         </div>
         {!readOnly && (
@@ -214,11 +261,11 @@ export function DetailsPanel({ header, readOnly }: { header: PipelineHeader; rea
               <div key={k} className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 <div className="min-w-0 rounded-xl bg-muted p-3">
                   <p className="text-[11.5px] font-bold text-ink-3 mb-1">{LABEL[k]} — theirs</p>
-                  <p className="text-[13.5px] text-ink whitespace-pre-wrap [overflow-wrap:anywhere]">{fromHeader(conflict)[k] || "—"}</p>
+                  <p className="text-[13.5px] text-ink whitespace-pre-wrap [overflow-wrap:anywhere]">{shown(k, fromHeader(conflict)[k])}</p>
                 </div>
                 <div className="min-w-0 rounded-xl bg-indigo-soft p-3">
                   <p className="text-[11.5px] font-bold text-ink-3 mb-1">{LABEL[k]} — yours</p>
-                  <p className="text-[13.5px] text-ink whitespace-pre-wrap [overflow-wrap:anywhere]">{form[k] || "—"}</p>
+                  <p className="text-[13.5px] text-ink whitespace-pre-wrap [overflow-wrap:anywhere]">{shown(k, form[k])}</p>
                 </div>
               </div>
             ))}

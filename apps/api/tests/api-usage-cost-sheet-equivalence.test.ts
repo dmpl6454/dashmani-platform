@@ -521,19 +521,20 @@ async function seedBacklog(pending: number): Promise<void> {
 }
 
 /**
- * Count calls to prisma.apiUsage.findMany. vi.spyOn cannot wrap it: Prisma's model delegate is
- * a Proxy that mints a fresh action function on every read and reports an own descriptor with
- * `value: undefined`, so spyOn captures `undefined` as the original (and restoring it leaves
- * findMany undefined for the rest of the file). An own property shadows the minted function.
+ * Count calls to one prisma.apiUsage action (findMany, aggregate). vi.spyOn cannot wrap it:
+ * Prisma's model delegate is a Proxy that mints a fresh action function on every read and
+ * reports an own descriptor with `value: undefined`, so spyOn captures `undefined` as the
+ * original (and restoring it leaves the action undefined for the rest of the file). An own
+ * property shadows the minted function.
  * ⚠️ Restore by re-pointing it at a real minted function, never `delete`: the proxy remembers
  * deleted keys, and this client is shared (globalThis) by every later file in the fork.
  */
-function watchApiUsageFindMany(): { calls: () => number; restore: () => void } {
+function watchApiUsageAction(action: "findMany" | "aggregate"): { calls: () => number; restore: () => void } {
   const delegate = prisma.apiUsage as unknown as Record<string, unknown>;
-  const real = delegate.findMany as (...args: unknown[]) => unknown;
+  const real = delegate[action] as (...args: unknown[]) => unknown;
   let calls = 0;
   const define = (value: unknown) =>
-    Object.defineProperty(delegate, "findMany", { configurable: true, enumerable: true, writable: true, value });
+    Object.defineProperty(delegate, action, { configurable: true, enumerable: true, writable: true, value });
   define((...args: unknown[]) => {
     calls++;
     return real(...args);
@@ -779,7 +780,7 @@ describe("getCostSheet: bounded, memoised and behind the heavy-query bulkhead", 
   it("never hydrates rows: no apiUsage.findMany, ONE $queryRaw returning one row per group", async () => {
     const rows = prodLikeFixture(7, 8_000, 35);
     await seed(rows);
-    const findMany = watchApiUsageFindMany();
+    const findMany = watchApiUsageAction("findMany");
     const raw = vi.spyOn(prisma, "$queryRaw");
     let legacy!: CostSheet;
     let sheet!: CostSheet;
@@ -812,6 +813,31 @@ describe("getCostSheet: bounded, memoised and behind the heavy-query bulkhead", 
     ).size;
     expect(groups).toHaveLength(expectedGroups);
     expect(groups.length).toBeLessThan(inWindow.length / 10);
+  });
+
+  it("reads the tracking start without Prisma's _min aggregate, which cannot use the created_at index", async () => {
+    // Prisma 5.22 sends aggregate({ _min: { createdAt: true } }) as
+    //   SELECT MIN("created_at") FROM (SELECT ... FROM "public"."api_usage" WHERE 1=1 OFFSET $1) AS "sub"
+    // Postgres never flattens a subquery with OFFSET, so its MIN/MAX index shortcut cannot apply.
+    // On a 4.36M-row local copy shaped like prod it read the whole heap (Seq Scan, 67,077
+    // buffers, 0.5-0.7 s) on every cold compute, at a cost set by the table's size rather than
+    // the window. ORDER BY created_at LIMIT 1 reads one index entry (4 buffers, ~0.03 ms).
+    // The value itself is compared with the legacy in every expectSameAsLegacy call.
+    await seed(handBuiltFixture());
+    const aggregate = watchApiUsageAction("aggregate");
+    let legacy!: CostSheet;
+    let sheet!: CostSheet;
+    try {
+      // Positive control: the watcher sees the old implementation's aggregate.
+      legacy = await legacyCostSheet(30);
+      expect(aggregate.calls()).toBe(1);
+      sheet = await getCostSheet(30);
+      expect(aggregate.calls()).toBe(1); // the new code added none
+    } finally {
+      aggregate.restore();
+    }
+    expect(sheetDiffs(sheet, legacy)).toEqual([]);
+    expect(sheet.trackingSince).toBe(ms(NOW - 40 * DAY).toISOString());
   });
 
   it("serves a repeat within 60 s from the memo, shares one compute between concurrent cold callers, and recomputes after expiry", async () => {

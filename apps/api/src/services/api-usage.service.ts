@@ -475,8 +475,12 @@ async function computeCostSheet(days: number): Promise<CostSheet> {
   groups.sort(compareByFirstSeen);
 
   // Earliest row overall (not just in-window) — the true tracking horizon.
-  const earliest = await prisma.apiUsage.aggregate({ _min: { createdAt: true } });
-  const trackingSince = earliest._min.createdAt ?? null;
+  // ⚠️ ORDER BY created_at LIMIT 1, never aggregate({ _min: { createdAt } }): Prisma sends
+  // _min as MIN() over a subquery with OFFSET, which Postgres cannot answer from the
+  // created_at index. On a 4.36M-row copy shaped like prod that read the whole heap on every
+  // cold compute (0.5-0.7 s, growing with the table, not the window); this reads one entry.
+  const earliest = await prisma.apiUsage.findFirst({ select: { createdAt: true }, orderBy: { createdAt: "asc" } });
+  const trackingSince = earliest?.createdAt ?? null;
 
   const byProviderMap = new Map<string, ProviderCost>();
   const byOpMap = new Map<string, { provider: string; operation: string; calls: number; costUsd: number }>();

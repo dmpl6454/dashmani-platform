@@ -31,6 +31,20 @@ export type ChannelPeriod = (typeof CHANNEL_PERIODS)[number];
 export const DEFAULT_CHANNEL_PERIOD: ChannelPeriod = 30;
 
 /**
+ * Every period the endpoint serves. ⚠️ 28 is NOT a pill on these tabs — it exists for the
+ * All tab, which lines these boards up against Meta's native 28-day window (the server
+ * lists it in its own CHANNEL_PERIODS). Keep it out of CHANNEL_PERIODS above, which is
+ * what the YouTube/Snapchat tabs render as buttons.
+ */
+export type ChannelBoardDays = ChannelPeriod | 28;
+
+/** An inclusive range of IST snapshot date keys ("YYYY-MM-DD"). */
+export interface SnapshotSpan {
+  from: string;
+  to: string;
+}
+
+/**
  * One tracked channel.
  *
  * ⚠️ Every metric is nullable ON PURPOSE, and a null is never a zero. YouTube publishes
@@ -89,7 +103,9 @@ export interface ChannelBoard {
     /** Channels whose follower count the platform withholds. */
     followersWithheld: number;
     totalViews: number | null;
-    /** Channels with a delta spanning the whole window — the like-for-like denominator. */
+    /** Channels with ANY change (follower or views), span unchecked — only "is there
+     *  anything to show yet". NOT a like-for-like denominator; the totals below are the
+     *  span-guarded figures (see the server's ChannelBoard). */
     withHistory: number;
     /**
      * Period movement of the two summable tiles, summed ONLY over channels whose own
@@ -110,6 +126,10 @@ export interface ChannelBoard {
     followerDeltaUncertainty?: number;
     viewsDelta?: number | null;
     viewsDeltaChannels?: number;
+    /** The exact snapshot dates the two period totals above cover — over the rows actually
+     *  summed, null when none were. Optional for the same older-response reason. */
+    followerDeltaSpan?: SnapshotSpan | null;
+    viewsDeltaSpan?: SnapshotSpan | null;
   };
   /** Earliest snapshot we hold for this platform, so the UI can say "collecting since". */
   historyFrom: string | null;
@@ -132,7 +152,7 @@ type Envelope<T> = { success: boolean; data: T };
  */
 const opts = { revalidateOnFocus: false, dedupingInterval: 30_000 } as const;
 
-export function useChannelBoard(platform: ChannelPlatform, days: ChannelPeriod) {
+export function useChannelBoard(platform: ChannelPlatform, days: ChannelBoardDays) {
   const { data, error, isLoading, mutate } = useSWR(
     `/admin/channels?platform=${platform}&days=${days}`,
     (url: string) => apiFetch<Envelope<ChannelBoard>>(url).then((r) => r.data),

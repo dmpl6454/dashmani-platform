@@ -29,7 +29,13 @@
  * for pilot users, so the others never get it — not even after a later switch back to on.
  * The script prints a warning for on → pilot (WARNINGS below) BEFORE it writes, and with
  * --apply waits WARNING_PAUSE_MS so the operator can still press Ctrl-C — but it does not
- * refuse: an operator may mean it.
+ * refuse: an operator may mean it. ⚠️ Ctrl-C only reaches the process from an interactive
+ * terminal: over `ssh host "…"` (no -t) it kills the local ssh client and the remote script
+ * still writes when the pause ends, so the pause message says so instead of promising it.
+ *
+ * Every write is checked against the plan it printed: if the stored settings changed in the
+ * meantime (another shell ran the kill switch during the pause, say), NOTHING is written —
+ * re-run to see the new plan. A stale on → pilot must never undo a --mode=off.
  */
 import { prisma } from "@dashmani/db";
 
@@ -42,6 +48,12 @@ export interface PipelineFlagOptions {
   add?: string[];
   remove?: string[];
   apply?: boolean;
+  /**
+   * The stored settings the caller planned against (a dry pass's `before`). When the settings
+   * read now differ — mode, email or the pilot ids — nothing is written and the result is
+   * `stale`: the printed plan no longer describes what would be written.
+   */
+  expect?: Pick<PipelineFlagState, "mode" | "email" | "pilotUserIds">;
 }
 
 export interface PipelineFlagState {
@@ -57,6 +69,8 @@ export interface PipelineFlagResult {
   after: PipelineFlagState;
   changed: boolean;
   applied: boolean;
+  /** `expect` was given and the stored settings no longer match it: nothing was written. */
+  stale: boolean;
   errors: string[];
   /** Cautions about a VALID change — printed prominently, never a reason not to write. */
   warnings: string[];
@@ -70,7 +84,7 @@ export const ON_TO_PILOT_WARNING =
   "after you switch back to on. " +
   "To roll back, use --mode=off (the kill switch): it pauses Pipeline for everyone and resumes cleanly.";
 
-/** How long `--apply` waits after printing a WARNING, so the operator can still press Ctrl-C. */
+/** How long `--apply` waits after printing a WARNING, so the operator can still press Ctrl-C (from a terminal). */
 export const WARNING_PAUSE_MS = 10_000;
 
 type Db = typeof prisma;
@@ -155,9 +169,15 @@ export async function runPipelineFlag(db: Db, opts: PipelineFlagOptions): Promis
   const emailChanged = opts.email !== undefined && opts.email !== beforeEmail;
   const idsChanged = JSON.stringify([...beforeIds].sort()) !== JSON.stringify(nextIds);
   const changed = modeChanged || idsChanged || emailChanged;
+  const sortedIds = (ids: string[]) => JSON.stringify([...ids].sort());
+  const stale =
+    opts.expect !== undefined &&
+    (opts.expect.mode !== beforeMode ||
+      opts.expect.email !== beforeEmail ||
+      sortedIds(opts.expect.pilotUserIds) !== sortedIds(beforeIds));
 
   let applied = false;
-  if (opts.apply && errors.length === 0 && changed) {
+  if (opts.apply && errors.length === 0 && changed && !stale) {
     await db.$transaction(async (tx) => {
       if (modeChanged) {
         await tx.systemSetting.upsert({
@@ -184,7 +204,7 @@ export async function runPipelineFlag(db: Db, opts: PipelineFlagOptions): Promis
     });
     applied = true;
   }
-  return { before, after, changed, applied, errors, warnings };
+  return { before, after, changed, applied, stale, errors, warnings };
 }
 
 /** Where the CLI writes — the console in main(); a recorder in tests. */
@@ -194,6 +214,12 @@ export interface PipelineFlagIo {
   error(line: string): void;
   /** Wait `ms` before writing (main() sleeps; a test observes the state at that moment). */
   pause(ms: number): Promise<void>;
+  /**
+   * Whether Ctrl-C can reach this process (main(): stdin is a terminal). Default true. Over a
+   * non-interactive ssh it cannot — the local client dies and the remote script still writes
+   * when the pause ends — so the pause message must not promise it.
+   */
+  interactive?: boolean;
 }
 
 function print(io: PipelineFlagIo, label: string, s: PipelineFlagState): void {
@@ -206,8 +232,14 @@ function print(io: PipelineFlagIo, label: string, s: PipelineFlagState): void {
 /**
  * The CLI flow. A DRY pass runs first, so a WARNING (on → pilot) is printed BEFORE anything
  * is written — with --apply the write then waits WARNING_PAUSE_MS, so an operator who typed
- * the documented pilot-start command during an incident can still press Ctrl-C. A change
- * with no warning (the kill switch --mode=off included) is applied at once.
+ * the documented pilot-start command during an incident can still press Ctrl-C (from a
+ * terminal; see PipelineFlagIo.interactive). A change with no warning (the kill switch
+ * --mode=off included) is applied at once.
+ *
+ * ⚠️ The applying pass is checked against the dry pass (`expect`): if the stored settings
+ * changed in between — above all a --mode=off run from another shell during the pause, which
+ * the WARNING itself recommends — nothing is written. Otherwise it would read the new state,
+ * plan off → pilot (no warning: it no longer starts from on) and silently undo the kill switch.
  */
 export async function runPipelineFlagCli(db: Db, opts: PipelineFlagOptions, io: PipelineFlagIo): Promise<PipelineFlagResult> {
   const plan = await runPipelineFlag(db, { ...opts, apply: false });
@@ -231,10 +263,23 @@ export async function runPipelineFlagCli(db: Db, opts: PipelineFlagOptions, io: 
     return plan;
   }
   if (plan.warnings.length) {
-    io.warn(`Writing in ${WARNING_PAUSE_MS / 1000} s — press Ctrl-C now to abort. Nothing has been written yet.`);
+    const secs = WARNING_PAUSE_MS / 1000;
+    io.warn(
+      io.interactive === false
+        ? `Writing in ${secs} s. Nothing has been written yet. This is not an interactive terminal, so Ctrl-C ` +
+            `may not reach this process (over ssh, run it with ssh -t to be able to abort). If the pipeline ` +
+            `settings change before then (for example --mode=off from another shell), this run writes nothing.`
+        : `Writing in ${secs} s — press Ctrl-C now to abort. Nothing has been written yet.`,
+    );
     await io.pause(WARNING_PAUSE_MS);
   }
-  const res = await runPipelineFlag(db, opts);
+  const res = await runPipelineFlag(db, { ...opts, expect: plan.before });
+  if (res.stale) {
+    io.warn("The pipeline settings changed after the plan above was printed, so NOTHING was written. They are now:");
+    print(io, "NOW   ", res.before);
+    io.warn("Re-run the command to see the new plan (and any warning) before writing.");
+    return res;
+  }
   for (const e of res.errors) io.error(`ERROR: ${e}`);
   if (res.errors.length) io.error("Nothing written.");
   else if (res.applied) io.log("APPLIED — the API picks this up within 15 s.");
@@ -265,9 +310,11 @@ async function main() {
       warn: (s) => console.warn(s),
       error: (s) => console.error(s),
       pause: (ms) => new Promise((r) => setTimeout(r, ms)),
+      // Ctrl-C reaches this process only from a terminal; `ssh host "…"` without -t has none.
+      interactive: process.stdin.isTTY === true,
     },
   );
-  if (res.errors.length) process.exitCode = 1;
+  if (res.errors.length || res.stale) process.exitCode = 1;
 }
 
 if (process.argv[1] && /pipeline-flag\.ts$/.test(process.argv[1])) {

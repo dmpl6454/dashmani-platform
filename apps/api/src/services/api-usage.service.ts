@@ -335,9 +335,14 @@ function sqlInt(value: bigint | number | null): number {
  * the SESSION TimeZone, so a bare `created_at >= ${since}` moves the window by the
  * session's UTC offset (measured: empty under Asia/Kolkata, hours too wide under
  * America/Los_Angeles). findMany compared in UTC whatever the session said;
- * `AT TIME ZONE 'UTC'` reproduces that exactly. The parameter is already timestamptz, so
- * Postgres folds the whole edge to a constant at plan time: no per-row work, and the
- * created_at index stays usable.
+ * `AT TIME ZONE 'UTC'` reproduces that exactly. The created_at index stays usable.
+ *
+ * Plan cost: Prisma runs this as a cached prepared statement. Its first five executions
+ * per connection get custom plans, where the edge folds to a constant; then Postgres
+ * switches to a generic plan (verified: generic=3 custom=5 after eight runs), where
+ * `recent` re-evaluates the conversion for every row. Measured on 2.07M rows: ~1.0 s
+ * custom, ~1.2 s generic. A scalar sub-SELECT (InitPlan) edge was measured too: a flat
+ * ~1.1 s in both modes. That is not a clear win, so the simpler form stays.
  *
  * The day key is created_at::date, the wall-clock date of a timestamp without time zone,
  * so no TimeZone is involved. It is formatted through ::timestamp, because

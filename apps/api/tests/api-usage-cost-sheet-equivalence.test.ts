@@ -681,6 +681,42 @@ describe("getCostSheet: the SQL aggregation returns exactly what the row loop re
     expect(sheet).toMatchObject({ totalCostUsd: 0, estimatedHistoricalUsd: 5.25, hasReconstructed: true, projectedDailyUsd: 0 });
   });
 
+  // The steady-state rate reads ONLY non-reconstructed recent rows, for all three of its inputs
+  // (rows, cost, days). The fixtures above cannot tell whether an estimate leaks into the row
+  // count or the day count: every recent estimate there shares its UTC day with a forward row,
+  // and the one case with no recent forward rows has $0 of measured spend, so both branches give
+  // 0. These two can. A deepseek-v4-flash row with 20,000 in / 70 out is priced from its tokens.
+  const FORWARD_COST = (20_000 / 1e6) * 0.14 + (70 / 1e6) * 0.28;
+
+  it("a recent estimate alone on its UTC day adds no day to the steady-state rate", async () => {
+    await seed([
+      // The only row on 2026-09-30 after the 3-day edge (09:30Z): an estimate.
+      row({ provider: "meta", operation: "graph-reconstructed", calls: 2, units: 2, costUsd: 0.75, createdAt: ms(THREE_DAYS_AGO + 3_600_000) }),
+      row({ provider: "deepseek", model: "deepseek-v4-flash", operation: "entity-extraction", inputTokens: 20_000, outputTokens: 70, costUsd: 0.0004, createdAt: ms(NOW - 3_600_000) }),
+    ]);
+    for (const days of [3, 7, 30]) {
+      const { sheet } = await expectSameAsLegacy(days);
+      // One day of forward data (2026-10-03), not two.
+      expect(sheet.projectedDailyUsd, `days=${days}`).toBeCloseTo(FORWARD_COST, 12);
+    }
+  });
+
+  it("recent estimates without recent forward rows keep the window-rate fallback", async () => {
+    await seed([
+      row({ provider: "deepseek", model: "deepseek-v4-flash", operation: "entity-extraction", inputTokens: 20_000, outputTokens: 70, costUsd: 0.0004, createdAt: ms(NOW - 10 * DAY) }),
+      row({ provider: "meta", operation: "graph-reconstructed", calls: 4, units: 4, costUsd: 0.25, createdAt: ms(NOW - 2 * DAY) }),
+      row({ provider: "deepseek", model: "deepseek-v4-flash", operation: "entity-extraction-reconstructed", costUsd: 1.25, createdAt: ms(NOW - DAY) }),
+    ]);
+    // At 7 days the forward row is outside the window, so both branches give 0; it still has to match.
+    for (const days of [7, 14, 30]) await expectSameAsLegacy(days);
+    for (const days of [14, 30]) {
+      const { sheet } = await expectSameAsLegacy(days);
+      // Measured spend over the 10 real days of tracking, not $0 from a "recent" set of estimates.
+      expect(sheet.effectiveDays).toBe(10);
+      expect(sheet.projectedDailyUsd, `days=${days}`).toBeCloseTo(FORWARD_COST / 10, 12);
+    }
+  });
+
   it("tracking younger than the window: the horizon fields match", async () => {
     await seed([
       row({ provider: "deepseek", model: "deepseek-v4-flash", operation: "entity-extraction", inputTokens: 9_000, outputTokens: 90, createdAt: ms(NOW - 30 * 3_600_000) }),

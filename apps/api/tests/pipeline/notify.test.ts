@@ -303,6 +303,52 @@ describe("pipeline notifications", () => {
       expect(row.message).toBe("Phase: Planning");
     });
 
+    it("a leaver's 'added' row loses its due date (D4 reaches current participants only) — kept, not re-armed", async () => {
+      // The row stays (a remove + re-add within 24 h must not re-alert, test above), but a date
+      // left in it would outlive the next due change: D4 rewrites participants' rows only.
+      const owner = await createPipelineUser({ name: "Rahul Owner", tag: "a5-owner" });
+      const bob = await createPipelineUser({ name: "Bob Added", tag: "a5-bob" });
+      const planning = await phaseIdOf("planning");
+      const c = await request(app).post("/v1/pipeline/projects").set(auth(owner.id)).send({
+        clientId: randomUUID(),
+        title: "Diwali campaign",
+        phaseId: planning,
+        dueDate: "2026-10-06",
+        memberIds: [bob.id],
+      });
+      expect(c.status).toBe(201);
+      const pid = c.body.data.card.id;
+      const rowId = plnId("added", pid, bob.id);
+      const added = () => prisma.notification.findUniqueOrThrow({ where: { id: rowId } });
+      expect((await added()).message).toBe("Phase: Planning · due Tue 6 Oct");
+      await prisma.notification.update({ where: { id: rowId }, data: { read: true } });
+      const writtenAt = (await added()).createdAt;
+
+      // The owner undoes the add (Bob never engaged, so his participant row is deleted).
+      expect((await request(app).delete(`/v1/pipeline/projects/${pid}/members/${bob.id}`).set(auth(owner.id))).status).toBe(200);
+      let row = await added();
+      expect(row.message).toBe("Phase: Planning"); // no date a later change could leave behind
+      expect(row.read).toBe(true);
+      expect(row.createdAt.getTime()).toBe(writtenAt.getTime());
+      expect(row.title).toBe("Rahul Owner added you to “Diwali campaign”");
+
+      // The date moves while he is out: nothing in his row goes stale.
+      const moved = await request(app)
+        .patch(`/v1/pipeline/projects/${pid}`)
+        .set(auth(owner.id))
+        .send({ changes: { dueDate: "2026-10-09" }, base: { dueDate: "2026-10-06" } });
+      expect(moved.status).toBe(200);
+      expect((await added()).message).toBe("Phase: Planning");
+
+      // Re-added within 24 h: not re-alerted (§7.7), and still no dead date.
+      const re = await request(app).post(`/v1/pipeline/projects/${pid}/members`).set(auth(owner.id)).send({ userIds: [bob.id] });
+      expect(re.status).toBe(200);
+      row = await added();
+      expect(row.message).toBe("Phase: Planning");
+      expect(row.read).toBe(true);
+      expect(row.createdAt.getTime()).toBe(writtenAt.getTime());
+    });
+
     it("an 'added' row for a due date in another year carries the year (B9)", async () => {
       const owner = await createPipelineUser({ name: "Rahul Owner", tag: "a9-owner" });
       const bob = await createPipelineUser({ name: "Bob Added", tag: "a9-bob" });

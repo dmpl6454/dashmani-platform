@@ -69,13 +69,28 @@ const PIPELINE_TYPE = Prisma.sql`'PIPELINE'::"NotificationType"`;
  *   - the due-soon / overdue rows for the project's current due date (`dueDate`, or null when
  *     it has none) — a later due change or a move into Done withdraws them only for current
  *     participants (withdrawDueRows), so a leaver's row would keep a deadline that no longer
- *     exists for up to 90 days. (Rows of an EARLIER date were withdrawn when it changed.)
- * ONE statement of primary-key probes, in the caller's transaction.
+ *     exists for up to 90 days. (Rows of an earlier date were withdrawn when it changed — for
+ *     changes made since D1 shipped; rows written before that deploy age out in ≤ 90 days.)
+ * The "added" row stays — a remove and re-add within 24 h must not re-alert (§7.7), and "X
+ * added you" is still true — but it loses its due date: D4 rewrites that date for current
+ * participants only, so a leaver's copy would keep a deadline that may change. It is rewritten
+ * by primary key, NOT re-armed, to `addedMessage(phaseName, null)` (the current phase, as D4).
+ * Primary-key probes only, in the caller's transaction.
  */
-export async function dropLeaverRows(tx: PipelineTx, projectId: string, userId: string, dueDate: string | null): Promise<void> {
+export async function dropLeaverRows(
+  tx: PipelineTx,
+  projectId: string,
+  userId: string,
+  dueDate: string | null,
+  phaseName: string,
+): Promise<void> {
   const ids = [plnId("messages", projectId, userId)];
   if (dueDate) ids.push(plnId("due_soon", projectId, userId, dueDate), plnId("overdue", projectId, userId, dueDate));
   await tx.$executeRaw`DELETE FROM notifications WHERE id = ANY(${ids}::text[]) AND type = ${PIPELINE_TYPE}`;
+  const added = addedMessage(phaseName, null);
+  await tx.$executeRaw`
+    UPDATE notifications SET message = ${added}
+     WHERE id = ${plnId("added", projectId, userId)} AND type = ${PIPELINE_TYPE} AND message <> ${added}`;
 }
 const NO_NAMES: Record<string, string> = {};
 const TITLE_MAX = 120;

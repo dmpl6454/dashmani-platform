@@ -389,9 +389,10 @@ export async function syncPipeline(actor: PipelineActor, body: PipelineSyncReque
     mineH: hash,
     mine: body.mineH === hash ? null : mine,
     project,
-    // The WHOLE set, every tick: bootstrap is re-fetched at most once per 10 minutes per tab,
-    // and only on a mount or a focus, so this is how a `pipeline.pollMs` stretch (§8.5,
-    // evening rush) reaches tabs that are already open.
+    // The WHOLE set, every tick: an open tab re-fetches bootstrap only on a mount or a focus
+    // (at most once per 10 minutes — SWR's dedupe and focus throttle) and, in /pipeline, on a
+    // few re-checks of its own (a cached "not enabled", a mode change — provider.tsx), so this
+    // is how a `pipeline.pollMs` stretch (§8.5, evening rush) reaches tabs that are already open.
     pollMs: settings.pollMs,
     // The mode, every tick, for the same reason (GA): the client re-checks bootstrap when it
     // differs from what bootstrap gave the tab, and the new mode re-keys the directory. The

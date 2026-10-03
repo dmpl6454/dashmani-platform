@@ -4,8 +4,11 @@
  * SyncEngine — and nothing here polls (no refreshInterval, no global SWRConfig).
  *
  * Bootstrap alone revalidates a stale cache (GA, 2026-10-01), so a `pipeline.mode` flip
- * reaches tabs that are already open — at most one bootstrap request per 10 minutes per tab
- * (see usePipelineBootstrap for exactly when).
+ * reaches tabs that are already open: an HR tab re-fetches it on a mount or a focus, at most
+ * once per 10 minutes (SWR's dedupe and focus throttle — see usePipelineBootstrap for exactly
+ * when). A /pipeline tab also re-checks it on its own (provider.tsx): once on mount when its
+ * cache says "not enabled", every ~3 minutes while disabled, and when a sync reports a
+ * different mode (at most once per 2 minutes).
  */
 import useSWR, { type SWRConfiguration } from "swr";
 import type { PipelineBootstrap, PipelineDirectoryEntry, PipelineMode } from "@dashmani/shared";

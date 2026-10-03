@@ -1040,9 +1040,9 @@ New pure helpers in `packages/shared/src/utils/date.ts`:
   ```
 - **Text (amended 2026-10-01 — stored text must stay true after it is written):**
   - "“Diwali campaign” is due Saturday (27 Sep)", or "… is due Monday (29 Sep)" when sent on a Saturday. Always the ABSOLUTE day, never "tomorrow": the row is read for up to 90 days and mobile shows it verbatim. (The email keeps "due tomorrow (Sat 27 Sep)": it is read near send time and is worded against the send day.)
-  - "“Diwali campaign” is overdue — was due Sat 27 Sep, still in Review".
+  - "“Diwali campaign” is overdue — was due Sat 27 Sep", message "Phase: Review". (Earlier builds ended the title with ", still in Review", which turned false at the next move between live phases: the row stays until a due change or Done withdraws it.)
   - Every stored or emailed date carries its year when that is not the current IST year ("is due Friday (1 Jan 2027)", "was due Tue 30 Dec 2025").
-  - A due-date change, or a move into a terminal phase, withdraws the superseded due-soon / overdue rows by primary key and clears the `*_notified_for` markers, so the bell alert re-arms if the date comes back. The re-armed due-soon email skips anyone already mailed about that (project, date). A participant row that is deleted (a leave, or removing someone never engaged) takes that user's due rows for the current date with it — later withdrawals reach current participants only.
+  - A due-date change, or a move into a terminal phase, withdraws the superseded due-soon / overdue rows by primary key and clears the `*_notified_for` markers, so the bell alert re-arms if the date comes back. The re-armed due-soon email skips anyone already mailed about that (project, date). A participant row that is deleted (a leave, or removing someone never engaged) takes that user's due rows for the current date with it, and their "added" row loses its due date (it stays, so a quick re-add does not re-alert) — later withdrawals and the D4 rewrite reach current participants only.
 - **Restart safety:** idempotent across restarts, and a tick with nothing to do costs one indexed probe.
 
 #### 7.9 Text and snippets
@@ -1232,7 +1232,7 @@ packages/shared/src/validators/pipeline.ts · packages/shared/src/types/pipeline
 
 #### 9.3 Data layer and identity scoping
 
-- **SWR** is used only for request-once data: `['/pipeline/bootstrap', userId]` and `['/pipeline/directory', userId, mode]` (10-minute dedupe), and the archived and deleted lists (`useSWRInfinite`, limit 20). *Amended 2026-10-01 (GA):* bootstrap alone overrides the options below with `revalidateIfStale: true`, `revalidateOnFocus: true` and a 10-minute `focusThrottleInterval`, so a `pipeline.mode` flip reaches open tabs (at most one bootstrap request per 10 minutes per tab); the directory key includes the bootstrap mode, so pilot users' cached `pickable: false` entries are fetched again after GA; and every sync carries the mode, so an enabled `/pipeline` tab re-checks bootstrap when it differs. Options:
+- **SWR** is used only for request-once data: `['/pipeline/bootstrap', userId]` and `['/pipeline/directory', userId, mode]` (10-minute dedupe), and the archived and deleted lists (`useSWRInfinite`, limit 20). *Amended 2026-10-01 (GA):* bootstrap alone overrides the options below with `revalidateIfStale: true`, `revalidateOnFocus: true` and a 10-minute `focusThrottleInterval`, so a `pipeline.mode` flip reaches open tabs (on a mount or a focus, at most once per 10 minutes per tab; a `/pipeline` tab also re-checks once on mount when its cache says "not enabled", every ~3 minutes while disabled, and when a sync reports a different mode, at most once per 2 minutes); the directory key includes the bootstrap mode, so pilot users' cached `pickable: false` entries are fetched again after GA; and every sync carries the mode, so an enabled `/pipeline` tab re-checks bootstrap when it differs. Options:
   ```ts
   export const PL_SWR = {
     revalidateOnFocus: false, revalidateOnReconnect: false, revalidateIfStale: false,

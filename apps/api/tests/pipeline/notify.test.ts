@@ -9,7 +9,7 @@ import { prisma } from "@dashmani/db";
 import app from "../../src/app";
 import { resetPipelineStateForTests } from "../../src/services/pipeline";
 import { pipelineDb } from "../../src/services/pipeline/db";
-import { plnId } from "../../src/services/pipeline/notify";
+import { __setPipelineTextTodayForTests, plnId } from "../../src/services/pipeline/notify";
 import { hrToken, tokenFor, setPipelineSetting, clearPipelineSettings, createPipelineUser, seedPipelinePhases } from "./pipeline-helpers";
 import { createProjectFixture, addParticipantFixture, phaseIdOf, mention } from "./fixtures-messages";
 
@@ -24,11 +24,15 @@ const meta = (r: { metadata: unknown }) => (r.metadata ?? {}) as Meta;
 describe("pipeline notifications", () => {
   beforeEach(async () => {
     resetPipelineStateForTests();
+    // Stored text carries a date's year when it differs from the year it is written in:
+    // pin the write day so the 2026 dates below stay year-less in any year this suite runs.
+    __setPipelineTextTodayForTests("2026-10-01");
     await clearPipelineSettings();
     await seedPipelinePhases();
     await setPipelineSetting("pipeline.mode", "on");
   });
   afterAll(async () => {
+    __setPipelineTextTodayForTests(null);
     await clearPipelineSettings();
     resetPipelineStateForTests();
     await pipelineDb.$disconnect();
@@ -264,6 +268,99 @@ describe("pipeline notifications", () => {
       expect(after).toHaveLength(1);
       expect(after[0].read).toBe(true);
       expect(after[0].createdAt.getTime()).toBe(createdAt.getTime());
+    });
+
+    it("a due-date change rewrites the 'added' row's date in place — never re-armed, and gone with the date (D4)", async () => {
+      const owner = await createPipelineUser({ name: "Rahul Owner", tag: "a4-owner" });
+      const bob = await createPipelineUser({ name: "Bob Added", tag: "a4-bob" });
+      const planning = await phaseIdOf("planning");
+      const c = await request(app).post("/v1/pipeline/projects").set(auth(owner.id)).send({
+        clientId: randomUUID(),
+        title: "Diwali campaign",
+        phaseId: planning,
+        dueDate: "2026-10-03",
+        memberIds: [bob.id],
+      });
+      expect(c.status).toBe(201);
+      const pid = c.body.data.card.id;
+      const rowId = plnId("added", pid, bob.id);
+      const added = () => prisma.notification.findUniqueOrThrow({ where: { id: rowId } });
+      expect((await added()).message).toBe("Phase: Planning · due Sat 3 Oct");
+      await prisma.notification.update({ where: { id: rowId }, data: { read: true } });
+      const writtenAt = (await added()).createdAt;
+      const patch = (from: string | null, to: string | null) =>
+        request(app).patch(`/v1/pipeline/projects/${pid}`).set(auth(owner.id)).send({ changes: { dueDate: to }, base: { dueDate: from } });
+
+      expect((await patch("2026-10-03", "2026-10-09")).status).toBe(200);
+      let row = await added();
+      expect(row.message).toBe("Phase: Planning · due Fri 9 Oct");
+      expect(row.read).toBe(true); // corrected, not re-announced
+      expect(row.createdAt.getTime()).toBe(writtenAt.getTime());
+      expect(row.title).toBe("Rahul Owner added you to “Diwali campaign”");
+
+      expect((await patch("2026-10-09", null)).status).toBe(200);
+      row = await added();
+      expect(row.message).toBe("Phase: Planning");
+    });
+
+    it("a leaver's 'added' row loses its due date (D4 reaches current participants only) — kept, not re-armed", async () => {
+      // The row stays (a remove + re-add within 24 h must not re-alert, test above), but a date
+      // left in it would outlive the next due change: D4 rewrites participants' rows only.
+      const owner = await createPipelineUser({ name: "Rahul Owner", tag: "a5-owner" });
+      const bob = await createPipelineUser({ name: "Bob Added", tag: "a5-bob" });
+      const planning = await phaseIdOf("planning");
+      const c = await request(app).post("/v1/pipeline/projects").set(auth(owner.id)).send({
+        clientId: randomUUID(),
+        title: "Diwali campaign",
+        phaseId: planning,
+        dueDate: "2026-10-06",
+        memberIds: [bob.id],
+      });
+      expect(c.status).toBe(201);
+      const pid = c.body.data.card.id;
+      const rowId = plnId("added", pid, bob.id);
+      const added = () => prisma.notification.findUniqueOrThrow({ where: { id: rowId } });
+      expect((await added()).message).toBe("Phase: Planning · due Tue 6 Oct");
+      await prisma.notification.update({ where: { id: rowId }, data: { read: true } });
+      const writtenAt = (await added()).createdAt;
+
+      // The owner undoes the add (Bob never engaged, so his participant row is deleted).
+      expect((await request(app).delete(`/v1/pipeline/projects/${pid}/members/${bob.id}`).set(auth(owner.id))).status).toBe(200);
+      let row = await added();
+      expect(row.message).toBe("Phase: Planning"); // no date a later change could leave behind
+      expect(row.read).toBe(true);
+      expect(row.createdAt.getTime()).toBe(writtenAt.getTime());
+      expect(row.title).toBe("Rahul Owner added you to “Diwali campaign”");
+
+      // The date moves while he is out: nothing in his row goes stale.
+      const moved = await request(app)
+        .patch(`/v1/pipeline/projects/${pid}`)
+        .set(auth(owner.id))
+        .send({ changes: { dueDate: "2026-10-09" }, base: { dueDate: "2026-10-06" } });
+      expect(moved.status).toBe(200);
+      expect((await added()).message).toBe("Phase: Planning");
+
+      // Re-added within 24 h: not re-alerted (§7.7), and still no dead date.
+      const re = await request(app).post(`/v1/pipeline/projects/${pid}/members`).set(auth(owner.id)).send({ userIds: [bob.id] });
+      expect(re.status).toBe(200);
+      row = await added();
+      expect(row.message).toBe("Phase: Planning");
+      expect(row.read).toBe(true);
+      expect(row.createdAt.getTime()).toBe(writtenAt.getTime());
+    });
+
+    it("an 'added' row for a due date in another year carries the year (B9)", async () => {
+      const owner = await createPipelineUser({ name: "Rahul Owner", tag: "a9-owner" });
+      const bob = await createPipelineUser({ name: "Bob Added", tag: "a9-bob" });
+      const c = await request(app).post("/v1/pipeline/projects").set(auth(owner.id)).send({
+        clientId: randomUUID(),
+        title: "Next year",
+        dueDate: "2027-09-30",
+        memberIds: [bob.id],
+      });
+      expect(c.status).toBe(201);
+      const row = await prisma.notification.findUniqueOrThrow({ where: { id: plnId("added", c.body.data.card.id, bob.id) } });
+      expect(row.message).toBe("Phase: Brief · due Thu 30 Sep 2027");
     });
   });
 

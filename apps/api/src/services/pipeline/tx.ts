@@ -84,9 +84,10 @@ export async function pipelineBackground<T>(fn: (db: PipelineDbClient) => Promis
 
 export interface PipelineWriteOptions {
   /**
-   * Retry once after 50–150 ms on a deadlock (40P01) or serialization failure (40001).
-   * ONLY for operations that are safe to run twice (idempotent by key or by state).
-   * The slot is released during the pause and re-acquired for the retry.
+   * Retry once after 50–150 ms on a deadlock (40P01), a serialization failure (40001) or a
+   * lock timeout (55P03) — see withRetryOnce. ONLY for operations that are safe to run twice
+   * (idempotent by key or by state). The slot is released during the pause and re-acquired
+   * for the retry.
    */
   retryOnce?: boolean;
   /**

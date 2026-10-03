@@ -354,12 +354,37 @@ describe("withRetryOnce", () => {
     expect(toPipelineError(err)).toMatchObject({ statusCode: 503, code: "PIPELINE_BUSY" });
   });
 
+  it("retries a lock timeout (55P03) once too — the lock cycle a multi-row write can meet", async () => {
+    // A due change locks several of each participant's rows; an ack or mark-all-read that
+    // locks the same rows in another order makes ONE side wait out the 1 s lock_timeout.
+    // The whole transaction rolled back, so running it again is a clean first attempt.
+    for (const lost of [known("P2010", { code: "55P03" }), new Error("ERROR: canceling statement due to lock timeout")]) {
+      let calls = 0;
+      const out = await withRetryOnce(async () => {
+        calls++;
+        if (calls === 1) throw lost;
+        return "ok";
+      });
+      expect(out).toBe("ok");
+      expect(calls).toBe(2);
+    }
+  });
+
   it("never retries anything else", async () => {
     let calls = 0;
     await expect(
       withRetryOnce(async () => {
         calls++;
         throw known("P2010", { code: "23505" });
+      }),
+    ).rejects.toBeTruthy();
+    expect(calls).toBe(1);
+    // A statement timeout (57014) is not a lost race — a second try would only wait again.
+    calls = 0;
+    await expect(
+      withRetryOnce(async () => {
+        calls++;
+        throw new Error("ERROR: canceling statement due to statement timeout");
       }),
     ).rejects.toBeTruthy();
     expect(calls).toBe(1);

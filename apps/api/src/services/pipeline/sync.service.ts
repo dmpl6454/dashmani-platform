@@ -185,7 +185,13 @@ interface R1Row {
     createdAt: string;
     updatedAt: string;
   }) | null;
-  participants?: Array<{ userId: string; role: PipelineParticipantRole; memberAddedById: string | null; createdAt: string }>;
+  participants?: Array<{
+    userId: string;
+    role: PipelineParticipantRole;
+    memberAddedById: string | null;
+    memberAddedAt: JsonTs;
+    createdAt: string;
+  }>;
 }
 
 function projectPartSql(p: NonNullable<PipelineSyncRequest["project"]>, me: string, limit: number) {
@@ -218,9 +224,10 @@ function projectPartSql(p: NonNullable<PipelineSyncRequest["project"]>, me: stri
        FROM pipeline_projects h
       WHERE h.id = ${p.id} AND h.deleted_at IS NULL AND h.header_rev <> ${p.hv}::int) AS header,
     (SELECT COALESCE(json_agg(json_build_object('userId', x.user_id, 'role', x.role,
-                                                'memberAddedById', x.member_added_by_id, 'createdAt', x.created_at)
+                                                'memberAddedById', x.member_added_by_id,
+                                                'memberAddedAt', x.member_added_at, 'createdAt', x.created_at)
                               ORDER BY x.created_at, x.user_id), '[]'::json)
-       FROM (SELECT pp.user_id, pp.role, pp.member_added_by_id, pp.created_at
+       FROM (SELECT pp.user_id, pp.role, pp.member_added_by_id, pp.member_added_at, pp.created_at
                FROM pipeline_participants pp
               WHERE pp.project_id = ${p.id} AND ${headerMoved}
               ORDER BY pp.created_at, pp.user_id
@@ -329,6 +336,7 @@ export async function syncPipeline(actor: PipelineActor, body: PipelineSyncReque
             role: x.role,
             isOwner: x.userId === header.ownerId,
             memberAddedById: x.memberAddedById,
+            memberAddedAt: isoUtc(x.memberAddedAt),
             createdAt: isoUtc(x.createdAt)!,
           }))
         : null;
@@ -381,9 +389,15 @@ export async function syncPipeline(actor: PipelineActor, body: PipelineSyncReque
     mineH: hash,
     mine: body.mineH === hash ? null : mine,
     project,
-    // The WHOLE set, every tick: bootstrap is fetched once per tab, so this is the only way
-    // a `pipeline.pollMs` stretch (§8.5, evening rush) reaches tabs that are already open.
+    // The WHOLE set, every tick: an open tab re-fetches bootstrap only on a mount or a focus
+    // (at most once per 10 minutes — SWR's dedupe and focus throttle) and, in /pipeline, on a
+    // few re-checks of its own (a cached "not enabled", a mode change — provider.tsx), so this
+    // is how a `pipeline.pollMs` stretch (§8.5, evening rush) reaches tabs that are already open.
     pollMs: settings.pollMs,
+    // The mode, every tick, for the same reason (GA): the client re-checks bootstrap when it
+    // differs from what bootstrap gave the tab, and the new mode re-keys the directory. The
+    // gate refused "off" before this point, so it is "pilot" or "on" (bootstrap's mapping).
+    mode: settings.mode === "on" ? "on" : "pilot",
     reload: body.clientBuild < settings.minClientBuild,
     ...(boardUnavailable ? { boardUnavailable: true as const } : {}),
   };

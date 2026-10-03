@@ -11,7 +11,7 @@ import { prisma } from "@dashmani/db";
 import app from "../../src/app";
 import { resetPipelineStateForTests } from "../../src/services/pipeline";
 import { pipelineDb, Prisma } from "../../src/services/pipeline/db";
-import { plnId } from "../../src/services/pipeline/notify";
+import { __setPipelineTextTodayForTests, plnId } from "../../src/services/pipeline/notify";
 import { EMAIL_MENTION_IDS_MAX, mergePayloadSql, mergePayloadTs } from "../../src/services/pipeline/email-outbox";
 import { __setPipelineEmailSchemaOkForTests } from "../../src/services/pipeline/self-check";
 import { runPipelineDueTick } from "../../src/cron/pipeline-due.cron";
@@ -37,6 +37,9 @@ describe("pipeline email — enqueue", () => {
   });
   beforeEach(async () => {
     resetPipelineStateForTests();
+    // Bell text is written against the IST day it is written in (the year rule): pin it so
+    // the 2026 dates below read "Mon 28 Sep" in any year this suite runs.
+    __setPipelineTextTodayForTests("2026-10-01");
     await clearPipelineSettings();
     await seedPipelinePhases();
     await setPipelineSetting("pipeline.mode", "on");
@@ -45,6 +48,7 @@ describe("pipeline email — enqueue", () => {
     vi.stubEnv("SMTP_PASS", "not-a-real-password");
   });
   afterAll(async () => {
+    __setPipelineTextTodayForTests(null);
     vi.unstubAllEnvs();
     await clearPipelineSettings();
     resetPipelineStateForTests();
@@ -253,9 +257,27 @@ describe("pipeline email — enqueue", () => {
 
     it("keeps the dates visible when the names and title are long", async () => {
       const { dueChangedTitle } = await import("../../src/services/pipeline/notify");
-      const t = dueChangedTitle("A".repeat(60), "T".repeat(120), "2026-09-28", "2026-10-03");
+      const t = dueChangedTitle("A".repeat(60), "T".repeat(120), "2026-09-28", "2026-10-03", "2026-10-01");
       expect(Array.from(t).length).toBeLessThanOrEqual(120);
       expect(t.endsWith("to Sat 3 Oct (was Mon 28 Sep)")).toBe(true);
+      // The year rule keeps the year inside the limit too.
+      const y = dueChangedTitle("A".repeat(60), "T".repeat(120), "2026-12-30", "2027-01-04", "2026-12-28");
+      expect(Array.from(y).length).toBeLessThanOrEqual(120);
+      expect(y.endsWith("to Mon 4 Jan 2027 (was Wed 30 Dec)")).toBe(true);
+    });
+
+    it("a date in another year carries its year; this year's do not (B9)", async () => {
+      const { dueChangedTitle } = await import("../../src/services/pipeline/notify");
+      expect(dueChangedTitle("Priya", "Diwali campaign", "2026-12-30", "2027-01-04", "2026-12-28")).toBe(
+        "Priya changed the due date of “Diwali campaign” to Mon 4 Jan 2027 (was Wed 30 Dec)",
+      );
+      expect(dueChangedTitle("Priya", "Diwali campaign", "2025-12-30", null, "2026-01-02")).toBe(
+        "Priya removed the due date of “Diwali campaign” (was Tue 30 Dec 2025)",
+      );
+      const { priya, bob, project } = await team();
+      expect((await patchDue(priya.id, project.id, null, "2027-09-30")).status).toBe(200);
+      const bell = await prisma.notification.findUnique({ where: { id: plnId("due_changed", project.id, bob.id) } });
+      expect(bell!.title).toBe("Priya Owner set the due date of “Diwali campaign” to Thu 30 Sep 2027");
     });
   });
 
@@ -269,6 +291,41 @@ describe("pipeline email — enqueue", () => {
       expect(await runPipelineDueTick({ now: new Date("2026-09-29T10:00:00.000+05:30") })).toMatchObject({ status: "ran", dueSoon: 1 });
       expect((await outbox()).map((x) => x.userId)).toEqual([bob.id]);
       expect(await outbox({ userId: priya.id })).toHaveLength(0);
+    });
+
+    it("a re-armed alert (a drag into Done and back out, or A → B → A) re-alerts the bell but never re-mails someone already mailed about that date", async () => {
+      const { priya, bob, project } = await team();
+      await pipelineDb.$executeRaw`UPDATE pipeline_projects SET due_date = DATE '2026-09-30' WHERE id = ${project.id}`;
+      const tick = (hhmm: string) => runPipelineDueTick({ now: new Date(`2026-09-29T${hhmm}:00.000+05:30`) });
+      const dueSoon = () => outbox({ kind: "due_soon" });
+      expect(await tick("10:00")).toMatchObject({ status: "ran", dueSoon: 1 });
+      // The worker mailed Priya and Bob.
+      await pipelineDb.$executeRaw`UPDATE pipeline_email_outbox SET status = 'sent', sent_at = timezone('utc', now()) WHERE kind = 'due_soon'`;
+      // Eve joins after that mail, so she was never told.
+      const eve = await createPipelineUser({ name: "Eve Late", tag: "em-eve" });
+      await addParticipantFixture(project.id, eve.id);
+
+      // A drag into Done and straight back out withdraws the bell rows and re-arms them …
+      expect((await move(priya.id, project.id, "done", "brief")).status).toBe(200);
+      expect((await move(priya.id, project.id, "brief", "done")).status).toBe(200);
+      expect(await tick("11:00")).toMatchObject({ status: "ran", dueSoon: 1 });
+      expect(await prisma.notification.findUnique({ where: { id: plnId("due_soon", project.id, bob.id, "2026-09-30") } })).not.toBeNull();
+      // … but the mail goes ONLY to Eve: Priya and Bob already have it.
+      expect((await dueSoon()).map((x) => [x.userId, x.status]).sort()).toEqual(
+        [
+          [priya.id, "sent"],
+          [bob.id, "sent"],
+          [eve.id, "pending"],
+        ].sort(),
+      );
+
+      // A → B → A (the date came back): the same rule.
+      await pipelineDb.$executeRaw`UPDATE pipeline_email_outbox SET status = 'sent', sent_at = timezone('utc', now()) WHERE kind = 'due_soon'`;
+      expect((await patchDue(priya.id, project.id, "2026-09-30", "2026-10-09")).status).toBe(200);
+      expect((await patchDue(priya.id, project.id, "2026-10-09", "2026-09-30")).status).toBe(200);
+      expect(await tick("12:00")).toMatchObject({ status: "ran", dueSoon: 1 });
+      expect((await dueSoon()).every((x) => x.status === "sent")).toBe(true);
+      expect(await dueSoon()).toHaveLength(3);
     });
 
     it("queues an immediate due_soon row per notify=true participant", async () => {

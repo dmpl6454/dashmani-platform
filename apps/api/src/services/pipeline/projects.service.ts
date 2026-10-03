@@ -29,12 +29,12 @@ import {
   type PipelineCreateProjectResponse,
   type PipelineProjectListResponse,
 } from "@dashmani/shared";
-import type { PipelineDbClient, PipelineTx } from "./db";
+import { Prisma, type PipelineDbClient, type PipelineTx } from "./db";
 import { pipelineRead, pipelineWrite } from "./tx";
 import { PipelineDbError, PipelineError, isIdempotencyKeyViolation } from "./errors";
 import { bumpBoard } from "./board";
 import { notifier } from "./notifier";
-import { cardFromRow, headerFromRow, messageFromRow, participantFromRow } from "./wire";
+import { cardFromRow, day, headerFromRow, messageFromRow, participantFromRow } from "./wire";
 import type { PipelineDirectory } from "./access";
 import { isPilotUser, type PipelineSettings } from "./settings";
 import { pipelineEmailOn } from "./email-outbox";
@@ -365,7 +365,7 @@ export async function getProjectDetail(
          ORDER BY m.seq
          LIMIT ${AROUND_HALF + 1}),
       parts AS (
-        SELECT user_id, role, member_added_by_id, created_at FROM pipeline_participants
+        SELECT user_id, role, member_added_by_id, member_added_at, created_at FROM pipeline_participants
          WHERE project_id = ${projectId}
          ORDER BY created_at, user_id
          LIMIT ${PIPELINE_LIMITS.participantsMax})
@@ -451,6 +451,11 @@ export async function editProject(
   base: PipelineEditableFields,
 ): Promise<{ header: PipelineHeader }> {
   const email = pipelineEmailOn(actor.settings); // memo only — before the slot
+  // retryOnce: a due change writes several of each participant's notification rows (D1/D4),
+  // which a concurrent ack or mark-all-read may hold — a lost lock race (55P03 / 40P01) is
+  // retried once rather than shown as "not saved". The edit is safe to repeat: the whole
+  // transaction rolled back (outbox rows included), and a field already at the desired value
+  // is skipped as a no-op.
   const out = await pipelineWrite(async (tx) => {
     const row = await lockProject(tx, projectId, actor.userId);
     assertWritable(row);
@@ -480,6 +485,12 @@ export async function editProject(
              description = CASE WHEN ${has("description")}::boolean THEN ${changes.description ?? null}::text ELSE description END,
              start_date  = CASE WHEN ${has("startDate")}::boolean THEN ${changes.startDate ?? null}::date ELSE start_date END,
              due_date    = CASE WHEN ${has("dueDate")}::boolean THEN ${changes.dueDate ?? null}::date ELSE due_date END,
+             -- D1: onDueChanged (below, same transaction) withdraws the old date's due-soon /
+             -- overdue rows, so the markers go too: an A → B → A change must re-arm the A alert
+             -- it just deleted (IS DISTINCT FROM re-arms B by itself). Such a flip re-alerts A in
+             -- the bell; whoever was already mailed about A is not mailed again (enqueueDueSoonEmails).
+             due_soon_notified_for = CASE WHEN ${has("dueDate")}::boolean THEN NULL ELSE due_soon_notified_for END,
+             overdue_notified_for  = CASE WHEN ${has("dueDate")}::boolean THEN NULL ELSE overdue_notified_for END,
              header_rev  = header_rev + 1,
              updated_at  = timezone('utc', now())
        WHERE id = ${projectId}
@@ -503,7 +514,7 @@ export async function editProject(
       header,
       boardChanged: has("title") || has("startDate") || has("dueDate"),
     };
-  });
+  }, { retryOnce: true });
   if (out.boardChanged) await bumpBoard();
   return { header: out.header };
 }
@@ -547,12 +558,20 @@ export async function moveProject(actor: PipelineActor, projectId: string, input
  * re-runs with `lockPhaseFirst`: the card AND the target phase's live rows are locked in
  * ONE id-ordered statement before anything else. Every multi-row locker then uses the
  * same global id order (a cross-phase swap included), so no cycle can form.
+ *
+ * That holds for PROJECT rows only. A move into Done also writes several of each
+ * participant's NOTIFICATION rows (withdrawDueRows, then the moved row), which a viewer's
+ * ack or the main pool's "Mark all read" can hold in another order — a rare lock cycle there
+ * is real. Both sides retry it once: this move (retryOnce below) and markAllAsRead.
  */
 async function moveAttempt(actor: PipelineActor, projectId: string, input: PipelineMoveRequest, lockPhaseFirst: boolean) {
   const me = actor.userId;
   const email = pipelineEmailOn(actor.settings); // memo only — before the slot
   const { toPhaseId, basePhaseId } = input;
   const afterId = input.afterId === projectId ? null : input.afterId;
+  // retryOnce: a move into Done withdraws several rows per participant (D2) — a lost lock
+  // race is retried once (see editProject). Safe: the transaction rolled back whole, and an
+  // attempt that finds the card already in place returns without writing.
   return pipelineWrite(async (tx) => {
     if (lockPhaseFirst) {
       await tx.$queryRaw`
@@ -590,7 +609,7 @@ async function moveAttempt(actor: PipelineActor, projectId: string, input: Pipel
     // S2: the target phase and the neighbours (a = after, b = the next rank above a).
     const [s2] = await tx.$queryRaw<Row[]>`
       WITH ph AS (
-        SELECT id, name, archived_at FROM pipeline_phases WHERE id = ${toPhaseId}),
+        SELECT id, name, archived_at, is_terminal FROM pipeline_phases WHERE id = ${toPhaseId}),
       aft AS (
         SELECT rank FROM pipeline_projects
          WHERE id = ${afterId}::text AND phase_id = ${toPhaseId}
@@ -610,6 +629,7 @@ async function moveAttempt(actor: PipelineActor, projectId: string, input: Pipel
            AND (a.rank IS NULL OR q.rank COLLATE "C" > a.rank COLLATE "C")
          ORDER BY q.rank COLLATE "C", q.id LIMIT 1)
       SELECT ph.id AS phase_id, ph.name AS phase_name, ph.archived_at AS phase_archived_at,
+             ph.is_terminal AS phase_terminal,
              (SELECT name FROM pipeline_phases WHERE id = ${fromPhaseId}) AS from_name,
              (SELECT rank FROM a) AS a_rank, (SELECT adjusted FROM a) AS adjusted, (SELECT rank FROM b) AS b_rank
         FROM (SELECT 1) one
@@ -631,6 +651,11 @@ async function moveAttempt(actor: PipelineActor, projectId: string, input: Pipel
       if (!lockPhaseFirst) throw new NeedsRebalance("rebalance needed");
       rank = await rebalancePhase(tx, toPhaseId, projectId, afterId);
     }
+    // D2: entering a terminal phase (Done) withdraws this due date's due-soon / overdue rows
+    // (notifier.onMoved below), so its markers are cleared with them: moving back out of Done
+    // re-arms the alerts that were withdrawn (the due cron never alerts a terminal project) —
+    // in the bell; a recipient already mailed about this date is not mailed again.
+    const toTerminal = phaseChanged && s2.phase_terminal === true;
 
     // S3: the card, with the move bookkeeping only when the phase changed.
     const [updated] = await tx.$queryRaw<Row[]>`
@@ -644,6 +669,8 @@ async function moveAttempt(actor: PipelineActor, projectId: string, input: Pipel
              move_from_phase_id  = CASE WHEN ${phaseChanged}::boolean THEN ${fromPhaseId}::text ELSE p.move_from_phase_id END,
              move_started_at     = CASE WHEN ${phaseChanged && !sameGen}::boolean THEN timezone('utc', now()) ELSE p.move_started_at END,
              move_last_at        = CASE WHEN ${phaseChanged}::boolean THEN timezone('utc', now()) ELSE p.move_last_at END,
+             due_soon_notified_for = CASE WHEN ${toTerminal}::boolean THEN NULL ELSE p.due_soon_notified_for END,
+             overdue_notified_for  = CASE WHEN ${toTerminal}::boolean THEN NULL ELSE p.overdue_notified_for END,
              header_rev          = p.header_rev + 1,
              updated_at          = timezone('utc', now())
        WHERE p.id = ${projectId}
@@ -667,11 +694,13 @@ async function moveAttempt(actor: PipelineActor, projectId: string, input: Pipel
         toPhaseId,
         toPhaseName: String(s2.phase_name ?? ""),
         prevPhaseId: curPhase,
+        toTerminal,
+        dueDate: day(row.due_date),
         email,
       });
     }
     return { card: cardFromRow(updated), placementAdjusted, changed: true };
-  });
+  }, { retryOnce: true });
 }
 
 /**
@@ -728,6 +757,16 @@ async function relocationFor(tx: PipelineTx, row: Row): Promise<{ phaseId: strin
   return { phaseId: String(r.first_id), rank, adjusted: true };
 }
 
+/**
+ * A relocation IS a phase change: the header reads "<when> · Moved to <phase> by <who>" from
+ * phase_changed_*, and without this it would pair the NEW phase with an OLD move's person and
+ * time ("Moved to Brief by Aisha · 3 Aug", though Aisha moved it to the phase that is gone).
+ * Attributed to the actor whose unarchive / restore moved it. A card that stays put keeps them.
+ */
+const relocationStamp = (adjusted: boolean, actorId: string) => Prisma.sql`
+  phase_changed_at    = CASE WHEN ${adjusted}::boolean THEN timezone('utc', now()) ELSE p.phase_changed_at END,
+  phase_changed_by_id = CASE WHEN ${adjusted}::boolean THEN ${actorId}::text ELSE p.phase_changed_by_id END`;
+
 /** The card from an `UPDATE … RETURNING <card columns>` result. */
 const firstCard = (rows: Row[]): PipelineCard => cardFromRow(rows[0]);
 
@@ -772,6 +811,7 @@ export async function unarchiveProject(actor: PipelineActor, projectId: string):
         UPDATE pipeline_projects p SET
                archived_at = NULL, archived_by_id = NULL, archived_by_admin = false,
                phase_id = ${to.phaseId}, rank = ${to.rank},
+               ${relocationStamp(to.adjusted, me)},
                header_rev = p.header_rev + 1, updated_at = timezone('utc', now())
          WHERE p.id = ${projectId}
      RETURNING p.id, p.phase_id, p.title, p.rank, p.owner_id, p.start_date, p.due_date, p.member_count,
@@ -806,6 +846,7 @@ export async function restoreProject(actor: PipelineActor, projectId: string): P
         UPDATE pipeline_projects p SET
                deleted_at = NULL, deleted_by_id = NULL, deleted_by_admin = false,
                phase_id = ${to.phaseId}, rank = ${to.rank},
+               ${relocationStamp(to.adjusted, me)},
                header_rev = p.header_rev + 1, updated_at = timezone('utc', now())
          WHERE p.id = ${projectId}
      RETURNING p.id, p.phase_id, p.title, p.rank, p.owner_id, p.start_date, p.due_date, p.member_count,

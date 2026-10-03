@@ -8,13 +8,24 @@
  *
  * Deep links (`?m=<messageId>&t=<rootId>`) are handled by an effect keyed on the CURRENT
  * m and t values, so a bell click for the project already open still works.
+ *
+ * The header says who last changed the phase, and when (spec rule 7, §9.6): "3:20 pm · Moved
+ * to Review by Aisha", dated when it was not today.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { ChevronLeft } from "lucide-react";
+import {
+  dayMonthShort,
+  localDayKey,
+  timeLabel,
+  type PipelineDirectoryEntry,
+  type PipelineHeader as ProjectHeaderData,
+  type PipelinePhase,
+} from "@dashmani/shared";
 import { NotificationBell } from "@/components/notification-bell";
-import { usePipeline } from "../provider";
+import { usePipeline, usePhases } from "../provider";
 import { useStoreSelector } from "../store";
 import { describeError, isApiError, plApi } from "../api";
 import { PipelineHeader } from "../header/PipelineHeader";
@@ -24,6 +35,7 @@ import { Skeleton } from "../ui/Skeleton";
 import { Surface } from "../ui/Surface";
 import { useToast } from "../ui/Toast";
 import { useBelowLg } from "../hooks/use-media";
+import { useLocalDayKey } from "../hooks/use-local-day-key";
 import { AckLedger } from "../hooks/use-seen-observer";
 import { Z } from "../constants";
 import { Thread } from "../thread/Thread";
@@ -36,8 +48,27 @@ const RETRY_MS = [10_000, 20_000, 40_000];
 
 type LoadState = { kind: "loading" } | { kind: "ok" } | { kind: "failed"; reason: string; retrying: boolean } | { kind: "gone"; deleted: boolean };
 
-function day(ts: string): string {
-  return new Date(ts).toLocaleDateString(undefined, { day: "numeric", month: "short" });
+/**
+ * "3:20 pm · Moved to Review by Aisha" (H9) — "by you" for the viewer, no name when the
+ * directory does not know them, and nothing for a project still in the phase it was created
+ * in (phaseChangedAt null). The time is dated when it was not today ("Wed, 30 Sep, 3:20 pm ·
+ * …"). ⚠️ The WHEN leads: the line is cut to one row (phone ≈ 50 characters), and what a long
+ * name must cut is the name — never the date and time this line exists to show.
+ */
+function phaseLine(
+  header: ProjectHeaderData,
+  phases: PipelinePhase[],
+  dirById: ReadonlyMap<string, PipelineDirectoryEntry>,
+  meId: string,
+  today: string,
+): string | null {
+  if (!header.phaseChangedAt) return null;
+  const when = timeLabel(header.phaseChangedAt, today);
+  if (!when) return null;
+  const phase = phases.find((p) => p.id === header.phaseId)?.name;
+  const byId = header.phaseChangedById;
+  const who = byId === meId ? "you" : byId ? dirById.get(byId)?.name ?? null : null;
+  return `${when} · ${phase ? `Moved to ${phase}` : "Moved"}${who ? ` by ${who}` : ""}`;
 }
 
 export function ProjectPage({ id }: { id: string }) {
@@ -46,7 +77,9 @@ export function ProjectPage({ id }: { id: string }) {
   const t = sp.get("t");
   const router = useRouter();
   const pathname = usePathname();
-  const { store, engine, loadProject, dirById } = usePipeline();
+  const { store, engine, loadProject, dirById, meId } = usePipeline();
+  const phases = usePhases();
+  const today = useLocalDayKey();
   const toast = useToast();
   const phone = useBelowLg();
   const project = useStoreSelector(store, (s) => s.projects[id]);
@@ -182,10 +215,14 @@ export function ProjectPage({ id }: { id: string }) {
   let readOnlyReason: string | null = null;
   if (header && status === "archived") {
     const who = header.archivedById ? dirById.get(header.archivedById)?.name : null;
-    readOnlyReason = `Archived${who ? ` by ${who}` : ""}${header.archivedAt ? ` · ${day(header.archivedAt)}` : ""} — read-only.`;
+    // The local day it was archived — with the year when that is not this year (B9).
+    const on = header.archivedAt ? dayMonthShort(localDayKey(new Date(header.archivedAt)), today) : null;
+    readOnlyReason = `Archived${who ? ` by ${who}` : ""}${on ? ` · ${on}` : ""} — read-only.`;
   } else if (status === "deleted") {
     readOnlyReason = "This project was deleted — messages can't be sent.";
   }
+
+  const moved = header ? phaseLine(header, phases, dirById, meId, today) : null;
 
   const back = (
     <Link href="/pipeline" aria-label="Back to the board" className="h-11 w-11 -ml-1 grid place-items-center rounded-xl text-ink-3 hover:bg-muted">
@@ -276,7 +313,12 @@ export function ProjectPage({ id }: { id: string }) {
           <NotificationBell />
           {header && <ProjectMenu header={header} me={project!.me} can={project!.can} onShowDetails={() => setTab("details")} />}
         </div>
-        <div className="px-3 pt-1 pb-0 flex min-w-0">
+        <div className="px-3 pt-1 pb-0 flex flex-wrap items-center gap-x-2 gap-y-1 min-w-0">
+          {moved && (
+            <p className="min-w-0 truncate text-[12px] text-ink-3" title={moved}>
+              {moved}
+            </p>
+          )}
           <StatusPill engine={engine} />
         </div>
         {header && (
@@ -307,6 +349,7 @@ export function ProjectPage({ id }: { id: string }) {
     <div className="flex flex-col min-h-0 flex-1 min-w-0">
       <PipelineHeader
         title={header?.title ?? "Project"}
+        sub={moved ? <span title={moved}>{moved}</span> : null}
         left={back}
         status={<StatusPill engine={engine} />}
         actions={

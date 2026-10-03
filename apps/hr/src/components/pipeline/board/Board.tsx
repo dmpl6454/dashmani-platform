@@ -42,6 +42,7 @@ import { EmptyState } from "../ui/EmptyState";
 import { Skeleton } from "../ui/Skeleton";
 import { useToast } from "../ui/Toast";
 import { usePhone } from "../hooks/use-media";
+import { useLocalDayKey } from "../hooks/use-local-day-key";
 import { Z } from "../constants";
 import { CardFace } from "./ProjectCard";
 import { PhaseTabs } from "./PhaseTabs";
@@ -90,11 +91,13 @@ const collision: CollisionDetection = (args) => {
 };
 
 export function Board() {
-  const { store, engine, meId, dirById, move } = usePipeline();
+  const { store, engine, meId, dirById, move, boot } = usePipeline();
   const router = useRouter();
   const toast = useToast();
   const phone = usePhone();
   const phases = usePhases();
+  // The due chips' "today": a prop for the memoised cards, changing once at local midnight.
+  const today = useLocalDayKey();
 
   useEffect(() => engine.mountBoard(), [engine]);
 
@@ -426,6 +429,7 @@ export function Board() {
                   cards={list}
                   mine={mine}
                   dirById={dirById}
+                  today={today}
                   checking={checking}
                   onOpen={openCard}
                   onMenu={setMenuCard}
@@ -452,6 +456,7 @@ export function Board() {
                   count={board.perPhase[ph.id]}
                   mine={mine}
                   dirById={dirById}
+                  today={today}
                   checking={checking}
                   onOpen={openCard}
                   onMenu={setMenuCard}
@@ -468,6 +473,13 @@ export function Board() {
   return (
     <div className="flex flex-col min-h-0 flex-1 min-w-0">
       {header}
+      {/* G4 (GA): access is open by design (any active HR user may view, move, edit and post),
+          so say it in words before anyone types. Pilot copy until pipeline.mode is "on". */}
+      <p className="shrink-0 px-3 sm:px-5 pt-2.5 text-[12px] font-medium text-ink-3">
+        {boot.mode === "on"
+          ? "Everyone at Digital Sukoon can see and edit projects here."
+          : "Everyone in the Pipeline pilot can see and edit projects here."}
+      </p>
       <p ref={liveRef} className="sr-only" aria-live="polite" />
       <DndContext
         sensors={sensors}
@@ -483,7 +495,14 @@ export function Board() {
           <DragOverlay zIndex={Z.drag}>
             {dragCard ? (
               <div className="w-[272px] max-w-[85vw]">
-                <CardFace card={dragCard} mine={mine?.[dragCard.id]} dirById={dirById} isTerminal={!!phaseById.get(dragCard.phaseId)?.isTerminal} overlay />
+                <CardFace
+                  card={dragCard}
+                  mine={mine?.[dragCard.id]}
+                  dirById={dirById}
+                  isTerminal={!!phaseById.get(dragCard.phaseId)?.isTerminal}
+                  today={today}
+                  overlay
+                />
               </div>
             ) : null}
           </DragOverlay>

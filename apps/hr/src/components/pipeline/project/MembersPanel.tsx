@@ -3,15 +3,30 @@
  * Members and followers (routes #11–14). Buttons show only what `can` / the removal rule
  * allows; every action is still re-checked by the server and a refusal is said in words.
  */
-import { useMemo, useState } from "react";
-import { PIPELINE_LIMITS, type PipelineCan, type PipelineHeader, type PipelineMe, type PipelineParticipant } from "@dashmani/shared";
+import { useEffect, useMemo, useState } from "react";
+import {
+  PIPELINE_LIMITS,
+  isWithinUndoWindow,
+  undoWindowEndsAt,
+  type PipelineCan,
+  type PipelineHeader,
+  type PipelineMe,
+  type PipelineParticipant,
+} from "@dashmani/shared";
 import { usePipeline } from "../provider";
 import { Initials } from "../ui/Initials";
 import { useToast } from "../ui/Toast";
 import { describeError, plApi } from "../api";
 import { PeoplePicker } from "./PeoplePicker";
 
-const UNDO_ADD_MS = PIPELINE_LIMITS.undoAddMinutes * 60_000;
+/**
+ * The adder's 10-minute undo, EXACTLY as the server checks it (participants.ts removeMember):
+ * a MEMBER row this user added, timed from member_added_at (B8). A promoted follower's
+ * createdAt is their old follow time, so it is used only when an older API omits the field.
+ * A FOLLOWER row, or an expired window, would only earn a 403 — so no button.
+ */
+const undoStart = (p: PipelineParticipant) => p.memberAddedAt ?? p.createdAt;
+const adderMayUndo = (p: PipelineParticipant, meId: string) => p.role === "MEMBER" && p.memberAddedById === meId;
 
 export function MembersPanel({
   header,
@@ -36,6 +51,24 @@ export function MembersPanel({
     () => participants.filter((p) => p.role === "MEMBER").sort((a, b) => Number(b.isOwner) - Number(a.isOwner)),
     [participants],
   );
+
+  // "Remove" must disappear when the window closes, not at the next unrelated re-render: one
+  // timer, for the earliest window still open, re-armed by the render it triggers.
+  const now = Date.now();
+  let nextExpiry: number | null = null;
+  if (!readOnly && !can?.removeOthers) {
+    for (const p of participants) {
+      if (p.isOwner || p.userId === meId || !adderMayUndo(p, meId)) continue;
+      const end = undoWindowEndsAt(undoStart(p));
+      if (end !== null && end > now && (nextExpiry === null || end < nextExpiry)) nextExpiry = end;
+    }
+  }
+  const [, setExpiryTick] = useState(0);
+  useEffect(() => {
+    if (nextExpiry === null) return;
+    const t = setTimeout(() => setExpiryTick((n) => n + 1), Math.max(0, nextExpiry - Date.now()) + 250);
+    return () => clearTimeout(t);
+  }, [nextExpiry]);
   const followers = useMemo(() => participants.filter((p) => p.role === "FOLLOWER"), [participants]);
   const memberIds = members.map((p) => p.userId);
 
@@ -55,7 +88,7 @@ export function MembersPanel({
     if (readOnly || p.isOwner) return false;
     if (p.userId === meId) return true; // leave
     if (can?.removeOthers) return true;
-    return p.memberAddedById === meId && Date.now() - new Date(p.createdAt).getTime() < UNDO_ADD_MS;
+    return adderMayUndo(p, meId) && isWithinUndoWindow(undoStart(p), now);
   };
 
   const remove = (p: PipelineParticipant) =>

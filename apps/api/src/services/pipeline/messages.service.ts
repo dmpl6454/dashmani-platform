@@ -198,6 +198,11 @@ const keyReused = () =>
   new PipelineError(409, "IDEMPOTENCY_KEY_REUSED", "That message id was already used in another project");
 
 const NOW = Prisma.sql`timezone('utc', now())`;
+/**
+ * The START of the current statement — constant within it, unlike clock_timestamp(). Used by
+ * the send's S3, which runs after the project lock, so its times are monotonic with seq.
+ */
+const STMT_NOW = Prisma.sql`timezone('utc', statement_timestamp())`;
 
 // ── Route #17: send ──────────────────────────────────────────────────────────────────
 
@@ -348,33 +353,37 @@ export async function postMessage(actor: PipelineActor, projectId: string, input
       }
 
       // S3 — one data-modifying statement: counters, the message, the root, participants.
+      // Its timestamps are STMT_NOW (statement start, AFTER the S1 lock), not the
+      // transaction start: seq is assigned under that lock, so created_at, last_reply_at
+      // and last_message_at can never go backwards against seq (R1). Cursors never read
+      // created_at — skip-freedom is rev/seq — and every value here shares one instant.
       const rows = await tx.$queryRaw<Array<MessageRow & { kind: string }>>`
         WITH bump AS (
           UPDATE pipeline_projects
              SET last_message_seq = last_message_seq + 1,
                  thread_rev = thread_rev + ${k}::int,
                  header_rev = header_rev + ${inserted > 0 ? 1 : 0}::int,
-                 last_message_at = ${NOW},
-                 updated_at = ${NOW}
+                 last_message_at = ${STMT_NOW},
+                 updated_at = ${STMT_NOW}
            WHERE id = ${projectId}
        RETURNING last_message_seq AS seq, thread_rev AS r
         ), msg AS (
           INSERT INTO pipeline_messages AS m
                  (id, client_id, project_id, seq, rev, parent_id, author_id, body, mention_ids, created_at, updated_at)
           SELECT ${messageId}, ${input.clientId}, ${projectId}, b.seq, b.r - ${k}::int + 1, ${rootId}::text, ${me},
-                 ${input.body}, ${delivered}::text[], ${NOW}, ${NOW}
+                 ${input.body}, ${delivered}::text[], ${STMT_NOW}, ${STMT_NOW}
             FROM bump b
        RETURNING ${MESSAGE_COLUMNS}
         ), rootu AS (
           UPDATE pipeline_messages m
-             SET reply_count = m.reply_count + 1, last_reply_at = ${NOW}, rev = b.r, updated_at = ${NOW}
+             SET reply_count = m.reply_count + 1, last_reply_at = ${STMT_NOW}, rev = b.r, updated_at = ${STMT_NOW}
             FROM bump b
            WHERE m.id = ${rootId}::text
        RETURNING ${MESSAGE_COLUMNS}
         ), pa AS (
           INSERT INTO pipeline_participants AS pp
                  (project_id, user_id, role, notify, last_read_seq, engaged_at, created_at, updated_at)
-          SELECT ${projectId}, ${me}, 'FOLLOWER', true, b.seq, ${NOW}, ${NOW}, ${NOW}
+          SELECT ${projectId}, ${me}, 'FOLLOWER', true, b.seq, ${STMT_NOW}, ${STMT_NOW}, ${STMT_NOW}
             FROM bump b WHERE ${authorIncluded}::boolean
               ON CONFLICT (project_id, user_id) DO UPDATE
              SET notify = true,
@@ -386,7 +395,7 @@ export async function postMessage(actor: PipelineActor, projectId: string, input
         ), pm AS (
           INSERT INTO pipeline_participants AS pp
                  (project_id, user_id, role, notify, last_read_seq, engaged_at, created_at, updated_at)
-          SELECT ${projectId}, t.uid, 'FOLLOWER', true, b.seq - 1, ${NOW}, ${NOW}, ${NOW}
+          SELECT ${projectId}, t.uid, 'FOLLOWER', true, b.seq - 1, ${STMT_NOW}, ${STMT_NOW}, ${STMT_NOW}
             FROM bump b CROSS JOIN unnest(${mentionTargets}::text[]) AS t(uid)
               ON CONFLICT (project_id, user_id) DO UPDATE
              SET engaged_at = COALESCE(pp.engaged_at, EXCLUDED.engaged_at),
@@ -567,8 +576,16 @@ export async function deleteMessage(actor: PipelineActor, mid: string): Promise<
          WHERE m.id = ${mid} AND m.project_id = ${project.id} AND m.author_id = ${me} AND m.deleted_at IS NULL
      RETURNING ${MESSAGE_COLUMNS}
       ), rootu AS (
+        -- last_reply_at follows the LIVE replies (B7): without this, deleting the latest
+        -- reply left the root dated by it ("1 reply · 5m" was the deleted reply's age).
+        -- ⚠️ "r.id <> mid" is load-bearing: the sibling del CTE's UPDATE is NOT visible to
+        -- this subquery (one statement, one snapshot), so the reply being deleted still reads
+        -- as live here. NULL when no live reply remains. Bounded by @@index([parentId]).
         UPDATE pipeline_messages m
-           SET reply_count = GREATEST(m.reply_count - 1, 0), rev = b.r, updated_at = ${NOW}
+           SET reply_count = GREATEST(m.reply_count - 1, 0),
+               last_reply_at = (SELECT max(r.created_at) FROM pipeline_messages r
+                                 WHERE r.parent_id = m.id AND r.deleted_at IS NULL AND r.id <> ${mid}),
+               rev = b.r, updated_at = ${NOW}
           FROM bump b
          WHERE m.id = ${row.parent_id}::text AND m.project_id = ${project.id}
      RETURNING ${MESSAGE_COLUMNS}

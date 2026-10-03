@@ -123,8 +123,57 @@ describe("scripts/pipeline-flag.ts", () => {
     const res = await runPipelineFlagCli(prisma, { mode: "pilot", add: [a.email], apply: true }, io);
     expect(modeDuringPause).toBe("on");
     expect(res.applied).toBe(true);
+    expect(res.stale).toBe(false);
     expect(await setting("pipeline.mode")).toBe("pilot");
+    expect(lines.join("\n")).toMatch(/press Ctrl-C now/i); // a terminal: the abort is real
     expect(lines.some((l) => l.startsWith("APPLIED"))).toBe(true);
+  });
+
+  it("a setting changed while the CLI waits (the kill switch run from another shell) makes it write NOTHING — never undo it", async () => {
+    // The 10 s pause is a deliberate read-then-write gap, and the WARNING itself recommends
+    // --mode=off: if a teammate runs it meanwhile, writing the stale on → pilot plan would
+    // silently switch Pipeline back on for the pilot in the middle of the incident.
+    const a = await createPipelineUser({ name: "Pilot A", tag: "flag-a" });
+    await runPipelineFlag(prisma, { mode: "on", apply: true });
+    const lines: string[] = [];
+    const io: PipelineFlagIo = {
+      log: (s) => lines.push(s),
+      warn: (s) => lines.push(s),
+      error: (s) => lines.push(s),
+      pause: async () => {
+        expect((await runPipelineFlag(prisma, { mode: "off", apply: true })).applied).toBe(true);
+      },
+    };
+    const res = await runPipelineFlagCli(prisma, { mode: "pilot", add: [a.email], apply: true }, io);
+    expect(res.applied).toBe(false);
+    expect(res.stale).toBe(true);
+    expect(await setting("pipeline.mode")).toBe("off"); // the kill switch stands
+    expect(await setting("pipeline.pilotUserIds")).toBeNull(); // nothing of the stale plan landed
+    const out = lines.join("\n");
+    expect(out).toMatch(/changed after the plan above was printed, so NOTHING was written/i);
+    expect(out).toMatch(/NOW {3}: mode=off/);
+    expect(lines.some((l) => l.startsWith("APPLIED"))).toBe(false);
+  });
+
+  it("outside an interactive terminal the pause does not promise Ctrl-C (it may never reach the process) — and still writes", async () => {
+    // `ssh host "… --apply --confirm-prod"` has no TTY: Ctrl-C kills only the local ssh client.
+    const a = await createPipelineUser({ name: "Pilot A", tag: "flag-a" });
+    await runPipelineFlag(prisma, { mode: "on", apply: true });
+    const lines: string[] = [];
+    const io: PipelineFlagIo = {
+      interactive: false,
+      log: (s) => lines.push(s),
+      warn: (s) => lines.push(s),
+      error: (s) => lines.push(s),
+      pause: async () => {},
+    };
+    const res = await runPipelineFlagCli(prisma, { mode: "pilot", add: [a.email], apply: true }, io);
+    const out = lines.join("\n");
+    expect(out).not.toMatch(/press Ctrl-C now/i);
+    expect(out).toMatch(/not an interactive terminal/i);
+    expect(out).toContain("ssh -t");
+    expect(res.applied).toBe(true); // a warning, never a refusal
+    expect(await setting("pipeline.mode")).toBe("pilot");
   });
 
   it("the CLI never pauses a change with no warning — the kill switch is instant — and a dry run never writes", async () => {

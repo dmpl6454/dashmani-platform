@@ -95,13 +95,16 @@ async function claimBatch(tx: PipelineTx, kind: Kind, today: string, nextWorking
  * days and mobile shows it verbatim, so "is due tomorrow" would be false from the next day on
  * — "is due Saturday (3 Oct)" stays true. Dates carry their year when it is not `today`'s
  * (notify.ts shortDay / dayMonth). The EMAIL keeps its send-time "due tomorrow" wording.
+ * ⚠️ The overdue TITLE names no phase: "still in Review" turns false at the next move between
+ * live phases, and the row stays (only a due change or Done withdraws it). The phase is in the
+ * message, "Phase: Review", as on every other row.
  */
 function textFor(kind: Kind, c: Claimed, today: string): { title: string; message: string } {
   const qt = quotedTitle(c.title);
   const phase = c.phase_name ?? "";
   if (kind === "overdue") {
     return {
-      title: clip(`${qt} is overdue — was due ${shortDay(c.due, today)}, still in ${phase}`, 120),
+      title: clip(`${qt} is overdue — was due ${shortDay(c.due, today)}`, 120),
       message: clip(`Phase: ${phase}`, 200),
     };
   }

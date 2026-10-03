@@ -386,9 +386,9 @@ const dueRowIds = (projectId: string, due: string) => [
  * Withdraw the due-soon and overdue rows keyed on `due` for EVERY current participant (notify
  * on or off — a muted follower's stale row is just as false). Used when that date stops being
  * true: the due date changed (D1, B1 — the bell kept "due tomorrow (Tue 6 Oct)" for a deadline
- * that no longer existed) and the project reached a terminal phase (D2 — "is overdue … still
- * in Review" after Done). Unread or read, they go: the deadline they describe is gone. Primary-
- * key probes only (≤ 2 × 200), in the caller's transaction; the caller also clears the
+ * that no longer existed) and the project reached a terminal phase (D2 — "is overdue" after
+ * Done). Unread or read, they go: the deadline they describe is gone. Primary-key probes
+ * only (≤ 2 × 200), in the caller's transaction; the caller also clears the
  * project's *_notified_for markers, so a row withdrawn here can be re-armed by the due cron
  * if the date comes back (A → B → A, or Done → back out).
  */

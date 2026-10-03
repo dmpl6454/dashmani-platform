@@ -169,9 +169,12 @@ export async function removeMember(actor: PipelineActor, projectId: string, targ
         DELETE FROM pipeline_participants
          WHERE project_id = ${projectId} AND user_id = ${targetId} AND user_id <> ${ownerId}`;
       result = n > 0 ? "removed" : "none";
-      // Their grouped row and the current date's due rows go too (no later redaction or
-      // withdrawal can reach a non-participant).
-      if (n > 0) await dropLeaverRows(tx, projectId, targetId, day(row.due_date));
+      // Their grouped row and the current date's due rows go too, and their "added" row loses
+      // its date (no later redaction, withdrawal or D4 rewrite can reach a non-participant).
+      if (n > 0) {
+        const [ph] = await tx.$queryRaw<Row[]>`SELECT name FROM pipeline_phases WHERE id = ${String(row.phase_id)}`;
+        await dropLeaverRows(tx, projectId, targetId, day(row.due_date), String(ph?.name ?? ""));
+      }
     } else if (target.role === "MEMBER") {
       const n = await tx.$executeRaw`
         UPDATE pipeline_participants

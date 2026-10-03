@@ -457,8 +457,12 @@ describe("YouTube and Snapchat — the boards' own server totals, never re-summe
       snapchat: board("snapchat", { totals: { channels: 30, followerDelta: 3_500, followerDeltaChannels: 6, followerDeltaUncertainty: 3_000 } }),
     });
     expect(r.combined.uncertainty).toBe(189_310);
-    expect(r.combined.followerDelta).toBe(20_000);
-    // |20,000| < ±189,310: inside the error bar → shown as approximate, never as a bare figure.
+    // YouTube's +1,500 sits inside its own ±186,310, so its tab and its row show no number:
+    // it adds its ± here, never its figure. 15,000 (Facebook) + 3,500 (Snapchat, which clears
+    // its ±3,000) = 18,500.
+    expect(r.combined.followerDelta).toBe(18_500);
+    expect(r.combined.followerDeltaUnresolvedPlatforms).toEqual(["youtube"]);
+    // |18,500| < ±189,310: inside the error bar → shown as approximate, never as a bare figure.
     expect(r.combined.followerDeltaApprox).toBe(true);
     expect(r.platforms.youtube.followerDeltaApprox).toBe(true);
     expect(r.platforms.facebook.followerDeltaApprox).toBe(false);
@@ -757,7 +761,8 @@ describe("a board's change is shown only where its own tab would show it (the PR
       youtube: board("youtube", { totals: { channels: 20, followerDelta: 1_500, followerDeltaChannels: 4, followerDeltaUncertainty: 186_310 } }),
       snapchat: board("snapchat", { totals: { channels: 30, followerDelta: 3_500, followerDeltaChannels: 6, followerDeltaUncertainty: 3_000 } }),
     });
-    expect(growthCombinedChangeView(r.combined)).toEqual({ kind: "value", value: 20_000, approx: true });
+    // 15,000 + 3,500: YouTube's +1,500 is inside its own ± and so is not a number anywhere.
+    expect(growthCombinedChangeView(r.combined)).toEqual({ kind: "value", value: 18_500, approx: true });
     expect(r.combined.uncertaintyPlatforms).toEqual(["youtube", "snapchat"]);
     // A board with no rounding contributes no ± and is not named as a source of one.
     const exact = combineGrowth({ ...allReady(), youtube: board("youtube", { totals: { channels: 1, followerDelta: 5, followerDeltaChannels: 1 } }) });
@@ -768,6 +773,69 @@ describe("a board's change is shown only where its own tab would show it (the PR
     const r = combineGrowth({ meta: undefined, youtube: undefined, snapchat: undefined, periodDays: 28 });
     expect(growthCombinedChangeView(r.combined)).toEqual({ kind: "absent", reason: "not-loaded" });
     expect(growthPlatformChangeView(r.platforms.youtube)).toEqual({ kind: "absent", reason: "not-loaded" });
+  });
+
+  it("with no exact Meta figure beside it, the Total never re-prints a board's unresolved number", () => {
+    // Live shape at 7 days: YouTube +1,500 inside ±186,310. Its row reads "—, finer than
+    // YouTube's ±186.3k rounding"; a Total of "≈ +1.5k" two rows below would print the very
+    // number that row refuses to — whether Meta failed or simply has no full-span channel yet.
+    const yt = board("youtube", {
+      days: 7,
+      totals: { channels: 22, followerDelta: 1_500, followerDeltaChannels: 4, followerDeltaSuppressed: 12, followerDeltaUncertainty: 186_310 },
+    });
+    const metaFailed = combineGrowth({ meta: { error: "Request failed" }, youtube: yt, snapchat: board("snapchat", { days: 7, totals: { channels: 30 } }), periodDays: 7 });
+    const freshMeta = combineGrowth({
+      ...allReady(7),
+      meta: meta({ window: "week", items: [metaItem({ id: "f1", platform: "facebook", followers: 10, followerDelta: 2, followerDeltaDays: 3, followerDeltaFrom: "2026-09-27" })] }),
+      youtube: yt,
+    });
+    for (const r of [metaFailed, freshMeta]) {
+      expect(growthPlatformChangeView(r.platforms.youtube)).toEqual({ kind: "unresolved", uncertainty: 186_310 });
+      expect(r.combined.followerDelta).toBeNull();
+      expect(r.combined.followerDeltaUnresolvedPlatforms).toEqual(["youtube"]);
+      expect(growthCombinedChangeView(r.combined)).toEqual({ kind: "unresolved", uncertainty: 186_310 });
+    }
+  });
+
+  it("the Total is always the sum of the changes the rows show — an unresolved board adds only its ±", () => {
+    // Prod at 28 days: Meta's exact change plus Snapchat's resolved one, while YouTube's
+    // +19.6k sits inside its ±186k. Rows read +600k, —, +41k; a Total of +660.6k could
+    // never be added up from them.
+    const r = combineGrowth({
+      ...allReady(28),
+      meta: meta({ items: [metaItem({ id: "f1", platform: "facebook", followerDelta: 600_000, followerDeltaDays: 28, followerDeltaFrom: "2026-09-03" })] }),
+      youtube: board("youtube", { totals: { channels: 22, followerDelta: 19_600, followerDeltaChannels: 7, followerDeltaSuppressed: 14, followerDeltaUncertainty: 186_000 } }),
+      snapchat: board("snapchat", { totals: { channels: 30, followerDelta: 41_000, followerDeltaChannels: 20, followerDeltaUncertainty: 2_800 } }),
+    });
+    expect(growthCombinedChangeView(r.combined)).toEqual({ kind: "value", value: 641_000, approx: false });
+    expect(r.combined.followerDeltaPlatforms).toEqual(["facebook", "snapchat"]);
+    expect(r.combined.followerDeltaChannels).toBe(21); // Facebook's 1 + Snapchat's 20; not YouTube's 7
+    expect(r.combined.uncertainty).toBe(188_800); // …but YouTube's ± is still in the error bar
+    expect(r.combined.uncertaintyPlatforms).toEqual(["youtube", "snapchat"]);
+    expect(r.combined.followerDeltaUnresolvedPlatforms).toEqual(["youtube"]);
+
+    // Across the gate's edges and every mix of boards: the Total adds up from the rows.
+    for (const ytDelta of [-200_000, -1_500, 0, 1_500, 186_000, 250_000]) {
+      for (const scDelta of [null, -2_000, 2_800, 9_000]) {
+        for (const metaDelta of [null, 0, 75_000]) {
+          const c = combineGrowth({
+            ...allReady(28),
+            meta: meta({ items: metaDelta === null ? [] : [metaItem({ id: "f1", platform: "facebook", followerDelta: metaDelta, followerDeltaDays: 28, followerDeltaFrom: "2026-09-03" })] }),
+            youtube: board("youtube", { totals: { channels: 5, followerDelta: ytDelta, followerDeltaChannels: 3, followerDeltaUncertainty: 186_000 } }),
+            snapchat: board("snapchat", { totals: { channels: 5, followerDelta: scDelta, followerDeltaChannels: scDelta === null ? 0 : 2, followerDeltaUncertainty: 2_800 } }),
+          });
+          const shown = (["facebook", "instagram", "youtube", "snapchat"] as const)
+            .map((p) => growthPlatformChangeView(c.platforms[p]))
+            .flatMap((v) => (v.kind === "value" ? [v.value] : []));
+          const total = growthCombinedChangeView(c.combined);
+          if (shown.length > 0) {
+            expect(total).toEqual({ kind: "value", value: shown.reduce((a, b) => a + b, 0), approx: c.combined.followerDeltaApprox });
+          } else {
+            expect(total.kind).not.toBe("value");
+          }
+        }
+      }
+    }
   });
 });
 
@@ -954,6 +1022,59 @@ describe("the dates each figure covers", () => {
     const old = combineGrowth({ ...allReady(28), meta: meta({ items: [metaItem({ id: "f1", platform: "facebook" })] }) });
     expect(old.platforms.facebook.spanEnds).toBeNull();
     expect(growthPeriodText(old.platforms.facebook, 2026).views).toBe("2 Sep – 29 Sep");
+  });
+
+  it("Meta's own accounting across two windows is dated by those windows, never by the laggard's start", () => {
+    // Instagram's channels on two windows (a sync part-way, or a restored channel weeks
+    // behind). Each follows − unfollows figure spans ITS channel's window, so the earliest
+    // window's first day (14 Aug) would date the current-window channels — nearly all of
+    // them — almost three weeks early, beside "windows ending 10 Sep – 30 Sep".
+    const windows = {
+      dataThroughDayByPlatform: { facebook: "2026-09-29", instagram: "2026-09-10" },
+      newestCoveredDayByPlatform: { facebook: "2026-09-29", instagram: "2026-09-30" },
+    };
+    const acc = (id: string, d: number) =>
+      metaItem({ id, platform: "instagram", followerDelta: d, followerDeltaDays: 28, followerDeltaFrom: null, views28d: 10 });
+
+    const all = combineGrowth({ ...allReady(28), meta: meta({ ...windows, items: [acc("i1", 50), acc("i2", 40)] }) });
+    const ig = all.platforms.instagram;
+    expect(ig.followerDelta).toBe(90);
+    expect(ig.changeSince).toBeNull();
+    expect(ig.changeUntil).toBeNull();
+    const t = growthPeriodText(ig, 2026);
+    expect(t.change).toBe("28-day windows ending 10 Sep – 30 Sep");
+    expect(t.views).toBe("28-day windows ending 10 Sep – 30 Sep");
+    expect(t.change).not.toMatch(/14 Aug/);
+    expect(t.calendar).toMatch(/each channel's window/);
+
+    // Snapshot-measured and accounting contributors together: the start is the snapshots'
+    // own, and the accounting ones are described by their windows rather than dated.
+    const mixed = combineGrowth({
+      ...allReady(28),
+      meta: meta({
+        ...windows,
+        items: [acc("i1", 50), metaItem({ id: "i3", platform: "instagram", followerDelta: 7, followerDeltaDays: 27, followerDeltaFrom: "2026-09-05" })],
+      }),
+    });
+    expect(mixed.platforms.instagram.changeSince).toBe("2026-09-05");
+    const m = growthPeriodText(mixed.platforms.instagram, 2026);
+    expect(m.change).toBe("5 Sep → last channel refresh");
+    expect(m.calendar).toMatch(/1 by Meta's follows − unfollows for each channel's views window/);
+
+    // The common case — a sync one day part-way: the change is not a day early either.
+    const oneDay = combineGrowth({
+      ...allReady(28),
+      meta: meta({
+        dataThroughDayByPlatform: { facebook: "2026-09-29", instagram: "2026-09-29" },
+        newestCoveredDayByPlatform: { facebook: "2026-09-29", instagram: "2026-09-30" },
+        items: [acc("i1", 50)],
+      }),
+    });
+    expect(growthPeriodText(oneDay.platforms.instagram, 2026).change).toBe("28-day windows ending 29 Sep – 30 Sep");
+
+    // One window: Meta's accounting spans exactly it, as before.
+    const single = combineGrowth({ ...allReady(28), meta: meta({ items: [acc("i1", 50)] }) });
+    expect(growthPeriodText(single.platforms.instagram, 2026).change).toBe("3 Sep – 30 Sep");
   });
 });
 

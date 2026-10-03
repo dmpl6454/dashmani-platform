@@ -343,6 +343,9 @@ export interface GrowthPlatformAggregate {
    *   Boards: their snapshot span's first day.
    *   Meta: the earliest API snapshot (IST date) a contributor's change starts at, or the
    *         window's first day for Meta's own accounting (Instagram's follows − unfollows).
+   *         ⚠️ With channels on two windows (spanEnds) accounting contributors have no one
+   *         start day, so they leave this to the snapshot-measured ones and are described by
+   *         their windows; an all-accounting change then has no single start (null).
    * null when nothing contributed, or a contributor did not say (an older response).
    */
   changeSince: string | null;
@@ -380,9 +383,23 @@ export interface GrowthCombined {
   followersTotal: number;
   /** Platforms whose follower count is in `followers`. */
   followersPlatforms: GrowthPlatform[];
+  /**
+   * The sum of the follower changes the By-platform rows SHOW — so the Total always adds up
+   * from them. ⚠️ A YouTube/Snapchat change inside its own rounding error bar is no number on
+   * its row or its tab (PR #166), so it is no number in here either: it adds its ± to
+   * `uncertainty` and is named in `followerDeltaUnresolvedPlatforms` instead. null when no
+   * row shows a figure.
+   */
   followerDelta: number | null;
+  /** Channels in that sum (only the platforms in followerDeltaPlatforms). */
   followerDeltaChannels: number;
   followerDeltaPlatforms: GrowthPlatform[];
+  /**
+   * Loaded boards whose own change sits inside their rounding error bar: in `uncertainty`,
+   * never in `followerDelta`. The server treats a sub-step CHANNEL the same way inside a
+   * board's own totals — its step in the ±, its movement out of the sum.
+   */
+  followerDeltaUnresolvedPlatforms: GrowthPlatform[];
   /** Full-span channels, across the loaded boards, that moved less than their rounding step. */
   followerDeltaSuppressed: number;
   /** Full-span channels, across the loaded boards, left out as unreliable. */
@@ -533,6 +550,11 @@ function metaAggregate(
   // While a sync moves channels onto the next window, ends differ — see spanEnds.
   const newest = src.newestCoveredDayByPlatform?.[platform] ?? null;
   const spanEnds = span && isDayKey(newest) && newest >= span.to ? { from: span.to, to: newest } : null;
+  // ⚠️ On two windows, Meta's own accounting (Instagram's follows − unfollows) spans EACH
+  // channel's window, and those start on different days. The earliest window's first day
+  // would date the current-window channels — usually nearly all of them — up to weeks
+  // early, so it is never used as a start date then (growthPeriodText states the windows).
+  const mixedWindows = spanEnds !== null && spanEnds.from !== spanEnds.to;
 
   let followers = 0, followersReported = 0;
   let views = 0, viewsChannels = 0;
@@ -556,13 +578,17 @@ function metaAggregate(
       delta += d;
       deltaChannels++;
       // Snapshot-measured: starts at its snapshot's IST date. Meta's accounting (null):
-      // spans the window, so starts on its first day. Absent or malformed: unknown — and
-      // one unknown start makes the whole start unknown rather than quietly later.
-      const from = i.followerDeltaFrom === null ? (span?.from ?? null)
-        : isDayKey(i.followerDeltaFrom) ? i.followerDeltaFrom : null;
+      // spans the window, so starts on its first day — when every channel is on one window;
+      // on two it is described by the windows instead and does not move this start. Absent
+      // or malformed: unknown — and one unknown start makes the whole start unknown rather
+      // than quietly later.
       if (i.followerDeltaFrom === null) accounting++;
-      if (from === null) sinceKnown = false;
-      else if (since === null || from < since) since = from;
+      if (!(i.followerDeltaFrom === null && mixedWindows)) {
+        const from = i.followerDeltaFrom === null ? (span?.from ?? null)
+          : isDayKey(i.followerDeltaFrom) ? i.followerDeltaFrom : null;
+        if (from === null) sinceKnown = false;
+        else if (since === null || from < since) since = from;
+      }
     }
     if (i.metricsError) stale++;
   }
@@ -799,11 +825,22 @@ export function combineGrowth(input: {
   };
 
   const followers = sumOf((a) => a.followers);
-  const followerDelta = sumOf((a) => a.followerDelta);
+  // ⚠️ Each platform's change AS ITS OWN ROW SHOWS IT (growthPlatformChangeView). Summing a
+  // board's raw figure would put a number its row and its tab refuse to state into the
+  // Total: beside an exact Meta change it is hidden inside the sum (rows reading +600k, —,
+  // +41k under a Total of +660.6k that no reader can add up), and with no Meta figure in
+  // the sum it is printed outright ("≈ +1.5k" two rows below "finer than YouTube's ±186.3k
+  // rounding"). Its ± still counts — see `uncertainty` below.
+  const followerDelta = sumOf((a) => {
+    const v = growthPlatformChangeView(a);
+    return v.kind === "value" ? v.value : null;
+  });
+  const unresolved = included.filter((p) => growthPlatformChangeView(platforms[p]).kind === "unresolved");
   const views = sumOf((a) => (a.viewsPublished ? a.views : null));
   // ⚠️ Every LOADED board's error bar counts, contributor or not: a board whose full-span
-  // channels all moved below the rounding step contributes no figure, but the estate's true
-  // change is still unknown within its ±. A failed board's is unknown and it is named instead.
+  // channels all moved below the rounding step — or whose summed change sits inside its own
+  // ± — contributes no figure, but the estate's true change is still unknown within its ±.
+  // A failed board's is unknown and it is named instead.
   const uncertainty = included.reduce((acc, p) => acc + platforms[p].uncertainty, 0);
 
   const combined: GrowthCombined = {
@@ -818,8 +855,9 @@ export function combineGrowth(input: {
     followersTotal: included.reduce((acc, p) => acc + (platforms[p].followersTotal ?? 0), 0),
     followersPlatforms: followers.from,
     followerDelta: followerDelta.value,
-    followerDeltaChannels: included.reduce((acc, p) => acc + (platforms[p].followerDeltaChannels ?? 0), 0),
+    followerDeltaChannels: followerDelta.from.reduce((acc, p) => acc + (platforms[p].followerDeltaChannels ?? 0), 0),
     followerDeltaPlatforms: followerDelta.from,
+    followerDeltaUnresolvedPlatforms: unresolved,
     followerDeltaSuppressed: included.reduce((acc, p) => acc + (platforms[p].followerDeltaSuppressed ?? 0), 0),
     followerDeltaExcluded: included.reduce((acc, p) => acc + (platforms[p].followerDeltaExcluded ?? 0), 0),
     uncertainty,
@@ -856,7 +894,9 @@ export type GrowthChangeAbsence = "not-loaded" | "no-channels" | "below-step" | 
  * How a follower change may be shown.
  *   value      — a measured figure. `approx` (the COMBINED figure only, plan decision 3) =
  *                it sits inside the summed rounding error bar: shown with "≈", ± leading.
- *   unresolved — a YouTube/Snapchat board's change smaller than its OWN error bar.
+ *                The combined figure only ever adds up figures the rows themselves show.
+ *   unresolved — a YouTube/Snapchat board's change smaller than its OWN error bar — or a
+ *                Total whose only measured changes are such boards' (nothing exact beside).
  *                ⚠️ NO NUMBER. The board's own tab prints the limit instead (PR #166,
  *                ChangeLine), and the server's contract says to: "Render the value only when
  *                |followerDelta| >= followerDeltaUncertainty". "≈ +1.5k" beside ±186.3k would
@@ -891,7 +931,12 @@ export function growthPlatformChangeView(a: GrowthPlatformAggregate): GrowthChan
  */
 export function growthCombinedChangeView(c: GrowthCombined): GrowthChangeView {
   if (!c.settled || c.includedPlatforms.length === 0) return { kind: "absent", reason: "not-loaded" };
-  if (c.followerDelta === null) return { kind: "absent", reason: changeAbsence(c.channels, c.followerDeltaSuppressed, c.followerDeltaExcluded) };
+  if (c.followerDelta === null) {
+    // Every change that WAS measured sits inside its own board's rounding: state the
+    // limit, as those boards' rows and tabs do — never their number.
+    if (c.followerDeltaUnresolvedPlatforms.length > 0) return { kind: "unresolved", uncertainty: c.uncertainty };
+    return { kind: "absent", reason: changeAbsence(c.channels, c.followerDeltaSuppressed, c.followerDeltaExcluded) };
+  }
   return { kind: "value", value: c.followerDelta, approx: c.followerDeltaApprox };
 }
 
@@ -930,14 +975,16 @@ export function growthPeriodText(a: GrowthPlatformAggregate, currentYear: number
   const isMeta = isMetaPlatform(a.platform);
   const acc = a.followerDeltaAccounting ?? 0;
   const allAccounting = acc > 0 && acc === (a.followerDeltaChannels ?? 0);
+  // Channels on two windows: Meta's accounting then spans each channel's OWN window.
+  const twoWindows = a.spanEnds !== null && a.spanEnds.from !== a.spanEnds.to;
   const calendar =
     a.platform === "facebook"
       ? "views on Pacific days · change from our API follower snapshots, IST dates"
       : a.platform === "instagram"
         ? allAccounting
-          ? "UTC days · change is Meta's follows − unfollows for the same window"
+          ? `UTC days · change is Meta's follows − unfollows ${twoWindows ? "over each channel's window" : "for the same window"}`
           : `views on UTC days · change from our API follower snapshots, IST dates` +
-            (acc > 0 ? `; ${acc} by Meta's follows − unfollows for the views window` : "")
+            (acc > 0 ? `; ${acc} by Meta's follows − unfollows for ${twoWindows ? "each channel's views window" : "the views window"}` : "")
         : "our daily snapshots, IST dates";
   if (a.state !== "ready" || (a.channels ?? 0) === 0) {
     return { change: null, changeWhy: null, views: null, viewsWhy: null, calendar, windowsNote: null };
@@ -945,7 +992,7 @@ export function growthPeriodText(a: GrowthPlatformAggregate, currentYear: number
 
   // Channels on different windows: a one-day gap is a sync part-way through moving them
   // onto the next window; a longer one is a channel that has not refreshed in that time.
-  const lagDays = a.spanEnds && a.spanEnds.from !== a.spanEnds.to
+  const lagDays = a.spanEnds && twoWindows
     ? Math.round((Date.parse(`${a.spanEnds.to}T00:00:00Z`) - Date.parse(`${a.spanEnds.from}T00:00:00Z`)) / 86_400_000)
     : 0;
   const windowsNote = lagDays <= 0 ? null
@@ -958,7 +1005,7 @@ export function growthPeriodText(a: GrowthPlatformAggregate, currentYear: number
     viewsWhy = "not published";
   } else if (isMeta) {
     // Channels part-way between two windows: say so, never print one window over both.
-    if (a.spanEnds && a.spanEnds.from !== a.spanEnds.to) {
+    if (a.spanEnds && twoWindows) {
       views = `${a.periodDays}-day windows ending ${fmtGrowthSpan(a.spanEnds, currentYear)}`;
     } else if (a.span) {
       views = fmtGrowthSpan(a.span, currentYear);
@@ -983,6 +1030,10 @@ export function growthPeriodText(a: GrowthPlatformAggregate, currentYear: number
           ? `no API history covers ${growthHistoryRequirement(a.periodDays)} yet`
           : `not enough history yet${a.historyFrom ? ` · collecting since ${fmtGrowthDay(a.historyFrom, currentYear)}` : ""}`
         : null;
+  } else if (isMeta && allAccounting && a.spanEnds && twoWindows) {
+    // Meta's own accounting over channels on two windows: dated as the views are. The
+    // earliest window's start would date nearly every channel days or weeks early.
+    change = `${a.periodDays}-day windows ending ${fmtGrowthSpan(a.spanEnds, currentYear)}`;
   } else if (a.changeSince && a.changeUntil) {
     // Boards' snapshot pairs read "→"; Meta's accounting window reads "–", like its views.
     change = fmtGrowthSpan({ from: a.changeSince, to: a.changeUntil }, currentYear, isMeta ? " – " : " → ");

@@ -303,7 +303,8 @@ export function AllPanel({ onOpenTab }: { onOpenTab?: (tab: SiblingTab) => void 
           <p className="text-[10px] text-[#B0B0B0] mt-0.5 leading-snug max-w-3xl">
             Each row is that platform&apos;s own board, with the exact dates its figures cover. The
             Total adds the rows that loaded; a platform that did not load is named, never counted
-            as zero.
+            as zero. A change too small for its platform&apos;s rounding shows that limit instead of
+            a number, and adds only its ± to the Total.
           </p>
         </div>
         <SourceStatus combo={combo} refreshFailed={refreshFailed} onRetry={(s) => retry[s]()} />
@@ -320,7 +321,7 @@ export function AllPanel({ onOpenTab }: { onOpenTab?: (tab: SiblingTab) => void 
                 />
                 <PlainTh
                   label={`Change · ${periodDays}d`}
-                  title={`Follower change over the period, counting only channels whose own history covers ${requirement}. A YouTube or Snapchat change smaller than its rounding is shown as that limit, not as a number — as on those tabs.`}
+                  title={`Follower change over the period, counting only channels whose own history covers ${requirement}. A YouTube or Snapchat change smaller than its rounding is shown as that limit, not as a number — as on those tabs — and the Total adds only its ±.`}
                 />
                 <PlainTh
                   label={`Views · ${periodDays}d`}
@@ -364,7 +365,7 @@ export function AllPanel({ onOpenTab }: { onOpenTab?: (tab: SiblingTab) => void 
           are refreshed (on connecting, or with Refresh channels on the Meta tab). An Instagram account
           without that history uses Meta&apos;s own follows-minus-unfollows for the views window. YouTube
           and Snapchat publish rounded counts, so a change smaller than their ± is shown as that limit
-          rather than as a number.{" "}
+          rather than as a number, and the Total counts it in the ± only.{" "}
           <strong className="font-medium text-[#7A7A7A]">Followers</strong> is a live total and reads
           the same on both periods. <strong className="font-medium text-[#7A7A7A]">Views</strong> are
           each platform&apos;s own count: Meta counts every time content was shown or played, including
@@ -508,14 +509,26 @@ function Tiles({ combo, currentYear }: { combo: GrowthCombination; currentYear: 
   const pm = c.uncertainty > 0 ? `±${fmtMetric(c.uncertainty)} from ${possessives(c.uncertaintyPlatforms)} rounded counts` : null;
   const changeView = growthCombinedChangeView(c);
   const changeChannels = `${c.followerDeltaChannels} channel${c.followerDeltaChannels === 1 ? "" : "s"}`;
+  // ⚠️ A board whose own change is inside its rounding shows no number on its row, so it is
+  // not in this figure either — only in the ± (combine.ts). Say so, or the tile reads as if
+  // that board was forgotten.
+  const unresolvedPs = c.followerDeltaUnresolvedPlatforms;
+  const inPmOnly = unresolvedPs.length > 0
+    ? `${growthListNames(unresolvedPs)}: finer than ${unresolvedPs.length > 1 ? "their" : "its"} rounding, counted in the ± only`
+    : null;
   const changeNote = (() => {
     if (!settled) return "Loading…";
     if (noneLoaded) return NONE;
     if (changeView.kind === "value") {
       // The ± leads when it is bigger than the change itself: it is the headline then.
-      return changeView.approx && pm
-        ? `${pm}, more than the change itself · ${changeChannels}`
-        : `${growthListNames(c.followerDeltaPlatforms)} · ${changeChannels}${pm ? ` · ${pm}` : ""}`;
+      return (changeView.approx && pm
+        ? [`${pm}, more than the change itself`, growthListNames(c.followerDeltaPlatforms), changeChannels, inPmOnly]
+        : [growthListNames(c.followerDeltaPlatforms), changeChannels, pm, inPmOnly]
+      ).filter(Boolean).join(" · ");
+    }
+    if (changeView.kind === "unresolved") {
+      // Worded as the YouTube/Snapchat tabs word it: the limit, never the number inside it.
+      return `movement is smaller than the ±${fmtMetric(changeView.uncertainty)} ${possessives(c.uncertaintyPlatforms)} rounding can resolve`;
     }
     if (changeView.kind === "absent" && changeView.reason === "below-step") {
       return `${c.followerDeltaSuppressed} channel${c.followerDeltaSuppressed === 1 ? "" : "s"} moved less than the rounding step; none has a countable change${pm ? ` · ${pm}` : ""}`;
@@ -576,6 +589,8 @@ function Tiles({ combo, currentYear }: { combo: GrowthCombination; currentYear: 
         (changeView.kind === "value" && changeView.approx
           ? " — and this figure is smaller than it, so it is shown as approximate."
           : ".") +
+        " A YouTube or Snapchat change smaller than its own rounding shows that limit on its row instead of a " +
+        "number, so it adds only its ± here: this figure is always the sum of the changes the rows below show." +
         (datedReady.length > 0 ? ` Dates — ${datedReady.map((p) => datesOf(p, "change")).join("; ")}.` : "") +
         " Channels we have not tracked that long are left out rather than counted as flat.",
     },
@@ -912,13 +927,24 @@ function TotalRow({ c }: { c: GrowthCombined }) {
         {fmtMetric(c.followers)}
         {c.followers !== null && <span className={SUB}>{c.followersReported} of {c.followersTotal} publish a count</span>}
       </td>
-      <td className="px-2 py-2 text-right text-xs font-semibold">
+      <td
+        className="px-2 py-2 text-right text-xs font-semibold"
+        title={
+          "The Total adds up the changes the rows above show. A YouTube or Snapchat change smaller than its own " +
+          "rounding shows that limit on its row instead of a number, so it adds only its ± here."
+        }
+      >
         {view.kind === "value" ? (
           <span className={changeTone(view.value, view.approx)}>{fmtChange(view.value, view.approx)}</span>
         ) : (
           <span className="text-[#B0B0B0]">—</span>
         )}
-        {pm && <span className={SUB}>{pm}</span>}
+        {/* ⚠️ Never a number when every measured change is inside its own rounding — the rows
+            above print none, so the Total must not print theirs (growthCombinedChangeView). */}
+        {pm && <span className={SUB}>{view.kind === "unresolved" ? `finer than the ${pm}` : pm}</span>}
+        {view.kind === "value" && c.followerDeltaUnresolvedPlatforms.length > 0 && (
+          <span className={SUB}>{growthListNames(c.followerDeltaUnresolvedPlatforms)}: counted in the ± only</span>
+        )}
       </td>
       <td className="px-2 py-2 text-right text-xs font-semibold text-[#1A1A1A]">
         {fmtMetric(c.views)}

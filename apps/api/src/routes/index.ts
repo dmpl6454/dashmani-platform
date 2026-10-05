@@ -21,6 +21,7 @@ import publicJobsRoutes from "./public-jobs.routes";
 import publicStatsRoutes from "./public-stats.routes";
 import metaOauthRoutes from "./meta-oauth.routes";
 import metaRoutes from "./meta.routes";
+import postingWatchRoutes from "./posting-watch.routes";
 import channelRoutes from "./channel.routes";
 import overviewRoutes from "./overview.routes";
 import pipelineRoutes from "./pipeline.routes";
@@ -48,6 +49,8 @@ router.use(pipelineRoutes);
 // be captured by any parameterised /admin/:x route declared later.
 router.use(metaOauthRoutes);
 router.use(metaRoutes);
+// Posting watch (/admin/meta/posting-watch*): beside the Meta routes, for the same reason.
+router.use(postingWatchRoutes);
 // Same placement rationale as metaRoutes: /admin/channels must not be captured by a
 // parameterised /admin/:x route declared later.
 router.use(channelRoutes);

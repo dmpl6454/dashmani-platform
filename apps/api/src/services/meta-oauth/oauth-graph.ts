@@ -38,7 +38,15 @@ const REAUTH_SUBCODES = new Set([458, 463, 467]);
  * `null` means UNKNOWN — never 0. A confident-looking 0% would make the ceiling
  * check pass forever; an honest null makes it visibly unknown.
  */
-export type MetaUsage = { source: "app" | "buc"; callCountPct: number } | null;
+/**
+ * Meta's usage telemetry, in percent of the limit.
+ * - callCountPct: share of calls used.
+ * - usagePct: the highest of call_count, total_cputime and total_time — Meta throttles
+ *   on whichever runs out first, so this is the one to back off on.
+ * - regainMinutes: estimated_time_to_regain_access when a BUC throttle is already in
+ *   force (null otherwise, and always for x-app-usage).
+ */
+export type MetaUsage = { source: "app" | "buc"; callCountPct: number; usagePct: number; regainMinutes: number | null } | null;
 
 export interface OauthGraphResult<T = unknown> {
   ok: boolean;
@@ -92,21 +100,34 @@ function recordCall(label: string): void {
  * a number, and the ceiling short-circuit does not fire on unknown.
  */
 function parseUsage(headers: Headers): MetaUsage {
+  const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
+  /** Folds one usage entry into the running maxima; false when it carries no number. */
+  const fold = (entry: Record<string, unknown> | null | undefined, acc: { calls: number; usage: number }): boolean => {
+    let seen = false;
+    for (const k of ["call_count", "total_cputime", "total_time"]) {
+      const v = num(entry?.[k]);
+      if (v == null) continue;
+      seen = true;
+      acc.usage = Math.max(acc.usage, v);
+      if (k === "call_count") acc.calls = Math.max(acc.calls, v);
+    }
+    return seen;
+  };
+
   const buc = headers.get("x-business-use-case-usage");
   if (buc) {
     try {
-      const parsed = JSON.parse(buc) as Record<string, Array<{ call_count?: number }>>;
-      let max = 0;
+      const parsed = JSON.parse(buc) as Record<string, Array<Record<string, unknown>>>;
+      const acc = { calls: 0, usage: 0 };
       let seen = false;
+      let regain = 0;
       for (const arr of Object.values(parsed)) {
         for (const entry of arr ?? []) {
-          if (typeof entry?.call_count === "number") {
-            seen = true;
-            max = Math.max(max, entry.call_count);
-          }
+          if (fold(entry, acc)) seen = true;
+          regain = Math.max(regain, num(entry?.estimated_time_to_regain_access) ?? 0);
         }
       }
-      if (seen) return { source: "buc", callCountPct: max };
+      if (seen) return { source: "buc", callCountPct: acc.calls, usagePct: acc.usage, regainMinutes: regain > 0 ? regain : null };
     } catch {
       /* fall through to app usage */
     }
@@ -114,9 +135,9 @@ function parseUsage(headers: Headers): MetaUsage {
   const app = headers.get("x-app-usage");
   if (app) {
     try {
-      const parsed = JSON.parse(app) as { call_count?: number };
-      if (typeof parsed?.call_count === "number") {
-        return { source: "app", callCountPct: parsed.call_count };
+      const acc = { calls: 0, usage: 0 };
+      if (fold(JSON.parse(app) as Record<string, unknown>, acc)) {
+        return { source: "app", callCountPct: acc.calls, usagePct: acc.usage, regainMinutes: null };
       }
     } catch {
       /* unknown */
@@ -179,7 +200,20 @@ export async function oauthGraphFetch<T = unknown>(
   path: string,
   params: Record<string, string | number | undefined>,
   token: string,
-  opts?: { timeoutMs?: number; label?: string; budget?: CallBudget; signal?: AbortSignal },
+  opts?: {
+    timeoutMs?: number;
+    label?: string;
+    budget?: CallBudget;
+    signal?: AbortSignal;
+    /**
+     * Default true: one api_usage row per call. A high-frequency caller (the posting
+     * watch makes ~1k small calls an hour) passes false and records ONE aggregate row
+     * per run with recordApiUsage({ calls: n }) instead — the cost sheet sums `calls`,
+     * so it reads the same, while api_usage (1.1 GB, no retention) grows by a row a
+     * minute instead of a row per call.
+     */
+    recordUsage?: boolean;
+  },
 ): Promise<OauthGraphResult<T>> {
   const label = opts?.label ?? "other";
   const budget = opts?.budget;
@@ -229,7 +263,7 @@ export async function oauthGraphFetch<T = unknown>(
   }
 
   // Record BEFORE the fetch so a throw is still counted.
-  recordCall(label);
+  if (opts?.recordUsage !== false) recordCall(label);
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS);

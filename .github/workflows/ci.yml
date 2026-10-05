@@ -167,8 +167,8 @@ jobs:
           PG="docker exec -i -e PGPASSWORD=password $PG_CONTAINER psql -U user -v ON_ERROR_STOP=1 -q"
           $PG -d dashmani -c "CREATE DATABASE dashmani_ddl_rehearsal"
           DATABASE_URL="$DDL_DB_URL" npx prisma db push --schema packages/db/prisma/schema.prisma --skip-generate
-          $PG -d dashmani_ddl_rehearsal -c "DROP TABLE pipeline_email_outbox, pipeline_messages, pipeline_participants, pipeline_projects, pipeline_phases, pipeline_board_state"
-          for script in scripts/pipeline-ddl.sql scripts/pipeline-email-ddl.sql; do
+          $PG -d dashmani_ddl_rehearsal -c "DROP TABLE pipeline_email_outbox, pipeline_messages, pipeline_participants, pipeline_projects, pipeline_phases, pipeline_board_state, meta_post_watch"
+          for script in scripts/pipeline-ddl.sql scripts/pipeline-email-ddl.sql scripts/posting-watch-ddl.sql; do
             for run in 1 2; do
               echo "apply $script #$run"
               $PG -d dashmani_ddl_rehearsal -f - < "$script"

@@ -17,6 +17,7 @@ import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
 } from "recharts";
 import { Pill, PillGroup } from "./_pills";
+import { PostingWatchCard } from "./_posting-watch";
 
 // Each card links to the page that is the source of truth for the count it shows,
 // so clicking "Pending: 5" lands on the page that actually displays those 5 items.
@@ -63,6 +64,12 @@ export default function DashboardPage() {
   usePageTitle("Dashboard");
   const { user } = useAuth();
   const firstName = user?.name?.split(" ")[0] || "";
+  // UI courtesy only (the API decides): the posting-watch endpoint is admin-only, and a
+  // non-admin must never mount a request that would 403. Mirrors require-admin-role.ts.
+  const isAdmin = (user?.roles ?? []).some((r) => {
+    const n = String(r).toLowerCase();
+    return n === "admin" || n === "super admin";
+  });
   const today = new Date();
 
   // Links bento date range — default last 14 days
@@ -384,6 +391,9 @@ export default function DashboardPage() {
             </Link>
           </div>
         )}
+
+        {/* Posting watch — assigned channels with no new post for 2h+ (admins only) */}
+        {isAdmin && <PostingWatchCard />}
 
         {/* Links Activity bento — full width */}
         <div className="lg:col-span-3 v3-card p-5 space-y-4 v3-card-lift">

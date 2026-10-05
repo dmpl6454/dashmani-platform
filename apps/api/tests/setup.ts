@@ -6,7 +6,7 @@ const TRUNCATE_SQL = `
       content_posts, approvals, project_files, project_tasks, project_accounts, projects,
       client_refresh_tokens, clients,
       task_comments, tasks, link_metrics_latest, link_metrics, report_links, daily_reports, account_growth_snapshots, account_assignments,
-      meta_asset_demographics, meta_asset_metrics, meta_asset_daily,
+      meta_asset_demographics, meta_asset_metrics, meta_asset_daily, meta_post_watch,
       meta_posts, meta_assets, meta_connections, meta_oauth_states, social_accounts, platforms,
       link_content_entities, link_content, entities, announcements,
       otp_tokens, audit_logs, attendance, leave_requests, refresh_tokens,
@@ -90,7 +90,25 @@ async function truncateAll(attempts = 5): Promise<void> {
   }
 }
 
+/**
+ * Self-heal for posting-watch.test.ts, which briefly renames meta_post_watch to prove the
+ * feature pauses cleanly while its table is missing. A run interrupted mid-test (Ctrl-C, a
+ * killed fork) would otherwise leave the table renamed, and the TRUNCATE below — which
+ * names it — would then fail every test in every later run. Once per file.
+ */
+let renamedTablesHealed = false;
+async function healRenamedTables(): Promise<void> {
+  if (renamedTablesHealed) return;
+  renamedTablesHealed = true;
+  await prisma.$executeRawUnsafe(`DO $$ BEGIN
+    IF to_regclass('public.meta_post_watch_away') IS NOT NULL AND to_regclass('public.meta_post_watch') IS NULL THEN
+      ALTER TABLE "meta_post_watch_away" RENAME TO "meta_post_watch";
+    END IF;
+  END $$`);
+}
+
 beforeEach(async () => {
+  await healRenamedTables();
   // Drain first (prevents the deadlock forming), then truncate (retries if one forms anyway).
   await waitForQuiesce();
   await truncateAll();

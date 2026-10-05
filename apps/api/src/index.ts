@@ -10,6 +10,7 @@ import { runSocialInsightsRefresh } from "./cron/social-insights.cron";
 import { runEntityExtraction } from "./cron/entity-extraction.cron";
 import { runIgCaptionBackfill } from "./cron/ig-caption-backfill.cron";
 import { runMetaTokenHealth } from "./cron/meta-token-health.cron";
+import { startPostingWatchCron } from "./cron/posting-watch.cron";
 import { startPipelineSelfCheck, startPipelineStatsLog } from "./services/pipeline";
 import { startPipelineDueCron } from "./cron/pipeline-due.cron";
 import { startPipelineEmailCron } from "./cron/pipeline-email.cron";
@@ -225,4 +226,12 @@ app.listen(PORT, () => {
     },
     20 * 60 * 1000,
   );
+
+  // Posting watch (owner request 2026-10-03): ASSIGNED channels whose connected FB/IG Page
+  // has no new post for 2h+ between 07:00 and 23:00 IST, shown on the admin dashboard. First tick at
+  // +7 min (a free offset), then every minute; each tick is bounded (≤60 small Meta
+  // reads, ≤45 s), overlap-guarded, DARK without the META_OAUTH_* vars, and outside the
+  // window returns before touching the DB. Kill switches: POSTING_WATCH_ENABLED=0, or
+  // system_settings postingWatch.mode=off (no restart).
+  startPostingWatchCron();
 });

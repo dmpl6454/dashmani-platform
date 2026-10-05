@@ -2036,6 +2036,56 @@ model MetaPost {
   @@map("meta_posts")
 }
 
+/// POSTING WATCH (2026-10-05) — for each connected Meta Page / IG account behind an
+/// ASSIGNED channel, the newest post the monitor has seen and the outcome of its latest
+/// check. Drives the dashboard list of assigned channels with no new post for 2h+ between
+/// 07:00 and 23:00 IST (services/meta-oauth/posting-watch*.ts).
+///
+/// ⚠️ Keyed by the channel's Meta identity (kind + metaId), NOT by meta_assets.id:
+///   - it survives a reconnect and a change of duplicate winner (a Page reachable
+///     through two connections is stored as two meta_assets rows);
+///   - it needs NO foreign key and NO new column on meta_assets. A new scalar there
+///     would break every un-selected meta_assets upsert in discovery and the syncs
+///     until prod had the column; a standalone table breaks nothing while it is
+///     missing, and the feature's boot self-check reports "paused" instead.
+///
+/// One row per watched Page (~100): a STATE table, upserted in place — never an
+/// append-only log (link_metrics and api_usage both outgrew that shape).
+/// ⚠️ Prod DDL: scripts/posting-watch-ddl.sql, applied by hand as the LAST step before
+/// the merge (see its header: `db push` drops an empty table without a prompt).
+model MetaPostWatch {
+  id     String        @id @default(uuid())
+  kind   MetaAssetKind
+  metaId String        @map("meta_id")
+
+  /// Meta's newest post as of the last successful check (a deleted post stops counting;
+  /// an empty feed keeps the last known value — posting-watch-rules.ts foldOutcome).
+  lastPostAt  DateTime? @map("last_post_at")
+  lastPostId  String?   @map("last_post_id")
+  lastPostUrl String?   @map("last_post_url") @db.Text
+
+  /// When the last SUCCESSFUL check started (a gap is confirmed only by a check
+  /// that started after the deadline, so this is the start, not the finish).
+  checkedAt   DateTime? @map("checked_at")
+  /// When the last check of any outcome started.
+  attemptedAt DateTime? @map("attempted_at")
+
+  /// token | permission | not_found | rate_limited | unreachable | meta_error.
+  /// NULL when the latest attempt succeeded.
+  errorKind         String?   @map("error_kind") @db.VarChar(16)
+  /// Meta's message for the latest failure, secret-scrubbed and truncated.
+  error             String?   @db.Text
+  /// First failure of the current failing streak.
+  errorSince        DateTime? @map("error_since")
+  consecutiveErrors Int       @default(0) @map("consecutive_errors")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([kind, metaId])
+  @@map("meta_post_watch")
+}
+
 // ============ PIPELINE (HR portal v1) ============
 // Spec: docs/superpowers/specs/2026-09-26-pipeline-design.md §2. These tables ship DARK:
 // nothing reads or writes them until the pipeline API lands behind `pipeline.mode`.

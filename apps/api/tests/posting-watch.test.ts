@@ -15,12 +15,14 @@ import { oauthGraphFetch, type OauthGraphResult } from "../src/services/meta-oau
 import { encryptToken } from "../src/utils/token-crypto";
 import {
   POSTING_WATCH_MODE_KEY,
+  checkPage,
   getPostingWatch,
   invalidatePostingWatchCache,
   loadMonitoredSet,
   resetPostingWatchStateForTests,
   runPostingWatchTick,
 } from "../src/services/meta-oauth/posting-watch.service";
+import { EMPTY_SNAPSHOT } from "../src/services/meta-oauth/posting-watch-rules";
 import "./setup";
 
 const mockedFetch = vi.mocked(oauthGraphFetch);
@@ -113,6 +115,8 @@ async function seedEstate(): Promise<Estate> {
 
 const FB_PATH = "1001/published_posts";
 const IG_PATH = "17841400000000001/media";
+/** Read only when the account's own posts look silent: its ACCEPTED Collabs. */
+const IG_COLLABS_PATH = "17841400000000001/collaborative_media";
 
 describe("posting watch — poller and dashboard payload", () => {
   let e: Estate;
@@ -122,6 +126,8 @@ describe("posting watch — poller and dashboard payload", () => {
     invalidatePostingWatchCache();
     mockedFetch.mockReset();
     feeds = new Map();
+    // No Collabs unless a test says otherwise.
+    feeds.set(IG_COLLABS_PATH, () => okFeed([]));
     unexpected = [];
     mockedFetch.mockImplementation(async (path) => {
       const f = feeds.get(String(path));
@@ -149,12 +155,14 @@ describe("posting watch — poller and dashboard payload", () => {
     feeds.set(IG_PATH, () => okFeed([{ id: "ig-1", at: ist(D, "08:00"), url: "https://www.instagram.com/reel/A/" }]));
 
     const r = await tick(ist(D, "10:30"));
-    expect(r).toMatchObject({ status: "ran", checked: 2, calls: 2, failed: 0, wrote: true });
+    // IG's own newest post is 2h+ old, so its Collabs are looked up too: FB 1 + IG 2.
+    expect(r).toMatchObject({ status: "ran", checked: 2, calls: 3, failed: 0, wrote: true });
 
     const calls = mockedFetch.mock.calls.map(([path, params, token, opts]) => ({ path, params, token, opts }));
-    expect(calls.map((c) => c.path).sort()).toEqual([FB_PATH, IG_PATH]);
+    expect(calls.map((c) => c.path).sort()).toEqual([FB_PATH, IG_COLLABS_PATH, IG_PATH]);
     const fbCall = calls.find((c) => c.path === FB_PATH)!;
     const igCall = calls.find((c) => c.path === IG_PATH)!;
+    const collabCall = calls.find((c) => c.path === IG_COLLABS_PATH)!;
     expect(fbCall.token).toBe("page-token-1001"); // FB: the Page's own token
     expect(igCall.token).toBe("user-token"); // IG: the connection's user token
     expect(fbCall.params).toMatchObject({ fields: "id,created_time,permalink_url", limit: 3 });
@@ -162,6 +170,9 @@ describe("posting watch — poller and dashboard payload", () => {
     expect(typeof (fbCall.params as { until?: unknown }).until).toBe("number");
     expect(fbCall.opts).toMatchObject({ recordUsage: false, label: "posting-watch-fb" });
     expect(igCall.opts).toMatchObject({ recordUsage: false, label: "posting-watch-ig" });
+    expect(collabCall.token).toBe("user-token");
+    expect(collabCall.params).toEqual({ fields: "id,timestamp,permalink", limit: 100 });
+    expect(collabCall.opts).toMatchObject({ recordUsage: false, label: "posting-watch-ig-collabs" });
 
     const p = await read(new Date(ist(D, "10:30").getTime() + 1_000));
     expect(p.status).toBe("ok");
@@ -224,6 +235,133 @@ describe("posting watch — poller and dashboard payload", () => {
     expect(ig.attemptedAt?.toISOString()).toBe(ist(D, "10:33").toISOString());
     expect(ig.checkedAt?.toISOString()).toBe(ist(D, "10:30").toISOString()); // the last SUCCESS stands
     expect(ig.lastPostAt?.toISOString()).toBe(ist(D, "08:00").toISOString());
+  });
+
+  describe("Instagram Collabs (owner report 2026-10-06: Movified Hollywood)", () => {
+    // A Collab is owned by the account that started it, so it never appears on the
+    // collaborator's own /media. Once ACCEPTED it is on both profiles, and Meta lists it under
+    // the collaborator's /collaborative_media — in acceptance order, not newest-first.
+    const IG_ID = "17841400000000001";
+
+    it("an accepted Collab counts as the account's post — the newest anywhere on the page", async () => {
+      feeds.set(FB_PATH, () => okFeed([{ id: "f", at: ist(D, "10:10") }]));
+      feeds.set(IG_PATH, () => okFeed([{ id: "own", at: ist("2026-09-26", "12:20") }])); // its own feed is 9 days old
+      feeds.set(IG_COLLABS_PATH, () =>
+        okFeed([
+          { id: "c-yesterday", at: ist("2026-10-04", "21:00") },
+          { id: "c-newest", at: ist(D, "08:30"), url: "https://www.instagram.com/p/COLLAB/" }, // not first
+          { id: "c-early", at: ist(D, "07:40") },
+        ]),
+      );
+      const r = await tick(ist(D, "10:31"));
+      expect(r).toMatchObject({ status: "ran", calls: 3 }); // FB 1 + IG media and Collabs
+      const ig = (await read(ist(D, "10:32"))).channels.find((c) => c.platform === "instagram")!;
+      // Measured from the Collab (08:30), not from 26 Sep.
+      expect(ig).toMatchObject({ group: "quiet_today", silentSince: ist(D, "08:30").toISOString(), lastPostUrl: "https://www.instagram.com/p/COLLAB/" });
+    });
+
+    it("a recent Collab keeps the channel off the list", async () => {
+      feeds.set(FB_PATH, () => okFeed([{ id: "f", at: ist(D, "10:10") }]));
+      feeds.set(IG_PATH, () => okFeed([{ id: "own", at: ist("2026-09-26", "12:20") }]));
+      feeds.set(IG_COLLABS_PATH, () => okFeed([{ id: "c", at: ist(D, "09:45") }]));
+      await tick(ist(D, "10:31"));
+      const p = await read(ist(D, "10:32"));
+      expect(p.channels).toEqual([]);
+      expect(p.counts).toMatchObject({ monitored: 2, onSchedule: 2 });
+    });
+
+    it("an older Collab never moves the account's newest post back", async () => {
+      feeds.set(FB_PATH, () => okFeed([{ id: "f", at: ist(D, "10:10") }]));
+      feeds.set(IG_PATH, () => okFeed([{ id: "own", at: ist(D, "07:20"), url: "https://www.instagram.com/p/OWN/" }]));
+      feeds.set(IG_COLLABS_PATH, () => okFeed([{ id: "c", at: ist("2026-10-04", "20:00") }]));
+      await tick(ist(D, "10:31"));
+      const ig = (await read(ist(D, "10:32"))).channels.find((c) => c.platform === "instagram")!;
+      expect(ig).toMatchObject({ group: "quiet_today", silentSince: ist(D, "07:20").toISOString(), lastPostUrl: "https://www.instagram.com/p/OWN/" });
+    });
+
+    it("an account posting on its own feed costs no extra call", async () => {
+      feeds.set(FB_PATH, () => okFeed([{ id: "f", at: ist(D, "10:10") }]));
+      feeds.set(IG_PATH, () => okFeed([{ id: "own", at: ist(D, "10:05") }]));
+      await tick(ist(D, "10:31"));
+      expect(mockedFetch.mock.calls.map(([path]) => path)).not.toContain(IG_COLLABS_PATH);
+    });
+
+    it("checkPage: one Collab read, at most two calls", async () => {
+      feeds.set(IG_PATH, () => okFeed([]));
+      feeds.set(IG_COLLABS_PATH, () => okFeed([{ id: "c", at: ist(D, "09:00") }]));
+      const job = { key: `INSTAGRAM_ACCOUNT:${IG_ID}`, kind: "INSTAGRAM_ACCOUNT" as const, metaId: IG_ID, token: "t", prev: { ...EMPTY_SNAPSHOT, lastPostId: null, lastPostUrl: null } };
+      const r = await checkPage(job, ist(D, "10:30").getTime(), { requestTimeoutMs: 8_000, rules: { gapMs: 2 * 60 * 60_000 } });
+      expect(r).toMatchObject({ calls: 2, error: null, outcome: { ok: true, newest: { id: "c", at: ist(D, "09:00").getTime() } } });
+    });
+
+    it("a Collab read that fails fails the check — never read as 'no Collab', never a flag", async () => {
+      feeds.set(FB_PATH, () => okFeed([{ id: "f", at: ist(D, "10:10") }]));
+      feeds.set(IG_PATH, () => okFeed([{ id: "own", at: ist("2026-09-26", "12:20") }]));
+      feeds.set(IG_COLLABS_PATH, () => fail({ status: 0, error: "The operation was aborted due to timeout" }));
+      await tick(ist(D, "10:31"));
+      const p = await read(ist(D, "10:32"));
+      expect(p.channels).toEqual([]); // a 1-minute transient failure: still verifying, not silent
+      expect(p.counts.verifying).toBe(1);
+      const row = await prisma.metaPostWatch.findUniqueOrThrow({ where: { kind_metaId: { kind: "INSTAGRAM_ACCOUNT", metaId: IG_ID } } });
+      expect(row).toMatchObject({ errorKind: "unreachable", checkedAt: null, error: "Reading its Collabs: The operation was aborted due to timeout" });
+    });
+
+    it("a Collab list Meta refuses is 'can't check' and says which read failed", async () => {
+      feeds.set(FB_PATH, () => okFeed([{ id: "f", at: ist(D, "10:10") }]));
+      feeds.set(IG_PATH, () => okFeed([{ id: "own", at: ist("2026-09-26", "12:20") }]));
+      feeds.set(IG_COLLABS_PATH, () => fail({ status: 403, errorCode: 10, error: "(#10) Application does not have permission for this action" }));
+      await tick(ist(D, "10:31"));
+      const ig = (await read(ist(D, "10:32"))).channels.find((c) => c.platform === "instagram")!;
+      expect(ig).toMatchObject({ group: "cant_check", errorKind: "permission" });
+      expect(ig.errorDetail).toBe("Reading its Collabs: (#10) Application does not have permission for this action");
+    });
+
+    it("a 200 Collab answer that cannot be read fails the check, and says which read", async () => {
+      feeds.set(FB_PATH, () => okFeed([{ id: "f", at: ist(D, "10:10") }]));
+      feeds.set(IG_PATH, () => okFeed([{ id: "own", at: ist("2026-09-26", "12:20") }]));
+      feeds.set(IG_COLLABS_PATH, () => ({ ok: true, rateLimited: false, authInvalid: false, status: 200, usage: null }));
+      await tick(ist(D, "10:31"));
+      const row = await prisma.metaPostWatch.findUniqueOrThrow({ where: { kind_metaId: { kind: "INSTAGRAM_ACCOUNT", metaId: IG_ID } } });
+      expect(row).toMatchObject({ errorKind: "meta_error", checkedAt: null, error: "Reading its Collabs: Meta returned an unreadable response." });
+    });
+
+    it("a slow-down on the account's own read means its Collabs are not read — and nothing is flagged", async () => {
+      feeds.set(FB_PATH, () => okFeed([{ id: "f", at: ist(D, "10:10") }]));
+      feeds.set(IG_PATH, () => okFeed([{ id: "own", at: ist(D, "07:20") }], { source: "buc", callCountPct: 90, usagePct: 90, regainMinutes: null }));
+      const r = await tick(ist(D, "10:31"));
+      expect(r).toMatchObject({ status: "ran", calls: 2 }); // FB 1 + IG's own feed; no Collab read
+      expect(mockedFetch.mock.calls.map(([path]) => path)).not.toContain(IG_COLLABS_PATH);
+      const row = await prisma.metaPostWatch.findUniqueOrThrow({ where: { kind_metaId: { kind: "INSTAGRAM_ACCOUNT", metaId: IG_ID } } });
+      expect(row).toMatchObject({ errorKind: "rate_limited", checkedAt: null });
+      const p = await read(ist(D, "10:32"));
+      expect(p.channels.find((c) => c.platform === "instagram")).toBeUndefined(); // still verifying, never a gap
+      expect(p.counts.verifying).toBe(1);
+      // … and the account is left alone while Meta's reading says so.
+      mockedFetch.mockClear();
+      await tick(ist(D, "10:40"));
+      expect(mockedFetch.mock.calls.map(([path]) => path)).not.toContain(IG_PATH);
+    });
+
+    it("a slow-down on the Collab read is obeyed like any other", async () => {
+      feeds.set(FB_PATH, () => okFeed([{ id: "f", at: ist(D, "10:10") }]));
+      feeds.set(IG_PATH, () => okFeed([{ id: "own", at: ist(D, "07:20") }]));
+      feeds.set(IG_COLLABS_PATH, () => okFeed([], { source: "buc", callCountPct: 20, usagePct: 85, regainMinutes: 40 }));
+      expect(await tick(ist(D, "10:31"))).toMatchObject({ status: "ran", calls: 3, failed: 0 });
+      mockedFetch.mockClear();
+      await tick(ist(D, "10:34")); // 'quiet today' is due a re-check, but Meta said wait ~40 min
+      expect(mockedFetch.mock.calls.map(([path]) => path)).not.toContain(IG_PATH);
+      mockedFetch.mockClear();
+      await tick(ist(D, "11:12")); // past Meta's estimate: checked again
+      expect(mockedFetch.mock.calls.map(([path]) => path)).toEqual(expect.arrayContaining([IG_PATH, IG_COLLABS_PATH]));
+    });
+
+    it("an app-wide throttle (code 4) on the Collab read pauses every check", async () => {
+      feeds.set(FB_PATH, () => okFeed([{ id: "f", at: ist(D, "10:10") }]));
+      feeds.set(IG_PATH, () => okFeed([{ id: "own", at: ist(D, "07:20") }]));
+      feeds.set(IG_COLLABS_PATH, () => fail({ status: 403, rateLimited: true, errorCode: 4, error: "Application request limit reached" }));
+      expect(await tick(ist(D, "10:31"))).toMatchObject({ status: "ran" });
+      expect(await tick(ist(D, "10:32"))).toEqual({ status: "skipped", reason: "paused" });
+    });
   });
 
   it("checks nothing outside 07:00–23:00 IST", async () => {
@@ -325,7 +463,7 @@ describe("posting watch — poller and dashboard payload", () => {
     // the channel is flagged, measured from the newest post on EITHER Page.
     mockedFetch.mockClear();
     const r = await tick(ist(D, "12:22"));
-    expect(mockedFetch.mock.calls.map(([path]) => path).sort()).toEqual(["5001/published_posts", "5002/published_posts", FB_PATH, IG_PATH].sort());
+    expect(mockedFetch.mock.calls.map(([path]) => path).sort()).toEqual(["5001/published_posts", "5002/published_posts", FB_PATH, IG_PATH, IG_COLLABS_PATH].sort());
     expect(r).toMatchObject({ status: "ran" });
     p = await read(ist(D, "12:23"));
     const insiderRow = p.channels.find((c) => c.name === "Bollywood Insider")!;
@@ -396,7 +534,8 @@ describe("posting watch — poller and dashboard payload", () => {
     await tick(ist(D, "10:30"));
     mockedFetch.mockClear();
     await tick(ist(D, "10:34")); // both are 'quiet today' and due a re-check …
-    expect(mockedFetch.mock.calls.map(([path]) => path)).toEqual([IG_PATH]); // … but FB is cooling down
+    // … but FB is cooling down; only IG is re-read (its own feed, then its Collabs).
+    expect(mockedFetch.mock.calls.map(([path]) => path)).toEqual([IG_PATH, IG_COLLABS_PATH]);
   });
 
   it("the Page back-off honours Meta's CPU/time usage and its own regain estimate", async () => {
@@ -406,25 +545,52 @@ describe("posting watch — poller and dashboard payload", () => {
     await tick(ist(D, "10:30"));
     mockedFetch.mockClear();
     await tick(ist(D, "11:01")); // past the default 30 min, inside Meta's 45
-    expect(mockedFetch.mock.calls.map(([path]) => path)).toEqual([IG_PATH]);
+    expect(mockedFetch.mock.calls.map(([path]) => path)).toEqual([IG_PATH, IG_COLLABS_PATH]);
     mockedFetch.mockClear();
     await tick(ist(D, "11:16"));
-    expect(mockedFetch.mock.calls.map(([path]) => path).sort()).toEqual([FB_PATH, IG_PATH].sort());
+    expect(mockedFetch.mock.calls.map(([path]) => path).sort()).toEqual([FB_PATH, IG_PATH, IG_COLLABS_PATH].sort());
   });
 
-  it("stops for the hour once the hourly call cap is spent", async () => {
+  it("never makes more calls in an hour than the hourly cap, and resumes as the oldest calls age out", async () => {
     vi.stubEnv("POSTING_WATCH_HOURLY_CALL_CAP", "60"); // the floor the config allows
     feeds.set(FB_PATH, () => okFeed([{ id: "f", at: ist(D, "08:00") }]));
     feeds.set(IG_PATH, () => okFeed([{ id: "i", at: ist(D, "08:00") }]));
-    // Both are confirmed silent at 10:30 and re-checked every 2 minutes: 2 calls a tick.
-    for (let m = 0; m < 60; m += 2) {
-      const r = await tick(new Date(ist(D, "10:30").getTime() + m * 60_000));
-      expect(r).toMatchObject({ status: "ran", calls: 2 });
+    // Both are confirmed silent at 10:30 and re-checked every 2 minutes; each IG check also
+    // reads its Collabs. Uncapped, that is ~90 calls in an hour.
+    const ran: Array<{ at: number; calls: number }> = [];
+    let capped = 0;
+    for (let m = 0; m < 60; m++) {
+      const at = ist(D, "10:30").getTime() + m * 60_000;
+      const r = await tick(new Date(at));
+      if (r.status === "ran") ran.push({ at, calls: r.calls });
+      else if (r.status === "skipped" && r.reason === "hourly_cap") capped++;
     }
-    expect(mockedFetch).toHaveBeenCalledTimes(60);
-    expect(await tick(ist(D, "11:29"))).toEqual({ status: "skipped", reason: "hourly_cap" });
-    // The oldest calls age out of the hour and checking resumes.
-    expect(await tick(ist(D, "11:31"))).toMatchObject({ status: "ran" });
+    const total = ran.reduce((sum, x) => sum + x.calls, 0);
+    expect(mockedFetch).toHaveBeenCalledTimes(total); // every counted call is a real call
+    expect(capped).toBeGreaterThan(0); // the cap was reached, and ticks then skip …
+    expect(total).toBe(60); // … without ever passing it
+    // The window ROLLS: at 11:30 the 10:30 tick's calls are an hour old and free up again —
+    // exactly those, no more.
+    expect(ran[0]).toMatchObject({ at: ist(D, "10:30").getTime() });
+    const r = await tick(ist(D, "11:30"));
+    expect(r).toMatchObject({ status: "ran" });
+    if (r.status === "ran") {
+      expect(r.calls).toBeGreaterThan(0);
+      expect(r.calls).toBeLessThanOrEqual(ran[0].calls);
+    }
+  });
+
+  it("a tick never commits more calls than its budget — even with checks running at once", async () => {
+    vi.stubEnv("POSTING_WATCH_MAX_CALLS_PER_TICK", "1"); // raised to the floor: one worst-case Instagram check (2)
+    feeds.set(FB_PATH, () => okFeed([{ id: "f", at: ist(D, "10:10") }]));
+    feeds.set(IG_PATH, () => okFeed([{ id: "i", at: ist(D, "08:00") }]));
+    // FB (1 call) and IG (up to 2) are both due; together they could exceed 2, so IG
+    // waits for the next tick instead of running alongside.
+    expect(await tick(ist(D, "10:30"))).toMatchObject({ status: "ran", checked: 1, calls: 1 });
+    expect(mockedFetch.mock.calls.map(([path]) => path)).toEqual([FB_PATH]);
+    mockedFetch.mockClear();
+    expect(await tick(ist(D, "10:31"))).toMatchObject({ status: "ran", checked: 1 });
+    expect(mockedFetch.mock.calls.map(([path]) => path)).toEqual([IG_PATH, IG_COLLABS_PATH]);
   });
 
   it("a failed result write backs off from the DB for a few minutes", async () => {
@@ -435,7 +601,7 @@ describe("posting watch — poller and dashboard payload", () => {
     // A tick's transactions: schema check, state read, result write — fail only the write.
     vi.spyOn(prisma, "$transaction").mockImplementation(((...args: unknown[]) =>
       ++n === 3 ? Promise.reject(new Error("Timed out fetching a new connection from the connection pool")) : real(...args)) as typeof prisma.$transaction);
-    expect(await tick(ist(D, "10:30"))).toMatchObject({ status: "ran", calls: 2, wrote: false });
+    expect(await tick(ist(D, "10:30"))).toMatchObject({ status: "ran", calls: 3, wrote: false });
     expect(await tick(ist(D, "10:31"))).toEqual({ status: "skipped", reason: "db" });
     expect(await tick(ist(D, "10:32"))).toEqual({ status: "skipped", reason: "db" });
     expect(await tick(ist(D, "10:34"))).toMatchObject({ status: "ran", wrote: true });
@@ -451,13 +617,14 @@ describe("posting watch — poller and dashboard payload", () => {
     for (const call of spy.mock.calls) expect(call[1]).toEqual({ maxWait: 1500, timeout: 10000 });
   });
 
-  it("never makes more calls than the per-tick cap", async () => {
+  it("never runs more checks in a tick than the per-tick check cap", async () => {
     vi.stubEnv("POSTING_WATCH_MAX_CHECKS_PER_TICK", "1");
     feeds.set(FB_PATH, () => okFeed([]));
     feeds.set(IG_PATH, () => okFeed([]));
     const r = await tick(ist(D, "10:30"));
-    expect(mockedFetch).toHaveBeenCalledTimes(1);
     expect(r).toMatchObject({ status: "ran", due: 2, checked: 1 });
+    // Whichever check ran, every call it made is counted (an Instagram check may make two).
+    if (r.status === "ran") expect(mockedFetch).toHaveBeenCalledTimes(r.calls);
   });
 
   it("a second tick while one is in flight is skipped, never run alongside", async () => {
@@ -487,7 +654,7 @@ describe("posting watch — poller and dashboard payload", () => {
     }
     await new Promise((r) => setTimeout(r, 100)); // any straggler would land by now
     rows = await prisma.apiUsage.findMany({ where: { operation: { startsWith: USAGE_OP } }, select: { operation: true, calls: true } });
-    expect(rows).toEqual([{ operation: USAGE_OP, calls: 2 }]);
+    expect(rows).toEqual([{ operation: USAGE_OP, calls: 3 }]);
   });
 
   it("system_settings postingWatch.mode=off pauses everything without a restart", async () => {

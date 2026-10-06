@@ -111,7 +111,9 @@ export const DEFAULT_RULES: Readonly<WatchRules> = Object.freeze({
   inactiveAfterMs: 7 * DAY,
   // ~90 Pages sit behind assigned channels (prod, 2026-10-05), so silent channels can be
   // re-checked often and drop off within minutes of posting again. ~20 are silent at a
-  // typical hour ⇒ ~500 calls/hour; measured per-Page usage stayed at 1%.
+  // typical hour ⇒ measured ~550 calls/hour (2026-10-06); an Instagram re-check whose own
+  // feed is silent also reads its Collabs, adding ~250–300/hour — far inside the hourly cap.
+  // Measured per-Page usage stayed at 1%.
   recheckMs: Object.freeze({ quiet_today: 2 * MINUTE, no_post_today: 3 * MINUTE, inactive: 15 * MINUTE }),
   transientGraceMs: 20 * MINUTE,
   permanentRetryMs: HOUR,

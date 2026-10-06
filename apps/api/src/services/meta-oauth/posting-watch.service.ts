@@ -11,8 +11,9 @@
  * meta_posts is refreshed by the 3-hourly posts sync, after a ~30-minute channel sweep:
  * a new post can take ~3.5h to land there (measured 2026-10-03: Bollywood Chronicle's
  * newest stored FB post was 1h21m behind the live feed). That cannot detect a 2-hour gap,
- * so this asks Meta directly — one tiny `limit<=4`, three-field read per check — and only
- * when a Page's deadline makes it due. ~90 Pages sit behind assigned channels.
+ * so this asks Meta directly — one small three-field read per check (two for an Instagram
+ * account whose own feed looks silent: its accepted Collabs are read too) — and only when a
+ * Page's deadline makes it due. ~90 Pages sit behind assigned channels.
  *
  * ── Performance contract (owner: "performance takes priority") ─────────────────────
  *  - NOTHING here runs on a request path except the dashboard read, which is a memoised
@@ -21,16 +22,18 @@
  *    DB_MAX_WAIT_MS for a pooled connection and caps every statement. If the 10-slot main
  *    pool is busy (sign-in, HR submit), the watch gives up and skips — it never queues
  *    behind them for the pool's 20 s.
- *  - Bounded work: at most maxChecksPerTick Meta calls per tick, an hourly cap, a small
+ *  - Bounded work: at most maxChecksPerTick checks and maxCallsPerTick Meta calls per tick
+ *    (each check reserves its worst case before it starts), an hourly call cap, a small
  *    concurrency, a wall-clock budget per tick, and a claim-before-first-await overlap
  *    guard (a concurrent tick skips; it never takes over).
  *  - api_usage gets ONE row per tick (calls: n), not one per call.
  *  - Meta's own throttle telemetry (x-business-use-case-usage) is honoured: a Page past
  *    USAGE_COOLDOWN_PCT is left alone for a while; an app-level signal pauses everything.
+ *    Within one check too: a slow-down on the first read means the second is not made.
  */
 import { randomUUID } from "crypto";
 import { prisma, Prisma, type MetaPostWatch } from "@dashmani/db";
-import { oauthGraphFetch, type MetaUsage } from "./oauth-graph";
+import { oauthGraphFetch, type MetaUsage, type OauthGraphResult } from "./oauth-graph";
 import { metaOauthConfigured } from "./meta-config";
 import { decryptToken, scrubSecrets } from "../../utils/token-crypto";
 import { recordApiUsage } from "../api-usage.service";
@@ -55,6 +58,7 @@ import {
   type ErrorKind,
   type FeedItem,
   type FoldedSnapshot,
+  type NewestPost,
   type Kind,
   type MonitoredChannel,
   type NotConnectedReason,
@@ -96,6 +100,8 @@ export interface PostingWatchConfig {
   tickMs: number;
   bootDelayMs: number;
   maxChecksPerTick: number;
+  /** Graph calls one tick may make (an Instagram check can cost two). */
+  maxCallsPerTick: number;
   hourlyCallCap: number;
   concurrency: number;
   requestTimeoutMs: number;
@@ -117,6 +123,8 @@ export function postingWatchConfig(): PostingWatchConfig {
     tickMs,
     bootDelayMs: envInt("POSTING_WATCH_BOOT_DELAY_MS", 7 * MINUTE, 0, 60 * MINUTE),
     maxChecksPerTick: envInt("POSTING_WATCH_MAX_CHECKS_PER_TICK", 60, 1, 300),
+    // Never below the most a single check can cost, or that kind of check could never run.
+    maxCallsPerTick: Math.max(maxCallsFor("INSTAGRAM_ACCOUNT"), envInt("POSTING_WATCH_MAX_CALLS_PER_TICK", 120, 1, 3_000)),
     hourlyCallCap: envInt("POSTING_WATCH_HOURLY_CALL_CAP", 2400, 60, 20_000),
     concurrency: envInt("POSTING_WATCH_CONCURRENCY", 3, 1, 6),
     requestTimeoutMs: envInt("POSTING_WATCH_REQUEST_TIMEOUT_MS", 8_000, 2_000, 20_000),
@@ -425,6 +433,30 @@ const MAX_REGAIN_MS = 6 * 60 * MINUTE;
 /** This many rate-limited answers in one tick means "slow down", not "one busy Page". */
 const RATE_LIMITED_PAUSE_THRESHOLD = 5;
 const STALE_TICK_MS = 10 * MINUTE;
+
+/** Meta's verdict in one usage reading: "app" = slow the whole app down, "page" = leave this
+ *  Page alone for a while, null = carry on. checkPage and the tick both decide with it. */
+function throttleOf(u: MetaUsage): "app" | "page" | null {
+  if (!u) return null;
+  if (u.source === "app") return u.usagePct >= USAGE_COOLDOWN_PCT ? "app" : null;
+  return u.usagePct >= USAGE_COOLDOWN_PCT || (u.regainMinutes ?? 0) > 0 ? "page" : null;
+}
+
+/** Of two readings, the one to obey: an app-wide throttle outranks a Page one, a throttle
+ *  outranks none, and between equals the longer regain estimate, then the busier, wins. */
+function moreUrgent(a: MetaUsage, b: MetaUsage): MetaUsage {
+  if (!a) return b;
+  if (!b) return a;
+  const rank = (u: MetaUsage): number => {
+    const v = throttleOf(u);
+    return v === "app" ? 2 : v === "page" ? 1 : 0;
+  };
+  if (rank(a) !== rank(b)) return rank(a) > rank(b) ? a : b;
+  const ga = a.regainMinutes ?? 0;
+  const gb = b.regainMinutes ?? 0;
+  if (ga !== gb) return ga > gb ? a : b;
+  return b.usagePct > a.usagePct ? b : a;
+}
 const SUMMARY_EVERY_MS = 15 * MINUTE;
 
 const summary = { since: 0, ticks: 0, checks: 0, ok: 0, failed: {} as Record<string, number>, calls: 0 };
@@ -464,6 +496,40 @@ const IG_FIELDS = "id,timestamp,permalink";
 const FB_LIMIT = 3;
 const IG_LIMIT = 4;
 
+/**
+ * Instagram Collabs. A Collab is OWNED by the account that started it, so it is listed only on
+ * the owner's /media — never on a collaborator's — although, once the collaborator ACCEPTS, it
+ * shows on both profiles. GET /{ig-user}/collaborative_media lists exactly those: media where
+ * this account is an ACCEPTED collaborator, whoever owns it. Live-probed 2026-10-06 on all 62
+ * watched accounts (0 errors, ~0.5 s each): @movifiedhollywood's own /media was 10 days old
+ * while its accepted Collabs with @movifiedbollywood were 3 days old.
+ *
+ * Why not /tags + GET /{media}/collaborators (tried first, rejected on live data):
+ *  - /tags also holds every fan's photo tag, and /collaborators answers only for media the
+ *    token's user CREATED (Meta's docs; (#100) for anyone else's), so a Collab owned by an
+ *    outside account could never be confirmed — and fans' tags alone made 4 of the 11
+ *    accounts that needed the lookup "can't check";
+ *  - it also lists PENDING invites (2 of @movifiedhollywood's newest), which are not on the
+ *    account's profile.
+ *
+ * The list is NOT newest-first: it comes roughly in the order the account accepted, in
+ * batches, and `since`/`until` are ignored (probed). A Collab posted in the last hours was also
+ * accepted in the last hours — acceptance follows posting — so it sits at the top: the newest
+ * is taken as the max over one generous page. Census of all 56 watched accounts that have
+ * Collabs (2026-10-06, lists paged to 1,000): the newest was at position 22 or better on every
+ * one, and every Collab of the last 7 days within the first 50. A recent Collab can only be
+ * missed if the account accepts 100+ older invites after it. limit=100 costs what limit=50 does
+ * (p50 0.52 s vs 0.49 s).
+ */
+const IG_COLLAB_FIELDS = "id,timestamp,permalink";
+const IG_COLLAB_LIMIT = 100;
+/** The most one check can cost: an Instagram check reads its own feed and, when that looks
+ *  silent, its Collabs; a Facebook check is one read. The tick reserves this much BEFORE a
+ *  check starts, so concurrent checks can never together overrun its call budget. */
+function maxCallsFor(kind: Kind): number {
+  return kind === "INSTAGRAM_ACCOUNT" ? 2 : 1;
+}
+
 export interface CheckJob {
   key: string;
   kind: Kind;
@@ -475,21 +541,81 @@ export interface CheckJob {
 export interface CheckResult {
   job: CheckJob;
   outcome: CheckOutcome;
-  /** False when no request left the process (no token). */
-  called: boolean;
+  /** Requests that left the process: 0 with no token, 1 for a plain read, 2 when an
+   *  Instagram check also read its Collabs. */
+  calls: number;
   error: string | null;
   usage: MetaUsage;
   /** Graph code 4: the APP's own limit — everything should slow down. */
   appThrottled: boolean;
 }
 
-/** One newest-post read. Never throws (oauthGraphFetch never throws). */
-export async function checkPage(job: CheckJob, startedAt: number, cfg: Pick<PostingWatchConfig, "requestTimeoutMs">): Promise<CheckResult> {
+/**
+ * A Graph answer that is not a readable list, turned into a failed check. `context` names the
+ * read that failed; `priorUsage` is an earlier read's reading in the same check, so a second
+ * call that times out (no headers) cannot hide the first call's slow-down.
+ */
+function failedCheck(
+  job: CheckJob,
+  startedAt: number,
+  res: OauthGraphResult<unknown>,
+  calls: number,
+  opts: { context?: string; priorUsage?: MetaUsage } = {},
+): CheckResult {
+  const context = opts.context ?? "";
+  const usage = moreUrgent(opts.priorUsage ?? null, res.usage);
+  if (res.ok) {
+    // 200 with an unreadable body (oauthGraphFetch returns ok:true, data undefined).
+    return { job, outcome: { ok: false, startedAt, errorKind: "meta_error" }, calls, error: `${context}Meta returned an unreadable response.`, usage, appThrottled: false };
+  }
+  return {
+    job,
+    outcome: { ok: false, startedAt, errorKind: classifyFailure(res) },
+    calls,
+    error: `${context}${res.error ?? `HTTP ${res.status}`}`.slice(0, 300),
+    usage,
+    appThrottled: res.errorCode === 4,
+  };
+}
+
+const isList = <T>(res: OauthGraphResult<{ data?: T[] }>): res is OauthGraphResult<{ data: T[] }> & { data: { data: T[] } } =>
+  res.ok && !!res.data && Array.isArray(res.data.data);
+
+/**
+ * The newest ACCEPTED Collab of this Instagram account, or null when it has none. A failed read
+ * fails the whole check (never "no Collab"): a Collab we could not see may be the very post
+ * that keeps the channel off the list.
+ */
+async function newestCollab(
+  job: CheckJob & { token: string },
+  startedAt: number,
+  timeoutMs: number,
+): Promise<{ newest: NewestPost | null; usage: MetaUsage; failure: OauthGraphResult<unknown> | null }> {
+  const res = await oauthGraphFetch<{ data?: FeedItem[] }>(
+    `${job.metaId}/collaborative_media`,
+    { fields: IG_COLLAB_FIELDS, limit: IG_COLLAB_LIMIT },
+    job.token,
+    { label: "posting-watch-ig-collabs", timeoutMs, recordUsage: false },
+  );
+  if (!isList(res)) return { newest: null, usage: res.usage, failure: res };
+  // Max over the page (not its first item): the list is not newest-first.
+  return { newest: newestPostIn(res.data.data, startedAt), usage: res.usage, failure: null };
+}
+
+/**
+ * One newest-post read (plus, for an Instagram account whose own feed looks silent, its
+ * Collabs). Never throws (oauthGraphFetch never throws).
+ */
+export async function checkPage(
+  job: CheckJob,
+  startedAt: number,
+  cfg: Pick<PostingWatchConfig, "requestTimeoutMs"> & { rules: Pick<WatchRules, "gapMs"> },
+): Promise<CheckResult> {
   if (!job.token) {
     return {
       job,
       outcome: { ok: false, startedAt, errorKind: "token" },
-      called: false,
+      calls: 0,
       error: "No usable Meta access token for this channel — reconnect on Account Growth.",
       usage: null,
       appThrottled: false,
@@ -508,35 +634,33 @@ export async function checkPage(job: CheckJob, startedAt: number, cfg: Pick<Post
     job.token,
     { label: isIg ? "posting-watch-ig" : "posting-watch-fb", timeoutMs: cfg.requestTimeoutMs, recordUsage: false },
   );
-  if (res.ok && res.data && Array.isArray(res.data.data)) {
-    return {
-      job,
-      outcome: { ok: true, startedAt, newest: newestPostIn(res.data.data, startedAt) },
-      called: true,
-      error: null,
-      usage: res.usage,
-      appThrottled: false,
-    };
+  if (!isList(res)) return failedCheck(job, startedAt, res, 1);
+  let newest = newestPostIn(res.data.data, startedAt);
+  let calls = 1;
+  let usage = res.usage;
+  // Collabs only matter when the account's own posts would leave it silent; a post inside
+  // the gap already answers the question at no extra cost.
+  if (isIg && (newest == null || newest.at <= startedAt - cfg.rules.gapMs)) {
+    // Meta has just asked us to slow down. The Collab read decides whether this account is
+    // silent, so the check cannot finish without it: it fails as rate-limited (never a flag),
+    // and the tick backs off as the reading says.
+    if (throttleOf(usage)) {
+      return {
+        job,
+        outcome: { ok: false, startedAt, errorKind: "rate_limited" },
+        calls,
+        error: "Meta asked us to slow down before this account's Collabs could be read.",
+        usage,
+        appThrottled: false,
+      };
+    }
+    const collab = await newestCollab({ ...job, token: job.token }, startedAt, cfg.requestTimeoutMs);
+    calls++;
+    if (collab.failure) return failedCheck(job, startedAt, collab.failure, calls, { context: "Reading its Collabs: ", priorUsage: usage });
+    usage = moreUrgent(usage, collab.usage);
+    if (collab.newest && (newest == null || collab.newest.at > newest.at)) newest = collab.newest;
   }
-  if (res.ok) {
-    // 200 with an unreadable body (oauthGraphFetch returns ok:true, data undefined).
-    return {
-      job,
-      outcome: { ok: false, startedAt, errorKind: "meta_error" },
-      called: true,
-      error: "Meta returned an unreadable response.",
-      usage: res.usage,
-      appThrottled: false,
-    };
-  }
-  return {
-    job,
-    outcome: { ok: false, startedAt, errorKind: classifyFailure(res) },
-    called: true,
-    error: (res.error ?? `HTTP ${res.status}`).slice(0, 300),
-    usage: res.usage,
-    appThrottled: res.errorCode === 4,
-  };
+  return { job, outcome: { ok: true, startedAt, newest }, calls, error: null, usage, appThrottled: false };
 }
 
 /** Bounded-concurrency map; `fn` must not throw. */
@@ -675,26 +799,44 @@ async function tickInner(opts: TickOptions): Promise<TickResult> {
   }));
 
   const startedReal = Date.now();
+  // The tick's CALL budget (a check can cost more than one call): never past the hourly cap,
+  // never more than maxCallsPerTick in one tick. Each check reserves the most it could cost
+  // before it starts, so even concurrent checks cannot overrun it; what goes unused is
+  // released. A check that does not fit stays due and runs on a later tick.
+  const callBudget = Math.min(hourRemaining, cfg.maxCallsPerTick);
+  let callsUsed = 0;
+  let callsReserved = 0;
   const results = await runPool(jobs, cfg.concurrency, async (job): Promise<CheckResult | null> => {
     // Budget is wall-clock (real time), even under an injected test clock.
     if (Date.now() - startedReal > cfg.tickBudgetMs) return null;
     if (pausedUntil > clock()) return null;
+    const reserve = maxCallsFor(job.kind);
+    if (callsUsed + callsReserved + reserve > callBudget) return null;
+    callsReserved += reserve;
     try {
       const r = await checkPage(job, clock(), cfg);
+      callsUsed += r.calls;
       // React to Meta's throttle telemetry at once, so the rest of this tick obeys it. Meta
       // throttles on calls, CPU or time — whichever is highest (usagePct) — and says how
       // long a throttle already in force will last (regainMinutes).
       const regainMs = Math.min(MAX_REGAIN_MS, (r.usage?.regainMinutes ?? 0) * MINUTE);
-      if (r.appThrottled || (r.usage?.source === "app" && r.usage.usagePct >= USAGE_COOLDOWN_PCT)) {
+      const throttle = throttleOf(r.usage);
+      if (r.appThrottled || throttle === "app") {
         pausedUntil = Math.max(pausedUntil, clock() + Math.max(GLOBAL_PAUSE_MS, regainMs));
-      } else if (r.usage?.source === "buc" && (r.usage.usagePct >= USAGE_COOLDOWN_PCT || regainMs > 0)) {
+      } else if (throttle === "page") {
         cooldownUntil.set(job.key, clock() + Math.max(PAGE_COOLDOWN_MS, regainMs));
       }
       return r;
     } catch (err) {
       // checkPage cannot throw by contract; a bug here must not end the tick.
       warnThrottled("posting-watch:check-threw", `[posting-watch] check threw: ${scrubSecrets(String(err)).slice(0, 200)}`);
+      // Calls it made before throwing are unknown: the whole reservation counts against this
+      // tick's budget. (The hourly log and api_usage see only completed checks; by contract
+      // this path never runs.)
+      callsUsed += reserve;
       return null;
+    } finally {
+      callsReserved -= reserve;
     }
   });
 
@@ -704,7 +846,7 @@ async function tickInner(opts: TickOptions): Promise<TickResult> {
   let rateLimited = 0;
   const writes: Array<{ kind: Kind; metaId: string; snap: FoldedSnapshot; error: string | null }> = [];
   for (const r of done) {
-    if (r.called) calls++;
+    calls += r.calls;
     if (!r.outcome.ok) {
       failed++;
       summary.failed[r.outcome.errorKind] = (summary.failed[r.outcome.errorKind] ?? 0) + 1;

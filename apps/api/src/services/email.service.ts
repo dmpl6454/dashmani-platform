@@ -21,6 +21,7 @@ export async function sendEmail(options: {
   subject: string;
   html: string;
   replyTo?: string;
+  fromName?: string;
 }) {
   if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
     console.warn("⚠ Email not configured (SMTP_USER/SMTP_PASS missing). Skipping email.");
@@ -30,7 +31,7 @@ export async function sendEmail(options: {
   try {
     const transporter = await createTransporter();
     const result = await transporter.sendMail({
-      from: `"Digital Sukoon HR" <${process.env.SMTP_USER}>`,
+      from: `"${options.fromName ?? "Digital Sukoon HR"}" <${process.env.SMTP_USER}>`,
       to: options.to,
       subject: options.subject,
       html: options.html,

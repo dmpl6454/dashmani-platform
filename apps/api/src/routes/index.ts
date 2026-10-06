@@ -19,6 +19,7 @@ import adminFeaturesRoutes from "./admin-features.routes";
 import hrFeaturesRoutes from "./hr-features.routes";
 import publicJobsRoutes from "./public-jobs.routes";
 import publicStatsRoutes from "./public-stats.routes";
+import publicEnquiryRoutes from "./public-enquiry.routes";
 import metaOauthRoutes from "./meta-oauth.routes";
 import metaRoutes from "./meta.routes";
 import postingWatchRoutes from "./posting-watch.routes";
@@ -61,5 +62,6 @@ router.use(adminFeaturesRoutes);
 router.use(hrFeaturesRoutes);
 router.use(publicJobsRoutes);
 router.use(publicStatsRoutes);
+router.use(publicEnquiryRoutes);
 
 export default router;

@@ -118,7 +118,7 @@ jobs:
               echo "SEED_ADMIN_PASSWORD=$SEED_ADMIN_PASSWORD"
             } > "$target"
           done
-          for app in client internal hr jobs; do
+          for app in client internal hr jobs web; do
             echo "NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL" > "apps/$app/.env.local"
           done
 
@@ -130,7 +130,7 @@ jobs:
       # packages/shared and packages/ui are typechecked as part of `npm run build`
       # (turbo's build task has dependsOn: ["^build"], so dependencies build first).
 
-      # Builds all five apps. This is what typechecks the four Next.js frontends and is
+      # Builds all six apps. This is what typechecks the five Next.js frontends and is
       # the same command the server runs on deploy — so a green build here means the
       # deploy's build step will not be the thing that fails.
       - name: Build all apps

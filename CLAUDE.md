@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-A Turborepo + npm-workspaces monorepo: one Express REST API and four Next.js portals (internal staff, client, HR, public jobs) on a shared PostgreSQL database through Prisma, plus shared TypeScript packages and a separate Expo mobile app.
+A Turborepo + npm-workspaces monorepo: one Express REST API, four Next.js portals (internal staff, client, HR, public jobs) and the public marketing site on a shared PostgreSQL database through Prisma, plus shared TypeScript packages and a separate Expo mobile app.
 
 ## Repository layout
 
@@ -15,6 +15,7 @@ A Turborepo + npm-workspaces monorepo: one Express REST API and four Next.js por
 | `apps/client` | Client portal, Next.js (`@dashmani/client`, port 3001) |
 | `apps/hr` | HR / employee portal, Next.js (`@dashmani/hr`, port 3002) |
 | `apps/jobs` | Public jobs portal, Next.js (`@dashmani/jobs`, port 3003) |
+| `apps/web` | Public marketing site digitalsukoon.com, Next.js static export (`@dashmani/web`, dev port 3004) — served by nginx from `apps/web/out`, no pm2 process |
 | `packages/db` | Prisma schema and client (`@dashmani/db`) — the single source of truth for the database |
 | `packages/shared` | Zod validators, types and utilities shared by the API and the portals (`@dashmani/shared`) |
 | `packages/ui` | Shared Radix UI + Tailwind components (`@dashmani/ui`) |

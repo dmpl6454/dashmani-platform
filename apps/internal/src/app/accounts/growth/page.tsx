@@ -73,10 +73,10 @@ const AllPanel = dynamic<AllPanelProps>(
 );
 
 const TABS = [
-  { key: "meta", label: "Meta" },
-  { key: "youtube", label: "YouTube" },
-  { key: "snapchat", label: "Snapchat" },
-  { key: "all", label: "All" },
+  { key: "meta", label: "Meta", dot: "#238BFF" },
+  { key: "youtube", label: "YouTube", dot: "#FF5A5F" },
+  { key: "snapchat", label: "Snapchat", dot: "#E9D23A" },
+  { key: "all", label: "All", dot: "#E9BD62" },
 ] as const;
 
 type GrowthTab = (typeof TABS)[number]["key"];
@@ -91,22 +91,21 @@ export default function AccountGrowthPage() {
   usePageTitle("Account Growth");
 
   return (
-    <div className="space-y-6 pop-in">
-      <div className="flex items-center gap-3">
+    <div className="pb-6">
+      <section className="pt-[22px] pb-[18px]">
         <Link
           href="/accounts"
-          className="flex items-center gap-1 text-sm text-[#7A7A7A] hover:text-[#1A1A1A] transition-colors"
+          className="inline-flex items-center gap-1.5 text-[12px] font-medium text-ds-t2 hover:text-ds-gold transition-colors"
         >
-          <ArrowLeft className="h-4 w-4" /> Accounts
+          <ArrowLeft className="h-[13px] w-[13px]" strokeWidth={2} /> Accounts
         </Link>
-      </div>
-
-      <div>
-        <h1 className="font-serif text-2xl font-medium text-[#1A1A1A]">Account Growth</h1>
-        <p className="text-sm text-[#7A7A7A] mt-0.5">
+        <div className="mt-4 max-w-[760px]">
+        <p className="text-[10px] tracking-[.2em] uppercase text-ds-gold font-semibold">Social Media</p>
+        <h1 className="mt-2 text-[28px] font-semibold tracking-[-.02em] text-ds-text">Account Growth</h1>
+        <p className="mt-1.5 text-[13.5px] text-ds-t5">
           Followers, views and engagement across every channel we track
         </p>
-        <p className="text-xs text-[#B0B0B0] mt-1 max-w-3xl leading-snug">
+        <p className="mt-2 text-[12px] leading-[1.6] text-ds-t3 [text-wrap:pretty]">
           Three boards, and they do not share a source. Each tab says where its own numbers
           come from and what its platform refuses to publish. A dash is never a zero: the
           platform published nothing, our history is too short so far, or a movement is finer
@@ -114,7 +113,8 @@ export default function AccountGrowthPage() {
           inside a tab; each one keeps its own. The All tab adds the boards up wherever a figure
           means the same thing on every platform.
         </p>
-      </div>
+        </div>
+      </section>
 
       {/* ⚠️ useSearchParams() must sit under a Suspense boundary or the build complains
           that the route deopted into client-side rendering. Same pattern as the sibling
@@ -131,7 +131,7 @@ export default function AccountGrowthPage() {
 function TabStrip({ tab, onSelect }: { tab: GrowthTab; onSelect: (t: GrowthTab) => void }) {
   return (
     <div
-      className="flex flex-wrap items-center gap-1 border-b border-[#E8E0D0] -mb-px"
+      className="flex items-center gap-1 shadow-[inset_0_-1px_0_#182C39] overflow-x-auto [scrollbar-width:none]"
       role="tablist"
       aria-label="Channel source"
     >
@@ -143,11 +143,11 @@ function TabStrip({ tab, onSelect }: { tab: GrowthTab; onSelect: (t: GrowthTab) 
             role="tab"
             aria-selected={active}
             onClick={() => onSelect(t.key)}
-            className={`text-sm font-medium px-3.5 py-2 border-b-2 -mb-px transition-colors ${
-              active
-                ? "border-[#5B4BF5] text-[#1A1A1A]"
-                : "border-transparent text-[#7A7A7A] hover:text-[#1A1A1A]"}`}
+            className={`inline-flex items-center gap-2 h-[42px] px-[18px] text-[13px] font-semibold whitespace-nowrap transition-colors ${
+              active ? "text-ds-text" : "text-ds-t2 hover:text-ds-text"}`}
+            style={{ boxShadow: `inset 0 -2px 0 ${active ? "#E9BD62" : "transparent"}` }}
           >
+            <i className="h-[7px] w-[7px] rounded-full" style={{ background: t.dot }} />
             {t.label}
           </button>
         );
@@ -198,14 +198,15 @@ function GrowthTabs() {
   }, [urlTab]);
 
   return (
-    <div className="space-y-6">
+    <div>
       <TabStrip tab={tab} onSelect={selectTab} />
+      <div className="mt-4 space-y-4">
 
       {/* The Meta-specific promise lives HERE, not in the page header, because it is only
           true of this board — see the file header. */}
       {tab === "meta" && (
         <>
-          <p className="text-xs text-[#B0B0B0] max-w-3xl leading-snug -mt-2">
+          <p className="text-[12px] text-ds-t3 max-w-[760px] leading-[1.6] [text-wrap:pretty]">
             Every channel below belongs to the connected Meta account, and every figure comes
             from Meta&apos;s own API — nothing on this tab is scraped or entered by hand. Pick a
             time window to see views, reach and engagement over that period.
@@ -218,18 +219,19 @@ function GrowthTabs() {
       {tab === "youtube" && <YouTubePanel />}
       {tab === "snapchat" && <SnapchatPanel />}
       {tab === "all" && <AllPanel onOpenTab={selectTab} />}
+      </div>
     </div>
   );
 }
 
-const PANEL_CARD = "bg-white rounded-2xl border border-[#E8E0D0] shadow-[0_2px_16px_rgba(0,0,0,0.05)] p-5";
+const PANEL_CARD = "bg-ds-card rounded-[12px] border border-[#1D3444] p-5";
 
 /** While the All tab's code downloads — a moment, the first time it is opened. */
 function AllPanelLoading() {
   return (
     <section className={PANEL_CARD} aria-busy="true">
-      <h2 className="font-serif text-lg text-[#1A1A1A]">All platforms</h2>
-      <p className="text-xs text-[#B0B0B0] mt-1 animate-pulse">Loading…</p>
+      <h2 className="text-[17px] font-semibold text-ds-text">All platforms</h2>
+      <p className="text-[12px] text-ds-t3 mt-1 animate-pulse">Loading…</p>
     </section>
   );
 }
@@ -242,14 +244,14 @@ function AllPanelLoading() {
 function AllPanelUnavailable(_props: AllPanelProps) {
   return (
     <section className={`${PANEL_CARD} space-y-2`}>
-      <h2 className="font-serif text-lg text-[#1A1A1A]">All platforms</h2>
-      <p className="text-sm text-[#7A7A7A]">
+      <h2 className="text-[17px] font-semibold text-ds-text">All platforms</h2>
+      <p className="text-[12.5px] text-ds-t2">
         This tab couldn&apos;t be opened just now — the portal may have been updated since this page
         loaded, or the connection dropped. The other tabs still work.
       </p>
       <button
         onClick={() => window.location.reload()}
-        className="text-xs text-[#5B4BF5] underline hover:text-[#1A1A1A]"
+        className="text-[12px] text-ds-gold underline underline-offset-[3px] hover:text-ds-gold2"
       >
         Reload the page
       </button>

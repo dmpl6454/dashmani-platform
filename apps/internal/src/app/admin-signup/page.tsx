@@ -4,6 +4,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { apiFetch } from "@/lib/api";
 import { clearSwrCache } from "@/lib/swr-cache";
 import { Eye, EyeOff, Lock, User } from "lucide-react";
+import { BoxesLoader } from "@/components/boxes-loader";
 
 function AdminSignupForm() {
   const router = useRouter();
@@ -94,7 +95,7 @@ function AdminSignupForm() {
           <div className={`bg-white/60 backdrop-blur-xl rounded-2xl border border-white/50 shadow-[0_8px_40px_rgba(0,0,0,0.06)] p-7 ${shake ? "animate-[shake_0.5s_ease-in-out]" : ""}`} style={{ animation: mounted ? "crx-fadeInUp 0.5s ease-out 0.3s both" : "none" }}>
             {tokenValid === null && (
               <div className="flex justify-center py-8">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#F5D547]" />
+                <BoxesLoader />
               </div>
             )}
 
@@ -184,7 +185,7 @@ function AdminSignupForm() {
 
 export default function AdminSignupPage() {
   return (
-    <Suspense fallback={<div className="flex items-center justify-center min-h-screen" style={{ background: "linear-gradient(165deg, #FDF6E3 0%, #F7ECD5 40%, #EFE2C4 100%)" }}><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#F5D547]" /></div>}>
+    <Suspense fallback={<div className="flex items-center justify-center min-h-screen" style={{ background: "linear-gradient(165deg, #FDF6E3 0%, #F7ECD5 40%, #EFE2C4 100%)" }}><BoxesLoader /></div>}>
       <AdminSignupForm />
     </Suspense>
   );

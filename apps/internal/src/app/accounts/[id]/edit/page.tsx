@@ -2,6 +2,7 @@
 import { useParams } from "next/navigation";
 import { AccountForm } from "@/components/account-form";
 import { useAccount } from "@/lib/hooks/use-accounts";
+import { BoxesLoader } from "@/components/boxes-loader";
 
 export default function EditAccountPage() {
   const { id } = useParams();
@@ -11,7 +12,7 @@ export default function EditAccountPage() {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#F5D547]" />
+        <BoxesLoader />
       </div>
     );
   }

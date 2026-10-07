@@ -261,6 +261,56 @@ input:focus, textarea:focus, select:focus { outline: none; }
 *::-webkit-scrollbar-thumb { background: #D4CBBA; border-radius: 3px; }
 *::-webkit-scrollbar-thumb:hover { background: #9C947C; }
 
+/* ── Premium dark redesign ("ds") ──
+   Everything below is scoped to .ds-root, the wrapper the layout renders only for
+   routes in src/lib/ds-routes.ts, so classic cream pages are untouched. */
+html:has(.ds-root), body:has(.ds-root) { background: #060D14; }
+.ds-root {
+  background: #060D14;
+  color: #F4F6F8;
+  font-family: 'Inter', system-ui, sans-serif;
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+  /* The mockups set a 12px base and the browser's normal line-height (not
+     Tailwind's 1.5), so unsized text and every box's height match the design. */
+  font-size: 12px;
+  line-height: normal;
+}
+.ds-root *::-webkit-scrollbar-thumb { background: #182C39; }
+.ds-root *::-webkit-scrollbar-thumb:hover { background: #2A4658; }
+.ds-root ::selection { background: rgba(233,189,98,.28); color: #F4F6F8; }
+.ds-root input:focus-visible,
+.ds-root textarea:focus-visible,
+.ds-root select:focus-visible {
+  border-color: #E9BD62 !important;
+  box-shadow: 0 0 0 3px rgba(233,189,98,.18) !important;
+}
+/* An input drawn inside its own pill/field wrapper: the wrapper shows the focus
+   (focus-within), so the bare input must not draw a second ring inside it. */
+.ds-root input.ds-bare:focus-visible {
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
+.ds-root button:focus-visible,
+.ds-root a:focus-visible,
+.ds-root [role="button"]:focus-visible,
+.ds-root [tabindex]:focus-visible {
+  outline: 2px solid rgba(233,189,98,.6);
+  outline-offset: 2px;
+}
+.ds-root input[type="date"] { color-scheme: dark; }
+.ds-root kbd {
+  background: transparent; color: #738395; border: 1px solid #223543;
+  border-bottom-width: 1px; border-radius: 4px; font-size: 10px; font-weight: 500;
+}
+@keyframes dsBeat {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(0,215,160,.55); }
+  50%      { box-shadow: 0 0 0 5px rgba(0,215,160,0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ds-root .ds-beat { animation: none !important; }
+}
+
 /* ── Kbd ── */
 kbd {
   font-family: inherit; font-size: 10.5px; font-weight: 600;
@@ -268,4 +318,62 @@ kbd {
   border: 1.5px solid #D4CBBA; border-bottom-width: 3px;
   border-radius: 6px; background: #FFFFFF; color: #3A3A3A;
   display: inline-block; text-align: center; line-height: 14px; min-width: 18px;
+}
+
+/* ── Boxes loader (from Uiverse.io by Nawsome) ─────────────────────────────
+   Used by <BoxesLoader /> (components/boxes-loader.tsx) for full-screen and
+   page-level loading states. Button-inline spinners deliberately stay Loader2.
+   Classes are prefixed `bx-` so they cannot collide with portal styles. */
+.bx-boxes {
+  --size: 32px;
+  --duration: 800ms;
+  height: calc(var(--size) * 2);
+  width: calc(var(--size) * 3);
+  position: relative;
+  transform-style: preserve-3d;
+  transform-origin: 50% 50%;
+  margin-top: calc(var(--size) * 1.5 * -1);
+  transform: rotateX(60deg) rotateZ(45deg) rotateY(0deg) translateZ(0px);
+}
+.bx-boxes .bx-box {
+  width: var(--size);
+  height: var(--size);
+  top: 0;
+  left: 0;
+  position: absolute;
+  transform-style: preserve-3d;
+}
+.bx-boxes .bx-box:nth-child(1) { transform: translate(100%, 0); animation: bx-box1 var(--duration) linear infinite; }
+.bx-boxes .bx-box:nth-child(2) { transform: translate(0, 100%); animation: bx-box2 var(--duration) linear infinite; }
+.bx-boxes .bx-box:nth-child(3) { transform: translate(100%, 100%); animation: bx-box3 var(--duration) linear infinite; }
+.bx-boxes .bx-box:nth-child(4) { transform: translate(200%, 0); animation: bx-box4 var(--duration) linear infinite; }
+.bx-boxes .bx-box > div {
+  --background: #5C8DF6;
+  --top: auto;
+  --right: auto;
+  --bottom: auto;
+  --left: auto;
+  --translateZ: calc(var(--size) / 2);
+  --rotateY: 0deg;
+  --rotateX: 0deg;
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  background: var(--background);
+  top: var(--top);
+  right: var(--right);
+  bottom: var(--bottom);
+  left: var(--left);
+  transform: rotateY(var(--rotateY)) rotateX(var(--rotateX)) translateZ(var(--translateZ));
+}
+.bx-boxes .bx-box > div:nth-child(1) { --top: 0; --left: 0; }
+.bx-boxes .bx-box > div:nth-child(2) { --background: #145af2; --right: 0; --rotateY: 90deg; }
+.bx-boxes .bx-box > div:nth-child(3) { --background: #447cf5; --rotateX: -90deg; }
+.bx-boxes .bx-box > div:nth-child(4) { --background: #DBE3F4; --top: 0; --left: 0; --translateZ: calc(var(--size) * 3 * -1); }
+@keyframes bx-box1 { 0%, 50% { transform: translate(100%, 0); } 100% { transform: translate(200%, 0); } }
+@keyframes bx-box2 { 0% { transform: translate(0, 100%); } 50% { transform: translate(0, 0); } 100% { transform: translate(100%, 0); } }
+@keyframes bx-box3 { 0%, 50% { transform: translate(100%, 100%); } 100% { transform: translate(0, 100%); } }
+@keyframes bx-box4 { 0% { transform: translate(200%, 0); } 50% { transform: translate(200%, 100%); } 100% { transform: translate(100%, 100%); } }
+@media (prefers-reduced-motion: reduce) {
+  .bx-boxes .bx-box { animation-duration: 2400ms; }
 }

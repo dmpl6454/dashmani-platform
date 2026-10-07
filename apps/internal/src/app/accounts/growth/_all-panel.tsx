@@ -85,14 +85,14 @@ import {
 /** The tabs this one can send a reader to. */
 type SiblingTab = "meta" | "youtube" | "snapchat";
 
-const CARD = "bg-white rounded-2xl border border-[#E8E0D0] shadow-[0_2px_16px_rgba(0,0,0,0.05)] overflow-hidden";
+const CARD = "relative bg-ds-card rounded-[12px] border border-[#1D3444] overflow-hidden";
 
 /** Soft platform pills — the same palette the reports pages and link previews use. */
 const PLATFORM_PILL: Record<GrowthPlatform, string> = {
-  facebook: "bg-blue-50 text-blue-600 border-blue-200",
-  instagram: "bg-pink-100 text-pink-700 border-pink-200",
-  youtube: "bg-red-50 text-red-700 border-red-200",
-  snapchat: "bg-yellow-100 text-yellow-700 border-yellow-200",
+  facebook: "bg-[#238BFF]/[.12] text-[#238BFF] border-[#238BFF]/30",
+  instagram: "bg-[#EC42B7]/[.12] text-[#EC42B7] border-[#EC42B7]/30",
+  youtube: "bg-[#FF5A5F]/[.12] text-[#FF5A5F] border-[#FF5A5F]/30",
+  snapchat: "bg-[#E9D23A]/[.12] text-[#E9D23A] border-[#E9D23A]/30",
 };
 
 /** Where each platform's figures come from — said on every row, not only in a footnote. */
@@ -127,9 +127,9 @@ function fmtChange(v: number | null, approx: boolean): string {
 }
 
 function changeTone(v: number | null, approx: boolean): string {
-  if (v === null) return "text-[#1A1A1A]";
-  if (approx) return "text-[#8A8A8A]";
-  return v > 0 ? "text-[#3E9B4F]" : v < 0 ? "text-[#C0504D]" : "text-[#8A8A8A]";
+  if (v === null) return "text-ds-text";
+  if (approx) return "text-ds-t2";
+  return v > 0 ? "text-ds-teal" : v < 0 ? "text-ds-redsoft" : "text-ds-t2";
 }
 
 /**
@@ -144,7 +144,7 @@ function spanSuffix(days: number | null, periodDays: number): string | null {
 
 function PlatformPill({ platform }: { platform: GrowthPlatform }) {
   return (
-    <span className={`inline-flex items-center text-[10px] font-medium border rounded-full px-1.5 py-0.5 leading-none whitespace-nowrap ${PLATFORM_PILL[platform]}`}>
+    <span className={`inline-flex items-center h-5 text-[10.5px] font-semibold border rounded-full px-2 leading-none whitespace-nowrap ${PLATFORM_PILL[platform]}`}>
       {GROWTH_PLATFORM_LABEL[platform]}
     </span>
   );
@@ -159,7 +159,7 @@ function PlatformPill({ platform }: { platform: GrowthPlatform }) {
 function RefreshMark({ message, platform }: { message: string; platform: GrowthPlatform }) {
   return (
     <span title={growthRefreshFailureText(message, platform)}>
-      <AlertTriangle className="h-3 w-3 text-[#C2861D] shrink-0" />
+      <AlertTriangle className="h-3 w-3 text-[#FBBF24] shrink-0" />
     </span>
   );
 }
@@ -252,9 +252,10 @@ export function AllPanel({ onOpenTab }: { onOpenTab?: (tab: SiblingTab) => void 
   if (allForbidden) {
     return (
       <section className={`${CARD} p-5 space-y-2`}>
-        <h2 className="font-serif text-lg text-[#1A1A1A]">All platforms</h2>
-        <p className="text-sm text-[#7A7A7A]">Only administrators can see Account Growth.</p>
-        <p className="text-[11px] text-[#B0B0B0]">Ask a Super Admin or Admin if you need these figures.</p>
+        <span aria-hidden="true" className="absolute left-0 right-0 top-0 h-px bg-[linear-gradient(90deg,transparent,#E9BD62_30%,#E9BD62_70%,transparent)]" />
+        <h2 className="text-[17px] font-semibold tracking-[-.01em] text-ds-text">All platforms</h2>
+        <p className="text-sm text-ds-t2">Only administrators can see Account Growth.</p>
+        <p className="text-[11px] text-ds-t3">Ask a Super Admin or Admin if you need these figures.</p>
       </section>
     );
   }
@@ -262,41 +263,42 @@ export function AllPanel({ onOpenTab }: { onOpenTab?: (tab: SiblingTab) => void 
   return (
     <div className="space-y-6">
       <section className={CARD}>
-        <div className="px-5 py-4 border-b border-[#F0EAE0]">
-          <h2 className="font-serif text-lg text-[#1A1A1A]">All platforms</h2>
-          <p className="text-xs text-[#7A7A7A] mt-0.5">
+        <span aria-hidden="true" className="absolute left-0 right-0 top-0 h-px bg-[linear-gradient(90deg,transparent,#E9BD62_30%,#E9BD62_70%,transparent)]" />
+        <div className="px-6 py-5 border-b border-ds-line">
+          <h2 className="text-[17px] font-semibold tracking-[-.01em] text-ds-text">All platforms</h2>
+          <p className="text-xs text-ds-t2 mt-0.5">
             Facebook, Instagram, YouTube and Snapchat together — added up only where a figure means
             the same thing on every platform
           </p>
-          <p className="text-[11px] text-[#B0B0B0] mt-1 leading-snug max-w-3xl">
+          <p className="text-[11px] text-ds-t3 mt-1 leading-snug max-w-3xl">
             Every number comes from that platform&apos;s own board, under the rules its own tab uses —{" "}
-            <strong className="font-medium text-[#8A8A8A]">Meta&apos;s API</strong> for Facebook and
-            Instagram, <strong className="font-medium text-[#8A8A8A]">YouTube&apos;s Data API</strong>,
-            and <strong className="font-medium text-[#8A8A8A]">Snapchat&apos;s public profile
+            <strong className="font-medium text-ds-t2">Meta&apos;s API</strong> for Facebook and
+            Instagram, <strong className="font-medium text-ds-t2">YouTube&apos;s Data API</strong>,
+            and <strong className="font-medium text-ds-t2">Snapchat&apos;s public profile
             pages</strong> — added together. Nothing is re-measured, and each figure says which dates
             it covers. The YouTube and Snapchat tabs offer 7, 14, 30 and 90 days: their 7-day figures
             are the ones those tabs show, while 28 days is measured for this tab alone.
           </p>
         </div>
 
-        <div className="px-5 py-2.5 border-b border-[#F0EAE0] flex flex-wrap items-center gap-2">
-          <div className="flex flex-wrap items-center gap-1 mr-1" role="group" aria-label="Reporting period">
-            <span className="text-[11px] text-[#B0B0B0] mr-0.5">Period</span>
+        <div className="px-6 py-3.5 border-b border-ds-line bg-[#0A1620] flex flex-wrap items-center gap-1.5">
+          <div className="flex flex-wrap items-center gap-1.5 mr-1" role="group" aria-label="Reporting period">
+            <span className="text-[10px] tracking-[.14em] uppercase text-ds-t3 font-semibold mr-1">Period</span>
             {GROWTH_ALL_PERIODS.map((d) => (
               <button
                 key={d}
                 onClick={() => setDays(d)}
                 aria-pressed={days === d}
-                className={`text-[11px] rounded-full px-2.5 py-1 border ${
+                className={`h-[30px] inline-flex items-center gap-1.5 text-[11.5px] font-semibold whitespace-nowrap rounded-full px-[13px] border transition-colors ${
                   days === d
-                    ? "bg-[#5B4BF5] text-white border-[#5B4BF5]"
-                    : "border-[#DCDCDC] text-[#7A7A7A] hover:bg-[#FAFAFA]"}`}
+                    ? "bg-ds-blue text-white border-ds-blue"
+                    : "border-ds-line2 bg-ds-card text-ds-t2 hover:text-ds-text hover:border-ds-line4"}`}
               >
                 {d}d
               </button>
             ))}
           </div>
-          <span className="text-[10px] text-[#B0B0B0] leading-snug min-w-0">
+          <span className="text-[10px] text-ds-t3 leading-snug min-w-0">
             Only 7 and 28 days: the periods every platform can measure over the same span.
           </span>
         </div>
@@ -304,8 +306,8 @@ export function AllPanel({ onOpenTab }: { onOpenTab?: (tab: SiblingTab) => void 
         <Tiles combo={combo} currentYear={currentYear} />
 
         <div className="px-5 pt-4 pb-2">
-          <h3 className="text-xs font-medium text-[#1A1A1A]">By platform</h3>
-          <p className="text-[10px] text-[#B0B0B0] mt-0.5 leading-snug max-w-3xl">
+          <h3 className="text-xs font-medium text-ds-text">By platform</h3>
+          <p className="text-[10px] text-ds-t3 mt-0.5 leading-snug max-w-3xl">
             Each row is that platform&apos;s own board, with the exact dates its figures cover. The
             Total adds the rows that loaded; a platform that did not load is named, never counted
             as zero. A change too small for its platform&apos;s rounding shows that limit instead of
@@ -317,11 +319,11 @@ export function AllPanel({ onOpenTab }: { onOpenTab?: (tab: SiblingTab) => void 
         <div className="overflow-x-auto">
           <table className="w-full min-w-[860px]">
             <thead>
-              <tr className="text-[11px] text-[#7A7A7A] border-b border-[#F0EAE0]">
+              <tr className="text-[10px] tracking-[.1em] uppercase text-ds-t3 font-semibold border-b border-ds-line bg-[#0A1620]">
                 <PlainTh label="Platform" align="left" pad="px-5" />
                 <PlainTh label="Channels" />
                 <PlainTh
-                  label={<>Followers <span className="text-[#B0B0B0] font-normal">(now)</span></>}
+                  label={<>Followers <span className="text-ds-t3 font-normal">(now)</span></>}
                   title="A live total, not a period figure — how many followers (and YouTube subscribers) the channels have now, as each platform last reported them."
                 />
                 <PlainTh
@@ -350,19 +352,19 @@ export function AllPanel({ onOpenTab }: { onOpenTab?: (tab: SiblingTab) => void 
           </table>
         </div>
 
-        <p className="px-5 py-3 text-[11px] text-[#B0B0B0] leading-snug border-t border-[#F0EAE0]">
-          <strong className="font-medium text-[#7A7A7A]">Whose day each date is.</strong>{" "}
-          <strong className="font-medium text-[#7A7A7A]">Facebook</strong>&apos;s views are Meta&apos;s own
+        <p className="px-6 py-4 text-[11px] text-ds-t3 leading-[1.6] border-t border-ds-line bg-[#0A1620] [text-wrap:pretty]">
+          <strong className="font-medium text-ds-t2">Whose day each date is.</strong>{" "}
+          <strong className="font-medium text-ds-t2">Facebook</strong>&apos;s views are Meta&apos;s own
           rolling {periodDays}-day window on Pacific days — Facebook&apos;s day ends at Pacific
           midnight ({fbDayEnd ? `${fbDayEnd} IST` : "12:30 PM IST, 1:30 PM in winter"}).{" "}
-          <strong className="font-medium text-[#7A7A7A]">Instagram</strong>&apos;s are the same window
+          <strong className="font-medium text-ds-t2">Instagram</strong>&apos;s are the same window
           on UTC days — Instagram&apos;s day ends at midnight UTC (5:30 AM IST). The two can therefore
           end on different calendar days, and each row says which.{" "}
-          <strong className="font-medium text-[#7A7A7A]">YouTube</strong> and{" "}
-          <strong className="font-medium text-[#7A7A7A]">Snapchat</strong> are measured between our own
+          <strong className="font-medium text-ds-t2">YouTube</strong> and{" "}
+          <strong className="font-medium text-ds-t2">Snapchat</strong> are measured between our own
           daily snapshots, dated on the Indian calendar; each figure names the snapshot dates it really
           covers, which can be shorter than the period while history builds up.{" "}
-          <strong className="font-medium text-[#7A7A7A]">Follower change</strong> counts only channels
+          <strong className="font-medium text-ds-t2">Follower change</strong> counts only channels
           whose own history covers {requirement} — a shorter history is left out rather than counted as
           flat. For Facebook and Instagram it runs from our daily API follower snapshots to each
           channel&apos;s current count, so it has its own dates rather than the views window&apos;s:
@@ -371,15 +373,15 @@ export function AllPanel({ onOpenTab }: { onOpenTab?: (tab: SiblingTab) => void 
           without that history uses Meta&apos;s own follows-minus-unfollows for the views window. YouTube
           and Snapchat publish rounded counts, so a change smaller than their ± is shown as that limit
           rather than as a number, and the Total counts it in the ± only.{" "}
-          <strong className="font-medium text-[#7A7A7A]">Followers</strong> is a live total and reads
-          the same on both periods. <strong className="font-medium text-[#7A7A7A]">Views</strong> are
+          <strong className="font-medium text-ds-t2">Followers</strong> is a live total and reads
+          the same on both periods. <strong className="font-medium text-ds-t2">Views</strong> are
           each platform&apos;s own count: Meta counts every time content was shown or played, including
           repeats; YouTube&apos;s is the growth of its exact lifetime view counter; Snapchat publishes
           no period view count, so it is left out. A dash is never a zero: the platform published
           nothing, our history does not cover the period yet, or the movement is finer than the
           platform&apos;s rounding. Engagements, reach and revenue are Meta-only — see the{" "}
           {onOpenTab ? (
-            <button onClick={() => openTab("meta")} className="underline hover:text-[#1A1A1A]">Meta tab</button>
+            <button onClick={() => openTab("meta")} className="underline hover:text-ds-text">Meta tab</button>
           ) : (
             "Meta tab"
           )}
@@ -388,30 +390,31 @@ export function AllPanel({ onOpenTab }: { onOpenTab?: (tab: SiblingTab) => void 
       </section>
 
       <section className={CARD}>
-        <div className="px-5 py-4 border-b border-[#F0EAE0]">
-          <h2 className="font-serif text-lg text-[#1A1A1A]">All channels</h2>
-          <p className="text-xs text-[#7A7A7A] mt-0.5">
+        <span aria-hidden="true" className="absolute left-0 right-0 top-0 h-px bg-[linear-gradient(90deg,transparent,#E9BD62_30%,#E9BD62_70%,transparent)]" />
+        <div className="px-6 py-5 border-b border-ds-line">
+          <h2 className="text-[17px] font-semibold tracking-[-.01em] text-ds-text">All channels</h2>
+          <p className="text-xs text-ds-t2 mt-0.5">
             Every tracked channel on one list, each with its own platform&apos;s figures
           </p>
         </div>
 
-        <div className="px-5 py-2.5 border-b border-[#F0EAE0] flex flex-wrap items-center gap-2">
+        <div className="px-6 py-3.5 border-b border-ds-line bg-[#0A1620] flex flex-wrap items-center gap-1.5">
           <div className="flex flex-wrap items-center gap-1" role="group" aria-label="Platform">
             {(["all", ...GROWTH_PLATFORMS] as const).map((p) => (
               <button
                 key={p}
                 onClick={() => setPlatformFilter(p)}
                 aria-pressed={platformFilter === p}
-                className={`text-[11px] rounded-full px-2.5 py-1 border ${
+                className={`h-[30px] inline-flex items-center gap-1.5 text-[11.5px] font-semibold whitespace-nowrap rounded-full px-[13px] border transition-colors ${
                   platformFilter === p
-                    ? "bg-[#1A1A1A] text-white border-[#1A1A1A]"
-                    : "border-[#DCDCDC] text-[#7A7A7A] hover:bg-[#FAFAFA]"}`}
+                    ? "bg-ds-gold/[.14] text-ds-gold border-ds-gold/55"
+                    : "border-ds-line2 bg-ds-card text-ds-t2 hover:text-ds-text hover:border-ds-line4"}`}
               >
                 {p === "all" ? "All" : GROWTH_PLATFORM_LABEL[p]}
               </button>
             ))}
           </div>
-          <span className="hidden sm:block h-4 w-px bg-[#E8E0D0]" />
+          <span className="hidden sm:block h-5 w-px bg-ds-line2 mx-1.5" />
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
@@ -419,12 +422,12 @@ export function AllPanel({ onOpenTab }: { onOpenTab?: (tab: SiblingTab) => void 
             aria-label="Search channels"
             // ⚠️ 16px on phones. iOS Safari auto-zooms into any focused input below that
             // and then pans the viewport, which is how controls end up off-screen.
-            className="text-[16px] sm:text-[13px] border border-[#DCDCDC] rounded-full px-3 py-1 w-40 focus:outline-none focus:border-[#B0B0B0]"
+            className="h-[30px] text-[16px] sm:text-[11.5px] border border-ds-line2 rounded-full px-3 w-[220px] max-w-full bg-ds-card text-ds-text placeholder:text-ds-t3 focus:outline-none focus:border-ds-gold"
           />
-          <span className="text-[10px] text-[#B0B0B0] leading-snug">
+          <span className="text-[10px] text-ds-t3 leading-snug">
             Totals cover every channel; search and the platform filter narrow this table only.
           </span>
-          <span className="text-[11px] text-[#B0B0B0] ml-auto">
+          <span className="text-[11px] text-ds-t3 ml-auto">
             {/* ⚠️ Only a loaded response may claim a count: never "0 channels" over sources
                 that are still loading or failed (growthTableCountLabel). */}
             {growthTableCountLabel(combo, { shown: sorted.length, platform: platformFilter })}
@@ -432,16 +435,16 @@ export function AllPanel({ onOpenTab }: { onOpenTab?: (tab: SiblingTab) => void 
         </div>
 
         {(c.loadingPlatforms.length > 0 || c.failedPlatforms.length > 0) && (
-          <p className="px-5 py-2 border-b border-[#F6F2EA] text-[10px] text-[#7A7A7A] leading-snug">
+          <p className="px-6 py-[11px] border-b border-ds-line text-[11.5px] text-ds-t2 leading-[1.55] [text-wrap:pretty]">
             {c.loadingPlatforms.length > 0 && (
-              <>Still loading: <strong className="font-medium text-[#5A5A5A]">{growthListNames(c.loadingPlatforms)}</strong>. </>
+              <>Still loading: <strong className="font-medium text-ds-t5">{growthListNames(c.loadingPlatforms)}</strong>. </>
             )}
             {c.failedPlatforms.length > 0 && (
               <>
-                <span className="text-[#C0504D]">
+                <span className="text-ds-redsoft">
                   Not listed: {growthListNames(c.failedPlatforms)} — couldn&apos;t load.
                 </span>{" "}
-                <button onClick={() => retrySources(c.failedPlatforms)} className="underline hover:text-[#1A1A1A]">
+                <button onClick={() => retrySources(c.failedPlatforms)} className="underline hover:text-ds-text">
                   Retry
                 </button>
               </>
@@ -450,13 +453,13 @@ export function AllPanel({ onOpenTab }: { onOpenTab?: (tab: SiblingTab) => void 
         )}
 
         {combo.channels.length > 0 && (
-          <p className="px-5 py-2 border-b border-[#F6F2EA] text-[10px] text-[#7A7A7A] leading-snug">
+          <p className="px-6 py-[11px] border-b border-ds-line text-[11.5px] text-ds-t2 leading-[1.55] [text-wrap:pretty]">
             Each row shows its own platform&apos;s figures, so spans differ by platform; a small figure
             under a value is that row&apos;s own span when it is not the period. A dash is never a zero:
             the channel&apos;s history doesn&apos;t cover the period yet, its movement is finer than the
             platform&apos;s rounding, or the platform publishes no such figure (Snapchat publishes no
             period view count). A{" "}
-            <span className="line-through decoration-[#C2861D]">struck-through</span> change jumped
+            <span className="line-through decoration-[#FBBF24]">struck-through</span> change jumped
             between two different channels and is left out of every total and of the Change sort.
           </p>
         )}
@@ -550,7 +553,7 @@ function Tiles({ combo, currentYear }: { combo: GrowthCombination; currentYear: 
       id: "channels",
       label: "Channels",
       value: settled ? fmtExact(c.channels) : "—",
-      tone: "text-[#1A1A1A]",
+      tone: "text-ds-text",
       note: !settled ? "Loading…" : noneLoaded ? NONE : `across ${c.includedPlatforms.length} platform${c.includedPlatforms.length === 1 ? "" : "s"}`,
       title:
         "How many channels the boards track: the Facebook Pages and Instagram accounts the connected " +
@@ -563,7 +566,7 @@ function Tiles({ combo, currentYear }: { combo: GrowthCombination; currentYear: 
       // reads the same on 7d and 28d. Reported as "faulty data" three times on the Meta board.
       label: "Followers & subscribers (now)",
       value: settled ? fmtMetric(c.followers) : "—",
-      tone: "text-[#1A1A1A]",
+      tone: "text-ds-text",
       note: !settled
         ? "Loading…"
         : noneLoaded
@@ -584,7 +587,7 @@ function Tiles({ combo, currentYear }: { combo: GrowthCombination; currentYear: 
       id: "change",
       label: `Follower change · ${n}d`,
       value: settled && changeView.kind === "value" ? fmtChange(changeView.value, changeView.approx) : "—",
-      tone: settled && changeView.kind === "value" ? changeTone(changeView.value, changeView.approx) : "text-[#1A1A1A]",
+      tone: settled && changeView.kind === "value" ? changeTone(changeView.value, changeView.approx) : "text-ds-text",
       note: changeNote,
       title:
         `Follower change over the ${n} days, summed only over channels whose own history covers ` +
@@ -603,7 +606,7 @@ function Tiles({ combo, currentYear }: { combo: GrowthCombination; currentYear: 
       id: "views",
       label: `Views · ${n}d`,
       value: settled ? fmtMetric(c.views) : "—",
-      tone: "text-[#1A1A1A]",
+      tone: "text-ds-text",
       note: !settled
         ? "Loading…"
         : noneLoaded
@@ -624,35 +627,35 @@ function Tiles({ combo, currentYear }: { combo: GrowthCombination; currentYear: 
 
   return (
     <>
-      {warn && <p className="px-5 pt-4 -mb-1 text-[11px] font-medium leading-snug text-[#C0504D]">{warn}</p>}
+      {warn && <p className="px-6 pt-4 -mb-1 text-[11px] font-medium leading-snug text-ds-redsoft">{warn}</p>}
       {/* 4 tiles: two columns, then four from `xl` — the column count divides 4 at every
           breakpoint, so no tile is ever orphaned onto a row of its own. ⚠️ Four across only at
           `xl`: the sidebar takes ~340px, so at 1024px four columns would ellipsise the values. */}
       <div
         aria-busy={!settled}
-        className="px-5 py-5 grid grid-cols-2 xl:grid-cols-4 gap-x-4 gap-y-5 border-b border-[#F0EAE0]"
+        className="grid grid-cols-2 xl:grid-cols-4 border-b border-ds-line"
       >
         {tiles.map((t) => (
           <div
             key={t.id}
             title={t.title}
             // Hairlines only at `xl`, where all four are guaranteed to share one row.
-            className="min-w-0 xl:border-l xl:border-[#F0EAE0] xl:pl-4 xl:first:border-l-0 xl:first:pl-0"
+            className="min-w-0 px-6 py-[22px] shadow-[inset_1px_0_0_#182C39,inset_0_-1px_0_#182C39]"
           >
             <p
               // ⚠️ clamp with the 2.2vw coefficient, as on the sibling boards: `vw` is the WINDOW
               // and the sidebar takes ~340px of it, so a bigger coefficient ellipsises at 1024px.
-              className={`font-num text-[clamp(1.5rem,2.2vw,2rem)] font-semibold tracking-tight leading-none truncate ${
-                !settled ? "text-[#C4C4C4] animate-pulse" : partial ? "text-[#8A8A8A]" : t.tone}`}
+              className={`text-[clamp(1.6rem,2.3vw,2.125rem)] font-semibold tracking-[-.035em] leading-none truncate ${
+                !settled ? "text-ds-t4 animate-pulse" : partial ? "text-ds-t2" : t.tone}`}
             >
               {t.value}
             </p>
             {/* Labels wrap rather than truncate: a clipped "FOLLOWERS & SUBSCRI…" loses its
                 meaning on a phone, where the tooltip is out of reach. */}
-            <p className="mt-2 text-[10px] font-medium uppercase tracking-[0.08em] text-[#8A8A8A] leading-tight break-words">
+            <p className="mt-2.5 text-[10px] font-semibold uppercase tracking-[.16em] text-ds-t2 leading-tight break-words">
               {t.label}
             </p>
-            <p className="mt-0.5 text-[10px] leading-tight text-[#B0B0B0] break-words">{t.note}</p>
+            <p className="mt-1 text-[10.5px] leading-[1.45] text-ds-t3 break-words">{t.note}</p>
           </div>
         ))}
       </div>
@@ -662,7 +665,7 @@ function Tiles({ combo, currentYear }: { combo: GrowthCombination; currentYear: 
 
 // ─── By platform ─────────────────────────────────────────────────────────────────
 
-const SUB = "block text-[10px] font-normal text-[#B0B0B0] leading-tight";
+const SUB = "block text-[10px] font-normal text-ds-t3 leading-tight";
 
 /**
  * What is loading, what failed and why, with Retry — ABOVE the table, outside its scroller,
@@ -680,27 +683,27 @@ function SourceStatus({ combo, refreshFailed, onRetry }: {
   return (
     <div className="px-5 pb-2 space-y-1 text-[11px] leading-snug">
       {c.loadingPlatforms.length > 0 && (
-        <p className="text-[#7A7A7A]">
+        <p className="text-ds-t2">
           Loading {growthListNames(c.loadingPlatforms)}… the Total waits for every platform, so it does not
           change as each one arrives.
         </p>
       )}
       {problems.map((p) => (
-        <p key={p.source} className="text-[#C0504D]">
+        <p key={p.source} className="text-ds-redsoft">
           {p.text}
           {p.kind !== "forbidden" && (
             <>
               {" "}
-              <button onClick={() => onRetry(p.source)} className="underline hover:text-[#1A1A1A]">Retry</button>
+              <button onClick={() => onRetry(p.source)} className="underline hover:text-ds-text">Retry</button>
             </>
           )}
         </p>
       ))}
       {stale.map((s) => (
-        <p key={s} className="text-[#C2861D]">
+        <p key={s} className="text-[#FBBF24]">
           Couldn&apos;t refresh {growthListNames(platformsOf(s))} just now, so the figures shown are the ones
           loaded earlier.{" "}
-          <button onClick={() => onRetry(s)} className="underline hover:text-[#1A1A1A]">Retry</button>
+          <button onClick={() => onRetry(s)} className="underline hover:text-ds-text">Retry</button>
         </p>
       ))}
     </div>
@@ -716,17 +719,17 @@ function DatesList({ combo, currentYear }: { combo: GrowthCombination; currentYe
   const ready = GROWTH_PLATFORMS.filter((p) => combo.platforms[p].state === "ready" && (combo.platforms[p].channels ?? 0) > 0);
   if (ready.length === 0) return null;
   return (
-    <div className="xl:hidden px-5 pb-2 text-[10px] text-[#7A7A7A] leading-snug">
-      <p className="font-medium text-[#5A5A5A]">Dates each figure covers</p>
+    <div className="xl:hidden px-5 pb-2 text-[10px] text-ds-t2 leading-snug">
+      <p className="font-medium text-ds-t5">Dates each figure covers</p>
       <ul className="mt-0.5 space-y-0.5">
         {ready.map((p) => {
           const t = growthPeriodText(combo.platforms[p], currentYear);
           return (
             <li key={p}>
-              <strong className="font-medium text-[#5A5A5A]">{GROWTH_PLATFORM_LABEL[p]}</strong>{" "}
+              <strong className="font-medium text-ds-t5">{GROWTH_PLATFORM_LABEL[p]}</strong>{" "}
               — change {t.change ?? t.changeWhy ?? "—"} · views {t.views ?? t.viewsWhy ?? "—"}
-              <span className="text-[#B0B0B0]"> ({t.calendar})</span>
-              {t.windowsNote && <span className="text-[#C2861D]"> · {t.windowsNote}</span>}
+              <span className="text-ds-t3"> ({t.calendar})</span>
+              {t.windowsNote && <span className="text-[#FBBF24]"> · {t.windowsNote}</span>}
             </li>
           );
         })}
@@ -742,10 +745,10 @@ function PlatformRow({ a, currentYear, refreshFailed }: {
 }) {
   const label = GROWTH_PLATFORM_LABEL[a.platform];
   const platformCell = (
-    <td className="px-5 py-2 align-top">
+    <td className="px-6 py-[11px] align-top">
       <PlatformPill platform={a.platform} />
       {a.state === "ready" && refreshFailed && (
-        <span className="block mt-1 text-[10px] text-[#C2861D] leading-tight">couldn&apos;t refresh — see above</span>
+        <span className="block mt-1 text-[10px] text-[#FBBF24] leading-tight">couldn&apos;t refresh — see above</span>
       )}
     </td>
   );
@@ -754,17 +757,17 @@ function PlatformRow({ a, currentYear, refreshFailed }: {
   // A sentence here runs past a phone's edge inside the 860px scroller.
   if (a.state === "loading") {
     return (
-      <tr className="border-b border-[#F8F5EF]">
+      <tr className="border-b border-[#101E29]">
         {platformCell}
-        <td colSpan={6} className="px-2 py-2 text-xs text-[#B0B0B0]">Loading…</td>
+        <td colSpan={6} className="px-2 py-2 text-xs text-ds-t3">Loading…</td>
       </tr>
     );
   }
   if (a.state === "error") {
     return (
-      <tr className="border-b border-[#F8F5EF]">
+      <tr className="border-b border-[#101E29]">
         {platformCell}
-        <td colSpan={6} className="px-2 py-2 text-xs text-[#C0504D]">
+        <td colSpan={6} className="px-2 py-2 text-xs text-ds-redsoft">
           {a.errorKind === "forbidden" ? "administrators only" : "couldn't load — see the note above"}
         </td>
       </tr>
@@ -791,7 +794,7 @@ function PlatformRow({ a, currentYear, refreshFailed }: {
   const below = (a.followerDeltaSuppressed ?? 0) > 0 ? `${a.followerDeltaSuppressed} below the rounding step` : null;
   const excluded = (a.followerDeltaExcluded ?? 0) > 0 ? `${a.followerDeltaExcluded} excluded as unreliable` : null;
   const changeMain = view.kind === "value" ? fmtDelta(view.value) : "—";
-  const changeClass = view.kind === "value" ? changeTone(view.value, false) : "text-[#B0B0B0]";
+  const changeClass = view.kind === "value" ? changeTone(view.value, false) : "text-ds-t3";
   // ⚠️ Every count the board discloses is shown beside a figure — "N below the rounding
   // step" included: the server documents it as load-bearing, and the board's tab shows it.
   const changeSub: Array<string | null> =
@@ -821,14 +824,14 @@ function PlatformRow({ a, currentYear, refreshFailed }: {
   const pt = growthPeriodText(a, currentYear);
 
   return (
-    <tr className="border-b border-[#F8F5EF] hover:bg-[#FCFBF8] align-top">
+    <tr className="border-b border-[#101E29] hover:bg-[#0B1824] align-top">
       {platformCell}
-      <td className="px-2 py-2 text-right text-xs text-[#1A1A1A]">
+      <td className="px-2 py-2 text-right text-xs text-ds-text">
         {fmtExact(a.channels)}
         {isMeta && a.channels === 0 && <span className={SUB}>none connected</span>}
       </td>
       <td
-        className="px-2 py-2 text-right text-xs font-semibold text-[#1A1A1A]"
+        className="px-2 py-2 text-right text-xs font-semibold text-ds-text"
         title={
           [
             a.followers !== null ? a.followers.toLocaleString() : null,
@@ -845,23 +848,23 @@ function PlatformRow({ a, currentYear, refreshFailed }: {
         <span className={changeClass}>{changeMain}</span>
         {changeSub.some(Boolean) && <span className={SUB}>{changeSub.filter(Boolean).join(" · ")}</span>}
       </td>
-      <td className="px-2 py-2 text-right text-xs">
+      <td className="px-2 py-[11px] text-right text-[12.5px] text-ds-t5 whitespace-nowrap">
         {!a.viewsPublished ? (
           <span
-            className="text-[#B0B0B0] whitespace-nowrap"
+            className="text-ds-t3 whitespace-nowrap"
             title="Snapchat doesn't publish a period view count. Its profile pages show views for a changing handful of recent posts only — a sample, not a figure for these dates — so it is never added up."
           >
             Not published
           </span>
         ) : a.views === null ? (
-          <span className="text-[#B0B0B0]">
+          <span className="text-ds-t3">
             —
             {(a.channels ?? 0) > 0 && (
               <span className={SUB}>{a.platform === "youtube" ? "not enough view history yet" : "none reported"}</span>
             )}
           </span>
         ) : (
-          <span className="text-[#1A1A1A]" title={a.views.toLocaleString()}>
+          <span className="text-ds-text" title={a.views.toLocaleString()}>
             {fmtMetric(a.views)}
             {(a.viewsChannels ?? 0) < (a.channels ?? 0) && (
               <span className={SUB}>{a.viewsChannels} of {a.channels} channels</span>
@@ -869,38 +872,38 @@ function PlatformRow({ a, currentYear, refreshFailed }: {
           </span>
         )}
       </td>
-      <td className="px-2 py-2 text-left text-xs text-[#1A1A1A]">
+      <td className="px-2 py-2 text-left text-xs text-ds-text">
         {(a.channels ?? 0) === 0 ? (
-          <span className="text-[#B0B0B0]">—</span>
+          <span className="text-ds-t3">—</span>
         ) : (
           <>
             {/* ⚠️ Two lines, because the change and the views do NOT share dates: Meta's change
                 runs from our API snapshots to the current count, not over its views window. */}
             <span className="block">
-              <span className="text-[#7A7A7A]">Change</span>{" "}
-              {pt.change ? <span className="whitespace-nowrap">{pt.change}</span> : <span className="text-[#7A7A7A]">{pt.changeWhy ?? "—"}</span>}
+              <span className="text-ds-t2">Change</span>{" "}
+              {pt.change ? <span className="whitespace-nowrap">{pt.change}</span> : <span className="text-ds-t2">{pt.changeWhy ?? "—"}</span>}
             </span>
             <span className="block">
-              <span className="text-[#7A7A7A]">Views</span>{" "}
-              {pt.views ? <span className="whitespace-nowrap">{pt.views}</span> : <span className="text-[#7A7A7A]">{pt.viewsWhy ?? "—"}</span>}
+              <span className="text-ds-t2">Views</span>{" "}
+              {pt.views ? <span className="whitespace-nowrap">{pt.views}</span> : <span className="text-ds-t2">{pt.viewsWhy ?? "—"}</span>}
             </span>
           </>
         )}
         <span className={SUB}>{pt.calendar}</span>
-        {pt.windowsNote && <span className="block text-[10px] text-[#C2861D] leading-tight">{pt.windowsNote}</span>}
+        {pt.windowsNote && <span className="block text-[10px] text-[#FBBF24] leading-tight">{pt.windowsNote}</span>}
         {(a.staleChannels ?? 0) > 0 && (
           <span
-            className="block text-[10px] text-[#C2861D] leading-tight"
+            className="block text-[10px] text-[#FBBF24] leading-tight"
             title={`These channels' latest refresh failed, so their figures are from an earlier window than the dates shown. The ${GROWTH_PLATFORM_TAB[a.platform]} tab marks each one.`}
           >
             {a.staleChannels} channel{a.staleChannels === 1 ? "" : "s"} couldn&apos;t refresh — older figures
           </span>
         )}
       </td>
-      <td className="px-5 py-2">
+      <td className="px-6 py-[11px]">
         <div className="flex flex-wrap items-center gap-1">
           <SourceBadge source={SOURCE[a.platform].badge} />
-          <span className="text-[11px] text-[#7A7A7A] whitespace-nowrap">{SOURCE[a.platform].label}</span>
+          <span className="text-[11px] text-ds-t2 whitespace-nowrap">{SOURCE[a.platform].label}</span>
         </div>
       </td>
     </tr>
@@ -911,9 +914,9 @@ function TotalRow({ c }: { c: GrowthCombined }) {
   if (!c.settled) {
     // Short: the "waits for every platform" explanation is in SourceStatus, above the table.
     return (
-      <tr className="border-t border-[#F0EAE0]">
-        <td className="px-5 py-2 text-xs font-semibold text-[#1A1A1A]">Total</td>
-        <td colSpan={6} className="px-2 py-2 text-xs text-[#B0B0B0]">Loading…</td>
+      <tr className="border-t border-ds-line">
+        <td className="px-6 py-[11px] text-[12.5px] font-semibold text-ds-text">Total</td>
+        <td colSpan={6} className="px-2 py-2 text-xs text-ds-t3">Loading…</td>
       </tr>
     );
   }
@@ -922,13 +925,13 @@ function TotalRow({ c }: { c: GrowthCombined }) {
   // The ± is named by its source, so it can be traced to the rows that carry it.
   const pm = c.uncertainty > 0 ? `±${fmtMetric(c.uncertainty)} from ${possessives(c.uncertaintyPlatforms)} rounded counts` : null;
   return (
-    <tr className="border-t border-[#F0EAE0] bg-[#FCFBF8] align-top">
-      <td className="px-5 py-2 text-xs font-semibold text-[#1A1A1A]">
+    <tr className="border-t border-ds-line bg-[#0A1620] align-top">
+      <td className="px-6 py-[11px] text-[12.5px] font-semibold text-ds-text">
         Total
-        {excluding && <span className="block text-[10px] font-normal text-[#C0504D] leading-tight">{excluding}</span>}
+        {excluding && <span className="block text-[10px] font-normal text-ds-redsoft leading-tight">{excluding}</span>}
       </td>
-      <td className="px-2 py-2 text-right text-xs font-semibold text-[#1A1A1A]">{fmtExact(c.channels)}</td>
-      <td className="px-2 py-2 text-right text-xs font-semibold text-[#1A1A1A]" title={c.followers !== null ? c.followers.toLocaleString() : undefined}>
+      <td className="px-2 py-[11px] text-right text-[12.5px] font-bold text-ds-text whitespace-nowrap">{fmtExact(c.channels)}</td>
+      <td className="px-2 py-2 text-right text-xs font-semibold text-ds-text" title={c.followers !== null ? c.followers.toLocaleString() : undefined}>
         {fmtMetric(c.followers)}
         {c.followers !== null && <span className={SUB}>{c.followersReported} of {c.followersTotal} publish a count</span>}
       </td>
@@ -942,7 +945,7 @@ function TotalRow({ c }: { c: GrowthCombined }) {
         {view.kind === "value" ? (
           <span className={changeTone(view.value, view.approx)}>{fmtChange(view.value, view.approx)}</span>
         ) : (
-          <span className="text-[#B0B0B0]">—</span>
+          <span className="text-ds-t3">—</span>
         )}
         {/* ⚠️ Never a number when every measured change is inside its own rounding — the rows
             above print none, so the Total must not print theirs (growthCombinedChangeView). */}
@@ -951,11 +954,11 @@ function TotalRow({ c }: { c: GrowthCombined }) {
           <span className={SUB}>{growthListNames(c.followerDeltaUnresolvedPlatforms)}: counted in the ± only</span>
         )}
       </td>
-      <td className="px-2 py-2 text-right text-xs font-semibold text-[#1A1A1A]">
+      <td className="px-2 py-[11px] text-right text-[12.5px] font-bold text-ds-text whitespace-nowrap">
         {fmtMetric(c.views)}
         {c.views !== null && <span className={SUB}>{growthListNames(c.viewsPlatforms)}</span>}
       </td>
-      <td className="px-2 py-2 text-left text-xs text-[#B0B0B0]" colSpan={2}>
+      <td className="px-2 py-2 text-left text-xs text-ds-t3" colSpan={2}>
         each platform&apos;s own dates, above
       </td>
     </tr>
@@ -981,7 +984,7 @@ const ChannelsTable = memo(function ChannelsTable({ combo, rows, platformFilter,
   // said to be so — never rendered as "No channels" (growthTableEmpty).
   if (rows.length === 0) {
     const e = growthTableEmpty(combo, { platform: platformFilter, searching });
-    return <p className={`px-5 py-8 text-center text-xs ${e.error ? "text-[#C0504D]" : "text-[#7A7A7A]"}`}>{e.text}</p>;
+    return <p className={`px-5 py-8 text-center text-xs ${e.error ? "text-ds-redsoft" : "text-ds-t2"}`}>{e.text}</p>;
   }
 
   return (
@@ -989,13 +992,13 @@ const ChannelsTable = memo(function ChannelsTable({ combo, rows, platformFilter,
     // the page itself never overflows at 375px.
     <table className="w-full min-w-[720px]">
       <thead>
-        <tr className="text-[11px] text-[#7A7A7A] border-b border-[#F0EAE0]">
+        <tr className="text-[10px] tracking-[.1em] uppercase text-ds-t3 font-semibold border-b border-ds-line bg-[#0A1620]">
           <SortTh label="Channel" colKey="name" sort={sort} onSort={onSort} align="left" pad="px-5" />
           <SortTh label="Platform" colKey="platform" sort={sort} onSort={onSort} align="left" />
           <SortTh
             colKey="followers" sort={sort} onSort={onSort}
             title="A live total, not a period figure — how many followers (or subscribers) the channel has now, as its platform last reported."
-            label={<>Followers <span className="text-[#B0B0B0] font-normal">(now)</span></>}
+            label={<>Followers <span className="text-ds-t3 font-normal">(now)</span></>}
           />
           <SortTh
             label={`Change · ${n}d`} colKey="change" sort={sort} onSort={onSort}
@@ -1009,25 +1012,25 @@ const ChannelsTable = memo(function ChannelsTable({ combo, rows, platformFilter,
       </thead>
       <tbody>
         {rows.map((r) => (
-          <tr key={r.key} className="border-b border-[#F8F5EF] hover:bg-[#FCFBF8]">
-            <td className="px-5 py-2">
+          <tr key={r.key} className="border-b border-[#101E29] hover:bg-[#0B1824]">
+            <td className="px-6 py-[11px]">
               {/* min-w-0 on the flex child AND truncate on the name: the parent can only
                   clip what its children are willing to shrink. */}
               <div className="flex items-center gap-1.5 min-w-0">
-                <span className="text-xs font-medium text-[#1A1A1A] truncate max-w-[220px]">{r.name}</span>
-                {r.handle && <span className="text-[10px] text-[#B0B0B0] truncate">@{r.handle}</span>}
+                <span className="text-xs font-medium text-ds-text truncate max-w-[220px]">{r.name}</span>
+                {r.handle && <span className="text-[10px] text-ds-t3 truncate">@{r.handle}</span>}
                 <ChannelLink url={r.href} name={r.name} />
                 {r.refreshError && <RefreshMark message={r.refreshError} platform={r.platform} />}
               </div>
             </td>
             <td className="px-2 py-2"><PlatformPill platform={r.platform} /></td>
             <td
-              className="px-2 py-2 text-right text-xs font-semibold text-[#1A1A1A]"
+              className="px-2 py-2 text-right text-xs font-semibold text-ds-text"
               title={r.followers !== null ? r.followers.toLocaleString() : undefined}
             >
               {r.followers === null ? (
                 <span
-                  className="text-[#B0B0B0] font-normal"
+                  className="text-ds-t3 font-normal"
                   title={
                     r.platform === "snapchat"
                       ? "Snapchat does not publish a public follower count for this profile — Snapchat's choice, not an error or a zero."
@@ -1042,8 +1045,8 @@ const ChannelsTable = memo(function ChannelsTable({ combo, rows, platformFilter,
                 fmtMetric(r.followers)
               )}
             </td>
-            <td className="px-2 py-2 text-right text-xs"><RowChange r={r} periodDays={n} /></td>
-            <td className="px-5 py-2 text-right text-xs"><RowViews r={r} periodDays={n} /></td>
+            <td className="px-2 py-[11px] text-right text-[12.5px] text-ds-t5 whitespace-nowrap"><RowChange r={r} periodDays={n} /></td>
+            <td className="px-6 py-[11px] text-right text-[12.5px]"><RowViews r={r} periodDays={n} /></td>
           </tr>
         ))}
       </tbody>
@@ -1056,7 +1059,7 @@ function RowChange({ r, periodDays }: { r: GrowthChannelRow; periodDays: number 
   if (v === null) {
     return (
       <span
-        className="text-[#B0B0B0]"
+        className="text-ds-t3"
         title={
           r.followers === null && r.platform === "snapchat"
             ? "No change to show: Snapchat publishes no follower count for this profile, so there is nothing to measure movement in."
@@ -1080,7 +1083,7 @@ function RowChange({ r, periodDays }: { r: GrowthChannelRow; periodDays: number 
     // channels, not growth; hiding it would hide the evidence the handle needs fixing.
     return (
       <span
-        className="text-[#B0B0B0] line-through decoration-[#C2861D]"
+        className="text-ds-t3 line-through decoration-[#FBBF24]"
         title={`This change (${fmtDelta(v)}) is larger than the figure it was measured from, so it cannot be growth — the stored history for this channel spans two different channels. It is excluded from every total and from the Change sort; the ${GROWTH_PLATFORM_TAB[r.platform]} tab is where the handle gets fixed.`}
       >
         {fmtDelta(v)}
@@ -1089,9 +1092,9 @@ function RowChange({ r, periodDays }: { r: GrowthChannelRow; periodDays: number 
   }
   const suffix = spanSuffix(r.followerDeltaDays, periodDays);
   return (
-    <span className={v > 0 ? "text-[#3E9B4F]" : v < 0 ? "text-[#C0504D]" : "text-[#B0B0B0]"}>
+    <span className={v > 0 ? "text-ds-teal" : v < 0 ? "text-ds-redsoft" : "text-ds-t3"}>
       {fmtDelta(v)}
-      {suffix && <span className="block text-[9px] font-normal text-[#B0B0B0] leading-tight">{suffix}</span>}
+      {suffix && <span className="block text-[9px] font-normal text-ds-t3 leading-tight">{suffix}</span>}
     </span>
   );
 }
@@ -1100,7 +1103,7 @@ function RowViews({ r, periodDays }: { r: GrowthChannelRow; periodDays: number }
   if (!r.viewsPublished) {
     return (
       <span
-        className="text-[#B0B0B0]"
+        className="text-ds-t3"
         title="Snapchat doesn't publish a period view count — its profile pages show views for a changing handful of recent posts, not a figure for these dates."
       >
         —
@@ -1110,7 +1113,7 @@ function RowViews({ r, periodDays }: { r: GrowthChannelRow; periodDays: number }
   if (r.views === null) {
     return (
       <span
-        className="text-[#B0B0B0]"
+        className="text-ds-t3"
         title={r.platform === "youtube"
           ? "No view change to show yet — we hold fewer than two days of view-count history for this channel in this period. It is not a zero."
           : "Meta published no view figure for this channel in this window. It is not a zero."}
@@ -1121,9 +1124,9 @@ function RowViews({ r, periodDays }: { r: GrowthChannelRow; periodDays: number }
   }
   const suffix = spanSuffix(r.viewsDays, periodDays);
   return (
-    <span className="text-[#1A1A1A]" title={r.views.toLocaleString()}>
+    <span className="text-ds-text" title={r.views.toLocaleString()}>
       {fmtMetric(r.views)}
-      {suffix && <span className="block text-[9px] font-normal text-[#B0B0B0] leading-tight">{suffix}</span>}
+      {suffix && <span className="block text-[9px] font-normal text-ds-t3 leading-tight">{suffix}</span>}
     </span>
   );
 }

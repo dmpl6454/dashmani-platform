@@ -2,21 +2,62 @@
 import { useState } from "react";
 import { apiFetch, API_BASE } from "@/lib/api";
 import useSWR from "swr";
-import { Users, Plus, Check, ExternalLink, UserPlus } from "lucide-react";
+import { X } from "lucide-react";
 
-const inputClass = "w-full border border-[#E8E0D0] bg-white rounded-lg px-4 py-2.5 text-sm text-[#1A1A1A] placeholder:text-[#B0B0B0] focus:outline-none focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547] transition-colors";
+const HUES = ["#238BFF", "#E9BD62", "#9B7EDE", "#00D7A0", "#FB7185", "#6EB2FF"];
+const PLAT: Record<string, string> = {
+  instagram: "#E1306C",
+  linkedin: "#0A66C2",
+  youtube: "#E5484D",
+  facebook: "#1877F2",
+  x: "#3A4B5A",
+  twitter: "#3A4B5A",
+};
+const rgba = (hex: string, a: number) => {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`;
+};
+const hash = (s: string) => {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = s.charCodeAt(i) + ((h << 5) - h);
+  return Math.abs(h);
+};
+const initials = (name?: string | null) =>
+  (name || "").trim().split(/\s+/).filter(Boolean).map((p) => p[0]).slice(0, 2).join("").toUpperCase() || "?";
+const kfmt = (n: number | null | undefined) => {
+  if (n === null || n === undefined || Number.isNaN(Number(n))) return "—";
+  const v = Number(n);
+  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1).replace(/\.0$/, "")}m`;
+  if (v >= 1000) return `${(v / 1000).toFixed(v >= 100000 ? 0 : 1).replace(/\.0$/, "")}k`;
+  return String(v);
+};
+const imgSrc = (u: string) => (u.startsWith("http") ? u : `${API_BASE}${u}`);
+
+const USERS = "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM22 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8";
+const USER_PLUS = "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM20 8v6M23 11h-6";
+const CHECK = "M22 11.1V12a10 10 0 1 1-5.9-9.1M22 4L12 14l-3-3";
+
+function Icon({ d, className = "h-4 w-4", sw = 2 }: { d: string; className?: string; sw?: number }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round" className={`${className} shrink-0`} aria-hidden="true">
+      <path d={d} />
+    </svg>
+  );
+}
 
 export default function AutoTeamsPage() {
-  const { data, isLoading, mutate } = useSWR("/admin/auto-teams", (url: string) => apiFetch<any>(url));
+  const { data, isLoading, error, mutate } = useSWR("/admin/auto-teams", (url: string) => apiFetch<any>(url));
   const sharedAccounts = data?.data || [];
   const [teamNames, setTeamNames] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState("");
+  const [errorMsg, setErrorMsg] = useState("");
 
   async function createTeam(account: any) {
     const name = (teamNames[account.accountId] || "").trim();
     if (!name) return;
     setSubmitting(account.accountId);
+    setErrorMsg("");
     try {
       await apiFetch("/admin/auto-teams/create", {
         method: "POST",
@@ -32,107 +73,171 @@ export default function AutoTeamsPage() {
       mutate();
       setTimeout(() => setSuccessMsg(""), 4000);
     } catch (e: any) {
-      alert(e.message);
+      setErrorMsg(e?.message || "Failed to create the team.");
       setSubmitting(null);
     }
   }
 
   return (
-    <div className="space-y-6 crx-animate-fade">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="font-serif text-3xl font-light text-[#1A1A1A]">Auto-Detected Teams</h1>
-          <p className="text-sm text-[#7A7A7A] mt-1">Employees working on the same social accounts are automatically grouped. Create teams from these groups.</p>
+    <div className="pb-8">
+      {/* Header */}
+      <section className="flex items-end justify-between gap-4 flex-wrap pt-[30px] pb-[22px]">
+        <div className="flex-[1_1_320px] min-w-0">
+          <div className="text-[11px] font-bold tracking-[.2em] uppercase text-ds-gold">Teams</div>
+          <h1 className="mt-1.5 text-[30px] sm:text-[38px] font-extrabold tracking-[-.035em] leading-[1.1] text-ds-text">Auto-Detected Teams</h1>
+          <p className="mt-2 text-[13.5px] leading-[1.5] text-ds-t2 max-w-[620px] [text-wrap:pretty]">
+            Employees working on the same social accounts are automatically grouped. Create teams from these groups.
+          </p>
         </div>
-        <div className="flex items-center gap-2 bg-[#FFF3C4] px-4 py-2 rounded-full">
-          <Users className="h-4 w-4 text-[#B8960C]" />
-          <span className="text-sm font-semibold text-[#1A1A1A]">{sharedAccounts.length} Shared Accounts</span>
-        </div>
-      </div>
+        <span className="inline-flex items-center gap-2.5 h-[46px] px-[18px] rounded-full bg-[rgba(233,189,98,.1)] border border-[rgba(233,189,98,.4)] text-ds-gold text-[13.5px] font-bold whitespace-nowrap">
+          <Icon d={USERS} sw={1.9} />
+          <span className="text-[20px] font-extrabold tracking-[-.03em] tabular-nums">{data ? sharedAccounts.length : "—"}</span>
+          <span className="text-ds-text">Shared Accounts</span>
+        </span>
+      </section>
 
       {successMsg && (
-        <div className="bg-green-50 border border-green-200 text-green-800 px-4 py-3 rounded-xl text-sm flex items-center gap-2">
-          <Check className="h-4 w-4" /> {successMsg}
+        <section role="status" className="flex items-center gap-2.5 mb-4 px-[18px] py-3.5 rounded-[14px] bg-[rgba(0,215,160,.08)] border border-[rgba(0,215,160,.35)] text-ds-teal text-[13.5px] font-semibold">
+          <Icon d={CHECK} />
+          {successMsg}
+        </section>
+      )}
+
+      {errorMsg && (
+        <div role="alert" className="mb-4 px-3.5 py-2.5 rounded-[8px] bg-[rgba(229,72,77,.08)] border border-[rgba(229,72,77,.3)] text-[#FB7185] text-[12.5px] flex items-center justify-between gap-3">
+          <span>{errorMsg}</span>
+          <button type="button" onClick={() => setErrorMsg("")} aria-label="Dismiss" className="shrink-0 hover:text-ds-text"><X className="h-4 w-4" /></button>
         </div>
       )}
 
       {isLoading ? (
-        <div className="flex items-center justify-center h-40">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#F5D547]" />
-        </div>
+        <section className="grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(min(100%,340px),1fr))]">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="h-[360px] rounded-[18px] border border-[#2A4658] bg-ds-card motion-safe:animate-pulse" />
+          ))}
+        </section>
+      ) : error && !data ? (
+        <section className="rounded-[18px] border border-[#2A4658] bg-ds-card py-14 px-5 text-center text-ds-t3 text-[13px]">
+          Shared accounts couldn&apos;t be loaded just now. Refresh to try again.
+        </section>
       ) : sharedAccounts.length === 0 ? (
-        <div className="bg-white rounded-2xl border border-[#E8E0D0] p-12 text-center">
-          <Users className="h-12 w-12 mx-auto mb-3 text-[#B0B0B0]" />
-          <p className="text-[#7A7A7A] font-medium">No shared accounts found</p>
-          <p className="text-sm text-[#B0B0B0] mt-1">Teams will appear here when multiple employees are assigned to the same account</p>
-        </div>
+        <section className="rounded-[18px] border border-[#2A4658] bg-ds-card shadow-[0_12px_32px_rgba(0,0,0,.32)] py-16 px-5 flex flex-col items-center gap-2.5 text-center text-ds-t3 text-[13px]">
+          <Icon d={USERS} className="h-9 w-9" sw={1.5} />
+          <span className="text-[14.5px] font-semibold text-ds-text">No shared accounts found</span>
+          Teams will appear here when multiple employees are assigned to the same account
+        </section>
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-          {sharedAccounts.map((account: any) => (
-            <div key={account.accountId} className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-[#E8E0D0] overflow-hidden">
-              {/* Account Header */}
-              <div className="bg-[#FEFCF7] border-b border-[#F0EAD8] p-4 flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="h-10 w-10 rounded-xl bg-[#FFF3C4] flex items-center justify-center text-lg font-bold text-[#1A1A1A]">
-                    {account.platform?.[0] || "?"}
-                  </div>
-                  <div>
-                    <p className="font-semibold text-[#1A1A1A]">{account.displayName || account.handle}</p>
-                    <p className="text-xs text-[#7A7A7A]">{account.platform} · @{account.handle} {account.clientName ? `· ${account.clientName}` : ""}</p>
-                  </div>
-                </div>
-                <div className="text-right">
-                  <p className="text-xs text-[#7A7A7A]">Followers</p>
-                  <p className="text-sm font-semibold text-[#1A1A1A]">{(account.followerCount || 0).toLocaleString()}</p>
-                </div>
-              </div>
-
-              {/* Members */}
-              <div className="p-4 space-y-2">
-                <p className="text-xs font-medium text-[#7A7A7A] uppercase tracking-wide mb-2">{account.members.length} Team Members</p>
-                {account.members.map((member: any) => (
-                  <div key={member.id} className="flex items-center gap-3 p-2 rounded-lg hover:bg-[#FEFCF7] transition-colors">
-                    {member.profileImageUrl ? (
-                      <img src={member.profileImageUrl.startsWith("http") ? member.profileImageUrl : `${API_BASE}${member.profileImageUrl}`} alt="" className="h-8 w-8 rounded-full object-cover" />
-                    ) : (
-                      <div className="h-8 w-8 rounded-full bg-[#FFF3C4] flex items-center justify-center text-sm font-bold text-[#1A1A1A]">
-                        {member.name?.[0]?.toUpperCase() || "?"}
-                      </div>
-                    )}
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-[#1A1A1A] truncate">{member.name}</p>
-                      <p className="text-xs text-[#7A7A7A] truncate">{member.email}</p>
+        <section className="grid gap-4 mb-8 [grid-template-columns:repeat(auto-fill,minmax(min(100%,340px),1fr))]">
+          {sharedAccounts.map((account: any) => {
+            const platform: string = account.platform || "";
+            const pc = PLAT[platform.toLowerCase()] || "#E9BD62";
+            const members: any[] = account.members || [];
+            const busy = submitting === account.accountId;
+            const value = teamNames[account.accountId] ?? "";
+            const hueOf = (m: any) => HUES[hash(m.name || m.email || m.id || "") % HUES.length];
+            return (
+              <div key={account.accountId} className="rounded-[18px] border border-[#2A4658] bg-ds-card shadow-[0_12px_32px_rgba(0,0,0,.32)] flex flex-col overflow-hidden min-w-0">
+                {/* Account header */}
+                <div
+                  className="px-[22px] pt-[22px] pb-5 border-b border-[#1A2C38] flex items-center gap-3.5"
+                  style={{ background: `linear-gradient(135deg, ${rgba(pc, 0.16)}, transparent 70%)` }}
+                >
+                  <span
+                    className="h-12 w-12 rounded-[14px] grid place-items-center text-white text-[20px] font-extrabold shrink-0"
+                    style={{ background: pc, boxShadow: `0 8px 20px ${rgba(pc, 0.35)}` }}
+                  >
+                    {platform[0]?.toUpperCase() || "?"}
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-[17px] font-extrabold tracking-[-.02em] text-ds-text [overflow-wrap:anywhere]">
+                      {account.displayName || account.handle || "—"}
                     </div>
-                    {member.currentTeam && (
-                      <span className="text-xs bg-[#FFF3C4] text-[#B8960C] px-2.5 py-1 rounded-full font-medium">{member.currentTeam}</span>
-                    )}
+                    <div className="mt-1 text-[12px] text-ds-t2 [overflow-wrap:anywhere]">
+                      {platform || "—"} · @{account.handle}
+                      {account.clientName ? ` · ${account.clientName}` : ""}
+                    </div>
                   </div>
-                ))}
-              </div>
+                  <div className="text-right shrink-0">
+                    <div className="text-[22px] font-extrabold tracking-[-.03em] leading-none tabular-nums text-ds-text">{kfmt(account.followerCount)}</div>
+                    <div className="mt-[5px] text-[10px] font-bold tracking-[.14em] uppercase text-ds-t3">Followers</div>
+                  </div>
+                </div>
 
-              {/* Create Team Action */}
-              <div className="border-t border-[#F0EAD8] p-4 bg-[#FEFCF7]">
-                <div className="flex gap-2">
+                {/* Member label + stack */}
+                <div className="px-[22px] pt-4 pb-2 flex items-center justify-between gap-2.5">
+                  <span className="text-[11px] font-bold tracking-[.14em] uppercase text-ds-t3">{members.length} Team Members</span>
+                  <span className="flex pl-2">
+                    {members.slice(0, 4).map((m: any) => (
+                      <span
+                        key={m.id}
+                        className="h-7 w-7 -ml-2 rounded-full border-2 border-ds-card grid place-items-center text-[10px] font-extrabold text-[#060D14]"
+                        style={{ background: rgba(hueOf(m), 0.9) }}
+                      >
+                        {initials(m.name)}
+                      </span>
+                    ))}
+                  </span>
+                </div>
+
+                {/* Members */}
+                <div className="px-3 pb-3 flex flex-col">
+                  {members.map((member: any) => {
+                    const hue = hueOf(member);
+                    return (
+                      <div key={member.id} className="flex items-center gap-3 p-2.5 rounded-[12px] hover:bg-ds-inset transition-colors">
+                        {member.profileImageUrl ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={imgSrc(member.profileImageUrl)} alt="" className="h-9 w-9 rounded-full object-cover shrink-0" />
+                        ) : (
+                          <span
+                            className="h-9 w-9 rounded-full grid place-items-center text-[12px] font-extrabold shrink-0"
+                            style={{ background: rgba(hue, 0.16), color: hue }}
+                          >
+                            {initials(member.name)}
+                          </span>
+                        )}
+                        <span className="flex-1 min-w-0 leading-[1.3]">
+                          <span className="block text-[13.5px] font-semibold text-ds-text truncate">{member.name || "—"}</span>
+                          <span className="block text-[11.5px] text-ds-t3 truncate">{member.email || "—"}</span>
+                        </span>
+                        {member.currentTeam && (
+                          <span className="h-6 px-2.5 rounded-full bg-[rgba(233,189,98,.1)] border border-[rgba(233,189,98,.3)] text-ds-gold text-[11px] font-semibold inline-flex items-center whitespace-nowrap shrink-0 max-w-[45%] truncate">
+                            {member.currentTeam}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Create team */}
+                <div className="mt-auto px-[22px] pt-4 pb-5 border-t border-[#1A2C38] bg-[#0A1620] flex gap-2.5 flex-wrap">
                   <input
                     type="text"
+                    aria-label={`Team name for ${account.displayName || account.handle}`}
                     placeholder={`Team name (e.g., "${account.handle} Team")`}
-                    value={teamNames[account.accountId] ?? ""}
-                    onFocus={() => { if (!teamNames[account.accountId]) setTeamNames((prev) => ({ ...prev, [account.accountId]: `${account.displayName || account.handle} Team` })); }}
+                    value={value}
+                    onFocus={() => {
+                      if (!teamNames[account.accountId])
+                        setTeamNames((prev) => ({ ...prev, [account.accountId]: `${account.displayName || account.handle} Team` }));
+                    }}
                     onChange={(e) => setTeamNames((prev) => ({ ...prev, [account.accountId]: e.target.value }))}
-                    className={inputClass}
+                    className="flex-[1_1_180px] min-w-0 h-[46px] px-[18px] rounded-full border border-ds-line2 bg-ds-inset text-ds-text text-[16px] sm:text-[13.5px] outline-none focus:border-[rgba(233,189,98,.6)] placeholder:text-ds-t4 [color-scheme:dark]"
                   />
                   <button
+                    type="button"
                     onClick={() => createTeam(account)}
-                    disabled={submitting === account.accountId || !teamNames[account.accountId]?.trim()}
-                    className="flex items-center gap-2 bg-[#1A1A1A] text-white px-5 py-2.5 rounded-lg text-sm font-semibold hover:bg-[#2B2B2B] disabled:opacity-50 transition-all whitespace-nowrap"
+                    disabled={busy || !value.trim()}
+                    className="inline-flex items-center justify-center gap-2 h-[46px] px-5 rounded-full bg-ds-gold text-[#060D14] text-[13.5px] font-bold whitespace-nowrap hover:bg-[#F4D58C] disabled:opacity-50 disabled:hover:bg-ds-gold"
                   >
-                    <UserPlus className="h-4 w-4" /> {submitting === account.accountId ? "Creating..." : "Create Team"}
+                    <Icon d={USER_PLUS} className="h-[15px] w-[15px]" />
+                    {busy ? "Creating..." : "Create Team"}
                   </button>
                 </div>
               </div>
-            </div>
-          ))}
-        </div>
+            );
+          })}
+        </section>
       )}
     </div>
   );

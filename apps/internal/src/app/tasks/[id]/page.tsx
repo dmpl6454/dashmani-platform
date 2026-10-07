@@ -6,6 +6,7 @@ import { Button, Input } from "@dashmani/ui";
 import { apiFetch } from "@/lib/api";
 import { useEmployees } from "@/lib/hooks/use-employees";
 import { usePageTitle } from "@/lib/hooks/use-page-title";
+import { BoxesLoader } from "@/components/boxes-loader";
 
 const STATUS_LABELS: Record<string, string> = {
   TODO: "To Do", IN_PROGRESS: "In Progress", IN_REVIEW: "In Review", DONE: "Done", CANCELLED: "Cancelled",
@@ -33,7 +34,7 @@ export default function TaskDetailPage() {
   const { data: employeesData } = useEmployees({ status: "ACTIVE", limit: 500 });
   const employees: any[] = (employeesData as any)?.data || [];
 
-  if (isLoading) return <div className="flex items-center justify-center h-64"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#F5D547]" /></div>;
+  if (isLoading) return <div className="flex items-center justify-center h-64"><BoxesLoader /></div>;
   const task = (data as any)?.data;
   if (!task) return <div className="text-[#7A7A7A] text-center py-8">Task not found</div>;
 

@@ -19,7 +19,8 @@ import { apiFetchBlob, downloadBlob } from "@/lib/api";
  * startDate/endDate/employeeId, and the export scopes to that employee.
  */
 
-type Variant = "light" | "dark";
+// "ds" = the premium dark redesign (only /reports itself uses it so far).
+type Variant = "light" | "dark" | "ds";
 
 interface DownloadButtonProps {
   startDate: string;
@@ -29,6 +30,8 @@ interface DownloadButtonProps {
 }
 
 function skinFor(variant: Variant) {
+  if (variant === "ds")
+    return "h-[42px] !px-4 !py-0 border border-ds-line2 bg-ds-inset text-ds-t5 !text-[13px] !font-semibold whitespace-nowrap hover:border-[#2A4658] hover:text-ds-text";
   return variant === "dark"
     ? "bg-[#1A1A1A] text-white shadow-[0_4px_16px_rgba(0,0,0,0.18)] hover:shadow-[0_6px_24px_rgba(0,0,0,0.22)]"
     : "bg-white border border-[#E8E0D0] text-[#1A1A1A] hover:shadow-[0_4px_12px_rgba(0,0,0,0.08)]";
@@ -85,11 +88,11 @@ function DownloadButton({
         {loading ? (
           <Loader2 className="h-4 w-4 animate-spin" />
         ) : (
-          <Icon className="h-4 w-4 text-emerald-600" />
+          <Icon className={`h-4 w-4 ${variant === "ds" ? "text-ds-teal" : "text-emerald-600"}`} />
         )}
         {loading ? busyLabel : idleLabel}
       </button>
-      {error && <span className="text-xs text-red-600 max-w-[220px] text-right">{error}</span>}
+      {error && <span className={`text-xs max-w-[220px] text-right ${variant === "ds" ? "text-[#FB7185]" : "text-red-600"}`}>{error}</span>}
     </div>
   );
 }

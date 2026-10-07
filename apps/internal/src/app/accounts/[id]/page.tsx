@@ -7,6 +7,7 @@ import { Button } from "@dashmani/ui";
 import { apiFetch } from "@/lib/api";
 import { Pencil, Trash2, Search, BarChart2, ChevronDown, X, Users, Link2, TrendingUp, TrendingDown } from "lucide-react";
 import Link from "next/link";
+import { BoxesLoader } from "@/components/boxes-loader";
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip,
   ResponsiveContainer, CartesianGrid,
@@ -112,7 +113,7 @@ export default function AccountDetailPage() {
     });
   }, []);
 
-  if (isLoading) return <div className="flex items-center justify-center h-64"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#F5D547]" /></div>;
+  if (isLoading) return <div className="flex items-center justify-center h-64"><BoxesLoader /></div>;
   const account = (data as any)?.data;
   if (!account) return <div className="text-[#7A7A7A] text-center py-8">Account not found</div>;
 

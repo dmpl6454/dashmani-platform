@@ -4,9 +4,6 @@ import Link from "next/link";
 import {
   ArrowLeft, Receipt, DollarSign, TrendingUp, Info, Activity, Server, AlertTriangle, Power,
 } from "lucide-react";
-import {
-  ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid,
-} from "recharts";
 import { useCostSheet, useOpenAiBilling, type ProviderCost, type OpenAiBilling } from "@/lib/hooks/use-cost-sheet";
 import { usePageTitle } from "@/lib/hooks/use-page-title";
 import { apiFetch } from "@/lib/api";
@@ -21,6 +18,7 @@ const PROVIDER_LABEL: Record<string, string> = {
   openai: "OpenAI", gemini: "Gemini", anthropic: "Anthropic (Claude)",
   meta: "Meta Graph (IG/FB)", youtube: "YouTube Data", deepseek: "DeepSeek",
 };
+const PROVIDER_DOT: Record<string, string> = { openai: "#00D7A0", gemini: "#6EB2FF", anthropic: "#E9BD62", deepseek: "#9B7EDE" };
 // The ONLY active LLM going forward is Gemini (entity-extraction switched to
 // Gemini-only on 2026-06-29 — measured cheapest by far). OpenAI + Anthropic rows
 // are HISTORICAL: real spend that already happened, kept visible for honesty, but
@@ -30,6 +28,24 @@ const PROVIDER_LABEL: Record<string, string> = {
 const HISTORICAL_PROVIDERS = new Set(["openai", "anthropic"]);
 
 const RANGES = [7, 14, 30, 90] as const;
+const rgba = (hex: string, a: number) => {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`;
+};
+
+const CARD = "rounded-[16px] border border-[#2A4658] bg-ds-card shadow-[0_12px_32px_rgba(0,0,0,.3)]";
+const TH = "text-[10.5px] font-semibold tracking-[.08em] uppercase text-ds-t3 pb-3 border-b border-[#1A2C38] whitespace-nowrap";
+const TD = "py-[13px] border-b border-[#132430] text-[13.5px] tabular-nums whitespace-nowrap";
+
+function CardTitle({ icon, color, children, note }: { icon: React.ReactNode; color: string; children: React.ReactNode; note?: React.ReactNode }) {
+  return (
+    <div className="flex items-center gap-2.5 flex-wrap mb-4">
+      <span className="flex" style={{ color }}>{icon}</span>
+      <span className="text-[15px] font-semibold text-ds-text">{children}</span>
+      {note && <span className="ml-auto text-[11.5px] text-ds-t3">{note}</span>}
+    </div>
+  );
+}
 
 export default function ApiCostsPage() {
   usePageTitle("API Costs");
@@ -52,11 +68,7 @@ export default function ApiCostsPage() {
         if (!cancelled) setEnrichmentEnabled((res as any)?.data?.enabled ?? true);
       })
       .catch((err: any) => {
-        // Without setting enrichmentState here, this catch used to fail SILENTLY:
-        // enrichmentEnabled stays null forever (switch permanently disabled via the
-        // `enrichmentEnabled === null` guard below) with no on-screen explanation.
-        // Reuse the same error-display block the PUT failure path already renders
-        // (enrichmentState === "error") instead of inventing a second one.
+        // Show why the switch is unavailable instead of leaving it silently disabled.
         if (cancelled) return;
         setEnrichmentError(err?.message || "Failed to load enrichment status. Reload the page to try again.");
         setEnrichmentState("error");
@@ -164,129 +176,139 @@ export default function ApiCostsPage() {
   const paidProviders = byProvider.filter((p) => PAID.has(p.provider));
   const freeProviders = byProvider.filter((p) => !PAID.has(p.provider));
 
-  const chartData = daily.map((x) => ({
-    date: new Date(x.date).toLocaleDateString("en-IN", { day: "numeric", month: "short" }),
-    cost: Number(x.costUsd.toFixed(4)),
+  // Daily bars (drawn as plain bars like the mockup).
+  const bars = daily.map((x) => ({
+    label: new Date(x.date).toLocaleDateString("en-IN", { day: "numeric", month: "short" }),
+    cost: x.costUsd,
   }));
+  const maxCost = Math.max(0, ...bars.map((b) => b.cost));
+  const top = maxCost > 0 ? (maxCost >= 1 ? Math.ceil(maxCost) : Math.ceil(maxCost * 100) / 100) : 1;
+  const yTicks = [1, 0.75, 0.5, 0.25, 0].map((f) => {
+    const v = top * f;
+    return v === 0 ? "$0" : `$${+v.toFixed(v >= 1 ? 2 : 3)}`;
+  });
+  // Up to six evenly spaced date labels under the bars.
+  const tickCount = Math.min(6, bars.length);
+  const xTickIdx: number[] =
+    tickCount <= 1 ? [0] : Array.from({ length: tickCount }, (_v, i: number) => Math.round(((bars.length - 1) * i) / (tickCount - 1)));
+
+  const ceilPct = ceiling && ceiling > 0 && todaySpend != null ? Math.min(100, (todaySpend / ceiling) * 100) : 0;
 
   return (
-    <div className="space-y-6 pop-in">
+    <div className="pb-8">
       {/* Header */}
-      <div className="flex items-center gap-3">
-        <Link href="/dashboard" className="flex items-center gap-1 text-sm text-[#7A7A7A] hover:text-[#1A1A1A] transition-colors">
-          <ArrowLeft className="h-4 w-4" /> Dashboard
+      <section className="pt-[26px]">
+        <Link href="/dashboard" className="inline-flex items-center gap-1.5 text-[13px] text-ds-t2 hover:text-ds-text">
+          <ArrowLeft className="h-3.5 w-3.5" /> Dashboard
         </Link>
-      </div>
-
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div className="flex items-center gap-2.5">
-          <div className="h-9 w-9 rounded-xl bg-indigo-soft flex items-center justify-center">
-            <Receipt className="h-5 w-5 text-indigo" />
-          </div>
-          <div>
-            <h1 className="font-display text-2xl font-semibold text-ink">API Costs</h1>
-            <p className="text-sm text-ink-4 mt-0.5">
+      </section>
+      <section className="flex items-center justify-between gap-4 flex-wrap pt-3.5 pb-[22px]">
+        <div className="flex items-center gap-3.5 min-w-0 flex-[1_1_360px]">
+          <span className="h-[46px] w-[46px] rounded-[13px] bg-[rgba(233,189,98,.12)] border border-[rgba(233,189,98,.4)] text-ds-gold grid place-items-center shrink-0">
+            <Receipt className="h-5 w-5" />
+          </span>
+          <div className="min-w-0">
+            <h1 className="text-[34px] font-bold tracking-[-.03em] text-ds-text leading-tight">API Costs</h1>
+            <p className="mt-1 text-[13.5px] text-ds-t2 [text-wrap:pretty]">
               What every AI &amp; data API is costing — so you know how much credit to top up.
             </p>
           </div>
         </div>
         {/* Window pills */}
-        <div className="flex items-center gap-1 rounded-xl border-2 border-ink/10 p-1">
+        <div className="flex gap-1 p-[5px] rounded-full bg-ds-inset border border-ds-line2" role="group" aria-label="Window">
           {RANGES.map((r) => (
             <button
               key={r}
+              type="button"
+              aria-pressed={days === r}
               onClick={() => setDays(r)}
-              className={`px-3 py-1 rounded-lg text-xs font-medium transition-colors ${
-                days === r ? "bg-ink text-white" : "text-ink-4 hover:text-ink"
-              }`}
+              className={`h-[34px] px-4 rounded-full text-[13px] font-semibold transition-colors ${days === r ? "bg-ds-gold text-[#060D14]" : "text-ds-t2 hover:text-ds-text"}`}
             >
               {r}d
             </button>
           ))}
         </div>
-      </div>
+      </section>
 
-      {/* Enrichment kill-switch */}
-      <div className="v3-card p-5 flex items-start justify-between gap-4 flex-wrap">
-        <div className="flex items-start gap-2.5">
-          <div className="h-9 w-9 rounded-xl bg-terra-soft flex items-center justify-center shrink-0">
-            <Power className="h-4 w-4 text-terra" />
-          </div>
-          <div>
-            <p className="font-semibold text-ink text-sm">Caption enrichment (LLM entity tagging)</p>
-            <p className="text-xs text-ink-4 mt-0.5 max-w-xl">
+      <section className="flex flex-col gap-3.5">
+        {/* Enrichment kill-switch */}
+        <div className={`${CARD} px-[22px] py-5 flex items-start gap-3.5`}>
+          <span className="h-[38px] w-[38px] rounded-[11px] grid place-items-center shrink-0 bg-[rgba(251,146,60,.12)] text-[#FB923C]">
+            <Power className="h-4 w-4" />
+          </span>
+          <div className="flex-1 min-w-0 max-w-[720px]">
+            <div className="text-[14px] font-semibold text-ds-text">Caption enrichment (LLM entity tagging)</div>
+            <p className="mt-[5px] text-[12.5px] leading-[1.55] text-ds-t2 [text-wrap:pretty]">
               Turn off to stop paid LLM calls immediately. Follower sync, engagement metrics, and
               caption harvesting keep running — only entity tagging pauses.
             </p>
-            {enrichmentState === "error" && (
-              <p className="text-xs text-attention mt-1">{enrichmentError}</p>
-            )}
+            {enrichmentState === "error" ? (
+              <div className="mt-2.5 text-[12px] font-semibold text-[#FB7185]">{enrichmentError}</div>
+            ) : enrichmentEnabled !== null ? (
+              <div className={`mt-2.5 text-[12px] font-semibold ${enrichmentEnabled ? "text-ds-teal" : "text-[#FB7185]"}`}>
+                ● {enrichmentEnabled ? "Enabled" : "Paused"}
+              </div>
+            ) : null}
           </div>
-        </div>
-        <button
-          type="button"
-          role="switch"
-          aria-checked={enrichmentEnabled ?? false}
-          aria-live="polite"
-          disabled={enrichmentEnabled === null || enrichmentState === "loading"}
-          onClick={handleToggleEnrichment}
-          className={`relative h-7 w-12 shrink-0 rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
-            enrichmentEnabled ? "bg-sage" : "bg-ink/15"
-          }`}
-        >
-          <span
-            className={`absolute top-0.5 left-0.5 h-6 w-6 rounded-full bg-white shadow transition-transform ${
-              enrichmentEnabled ? "translate-x-5" : "translate-x-0"
-            }`}
-          />
-        </button>
-      </div>
-
-      {/* Daily spend ceiling — hard auto-pause once today's DeepSeek spend hits this. */}
-      <div className="v3-card p-5 flex items-start justify-between gap-4 flex-wrap">
-        <div className="flex items-start gap-2.5">
-          <div className="h-9 w-9 rounded-xl bg-indigo-soft flex items-center justify-center shrink-0">
-            <AlertTriangle className="h-4 w-4 text-indigo" />
-          </div>
-          <div>
-            <p className="font-semibold text-ink text-sm">Daily spend ceiling (DeepSeek extraction)</p>
-            <p className="text-xs text-ink-4 mt-0.5 max-w-xl">
-              Today: <span className="font-medium text-ink">{todaySpend != null ? usd(todaySpend) : "…"}</span> of{" "}
-              <span className="font-medium text-ink">{ceiling != null ? usd(ceiling) : "…"}</span> — extraction
-              auto-pauses for the rest of the UTC day once today&rsquo;s spend hits the ceiling.
-            </p>
-            {ceilingState === "error" && (
-              <p className="text-xs text-attention mt-1">{ceilingError}</p>
-            )}
-          </div>
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
-          <label htmlFor="spend-ceiling-input" className="text-xs text-ink-4">
-            Ceiling (USD)
-          </label>
-          <input
-            id="spend-ceiling-input"
-            value={ceilingInput}
-            onChange={(e) => setCeilingInput(e.target.value)}
-            inputMode="decimal"
-            disabled={ceilingState === "loading"}
-            className="w-24 rounded-lg border-2 border-ink/10 px-2 py-1 text-sm text-ink disabled:opacity-50"
-          />
           <button
             type="button"
-            onClick={saveCeiling}
-            disabled={ceilingState === "loading"}
-            className="px-3 py-1.5 rounded-lg bg-ink text-white text-xs font-medium disabled:opacity-50"
+            role="switch"
+            aria-checked={enrichmentEnabled ?? false}
+            aria-label="Caption enrichment"
+            aria-live="polite"
+            disabled={enrichmentEnabled === null || enrichmentState === "loading"}
+            onClick={handleToggleEnrichment}
+            className={`relative h-7 w-[50px] shrink-0 rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${enrichmentEnabled ? "bg-[#00B386]" : "bg-[#2A3B48]"}`}
           >
-            {ceilingState === "loading" ? "Saving…" : "Save"}
+            <span
+              className={`absolute top-[3px] h-[22px] w-[22px] rounded-full bg-ds-text shadow-[0_2px_6px_rgba(0,0,0,.4)] transition-[left] ${enrichmentEnabled ? "left-[25px]" : "left-[3px]"}`}
+            />
           </button>
         </div>
-      </div>
+
+        {/* Daily spend ceiling — hard auto-pause once today's DeepSeek spend hits this. */}
+        <div className={`${CARD} px-[22px] py-5 flex items-start gap-3.5 flex-wrap`}>
+          <span className="h-[38px] w-[38px] rounded-[11px] grid place-items-center shrink-0 bg-[rgba(110,178,255,.12)] text-[#6EB2FF]">
+            <AlertTriangle className="h-4 w-4" />
+          </span>
+          <div className="flex-[1_1_320px] min-w-0 max-w-[720px]">
+            <div className="text-[14px] font-semibold text-ds-text">Daily spend ceiling (DeepSeek extraction)</div>
+            <p className="mt-[5px] text-[12.5px] leading-[1.55] text-ds-t2 [text-wrap:pretty]">
+              Today: <b className="text-ds-text font-semibold">{todaySpend != null ? usd(todaySpend) : "…"}</b> of{" "}
+              <b className="text-ds-text font-semibold">{ceiling != null ? usd(ceiling) : "…"}</b> — extraction
+              auto-pauses for the rest of the UTC day once today&rsquo;s spend hits the ceiling.
+            </p>
+            {ceiling != null && todaySpend != null && (
+              <div className="mt-2.5 h-1.5 rounded-[3px] bg-[#132430] overflow-hidden">
+                <div className="h-full rounded-[3px]" style={{ width: `${ceilPct}%`, background: ceilPct > 85 ? "#FB7185" : "#6EB2FF" }} />
+              </div>
+            )}
+            {ceilingState === "error" && <p className="mt-2 text-[12px] text-[#FB7185]">{ceilingError}</p>}
+          </div>
+          <div className="flex items-center gap-2.5 shrink-0 self-center ml-auto">
+            <label htmlFor="spend-ceiling-input" className="text-[12px] text-ds-t3 whitespace-nowrap">Ceiling (USD)</label>
+            <input
+              id="spend-ceiling-input"
+              value={ceilingInput}
+              onChange={(e) => setCeilingInput(e.target.value)}
+              inputMode="decimal"
+              disabled={ceilingState === "loading"}
+              className="w-[120px] h-[38px] px-3.5 rounded-full border border-ds-line2 bg-ds-inset text-ds-text text-[16px] sm:text-[13.5px] outline-none focus:border-[rgba(233,189,98,.6)] disabled:opacity-50"
+            />
+            <button
+              type="button"
+              onClick={saveCeiling}
+              disabled={ceilingState === "loading"}
+              className="h-[38px] px-[18px] rounded-full bg-ds-gold text-[#060D14] text-[13px] font-bold hover:bg-[#F4D58C] disabled:opacity-50"
+            >
+              {ceilingState === "loading" ? "Saving…" : "Save"}
+            </button>
+          </div>
+        </div>
+      </section>
 
       {isLoading && !d && (
-        <div className="v3-card p-8 flex items-center justify-center">
-          <p className="text-sm text-ink-4">Loading cost data…</p>
-        </div>
+        <div className={`${CARD} mt-3.5 p-8 text-center text-[13px] text-ds-t3`}>Loading cost data…</div>
       )}
 
       {d && (
@@ -294,233 +316,241 @@ export default function ApiCostsPage() {
           {/* AUTHORITATIVE — OpenAI billed cost (Costs API). The source of truth when
               the admin key is set. Shown ABOVE our estimate so the real number leads. */}
           {billingAvailable && (
-            <div className="v3-card p-5 border-2 border-sage/40 bg-sage/5 space-y-2">
-              <div className="flex items-center gap-2">
-                <DollarSign className="h-4 w-4 text-sage" />
-                <p className="font-semibold text-ink">OpenAI — Billed (authoritative)</p>
-                <span className="ml-auto text-[11px] text-ink-4">official Costs API</span>
+            <section className="mt-3.5 rounded-[16px] border border-[rgba(0,215,160,.35)] bg-[linear-gradient(180deg,rgba(0,215,160,.06),rgba(0,215,160,.01))] shadow-[0_12px_32px_rgba(0,0,0,.3)] px-6 py-[22px]">
+              <div className="flex items-center gap-2.5 flex-wrap">
+                <DollarSign className="h-4 w-4 text-ds-teal" />
+                <span className="text-[15px] font-semibold text-ds-text">OpenAI — Billed (authoritative)</span>
+                <span className="ml-auto text-[11.5px] text-ds-t3 whitespace-nowrap">official Costs API</span>
               </div>
-              <p className="font-num text-3xl font-semibold text-ink leading-none">{usd(billing!.totalUsd)}</p>
-              <p className="text-xs text-ink-4">
-                Exact billed spend over the last {days} days{billing!.since ? `, since ${fmtDay(billing!.since)}` : ""}.
-                This is the <span className="font-medium">real invoice figure</span> — caching-aware, not an estimate.
-              </p>
-              <p className="text-[11px] text-ink-4 leading-snug border-t border-sage/20 pt-1.5">
-                ⚠️ <span className="font-medium">Combined total</span> — the OpenAI key is shared with the other app
-                (&ldquo;Post Automation&rdquo;), so this covers <span className="font-medium">both apps</span>. {billing!.lagNote} Our token-based
-                figures below are an internal estimate for this app&rsquo;s share + the forward projection.
-              </p>
-            </div>
+              <div className="flex items-end gap-6 flex-wrap mt-3.5">
+                <span className="text-[40px] font-bold tracking-[-.04em] leading-none tabular-nums text-ds-text">{usd(billing!.totalUsd)}</span>
+                <p className="flex-[1_1_320px] text-[12.5px] leading-[1.55] text-ds-t2">
+                  Exact billed spend over the last {days} days{billing!.since ? `, since ${fmtDay(billing!.since)}` : ""}.
+                  This is the <b className="text-ds-text font-semibold">real invoice figure</b> — caching-aware, not an estimate.
+                </p>
+              </div>
+              <div className="flex gap-2 items-start mt-4 pt-3.5 border-t border-[rgba(0,215,160,.18)] text-[12px] leading-[1.55] text-ds-t2">
+                <AlertTriangle className="h-[13px] w-[13px] text-ds-gold shrink-0 mt-0.5" />
+                <span>
+                  <b className="text-ds-text font-semibold">Combined total</b> — the OpenAI key is shared with the other app
+                  (&ldquo;Post Automation&rdquo;), so this covers <b className="text-ds-text font-semibold">both apps</b>. {billing!.lagNote} Our token-based
+                  figures below are an internal estimate for this app&rsquo;s share + the forward projection.
+                </span>
+              </div>
+            </section>
           )}
 
           {/* Headline cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <div className="v3-card p-5 space-y-1">
-              <div className="h-8 w-8 rounded-lg bg-terra-soft flex items-center justify-center">
-                <DollarSign className="h-4 w-4 text-terra" />
+          <section className="grid grid-cols-1 sm:grid-cols-3 gap-3.5 mt-3.5">
+            {[
+              { v: usd(total), l: coverageLabel, c: "#FB923C", Icon: DollarSign },
+              {
+                v: projectionReliable ? usd(projMonthly) : "—",
+                l: projectionReliable ? "Projected next 30 days (forward run-rate, excl. one-time backfill)" : "Forward projection pending — backfill still draining",
+                c: "#6EB2FF",
+                Icon: TrendingUp,
+              },
+              {
+                v: projectionReliable ? usd(projDaily) : "—",
+                l: projectionReliable ? "Forward daily run-rate (steady state)" : "Available once at steady state",
+                c: "#00D7A0",
+                Icon: Activity,
+              },
+            ].map(({ v, l, c, Icon }) => (
+              <div key={l} className={`${CARD} px-[22px] py-5 flex flex-col gap-3.5 min-w-0`}>
+                <span className="h-9 w-9 rounded-[10px] grid place-items-center" style={{ background: rgba(c, 0.12), color: c }}>
+                  <Icon className="h-4 w-4" />
+                </span>
+                <span className="text-[34px] font-bold tracking-[-.04em] leading-none tabular-nums text-ds-text">{v}</span>
+                <span className="text-[12.5px] leading-[1.45] text-ds-t2 [text-wrap:pretty]">{l}</span>
               </div>
-              <p className="font-num text-3xl font-semibold text-ink leading-none pt-1">{usd(total)}</p>
-              <p className="text-xs text-ink-4">{coverageLabel}</p>
-            </div>
-            <div className="v3-card p-5 space-y-1">
-              <div className="h-8 w-8 rounded-lg bg-indigo-soft flex items-center justify-center">
-                <TrendingUp className="h-4 w-4 text-indigo" />
-              </div>
-              <p className="font-num text-3xl font-semibold text-ink leading-none pt-1">
-                {projectionReliable ? usd(projMonthly) : "—"}
-              </p>
-              <p className="text-xs text-ink-4">
-                {projectionReliable
-                  ? "Projected next 30 days (forward run-rate, excl. one-time backfill)"
-                  : "Forward projection pending — backfill still draining"}
-              </p>
-            </div>
-            <div className="v3-card p-5 space-y-1">
-              <div className="h-8 w-8 rounded-lg bg-sage-soft flex items-center justify-center">
-                <Activity className="h-4 w-4 text-sage" />
-              </div>
-              <p className="font-num text-3xl font-semibold text-ink leading-none pt-1">
-                {projectionReliable ? usd(projDaily) : "—"}
-              </p>
-              <p className="text-xs text-ink-4">
-                {projectionReliable ? "Forward daily run-rate (steady state)" : "Available once at steady state"}
-              </p>
-            </div>
-          </div>
+            ))}
+          </section>
 
-          {/* Top-up guidance */}
-          <div className="rounded-xl border border-indigo/20 bg-indigo-soft px-4 py-3 flex items-start gap-3">
-            <Info className="h-4 w-4 text-indigo shrink-0 mt-0.5" />
-            <p className="text-xs text-ink leading-relaxed">
-              {projectionReliable ? (
-                <>
-                  To cover the next month, keep at least{" "}
-                  <span className="font-semibold">{usd(projMonthly)}</span> of credit across the paid AI providers
-                  (OpenAI is primary; Gemini &amp; Anthropic are fallbacks). This is the <span className="font-medium">forward steady-state</span> rate
-                  (the daily new-link inflow) — it excludes the one-time historical backfill, which won&rsquo;t recur, so going-forward cost is well below total spend-to-date.{" "}
-                </>
-              ) : (
-                <>
-                  A forward credit estimate isn&rsquo;t shown yet because the system is still <span className="font-medium">working through a one-time enrichment backlog</span>{" "}
-                  ({pendingBacklog.toLocaleString()} captions left to tag) — the extraction cron is running at catch-up speed, well above the normal daily rate,
-                  so any projection now would overstate. It&rsquo;ll appear once the backlog clears (~a day) and the true forward rate can be measured. In the meantime, keep a comfortable buffer of OpenAI credit.{" "}
-                </>
-              )}
-              Meta Graph and YouTube are <span className="font-medium">free within their quotas</span> — they show call volume, not dollars, so you can spot a quota cliff before it bites.
-            </p>
-          </div>
-
-          {/* Authoritative-source + shared-key disclosure — the honest framing of what
-              this sheet can and cannot tell you. */}
-          <div className="rounded-xl border border-attention/30 bg-attention/5 px-4 py-3 flex items-start gap-3">
-            <AlertTriangle className="h-4 w-4 text-attention shrink-0 mt-0.5" />
-            <div className="text-xs text-ink leading-relaxed space-y-1.5">
-              <p>
-                <span className="font-semibold">This figure is measured precisely going forward</span> (real per-call tokens, since {fmtDay(trackingSince)}) — it is the trustworthy number for predicting future top-ups. For spend <span className="font-medium">before</span> that, the provider console is authoritative; we don&rsquo;t show a reconstructed dollar guess because it over-counted high-volume days.
-              </p>
-              <p>
-                <span className="font-semibold">⚠️ The OpenAI key is shared</span> with another project (&ldquo;Post Automation&rdquo;), so OpenAI&rsquo;s project total (e.g. <span className="font-medium">~$108 for June</span>) covers <span className="font-medium">both apps combined</span> — neither this sheet nor OpenAI&rsquo;s project view isolates this app&rsquo;s spend alone. To get an exact, isolated figure, give this app its <span className="font-medium">own OpenAI API key / project</span>; then OpenAI&rsquo;s dashboard breaks it out directly.
-              </p>
-              <p className="text-ink-4">
-                Authoritative billed totals: OpenAI <span className="font-mono">platform.openai.com/usage</span> · Anthropic <span className="font-mono">console.anthropic.com</span> · Google AI Studio. {!fullWindow && <>Precise in-app tracking began {fmtDay(trackingSince)}.</>}
-              </p>
+          {/* Top-up guidance + authoritative-source / shared-key disclosure */}
+          <section className="grid gap-3.5 mt-3.5 [grid-template-columns:repeat(auto-fit,minmax(min(100%,380px),1fr))]">
+            <div className="flex gap-3 items-start px-[18px] py-4 rounded-[14px] bg-[rgba(110,178,255,.06)] border border-[rgba(110,178,255,.25)] text-[12.5px] leading-[1.6] text-[#C9D2DC]">
+              <Info className="h-[15px] w-[15px] text-[#6EB2FF] shrink-0 mt-0.5" />
+              <span>
+                {projectionReliable ? (
+                  <>
+                    To cover the next month, keep at least <b className="text-ds-text">{usd(projMonthly)}</b> of credit across the paid AI providers
+                    (OpenAI is primary; Gemini &amp; Anthropic are fallbacks). This is the <b className="text-ds-text font-semibold">forward steady-state</b> rate
+                    (the daily new-link inflow) — it excludes the one-time historical backfill, which won&rsquo;t recur, so going-forward cost is well below total spend-to-date.{" "}
+                  </>
+                ) : (
+                  <>
+                    A forward credit estimate isn&rsquo;t shown yet because the system is still <b className="text-ds-text font-semibold">working through a one-time enrichment backlog</b>{" "}
+                    ({pendingBacklog.toLocaleString()} captions left to tag) — the extraction cron is running at catch-up speed, well above the normal daily rate,
+                    so any projection now would overstate. It&rsquo;ll appear once the backlog clears (~a day) and the true forward rate can be measured. In the meantime, keep a comfortable buffer of OpenAI credit.{" "}
+                  </>
+                )}
+                Meta Graph and YouTube are <b className="text-ds-text font-semibold">free within their quotas</b> — they show call volume, not dollars, so you can spot a quota cliff before it bites.
+              </span>
             </div>
-          </div>
+            <div className="flex gap-3 items-start px-[18px] py-4 rounded-[14px] bg-[rgba(233,189,98,.05)] border border-[rgba(233,189,98,.25)] text-[12.5px] leading-[1.6] text-[#C9D2DC]">
+              <AlertTriangle className="h-[15px] w-[15px] text-ds-gold shrink-0 mt-0.5" />
+              <span className="flex flex-col gap-2">
+                <span>
+                  <b className="text-ds-text">This figure is measured precisely going forward</b> (real per-call tokens, since {fmtDay(trackingSince)}) — it is the trustworthy number for predicting future top-ups. For spend <b className="text-ds-text font-semibold">before</b> that, the provider console is authoritative; we don&rsquo;t show a reconstructed dollar guess because it over-counted high-volume days.
+                </span>
+                <span>
+                  <b className="text-ds-text">⚠️ The OpenAI key is shared</b> with another project (&ldquo;Post Automation&rdquo;), so OpenAI&rsquo;s project total (e.g. <b className="text-ds-text font-semibold">~$108 for June</b>) covers <b className="text-ds-text font-semibold">both apps combined</b> — neither this sheet nor OpenAI&rsquo;s project view isolates this app&rsquo;s spend alone. To get an exact, isolated figure, give this app its <b className="text-ds-text font-semibold">own OpenAI API key / project</b>; then OpenAI&rsquo;s dashboard breaks it out directly.
+                </span>
+                <span className="text-ds-t3">
+                  Authoritative billed totals: OpenAI <span className="font-mono">platform.openai.com/usage</span> · Anthropic <span className="font-mono">console.anthropic.com</span> · Google AI Studio. {!fullWindow && <>Precise in-app tracking began {fmtDay(trackingSince)}.</>}
+                </span>
+              </span>
+            </div>
+          </section>
 
           {/* Daily spend chart */}
-          {chartData.length > 0 && (
-            <div className="v3-card p-5 space-y-3">
-              <div className="flex items-center gap-2">
-                <DollarSign className="h-4 w-4 text-terra" />
-                <p className="font-semibold text-ink">Daily Spend (paid providers)</p>
+          {bars.length > 0 && (
+            <section className={`${CARD} mt-3.5 px-6 py-[22px]`}>
+              <CardTitle icon={<DollarSign className="h-4 w-4" />} color="#E9BD62" note={fullWindow ? `${usd(total)} over ${days} days` : `${usd(total)} since ${fmtDay(trackingSince)}`}>
+                Daily Spend (paid providers)
+              </CardTitle>
+              <div className="grid grid-cols-[44px_minmax(0,1fr)] gap-2.5 h-[230px]">
+                <div className="flex flex-col justify-between pb-[22px] text-[11px] text-ds-t3 text-right tabular-nums">
+                  {yTicks.map((y, i) => <span key={i}>{y}</span>)}
+                </div>
+                <div className="relative flex flex-col min-w-0">
+                  <div className="absolute inset-x-0 top-0 bottom-[22px] flex flex-col justify-between pointer-events-none" aria-hidden="true">
+                    {yTicks.map((_, i) => <span key={i} className="h-0 border-t border-dashed border-[#1A2C38]" />)}
+                  </div>
+                  <div
+                    className="relative flex-1 flex items-end"
+                    style={{ gap: bars.length > 30 ? 2 : bars.length > 14 ? 4 : 8 }}
+                    role="img"
+                    aria-label={`Daily paid spend over the last ${days} days`}
+                  >
+                    {bars.map((b, i) => (
+                      <div
+                        key={i}
+                        title={`${b.label} · ${usd(b.cost)}`}
+                        className="flex-1 min-h-[2px] rounded-t-[4px] bg-[linear-gradient(180deg,#E9BD62,rgba(233,189,98,.45))] hover:bg-[#F4D58C]"
+                        style={{ height: `${top > 0 ? (b.cost / top) * 100 : 0}%` }}
+                      />
+                    ))}
+                  </div>
+                  <div className="h-[22px] flex justify-between items-end text-[11px] text-ds-t3">
+                    {xTickIdx.map((i) => <span key={i} className="whitespace-nowrap">{bars[i]?.label}</span>)}
+                  </div>
+                </div>
               </div>
-              <div className="h-56">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#E6DFC9" vertical={false} />
-                    <XAxis dataKey="date" tick={{ fontSize: 11, fill: "#7A7A7A" }} interval={Math.max(0, Math.ceil(chartData.length / 8) - 1)} />
-                    <YAxis tick={{ fontSize: 11, fill: "#7A7A7A" }} width={48} tickFormatter={(v) => `$${v}`} />
-                    <Tooltip formatter={(v: number) => [usd(v), "Cost"]} contentStyle={{ fontSize: 12, borderRadius: 8 }} />
-                    <Bar dataKey="cost" fill="#4F46E5" radius={[4, 4, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
+            </section>
           )}
 
           {/* Paid providers breakdown */}
-          <div className="v3-card p-5 space-y-3">
-            <div className="flex items-center gap-2">
-              <DollarSign className="h-4 w-4 text-terra" />
-              <p className="font-semibold text-ink">Paid AI Providers</p>
-              <span className="ml-auto text-[11px] text-ink-4">Gemini is the only active LLM — OpenAI/Anthropic are historical</span>
-            </div>
+          <section className={`${CARD} mt-3.5 px-6 py-[22px]`}>
+            <CardTitle icon={<DollarSign className="h-4 w-4" />} color="#E9BD62" note="Gemini is the only active LLM — OpenAI/Anthropic are historical">
+              Paid AI Providers
+            </CardTitle>
             {paidProviders.length === 0 ? (
-              <p className="text-xs text-ink-4">No paid-provider usage recorded in this window.</p>
+              <p className="text-[12.5px] text-ds-t3">No paid-provider usage recorded in this window.</p>
             ) : (
               <div className="overflow-x-auto">
-                <table className="w-full text-sm">
+                <table className="w-full min-w-[520px] border-collapse">
                   <thead>
-                    <tr className="text-[10px] font-medium text-ink-4 uppercase tracking-wide border-b border-ink/8">
-                      <th className="text-left py-2 font-medium">Provider</th>
-                      <th className="text-right py-2 font-medium">Calls</th>
-                      <th className="text-right py-2 font-medium">Input Tokens</th>
-                      <th className="text-right py-2 font-medium">Output Tokens</th>
-                      <th className="text-right py-2 font-medium">Cost</th>
+                    <tr>
+                      <th className={`${TH} text-left`}>Provider</th>
+                      <th className={`${TH} text-right`}>Calls</th>
+                      <th className={`${TH} text-right`}>Input Tokens</th>
+                      <th className={`${TH} text-right`}>Output Tokens</th>
+                      <th className={`${TH} text-right`}>Cost</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-ink/6">
+                  <tbody>
                     {paidProviders.map((p) => {
                       const historical = HISTORICAL_PROVIDERS.has(p.provider);
                       return (
-                      <tr key={p.provider} className={historical ? "opacity-70" : ""}>
-                        <td className="py-2.5 font-medium text-ink">
-                          {PROVIDER_LABEL[p.provider] ?? p.provider}
-                          {historical && (
-                            <span
-                              className="ml-2 inline-block rounded px-1.5 py-0.5 text-[10px] font-medium bg-ink/8 text-ink-4 align-middle"
-                              title="No longer used — extraction switched to Gemini-only on 29 Jun 2026. This is past spend, kept for the record; no new cost accrues."
-                            >
-                              historical
+                        <tr key={p.provider} className={historical ? "opacity-70" : ""}>
+                          <td className={`${TD} font-semibold text-ds-text`}>
+                            <span className="inline-flex items-center gap-2.5">
+                              <i className="h-2 w-2 rounded-full" style={{ background: PROVIDER_DOT[p.provider] ?? "#A7B3C2" }} />
+                              {PROVIDER_LABEL[p.provider] ?? p.provider}
+                              {historical && (
+                                <span
+                                  className="inline-flex items-center h-5 px-2 rounded-full bg-[#132430] border border-ds-line2 text-ds-t3 text-[10.5px] font-semibold"
+                                  title="No longer used — extraction switched to Gemini-only on 29 Jun 2026. This is past spend, kept for the record; no new cost accrues."
+                                >
+                                  historical
+                                </span>
+                              )}
                             </span>
-                          )}
-                        </td>
-                        <td className="py-2.5 text-right tabular-nums text-ink-3">{num(p.calls)}</td>
-                        <td className="py-2.5 text-right tabular-nums text-ink-4">{num(p.inputTokens)}</td>
-                        <td className="py-2.5 text-right tabular-nums text-ink-4">{num(p.outputTokens)}</td>
-                        <td className="py-2.5 text-right font-num font-semibold text-terra">{usd(p.costUsd)}</td>
-                      </tr>
+                          </td>
+                          <td className={`${TD} text-right text-ds-t5`}>{num(p.calls)}</td>
+                          <td className={`${TD} text-right text-ds-t2`}>{num(p.inputTokens)}</td>
+                          <td className={`${TD} text-right text-ds-t2`}>{num(p.outputTokens)}</td>
+                          <td className={`${TD} text-right font-bold text-ds-gold`}>{usd(p.costUsd)}</td>
+                        </tr>
                       );
                     })}
                   </tbody>
                 </table>
               </div>
             )}
-          </div>
+          </section>
 
-          {/* Free-within-quota providers (call volume) */}
-          {freeProviders.length > 0 && (
-            <div className="v3-card p-5 space-y-3">
-              <div className="flex items-center gap-2">
-                <Server className="h-4 w-4 text-sage" />
-                <p className="font-semibold text-ink">Free within Quota — Call Volume</p>
-                <span className="ml-auto text-[11px] text-ink-4">no dollar cost; watch for quota limits</span>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="text-[10px] font-medium text-ink-4 uppercase tracking-wide border-b border-ink/8">
-                      <th className="text-left py-2 font-medium">Provider</th>
-                      <th className="text-right py-2 font-medium">Calls / Units</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-ink/6">
-                    {freeProviders.map((p) => (
-                      <tr key={p.provider}>
-                        <td className="py-2.5 font-medium text-ink">{PROVIDER_LABEL[p.provider] ?? p.provider}</td>
-                        <td className="py-2.5 text-right tabular-nums text-ink-3">{num(p.calls)}</td>
+          {(freeProviders.length > 0 || byOperation.length > 0) && (
+            <section className="grid gap-3.5 mt-3.5 [grid-template-columns:repeat(auto-fit,minmax(min(100%,340px),1fr))]">
+              {/* Free-within-quota providers (call volume) */}
+              {freeProviders.length > 0 && (
+                <div className={`${CARD} px-6 py-[22px] min-w-0`}>
+                  <CardTitle icon={<Server className="h-4 w-4" />} color="#00D7A0">Free within Quota — Call Volume</CardTitle>
+                  <div className="text-[11.5px] text-ds-t3 -mt-2 mb-3.5">no dollar cost; watch for quota limits</div>
+                  <table className="w-full border-collapse">
+                    <thead>
+                      <tr>
+                        <th className={`${TH} text-left`}>Provider</th>
+                        <th className={`${TH} text-right`}>Calls / Units</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
+                    </thead>
+                    <tbody>
+                      {freeProviders.map((p) => (
+                        <tr key={p.provider}>
+                          <td className={`${TD} font-semibold text-ds-text`}>{PROVIDER_LABEL[p.provider] ?? p.provider}</td>
+                          <td className={`${TD} text-right text-ds-t5`}>{num(p.calls)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
 
-          {/* Per-operation breakdown */}
-          {byOperation.length > 0 && (
-            <div className="v3-card p-5 space-y-3">
-              <div className="flex items-center gap-2">
-                <Activity className="h-4 w-4 text-indigo" />
-                <p className="font-semibold text-ink">By Operation</p>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="text-[10px] font-medium text-ink-4 uppercase tracking-wide border-b border-ink/8">
-                      <th className="text-left py-2 font-medium">Operation</th>
-                      <th className="text-left py-2 font-medium">Provider</th>
-                      <th className="text-right py-2 font-medium">Calls</th>
-                      <th className="text-right py-2 font-medium">Cost</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-ink/6">
-                    {byOperation.map((op) => (
-                      <tr key={`${op.provider}:${op.operation}`}>
-                        <td className="py-2.5 text-ink">{op.operation || "—"}</td>
-                        <td className="py-2.5 text-ink-4">{PROVIDER_LABEL[op.provider] ?? op.provider}</td>
-                        <td className="py-2.5 text-right tabular-nums text-ink-3">{num(op.calls)}</td>
-                        <td className="py-2.5 text-right font-num text-terra">{usd(op.costUsd)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
+              {/* Per-operation breakdown */}
+              {byOperation.length > 0 && (
+                <div className={`${CARD} px-6 py-[22px] min-w-0`}>
+                  <CardTitle icon={<Activity className="h-4 w-4" />} color="#6EB2FF">By Operation</CardTitle>
+                  <div className="overflow-x-auto">
+                    <table className="w-full min-w-[400px] border-collapse">
+                      <thead>
+                        <tr>
+                          <th className={`${TH} text-left`}>Operation</th>
+                          <th className={`${TH} text-left`}>Provider</th>
+                          <th className={`${TH} text-right`}>Calls</th>
+                          <th className={`${TH} text-right`}>Cost</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {byOperation.map((op) => (
+                          <tr key={`${op.provider}:${op.operation}`}>
+                            <td className={`${TD} font-mono text-[12.5px] text-ds-text`}>{op.operation || "—"}</td>
+                            <td className={`${TD} text-ds-t2`}>{PROVIDER_LABEL[op.provider] ?? op.provider}</td>
+                            <td className={`${TD} text-right text-ds-t5`}>{num(op.calls)}</td>
+                            <td className={`${TD} text-right font-semibold text-ds-gold`}>{usd(op.costUsd)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </section>
           )}
 
           {total === 0 && (
-            <p className="text-xs text-ink-4">
+            <p className="mt-3.5 text-[12.5px] text-ds-t3">
               No spend recorded yet for this window. Costs accrue as the extraction cron and AI generators run —
               check back after the next cycle.
             </p>

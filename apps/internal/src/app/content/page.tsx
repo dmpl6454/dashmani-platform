@@ -1,145 +1,204 @@
 "use client";
+// Content — premium dark redesign ("ds"), built to the Content.dc.html mockup.
+// UI only: same /content endpoint. The status strip needs every status's count at
+// once, so the list is fetched without a status filter and filtered in the page;
+// a ?status= link (e.g. from the dashboard) still pre-selects a status.
 import { useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
+import { CalendarDays, Plus, Search, X } from "lucide-react";
 import { useContentPosts } from "@/lib/hooks/use-content";
 import { useProjects } from "@/lib/hooks/use-projects";
-import { Plus, Search, FileEdit } from "lucide-react";
+import { usePageTitle } from "@/lib/hooks/use-page-title";
 
-const STATUS_OPTIONS = ["", "DRAFT", "PENDING_APPROVAL", "APPROVED", "SCHEDULED", "PUBLISHED", "FAILED", "REJECTED"];
-const STATUS_LABELS: Record<string, string> = {
-  DRAFT:            "Draft",
-  PENDING_APPROVAL: "Needs Review",
-  APPROVED:         "Approved",
-  SCHEDULED:        "Scheduled",
-  PUBLISHED:        "Published",
-  FAILED:           "Failed",
-  REJECTED:         "Rejected",
-};
-const STATUS_BADGE: Record<string, string> = {
-  DRAFT:            "bg-neutral-bg text-neutral border-neutral/20",
-  PENDING_APPROVAL: "bg-attention-bg text-attention border-attention/20",
-  APPROVED:         "bg-success-bg text-success border-success/20",
-  SCHEDULED:        "bg-indigo-soft text-indigo border-indigo/20",
-  PUBLISHED:        "bg-success-bg text-success border-success/20",
-  FAILED:           "bg-danger-bg text-danger border-danger/20",
-  REJECTED:         "bg-danger-bg text-danger border-danger/20",
-};
+const STATUSES = [
+  ["DRAFT", "Draft", "#A7B3C2"],
+  ["PENDING_APPROVAL", "Needs Review", "#FBBF24"],
+  ["APPROVED", "Approved", "#34D399"],
+  ["SCHEDULED", "Scheduled", "#238BFF"],
+  ["PUBLISHED", "Published", "#00D7A0"],
+  ["FAILED", "Failed", "#FB7185"],
+  ["REJECTED", "Rejected", "#E5484D"],
+] as const;
+const STATUS = Object.fromEntries(STATUSES.map(([k, label, color]) => [k, { label, color }])) as Record<string, { label: string; color: string }>;
+const PLATFORM_COLOR: Record<string, string> = { instagram: "#EC42B7", facebook: "#238BFF", youtube: "#FF5A5F", snapchat: "#E9D23A" };
+const rgba = (hex: string, a: number) => { const n = parseInt(hex.slice(1), 16); return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`; };
+const GRID = "grid [grid-template-columns:minmax(260px,2.2fr)_minmax(130px,1fr)_minmax(170px,1.2fr)_120px_130px_minmax(120px,1fr)] gap-3";
+const DAY = 86_400_000;
 
-const selectCls = "h-10 rounded-xl border-2 border-ink/15 bg-surface px-3 py-2 text-sm text-ink focus:outline-none focus:border-indigo transition-colors";
+function whenOf(post: any): { text: string; color: string } {
+  const iso = post.status === "PUBLISHED" ? (post.publishedAt ?? post.scheduledAt) : post.scheduledAt;
+  if (!iso) return { text: "Not scheduled", color: "#738395" };
+  const d = new Date(iso);
+  const today = new Date();
+  const dayDiff = Math.round((new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime() - new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime()) / DAY);
+  const day = dayDiff === 0 ? "Today" : dayDiff === 1 ? "Tomorrow" : dayDiff === -1 ? "Yesterday" : d.toLocaleDateString("en-IN", { day: "numeric", month: "short" });
+  const time = d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+  return { text: `${day} · ${time}`, color: post.status === "SCHEDULED" ? "#6EB2FF" : post.status === "FAILED" ? "#FB7185" : "#A7B3C2" };
+}
 
 export default function ContentListPage() {
+  usePageTitle("Content");
   const searchParams = useSearchParams();
-  const [search,    setSearch]    = useState("");
-  const [status,    setStatus]    = useState(searchParams.get("status") || "");
+  const [search, setSearch] = useState("");
+  const [status, setStatus] = useState(searchParams.get("status") || "");
   const [projectId, setProjectId] = useState("");
-  const { data, isLoading }     = useContentPosts({ search, status, projectId });
-  const { data: projectsData }  = useProjects();
-  const posts    = (data as any)?.data || [];
-  const projects = (projectsData as any)?.data || [];
+  // The list is filtered by the SERVER, exactly as before the redesign (the endpoint pages at
+  // 100 rows, so filtering locally would silently drop older posts of the chosen status).
+  // A second, unfiltered request feeds the status counts; with no status chosen both share
+  // one SWR key, so there is no extra request in that case.
+  const { data, isLoading, error } = useContentPosts({ search, status, projectId });
+  const { data: allData, isLoading: countsLoading } = useContentPosts({ search, projectId });
+  const { data: projectsData } = useProjects();
+  const listed: any[] = (data as any)?.data || [];
+  const hasMore: boolean = !!(data as any)?.meta?.has_more;
+  const all: any[] = (allData as any)?.data || [];
+  const countsCapped: boolean = !!(allData as any)?.meta?.has_more;
+  const projects: any[] = (projectsData as any)?.data || [];
+
+  const posts = listed;
+  const countOf = (k: string) => all.filter((p) => p.status === k).length;
+  const more = countsCapped ? "+" : "";
+  const cur = status ? STATUS[status] : null;
 
   return (
-    <div className="space-y-5 pop-in">
+    <div className="pb-6">
       {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="font-display text-3xl font-semibold text-ink">Content</h1>
-          {!isLoading && <p className="text-sm text-ink-4 mt-0.5">{posts.length} post{posts.length !== 1 ? "s" : ""}</p>}
+      <section className="flex items-end justify-between gap-4 flex-wrap pt-[26px] pb-5">
+        <div className="basis-full sm:basis-auto sm:flex-1 min-w-0">
+          <p className="text-[10px] tracking-[.2em] uppercase text-ds-gold font-semibold">Content Studio</p>
+          <h1 className="mt-2 mb-0 text-[28px] font-semibold tracking-[-.02em] text-ds-text">Content</h1>
+          <p className="mt-1.5 text-[13.5px] text-ds-t2">
+            {countsLoading ? "Loading…" : `${all.length}${more} post${all.length !== 1 ? "s" : ""} · ${countOf("SCHEDULED")}${more} scheduled · ${countOf("PENDING_APPROVAL")}${more} awaiting review`}
+          </p>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <Link href="/content/calendar">
-            <button className="h-9 px-4 rounded-full border-2 border-ink/15 text-sm font-semibold text-ink-3 hover:bg-muted transition-colors">
-              Calendar
-            </button>
+        <div className="flex items-center gap-2 flex-wrap">
+          <Link href="/content/calendar" className="inline-flex items-center gap-1.5 h-[34px] px-3.5 rounded-[6px] border border-ds-line2 bg-ds-card text-ds-t5 text-[12px] font-semibold whitespace-nowrap transition-colors hover:border-ds-line4 hover:text-ds-text">
+            <CalendarDays className="h-[13px] w-[13px]" strokeWidth={1.8} /> Calendar
           </Link>
-          <Link href="/content/new">
-            <button className="h-9 px-4 rounded-full bg-ink text-white text-sm font-bold btn-3d hover:bg-ink-2 transition-colors flex items-center gap-1.5">
-              <Plus className="h-4 w-4" /> New Content
-            </button>
+          <Link href="/content/new" className="inline-flex items-center gap-1.5 h-[34px] px-4 rounded-[6px] border border-ds-gold bg-ds-gold/[.14] text-ds-gold text-[12px] font-semibold whitespace-nowrap transition-colors hover:bg-ds-gold/[.22] hover:text-ds-gold2">
+            <Plus className="h-3.5 w-3.5" /> New Content
           </Link>
         </div>
-      </div>
+      </section>
+
+      {/* Status pipeline — click to filter, click again to clear */}
+      <section className="flex overflow-x-auto bg-ds-card border border-ds-line rounded-[8px]" role="group" aria-label="Filter by status">
+        {STATUSES.map(([k, label, color]) => {
+          const sel = status === k;
+          return (
+            <button
+              key={k}
+              type="button"
+              aria-pressed={sel}
+              onClick={() => setStatus(sel ? "" : k)}
+              className="relative flex-[1_0_128px] min-w-0 flex flex-col gap-2 p-4 border-r border-ds-grid last:border-r-0 text-left text-ds-text transition-colors hover:bg-[#0B1824]"
+              style={{ background: sel ? "#0B1824" : "transparent" }}
+            >
+              <span className="absolute inset-x-0 bottom-0 h-0.5" style={{ background: sel ? color : "transparent" }} />
+              <span className="flex items-center gap-[7px] text-[10px] tracking-[.1em] uppercase font-semibold whitespace-nowrap min-w-0" style={{ color: sel ? "#F4F6F8" : "#A7B3C2" }}>
+                <i className="h-1.5 w-1.5 rounded-full shrink-0" style={{ background: color }} />
+                <span className="truncate">{label}</span>
+              </span>
+              <span className="text-[28px] font-semibold tracking-[-.03em] leading-none">{countsLoading ? "—" : `${countOf(k)}${more}`}</span>
+            </button>
+          );
+        })}
+      </section>
 
       {/* Filters */}
-      <div className="flex gap-3 items-center flex-wrap fade-up d2">
-        <div className="relative">
-          <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-ink-4" />
+      <section className="flex items-center gap-2.5 flex-wrap mt-3.5">
+        <label className="flex items-center gap-2 h-[34px] px-3 rounded-[17px] bg-ds-inset border border-ds-line2 text-ds-t3 flex-[0_1_300px] min-w-[200px] w-full sm:w-auto">
+          <Search className="h-[13px] w-[13px] shrink-0" strokeWidth={1.8} />
           <input
-            placeholder="Search content…"
-            className="pl-10 pr-4 h-10 w-56 bg-surface border-2 border-ink/15 rounded-xl text-sm text-ink placeholder:text-ink-4 focus:outline-none focus:border-indigo transition-colors"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search content…"
+            aria-label="Search content"
+            className="flex-1 min-w-0 bg-transparent border-0 outline-none text-ds-text text-[12px] placeholder:text-ds-t3"
           />
-        </div>
-        <select className={selectCls} value={status} onChange={(e) => setStatus(e.target.value)}>
-          <option value="">All Statuses</option>
-          {STATUS_OPTIONS.filter(Boolean).map((s) => (
-            <option key={s} value={s}>{STATUS_LABELS[s]}</option>
-          ))}
-        </select>
-        <select className={selectCls} value={projectId} onChange={(e) => setProjectId(e.target.value)}>
+        </label>
+        <select
+          value={projectId}
+          onChange={(e) => setProjectId(e.target.value)}
+          aria-label="Project"
+          className="h-[34px] px-3 rounded-[17px] border border-ds-line2 bg-ds-inset text-ds-t5 text-[12px]"
+        >
           <option value="">All Projects</option>
-          {projects.map((p: any) => (
-            <option key={p.id} value={p.id}>{p.name}</option>
-          ))}
+          {projects.map((p: any) => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
-      </div>
+        {cur && (
+          <button
+            type="button"
+            onClick={() => setStatus("")}
+            className="inline-flex items-center gap-1.5 h-[26px] px-2.5 rounded-[13px] border border-ds-gold/55 bg-ds-gold/[.14] text-ds-text text-[11px] font-semibold whitespace-nowrap"
+          >
+            {cur.label} <X className="h-3 w-3 text-ds-gold" aria-label="Clear status filter" />
+          </button>
+        )}
+      </section>
 
       {/* Table */}
-      <div className="v3-card overflow-hidden fade-up d3">
-        {isLoading ? (
-          <div className="py-14 flex items-center justify-center">
-            <div className="h-6 w-6 rounded-full border-[3px] border-ink/10 border-t-indigo" style={{ animation: "spin 0.7s linear infinite" }} />
-          </div>
-        ) : posts.length === 0 ? (
-          <div className="py-14 text-center text-ink-4">
-            <FileEdit className="h-8 w-8 mx-auto mb-2 opacity-30" />
-            <p className="text-sm">No content posts found</p>
-          </div>
-        ) : (
+      {error && listed.length === 0 ? (
+        <section role="alert" className="mt-3.5 px-5 py-14 text-center rounded-[8px] bg-ds-card border border-ds-line text-[12.5px] text-ds-t2">
+          Couldn&apos;t load content. Refresh the page to try again.
+        </section>
+      ) : !isLoading && posts.length === 0 ? (
+        <section className="mt-3.5 px-5 py-14 text-center rounded-[8px] bg-ds-card border border-dashed border-ds-line2 text-[12.5px] text-ds-t3">
+          No content posts found
+        </section>
+      ) : (
+        <section className="mt-3.5 rounded-[8px] bg-ds-card border border-ds-line overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b-2 border-ink/8 bg-muted/40">
-                  <th className="text-left px-5 py-3 text-[10px] font-bold text-ink-4 uppercase tracking-wider">Title</th>
-                  <th className="text-left px-5 py-3 text-[10px] font-bold text-ink-4 uppercase tracking-wider hidden md:table-cell">Project</th>
-                  <th className="text-left px-5 py-3 text-[10px] font-bold text-ink-4 uppercase tracking-wider hidden lg:table-cell">Account</th>
-                  <th className="text-left px-5 py-3 text-[10px] font-bold text-ink-4 uppercase tracking-wider">Status</th>
-                  <th className="text-left px-5 py-3 text-[10px] font-bold text-ink-4 uppercase tracking-wider hidden xl:table-cell">Scheduled</th>
-                  <th className="text-left px-5 py-3 text-[10px] font-bold text-ink-4 uppercase tracking-wider hidden xl:table-cell">By</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-rule">
-                {posts.map((post: any, i: number) => (
-                  <tr key={post.id} className="v3-row" style={{ animationDelay: `${i * 0.02}s` }}>
-                    <td className="px-5 py-3">
-                      <Link href={`/content/${post.id}`} className="font-semibold text-ink hover:text-indigo transition-colors">
-                        {post.title}
-                      </Link>
-                      {post.mediaUrls?.length > 0 && (
-                        <span className="ml-2 text-[10px] font-medium text-ink-4 bg-muted px-1.5 py-0.5 rounded">{post.mediaUrls.length} media</span>
-                      )}
-                    </td>
-                    <td className="px-5 py-3 text-ink-3 hidden md:table-cell">{post.project?.name || "—"}</td>
-                    <td className="px-5 py-3 text-ink-3 hidden lg:table-cell">
-                      {post.account ? `${post.account.platform?.name}: ${post.account.handle}` : "—"}
-                    </td>
-                    <td className="px-5 py-3">
-                      <span className={`rounded-full px-3 py-1 text-xs font-semibold border ${STATUS_BADGE[post.status] || "bg-neutral-bg text-neutral border-neutral/20"}`}>
-                        {STATUS_LABELS[post.status] || post.status}
-                      </span>
-                    </td>
-                    <td className="px-5 py-3 text-ink-3 hidden xl:table-cell">
-                      {post.scheduledAt ? new Date(post.scheduledAt).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" }) : "—"}
-                    </td>
-                    <td className="px-5 py-3 text-ink-3 hidden xl:table-cell">{post.createdBy?.name || "—"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <div className="min-w-[860px]" role="table" aria-label="Content posts">
+              <div role="row" className={`${GRID} px-5 py-2.5 text-[10px] tracking-[.12em] uppercase text-ds-t3 font-semibold border-b border-ds-line bg-[#0A1620]`}>
+                <span role="columnheader">Title</span><span role="columnheader">Project</span><span role="columnheader">Account</span>
+                <span role="columnheader">Status</span><span role="columnheader">Scheduled</span><span role="columnheader">By</span>
+              </div>
+              {isLoading
+                ? Array.from({ length: 6 }, (_, i) => (
+                    <div key={i} className={`${GRID} items-center px-5 py-2.5 border-b border-ds-grid`} aria-hidden="true">
+                      <span className="h-3 w-52 rounded-[4px] bg-ds-hover motion-safe:animate-pulse" /><span className="h-3 w-24 rounded-[4px] bg-ds-hover motion-safe:animate-pulse" />
+                      <span className="h-3 w-32 rounded-[4px] bg-ds-hover motion-safe:animate-pulse" /><span className="h-5 w-20 rounded-full bg-ds-hover motion-safe:animate-pulse" />
+                      <span className="h-3 w-24 rounded-[4px] bg-ds-hover motion-safe:animate-pulse" /><span className="h-3 w-20 rounded-[4px] bg-ds-hover motion-safe:animate-pulse" />
+                    </div>
+                  ))
+                : posts.map((post) => {
+                    const st = STATUS[post.status] ?? { label: post.status, color: "#A7B3C2" };
+                    const when = whenOf(post);
+                    const plat = (post.account?.platform?.slug || post.account?.platform?.name || "").toLowerCase();
+                    const media = post.mediaUrls?.length ?? 0;
+                    const handle = post.account ? (post.account.displayName || post.account.handle) : null;
+                    return (
+                      <div key={post.id} role="row" className={`${GRID} items-center px-5 py-2.5 border-b border-ds-grid text-[12.5px] transition-colors hover:bg-[#0B1824]`}>
+                        <Link href={`/content/${post.id}`} role="cell" className="flex items-center gap-3 min-w-0 text-ds-text hover:text-ds-gold">
+                          <span className="font-semibold truncate">{post.title}</span>
+                          {media > 0 && <span className="h-[18px] px-1.5 rounded-[4px] bg-ds-hover text-ds-t2 text-[10px] inline-flex items-center shrink-0 whitespace-nowrap">{media} media</span>}
+                        </Link>
+                        <span role="cell" className="text-ds-t2 truncate" title={post.project?.name || undefined}>{post.project?.name || "—"}</span>
+                        <span role="cell" className="flex items-center gap-2 min-w-0 text-ds-t5" title={post.account ? `${post.account.platform?.name}: ${post.account.handle}` : undefined}>
+                          {handle ? (
+                            <>
+                              <i className="h-[7px] w-[7px] rounded-full shrink-0" style={{ background: PLATFORM_COLOR[plat] ?? "#738395" }} />
+                              <span className="truncate">{handle}</span>
+                            </>
+                          ) : <span className="text-ds-t3">—</span>}
+                        </span>
+                        <span role="cell">
+                          <span className="inline-flex items-center gap-1.5 h-[22px] px-2.5 rounded-[11px] border text-[10.5px] font-semibold whitespace-nowrap" style={{ color: st.color, background: rgba(st.color, 0.1), borderColor: rgba(st.color, 0.35) }}>
+                            <i className="h-1.5 w-1.5 rounded-full" style={{ background: st.color }} />{st.label}
+                          </span>
+                        </span>
+                        <span role="cell" className="whitespace-nowrap" style={{ color: when.color }}>{when.text}</span>
+                        <span role="cell" className="text-ds-t2 truncate">{post.createdBy?.name || "—"}</span>
+                      </div>
+                    );
+                  })}
+            </div>
           </div>
-        )}
-      </div>
+          {hasMore && !isLoading && <p className="px-5 py-3 text-[11px] text-ds-t3">Showing the first {listed.length} posts — search or pick a project to narrow the list.</p>}
+        </section>
+      )}
     </div>
   );
 }

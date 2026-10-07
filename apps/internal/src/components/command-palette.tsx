@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useRef, useState, useMemo } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import {
   Search, LayoutDashboard, Users, Building2, Clock, CheckSquare, Globe,
   BarChart3, Briefcase, FolderOpen, FileEdit, TrendingUp, FileText,
@@ -8,6 +8,7 @@ import {
   Bug, Sparkles, Laptop, GraduationCap, AlertCircle, Settings, ArrowRight, X,
 } from "lucide-react";
 import { cn } from "@dashmani/ui";
+import { isDsRoute } from "@/lib/ds-routes";
 
 /* ── All navigable pages ── */
 const SEARCH_ITEMS = [
@@ -42,6 +43,8 @@ const SEARCH_ITEMS = [
   { id: "settings",      label: "Settings",      group: "Tools", icon: Settings,          href: "/settings"      },
 ];
 
+const KBD_DARK = "!bg-ds-inset !border-ds-line2 !text-ds-t2 !shadow-none";
+
 interface CommandPaletteProps {
   open: boolean;
   onClose: () => void;
@@ -49,6 +52,8 @@ interface CommandPaletteProps {
 
 export function CommandPalette({ open, onClose }: CommandPaletteProps) {
   const router = useRouter();
+  // Dark ("ds") skin on redesigned pages; classic pages keep the original light palette.
+  const dark = isDsRoute(usePathname() ?? "");
   const [query, setQuery]   = useState("");
   const [cursor, setCursor] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -101,30 +106,30 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
 
   return (
     <div
-      className="fixed inset-0 z-[90] bg-ink/20 backdrop-blur-[2px] flex items-start justify-center pt-[12vh] px-4 pop-in"
+      className={cn("fixed inset-0 z-[90] backdrop-blur-[2px] flex items-start justify-center pt-[12vh] px-4 pop-in", dark ? "bg-[rgba(2,6,10,.7)]" : "bg-ink/20")}
       onClick={onClose}
     >
       <div
-        className="v3-card w-full max-w-[520px] overflow-hidden"
+        className={cn("w-full max-w-[520px] overflow-hidden", dark ? "rounded-[14px] border border-ds-line2 bg-ds-card shadow-[0_30px_80px_rgba(0,0,0,.65)]" : "v3-card")}
         onClick={e => e.stopPropagation()}
       >
         {/* Input row */}
-        <div className="flex items-center gap-3 px-4 h-14 border-b-2 border-ink/10">
-          <Search className="h-[18px] w-[18px] text-ink-3 flex-shrink-0" strokeWidth={2} />
+        <div className={cn("flex items-center gap-3 px-4 h-14", dark ? "border-b border-ds-line" : "border-b-2 border-ink/10")}>
+          <Search className={cn("h-[18px] w-[18px] flex-shrink-0", dark ? "text-ds-gold" : "text-ink-3")} strokeWidth={2} />
           <input
             ref={inputRef}
-            className="flex-1 text-[14.5px] font-medium text-ink bg-transparent outline-none placeholder:text-ink-4"
+            className={cn("flex-1 text-[14.5px] font-medium bg-transparent outline-none", dark ? "ds-bare text-ds-text placeholder:text-ds-t3 border-0 shadow-none" : "text-ink placeholder:text-ink-4")}
             placeholder="Search pages, tools…"
             value={query}
             onChange={e => setQuery(e.target.value)}
             onKeyDown={onKey}
           />
           {query ? (
-            <button onClick={() => setQuery("")} className="text-ink-4 hover:text-ink-2 transition-colors flex-shrink-0">
+            <button onClick={() => setQuery("")} className={cn("transition-colors flex-shrink-0", dark ? "text-ds-t3 hover:text-ds-text" : "text-ink-4 hover:text-ink-2")}>
               <X className="h-3.5 w-3.5" />
             </button>
           ) : (
-            <kbd className="flex-shrink-0">Esc</kbd>
+            <kbd className={cn("flex-shrink-0", dark && KBD_DARK)}>Esc</kbd>
           )}
         </div>
 
@@ -134,10 +139,10 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
             return (
               <div key={group.heading}>
                 <div className="px-4 py-2.5">
-                  <span className="text-[10.5px] font-bold text-ink-4 uppercase tracking-widest">{group.heading}</span>
+                  <span className={cn("text-[10.5px] font-bold uppercase tracking-widest", dark ? "text-ds-gold" : "text-ink-4")}>{group.heading}</span>
                 </div>
                 {group.items.length === 0 && (
-                  <div className="px-4 pb-4 text-[13px] text-ink-3 font-medium">No matches found</div>
+                  <div className={cn("px-4 pb-4 text-[13px] font-medium", dark ? "text-ds-t2" : "text-ink-3")}>No matches found</div>
                 )}
                 {group.items.map(item => {
                   const idx = globalIdx++;
@@ -150,22 +155,22 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
                       onMouseEnter={() => setCursor(idx)}
                       className={cn(
                         "w-full flex items-center gap-3 px-4 py-2.5 text-left transition-all",
-                        isHighlighted ? "bg-indigo-soft" : "hover:bg-muted/40"
+                        dark ? (isHighlighted ? "bg-[rgba(233,189,98,.1)]" : "hover:bg-ds-hover") : (isHighlighted ? "bg-indigo-soft" : "hover:bg-muted/40")
                       )}
                     >
                       <div className={cn(
                         "h-8 w-8 rounded-xl grid place-items-center flex-shrink-0 transition-colors",
-                        isHighlighted ? "bg-indigo text-white" : "bg-muted text-ink-3"
+                        dark ? (isHighlighted ? "bg-ds-gold text-[#060D14]" : "bg-ds-inset border border-ds-line2 text-ds-t2") : (isHighlighted ? "bg-indigo text-white" : "bg-muted text-ink-3")
                       )}>
                         <Icon className="h-4 w-4" strokeWidth={2} />
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className={cn(
                           "text-[13.5px] font-semibold truncate",
-                          isHighlighted ? "text-indigo" : "text-ink"
+                          dark ? (isHighlighted ? "text-ds-gold" : "text-ds-text") : (isHighlighted ? "text-indigo" : "text-ink")
                         )}>{item.label}</p>
                       </div>
-                      {isHighlighted && <ArrowRight className="h-3.5 w-3.5 text-indigo flex-shrink-0" />}
+                      {isHighlighted && <ArrowRight className={cn("h-3.5 w-3.5 flex-shrink-0", dark ? "text-ds-gold" : "text-indigo")} />}
                     </button>
                   );
                 })}
@@ -175,11 +180,11 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
         </div>
 
         {/* Footer */}
-        <div className="px-4 py-2.5 flex items-center gap-4 border-t border-ink/10">
-          <div className="flex items-center gap-3 text-[11px] text-ink-4 font-medium">
-            <span className="flex items-center gap-1"><kbd>↑↓</kbd> navigate</span>
-            <span className="flex items-center gap-1"><kbd>↵</kbd> open</span>
-            <span className="flex items-center gap-1"><kbd>Esc</kbd> close</span>
+        <div className={cn("px-4 py-2.5 flex items-center gap-4 border-t", dark ? "border-ds-line bg-ds-inset" : "border-ink/10")}>
+          <div className={cn("flex items-center gap-3 text-[11px] font-medium", dark ? "text-ds-t3" : "text-ink-4")}>
+            <span className="flex items-center gap-1"><kbd className={cn(dark && KBD_DARK)}>↑↓</kbd> navigate</span>
+            <span className="flex items-center gap-1"><kbd className={cn(dark && KBD_DARK)}>↵</kbd> open</span>
+            <span className="flex items-center gap-1"><kbd className={cn(dark && KBD_DARK)}>Esc</kbd> close</span>
           </div>
         </div>
       </div>

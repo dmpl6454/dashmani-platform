@@ -1,13 +1,53 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import useSWR from "swr";
-import { Megaphone, Plus, Users, CheckCircle2, Globe, Building2 } from "lucide-react";
+import { X } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { useAnnouncements } from "@/lib/hooks/use-announcements";
+import { ModalPortal } from "@/components/modal-portal";
 
-const inputCls =
-  "w-full border-2 border-ink/15 bg-surface rounded-xl px-4 py-2.5 text-sm text-ink placeholder:text-ink-4 transition-colors";
+const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const HUES = ["#238BFF", "#E9BD62", "#9B7EDE", "#00D7A0", "#FB7185", "#6EB2FF"];
+const rgba = (hex: string, a: number) => {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`;
+};
+const hash = (s: string) => {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = s.charCodeAt(i) + ((h << 5) - h);
+  return Math.abs(h);
+};
+const initials = (name: string) =>
+  name.trim().split(/\s+/).map((p) => p[0]).slice(0, 2).join("").toUpperCase() || "?";
+const fdY = (v: string) => {
+  const d = new Date(v);
+  return `${d.getDate()} ${MONTH_SHORT[d.getMonth()]} ${d.getFullYear()}`;
+};
+
+const MEGA = "M3 11v2a1 1 0 0 0 1 1h2l5 4V6L6 10H4a1 1 0 0 0-1 1zM15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13";
+const GLOBE = "M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zM2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20";
+const BLDG = "M4 22V3h11v19M15 9h5v13M8 7h3M8 11h3M8 15h3M2 22h20";
+const USERS = "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM22 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8";
+const CHECK = "M22 11.1V12a10 10 0 1 1-5.9-9.1M22 4L12 14l-3-3";
+
+function Icon({ d, className = "h-4 w-4", sw = 2 }: { d: string; className?: string; sw?: number }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round" className={`${className} shrink-0`} aria-hidden="true">
+      <path d={d} />
+    </svg>
+  );
+}
+
+const LABEL = "text-[10.5px] text-ds-t3 font-semibold tracking-[.1em] uppercase";
+const FIELD =
+  "w-full h-[46px] px-4 rounded-[12px] border border-ds-line2 bg-ds-inset text-ds-text text-[16px] sm:text-[13.5px] outline-none focus:border-[rgba(233,189,98,.6)] placeholder:text-ds-t4 [color-scheme:dark] min-w-0";
+const GRID =
+  "grid gap-x-[14px] items-center [grid-template-columns:minmax(160px,22fr)_minmax(180px,30fr)_minmax(130px,15fr)_minmax(104px,12fr)_minmax(76px,8fr)_minmax(96px,11fr)]";
+const GHOST_BTN =
+  "h-[42px] px-5 rounded-full border border-ds-line2 text-ds-t2 text-[13px] font-semibold whitespace-nowrap hover:text-ds-text hover:border-[#2A4658] disabled:opacity-60";
+const GOLD_BTN =
+  "inline-flex items-center gap-2 h-[42px] px-5 rounded-full bg-ds-gold text-[#060D14] text-[13px] font-bold whitespace-nowrap hover:bg-[#F4D58C] disabled:opacity-60";
 
 function AnnouncementModal({
   onClose,
@@ -27,6 +67,14 @@ function AnnouncementModal({
   const teams: any[] = teamsData?.data ?? [];
 
   const selectedTeam = orgUnitId ? teams.find((t: any) => t.id === orgUnitId) : null;
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !sending) onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose, sending]);
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -60,143 +108,139 @@ function AnnouncementModal({
   const audienceLabel = selectedTeam ? `Team: ${selectedTeam.name}` : "All active employees";
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4 overflow-y-auto" onClick={onClose}>
-      <div className="v3-card shadow-pop w-full max-w-lg overflow-hidden pop-in max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-6 py-4 border-b-2 border-ink/10">
-          <h2 className="font-bold text-ink flex items-center gap-2">
-            <Megaphone size={18} className="text-action-deep" />
-            {confirming ? "Confirm broadcast" : "New Announcement"}
-          </h2>
-          <button
-            onClick={onClose}
-            className="h-7 w-7 flex items-center justify-center rounded-lg hover:bg-muted transition-colors text-ink-4 text-xl leading-none"
+    <ModalPortal>
+      <div className="ds-root contents">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[rgba(2,6,10,.72)]"
+          onClick={() => !sending && onClose()}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-label={confirming ? "Confirm broadcast" : "New Announcement"}
+            className="relative w-full max-w-[540px] max-h-[90vh] flex flex-col bg-ds-card border border-ds-line2 rounded-[18px] shadow-[0_24px_60px_rgba(0,0,0,.6)] overflow-hidden"
           >
-            ×
-          </button>
-        </div>
-
-        {confirming ? (
-          <div className="p-6 space-y-4 overflow-y-auto">
-            <p className="text-sm text-ink-3">
-              This will notify <strong>{audienceLabel}</strong> via portal and email. You can&apos;t undo this.
-            </p>
-            <div className="v3-card-inset p-4 space-y-2">
-              <p className="text-xs font-bold text-ink-4 uppercase tracking-wider">Preview</p>
-              <p className="text-sm font-semibold text-ink">{title}</p>
-              <p className="text-sm text-ink-3 whitespace-pre-wrap leading-relaxed">{message}</p>
-              <div className="flex items-center gap-1.5 mt-2 pt-2 border-t border-ink/10">
-                {orgUnitId ? <Building2 size={12} className="text-ink-4" /> : <Globe size={12} className="text-ink-4" />}
-                <span className="text-xs text-ink-4">{audienceLabel}</span>
-              </div>
-            </div>
-            {error && <p className="text-xs text-danger">{error}</p>}
-            <div className="flex items-center justify-end gap-3 pt-1">
-              <button
-                type="button"
-                onClick={() => setConfirming(false)}
-                disabled={sending}
-                className="px-5 py-2 rounded-full border-2 border-ink/15 text-sm text-ink-3 hover:bg-muted transition-colors disabled:opacity-50"
-              >
-                Back
-              </button>
-              <button
-                type="button"
-                onClick={doSend}
-                disabled={sending}
-                className="px-5 py-2.5 rounded-full bg-ink text-white text-sm font-bold btn-3d hover:bg-ink-2 transition-colors disabled:opacity-50 flex items-center gap-2"
-              >
-                <Megaphone size={15} />
-                {sending ? "Sending…" : "Yes, send now"}
-              </button>
-            </div>
-          </div>
-        ) : (
-          <form onSubmit={handleSubmit} className="p-6 space-y-4 overflow-y-auto">
-            <div>
-              <label className="text-xs font-bold text-ink-4 uppercase tracking-wider mb-1.5 block">Send to</label>
-              <div className="relative">
-                <select
-                  value={orgUnitId}
-                  onChange={(e) => setOrgUnitId(e.target.value)}
-                  className={inputCls}
-                >
-                  <option value="">Everyone (all active employees)</option>
-                  {teams.map((t: any) => (
-                    <option key={t.id} value={t.id}>Team: {t.name}</option>
-                  ))}
-                </select>
-              </div>
-              <p className="text-xs text-ink-4 mt-1">
-                {orgUnitId && selectedTeam
-                  ? `Only members of "${selectedTeam.name}" will be notified.`
-                  : "All active employees will be notified."}
-              </p>
-            </div>
-
-            <div>
-              <div className="flex justify-between mb-1.5">
-                <label className="text-xs font-bold text-ink-4 uppercase tracking-wider">Title</label>
-                <span className="text-xs text-ink-4">{title.length}/120</span>
-              </div>
-              <input
-                type="text"
-                value={title}
-                onChange={(e) => setTitle(e.target.value.slice(0, 120))}
-                placeholder="e.g., Office closed on Monday"
-                required
-                className={inputCls}
-              />
-            </div>
-
-            <div>
-              <div className="flex justify-between mb-1.5">
-                <label className="text-xs font-bold text-ink-4 uppercase tracking-wider">Message</label>
-                <span className="text-xs text-ink-4">{message.length}/2000</span>
-              </div>
-              <textarea
-                value={message}
-                onChange={(e) => setMessage(e.target.value.slice(0, 2000))}
-                placeholder="Write your announcement here..."
-                required
-                rows={6}
-                className={`${inputCls} resize-none`}
-              />
-            </div>
-
-            {error && (
-              <p className="text-xs text-danger bg-danger/5 rounded-lg px-3 py-2">{error}</p>
-            )}
-
-            <div className="flex items-center gap-3 pt-1">
-              <p className="text-xs text-ink-4 flex-1">
-                {orgUnitId && selectedTeam
-                  ? `Sends to "${selectedTeam.name}" members only.`
-                  : "Sends to all active employees."}
-              </p>
+            <span aria-hidden="true" className="absolute left-0 right-0 top-0 h-px bg-[linear-gradient(90deg,transparent,#E9BD62_30%,#E9BD62_70%,transparent)]" />
+            <div className="flex items-center justify-between px-6 py-[18px] border-b border-[#1A2C38]">
+              <span className="flex items-center gap-2.5 text-[16px] font-semibold text-ds-text">
+                <span className="text-ds-gold flex"><Icon d={MEGA} className="h-[17px] w-[17px]" sw={1.9} /></span>
+                {confirming ? "Confirm broadcast" : "New Announcement"}
+              </span>
               <button
                 type="button"
                 onClick={onClose}
-                className="px-5 py-2 rounded-full border-2 border-ink/15 text-sm text-ink-3 hover:bg-muted transition-colors"
+                disabled={sending}
+                aria-label="Close"
+                className="h-[30px] w-[30px] rounded-[8px] grid place-items-center text-ds-t3 hover:bg-[#132430] hover:text-ds-text disabled:opacity-50"
               >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                className="px-5 py-2.5 rounded-full bg-ink text-white text-sm font-bold btn-3d hover:bg-ink-2 transition-colors flex items-center gap-2"
-              >
-                <Megaphone size={15} />
-                Review &amp; send
+                <X className="h-4 w-4" />
               </button>
             </div>
-          </form>
-        )}
+
+            {confirming ? (
+              <div className="px-6 py-[22px] flex flex-col gap-4 overflow-y-auto">
+                <p className="text-[13.5px] leading-[1.55] text-ds-t2">
+                  This will notify <b className="text-ds-text font-semibold">{audienceLabel}</b> via portal and email. You can&apos;t undo this.
+                </p>
+                <div className="p-[18px] rounded-[14px] bg-ds-inset border border-[#1A2C38] flex flex-col gap-2">
+                  <span className={LABEL}>Preview</span>
+                  <span className="text-[15px] font-semibold text-ds-text [overflow-wrap:anywhere]">{title}</span>
+                  <span className="text-[13px] leading-[1.6] text-ds-t2 whitespace-pre-wrap [overflow-wrap:anywhere]">{message}</span>
+                  <span className="flex items-center gap-1.5 mt-1 pt-2.5 border-t border-[#1A2C38] text-[12px] text-ds-t3">
+                    <Icon d={orgUnitId ? BLDG : GLOBE} className="h-3 w-3" />
+                    {audienceLabel}
+                  </span>
+                </div>
+                {error && (
+                  <div className="px-3 py-2.5 rounded-[8px] bg-[rgba(229,72,77,.08)] border border-[rgba(229,72,77,.3)] text-[#FB7185] text-[12.5px]">{error}</div>
+                )}
+                <div className="flex justify-end gap-2.5 flex-wrap">
+                  <button type="button" onClick={() => setConfirming(false)} disabled={sending} className={GHOST_BTN}>
+                    Back
+                  </button>
+                  <button type="button" onClick={doSend} disabled={sending} className={GOLD_BTN}>
+                    <Icon d={MEGA} className="h-3.5 w-3.5" />
+                    {sending ? "Sending…" : "Yes, send now"}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <form onSubmit={handleSubmit} className="px-6 py-[22px] flex flex-col gap-[18px] overflow-y-auto">
+                <label className="flex flex-col gap-[7px]">
+                  <span className={LABEL}>Send to</span>
+                  <select value={orgUnitId} onChange={(e) => setOrgUnitId(e.target.value)} className={`${FIELD} cursor-pointer`}>
+                    <option value="" className="bg-ds-card">Everyone (all active employees)</option>
+                    {teams.map((t: any) => (
+                      <option key={t.id} value={t.id} className="bg-ds-card">Team: {t.name}</option>
+                    ))}
+                  </select>
+                  <span className="text-[12px] text-ds-t3">
+                    {orgUnitId && selectedTeam
+                      ? `Only members of "${selectedTeam.name}" will be notified.`
+                      : "All active employees will be notified."}
+                  </span>
+                </label>
+
+                <label className="flex flex-col gap-[7px]">
+                  <span className="flex justify-between">
+                    <span className={LABEL}>Title</span>
+                    <span className="text-[11.5px] text-ds-t3 tabular-nums">{title.length}/120</span>
+                  </span>
+                  <input
+                    type="text"
+                    value={title}
+                    onChange={(e) => setTitle(e.target.value.slice(0, 120))}
+                    placeholder="e.g., Office closed on Monday"
+                    required
+                    className={FIELD}
+                  />
+                </label>
+
+                <label className="flex flex-col gap-[7px]">
+                  <span className="flex justify-between">
+                    <span className={LABEL}>Message</span>
+                    <span className="text-[11.5px] text-ds-t3 tabular-nums">{message.length}/2000</span>
+                  </span>
+                  <textarea
+                    value={message}
+                    onChange={(e) => setMessage(e.target.value.slice(0, 2000))}
+                    placeholder="Write your announcement here..."
+                    required
+                    rows={6}
+                    className={`${FIELD} h-auto py-3.5 resize-none leading-[1.55]`}
+                  />
+                </label>
+
+                {error && (
+                  <div className="px-3 py-2.5 rounded-[8px] bg-[rgba(229,72,77,.08)] border border-[rgba(229,72,77,.3)] text-[#FB7185] text-[12.5px]">{error}</div>
+                )}
+
+                <div className="flex items-center gap-2.5 flex-wrap">
+                  <span className="flex-[1_1_160px] text-[12px] text-ds-t3">
+                    {orgUnitId && selectedTeam
+                      ? `Sends to "${selectedTeam.name}" members only.`
+                      : "Sends to all active employees."}
+                  </span>
+                  <button type="button" onClick={onClose} className={GHOST_BTN}>
+                    Cancel
+                  </button>
+                  <button type="submit" className={GOLD_BTN}>
+                    <Icon d={MEGA} className="h-3.5 w-3.5" />
+                    Review &amp; send
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
+        </div>
       </div>
-    </div>
+    </ModalPortal>
   );
 }
 
 export default function AnnouncementsPage() {
-  const { announcements, isLoading, mutate } = useAnnouncements();
+  const { announcements, isLoading, isError, mutate } = useAnnouncements();
   const [modalOpen, setModalOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
@@ -208,116 +252,116 @@ export default function AnnouncementsPage() {
   }
 
   return (
-    <>
+    <div className="pb-8">
       {toast && (
-        <div className="fixed top-5 right-5 z-50 v3-card shadow-pop px-5 py-3 flex items-center gap-2 toast-pop">
-          <CheckCircle2 size={16} className="text-sage" />
-          <span className="text-sm font-medium text-ink">{toast}</span>
+        <div
+          role="status"
+          className="fixed top-5 right-5 left-5 sm:left-auto z-[60] flex items-center gap-2.5 px-[18px] py-[13px] rounded-[14px] bg-ds-inset border border-[rgba(0,215,160,.4)] shadow-[0_14px_36px_rgba(0,0,0,.5)] text-[13px] font-medium text-ds-text"
+        >
+          <span className="text-ds-teal flex"><Icon d={CHECK} /></span>
+          {toast}
         </div>
       )}
 
-      {modalOpen && (
-        <AnnouncementModal
-          onClose={() => setModalOpen(false)}
-          onSent={handleSent}
-        />
-      )}
+      {modalOpen && <AnnouncementModal onClose={() => setModalOpen(false)} onSent={handleSent} />}
 
-      <div className="space-y-5 pop-in">
-
-      <div className="flex items-end justify-between">
-        <div>
-          <p className="text-xs font-bold text-ink-4 uppercase tracking-widest mb-1">Broadcast</p>
-          <h1 className="font-display text-3xl font-semibold text-ink leading-tight">Announcements</h1>
-          <p className="text-sm text-ink-3 mt-0.5">History of every broadcast sent to the team</p>
+      {/* Header */}
+      <section className="flex items-end justify-between gap-4 flex-wrap pt-[30px] pb-[22px]">
+        <div className="flex-[1_1_320px] min-w-0">
+          <div className="text-[11px] font-semibold tracking-[.16em] uppercase text-ds-gold">Broadcast</div>
+          <h1 className="mt-1.5 text-[34px] font-bold tracking-[-.03em] text-ds-text leading-tight">Announcements</h1>
+          <p className="mt-1.5 text-[13.5px] text-ds-t2">History of every broadcast sent to the team</p>
         </div>
         <button
+          type="button"
           onClick={() => setModalOpen(true)}
-          className="hidden sm:flex items-center gap-2 px-4 py-2.5 rounded-full bg-ink text-white text-sm font-bold btn-3d hover:bg-ink-2 transition-colors"
+          className="inline-flex items-center gap-2 h-[46px] px-[22px] rounded-full bg-ds-gold text-[#060D14] text-[14px] font-bold whitespace-nowrap hover:bg-[#F4D58C]"
         >
-          <Plus size={16} />
+          <Icon d="M12 5v14M5 12h14" className="h-[15px] w-[15px]" sw={2.4} />
           New Announcement
         </button>
-      </div>
+      </section>
 
-      <div className="v3-card overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b-2 border-ink/10 bg-muted/40">
-                <th className="text-left px-4 py-3 text-ink-4 text-xs font-bold uppercase tracking-wider">Title</th>
-                <th className="text-left px-4 py-3 text-ink-4 text-xs font-bold uppercase tracking-wider">Message</th>
-                <th className="text-left px-4 py-3 text-ink-4 text-xs font-bold uppercase tracking-wider">Sent by</th>
-                <th className="text-left px-4 py-3 text-ink-4 text-xs font-bold uppercase tracking-wider">Audience</th>
-                <th className="text-left px-4 py-3 text-ink-4 text-xs font-bold uppercase tracking-wider">Recipients</th>
-                <th className="text-left px-4 py-3 text-ink-4 text-xs font-bold uppercase tracking-wider">Date</th>
-              </tr>
-            </thead>
-            <tbody>
-              {isLoading ? (
-                [...Array(4)].map((_, i) => (
-                  <tr key={i} className="border-b border-rule">
-                    {[...Array(6)].map((__, j) => (
-                      <td key={j} className="px-4 py-4">
-                        <div className="h-4 bg-muted rounded animate-pulse" />
-                      </td>
-                    ))}
-                  </tr>
-                ))
-              ) : announcements.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="p-10 text-center text-ink-4">
-                    <Megaphone size={28} className="mx-auto mb-3 opacity-25" />
-                    <p className="font-bold text-ink mb-1">No announcements yet</p>
-                    <p className="text-xs">Click &quot;New Announcement&quot; to broadcast a message.</p>
-                  </td>
-                </tr>
-              ) : (
-                announcements.map((a: any) => (
-                  <tr key={a.id} className="border-b border-rule last:border-0 v3-row">
-                    <td className="px-4 py-4 font-semibold text-ink max-w-[200px] truncate">
+      {/* Table */}
+      <section className="rounded-[16px] border border-[#2A4658] bg-ds-card overflow-hidden shadow-[0_12px_32px_rgba(0,0,0,.35)]">
+        <div className="overflow-x-auto [color-scheme:dark]">
+          <div className="min-w-[820px]">
+            <div className={`${GRID} h-[52px] px-5 bg-ds-inset border-b border-ds-line2 text-[11px] font-semibold tracking-[.08em] uppercase text-ds-t3 whitespace-nowrap`}>
+              <span>Title</span><span>Message</span><span>Sent by</span><span>Audience</span><span>Recipients</span><span>Date</span>
+            </div>
+            {isLoading ? (
+              Array.from({ length: 4 }).map((_, i) => (
+                <div key={i} className={`${GRID} h-[84px] px-5 border-b border-[#132430]`}>
+                  {Array.from({ length: 6 }).map((__, j) => (
+                    <div key={j} className="h-3.5 rounded-[4px] bg-ds-hover motion-safe:animate-pulse" />
+                  ))}
+                </div>
+              ))
+            ) : isError ? (
+              <div className="py-14 px-5 text-center text-ds-t3 text-[13px]">Announcements couldn&apos;t be loaded just now. Refresh to try again.</div>
+            ) : announcements.length === 0 ? (
+              <div className="py-14 px-5 flex flex-col items-center gap-2.5 text-ds-t3 text-[12.5px] text-center">
+                <Icon d={MEGA} className="h-[30px] w-[30px]" sw={1.5} />
+                <span className="text-[14px] font-semibold text-ds-text">No announcements yet</span>
+                Click &quot;New Announcement&quot; to broadcast a message.
+              </div>
+            ) : (
+              announcements.map((a: any) => {
+                const by: string | null = a.sentBy?.name ?? null;
+                const hue = by ? HUES[hash(by) % HUES.length] : "#738395";
+                const team = !!a.orgUnit;
+                const auColor = team ? "#9B7EDE" : "#A7B3C2";
+                return (
+                  <div key={a.id} className={`${GRID} min-h-[84px] py-3 px-5 border-b border-[#132430] last:border-b-0 text-[13.5px] hover:bg-[#0A1620] transition-colors`}>
+                    <span title={a.title} className="font-semibold text-ds-text leading-[1.4] line-clamp-2 [overflow-wrap:anywhere]">
                       {a.title}
-                    </td>
-                    <td className="px-4 py-4 text-ink-3 max-w-[280px]">
-                      <p className="line-clamp-2 leading-relaxed">{a.message}</p>
-                    </td>
-                    <td className="px-4 py-4 text-ink">{a.sentBy?.name ?? "—"}</td>
-                    <td className="px-4 py-4">
-                      {a.orgUnit ? (
-                        <span className="inline-flex items-center gap-1 bg-indigo/10 text-indigo rounded-full px-2.5 py-1 text-xs font-medium border border-indigo/20">
-                          <Building2 size={10} />
-                          {a.orgUnit.name}
-                        </span>
+                    </span>
+                    <span title={a.message} className="text-ds-t2 text-[13px] leading-[1.55] line-clamp-2 [overflow-wrap:anywhere]">
+                      {a.message}
+                    </span>
+                    <span className="flex items-center gap-2.5 min-w-0">
+                      {by ? (
+                        <>
+                          <span
+                            className="h-[30px] w-[30px] rounded-full grid place-items-center text-[11px] font-bold shrink-0"
+                            style={{ background: rgba(hue, 0.16), color: hue }}
+                          >
+                            {initials(by)}
+                          </span>
+                          <span className="text-[#E3E8EE] leading-[1.3] min-w-0 truncate">{by}</span>
+                        </>
                       ) : (
-                        <span className="inline-flex items-center gap-1 bg-muted text-ink-4 rounded-full px-2.5 py-1 text-xs font-medium">
-                          <Globe size={10} />
-                          Everyone
-                        </span>
+                        <span className="text-[#4A6275]">—</span>
                       )}
-                    </td>
-                    <td className="px-4 py-4">
-                      <span className="inline-flex items-center gap-1 bg-action/20 text-action-deep rounded-full px-3 py-1 text-xs font-bold border border-action/30">
-                        <Users size={11} />
-                        {a.recipientCount}
+                    </span>
+                    <span className="flex items-center min-w-0">
+                      <span
+                        className="inline-flex items-center gap-1.5 h-7 px-[11px] rounded-full border text-[12px] font-semibold whitespace-nowrap max-w-full overflow-hidden"
+                        style={
+                          team
+                            ? { background: rgba(auColor, 0.12), borderColor: rgba(auColor, 0.35), color: auColor }
+                            : { background: "#0F1F2B", borderColor: "#223543", color: auColor }
+                        }
+                        title={team ? a.orgUnit.name : "Everyone"}
+                      >
+                        <Icon d={team ? BLDG : GLOBE} className="h-3 w-3" />
+                        <span className="truncate">{team ? a.orgUnit.name : "Everyone"}</span>
                       </span>
-                    </td>
-                    <td className="px-4 py-4 text-ink-4 whitespace-nowrap">
-                      {a.createdAt
-                        ? new Date(a.createdAt).toLocaleDateString("en-IN", {
-                            day: "numeric",
-                            month: "short",
-                            year: "numeric",
-                          })
-                        : "—"}
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+                    </span>
+                    <span className="flex items-center">
+                      <span className="inline-flex items-center gap-1.5 h-7 px-3 rounded-full bg-[rgba(233,189,98,.12)] border border-[rgba(233,189,98,.35)] text-ds-gold text-[12px] font-bold tabular-nums">
+                        <Icon d={USERS} className="h-3 w-3" />
+                        {a.recipientCount ?? "—"}
+                      </span>
+                    </span>
+                    <span className="text-ds-t2 whitespace-nowrap tabular-nums">{a.createdAt ? fdY(a.createdAt) : "—"}</span>
+                  </div>
+                );
+              })
+            )}
+          </div>
         </div>
-      </div>
+      </section>
     </div>
-    </>
   );
 }

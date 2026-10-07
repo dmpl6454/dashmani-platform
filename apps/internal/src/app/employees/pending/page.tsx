@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback } from "react";
 import { apiFetch } from "@/lib/api";
 import { Check, X, Clock, ArrowLeft } from "lucide-react";
 import Link from "next/link";
+import { BoxesLoader } from "@/components/boxes-loader";
 
 interface PendingEmployee {
   id: string;
@@ -62,7 +63,7 @@ export default function PendingEmployeesPage() {
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#F5D547]" />
+        <BoxesLoader />
       </div>
     );
   }

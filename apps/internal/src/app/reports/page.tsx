@@ -1,54 +1,75 @@
 "use client";
 import { memo, useCallback, useState, useEffect } from "react";
 import Link from "next/link";
-import { Users, FileText, Link2, Calendar, Filter, X, TrendingUp, Trophy, Trash2, AlertTriangle, BarChart2, ArrowUpDown, ArrowUp, ArrowDown, Eye, Heart, MessageCircle, Youtube, Instagram, Facebook } from "lucide-react";
+import { Users, FileText, Link2, Calendar, X, TrendingUp, Trophy, Trash2, AlertTriangle, BarChart2, ArrowUpDown, ArrowUp, ArrowDown, Eye, Heart, MessageCircle, ChevronDown } from "lucide-react";
 import { useTopLinks } from "@/lib/hooks/use-reports";
 import { useAdminReports, useReportSummary, useInsightsSummary } from "@/lib/hooks/use-reports";
 import { useEmployees } from "@/lib/hooks/use-employees";
 import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { UserAvatar } from "@/components/user-avatar";
-import { PlatformIcon } from "@/lib/platform-icon";
-import { RangePills, presetStart, todayISO, rangeLabel } from "./_range";
+import { usePageTitle } from "@/lib/hooks/use-page-title";
+import { DsRangeFilters, presetStart, todayISO, rangeLabel } from "./_range";
 import { ExportButton, AllLinksCsvButton } from "./_export";
 import { TrueLinksPanel } from "./_true-links";
 
-// Snapchat has no dedicated lucide-react brand icon; reuse the same SVG mapped
-// in PlatformIcon (already used elsewhere in the portal) for visual consistency.
-function SnapchatTopLinksIcon({ className }: { className?: string }) {
-  return <PlatformIcon slug="snapchat" className={className} />;
-}
-
-const PLATFORM_COLORS: Record<string, string> = {
-  instagram: "bg-pink-100 text-pink-700",
-  twitter: "bg-sky-100 text-sky-700",
-  linkedin: "bg-[#FFF3C4] text-[#1A1A1A]",
-  facebook: "bg-[#FFF3C4] text-[#1A1A1A]",
-  youtube: "bg-red-100 text-red-700",
-  tiktok: "bg-[#F0E4C4] text-[#1A1A1A]",
-  snapchat: "bg-yellow-100 text-yellow-700",
+// Mockup palette.
+const PLATFORM_COLOR: Record<string, string> = {
+  instagram: "#F472B6",
+  facebook: "#6EB2FF",
+  youtube: "#FB7185",
+  snapchat: "#FACC15",
+  twitter: "#38BDF8",
+  linkedin: "#4AA3DF",
+  tiktok: "#A7B3C2",
 };
-
-const PLATFORM_CARD_STYLES: Record<string, { bg: string; labelColor: string; labelBg: string; bar: string; border: string }> = {
-  instagram: { bg: "from-pink-50 to-rose-50",     labelColor: "text-pink-600",   labelBg: "bg-pink-100",    bar: "bg-pink-400",   border: "border-pink-100"   },
-  linkedin:  { bg: "from-blue-50 to-indigo-50",   labelColor: "text-blue-700",   labelBg: "bg-blue-100",    bar: "bg-blue-500",   border: "border-blue-100"   },
-  youtube:   { bg: "from-red-50 to-orange-50",    labelColor: "text-red-600",    labelBg: "bg-red-100",     bar: "bg-red-400",    border: "border-red-100"    },
-  facebook:  { bg: "from-sky-50 to-blue-50",      labelColor: "text-sky-700",    labelBg: "bg-sky-100",     bar: "bg-sky-400",    border: "border-sky-100"    },
-  twitter:   { bg: "from-cyan-50 to-sky-50",      labelColor: "text-cyan-700",   labelBg: "bg-cyan-100",    bar: "bg-cyan-400",   border: "border-cyan-100"   },
-  tiktok:    { bg: "from-slate-50 to-zinc-50",    labelColor: "text-slate-700",  labelBg: "bg-slate-100",   bar: "bg-slate-400",  border: "border-slate-100"  },
-  snapchat:  { bg: "from-yellow-50 to-amber-50",  labelColor: "text-yellow-600", labelBg: "bg-yellow-100",  bar: "bg-yellow-400", border: "border-yellow-100" },
+const platformColor = (p?: string) => PLATFORM_COLOR[(p ?? "").toLowerCase()] ?? "#E9BD62";
+const PLATFORM_NAME: Record<string, string> = { youtube: "YouTube", tiktok: "TikTok", linkedin: "LinkedIn" };
+const platformName = (p?: string) => {
+  const k = (p ?? "").toLowerCase();
+  return PLATFORM_NAME[k] ?? (k ? k.charAt(0).toUpperCase() + k.slice(1) : "—");
 };
+const HUES = ["#238BFF", "#E9BD62", "#9B7EDE", "#00D7A0", "#FB7185", "#6EB2FF"];
+const hash = (s: string) => {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = s.charCodeAt(i) + ((h << 5) - h);
+  return Math.abs(h);
+};
+const rgba = (hex: string, a: number) => {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`;
+};
+const initials = (name?: string) =>
+  (name || "?").trim().split(/\s+/).slice(0, 2).map((w) => w[0]).join("").toUpperCase() || "?";
+const nf = new Intl.NumberFormat("en-IN");
 
-function platformCardStyle(platform: string) {
-  return PLATFORM_CARD_STYLES[platform?.toLowerCase()] ?? {
-    bg: "from-[#FFFBF0] to-[#FFF8E1]", labelColor: "text-amber-700", labelBg: "bg-amber-100", bar: "bg-amber-400", border: "border-[#F0EAD8]",
-  };
+function Mono({ name, size = 36 }: { name?: string; size?: number }) {
+  const hue = HUES[hash(name || "") % HUES.length];
+  return (
+    <span
+      aria-hidden="true"
+      className="rounded-full border grid place-items-center font-bold shrink-0"
+      style={{ width: size, height: size, fontSize: size >= 40 ? 12 : 11, background: rgba(hue, 0.12), borderColor: rgba(hue, 0.3), color: hue }}
+    >
+      {initials(name)}
+    </span>
+  );
 }
 
-function platformBadgeClass(platform: string) {
-  return PLATFORM_COLORS[platform?.toLowerCase()] ?? "bg-[#FFF3C4] text-[#1A1A1A]";
+function PlatformBadge({ platform }: { platform?: string }) {
+  const c = platformColor(platform);
+  return (
+    <span
+      className="inline-flex items-center h-[22px] px-[9px] rounded-full border text-[10px] font-bold tracking-[.06em] uppercase whitespace-nowrap shrink-0"
+      style={{ background: rgba(c, 0.1), borderColor: rgba(c, 0.3), color: c }}
+    >
+      {platform ?? "—"}
+    </span>
+  );
 }
 
+const CARD = "flex flex-col min-w-0 rounded-[16px] border border-[#2A4658] bg-ds-card overflow-hidden shadow-[0_12px_32px_rgba(0,0,0,.35)]";
+const HEAD_ROW = "bg-ds-inset border-b border-ds-line2 text-[10.5px] font-semibold tracking-[.08em] uppercase text-ds-t3 whitespace-nowrap";
+const BTN = "inline-flex items-center gap-2 h-[42px] px-4 rounded-full border border-ds-line2 bg-ds-inset text-ds-t5 text-[13px] font-semibold whitespace-nowrap hover:border-[#2A4658] hover:text-ds-text";
 
 type SortKey = "name" | "email" | "reportCount" | "totalLinks" | "linksToday" | "avgLinksPerDay" | "currentStreak" | "lastSubmittedAt";
 type SortDir = "asc" | "desc";
@@ -78,11 +99,12 @@ function sortEmployees(employees: any[], key: SortKey, dir: SortDir): any[] {
 
 interface SortIconProps { col: SortKey; sortKey: SortKey; sortDir: SortDir; }
 function SortIcon({ col, sortKey, sortDir }: SortIconProps) {
-  if (col !== sortKey) return <ArrowUpDown className="h-3 w-3 opacity-30 ml-0.5 inline-block" />;
-  return sortDir === "asc"
-    ? <ArrowUp className="h-3 w-3 ml-0.5 inline-block text-[#1A1A1A]" />
-    : <ArrowDown className="h-3 w-3 ml-0.5 inline-block text-[#1A1A1A]" />;
+  if (col !== sortKey) return <ArrowUpDown className="h-3 w-3 opacity-45 shrink-0" />;
+  return sortDir === "asc" ? <ArrowUp className="h-3 w-3 text-ds-gold shrink-0" /> : <ArrowDown className="h-3 w-3 text-ds-gold shrink-0" />;
 }
+
+const SUMMARY_GRID =
+  "grid gap-x-3.5 items-center [grid-template-columns:minmax(200px,20fr)_minmax(170px,20fr)_80px_110px_80px_80px_80px_110px_110px]";
 
 interface EmployeeRowProps {
   emp: any;
@@ -91,181 +113,141 @@ interface EmployeeRowProps {
 }
 
 const EmployeeRow = memo(function EmployeeRow({ emp, onOpenEmpModal, onOpenTodayModal }: EmployeeRowProps) {
+  const today = emp.linksToday ?? 0;
+  const streak = emp.currentStreak ?? 0;
   return (
-    <tr className="border-b border-[#F0EAD8] last:border-0 hover:bg-[rgba(255,248,225,0.5)] transition-colors group">
-      <td className="py-3 pr-4">
-        <div className="flex items-center gap-3">
-          <UserAvatar
-            name={emp.name}
-            imageUrl={emp.profileImageUrl}
-            size={8}
-            className="ring-2 ring-white shadow-sm"
-            textClassName="text-xs"
-          />
-          <span className="font-medium text-[#1A1A1A] group-hover:text-[#F5D547] transition-colors">{emp.name}</span>
-        </div>
-      </td>
-      <td className="py-3 pr-4 text-[#7A7A7A]">{emp.email}</td>
-      <td className="py-3 pr-4 text-right">
-        <span className="inline-flex items-center justify-center min-w-[28px] h-6 rounded-full bg-purple-50 text-purple-700 text-xs font-semibold px-2">
+    <div className={`${SUMMARY_GRID} min-h-[64px] py-2.5 px-6 border-b border-[#132430] last:border-b-0 text-[13px] tabular-nums hover:bg-[#0A1620] transition-colors`}>
+      <span className="flex items-center gap-3 min-w-0">
+        <Mono name={emp.name} />
+        <span className="text-[14px] font-semibold text-ds-text truncate" title={emp.name}>{emp.name}</span>
+      </span>
+      <span className="text-ds-t2 truncate" title={emp.email}>{emp.email}</span>
+      <span className="text-right">
+        <span className="inline-flex items-center justify-center min-w-[32px] h-[26px] px-2 rounded-[8px] bg-[rgba(155,126,222,.14)] text-[#B8A3EC] font-bold">
           {emp.reportCount}
         </span>
-      </td>
-      <td className="py-3 pr-4 text-right">
+      </span>
+      <span className="text-right">
         <button
+          type="button"
           onClick={() => onOpenEmpModal(emp)}
           title="View per-platform breakdown for the selected window"
-          className="inline-flex items-center gap-1 min-w-[28px] h-6 rounded-full bg-emerald-50 text-emerald-700 text-xs font-semibold px-2 hover:bg-emerald-100 transition-colors cursor-pointer border border-transparent hover:border-emerald-300"
+          className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-[8px] bg-[rgba(0,215,160,.1)] text-ds-teal font-bold hover:bg-[rgba(0,215,160,.18)]"
         >
-          {emp.totalLinks}
-          <BarChart2 className="h-3 w-3 opacity-60" />
+          {nf.format(emp.totalLinks ?? 0)}
+          <BarChart2 className="h-3 w-3 opacity-70" />
         </button>
-      </td>
-      <td className="py-3 pr-4 text-right">
+      </span>
+      <span className="text-right">
         <button
+          type="button"
           onClick={() => onOpenTodayModal(emp)}
           title="View today's per-platform breakdown (always today, ignores the date filter)"
-          className={`inline-flex items-center gap-1 min-w-[28px] h-6 rounded-full text-xs font-semibold px-2 transition-colors cursor-pointer border ${
-            (emp.linksToday ?? 0) > 0
-              ? "bg-blue-50 text-blue-700 border-transparent hover:bg-blue-100 hover:border-blue-300"
-              : "bg-transparent text-[#B0B0B0] border-transparent hover:bg-[#F5F5F5] hover:border-[#E8E0D0]"
-          }`}
+          className={`inline-flex items-center gap-1.5 h-7 px-2 rounded-[8px] font-semibold ${today > 0 ? "text-ds-teal hover:bg-[rgba(0,215,160,.1)]" : "text-[#4A6275] hover:bg-ds-hover"}`}
         >
-          {(emp.linksToday ?? 0) > 0 ? emp.linksToday : "—"}
+          {today > 0 ? nf.format(today) : "—"}
           <BarChart2 className="h-3 w-3 opacity-60" />
         </button>
-      </td>
-      <td className="py-3 pr-4 text-right">
-        <span className="text-xs text-[#7A7A7A]">{emp.avgLinksPerDay ?? "—"}</span>
-      </td>
-      <td className="py-3 pr-4 text-right">
-        <span className="inline-flex items-center gap-1 text-xs font-semibold text-orange-600">
-          {emp.currentStreak ?? 0} 🔥
-        </span>
-      </td>
-      <td className="py-3 pr-4 text-xs text-[#7A7A7A]">
-        {emp.lastSubmittedAt
-          ? new Date(emp.lastSubmittedAt).toLocaleDateString("en-IN", { day: "numeric", month: "short" })
-          : "—"}
-      </td>
-      <td className="py-3">
-        <Link
-          href={`/reports/${emp.id}`}
-          className="text-[#1A1A1A] hover:text-[#F5D547] text-xs font-medium transition-colors"
-        >
-          View Details
+      </span>
+      <span className="text-right text-ds-t5">{emp.avgLinksPerDay ?? "—"}</span>
+      <span className={`text-right font-bold ${streak ? "text-[#F59E66]" : "text-ds-t3"}`}>{streak} 🔥</span>
+      <span className="text-ds-t2 whitespace-nowrap">
+        {emp.lastSubmittedAt ? new Date(emp.lastSubmittedAt).toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : "—"}
+      </span>
+      <span className="text-right">
+        <Link href={`/reports/${emp.id}`} className="text-[12.5px] font-semibold text-ds-gold hover:text-[#F4D58C] whitespace-nowrap">
+          View Details →
         </Link>
-      </td>
-    </tr>
+      </span>
+    </div>
   );
 });
 
 interface ReportCardProps {
   report: any;
   isAdmin: boolean;
+  open: boolean;
+  onToggle: () => void;
   deletingLinkId: string | null;
   onDeleteLink: (linkId: string) => void;
 }
 
-const ReportCard = memo(function ReportCard({ report, isAdmin, deletingLinkId, onDeleteLink }: ReportCardProps) {
+const ReportCard = memo(function ReportCard({ report, isAdmin, open, onToggle, deletingLinkId, onDeleteLink }: ReportCardProps) {
   const [showAllLinks, setShowAllLinks] = useState(false);
   const LINK_CAP = 20;
   const allLinks = report.links ?? [];
   const shownLinks = showAllLinks ? allLinks : allLinks.slice(0, LINK_CAP);
+  const time = report.submittedAt
+    ? new Date(report.submittedAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })
+    : null;
   return (
     <div
-      className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0] transition-shadow duration-200 hover:shadow-[0_8px_32px_rgba(0,0,0,0.07)]"
-      style={{ contentVisibility: "auto", containIntrinsicSize: "300px" } as any}
+      className={`rounded-[16px] border bg-ds-card overflow-hidden transition-colors ${open ? "border-[#2A4658]" : "border-ds-line"}`}
+      style={{ contentVisibility: "auto", containIntrinsicSize: open ? "420px" : "80px" } as any}
     >
-      <div className="p-5">
-        <div className="flex flex-wrap items-start justify-between gap-2 mb-4">
-          <div className="flex items-center gap-3 min-w-0">
-            <UserAvatar
-              name={report.employee?.name}
-              imageUrl={report.employee?.profileImageUrl}
-              size={10}
-              className="ring-2 ring-white shadow-sm"
-            />
-            <div className="min-w-0">
-              <p className="font-semibold text-[#1A1A1A] truncate">{report.employee?.name ?? "Unknown"}</p>
-              <p className="text-xs text-[#7A7A7A] truncate">{report.employee?.email}</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
-            <span className="rounded-full px-3 py-1 text-xs font-medium bg-[#FFF8E1] text-[#1A1A1A] border border-[#F0EAD8]">
-              {new Date(report.date ?? report.createdAt).toLocaleDateString()}
-            </span>
-            <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium bg-emerald-50 text-emerald-700">
-              <Link2 className="h-3 w-3" />
-              {report.links?.length ?? 0}
-            </span>
-          </div>
-        </div>
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        className="w-full flex items-center gap-3.5 flex-wrap min-h-[72px] px-[22px] py-3.5 text-left hover:bg-[#0A1620] transition-colors"
+      >
+        <Mono name={report.employee?.name} size={40} />
+        <span className="flex-[1_1_200px] min-w-0 leading-[1.3]">
+          <span className="block text-[15px] font-semibold text-ds-text truncate">{report.employee?.name ?? "Unknown"}</span>
+          <span className="block text-[12.5px] text-ds-t3 truncate">{report.employee?.email}</span>
+        </span>
+        <span className="flex items-center gap-2 shrink-0">
+          <span className="inline-flex items-center h-[30px] px-3 rounded-full bg-[rgba(233,189,98,.1)] border border-[rgba(233,189,98,.3)] text-ds-gold text-[12px] font-semibold whitespace-nowrap">
+            {new Date(report.date ?? report.createdAt).toLocaleDateString()}
+          </span>
+          <span className="inline-flex items-center gap-1.5 h-[30px] px-3 rounded-full bg-[rgba(0,215,160,.1)] border border-[rgba(0,215,160,.28)] text-ds-teal text-[12px] font-bold whitespace-nowrap">
+            <Link2 className="h-3.5 w-3.5" />
+            {report.links?.length ?? 0}
+          </span>
+          <ChevronDown className={`h-4 w-4 text-ds-t3 transition-transform ${open ? "rotate-180" : ""}`} />
+        </span>
+      </button>
 
-        {report.notes && (
-          // break-words: notes are free text and occasionally contain an unbroken URL,
-          // which has no spaces for the browser to wrap on and overflows the card.
-          <p className="text-sm text-[#7A7A7A] mb-4 italic pl-0 sm:pl-[52px] break-words">{report.notes}</p>
-        )}
-
-        {/* pl-[52px] aligns the list under the avatar on desktop, but that is 52px of
-            a ~340px phone viewport spent on empty gutter — flush left on phones. */}
-        <div className="space-y-1 pl-0 sm:pl-[52px]">
+      {open && (
+        <div className="border-t border-ds-line py-1.5">
+          {report.notes && (
+            // break-words: notes are free text and occasionally contain an unbroken URL.
+            <p className="px-[22px] sm:pl-[76px] py-2 text-[12.5px] text-ds-t2 italic break-words">{report.notes}</p>
+          )}
           {shownLinks.map((link: any, i: number) => (
-            /* Phones: the row wraps to two lines — badge + time on top, the link itself
-               full-width below. Everything except the URL was shrink-0, so on a narrow
-               row the URL truncated to nothing while the non-shrinkable items still
-               overflowed and painted over each other. sm+ keeps the single-line row. */
-            <div key={link.id ?? i} className="flex flex-wrap sm:flex-nowrap items-center gap-x-2 gap-y-0.5 group/link py-1 px-2 rounded-lg hover:bg-[#FEFCF7] transition-colors">
-              <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide border ${platformBadgeClass(link.platform)}`}>
-                {link.platform ?? "—"}
-              </span>
-              {/* basis-full + order-last put this on its own line on phones; sm:basis-0
-                  restores the original `flex-1` behaviour (grow:1 shrink:1 basis:0).
-                  overflow-hidden clips any child that still refuses to shrink, so a
-                  long name can never paint over the time again. */}
+            /* Phones: the row wraps — badge, account and time on top, the URL full-width
+               below. Only the URL and account shrink, so nothing paints over anything. */
+            <div
+              key={link.id ?? i}
+              className="group/link flex flex-wrap sm:flex-nowrap items-center gap-x-3 gap-y-1 min-h-[42px] py-1.5 px-[22px] sm:pl-[76px] text-[12.5px] hover:bg-[#0A1620]"
+            >
+              <PlatformBadge platform={link.platform} />
+              {link.accountName && (
+                <span className="font-semibold text-ds-t5 truncate min-w-0 max-w-[45%] sm:max-w-[160px]" title={link.accountName}>{link.accountName}</span>
+              )}
               <a
                 href={link.url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="order-last basis-full grow min-w-0 overflow-hidden flex items-center gap-2 group/url sm:order-none sm:basis-0"
                 title={link.url}
+                className="order-last sm:order-none basis-full sm:basis-0 grow min-w-0 truncate text-ds-t3 hover:text-ds-gold"
               >
-                {link.accountName && (
-                  /* Was shrink-0, which is what pushed the name outside the anchor.
-                     Two separate things are going on, so note both:
-                       - `shrink-0` is REMOVED at every width (no sm:shrink-0). The
-                         anchor's overflow-hidden is not breakpoint-gated, so a
-                         non-shrinkable name at desktop could not ellipsize itself
-                         and the anchor hard-clipped its glyphs mid-letter instead.
-                         Being shrinkable means its own `truncate` fires and you get
-                         a proper "…".
-                       - `max-w-[55%]` stays PHONE-ONLY (sm:max-w-none). On a phone
-                         the anchor is a full-width line shared with the URL, so the
-                         cap guarantees the URL keeps room. At desktop there is
-                         usually space for the whole name, and capping it there
-                         would truncate names that fit perfectly well (measured: a
-                         345px name needlessly cut to 269px at an 800px viewport). */
-                  <span className="text-xs font-medium text-[#1A1A1A] min-w-0 max-w-[55%] truncate sm:max-w-none group-hover/url:text-[#F5D547] transition-colors">{link.accountName}</span>
-                )}
-                <span className="text-[10px] text-[#B0B0B0] truncate group-hover/url:underline">{link.url}</span>
+                {link.url}
               </a>
               {link.description && (
-                <span className="text-xs text-[#B0B0B0] truncate max-w-[200px] hidden md:block">{link.description}</span>
+                <span className="hidden md:block text-ds-t3 truncate max-w-[200px]">{link.description}</span>
               )}
-              {report.submittedAt && (
-                /* ml-auto right-aligns the time on the phone's first line; on sm+ the
-                   anchor already absorbs the free space, so it resolves to zero. */
-                <span className="ml-auto text-[10px] text-[#B0B0B0] shrink-0 tabular-nums whitespace-nowrap">
-                  {new Date(report.submittedAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}
-                </span>
-              )}
+              {time && <span className="ml-auto sm:ml-0 text-ds-t3 whitespace-nowrap tabular-nums shrink-0">{time}</span>}
               {isAdmin && link.id && (
+                /* Visible on touch screens (no hover there); revealed on hover with a mouse.
+                   Deleting still asks for confirmation first. */
                 <button
+                  type="button"
                   onClick={() => onDeleteLink(link.id)}
                   disabled={deletingLinkId === link.id}
                   title="Delete this link"
-                  className="h-6 w-6 rounded-lg flex items-center justify-center text-[#B0B0B0] hover:text-red-500 hover:bg-red-50 transition-colors opacity-0 group-hover/link:opacity-100 disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+                  aria-label="Delete this link"
+                  className="h-6 w-6 rounded-[6px] grid place-items-center text-ds-t3 hover:text-[#FB7185] hover:bg-[rgba(229,72,77,.1)] shrink-0 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover/link:opacity-100 focus-visible:opacity-100 disabled:opacity-50"
                 >
                   {deletingLinkId === link.id ? (
                     <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
@@ -276,21 +258,86 @@ const ReportCard = memo(function ReportCard({ report, isAdmin, deletingLinkId, o
               )}
             </div>
           ))}
+          {allLinks.length === 0 && <p className="px-[22px] sm:pl-[76px] py-2 text-[12.5px] text-ds-t3">No links in this report.</p>}
           {allLinks.length > LINK_CAP && (
             <button
+              type="button"
               onClick={() => setShowAllLinks((v) => !v)}
-              className="mt-1 text-xs font-medium text-[#7A7A7A] hover:text-[#1A1A1A] underline"
+              className="mx-[22px] sm:ml-[76px] mt-1 mb-1.5 text-[12px] font-semibold text-ds-gold hover:text-[#F4D58C]"
             >
               {showAllLinks ? "Show fewer" : `Show all ${allLinks.length} links`}
             </button>
           )}
         </div>
-      </div>
+      )}
     </div>
   );
 });
 
+/** Dark breakdown dialog shared by the four drill-downs. */
+function BreakdownModal({ title, sub, icon, color, onClose, children }: {
+  title: string; sub: string; icon: React.ReactNode; color: string; onClose: () => void; children: React.ReactNode;
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  return (
+    <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-[rgba(2,6,10,.7)]" onClick={onClose}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        onClick={(e) => e.stopPropagation()}
+        className="relative w-full max-w-sm bg-ds-card border border-ds-line2 rounded-[16px] p-6 shadow-[0_20px_50px_rgba(0,0,0,.6)] overflow-hidden"
+      >
+        <span aria-hidden="true" className="absolute left-0 right-0 top-0 h-px" style={{ background: `linear-gradient(90deg,transparent,${color} 30%,${color} 70%,transparent)` }} />
+        <div className="flex items-center justify-between gap-3 mb-5">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <span className="h-9 w-9 rounded-[10px] grid place-items-center shrink-0" style={{ background: rgba(color, 0.12), color }}>{icon}</span>
+            <div className="min-w-0">
+              <h2 className="text-[15px] font-semibold text-ds-text truncate">{title}</h2>
+              <p className="text-[12px] text-ds-t3">{sub}</p>
+            </div>
+          </div>
+          <button type="button" onClick={onClose} aria-label="Close" className="h-7 w-7 rounded-[8px] grid place-items-center text-ds-t3 hover:text-ds-text hover:bg-ds-hover">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function ShareList({ rows, total, barColor, empty }: { rows: { platform: string; count: number }[]; total: number; barColor?: string; empty: string }) {
+  if (!rows.length) return <p className="text-[13px] text-ds-t3 text-center py-6">{empty}</p>;
+  return (
+    <div className="space-y-3">
+      {rows.map(({ platform, count }) => {
+        const pct = total > 0 ? Math.round((count / total) * 100) : 0;
+        const c = barColor ?? platformColor(platform);
+        return (
+          <div key={platform}>
+            <div className="flex items-center justify-between mb-1.5">
+              <PlatformBadge platform={platform} />
+              <span className="text-[13px] font-semibold text-ds-text tabular-nums">
+                {nf.format(count)} <span className="text-[11.5px] font-normal text-ds-t3">({pct}%)</span>
+              </span>
+            </div>
+            <div className="h-1.5 w-full rounded-full bg-[#132430] overflow-hidden">
+              <div className="h-full rounded-full" style={{ width: `${pct}%`, background: c }} />
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function ReportsPage() {
+  usePageTitle("Link Reports");
   // Scroll the <main> container to top on mount (it uses overflow-auto, not window)
   useEffect(() => {
     document.querySelector("main")?.scrollTo({ top: 0, behavior: "instant" as ScrollBehavior });
@@ -301,6 +348,7 @@ export default function ReportsPage() {
   const [endDate, setEndDate] = useState(() => todayISO());
   const [employeeId, setEmployeeId] = useState("");
   const [reportsPage, setReportsPage] = useState(1);
+  const [openReport, setOpenReport] = useState(0);
   const [deletingLinkId, setDeletingLinkId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>("totalLinks");
@@ -309,6 +357,7 @@ export default function ReportsPage() {
   const [platformModal, setPlatformModal] = useState<{ platform: string; count: number; dailyBreakdown: { date: string; count: number }[] } | null>(null);
   const [todayModal, setTodayModal] = useState<{ name: string; linksToday: number; platformBreakdown: { platform: string; count: number }[] } | null>(null);
   const [teamTodayModal, setTeamTodayModal] = useState<{ totalLinks: number; platformBreakdown: { platform: string; count: number }[] } | null>(null);
+  const [topTab, setTopTab] = useState<string>("youtube");
 
   useEffect(() => {
     const main = document.querySelector("main") as HTMLElement | null;
@@ -333,6 +382,10 @@ export default function ReportsPage() {
   useEffect(() => {
     setReportsPage(1);
   }, [employeeId, startDate, endDate]);
+  // The first report on each page starts open; the rest are collapsed.
+  useEffect(() => {
+    setOpenReport(0);
+  }, [employeeId, startDate, endDate, reportsPage]);
 
   const { data: summaryData, isLoading: summaryLoading, mutate: mutateSummary } = useReportSummary(startDate, endDate);
   const { data: reportsData, isLoading: reportsLoading, mutate: mutateReports } = useAdminReports({ employeeId, startDate, endDate, page: reportsPage, pageSize: 50 });
@@ -412,12 +465,6 @@ export default function ReportsPage() {
   );
   const avgLinksInWindow = Math.round((viewTotalLinks / windowDays) * 10) / 10;
 
-  // First card: team mode shows "Employees Reporting"; single-employee mode shows that
-  // employee's current streak instead (more useful than a count of 1).
-  const firstCard = isEmployeeView
-    ? { title: "Current Streak", value: `${selectedEmployee?.currentStreak ?? 0} 🔥`, icon: Users, iconColor: "text-orange-600", bgColor: "bg-orange-50 shadow-[0_2px_8px_rgba(234,88,12,0.12)]", sub: selectedEmployeeName }
-    : { title: "Employees Reporting", value: summary?.employeesReporting ?? 0, icon: Users, iconColor: "text-blue-600", bgColor: "bg-blue-50 shadow-[0_2px_8px_rgba(59,130,246,0.12)]", sub: "submitted reports" };
-
   // Engagement insight card — scopes to selected employee or whole team, follows window pill.
   // ⚠️ The card is labelled "YouTube Views", so it MUST use the YOUTUBE-only figures, not the
   // cross-platform totalViews (which folds in FB/IG and overstated YT views 4.6–5.5×). The
@@ -470,542 +517,423 @@ export default function ReportsPage() {
     return `${days}d old`;
   }
 
-  const statCards = [
-    firstCard,
-    { title: "Total Reports", value: viewTotalReports, icon: FileText, iconColor: "text-purple-600", bgColor: "bg-purple-50 shadow-[0_2px_8px_rgba(147,51,234,0.12)]", sub: windowLabel },
-    { title: "Total Links", value: viewTotalLinks, icon: Link2, iconColor: "text-emerald-600", bgColor: "bg-emerald-50 shadow-[0_2px_8px_rgba(16,185,129,0.12)]", sub: windowLabel },
-    { title: "Avg Links/Day", value: avgLinksInWindow, icon: TrendingUp, iconColor: "text-amber-600", bgColor: "bg-amber-50 shadow-[0_2px_8px_rgba(245,158,11,0.12)]", sub: windowLabel, clickable: true },
+  const ICON = "h-[14px] w-[14px]";
+  const statCards: { title: string; value: string | number; color: string; icon: React.ReactNode; sub: string; clickable?: boolean }[] = [
+    // First card: team mode shows "Employees Reporting"; single-employee mode shows that
+    // employee's current streak instead (more useful than a count of 1).
+    isEmployeeView
+      ? { title: "Current Streak", value: `${selectedEmployee?.currentStreak ?? 0} 🔥`, color: "#F59E66", icon: <Users className={ICON} />, sub: selectedEmployeeName }
+      : { title: "Employees Reporting", value: summary?.employeesReporting ?? 0, color: "#6EB2FF", icon: <Users className={ICON} />, sub: "submitted reports" },
+    { title: "Total Reports", value: nf.format(viewTotalReports), color: "#B8A3EC", icon: <FileText className={ICON} />, sub: windowLabel },
+    { title: "Total Links", value: nf.format(viewTotalLinks), color: "#00D7A0", icon: <Link2 className={ICON} />, sub: windowLabel },
+    { title: "Avg Links/Day", value: avgLinksInWindow, color: "#E9BD62", icon: <TrendingUp className={ICON} />, sub: windowLabel, clickable: true },
     {
       title: "YouTube Views",
       value: insightsLoading ? "—" : hasInsights ? fmtCompact(engagementViews) : "—",
-      icon: Eye,
-      iconColor: "text-rose-600",
-      bgColor: "bg-rose-50 shadow-[0_2px_8px_rgba(244,63,94,0.12)]",
+      color: "#FB7185",
+      icon: <Eye className={ICON} />,
       sub: hasInsights ? `${fmtCompact(engagementLikes)} likes · ${fmtCompact(engagementComments)} comments` : "No YouTube views in this window",
     },
   ];
 
+  // Top Links. YouTube/Facebook/Snapchat rank by views; Instagram by likes+comments
+  // (Snapchat has no likes metric — its likes column always reads "—").
+  const PLATFORMS = [
+    { key: "youtube", label: "YouTube", showViews: true, data: (topYouTubeData as any)?.data ?? [], loading: topYouTubeLoading, note: "YouTube · views" },
+    { key: "instagram", label: "Instagram", showViews: false, data: (topInstagramData as any)?.data ?? [], loading: topInstagramLoading, note: "Instagram · likes + comments" },
+    { key: "facebook", label: "Facebook", showViews: true, data: (topFacebookData as any)?.data ?? [], loading: topFacebookLoading, note: "Facebook · likes + comments" },
+    {
+      key: "snapchat",
+      label: "Snapchat",
+      showViews: true,
+      showLikes: false,
+      data: (topSnapchatData as any)?.data ?? [],
+      loading: topSnapchatLoading,
+      // Null views are LEGITIMATE: Snapchat serves viewCount:"-1" (a sentinel meaning
+      // "not published") for many Spotlights — live-verified 10/10 on 2026-07-18.
+      // The dash is honest absence, not missing data. Don't "fix" it to 0.
+      note: "Snapchat · views where Spotlight publishes them (a dash means Snapchat doesn't expose a public view count for that post — not missing data) · no likes on Spotlight",
+    },
+  ];
+  // A platform with no links in the active window drops out; Facebook always stays
+  // (it shows an honest "collected in the background" note when empty).
+  const visibleTop = PLATFORMS.filter((p) => p.key === "facebook" || p.loading || p.data.length > 0);
+  const activeTop = visibleTop.find((p) => p.key === topTab) ?? visibleTop[0];
+
+  const summaryEmployees: any[] = summary?.employees ?? [];
+  const SUMMARY_COLS: { key: SortKey; label: string; align: "left" | "right"; title?: string }[] = [
+    { key: "name", label: "Employee", align: "left" },
+    { key: "email", label: "Email", align: "left" },
+    { key: "reportCount", label: "Reports", align: "right" },
+    { key: "totalLinks", label: "Total Links", align: "right" },
+    { key: "linksToday", label: "Today", align: "right", title: "Links submitted today — always today, ignores the date filter" },
+    { key: "avgLinksPerDay", label: "Avg/Day", align: "right" },
+    { key: "currentStreak", label: "Streak", align: "right" },
+    { key: "lastSubmittedAt", label: "Last Submitted", align: "left" },
+  ];
+
   return (
     <>
-    <div className="space-y-6">
+    <div className="pb-8">
       {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="font-serif text-4xl font-light text-[#1A1A1A]">Link Reports</h1>
-          <p className="text-sm text-[#7A7A7A] mt-1">Employee daily link submission reports</p>
+      <section className="flex items-end justify-between gap-4 flex-wrap pt-[30px] pb-[22px]">
+        <div className="flex-[1_1_300px] min-w-0">
+          <h1 className="text-[34px] font-bold tracking-[-.03em] text-ds-text leading-tight">Link Reports</h1>
+          <p className="mt-1.5 text-[13.5px] text-ds-t2">Employee daily link submission reports</p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <ExportButton startDate={startDate} endDate={endDate} employeeId={employeeId || undefined} variant="light" />
-          <AllLinksCsvButton startDate={startDate} endDate={endDate} employeeId={employeeId || undefined} variant="light" />
-          <Link
-            href="/reports/links"
-            className="inline-flex items-center gap-2 bg-white border border-[#E8E0D0] text-[#1A1A1A] rounded-full px-4 py-2 text-sm font-medium hover:shadow-[0_4px_12px_rgba(0,0,0,0.08)] transition-shadow"
-          >
-            <TrendingUp className="h-4 w-4 text-emerald-600" />
+        <div className="flex flex-wrap items-start gap-2">
+          <ExportButton startDate={startDate} endDate={endDate} employeeId={employeeId || undefined} variant="ds" />
+          <AllLinksCsvButton startDate={startDate} endDate={endDate} employeeId={employeeId || undefined} variant="ds" />
+          <Link href="/reports/links" className={BTN}>
+            <TrendingUp className="h-[15px] w-[15px] text-[#6EB2FF]" />
             Links Analytics
           </Link>
-          <Link
-            href="/reports/leaderboard"
-            className="inline-flex items-center gap-2 bg-[#1A1A1A] text-white rounded-full px-5 py-2.5 text-sm font-medium shadow-[0_4px_16px_rgba(0,0,0,0.18)] hover:shadow-[0_6px_24px_rgba(0,0,0,0.22)] transition-shadow"
-          >
-            <Trophy className="h-4 w-4" />
+          <Link href="/reports/leaderboard" className="inline-flex items-center gap-2 h-[42px] px-4 rounded-full bg-ds-gold text-[#060D14] text-[13px] font-bold whitespace-nowrap hover:bg-[#F4D58C]">
+            <Trophy className="h-[15px] w-[15px]" />
             Leaderboard
           </Link>
         </div>
-      </div>
+      </section>
 
       {/* Filters — above the cards so you choose the window/employee first, then read the numbers */}
-      <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0]">
-        <div className="px-6 py-4 border-b border-[#F0EAD8] flex flex-wrap items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <div className="h-8 w-8 rounded-lg bg-[#FFF8E1] flex items-center justify-center">
-              <Filter className="h-4 w-4 text-[#B0B0B0]" />
-            </div>
-            <h3 className="font-serif text-[#1A1A1A] font-medium">Filters</h3>
-          </div>
-          <span className="text-xs font-medium text-[#7A7A7A] bg-[#FFF8E1] px-3 py-1 rounded-full border border-[#F0EAD8]">
-            {windowLabel}
-          </span>
-        </div>
-        <div className="p-6 space-y-4">
-          {/* Time-period pills + custom range */}
-          <RangePills
-            startDate={startDate}
-            endDate={endDate}
-            onChange={(s, e) => { setStartDate(s); setEndDate(e); }}
-          />
-          {/* Employee selector */}
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-medium text-[#7A7A7A] flex items-center gap-1">
-              <Users className="h-3 w-3" /> Employee
-            </label>
-            <select
-              value={employeeId}
-              onChange={(e) => setEmployeeId(e.target.value)}
-              className="h-10 rounded-xl border border-[#E8E0D0] bg-[#FEFCF8] px-3 py-1 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547] w-full sm:w-52"
-            >
-              <option value="">All Employees</option>
-              {employees.map((emp: any) => (
-                <option key={emp.id} value={emp.id}>
-                  {emp.name}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-      </div>
+      <section className="flex items-end gap-x-5 gap-y-4 flex-wrap px-[22px] py-[18px] rounded-[16px] border border-[#2A4658] bg-ds-card">
+        <DsRangeFilters startDate={startDate} endDate={endDate} onChange={(s, e) => { setStartDate(s); setEndDate(e); }} />
+        <label className="flex flex-col gap-2 min-w-[200px] flex-[0_1_240px]">
+          <span className="text-[10.5px] font-semibold tracking-[.12em] uppercase text-ds-t3">Employee</span>
+          <select
+            value={employeeId}
+            onChange={(e) => setEmployeeId(e.target.value)}
+            className="h-10 px-3.5 rounded-full border border-ds-line2 bg-ds-inset text-ds-text text-[16px] sm:text-[13px] outline-none cursor-pointer [color-scheme:dark] focus:border-ds-gold"
+          >
+            <option value="" className="bg-ds-card">All Employees</option>
+            {employees.map((emp: any) => (
+              <option key={emp.id} value={emp.id} className="bg-ds-card">{emp.name}</option>
+            ))}
+          </select>
+        </label>
+        <span className="ml-auto self-center inline-flex items-center h-[30px] px-3 rounded-full bg-[rgba(233,189,98,.1)] border border-[rgba(233,189,98,.3)] text-ds-gold text-[12px] font-semibold whitespace-nowrap">
+          {windowLabel}
+        </span>
+      </section>
 
       {/* Stat Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-        {statCards.map((card: any) => {
-          const Icon = card.icon;
+      <section className="grid gap-3 mt-4 [grid-template-columns:repeat(auto-fit,minmax(170px,1fr))]">
+        {statCards.map((card) => {
           const isClickable = card.clickable && viewTotalLinks > 0;
-          const onClickHandler = isClickable
-            ? () => setTeamTodayModal({ totalLinks: viewTotalLinks, platformBreakdown: viewPlatformBreakdown })
-            : undefined;
-          return (
-            <div
-              key={card.title}
-              onClick={onClickHandler}
-              className={`bg-white rounded-2xl p-5 border border-[#E8E0D0] transition-shadow duration-200 hover:shadow-[0_8px_32px_rgba(0,0,0,0.06)] ${isClickable ? "cursor-pointer hover:border-amber-300" : ""}`}
-            >
-              <div className="flex items-center justify-between mb-3">
-                <span className="text-xs text-[#7A7A7A] font-medium flex items-center gap-1.5">
+          const body = (
+            <>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[12px] font-semibold text-ds-t2 truncate flex items-center gap-1.5">
                   {card.title}
-                  {isClickable && <BarChart2 className="h-3 w-3 text-amber-500" />}
+                  {isClickable && <BarChart2 className="h-3 w-3 text-ds-gold shrink-0" />}
                 </span>
-                <div className={`h-10 w-10 rounded-xl ${card.bgColor} flex items-center justify-center`}>
-                  <Icon className={`h-5 w-5 ${card.iconColor}`} />
-                </div>
+                <span className="h-[30px] w-[30px] rounded-[9px] grid place-items-center shrink-0" style={{ background: rgba(card.color, 0.13), color: card.color }}>
+                  {card.icon}
+                </span>
               </div>
-              <p className={`font-light font-num text-[#1A1A1A] leading-tight ${typeof card.value === "number" ? "text-[40px]" : "text-xl"}`}>
-                {summaryLoading ? "\u2014" : card.value}
-              </p>
-              <p className="text-xs text-[#B0B0B0] mt-1">{card.sub}</p>
-            </div>
+              <span className="leading-[1.2] min-w-0">
+                <span className="block text-[28px] font-bold tracking-[-.04em] tabular-nums text-ds-text whitespace-nowrap truncate">
+                  {summaryLoading ? "—" : card.value}
+                </span>
+                <span className="block text-[11.5px] text-ds-t3 truncate" title={card.sub}>{card.sub}</span>
+              </span>
+            </>
+          );
+          const cls = "flex flex-col gap-3.5 px-5 py-[18px] rounded-[16px] bg-ds-card border border-[#2A4658] min-w-0 text-left";
+          return isClickable ? (
+            <button
+              key={card.title}
+              type="button"
+              onClick={() => setTeamTodayModal({ totalLinks: viewTotalLinks, platformBreakdown: viewPlatformBreakdown })}
+              className={`${cls} hover:border-[rgba(233,189,98,.5)] transition-colors`}
+            >
+              {body}
+            </button>
+          ) : (
+            <div key={card.title} className={cls}>{body}</div>
           );
         })}
-      </div>
+      </section>
 
       {/* Platform Breakdown Cards */}
       {!summaryLoading && viewPlatformBreakdown.length > 0 && (
-        <div
-          className="grid gap-4 grid-cols-2 sm:grid-cols-3 lg:grid-cols-[repeat(var(--pb-cols),minmax(0,1fr))]"
-          style={{ ["--pb-cols" as any]: viewPlatformBreakdown.length }}
-        >
-          {viewPlatformBreakdown
-            .map(({ platform, count }) => {
-              const style = platformCardStyle(platform);
-              const pct = viewTotalLinks > 0 ? Math.round((count / viewTotalLinks) * 100) : 0;
-              // Daily drill-down: per-employee when one is selected, else team-wide. Both carry dailyBreakdown.
-              const sourceBreakdown = isEmployeeView
-                ? (selectedEmployee?.platformBreakdown ?? [])
-                : (summary?.platformBreakdown ?? []);
-              const dailyBreakdown = (sourceBreakdown as any[]).find((p: any) => p.platform === platform)?.dailyBreakdown ?? [];
-              return (
-                <div
-                  key={platform}
-                  onClick={() => setPlatformModal({ platform, count, dailyBreakdown })}
-                  className={`bg-gradient-to-br ${style.bg} rounded-2xl p-5 border ${style.border} shadow-[0_2px_12px_rgba(0,0,0,0.05)] flex flex-col gap-3 hover:shadow-[0_6px_20px_rgba(0,0,0,0.08)] transition-shadow duration-150 cursor-pointer`}
-                >
-                  {/* Header — name left, colored icon right (same pattern as stat cards) */}
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-medium text-[#7A7A7A] capitalize">{platform}</span>
-                    <div className={`h-10 w-10 rounded-xl ${style.labelBg} flex items-center justify-center`}>
-                      <Link2 className={`h-5 w-5 ${style.labelColor}`} />
-                    </div>
-                  </div>
-
-                  {/* Count — left aligned like stat cards */}
-                  <p className="font-num font-light text-[40px] text-[#1A1A1A] leading-tight">{count}</p>
-                  <p className="text-xs text-[#B0B0B0] -mt-2">links · {windowLabel.toLowerCase()}</p>
-
-                  {/* Progress bar */}
-                  <div className="h-1 w-full rounded-full bg-white/70">
-                    <div
-                      className={`h-1 rounded-full ${style.bar} transition-all duration-700`}
-                      style={{ width: `${pct}%` }}
-                    />
-                  </div>
+        <section className="grid gap-3 mt-3 [grid-template-columns:repeat(auto-fit,minmax(min(100%,200px),1fr))]">
+          {viewPlatformBreakdown.map(({ platform, count }) => {
+            const c = platformColor(platform);
+            const share = viewTotalLinks > 0 ? (count / viewTotalLinks) * 100 : 0;
+            // Daily drill-down: per-employee when one is selected, else team-wide. Both carry dailyBreakdown.
+            const sourceBreakdown = isEmployeeView
+              ? (selectedEmployee?.platformBreakdown ?? [])
+              : (summary?.platformBreakdown ?? []);
+            const dailyBreakdown = (sourceBreakdown as any[]).find((p: any) => p.platform === platform)?.dailyBreakdown ?? [];
+            return (
+              <button
+                key={platform}
+                type="button"
+                onClick={() => setPlatformModal({ platform, count, dailyBreakdown })}
+                title="View the daily breakdown"
+                className="relative flex flex-col gap-3 px-5 py-[18px] rounded-[16px] bg-ds-card border border-ds-line min-w-0 overflow-hidden text-left hover:border-[#2A4658] transition-colors"
+              >
+                <span aria-hidden="true" className="absolute left-0 top-0 bottom-0 w-[3px]" style={{ background: c }} />
+                <div className="flex items-center justify-between gap-2">
+                  <span className="flex items-center gap-2 text-[13px] font-semibold text-ds-text min-w-0">
+                    <i className="h-2 w-2 rounded-full shrink-0" style={{ background: c }} />
+                    <span className="truncate">{platformName(platform)}</span>
+                  </span>
+                  <span className="text-[12px] font-semibold" style={{ color: c }}>{share < 1 && share > 0 ? share.toFixed(2) : share.toFixed(1)}%</span>
                 </div>
-              );
-            })}
-        </div>
+                <span className="leading-[1.2]">
+                  <span className="block text-[26px] font-bold tracking-[-.04em] tabular-nums text-ds-text">{nf.format(count)}</span>
+                  <span className="text-[11.5px] text-ds-t3">links · {windowLabel.toLowerCase()}</span>
+                </span>
+                <span className="h-[5px] rounded-[3px] bg-[#132430] overflow-hidden">
+                  <span className="block h-full rounded-[3px]" style={{ width: `${Math.max(share, 0.8)}%`, background: c }} />
+                </span>
+              </button>
+            );
+          })}
+        </section>
       )}
 
       {/* True Links — dedupe-aware stats + per-employee shared/unique leaderboard.
           Own endpoint + hook (server-cached), so it loads independently and can
           never slow or block the summary cards above. Honors the same window pills
           and employee dropdown as everything else on the page. */}
-      <TrueLinksPanel
-        startDate={startDate}
-        endDate={endDate}
-        employeeId={employeeId || undefined}
-        windowLabel={windowLabel}
-      />
+      <div className="mt-4">
+        <TrueLinksPanel startDate={startDate} endDate={endDate} employeeId={employeeId || undefined} windowLabel={windowLabel} />
+      </div>
 
-      {/* Top Links panels — YouTube, Instagram, Facebook, Snapchat. One shared window
-          toggle on the first rendered panel; each panel reuses the same /admin/reports/top-links
-          endpoint. YouTube/Facebook/Snapchat rank by views; Instagram by likes+comments
-          (Snapchat has no likes metric — its panel never renders one).
-          A platform with no links in the active window simply hides its panel
-          (Facebook is the one exception — it always renders, see below). */}
-      {(() => {
-        const PLATFORMS = [
-          {
-            key: "youtube" as const,
-            label: "Top YouTube Links",
-            Icon: Youtube,
-            iconBg: "bg-red-50",
-            iconColor: "text-red-500",
-            metric: "views" as const, // primary sort metric (YouTube sorts by views, others by engagement)
-            showViews: true,
-            data: (topYouTubeData as any)?.data ?? [],
-            loading: topYouTubeLoading,
-            note: "YouTube · views",
-          },
-          {
-            key: "instagram" as const,
-            label: "Top Instagram Links",
-            Icon: Instagram,
-            iconBg: "bg-fuchsia-50",
-            iconColor: "text-fuchsia-600",
-            metric: "engagement" as const,
-            showViews: false,
-            data: (topInstagramData as any)?.data ?? [],
-            loading: topInstagramLoading,
-            note: "Instagram · likes + comments",
-          },
-          {
-            key: "facebook" as const,
-            label: "Top Facebook Links",
-            Icon: Facebook,
-            iconBg: "bg-blue-50",
-            iconColor: "text-blue-600",
-            metric: "engagement" as const,
-            showViews: true,
-            data: (topFacebookData as any)?.data ?? [],
-            loading: topFacebookLoading,
-            note: "Facebook · likes + comments",
-          },
-          {
-            key: "snapchat" as const,
-            label: "Top Snapchat Spotlights",
-            Icon: SnapchatTopLinksIcon,
-            iconBg: "bg-yellow-50",
-            iconColor: "text-yellow-600",
-            metric: "views" as const, // Snapchat ranks by views (no likes metric exists)
-            showViews: true,
-            data: (topSnapchatData as any)?.data ?? [],
-            loading: topSnapchatLoading,
-            // Null views are LEGITIMATE: Snapchat serves viewCount:"-1" (a sentinel meaning
-            // "not published") for many Spotlights — live-verified 10/10 on 2026-07-18.
-            // The dash is honest absence, not missing data. Don't "fix" it to 0.
-            note: "Snapchat · views where Spotlight publishes them (a dash means Snapchat doesn't expose a public view count for that post — not missing data) · no likes on Spotlight",
-          },
-        ];
-
-        // Anchor the shared window toggle to the first panel that renders content.
-        // Facebook always renders (it shows an honest "collected in the background"
-        // note when this window has no data yet), so include it for toggle-anchoring.
-        const willRender = PLATFORMS.filter((p) => p.key === "facebook" || p.loading || p.data.length > 0);
-        const toggleAnchorKey = willRender[0]?.key;
-
-        return (
-          <div className="space-y-6">
-            {PLATFORMS.map((p) => {
-              // YouTube and Instagram hide when empty — no data in this window is fine.
-              // Facebook always renders so the "metrics refresh periodically" note shows.
-              if (p.key !== "facebook" && !p.loading && p.data.length === 0) return null;
-              const showToggle = p.key === toggleAnchorKey;
-              const showViewsCol = p.showViews;
-              const cols = showViewsCol
-                ? "grid-cols-[1.5rem_1fr_8rem_5rem_5rem_5rem]"
-                : "grid-cols-[1.5rem_1fr_8rem_5rem_5rem]";
-              return (
-                <div key={p.key} className="bg-white rounded-2xl border border-[#E8E0D0] shadow-[0_2px_16px_rgba(0,0,0,0.05)]">
-                  <div className="px-6 py-4 border-b border-[#F0EAD8] flex items-center gap-2 flex-wrap">
-                    <div className={`h-8 w-8 rounded-lg ${p.iconBg} flex items-center justify-center shrink-0`}>
-                      <p.Icon className={`h-4 w-4 ${p.iconColor}`} />
-                    </div>
-                    <h3 className="font-serif text-[#1A1A1A] font-medium">{p.label}</h3>
-                    {showToggle && (
-                      <div className="flex items-center gap-1 ml-2">
-                        <button
-                          onClick={() => setYtAllTime(false)}
-                          className={`text-[11px] px-2.5 py-0.5 rounded-full border transition-colors ${!ytAllTime ? "bg-[#1A1A1A] text-white border-[#1A1A1A]" : "text-[#7A7A7A] border-[#E8E0D0] hover:border-[#1A1A1A]"}`}
-                        >
-                          {windowLabel}
-                        </button>
-                        <button
-                          onClick={() => setYtAllTime(true)}
-                          className={`text-[11px] px-2.5 py-0.5 rounded-full border transition-colors ${ytAllTime ? "bg-[#1A1A1A] text-white border-[#1A1A1A]" : "text-[#7A7A7A] border-[#E8E0D0] hover:border-[#1A1A1A]"}`}
-                        >
-                          All time
-                        </button>
-                      </div>
-                    )}
-                    {/* No shrink-0 here: a text flex item's base size is its max-content
-                        width (the whole string on one line), so flex-shrink:0 meant the
-                        box could never be narrowed and the text could never wrap — the
-                        161-char Snapchat note ran straight off the card edge while the
-                        short notes ("YouTube · views") happened to fit. Shrinking is now
-                        allowed, so long notes wrap onto their own line inside the card
-                        and short ones still sit right-aligned on the header line. */}
-                    <span className="ml-auto min-w-0 max-w-full text-[10px] text-[#B0B0B0] sm:text-right">
-                      {p.note}
-                      {(() => {
-                        const rel = relativeUpdated(p.data);
-                        return rel ? ` · ${rel}` : "";
-                      })()}
-                    </span>
-                  </div>
-                  {p.loading ? (
-                    <div className="px-6 py-4 text-xs text-[#B0B0B0]">Loading…</div>
-                  ) : p.key === "facebook" && p.data.length === 0 ? (
-                    /* Facebook empty state — honest: metrics are collected gradually by the
-                       insights job, so this fills in over time rather than being unavailable. */
-                    <div className="px-6 py-5 text-xs text-[#7A7A7A] leading-relaxed max-w-prose">
-                      Facebook views, reactions and comments are collected in the background and
-                      refresh periodically. Recently submitted reels appear here once the next
-                      insights run picks them up &mdash; check back shortly.
-                    </div>
-                  ) : (
-                    /* Phones: rows wrap to two lines (link on top; employee + metrics below)
-                       so views/likes/comments stay visible without horizontal scrolling.
-                       sm+ keeps the original single-line grid table. */
-                    <div className="overflow-x-auto">
-                    <div className={showViewsCol ? "sm:min-w-[620px]" : "sm:min-w-[540px]"}>
-                      <div className={`hidden sm:grid px-6 py-2 ${cols} gap-3 text-[10px] font-medium text-[#B0B0B0] uppercase tracking-wide border-b border-[#F5F0E8]`}>
-                        <span>#</span>
-                        <span>Link</span>
-                        <span>Employee</span>
-                        {showViewsCol && <span className="text-right">Views</span>}
-                        <span className="text-right">Likes</span>
-                        <span className="text-right">Comments</span>
-                      </div>
-                      <ul className="divide-y divide-[#F5F0E8]">
-                        {p.data.map((link: any, i: number) => (
-                          <li key={`${link.linkId ?? link.url}-${i}`} className={`px-4 sm:px-6 py-3 flex flex-wrap items-center gap-x-3 gap-y-1.5 sm:grid ${cols} sm:gap-3`}>
-                            <span className="text-xs font-medium text-[#B0B0B0]">{i + 1}</span>
-                            {/* ⚠️ The URL and the staleness chip share ONE grid cell — the chip
-                                must NOT be a direct child of the <li>. At sm+ the row is
-                                `sm:grid ${cols}` with exactly as many tracks as it has children
-                                (the phone wrap spacer below is `sm:hidden`, so it generates no
-                                box and is not a grid item). Adding a bare chip as another child
-                                shifts every following cell one track right: measured in a
-                                headless browser against the compiled stylesheet, the employee
-                                name landed under "Views", views under "Likes", and Comments
-                                wrapped onto an implicit second row under "#". Wrapping both in a
-                                single span keeps the child count — and the header alignment —
-                                exactly as it was. */}
-                            <span className="flex items-center gap-2 min-w-0 flex-1 sm:flex-none">
-                              <a
-                                href={link.url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="text-xs text-[#1A1A1A] hover:underline truncate min-w-0"
-                                title={link.url}
-                              >
-                                {link.url}
-                              </a>
-                              {/* Staleness marker: this row's metrics were last refreshed
-                                  N days ago. Only rendered past STALE_ROW_HOURS, so fresh
-                                  rows stay clean and an old number can't masquerade as live. */}
-                              {(() => {
-                                const stale = rowStaleness(link.fetchedAt);
-                                return stale ? (
-                                  <span
-                                    className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5 shrink-0"
-                                    title={`Metrics last refreshed ${stale.replace(" old", "")} ago. This link is waiting its turn in the background refresh queue.`}
-                                  >
-                                    {stale}
-                                  </span>
-                                ) : null;
-                              })()}
-                            </span>
-                            {/* forces the wrap onto line 2 on phones; absent from the sm grid */}
-                            <span aria-hidden className="basis-full h-0 sm:hidden" />
-                            <span className="text-xs text-[#7A7A7A] truncate flex-1 min-w-0 sm:flex-none">{link.employeeName}</span>
-                            {showViewsCol && (
-                              <span className="inline-flex items-center justify-end gap-1 text-[11px] font-semibold text-rose-700">
-                                <Eye className="h-3 w-3 shrink-0" />
-                                {fmtCompact(link.views)}
-                              </span>
-                            )}
-                            <span className="inline-flex items-center justify-end gap-1 text-[11px] font-semibold text-pink-600">
-                              <Heart className="h-3 w-3 shrink-0" />
-                              {fmtCompact(link.likes)}
-                            </span>
-                            <span className="inline-flex items-center justify-end gap-1 text-[11px] font-semibold text-slate-500">
-                              <MessageCircle className="h-3 w-3 shrink-0" />
-                              {fmtCompact(link.comments)}
-                            </span>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
+      {/* Top Links — one card, one tab per platform (same endpoint per platform as before). */}
+      {activeTop && (
+        <section className={`${CARD} mt-4`}>
+          <div className="flex items-center justify-between gap-x-4 gap-y-3 min-h-[64px] px-6 py-3 border-b border-ds-line flex-wrap">
+            <span className="flex items-center gap-3.5 flex-wrap min-w-0">
+              <span className="text-[15px] font-semibold tracking-[-.01em] text-ds-text whitespace-nowrap">Top Links</span>
+              <span className="flex gap-[3px] p-1 rounded-full bg-ds-inset border border-ds-line2 max-w-full overflow-x-auto" role="tablist" aria-label="Platform">
+                {visibleTop.map((p) => {
+                  const on = p.key === activeTop.key;
+                  return (
+                    <button
+                      key={p.key}
+                      type="button"
+                      role="tab"
+                      aria-selected={on}
+                      onClick={() => setTopTab(p.key)}
+                      className={`inline-flex items-center gap-[7px] h-[30px] px-[13px] rounded-full text-[12.5px] font-semibold whitespace-nowrap shrink-0 ${on ? "bg-[#132430] text-ds-text" : "text-ds-t2 hover:text-ds-text"}`}
+                    >
+                      <i className="h-[7px] w-[7px] rounded-full" style={{ background: platformColor(p.key) }} />
+                      {p.label}
+                    </button>
+                  );
+                })}
+              </span>
+              <span className="flex gap-[3px] p-[3px] rounded-full border border-ds-line2 shrink-0">
+                {[{ v: false, label: windowLabel }, { v: true, label: "All time" }].map((m) => (
+                  <button
+                    key={String(m.v)}
+                    type="button"
+                    aria-pressed={ytAllTime === m.v}
+                    onClick={() => setYtAllTime(m.v)}
+                    className={`h-[26px] px-[11px] rounded-full text-[11.5px] font-semibold whitespace-nowrap ${ytAllTime === m.v ? "bg-ds-gold text-[#060D14]" : "text-ds-t2 hover:text-ds-text"}`}
+                  >
+                    {m.label}
+                  </button>
+                ))}
+              </span>
+            </span>
+            {/* Wrapping allowed on purpose: the Snapchat note is long, and a non-shrinking
+                text box can never wrap and would run off the card. */}
+            <span className="min-w-0 max-w-[520px] text-[12px] leading-[1.45] text-ds-t3 sm:text-right">
+              {activeTop.note}
+              {(() => {
+                const rel = relativeUpdated(activeTop.data);
+                return rel ? ` · ${rel}` : "";
+              })()}
+            </span>
           </div>
-        );
-      })()}
-
-      {/* Summary Table */}
-      {!employeeId && (
-        <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0]">
-          <div className="px-6 py-4 border-b border-[#F0EAD8] flex items-center gap-2">
-            <div className="h-8 w-8 rounded-lg bg-[#FFF8E1] flex items-center justify-center">
-              <TrendingUp className="h-4 w-4 text-[#B0B0B0]" />
+          {activeTop.loading ? (
+            <div className="px-6 py-6 text-[12.5px] text-ds-t3">Loading…</div>
+          ) : activeTop.key === "facebook" && activeTop.data.length === 0 ? (
+            /* Facebook empty state — honest: metrics are collected gradually by the
+               insights job, so this fills in over time rather than being unavailable. */
+            <div className="px-6 py-5 text-[12.5px] text-ds-t2 leading-relaxed max-w-prose">
+              Facebook views, reactions and comments are collected in the background and
+              refresh periodically. Recently submitted reels appear here once the next
+              insights run picks them up &mdash; check back shortly.
             </div>
-            <h3 className="font-serif text-[#1A1A1A] font-medium">Employee Summary</h3>
-            {!summaryLoading && (summary?.employees ?? []).length > 0 && (
-              <span className="ml-auto text-xs text-[#B0B0B0]">
-                {(summary?.employees ?? []).length} employee{(summary?.employees ?? []).length !== 1 ? "s" : ""}
+          ) : (
+            <div className="overflow-x-auto">
+              <div className="min-w-[720px]">
+                <div className={`grid gap-x-3.5 items-center h-[46px] px-6 ${HEAD_ROW} [grid-template-columns:28px_minmax(0,1fr)_minmax(0,170px)_84px_84px_92px]`}>
+                  <span>#</span><span>Link</span><span>Employee</span>
+                  <span className="text-right">Views</span><span className="text-right">Likes</span><span className="text-right">Comments</span>
+                </div>
+                {activeTop.data.map((link: any, i: number) => {
+                  const stale = rowStaleness(link.fetchedAt);
+                  const noLikes = (activeTop as any).showLikes === false;
+                  return (
+                    <div
+                      key={`${link.linkId ?? link.url}-${i}`}
+                      className="grid gap-x-3.5 items-center min-h-[54px] py-2 px-6 border-b border-[#132430] last:border-b-0 text-[13px] tabular-nums hover:bg-[#0A1620] [grid-template-columns:28px_minmax(0,1fr)_minmax(0,170px)_84px_84px_92px]"
+                    >
+                      <span className="text-[12px] font-bold text-ds-t3">{i + 1}</span>
+                      {/* The URL and the staleness chip share ONE grid cell, so the column
+                          count — and the header alignment — never changes. */}
+                      <span className="flex items-center gap-2 min-w-0">
+                        <a href={link.url} target="_blank" rel="noopener noreferrer" title={link.url} className="truncate min-w-0 text-ds-t5 hover:text-ds-gold">
+                          {link.url}
+                        </a>
+                        {stale && (
+                          <span
+                            className="shrink-0 inline-flex items-center h-[22px] px-2 rounded-full bg-[rgba(233,189,98,.1)] border border-[rgba(233,189,98,.3)] text-ds-gold text-[10.5px] font-semibold whitespace-nowrap"
+                            title={`Metrics last refreshed ${stale.replace(" old", "")} ago. This link is waiting its turn in the background refresh queue.`}
+                          >
+                            {stale}
+                          </span>
+                        )}
+                      </span>
+                      <span className="text-ds-t2 truncate" title={link.employeeName}>{link.employeeName}</span>
+                      <span className={`flex items-center justify-end gap-[5px] font-semibold ${activeTop.showViews && link.views != null ? "text-[#FDA4AF]" : "text-[#4A6275]"}`}>
+                        <Eye className="h-3 w-3 shrink-0" />
+                        {activeTop.showViews ? fmtCompact(link.views) : "—"}
+                      </span>
+                      <span className={`flex items-center justify-end gap-[5px] font-semibold ${noLikes || link.likes == null ? "text-[#4A6275]" : "text-[#F9A8D4]"}`}>
+                        <Heart className="h-3 w-3 shrink-0" />
+                        {noLikes ? "—" : fmtCompact(link.likes)}
+                      </span>
+                      <span className="flex items-center justify-end gap-[5px] font-semibold text-ds-t2">
+                        <MessageCircle className="h-3 w-3 shrink-0" />
+                        {fmtCompact(link.comments)}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* Employee Summary */}
+      {!employeeId && (
+        <section className={`${CARD} mt-4`}>
+          <div className="flex items-center justify-between gap-3 min-h-[64px] px-6 py-3 border-b border-ds-line flex-wrap">
+            <span className="flex items-center gap-2.5 text-[15px] font-semibold tracking-[-.01em] text-ds-text whitespace-nowrap">
+              <TrendingUp className="h-[15px] w-[15px] text-ds-gold" />
+              Employee Summary
+            </span>
+            {!summaryLoading && summaryEmployees.length > 0 && (
+              <span className="text-[12px] text-ds-t3">
+                {summaryEmployees.length} employee{summaryEmployees.length !== 1 ? "s" : ""}
               </span>
             )}
           </div>
-          <div className="p-6">
-            {summaryLoading ? (
-              <div className="flex items-center justify-center gap-2 py-4 text-sm text-[#7A7A7A]">
-                <svg className="animate-spin h-4 w-4 text-[#F5D547]" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-                Loading summary...
+          {summaryLoading ? (
+            <div className="px-6 py-8 text-[13px] text-ds-t3 text-center">Loading summary…</div>
+          ) : summaryEmployees.length === 0 ? (
+            <div className="px-6 py-10 text-[13px] text-ds-t3 text-center">
+              <FileText className="h-[30px] w-[30px] mx-auto mb-2 opacity-50" strokeWidth={1.5} />
+              No report data found.
+            </div>
+          ) : (
+            <div className="overflow-auto max-h-[560px]">
+              <div className="min-w-[1080px]">
+                <div className={`${SUMMARY_GRID} h-[46px] px-6 ${HEAD_ROW} sticky top-0 z-10`}>
+                  {SUMMARY_COLS.map(({ key, label, align, title }) => (
+                    <button
+                      key={key}
+                      type="button"
+                      title={title ?? `Sort by ${label.toLowerCase()}`}
+                      onClick={() => {
+                        if (sortKey === key) {
+                          setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+                        } else {
+                          setSortKey(key);
+                          setSortDir(key === "name" || key === "email" ? "asc" : "desc");
+                        }
+                      }}
+                      className={`flex items-center gap-[5px] min-w-0 uppercase tracking-[.08em] ${align === "right" ? "justify-end" : "justify-start"} ${sortKey === key ? "text-ds-text" : "hover:text-ds-t5"}`}
+                    >
+                      {key === "linksToday" && <span className="h-1.5 w-1.5 rounded-full bg-ds-teal shrink-0" />}
+                      {label}
+                      <SortIcon col={key} sortKey={sortKey} sortDir={sortDir} />
+                    </button>
+                  ))}
+                  <span />
+                </div>
+                {sortEmployees(summaryEmployees, sortKey, sortDir).map((emp: any) => (
+                  <EmployeeRow key={emp.id} emp={emp} onOpenEmpModal={handleOpenEmpModal} onOpenTodayModal={handleOpenTodayModal} />
+                ))}
               </div>
-            ) : (summary?.employees ?? []).length === 0 ? (
-              <div className="flex flex-col items-center gap-2 py-6 text-sm text-[#7A7A7A]">
-                <FileText className="h-8 w-8 text-[#E8E0D0]" />
-                <span>No report data found.</span>
-              </div>
-            ) : (
-              <div className="overflow-x-auto overflow-y-auto max-h-[560px]">
-                <table className="w-full text-sm">
-                  <thead className="sticky top-0 z-10 bg-white">
-                    <tr className="border-b border-[#F0EAD8]">
-                      {(
-                        [
-                          { key: "name",            label: "Employee",       align: "left"  },
-                          { key: "email",           label: "Email",          align: "left"  },
-                          { key: "reportCount",     label: "Reports",        align: "right" },
-                          { key: "totalLinks",      label: "Total Links",    align: "right" },
-                          { key: "linksToday",      label: null,             align: "right" },
-                          { key: "avgLinksPerDay",  label: "Avg/Day",        align: "right" },
-                          { key: "currentStreak",   label: "Streak",         align: "right" },
-                          { key: "lastSubmittedAt", label: "Last Submitted", align: "left"  },
-                        ] as { key: SortKey; label: string | null; align: "left" | "right" }[]
-                      ).map(({ key, label, align }) => (
-                        <th
-                          key={key}
-                          onClick={() => {
-                            if (sortKey === key) {
-                              setSortDir(d => d === "asc" ? "desc" : "asc");
-                            } else {
-                              setSortKey(key);
-                              setSortDir(key === "name" || key === "email" ? "asc" : "desc");
-                            }
-                          }}
-                          className={`py-2 pr-4 text-[#7A7A7A] text-xs font-medium cursor-pointer select-none whitespace-nowrap hover:text-[#1A1A1A] transition-colors ${align === "right" ? "text-right" : "text-left"} ${sortKey === key ? "text-[#1A1A1A]" : ""}`}
-                        >
-                          {key === "linksToday" ? (
-                            <span className="inline-flex items-center gap-1" title="Links submitted today — always today, ignores the date filter">
-                              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 inline-block" />
-                              Today
-                              <SortIcon col={key} sortKey={sortKey} sortDir={sortDir} />
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center gap-0.5">
-                              {label}
-                              <SortIcon col={key} sortKey={sortKey} sortDir={sortDir} />
-                            </span>
-                          )}
-                        </th>
-                      ))}
-                      {/* non-sortable actions column */}
-                      <th className="py-2 text-[#7A7A7A] text-xs font-medium" />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {sortEmployees(summary?.employees ?? [], sortKey, sortDir).map((emp: any) => (
-                      <EmployeeRow
-                        key={emp.id}
-                        emp={emp}
-                        onOpenEmpModal={handleOpenEmpModal}
-                        onOpenTodayModal={handleOpenTodayModal}
-                      />
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        </div>
+            </div>
+          )}
+        </section>
       )}
 
       {/* Delete error banner */}
       {deleteError && (
-        <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 flex items-center gap-2 text-sm text-red-700">
+        <div className="mt-4 px-4 py-3 rounded-[10px] bg-[rgba(229,72,77,.08)] border border-[rgba(229,72,77,.3)] flex items-center gap-2 text-[13px] text-[#FB7185]">
           <AlertTriangle className="h-4 w-4 shrink-0" />
           {deleteError}
-          <button onClick={() => setDeleteError(null)} className="ml-auto text-red-400 hover:text-red-600">
+          <button type="button" onClick={() => setDeleteError(null)} aria-label="Dismiss" className="ml-auto hover:text-ds-text">
             <X className="h-4 w-4" />
           </button>
         </div>
       )}
 
       {/* Recent Reports */}
-      <div>
-        <div className="flex items-center gap-2 mb-4">
-          <div className="h-8 w-8 rounded-lg bg-[#FFF8E1] flex items-center justify-center">
-            <FileText className="h-4 w-4 text-[#B0B0B0]" />
-          </div>
-          <h3 className="text-lg font-semibold font-serif text-[#1A1A1A]">
+      <section className="mt-7">
+        <div className="flex items-center justify-between gap-3 mb-3">
+          <span className="flex items-center gap-2.5 text-[20px] font-bold tracking-[-.02em] text-ds-text">
+            <FileText className="h-[15px] w-[15px] text-ds-gold" />
             {employeeId ? "Filtered Reports" : "Recent Reports"}
-          </h3>
+          </span>
           {!reportsLoading && reports.length > 0 && (
-            <span className="text-xs text-[#B0B0B0] ml-auto">
-              {reportsMeta?.total ?? reports.length} report{(reportsMeta?.total ?? reports.length) !== 1 ? "s" : ""}
+            <span className="text-[12px] text-ds-t3">
+              {nf.format(reportsMeta?.total ?? reports.length)} report{(reportsMeta?.total ?? reports.length) !== 1 ? "s" : ""}
             </span>
           )}
         </div>
         {reportsLoading ? (
-          <div className="flex items-center justify-center gap-2 py-8 text-sm text-[#7A7A7A]">
-            <svg className="animate-spin h-4 w-4 text-[#F5D547]" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-            Loading reports...
+          <div className="flex flex-col gap-2.5" aria-hidden="true">
+            {Array.from({ length: 3 }).map((_, i) => <div key={i} className="h-[72px] rounded-[16px] bg-ds-card border border-ds-line motion-safe:animate-pulse" />)}
           </div>
         ) : reports.length === 0 ? (
-          <div className="flex flex-col items-center gap-2 py-10 text-sm text-[#7A7A7A] bg-white rounded-2xl border border-[#E8E0D0]">
-            <FileText className="h-10 w-10 text-[#E8E0D0]" />
-            <span>No reports found.</span>
+          <div className="py-12 px-5 rounded-[16px] border border-dashed border-ds-line2 text-center text-[13px] text-ds-t3">
+            <FileText className="h-[30px] w-[30px] mx-auto mb-2 opacity-50" strokeWidth={1.5} />
+            No reports found.
           </div>
         ) : (
           <>
-            <div className="space-y-4">
-              {reports.map((report: any) => (
+            <div className="flex flex-col gap-2.5">
+              {reports.map((report: any, i: number) => (
                 <ReportCard
                   key={report.id}
                   report={report}
                   isAdmin={isAdmin}
+                  open={openReport === i}
+                  onToggle={() => setOpenReport((o) => (o === i ? -1 : i))}
                   deletingLinkId={deletingLinkId}
                   onDeleteLink={handleDeleteLink}
                 />
               ))}
             </div>
             {(reportsPage > 1 || reportsMeta?.hasMore) && (
-              <div className="flex items-center justify-center gap-3 pt-4">
+              <div className="flex items-center justify-center gap-3 pt-5">
                 <button
+                  type="button"
                   onClick={() => setReportsPage((p) => Math.max(1, p - 1))}
                   disabled={reportsPage <= 1 || reportsLoading}
-                  className="rounded-full px-5 py-2 text-sm font-medium bg-white border border-[#E8E0D0] text-[#1A1A1A] disabled:opacity-40 disabled:cursor-not-allowed"
+                  className="h-10 px-5 rounded-full border border-ds-line2 bg-ds-inset text-ds-t5 text-[13px] font-semibold hover:text-ds-text disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   Previous
                 </button>
-                <span className="text-xs text-[#7A7A7A]">Page {reportsPage}</span>
+                <span className="text-[12px] text-ds-t3">Page {reportsPage}</span>
                 <button
+                  type="button"
                   onClick={() => setReportsPage((p) => p + 1)}
                   disabled={!reportsMeta?.hasMore || reportsLoading}
-                  className="rounded-full px-5 py-2 text-sm font-medium bg-[#1A1A1A] text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="h-10 px-5 rounded-full bg-ds-gold text-[#060D14] text-[13px] font-bold hover:bg-[#F4D58C] disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {reportsLoading ? "Loading…" : "Next"}
                 </button>
@@ -1013,240 +941,77 @@ export default function ReportsPage() {
             )}
           </>
         )}
-      </div>
+      </section>
     </div>
 
     {/* Platform daily breakdown modal */}
     {platformModal && (
-      <div
-        className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40"
-        onClick={() => setPlatformModal(null)}
+      <BreakdownModal
+        title={platformName(platformModal.platform)}
+        sub={`${nf.format(platformModal.count)} total links`}
+        color={platformColor(platformModal.platform)}
+        icon={<Link2 className="h-4 w-4" />}
+        onClose={() => setPlatformModal(null)}
       >
-        <div
-          className="bg-white rounded-2xl border border-[#E8E0D0] shadow-[0_16px_48px_rgba(0,0,0,0.16)] w-full max-w-sm mx-4 p-6"
-          onClick={(e) => e.stopPropagation()}
-        >
-          {/* Header */}
-          <div className="flex items-center justify-between mb-5">
-            <div className="flex items-center gap-2">
-              <div className={`h-9 w-9 rounded-xl ${platformCardStyle(platformModal.platform).labelBg} flex items-center justify-center`}>
-                <Link2 className={`h-4 w-4 ${platformCardStyle(platformModal.platform).labelColor}`} />
-              </div>
-              <div>
-                <h2 className="font-serif text-[#1A1A1A] font-medium text-base capitalize">{platformModal.platform}</h2>
-                <p className="text-xs text-[#B0B0B0]">{platformModal.count} total links</p>
-              </div>
-            </div>
-            <button
-              onClick={() => setPlatformModal(null)}
-              className="h-7 w-7 rounded-lg flex items-center justify-center text-[#B0B0B0] hover:text-[#1A1A1A] hover:bg-[#F5F5F5] transition-colors"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-
-          {/* Daily breakdown table */}
-          {!platformModal.dailyBreakdown.length ? (
-            <p className="text-sm text-[#B0B0B0] text-center py-6">No data available.</p>
-          ) : (
-            <div className="max-h-72 overflow-y-auto pr-1 space-y-2">
-              {platformModal.dailyBreakdown.map(({ date, count }) => {
-                const pct = platformModal.count > 0 ? Math.round((count / platformModal.count) * 100) : 0;
-                const label = new Date(date).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
-                return (
-                  <div key={date} className="flex items-center gap-3">
-                    <span className="text-xs text-[#7A7A7A] w-24 shrink-0">{label}</span>
-                    <div className="flex-1 h-1.5 rounded-full bg-[#F0EAD8]">
-                      <div
-                        className={`h-1.5 rounded-full ${platformCardStyle(platformModal.platform).bar} transition-all duration-500`}
-                        style={{ width: `${pct}%` }}
-                      />
-                    </div>
-                    <span className="text-sm font-semibold text-[#1A1A1A] w-8 text-right">{count}</span>
+        {!platformModal.dailyBreakdown.length ? (
+          <p className="text-[13px] text-ds-t3 text-center py-6">No data available.</p>
+        ) : (
+          <div className="max-h-72 overflow-y-auto pr-1 space-y-2">
+            {platformModal.dailyBreakdown.map(({ date, count }) => {
+              const pct = platformModal.count > 0 ? Math.round((count / platformModal.count) * 100) : 0;
+              const label = new Date(date).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+              return (
+                <div key={date} className="flex items-center gap-3">
+                  <span className="text-[12px] text-ds-t2 w-24 shrink-0">{label}</span>
+                  <div className="flex-1 h-1.5 rounded-full bg-[#132430] overflow-hidden">
+                    <div className="h-full rounded-full" style={{ width: `${pct}%`, background: platformColor(platformModal.platform) }} />
                   </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      </div>
+                  <span className="text-[13px] font-semibold text-ds-text w-10 text-right tabular-nums">{count}</span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </BreakdownModal>
     )}
 
     {/* Per-employee platform breakdown modal */}
     {empModal && (
-      <div
-        className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40"
-        onClick={() => setEmpModal(null)}
+      <BreakdownModal
+        title={empModal.name}
+        sub={`${nf.format(empModal.totalLinks)} links · by platform`}
+        color="#00D7A0"
+        icon={<Link2 className="h-4 w-4" />}
+        onClose={() => setEmpModal(null)}
       >
-        <div
-          className="bg-white rounded-2xl border border-[#E8E0D0] shadow-[0_16px_48px_rgba(0,0,0,0.16)] w-full max-w-sm mx-4 p-6"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <div className="flex items-center justify-between mb-5">
-            <div className="flex items-center gap-2">
-              <div className="h-9 w-9 rounded-xl bg-emerald-50 flex items-center justify-center">
-                <Link2 className="h-5 w-5 text-emerald-600" />
-              </div>
-              <div>
-                <h2 className="font-serif text-[#1A1A1A] font-medium text-base">{empModal.name}</h2>
-                <p className="text-xs text-[#B0B0B0]">{empModal.totalLinks} links · by platform</p>
-              </div>
-            </div>
-            <button
-              onClick={() => setEmpModal(null)}
-              className="h-7 w-7 rounded-lg flex items-center justify-center text-[#B0B0B0] hover:text-[#1A1A1A] hover:bg-[#F5F5F5] transition-colors"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-
-          {!empModal.platformBreakdown.length ? (
-            <p className="text-sm text-[#B0B0B0] text-center py-6">No links submitted yet.</p>
-          ) : (
-            <div className="space-y-3">
-              {empModal.platformBreakdown.map(({ platform, count }) => {
-                const pct = empModal.totalLinks > 0 ? Math.round((count / empModal.totalLinks) * 100) : 0;
-                return (
-                  <div key={platform}>
-                    <div className="flex items-center justify-between mb-1">
-                      <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium capitalize ${platformBadgeClass(platform)}`}>
-                        {platform}
-                      </span>
-                      <span className="text-sm font-semibold text-[#1A1A1A]">
-                        {count} <span className="text-xs font-normal text-[#B0B0B0]">({pct}%)</span>
-                      </span>
-                    </div>
-                    <div className="h-1.5 w-full rounded-full bg-[#F0EAD8]">
-                      <div
-                        className="h-1.5 rounded-full bg-emerald-400 transition-all duration-500"
-                        style={{ width: `${pct}%` }}
-                      />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      </div>
+        <ShareList rows={empModal.platformBreakdown} total={empModal.totalLinks} empty="No links submitted yet." />
+      </BreakdownModal>
     )}
 
     {/* Per-employee TODAY platform breakdown modal (filter-independent) */}
     {todayModal && (
-      <div
-        className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40"
-        onClick={() => setTodayModal(null)}
+      <BreakdownModal
+        title={todayModal.name}
+        sub={`${nf.format(todayModal.linksToday)} links today · by platform`}
+        color="#6EB2FF"
+        icon={<BarChart2 className="h-4 w-4" />}
+        onClose={() => setTodayModal(null)}
       >
-        <div
-          className="bg-white rounded-2xl border border-[#E8E0D0] shadow-[0_16px_48px_rgba(0,0,0,0.16)] w-full max-w-sm mx-4 p-6"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <div className="flex items-center justify-between mb-5">
-            <div className="flex items-center gap-2">
-              <div className="h-9 w-9 rounded-xl bg-blue-50 flex items-center justify-center">
-                <BarChart2 className="h-5 w-5 text-blue-600" />
-              </div>
-              <div>
-                <h2 className="font-serif text-[#1A1A1A] font-medium text-base">{todayModal.name}</h2>
-                <p className="text-xs text-[#B0B0B0]">{todayModal.linksToday} links today · by platform</p>
-              </div>
-            </div>
-            <button
-              onClick={() => setTodayModal(null)}
-              className="h-7 w-7 rounded-lg flex items-center justify-center text-[#B0B0B0] hover:text-[#1A1A1A] hover:bg-[#F5F5F5] transition-colors"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-
-          {!todayModal.platformBreakdown.length ? (
-            <p className="text-sm text-[#B0B0B0] text-center py-6">No links submitted today.</p>
-          ) : (
-            <div className="space-y-3">
-              {todayModal.platformBreakdown.map(({ platform, count }) => {
-                const pct = todayModal.linksToday > 0 ? Math.round((count / todayModal.linksToday) * 100) : 0;
-                return (
-                  <div key={platform}>
-                    <div className="flex items-center justify-between mb-1">
-                      <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium capitalize ${platformBadgeClass(platform)}`}>
-                        {platform}
-                      </span>
-                      <span className="text-sm font-semibold text-[#1A1A1A]">
-                        {count} <span className="text-xs font-normal text-[#B0B0B0]">({pct}%)</span>
-                      </span>
-                    </div>
-                    <div className="h-1.5 w-full rounded-full bg-[#F0EAD8]">
-                      <div
-                        className="h-1.5 rounded-full bg-blue-400 transition-all duration-500"
-                        style={{ width: `${pct}%` }}
-                      />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      </div>
+        <ShareList rows={todayModal.platformBreakdown} total={todayModal.linksToday} empty="No links submitted today." />
+      </BreakdownModal>
     )}
 
     {/* Team-wide window platform breakdown modal */}
     {teamTodayModal && (
-      <div
-        className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40"
-        onClick={() => setTeamTodayModal(null)}
+      <BreakdownModal
+        title={`${isEmployeeView ? selectedEmployeeName : "Team"} · ${windowLabel}`}
+        sub={`${nf.format(teamTodayModal.totalLinks)} links · ${isEmployeeView ? "by platform" : "across team · by platform"}`}
+        color="#E9BD62"
+        icon={<Calendar className="h-4 w-4" />}
+        onClose={() => setTeamTodayModal(null)}
       >
-        <div
-          className="bg-white rounded-2xl border border-[#E8E0D0] shadow-[0_16px_48px_rgba(0,0,0,0.16)] w-full max-w-sm mx-4 p-6"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <div className="flex items-center justify-between mb-5">
-            <div className="flex items-center gap-2">
-              <div className="h-9 w-9 rounded-xl bg-amber-50 flex items-center justify-center">
-                <Calendar className="h-5 w-5 text-amber-600" />
-              </div>
-              <div>
-                <h2 className="font-serif text-[#1A1A1A] font-medium text-base">{isEmployeeView ? selectedEmployeeName : "Team"} · {windowLabel}</h2>
-                <p className="text-xs text-[#B0B0B0]">{teamTodayModal.totalLinks} links · {isEmployeeView ? "by platform" : "across team · by platform"}</p>
-              </div>
-            </div>
-            <button
-              onClick={() => setTeamTodayModal(null)}
-              className="h-7 w-7 rounded-lg flex items-center justify-center text-[#B0B0B0] hover:text-[#1A1A1A] hover:bg-[#F5F5F5] transition-colors"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-
-          {!teamTodayModal.platformBreakdown.length ? (
-            <p className="text-sm text-[#B0B0B0] text-center py-6">No links submitted in this window.</p>
-          ) : (
-            <div className="space-y-3">
-              {teamTodayModal.platformBreakdown.map(({ platform, count }) => {
-                const pct = teamTodayModal.totalLinks > 0 ? Math.round((count / teamTodayModal.totalLinks) * 100) : 0;
-                return (
-                  <div key={platform}>
-                    <div className="flex items-center justify-between mb-1">
-                      <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium capitalize ${platformBadgeClass(platform)}`}>
-                        {platform}
-                      </span>
-                      <span className="text-sm font-semibold text-[#1A1A1A]">
-                        {count} <span className="text-xs font-normal text-[#B0B0B0]">({pct}%)</span>
-                      </span>
-                    </div>
-                    <div className="h-1.5 w-full rounded-full bg-[#F0EAD8]">
-                      <div
-                        className="h-1.5 rounded-full bg-amber-400 transition-all duration-500"
-                        style={{ width: `${pct}%` }}
-                      />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      </div>
+        <ShareList rows={teamTodayModal.platformBreakdown} total={teamTodayModal.totalLinks} empty="No links submitted in this window." />
+      </BreakdownModal>
     )}
     </>
   );

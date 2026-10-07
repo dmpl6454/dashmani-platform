@@ -7,7 +7,14 @@ import { clearSwrCache } from "@/lib/swr-cache";
 import { Sidebar } from "@/components/sidebar";
 import { TopNav } from "@/components/top-nav";
 import { CommandPalette } from "@/components/command-palette";
+import { DsSidebar } from "@/components/ds/ds-sidebar";
+import { DsTopNav } from "@/components/ds/ds-topnav";
+import { isDsRoute } from "@/lib/ds-routes";
+import { BoxesLoader } from "@/components/boxes-loader";
 import "./globals.css";
+
+/** Minimum time the startup loader stays visible (ms). */
+const MIN_LOADER_MS = 2500;
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<any>(null);
@@ -33,7 +40,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         localStorage.removeItem("user");
       }
     }
-    setIsLoading(false);
+    // Keep the boxes loader on screen for a minimum time so it is visible
+    // instead of flashing for a few milliseconds. Auth is resolved above
+    // immediately; only the reveal of the page is held back.
+    const t = setTimeout(() => setIsLoading(false), MIN_LOADER_MS);
+    return () => clearTimeout(t);
   }, []);
 
   // Redirect to login once loading is done and there's no authenticated user.
@@ -93,11 +104,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <meta name="viewport" content="width=device-width, initial-scale=1" />
         </head>
         <body>
-          <div className="flex items-center justify-center min-h-screen bg-bg">
-            <div
-              className="h-8 w-8 rounded-full border-[3px] border-ink/10 border-t-indigo"
-              style={{ animation: "spin 0.7s linear infinite" }}
-            />
+          <div className={`flex items-center justify-center min-h-screen ${isDsRoute(pathname) ? "bg-ds-bg" : "bg-bg"}`}>
+            <BoxesLoader />
           </div>
         </body>
       </html>
@@ -112,11 +120,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <meta name="viewport" content="width=device-width, initial-scale=1" />
         </head>
         <body>
-          <div className="flex items-center justify-center min-h-screen bg-bg">
-            <div
-              className="h-8 w-8 rounded-full border-[3px] border-ink/10 border-t-indigo"
-              style={{ animation: "spin 0.7s linear infinite" }}
-            />
+          <div className={`flex items-center justify-center min-h-screen ${isDsRoute(pathname) ? "bg-ds-bg" : "bg-bg"}`}>
+            <BoxesLoader />
           </div>
         </body>
       </html>
@@ -139,6 +144,22 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             // navigates straight out of it — the same cross-plane leak as the old
             // nav rail, from a second source. The overview has its own channel search.
             children
+          ) : isDsRoute(pathname) ? (
+            // Premium dark shell — only for modules already redesigned (src/lib/ds-routes.ts).
+            // ⚠️ The content column is its own scroll container on purpose: globals.css sets
+            // overflow-x:hidden on html/body, which silently disables position:sticky for
+            // anything scrolling with the page (see the /overview rail note in CLAUDE.md).
+            // Scrolling inside this column keeps the sidebar fixed and the top bar sticky.
+            <div className="ds-root flex h-[100dvh] overflow-hidden">
+              <DsSidebar />
+              <div className="flex flex-col flex-1 min-w-0 mt-14 h-[calc(100dvh-3.5rem)] lg:mt-0 lg:h-[100dvh] overflow-y-auto">
+                <DsTopNav onOpenSearch={() => setCmdOpen(true)} />
+                <main className="flex-1 px-4 sm:px-6 pb-6 overflow-x-hidden">
+                  {children}
+                </main>
+              </div>
+              <CommandPalette open={cmdOpen} onClose={() => setCmdOpen(false)} />
+            </div>
           ) : (
             <div className="flex min-h-screen bg-bg">
               {/* Collapsible left rail */}

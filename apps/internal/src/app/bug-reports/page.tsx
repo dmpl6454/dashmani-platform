@@ -3,32 +3,67 @@
 import { useState } from "react";
 import { apiFetch } from "@/lib/api";
 import useSWR from "swr";
-import { Bug } from "lucide-react";
+import { Bug, ChevronRight, Clock, Check, X } from "lucide-react";
 import { formatStatus } from "@dashmani/shared";
 import { usePageTitle } from "@/lib/hooks/use-page-title";
 
-const severityColors: Record<string, string> = {
-  LOW: "bg-blue-50 text-blue-700", MEDIUM: "bg-yellow-50 text-yellow-700",
-  HIGH: "bg-orange-50 text-orange-700", CRITICAL: "bg-red-50 text-red-700",
+const STATUSES = ["", "OPEN", "IN_PROGRESS", "RESOLVED", "CLOSED"];
+// Mockup palette.
+const STATUS_COLOR: Record<string, string> = { OPEN: "#FB7185", IN_PROGRESS: "#E9BD62", RESOLVED: "#00D7A0", CLOSED: "#738395", WONT_FIX: "#738395" };
+const SEVERITY_COLOR: Record<string, string> = { LOW: "#6EB2FF", MEDIUM: "#E9BD62", HIGH: "#FB923C", CRITICAL: "#FB7185" };
+const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const rgba = (hex: string, a: number) => {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`;
 };
-const statusColors: Record<string, string> = {
-  OPEN: "bg-red-50 text-red-700", IN_PROGRESS: "bg-yellow-50 text-yellow-700",
-  RESOLVED: "bg-green-50 text-green-700", CLOSED: "bg-gray-100 text-gray-700",
-  WONT_FIX: "bg-gray-100 text-gray-600",
-};
+const fdY = (v: string) => { const d = new Date(v); return `${d.getDate()} ${MONTH_SHORT[d.getMonth()]} ${d.getFullYear()}`; };
+const statusLabel = (s: string) => (s === "WONT_FIX" ? "Won't Fix" : formatStatus(s));
+const Dot = () => <span aria-hidden="true" className="h-[3px] w-[3px] rounded-full bg-[#4A6275] shrink-0" />;
+
+function Pill({ color, dot, children }: { color: string; dot?: boolean; children: React.ReactNode }) {
+  return (
+    <span
+      className="inline-flex items-center gap-[5px] h-[22px] px-[9px] rounded-full border text-[11px] font-semibold whitespace-nowrap"
+      style={{ background: rgba(color, 0.1), borderColor: rgba(color, 0.3), color }}
+    >
+      {dot && <i className="h-1 w-1 rounded-full" style={{ background: color }} />}
+      {children}
+    </span>
+  );
+}
+
+function ActionBtn({ color, onClick, icon, children, disabled }: { color: string; onClick: () => void; icon: React.ReactNode; children: React.ReactNode; disabled?: boolean }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className="inline-flex items-center gap-[7px] h-[38px] px-[15px] rounded-full border text-[12.5px] font-semibold whitespace-nowrap transition-colors disabled:opacity-50"
+      style={{ borderColor: rgba(color, 0.33), background: rgba(color, 0.08), color }}
+    >
+      {icon}
+      {children}
+    </button>
+  );
+}
 
 export default function BugReportsPage() {
   usePageTitle("Bug Reports");
   const [statusFilter, setStatusFilter] = useState("");
-  const { data, mutate } = useSWR(
-    `/admin/bug-reports${statusFilter ? `?status=${statusFilter}` : ""}`,
-    (url: string) => apiFetch<any>(url)
-  );
-  const bugs = data?.data || [];
+  // One request for every status, filtered here so each tab can show its count.
+  const { data, error, isLoading, mutate } = useSWR(`/admin/bug-reports`, (url: string) => apiFetch<any>(url));
+  const all: any[] = data?.data || [];
+  const bugs = statusFilter ? all.filter((b) => b.status === statusFilter) : all;
+  const count = (s: string) => (s ? all.filter((b) => b.status === s).length : all.length);
+  const openCount = count("OPEN");
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [resolution, setResolution] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [actionError, setActionError] = useState("");
 
   async function updateStatus(id: string, status: string) {
+    setBusy(true);
+    setActionError("");
     try {
       await apiFetch(`/admin/bug-reports/${id}/status`, {
         method: "POST",
@@ -36,67 +71,140 @@ export default function BugReportsPage() {
       });
       setResolution("");
       mutate();
-    } catch (e: any) { alert(e.message); }
+    } catch (e: any) { setActionError(e.message || "Failed to update the bug report"); }
+    setBusy(false);
   }
 
   return (
-    <div className="space-y-6 crx-animate-fade">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="font-serif text-4xl font-light text-[#1A1A1A]">Bug Reports</h1>
-        {/* wraps on phones so every pill stays fully visible */}
-        <div className="flex flex-wrap gap-2">
-          {["", "OPEN", "IN_PROGRESS", "RESOLVED", "CLOSED"].map((s) => (
-            <button key={s} onClick={() => setStatusFilter(s)}
-              className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors whitespace-nowrap ${statusFilter === s ? "bg-[#1A1A1A] text-white" : "bg-white text-[#7A7A7A] border border-[#E8E0D0] hover:border-[#F5D547]"}`}
-            >{s ? formatStatus(s) : "All"}</button>
-          ))}
+    <div className="pb-8">
+      {/* Header + status tabs */}
+      <section className="flex items-center justify-between gap-4 flex-wrap pt-[30px] pb-[22px]">
+        <div className="flex items-center gap-3.5 flex-wrap min-w-0">
+          <h1 className="text-[34px] font-bold tracking-[-.03em] text-ds-text leading-tight">Bug Reports</h1>
+          {openCount > 0 && (
+            <span className="inline-flex items-center gap-1.5 h-7 px-3 rounded-full bg-[rgba(251,113,133,.1)] border border-[rgba(251,113,133,.35)] text-[#FB7185] text-[12px] font-semibold whitespace-nowrap">
+              <i className="h-[5px] w-[5px] rounded-full bg-[#FB7185]" />
+              {openCount} Open
+            </span>
+          )}
         </div>
-      </div>
+        <div className="flex gap-1 p-[5px] rounded-full bg-ds-inset border border-ds-line2 max-w-full overflow-x-auto" role="tablist" aria-label="Status">
+          {STATUSES.map((s) => {
+            const on = statusFilter === s;
+            return (
+              <button
+                key={s || "all"}
+                type="button"
+                role="tab"
+                aria-selected={on}
+                onClick={() => setStatusFilter(s)}
+                className={`inline-flex items-center gap-2 h-9 px-4 rounded-full text-[13px] font-semibold whitespace-nowrap shrink-0 transition-colors ${on ? "bg-ds-gold text-[#060D14]" : "text-ds-t2 hover:text-ds-text"}`}
+              >
+                {s ? statusLabel(s) : "All"}
+                {data && <span className={`text-[11px] font-semibold ${on ? "text-[rgba(6,13,20,.6)]" : "text-ds-t3"}`}>{count(s)}</span>}
+              </button>
+            );
+          })}
+        </div>
+      </section>
 
-      <div className="space-y-4">
-        {bugs.length === 0 ? (
-          <div className="bg-white rounded-2xl border border-[#E8E0D0] p-8 text-center text-[#7A7A7A]">
-            <Bug size={24} className="mx-auto mb-2 opacity-30" />No bug reports
+      {actionError && (
+        <div className="mb-3.5 px-3.5 py-2.5 rounded-[8px] bg-[rgba(229,72,77,.08)] border border-[rgba(229,72,77,.3)] text-[#FB7185] text-[12.5px] flex items-center justify-between gap-3">
+          <span>{actionError}</span>
+          <button type="button" onClick={() => setActionError("")} aria-label="Dismiss" className="shrink-0 hover:text-ds-text"><X className="h-4 w-4" /></button>
+        </div>
+      )}
+
+      <section className="flex flex-col gap-3">
+        {isLoading && !data ? (
+          Array.from({ length: 4 }).map((_, i) => <div key={i} className="h-[86px] rounded-[16px] bg-ds-card border border-ds-line motion-safe:animate-pulse" />)
+        ) : error ? (
+          <div className="rounded-[16px] border border-[#2A4658] bg-ds-card py-14 px-5 text-center text-[13px] text-ds-t3">
+            Bug reports couldn&apos;t be loaded just now. Refresh to try again.
           </div>
-        ) : bugs.map((bug: any) => (
-          <div key={bug.id} className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.06)] border border-[#E8E0D0] overflow-hidden">
-            <div className="p-5 cursor-pointer hover:bg-[#FEFCF7] transition-colors" onClick={() => setExpandedId(expandedId === bug.id ? null : bug.id)}>
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <div className="flex flex-wrap items-center gap-2 mb-1">
-                    <h3 className="font-semibold text-[#1A1A1A]">{bug.title}</h3>
-                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${severityColors[bug.severity] || ""}`}>{formatStatus(bug.severity)}</span>
-                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${statusColors[bug.status] || ""}`}>{formatStatus(bug.status)}</span>
+        ) : bugs.length === 0 ? (
+          <div className="rounded-[16px] border border-[#2A4658] bg-ds-card py-14 px-5 flex flex-col items-center gap-3 text-[13px] text-ds-t3">
+            <Bug className="h-8 w-8" strokeWidth={1.5} />
+            No bug reports
+          </div>
+        ) : (
+          bugs.map((bug: any) => {
+            const open = expandedId === bug.id;
+            const sevColor = SEVERITY_COLOR[bug.severity] ?? "#A7B3C2";
+            const stColor = STATUS_COLOR[bug.status] ?? "#738395";
+            const live = bug.status === "OPEN" || bug.status === "IN_PROGRESS";
+            return (
+              <div
+                key={bug.id}
+                className={`rounded-[16px] border bg-ds-card overflow-hidden shadow-[0_8px_24px_rgba(0,0,0,.25)] transition-colors ${open ? "border-[rgba(233,189,98,.4)]" : "border-[#2A4658]"}`}
+              >
+                <button
+                  type="button"
+                  aria-expanded={open}
+                  onClick={() => { setExpandedId(open ? null : bug.id); setResolution(""); }}
+                  className={`w-full flex items-center gap-3.5 px-6 py-5 text-left hover:bg-[#0A1620] transition-colors ${open ? "bg-[#0A1620]" : ""}`}
+                >
+                  <span className="flex-1 min-w-0 flex flex-col gap-[5px]">
+                    <span className="flex items-center gap-2 flex-wrap min-w-0">
+                      <span className="text-[16px] font-semibold text-ds-text min-w-0 break-words">{bug.title}</span>
+                      {bug.severity && <Pill color={sevColor}>{formatStatus(bug.severity)}</Pill>}
+                      <Pill color={stColor} dot>{statusLabel(bug.status)}</Pill>
+                    </span>
+                    <span className="flex items-center gap-2 flex-wrap text-[12px] text-ds-t3">
+                      <span className="whitespace-nowrap">by <span className="text-ds-t5 font-medium">{bug.reporter?.name ?? "—"}</span></span>
+                      <Dot />
+                      <span className="whitespace-nowrap">{fdY(bug.createdAt)}</span>
+                      {bug.page && (
+                        <>
+                          <Dot />
+                          <span className="min-w-0 break-all">Page: <span className="font-mono text-[11.5px] text-ds-t2">{bug.page}</span></span>
+                        </>
+                      )}
+                    </span>
+                  </span>
+                  <ChevronRight className={`h-[15px] w-[15px] text-ds-t3 shrink-0 transition-transform ${open ? "rotate-90" : ""}`} />
+                </button>
+                {open && (
+                  <div className="px-6 pt-1 pb-[22px] flex flex-col gap-3.5">
+                    <p className="text-[13.5px] leading-[1.6] text-ds-t2 whitespace-pre-line break-words [text-wrap:pretty]">{bug.description}</p>
+                    {bug.resolution && (
+                      <div className="px-3.5 py-3 rounded-[12px] bg-[rgba(0,215,160,.06)] border border-[rgba(0,215,160,.25)]">
+                        <div className="text-[10.5px] font-semibold tracking-[.1em] uppercase text-ds-teal">Resolution</div>
+                        <p className="mt-1.5 text-[13px] leading-[1.55] text-[#E3E8EE] whitespace-pre-line break-words">{bug.resolution}</p>
+                      </div>
+                    )}
+                    <div className="flex items-center gap-2 flex-wrap pt-3.5 border-t border-[#132430]">
+                      <input
+                        type="text"
+                        placeholder="Resolution note (optional)"
+                        aria-label="Resolution note"
+                        value={resolution}
+                        onChange={(e) => setResolution(e.target.value)}
+                        className="h-10 px-3 rounded-[10px] border border-ds-line2 bg-ds-inset text-ds-text text-[16px] sm:text-[13px] outline-none focus:border-ds-gold placeholder:text-ds-t4 flex-[1_1_220px] min-w-[180px]"
+                      />
+                      {bug.status === "OPEN" && (
+                        <ActionBtn color="#E9BD62" disabled={busy} onClick={() => updateStatus(bug.id, "IN_PROGRESS")} icon={<Clock className="h-[13px] w-[13px]" strokeWidth={2.2} />}>
+                          In Progress
+                        </ActionBtn>
+                      )}
+                      {live && (
+                        <>
+                          <ActionBtn color="#00D7A0" disabled={busy} onClick={() => updateStatus(bug.id, "RESOLVED")} icon={<Check className="h-[13px] w-[13px]" strokeWidth={2.2} />}>
+                            Resolve
+                          </ActionBtn>
+                          <ActionBtn color="#A7B3C2" disabled={busy} onClick={() => updateStatus(bug.id, "WONT_FIX")} icon={<X className="h-[13px] w-[13px]" strokeWidth={2.2} />}>
+                            Won&apos;t Fix
+                          </ActionBtn>
+                        </>
+                      )}
+                    </div>
                   </div>
-                  <p className="text-xs text-[#7A7A7A]">by {bug.reporter?.name} · {new Date(bug.createdAt).toLocaleDateString()} {bug.page ? `· Page: ${bug.page}` : ""}</p>
-                </div>
+                )}
               </div>
-            </div>
-            {expandedId === bug.id && (
-              <div className="border-t border-[#E8E0D0] p-5 bg-[#FEFCF7] space-y-3">
-                <p className="text-sm text-[#555] whitespace-pre-line">{bug.description}</p>
-                {bug.resolution && <div className="bg-green-50 rounded-lg p-3 text-sm"><strong>Resolution:</strong> {bug.resolution}</div>}
-                <div className="flex flex-wrap items-center gap-3">
-                  <input
-                    type="text" placeholder="Resolution note (optional)" value={resolution}
-                    onChange={(e) => setResolution(e.target.value)}
-                    className="flex-1 min-w-[180px] border border-[#E8E0D0] rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-[#F5D547]"
-                  />
-                  {bug.status === "OPEN" && (
-                    <button onClick={() => updateStatus(bug.id, "IN_PROGRESS")} className="rounded-full bg-yellow-50 text-yellow-700 px-3 py-1.5 text-xs font-medium hover:bg-yellow-100">In Progress</button>
-                  )}
-                  {(bug.status === "OPEN" || bug.status === "IN_PROGRESS") && (
-                    <>
-                      <button onClick={() => updateStatus(bug.id, "RESOLVED")} className="rounded-full bg-green-50 text-green-700 px-3 py-1.5 text-xs font-medium hover:bg-green-100">Resolve</button>
-                      <button onClick={() => updateStatus(bug.id, "WONT_FIX")} className="rounded-full bg-gray-100 text-gray-600 px-3 py-1.5 text-xs font-medium hover:bg-gray-200">Won't Fix</button>
-                    </>
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
-        ))}
-      </div>
+            );
+          })
+        )}
+      </section>
     </div>
   );
 }

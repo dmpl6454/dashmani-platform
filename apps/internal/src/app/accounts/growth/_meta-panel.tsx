@@ -16,13 +16,14 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import {
   RefreshCw, Link2, Unlink, AlertTriangle, ExternalLink, Loader2, ChevronDown, ChevronRight,
-  Eye, EyeOff, Download,
+  Eye, EyeOff, Download, Clock,
 } from "lucide-react";
 import {
   useMetaConnections, useMetaChannels, useMetaPosts,
   startMetaConnect, triggerMetaDiscovery, triggerMetaSync, disconnectMeta, setAssetsSelectedBulk,
   fmtMetric, fmtMoney, fmtWatchTime, useMetaDemographics, CHANNEL_WINDOWS, windowSuffix, type MetaChannel, type MetaConnection, type ChannelWindowKey,
 } from "@/lib/hooks/use-meta";
+import { FollowerTrend } from "./_follower-trend";
 
 /** Per-browser preference for masking revenue while presenting. */
 const REVENUE_HIDDEN_KEY = "meta-growth:hide-revenue";
@@ -56,23 +57,24 @@ function csvMoney(cents: number | null | undefined): string {
 
 function StatusChip({ status, daysLeft }: { status: string; daysLeft: number | null }) {
   const map: Record<string, { cls: string; label: string; title: string }> = {
-    ACTIVE: { cls: "text-[#3E9B4F] border-[#C6E8CB] bg-[#F2FAF3]", label: "Connected",
+    ACTIVE: { cls: "text-ds-teal border-ds-teal/30 bg-ds-teal/[.1]", label: "Connected",
       title: "Reading live data through your Meta authorisation." },
-    PARTIAL_SCOPE: { cls: "text-[#C2861D] border-[#F3D9A4] bg-[#FDF8EC]", label: "Partial permissions",
+    PARTIAL_SCOPE: { cls: "text-[#FBBF24] border-[#FBBF24]/30 bg-[#FBBF24]/[.08]", label: "Partial permissions",
       title: "A required permission was declined. Reconnect to grant it." },
-    NEEDS_REAUTH_SOON: { cls: "text-[#C2861D] border-[#F3D9A4] bg-[#FDF8EC]",
+    NEEDS_REAUTH_SOON: { cls: "text-[#FBBF24] border-[#FBBF24]/30 bg-[#FBBF24]/[.08]",
       label: daysLeft != null ? `Expires in ${daysLeft}d` : "Expiring soon",
       title: "Meta data access lapses ~90 days after authorising. Reconnect to extend." },
-    NEEDS_REAUTH: { cls: "text-[#C0504D] border-[#F3C7C6] bg-[#FDF1F1]", label: "Reconnect needed",
+    NEEDS_REAUTH: { cls: "text-ds-redsoft border-ds-red/35 bg-ds-red/[.08]", label: "Reconnect needed",
       title: "The grant is no longer valid — reconnect to resume." },
-    RATE_LIMITED: { cls: "text-[#C2861D] border-[#F3D9A4] bg-[#FDF8EC]", label: "Rate limited",
+    RATE_LIMITED: { cls: "text-[#FBBF24] border-[#FBBF24]/30 bg-[#FBBF24]/[.08]", label: "Rate limited",
       title: "Meta is throttling us; this clears itself on the next run." },
-    REVOKED: { cls: "text-[#7A7A7A] border-[#DCDCDC] bg-[#F7F7F7]", label: "Disconnected", title: "Revoked." },
+    REVOKED: { cls: "text-ds-t2 border-ds-line2 bg-ds-hover", label: "Disconnected", title: "Revoked." },
   };
   const m = map[status] ?? map.REVOKED;
   return (
     <span title={m.title}
-      className={`inline-flex items-center text-[11px] font-medium border rounded-full px-2 py-0.5 leading-none whitespace-nowrap ${m.cls}`}>
+      className={`inline-flex items-center gap-[5px] h-5 px-2 text-[10.5px] font-semibold border rounded-full leading-none whitespace-nowrap ${m.cls}`}>
+      <i aria-hidden="true" className="h-[5px] w-[5px] rounded-full bg-current" />
       {m.label}
     </span>
   );
@@ -93,15 +95,15 @@ const AUDIENCE_LABEL: Record<string, string> = {
 function ChannelAudience({ assetId }: { assetId: string }) {
   const { data, isLoading } = useMetaDemographics(assetId);
   const [audience, setAudience] = useState<string>("follower");
-  if (isLoading) return <p className="px-6 py-3 text-[11px] text-[#B0B0B0]">Loading audience…</p>;
+  if (isLoading) return <p className="px-6 py-3 text-[11px] text-ds-t3">Loading audience…</p>;
   if (!data) return null;
 
   if (!data.supported) {
-    return <p className="px-6 py-3 text-[11px] text-[#B0B0B0]">{data.reason}</p>;
+    return <p className="px-6 py-3 text-[11px] text-ds-t3">{data.reason}</p>;
   }
   if (data.pending) {
     return (
-      <p className="px-6 py-3 text-[11px] text-[#B0B0B0]">
+      <p className="px-6 py-3 text-[11px] text-ds-t3">
         Audience breakdown refreshes once a day and hasn&apos;t been collected for this channel
         yet. Meta also withholds it entirely for accounts below its privacy threshold.
       </p>
@@ -112,9 +114,9 @@ function ChannelAudience({ assetId }: { assetId: string }) {
   const available = Object.keys(data.audiences);
 
   return (
-    <div className="px-6 py-3 bg-[#FCFBF8] border-t border-[#F0EAE0]">
+    <div className="px-6 py-3 bg-[#0A1620] border-t border-ds-line">
       <div className="flex flex-wrap items-center gap-1.5 mb-2">
-        <span className="text-[10px] text-[#B0B0B0] mr-0.5">Audience</span>
+        <span className="text-[10px] text-ds-t3 mr-0.5">Audience</span>
         {available.map((a) => (
           <button
             key={a}
@@ -122,8 +124,8 @@ function ChannelAudience({ assetId }: { assetId: string }) {
             aria-pressed={audience === a}
             className={`text-[10px] rounded-full px-2 py-0.5 border ${
               audience === a
-                ? "bg-[#5B4BF5] text-white border-[#5B4BF5]"
-                : "border-[#DCDCDC] text-[#7A7A7A] hover:bg-white"}`}
+                ? "bg-ds-blue text-white border-ds-blue"
+                : "border-ds-line2 bg-ds-card text-ds-t2 hover:text-ds-text hover:border-ds-line4"}`}
           >
             {AUDIENCE_LABEL[a] ?? a}
           </button>
@@ -140,18 +142,18 @@ function ChannelAudience({ assetId }: { assetId: string }) {
           const total = rows.reduce((sum, r) => sum + r.value, 0) || 1;
           return (
             <div key={dim} className="min-w-0">
-              <p className="text-[10px] text-[#7A7A7A] font-medium mb-1">{DIMENSION_LABEL[dim]}</p>
+              <p className="text-[10px] text-ds-t2 font-medium mb-1">{DIMENSION_LABEL[dim]}</p>
               {shown.map((r) => (
                 <div key={r.bucket} className="mb-1">
                   <div className="flex items-baseline justify-between gap-2">
-                    <span className="text-[11px] text-[#1A1A1A] truncate">{r.bucket}</span>
-                    <span className="text-[10px] text-[#7A7A7A] shrink-0 tabular-nums">
+                    <span className="text-[11px] text-ds-text truncate">{r.bucket}</span>
+                    <span className="text-[10px] text-ds-t2 shrink-0 tabular-nums">
                       {Math.round((r.value / total) * 100)}%
                     </span>
                   </div>
-                  <div className="h-1 rounded-full bg-[#EFEAE0] overflow-hidden">
+                  <div className="h-1 rounded-full bg-[#132430] overflow-hidden">
                     <div
-                      className="h-full rounded-full bg-[#5B4BF5]"
+                      className="h-full rounded-full bg-ds-blue"
                       style={{ width: `${Math.max(2, Math.round((r.value / total) * 100))}%` }}
                     />
                   </div>
@@ -161,7 +163,7 @@ function ChannelAudience({ assetId }: { assetId: string }) {
           );
         })}
       </div>
-      <p className="mt-2 text-[10px] text-[#B0B0B0] leading-snug">
+      <p className="mt-2 text-[10px] text-ds-t3 leading-snug">
         Share of the buckets Meta returns for this channel, which is a top set rather than the
         whole audience — so these read as relative weight, not an exact census. Refreshed daily.
       </p>
@@ -183,12 +185,12 @@ function ChannelExtras({ c, sfx }: { c: MetaChannel; sfx: string }) {
       : [{ label: `Watch time · ${sfx}`, value: fmtWatchTime(c.videoViewTimeMs) }]),
   ];
   return (
-    <div className="px-6 py-3 bg-[#FCFBF8]">
+    <div className="px-6 py-3 bg-[#0A1620]">
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
         {stats.map((s) => (
           <div key={s.label} className="min-w-0">
-            <p className="font-num text-sm font-semibold text-[#1A1A1A] truncate">{s.value}</p>
-            <p className="text-[10px] text-[#7A7A7A] leading-tight">{s.label}</p>
+            <p className="font-num text-sm font-semibold text-ds-text truncate">{s.value}</p>
+            <p className="text-[10px] text-ds-t2 leading-tight">{s.label}</p>
           </div>
         ))}
       </div>
@@ -198,7 +200,7 @@ function ChannelExtras({ c, sfx }: { c: MetaChannel; sfx: string }) {
           +617,430. They are two different Meta measurements — gross churn counters
           versus the true daily follower total — not two views of one number. */}
       {c.follows !== null && c.unfollows !== null && (
-        <p className="mt-2 text-[10px] text-[#B0B0B0] leading-snug">
+        <p className="mt-2 text-[10px] text-ds-t3 leading-snug">
           New follows and unfollows are Meta&apos;s gross counters. They will not subtract
           exactly to the follower change above — that is measured from the follower count
           itself, which is the more reliable of the two. Treat these as the churn behind the
@@ -218,18 +220,21 @@ function ConnectionRow({
   run: (key: string, fn: () => Promise<unknown>) => Promise<void>;
 }) {
   return (
-    <div className="px-5 py-2.5 border-b border-[#F6F2EA] flex flex-wrap items-center gap-x-3 gap-y-1.5">
-            <div className="min-w-0 flex items-center gap-2">
-              <span className="text-sm font-medium text-[#1A1A1A] truncate">
+    <div className="px-6 py-3 border-t border-b border-ds-line bg-[#0A1620] flex flex-wrap items-center gap-x-3 gap-y-1.5">
+            <div className="min-w-0 flex items-center gap-3">
+              <span aria-hidden="true" className="h-[26px] w-[26px] rounded-full bg-ds-chip border border-ds-line3 grid place-items-center text-[9.5px] font-bold text-ds-text shrink-0">
+                {(c.metaUserName ?? "M").split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase()}
+              </span>
+              <span className="text-[13px] font-semibold text-ds-text truncate">
                 {c.metaUserName ?? `Meta user ${c.metaUserId}`}
               </span>
               <StatusChip status={c.status} daysLeft={c.dataAccessDaysLeft} />
             </div>
-            <div className="text-[11px] text-[#7A7A7A] flex items-center gap-2 sm:ml-auto">
+            <div className="text-[11.5px] text-ds-t2 flex flex-wrap items-center gap-x-3.5 gap-y-1 sm:ml-auto">
               {c.discoveryState !== "done" && <span className="italic">finding channels…</span>}
               <span>{c.assetCount ?? 0} channels</span>
               <button onClick={() => run(`disc-${c.id}`, () => triggerMetaDiscovery(c.id))}
-                disabled={busy !== null} className="underline hover:text-[#1A1A1A] disabled:opacity-50">
+                disabled={busy !== null} className="text-[#6EB2FF] underline underline-offset-[3px] hover:text-[#9CCBFF] disabled:opacity-50">
                 {busy === `disc-${c.id}` ? "refreshing…" : "refresh channels"}
               </button>
               <button
@@ -238,16 +243,16 @@ function ConnectionRow({
                     void run(`del-${c.id}`, () => disconnectMeta(c.id));
                 }}
                 disabled={busy !== null}
-                className="inline-flex items-center gap-1 text-[#C0504D] underline hover:opacity-80 disabled:opacity-50">
+                className="inline-flex items-center gap-1 text-ds-redsoft underline underline-offset-[3px] hover:text-[#FDA4AF] disabled:opacity-50">
                 <Unlink className="h-3 w-3" />disconnect
               </button>
             </div>
             {c.missingScopes.length > 0 && (
-              <p className="basis-full text-[11px] text-[#C2861D]">
+              <p className="basis-full text-[11px] text-[#FBBF24]">
                 Declined permissions: {c.missingScopes.join(", ")} — reconnect to grant them.
               </p>
             )}
-            {c.lastError && <p className="basis-full text-[11px] text-[#C0504D] break-words">{c.lastError}</p>}
+            {c.lastError && <p className="basis-full text-[11px] text-ds-redsoft break-words">{c.lastError}</p>}
           </div>
   );
 }
@@ -255,15 +260,15 @@ function ConnectionRow({
 /** Recent posts for ONE channel — a drill-down, never the headline. */
 function ChannelPosts({ assetId }: { assetId: string }) {
   const { data, isLoading } = useMetaPosts({ assetId });
-  if (isLoading) return <p className="px-6 py-3 text-[11px] text-[#B0B0B0]">Loading posts…</p>;
+  if (isLoading) return <p className="px-6 py-3 text-[11px] text-ds-t3">Loading posts…</p>;
   const items = data?.items ?? [];
   if (items.length === 0)
-    return <p className="px-6 py-3 text-[11px] text-[#B0B0B0]">No posts stored for this channel yet.</p>;
+    return <p className="px-6 py-3 text-[11px] text-ds-t3">No posts stored for this channel yet.</p>;
   return (
-    <div className="px-6 py-2 bg-[#FCFBF8]">
+    <div className="px-6 py-2 bg-[#0A1620]">
       <table className="w-full">
         <thead>
-          <tr className="text-[10px] text-[#B0B0B0]">
+          <tr className="text-[10px] text-ds-t3">
             <th className="text-left font-medium py-1">Most recent posts</th>
             <th className="text-right font-medium py-1 w-16">Views</th>
             <th className="text-right font-medium py-1 w-16">Likes</th>
@@ -273,15 +278,15 @@ function ChannelPosts({ assetId }: { assetId: string }) {
         </thead>
         <tbody>
           {items.slice(0, 8).map((p) => (
-            <tr key={p.id} className="border-t border-[#F0EAE0]">
+            <tr key={p.id} className="border-t border-ds-line">
               <td className="py-1 pr-2 max-w-0">
                 <div className="flex items-center gap-1 min-w-0">
-                  <span className="text-[11px] text-[#1A1A1A] truncate">
-                    {p.caption?.trim() || <span className="text-[#B0B0B0]">(no caption)</span>}
+                  <span className="text-[11px] text-ds-text truncate">
+                    {p.caption?.trim() || <span className="text-ds-t3">(no caption)</span>}
                   </span>
                   {p.permalink && (
                     <a href={p.permalink} target="_blank" rel="noopener noreferrer"
-                      className="shrink-0 text-[#B0B0B0] hover:text-[#1A1A1A]">
+                      className="shrink-0 text-ds-t3 hover:text-ds-text">
                       <ExternalLink className="h-3 w-3" />
                     </a>
                   )}
@@ -289,19 +294,19 @@ function ChannelPosts({ assetId }: { assetId: string }) {
               </td>
               <td className="py-1 text-right text-[11px]">
                 {p.metricsStatus === "pending" && p.views === null
-                  ? <span className="italic text-[#B0B0B0]">measuring</span>
+                  ? <span className="italic text-ds-t3">measuring</span>
                   : fmtMetric(p.views)}
               </td>
               <td className="py-1 text-right text-[11px]">{fmtMetric(p.likes)}</td>
               <td className="py-1 text-right text-[11px]">{fmtMetric(p.comments)}</td>
-              <td className="py-1 text-right text-[10px] text-[#7A7A7A] whitespace-nowrap">
+              <td className="py-1 text-right text-[10px] text-ds-t2 whitespace-nowrap">
                 {p.postedAt ? new Date(p.postedAt).toLocaleDateString() : "—"}
               </td>
             </tr>
           ))}
         </tbody>
       </table>
-      <p className="py-2 text-[10px] text-[#B0B0B0] leading-snug">
+      <p className="py-2 text-[10px] text-ds-t3 leading-snug">
         The most recent posts we have measured — not every post from the last 28 days. A
         per-post figure costs one Meta request and the busiest channels publish over a
         thousand posts a month, so measurement is spent newest-first. The channel totals
@@ -369,15 +374,15 @@ function SortTh({ label, colKey, sort, onSort, align = "right", pad = "px-2", ti
 }) {
   const active = sort.key === colKey;
   return (
-    <th className={`${align === "left" ? "text-left" : "text-right"} font-medium ${pad} py-2`} title={title}>
+    <th className={`${align === "left" ? "text-left" : "text-right"} font-semibold ${pad} py-[11px] whitespace-nowrap`} title={title}>
       <button
         onClick={() => onSort(colKey)}
         aria-pressed={active}
-        className={`inline-flex items-center gap-0.5 hover:text-[#1A1A1A] ${active ? "text-[#1A1A1A]" : ""}`}
+        className={`inline-flex items-center gap-1 uppercase tracking-[.1em] hover:text-ds-text ${active ? "text-ds-text" : ""}`}
       >
         {label}
         {/* fixed-width slot so headers don't shift as the arrow moves between columns */}
-        <span className="inline-block w-2.5 text-[9px] leading-none text-[#5B4BF5]">
+        <span className="inline-block w-2.5 text-[9px] leading-none text-ds-gold normal-case">
           {active ? (sort.dir === "desc" ? "\u25BC" : "\u25B2") : ""}
         </span>
       </button>
@@ -686,13 +691,14 @@ export function MetaPanel() {
 
   if (!connLoading && !configured) {
     return (
-      <section className="bg-white rounded-2xl border border-[#E8E0D0] shadow-[0_2px_16px_rgba(0,0,0,0.05)] p-5 space-y-2">
-        <h2 className="font-serif text-lg text-[#1A1A1A]">Facebook &amp; Instagram</h2>
-        <p className="text-sm text-[#7A7A7A]">
+      <section className="relative bg-ds-card rounded-[12px] border border-[#1D3444] overflow-hidden px-6 py-5 space-y-2">
+        <span aria-hidden="true" className="absolute left-0 right-0 top-0 h-px bg-[linear-gradient(90deg,transparent,#E9BD62_30%,#E9BD62_70%,transparent)]" />
+        <h2 className="text-[17px] font-semibold tracking-[-.01em] text-ds-text">Facebook &amp; Instagram</h2>
+        <p className="text-[12.5px] text-ds-t2">
           Meta connection isn&apos;t configured on the server, so no Facebook or Instagram data can be shown.
         </p>
         {(conns?.missingEnv?.length ?? 0) > 0 && (
-          <p className="text-[11px] text-[#B0B0B0]">Missing: {conns!.missingEnv.join(", ")}</p>
+          <p className="text-[11px] text-ds-t3">Missing: {conns!.missingEnv.join(", ")}</p>
         )}
       </section>
     );
@@ -702,25 +708,26 @@ export function MetaPanel() {
   const contrib = ch?.contributing;
 
   return (
-    <section className="bg-white rounded-2xl border border-[#E8E0D0] shadow-[0_2px_16px_rgba(0,0,0,0.05)] overflow-hidden">
-      <div className="px-5 py-4 border-b border-[#F0EAE0] flex flex-wrap items-center gap-x-3 gap-y-2">
+    <section className="relative bg-ds-card rounded-[12px] border border-[#1D3444] overflow-hidden">
+      <span aria-hidden="true" className="absolute left-0 right-0 top-0 h-px bg-[linear-gradient(90deg,transparent,#E9BD62_30%,#E9BD62_70%,transparent)]" />
+      <div className="px-6 py-5 flex flex-wrap items-center gap-x-4 gap-y-3">
         <div className="min-w-0">
-          <h2 className="font-serif text-lg text-[#1A1A1A]">Connected channels</h2>
-          <p className="text-xs text-[#7A7A7A] mt-0.5">
+          <h2 className="text-[17px] font-semibold tracking-[-.01em] text-ds-text">Connected channels</h2>
+          <p className="text-[12px] text-ds-t2 mt-1">
             Facebook Pages &amp; Instagram accounts, read directly from Meta — no scraping.
           </p>
         </div>
-        <div className="flex items-center gap-1.5 sm:ml-auto">
+        <div className="flex items-center gap-2 sm:ml-auto">
           {live.length > 0 && (
             <button onClick={() => run("sync", () => triggerMetaSync())} disabled={busy !== null}
-              className="inline-flex items-center gap-1.5 text-xs font-medium border border-[#DCDCDC] rounded-full px-3 py-1.5 hover:bg-[#FAFAFA] disabled:opacity-50">
+              className="inline-flex items-center gap-1.5 h-[34px] px-3.5 rounded-full border border-ds-line2 bg-ds-inset text-ds-t5 text-[12px] font-semibold whitespace-nowrap transition-colors hover:border-ds-blue/50 hover:text-[#6EB2FF] disabled:opacity-50">
               {busy === "sync" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
               Refresh
             </button>
           )}
           <button onClick={() => connect(live.length > 0 ? "reconnect" : "connect", live[0]?.id)}
             disabled={busy !== null}
-            className="inline-flex items-center gap-1.5 text-xs font-medium rounded-full px-3 py-1.5 bg-[#1877F2] text-white hover:bg-[#166FE5] disabled:opacity-50">
+            className="inline-flex items-center gap-1.5 h-[34px] px-4 rounded-full bg-ds-blue text-white text-[12px] font-semibold whitespace-nowrap transition-colors hover:bg-[#3B98FF] disabled:opacity-50">
             <Link2 className="h-3.5 w-3.5" />
             {live.length > 0 ? "Reconnect" : "Connect with Facebook"}
           </button>
@@ -728,15 +735,15 @@ export function MetaPanel() {
       </div>
 
       {err && (
-        <div className="mx-5 mt-4 flex items-start gap-2 text-xs text-[#C0504D] bg-[#FDF1F1] border border-[#F3C7C6] rounded-lg px-3 py-2">
+        <div className="mx-5 mt-4 flex items-start gap-2 text-xs text-ds-redsoft bg-ds-red/[.08] border border-ds-red/35 rounded-[8px] px-3 py-2">
           <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" /><span className="min-w-0">{err}</span>
         </div>
       )}
 
       {!connLoading && live.length === 0 && (
         <div className="px-5 py-8 text-center space-y-2">
-          <p className="text-sm text-[#1A1A1A] font-medium">No Meta account connected yet</p>
-          <p className="text-xs text-[#7A7A7A] max-w-md mx-auto leading-relaxed">
+          <p className="text-sm text-ds-text font-medium">No Meta account connected yet</p>
+          <p className="text-xs text-ds-t2 max-w-md mx-auto leading-relaxed">
             Connect the Facebook account that manages your Pages. We&apos;ll list every Page and
             Instagram account it administers, with each channel&apos;s followers, views and
             engagement. Read-only — we never post anything.
@@ -753,16 +760,16 @@ export function MetaPanel() {
       {primaryConn && <ConnectionRow c={primaryConn} busy={busy} run={run} />}
 
       {backupConns.length > 0 && (
-        <div className="px-5 py-2 border-b border-[#F6F2EA]">
+        <div className="px-5 py-2 border-b border-[#101E29]">
           <button
             onClick={() => setShowBackups((v) => !v)}
             aria-expanded={showBackups}
-            className="text-[11px] text-[#7A7A7A] hover:text-[#1A1A1A] underline"
+            className="text-[11px] text-ds-t2 hover:text-ds-text underline"
           >
             {showBackups ? "Hide" : "Show"} {backupConns.length} backup connection
             {backupConns.length > 1 ? "s" : ""}
           </button>
-          <span className="ml-2 text-[10px] text-[#B0B0B0]">
+          <span className="ml-2 text-[10px] text-ds-t3">
             kept so access survives a password change or someone leaving — they add no
             duplicate channels and no extra API calls
           </span>
@@ -778,7 +785,7 @@ export function MetaPanel() {
         // 1024px the content strip is ~684px and five columns leave ~120px each —
         // measured, the value ellipsised at that width. Three columns there keep
         // the tiles wide enough; five only once there is genuinely room.
-        <div className="px-5 py-5 grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 gap-x-4 gap-y-5 border-b border-[#F0EAE0]">
+        <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 border-t border-ds-line">
           {[
             { label: "Channels", value: ch!.channelCount, raw: true, note: null as string | null },
             // ⚠️ THE HEADLINE OF THIS TILE DOES NOT MOVE WITH THE PERIOD, AND THAT
@@ -833,7 +840,7 @@ export function MetaPanel() {
               // items that happen to sit near each other. Only at `lg`, where all
               // five are guaranteed to share one row — at narrower widths the grid
               // wraps and a leading border would land mid-row and look like a bug.
-              className="min-w-0 xl:border-l xl:border-[#F0EAE0] xl:pl-4 xl:first:border-l-0 xl:first:pl-0"
+              className="min-w-0 px-6 py-[22px] shadow-[inset_1px_0_0_#182C39,inset_0_-1px_0_#182C39]"
             >
               <p
                 // ⚠️ clamp, not a fixed size — a fixed `text-2xl`-and-up overflowed
@@ -844,7 +851,7 @@ export function MetaPanel() {
                 // 1024px and ellipsised in a ~120px tile — measured, not guessed.
                 // 24px phone -> 28px at 1280 -> 32px on a wide desktop, and it still
                 // truncates rather than painting over its neighbour.
-                className="font-num text-[clamp(1.5rem,2.2vw,2rem)] font-semibold tracking-tight leading-none text-[#1A1A1A] truncate"
+                className={`text-[clamp(1.6rem,2.3vw,2.125rem)] font-semibold tracking-[-.035em] leading-none truncate ${"money" in s && s.money ? "text-ds-gold" : "text-ds-text"}`}
               >
                 {s.raw
                   ? (s.value ?? 0).toLocaleString()
@@ -852,23 +859,23 @@ export function MetaPanel() {
                     ? (hideRevenue ? "•••••" : fmtMoney(s.value))
                     : fmtMetric(s.value)}
               </p>
-              <p className="mt-2 text-[10px] font-medium uppercase tracking-[0.08em] text-[#8A8A8A] truncate">
+              <p className="mt-2.5 text-[10px] font-semibold uppercase tracking-[.16em] text-ds-t2 truncate">
                 {s.label}
               </p>
               {/* Trend vs the equal-length prior span — rendered only when the
                   baseline is >=95% covered (see trendOk) so a chip can never be
                   computed against half a baseline. */}
               {typeof s.trend === "number" && (
-                <p className={`mt-1 text-[10px] font-medium ${s.trend >= 0 ? "text-[#3E9B4F]" : "text-[#C0504D]"}`}>
+                <p className={`mt-2 text-[11px] font-semibold ${s.trend >= 0 ? "text-ds-teal" : "text-ds-redsoft"}`}>
                   {s.trend >= 0 ? "\u25B2" : "\u25BC"} {Math.abs(s.trend).toFixed(1)}% vs prior {isRangeMode && periodDays ? `${periodDays}d` : sfx}
                 </p>
               )}
               {/* Say what a total does NOT cover, rather than implying completeness. */}
               {s.note && (
-                <p className={`mt-0.5 text-[10px] leading-tight ${
-                  s.noteTone === "up" ? "text-[#3E9B4F]"
-                  : s.noteTone === "down" ? "text-[#C0504D]"
-                  : "text-[#B0B0B0]"}`}>
+                <p className={`mt-1 text-[10.5px] leading-[1.45] ${
+                  s.noteTone === "up" ? "text-ds-teal"
+                  : s.noteTone === "down" ? "text-ds-redsoft"
+                  : "text-ds-t3"}`}>
                   {s.note}
                 </p>
               )}
@@ -877,23 +884,27 @@ export function MetaPanel() {
         </div>
       )}
 
+      {/* Follower trend (mockup chart). Real data from the Overview endpoint's follower
+          series — see _follower-trend.tsx for what it covers and why. */}
+      {live.length > 0 && t && <FollowerTrend win={win} range={range} />}
+
       {live.length > 0 && (
-        <div className="px-5 py-2.5 border-b border-[#F0EAE0] flex flex-wrap items-center gap-2">
+        <div className="px-6 py-3.5 border-t border-ds-line bg-[#0A1620] flex flex-wrap items-center gap-1.5">
           <div
-            className="flex flex-wrap items-center gap-1 mr-1"
+            className="flex flex-wrap items-center gap-1.5 mr-1"
             role="group"
             aria-label="Reporting period"
           >
-            <span className="text-[11px] text-[#B0B0B0] mr-0.5">Period</span>
+            <span className="text-[10px] tracking-[.14em] uppercase text-ds-t3 font-semibold mr-1">Period</span>
             {CHANNEL_WINDOWS.map((w) => (
               <button
                 key={w.key}
                 onClick={() => { setRange(null); setCustomOpen(false); setWin(w.key); }}
                 aria-pressed={!range && win === w.key}
-                className={`text-[11px] rounded-full px-2.5 py-1 border ${
+                className={`h-[30px] inline-flex items-center gap-1.5 text-[11.5px] font-semibold whitespace-nowrap rounded-full px-[13px] border transition-colors ${
                   !range && win === w.key
-                    ? "bg-[#5B4BF5] text-white border-[#5B4BF5]"
-                    : "border-[#DCDCDC] text-[#7A7A7A] hover:bg-[#FAFAFA]"}`}
+                    ? "bg-ds-blue text-white border-ds-blue"
+                    : "border-ds-line2 bg-ds-card text-ds-t2 hover:text-ds-text hover:border-ds-line4"}`}
               >
                 {w.label}
               </button>
@@ -914,10 +925,10 @@ export function MetaPanel() {
                   key={which}
                   onClick={() => { setCustomOpen(false); setRange(r); }}
                   aria-pressed={active}
-                  className={`text-[11px] rounded-full px-2.5 py-1 border ${
+                  className={`h-[30px] inline-flex items-center gap-1.5 text-[11.5px] font-semibold whitespace-nowrap rounded-full px-[13px] border transition-colors ${
                     active
-                      ? "bg-[#5B4BF5] text-white border-[#5B4BF5]"
-                      : "border-[#DCDCDC] text-[#7A7A7A] hover:bg-[#FAFAFA]"}`}
+                      ? "bg-ds-blue text-white border-ds-blue"
+                      : "border-ds-line2 bg-ds-card text-ds-t2 hover:text-ds-text hover:border-ds-line4"}`}
                 >
                   {which === "this" ? "This month" : "Last month"}
                 </button>
@@ -933,44 +944,44 @@ export function MetaPanel() {
                 if (r) { setCustomOpen(false); setRange(r); }
               }}
               title="Pick any calendar month"
-              className="text-[11px] border border-[#DCDCDC] rounded-full px-2 py-0.5 bg-white text-[#7A7A7A]"
+              className="h-[30px] text-[11.5px] border border-ds-line2 rounded-full px-2.5 bg-ds-card text-ds-t2 [color-scheme:dark]"
             />
             <button
               onClick={() => setCustomOpen((v) => !v)}
               aria-expanded={customOpen}
-              className={`text-[11px] rounded-full px-2.5 py-1 border ${
+              className={`h-[30px] inline-flex items-center gap-1.5 text-[11.5px] font-semibold whitespace-nowrap rounded-full px-[13px] border transition-colors ${
                 customOpen
-                  ? "border-[#5B4BF5] text-[#5B4BF5]"
-                  : "border-[#DCDCDC] text-[#7A7A7A] hover:bg-[#FAFAFA]"}`}
+                  ? "border-ds-blue text-ds-gold"
+                  : "border-ds-line2 bg-ds-card text-ds-t2 hover:text-ds-text hover:border-ds-line4"}`}
             >
               Custom…
             </button>
           </div>
-          <span className="hidden sm:block h-4 w-px bg-[#E8E0D0]" />
+          <span className="hidden sm:block h-5 w-px bg-ds-line2 mx-1.5" />
           {(["all", "facebook", "instagram"] as const).map((p) => (
             <button key={p} onClick={() => setPlatform(p)}
-              className={`text-[11px] rounded-full px-2.5 py-1 border ${
-                platform === p ? "bg-[#1A1A1A] text-white border-[#1A1A1A]"
-                : "border-[#DCDCDC] text-[#7A7A7A] hover:bg-[#FAFAFA]"}`}>
+              className={`h-[30px] inline-flex items-center gap-1.5 text-[11.5px] font-semibold whitespace-nowrap rounded-full px-[13px] border transition-colors ${
+                platform === p ? "bg-ds-gold/[.14] text-ds-gold border-ds-gold/55"
+                : "border-ds-line2 bg-ds-card text-ds-t2 hover:text-ds-text hover:border-ds-line4"}`}>
               {p === "all" ? "All" : p === "facebook" ? "Facebook" : "Instagram"}
             </button>
           ))}
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search channels…"
-            className="text-[11px] border border-[#DCDCDC] rounded-full px-3 py-1 w-40 focus:outline-none focus:border-[#B0B0B0]" />
+            className="h-[30px] text-[11.5px] border border-ds-line2 rounded-full px-3 w-[220px] max-w-full bg-ds-card text-ds-text placeholder:text-ds-t3 focus:outline-none focus:border-ds-gold" />
           <button
             onClick={() => { setManageMode((v) => !v); setCheckedIds(new Set()); }}
             aria-pressed={manageMode}
             title="Select channels to remove from monitoring. Removed channels stop syncing and drop out of every figure; restore them anytime."
-            className={`text-[11px] rounded-full px-2.5 py-1 border ${
-              manageMode ? "bg-[#1A1A1A] text-white border-[#1A1A1A]"
-              : "border-[#DCDCDC] text-[#7A7A7A] hover:bg-[#FAFAFA]"}`}
+            className={`h-[30px] inline-flex items-center gap-1.5 text-[11.5px] font-semibold whitespace-nowrap rounded-full px-[13px] border transition-colors ${
+              manageMode ? "bg-ds-gold/[.14] text-ds-gold border-ds-gold/55"
+              : "border-ds-line2 bg-ds-card text-ds-t2 hover:text-ds-text hover:border-ds-line4"}`}
           >
             {manageMode ? "Done" : "Manage"}
           </button>
           <button
             onClick={() => setShowRemoved((v) => !v)}
             aria-expanded={showRemoved}
-            className="text-[11px] rounded-full px-2.5 py-1 border border-[#DCDCDC] text-[#7A7A7A] hover:bg-[#FAFAFA]"
+            className="h-[30px] inline-flex items-center gap-1.5 text-[11.5px] font-semibold whitespace-nowrap rounded-full px-[13px] border transition-colors border-ds-line2 bg-ds-card text-ds-t2 hover:text-ds-text hover:border-ds-line4"
           >
             Removed channels
           </button>
@@ -978,10 +989,10 @@ export function MetaPanel() {
             onClick={() => setEarningOnly((v) => !v)}
             aria-pressed={earningOnly}
             title="Show only channels Meta reports earnings above zero for. Instagram has no earnings metric, so this is Facebook only."
-            className={`text-[11px] rounded-full px-2.5 py-1 border ${
+            className={`h-[30px] inline-flex items-center gap-1.5 text-[11.5px] font-semibold whitespace-nowrap rounded-full px-[13px] border transition-colors ${
               earningOnly
-                ? "bg-[#1A1A1A] text-white border-[#1A1A1A]"
-                : "border-[#DCDCDC] text-[#7A7A7A] hover:bg-[#FAFAFA]"}`}
+                ? "bg-ds-gold/[.14] text-ds-gold border-ds-gold/55"
+                : "border-ds-line2 bg-ds-card text-ds-t2 hover:text-ds-text hover:border-ds-line4"}`}
           >
             Earning only
           </button>
@@ -990,7 +1001,7 @@ export function MetaPanel() {
             onClick={toggleRevenue}
             aria-pressed={hideRevenue}
             title={hideRevenue ? "Show revenue figures" : "Hide revenue figures — useful when screen-sharing. Remembered on this browser."}
-            className="inline-flex items-center gap-1 text-[11px] rounded-full px-2.5 py-1 border border-[#DCDCDC] text-[#7A7A7A] hover:bg-[#FAFAFA]"
+            className="h-[30px] inline-flex items-center gap-1.5 text-[11.5px] font-semibold whitespace-nowrap rounded-full px-[13px] border transition-colors border-ds-line2 bg-ds-card text-ds-t2 hover:text-ds-text hover:border-ds-line4"
           >
             {hideRevenue ? <Eye className="h-3 w-3" /> : <EyeOff className="h-3 w-3" />}
             {hideRevenue ? "Show revenue" : "Hide revenue"}
@@ -1000,45 +1011,45 @@ export function MetaPanel() {
             onClick={downloadCsv}
             disabled={channels.length === 0}
             title="Download exactly what is shown — same period, platform, search, sort and filters."
-            className="inline-flex items-center gap-1 text-[11px] rounded-full px-2.5 py-1 border border-[#DCDCDC] text-[#7A7A7A] hover:bg-[#FAFAFA] disabled:opacity-40"
+            className="h-[30px] inline-flex items-center gap-1.5 text-[11.5px] font-semibold whitespace-nowrap rounded-full px-[13px] border transition-colors border-ds-line2 bg-ds-card text-ds-t2 hover:text-ds-text hover:border-ds-line4 disabled:opacity-40"
           >
             <Download className="h-3 w-3" />
             CSV
           </button>
 
-          <span className="text-[11px] text-[#B0B0B0] ml-auto">
+          <span className="text-[11px] text-ds-t3 ml-auto whitespace-nowrap">
             {channels.length} channel(s)
             {earningOnly && allChannels.length !== channels.length && (
-              <span className="text-[#B0B0B0]"> of {allChannels.length}</span>
+              <span className="text-ds-t3"> of {allChannels.length}</span>
             )}
           </span>
         </div>
       )}
 
       {live.length > 0 && customOpen && (
-        <div className="px-5 py-2 border-b border-[#F6F2EA] flex flex-wrap items-center gap-2 text-[11px]">
-          <span className="text-[#7A7A7A]">From</span>
+        <div className="px-5 py-2 border-b border-[#101E29] flex flex-wrap items-center gap-2 text-[11px]">
+          <span className="text-ds-t2">From</span>
           {/* `max` is the last day the estate is complete through when the server has
               said so, falling back to the clock's yesterday before the first payload —
               picking an unclosed day only earns a partial day averaged into the total. */}
           <input type="date" value={customStart} max={ch?.dataThroughDay ?? yesterdayIso()}
             onChange={(e) => setCustomStart(e.target.value)}
-            className="border border-[#DCDCDC] rounded-lg px-2 py-1" />
-          <span className="text-[#7A7A7A]">to</span>
+            className="border border-ds-line2 rounded-[8px] px-2 py-1" />
+          <span className="text-ds-t2">to</span>
           <input type="date" value={customEnd} max={ch?.dataThroughDay ?? yesterdayIso()}
             onChange={(e) => setCustomEnd(e.target.value)}
-            className="border border-[#DCDCDC] rounded-lg px-2 py-1" />
+            className="border border-ds-line2 rounded-[8px] px-2 py-1" />
           <button
             disabled={!customStart || !customEnd || customStart > customEnd}
             onClick={() => {
               setRange({ start: customStart, end: customEnd, label: customLabel(customStart, customEnd) });
               setCustomOpen(false);
             }}
-            className="rounded-full px-3 py-1 bg-[#5B4BF5] text-white disabled:opacity-40"
+            className="rounded-full px-3 py-1 bg-ds-blue text-white disabled:opacity-40"
           >
             Apply
           </button>
-          <span className="text-[10px] text-[#B0B0B0]">
+          <span className="text-[10px] text-ds-t3">
             completed days only — history reaches back as far as each channel&apos;s stored daily data
           </span>
         </div>
@@ -1049,72 +1060,75 @@ export function MetaPanel() {
           every live window — not buried in the footnote. Clock-only on purpose:
           this names a recurring daily boundary, not a specific instant. */}
       {live.length > 0 && !isRangeMode && ch?.dayStarts && (
-        <div className="px-5 py-2 border-b border-[#F6F2EA] text-[10px] text-[#7A7A7A] leading-snug">
-          <strong className="font-medium text-[#5A5A5A]">Today and Yesterday follow Meta&apos;s day, not midnight IST.</strong>{" "}
+        <div className="px-6 py-[11px] border-t border-ds-line flex gap-2.5 text-[11.5px] text-ds-t2 leading-[1.55]">
+          <Clock aria-hidden="true" className="h-[13px] w-[13px] text-ds-gold shrink-0 mt-0.5" />
+          <span className="[text-wrap:pretty]">
+          <strong className="font-medium text-ds-t5">Today and Yesterday follow Meta&apos;s day, not midnight IST.</strong>{" "}
           Facebook&apos;s day starts at Pacific midnight —{" "}
-          <strong className="font-medium text-[#5A5A5A]">{fmtDayClock(ch.dayStarts.facebook)} your time</strong> — and every
+          <strong className="font-medium text-ds-t5">{fmtDayClock(ch.dayStarts.facebook)} your time</strong> — and every
           Facebook figure (revenue, views, engagements, reach) counts from then. Instagram&apos;s day starts at UTC
-          midnight — <strong className="font-medium text-[#5A5A5A]">{fmtDayClock(ch.dayStarts.instagram)}</strong>.
+          midnight — <strong className="font-medium text-ds-t5">{fmtDayClock(ch.dayStarts.instagram)}</strong>.
           Meta publishes whole days in those zones only, so an Indian midnight-to-midnight day cannot be rebuilt.
+          </span>
         </div>
       )}
 
       {live.length > 0 && isRangeMode && (
-        <div className="px-5 py-2 border-b border-[#F6F2EA] text-[10px] text-[#7A7A7A] leading-snug">
+        <div className="px-5 py-2 border-b border-[#101E29] text-[10px] text-ds-t2 leading-snug">
           Exact sums of stored daily history for <strong className="font-medium">{sfx}</strong>
           {throughDay && <> · data through {throughDay}</>}.
           {/* ⚠️ Disclose a clamp rather than silently summing fewer days than were asked
               for. The server shortens a range whose end Meta has not closed yet — the
               measured 7.2% understatement — and echoes the day it stopped at. */}
           {ch?.range?.clampedTo && (
-            <> <span className="text-[#C2861D]">Range shortened to {customLabel(ch.range.clampedTo, ch.range.clampedTo).split(" – ")[0]}</span> — Meta has not published a complete day after that, so the unclosed day is left out instead of being counted as a full one.</>
+            <> <span className="text-[#FBBF24]">Range shortened to {customLabel(ch.range.clampedTo, ch.range.clampedTo).split(" – ")[0]}</span> — Meta has not published a complete day after that, so the unclosed day is left out instead of being counted as a full one.</>
           )}
           Reach shows a dash here: it counts unique people, days cannot be added without
           double-counting, and Meta publishes no unique-people figure for a custom span.
-          A <span className="text-[#C2861D]">n/Nd</span> chip beside a channel means its stored
+          A <span className="text-[#FBBF24]">n/Nd</span> chip beside a channel means its stored
           history covers only part of the range — its sums cover those days only.
         </div>
       )}
 
       {live.length > 0 && manageMode && (
-        <div className="px-5 py-2 border-b border-[#F0EAE0] bg-[#FDF8EC] flex flex-wrap items-center gap-2 text-[11px]">
-          <span className="text-[#7A7A7A]">{checkedIds.size} selected</span>
+        <div className="px-5 py-2 border-b border-ds-line bg-[#FBBF24]/[.08] flex flex-wrap items-center gap-2 text-[11px]">
+          <span className="text-ds-t2">{checkedIds.size} selected</span>
           <button
             disabled={checkedIds.size === 0 || busy !== null}
             onClick={() => setSelectedBulk(
               [...checkedIds], false,
               `Remove ${checkedIds.size} channel(s) from monitoring?\n\nThey stop syncing (no more Meta API calls are spent on them) and disappear from every figure on this page and the dashboard. Their history is kept and you can restore them anytime under "Removed channels".`,
             )}
-            className="rounded-full px-3 py-1 bg-[#C0504D] text-white disabled:opacity-40"
+            className="rounded-full px-3 py-1 bg-ds-red text-white disabled:opacity-40"
           >
             {busy === "remove" ? "Removing…" : "Remove from monitoring"}
           </button>
-          <span className="text-[10px] text-[#B0B0B0]">
+          <span className="text-[10px] text-ds-t3">
             not a delete — removed channels stop syncing and can be restored anytime
           </span>
         </div>
       )}
 
       {live.length > 0 && showRemoved && (
-        <div className="px-5 py-3 border-b border-[#F0EAE0] bg-[#FCFBF8]">
+        <div className="px-5 py-3 border-b border-ds-line bg-[#0A1620]">
           <div className="flex items-center justify-between mb-1.5">
-            <p className="text-xs font-medium text-[#1A1A1A]">
+            <p className="text-xs font-medium text-ds-text">
               Removed channels{hiddenCh ? ` (${hiddenCh.channelCount})` : ""}
             </p>
             {(hiddenCh?.items?.length ?? 0) > 0 && (
               <button
                 disabled={busy !== null}
                 onClick={() => setSelectedBulk(hiddenCh!.items.map((c) => c.id), true)}
-                className="text-[11px] text-[#5B4BF5] hover:underline disabled:opacity-40"
+                className="text-[11px] text-ds-gold hover:underline disabled:opacity-40"
               >
                 Restore all
               </button>
             )}
           </div>
           {!hiddenCh ? (
-            <p className="text-[11px] text-[#B0B0B0]">Loading…</p>
+            <p className="text-[11px] text-ds-t3">Loading…</p>
           ) : hiddenCh.items.length === 0 ? (
-            <p className="text-[11px] text-[#B0B0B0]">
+            <p className="text-[11px] text-ds-t3">
               Nothing here — removing a channel (via Manage) hides it from every figure and
               stops spending Meta API calls on it, without deleting its history.
             </p>
@@ -1122,15 +1136,15 @@ export function MetaPanel() {
             <ul className="space-y-1">
               {hiddenCh.items.map((c) => (
                 <li key={c.id} className="flex items-center gap-2 text-xs">
-                  <span className={`text-[10px] shrink-0 ${c.platform === "facebook" ? "text-[#1877F2]" : "text-[#C13584]"}`}>
+                  <span className={`text-[10px] shrink-0 ${c.platform === "facebook" ? "text-ds-fb" : "text-ds-ig"}`}>
                     {c.platform === "facebook" ? "f" : "ig"}
                   </span>
-                  <span className="truncate max-w-[260px] text-[#1A1A1A]">{c.name}</span>
-                  <span className="text-[10px] text-[#B0B0B0]">{fmtMetric(c.followers)} followers</span>
+                  <span className="truncate max-w-[260px] text-ds-text">{c.name}</span>
+                  <span className="text-[10px] text-ds-t3">{fmtMetric(c.followers)} followers</span>
                   <button
                     disabled={busy !== null}
                     onClick={() => setSelectedBulk([c.id], true)}
-                    className="ml-auto text-[11px] text-[#5B4BF5] hover:underline disabled:opacity-40"
+                    className="ml-auto text-[11px] text-ds-gold hover:underline disabled:opacity-40"
                   >
                     Restore
                   </button>
@@ -1142,26 +1156,26 @@ export function MetaPanel() {
       )}
 
       {live.length > 0 && (
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto border-t border-ds-line">
           {channels.length === 0 ? (
-            <p className="px-5 py-8 text-center text-xs text-[#7A7A7A]">
+            <p className="px-5 py-8 text-center text-xs text-ds-t2">
               {ch ? "No channels match that filter." : "Waiting for your channels to be discovered…"}
             </p>
           ) : (
-            <table className="w-full min-w-[820px]">
+            <table className="w-full min-w-[920px]">
               <thead>
                 {/* ⚠️ Column COUNT is dynamic (the Manage checkbox column), so the
                     expanded row's colSpan below must track it — a stale colSpan
                     silently misaligns every cell (the documented drill-down trap). */}
-                <tr className="text-[11px] text-[#7A7A7A] border-b border-[#F0EAE0]">
+                <tr className="text-[10px] tracking-[.1em] uppercase text-ds-t3 font-semibold border-b border-ds-line bg-[#0A1620]">
                   {manageMode && (
-                    <th className="pl-4 pr-1 py-2 text-left">
+                    <th className="pl-5 pr-1 py-[11px] text-left">
                       <input
                         type="checkbox"
                         aria-label="Select all listed channels"
                         checked={sortedChannels.length > 0 && sortedChannels.every((c) => checkedIds.has(c.id))}
                         onChange={(e) => setCheckedIds(e.target.checked ? new Set(sortedChannels.map((c) => c.id)) : new Set())}
-                        className="h-3.5 w-3.5 accent-[#5B4BF5]"
+                        className="h-3.5 w-3.5 accent-[#E9BD62]"
                       />
                     </th>
                   )}
@@ -1169,7 +1183,7 @@ export function MetaPanel() {
                   <SortTh
                     colKey="followers" sort={tableSort} onSort={onSort}
                     title="A live total, not a period figure — how many followers the channel has right now. The period filter drives Views, Engagements and Reach."
-                    label={<>Followers <span className="text-[#B0B0B0] font-normal">(now)</span></>}
+                    label={<>Followers <span className="text-ds-t4 font-semibold">(now)</span></>}
                   />
                   <SortTh label={`Views ${sfx}`} colKey="views" sort={tableSort} onSort={onSort} />
                   <SortTh label={`Engagements ${sfx}`} colKey="engagements" sort={tableSort} onSort={onSort} />
@@ -1193,9 +1207,9 @@ export function MetaPanel() {
                   return (
                     <Fragment key={c.id}>
                       <tr onClick={() => setExpanded(open ? null : c.id)}
-                        className="border-b border-[#F8F5EF] hover:bg-[#FCFBF8] cursor-pointer">
+                        className={`border-b border-[#101E29] hover:bg-[#0B1824] cursor-pointer text-[12.5px] ${open ? "bg-[#0A1620]" : ""}`}>
                         {manageMode && (
-                          <td className="pl-4 pr-1 py-2" onClick={(e) => e.stopPropagation()}>
+                          <td className="pl-5 pr-1 py-[11px]" onClick={(e) => e.stopPropagation()}>
                             <input
                               type="checkbox"
                               aria-label={`Select ${c.name}`}
@@ -1205,19 +1219,24 @@ export function MetaPanel() {
                                 if (e.target.checked) next.add(c.id); else next.delete(c.id);
                                 return next;
                               })}
-                              className="h-3.5 w-3.5 accent-[#5B4BF5]"
+                              className="h-3.5 w-3.5 accent-[#E9BD62]"
                             />
                           </td>
                         )}
-                        <td className="px-5 py-2">
-                          <div className="flex items-center gap-1.5 min-w-0">
-                            {open ? <ChevronDown className="h-3 w-3 text-[#B0B0B0] shrink-0" />
-                                  : <ChevronRight className="h-3 w-3 text-[#B0B0B0] shrink-0" />}
-                            <span className={`text-[10px] shrink-0 ${c.platform === "facebook" ? "text-[#1877F2]" : "text-[#C13584]"}`}>
-                              {c.platform === "facebook" ? "f" : "ig"}
+                        <td className="px-6 py-[11px]">
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            {open ? <ChevronDown className="h-3.5 w-3.5 text-ds-t3 shrink-0" />
+                                  : <ChevronRight className="h-3.5 w-3.5 text-ds-t3 shrink-0" />}
+                            <span
+                              aria-label={c.platform === "facebook" ? "Facebook" : "Instagram"}
+                              className={`h-6 w-6 rounded-[6px] grid place-items-center shrink-0 text-[8.5px] font-extrabold border ${c.platform === "facebook"
+                                ? "bg-ds-blue/[.12] border-ds-blue/30 text-ds-blue"
+                                : "bg-ds-ig/[.12] border-ds-ig/30 text-ds-ig"}`}
+                            >
+                              {c.platform === "facebook" ? "FB" : "IG"}
                             </span>
-                            <span className="text-xs font-medium text-[#1A1A1A] truncate max-w-[220px]">{c.name}</span>
-                            {c.username && <span className="text-[10px] text-[#B0B0B0] truncate">@{c.username}</span>}
+                            <span className="font-semibold text-ds-text truncate max-w-[240px]">{c.name}</span>
+                            {c.username && <span className="text-[11px] text-ds-t3 truncate">@{c.username}</span>}
                             {/* Straight through to the channel on Meta. ⚠️ stopPropagation is
                                 load-bearing — the whole <tr> is a click-to-expand target, so
                                 without it opening the profile would also toggle the drill-down
@@ -1230,7 +1249,7 @@ export function MetaPanel() {
                                 onClick={(e) => e.stopPropagation()}
                                 title={`Open ${c.name} on ${c.platform === "facebook" ? "Facebook" : "Instagram"}`}
                                 aria-label={`Open ${c.name} on ${c.platform === "facebook" ? "Facebook" : "Instagram"}`}
-                                className="shrink-0 text-[#C4C4C4] hover:text-[#5B4BF5] transition-colors"
+                                className="shrink-0 text-ds-t3 hover:text-ds-gold transition-colors"
                               >
                                 <ExternalLink className="h-3 w-3" />
                               </a>
@@ -1243,7 +1262,7 @@ export function MetaPanel() {
                             {isRangeMode && c.rangeDays != null && (c.coveredDays ?? 0) < c.rangeDays && (
                               <span
                                 title={`Stored history covers ${c.coveredDays ?? 0} of the ${c.rangeDays} days in this range. The missing days predate this channel's daily history, so its figures here are sums over the covered days only.`}
-                                className="text-[9px] text-[#C2861D] border border-[#F3D9A4] bg-[#FDF8EC] rounded-full px-1.5 py-px shrink-0"
+                                className="text-[9px] text-[#FBBF24] border border-[#FBBF24]/30 bg-[#FBBF24]/[.08] rounded-full px-1.5 py-px shrink-0"
                               >
                                 {c.coveredDays ?? 0}/{c.rangeDays}d
                               </span>
@@ -1265,22 +1284,22 @@ export function MetaPanel() {
                                 that has never once succeeded — hence "any figures shown". */}
                             {c.metricsError && (
                               <span title={`This channel's most recent ${sfx} refresh failed, so any figures shown are from the last successful sync. The next sync re-attempts it (roughly every 3 hours); if the mark persists across syncs, the connected Meta account has most likely lost admin access to this channel and someone needs to restore it. Meta's reply: ${c.metricsError}`}>
-                                <AlertTriangle className="h-3 w-3 text-[#C2861D] shrink-0" />
+                                <AlertTriangle className="h-3 w-3 text-[#FBBF24] shrink-0" />
                               </span>
                             )}
                           </div>
                         </td>
-                        <td className="px-2 py-2 text-right text-xs font-semibold text-[#1A1A1A]">
+                        <td className="px-2 py-[11px] text-right font-bold text-ds-text whitespace-nowrap">
                           {fmtMetric(c.followers)}
                           {/* Only rendered when an API baseline actually spans the period.
                               A 0 here would claim "no growth" when the truth is "no history
                               yet" — so absence stays absent. */}
                           {c.followerDelta !== null && c.followerDelta !== undefined && (
                             <span
-                              className={`block font-normal text-[10px] ${
-                                c.followerDelta > 0 ? "text-[#3E9B4F]"
-                                : c.followerDelta < 0 ? "text-[#C0504D]"
-                                : "text-[#B0B0B0]"}`}
+                              className={`block font-normal text-[10.5px] ${
+                                c.followerDelta > 0 ? "text-ds-teal"
+                                : c.followerDelta < 0 ? "text-ds-redsoft"
+                                : "text-ds-t3"}`}
                             >
                               {/* ⚠️ Labelled from the delta's OWN span, not from the
                                   selected window. Most channels' API follower history
@@ -1298,14 +1317,14 @@ export function MetaPanel() {
                             </span>
                           )}
                         </td>
-                        <td className="px-2 py-2 text-right text-xs">{fmtMetric(c.views28d)}</td>
-                        <td className="px-2 py-2 text-right text-xs">{fmtMetric(c.engagements28d)}</td>
-                        <td className="px-2 py-2 text-right text-xs">{fmtMetric(c.reach28d)}</td>
-                        <td className="px-2 py-2 text-right text-xs">
-                          {hideRevenue ? <span className="text-[#B0B0B0]">•••</span> : fmtMoney(c.earningsCents)}
+                        <td className="px-2 py-[11px] text-right text-ds-t5 whitespace-nowrap">{fmtMetric(c.views28d)}</td>
+                        <td className="px-2 py-[11px] text-right text-ds-t5 whitespace-nowrap">{fmtMetric(c.engagements28d)}</td>
+                        <td className="px-2 py-[11px] text-right text-ds-t5 whitespace-nowrap">{fmtMetric(c.reach28d)}</td>
+                        <td className="px-2 py-[11px] text-right text-ds-t5 whitespace-nowrap">
+                          {hideRevenue ? <span className="text-ds-t3">•••</span> : fmtMoney(c.earningsCents)}
                         </td>
-                        <td className="px-2 py-2 text-right text-xs">{fmtMetric(c.profileViews28d)}</td>
-                        <td className="px-5 py-2 text-right text-xs text-[#7A7A7A]">{fmtMetric(c.posts)}</td>
+                        <td className="px-2 py-[11px] text-right text-ds-t5 whitespace-nowrap">{fmtMetric(c.profileViews28d)}</td>
+                        <td className="px-6 py-[11px] text-right text-ds-t2 whitespace-nowrap">{fmtMetric(c.posts)}</td>
                       </tr>
                       {open && (
                         <tr>
@@ -1329,20 +1348,20 @@ export function MetaPanel() {
       )}
 
       {live.length > 0 && (
-        <p className="px-5 py-3 text-[11px] text-[#B0B0B0] leading-snug border-t border-[#F0EAE0]">
+        <p className="px-6 py-4 text-[11px] text-ds-t3 leading-[1.6] border-t border-ds-line bg-[#0A1620] [text-wrap:pretty]">
           Figures cover the selected period and come straight from Meta — every channel here
           is one the connected account administers, so nothing on this tab is scraped or
           hand-entered. Views and reach use Meta&apos;s current metrics, which replaced
           impressions when Meta retired that family across the API. A dash means Meta
           publishes no value for that metric on that platform — not a zero and not missing
           data. Profile views mean Page views on Facebook and profile visits on Instagram.
-          <strong className="font-medium text-[#7A7A7A]">Views</strong> counts how many
+          <strong className="font-medium text-ds-t2">Views</strong> counts how many
           times content was shown or played, including repeat views by the same person.
-          <strong className="font-medium text-[#7A7A7A]"> Reach</strong> counts how many
+          <strong className="font-medium text-ds-t2"> Reach</strong> counts how many
           distinct accounts saw it at least once — Meta&apos;s own name for it is now
           &ldquo;viewers&rdquo;. So views is normally the larger of the two, and the gap
           widens over a longer period because the same person sees more posts.
-          <strong className="font-medium text-[#7A7A7A]"> Followers</strong> is a live
+          <strong className="font-medium text-ds-t2"> Followers</strong> is a live
           total and does not move with the period; the small figure beneath it is the change
           across the selected one. Facebook reports its true daily follower count, so that
           change is measured directly. Instagram publishes no such history — its change is
@@ -1350,7 +1369,7 @@ export function MetaPanel() {
           identical, and is unavailable over 24 hours.
           {throughDay && (
             <>
-              <strong className="font-medium text-[#7A7A7A]">Figures run through{" "}
+              <strong className="font-medium text-ds-t2">Figures run through{" "}
               {throughDay}</strong>
               , the most recent completed day Meta has published. Facebook&apos;s days run
               midnight-to-midnight Pacific time and Instagram&apos;s UTC, so &ldquo;Yesterday&rdquo;
@@ -1368,8 +1387,8 @@ export function MetaPanel() {
             </>
           )}
           Click a channel to see its recent posts.{" "}
-          <strong className="font-medium text-[#7A7A7A]">Periods:</strong>{" "}
-          <strong className="font-medium text-[#7A7A7A]">Today (so far)</strong> is a
+          <strong className="font-medium text-ds-t2">Periods:</strong>{" "}
+          <strong className="font-medium text-ds-t2">Today (so far)</strong> is a
           partial day refreshed every few hours: Instagram&apos;s day starts at UTC midnight
           and Facebook&apos;s at Pacific midnight
           {ch?.dayStarts ? <> ({fmtClock(ch.dayStarts.instagram)} and {fmtClock(ch.dayStarts.facebook)} your time)</> : null},

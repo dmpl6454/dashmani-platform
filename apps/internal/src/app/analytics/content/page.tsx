@@ -1,6 +1,7 @@
 "use client";
 import { useContentAnalytics } from "@/lib/hooks/use-analytics";
 import { formatStatus } from "@dashmani/shared";
+import { BoxesLoader } from "@/components/boxes-loader";
 
 function ProgressBar({ value, max, color }: { value: number; max: number; color: string }) {
   const percent = max > 0 ? Math.round((value / max) * 100) : 0;
@@ -33,7 +34,7 @@ export default function ContentAnalyticsPage() {
   const content = (data as any)?.data;
 
   if (isLoading) {
-    return <div className="flex items-center justify-center h-64"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#F5D547]" /></div>;
+    return <div className="flex items-center justify-center h-64"><BoxesLoader /></div>;
   }
 
   if ((content?.totalPosts ?? 0) === 0) {

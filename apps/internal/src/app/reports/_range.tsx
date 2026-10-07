@@ -119,6 +119,63 @@ export function RangePills({ startDate, endDate, onChange, defaultLabel = "30d" 
   );
 }
 
+/**
+ * Same controls as RangePills (same presets, same onChange contract), drawn in the
+ * premium dark design: a segmented "Range" control plus labelled From / To fields.
+ * Renders a fragment so the parent lays it out in one row with its other filters.
+ */
+export function DsRangeFilters({ startDate, endDate, onChange, defaultLabel = "30d" }: RangePillsProps) {
+  const active = activePresetLabel(startDate, endDate);
+  const isCustom = active === null;
+  const defPreset = RANGE_PRESETS.find((p) => p.label === defaultLabel) ?? RANGE_PRESETS[4];
+  const LABEL = "text-[10.5px] font-semibold tracking-[.12em] uppercase text-ds-t3";
+  const FIELD =
+    "h-10 px-3 rounded-full border border-ds-line2 bg-ds-inset text-ds-text text-[16px] sm:text-[13px] outline-none [color-scheme:dark] focus:border-ds-gold";
+  return (
+    <>
+      <div className="flex flex-col gap-2 min-w-0 max-w-full">
+        <span className={LABEL}>Range</span>
+        <div className="flex gap-[3px] p-1 rounded-full bg-ds-inset border border-ds-line2 overflow-x-auto max-w-full" role="group" aria-label="Range">
+          {RANGE_PRESETS.map((p) => {
+            const isActive = active === p.label;
+            return (
+              <button
+                key={p.label}
+                type="button"
+                aria-pressed={isActive}
+                onClick={() => onChange(presetStart(p.days), todayISO())}
+                className={`h-8 px-[13px] rounded-full text-[12.5px] font-semibold whitespace-nowrap shrink-0 transition-colors ${
+                  isActive ? "bg-ds-gold text-[#060D14]" : "text-ds-t2 hover:text-ds-text"
+                }`}
+              >
+                {p.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+      <label className="flex flex-col gap-2">
+        <span className={LABEL}>From</span>
+        <input type="date" value={startDate} max={endDate} onChange={(e) => onChange(e.target.value, endDate)} className={FIELD} />
+      </label>
+      <label className="flex flex-col gap-2">
+        <span className={LABEL}>To</span>
+        <input type="date" value={endDate} min={startDate} max={todayISO()} onChange={(e) => onChange(startDate, e.target.value)} className={FIELD} />
+      </label>
+      {isCustom && (
+        <button
+          type="button"
+          onClick={() => onChange(presetStart(defPreset.days), todayISO())}
+          className="h-10 inline-flex items-center gap-1 rounded-full border border-ds-line2 px-3 text-[12px] text-ds-t2 hover:text-[#FB7185] hover:border-[rgba(229,72,77,.4)] self-end"
+          title={`Reset to last ${defaultLabel}`}
+        >
+          <X className="h-3 w-3" /> Reset
+        </button>
+      )}
+    </>
+  );
+}
+
 // Human label for the currently selected window, e.g. "Last 7 days" or "12 May – 20 May".
 export function rangeLabel(startDate: string, endDate: string): string {
   const active = activePresetLabel(startDate, endDate);

@@ -9,176 +9,237 @@ import { usePageTitle } from "@/lib/hooks/use-page-title";
 const STATUS_TABS = ["ALL", "PENDING", "APPROVED", "REJECTED"] as const;
 type StatusTab = typeof STATUS_TABS[number];
 
-const statusColors: Record<string, string> = {
-  PENDING: "bg-yellow-50 text-yellow-700 border border-yellow-200",
-  APPROVED: "bg-green-50 text-green-700 border border-green-200",
-  REJECTED: "bg-red-50 text-red-700 border border-red-200",
+// Mockup palette.
+const STATUS_COLOR: Record<string, string> = { PENDING: "#E9BD62", APPROVED: "#00D7A0", REJECTED: "#FB7185" };
+const TYPE_COLOR: Record<string, string> = { CASUAL: "#6EB2FF", SICK: "#F59E66", EARNED: "#9B7EDE", WFH: "#00D7A0" };
+const HUES = ["#238BFF", "#E9BD62", "#9B7EDE", "#00D7A0", "#FB7185", "#6EB2FF"];
+const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const hash = (s: string) => {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = s.charCodeAt(i) + ((h << 5) - h);
+  return Math.abs(h);
 };
-
-const typeColors: Record<string, string> = {
-  CASUAL: "bg-blue-50 text-blue-700",
-  SICK: "bg-orange-50 text-orange-700",
-  EARNED: "bg-purple-50 text-purple-700",
+const rgba = (hex: string, a: number) => {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`;
 };
+const initials = (name: string) =>
+  (name || "?").trim().split(/\s+/).slice(0, 2).map((w) => w[0]).join("").toUpperCase() || "?";
 
-function formatDateRange(start: string, end?: string) {
-  const s = new Date(start).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
-  if (!end || end === start) return s;
-  const e = new Date(end).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
-  return `${s} — ${e}`;
+// Leave dates are calendar days — read the YYYY-MM-DD part so no timezone shifts a day.
+const dayOf = (v?: string) => (v ? new Date(`${v.slice(0, 10)}T00:00:00`) : null);
+const fd = (d: Date, withYear: boolean) => `${d.getDate()} ${MONTH_SHORT[d.getMonth()]}${withYear ? ` ${d.getFullYear()}` : ""}`;
+function dateRange(start: string, end?: string) {
+  const s = dayOf(start);
+  const e = dayOf(end) ?? s;
+  if (!s || !e) return { range: "—", days: "" };
+  const n = Math.round((e.getTime() - s.getTime()) / 86_400_000) + 1;
+  // Working days only: the working week is Monday–Saturday, Sunday is the one weekend day.
+  let work = 0;
+  for (let i = 0; i < n; i++) if (new Date(s.getFullYear(), s.getMonth(), s.getDate() + i).getDay() !== 0) work++;
+  const thisYear = new Date().getFullYear();
+  const showYear = s.getFullYear() !== thisYear || e.getFullYear() !== thisYear;
+  const range = n <= 1 ? fd(s, showYear) : `${fd(s, showYear && s.getFullYear() !== e.getFullYear())} – ${fd(e, showYear)}`;
+  return { range, days: `${work} working ${work === 1 ? "day" : "days"}` };
 }
+
+const GRID =
+  "grid gap-x-3.5 items-center [grid-template-columns:minmax(160px,22fr)_minmax(76px,10fr)_minmax(110px,15fr)_minmax(100px,18fr)_minmax(84px,13fr)_minmax(104px,10fr)_minmax(196px,12fr)]";
 
 export default function LeavePage() {
   usePageTitle("Leave");
   const [tab, setTab] = useState<StatusTab>("PENDING");
   const [actioning, setActioning] = useState<string | null>(null);
+  const [actionError, setActionError] = useState("");
 
-  const query = tab === "ALL" ? "" : `?status=${tab}`;
-  const { data, mutate } = useSWR(`/admin/leave-requests${query}`, (url: string) => apiFetch<any>(url), {
+  // One request for every status; the tabs filter it here so each tab can show its count.
+  const { data, error, isLoading, mutate } = useSWR(`/admin/leave-requests`, (url: string) => apiFetch<any>(url), {
     revalidateOnFocus: true,
   });
-  const leaves: any[] = data?.data || [];
+  const all: any[] = data?.data || [];
+  const leaves = tab === "ALL" ? all : all.filter((l) => l.status === tab);
+  const count = (s: StatusTab) => (s === "ALL" ? all.length : all.filter((l) => l.status === s).length);
+  const pendingCount = count("PENDING");
 
-  async function approve(id: string) {
+  async function act(id: string, kind: "approve" | "reject") {
     setActioning(id);
+    setActionError("");
     try {
-      await apiFetch(`/admin/leave-requests/${id}/approve`, { method: "POST" });
+      await apiFetch(`/admin/leave-requests/${id}/${kind}`, { method: "POST" });
       mutate();
-    } catch (e: any) { alert(e.message); }
+    } catch (e: any) {
+      setActionError(e.message || `Failed to ${kind} the request`);
+    }
     setActioning(null);
   }
-
-  async function reject(id: string) {
-    setActioning(id);
-    try {
-      await apiFetch(`/admin/leave-requests/${id}/reject`, { method: "POST" });
-      mutate();
-    } catch (e: any) { alert(e.message); }
-    setActioning(null);
-  }
-
-  const pendingCount = leaves.filter((l) => l.status === "PENDING").length;
 
   return (
-    <div className="space-y-6 crx-animate-fade">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="font-serif text-4xl font-light text-ink">Leave Requests</h1>
-          <p className="text-sm text-ink-3 mt-1">Approve or reject employee leave applications</p>
+    <div className="pb-8">
+      {/* Header */}
+      <section className="flex items-end justify-between gap-4 flex-wrap pt-[30px] pb-[22px]">
+        <div className="flex-[1_1_320px] min-w-0">
+          <h1 className="text-[34px] font-bold tracking-[-.03em] text-ds-text leading-tight">Leave Requests</h1>
+          <p className="mt-1.5 text-[13.5px] text-ds-t2">Approve or reject employee leave applications</p>
         </div>
         {pendingCount > 0 && (
-          <div className="flex items-center gap-2 bg-attention/10 px-4 py-2 rounded-full shrink-0">
-            <Clock className="h-4 w-4 text-attention shrink-0" />
-            <span className="text-sm font-semibold text-ink whitespace-nowrap">{pendingCount} Pending</span>
-          </div>
+          <span className="inline-flex items-center gap-2.5 h-10 px-5 rounded-full bg-[rgba(233,189,98,.1)] border border-[rgba(233,189,98,.35)] text-ds-text text-[13px] font-semibold whitespace-nowrap">
+            <Clock className="h-[15px] w-[15px] text-ds-gold" />
+            {pendingCount} Pending
+          </span>
         )}
-      </div>
+      </section>
 
       {/* Status tabs */}
-      <div className="flex gap-2 flex-wrap">
-        {STATUS_TABS.map((t) => (
-          <button
-            key={t}
-            onClick={() => setTab(t)}
-            className={`px-4 py-2 rounded-full text-sm font-medium transition-all ${
-              tab === t ? "bg-ink text-white" : "bg-white text-ink-3 border border-ink/10 hover:bg-muted"
-            }`}
-          >
-            {t === "ALL" ? "All" : formatStatus(t)}
-          </button>
-        ))}
-      </div>
+      <section className="flex items-center gap-3 flex-wrap">
+        <div className="flex gap-1 p-[5px] rounded-full bg-ds-inset border border-ds-line2 max-w-full overflow-x-auto" role="tablist" aria-label="Status">
+          {STATUS_TABS.map((t) => {
+            const on = tab === t;
+            return (
+              <button
+                key={t}
+                type="button"
+                role="tab"
+                aria-selected={on}
+                onClick={() => setTab(t)}
+                className={`inline-flex items-center gap-2 h-9 px-[18px] rounded-full text-[13px] font-semibold whitespace-nowrap transition-colors ${
+                  on ? "bg-ds-gold text-[#060D14]" : "text-ds-t2 hover:text-ds-text"
+                }`}
+              >
+                {t === "ALL" ? "All" : formatStatus(t)}
+                {data && <span className={`text-[11px] font-semibold ${on ? "text-[rgba(6,13,20,.6)]" : "text-ds-t3"}`}>{count(t)}</span>}
+              </button>
+            );
+          })}
+        </div>
+        {data && (
+          <span className="ml-auto text-[12px] text-ds-t3 whitespace-nowrap">
+            {leaves.length} {leaves.length === 1 ? "request" : "requests"}
+          </span>
+        )}
+      </section>
+
+      {actionError && (
+        <div className="mt-3.5 px-3.5 py-2.5 rounded-[8px] bg-[rgba(229,72,77,.08)] border border-[rgba(229,72,77,.3)] text-[#FB7185] text-[12.5px] flex items-center justify-between gap-3">
+          <span>{actionError}</span>
+          <button type="button" onClick={() => setActionError("")} aria-label="Dismiss" className="shrink-0 hover:text-ds-text"><X className="h-4 w-4" /></button>
+        </div>
+      )}
 
       {/* Table */}
-      <div className="v3-card overflow-hidden">
+      <section className="mt-[18px] rounded-[16px] border border-[#2A4658] bg-ds-card overflow-hidden shadow-[0_12px_32px_rgba(0,0,0,.35)]">
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-ink/8">
-                <th className="text-left p-4 text-ink-4 text-xs font-semibold uppercase tracking-wide">Employee</th>
-                <th className="text-left p-4 text-ink-4 text-xs font-semibold uppercase tracking-wide">Type</th>
-                <th className="text-left p-4 text-ink-4 text-xs font-semibold uppercase tracking-wide">Dates</th>
-                <th className="text-left p-4 text-ink-4 text-xs font-semibold uppercase tracking-wide">Reason</th>
-                <th className="text-left p-4 text-ink-4 text-xs font-semibold uppercase tracking-wide">Attachment</th>
-                <th className="text-left p-4 text-ink-4 text-xs font-semibold uppercase tracking-wide">Status</th>
-                <th className="text-left p-4 text-ink-4 text-xs font-semibold uppercase tracking-wide">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {leaves.length === 0 ? (
-                <tr>
-                  <td colSpan={7} className="p-10 text-center text-ink-3">
-                    <CalendarOff className="h-8 w-8 mx-auto mb-2 opacity-30" />
-                    No leave requests found
-                  </td>
-                </tr>
-              ) : leaves.map((leave: any) => (
-                <tr key={leave.id} className="border-b border-ink/5 last:border-0 hover:bg-muted/40">
-                  <td className="p-4">
-                    <p className="font-semibold text-ink">{leave.employee?.name || "—"}</p>
-                    <p className="text-xs text-ink-4">{leave.employee?.email || ""}</p>
-                  </td>
-                  <td className="p-4">
-                    <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${typeColors[leave.type] || "bg-muted text-ink-3"}`}>
-                      {leave.type}
-                    </span>
-                  </td>
-                  <td className="p-4 text-ink-3 text-xs whitespace-nowrap">
-                    {formatDateRange(leave.startDate, leave.endDate)}
-                  </td>
-                  <td className="p-4 text-ink-3 max-w-[200px]">
-                    <p className="truncate">{leave.reason || "—"}</p>
-                  </td>
-                  <td className="p-4">
-                    {leave.attachmentUrl ? (
-                      <a
-                        href={`${API_BASE}${leave.attachmentUrl}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1.5 text-xs text-indigo font-medium hover:underline"
+          <div className="min-w-[960px]">
+            <div className={`${GRID} h-[50px] px-5 bg-ds-inset border-b border-ds-line2 text-[10.5px] font-semibold tracking-[.1em] uppercase text-ds-t3 whitespace-nowrap`}>
+              <span>Employee</span><span>Type</span><span>Dates</span><span>Reason</span><span>Attachment</span><span className="pl-4">Status</span><span>Actions</span>
+            </div>
+            {isLoading && !data ? (
+              Array.from({ length: 4 }).map((_, i) => (
+                <div key={i} className={`${GRID} h-[80px] px-5 border-b border-[#132430]`}>
+                  <div className="flex items-center gap-3">
+                    <div className="h-10 w-10 rounded-full bg-ds-hover motion-safe:animate-pulse" />
+                    <div className="h-3.5 w-28 rounded-[4px] bg-ds-hover motion-safe:animate-pulse" />
+                  </div>
+                </div>
+              ))
+            ) : error ? (
+              <div className="py-14 px-5 text-center text-ds-t3 text-[13px]">Leave requests couldn&apos;t be loaded just now. Refresh to try again.</div>
+            ) : leaves.length === 0 ? (
+              <div className="py-14 px-5 text-center text-ds-t3 text-[13px]">
+                <CalendarOff className="h-[30px] w-[30px] mx-auto mb-2.5 opacity-50" strokeWidth={1.5} />
+                No leave requests found
+              </div>
+            ) : (
+              leaves.map((leave: any) => {
+                const name = leave.employee?.name || "—";
+                const hue = HUES[hash(name) % HUES.length];
+                const tc = TYPE_COLOR[leave.type] || "#738395";
+                const sc = STATUS_COLOR[leave.status] || "#738395";
+                const { range, days } = dateRange(leave.startDate, leave.endDate);
+                const busy = actioning === leave.id;
+                return (
+                  <div key={leave.id} className={`${GRID} min-h-[80px] py-3 px-5 border-b border-[#132430] last:border-b-0 text-[13px] hover:bg-[#0A1620] transition-colors tabular-nums`}>
+                    <span className="flex items-center gap-3 min-w-0">
+                      <span
+                        aria-hidden="true"
+                        className="h-10 w-10 rounded-full border grid place-items-center text-[12px] font-bold shrink-0"
+                        style={{ background: rgba(hue, 0.12), borderColor: rgba(hue, 0.3), color: hue }}
                       >
-                        <Paperclip size={12} />
-                        {leave.attachmentName || "View"}
-                      </a>
-                    ) : (
-                      <span className="text-xs text-ink-4">—</span>
-                    )}
-                  </td>
-                  <td className="p-4">
-                    <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${statusColors[leave.status] || "bg-muted text-ink-3"}`}>
-                      {formatStatus(leave.status)}
+                        {initials(name)}
+                      </span>
+                      <span className="flex flex-col gap-0.5 min-w-0 leading-[1.25]">
+                        <span className="text-[14.5px] font-semibold text-ds-text truncate" title={name}>{name}</span>
+                        <span className="text-[12px] text-ds-t3 truncate" title={leave.employee?.email || undefined}>{leave.employee?.email || ""}</span>
+                      </span>
                     </span>
-                  </td>
-                  <td className="p-4">
-                    {leave.status === "PENDING" ? (
-                      <div className="flex gap-2">
-                        <button
-                          onClick={() => approve(leave.id)}
-                          disabled={actioning === leave.id}
-                          className="flex items-center gap-1.5 px-3 py-1.5 bg-sage text-white rounded-full text-xs font-medium hover:opacity-90 disabled:opacity-50 transition-opacity"
+                    <span>
+                      <span
+                        className="inline-flex items-center h-7 px-3 rounded-full text-[11.5px] font-semibold tracking-[.04em] whitespace-nowrap"
+                        style={{ background: rgba(tc, 0.12), color: tc }}
+                      >
+                        {!leave.type ? "—" : leave.type.length <= 3 ? leave.type : formatStatus(leave.type)}
+                      </span>
+                    </span>
+                    <span className="flex flex-col gap-0.5 min-w-0 leading-[1.25]">
+                      <span className="font-semibold text-[#E3E8EE] truncate">{range}</span>
+                      <span className="text-[11.5px] text-ds-t3">{days}</span>
+                    </span>
+                    <span className="text-[13px] text-ds-t2 truncate" title={leave.reason || undefined}>{leave.reason || "—"}</span>
+                    <span className="min-w-0">
+                      {leave.attachmentUrl ? (
+                        <a
+                          href={`${API_BASE}${leave.attachmentUrl}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          title={leave.attachmentName || "View attachment"}
+                          className="inline-flex items-center gap-1.5 min-w-0 max-w-full text-[12.5px] font-semibold text-[#6EB2FF] hover:text-[#9FCBFF]"
                         >
-                          <Check className="h-3.5 w-3.5" />
-                          Approve
-                        </button>
-                        <button
-                          onClick={() => reject(leave.id)}
-                          disabled={actioning === leave.id}
-                          className="flex items-center gap-1.5 px-3 py-1.5 bg-terra text-white rounded-full text-xs font-medium hover:opacity-90 disabled:opacity-50 transition-opacity"
-                        >
-                          <X className="h-3.5 w-3.5" />
-                          Reject
-                        </button>
-                      </div>
-                    ) : (
-                      <span className="text-xs text-ink-4">—</span>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                          <Paperclip className="h-[13px] w-[13px] shrink-0" />
+                          <span className="truncate">{leave.attachmentName || "View"}</span>
+                        </a>
+                      ) : (
+                        <span className="text-[#4A6275]">—</span>
+                      )}
+                    </span>
+                    <span className="pl-4">
+                      <span
+                        className="inline-flex items-center gap-1.5 h-[30px] px-3 rounded-full border text-[12px] font-semibold whitespace-nowrap"
+                        style={{ background: rgba(sc, 0.1), borderColor: rgba(sc, 0.3), color: sc }}
+                      >
+                        <i className="h-[5px] w-[5px] rounded-full" style={{ background: sc }} />
+                        {formatStatus(leave.status)}
+                      </span>
+                    </span>
+                    <span className="flex items-center gap-2">
+                      {leave.status === "PENDING" ? (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => act(leave.id, "approve")}
+                            disabled={busy}
+                            className="inline-flex items-center gap-1.5 h-9 px-3.5 rounded-full bg-ds-teal text-[#04130D] text-[12px] font-bold whitespace-nowrap shrink-0 hover:bg-[#33E2B5] disabled:opacity-50"
+                          >
+                            <Check className="h-3 w-3" strokeWidth={2.6} /> Approve
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => act(leave.id, "reject")}
+                            disabled={busy}
+                            className="inline-flex items-center gap-1.5 h-9 px-3.5 rounded-full border border-[rgba(229,72,77,.4)] text-[#FB7185] text-[12px] font-bold whitespace-nowrap shrink-0 hover:bg-[rgba(229,72,77,.1)] disabled:opacity-50"
+                          >
+                            <X className="h-3 w-3" strokeWidth={2.6} /> Reject
+                          </button>
+                        </>
+                      ) : (
+                        <span className="text-[#4A6275]">—</span>
+                      )}
+                    </span>
+                  </div>
+                );
+              })
+            )}
+          </div>
         </div>
-      </div>
+      </section>
     </div>
   );
 }

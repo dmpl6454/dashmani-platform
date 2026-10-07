@@ -19,7 +19,65 @@ import {
   type PostingWatchPayload,
   type PostingWatchPerson,
 } from "@/lib/hooks/use-posting-watch";
-import { Pill, PillGroup } from "./_pills";
+// ── Dark ("ds") pieces — styling only, matching the dashboard mockup ─────────────
+
+const rgba = (hex: string, a: number) => {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`;
+};
+/** Accent per status tab: amber for silence, red for access trouble, slate for not connected. */
+const TAB_ACCENT: Record<"quiet_today" | "no_post_today" | "inactive" | "cant_check" | "not_connected", string> = {
+  quiet_today: "#E9BD62",
+  no_post_today: "#F0803C",
+  inactive: "#9B7EDE",
+  cant_check: "#E52D47",
+  not_connected: "#6EB2FF",
+};
+
+function StatusTab({ active, accent, label, count, onClick }: { active: boolean; accent: string; label: string; count: number; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className="group inline-flex items-center gap-2 h-[34px] pl-3.5 pr-2 rounded-full border text-[12px] font-semibold whitespace-nowrap transition-colors"
+      style={
+        active
+          ? { borderColor: rgba(accent, 0.55), background: rgba(accent, 0.12), color: accent }
+          : { borderColor: "#223543", background: "#0B1720", color: "#A7B3C2" }
+      }
+    >
+      <span className="h-1.5 w-1.5 rounded-full shrink-0" style={{ background: count > 0 ? accent : "#3A4E5E" }} aria-hidden="true" />
+      {label}
+      <span
+        className="font-num min-w-[22px] h-[20px] px-1.5 grid place-items-center rounded-full text-[11px] font-bold"
+        style={active ? { background: rgba(accent, 0.2), color: accent } : { background: "#132430", color: count > 0 ? "#F4F6F8" : "#738395" }}
+      >
+        {count}
+      </span>
+    </button>
+  );
+}
+
+function Seg<T extends string>({ options, value, onChange }: { options: { key: T; label: string }[]; value: T; onChange: (k: T) => void }) {
+  return (
+    <div className="inline-flex items-center p-[3px] rounded-full border border-ds-line bg-ds-inset" role="group">
+      {options.map((o) => (
+        <button
+          key={o.key}
+          type="button"
+          onClick={() => onChange(o.key)}
+          aria-pressed={value === o.key}
+          className={`h-[26px] px-3.5 rounded-full text-[11.5px] font-semibold transition-colors ${
+            value === o.key ? "bg-ds-gold text-[#060D14]" : "text-ds-t2 hover:text-ds-text"
+          }`}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
 
 // ── Time, always in IST (the business window is IST, whatever the viewer's clock) ──
 
@@ -183,24 +241,25 @@ function tabCounts(p: PostingWatchPayload, platform: PlatformFilter, query: stri
 // ── Pieces ───────────────────────────────────────────────────────────────────────
 
 function PlatformChip({ platform }: { platform: "facebook" | "instagram" }) {
-  return platform === "facebook" ? (
-    <span className="mt-0.5 text-[10px] font-bold px-1.5 py-0.5 rounded-md border bg-blue-50 text-blue-600 border-blue-200 shrink-0" title="Facebook">
-      FB
-    </span>
-  ) : (
-    <span className="mt-0.5 text-[10px] font-bold px-1.5 py-0.5 rounded-md border bg-pink-100 text-pink-700 border-pink-200 shrink-0" title="Instagram">
-      IG
+  const fb = platform === "facebook";
+  return (
+    <span
+      className="h-9 w-9 rounded-[8px] grid place-items-center text-[11px] font-bold text-white shrink-0 shadow-[inset_0_0_0_1px_rgba(255,255,255,.08)]"
+      style={{ background: fb ? "linear-gradient(135deg,#1877F2,#0B45BB)" : "linear-gradient(135deg,#F0803C,#EC42B7)" }}
+      title={fb ? "Facebook" : "Instagram"}
+    >
+      {fb ? "FB" : "IG"}
     </span>
   );
 }
 
 function ChannelName({ name, href }: { name: string; href: string | null }) {
   return href ? (
-    <a href={href} target="_blank" rel="noopener noreferrer" className="text-sm font-semibold text-ink truncate hover:underline" title={`${name} — open on Meta`}>
+    <a href={href} target="_blank" rel="noopener noreferrer" className="text-[13.5px] font-semibold text-ds-text truncate hover:text-ds-gold transition-colors" title={`${name} — open on Meta`}>
       {name}
     </a>
   ) : (
-    <span className="text-sm font-semibold text-ink truncate" title={name}>
+    <span className="text-[13.5px] font-semibold text-ds-text truncate" title={name}>
       {name}
     </span>
   );
@@ -229,46 +288,50 @@ function ChannelRow({ c, nowMs, startLabel }: { c: PostingWatchChannel; nowMs: n
     detail = c.group === "no_post_today" ? `Nothing since ${startLabel} · ${lastText}` : `Last post ${last != null ? istWhen(last, nowMs) : "unknown"}`;
   }
   return (
-    <li className="flex items-start gap-3 px-3 py-2.5 min-w-0">
+    <li className="flex items-center gap-3.5 px-4 py-3 min-w-0 transition-colors hover:bg-ds-hover/60">
       <PlatformChip platform={c.platform} />
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5 min-w-0">
           <ChannelName name={c.name} href={c.href} />
           {c.pages.length > 1 && (
-            <span className="text-[10px] text-ink-4 bg-ink/5 rounded-full px-1.5 py-0.5 shrink-0" title={`Counts as posting when any of its ${c.pages.length} Pages posts`}>
+            <span className="text-[10px] font-semibold text-ds-t2 border border-ds-line2 rounded-full px-1.5 py-[1px] shrink-0" title={`Counts as posting when any of its ${c.pages.length} Pages posts`}>
               {c.pages.length} Pages
             </span>
           )}
         </div>
-        <p className="text-xs text-ink-3 truncate" title={c.assignees.map((a) => a.name).join(", ")}>
+        <p className="text-[12px] text-ds-t5 truncate mt-0.5" title={c.assignees.map((a) => a.name).join(", ")}>
           {peopleLabel(c.assignees)}
         </p>
-        <p className="text-xs text-ink-4 flex items-center gap-1 flex-wrap">
+        <p className="text-[11.5px] text-ds-t3 flex items-center gap-1 flex-wrap mt-0.5">
           <span className="min-w-0">{detail}</span>
           {c.lastPostUrl && c.group !== "cant_check" && (
-            <a href={c.lastPostUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-0.5 text-indigo hover:underline" aria-label={`View the last post on ${c.name}`}>
+            <a href={c.lastPostUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-0.5 font-semibold text-[#6EB2FF] hover:text-ds-text" aria-label={`View the last post on ${c.name}`}>
               view <ExternalLink className="h-3 w-3" />
             </a>
           )}
           {/* How fresh THIS flag is — every row is backed by its own live check of Meta. */}
-          {checked != null && c.group !== "cant_check" && <span className="text-ink-4">· checked {ago(nowMs - checked)}</span>}
+          {checked != null && c.group !== "cant_check" && <span>· checked {ago(nowMs - checked)}</span>}
         </p>
       </div>
       {c.group === "inactive" ? (
         // For a dormant channel "silent since 7 AM" says nothing; the age of its last post does.
         last != null && (
           <div className="shrink-0 text-right">
-            <p className="font-num text-sm font-bold text-ink-3 whitespace-nowrap">{duration(nowMs - last)}</p>
-            <p className="text-[10px] text-ink-4">since last post</p>
+            <p className="font-num text-[15px] font-bold text-[#B9A6EC] whitespace-nowrap">{duration(nowMs - last)}</p>
+            <p className="text-[10px] uppercase tracking-[.08em] text-ds-t3">since last post</p>
           </div>
         )
       ) : since != null ? (
         <div className="shrink-0 text-right">
-          <p className="font-num text-sm font-bold text-attention whitespace-nowrap">{duration(nowMs - since)}</p>
-          <p className="text-[10px] text-ink-4">silent</p>
+          <p className="font-num text-[15px] font-bold text-ds-gold whitespace-nowrap">{duration(nowMs - since)}</p>
+          <p className="text-[10px] uppercase tracking-[.08em] text-ds-t3">silent</p>
         </div>
       ) : (
-        c.group === "cant_check" && <AlertTriangle className="h-4 w-4 text-danger shrink-0 mt-0.5" aria-label="Can't check" />
+        c.group === "cant_check" && (
+          <span className="h-8 w-8 rounded-full grid place-items-center shrink-0" style={{ background: "rgba(229,45,71,.12)" }}>
+            <AlertTriangle className="h-4 w-4 text-[#F26B7E]" aria-label="Can't check" />
+          </span>
+        )
       )}
     </li>
   );
@@ -277,44 +340,58 @@ function ChannelRow({ c, nowMs, startLabel }: { c: PostingWatchChannel; nowMs: n
 function NotConnectedRow({ r }: { r: PostingWatchNotConnected }) {
   const handle = r.handle.split("?")[0].trim();
   return (
-    <li className="flex items-start gap-3 px-3 py-2.5 min-w-0">
+    <li className="flex items-center gap-3.5 px-4 py-3 min-w-0 transition-colors hover:bg-ds-hover/60">
       <PlatformChip platform={r.platform} />
       <div className="flex-1 min-w-0">
-        <p className="text-sm font-semibold text-ink truncate" title={r.name}>
+        <p className="text-[13.5px] font-semibold text-ds-text truncate" title={r.name}>
           {r.name}
         </p>
-        <p className="text-xs text-ink-3 truncate" title={r.assignees.map((a) => a.name).join(", ")}>
+        <p className="text-[12px] text-ds-t5 truncate mt-0.5" title={r.assignees.map((a) => a.name).join(", ")}>
           {peopleLabel(r.assignees)}
         </p>
         {r.reason === "ambiguous" ? (
-          <p className="text-xs text-ink-4">Its name matches Pages of more than one channel, so it isn&apos;t watched.</p>
+          <p className="text-[11.5px] text-ds-t3 mt-0.5">Its name matches Pages of more than one channel, so it isn&apos;t watched.</p>
         ) : (
           handle &&
           handle !== r.name && (
-            <p className="text-xs text-ink-4 truncate" title={handle}>
+            <p className="text-[11.5px] text-ds-t3 truncate mt-0.5" title={handle}>
               Handle: {handle}
             </p>
           )
         )}
       </div>
+      <span className="hidden sm:inline-flex items-center h-[22px] px-2.5 rounded-full text-[10.5px] font-semibold shrink-0 border border-[rgba(110,178,255,.35)] bg-[rgba(110,178,255,.08)] text-[#6EB2FF]">
+        {r.reason === "ambiguous" ? "Ambiguous" : "Not connected"}
+      </span>
     </li>
   );
 }
 
 function Frame({ children }: { children: ReactNode }) {
-  return <section className="lg:col-span-3 v3-card p-5 space-y-4 min-w-0">{children}</section>;
+  return (
+    <section className="relative overflow-hidden rounded-[10px] bg-ds-card border border-[#1E3442] p-5 sm:p-6 space-y-4 min-w-0 shadow-[0_18px_40px_-28px_rgba(0,0,0,.9)]">
+      {/* Soft gold glow in the corner — decoration only */}
+      <span
+        aria-hidden="true"
+        className="pointer-events-none absolute -top-24 -left-16 h-56 w-56 rounded-full"
+        style={{ background: "radial-gradient(circle, rgba(233,189,98,.10), transparent 70%)" }}
+      />
+      <div className="relative space-y-4">{children}</div>
+    </section>
+  );
 }
 
 function Header({ right, subtitle }: { right?: ReactNode; subtitle?: string }) {
   return (
     <div className="flex items-start justify-between flex-wrap gap-3">
-      <div className="flex items-center gap-3 min-w-0">
-        <div className="h-10 w-10 rounded-xl bg-attention/10 flex items-center justify-center shrink-0">
-          <BellRing className="h-5 w-5 text-attention" />
+      <div className="flex items-center gap-3.5 min-w-0">
+        <div className="h-11 w-11 rounded-[10px] grid place-items-center shrink-0 border border-[rgba(233,189,98,.3)] bg-[rgba(233,189,98,.1)]">
+          <BellRing className="h-5 w-5 text-ds-gold" strokeWidth={1.8} />
         </div>
         <div className="min-w-0">
-          <h2 className="font-bold text-ink">Posting watch</h2>
-          <p className="text-xs text-ink-4">{subtitle ?? "Assigned channels that have stopped posting"}</p>
+          <p className="text-[10px] font-bold uppercase tracking-[.14em] text-ds-gold">Monitoring</p>
+          <h2 className="text-[17px] font-semibold tracking-[-.01em] text-ds-text leading-tight">Posting watch</h2>
+          <p className="text-[12px] text-ds-t3 mt-0.5">{subtitle ?? "Assigned channels that have stopped posting"}</p>
         </div>
       </div>
       {right}
@@ -323,12 +400,16 @@ function Header({ right, subtitle }: { right?: ReactNode; subtitle?: string }) {
 }
 
 function Notice({ children }: { children: ReactNode }) {
-  return <div className="text-xs text-ink-3 rounded-lg bg-attention/5 px-3 py-2 flex items-center justify-between gap-3 flex-wrap">{children}</div>;
+  return (
+    <div className="text-[12px] text-ds-t5 rounded-[8px] border border-[rgba(233,189,98,.28)] bg-[rgba(233,189,98,.07)] px-3.5 py-2.5 flex items-center justify-between gap-3 flex-wrap">
+      {children}
+    </div>
+  );
 }
 
 function RetryButton({ onClick }: { onClick: () => void }) {
   return (
-    <button type="button" onClick={onClick} className="inline-flex items-center gap-1.5 text-xs font-semibold text-indigo hover:underline">
+    <button type="button" onClick={onClick} className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-ds-gold hover:text-[#F4D58C]">
       <RefreshCw className="h-3.5 w-3.5" /> Retry now
     </button>
   );
@@ -379,8 +460,8 @@ function PostingWatchInner() {
       return (
         <Frame>
           <Header />
-          <div className="flex items-center justify-between gap-3 flex-wrap rounded-xl bg-muted px-4 py-3">
-            <p className="text-sm text-ink-3">Couldn&apos;t load the posting watch. Retrying automatically.</p>
+          <div className="flex items-center justify-between gap-3 flex-wrap rounded-[8px] border border-ds-line bg-ds-inset px-4 py-3">
+            <p className="text-[13px] text-ds-t2">Couldn&apos;t load the posting watch. Retrying automatically.</p>
             <RetryButton onClick={() => void mutate()} />
           </div>
         </Frame>
@@ -391,7 +472,7 @@ function PostingWatchInner() {
         <Header />
         <div className="space-y-2" aria-busy="true">
           {[0, 1, 2].map((i) => (
-            <div key={i} className="h-12 rounded-xl bg-ink/5 animate-pulse" />
+            <div key={i} className="h-14 rounded-[8px] bg-ds-inset border border-ds-line motion-safe:animate-pulse" />
           ))}
         </div>
       </Frame>
@@ -412,7 +493,7 @@ function PostingWatchInner() {
     return (
       <Frame>
         <Header subtitle={subtitle} />
-        <p className="text-sm text-ink-3 rounded-xl bg-muted px-4 py-3">{text}</p>
+        <p className="text-[13px] text-ds-t2 rounded-[8px] border border-ds-line bg-ds-inset px-4 py-3">{text}</p>
       </Frame>
     );
   }
@@ -456,22 +537,22 @@ function PostingWatchInner() {
   }
 
   const status = !configured ? (
-    <div className="flex items-center gap-1.5 text-xs text-ink-4">
-      <AlertTriangle className="h-3.5 w-3.5 text-attention" aria-hidden="true" />
+    <div className="inline-flex items-center gap-1.5 h-[28px] px-3 rounded-full border border-[rgba(233,189,98,.35)] bg-[rgba(233,189,98,.08)] text-[11.5px] font-semibold text-ds-gold">
+      <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />
       Not connected to Meta
     </div>
   ) : active ? (
-    <div className="flex items-center gap-2 text-xs text-ink-4">
-      <span className="inline-flex items-center gap-1.5 font-semibold text-success">
-        <span className="h-2 w-2 rounded-full bg-success dot-pulse" aria-hidden="true" />
+    <div className="inline-flex items-center gap-2 h-[28px] px-3 rounded-full border border-[rgba(0,215,160,.3)] bg-[rgba(0,215,160,.07)] text-[11.5px] text-ds-t2">
+      <span className="inline-flex items-center gap-1.5 font-semibold text-ds-teal">
+        <span className="h-1.5 w-1.5 rounded-full bg-ds-teal [animation:dsBeat_2s_infinite]" aria-hidden="true" />
         Live
       </span>
       {/* A SUCCESSFUL check, and only today's: nothing needs checking before the first deadline. */}
       {lastSuccess != null && lastSuccess >= windowStart && <span>· checked {ago(nowMs - lastSuccess)}</span>}
     </div>
   ) : (
-    <div className="flex items-center gap-1.5 text-xs text-ink-4">
-      <Moon className="h-3.5 w-3.5" />
+    <div className="inline-flex items-center gap-1.5 h-[28px] px-3 rounded-full border border-ds-line2 bg-ds-inset text-[11.5px] text-ds-t2">
+      <Moon className="h-3.5 w-3.5 text-[#9B7EDE]" />
       Paused overnight{nextStart != null && ` · resumes ${istWhen(nextStart, nowMs)}`}
     </div>
   );
@@ -497,46 +578,49 @@ function PostingWatchInner() {
         </Notice>
       )}
 
-      <div className="space-y-3">
-        <PillGroup>
+      <div className="space-y-3.5">
+        <div className="flex items-center gap-2 flex-wrap" role="group" aria-label="Status">
           {TAB_ORDER.map((t) => (
-            <Pill key={t} active={current === t} accent="terra" onClick={() => setTab(t)}>
-              {tabLabel(t)} <span className="font-num">{counts[t]}</span>
-            </Pill>
+            <StatusTab key={t} active={current === t} accent={TAB_ACCENT[t]} label={tabLabel(t)} count={counts[t]} onClick={() => setTab(t)} />
           ))}
-        </PillGroup>
+        </div>
         <div className="flex items-center justify-between gap-3 flex-wrap">
-          <PillGroup>
-            {(["all", "facebook", "instagram"] as const).map((pl) => (
-              <Pill key={pl} active={platform === pl} onClick={() => setPlatform(pl)}>
-                {pl === "all" ? "All" : pl === "facebook" ? "Facebook" : "Instagram"}
-              </Pill>
-            ))}
-          </PillGroup>
-          <label className="relative block w-full sm:w-64">
+          <Seg<PlatformFilter>
+            options={[
+              { key: "all", label: "All" },
+              { key: "facebook", label: "Facebook" },
+              { key: "instagram", label: "Instagram" },
+            ]}
+            value={platform}
+            onChange={setPlatform}
+          />
+          <label className="relative flex items-center w-full sm:w-72 h-[34px] rounded-full border border-ds-line2 bg-ds-inset px-3.5 gap-2 transition-colors focus-within:border-[rgba(233,189,98,.55)]">
             <span className="sr-only">Search channels or people</span>
-            <Search className="h-3.5 w-3.5 text-ink-4 absolute left-3 top-1/2 -translate-y-1/2" aria-hidden="true" />
+            <Search className="h-3.5 w-3.5 text-ds-t3 shrink-0" aria-hidden="true" />
             <input
               type="search"
               value={q}
               onChange={(e) => setQ(e.target.value)}
               placeholder="Search channels or people"
-              className="w-full h-8 pl-8 pr-3 rounded-full border-2 border-ink/10 bg-surface text-xs text-ink placeholder:text-ink-4 focus:outline-none focus:border-indigo/40"
+              className="ds-bare flex-1 min-w-0 bg-transparent border-0 text-[12.5px] text-ds-text placeholder:text-ds-t3 focus:outline-none"
             />
           </label>
         </div>
-        <p className="text-xs text-ink-4">{tabHint(current, startLabel, gapText(p.thresholdMinutes), cause)}</p>
+        <p className="text-[12px] text-ds-t3 leading-relaxed flex items-start gap-2">
+          <span className="mt-[6px] h-1 w-1 rounded-full shrink-0" style={{ background: TAB_ACCENT[current] }} aria-hidden="true" />
+          {tabHint(current, startLabel, gapText(p.thresholdMinutes), cause)}
+        </p>
       </div>
 
-      <div className="rounded-xl border-2 border-ink/10 overflow-hidden">
+      <div className="rounded-[8px] border border-ds-line bg-ds-inset overflow-hidden">
         {!active && SILENT_TABS.has(current) ? (
-          <p className="text-sm text-ink-3 px-4 py-6 text-center">
+          <p className="text-[13px] text-ds-t2 px-4 py-8 text-center">
             Monitoring runs {startLabel} – {endLabel} IST. Gaps overnight are fine.
           </p>
         ) : rowCount === 0 ? (
-          <p className="text-sm text-ink-3 px-4 py-6 text-center">{emptyMessage}</p>
+          <p className="text-[13px] text-ds-t2 px-4 py-8 text-center">{emptyMessage}</p>
         ) : (
-          <ul className="divide-y-2 divide-ink/5 max-h-[26rem] overflow-y-auto overscroll-contain">
+          <ul className="divide-y divide-[#132430] max-h-[26rem] overflow-y-auto overscroll-contain [scrollbar-width:thin] [scrollbar-color:#223543_transparent]">
             {current === "not_connected"
               ? ncRows.map((r) => <NotConnectedRow key={r.accountId} r={r} />)
               : channelRows.map((c) => <ChannelRow key={c.key} c={c} nowMs={nowMs} startLabel={startLabel} />)}
@@ -544,12 +628,25 @@ function PostingWatchInner() {
         )}
       </div>
 
-      <p className="text-xs text-ink-4">
-        {p.counts.monitored} assigned channel{p.counts.monitored === 1 ? "" : "s"} watched
-        {active && ` · ${p.counts.onSchedule} on schedule`}
-        {active && p.counts.verifying > 0 && ` · checking ${p.counts.verifying}`}
-        {` · ${startLabel} – ${endLabel} IST`}
-      </p>
+      <div className="flex items-center gap-x-4 gap-y-1 flex-wrap pt-1 text-[11.5px] text-ds-t3">
+        <span>
+          <span className="font-num font-semibold text-ds-t5">{p.counts.monitored}</span> assigned channel{p.counts.monitored === 1 ? "" : "s"} watched
+        </span>
+        {active && (
+          <span>
+            <span className="font-num font-semibold text-ds-teal">{p.counts.onSchedule}</span> on schedule
+          </span>
+        )}
+        {active && p.counts.verifying > 0 && (
+          <span>
+            checking <span className="font-num font-semibold text-ds-t5">{p.counts.verifying}</span>
+          </span>
+        )}
+        <span className="sm:ml-auto inline-flex items-center gap-1.5">
+          <span className="h-1 w-1 rounded-full bg-ds-gold" aria-hidden="true" />
+          {startLabel} – {endLabel} IST
+        </span>
+      </div>
     </Frame>
   );
 }
@@ -570,7 +667,7 @@ class CardBoundary extends Component<{ children: ReactNode }, { failed: boolean 
       return (
         <Frame>
           <Header />
-          <p className="text-sm text-ink-3">The posting watch couldn&apos;t be shown. Reload the page to try again.</p>
+          <p className="text-[13px] text-ds-t2">The posting watch couldn&apos;t be shown. Reload the page to try again.</p>
         </Frame>
       );
     }

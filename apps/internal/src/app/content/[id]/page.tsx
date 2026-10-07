@@ -7,6 +7,7 @@ import { ContentForm } from "@/components/content-form";
 import { apiFetch } from "@/lib/api";
 import useSWR from "swr";
 import { Send } from "lucide-react";
+import { BoxesLoader } from "@/components/boxes-loader";
 
 const STATUS_LABELS: Record<string, string> = {
   DRAFT: "Draft",
@@ -69,7 +70,7 @@ export default function ContentDetailPage() {
   );
   const comments: any[] = commentsData?.data || [];
 
-  if (isLoading) return <div className="flex items-center justify-center h-64"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#F5D547]" /></div>;
+  if (isLoading) return <div className="flex items-center justify-center h-64"><BoxesLoader /></div>;
   const post = (data as any)?.data;
   if (!post) return <div className="py-8 text-center text-[#7A7A7A]">Content not found</div>;
 

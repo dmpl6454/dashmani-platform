@@ -1,13 +1,9 @@
-﻿export default function Loading() {
+export default function Loading() {
   return (
-    <div className="space-y-5 animate-pulse">
-      <div className="h-8 w-48 bg-rule rounded-xl" />
-      <div className="grid grid-cols-4 lg:grid-cols-8 gap-3">
-        {[...Array(8)].map((_, i) => (
-          <div key={i} className="h-20 bg-rule rounded-xl" />
-        ))}
-      </div>
-      <div className="h-80 bg-rule rounded-2xl" />
+    <div className="pt-[30px] space-y-3.5" aria-hidden="true">
+      <div className="h-11 w-72 rounded-[4px] bg-ds-hover motion-safe:animate-pulse" />
+      <div className="h-12 w-full max-w-[760px] rounded-full bg-ds-hover motion-safe:animate-pulse" />
+      <div className="h-[460px] rounded-[18px] bg-ds-card border border-ds-line motion-safe:animate-pulse" />
     </div>
   );
 }

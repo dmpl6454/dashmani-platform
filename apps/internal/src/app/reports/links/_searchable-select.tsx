@@ -138,17 +138,17 @@ export function SearchableSelect({
             setOpen(true);
           }
         }}
-        className={`flex h-10 w-full min-w-0 items-center gap-2 rounded-lg border bg-white px-3 text-left text-base focus:outline-none focus:ring-2 focus:ring-[#F5D547] ${
-          value ? "border-ink/30 text-ink" : "border-ink/10 text-ink"
-        }`}
+        className={`flex h-9 w-full min-w-0 items-center gap-2 rounded-full border bg-ds-inset px-3 text-left text-base text-ds-text transition-colors hover:border-[#2A4658] focus:outline-none focus:border-[rgba(233,189,98,.55)] sm:text-[12.5px] ${
+          value ? "border-[rgba(233,189,98,.45)]" : "border-ds-line2"
+        } ${open ? "border-[rgba(233,189,98,.55)]" : ""}`}
       >
-        <span className="min-w-0 flex-1 truncate">{triggerText}</span>
-        <ChevronDown className="h-4 w-4 flex-none text-ink-4" aria-hidden />
+        <span className={`min-w-0 flex-1 truncate ${value ? "text-ds-text" : "text-ds-t5"}`}>{triggerText}</span>
+        <ChevronDown className={`h-4 w-4 flex-none text-ds-t3 transition-transform ${open ? "rotate-180" : ""}`} aria-hidden />
       </button>
       {open && (
-        <div className="absolute left-0 right-0 top-full z-30 mt-1 min-w-0 overflow-hidden rounded-xl border border-ink/10 bg-white shadow-lg">
-          <div className="relative border-b border-ink/10 p-2">
-            <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-4" aria-hidden />
+        <div className="absolute left-0 right-0 top-full z-30 mt-1.5 min-w-0 overflow-hidden rounded-[12px] border border-ds-line2 bg-ds-inset shadow-[0_18px_40px_rgba(0,0,0,.6)]">
+          <div className="relative border-b border-[#182C39] p-2">
+            <Search className="pointer-events-none absolute left-[18px] top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ds-t3" aria-hidden />
             <input
               ref={inputRef}
               type="text"
@@ -171,7 +171,7 @@ export function SearchableSelect({
               placeholder={searchPlaceholder}
               autoComplete="off"
               spellCheck={false}
-              className="h-10 w-full min-w-0 rounded-lg border border-ink/10 bg-white pl-8 pr-3 text-base text-ink focus:outline-none focus:ring-2 focus:ring-[#F5D547]"
+              className="h-9 w-full min-w-0 rounded-full border border-ds-line2 bg-[#08131C] pl-8 pr-3 text-base text-ds-text placeholder:text-ds-t3 focus:border-[rgba(233,189,98,.55)] focus:outline-none sm:text-[12.5px]"
             />
           </div>
           <ul id={listId} ref={listRef} role="listbox" aria-label={label} className="max-h-64 overflow-y-auto py-1">
@@ -186,21 +186,27 @@ export function SearchableSelect({
                 onMouseDown={(e) => e.preventDefault()}
                 onMouseEnter={() => setActive(i)}
                 onClick={() => choose(o.value)}
-                className={`flex cursor-pointer items-start gap-2 px-3 py-2 ${i === active ? "bg-ink/5" : ""}`}
+                className={`mx-1 flex cursor-pointer items-start gap-2 rounded-[8px] px-2.5 py-2 transition-colors ${i === active ? "bg-[#132430]" : ""}`}
               >
-                <Check className={`mt-0.5 h-4 w-4 flex-none ${o.value === value ? "text-indigo" : "invisible"}`} aria-hidden />
+                <Check className={`mt-0.5 h-4 w-4 flex-none ${o.value === value ? "text-ds-gold" : "invisible"}`} aria-hidden />
                 <span className="min-w-0 flex-1">
-                  <span className={`block truncate text-sm ${o.value === "" ? "font-medium text-ink" : "text-ink"}`}>{o.label}</span>
-                  {o.detail && <span className="block truncate text-xs text-ink-4">{o.detail}</span>}
+                  <span
+                    className={`block truncate text-[13px] ${
+                      o.value === value ? "font-semibold text-ds-gold" : o.value === "" ? "font-medium text-ds-text" : "text-ds-t5"
+                    }`}
+                  >
+                    {o.label}
+                  </span>
+                  {o.detail && <span className="block truncate text-[11.5px] text-ds-t3">{o.detail}</span>}
                 </span>
               </li>
             ))}
             {matchCount === 0 && query.trim() !== "" && (
-              <li className="px-3 py-2 text-xs text-ink-4 break-words">No match for “{query.trim()}”.</li>
+              <li className="px-3 py-2 text-xs text-ds-t3 break-words">No match for “{query.trim()}”.</li>
             )}
           </ul>
           {matchCount > RENDER_LIMIT && (
-            <p className="border-t border-ink/10 px-3 py-2 text-[11px] text-ink-4">
+            <p className="border-t border-[#182C39] px-3 py-2 text-[11px] text-ds-t3">
               Showing the first {RENDER_LIMIT} of {matchCount} — keep typing to narrow.
             </p>
           )}

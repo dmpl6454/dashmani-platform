@@ -1,18 +1,25 @@
 "use client";
 import { useState, useMemo } from "react";
-import { ClipboardList, CalendarDays, CheckCircle2, AlertTriangle, Filter } from "lucide-react";
+import { ClipboardList, CalendarDays, CheckCircle2, AlertTriangle, Filter, Search, Clock, ChevronLeft, ChevronRight } from "lucide-react";
 import { useDailyReports, useDailyReportStatus } from "@/lib/hooks/use-daily-reports";
 import { useEmployees } from "@/lib/hooks/use-employees";
 import { usePageTitle } from "@/lib/hooks/use-page-title";
-import { UserAvatar } from "@/components/user-avatar";
+import { BoxesLoader } from "@/components/boxes-loader";
 
 // Local-date (IST for users in India) — never toISOString, which is UTC.
-function todayLocalISO(): string {
-  const d = new Date();
+function isoLocal(d: Date): string {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
+}
+function todayLocalISO(): string {
+  return isoLocal(new Date());
+}
+function shiftDay(iso: string, n: number): string {
+  const d = new Date(iso + "T00:00:00");
+  d.setDate(d.getDate() + n);
+  return isoLocal(d);
 }
 
 function displayDate(iso: string): string {
@@ -25,12 +32,39 @@ function fmtTime(v: string | null | undefined): string {
   return new Date(v).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
 }
 
+// Initials avatar, same palette as the Employees page.
+const AV_BG = ["#10222E", "#0E2A22", "#1B1630", "#2A2410", "#2A1116"];
+const AV_FG = ["#238BFF", "#34D399", "#9B7EDE", "#E9BD62", "#FB7185"];
+const hash = (s: string) => {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = s.charCodeAt(i) + ((h << 5) - h);
+  return Math.abs(h);
+};
+function Mono({ name, size }: { name: string; size: number }) {
+  const k = hash(name || "") % 5;
+  return (
+    <span
+      aria-hidden="true"
+      className="rounded-full grid place-items-center font-bold shrink-0"
+      style={{ width: size, height: size, background: AV_BG[k], color: AV_FG[k], fontSize: size >= 34 ? 13 : 10 }}
+    >
+      {(name || "?").trim().charAt(0).toUpperCase() || "?"}
+    </span>
+  );
+}
+
+const MISSING_PREVIEW = 18;
+
 export default function DailyReportsPage() {
   usePageTitle("Daily Updates");
   const [date, setDate] = useState(todayLocalISO());
   const [employeeId, setEmployeeId] = useState("");
+  const [missingQuery, setMissingQuery] = useState("");
+  const [showAllMissing, setShowAllMissing] = useState(false);
 
-  const isToday = date === todayLocalISO();
+  const today = todayLocalISO();
+  const isToday = date === today;
+  const dayWord = isToday ? "today" : "on this day";
 
   const { data: reportsEnv, isLoading: reportsLoading } = useDailyReports(date, employeeId || undefined);
   const { data: statusEnv } = useDailyReportStatus(date);
@@ -43,137 +77,267 @@ export default function DailyReportsPage() {
   const nonSubmitters = status?.nonSubmitters ?? [];
   const submittedCount = status?.submittedCount ?? 0;
   const totalEmployees = status?.totalEmployees ?? 0;
+  const pct = totalEmployees > 0 ? Math.round((submittedCount / totalEmployees) * 100) : null;
+  const allIn = nonSubmitters.length === 0;
 
   const sortedReports = useMemo(
     () => [...reports].sort((a: any, b: any) => (b.updatedAt || b.date).localeCompare(a.updatedAt || a.date)),
     [reports],
   );
 
-  return (
-    <div className="space-y-5">
-      {/* Header */}
-      <div className="flex items-center gap-3">
-        <span className="h-9 w-9 rounded-xl bg-[#FFF3C4] flex items-center justify-center">
-          <ClipboardList className="h-5 w-5 text-[#1A1A1A]" />
-        </span>
-        <div>
-          <h1 className="text-2xl font-bold text-[#1A1A1A]">Daily Updates</h1>
-          <p className="text-sm text-[#7A7A7A]">Written work updates from all employees — {displayDate(date)}</p>
-        </div>
-      </div>
+  const missingShown = useMemo(() => {
+    const q = missingQuery.trim().toLowerCase();
+    const f = nonSubmitters.filter((e: any) => !q || (e.name ?? "").toLowerCase().includes(q));
+    return showAllMissing || q ? f : f.slice(0, MISSING_PREVIEW);
+  }, [nonSubmitters, missingQuery, showAllMissing]);
 
-      {/* Filters */}
-      <div className="bg-white rounded-2xl border border-[#F0EAD8] p-4 flex flex-wrap items-center gap-3">
-        <div className="flex items-center gap-2">
-          <CalendarDays className="h-4 w-4 text-[#7A7A7A]" />
-          <input
-            type="date"
-            value={date}
-            max={todayLocalISO()}
-            onChange={(e) => setDate(e.target.value)}
-            className="h-9 rounded-lg border border-[#E8E0D0] bg-[#FEFCF8] text-sm px-2.5 focus:outline-none focus:ring-2 focus:ring-[#F5D547]"
-          />
+  const selectedName = employeeId ? employees.find((e: any) => e.id === employeeId)?.name ?? "Selected employee" : null;
+
+  const changeDate = (v: string) => {
+    if (!v) return;
+    setDate(v > today ? today : v);
+  };
+
+  return (
+    <div className="pb-8">
+      {/* Header */}
+      <section className="flex items-end justify-between gap-4 flex-wrap pt-[26px] pb-5">
+        <div className="flex-[1_1_380px] min-w-0">
+          <div className="text-[10px] tracking-[.2em] uppercase text-ds-gold font-semibold">Work</div>
+          <h1 className="mt-2 text-[28px] font-semibold tracking-[-.02em] text-ds-text">Daily Updates</h1>
+          <p className="mt-1.5 text-[13.5px] text-ds-t2 [text-wrap:pretty]">
+            Written work updates from all employees · {displayDate(date)}
+          </p>
+        </div>
+
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center h-[34px] rounded-full border border-ds-line2 bg-ds-inset overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setDate(shiftDay(date, -1))}
+              title="Previous day"
+              aria-label="Previous day"
+              className="w-[34px] h-full grid place-items-center text-ds-t2 hover:text-ds-gold"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+            <label className="flex items-center gap-[7px] h-full px-1.5 border-x border-ds-line text-ds-t5">
+              <CalendarDays className="h-[13px] w-[13px] text-ds-gold" />
+              <input
+                type="date"
+                value={date}
+                max={today}
+                onChange={(e) => changeDate(e.target.value)}
+                aria-label="Date"
+                className="bg-transparent border-0 outline-none text-ds-text text-[16px] sm:text-[12px] [color-scheme:dark] w-[128px]"
+              />
+            </label>
+            <button
+              type="button"
+              onClick={() => !isToday && setDate(shiftDay(date, 1))}
+              disabled={isToday}
+              title="Next day"
+              aria-label="Next day"
+              className="w-[34px] h-full grid place-items-center text-ds-t2 hover:text-ds-gold disabled:text-[#33506A] disabled:hover:text-[#33506A] disabled:cursor-default"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </button>
+          </div>
+
           {!isToday && (
             <button
-              onClick={() => setDate(todayLocalISO())}
-              className="h-9 px-3 rounded-lg text-xs font-semibold text-[#1A1A1A] border border-[#E8E0D0] hover:border-[#1A1A1A]/30"
+              type="button"
+              onClick={() => setDate(today)}
+              className="h-[34px] px-3.5 rounded-full border border-ds-gold bg-[rgba(233,189,98,.14)] text-ds-gold text-[12px] font-semibold whitespace-nowrap hover:bg-[rgba(233,189,98,.22)]"
             >
               Today
             </button>
           )}
-        </div>
-        <span className="h-5 w-px bg-[#E8E0D0]" />
-        <div className="flex items-center gap-2">
-          <Filter className="h-4 w-4 text-[#7A7A7A]" />
-          <select
-            value={employeeId}
-            onChange={(e) => setEmployeeId(e.target.value)}
-            className="h-9 rounded-lg border border-[#E8E0D0] bg-[#FEFCF8] text-sm px-2.5 focus:outline-none focus:ring-2 focus:ring-[#F5D547] min-w-[180px]"
-          >
-            <option value="">All employees</option>
-            {employees.map((e: any) => (
-              <option key={e.id} value={e.id}>{e.name}</option>
-            ))}
-          </select>
-        </div>
-      </div>
 
-      {/* Submission status banner (only meaningful for "all employees" view) */}
-      {!employeeId && status && (
-        <div className={`rounded-2xl border p-4 ${
-          nonSubmitters.length === 0
-            ? "bg-green-50 border-green-200"
-            : "bg-amber-50 border-amber-200"
-        }`}>
-          <div className="flex items-center gap-2 mb-2">
-            {nonSubmitters.length === 0 ? (
-              <><CheckCircle2 className="h-5 w-5 text-green-600" /><span className="font-semibold text-green-800">Everyone has submitted {isToday ? "today" : "on this day"} ✅</span></>
-            ) : (
-              <><AlertTriangle className="h-5 w-5 text-amber-600" /><span className="font-semibold text-amber-800">{nonSubmitters.length} of {totalEmployees} {nonSubmitters.length === 1 ? "employee hasn't" : "employees haven't"} submitted {isToday ? "today" : "on this day"}</span></>
-            )}
-          </div>
-          {nonSubmitters.length > 0 && (
-            <div className="flex flex-wrap gap-2 mt-2">
-              {nonSubmitters.map((e: any) => (
-                <span key={e.id} className="inline-flex items-center gap-1.5 bg-white border border-amber-200 rounded-full px-2.5 py-1 text-xs text-[#7A4A00]">
-                  <UserAvatar name={e.name} size={5} />
-                  {e.name}
-                </span>
+          <label className="flex items-center gap-2 h-[34px] px-3 rounded-full border border-ds-line2 bg-ds-inset text-ds-t3 max-w-full">
+            <Filter className="h-[13px] w-[13px] shrink-0" />
+            <select
+              value={employeeId}
+              onChange={(e) => setEmployeeId(e.target.value)}
+              aria-label="Employee"
+              className="bg-transparent border-0 outline-none text-ds-text text-[16px] sm:text-[12px] min-w-[150px] max-w-[220px] cursor-pointer"
+            >
+              <option value="" className="bg-ds-card">All employees</option>
+              {employees.map((e: any) => (
+                <option key={e.id} value={e.id} className="bg-ds-card">{e.name}</option>
               ))}
+            </select>
+          </label>
+        </div>
+      </section>
+
+      {/* Submission status (only meaningful for the "all employees" view) */}
+      {!employeeId && status && (
+        <section className="relative rounded-[12px] bg-[linear-gradient(180deg,#0B1A27_0%,#08131C_75%)] border border-[#1D3444] overflow-hidden">
+          <span
+            aria-hidden="true"
+            className="absolute left-0 right-0 top-0 h-px"
+            style={{ background: `linear-gradient(90deg,transparent,${allIn ? "#00D7A0" : "#E9BD62"} 30%,${allIn ? "#00D7A0" : "#E9BD62"} 70%,transparent)` }}
+          />
+          <div className="flex flex-wrap gap-x-10 gap-y-6 px-7 py-[26px] items-center">
+            <div className="flex-none">
+              <div className="text-[10.5px] tracking-[.22em] uppercase text-ds-t2 font-semibold">Submitted {dayWord}</div>
+              <div className="flex items-baseline gap-2.5 mt-2.5">
+                <span className="text-[60px] font-semibold tracking-[-.04em] leading-[.9] text-ds-text">{submittedCount}</span>
+                <span className="text-[24px] font-light text-ds-t3 tracking-[-.02em]">/ {totalEmployees}</span>
+              </div>
+              <div className="flex items-center gap-2.5 mt-3.5 w-[240px] max-w-full">
+                <div className="flex-1 h-1 rounded-[2px] bg-[#132430] overflow-hidden">
+                  <div
+                    className="h-full bg-[linear-gradient(90deg,#B8913F,#E9BD62)] transition-[width] duration-500"
+                    style={{ width: `${pct ?? 0}%` }}
+                  />
+                </div>
+                <span className="text-[11px] font-bold text-ds-gold">{pct === null ? "—" : `${pct}%`}</span>
+              </div>
+            </div>
+
+            <div className="flex-[1_1_360px] min-w-0 sm:pl-7 sm:border-l border-[#1D3444]">
+              <div className={`flex items-center gap-2 text-[13.5px] font-semibold ${allIn ? "text-ds-teal" : "text-[#FBBF24]"}`}>
+                {allIn ? <CheckCircle2 className="h-4 w-4 shrink-0" /> : <AlertTriangle className="h-4 w-4 shrink-0" />}
+                <span>
+                  {allIn
+                    ? `Everyone has submitted ${dayWord}`
+                    : `${nonSubmitters.length} of ${totalEmployees} ${nonSubmitters.length === 1 ? "employee hasn't" : "employees haven't"} submitted ${dayWord}`}
+                </span>
+              </div>
+              <div className="text-[11px] text-ds-t3 mt-3">
+                {submittedCount} submitted · counts active employees only (excludes pure-admin accounts).
+              </div>
+            </div>
+          </div>
+
+          {!allIn && (
+            <div className="border-t border-ds-line bg-[rgba(5,10,16,.35)] px-7 pt-4 pb-5">
+              <div className="flex items-center gap-3 flex-wrap">
+                <span className="whitespace-nowrap text-[10px] tracking-[.18em] uppercase text-[#FBBF24] font-bold">Not yet submitted</span>
+                <span className="h-5 px-2 rounded-full bg-[rgba(251,191,36,.12)] text-[#FBBF24] text-[10.5px] font-bold inline-flex items-center whitespace-nowrap">
+                  {nonSubmitters.length} pending
+                </span>
+                <label className="sm:ml-auto flex items-center gap-[7px] h-7 px-[11px] rounded-full bg-ds-inset border border-ds-line2 text-ds-t3 w-[220px] max-w-full">
+                  <Search className="h-3 w-3 shrink-0" />
+                  <input
+                    value={missingQuery}
+                    onChange={(e) => setMissingQuery(e.target.value)}
+                    placeholder="Find a name…"
+                    aria-label="Find a name among those not yet submitted"
+                    className="flex-1 min-w-0 bg-transparent border-0 outline-none text-ds-text text-[16px] sm:text-[11.5px] placeholder:text-ds-t3"
+                  />
+                </label>
+              </div>
+              <div className="flex flex-wrap gap-1.5 mt-3">
+                {missingShown.map((e: any) => (
+                  <button
+                    key={e.id}
+                    type="button"
+                    onClick={() => setEmployeeId(e.id)}
+                    title={`View ${e.name}`}
+                    className="inline-flex items-center gap-[7px] h-7 pl-[3px] pr-[11px] rounded-full border border-ds-line2 bg-ds-inset text-ds-t5 text-[11.5px] font-medium whitespace-nowrap max-w-full hover:border-[rgba(251,191,36,.55)] hover:text-[#F4D58C]"
+                  >
+                    <Mono name={e.name} size={22} />
+                    <span className="truncate">{e.name}</span>
+                  </button>
+                ))}
+                {missingShown.length === 0 && (
+                  <span className="text-[11.5px] text-ds-t3 py-1">No name matches “{missingQuery.trim()}”.</span>
+                )}
+                {!missingQuery.trim() && nonSubmitters.length > MISSING_PREVIEW && (
+                  <button
+                    type="button"
+                    onClick={() => setShowAllMissing((v) => !v)}
+                    className="h-7 px-[13px] rounded-full border border-dashed border-[#33506A] text-ds-gold text-[11.5px] font-semibold whitespace-nowrap hover:border-ds-gold"
+                  >
+                    {showAllMissing ? "Show fewer" : `Show all ${nonSubmitters.length}`}
+                  </button>
+                )}
+              </div>
             </div>
           )}
-          <p className="text-[11px] text-[#7A7A7A] mt-2">
-            {submittedCount} submitted • counts active employees only (excludes pure-admin accounts).
-          </p>
-        </div>
+        </section>
       )}
+
+      {/* List header */}
+      <section className="flex items-baseline justify-between gap-3 mt-[26px] mb-3 flex-wrap">
+        <div className="flex items-baseline gap-2.5 min-w-0">
+          <span className="text-[16px] font-semibold text-ds-text truncate">{selectedName ?? "Submitted updates"}</span>
+          {!reportsLoading && (
+            <span className="text-[11.5px] text-ds-t3 whitespace-nowrap">
+              {sortedReports.length} {sortedReports.length === 1 ? "update" : "updates"}
+            </span>
+          )}
+          {employeeId && (
+            <button type="button" onClick={() => setEmployeeId("")} className="text-[11.5px] text-ds-gold hover:underline whitespace-nowrap">
+              Show all
+            </button>
+          )}
+        </div>
+        <span className="text-[11px] text-ds-t3">Latest first</span>
+      </section>
 
       {/* Submitted reports */}
       {reportsLoading ? (
-        <div className="bg-white rounded-2xl border border-[#F0EAD8] p-10 flex justify-center">
-          <div className="animate-spin rounded-full h-7 w-7 border-b-2 border-[#1A1A1A]" />
+        <div className="bg-ds-card border border-ds-line rounded-[10px] p-12 grid place-items-center">
+          <BoxesLoader />
         </div>
       ) : sortedReports.length === 0 ? (
-        <div className="bg-white rounded-2xl border border-[#F0EAD8] p-10 text-center text-[#7A7A7A]">
-          <ClipboardList className="h-8 w-8 mx-auto mb-2 opacity-40" />
-          No daily updates {employeeId ? "from this employee " : ""}for {displayDate(date)} yet.
+        <div className="bg-ds-card border border-dashed border-ds-line2 rounded-[10px] px-5 py-14 text-center text-ds-t3 text-[13px]">
+          <ClipboardList className="h-[30px] w-[30px] mx-auto opacity-50" strokeWidth={1.5} />
+          <div className="mt-2.5">
+            No daily updates {employeeId ? "from this employee " : ""}for {displayDate(date)} yet.
+          </div>
         </div>
       ) : (
-        <div className="space-y-3">
-          {sortedReports.map((r: any) => (
-            <div key={r.id} className="bg-white rounded-2xl border border-[#F0EAD8] p-5 space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <UserAvatar name={r.employee?.name ?? "—"} size={9} />
-                  <div>
-                    <p className="text-sm font-semibold text-[#1A1A1A]">{r.employee?.name ?? "Unknown"}</p>
-                    <p className="text-[11px] text-[#B0B0B0]">{r.employee?.email}</p>
+        <section className="grid gap-3.5 [grid-template-columns:repeat(auto-fill,minmax(min(100%,420px),1fr))]">
+          {sortedReports.map((r: any) => {
+            const name = r.employee?.name ?? "Unknown";
+            const time = fmtTime(r.updatedAt);
+            return (
+              <article key={r.id} className="relative flex flex-col bg-ds-card border border-ds-line rounded-[10px] overflow-hidden hover:border-[#2A4658] transition-colors">
+                <div className="flex items-center gap-3 px-5 py-4 border-b border-[#101E29]">
+                  <span className="rounded-full border border-ds-line2 shrink-0">
+                    <Mono name={name} size={38} />
+                  </span>
+                  <div className="flex-1 min-w-0 leading-[1.3]">
+                    <div className="text-[13.5px] font-semibold text-ds-text truncate">{name}</div>
+                    <div className="text-[11px] text-ds-t3 truncate">{r.employee?.email ?? "—"}</div>
                   </div>
+                  {time && (
+                    <span className="inline-flex items-center gap-[5px] h-6 px-2.5 rounded-full bg-ds-inset border border-ds-line text-ds-t2 text-[11px] font-semibold whitespace-nowrap shrink-0">
+                      <Clock className="h-[11px] w-[11px]" />
+                      {time}
+                    </span>
+                  )}
                 </div>
-                <span className="text-[11px] text-[#B0B0B0]">{fmtTime(r.updatedAt)}</span>
-              </div>
 
-              <div>
-                <p className="text-[10.5px] font-bold text-[#B0B0B0] uppercase tracking-wider mb-0.5">What they did</p>
-                <p className="text-sm text-[#1A1A1A] whitespace-pre-wrap">{r.tasks || "—"}</p>
-              </div>
+                <div className="flex flex-col gap-4 px-5 pt-[18px] pb-5">
+                  <div>
+                    <div className="text-[10px] tracking-[.18em] uppercase text-ds-gold font-bold">What they did</div>
+                    <p className="mt-[7px] text-[13px] leading-[1.6] text-ds-text whitespace-pre-wrap break-words [text-wrap:pretty]">{r.tasks || "—"}</p>
+                  </div>
 
-              {r.tomorrowPlan && (
-                <div>
-                  <p className="text-[10.5px] font-bold text-[#B0B0B0] uppercase tracking-wider mb-0.5">Tomorrow's plan</p>
-                  <p className="text-sm text-[#4A4A4A] whitespace-pre-wrap">{r.tomorrowPlan}</p>
+                  {r.tomorrowPlan && (
+                    <div className="pt-3.5 border-t border-dashed border-ds-line">
+                      <div className="text-[10px] tracking-[.18em] uppercase text-[#6EB2FF] font-bold">Tomorrow&apos;s plan</div>
+                      <p className="mt-[7px] text-[12.5px] leading-[1.6] text-ds-t5 whitespace-pre-wrap break-words [text-wrap:pretty]">{r.tomorrowPlan}</p>
+                    </div>
+                  )}
+
+                  {r.blockers && (
+                    <div className="px-3.5 py-3 rounded-[8px] bg-[rgba(251,191,36,.05)] border border-[rgba(251,191,36,.18)]">
+                      <div className="text-[10px] tracking-[.18em] uppercase text-[#FBBF24] font-bold">Notes</div>
+                      <p className="mt-1.5 text-[12.5px] leading-[1.55] text-ds-t5 italic whitespace-pre-wrap break-words [text-wrap:pretty]">{r.blockers}</p>
+                    </div>
+                  )}
                 </div>
-              )}
-
-              {r.blockers && (
-                <div>
-                  <p className="text-[10.5px] font-bold text-[#B0B0B0] uppercase tracking-wider mb-0.5">Notes</p>
-                  <p className="text-sm text-[#4A4A4A] italic whitespace-pre-wrap">{r.blockers}</p>
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
+              </article>
+            );
+          })}
+        </section>
       )}
     </div>
   );

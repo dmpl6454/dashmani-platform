@@ -13,7 +13,7 @@ import { useOverviewStats } from "@/lib/hooks/use-analytics";
 import { useState, useEffect } from "react";
 
 /* ── Primary nav — grouped, always visible ── */
-const primaryNav = [
+export const primaryNav = [
   { href: "/dashboard",     label: "Dashboard",        icon: LayoutDashboard, group: null },
   { href: "/employees",     label: "Employees",        icon: Users,           group: "People",    badgeKey: "pendingEmployees" as const },
   { href: "/teams",         label: "Teams",            icon: Building2,       group: null },
@@ -41,7 +41,7 @@ const primaryNav = [
 ];
 
 /* ── More section items (3-col grid) ── */
-const moreNav = [
+export const moreNav = [
   { href: "/offer-letters", label: "Offer Letters", icon: FileSignature   },
   { href: "/holidays",      label: "Holiday Calendar", icon: Calendar      },
   { href: "/jobs",          label: "Job Listings",  icon: BriefcaseBusiness },

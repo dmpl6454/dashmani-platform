@@ -1,13 +1,14 @@
 "use client";
 import { useParams } from "next/navigation";
 import { useProject } from "@/lib/hooks/use-projects";
+import { BoxesLoader } from "@/components/boxes-loader";
 
 export default function ProjectDetailPage() {
   const { id } = useParams();
   const { data, isLoading } = useProject(id as string);
   const project = (data as any)?.data;
 
-  if (isLoading) return <div className="flex items-center justify-center h-64"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#F5D547]" /></div>;
+  if (isLoading) return <div className="flex items-center justify-center h-64"><BoxesLoader /></div>;
   if (!project) return <div className="text-center py-8 text-[#7A7A7A]">Project not found.</div>;
 
   const statusBadge: Record<string, string> = {

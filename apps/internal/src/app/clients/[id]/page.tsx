@@ -1,6 +1,5 @@
 "use client";
 
-import { use } from "react";
 import Link from "next/link";
 import { useClient } from "@/lib/hooks/use-clients";
 import { usePageTitle } from "@/lib/hooks/use-page-title";
@@ -12,7 +11,7 @@ import {
   FolderOpen, Send, X, Check,
 } from "lucide-react";
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 
 const statusBadge: Record<string, string> = {
   ACTIVE: "bg-emerald-100 text-emerald-700",
@@ -27,8 +26,10 @@ const projectStatusBadge: Record<string, string> = {
   ARCHIVED: "bg-[rgba(0,0,0,0.06)] text-[#7A7A7A]",
 };
 
-export default function ClientDetailPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = use(params);
+// Next 14: read the route id with useParams(). React 18 has no use(), so use(params)
+// crashed this page with "An unsupported type was passed to use()".
+export default function ClientDetailPage() {
+  const { id } = useParams<{ id: string }>();
   const { data, isLoading, error, mutate } = useClient(id);
   const isError = !!error;
   const client = (data as any)?.data;

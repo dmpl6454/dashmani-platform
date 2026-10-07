@@ -15,7 +15,7 @@ import { createPortal } from "react-dom";
 import { bellListView, pipelineNotificationUrl } from "@dashmani/shared/src/pipeline/bell";
 
 /* ── Compose-announcement modal (moved from dashboard — the only place it's used) ── */
-function QuickAnnounceModal({ onClose }: { onClose: () => void }) {
+export function QuickAnnounceModal({ onClose }: { onClose: () => void }) {
   const [title,   setTitle]   = useState("");
   const [message, setMessage] = useState("");
   const [orgUnitId, setOrgUnitId] = useState<string>("");

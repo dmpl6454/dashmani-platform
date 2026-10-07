@@ -92,38 +92,42 @@ function compareRows<T extends { countedDays: number; missedDays: number; curren
 }
 
 function MetricLabel({ children }: { children: React.ReactNode }) {
-  return <span className="xl:hidden block text-[10px] font-semibold uppercase tracking-wide text-ink-4">{children}</span>;
+  return <span className="xl:hidden mb-0.5 block text-[10.5px] font-semibold uppercase tracking-[.08em] text-ds-t3">{children}</span>;
 }
 
+const chipBase = "inline-flex items-center gap-1 whitespace-nowrap rounded-full border px-2 py-0.5 text-[11px] font-semibold tabular-nums";
+const tealChip = `${chipBase} border-[rgba(0,215,160,.25)] bg-[rgba(0,215,160,.12)] text-[#5EEAC4]`;
+const goldChip = `${chipBase} border-[rgba(233,189,98,.28)] bg-[rgba(233,189,98,.10)] text-ds-gold`;
+
 function TodayChip({ status, links, of }: { status: GapPairRow["todayStatus"] | GapEmployeeRow["todayStatus"]; links: number; of?: string }) {
-  if (status == null) return <span className="text-sm text-ink-4" title="This window does not include today">—</span>;
+  if (status == null) return <span className="text-[13px] text-ds-t3" title="This window does not include today">—</span>;
   if (status === "posted") {
     return (
-      <span className="inline-flex items-center gap-1 rounded-full bg-sage-soft px-2 py-0.5 text-[11px] font-semibold text-sage">
+      <span className={tealChip}>
         <CheckCircle2 className="h-3 w-3" aria-hidden /> Posted{links > 0 ? ` · ${nf.format(links)}` : ""}
       </span>
     );
   }
   if (status === "partial") {
     return (
-      <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
+      <span className={goldChip}>
         <Hourglass className="h-3 w-3" aria-hidden /> Some{of ? ` · ${of}` : ""}
       </span>
     );
   }
   return (
-    <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
+    <span className={goldChip}>
       <Clock className="h-3 w-3" aria-hidden /> Not yet
     </span>
   );
 }
 
 function GapValue({ days, open, counted }: { days: number; open: boolean; counted: number }) {
-  if (counted === 0) return <span className="text-sm text-ink-4">—</span>;
-  if (days === 0) return <span className="text-sm font-medium text-sage">None</span>;
+  if (counted === 0) return <span className="text-[13px] text-ds-t3">—</span>;
+  if (days === 0) return <span className="text-[13px] font-medium text-[#00D7A0]">None</span>;
   return (
     <span
-      className="text-sm font-semibold text-attention"
+      className="text-[13px] font-semibold tabular-nums text-[#FB7185]"
       title={open ? "The gap runs back past the start of this window — it may be longer. Widen the range to see where it began." : undefined}
     >
       {open ? "≥ " : ""}{plural(days, "day")}
@@ -132,14 +136,14 @@ function GapValue({ days, open, counted }: { days: number; open: boolean; counte
 }
 
 function LastPosted({ day, ist, approx, year }: { day: string | null; ist: string | null; approx: boolean; year: string }) {
-  if (!day) return <span className="text-sm text-ink-4" title="No link in this window">—</span>;
+  if (!day) return <span className="text-[13px] text-ds-t3" title="No link in this window">—</span>;
   return (
     <span
-      className="block text-sm text-ink"
+      className="block text-[13px] tabular-nums text-ds-t5"
       title={approx ? "Approximate — before 3 Jun 2026 only the report's first-submit time is known" : "The latest day with a link, and the time of that day's last link"}
     >
       {fmtDay(day, year)}
-      <span className="block text-xs text-ink-4 font-num">{approx ? "~" : ""}{timeFor(day, ist, year)} IST</span>
+      <span className="block text-[11.5px] text-ds-t3 font-num tabular-nums">{approx ? "~" : ""}{timeFor(day, ist, year)} IST</span>
     </span>
   );
 }
@@ -150,19 +154,55 @@ function MissedRanges({ ranges, total, truncated, year }: { ranges: GapRange[]; 
   const hidden = total - shown.length;
   return (
     <div className="flex flex-wrap items-center gap-1.5 pt-2">
-      <span className="text-[10px] font-semibold uppercase tracking-wide text-ink-4">Missed</span>
+      <span className="inline-flex items-center gap-1.5 text-[10.5px] font-semibold uppercase tracking-[.08em] text-ds-t3">
+        <i aria-hidden className="h-2.5 w-2.5 rounded-[3px] bg-[#FB7185]" />
+        Missed
+      </span>
       {hidden > 0 && (
-        <span className="text-[11px] text-ink-4" title={truncated ? "Open the day-by-day view for the full list" : undefined}>
+        <span className="text-[11px] tabular-nums text-ds-t3" title={truncated ? "Open the day-by-day view for the full list" : undefined}>
           +{nf.format(hidden)} earlier
         </span>
       )}
       {shown.map((r) => (
-        <span key={r[0]} className="rounded-md bg-attention/10 px-1.5 py-0.5 text-[11px] font-medium text-attention">
+        <span
+          key={r[0]}
+          className="rounded-[6px] border border-[rgba(251,113,133,.25)] bg-[rgba(251,113,133,.12)] px-1.5 py-0.5 text-[11px] font-medium tabular-nums text-[#FDA4AF]"
+        >
           {fmtRange(r, year)}
           {r[0] !== r[1] ? ` (${rangeDays(r)}d)` : ""}
         </span>
       ))}
     </div>
+  );
+}
+
+/** Decorative initials circle (aria-hidden; the name beside it is the accessible text). */
+const AVATAR_TINTS = [
+  "border-[rgba(233,189,98,.35)] bg-[rgba(233,189,98,.12)] text-ds-gold",
+  "border-[rgba(0,215,160,.35)] bg-[rgba(0,215,160,.12)] text-[#5EEAC4]",
+  "border-[rgba(110,178,255,.35)] bg-[rgba(110,178,255,.12)] text-[#6EB2FF]",
+  "border-[rgba(155,126,222,.35)] bg-[rgba(155,126,222,.12)] text-[#B9A3EC]",
+  "border-[rgba(251,113,133,.35)] bg-[rgba(251,113,133,.12)] text-[#FDA4AF]",
+];
+
+function Avatar({ name, seed }: { name: string; seed: string }) {
+  const mono =
+    name
+      .trim()
+      .split(/\s+/)
+      .slice(0, 2)
+      .map((w) => w[0] ?? "")
+      .join("")
+      .toUpperCase() || "?";
+  let h = 0;
+  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
+  return (
+    <span
+      aria-hidden
+      className={`grid h-[34px] w-[34px] flex-none place-items-center rounded-full border text-[11px] font-bold ${AVATAR_TINTS[h % AVATAR_TINTS.length]}`}
+    >
+      {mono}
+    </span>
   );
 }
 
@@ -173,7 +213,11 @@ function ExpandButton({ open, onClick }: { open: boolean; onClick: () => void })
       onClick={onClick}
       aria-expanded={open}
       aria-label={open ? "Hide day by day" : "Show day by day"}
-      className="inline-flex h-9 items-center gap-1 rounded-full border border-ink/10 px-2.5 text-xs font-medium text-ink hover:bg-ink/5"
+      className={`inline-flex h-8 min-w-[32px] items-center justify-center gap-1 rounded-full border px-2.5 text-[12px] font-semibold transition-colors ${
+        open
+          ? "border-[rgba(233,189,98,.45)] bg-[rgba(233,189,98,.10)] text-ds-gold"
+          : "border-ds-line2 bg-ds-inset text-ds-t5 hover:border-[#2A4658] hover:text-ds-text"
+      }`}
     >
       <span className="xl:hidden">Days</span>
       {open ? <ChevronUp className="h-3.5 w-3.5" aria-hidden /> : <ChevronDown className="h-3.5 w-3.5" aria-hidden />}
@@ -185,7 +229,14 @@ const GRID =
   "grid grid-cols-2 gap-x-3 gap-y-2 sm:grid-cols-6 xl:grid-cols-[minmax(0,1.25fr)_minmax(0,1.5fr)_4.5rem_5.5rem_6rem_7rem_6.5rem_2.5rem] xl:items-center";
 
 const toolbarBtn =
-  "inline-flex items-center gap-1.5 rounded-full border border-ink/10 px-3 py-1.5 text-xs font-semibold text-ink hover:bg-ink/5 disabled:opacity-40";
+  "inline-flex h-9 items-center gap-1.5 whitespace-nowrap rounded-full border border-ds-line2 bg-ds-inset px-4 text-[12.5px] font-semibold text-ds-t5 transition-colors hover:border-[#2A4658] hover:text-ds-text disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-ds-line2 disabled:hover:text-ds-t5";
+
+/** The dark design system's card surface. */
+const CARD = "rounded-[16px] border border-[#2A4658] bg-ds-card shadow-[0_12px_32px_rgba(0,0,0,.35)]";
+
+/** Rose / gold tinted notices. */
+const roseNotice = "rounded-[12px] border border-[rgba(251,113,133,.25)] bg-[rgba(251,113,133,.08)] text-[#FDA4AF]";
+const goldNotice = "rounded-[12px] border border-[rgba(233,189,98,.28)] bg-[rgba(233,189,98,.07)] text-ds-t5";
 
 export function SubmissionGapsPanel({
   startDate, endDate, windowLabel,
@@ -429,15 +480,15 @@ export function SubmissionGapsPanel({
       label: "Channel assignments",
       value: d ? nf.format(d.totals.assignments) : "—",
       sub: d ? plural(d.totals.employees, "person", "people") : rangeShort.toLowerCase(),
-      icon: <Users className="h-3.5 w-3.5 text-indigo" aria-hidden />,
-      tone: "bg-indigo-soft",
+      icon: <Users className="h-4 w-4 text-[#6EB2FF]" aria-hidden />,
+      tone: "border-[rgba(110,178,255,.25)] bg-[rgba(110,178,255,.12)]",
     },
     {
       label: "Missed channel-days",
       value: !d || nothingCounted ? "—" : nf.format(d.totals.missedDays),
       sub: !d ? "every calendar day counts" : nothingCounted ? "nothing counted yet" : `of ${nf.format(d.totals.countedDays)} counted`,
-      icon: <CalendarX2 className="h-3.5 w-3.5 text-attention" aria-hidden />,
-      tone: "bg-attention/10",
+      icon: <CalendarX2 className="h-4 w-4 text-[#FB7185]" aria-hidden />,
+      tone: "border-[rgba(251,113,133,.25)] bg-[rgba(251,113,133,.12)]",
     },
     {
       label: endsYesterday || !d ? "People in a gap now" : "People in a gap at window end",
@@ -447,8 +498,8 @@ export function SubmissionGapsPanel({
         : nothingCounted
           ? "nothing counted yet"
           : `no link on any channel on ${fmtDay(d.range.countedThrough, year)}`,
-      icon: <Hourglass className="h-3.5 w-3.5 text-terra" aria-hidden />,
-      tone: "bg-terra-soft",
+      icon: <Hourglass className="h-4 w-4 text-[#9B7EDE]" aria-hidden />,
+      tone: "border-[rgba(155,126,222,.28)] bg-[rgba(155,126,222,.12)]",
     },
     {
       label: "Not posted yet today",
@@ -458,35 +509,35 @@ export function SubmissionGapsPanel({
         : d.range.includesToday
           ? `${plural(d.totals.notYetToday ?? 0, "channel")} · today is in progress`
           : "this window does not include today",
-      icon: <Clock className="h-3.5 w-3.5 text-amber-700" aria-hidden />,
-      tone: "bg-amber-50",
+      icon: <Clock className="h-4 w-4 text-ds-gold" aria-hidden />,
+      tone: "border-[rgba(233,189,98,.28)] bg-[rgba(233,189,98,.10)]",
     },
   ];
 
   const inputCls =
-    "h-10 w-full min-w-0 rounded-lg border border-ink/10 bg-white px-3 text-base text-ink focus:outline-none focus:ring-2 focus:ring-[#F5D547]";
+    "h-9 w-full min-w-0 rounded-full border border-ds-line2 bg-ds-inset px-3 text-base text-ds-text placeholder:text-ds-t3 [color-scheme:dark] transition-colors hover:border-[#2A4658] focus:border-[rgba(233,189,98,.55)] focus:outline-none sm:text-[12.5px]";
   const rangeText = custom ? `${rangeShort} (this tab's own dates)` : windowLabel;
 
   return (
     <div className="space-y-4">
-      <div className="v3-card p-5 space-y-3">
-        <div className="flex flex-wrap items-start justify-between gap-3">
+      <div className={`${CARD} overflow-hidden`}>
+        <div className="flex min-h-[62px] flex-wrap items-center justify-between gap-3 border-b border-[#182C39] px-4 py-3 sm:px-6">
           <div className="min-w-0">
-            <p className="font-semibold text-ink">Submission gaps</p>
-            <p className="text-xs text-ink-4 mt-0.5 break-words">
+            <p className="text-[15px] font-semibold tracking-[-.01em] text-ds-text">Submission gaps</p>
+            <p className="mt-[3px] break-words text-[12px] text-ds-t3">
               Who did not submit links for the channels assigned to them · {rangeText}
             </p>
           </div>
           <div className="flex min-w-0 flex-wrap items-center gap-2">
-            <div role="group" aria-label="View" className="inline-flex rounded-full border border-ink/10 p-0.5">
+            <div role="group" aria-label="View" className="inline-flex rounded-full border border-ds-line2 bg-ds-inset p-[3px]">
               {(["channels", "people"] as GapView[]).map((v) => (
                 <button
                   key={v}
                   type="button"
                   aria-pressed={view === v}
                   onClick={() => { setView(v); resetList(); }}
-                  className={`rounded-full px-3 py-1.5 text-xs font-semibold transition-colors ${
-                    view === v ? "bg-[#1A1A1A] text-white" : "text-ink-4 hover:text-ink"
+                  className={`h-[28px] whitespace-nowrap rounded-full px-3.5 text-[12px] font-semibold transition-colors ${
+                    view === v ? "bg-ds-gold text-[#060D14]" : "text-ds-t2 hover:text-ds-text"
                   }`}
                 >
                   {v === "channels" ? "By channel" : "By person"}
@@ -500,7 +551,7 @@ export function SubmissionGapsPanel({
               className={toolbarBtn}
               title="Download the rows below (after every filter) as CSV — one row per channel or person"
             >
-              <Download className="h-3.5 w-3.5" aria-hidden /> Gaps CSV
+              <Download className="h-3.5 w-3.5 text-ds-teal" aria-hidden /> Gaps CSV
             </button>
             <button
               type="button"
@@ -514,20 +565,21 @@ export function SubmissionGapsPanel({
                   : "Available once the rows have loaded"
               }
             >
-              {allCsv.busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : <FileText className="h-3.5 w-3.5" aria-hidden />}
+              {allCsv.busy ? <Loader2 className="h-3.5 w-3.5 animate-spin text-ds-teal" aria-hidden /> : <FileText className="h-3.5 w-3.5 text-ds-teal" aria-hidden />}
               {allCsv.busy ? "Preparing…" : "Day-by-day CSV (all rows)"}
             </button>
           </div>
         </div>
+        <div className="space-y-3 px-4 py-4 sm:px-6">
         {allCsv.error && (
-          <p role="alert" className="flex items-start gap-1.5 text-xs text-attention">
+          <p role="alert" className={`flex items-start gap-1.5 px-3 py-2 text-xs ${roseNotice}`}>
             <AlertCircle className="mt-0.5 h-3.5 w-3.5 flex-none" aria-hidden />
             <span className="min-w-0 break-words">Couldn&apos;t build the day-by-day CSV: {allCsv.error}</span>
           </p>
         )}
 
-        <p className="text-[11px] leading-relaxed text-ink-4">
-          <span className="font-semibold text-ink">How this is counted:</span> every calendar day counts — 7 days a week;
+        <p className={`px-3.5 py-2.5 text-[11.5px] leading-relaxed ${goldNotice}`}>
+          <span className="font-semibold text-ds-gold">How this is counted:</span> every calendar day counts — 7 days a week;
           weekends, holidays and leave are <em>not</em> excluded. Days before a channel was assigned to the person are not
           counted (the day-by-day view marks them &ldquo;not assigned yet&rdquo;). Today is still in progress, so it is never
           counted as missed — it has its own column. Only live links on the assigned channel itself count — scheduled or
@@ -538,30 +590,31 @@ export function SubmissionGapsPanel({
             ? ` ${plural(d.excluded.inactiveChannelAssignments, "assignment")} to paused or archived channels ${d.excluded.inactiveChannelAssignments === 1 ? "is" : "are"} not shown.`
             : ""}
         </p>
+        </div>
       </div>
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         {tiles.map((t) => (
-          <div key={t.label} className="v3-card-sm min-w-0 p-4 space-y-1">
-            <div className={`flex h-7 w-7 items-center justify-center rounded-lg ${t.tone}`}>{t.icon}</div>
-            <p className="font-num text-2xl font-semibold leading-none text-ink pt-1">{t.value}</p>
-            <p className="text-xs font-medium text-ink">{t.label}</p>
-            <p className="text-[11px] text-ink-4 break-words">{t.sub}</p>
+          <div key={t.label} className={`${CARD} min-w-0 space-y-1.5 p-4 sm:p-5`}>
+            <div className={`flex h-8 w-8 items-center justify-center rounded-[10px] border ${t.tone}`}>{t.icon}</div>
+            <p className="font-num pt-1.5 text-[26px] font-semibold leading-none tracking-[-.02em] tabular-nums text-ds-text">{t.value}</p>
+            <p className="text-[12.5px] font-semibold text-ds-t5">{t.label}</p>
+            <p className="break-words text-[11.5px] text-ds-t3">{t.sub}</p>
           </div>
         ))}
       </div>
       {d && filtersNarrow && (
-        <p className="-mt-2 text-[11px] text-ink-4">
+        <p className="-mt-2 text-[11px] text-ds-t3">
           These totals cover the whole range, team and platform; the person, channel, search and minimum filters narrow
           the list below and both CSVs.
         </p>
       )}
 
-      <div className="v3-card p-4 space-y-3">
+      <div className={`${CARD} space-y-3 p-4 sm:p-5`}>
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
           <label className="relative block min-w-0">
             <span className="sr-only">Search person or channel</span>
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-4" aria-hidden />
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ds-t3" aria-hidden />
             <input
               type="search"
               value={search}
@@ -616,9 +669,9 @@ export function SubmissionGapsPanel({
           </label>
         </div>
 
-        <div className="grid grid-cols-2 gap-2 border-t border-ink/10 pt-3 sm:grid-cols-[10.5rem_10.5rem_minmax(0,1fr)] sm:items-end">
-          <p className="col-span-2 min-w-0 break-words text-xs text-ink-4 sm:col-span-3">
-            <span className="font-semibold text-ink">Dates for this tab:</span>{" "}
+        <div className="grid grid-cols-2 gap-2 border-t border-[#182C39] pt-3 sm:grid-cols-[10.5rem_10.5rem_minmax(0,1fr)] sm:items-end">
+          <p className="col-span-2 min-w-0 break-words text-[12px] text-ds-t3 sm:col-span-3">
+            <span className="font-semibold text-ds-t5">Dates for this tab:</span>{" "}
             {custom
               ? "custom — they override the page's range pills here only."
               : `following the page's range pills (${windowLabel}). Pick dates to override them for this tab.`}
@@ -635,7 +688,7 @@ export function SubmissionGapsPanel({
                   }
                   rangeDraft.discard();
                 }}
-                className="inline-flex h-10 items-center rounded-full border border-ink/10 bg-white px-3 text-xs font-semibold text-ink hover:bg-ink/5"
+                className={toolbarBtn}
               >
                 Use page range
               </button>
@@ -646,7 +699,7 @@ export function SubmissionGapsPanel({
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 text-xs text-ink-4">
+        <div className="flex flex-wrap items-center gap-2 border-t border-[#182C39] pt-3 text-[12px] text-ds-t3">
           <label className="inline-flex flex-wrap items-center gap-2">
             <span>Only rows with at least</span>
             <input
@@ -656,12 +709,12 @@ export function SubmissionGapsPanel({
               max={366}
               value={minMissed}
               onChange={(e) => { setMinMissed(e.target.value); resetList(); }}
-              className="h-10 w-20 rounded-lg border border-ink/10 bg-white px-2 text-base text-ink focus:outline-none focus:ring-2 focus:ring-[#F5D547]"
+              className="h-9 w-20 rounded-full border border-ds-line2 bg-ds-inset px-3 text-base tabular-nums text-ds-text [color-scheme:dark] focus:border-[rgba(233,189,98,.55)] focus:outline-none sm:text-[12.5px]"
             />
             <span>missed {view === "channels" ? "days" : "days (no link on any channel)"}</span>
           </label>
           {d && (
-            <span className="ml-auto">
+            <span className="ml-auto tabular-nums text-ds-t2">
               {nf.format(list.length)} of {plural(total, view === "channels" ? "row" : "person", view === "channels" ? "rows" : "people")}
               {filtersNarrow ? " match" : ""}
             </span>
@@ -671,62 +724,64 @@ export function SubmissionGapsPanel({
 
       {/* States: invalid window → loading → failed → only-today note → empty → list. */}
       {problem && (
-        <div className="v3-card p-5 flex items-center gap-3 text-sm text-ink">
-          <AlertCircle className="h-4 w-4 flex-none text-attention" aria-hidden />
+        <div className={`flex items-center gap-3 p-4 text-[13px] sm:p-5 ${roseNotice}`}>
+          <AlertCircle className="h-4 w-4 flex-none text-[#FB7185]" aria-hidden />
           <span className="min-w-0 break-words">{problem}</span>
         </div>
       )}
 
       {!problem && !d && isLoading && (
-        <div className="v3-card p-5 space-y-3" aria-busy="true">
-          {[0, 1, 2].map((i) => <div key={i} className="h-14 animate-pulse rounded-xl bg-ink/5" />)}
-          <p className="text-xs text-ink-4">Loading submission gaps…</p>
+        <div className={`${CARD} space-y-3 p-4 sm:p-5`} aria-busy="true">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="h-14 rounded-[12px] border border-[#132430] bg-ds-inset motion-safe:animate-pulse" />
+          ))}
+          <p className="text-xs text-ds-t3">Loading submission gaps…</p>
         </div>
       )}
 
       {!problem && !d && !isLoading && error && (
-        <div className="v3-card p-5 flex flex-wrap items-center gap-3">
-          <AlertCircle className="h-4 w-4 flex-none text-attention" aria-hidden />
-          <p className="min-w-0 flex-1 break-words text-sm text-ink">
-            Couldn&apos;t load submission gaps. <span className="text-ink-4">{(error as Error).message}</span>
+        <div className={`flex flex-wrap items-center gap-3 p-4 sm:p-5 ${roseNotice}`}>
+          <AlertCircle className="h-4 w-4 flex-none text-[#FB7185]" aria-hidden />
+          <p className="min-w-0 flex-1 break-words text-[13px] text-[#FDA4AF]">
+            Couldn&apos;t load submission gaps. <span className="text-ds-t2">{(error as Error).message}</span>
           </p>
           <button
             type="button"
             onClick={() => mutate()}
-            className="inline-flex items-center gap-1.5 rounded-full border border-ink/10 px-3 py-1.5 text-xs font-semibold text-ink hover:bg-ink/5"
+            className={toolbarBtn}
           >
-            <RefreshCw className="h-3.5 w-3.5" aria-hidden /> Retry
+            <RefreshCw className="h-3.5 w-3.5 text-ds-gold" aria-hidden /> Retry
           </button>
         </div>
       )}
 
       {d && onlyToday && (
-        <div className="v3-card p-4 text-xs text-ink">
+        <div className={`p-4 text-xs ${goldNotice}`}>
           Only today is in this window, and today is still in progress — nothing can be missed yet. The Today column shows
           who has posted so far. Pick a longer window to see missed days.
         </div>
       )}
 
       {d && d.totals.truncated && (
-        <p className="text-xs text-attention">
+        <p className={`px-3 py-2 text-xs ${roseNotice}`}>
           Showing the first {nf.format(d.rows.length)} of {nf.format(d.totals.assignments)} assignments — narrow by team or
           platform to see the rest.
         </p>
       )}
 
       {d && total === 0 && (
-        <div className="v3-card p-5 text-sm text-ink-4">
+        <div className={`${CARD} p-5 text-[13px] text-ds-t3`}>
           No current channel assignments match {teamId || platform ? "these filters" : "— assign channels to people on the Accounts page"}.
         </div>
       )}
 
       {d && total > 0 && list.length === 0 && (
-        <div className="v3-card p-5 flex flex-wrap items-center gap-3 text-sm text-ink-4">
+        <div className={`${CARD} flex flex-wrap items-center gap-3 p-5 text-[13px] text-ds-t3`}>
           <span className="min-w-0 flex-1">No rows match the person, channel, search or minimum-missed filters.</span>
           <button
             type="button"
             onClick={() => { setSearch(""); setMinMissed("0"); setPersonId(""); setAccountId(""); resetList(); }}
-            className="rounded-full border border-ink/10 px-3 py-1.5 text-xs font-semibold text-ink hover:bg-ink/5"
+            className={toolbarBtn}
           >
             Clear
           </button>
@@ -734,8 +789,10 @@ export function SubmissionGapsPanel({
       )}
 
       {d && report && list.length > 0 && (
-        <div className="v3-card p-3 sm:p-4">
-          <div className={`hidden xl:grid ${GRID} px-3 pb-2 text-[10px] font-semibold uppercase tracking-wide text-ink-4`}>
+        <div className={`${CARD} overflow-hidden`}>
+          <div
+            className={`hidden xl:grid ${GRID} min-h-[46px] border-b border-ds-line2 bg-ds-inset px-6 text-[11px] font-semibold uppercase tracking-[.08em] text-ds-t3`}
+          >
             <span>Person</span>
             <span>{view === "channels" ? "Channel" : "Channels"}</span>
             <span className="text-right">Missed</span>
@@ -745,43 +802,46 @@ export function SubmissionGapsPanel({
             <span>Today</span>
             <span className="sr-only">Details</span>
           </div>
-          <ul className="space-y-2">
+          <ul className="divide-y divide-[#132430]">
             {view === "channels"
               ? pairs.slice(0, limit).map((r) => {
                   const key = `${r.employee.id}:${r.account.id}`;
                   const open = expanded === key;
                   return (
-                    <li key={key} className="rounded-xl border border-ink/10 px-3 py-3">
+                    <li key={key} className={`px-4 py-3.5 transition-colors sm:px-6 ${open ? "bg-[#0A1620]" : "hover:bg-[#0A1620]"}`}>
                       <div className={GRID}>
-                        <div className="col-span-2 min-w-0 sm:col-span-3 xl:col-span-1">
-                          <Link href={`/reports/${r.employee.id}`} className="block truncate text-sm font-medium text-ink hover:text-indigo">
-                            {r.employee.name}
-                          </Link>
-                          <p className="truncate text-xs text-ink-4">{r.employee.team?.name ?? "No team"}</p>
+                        <div className="col-span-2 flex min-w-0 items-center gap-3 sm:col-span-3 xl:col-span-1">
+                          <Avatar name={r.employee.name} seed={r.employee.id} />
+                          <div className="min-w-0">
+                            <Link href={`/reports/${r.employee.id}`} className="block truncate text-[14px] font-semibold text-ds-text hover:text-ds-gold">
+                              {r.employee.name}
+                            </Link>
+                            <p className="truncate text-[11.5px] text-ds-t3">{r.employee.team?.name ?? "No team"}</p>
+                          </div>
                         </div>
                         <div className="col-span-2 min-w-0 sm:col-span-3 xl:col-span-1">
-                          <Link href={`/accounts/${r.account.id}`} className="block truncate text-sm text-ink hover:text-indigo">
+                          <Link href={`/accounts/${r.account.id}`} className="block truncate text-[13px] font-medium text-ds-t5 hover:text-[#6EB2FF]">
                             {r.account.displayName}
                           </Link>
-                          <p className="truncate text-xs text-ink-4">
+                          <p className="truncate text-[11.5px] text-ds-t3">
                             {r.account.platformName} · @{r.account.handle.replace(/^@/, "")} · since {fmtDay(r.assignedSince, year)}
                           </p>
                         </div>
                         <div className="min-w-0 xl:text-right">
                           <MetricLabel>Missed</MetricLabel>
                           {r.countedDays === 0 ? (
-                            <span className="text-sm text-ink-4" title="No countable days yet in this window">—</span>
+                            <span className="text-[13px] text-ds-t3" title="No countable days yet in this window">—</span>
                           ) : (
-                            <span className={`font-num text-lg font-semibold leading-none ${r.missedDays > 0 ? "text-attention" : "text-sage"}`}>
+                            <span className={`font-num text-lg font-bold leading-none tabular-nums ${r.missedDays > 0 ? "text-[#FB7185]" : "text-[#00D7A0]"}`}>
                               {nf.format(r.missedDays)}
                             </span>
                           )}
                         </div>
                         <div className="min-w-0">
                           <MetricLabel>Active</MetricLabel>
-                          <span className="block text-sm text-ink">
+                          <span className="block text-[13px] tabular-nums text-ds-t5">
                             {r.countedDays === 0 ? "—" : `${nf.format(r.activeDays)}/${nf.format(r.countedDays)}`}
-                            <span className="block text-xs text-ink-4">{pct(r.activeRate)} · {plural(r.linkCount, "link")}</span>
+                            <span className="block text-[11.5px] text-ds-t3">{pct(r.activeRate)} · {plural(r.linkCount, "link")}</span>
                           </span>
                         </div>
                         <div className="min-w-0">
@@ -809,29 +869,32 @@ export function SubmissionGapsPanel({
                   const key = `p:${r.employee.id}`;
                   const open = expanded === key;
                   return (
-                    <li key={key} className="rounded-xl border border-ink/10 px-3 py-3">
+                    <li key={key} className={`px-4 py-3.5 transition-colors sm:px-6 ${open ? "bg-[#0A1620]" : "hover:bg-[#0A1620]"}`}>
                       <div className={GRID}>
-                        <div className="col-span-2 min-w-0 sm:col-span-3 xl:col-span-1">
-                          <Link href={`/reports/${r.employee.id}`} className="block truncate text-sm font-medium text-ink hover:text-indigo">
-                            {r.employee.name}
-                          </Link>
-                          <p className="truncate text-xs text-ink-4">{r.employee.team?.name ?? "No team"}</p>
+                        <div className="col-span-2 flex min-w-0 items-center gap-3 sm:col-span-3 xl:col-span-1">
+                          <Avatar name={r.employee.name} seed={r.employee.id} />
+                          <div className="min-w-0">
+                            <Link href={`/reports/${r.employee.id}`} className="block truncate text-[14px] font-semibold text-ds-text hover:text-ds-gold">
+                              {r.employee.name}
+                            </Link>
+                            <p className="truncate text-[11.5px] text-ds-t3">{r.employee.team?.name ?? "No team"}</p>
+                          </div>
                         </div>
                         <div className="col-span-2 min-w-0 sm:col-span-3 xl:col-span-1">
-                          <p className="truncate text-sm text-ink">
+                          <p className="truncate text-[13px] font-medium text-ds-t5">
                             {filters.accountId ? channelLabel || plural(r.accountCount, "channel") : plural(r.accountCount, "channel")}
                           </p>
-                          <p className="truncate text-xs text-ink-4">
+                          <p className={`truncate text-[11.5px] ${r.missedChannelDays > 0 ? "text-[#FDA4AF]" : "text-ds-t3"}`}>
                             {r.missedChannelDays > 0 ? `${plural(r.missedChannelDays, "missed channel-day")}` : "no missed channel-days"}
                           </p>
                         </div>
                         <div className="min-w-0 xl:text-right">
                           <MetricLabel>No-link days</MetricLabel>
                           {r.countedDays === 0 ? (
-                            <span className="text-sm text-ink-4" title="No countable days yet in this window">—</span>
+                            <span className="text-[13px] text-ds-t3" title="No countable days yet in this window">—</span>
                           ) : (
                             <span
-                              className={`font-num text-lg font-semibold leading-none ${r.missedDays > 0 ? "text-attention" : "text-sage"}`}
+                              className={`font-num text-lg font-bold leading-none tabular-nums ${r.missedDays > 0 ? "text-[#FB7185]" : "text-[#00D7A0]"}`}
                               title={filters.accountId ? "Days with no link on the selected channel" : "Days with no link on ANY assigned channel"}
                             >
                               {nf.format(r.missedDays)}
@@ -840,9 +903,9 @@ export function SubmissionGapsPanel({
                         </div>
                         <div className="min-w-0">
                           <MetricLabel>Active</MetricLabel>
-                          <span className="block text-sm text-ink">
+                          <span className="block text-[13px] tabular-nums text-ds-t5">
                             {r.countedDays === 0 ? "—" : `${nf.format(r.activeDays)}/${nf.format(r.countedDays)}`}
-                            <span className="block text-xs text-ink-4">
+                            <span className="block text-[11.5px] text-ds-t3">
                               {pct(r.activeRate)}
                               {r.partialDays > 0 ? ` · ${nf.format(r.partialDays)} partial` : ""}
                             </span>
@@ -883,11 +946,11 @@ export function SubmissionGapsPanel({
                 })}
           </ul>
           {list.length > limit && (
-            <div className="pt-3 text-center">
+            <div className="border-t border-[#132430] px-4 py-4 text-center">
               <button
                 type="button"
                 onClick={() => setLimit((l) => l + PAGE)}
-                className="rounded-full border border-ink/10 px-4 py-2 text-xs font-semibold text-ink hover:bg-ink/5"
+                className={`${toolbarBtn} tabular-nums`}
               >
                 Show {nf.format(Math.min(PAGE, list.length - limit))} more of {nf.format(list.length - limit)}
               </button>

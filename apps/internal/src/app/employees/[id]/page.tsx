@@ -15,6 +15,7 @@ import { PlatformIcon } from "@/lib/platform-icon";
 import { useAuth } from "@/lib/auth";
 import { useRouter } from "next/navigation";
 import { formatStatus } from "@dashmani/shared";
+import { BoxesLoader } from "@/components/boxes-loader";
 
 const inputClass = "w-full border border-[#E8E0D0] bg-white rounded-lg px-4 py-2.5 text-sm text-[#1A1A1A] placeholder:text-[#B0B0B0] focus:outline-none focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547] transition-colors";
 
@@ -71,7 +72,7 @@ export default function EmployeeDetailPage() {
     if (profileData?.data?.jobDescription) setJdForm(profileData.data.jobDescription);
   }, [profileData]);
 
-  if (isLoading) return <div className="flex items-center justify-center h-64"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#F5D547]" /></div>;
+  if (isLoading) return <div className="flex items-center justify-center h-64"><BoxesLoader /></div>;
 
   const employee = (data as any)?.data;
   if (!employee) return <div className="text-[#7A7A7A] text-center py-8">Employee not found</div>;

@@ -6,6 +6,7 @@ import {
   Share2, Calendar, BarChart3, Globe, Briefcase,
 } from "lucide-react";
 import { useEmployeePerformance } from "@/lib/hooks/use-reports";
+import { BoxesLoader } from "@/components/boxes-loader";
 
 const PLATFORM_COLORS: Record<string, string> = {
   instagram: "bg-pink-100 text-pink-700",
@@ -48,7 +49,7 @@ export default function EmployeePerformancePage() {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#F5D547]" />
+        <BoxesLoader />
       </div>
     );
   }

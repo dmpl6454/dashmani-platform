@@ -38,6 +38,11 @@ app.use(cors({
     process.env.CLIENT_APP_URL || "http://localhost:3001",
     process.env.HR_APP_URL || "http://localhost:3002",
     process.env.JOBS_APP_URL || "http://localhost:3003",
+    // Public marketing site (apps/web, served as static files by nginx) — posts the
+    // CH 06 contact form to /v1/public/enquiries.
+    ...(process.env.WEBSITE_ORIGINS || "https://digitalsukoon.com,https://www.digitalsukoon.com,http://localhost:3004")
+      .split(",")
+      .map((o) => o.trim()),
     ...extraOrigins,
   ],
   credentials: true,

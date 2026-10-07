@@ -354,6 +354,7 @@ Turborepo + npm workspaces:
 | `apps/client` | 3001 | Client-facing portal (Next.js) |
 | `apps/hr` | 3002 | HR management portal (Next.js) |
 | `apps/jobs` | 3003 | Public job listings portal (Next.js) |
+| `apps/web` | 3004 (dev) | Public marketing site digitalsukoon.com — Next.js static export served by nginx from `apps/web/out`, no pm2 process |
 
 | Package | Purpose |
 |---------|---------|

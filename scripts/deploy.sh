@@ -34,7 +34,7 @@ echo "==> Writing production .env.local files for frontends"
 # it tries to connect to the user's own machine, not the server. Always
 # overwrite on every deploy so the prod build is self-healing even after a
 # fresh server provision or accidental local override.
-for app in client internal hr jobs; do
+for app in client internal hr jobs web; do
   echo "NEXT_PUBLIC_API_URL=https://api.digitalsukoon.com/v1" > "$APP_DIR/apps/$app/.env.local"
 done
 
@@ -49,12 +49,17 @@ npm run db:generate
 # an interrupted/OOM-killed build is on disk. Nuking it up front is the only
 # reliable cure. The cost is one full (~uncached) build, ~60s extra.
 echo "==> Clearing stale Next.js build caches"
-rm -rf apps/client/.next apps/internal/.next apps/hr/.next apps/jobs/.next
+rm -rf apps/client/.next apps/internal/.next apps/hr/.next apps/jobs/.next apps/web/.next
 
 echo "==> Building apps (sequential to manage memory)"
 export NODE_OPTIONS="--max-old-space-size=900"
 npx turbo build --concurrency=1
 unset NODE_OPTIONS
+
+# apps/web (digitalsukoon.com) is a static export: the build above rewrote apps/web/out,
+# which nginx serves directly — it has no pm2 process and needs no restart.
+# The export is world-readable so nginx (www-data) can serve it.
+chmod -R o+rX apps/web/out 2>/dev/null || true
 
 echo "==> Restarting processes"
 # Restart the platform's own processes ONE NAME PER INVOCATION — never `pm2 restart all`,

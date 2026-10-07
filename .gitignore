@@ -17,3 +17,6 @@ nul
 # Session verification artifacts (screenshots dropped at repo root + playwright traces)
 /.playwright-mcp/
 /*.png
+
+# Static export of the marketing site (apps/web) — built on the server by turbo
+apps/web/out/

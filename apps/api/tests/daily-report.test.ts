@@ -5,7 +5,7 @@ import { createTestUser, createTestRole, generateToken } from "./helpers";
 import { prisma } from "@dashmani/db";
 import jwt from "jsonwebtoken";
 import { __setShareResolverForTesting, __setSnapchatResolverForTesting } from "../src/services/daily-report.service";
-import { submitDailyReportSchema } from "@dashmani/shared";
+import { submitDailyReportSchema, todayIST } from "@dashmani/shared";
 import "./setup";
 
 // Generate an HR token (type: "hr")
@@ -719,7 +719,9 @@ describe("Daily Report API", () => {
     });
 
     it("returns today's report after submission", async () => {
-      const today = new Date().toISOString().split("T")[0];
+      // The API's "today" is the IST calendar day (todayIST()). A UTC date here made this
+      // test fail every night between 00:00 and 05:30 IST, when the two days differ.
+      const today = todayIST();
 
       await request(app)
         .post("/v1/hr/reports")

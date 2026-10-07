@@ -8,7 +8,9 @@ import {
   CONTACT_PHONE,
   LINEUP,
   LOGOS,
+  MONTHLY_VIEWS,
   OFFICES,
+  PLATFORM_REACH,
   PROPERTY_NAMES,
   SERVICES,
   STEPS,
@@ -55,6 +57,23 @@ function tilt(e: ReactMouseEvent<HTMLElement>) {
 }
 function reducedMotion() {
   return typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
+function PlatformReach() {
+  return (
+    <ul className="platforms" aria-label="Audience by platform">
+      {PLATFORM_REACH.map((p) => (
+        <li key={p.platform}>
+          <strong>{p.value}</strong>
+          <span>{p.platform}</span>
+        </li>
+      ))}
+      <li className="platforms-views">
+        <strong>{MONTHLY_VIEWS.value}</strong>
+        <span>{MONTHLY_VIEWS.label}</span>
+      </li>
+    </ul>
+  );
 }
 
 export default function ChannelSurf() {
@@ -297,6 +316,7 @@ export default function ChannelSurf() {
                     own.
                   </p>
                 </div>
+                <PlatformReach />
                 <div className="tiles" aria-hidden="true">
                   {Array.from({ length: TILE_MAX }, (_, i) => (
                     <div key={i} className={`tile${lit.has(i) ? " on" : ""}${i % 17 === 3 ? " hot" : ""}`}>
@@ -344,6 +364,7 @@ export default function ChannelSurf() {
               <p className="reach-count" aria-label="400 million plus audience">
                 {reach}M+
               </p>
+              <PlatformReach />
               <div className="stats">
                 <div>
                   <p className="stat-v">100+</p>

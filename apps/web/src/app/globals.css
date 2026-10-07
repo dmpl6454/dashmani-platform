@@ -184,7 +184,7 @@ input[type="date"].input { color-scheme: dark; }
 .stack-14 { display: flex; flex-direction: column; gap: 14px; }
 
 /* CH01 Network */
-.net-top { min-height: 100%; display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 24px; padding: clamp(20px, 3vw, 40px); }
+.net-top { min-height: 100%; display: grid; grid-template-rows: auto auto minmax(0, 1fr); gap: 24px; padding: clamp(20px, 3vw, 40px); }
 .net-intro { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 24px; }
 .h1 { font-weight: 800; letter-spacing: -0.05em; font-size: clamp(48px, 7vw, 112px); line-height: 0.95; }
 .net-intro p { max-width: 38ch; font-size: 16px; line-height: 1.55; color: var(--text-2); }
@@ -214,6 +214,19 @@ input[type="date"].input { color-scheme: dark; }
 .prop .n { font-size: 12px; color: var(--light); font-variant-numeric: tabular-nums; }
 .prop .name { font-weight: 800; letter-spacing: -0.03em; font-size: clamp(22px, 2.2vw, 30px); }
 .prop .meta { font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-2); text-align: right; }
+
+/* Audience by platform (CH01 + CH02) */
+.platforms {
+  list-style: none; margin: 0; padding: 0;
+  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 2px; background: var(--divider);
+  border-top: 2px solid var(--divider); border-bottom: 2px solid var(--divider);
+}
+.platforms li { background: #000; padding: 14px 16px; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.platforms strong { font-weight: 800; font-size: clamp(28px, 3.4vw, 52px); letter-spacing: -0.04em; line-height: 1; color: #fff; }
+.platforms span { font-size: 12px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--light); }
+@media (max-width: 699px) {
+  .platforms { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
 
 /* CH02 Reach */
 .reach { gap: 36px; }

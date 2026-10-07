@@ -101,3 +101,11 @@ export const OFFICES = [
 
 export const CONTACT_EMAIL = "hello@digitalsukoon.com";
 export const CONTACT_PHONE = { tel: "+918709788368", display: "+91 87097 88368" };
+
+// Audience by platform (owner-supplied, 2026-10-07). Sums to the 400M+ headline.
+export const PLATFORM_REACH = [
+  { platform: "Instagram", value: "100M+" },
+  { platform: "Facebook", value: "266M+" },
+  { platform: "YouTube", value: "27M+" },
+  { platform: "Snapchat", value: "7M+" },
+];

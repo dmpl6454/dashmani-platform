@@ -6,9 +6,10 @@ import useSWR from "swr";
 import {
   Plus, Trash2, AlertTriangle, FileText, Link2, MessageSquare,
   BarChart3, Send, Loader2, ChevronDown, Hash, Eye, Heart, Share2,
-  Clock, Zap, CheckCircle2, XCircle, X,
+  Clock, Zap, CheckCircle2, XCircle, X, Play,
 } from "lucide-react";
-import { canonicalKey } from "@dashmani/shared";
+import { canonicalKey, instagramEmbedUrl } from "@dashmani/shared";
+import { InstagramEmbed } from "@dashmani/ui";
 import { apiFetch, ApiError } from "@/lib/api";
 import { useAssignedAccounts } from "@/lib/hooks/use-accounts";
 import { useTodayReport, useMyLinkInsights } from "@/lib/hooks/use-reports";
@@ -90,6 +91,38 @@ function accountOptionLabel(acc: any): string {
   const name = clean.length > 24 ? clean.slice(0, 23).trimEnd() + "…" : clean;
   const platform = (acc?.platform || acc?.platformSlug || "").toString();
   return platform ? `${name} (${platform})` : name;
+}
+
+// ─── Instagram preview ────────────────────────────────────────────────────────
+
+/** The embed URL for a typed / pasted Instagram link, tolerating a missing scheme. */
+function igEmbedFor(raw: string): string | null {
+  const v = raw.trim();
+  if (!v) return null;
+  return instagramEmbedUrl(/^https?:\/\//i.test(v) ? v : `https://${v}`);
+}
+
+/**
+ * Click-to-play preview of an Instagram post / reel, so the employee can confirm the link
+ * is the right one before submitting. The player only loads on click — a form with 20
+ * pasted reels must not pull 20 Instagram players. Key it by `src` so a changed URL
+ * closes the old player.
+ */
+function InstagramPreview({ src }: { src: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="inline-flex items-center gap-1.5 text-xs font-medium text-pink-600 hover:text-pink-500"
+      >
+        {open ? <X className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
+        {open ? "Hide preview" : "Preview on Instagram"}
+      </button>
+      {open && <InstagramEmbed src={src} className="mt-2 border border-[#E8E0D0]" />}
+    </div>
+  );
 }
 
 // ─── Metrics row (shared) ─────────────────────────────────────────────────────
@@ -1250,6 +1283,11 @@ export default function ReportPage() {
                   )}
                 </div>
               </div>
+
+              {(() => {
+                const igSrc = igEmbedFor(link.url);
+                return igSrc ? <InstagramPreview key={igSrc} src={igSrc} /> : null;
+              })()}
 
               <MetricsRow link={link} onChange={(f, v) => updateLink(i, f, v)} />
             </div>

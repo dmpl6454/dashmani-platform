@@ -18,6 +18,7 @@ import { useGrowthOverview, httpUrlOrNull, type TopMover } from "@/lib/hooks/use
 import { useLinksAnalytics, useTopLinks, usePlatformLeaderboards, useInsightsSummary } from "@/lib/hooks/use-reports";
 import { usePageTitle } from "@/lib/hooks/use-page-title";
 import { PostingWatchCard } from "./_posting-watch";
+import { InstagramInline } from "@/components/instagram-inline";
 
 /* ── Palette (design tokens) ── */
 const C = {
@@ -923,10 +924,16 @@ export default function DashboardPage() {
                     </span>
                   </>
                 );
-                return safe ? (
-                  <a key={link.linkId ?? link.url} href={safe} target="_blank" rel="noopener noreferrer" className="flex gap-[9px] items-center px-[3px] py-0.5 rounded-[4px] hover:bg-ds-hover">{inner}</a>
+                const row = safe ? (
+                  <a href={safe} target="_blank" rel="noopener noreferrer" className="flex gap-[9px] items-center px-[3px] py-0.5 rounded-[4px] hover:bg-ds-hover">{inner}</a>
                 ) : (
-                  <div key={link.linkId ?? link.url} className="flex gap-[9px] items-center px-[3px] py-0.5">{inner}</div>
+                  <div className="flex gap-[9px] items-center px-[3px] py-0.5">{inner}</div>
+                );
+                // Instagram rows get a play button: the reel plays under the row.
+                return activeLinkPlatform.key === "instagram" ? (
+                  <InstagramInline key={link.linkId ?? link.url} url={safe} rowClassName="flex items-center gap-1.5 min-w-0">{row}</InstagramInline>
+                ) : (
+                  <div key={link.linkId ?? link.url}>{row}</div>
                 );
               })}
             </div>

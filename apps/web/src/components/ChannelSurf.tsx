@@ -5,6 +5,7 @@ import type { MouseEvent as ReactMouseEvent, TouchEvent as ReactTouchEvent } fro
 import {
   CHANNELS,
   CONTACT_EMAIL,
+  CASE_STUDIES,
   CONTACT_PHONE,
   LINEUP,
   LOGOS,
@@ -15,8 +16,8 @@ import {
   SERVICES,
   STEPS,
   TEAM,
-  WORK,
   initials,
+  instagramEmbedUrl,
 } from "@/lib/content";
 import ContactForm from "./ContactForm";
 
@@ -487,29 +488,65 @@ export default function ChannelSurf() {
           {ch === 3 && (
             <section key="work" ref={setScroll} className="channel pad work" aria-label="CH 04 Work">
               <div className="stack-12">
-                <p className="kicker">Replays</p>
+                <p className="kicker">Case studies</p>
                 <h2 className="h2">
                   Trusted to create
                   <br />
                   <span className="accent">cultural momentum.</span>
                 </h2>
               </div>
-              <div className="cards">
-                {WORK.map((w) => (
-                  <article key={w.name} className="card" onMouseMove={tilt} onMouseLeave={unmagnet}>
-                    <div className="card-media">
-                      <div className="row">
-                        <span className="rec">● Rec</span>
-                        <span style={{ color: "var(--text-2)" }}>{w.tag}</span>
+              <div className="cards cases">
+                {CASE_STUDIES.map((c) => {
+                  const embed = c.reelUrl ? instagramEmbedUrl(c.reelUrl) : null;
+                  return (
+                    <article
+                      key={c.brand}
+                      className={`card${embed ? " has-reel" : ""}`}
+                      onMouseMove={embed ? undefined : tilt}
+                      onMouseLeave={embed ? undefined : unmagnet}
+                    >
+                      {embed ? (
+                        <div className="card-reel">
+                          <iframe
+                            src={embed}
+                            title={`${c.brand} — top campaign reel on Instagram`}
+                            loading="lazy"
+                            scrolling="no"
+                            allow="autoplay; clipboard-write; encrypted-media; picture-in-picture; web-share"
+                            allowFullScreen
+                          />
+                        </div>
+                      ) : (
+                        <div className="card-media">
+                          <div className="row">
+                            <span className="rec">● Rec</span>
+                            <span style={{ color: "var(--text-2)" }}>{c.tag}</span>
+                          </div>
+                          <span style={{ color: "var(--muted)" }}>Campaign media</span>
+                        </div>
+                      )}
+                      <div className="card-body">
+                        <p className="name">{c.brand}</p>
+                        <p className="kind">{c.campaign}</p>
+                        {c.results && c.results.length > 0 && (
+                          <dl className="case-results">
+                            {c.results.map((r) => (
+                              <div key={r.label}>
+                                <dt>{r.label}</dt>
+                                <dd>{r.value}</dd>
+                              </div>
+                            ))}
+                          </dl>
+                        )}
+                        {embed && (
+                          <a className="case-link" href={c.reelUrl} target="_blank" rel="noopener noreferrer">
+                            Top reel · Watch on Instagram <span aria-hidden="true">↗</span>
+                          </a>
+                        )}
                       </div>
-                      <span style={{ color: "var(--muted)" }}>Campaign media</span>
-                    </div>
-                    <div className="card-body">
-                      <p className="name">{w.name}</p>
-                      <p className="kind">{w.kind}</p>
-                    </div>
-                  </article>
-                ))}
+                    </article>
+                  );
+                })}
               </div>
               <div className="stack-14">
                 <p className="kicker" style={{ color: "var(--text-2)" }}>

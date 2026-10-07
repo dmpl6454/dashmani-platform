@@ -291,6 +291,18 @@ input[type="date"].input { color-scheme: dark; }
 .card-body { padding: 16px; border-top: 2px solid var(--divider); display: flex; flex-direction: column; gap: 4px; }
 .card-body .name { font-weight: 800; font-size: 24px; letter-spacing: -0.03em; }
 .card-body .kind { font-size: 13px; color: var(--text-2); }
+.cards.cases { grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); align-items: start; }
+.card.has-reel { cursor: default; }
+/* Instagram's embed is a fixed-layout page (header, 4:5–9:16 media, footer); 600px shows a
+   vertical reel without clipping at card widths of 300–400px. */
+.card-reel { background: #fff; height: 600px; overflow: hidden; }
+.card-reel iframe { display: block; width: 100%; height: 100%; border: 0; }
+.case-results { margin: 10px 0 0; display: flex; flex-wrap: wrap; gap: 8px 20px; }
+.case-results div { display: flex; flex-direction: column; gap: 2px; }
+.case-results dt { font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-2); }
+.case-results dd { margin: 0; font-weight: 800; font-size: 22px; letter-spacing: -0.03em; }
+.case-link { margin-top: 10px; font-size: 13px; font-weight: 700; color: var(--light); }
+.case-link:hover { color: #fff; }
 .logos { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(50%, 180px), 1fr)); gap: 2px; background: var(--divider); }
 .logos > div {
   background: #000; height: 96px; display: grid; place-items: center; text-align: center; padding: 0 12px;

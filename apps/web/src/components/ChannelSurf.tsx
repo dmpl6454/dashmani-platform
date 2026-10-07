@@ -8,6 +8,7 @@ import {
   CONTACT_PHONE,
   LINEUP,
   LOGOS,
+  MONTHLY_VIEWS,
   OFFICES,
   PLATFORM_REACH,
   PROPERTY_NAMES,
@@ -67,6 +68,10 @@ function PlatformReach() {
           <span>{p.platform}</span>
         </li>
       ))}
+      <li className="platforms-views">
+        <strong>{MONTHLY_VIEWS.value}</strong>
+        <span>{MONTHLY_VIEWS.label}</span>
+      </li>
     </ul>
   );
 }

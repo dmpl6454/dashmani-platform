@@ -109,3 +109,6 @@ export const PLATFORM_REACH = [
   { platform: "YouTube", value: "27M+" },
   { platform: "Snapchat", value: "7M+" },
 ];
+
+// Network-wide monthly views (owner-supplied, 2026-10-07), shown beside the platform figures.
+export const MONTHLY_VIEWS = { label: "Monthly views", value: "12–15B" };

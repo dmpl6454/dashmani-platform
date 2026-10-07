@@ -218,14 +218,17 @@ input[type="date"].input { color-scheme: dark; }
 /* Audience by platform (CH01 + CH02) */
 .platforms {
   list-style: none; margin: 0; padding: 0;
-  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 2px; background: var(--divider);
+  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)) minmax(0, 1.3fr); gap: 2px; background: var(--divider);
   border-top: 2px solid var(--divider); border-bottom: 2px solid var(--divider);
 }
 .platforms li { background: #000; padding: 14px 16px; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .platforms strong { font-weight: 800; font-size: clamp(28px, 3.4vw, 52px); letter-spacing: -0.04em; line-height: 1; color: #fff; }
+.platforms .platforms-views { background: linear-gradient(140deg, var(--accent-deep), var(--accent)); }
+.platforms .platforms-views span { color: #fff; }
 .platforms span { font-size: 12px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--light); }
 @media (max-width: 699px) {
   .platforms { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .platforms .platforms-views { grid-column: 1 / -1; }
 }
 
 /* CH02 Reach */

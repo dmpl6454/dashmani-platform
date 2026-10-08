@@ -26,6 +26,8 @@ import postingWatchRoutes from "./posting-watch.routes";
 import channelRoutes from "./channel.routes";
 import overviewRoutes from "./overview.routes";
 import pipelineRoutes from "./pipeline.routes";
+import campaignClientRoutes from "./campaign-client.routes";
+import campaignAdminRoutes from "./campaign-admin.routes";
 
 const router = Router();
 
@@ -38,6 +40,8 @@ router.use(attendanceRoutes);
 router.use(taskRoutes);
 router.use(accountRoutes);
 router.use(clientRoutes);
+// Self-serve campaign booking: client portal + the signed /campaign-media links.
+router.use(campaignClientRoutes);
 router.use(projectRoutes);
 router.use(contentRoutes);
 router.use(analyticsRoutes);
@@ -56,6 +60,8 @@ router.use(postingWatchRoutes);
 // parameterised /admin/:x route declared later.
 router.use(channelRoutes);
 router.use(overviewRoutes);
+// Campaign review queue + rate cards (/admin/campaigns*, /admin/campaign-rate-cards).
+router.use(campaignAdminRoutes);
 router.use(adminReportsRoutes);
 router.use(notificationRoutes);
 router.use(adminFeaturesRoutes);

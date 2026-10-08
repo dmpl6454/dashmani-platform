@@ -5,6 +5,7 @@ import { razorpayConfig } from "./config";
 import * as rzp from "./razorpay";
 import { assertCreativeReady, transitionBooking, logBookingEvent, type Actor } from "./booking.service";
 import { notifyStaffPaid, sendStatusEmail } from "./delivery.service";
+import { priceFor } from "./rate-card.service";
 
 // Checkout, the Razorpay webhook, and refunds.
 //
@@ -26,7 +27,7 @@ export async function checkout(clientId: string, bookingId: string) {
   if (!razorpayConfig.configured()) throw new AppError(503, "PAYMENTS_UNAVAILABLE", "Online payment isn't available right now. Please contact us.");
   const b = await prisma.campaignBooking.findFirst({
     where: { id: bookingId, clientId },
-    select: { id: true, status: true, name: true, launchFrom: true, items: { select: { id: true, rateCardId: true, pricePaise: true, platform: true, format: true, accountName: true } } },
+    select: { id: true, status: true, name: true, launchFrom: true, format: true, campaignType: true, audioIntegration: true, audioTrack: true, items: { select: { id: true, rateCardId: true, pricePaise: true, platform: true, format: true, accountName: true } } },
   });
   if (!b) throw new AppError(404, "NOT_FOUND", "Campaign not found");
   if (!["draft", "awaiting_payment"].includes(b.status)) throw new AppError(409, "INVALID_STATE", "This campaign has already been paid for.");
@@ -37,11 +38,15 @@ export async function checkout(clientId: string, bookingId: string) {
   // Re-price from the CURRENT rate cards: a price that changed since the client picked it is
   // what they pay now, and an account withdrawn since then blocks checkout.
   const cards = await prisma.campaignRateCard.findMany({ where: { id: { in: b.items.map((i) => i.rateCardId) }, active: true } });
-  const priceOf = new Map(cards.map((c) => [c.id, c.pricePaise]));
-  for (const i of b.items) {
-    if (!priceOf.has(i.rateCardId)) throw new AppError(409, "RATE_CARD_UNAVAILABLE", `${i.accountName} is no longer available. Remove it and try again.`);
-  }
-  const priced = b.items.map((i) => ({ ...i, pricePaise: priceOf.get(i.rateCardId)! }));
+  // The campaign type picks the Brand or Entertainment price; reel audio integration adds the
+  // account's audio add-on (see priceFor).
+  const cardById = new Map(cards.map((c) => [c.id, c]));
+  const priced = b.items.map((i) => {
+    const card = cardById.get(i.rateCardId);
+    const p = card ? priceFor(card, b) : null;
+    if (!p) throw new AppError(409, "RATE_CARD_UNAVAILABLE", `${i.accountName} is no longer available for this campaign. Remove it and try again.`);
+    return { ...i, pricePaise: p.total, basePaise: p.base, audioAddonPaise: p.addon };
+  });
   const total = computeTotal(priced);
   if (total < 100) throw new AppError(400, "AMOUNT_TOO_LOW", "The total is below the minimum payment.");
 
@@ -49,9 +54,23 @@ export async function checkout(clientId: string, bookingId: string) {
   if (order.amount !== total || order.currency !== "INR") throw new AppError(502, "PAYMENT_ERROR", "Payment setup failed. Please try again.");
 
   await prisma.$transaction(async (tx) => {
-    for (const i of priced) await tx.campaignBookingItem.update({ where: { id: i.id }, data: { pricePaise: i.pricePaise } });
+    for (const i of priced) await tx.campaignBookingItem.update({ where: { id: i.id }, data: { pricePaise: i.pricePaise, audioAddonPaise: i.audioAddonPaise } });
     await tx.campaignPayment.create({ data: { bookingId: b.id, razorpayOrderId: order.id, amountPaise: total } });
-    const snapshot = priced.map((i) => ({ itemId: i.id, rateCardId: i.rateCardId, platform: i.platform, format: i.format, accountName: i.accountName, pricePaise: i.pricePaise }));
+    const snapshot = {
+      campaignType: b.campaignType,
+      audioIntegration: b.audioIntegration,
+      audioTrack: b.audioTrack,
+      items: priced.map((i) => ({
+        itemId: i.id,
+        rateCardId: i.rateCardId,
+        platform: i.platform,
+        format: i.format,
+        accountName: i.accountName,
+        basePaise: i.basePaise,
+        audioAddonPaise: i.audioAddonPaise,
+        pricePaise: i.pricePaise,
+      })),
+    };
     if (b.status === "draft") {
       await transitionBooking(b.id, ["draft"], "awaiting_payment", { type: "client", id: clientId }, {
         tx,

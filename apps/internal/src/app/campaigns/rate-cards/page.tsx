@@ -7,8 +7,10 @@ import { apiFetch } from "@/lib/api";
 import { usePageTitle } from "@/lib/hooks/use-page-title";
 import { BTN_GOLD, CARD, INPUT, ErrorBar, PageHead, PlatformDot, compact } from "../_ds";
 
-// Rate card: our price per account per format. Empty = that format isn't offered on that
-// account; only accounts with at least one active price appear in the client catalogue.
+// Rate card: our price per account per format. Each format has a Brand price (required to
+// offer the format at all), an Entertainment price (film / OTT / music campaigns; empty = not
+// offered for those) and, on reels, a song-audio add-on (empty = not offered). Only accounts
+// with at least one active price appear in the client catalogue.
 
 type Target = {
   targetType: "meta_asset" | "social_account";
@@ -20,10 +22,18 @@ type Target = {
   engagementRatePct: number | null;
   category: string | null;
   formats: string[];
-  cards: Array<{ id: string; format: string; pricePaise: number; active: boolean }>;
+  cards: Array<{ id: string; format: string; pricePaise: number; entertainmentPricePaise: number | null; audioAddonPaise: number | null; active: boolean }>;
 };
 
-const ALL_FORMATS = ["reel", "story", "post", "carousel"] as const;
+const ALL_FORMATS = ["reel", "post", "carousel"] as const;
+type Field = "pricePaise" | "entertainmentPricePaise" | "audioAddonPaise";
+const FIELDS: Array<{ key: Field; short: string; label: string }> = [
+  { key: "pricePaise", short: "Brand", label: "brand price" },
+  { key: "entertainmentPricePaise", short: "Ent.", label: "entertainment price" },
+  { key: "audioAddonPaise", short: "Audio", label: "song audio add-on" },
+];
+const fieldsFor = (f: string) => FIELDS.filter((x) => x.key !== "audioAddonPaise" || f === "reel");
+const pk = (f: string, field: Field) => `${f}:${field}`;
 const keyOf = (t: { targetType: string; targetId: string }) => `${t.targetType}:${t.targetId}`;
 
 export default function RateCardsPage() {
@@ -47,15 +57,15 @@ export default function RateCardsPage() {
     );
   }, [data, q, platform, onlyPriced]);
 
-  const priceOf = (t: Target, f: string) => {
-    const e = edits[keyOf(t)]?.prices[f];
+  const priceOf = (t: Target, f: string, field: Field) => {
+    const e = edits[keyOf(t)]?.prices[pk(f, field)];
     if (e !== undefined) return e;
-    const c = t.cards.find((x) => x.format === f);
-    return c ? String(c.pricePaise / 100) : "";
+    const v = t.cards.find((x) => x.format === f)?.[field];
+    return v != null ? String(v / 100) : "";
   };
   const categoryOf = (t: Target) => edits[keyOf(t)]?.category ?? t.category ?? "";
-  const setPrice = (t: Target, f: string, v: string) =>
-    setEdits((e) => ({ ...e, [keyOf(t)]: { ...e[keyOf(t)], prices: { ...(e[keyOf(t)]?.prices ?? {}), [f]: v } } }));
+  const setPrice = (t: Target, f: string, field: Field, v: string) =>
+    setEdits((e) => ({ ...e, [keyOf(t)]: { ...e[keyOf(t)], prices: { ...(e[keyOf(t)]?.prices ?? {}), [pk(f, field)]: v } } }));
   const setCategory = (t: Target, v: string) =>
     setEdits((e) => ({ ...e, [keyOf(t)]: { prices: e[keyOf(t)]?.prices ?? {}, category: v } }));
 
@@ -65,19 +75,35 @@ export default function RateCardsPage() {
     setErr("");
     setOk("");
     const byKey = new Map((data ?? []).map((t) => [keyOf(t), t]));
-    const cards: Array<{ targetType: string; targetId: string; format: string; pricePaise: number | null; category?: string | null }> = [];
+    type Out = { targetType: string; targetId: string; format: string; pricePaise: number | null; entertainmentPricePaise?: number | null; audioAddonPaise?: number | null; category?: string | null };
+    const cards: Out[] = [];
     for (const [k, e] of Object.entries(edits)) {
       const t = byKey.get(k);
       if (!t) continue;
       const category = e.category !== undefined ? e.category.trim() || null : undefined;
-      const formats = Object.keys(e.prices);
+      const formats = [...new Set(Object.keys(e.prices).map((x) => x.split(":")[0]))];
       for (const f of formats) {
-        const raw = e.prices[f].trim();
-        const rupees = raw === "" ? null : Number(raw.replace(/[,₹\s]/g, ""));
-        if (rupees !== null && (!Number.isFinite(rupees) || rupees < 1)) return setErr(`Check the ${f} price for ${t.name}.`);
+        const vals: Partial<Record<Field, number | null>> = {};
+        for (const { key, label } of fieldsFor(f)) {
+          const raw = priceOf(t, f, key).trim();
+          const rupees = raw === "" ? null : Number(raw.replace(/[,₹\s]/g, ""));
+          if (rupees !== null && (!Number.isFinite(rupees) || rupees < 1)) return setErr(`Check the ${f} ${label} for ${t.name}.`);
+          vals[key] = rupees === null ? null : Math.round(rupees * 100);
+        }
         const existed = t.cards.some((c) => c.format === f);
-        if (rupees === null && !existed) continue;
-        cards.push({ targetType: t.targetType, targetId: t.targetId, format: f, pricePaise: rupees === null ? null : Math.round(rupees * 100), ...(category !== undefined ? { category } : {}) });
+        if (vals.pricePaise == null) {
+          if (vals.entertainmentPricePaise != null || vals.audioAddonPaise != null) return setErr(`Set the ${f} brand price for ${t.name} first — it's what offers the format.`);
+          if (!existed) continue;
+        }
+        cards.push({
+          targetType: t.targetType,
+          targetId: t.targetId,
+          format: f,
+          pricePaise: vals.pricePaise ?? null,
+          entertainmentPricePaise: vals.entertainmentPricePaise ?? null,
+          ...(f === "reel" ? { audioAddonPaise: vals.audioAddonPaise ?? null } : {}),
+          ...(category !== undefined ? { category } : {}),
+        });
       }
       if (category !== undefined && formats.length === 0) {
         // Category only: write it onto an existing card (category is per account).
@@ -108,7 +134,7 @@ export default function RateCardsPage() {
       <Link href="/campaigns" className="mt-6 inline-flex items-center gap-1 text-[12.5px] text-ds-t3 hover:text-ds-text"><ChevronLeft className="h-4 w-4" />Campaign bookings</Link>
       <PageHead
         title="Rate card"
-        sub="Price per account and format, in rupees. Leave a box empty to not offer that format. Clients see accounts with at least one price."
+        sub="Rupees per account and format. Brand = brand campaigns (empty = format not offered). Ent. = film / OTT / music campaigns (empty = not offered for those). Audio = song integration add-on on reels. Clients see accounts with at least one price."
       />
 
       <div className="flex flex-wrap gap-2 items-center mb-4">
@@ -133,18 +159,25 @@ export default function RateCardsPage() {
 
       <section className={`${CARD} overflow-hidden`}>
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[920px] text-[13px]">
+          <table className="w-full min-w-[1180px] text-[13px]">
             <thead>
               <tr className="bg-ds-inset text-[10.5px] uppercase tracking-[.1em] text-ds-t3">
                 <th className="text-left font-semibold px-5 h-[46px]">Account</th>
                 <th className="text-right font-semibold px-3">Followers</th>
                 <th className="text-left font-semibold px-3 w-[170px]">Category</th>
-                {ALL_FORMATS.map((f) => <th key={f} className="text-left font-semibold px-2 w-[110px]">{f} ₹</th>)}
+                {ALL_FORMATS.map((f) => (
+                  <th key={f} className="text-left font-semibold px-2">
+                    {f} ₹
+                    <div className="flex gap-1.5 mt-0.5 normal-case tracking-normal text-[10px] text-ds-t4">
+                      {fieldsFor(f).map((x) => <span key={x.key} className="w-[76px]">{x.short}</span>)}
+                    </div>
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
-              {!data && !error && <tr><td colSpan={7} className="py-12 text-center text-ds-t3">Loading…</td></tr>}
-              {data && rows.length === 0 && <tr><td colSpan={7} className="py-12 text-center text-ds-t3">No accounts match.</td></tr>}
+              {!data && !error && <tr><td colSpan={6} className="py-12 text-center text-ds-t3">Loading…</td></tr>}
+              {data && rows.length === 0 && <tr><td colSpan={6} className="py-12 text-center text-ds-t3">No accounts match.</td></tr>}
               {rows.map((t) => (
                 <tr key={keyOf(t)} className={`border-t border-[#132430] ${edits[keyOf(t)] ? "bg-[rgba(233,189,98,.04)]" : ""}`}>
                   <td className="px-5 py-2.5">
@@ -161,14 +194,20 @@ export default function RateCardsPage() {
                   {ALL_FORMATS.map((f) => (
                     <td key={f} className="px-2">
                       {t.formats.includes(f) ? (
-                        <input
-                          className={`${INPUT} h-9 tabular-nums`}
-                          inputMode="decimal"
-                          value={priceOf(t, f)}
-                          placeholder="—"
-                          onChange={(e) => setPrice(t, f, e.target.value)}
-                          aria-label={`${f} price for ${t.name}`}
-                        />
+                        <div className="flex gap-1.5">
+                          {fieldsFor(f).map((x) => (
+                            <input
+                              key={x.key}
+                              className={`${INPUT} h-9 w-[76px] px-2 tabular-nums`}
+                              inputMode="decimal"
+                              value={priceOf(t, f, x.key)}
+                              placeholder="—"
+                              title={x.label}
+                              onChange={(e) => setPrice(t, f, x.key, e.target.value)}
+                              aria-label={`${f} ${x.label} for ${t.name}`}
+                            />
+                          ))}
+                        </div>
                       ) : (
                         <span className="text-ds-t4 text-[12px] px-2">n/a</span>
                       )}

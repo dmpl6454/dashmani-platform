@@ -661,6 +661,13 @@ The client portal has `/campaigns`, `/campaigns/new` and `/campaigns/[id]`. The 
 
 **Schema.** Seven additive tables, `campaign_*` plus `razorpay_webhook_events`. Statuses are VARCHAR and money is integer **paise**. ⚠️ Apply `scripts/campaign-booking-ddl.sql` by hand as the `dashmani` role **before** merging; CI rehearses it. There is no FK into hot tables and no enum change.
 
+**Pricing (owner's sheet, 2026-10-08).**
+- Each card (account × format) has a **Brand** price (`price_paise`, required: it is what offers the format), an **Entertainment** price (`entertainment_price_paise`, null = not offered for film/OTT/music campaigns) and, on Instagram reels, a **song audio add-on** (`audio_addon_paise`, null = "don't do").
+- The client picks the campaign type (step 1) and, for a reel, optionally song audio integration with the track (step 2). `priceFor()` in `rate-card.service.ts` is the ONE place the price is decided: base by type, + add-on when audio is on. An account that doesn't offer the combination is hidden from the list and refused by the API. Items store `audio_addon_paise` (the part of `price_paise` that is the add-on).
+- Changing the type or the audio option before payment re-prices the booked items (`repriceItems`). **After payment** (changes_requested) the format and the audio option are frozen (409 `PAID_TERMS_FROZEN`) and item prices are never re-priced.
+- Clients book **reel, post and carousel** only (`BOOKABLE_FORMATS`); `story` stays in the enum for stored data.
+- `scripts/import-campaign-rate-cards.ts` loads the sheet (`scripts/data/campaign-rate-cards.json`, 67 Instagram + 66 Facebook pages). Instagram matches by URL username only; Facebook by Page id, then username, then a unique exact name (flagged "NAME (check)"). Unmatched pages are listed, never guessed. The sheet's follower counts are ignored (live Meta counts are shown). Dry-run by default; `--apply --confirm-prod` from `packages/db`.
+
 **Money rules (do not regress).**
 - **The price comes only from `campaign_rate_cards`.** Checkout re-prices from the current cards and freezes each item; nothing the client sends is a price.
 - **Only the webhook marks a booking paid.** It is `POST /v1/webhooks/razorpay`, mounted in `app.ts` BEFORE `express.json` (raw body HMAC, `timingSafeEqual`), and is idempotent on `x-razorpay-event-id`. The checkout handler's verify only drives the UI.

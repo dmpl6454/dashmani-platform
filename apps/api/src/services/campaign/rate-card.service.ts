@@ -115,6 +115,33 @@ export async function resolveCatalogueTargets(keys: Array<{ targetType: string; 
   return map;
 }
 
+// ── Pricing (the ONE place a booking price is decided) ───────────────────────────
+
+export interface PricedCard {
+  pricePaise: number;
+  entertainmentPricePaise: number | null;
+  audioAddonPaise: number | null;
+}
+
+/**
+ * The price of one account for a booking: the campaign type picks the base (Brand or
+ * Entertainment column), and a reel with song audio integration adds the account's audio
+ * add-on. null = this account does not offer what the booking asks for.
+ */
+export function priceFor(
+  card: PricedCard,
+  booking: { campaignType: string; audioIntegration: boolean; format: string | null },
+): { base: number; addon: number; total: number } | null {
+  const base = booking.campaignType === "entertainment" ? card.entertainmentPricePaise : card.pricePaise;
+  if (base == null) return null;
+  let addon = 0;
+  if (booking.audioIntegration && booking.format === "reel") {
+    if (card.audioAddonPaise == null) return null;
+    addon = card.audioAddonPaise;
+  }
+  return { base, addon, total: base + addon };
+}
+
 // ── Admin: the rate-card grid ───────────────────────────────────────────────────
 
 export async function listRateCardGrid() {
@@ -131,7 +158,14 @@ export async function listRateCardGrid() {
         ...t,
         category: own.find((c) => c.category)?.category ?? null,
         formats: PLATFORM_FORMATS[t.platform],
-        cards: own.map((c) => ({ id: c.id, format: c.format, pricePaise: c.pricePaise, active: c.active })),
+        cards: own.map((c) => ({
+          id: c.id,
+          format: c.format,
+          pricePaise: c.pricePaise,
+          entertainmentPricePaise: c.entertainmentPricePaise,
+          audioAddonPaise: c.audioAddonPaise,
+          active: c.active,
+        })),
       };
     })
     .sort((a, b) => (b.followers ?? 0) - (a.followers ?? 0) || a.name.localeCompare(b.name));
@@ -162,12 +196,16 @@ export async function upsertRateCards(input: CampaignRateCardUpsertInput, staffI
           platform: t.platform,
           format: c.format,
           pricePaise: c.pricePaise,
+          entertainmentPricePaise: c.entertainmentPricePaise ?? null,
+          audioAddonPaise: c.format === "reel" ? c.audioAddonPaise ?? null : null,
           active: c.active ?? true,
           category: c.category ?? null,
           updatedById: staffId,
         },
         update: {
           pricePaise: c.pricePaise,
+          ...(c.entertainmentPricePaise !== undefined ? { entertainmentPricePaise: c.entertainmentPricePaise } : {}),
+          ...(c.audioAddonPaise !== undefined ? { audioAddonPaise: c.format === "reel" ? c.audioAddonPaise : null } : {}),
           active: c.active ?? true,
           ...(c.category !== undefined ? { category: c.category } : {}),
           updatedById: staffId,
@@ -207,7 +245,14 @@ export interface CatalogueEntry {
   views28d: number | null;
   category: string | null;
   profileUrl: string | null;
-  offers: Array<{ rateCardId: string; format: CampaignFormat; pricePaise: number }>;
+  /** pricePaise = brand price; entertainmentPricePaise / audioAddonPaise null when not offered. */
+  offers: Array<{
+    rateCardId: string;
+    format: CampaignFormat;
+    pricePaise: number;
+    entertainmentPricePaise: number | null;
+    audioAddonPaise: number | null;
+  }>;
 }
 
 /** Bookable accounts with at least one active price. Only the listed fields leave the server. */
@@ -240,7 +285,13 @@ export async function getCatalogue(): Promise<CatalogueEntry[]> {
         profileUrl: t.profileUrl,
         offers: own
           .filter((c) => (PLATFORM_FORMATS[t.platform] as readonly string[]).includes(c.format))
-          .map((c) => ({ rateCardId: c.id, format: c.format as CampaignFormat, pricePaise: c.pricePaise })),
+          .map((c) => ({
+            rateCardId: c.id,
+            format: c.format as CampaignFormat,
+            pricePaise: c.pricePaise,
+            entertainmentPricePaise: c.entertainmentPricePaise,
+            audioAddonPaise: c.audioAddonPaise,
+          })),
       });
     }
     return out.sort((a, b) => (b.followers ?? 0) - (a.followers ?? 0) || a.name.localeCompare(b.name));

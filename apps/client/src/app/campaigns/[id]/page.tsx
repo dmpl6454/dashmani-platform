@@ -5,7 +5,7 @@ import Link from "next/link";
 import { Topstrip } from "@/components/portal-topstrip";
 import { Button, PageError, Skeleton } from "@/components/portal-shared";
 import { Icon } from "@/components/portal-icons";
-import { FORMAT_LABELS, type CampaignFormat } from "@dashmani/shared/src/validators/campaign";
+import { CAMPAIGN_TYPE_LABELS, FORMAT_LABELS, type CampaignFormat } from "@dashmani/shared/src/validators/campaign";
 import { compact, mutateJson, previewUrl, rupees, useCampaign, useResults, PLATFORM_LABEL, type Campaign } from "@/lib/campaign";
 import { AccountsStep, CreativeStep, InfoForm } from "../_steps";
 import { Card, CampaignStatus, ErrorBanner, ItemStatus, PlatformDot, fmtDate, fmtDateTime } from "../_ui";
@@ -191,7 +191,9 @@ function PayStep({ campaign: c, onChanged, onEdit, onCancelled }: { campaign: Ca
         {renderFailed && <ErrorBanner>We couldn't prepare one of your files. Go back to Creative and upload it again.</ErrorBanner>}
         <PreviewStrip campaign={c} />
         <dl className="mt-4 grid gap-2 text-[13px]">
+          <Row k="Campaign type" v={CAMPAIGN_TYPE_LABELS[c.campaignType] ?? c.campaignType} />
           <Row k="Format" v={FORMAT_LABELS[c.format as CampaignFormat] ?? c.format ?? "—"} />
+          {c.audioIntegration && <Row k="Song audio" v={<span className="break-words">{c.audioTrack}</span>} />}
           <Row k="Go live" v={`${fmtDate(c.launchFrom)} – ${fmtDate(c.launchTo)}`} />
           {c.superText && <Row k="Overlay" v={<span className="whitespace-pre-line">{c.superText}</span>} />}
           {c.caption && <Row k="Caption" v={<span className="whitespace-pre-line break-words">{c.caption}</span>} />}
@@ -207,7 +209,10 @@ function PayStep({ campaign: c, onChanged, onEdit, onCancelled }: { campaign: Ca
               <PlatformDot platform={i.platform} />
               <span className="min-w-0 flex-1 truncate"><span className="font-semibold text-ink">{i.accountName}</span>{i.accountHandle && <span className="text-ink-3"> @{i.accountHandle}</span>}</span>
               <span className="text-ink-3 hidden sm:inline">{PLATFORM_LABEL[i.platform]}</span>
-              <span className="font-semibold tabular-nums">{rupees(i.pricePaise)}</span>
+              <span className="text-right">
+                <span className="block font-semibold tabular-nums">{rupees(i.pricePaise)}</span>
+                {i.audioAddonPaise > 0 && <span className="block text-[11px] text-ink-3 tabular-nums">incl. {rupees(i.audioAddonPaise)} audio</span>}
+              </span>
             </li>
           ))}
         </ul>

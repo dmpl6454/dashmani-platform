@@ -14,6 +14,8 @@ type Row = {
   client: string;
   status: string;
   format: string | null;
+  campaignType: string;
+  audioIntegration: boolean;
   totalPaise: number | null;
   launchFrom: string | null;
   launchTo: string | null;
@@ -83,7 +85,7 @@ export default function CampaignBookingsPage() {
           >
             <div className="min-w-0 flex-1">
               <div className="text-[14px] font-semibold text-ds-text truncate">{r.name}</div>
-              <div className="text-[12px] text-ds-t3 truncate">{r.client} · {r.brand} · {r.format ?? "—"} · {fmtDate(r.launchFrom)} – {fmtDate(r.launchTo)}</div>
+              <div className="text-[12px] text-ds-t3 truncate">{r.client} · {r.brand} · {r.campaignType === "entertainment" ? "Entertainment" : "Brand"} · {r.format ?? "—"}{r.audioIntegration ? " + audio" : ""} · {fmtDate(r.launchFrom)} – {fmtDate(r.launchTo)}</div>
             </div>
             <div className="flex items-center gap-4 shrink-0 text-[12.5px] text-ds-t2">
               <span className="tabular-nums">{r.liveCount}/{r.itemCount} posted</span>

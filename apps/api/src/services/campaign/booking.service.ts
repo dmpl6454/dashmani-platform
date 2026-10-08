@@ -12,7 +12,7 @@ import {
 } from "@dashmani/shared";
 import { AppError } from "../../middleware/error-handler";
 import { durationLimitSec } from "./media.service";
-import { resolveCatalogueTargets } from "./rate-card.service";
+import { priceFor, resolveCatalogueTargets } from "./rate-card.service";
 
 // Campaign bookings — the client's side of the lifecycle and the one state-transition helper
 // every other module goes through.
@@ -87,6 +87,7 @@ const itemSelect = {
   accountName: true,
   accountHandle: true,
   pricePaise: true,
+  audioAddonPaise: true,
   status: true,
   permalink: true,
   postedAt: true,
@@ -102,6 +103,9 @@ function shapeBooking(b: any) {
     launchFrom: ymd(b.launchFrom),
     launchTo: ymd(b.launchTo),
     format: b.format,
+    campaignType: b.campaignType,
+    audioIntegration: b.audioIntegration,
+    audioTrack: b.audioTrack,
     caption: b.caption,
     hashtags: b.hashtags,
     userTags: b.userTags,
@@ -133,6 +137,7 @@ export async function listClientBookings(clientId: string) {
       brand: true,
       status: true,
       format: true,
+      campaignType: true,
       totalPaise: true,
       launchFrom: true,
       launchTo: true,
@@ -147,6 +152,7 @@ export async function listClientBookings(clientId: string) {
     brand: r.brand,
     status: r.status,
     format: r.format,
+    campaignType: r.campaignType,
     totalPaise: r.totalPaise,
     launchFrom: ymd(r.launchFrom),
     launchTo: ymd(r.launchTo),
@@ -191,6 +197,7 @@ export async function createBooking(clientId: string, info: CampaignInfoInput) {
         name: info.name,
         brand: info.brand,
         objective: info.objective ?? null,
+        campaignType: info.campaignType ?? "brand",
         launchFrom: dateOf(info.launchFrom),
         launchTo: dateOf(info.launchTo),
       },
@@ -227,10 +234,12 @@ export async function updateInfo(clientId: string, id: string, info: CampaignInf
         name: info.name,
         brand: info.brand,
         objective: info.objective ?? null,
+        campaignType: info.campaignType ?? "brand",
         launchFrom: dateOf(info.launchFrom),
         launchTo: dateOf(info.launchTo),
       },
     });
+    await repriceItems(tx, id);
     await resetCheckoutIfNeeded(tx, id, b.status, clientId);
   });
   return getClientBooking(clientId, id);
@@ -243,6 +252,14 @@ export async function updateInfo(clientId: string, id: string, info: CampaignInf
  */
 export async function updateCreative(clientId: string, id: string, c: CampaignCreativeInput) {
   const b = await requireEditable(clientId, id);
+  if (b.status === "changes_requested") {
+    // Already paid: the format and the audio option decide which accounts were booked and
+    // what they cost, so they are frozen. Only the creative itself may change.
+    const cur = await prisma.campaignBooking.findUnique({ where: { id }, select: { format: true, audioIntegration: true } });
+    if (cur && (cur.format !== c.format || cur.audioIntegration !== (c.format === "reel" && !!c.audioIntegration))) {
+      throw new AppError(409, "PAID_TERMS_FROZEN", "The format and song audio option can't change after payment. Contact us if you need to change them.");
+    }
+  }
 
   const media = await prisma.campaignMedia.findMany({
     where: { id: { in: c.mediaIds }, clientId, purgedAt: null },
@@ -287,10 +304,15 @@ export async function updateCreative(clientId: string, id: string, c: CampaignCr
         collaborators: c.collaborators ?? [],
         superText: c.superText?.trim() ? c.superText.trim() : null,
         superTextStyle: c.superText?.trim() ? c.superTextStyle ?? "bottom" : null,
+        audioIntegration: c.format === "reel" && !!c.audioIntegration,
+        audioTrack: c.format === "reel" && c.audioIntegration && c.audioTrack?.trim() ? c.audioTrack.trim() : null,
       },
     });
     // Format changed → booked items for formats the new one doesn't match are dropped.
     await tx.campaignBookingItem.deleteMany({ where: { bookingId: id, format: { not: c.format } } });
+    // Audio integration toggled → prices change (and accounts without an audio price drop out).
+    // Never after payment: paid item prices stay what was paid.
+    if (b.status !== "changes_requested") await repriceItems(tx, id);
     await resetCheckoutIfNeeded(tx, id, b.status, clientId);
   });
   return getClientBooking(clientId, id);
@@ -302,15 +324,30 @@ export async function updateCreative(clientId: string, id: string, c: CampaignCr
  */
 export async function updateItems(clientId: string, id: string, rateCardIds: string[]) {
   const b = await requireEditable(clientId, id, ["draft", "awaiting_payment"]);
-  const booking = await prisma.campaignBooking.findUnique({ where: { id }, select: { format: true } });
+  const booking = await prisma.campaignBooking.findUnique({
+    where: { id },
+    select: { format: true, campaignType: true, audioIntegration: true },
+  });
   if (!booking?.format) throw new AppError(400, "NO_FORMAT", "Add your creative before choosing accounts.");
 
   const cards = await prisma.campaignRateCard.findMany({ where: { id: { in: rateCardIds }, active: true } });
   if (cards.length !== new Set(rateCardIds).size) {
     throw new AppError(400, "RATE_CARD_UNAVAILABLE", "One of the accounts is no longer available. Refresh the list.");
   }
+  const prices = new Map<string, { addon: number; total: number }>();
   for (const c of cards) {
     if (c.format !== booking.format) throw new AppError(400, "FORMAT_MISMATCH", "Every account must be booked for the campaign's format.");
+    const p = priceFor(c, booking);
+    if (!p) {
+      throw new AppError(
+        400,
+        "RATE_CARD_UNAVAILABLE",
+        booking.audioIntegration
+          ? "One of the accounts doesn't offer song audio integration for this campaign type. Refresh the list."
+          : "One of the accounts isn't offered for this campaign type. Refresh the list.",
+      );
+    }
+    prices.set(c.id, p);
   }
   const targets = await resolveCatalogueTargets(cards.map((c) => ({ targetType: c.targetType, targetId: c.targetId })));
   for (const c of cards) {
@@ -333,13 +370,37 @@ export async function updateItems(clientId: string, id: string, rateCardIds: str
           format: c.format,
           accountName: t.name.slice(0, 200),
           accountHandle: t.username?.slice(0, 100) ?? null,
-          pricePaise: c.pricePaise,
+          pricePaise: prices.get(c.id)!.total,
+          audioAddonPaise: prices.get(c.id)!.addon,
         };
       }),
     });
     await resetCheckoutIfNeeded(tx, id, b.status, clientId);
   });
   return getClientBooking(clientId, id);
+}
+
+/**
+ * Re-price every booked item from the current rate card after the campaign type or the audio
+ * option changed. Items whose account no longer offers what the booking asks for are dropped
+ * (the client sees them disappear from the account list and can pick others).
+ */
+async function repriceItems(tx: Tx, bookingId: string) {
+  const booking = await tx.campaignBooking.findUnique({
+    where: { id: bookingId },
+    select: { format: true, campaignType: true, audioIntegration: true, items: { select: { id: true, rateCardId: true } } },
+  });
+  if (!booking || booking.items.length === 0) return;
+  const cards = await tx.campaignRateCard.findMany({
+    where: { id: { in: booking.items.map((i) => i.rateCardId) }, active: true },
+  });
+  const byId = new Map(cards.map((c) => [c.id, c]));
+  for (const item of booking.items) {
+    const card = byId.get(item.rateCardId);
+    const p = card ? priceFor(card, booking) : null;
+    if (!p) await tx.campaignBookingItem.delete({ where: { id: item.id } });
+    else await tx.campaignBookingItem.update({ where: { id: item.id }, data: { pricePaise: p.total, audioAddonPaise: p.addon } });
+  }
 }
 
 export async function cancelBooking(clientId: string, id: string) {

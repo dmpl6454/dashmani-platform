@@ -3,17 +3,22 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/portal-shared";
 import { Icon } from "@/components/portal-icons";
 import {
+  BOOKABLE_FORMATS,
   CAMPAIGN_LIMITS,
+  CAMPAIGN_TYPE_LABELS,
+  CAMPAIGN_TYPES,
   FORMAT_LABELS,
   PLATFORM_FORMATS,
   countHashtags,
   countMentions,
   type CampaignFormat,
+  type CampaignType,
 } from "@dashmani/shared/src/validators/campaign";
 import { todayIST } from "@dashmani/shared/src/utils/date";
 import {
   compact,
   mutateJson,
+  offerPrice,
   previewUrl,
   rupees,
   uploadChunked,
@@ -29,15 +34,16 @@ const errMsg = (e: unknown) => (e instanceof Error ? e.message : "Something went
 // ── Step 1: details ─────────────────────────────────────────────────────────────
 
 export function InfoForm({ initial, submitLabel, onSubmit, disabled }: {
-  initial?: Partial<Pick<Campaign, "name" | "brand" | "objective" | "launchFrom" | "launchTo">>;
+  initial?: Partial<Pick<Campaign, "name" | "brand" | "objective" | "launchFrom" | "launchTo" | "campaignType">>;
   submitLabel: string;
-  onSubmit: (v: { name: string; brand: string; objective: string | null; launchFrom: string; launchTo: string }) => Promise<void>;
+  onSubmit: (v: { name: string; brand: string; objective: string | null; campaignType: CampaignType; launchFrom: string; launchTo: string }) => Promise<void>;
   disabled?: boolean;
 }) {
   const today = todayIST();
   const [name, setName] = useState(initial?.name ?? "");
   const [brand, setBrand] = useState(initial?.brand ?? "");
   const [objective, setObjective] = useState(initial?.objective ?? "");
+  const [campaignType, setCampaignType] = useState<CampaignType>(initial?.campaignType ?? "brand");
   const [from, setFrom] = useState(initial?.launchFrom ?? today);
   const [to, setTo] = useState(initial?.launchTo ?? today);
   const [busy, setBusy] = useState(false);
@@ -57,7 +63,7 @@ export function InfoForm({ initial, submitLabel, onSubmit, disabled }: {
         setBusy(true);
         setError(null);
         try {
-          await onSubmit({ name: name.trim(), brand: brand.trim(), objective: objective.trim() || null, launchFrom: from, launchTo: to });
+          await onSubmit({ name: name.trim(), brand: brand.trim(), objective: objective.trim() || null, campaignType, launchFrom: from, launchTo: to });
         } catch (err) {
           setError(errMsg(err));
         } finally {
@@ -75,6 +81,21 @@ export function InfoForm({ initial, submitLabel, onSubmit, disabled }: {
               <input id="c-brand" className={inputCls} value={brand} onChange={(e) => setBrand(e.target.value)} maxLength={200} placeholder="Your brand or product" disabled={disabled} />
             </Field>
           </div>
+          <fieldset>
+            <legend className="block text-[11px] uppercase tracking-wider font-bold text-ink-3 mb-1.5">Campaign type</legend>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {CAMPAIGN_TYPES.map((t) => (
+                <label key={t} className={`flex items-start gap-2.5 rounded-xl border-2 px-3 py-2.5 cursor-pointer ${campaignType === t ? "border-ink" : "border-ink/15"}`}>
+                  <input type="radio" name="ctype" value={t} checked={campaignType === t} onChange={() => setCampaignType(t)} disabled={disabled} className="mt-0.5 accent-[#1a1a1a]" />
+                  <span>
+                    <span className="block text-[13.5px] font-semibold text-ink">{CAMPAIGN_TYPE_LABELS[t]}</span>
+                    <span className="block text-[12px] text-ink-3">{t === "brand" ? "A product, app or brand." : "A film, OTT show, song or event."}</span>
+                  </span>
+                </label>
+              ))}
+            </div>
+            <p className="text-[12px] text-ink-3 mt-1.5">Prices on our accounts differ by campaign type.</p>
+          </fieldset>
           <Field label="Objective (optional)" htmlFor="c-obj" hint="What should the posts achieve? Any do's and don'ts for our team.">
             <textarea id="c-obj" className={textareaCls} rows={3} value={objective} onChange={(e) => setObjective(e.target.value)} maxLength={2000} disabled={disabled} />
           </Field>
@@ -175,6 +196,10 @@ export function CreativeStep({ campaign, onSaved, submitLabel }: { campaign: Cam
   const [collabs, setCollabs] = useState(campaign.collaborators.map((h) => `@${h}`).join(" "));
   const [superText, setSuperText] = useState(campaign.superText ?? "");
   const [style, setStyle] = useState(campaign.superTextStyle ?? "bottom");
+  const [audio, setAudio] = useState(campaign.audioIntegration);
+  const [audioTrack, setAudioTrack] = useState(campaign.audioTrack ?? "");
+  // After payment the format and the audio option are what was paid for — frozen.
+  const termsLocked = campaign.status === "changes_requested";
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -231,6 +256,8 @@ export function CreativeStep({ campaign, onSaved, submitLabel }: { campaign: Cam
     if (format === "carousel" && media.length < CAMPAIGN_LIMITS.carouselMin) return setError("A carousel needs at least 2 files.");
     if (format === "reel" && media.some((m) => m.kind !== "video")) return setError("A reel needs a video.");
     if (uploads.some((u) => !u.error)) return setError("Wait for the uploads to finish.");
+    const withAudio = format === "reel" && audio;
+    if (withAudio && audioTrack.trim().length < 2) return setError("Tell us which song to integrate, or turn song audio off.");
     setBusy(true);
     try {
       const c = await mutateJson<Campaign>(`/client/campaigns/${campaign.id}/creative`, "PUT", {
@@ -242,6 +269,8 @@ export function CreativeStep({ campaign, onSaved, submitLabel }: { campaign: Cam
         collaborators: splitTags(collabs),
         superText: superText.trim() || null,
         superTextStyle: superText.trim() ? style : null,
+        audioIntegration: withAudio,
+        audioTrack: withAudio ? audioTrack.trim() : null,
       });
       onSaved(c);
     } catch (e) {
@@ -256,21 +285,22 @@ export function CreativeStep({ campaign, onSaved, submitLabel }: { campaign: Cam
   return (
     <div className="grid gap-4">
       <Card title="Format" sub="How the content appears on each account.">
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-          {(Object.keys(FORMAT_LABELS) as CampaignFormat[]).map((f) => {
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+          {BOOKABLE_FORMATS.map((f) => {
             const F = FORMAT_ICON[f];
             const active = format === f;
             return (
               <button
                 key={f}
                 type="button"
+                disabled={termsLocked && f !== format}
                 onClick={() => {
-                  if (f === format) return;
+                  if (f === format || termsLocked) return;
                   setFormat(f);
                   if (f !== "carousel") setMedia((m) => m.slice(0, 1));
                 }}
                 aria-pressed={active}
-                className={`text-left rounded-xl border-2 p-3 transition-colors ${active ? "border-ink bg-ink text-white" : "border-ink/15 bg-surface hover:border-ink/40"}`}
+                className={`text-left rounded-xl border-2 p-3 transition-colors disabled:opacity-40 ${active ? "border-ink bg-ink text-white" : "border-ink/15 bg-surface hover:border-ink/40"}`}
               >
                 <F size={18} />
                 <div className="mt-2 text-[13.5px] font-bold">{FORMAT_LABELS[f]}</div>
@@ -365,6 +395,23 @@ export function CreativeStep({ campaign, onSaved, submitLabel }: { campaign: Cam
         )}
       </Card>
 
+      {format === "reel" && (
+        <Card title="Song audio integration" sub="Optional, reels only. We set your song as the reel's audio. Each account charges an extra fee for this.">
+          <label className="flex items-center gap-2.5 text-[13.5px] font-semibold text-ink cursor-pointer">
+            <input type="checkbox" checked={audio} disabled={termsLocked} onChange={(e) => setAudio(e.target.checked)} className="h-4 w-4 accent-[#1a1a1a]" />
+            Integrate a song in this reel
+          </label>
+          {audio && (
+            <div className="mt-3">
+              <Field label="Song" htmlFor="c-audio" hint="Song name and artist, or a link to it on Instagram, Spotify or YouTube">
+                <input id="c-audio" className={inputCls} value={audioTrack} maxLength={300} onChange={(e) => setAudioTrack(e.target.value)} placeholder="Song name – artist, or a link" />
+              </Field>
+              <p className="text-[12px] text-ink-3 mt-2">Accounts that don&apos;t offer song integration are hidden from the account list.</p>
+            </div>
+          )}
+        </Card>
+      )}
+
       <Card title="Super text" sub="Text we add on top of your image or video, exactly as you type it. Leave empty for none.">
         <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-start">
           <Field label="Overlay text" htmlFor="c-super" hint={`${superText.length}/${CAMPAIGN_LIMITS.superTextMax} · up to 3 lines`} error={superText.length > CAMPAIGN_LIMITS.superTextMax || superLines > 3 ? "Keep it to 120 characters and 3 lines" : null}>
@@ -436,10 +483,11 @@ export function AccountsStep({ campaign, onSaved }: { campaign: Campaign; onSave
   const offers = useMemo(() => {
     const rows = (data ?? []).flatMap((a) => {
       const o = a.offers.find((x) => x.format === format);
-      return o ? [{ ...a, offer: o }] : [];
+      const price = o ? offerPrice(o, campaign) : null;
+      return o && price ? [{ ...a, offer: o, price }] : [];
     });
     return rows;
-  }, [data, format]);
+  }, [data, format, campaign]);
 
   const visible = useMemo(() => {
     const term = q.trim().toLowerCase().replace(/^@/, "");
@@ -447,14 +495,15 @@ export function AccountsStep({ campaign, onSaved }: { campaign: Campaign; onSave
       .filter((a) => platform === "all" || a.platform === platform)
       .filter((a) => !term || a.name.toLowerCase().includes(term) || (a.username ?? "").toLowerCase().includes(term) || (a.category ?? "").toLowerCase().includes(term))
       .sort((a, b) =>
-        sort === "price" ? a.offer.pricePaise - b.offer.pricePaise :
+        sort === "price" ? a.price.total - b.price.total :
         sort === "engagement" ? (b.engagementRatePct ?? -1) - (a.engagementRatePct ?? -1) :
         (b.followers ?? 0) - (a.followers ?? 0),
       );
   }, [offers, q, platform, sort]);
 
   const selected = offers.filter((a) => picked.has(a.offer.rateCardId));
-  const total = selected.reduce((s, a) => s + a.offer.pricePaise, 0);
+  const total = selected.reduce((s, a) => s + a.price.total, 0);
+  const withAudio = campaign.audioIntegration && format === "reel";
   const reach = selected.reduce((s, a) => s + (a.followers ?? 0), 0);
   const counts = { all: offers.length, instagram: 0, facebook: 0, youtube: 0 } as Record<string, number>;
   for (const a of offers) counts[a.platform]++;
@@ -481,7 +530,10 @@ export function AccountsStep({ campaign, onSaved }: { campaign: Campaign; onSave
 
   return (
     <div className="grid gap-4 pb-24">
-      <Card title="Choose accounts" sub={`Accounts on our network that carry a ${FORMAT_LABELS[format].toLowerCase()}. Prices are per account.`}>
+      <Card
+        title="Choose accounts"
+        sub={`Accounts on our network that carry a ${FORMAT_LABELS[format].toLowerCase()}. Prices are per account, for ${CAMPAIGN_TYPE_LABELS[campaign.campaignType].toLowerCase()}${withAudio ? ", including song audio integration" : ""}.`}
+      >
         <div className="flex flex-wrap gap-2 items-center mb-3">
           <div className="relative flex-1 min-w-[180px]">
             <span className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-3"><Icon.Search size={15} /></span>
@@ -551,8 +603,9 @@ export function AccountsStep({ campaign, onSaved }: { campaign: Campaign; onSave
                     <span className="text-[10.5px] uppercase tracking-wider text-ink-3">Followers</span>
                     <span className="text-[10.5px] uppercase tracking-wider text-ink-3">Engagement</span>
                   </div>
-                  <div className="text-right shrink-0 w-[84px]">
-                    <div className="text-[14px] font-bold text-ink tabular-nums">{rupees(a.offer.pricePaise)}</div>
+                  <div className="text-right shrink-0 w-[96px]">
+                    <div className="text-[14px] font-bold text-ink tabular-nums">{rupees(a.price.total)}</div>
+                    {a.price.addon > 0 && <div className="text-[10.5px] text-ink-3 tabular-nums" title="Base price + song audio">incl. {rupees(a.price.addon)} audio</div>}
                     <div className="sm:hidden text-[11px] text-ink-3 tabular-nums">{compact(a.followers)} followers</div>
                   </div>
                 </label>

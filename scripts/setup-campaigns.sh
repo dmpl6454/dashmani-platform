@@ -12,6 +12,10 @@
 #
 # Before the code is merged, apply the schema by hand as the dashmani role:
 #   PGAPPNAME=campaign-ddl psql "$DBURL" -v ON_ERROR_STOP=1 -f scripts/campaign-booking-ddl.sql
+# After the deploy, load the rate card from the owner's sheet (dry run first, read the list of
+# unmatched pages, then apply):
+#   cd /opt/dashmani-platform/packages/db && npx tsx ../../scripts/import-campaign-rate-cards.ts
+#   npx tsx ../../scripts/import-campaign-rate-cards.ts --apply --confirm-prod
 set -euo pipefail
 
 APP_DIR="/opt/dashmani-platform"

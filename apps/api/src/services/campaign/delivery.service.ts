@@ -1,5 +1,5 @@
 import { prisma } from "@dashmani/db";
-import { canonicalKey, FORMAT_LABELS, formatPaise, type CampaignFormat } from "@dashmani/shared";
+import { canonicalKey, CAMPAIGN_TYPE_LABELS, FORMAT_LABELS, formatPaise, type CampaignFormat, type CampaignType } from "@dashmani/shared";
 import { sendEmail, notifyAdminByEmail } from "../email.service";
 import { campaignConfig } from "./config";
 
@@ -50,6 +50,9 @@ async function bookingWithClient(bookingId: string) {
       status: true,
       totalPaise: true,
       reviewNote: true,
+      campaignType: true,
+      audioIntegration: true,
+      audioTrack: true,
       client: { select: { email: true, contactName: true, companyName: true } },
       items: {
         orderBy: { createdAt: "asc" },
@@ -189,6 +192,8 @@ export async function notifyStaffPaid(bookingId: string) {
     [
       { label: "Client", value: b.client.companyName },
       { label: "Brand", value: b.brand },
+      { label: "Type", value: CAMPAIGN_TYPE_LABELS[b.campaignType as CampaignType] ?? b.campaignType },
+      ...(b.audioIntegration ? [{ label: "Song audio", value: b.audioTrack ?? "yes" }] : []),
       { label: "Accounts", value: String(b.items.length) },
       { label: "Paid", value: b.totalPaise != null ? formatPaise(b.totalPaise) : "—" },
     ],

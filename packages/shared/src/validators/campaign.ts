@@ -22,6 +22,20 @@ export const PLATFORM_FORMATS: Record<CampaignPlatform, readonly CampaignFormat[
   youtube: ["reel", "post"],
 };
 
+/**
+ * Formats clients can book today (owner decision 2026-10-08: reel, post and carousel — no
+ * stories). CAMPAIGN_FORMATS keeps "story" so stored data and a later re-launch stay valid.
+ */
+export const BOOKABLE_FORMATS: readonly CampaignFormat[] = ["reel", "post", "carousel"];
+
+/** brand = a product / brand promotion (Brand price); entertainment = film, OTT, music or show promotion. */
+export const CAMPAIGN_TYPES = ["brand", "entertainment"] as const;
+export type CampaignType = (typeof CAMPAIGN_TYPES)[number];
+export const CAMPAIGN_TYPE_LABELS: Record<CampaignType, string> = {
+  brand: "Brand promotion",
+  entertainment: "Entertainment (film, OTT, music)",
+};
+
 export const FORMAT_LABELS: Record<CampaignFormat, string> = {
   reel: "Reel",
   story: "Story",
@@ -152,6 +166,7 @@ export const campaignInfoSchema = z
     name: safeString.pipe(z.string().min(2, "Give the campaign a name").max(200)),
     brand: safeString.pipe(z.string().min(2, "Enter the brand").max(200)),
     objective: safeString.pipe(z.string().max(2000)).optional().nullable(),
+    campaignType: z.enum(CAMPAIGN_TYPES).optional().default("brand"),
     launchFrom: z.string().regex(YMD_RE, "Pick a start date"),
     launchTo: z.string().regex(YMD_RE, "Pick an end date"),
   })
@@ -195,8 +210,19 @@ export const campaignCreativeSchema = z
       .optional()
       .nullable(),
     superTextStyle: z.enum(SUPER_TEXT_STYLES).optional().nullable(),
+    /** Reel only: integrate the client's song audio (an extra per-account price). */
+    audioIntegration: z.boolean().optional().default(false),
+    audioTrack: safeString.pipe(z.string().max(300)).optional().nullable(),
   })
   .superRefine((v, ctx) => {
+    if (v.audioIntegration) {
+      if (v.format !== "reel") {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["audioIntegration"], message: "Song audio integration is available on reels only" });
+      }
+      if (!v.audioTrack || v.audioTrack.trim().length < 2) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["audioTrack"], message: "Tell us which song to use (name or link)" });
+      }
+    }
     if (v.format === "carousel") {
       if (v.mediaIds.length < CAMPAIGN_LIMITS.carouselMin) {
         ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["mediaIds"], message: "A carousel needs at least 2 images or videos" });
@@ -250,8 +276,12 @@ export const campaignRateCardUpsertSchema = z.object({
         targetType: z.enum(["meta_asset", "social_account"]),
         targetId: z.string().uuid(),
         format: z.enum(CAMPAIGN_FORMATS),
-        /** null deletes the card (stops offering that format on that account). */
+        /** Brand price. null deletes the card (stops offering that format on that account). */
         pricePaise: z.number().int().min(100, "Minimum ₹1").max(100_000_000).nullable(),
+        /** Entertainment price; null = not offered for entertainment campaigns. */
+        entertainmentPricePaise: z.number().int().min(100, "Minimum ₹1").max(100_000_000).nullable().optional(),
+        /** Song audio integration add-on (reels only); null = not offered. */
+        audioAddonPaise: z.number().int().min(100, "Minimum ₹1").max(100_000_000).nullable().optional(),
         active: z.boolean().optional().default(true),
         category: safeString.pipe(z.string().max(60)).optional().nullable(),
       }),

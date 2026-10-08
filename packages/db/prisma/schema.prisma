@@ -2282,8 +2282,13 @@ model CampaignRateCard {
   targetType  String   @map("target_type") @db.VarChar(16)
   targetId    String   @map("target_id")
   platform    String   @db.VarChar(16) // instagram | facebook | youtube
-  format      String   @db.VarChar(16) // reel | story | post | carousel | video
+  format      String   @db.VarChar(16) // reel | story | post | carousel
+  /// Brand campaign price (the "Brand Cost" column of the rate sheet).
   pricePaise  Int      @map("price_paise")
+  /// Entertainment (film / OTT / music promo) price. null = not offered for entertainment.
+  entertainmentPricePaise Int? @map("entertainment_price_paise")
+  /// Song audio integration on a reel, charged on top of the post price. null = not offered.
+  audioAddonPaise         Int? @map("audio_addon_paise")
   active      Boolean  @default(true)
   /// Shown to clients ("Bollywood news", "Lifestyle"…). Staff-entered: Instagram exposes none.
   category    String?  @db.VarChar(60)
@@ -2302,6 +2307,12 @@ model CampaignBooking {
   name            String    @db.VarChar(200)
   brand           String    @db.VarChar(200)
   objective       String?   @db.Text
+  /// brand | entertainment — decides which rate-card price applies. Staff check it at review.
+  campaignType    String    @default("brand") @map("campaign_type") @db.VarChar(16)
+  /// Reel only: integrate the client's song audio (priced per account as an add-on).
+  audioIntegration Boolean  @default(false) @map("audio_integration")
+  /// The song to integrate: a title or a link the client gives us.
+  audioTrack      String?   @map("audio_track") @db.VarChar(300)
   /// IST calendar days (YYYY-MM-DD semantics; stored as DATE).
   launchFrom      DateTime? @map("launch_from") @db.Date
   launchTo        DateTime? @map("launch_to") @db.Date
@@ -2391,7 +2402,10 @@ model CampaignBookingItem {
   /// Snapshot of the account as the client saw it (the asset may later be renamed / removed).
   accountName   String    @map("account_name") @db.VarChar(200)
   accountHandle String?   @map("account_handle") @db.VarChar(100)
+  /// Total for this account: base price + audio add-on (both frozen at checkout).
   pricePaise    Int       @map("price_paise")
+  /// The audio add-on part of pricePaise (0 when not booked).
+  audioAddonPaise Int     @default(0) @map("audio_addon_paise")
   status        String    @default("pending") @db.VarChar(24)
   attempts      Int       @default(0)
   nextAttemptAt DateTime? @map("next_attempt_at")

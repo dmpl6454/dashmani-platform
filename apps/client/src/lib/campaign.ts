@@ -31,6 +31,7 @@ export interface CampaignItem {
   accountName: string;
   accountHandle: string | null;
   pricePaise: number;
+  audioAddonPaise: number;
   status: string;
   permalink: string | null;
   postedAt: string | null;
@@ -44,6 +45,9 @@ export interface Campaign {
   launchFrom: string | null;
   launchTo: string | null;
   format: string | null;
+  campaignType: "brand" | "entertainment";
+  audioIntegration: boolean;
+  audioTrack: string | null;
   caption: string | null;
   hashtags: string[];
   userTags: string[];
@@ -85,7 +89,7 @@ export interface CatalogueEntry {
   views28d: number | null;
   category: string | null;
   profileUrl: string | null;
-  offers: Array<{ rateCardId: string; format: string; pricePaise: number }>;
+  offers: Array<{ rateCardId: string; format: string; pricePaise: number; entertainmentPricePaise: number | null; audioAddonPaise: number | null }>;
 }
 
 export interface CampaignResults {
@@ -207,6 +211,24 @@ export async function uploadChunked(
     }),
   );
   return mutateJson<CampaignMedia>(`/client/campaign-uploads/${init.id}/complete`, "POST");
+}
+
+/**
+ * Mirror of the server's priceFor(): what one account costs for this booking. The server
+ * re-prices at checkout; this only drives the list and the running total.
+ */
+export function offerPrice(
+  offer: CatalogueEntry["offers"][number],
+  b: { campaignType: string; audioIntegration: boolean; format: string | null },
+): { base: number; addon: number; total: number } | null {
+  const base = b.campaignType === "entertainment" ? offer.entertainmentPricePaise : offer.pricePaise;
+  if (base == null) return null;
+  let addon = 0;
+  if (b.audioIntegration && b.format === "reel") {
+    if (offer.audioAddonPaise == null) return null;
+    addon = offer.audioAddonPaise;
+  }
+  return { base, addon, total: base + addon };
 }
 
 // ── Formatting ──────────────────────────────────────────────────────────────────

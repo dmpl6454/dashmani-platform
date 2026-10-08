@@ -393,4 +393,80 @@ describe("campaign booking flow", () => {
     const mail = vi.mocked(sendEmail).mock.calls.find(([o]) => o.to === "a@brand.test" && o.subject.startsWith("Delivered"));
     expect(mail?.[0].html).toContain("refunded");
   });
+  it("campaign type picks the brand or entertainment price; reel song audio adds the account's add-on", async () => {
+    const rates = await request(app)
+      .put("/v1/admin/campaign-rate-cards")
+      .set("Authorization", `Bearer ${admin}`)
+      .send({
+        cards: [
+          { targetType: "meta_asset", targetId: assetId, format: "reel", pricePaise: 300_000, entertainmentPricePaise: 200_000, audioAddonPaise: 50_000 },
+          { targetType: "meta_asset", targetId: assetId, format: "post", pricePaise: 100_000, audioAddonPaise: 99_900 },
+        ],
+      });
+    expect(rates.status).toBe(200);
+    // An audio add-on is a reel-only thing: it is not stored on a post card.
+    const post = await prisma.campaignRateCard.findFirstOrThrow({ where: { format: "post" } });
+    expect(post.audioAddonPaise).toBeNull();
+
+    const created = await request(app).post("/v1/client/campaigns").set("Authorization", `Bearer ${tokA}`).send({ ...info(), campaignType: "entertainment" });
+    expect(created.body.data.campaignType).toBe("entertainment");
+    const id = created.body.data.id;
+    const video = Buffer.concat([MP4_HEAD, Buffer.alloc(2000, 1)]);
+    const up = await upload(tokA, video, "video/mp4");
+    expect(up.complete.status).toBe(200);
+    const creative = (extra: Record<string, unknown>) =>
+      request(app).put(`/v1/client/campaigns/${id}/creative`).set("Authorization", `Bearer ${tokA}`).send({ format: "reel", mediaIds: [up.id], ...extra });
+
+    // Audio needs a song, and is reels only.
+    expect((await creative({ audioIntegration: true })).status).toBe(400);
+    expect((await request(app).put(`/v1/client/campaigns/${id}/creative`).set("Authorization", `Bearer ${tokA}`).send({ format: "post", mediaIds: [up.id], audioIntegration: true, audioTrack: "Kesariya" })).status).toBe(400);
+    const cr = await creative({ audioIntegration: true, audioTrack: "Kesariya – Arijit Singh" });
+    expect(cr.status).toBe(200);
+    expect(cr.body.data).toMatchObject({ audioIntegration: true, audioTrack: "Kesariya – Arijit Singh" });
+    await renderNext({ ignoreLoad: true });
+
+    const cat = await request(app).get("/v1/client/campaigns/catalogue").set("Authorization", `Bearer ${tokA}`);
+    const reelOffer = cat.body.data[0].offers.find((o: any) => o.format === "reel");
+    expect(reelOffer).toMatchObject({ pricePaise: 300_000, entertainmentPricePaise: 200_000, audioAddonPaise: 50_000 });
+    const items = await request(app).put(`/v1/client/campaigns/${id}/items`).set("Authorization", `Bearer ${tokA}`).send({ rateCardIds: [reelOffer.rateCardId] });
+    expect(items.status).toBe(200);
+    expect(items.body.data.items[0]).toMatchObject({ pricePaise: 250_000, audioAddonPaise: 50_000 });
+
+    // Switching to a brand campaign re-prices the booked account; dropping audio removes the add-on.
+    const asBrand = await request(app).put(`/v1/client/campaigns/${id}/info`).set("Authorization", `Bearer ${tokA}`).send({ ...info(), campaignType: "brand" });
+    expect(asBrand.body.data.items[0]).toMatchObject({ pricePaise: 350_000, audioAddonPaise: 50_000 });
+    const noAudio = await creative({ audioIntegration: false });
+    expect(noAudio.body.data.items[0]).toMatchObject({ pricePaise: 300_000, audioAddonPaise: 0 });
+    await creative({ audioIntegration: true, audioTrack: "Kesariya – Arijit Singh" });
+    await renderNext({ ignoreLoad: true });
+
+    // Checkout charges the server's price and records how it was built.
+    const co = await request(app).post(`/v1/client/campaigns/${id}/checkout`).set("Authorization", `Bearer ${tokA}`);
+    expect(co.status).toBe(200);
+    expect(co.body.data.amount).toBe(350_000);
+    const b = await prisma.campaignBooking.findUniqueOrThrow({ where: { id } });
+    expect(b.pricingSnapshot).toMatchObject({ campaignType: "brand", audioIntegration: true, items: [{ basePaise: 300_000, audioAddonPaise: 50_000, pricePaise: 350_000 }] });
+
+    // After payment the audio option is frozen — it is part of what was paid for.
+    await webhook("payment.captured", { id: "pay_audio", order_id: co.body.data.orderId, amount: 350_000, currency: "INR", status: "captured" });
+    await request(app).post(`/v1/admin/campaigns/${id}/request-changes`).set("Authorization", `Bearer ${admin}`).send({ note: "New cut please" });
+    const frozen = await creative({ audioIntegration: false });
+    expect(frozen.status).toBe(409);
+    expect(frozen.body.error.code).toBe("PAID_TERMS_FROZEN");
+    const sameTerms = await creative({ audioIntegration: true, audioTrack: "Kesariya (remix)" });
+    expect(sameTerms.status).toBe(200);
+    expect((await prisma.campaignBookingItem.findFirstOrThrow({ where: { bookingId: id } })).pricePaise).toBe(350_000);
+  });
+
+  it("an account without an entertainment price can't be booked for an entertainment campaign", async () => {
+    await setRates(100_000); // brand price only
+    const created = await request(app).post("/v1/client/campaigns").set("Authorization", `Bearer ${tokA}`).send({ ...info(), campaignType: "entertainment" });
+    const id = created.body.data.id;
+    const up = await upload(tokA, JPEG, "image/jpeg");
+    await request(app).put(`/v1/client/campaigns/${id}/creative`).set("Authorization", `Bearer ${tokA}`).send({ format: "post", mediaIds: [up.id] });
+    const cat = await request(app).get("/v1/client/campaigns/catalogue").set("Authorization", `Bearer ${tokA}`);
+    const res = await request(app).put(`/v1/client/campaigns/${id}/items`).set("Authorization", `Bearer ${tokA}`).send({ rateCardIds: [cat.body.data[0].offers[0].rateCardId] });
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe("RATE_CARD_UNAVAILABLE");
+  });
 });

@@ -12,10 +12,11 @@ import {
 
 type Item = {
   id: string; platform: string; format: string; accountName: string; accountHandle: string | null; pricePaise: number;
-  status: string; permalink: string | null; postedAt: string | null; lastError: string | null;
+  audioAddonPaise: number; status: string; permalink: string | null; postedAt: string | null; lastError: string | null;
 };
 type Booking = {
   id: string; name: string; brand: string; objective: string | null; status: string; format: string | null;
+  campaignType: string; audioIntegration: boolean; audioTrack: string | null;
   launchFrom: string | null; launchTo: string | null; caption: string | null; hashtags: string[]; userTags: string[];
   collaborators: string[]; superText: string | null; superTextStyle: string | null; totalPaise: number | null;
   reviewNote: string | null; paidAt: string | null; deliveredAt: string | null;
@@ -70,7 +71,7 @@ export default function CampaignBookingDetail() {
       <Link href="/campaigns" className="mt-6 inline-flex items-center gap-1 text-[12.5px] text-ds-t3 hover:text-ds-text"><ChevronLeft className="h-4 w-4" />All bookings</Link>
       <PageHead
         title={b.name}
-        sub={<>{b.client.companyName} · {b.brand} · {b.format ?? "—"} · go live {fmtDate(b.launchFrom)} – {fmtDate(b.launchTo)}</>}
+        sub={<>{b.client.companyName} · {b.brand} · {b.campaignType === "entertainment" ? "Entertainment" : "Brand"} · {b.format ?? "—"}{b.audioIntegration ? " + song audio" : ""} · go live {fmtDate(b.launchFrom)} – {fmtDate(b.launchTo)}</>}
         right={<StatusPill status={b.status} />}
       />
 
@@ -118,6 +119,8 @@ export default function CampaignBookingDetail() {
               })}
             </div>
             <dl className="mt-4 grid gap-2.5 text-[13px]">
+              <Kv k="Campaign type" v={b.campaignType === "entertainment" ? "Entertainment (film, OTT, music)" : "Brand promotion"} />
+              {b.audioIntegration && <Kv k="Song audio" v={<span className="break-words font-semibold text-ds-gold">{b.audioTrack}</span>} />}
               {b.superText && <Kv k="Overlay" v={<span className="whitespace-pre-line">{b.superText} <span className="text-ds-t4">({b.superTextStyle})</span></span>} />}
               <Kv k="Caption" v={b.caption ? <span className="whitespace-pre-line break-words">{b.caption}</span> : "—"} />
               {b.hashtags.length > 0 && <Kv k="Hashtags" v={b.hashtags.map((h) => `#${h}`).join(" ")} />}
@@ -250,7 +253,7 @@ function ItemRow({ item: i, bookingId, postable, busy, act }: {
         <PlatformDot platform={i.platform} />
         <div className="min-w-0 flex-1">
           <div className="text-[13.5px] font-semibold text-ds-text truncate">{i.accountName}{i.accountHandle && <span className="text-ds-t3 font-normal"> @{i.accountHandle}</span>}</div>
-          <div className="text-[12px] text-ds-t3">{i.platform} · {i.format} · {rupees(i.pricePaise)}{i.postedAt ? ` · posted ${fmtWhen(i.postedAt)}` : ""}</div>
+          <div className="text-[12px] text-ds-t3">{i.platform} · {i.format} · {rupees(i.pricePaise)}{i.audioAddonPaise > 0 ? ` (incl. ${rupees(i.audioAddonPaise)} audio)` : ""}{i.postedAt ? ` · posted ${fmtWhen(i.postedAt)}` : ""}</div>
         </div>
         <StatusPill status={i.status} map={ITEM_STATUS} />
         {i.permalink && (

@@ -10,6 +10,7 @@ import { useAuth } from "@/lib/auth";
 
 const NAV = [
   { id: "dashboard", href: "/dashboard", label: "Home",      Icon: Icon.Dashboard,  key: "g d" },
+  { id: "campaigns", href: "/campaigns", label: "Campaigns", Icon: Icon.Megaphone,  key: "g m" },
   { id: "projects",  href: "/projects",  label: "Projects",  Icon: Icon.Folder,     key: "g p" },
   { id: "content",   href: "/content",   label: "Content",   Icon: Icon.Edit,       key: "g c" },
   { id: "approvals", href: "/approvals", label: "Approvals", Icon: Icon.CheckBadge, key: "g a", badge: "pending" as const },

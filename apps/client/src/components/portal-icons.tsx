@@ -61,5 +61,8 @@ export const Icon = {
   More: (p: IconProps) => <I {...p} path={<><circle cx="6" cy="12" r="1.4" fill="currentColor"/><circle cx="12" cy="12" r="1.4" fill="currentColor"/><circle cx="18" cy="12" r="1.4" fill="currentColor"/></>} />,
   Heart: (p: IconProps) => <I {...p} path={<path d="M12 20s-7-4.5-7-10a4 4 0 0 1 7-2 4 4 0 0 1 7 2c0 5.5-7 10-7 10Z"/>} />,
   Bookmark: (p: IconProps) => <I {...p} path={<path d="M6 4h12v16l-6-4-6 4Z"/>} />,
+  Megaphone: (p: IconProps) => <I {...p} path={<><path d="M4 10v4a1 1 0 0 0 1 1h2l5 4V5L7 9H5a1 1 0 0 0-1 1Z"/><path d="M16 9a4 4 0 0 1 0 6"/><path d="M18.5 6.5a7.5 7.5 0 0 1 0 11"/></>} />,
+  Upload: (p: IconProps) => <I {...p} path={<><path d="M12 16V4"/><path d="m7 9 5-5 5 5"/><path d="M5 20h14"/></>} />,
+  External: (p: IconProps) => <I {...p} path={<><path d="M14 4h6v6"/><path d="M20 4 11 13"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></>} />,
   Share: (p: IconProps) => <I {...p} path={<><path d="m22 2-7 20-4-9-9-4 20-7Z"/><path d="m22 2-11 11"/></>} />,
 };

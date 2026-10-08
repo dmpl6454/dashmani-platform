@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent, TouchEvent as ReactTouchEvent } from "react";
 import {
   CHANNELS,
+  CLIENT_BOOKING_URL,
   CONTACT_EMAIL,
   CASE_STUDIES,
   CONTACT_PHONE,
@@ -609,6 +610,9 @@ export default function ChannelSurf() {
                   <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>
                   <a href={`tel:${CONTACT_PHONE.tel}`} style={{ fontWeight: 400 }}>
                     {CONTACT_PHONE.display}
+                  </a>
+                  <a href={CLIENT_BOOKING_URL} style={{ fontWeight: 400 }}>
+                    Clients: book &amp; pay online <span aria-hidden="true">→</span>
                   </a>
                 </div>
               </div>

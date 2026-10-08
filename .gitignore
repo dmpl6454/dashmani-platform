@@ -20,3 +20,6 @@ nul
 
 # Static export of the marketing site (apps/web) — built on the server by turbo
 apps/web/out/
+
+# Campaign booking media (local default: apps/api/campaign-media)
+campaign-media/

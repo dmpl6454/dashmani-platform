@@ -124,6 +124,9 @@ export const OFFICES = [
 ];
 
 export const CONTACT_EMAIL = "hello@digitalsukoon.com";
+
+/** Self-serve booking for existing (invited) clients: the client portal's campaign wizard. */
+export const CLIENT_BOOKING_URL = "https://client.digitalsukoon.com/login?next=/campaigns/new";
 export const CONTACT_PHONE = { tel: "+918709788368", display: "+91 87097 88368" };
 
 // Audience by platform (owner-supplied, 2026-10-07). Sums to the 400M+ headline.

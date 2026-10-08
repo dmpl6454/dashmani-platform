@@ -642,6 +642,56 @@ At GA a reload shows the nav at once. An open HR tab shows it by itself at its f
 
 ---
 
+## Campaign booking: self-serve "Start a campaign" (client portal, Phase 1, 2026-10-08)
+
+**What it is.** An invited client books promotion on our network and pays online:
+1. **Details:** name, brand, objective, go-live window (IST, at most 60 days).
+2. **Creative:** reel / story / post / carousel. Chunked upload, plus **super text** that WE burn into the media, a caption, hashtags, @tags and collaborators.
+3. **Accounts:** a searchable catalogue of our accounts with followers, category, engagement and price.
+4. **Review & pay:** Razorpay checkout.
+5. **Our team reviews,** then posts and records each post's link. The client gets a "post is live" email per post and ONE delivery email with every link, and sees the links (plus views/likes once the Meta sync picks them up) on the campaign page.
+
+The client portal has `/campaigns`, `/campaigns/new` and `/campaigns/[id]`. The internal portal has `/campaigns`, `/campaigns/[id]` and `/campaigns/rate-cards`, gated to Admin/Super Admin. The website's contact channel links to `client.digitalsukoon.com/login?next=/campaigns/new`; the login page now honours a same-site `?next=`.
+
+**Phases.**
+- **Phase 1 (this):** staff post by hand and paste the link; the link must be on the item's platform host.
+- **Phase 2:** Meta auto-publish. Needs the publish scopes moved out of `META_FORBIDDEN_SCOPES`, an `oauthGraphPost`, and a re-connect.
+- **Phase 3:** YouTube upload.
+- Plan: `/root/.claude/plans/plan-in-start-campaign-replicated-neumann.md` (session-local); the code comments carry the rules.
+
+**Schema.** Seven additive tables, `campaign_*` plus `razorpay_webhook_events`. Statuses are VARCHAR and money is integer **paise**. ⚠️ Apply `scripts/campaign-booking-ddl.sql` by hand as the `dashmani` role **before** merging; CI rehearses it. There is no FK into hot tables and no enum change.
+
+**Money rules (do not regress).**
+- **The price comes only from `campaign_rate_cards`.** Checkout re-prices from the current cards and freezes each item; nothing the client sends is a price.
+- **Only the webhook marks a booking paid.** It is `POST /v1/webhooks/razorpay`, mounted in `app.ts` BEFORE `express.json` (raw body HMAC, `timingSafeEqual`), and is idempotent on `x-razorpay-event-id`. The checkout handler's verify only drives the UI.
+- **A captured payment that doesn't match the booking is refunded automatically.** This covers an old order paid after the client edited, and paying twice. Any edit after checkout drops the booking back to `draft`.
+- **Refunds claim the DB row first** (`refundedPaise` / item status), then call Razorpay, and roll back on failure. A double click can never refund twice.
+- **Reject = full refund.** The booking moves to `refunded` once Razorpay reports the refund processed.
+
+**State machine.**
+- Every booking status change goes through `transitionBooking()`: an `updateMany WHERE status IN (…)`, a 409 on a race, and an audit row in `campaign_booking_events`.
+- Booking path: draft → awaiting_payment → paid_pending_review ⇄ changes_requested → approved → publishing → completed | partially_published. Side exits: rejected → refunded, cancelled, expired. Unpaid bookings expire after 24h; untouched drafts after 30 days.
+
+**Media safety.**
+- **Where files live.** Files go to `CAMPAIGN_MEDIA_DIR` (prod `/var/lib/dashmani/campaign-media`, mode 0700), **never under `uploads/`, which is public**. File names are 256-bit random keys.
+- **Uploads.** 8 MB chunks (`PUT …/chunks/:n`, `application/octet-stream`), resumable and re-sendable. On complete, the real type is sniffed from magic bytes (JPEG/PNG/MP4/MOV only) and checked with ffprobe.
+- **Limits.** Video ≤ 500 MB, image ≤ 20 MB, reel ≤ 90 s, story ≤ 60 s.
+- **Disk guard.** Uploads get a 507 when free space minus 2.2× the file size falls below `CAMPAIGN_MIN_FREE_GB` (default 5). Each client has a 2 GB quota and at most 3 uploads in flight.
+- **Previews** use short-lived HMAC-signed URLs, `/v1/campaign-media/:id/:variant?exp&sig`, because `<video>` cannot send the Authorization header.
+
+**Render worker** (`cron/campaign.cron.ts` → `services/campaign/render.service.ts`).
+- Every 30 s, ONE file per tick, `nice -n 15 ffmpeg -threads 1`, with a 10-minute timeout. It skips a tick when load > 1.5 or free memory < 300 MB.
+- Reels and stories are padded to 1080×1920; posts are scaled to ≤1080 px wide.
+- ⚠️ **The client's text is written to a file per line and passed as `drawtext textfile=… expansion=none`. Never put user text in the filter string.** Paths in the filter must match `[A-Za-z0-9/_.-]`; they are checked, not escaped.
+- Checkout is blocked until every render is `done`, so the client pays after seeing the preview.
+- Kill switch: `CAMPAIGN_RENDER_ENABLED=0`, or `CAMPAIGN_CRONS_ENABLED=0` for both workers.
+
+**Retention** (every 6h). It purges media 14 days after a booking finishes (`CAMPAIGN_RETENTION_DAYS`), unused uploads after 48h, abandoned uploads after 24h, and orphaned renders. It emails an admin when the disk is low. Rows are kept, with `purged_at` set.
+
+**Server setup (once).** Run `sudo bash scripts/setup-campaigns.sh`. It installs ffmpeg and fonts-noto-core, creates the media folder and adds `CAMPAIGN_MEDIA_DIR`. Then add `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET` and `RAZORPAY_WEBHOOK_SECRET` to `apps/api/.env`, run `pm2 restart api`, and set the Razorpay webhook to `/v1/webhooks/razorpay` for payment.captured, payment.failed, order.paid, refund.processed and refund.failed. Checkout returns 503 until the keys exist.
+
+**Tests:** `apps/api/tests/campaign.test.ts` stubs ffprobe, ffmpeg, Razorpay and SMTP. It covers pure helpers plus the whole flow: catalogue field allow-list, cross-client 404s, chunk 413 / out-of-order / missing / fake-type, webhook replay and tamper, outdated-order refund, reject refunding exactly once, the delivery email sent exactly once, and resend.
+
 ## Client Portal (`apps/client`) — Implementation Status
 
 All 9 implementation phases + 5-wave audit remediation complete + TC-191 (forgot-password) verified implemented. See `.planning/CLIENT-PORTAL-AUDIT.md` for the full issue register. The `/login` page has a `forgotOpen` state that opens a `ForgotPasswordModal` calling `POST /client/auth/forgot-password`; `apps/client/src/app/reset-password/` page handles the token-based reset flow calling `POST /client/auth/reset-password`.

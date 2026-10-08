@@ -7,7 +7,7 @@ import {
   Briefcase, FolderOpen, FileEdit, TrendingUp, FileText, UserPlus, Megaphone,
   ChevronLeft, ChevronRight, Wallet, FileSignature, Calendar, BriefcaseBusiness,
   Bug, Sparkles, Laptop, GraduationCap, AlertCircle, Settings, LayoutGrid,
-  Menu, X as CloseIcon, CalendarOff, ClipboardList, Search, Receipt,
+  Menu, X as CloseIcon, CalendarOff, ClipboardList, Search, Receipt, ShoppingBag,
 } from "lucide-react";
 import { useOverviewStats } from "@/lib/hooks/use-analytics";
 import { useState, useEffect } from "react";
@@ -25,6 +25,7 @@ export const primaryNav = [
   { href: "/workload",      label: "Workload Matrix",  icon: BarChart3,       group: null },
   { href: "/clients",       label: "Clients",          icon: Briefcase,       group: "Business" },
   { href: "/projects",      label: "Projects",         icon: FolderOpen,      group: null },
+  { href: "/campaigns",     label: "Campaign Bookings", icon: ShoppingBag,    group: null },
   { href: "/attendance",    label: "Attendance",       icon: Clock,           group: "Analytics" },
   { href: "/leave",         label: "Leave",            icon: CalendarOff,     group: null },
   { href: "/approvals",     label: "Approvals",        icon: CheckSquare,     group: null },

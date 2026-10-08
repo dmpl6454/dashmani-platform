@@ -44,7 +44,7 @@ export const STATUS: Record<string, { label: string; color: string }> = {
 export const ITEM_STATUS: Record<string, { label: string; color: string }> = {
   pending: { label: "Awaiting approval", color: "#738395" },
   manual_pending: { label: "To post", color: "#E9BD62" },
-  queued: { label: "Queued", color: "#238BFF" },
+  queued: { label: "Auto-publish", color: "#238BFF" },
   posted_manual: { label: "Posted", color: "#00D7A0" },
   published: { label: "Published", color: "#00D7A0" },
   failed: { label: "Failed", color: "#FB7185" },

@@ -12,11 +12,12 @@ import {
 
 type Item = {
   id: string; platform: string; format: string; accountName: string; accountHandle: string | null; pricePaise: number;
-  audioAddonPaise: number; status: string; permalink: string | null; postedAt: string | null; lastError: string | null;
+  audioAddonPaise: number; status: string; nextAttemptAt: string | null; attempts: number; permalink: string | null; postedAt: string | null; lastError: string | null;
 };
 type Booking = {
   id: string; name: string; brand: string; objective: string | null; status: string; format: string | null;
   campaignType: string; audioIntegration: boolean; audioTrack: string | null;
+  autoPublish?: { enabled: boolean; dueAt: string };
   launchFrom: string | null; launchTo: string | null; caption: string | null; hashtags: string[]; userTags: string[];
   collaborators: string[]; superText: string | null; superTextStyle: string | null; totalPaise: number | null;
   reviewNote: string | null; paidAt: string | null; deliveredAt: string | null;
@@ -147,7 +148,7 @@ export default function CampaignBookingDetail() {
               )}
             </div>
             {b.items.map((i) => (
-              <ItemRow key={i.id} item={i} bookingId={b.id} postable={postable} busy={busy} act={act} />
+              <ItemRow key={i.id} item={i} bookingId={b.id} postable={postable} autoPublish={!!b.autoPublish?.enabled} busy={busy} act={act} />
             ))}
           </section>
         </div>
@@ -239,13 +240,14 @@ function Kv({ k, v }: { k: string; v: React.ReactNode }) {
   );
 }
 
-function ItemRow({ item: i, bookingId, postable, busy, act }: {
-  item: Item; bookingId: string; postable: boolean; busy: string | null;
+function ItemRow({ item: i, bookingId, postable, autoPublish, busy, act }: {
+  item: Item; bookingId: string; postable: boolean; autoPublish: boolean; busy: string | null;
   act: (key: string, path: string, body?: unknown, confirmText?: string) => Promise<boolean | undefined>;
 }) {
   const [url, setUrl] = useState(i.permalink ?? "");
   const [editing, setEditing] = useState(false);
   const open = ["manual_pending", "queued", "failed"].includes(i.status);
+  const queued = i.status === "queued";
   const live = i.status === "posted_manual" || i.status === "published";
   return (
     <div className="px-5 py-3.5 border-t border-[#132430]">
@@ -260,8 +262,16 @@ function ItemRow({ item: i, bookingId, postable, busy, act }: {
           <a href={i.permalink} target="_blank" rel="noopener noreferrer" className="text-ds-gold hover:text-ds-gold2" aria-label="Open post"><ExternalLink className="h-4 w-4" /></a>
         )}
       </div>
-      {i.lastError && <div className="mt-1.5 text-[12px] text-[#FB7185]">{i.lastError}</div>}
-      {postable && (open || editing) && (
+      {queued && (
+        <div className="mt-1.5 text-[12px] text-ds-t2">
+          {i.nextAttemptAt && new Date(i.nextAttemptAt) > new Date()
+            ? `Publishes through the Meta API · ${fmtWhen(i.nextAttemptAt)}`
+            : "Publishing through the Meta API now…"}
+          {i.attempts > 0 ? ` · attempt ${i.attempts + 1} of 5` : ""}
+        </div>
+      )}
+      {i.lastError && <div className={`mt-1.5 text-[12px] ${queued ? "text-ds-t3" : "text-[#FB7185]"}`}>{queued ? `Last try: ${i.lastError}` : i.lastError}</div>}
+      {postable && !queued && (open || editing) && (
         <form
           className="mt-2.5 flex flex-col sm:flex-row gap-2"
           onSubmit={async (e) => {
@@ -276,6 +286,21 @@ function ItemRow({ item: i, bookingId, postable, busy, act }: {
       {postable && (
         <div className="mt-2 flex flex-wrap gap-3 text-[12px]">
           {live && !editing && <button type="button" className="text-ds-t2 hover:text-ds-text" onClick={() => setEditing(true)}>Edit link</button>}
+          {queued && (
+            <>
+              <button type="button" className="text-ds-gold hover:underline" disabled={!!busy} onClick={() => act(`now-${i.id}`, `/admin/campaigns/${bookingId}/items/${i.id}/publish-now`)}>
+                Publish now
+              </button>
+              <button type="button" className="text-ds-t2 hover:text-ds-text" disabled={!!busy} onClick={() => act(`manual-${i.id}`, `/admin/campaigns/${bookingId}/items/${i.id}/manual`)}>
+                Post by hand instead
+              </button>
+            </>
+          )}
+          {autoPublish && i.status === "manual_pending" && (
+            <button type="button" className="text-ds-t2 hover:text-ds-text" disabled={!!busy} onClick={() => act(`now-${i.id}`, `/admin/campaigns/${bookingId}/items/${i.id}/publish-now`)}>
+              Try auto-publish
+            </button>
+          )}
           {(i.status === "manual_pending" || i.status === "queued") && (
             <button
               type="button"

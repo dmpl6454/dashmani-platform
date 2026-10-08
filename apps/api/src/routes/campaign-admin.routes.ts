@@ -74,6 +74,14 @@ router.post("/admin/campaigns/:id/items/:itemId/refund", ...gate, asyncHandler(a
   return success(res, await review.refundItem(req.params.id, req.params.itemId, staffId(req)));
 }));
 
+router.post("/admin/campaigns/:id/items/:itemId/publish-now", ...gate, asyncHandler(async (req, res) => {
+  return success(res, await review.publishNow(req.params.id, req.params.itemId, staffId(req)));
+}));
+
+router.post("/admin/campaigns/:id/items/:itemId/manual", ...gate, asyncHandler(async (req, res) => {
+  return success(res, await review.switchToManual(req.params.id, req.params.itemId, staffId(req)));
+}));
+
 /** Signed links to preview the creative and download the files to post by hand. */
 router.get("/admin/campaigns/:id/media-urls", ...gate, asyncHandler(async (req, res) => {
   const media = await prisma.campaignMedia.findMany({

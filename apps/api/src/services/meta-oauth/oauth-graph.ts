@@ -317,3 +317,104 @@ export async function oauthGraphFetch<T = unknown>(
     opts?.signal?.removeEventListener("abort", onAbort);
   }
 }
+
+/**
+ * POST sibling of oauthGraphFetch, for campaign publishing (container create,
+ * media_publish, Page photo/video/feed posts, the Reels upload phases).
+ *
+ * Same contract: NEVER THROWS, errors scrubbed, budget enforced, usage recorded.
+ * Params go in a form-encoded body (Graph accepts both; a body keeps a long caption
+ * out of URLs and logs). `tokenInHeader` sends `Authorization: OAuth <token>`
+ * instead — the only way rupload.facebook.com accepts it.
+ *
+ * ⚠️ A status-0 result from a POST is AMBIGUOUS: Meta may have acted before the
+ * answer was lost. Callers that create content must never blindly retry one —
+ * check the object's state first (see campaign/publish).
+ */
+export async function oauthGraphPost<T = unknown>(
+  path: string,
+  params: Record<string, string | number | boolean | undefined>,
+  token: string,
+  opts?: {
+    timeoutMs?: number;
+    label?: string;
+    budget?: CallBudget;
+    headers?: Record<string, string>;
+    tokenInHeader?: boolean;
+  },
+): Promise<OauthGraphResult<T>> {
+  const label = opts?.label ?? "post";
+  const budget = opts?.budget;
+  if (budget) {
+    if (budget.used >= budget.max) {
+      return { ok: false, rateLimited: false, authInvalid: false, status: 0, usage: null, error: "call budget exhausted" };
+    }
+    budget.used++;
+  }
+  const isAbsolute = /^https?:\/\//i.test(path);
+  let url: URL;
+  try {
+    url = new URL(isAbsolute ? path : `${metaGraphBase()}/${path.replace(/^\//, "")}`);
+  } catch {
+    return { ok: false, rateLimited: false, authInvalid: false, status: 0, usage: null, error: "invalid graph path" };
+  }
+
+  const body = new URLSearchParams();
+  for (const [k, v] of Object.entries(params ?? {})) {
+    if (v !== undefined && v !== null && v !== "") body.set(k, String(v));
+  }
+  const headers: Record<string, string> = { ...(opts?.headers ?? {}) };
+  if (opts?.tokenInHeader) {
+    headers.Authorization = `OAuth ${token}`;
+  } else {
+    body.set("access_token", token);
+    if (metaTuning.appsecretProof()) {
+      const secret = metaOauthAppSecret();
+      if (secret) body.set("appsecret_proof", createHmac("sha256", secret).update(token).digest("hex"));
+    }
+  }
+  const hasBody = [...body.keys()].length > 0;
+  if (hasBody) headers["Content-Type"] = "application/x-www-form-urlencoded";
+
+  recordCall(label);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+  try {
+    const res = await fetch(url.toString(), {
+      method: "POST",
+      headers,
+      body: hasBody ? body.toString() : undefined,
+      signal: controller.signal,
+    });
+    const usage = parseUsage(res.headers);
+    let json: unknown;
+    try {
+      json = await res.json();
+    } catch {
+      json = undefined;
+    }
+    const err = (json as { error?: GraphError } | undefined)?.error;
+    if (!res.ok || err) {
+      const code = err?.code;
+      const subcode = err?.error_subcode;
+      return {
+        ok: false,
+        rateLimited: isRateLimitError(res.status, err),
+        authInvalid: code === 190 || (subcode != null && REAUTH_SUBCODES.has(subcode)),
+        status: res.status,
+        usage,
+        error: scrubSecrets(err?.message ?? `HTTP ${res.status}`),
+        errorCode: code,
+        errorSubcode: subcode,
+      };
+    }
+    return { ok: true, rateLimited: false, authInvalid: false, status: res.status, usage, data: json as T };
+  } catch (e) {
+    return {
+      ok: false, rateLimited: false, authInvalid: false, status: 0, usage: null,
+      error: scrubSecrets(e instanceof Error ? e.message : String(e)),
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}

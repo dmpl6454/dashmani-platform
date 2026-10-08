@@ -655,7 +655,17 @@ The client portal has `/campaigns`, `/campaigns/new` and `/campaigns/[id]`. The 
 
 **Phases.**
 - **Phase 1 (this):** staff post by hand and paste the link; the link must be on the item's platform host.
-- **Phase 2:** Meta auto-publish. Needs the publish scopes moved out of `META_FORBIDDEN_SCOPES`, an `oauthGraphPost`, and a re-connect.
+- **Phase 2 (built, ships DARK):** Meta auto-publish, `services/campaign/publish.service.ts`, OFF unless `CAMPAIGN_PUBLISH_ENABLED=1`.
+  - **Approval decides per item** (`planPublishing`): `queued` (auto) when the API can post it, else `manual_pending` with the reason logged. By hand: YouTube, stories, **song audio** (the API cannot attach a song), FB carousels with a video, a connection that is revoked/needs re-auth, or one whose `granted_scopes` lacks `instagram_content_publish` / `pages_manage_posts`.
+  - **No scope change.** `META_FORBIDDEN_SCOPES` still governs what we REQUEST; eligibility reads what the connection actually GRANTED (prod's grant already carries both publish scopes from an earlier authorisation). A reconnect that drops them simply sends items to staff.
+  - **Due time:** launch day at `CAMPAIGN_PUBLISH_HOUR_IST` (default 10:00 IST); staff "Publish now" overrides; "Post by hand instead" stops it.
+  - **Worker:** every 60 s (first +3 min), overlap guard claimed before the first await, ≤`CAMPAIGN_PUBLISH_BATCH` (3) items per tick, each leased 10 min via `locked_until`.
+  - **Instagram:** quota check → container (REELS / image; carousel children kept as `c:<ids>` until all FINISHED, then the parent) → poll `status_code` → `media_publish` → permalink. The container id is saved at once and reused; EXPIRED/ERROR → a fresh one.
+  - **Facebook (Page token):** photo → `/photos`; video post → `/videos`; reel → `/video_reels` start → rupload (`file_url`, `Authorization: OAuth`) → finish, then poll `status.publishing_phase` (`containerId = reel:<id>:<startedMs>`); carousel → unpublished `/photos` + one `/feed` post with `attached_media`.
+  - ⚠️ **Never post twice.** An unanswered IG `media_publish` is never repeated: the container is re-checked (PUBLISHED → the post is found among the newest media by caption). An unanswered FB post goes to staff ("check the Page first"). Hand-posting (`markPosted`) refuses a `queued` item; refund / mark-failed refuse a LOCKED (mid-publish) one.
+  - ⚠️ **Never fail a paid item silently.** Token rejected (190) or permission (10/2xx) → staff at once; other errors back off 2/10/30/120/360 min, then staff after 5 attempts. Only staff mark failed / refund.
+  - Meta downloads the media from `API_PUBLIC_URL` + a signed `/v1/campaign-media/:id/preview` URL valid `CAMPAIGN_PUBLISH_MEDIA_TTL_SEC` (6 h).
+  - Tests: `tests/campaign-publish.test.ts` (fake Graph behind a stubbed fetch). ⚠️ Before switching it on: post once to our own test Page/IG account with "Publish now" and check the permalink.
 - **Phase 3:** YouTube upload.
 - Plan: `/root/.claude/plans/plan-in-start-campaign-replicated-neumann.md` (session-local); the code comments carry the rules.
 

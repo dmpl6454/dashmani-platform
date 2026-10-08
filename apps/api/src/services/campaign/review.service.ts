@@ -4,6 +4,8 @@ import { AppError } from "../../middleware/error-handler";
 import { transitionBooking, settleBooking, logBookingEvent } from "./booking.service";
 import { refundBookingInFull, refundPaymentRow, capturedPaymentFor } from "./payment.service";
 import { sendDeliveryEmail, sendItemLiveEmail, sendStatusEmail } from "./delivery.service";
+import { campaignConfig } from "./config";
+import { checkEligibility, launchAt, planPublishing } from "./publish.service";
 
 // Staff side: the review queue, booking detail, approve / reject / request changes, and the
 // per-item actions (mark posted with its link, mark failed, refund one item).
@@ -74,6 +76,7 @@ export async function getBookingForStaff(id: string) {
   if (!b) throw new AppError(404, "NOT_FOUND", "Campaign not found");
   return {
     ...b,
+    autoPublish: { enabled: campaignConfig.publishEnabled(), dueAt: launchAt(b.launchFrom) },
     launchFrom: ymd(b.launchFrom),
     launchTo: ymd(b.launchTo),
     media: b.media.map((m) => ({
@@ -103,14 +106,30 @@ export async function getBookingForStaff(id: string) {
 }
 
 export async function approve(id: string, staffId: string) {
+  // Phase 2: items the API can publish are queued for the launch day; everything else (and
+  // everything while CAMPAIGN_PUBLISH_ENABLED is off) is posted by our team, as in Phase 1.
+  const plan = await planPublishing(id);
   await prisma.$transaction(async (tx) => {
     await transitionBooking(id, ["paid_pending_review"], "approved", staff(staffId), {
       tx,
       data: { approvedAt: new Date(), reviewedById: staffId, reviewNote: null },
     });
-    // Phase 1: every item is posted by our team and recorded with its link.
+    for (const p of plan) {
+      await tx.campaignBookingItem.updateMany({
+        where: { id: p.itemId, status: "pending" },
+        data: p.auto
+          ? { status: "queued", nextAttemptAt: p.at, attempts: 0, containerId: null, lastError: null }
+          : { status: "manual_pending" },
+      });
+    }
+    // Anything the plan didn't see (it can't miss any, but never leave an item pending).
     await tx.campaignBookingItem.updateMany({ where: { bookingId: id, status: "pending" }, data: { status: "manual_pending" } });
   });
+  if (campaignConfig.publishEnabled()) {
+    for (const p of plan.filter((x) => !x.auto)) {
+      await logBookingEvent(id, staff(staffId), `Post by hand on ${p.accountName}: ${p.reason}`);
+    }
+  }
   void sendStatusEmail(id, "approved").catch((e) => console.error("[campaign] approved email failed", e));
   return getBookingForStaff(id);
 }
@@ -164,7 +183,9 @@ export async function markPosted(bookingId: string, itemId: string, staffId: str
   }
   const editingLink = item.status === "posted_manual" || item.status === "published";
   const res = await prisma.campaignBookingItem.updateMany({
-    where: { id: itemId, status: { in: ["manual_pending", "failed", "queued", "posted_manual", "published"] } },
+    // Not "queued": the worker may be publishing it — staff switch it to "post by hand" first,
+    // so a hand-made post and an API post can never both go out.
+    where: { id: itemId, status: { in: ["manual_pending", "failed", "posted_manual", "published"] } },
     data: {
       status: editingLink ? item.status : "posted_manual",
       permalink: url,
@@ -173,7 +194,11 @@ export async function markPosted(bookingId: string, itemId: string, staffId: str
       lastError: null,
     },
   });
-  if (res.count !== 1) throw new AppError(409, "INVALID_STATE", "This item can't be marked posted (it may have been refunded).");
+  if (res.count !== 1) {
+    throw new AppError(409, "INVALID_STATE", item.status === "queued"
+      ? "This account is set to auto-publish. Choose \"Post by hand instead\" first."
+      : "This item can't be marked posted (it may have been refunded).");
+  }
   await logBookingEvent(bookingId, staff(staffId), `${editingLink ? "Link updated" : "Posted"} on ${item.accountName} (${item.format}): ${url}`);
   if (!editingLink) {
     void sendItemLiveEmail(itemId).catch((e) => console.error("[campaign] live email failed", e));
@@ -185,7 +210,8 @@ export async function markPosted(bookingId: string, itemId: string, staffId: str
 export async function markFailed(bookingId: string, itemId: string, staffId: string, note: string) {
   const item = await itemOf(bookingId, itemId);
   const res = await prisma.campaignBookingItem.updateMany({
-    where: { id: itemId, status: { in: ["manual_pending", "queued"] } },
+    // A queued item mid-publish (locked) can't be failed under the worker's feet.
+    where: { id: itemId, status: { in: ["manual_pending", "queued"] }, OR: [{ lockedUntil: null }, { lockedUntil: { lt: new Date() } }] },
     data: { status: "failed", lastError: note.slice(0, 500) },
   });
   if (res.count !== 1) throw new AppError(409, "INVALID_STATE", "Only an item that is waiting to be posted can be marked failed.");
@@ -203,7 +229,10 @@ export async function refundItem(bookingId: string, itemId: string, staffId: str
   const pay = await capturedPaymentFor(bookingId, item.pricePaise);
   if (!pay) throw new AppError(409, "NOTHING_TO_REFUND", "There is no captured payment that can cover this refund.");
   // Claim the item first so two clicks cannot refund it twice.
-  const claim = await prisma.campaignBookingItem.updateMany({ where: { id: itemId, status: item.status }, data: { status: "refunded" } });
+  const claim = await prisma.campaignBookingItem.updateMany({
+    where: { id: itemId, status: item.status, OR: [{ lockedUntil: null }, { lockedUntil: { lt: new Date() } }] },
+    data: { status: "refunded" },
+  });
   if (claim.count !== 1) throw new AppError(409, "INVALID_STATE", "This item changed — refresh and try again.");
   try {
     await refundPaymentRow(pay.id, item.pricePaise, `item:${itemId.slice(0, 30)}`, staff(staffId));
@@ -212,6 +241,43 @@ export async function refundItem(bookingId: string, itemId: string, staffId: str
     throw err;
   }
   await afterItemChange(bookingId, staffId);
+  return getBookingForStaff(bookingId);
+}
+
+/** Staff: publish a queued item now (skipping the launch-day wait), or move a hand-posted item
+ *  to auto-publish if the API can do it. */
+export async function publishNow(bookingId: string, itemId: string, staffId: string) {
+  const item = await itemOf(bookingId, itemId);
+  const b = await prisma.campaignBooking.findUnique({
+    where: { id: bookingId },
+    select: { status: true, audioIntegration: true, media: { where: { purgedAt: null }, select: { kind: true } } },
+  });
+  if (!b || !["approved", "publishing"].includes(b.status)) throw new AppError(409, "INVALID_STATE", "Approve the campaign first.");
+  if (item.status !== "queued" && item.status !== "manual_pending") {
+    throw new AppError(409, "INVALID_STATE", "Only an item that is waiting to be posted can be published.");
+  }
+  const e = await checkEligibility(item, b);
+  if (!e.ok) throw new AppError(409, "NOT_PUBLISHABLE", e.reason);
+  const res = await prisma.campaignBookingItem.updateMany({
+    where: { id: itemId, status: item.status, OR: [{ lockedUntil: null }, { lockedUntil: { lt: new Date() } }] },
+    data: item.status === "queued"
+      ? { nextAttemptAt: new Date() }
+      : { status: "queued", nextAttemptAt: new Date(), attempts: 0, containerId: null, lastError: null },
+  });
+  if (res.count !== 1) throw new AppError(409, "BUSY", "This item is being published right now — try again in a minute.");
+  await logBookingEvent(bookingId, staff(staffId), `Publish now: ${item.accountName} (${item.format})`);
+  return getBookingForStaff(bookingId);
+}
+
+/** Staff: stop auto-publishing an item and post it by hand instead. */
+export async function switchToManual(bookingId: string, itemId: string, staffId: string) {
+  const item = await itemOf(bookingId, itemId);
+  const res = await prisma.campaignBookingItem.updateMany({
+    where: { id: itemId, status: "queued", OR: [{ lockedUntil: null }, { lockedUntil: { lt: new Date() } }] },
+    data: { status: "manual_pending", nextAttemptAt: null, lastError: null },
+  });
+  if (res.count !== 1) throw new AppError(409, "BUSY", "This item is being published right now — try again in a minute.");
+  await logBookingEvent(bookingId, staff(staffId), `Switched to posting by hand: ${item.accountName} (${item.format})`);
   return getBookingForStaff(bookingId);
 }
 

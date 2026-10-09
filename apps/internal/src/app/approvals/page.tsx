@@ -12,9 +12,9 @@ type Tab = "documents" | "pictures" | "leave";
 type LeaveFilter = "PENDING" | "APPROVED" | "REJECTED";
 
 // Mockup palette.
-const STATUS_COLOR: Record<string, string> = { PENDING: "#E9BD62", APPROVED: "#00D7A0", REJECTED: "#FB7185" };
-const TYPE_COLOR: Record<string, string> = { CASUAL: "#6EB2FF", SICK: "#F59E66", EARNED: "#9B7EDE", WFH: "#00D7A0" };
-const HUES = ["#238BFF", "#E9BD62", "#9B7EDE", "#00D7A0", "#FB7185", "#6EB2FF"];
+const STATUS_COLOR: Record<string, string> = { PENDING: "var(--hx-E9BD62)", APPROVED: "var(--hx-00D7A0)", REJECTED: "var(--hx-FB7185)" };
+const TYPE_COLOR: Record<string, string> = { CASUAL: "var(--hx-6EB2FF)", SICK: "var(--hx-F59E66)", EARNED: "var(--hx-9B7EDE)", WFH: "var(--hx-00D7A0)" };
+const HUES = ["var(--hx-238BFF)", "var(--hx-E9BD62)", "var(--hx-9B7EDE)", "var(--hx-00D7A0)", "var(--hx-FB7185)", "var(--hx-6EB2FF)"];
 const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const hash = (s: string) => {
   let h = 0;
@@ -22,7 +22,7 @@ const hash = (s: string) => {
   return Math.abs(h);
 };
 const rgba = (hex: string, a: number) => {
-  const n = parseInt(hex.slice(1), 16);
+  if (hex.startsWith("var(")) return `color-mix(in srgb, ${hex} ${Math.round(a * 100)}%, transparent)`; const n = parseInt(hex.slice(1), 16);
   return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`;
 };
 const initials = (name: string) =>
@@ -62,7 +62,7 @@ function Box({ on, onClick, label }: { on: boolean; onClick: () => void; label: 
       aria-checked={on}
       aria-label={label}
       onClick={onClick}
-      className={`h-5 w-5 rounded-[6px] border-[1.5px] grid place-items-center p-0 transition-colors ${on ? "bg-ds-gold border-ds-gold text-[#060D14]" : "border-[#3A5568] hover:border-ds-gold"}`}
+      className={`h-5 w-5 rounded-[6px] border-[1.5px] grid place-items-center p-0 transition-colors ${on ? "bg-ds-gold border-ds-gold text-[color:var(--hx-060D14)]" : "border-[color:var(--hx-3A5568)] hover:border-ds-gold"}`}
     >
       {on && <Check className="h-3 w-3" strokeWidth={3.2} />}
     </button>
@@ -88,9 +88,9 @@ function Who({ name, email, size = 40 }: { name: string; email?: string; size?: 
   );
 }
 
-const BTN_OK = "inline-flex items-center justify-center gap-1.5 h-9 px-3.5 rounded-full bg-ds-teal text-[#04130D] text-[12px] font-bold whitespace-nowrap shrink-0 hover:bg-[#33E2B5] disabled:opacity-50";
-const BTN_NO = "inline-flex items-center justify-center gap-1.5 h-9 px-3.5 rounded-full border border-[rgba(229,72,77,.4)] text-[#FB7185] text-[12px] font-bold whitespace-nowrap shrink-0 hover:bg-[rgba(229,72,77,.1)] disabled:opacity-50";
-const TABLE = "rounded-[16px] border border-[#2A4658] bg-ds-card overflow-hidden shadow-[0_12px_32px_rgba(0,0,0,.35)]";
+const BTN_OK = "inline-flex items-center justify-center gap-1.5 h-9 px-3.5 rounded-full bg-ds-teal text-[color:var(--hx-04130D)] text-[12px] font-bold whitespace-nowrap shrink-0 hover:bg-[color:var(--hx-33E2B5)] disabled:opacity-50";
+const BTN_NO = "inline-flex items-center justify-center gap-1.5 h-9 px-3.5 rounded-full border border-[rgba(229,72,77,.4)] text-[color:var(--hx-FB7185)] text-[12px] font-bold whitespace-nowrap shrink-0 hover:bg-[rgba(229,72,77,.1)] disabled:opacity-50";
+const TABLE = "rounded-[16px] border border-[color:var(--hx-2A4658)] bg-ds-card overflow-hidden shadow-[0_12px_32px_rgba(0,0,0,.35)]";
 const HEAD = "h-[50px] px-5 bg-ds-inset border-b border-ds-line2 text-[10.5px] font-semibold tracking-[.1em] uppercase text-ds-t3 whitespace-nowrap";
 const DOC_GRID = "grid gap-x-3.5 items-center [grid-template-columns:36px_minmax(160px,24fr)_minmax(110px,15fr)_minmax(130px,22fr)_minmax(96px,13fr)_minmax(196px,12fr)]";
 const LEAVE_GRID = "grid gap-x-3.5 items-center [grid-template-columns:36px_minmax(160px,24fr)_minmax(120px,16fr)_minmax(76px,10fr)_minmax(110px,20fr)_minmax(196px,12fr)]";
@@ -199,7 +199,7 @@ export default function ApprovalsPage() {
   );
   const loadingRows = (grid: string) =>
     Array.from({ length: 3 }).map((_, i) => (
-      <div key={i} className={`${grid} h-[80px] px-5 border-b border-[#132430]`}>
+      <div key={i} className={`${grid} h-[80px] px-5 border-b border-[color:var(--hx-132430)]`}>
         <span />
         <div className="flex items-center gap-3">
           <div className="h-10 w-10 rounded-full bg-ds-hover motion-safe:animate-pulse" />
@@ -245,7 +245,7 @@ export default function ApprovalsPage() {
       </section>
 
       {actionError && (
-        <div className="mt-4 px-3.5 py-2.5 rounded-[8px] bg-[rgba(229,72,77,.08)] border border-[rgba(229,72,77,.3)] text-[#FB7185] text-[12.5px] flex items-center justify-between gap-3">
+        <div className="mt-4 px-3.5 py-2.5 rounded-[8px] bg-[rgba(229,72,77,.08)] border border-[rgba(229,72,77,.3)] text-[color:var(--hx-FB7185)] text-[12.5px] flex items-center justify-between gap-3">
           <span>{actionError}</span>
           <button type="button" onClick={() => setActionError("")} aria-label="Dismiss" className="shrink-0 hover:text-ds-text"><X className="h-4 w-4" /></button>
         </div>
@@ -271,13 +271,13 @@ export default function ApprovalsPage() {
                       const url = fileUrl(doc.filePath);
                       const when = doc.createdAt || doc.uploadedAt;
                       return (
-                        <div key={doc.id} className={`${DOC_GRID} min-h-[80px] py-3 px-5 border-b border-[#132430] last:border-b-0 text-[13px] hover:bg-[#0A1620] transition-colors ${sel ? "bg-[rgba(233,189,98,.05)]" : ""}`}>
+                        <div key={doc.id} className={`${DOC_GRID} min-h-[80px] py-3 px-5 border-b border-[color:var(--hx-132430)] last:border-b-0 text-[13px] hover:bg-[color:var(--hx-0A1620)] transition-colors ${sel ? "bg-[rgba(233,189,98,.05)]" : ""}`}>
                           <span><Box on={sel} label={`Select ${name}`} onClick={() => toggle(setSelectedDocs, doc.id)} /></span>
                           <Who name={name} email={doc.employee?.email} />
                           <span className="font-medium text-ds-t5 truncate">{typeLabel(doc.documentType || doc.type)}</span>
                           <span className="min-w-0">
                             {file && url ? (
-                              <a href={url} target="_blank" rel="noopener noreferrer" title={file} className="inline-flex items-center gap-[7px] min-w-0 max-w-full text-[13px] font-semibold text-[#6EB2FF] hover:text-[#9FCBFF]">
+                              <a href={url} target="_blank" rel="noopener noreferrer" title={file} className="inline-flex items-center gap-[7px] min-w-0 max-w-full text-[13px] font-semibold text-[color:var(--hx-6EB2FF)] hover:text-[color:var(--hx-9FCBFF)]">
                                 <FileText className="h-3.5 w-3.5 shrink-0" />
                                 <span className="truncate">{file}</span>
                               </a>
@@ -286,7 +286,7 @@ export default function ApprovalsPage() {
                             )}
                           </span>
                           <span className="flex flex-col gap-0.5 leading-[1.25] min-w-0">
-                            <span className="font-semibold text-[#E3E8EE] whitespace-nowrap">{when ? fdy(when) : "—"}</span>
+                            <span className="font-semibold text-[color:var(--hx-E3E8EE)] whitespace-nowrap">{when ? fdy(when) : "—"}</span>
                             {when && <span className="text-[11.5px] text-ds-t3">{ago(when)}</span>}
                           </span>
                           <span className="flex items-center gap-2">
@@ -327,11 +327,11 @@ export default function ApprovalsPage() {
                     <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2 py-4 px-2 rounded-[12px] bg-ds-inset border border-ds-line">
                       <div className="flex flex-col items-center gap-2">
                         <span className="text-[10px] font-semibold tracking-[.14em] uppercase text-ds-t3">Current</span>
-                        <span className="h-[72px] w-[72px] rounded-full bg-[#132430] border-2 border-ds-line2 overflow-hidden grid place-items-center text-ds-t3 text-[11px]">
+                        <span className="h-[72px] w-[72px] rounded-full bg-[color:var(--hx-132430)] border-2 border-ds-line2 overflow-hidden grid place-items-center text-ds-t3 text-[11px]">
                           <Pic src={current} alt={`${name} current`} fallback={current ? "Unavailable" : "None"} />
                         </span>
                       </div>
-                      <span className="text-[#4A6275] text-[16px]" aria-hidden="true">→</span>
+                      <span className="text-[color:var(--hx-4A6275)] text-[16px]" aria-hidden="true">→</span>
                       <div className="flex flex-col items-center gap-2">
                         <span className="text-[10px] font-semibold tracking-[.14em] uppercase text-ds-gold">New</span>
                         <span
@@ -366,7 +366,7 @@ export default function ApprovalsPage() {
                     role="tab"
                     aria-selected={on}
                     onClick={() => { setLeaveFilter(f); setSelectedLeaves(new Set()); }}
-                    className={`inline-flex items-center gap-2 h-9 px-[18px] rounded-full text-[13px] font-semibold whitespace-nowrap transition-colors ${on ? "bg-ds-gold text-[#060D14]" : "text-ds-t2 hover:text-ds-text"}`}
+                    className={`inline-flex items-center gap-2 h-9 px-[18px] rounded-full text-[13px] font-semibold whitespace-nowrap transition-colors ${on ? "bg-ds-gold text-[color:var(--hx-060D14)]" : "text-ds-t2 hover:text-ds-text"}`}
                   >
                     {formatStatus(f)}
                     {leaveData && <span className={`text-[11px] font-semibold ${on ? "text-[rgba(6,13,20,.6)]" : "text-ds-t3"}`}>{allLeaves.filter((l) => l.status === f).length}</span>}
@@ -396,14 +396,14 @@ export default function ApprovalsPage() {
                         const sel = selectedLeaves.has(leave.id);
                         const { range, days } = leaveRange(leave.startDate, leave.endDate);
                         const type = leave.leaveType || leave.type;
-                        const tc = TYPE_COLOR[type] || "#A7B3C2";
-                        const sc = STATUS_COLOR[leave.status] || "#738395";
+                        const tc = TYPE_COLOR[type] || "var(--hx-A7B3C2)";
+                        const sc = STATUS_COLOR[leave.status] || "var(--hx-738395)";
                         return (
-                          <div key={leave.id} className={`${LEAVE_GRID} min-h-[80px] py-3 px-5 border-b border-[#132430] last:border-b-0 text-[13px] hover:bg-[#0A1620] transition-colors ${sel ? "bg-[rgba(233,189,98,.05)]" : ""}`}>
+                          <div key={leave.id} className={`${LEAVE_GRID} min-h-[80px] py-3 px-5 border-b border-[color:var(--hx-132430)] last:border-b-0 text-[13px] hover:bg-[color:var(--hx-0A1620)] transition-colors ${sel ? "bg-[rgba(233,189,98,.05)]" : ""}`}>
                             <span>{pending && !self && <Box on={sel} label={`Select ${name}`} onClick={() => toggle(setSelectedLeaves, leave.id)} />}</span>
                             <Who name={name} email={leave.employee?.email} />
                             <span className="flex flex-col gap-0.5 min-w-0 leading-[1.25]">
-                              <span className="font-semibold text-[#E3E8EE] truncate">{range}</span>
+                              <span className="font-semibold text-[color:var(--hx-E3E8EE)] truncate">{range}</span>
                               <span className="text-[11.5px] text-ds-t3">{days}</span>
                             </span>
                             <span>
@@ -446,7 +446,7 @@ export default function ApprovalsPage() {
       {/* Bulk bar */}
       {selectedCount > 0 && (
         <div className="sticky bottom-5 z-20 flex justify-center mt-5 pointer-events-none">
-          <div className="flex items-center gap-2.5 flex-wrap justify-center py-2 pl-5 pr-2 rounded-[28px] bg-[#0E1B25] border border-[#2A4658] shadow-[0_16px_40px_rgba(0,0,0,.55)] pointer-events-auto max-w-full">
+          <div className="flex items-center gap-2.5 flex-wrap justify-center py-2 pl-5 pr-2 rounded-[28px] bg-[color:var(--hx-0E1B25)] border border-[color:var(--hx-2A4658)] shadow-[0_16px_40px_rgba(0,0,0,.55)] pointer-events-auto max-w-full">
             <span className="text-[13px] font-semibold text-ds-text whitespace-nowrap mr-1.5">{selectedCount} selected</span>
             <button type="button" disabled={bulkLoading} onClick={() => bulkAction(activeTab, "APPROVE")} className={`${BTN_OK} h-10 px-4 text-[12.5px]`}>
               <Check className="h-3 w-3" strokeWidth={2.6} /> Approve Selected

@@ -9,5 +9,5 @@ export const ROLE_COLORS: Record<string, string> = {
 
 export function getRoleColor(roleName: string): string {
   const key = roleName?.toLowerCase();
-  return ROLE_COLORS[key] ?? "bg-[#FFF8E1] text-[#1A1A1A] border-[#F0EAD8]";
+  return ROLE_COLORS[key] ?? "bg-[color:var(--hx-FFF8E1)] text-[color:var(--hx-1A1A1A)] border-[color:var(--hx-F0EAD8)]";
 }

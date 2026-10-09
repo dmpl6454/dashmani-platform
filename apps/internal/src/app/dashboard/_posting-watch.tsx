@@ -22,16 +22,16 @@ import {
 // ── Dark ("ds") pieces — styling only, matching the dashboard mockup ─────────────
 
 const rgba = (hex: string, a: number) => {
-  const n = parseInt(hex.slice(1), 16);
+  if (hex.startsWith("var(")) return `color-mix(in srgb, ${hex} ${Math.round(a * 100)}%, transparent)`; const n = parseInt(hex.slice(1), 16);
   return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`;
 };
 /** Accent per status tab: amber for silence, red for access trouble, slate for not connected. */
 const TAB_ACCENT: Record<"quiet_today" | "no_post_today" | "inactive" | "cant_check" | "not_connected", string> = {
-  quiet_today: "#E9BD62",
-  no_post_today: "#F0803C",
-  inactive: "#9B7EDE",
-  cant_check: "#E52D47",
-  not_connected: "#6EB2FF",
+  quiet_today: "var(--hx-E9BD62)",
+  no_post_today: "var(--hx-F0803C)",
+  inactive: "var(--hx-9B7EDE)",
+  cant_check: "var(--hx-E52D47)",
+  not_connected: "var(--hx-6EB2FF)",
 };
 
 function StatusTab({ active, accent, label, count, onClick }: { active: boolean; accent: string; label: string; count: number; onClick: () => void }) {
@@ -44,14 +44,14 @@ function StatusTab({ active, accent, label, count, onClick }: { active: boolean;
       style={
         active
           ? { borderColor: rgba(accent, 0.55), background: rgba(accent, 0.12), color: accent }
-          : { borderColor: "#223543", background: "#0B1720", color: "#A7B3C2" }
+          : { borderColor: "var(--hx-223543)", background: "var(--hx-0B1720)", color: "var(--hx-A7B3C2)" }
       }
     >
-      <span className="h-1.5 w-1.5 rounded-full shrink-0" style={{ background: count > 0 ? accent : "#3A4E5E" }} aria-hidden="true" />
+      <span className="h-1.5 w-1.5 rounded-full shrink-0" style={{ background: count > 0 ? accent : "var(--hx-3A4E5E)" }} aria-hidden="true" />
       {label}
       <span
         className="font-num min-w-[22px] h-[20px] px-1.5 grid place-items-center rounded-full text-[11px] font-bold"
-        style={active ? { background: rgba(accent, 0.2), color: accent } : { background: "#132430", color: count > 0 ? "#F4F6F8" : "#738395" }}
+        style={active ? { background: rgba(accent, 0.2), color: accent } : { background: "var(--hx-132430)", color: count > 0 ? "var(--hx-F4F6F8)" : "var(--hx-738395)" }}
       >
         {count}
       </span>
@@ -69,7 +69,7 @@ function Seg<T extends string>({ options, value, onChange }: { options: { key: T
           onClick={() => onChange(o.key)}
           aria-pressed={value === o.key}
           className={`h-[26px] px-3.5 rounded-full text-[11.5px] font-semibold transition-colors ${
-            value === o.key ? "bg-ds-gold text-[#060D14]" : "text-ds-t2 hover:text-ds-text"
+            value === o.key ? "bg-ds-gold text-[color:var(--hx-060D14)]" : "text-ds-t2 hover:text-ds-text"
           }`}
         >
           {o.label}
@@ -245,7 +245,7 @@ function PlatformChip({ platform }: { platform: "facebook" | "instagram" }) {
   return (
     <span
       className="h-9 w-9 rounded-[8px] grid place-items-center text-[11px] font-bold text-white shrink-0 shadow-[inset_0_0_0_1px_rgba(255,255,255,.08)]"
-      style={{ background: fb ? "linear-gradient(135deg,#1877F2,#0B45BB)" : "linear-gradient(135deg,#F0803C,#EC42B7)" }}
+      style={{ background: fb ? "linear-gradient(135deg,var(--hx-1877F2),var(--hx-0B45BB))" : "linear-gradient(135deg,var(--hx-F0803C),var(--hx-EC42B7))" }}
       title={fb ? "Facebook" : "Instagram"}
     >
       {fb ? "FB" : "IG"}
@@ -305,7 +305,7 @@ function ChannelRow({ c, nowMs, startLabel }: { c: PostingWatchChannel; nowMs: n
         <p className="text-[11.5px] text-ds-t3 flex items-center gap-1 flex-wrap mt-0.5">
           <span className="min-w-0">{detail}</span>
           {c.lastPostUrl && c.group !== "cant_check" && (
-            <a href={c.lastPostUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-0.5 font-semibold text-[#6EB2FF] hover:text-ds-text" aria-label={`View the last post on ${c.name}`}>
+            <a href={c.lastPostUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-0.5 font-semibold text-[color:var(--hx-6EB2FF)] hover:text-ds-text" aria-label={`View the last post on ${c.name}`}>
               view <ExternalLink className="h-3 w-3" />
             </a>
           )}
@@ -317,7 +317,7 @@ function ChannelRow({ c, nowMs, startLabel }: { c: PostingWatchChannel; nowMs: n
         // For a dormant channel "silent since 7 AM" says nothing; the age of its last post does.
         last != null && (
           <div className="shrink-0 text-right">
-            <p className="font-num text-[15px] font-bold text-[#B9A6EC] whitespace-nowrap">{duration(nowMs - last)}</p>
+            <p className="font-num text-[15px] font-bold text-[color:var(--hx-B9A6EC)] whitespace-nowrap">{duration(nowMs - last)}</p>
             <p className="text-[10px] uppercase tracking-[.08em] text-ds-t3">since last post</p>
           </div>
         )
@@ -329,7 +329,7 @@ function ChannelRow({ c, nowMs, startLabel }: { c: PostingWatchChannel; nowMs: n
       ) : (
         c.group === "cant_check" && (
           <span className="h-8 w-8 rounded-full grid place-items-center shrink-0" style={{ background: "rgba(229,45,71,.12)" }}>
-            <AlertTriangle className="h-4 w-4 text-[#F26B7E]" aria-label="Can't check" />
+            <AlertTriangle className="h-4 w-4 text-[color:var(--hx-F26B7E)]" aria-label="Can't check" />
           </span>
         )
       )}
@@ -360,7 +360,7 @@ function NotConnectedRow({ r }: { r: PostingWatchNotConnected }) {
           )
         )}
       </div>
-      <span className="hidden sm:inline-flex items-center h-[22px] px-2.5 rounded-full text-[10.5px] font-semibold shrink-0 border border-[rgba(110,178,255,.35)] bg-[rgba(110,178,255,.08)] text-[#6EB2FF]">
+      <span className="hidden sm:inline-flex items-center h-[22px] px-2.5 rounded-full text-[10.5px] font-semibold shrink-0 border border-[rgba(110,178,255,.35)] bg-[rgba(110,178,255,.08)] text-[color:var(--hx-6EB2FF)]">
         {r.reason === "ambiguous" ? "Ambiguous" : "Not connected"}
       </span>
     </li>
@@ -369,7 +369,7 @@ function NotConnectedRow({ r }: { r: PostingWatchNotConnected }) {
 
 function Frame({ children }: { children: ReactNode }) {
   return (
-    <section className="relative overflow-hidden rounded-[10px] bg-ds-card border border-[#1E3442] p-5 sm:p-6 space-y-4 min-w-0 shadow-[0_18px_40px_-28px_rgba(0,0,0,.9)]">
+    <section className="relative overflow-hidden rounded-[10px] bg-ds-card border border-[color:var(--hx-1E3442)] p-5 sm:p-6 space-y-4 min-w-0 shadow-[0_18px_40px_-28px_rgba(0,0,0,.9)]">
       {/* Soft gold glow in the corner — decoration only */}
       <span
         aria-hidden="true"
@@ -409,7 +409,7 @@ function Notice({ children }: { children: ReactNode }) {
 
 function RetryButton({ onClick }: { onClick: () => void }) {
   return (
-    <button type="button" onClick={onClick} className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-ds-gold hover:text-[#F4D58C]">
+    <button type="button" onClick={onClick} className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-ds-gold hover:text-[color:var(--hx-F4D58C)]">
       <RefreshCw className="h-3.5 w-3.5" /> Retry now
     </button>
   );
@@ -552,7 +552,7 @@ function PostingWatchInner() {
     </div>
   ) : (
     <div className="inline-flex items-center gap-1.5 h-[28px] px-3 rounded-full border border-ds-line2 bg-ds-inset text-[11.5px] text-ds-t2">
-      <Moon className="h-3.5 w-3.5 text-[#9B7EDE]" />
+      <Moon className="h-3.5 w-3.5 text-[color:var(--hx-9B7EDE)]" />
       Paused overnight{nextStart != null && ` · resumes ${istWhen(nextStart, nowMs)}`}
     </div>
   );
@@ -620,7 +620,7 @@ function PostingWatchInner() {
         ) : rowCount === 0 ? (
           <p className="text-[13px] text-ds-t2 px-4 py-8 text-center">{emptyMessage}</p>
         ) : (
-          <ul className="divide-y divide-[#132430] max-h-[26rem] overflow-y-auto overscroll-contain [scrollbar-width:thin] [scrollbar-color:#223543_transparent]">
+          <ul className="divide-y divide-[color:var(--hx-132430)] max-h-[26rem] overflow-y-auto overscroll-contain [scrollbar-width:thin] [scrollbar-color:var(--hx-223543)_transparent]">
             {current === "not_connected"
               ? ncRows.map((r) => <NotConnectedRow key={r.accountId} r={r} />)
               : channelRows.map((c) => <ChannelRow key={c.key} c={c} nowMs={nowMs} startLabel={startLabel} />)}

@@ -49,7 +49,7 @@ const dateInputCls =
 
 /** Secondary pill button (dark design system). */
 const pillBtnCls =
-  "inline-flex h-9 items-center gap-1.5 rounded-full border border-ds-line2 bg-ds-inset px-4 text-[12.5px] font-semibold text-ds-t5 transition-colors hover:border-[#2A4658] hover:text-ds-text disabled:cursor-not-allowed disabled:opacity-40";
+  "inline-flex h-9 items-center gap-1.5 rounded-full border border-ds-line2 bg-ds-inset px-4 text-[12.5px] font-semibold text-ds-t5 transition-colors hover:border-[color:var(--hx-2A4658)] hover:text-ds-text disabled:cursor-not-allowed disabled:opacity-40";
 
 // ─── A From/To draft that applies itself once it settles and is valid ─────────────
 
@@ -166,7 +166,7 @@ export function RangeProblem({ message }: { message: string | null }) {
   return (
     <p
       role="alert"
-      className="flex items-start gap-1.5 rounded-[10px] border border-[rgba(251,113,133,.25)] bg-[rgba(251,113,133,.08)] px-3 py-2 text-xs text-[#FDA4AF]"
+      className="flex items-start gap-1.5 rounded-[10px] border border-[rgba(251,113,133,.25)] bg-[rgba(251,113,133,.08)] px-3 py-2 text-xs text-[color:var(--hx-FDA4AF)]"
     >
       <AlertCircle className="mt-0.5 h-3.5 w-3.5 flex-none" aria-hidden />
       <span className="min-w-0 break-words">{message}</span>
@@ -216,7 +216,7 @@ function DayWindowControls({ nav, year, actions }: { nav: DayWindowNav; year: st
   const prevName = nav.prev?.mode === "month" ? fmtMonth(nav.prev.month) : null;
   const nextName = nav.next?.mode === "month" ? fmtMonth(nav.next.month) : null;
   const arrowCls =
-    "inline-flex h-9 w-9 flex-none items-center justify-center rounded-full border border-ds-line2 bg-[#08131C] text-ds-t5 transition-colors hover:border-[#2A4658] hover:text-ds-gold disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-ds-line2 disabled:hover:text-ds-t5";
+    "inline-flex h-9 w-9 flex-none items-center justify-center rounded-full border border-ds-line2 bg-[color:var(--hx-08131C)] text-ds-t5 transition-colors hover:border-[color:var(--hx-2A4658)] hover:text-ds-gold disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-ds-line2 disabled:hover:text-ds-t5";
   return (
     <div className="space-y-3 rounded-[12px] border border-ds-line2 bg-ds-inset p-3">
       <div className="flex items-center gap-2">
@@ -332,7 +332,7 @@ function ChannelDays({
     <button
       type="button"
       onClick={() => mutate()}
-      className="inline-flex h-7 items-center rounded-full border border-ds-line2 bg-ds-inset px-3 text-[12px] font-semibold text-ds-t5 transition-colors hover:border-[#2A4658] hover:text-ds-text"
+      className="inline-flex h-7 items-center rounded-full border border-ds-line2 bg-ds-inset px-3 text-[12px] font-semibold text-ds-t5 transition-colors hover:border-[color:var(--hx-2A4658)] hover:text-ds-text"
     >
       Retry
     </button>
@@ -341,7 +341,7 @@ function ChannelDays({
   if (error && !fresh) {
     // A failed window never shows the previous window's days as if they were this one's.
     return (
-      <div className="mt-2 flex flex-wrap items-center gap-2 rounded-[10px] border border-[rgba(251,113,133,.25)] bg-[rgba(251,113,133,.08)] px-3 py-2.5 text-xs text-[#FDA4AF]">
+      <div className="mt-2 flex flex-wrap items-center gap-2 rounded-[10px] border border-[rgba(251,113,133,.25)] bg-[rgba(251,113,133,.08)] px-3 py-2.5 text-xs text-[color:var(--hx-FDA4AF)]">
         <AlertCircle className="h-3.5 w-3.5 flex-none" aria-hidden />
         <span className="min-w-0 break-words">
           Couldn&apos;t load {fmtRange([range.startDate, range.endDate], year)}: {(error as Error).message}
@@ -378,7 +378,7 @@ function ChannelDays({
             <DayChip key={d.date} day={d} year={year} />
           ))}
           {notAssigned.length > 0 && (
-            <li className="col-span-full min-w-0 rounded-[8px] border border-dashed border-[#2A4658] bg-[rgba(24,44,57,.45)] px-2.5 py-1.5 text-xs text-ds-t3">
+            <li className="col-span-full min-w-0 rounded-[8px] border border-dashed border-[color:var(--hx-2A4658)] bg-[color-mix(in_srgb,var(--hx-182C39)_45%,transparent)] px-2.5 py-1.5 text-xs text-ds-t3">
               <span className="break-words">
                 <span className="font-medium text-ds-t5">Not assigned yet</span> ·{" "}
                 {fmtRange([notAssigned[notAssigned.length - 1].date, notAssigned[0].date], year)} (
@@ -390,7 +390,7 @@ function ChannelDays({
         </ul>
       )}
       {assigned.length > DAYS_PREVIEW && (
-        <button type="button" onClick={() => setShowAll((v) => !v)} className="mt-2 text-xs font-semibold text-[#6EB2FF] hover:text-[#9CCBFF] hover:underline">
+        <button type="button" onClick={() => setShowAll((v) => !v)} className="mt-2 text-xs font-semibold text-[color:var(--hx-6EB2FF)] hover:text-[color:var(--hx-9CCBFF)] hover:underline">
           {showAll ? "Show fewer days" : `Show all ${nf.format(assigned.length)} days`}
         </button>
       )}
@@ -417,13 +417,13 @@ function DayChip({ day: d, year }: { day: GapDayCell; year: string }) {
     >
       <i
         aria-hidden
-        className={`h-2.5 w-2.5 flex-none rounded-[3px] ${posted ? "bg-[#00D7A0]" : isToday ? "bg-ds-gold" : "bg-[#FB7185]"}`}
+        className={`h-2.5 w-2.5 flex-none rounded-[3px] ${posted ? "bg-[color:var(--hx-00D7A0)]" : isToday ? "bg-ds-gold" : "bg-[color:var(--hx-FB7185)]"}`}
       />
       {/* Bounded text ("Mon 15 Sep 2025" at most), so it may keep its width. */}
       <span className="min-w-[4.5rem] shrink-0 whitespace-nowrap font-num tabular-nums text-ds-t5">
         {gapWeekday(d.date)} {fmtDay(d.date, year)}
       </span>
-      <span className={`min-w-0 break-words tabular-nums ${posted ? "text-[#5EEAC4]" : isToday ? "text-ds-gold" : "text-[#FDA4AF]"}`}>
+      <span className={`min-w-0 break-words tabular-nums ${posted ? "text-[color:var(--hx-5EEAC4)]" : isToday ? "text-ds-gold" : "text-[color:var(--hx-FDA4AF)]"}`}>
         {isToday ? "Today · " : ""}
         {posted
           ? `${plural(links, "link")}${times ? ` · ${d.approximate ? "~" : ""}${times}` : ""}`
@@ -438,7 +438,7 @@ function DayChip({ day: d, year }: { day: GapDayCell; year: string }) {
 function Legend() {
   return (
     <p className="pt-1 text-[11px] leading-relaxed text-ds-t3">
-      Newest first. <span className="font-semibold text-[#00D7A0]">Green</span> = posted, <span className="font-semibold text-[#FB7185]">red</span> = no
+      Newest first. <span className="font-semibold text-[color:var(--hx-00D7A0)]">Green</span> = posted, <span className="font-semibold text-[color:var(--hx-FB7185)]">red</span> = no
       link, <span className="font-semibold text-ds-gold">amber</span> = today (still in progress — never counted as missed), dashed =
       not assigned yet (not counted). Times are IST; ~ marks an approximate time (before 3 Jun 2026).
     </p>
@@ -482,7 +482,7 @@ export function PairDayByDay({ row, report, today, year }: { row: GapPairRow; re
   const onSeries = useCallback((_accountId: string, s: ChannelSeries | null) => setSeries(s), []);
   const ready = series?.window === windowKey(nav.range);
   return (
-    <div className="mt-3 space-y-2 border-t border-[#182C39] pt-3">
+    <div className="mt-3 space-y-2 border-t border-[color:var(--hx-182C39)] pt-3">
       <DayWindowControls
         nav={nav}
         year={year}
@@ -526,10 +526,10 @@ export function PersonDayByDay({
   const ready = channels.length > 0 && channels.every((c) => seriesById[c.account.id]?.window === key);
 
   if (channels.length === 0) {
-    return <p className="mt-3 border-t border-[#182C39] pt-3 text-xs text-ds-t3">No assigned channels in this scope.</p>;
+    return <p className="mt-3 border-t border-[color:var(--hx-182C39)] pt-3 text-xs text-ds-t3">No assigned channels in this scope.</p>;
   }
   return (
-    <div className="mt-3 space-y-3 border-t border-[#182C39] pt-3">
+    <div className="mt-3 space-y-3 border-t border-[color:var(--hx-182C39)] pt-3">
       <DayWindowControls
         nav={nav}
         year={year}
@@ -552,7 +552,7 @@ export function PersonDayByDay({
       {channels.map((c) => (
         <section
           key={c.account.id}
-          className="min-w-0 space-y-1 rounded-[12px] border border-[#182C39] bg-[rgba(11,23,32,.55)] p-3"
+          className="min-w-0 space-y-1 rounded-[12px] border border-[color:var(--hx-182C39)] bg-[color-mix(in_srgb,var(--hx-0B1720)_55%,transparent)] p-3"
           aria-label={`${c.account.displayName}, day by day`}
         >
           <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-0.5 text-xs">
@@ -560,7 +560,7 @@ export function PersonDayByDay({
             <span className="min-w-0 break-words text-ds-t3">
               {c.account.platformName} · @{c.account.handle.replace(/^@/, "")} · since {fmtDay(c.assignedSince, year)}
             </span>
-            <span className={`min-w-0 break-words tabular-nums ${c.missedDays > 0 ? "text-[#FDA4AF]" : "text-[#5EEAC4]"}`}>
+            <span className={`min-w-0 break-words tabular-nums ${c.missedDays > 0 ? "text-[color:var(--hx-FDA4AF)]" : "text-[color:var(--hx-5EEAC4)]"}`}>
               Report range:{" "}
               {c.countedDays === 0
                 ? "nothing counted yet"

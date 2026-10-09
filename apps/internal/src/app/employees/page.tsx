@@ -13,21 +13,21 @@ type ViewTab = "active" | "archived";
 type StatusKey = "ALL" | "ACTIVE" | "ONBOARDING" | "INACTIVE";
 
 const STATUS: Record<string, { label: string; color: string }> = {
-  ACTIVE: { label: "Active", color: "#00D7A0" },
-  ONBOARDING: { label: "Onboarding", color: "#FBBF24" },
-  INACTIVE: { label: "Inactive", color: "#738395" },
+  ACTIVE: { label: "Active", color: "var(--hx-00D7A0)" },
+  ONBOARDING: { label: "Onboarding", color: "var(--hx-FBBF24)" },
+  INACTIVE: { label: "Inactive", color: "var(--hx-738395)" },
 };
 // Role chip colours (mockup palette, mapped onto the portal's real roles).
 const ROLE_COLOR: Record<string, string> = {
-  "Super Admin": "#E9BD62", Admin: "#E9BD62", "Team Lead": "#9B7EDE",
-  "Senior Employee": "#00D7A0", Employee: "#238BFF", HR: "#FB7185", Designer: "#EC42B7", Editor: "#00D7A0",
+  "Super Admin": "var(--hx-E9BD62)", Admin: "var(--hx-E9BD62)", "Team Lead": "var(--hx-9B7EDE)",
+  "Senior Employee": "var(--hx-00D7A0)", Employee: "var(--hx-238BFF)", HR: "var(--hx-FB7185)", Designer: "var(--hx-EC42B7)", Editor: "var(--hx-00D7A0)",
 };
-const ROLE_FALLBACK = ["#238BFF", "#00D7A0", "#9B7EDE", "#EC42B7", "#FB7185"];
-const AV_BG = ["#10222E", "#0E2A22", "#1B1630", "#2A2410", "#2A1116"];
-const AV_FG = ["#238BFF", "#34D399", "#9B7EDE", "#E9BD62", "#FB7185"];
+const ROLE_FALLBACK = ["var(--hx-238BFF)", "var(--hx-00D7A0)", "var(--hx-9B7EDE)", "var(--hx-EC42B7)", "var(--hx-FB7185)"];
+const AV_BG = ["var(--hx-10222E)", "var(--hx-0E2A22)", "var(--hx-1B1630)", "var(--hx-2A2410)", "var(--hx-2A1116)"];
+const AV_FG = ["var(--hx-238BFF)", "var(--hx-34D399)", "var(--hx-9B7EDE)", "var(--hx-E9BD62)", "var(--hx-FB7185)"];
 
 const hash = (s: string) => { let h = 0; for (let i = 0; i < s.length; i++) h = s.charCodeAt(i) + ((h << 5) - h); return Math.abs(h); };
-const rgba = (hex: string, a: number) => { const n = parseInt(hex.slice(1), 16); return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`; };
+const rgba = (hex: string, a: number) => { if (hex.startsWith("var(")) return `color-mix(in srgb, ${hex} ${Math.round(a * 100)}%, transparent)`; const n = parseInt(hex.slice(1), 16); return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`; };
 const roleColor = (name: string) => ROLE_COLOR[name] ?? ROLE_FALLBACK[hash(name) % ROLE_FALLBACK.length];
 
 const GRID = "grid [grid-template-columns:minmax(200px,1.6fr)_minmax(180px,1.4fr)_minmax(150px,1.2fr)_minmax(120px,1fr)_110px_80px] gap-3";
@@ -58,10 +58,10 @@ export default function EmployeesPage() {
   const rosterCount = (k: StatusKey) => (k === "ALL" ? rosterTotal : roster.filter((e) => e.status === k).length);
 
   const kpis: { key: StatusKey; label: string; icon: any; color: string; note: string }[] = [
-    { key: "ALL", label: "Total Employees", icon: Users, color: "#238BFF", note: "on the portal" },
-    { key: "ACTIVE", label: "Active", icon: CheckSquare, color: "#00D7A0", note: "can sign in" },
-    { key: "ONBOARDING", label: "Onboarding", icon: UserPlus, color: "#FBBF24", note: "not yet active" },
-    { key: "INACTIVE", label: "Inactive", icon: Clock, color: "#A7B3C2", note: "deactivated" },
+    { key: "ALL", label: "Total Employees", icon: Users, color: "var(--hx-238BFF)", note: "on the portal" },
+    { key: "ACTIVE", label: "Active", icon: CheckSquare, color: "var(--hx-00D7A0)", note: "can sign in" },
+    { key: "ONBOARDING", label: "Onboarding", icon: UserPlus, color: "var(--hx-FBBF24)", note: "not yet active" },
+    { key: "INACTIVE", label: "Inactive", icon: Clock, color: "var(--hx-A7B3C2)", note: "deactivated" },
   ];
 
   return (
@@ -96,7 +96,7 @@ export default function EmployeesPage() {
               aria-pressed={sel}
               onClick={() => { setViewTab("active"); setStatusFilter(k.key); }}
               className="flex flex-col min-[480px]:flex-row gap-2.5 min-[480px]:gap-3.5 min-[480px]:items-center p-3 sm:p-4 rounded-[8px] border text-left text-ds-text transition-colors hover:border-ds-line3"
-              style={{ background: sel ? "#0A1621" : "#08131C", borderColor: sel ? rgba(k.color, 0.5) : "#182C39" }}
+              style={{ background: sel ? "var(--hx-0A1621)" : "var(--hx-08131C)", borderColor: sel ? rgba(k.color, 0.5) : "var(--hx-182C39)" }}
             >
               <span className="h-10 w-10 rounded-[10px] grid place-items-center shrink-0" style={{ background: rgba(k.color, 0.13), color: k.color }}>
                 <Icon className="h-[18px] w-[18px]" strokeWidth={1.8} />
@@ -164,7 +164,7 @@ export default function EmployeesPage() {
 
         <div className="overflow-x-auto">
           <div className="min-w-[820px]" role="table" aria-label="Employees">
-            <div role="row" className={`${GRID} px-5 py-2.5 text-[10px] tracking-[.12em] uppercase text-ds-t3 font-semibold border-b border-ds-line bg-[#0A1620]`}>
+            <div role="row" className={`${GRID} px-5 py-2.5 text-[10px] tracking-[.12em] uppercase text-ds-t3 font-semibold border-b border-ds-line bg-[color:var(--hx-0A1620)]`}>
               <span role="columnheader">Name</span><span role="columnheader">Email</span><span role="columnheader">Roles</span>
               <span role="columnheader">Team</span><span role="columnheader">Status</span><span role="columnheader" className="text-center">Perf.</span>
             </div>
@@ -194,7 +194,7 @@ export default function EmployeesPage() {
                   ? (String(emp.profileImageUrl).startsWith("http") ? emp.profileImageUrl : `${API_BASE}${emp.profileImageUrl}`)
                   : null;
                 return (
-                  <div key={emp.id} role="row" className={`${GRID} items-center px-5 py-[11px] border-b border-ds-grid text-[12.5px] transition-colors hover:bg-[#0B1824]`}>
+                  <div key={emp.id} role="row" className={`${GRID} items-center px-5 py-[11px] border-b border-ds-grid text-[12.5px] transition-colors hover:bg-[color:var(--hx-0B1824)]`}>
                     <Link href={`/employees/${emp.id}`} role="cell" className="flex items-center gap-2.5 min-w-0 text-ds-text hover:text-ds-gold">
                       {img ? (
                         <img src={img} alt="" className="h-8 w-8 rounded-full object-cover border border-ds-line2 shrink-0" />

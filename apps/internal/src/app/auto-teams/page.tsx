@@ -4,17 +4,17 @@ import { apiFetch, API_BASE } from "@/lib/api";
 import useSWR from "swr";
 import { X } from "lucide-react";
 
-const HUES = ["#238BFF", "#E9BD62", "#9B7EDE", "#00D7A0", "#FB7185", "#6EB2FF"];
+const HUES = ["var(--hx-238BFF)", "var(--hx-E9BD62)", "var(--hx-9B7EDE)", "var(--hx-00D7A0)", "var(--hx-FB7185)", "var(--hx-6EB2FF)"];
 const PLAT: Record<string, string> = {
-  instagram: "#E1306C",
-  linkedin: "#0A66C2",
-  youtube: "#E5484D",
-  facebook: "#1877F2",
-  x: "#3A4B5A",
-  twitter: "#3A4B5A",
+  instagram: "var(--hx-E1306C)",
+  linkedin: "var(--hx-0A66C2)",
+  youtube: "var(--hx-E5484D)",
+  facebook: "var(--hx-1877F2)",
+  x: "var(--hx-3A4B5A)",
+  twitter: "var(--hx-3A4B5A)",
 };
 const rgba = (hex: string, a: number) => {
-  const n = parseInt(hex.slice(1), 16);
+  if (hex.startsWith("var(")) return `color-mix(in srgb, ${hex} ${Math.round(a * 100)}%, transparent)`; const n = parseInt(hex.slice(1), 16);
   return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`;
 };
 const hash = (s: string) => {
@@ -104,7 +104,7 @@ export default function AutoTeamsPage() {
       )}
 
       {errorMsg && (
-        <div role="alert" className="mb-4 px-3.5 py-2.5 rounded-[8px] bg-[rgba(229,72,77,.08)] border border-[rgba(229,72,77,.3)] text-[#FB7185] text-[12.5px] flex items-center justify-between gap-3">
+        <div role="alert" className="mb-4 px-3.5 py-2.5 rounded-[8px] bg-[rgba(229,72,77,.08)] border border-[rgba(229,72,77,.3)] text-[color:var(--hx-FB7185)] text-[12.5px] flex items-center justify-between gap-3">
           <span>{errorMsg}</span>
           <button type="button" onClick={() => setErrorMsg("")} aria-label="Dismiss" className="shrink-0 hover:text-ds-text"><X className="h-4 w-4" /></button>
         </div>
@@ -113,15 +113,15 @@ export default function AutoTeamsPage() {
       {isLoading ? (
         <section className="grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(min(100%,340px),1fr))]">
           {Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} className="h-[360px] rounded-[18px] border border-[#2A4658] bg-ds-card motion-safe:animate-pulse" />
+            <div key={i} className="h-[360px] rounded-[18px] border border-[color:var(--hx-2A4658)] bg-ds-card motion-safe:animate-pulse" />
           ))}
         </section>
       ) : error && !data ? (
-        <section className="rounded-[18px] border border-[#2A4658] bg-ds-card py-14 px-5 text-center text-ds-t3 text-[13px]">
+        <section className="rounded-[18px] border border-[color:var(--hx-2A4658)] bg-ds-card py-14 px-5 text-center text-ds-t3 text-[13px]">
           Shared accounts couldn&apos;t be loaded just now. Refresh to try again.
         </section>
       ) : sharedAccounts.length === 0 ? (
-        <section className="rounded-[18px] border border-[#2A4658] bg-ds-card shadow-[0_12px_32px_rgba(0,0,0,.32)] py-16 px-5 flex flex-col items-center gap-2.5 text-center text-ds-t3 text-[13px]">
+        <section className="rounded-[18px] border border-[color:var(--hx-2A4658)] bg-ds-card shadow-[0_12px_32px_rgba(0,0,0,.32)] py-16 px-5 flex flex-col items-center gap-2.5 text-center text-ds-t3 text-[13px]">
           <Icon d={USERS} className="h-9 w-9" sw={1.5} />
           <span className="text-[14.5px] font-semibold text-ds-text">No shared accounts found</span>
           Teams will appear here when multiple employees are assigned to the same account
@@ -130,16 +130,16 @@ export default function AutoTeamsPage() {
         <section className="grid gap-4 mb-8 [grid-template-columns:repeat(auto-fill,minmax(min(100%,340px),1fr))]">
           {sharedAccounts.map((account: any) => {
             const platform: string = account.platform || "";
-            const pc = PLAT[platform.toLowerCase()] || "#E9BD62";
+            const pc = PLAT[platform.toLowerCase()] || "var(--hx-E9BD62)";
             const members: any[] = account.members || [];
             const busy = submitting === account.accountId;
             const value = teamNames[account.accountId] ?? "";
             const hueOf = (m: any) => HUES[hash(m.name || m.email || m.id || "") % HUES.length];
             return (
-              <div key={account.accountId} className="rounded-[18px] border border-[#2A4658] bg-ds-card shadow-[0_12px_32px_rgba(0,0,0,.32)] flex flex-col overflow-hidden min-w-0">
+              <div key={account.accountId} className="rounded-[18px] border border-[color:var(--hx-2A4658)] bg-ds-card shadow-[0_12px_32px_rgba(0,0,0,.32)] flex flex-col overflow-hidden min-w-0">
                 {/* Account header */}
                 <div
-                  className="px-[22px] pt-[22px] pb-5 border-b border-[#1A2C38] flex items-center gap-3.5"
+                  className="px-[22px] pt-[22px] pb-5 border-b border-[color:var(--hx-1A2C38)] flex items-center gap-3.5"
                   style={{ background: `linear-gradient(135deg, ${rgba(pc, 0.16)}, transparent 70%)` }}
                 >
                   <span
@@ -170,7 +170,7 @@ export default function AutoTeamsPage() {
                     {members.slice(0, 4).map((m: any) => (
                       <span
                         key={m.id}
-                        className="h-7 w-7 -ml-2 rounded-full border-2 border-ds-card grid place-items-center text-[10px] font-extrabold text-[#060D14]"
+                        className="h-7 w-7 -ml-2 rounded-full border-2 border-ds-card grid place-items-center text-[10px] font-extrabold text-[color:var(--hx-060D14)]"
                         style={{ background: rgba(hueOf(m), 0.9) }}
                       >
                         {initials(m.name)}
@@ -211,7 +211,7 @@ export default function AutoTeamsPage() {
                 </div>
 
                 {/* Create team */}
-                <div className="mt-auto px-[22px] pt-4 pb-5 border-t border-[#1A2C38] bg-[#0A1620] flex gap-2.5 flex-wrap">
+                <div className="mt-auto px-[22px] pt-4 pb-5 border-t border-[color:var(--hx-1A2C38)] bg-[color:var(--hx-0A1620)] flex gap-2.5 flex-wrap">
                   <input
                     type="text"
                     aria-label={`Team name for ${account.displayName || account.handle}`}
@@ -228,7 +228,7 @@ export default function AutoTeamsPage() {
                     type="button"
                     onClick={() => createTeam(account)}
                     disabled={busy || !value.trim()}
-                    className="inline-flex items-center justify-center gap-2 h-[46px] px-5 rounded-full bg-ds-gold text-[#060D14] text-[13.5px] font-bold whitespace-nowrap hover:bg-[#F4D58C] disabled:opacity-50 disabled:hover:bg-ds-gold"
+                    className="inline-flex items-center justify-center gap-2 h-[46px] px-5 rounded-full bg-ds-gold text-[color:var(--hx-060D14)] text-[13.5px] font-bold whitespace-nowrap hover:bg-[color:var(--hx-F4D58C)] disabled:opacity-50 disabled:hover:bg-ds-gold"
                   >
                     <Icon d={USER_PLUS} className="h-[15px] w-[15px]" />
                     {busy ? "Creating..." : "Create Team"}

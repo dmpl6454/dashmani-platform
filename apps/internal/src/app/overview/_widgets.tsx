@@ -48,9 +48,14 @@ export function Caret() {
   );
 }
 
-export function ViewAll({ href, label = "View All" }: { href: string; label?: string }) {
+export function ViewAll({ href, onClick, label = "View All" }: { href?: string; onClick?: () => void; label?: string }) {
   // The words collapse under 1366px (see .ov-viewall-t) so a card header never has to
   // buy them with the title's letters; the arrow always stays.
+  // `onClick` opens something IN PLACE (e.g. Account Growth over the overview) instead
+  // of navigating; it is a real <button> then, styled exactly like the link.
+  if (onClick) {
+    return <button type="button" className="ov-viewall" onClick={onClick} title={label}><span className="ov-viewall-t">{label} </span>→</button>;
+  }
   return <a className="ov-viewall" href={href} title={label}><span className="ov-viewall-t">{label} </span>→</a>;
 }
 
@@ -271,7 +276,8 @@ export interface DrawerSpec {
   sub?: string;
   hero?: { label: string; value: string; trend?: ReactNode; note?: string };
   rows: DrawerRow[];
-  href?: { label: string; url: string; external?: boolean };
+  /** A link out (`url`), or an in-place action (`onClick`) that keeps the reader on the overview. */
+  href?: { label: string; url?: string; external?: boolean; onClick?: () => void };
   note?: string;
 }
 
@@ -305,11 +311,15 @@ export function Drawer({ spec, onClose, stacked = false }: { spec: DrawerSpec; o
             <div key={r.label}><dt>{r.label}</dt><dd>{r.value}</dd></div>
           ))}
         </dl>
-        {spec.href && (
+        {spec.href && (spec.href.onClick ? (
+          <button type="button" className="ov-cta ov-cta-block" onClick={spec.href.onClick}>
+            {spec.href.label}
+          </button>
+        ) : (
           <a className="ov-cta ov-cta-block" href={spec.href.url} target={spec.href.external ? "_blank" : undefined} rel={spec.href.external ? "noopener noreferrer" : undefined}>
             {spec.href.label}
           </a>
-        )}
+        ))}
         <div className="ov-drawer-foot">{spec.note ?? "Live platform data · refreshed every minute"}</div>
       </aside>
     </>

@@ -12,29 +12,29 @@ import { useProjects } from "@/lib/hooks/use-projects";
 import { usePageTitle } from "@/lib/hooks/use-page-title";
 
 const STATUSES = [
-  ["DRAFT", "Draft", "#A7B3C2"],
-  ["PENDING_APPROVAL", "Needs Review", "#FBBF24"],
-  ["APPROVED", "Approved", "#34D399"],
-  ["SCHEDULED", "Scheduled", "#238BFF"],
-  ["PUBLISHED", "Published", "#00D7A0"],
-  ["FAILED", "Failed", "#FB7185"],
-  ["REJECTED", "Rejected", "#E5484D"],
+  ["DRAFT", "Draft", "var(--hx-A7B3C2)"],
+  ["PENDING_APPROVAL", "Needs Review", "var(--hx-FBBF24)"],
+  ["APPROVED", "Approved", "var(--hx-34D399)"],
+  ["SCHEDULED", "Scheduled", "var(--hx-238BFF)"],
+  ["PUBLISHED", "Published", "var(--hx-00D7A0)"],
+  ["FAILED", "Failed", "var(--hx-FB7185)"],
+  ["REJECTED", "Rejected", "var(--hx-E5484D)"],
 ] as const;
 const STATUS = Object.fromEntries(STATUSES.map(([k, label, color]) => [k, { label, color }])) as Record<string, { label: string; color: string }>;
-const PLATFORM_COLOR: Record<string, string> = { instagram: "#EC42B7", facebook: "#238BFF", youtube: "#FF5A5F", snapchat: "#E9D23A" };
-const rgba = (hex: string, a: number) => { const n = parseInt(hex.slice(1), 16); return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`; };
+const PLATFORM_COLOR: Record<string, string> = { instagram: "var(--hx-EC42B7)", facebook: "var(--hx-238BFF)", youtube: "var(--hx-FF5A5F)", snapchat: "var(--hx-E9D23A)" };
+const rgba = (hex: string, a: number) => { if (hex.startsWith("var(")) return `color-mix(in srgb, ${hex} ${Math.round(a * 100)}%, transparent)`; const n = parseInt(hex.slice(1), 16); return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`; };
 const GRID = "grid [grid-template-columns:minmax(260px,2.2fr)_minmax(130px,1fr)_minmax(170px,1.2fr)_120px_130px_minmax(120px,1fr)] gap-3";
 const DAY = 86_400_000;
 
 function whenOf(post: any): { text: string; color: string } {
   const iso = post.status === "PUBLISHED" ? (post.publishedAt ?? post.scheduledAt) : post.scheduledAt;
-  if (!iso) return { text: "Not scheduled", color: "#738395" };
+  if (!iso) return { text: "Not scheduled", color: "var(--hx-738395)" };
   const d = new Date(iso);
   const today = new Date();
   const dayDiff = Math.round((new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime() - new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime()) / DAY);
   const day = dayDiff === 0 ? "Today" : dayDiff === 1 ? "Tomorrow" : dayDiff === -1 ? "Yesterday" : d.toLocaleDateString("en-IN", { day: "numeric", month: "short" });
   const time = d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
-  return { text: `${day} · ${time}`, color: post.status === "SCHEDULED" ? "#6EB2FF" : post.status === "FAILED" ? "#FB7185" : "#A7B3C2" };
+  return { text: `${day} · ${time}`, color: post.status === "SCHEDULED" ? "var(--hx-6EB2FF)" : post.status === "FAILED" ? "var(--hx-FB7185)" : "var(--hx-A7B3C2)" };
 }
 
 export default function ContentListPage() {
@@ -92,11 +92,11 @@ export default function ContentListPage() {
               type="button"
               aria-pressed={sel}
               onClick={() => setStatus(sel ? "" : k)}
-              className="relative flex-[1_0_128px] min-w-0 flex flex-col gap-2 p-4 border-r border-ds-grid last:border-r-0 text-left text-ds-text transition-colors hover:bg-[#0B1824]"
-              style={{ background: sel ? "#0B1824" : "transparent" }}
+              className="relative flex-[1_0_128px] min-w-0 flex flex-col gap-2 p-4 border-r border-ds-grid last:border-r-0 text-left text-ds-text transition-colors hover:bg-[color:var(--hx-0B1824)]"
+              style={{ background: sel ? "var(--hx-0B1824)" : "transparent" }}
             >
               <span className="absolute inset-x-0 bottom-0 h-0.5" style={{ background: sel ? color : "transparent" }} />
-              <span className="flex items-center gap-[7px] text-[10px] tracking-[.1em] uppercase font-semibold whitespace-nowrap min-w-0" style={{ color: sel ? "#F4F6F8" : "#A7B3C2" }}>
+              <span className="flex items-center gap-[7px] text-[10px] tracking-[.1em] uppercase font-semibold whitespace-nowrap min-w-0" style={{ color: sel ? "var(--hx-F4F6F8)" : "var(--hx-A7B3C2)" }}>
                 <i className="h-1.5 w-1.5 rounded-full shrink-0" style={{ background: color }} />
                 <span className="truncate">{label}</span>
               </span>
@@ -151,7 +151,7 @@ export default function ContentListPage() {
         <section className="mt-3.5 rounded-[8px] bg-ds-card border border-ds-line overflow-hidden">
           <div className="overflow-x-auto">
             <div className="min-w-[860px]" role="table" aria-label="Content posts">
-              <div role="row" className={`${GRID} px-5 py-2.5 text-[10px] tracking-[.12em] uppercase text-ds-t3 font-semibold border-b border-ds-line bg-[#0A1620]`}>
+              <div role="row" className={`${GRID} px-5 py-2.5 text-[10px] tracking-[.12em] uppercase text-ds-t3 font-semibold border-b border-ds-line bg-[color:var(--hx-0A1620)]`}>
                 <span role="columnheader">Title</span><span role="columnheader">Project</span><span role="columnheader">Account</span>
                 <span role="columnheader">Status</span><span role="columnheader">Scheduled</span><span role="columnheader">By</span>
               </div>
@@ -164,13 +164,13 @@ export default function ContentListPage() {
                     </div>
                   ))
                 : posts.map((post) => {
-                    const st = STATUS[post.status] ?? { label: post.status, color: "#A7B3C2" };
+                    const st = STATUS[post.status] ?? { label: post.status, color: "var(--hx-A7B3C2)" };
                     const when = whenOf(post);
                     const plat = (post.account?.platform?.slug || post.account?.platform?.name || "").toLowerCase();
                     const media = post.mediaUrls?.length ?? 0;
                     const handle = post.account ? (post.account.displayName || post.account.handle) : null;
                     return (
-                      <div key={post.id} role="row" className={`${GRID} items-center px-5 py-2.5 border-b border-ds-grid text-[12.5px] transition-colors hover:bg-[#0B1824]`}>
+                      <div key={post.id} role="row" className={`${GRID} items-center px-5 py-2.5 border-b border-ds-grid text-[12.5px] transition-colors hover:bg-[color:var(--hx-0B1824)]`}>
                         <Link href={`/content/${post.id}`} role="cell" className="flex items-center gap-3 min-w-0 text-ds-text hover:text-ds-gold">
                           <span className="font-semibold truncate">{post.title}</span>
                           {media > 0 && <span className="h-[18px] px-1.5 rounded-[4px] bg-ds-hover text-ds-t2 text-[10px] inline-flex items-center shrink-0 whitespace-nowrap">{media} media</span>}
@@ -179,7 +179,7 @@ export default function ContentListPage() {
                         <span role="cell" className="flex items-center gap-2 min-w-0 text-ds-t5" title={post.account ? `${post.account.platform?.name}: ${post.account.handle}` : undefined}>
                           {handle ? (
                             <>
-                              <i className="h-[7px] w-[7px] rounded-full shrink-0" style={{ background: PLATFORM_COLOR[plat] ?? "#738395" }} />
+                              <i className="h-[7px] w-[7px] rounded-full shrink-0" style={{ background: PLATFORM_COLOR[plat] ?? "var(--hx-738395)" }} />
                               <span className="truncate">{handle}</span>
                             </>
                           ) : <span className="text-ds-t3">—</span>}

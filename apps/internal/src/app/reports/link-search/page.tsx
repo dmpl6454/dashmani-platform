@@ -45,14 +45,14 @@ const MIN_AUTOSEARCH_LEN = 2;
 const SEARCH_DEBOUNCE_MS = 350;
 
 // Mockup palette.
-const PLATFORM_COLOR: Record<string, string> = { youtube: "#FB7185", instagram: "#F472B6", facebook: "#6EB2FF", snapchat: "#FACC15" };
+const PLATFORM_COLOR: Record<string, string> = { youtube: "var(--hx-FB7185)", instagram: "var(--hx-F472B6)", facebook: "var(--hx-6EB2FF)", snapchat: "var(--hx-FACC15)" };
 const PLATFORM_LABEL: Record<string, string> = { youtube: "YouTube", instagram: "Instagram", facebook: "Facebook", snapchat: "Snapchat" };
-const TYPE_COLOR: Record<string, string> = { person: "#E9BD62", show: "#9B7EDE", topic: "#6EB2FF", brand: "#00D7A0" };
-const pColor = (p?: string) => PLATFORM_COLOR[(p ?? "").toLowerCase()] ?? "#A7B3C2";
+const TYPE_COLOR: Record<string, string> = { person: "var(--hx-E9BD62)", show: "var(--hx-9B7EDE)", topic: "var(--hx-6EB2FF)", brand: "var(--hx-00D7A0)" };
+const pColor = (p?: string) => PLATFORM_COLOR[(p ?? "").toLowerCase()] ?? "var(--hx-A7B3C2)";
 const pLabel = (p?: string) => PLATFORM_LABEL[(p ?? "").toLowerCase()] ?? cap(p ?? "—");
-const tColor = (t?: string) => TYPE_COLOR[(t ?? "").toLowerCase()] ?? "#A7B3C2";
+const tColor = (t?: string) => TYPE_COLOR[(t ?? "").toLowerCase()] ?? "var(--hx-A7B3C2)";
 const rgba = (hex: string, a: number) => {
-  const n = parseInt(hex.slice(1), 16);
+  if (hex.startsWith("var(")) return `color-mix(in srgb, ${hex} ${Math.round(a * 100)}%, transparent)`; const n = parseInt(hex.slice(1), 16);
   return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`;
 };
 const nf = (n: number) => n.toLocaleString("en-IN");
@@ -68,7 +68,7 @@ function Chip({ color, children, className = "" }: { color: string; children: Re
   );
 }
 
-const CARD = "flex flex-col min-w-0 rounded-[16px] border border-[#2A4658] bg-ds-card overflow-hidden shadow-[0_12px_32px_rgba(0,0,0,.35)]";
+const CARD = "flex flex-col min-w-0 rounded-[16px] border border-[color:var(--hx-2A4658)] bg-ds-card overflow-hidden shadow-[0_12px_32px_rgba(0,0,0,.35)]";
 const CARD_HEAD = "flex items-center justify-between gap-x-4 gap-y-3 min-h-[62px] px-6 py-3 border-b border-ds-line flex-wrap";
 
 export default function LinkSearchPage() {
@@ -198,27 +198,27 @@ export default function LinkSearchPage() {
               <button
                 type="button"
                 onClick={() => { setQ(""); setShowSuggest(false); }}
-                className="h-8 w-8 rounded-full grid place-items-center text-ds-t3 hover:text-ds-text hover:bg-[#132430] shrink-0"
+                className="h-8 w-8 rounded-full grid place-items-center text-ds-t3 hover:text-ds-text hover:bg-[color:var(--hx-132430)] shrink-0"
                 aria-label="Clear"
               >
                 <CloseIcon className="h-4 w-4" />
               </button>
             )}
           </label>
-          <button type="submit" className="h-[50px] px-[26px] rounded-full bg-ds-gold text-[#060D14] text-[14px] font-bold hover:bg-[#F4D58C] shrink-0">
+          <button type="submit" className="h-[50px] px-[26px] rounded-full bg-ds-gold text-[color:var(--hx-060D14)] text-[14px] font-bold hover:bg-[color:var(--hx-F4D58C)] shrink-0">
             Search
           </button>
         </form>
 
         {/* Autocomplete dropdown */}
         {showSuggestions && (
-          <div className="absolute z-30 left-0 right-0 top-[58px] p-1.5 rounded-[14px] border border-[#2A4658] bg-ds-inset shadow-[0_18px_40px_rgba(0,0,0,.55)] overflow-hidden">
+          <div className="absolute z-30 left-0 right-0 top-[58px] p-1.5 rounded-[14px] border border-[color:var(--hx-2A4658)] bg-ds-inset shadow-[0_18px_40px_rgba(0,0,0,.55)] overflow-hidden">
             {suggestions!.map((s) => (
               <button
                 key={s.id}
                 type="button"
                 onClick={() => runSearch(s.canonicalName)}
-                className="w-full flex items-center gap-2.5 h-[42px] px-3 rounded-[9px] text-left text-ds-text hover:bg-[#132430]"
+                className="w-full flex items-center gap-2.5 h-[42px] px-3 rounded-[9px] text-left text-ds-text hover:bg-[color:var(--hx-132430)]"
               >
                 <span className="flex-1 min-w-0 text-[13.5px] font-semibold truncate">{s.canonicalName}</span>
                 <Chip color={tColor(s.type)}>{cap(s.type)}</Chip>
@@ -245,7 +245,7 @@ export default function LinkSearchPage() {
         return (
           <section className="mt-[18px] rounded-[14px] border border-[rgba(110,178,255,.25)] bg-[rgba(110,178,255,.05)] overflow-hidden">
             <div className="flex items-start gap-3.5 px-5 py-4 flex-wrap">
-              <Info className="h-4 w-4 text-[#6EB2FF] shrink-0 mt-0.5" />
+              <Info className="h-4 w-4 text-[color:var(--hx-6EB2FF)] shrink-0 mt-0.5" />
               <div className="flex-[1_1_420px] min-w-0 flex flex-col gap-3">
                 <p className="text-[13.5px] text-ds-t5">
                   Searching <b className="text-ds-text">{nf(searchable)}</b> searchable
@@ -281,7 +281,7 @@ export default function LinkSearchPage() {
                             {sub != null && sub > 0 && <> of {nf(sub)}</>} searchable
                           </span>
                           {pct !== null && (
-                            <span className="h-1 rounded-[2px] bg-[#132430] overflow-hidden">
+                            <span className="h-1 rounded-[2px] bg-[color:var(--hx-132430)] overflow-hidden">
                               <span className="block h-full" style={{ width: `${raw! > 0 ? Math.max(raw!, 1) : 0}%`, background: c }} />
                             </span>
                           )}
@@ -297,7 +297,7 @@ export default function LinkSearchPage() {
                   </p>
                 )}
                 {covOpen && (
-                  <div className="flex flex-col gap-2 pt-3 border-t border-[rgba(110,178,255,.15)] text-[12px] leading-[1.6] text-[#8B9AAB]">
+                  <div className="flex flex-col gap-2 pt-3 border-t border-[rgba(110,178,255,.15)] text-[12px] leading-[1.6] text-[color:var(--hx-8B9AAB)]">
                     <p>
                       Two dates, and they mean different things: <b className="text-ds-t5 font-semibold">&ldquo;data since&rdquo;</b> is how far back the
                       submitted links themselves go (the earliest post any employee logged for that platform). That&rsquo;s the true reach of
@@ -323,7 +323,7 @@ export default function LinkSearchPage() {
                 type="button"
                 onClick={() => setCovOpen((v) => !v)}
                 aria-expanded={covOpen}
-                className="h-8 px-3.5 rounded-full border border-[rgba(110,178,255,.3)] text-[#6EB2FF] text-[12px] font-semibold whitespace-nowrap shrink-0 hover:bg-[rgba(110,178,255,.08)]"
+                className="h-8 px-3.5 rounded-full border border-[rgba(110,178,255,.3)] text-[color:var(--hx-6EB2FF)] text-[12px] font-semibold whitespace-nowrap shrink-0 hover:bg-[rgba(110,178,255,.08)]"
               >
                 {covOpen ? "Hide details" : "How coverage works"}
               </button>
@@ -406,7 +406,7 @@ export default function LinkSearchPage() {
             )}
           </section>
           {exportError && (
-            <div role="alert" className="mt-2.5 px-3.5 py-2.5 rounded-[10px] border border-[rgba(229,72,77,.3)] bg-[rgba(229,72,77,.08)] flex items-center gap-2 text-[12.5px] text-[#FB7185]">
+            <div role="alert" className="mt-2.5 px-3.5 py-2.5 rounded-[10px] border border-[rgba(229,72,77,.3)] bg-[rgba(229,72,77,.08)] flex items-center gap-2 text-[12.5px] text-[color:var(--hx-FB7185)]">
               <AlertTriangle className="h-4 w-4 shrink-0" />
               Couldn&rsquo;t export: {exportError}
             </div>
@@ -415,12 +415,12 @@ export default function LinkSearchPage() {
           {/* Summary strip */}
           <section className="grid grid-cols-2 lg:grid-cols-4 gap-3 mt-4">
             {[
-              { label: "Total Posts", value: data!.totalPosts, color: "#FB7185", Icon: Link2 },
-              { label: "Unique Posts", value: data!.uniquePosts, color: "#00D7A0", Icon: Layers },
-              { label: "Duplicates", value: data!.duplicatePosts, color: "#E9BD62", Icon: Copy },
-              { label: "Channels", value: data!.channelCount, color: "#6EB2FF", Icon: Globe },
+              { label: "Total Posts", value: data!.totalPosts, color: "var(--hx-FB7185)", Icon: Link2 },
+              { label: "Unique Posts", value: data!.uniquePosts, color: "var(--hx-00D7A0)", Icon: Layers },
+              { label: "Duplicates", value: data!.duplicatePosts, color: "var(--hx-E9BD62)", Icon: Copy },
+              { label: "Channels", value: data!.channelCount, color: "var(--hx-6EB2FF)", Icon: Globe },
             ].map(({ label, value, color, Icon }) => (
-              <div key={label} className="flex flex-col gap-3.5 px-5 py-[18px] rounded-[16px] bg-ds-card border border-[#2A4658] min-w-0">
+              <div key={label} className="flex flex-col gap-3.5 px-5 py-[18px] rounded-[16px] bg-ds-card border border-[color:var(--hx-2A4658)] min-w-0">
                 <span className="h-8 w-8 rounded-[9px] grid place-items-center" style={{ background: rgba(color, 0.13), color }}>
                   <Icon className="h-[15px] w-[15px]" />
                 </span>
@@ -437,7 +437,7 @@ export default function LinkSearchPage() {
             <div className={CARD}>
               <div className={CARD_HEAD}>
                 <span className="flex items-center gap-2.5 text-[15px] font-semibold tracking-[-.01em] text-ds-text whitespace-nowrap">
-                  <Globe className="h-4 w-4 text-[#6EB2FF]" /> Channel Breakdown
+                  <Globe className="h-4 w-4 text-[color:var(--hx-6EB2FF)]" /> Channel Breakdown
                 </span>
                 <span className="text-[12px] text-ds-t3">{channels.length} channel{channels.length !== 1 ? "s" : ""}</span>
               </div>
@@ -449,7 +449,7 @@ export default function LinkSearchPage() {
                     <span>Channel</span><span>Platform</span><span className="text-right">Posts</span>
                   </div>
                   {channels.map((c) => (
-                    <div key={c.accountId} className="grid grid-cols-[minmax(120px,1fr)_96px_60px] gap-x-3 items-center min-h-[60px] py-2 px-5 border-b border-[#132430] last:border-b-0">
+                    <div key={c.accountId} className="grid grid-cols-[minmax(120px,1fr)_96px_60px] gap-x-3 items-center min-h-[60px] py-2 px-5 border-b border-[color:var(--hx-132430)] last:border-b-0">
                       <span className="flex flex-col gap-0.5 min-w-0 leading-[1.3]">
                         <Link href={`/accounts/${c.accountId}`} className="text-[13.5px] font-semibold text-ds-text truncate hover:text-ds-gold" title={c.displayName}>
                           {c.displayName}
@@ -468,7 +468,7 @@ export default function LinkSearchPage() {
             <div className={CARD}>
               <div className={CARD_HEAD}>
                 <span className="flex items-center gap-2.5 text-[15px] font-semibold tracking-[-.01em] text-ds-text whitespace-nowrap">
-                  <Link2 className="h-4 w-4 text-[#FB7185]" /> Posts
+                  <Link2 className="h-4 w-4 text-[color:var(--hx-FB7185)]" /> Posts
                 </span>
                 <span className="text-[12px] text-ds-t3">{groupedPosts.length} unique link{groupedPosts.length !== 1 ? "s" : ""}</span>
               </div>
@@ -480,7 +480,7 @@ export default function LinkSearchPage() {
                     const p = g.lead;
                     const isDup = p.dupCount > 1;
                     return (
-                      <li key={p.canonicalKey} className="px-5 py-3.5 border-b border-[#132430] last:border-b-0">
+                      <li key={p.canonicalKey} className="px-5 py-3.5 border-b border-[color:var(--hx-132430)] last:border-b-0">
                         <div className="flex items-start gap-3">
                           <Chip color={pColor(p.platform)} className="mt-px">{pLabel(p.platform)}</Chip>
                           <div className="flex-1 min-w-0 flex flex-col gap-1">
@@ -495,7 +495,7 @@ export default function LinkSearchPage() {
                               <ExternalLink className="h-3 w-3 shrink-0" />
                             </a>
                             <span className="text-[11.5px] leading-[1.5] text-ds-t3">
-                              {p.account.displayName} <span className="text-[#4A6275]">{fmtHandle(p.account.handle)}</span>
+                              {p.account.displayName} <span className="text-[color:var(--hx-4A6275)]">{fmtHandle(p.account.handle)}</span>
                               {" · "}submitted by <b className="text-ds-t2 font-semibold">{p.employee.name}</b>
                               {" · "}{fmtDate(p.date)}
                             </span>

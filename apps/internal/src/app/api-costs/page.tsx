@@ -18,7 +18,7 @@ const PROVIDER_LABEL: Record<string, string> = {
   openai: "OpenAI", gemini: "Gemini", anthropic: "Anthropic (Claude)",
   meta: "Meta Graph (IG/FB)", youtube: "YouTube Data", deepseek: "DeepSeek",
 };
-const PROVIDER_DOT: Record<string, string> = { openai: "#00D7A0", gemini: "#6EB2FF", anthropic: "#E9BD62", deepseek: "#9B7EDE" };
+const PROVIDER_DOT: Record<string, string> = { openai: "var(--hx-00D7A0)", gemini: "var(--hx-6EB2FF)", anthropic: "var(--hx-E9BD62)", deepseek: "var(--hx-9B7EDE)" };
 // The ONLY active LLM going forward is Gemini (entity-extraction switched to
 // Gemini-only on 2026-06-29 — measured cheapest by far). OpenAI + Anthropic rows
 // are HISTORICAL: real spend that already happened, kept visible for honesty, but
@@ -29,13 +29,13 @@ const HISTORICAL_PROVIDERS = new Set(["openai", "anthropic"]);
 
 const RANGES = [7, 14, 30, 90] as const;
 const rgba = (hex: string, a: number) => {
-  const n = parseInt(hex.slice(1), 16);
+  if (hex.startsWith("var(")) return `color-mix(in srgb, ${hex} ${Math.round(a * 100)}%, transparent)`; const n = parseInt(hex.slice(1), 16);
   return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`;
 };
 
-const CARD = "rounded-[16px] border border-[#2A4658] bg-ds-card shadow-[0_12px_32px_rgba(0,0,0,.3)]";
-const TH = "text-[10.5px] font-semibold tracking-[.08em] uppercase text-ds-t3 pb-3 border-b border-[#1A2C38] whitespace-nowrap";
-const TD = "py-[13px] border-b border-[#132430] text-[13.5px] tabular-nums whitespace-nowrap";
+const CARD = "rounded-[16px] border border-[color:var(--hx-2A4658)] bg-ds-card shadow-[0_12px_32px_rgba(0,0,0,.3)]";
+const TH = "text-[10.5px] font-semibold tracking-[.08em] uppercase text-ds-t3 pb-3 border-b border-[color:var(--hx-1A2C38)] whitespace-nowrap";
+const TD = "py-[13px] border-b border-[color:var(--hx-132430)] text-[13.5px] tabular-nums whitespace-nowrap";
 
 function CardTitle({ icon, color, children, note }: { icon: React.ReactNode; color: string; children: React.ReactNode; note?: React.ReactNode }) {
   return (
@@ -222,7 +222,7 @@ export default function ApiCostsPage() {
               type="button"
               aria-pressed={days === r}
               onClick={() => setDays(r)}
-              className={`h-[34px] px-4 rounded-full text-[13px] font-semibold transition-colors ${days === r ? "bg-ds-gold text-[#060D14]" : "text-ds-t2 hover:text-ds-text"}`}
+              className={`h-[34px] px-4 rounded-full text-[13px] font-semibold transition-colors ${days === r ? "bg-ds-gold text-[color:var(--hx-060D14)]" : "text-ds-t2 hover:text-ds-text"}`}
             >
               {r}d
             </button>
@@ -233,7 +233,7 @@ export default function ApiCostsPage() {
       <section className="flex flex-col gap-3.5">
         {/* Enrichment kill-switch */}
         <div className={`${CARD} px-[22px] py-5 flex items-start gap-3.5`}>
-          <span className="h-[38px] w-[38px] rounded-[11px] grid place-items-center shrink-0 bg-[rgba(251,146,60,.12)] text-[#FB923C]">
+          <span className="h-[38px] w-[38px] rounded-[11px] grid place-items-center shrink-0 bg-[rgba(251,146,60,.12)] text-[color:var(--hx-FB923C)]">
             <Power className="h-4 w-4" />
           </span>
           <div className="flex-1 min-w-0 max-w-[720px]">
@@ -243,9 +243,9 @@ export default function ApiCostsPage() {
               caption harvesting keep running — only entity tagging pauses.
             </p>
             {enrichmentState === "error" ? (
-              <div className="mt-2.5 text-[12px] font-semibold text-[#FB7185]">{enrichmentError}</div>
+              <div className="mt-2.5 text-[12px] font-semibold text-[color:var(--hx-FB7185)]">{enrichmentError}</div>
             ) : enrichmentEnabled !== null ? (
-              <div className={`mt-2.5 text-[12px] font-semibold ${enrichmentEnabled ? "text-ds-teal" : "text-[#FB7185]"}`}>
+              <div className={`mt-2.5 text-[12px] font-semibold ${enrichmentEnabled ? "text-ds-teal" : "text-[color:var(--hx-FB7185)]"}`}>
                 ● {enrichmentEnabled ? "Enabled" : "Paused"}
               </div>
             ) : null}
@@ -258,7 +258,7 @@ export default function ApiCostsPage() {
             aria-live="polite"
             disabled={enrichmentEnabled === null || enrichmentState === "loading"}
             onClick={handleToggleEnrichment}
-            className={`relative h-7 w-[50px] shrink-0 rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${enrichmentEnabled ? "bg-[#00B386]" : "bg-[#2A3B48]"}`}
+            className={`relative h-7 w-[50px] shrink-0 rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${enrichmentEnabled ? "bg-[color:var(--hx-00B386)]" : "bg-[color:var(--hx-2A3B48)]"}`}
           >
             <span
               className={`absolute top-[3px] h-[22px] w-[22px] rounded-full bg-ds-text shadow-[0_2px_6px_rgba(0,0,0,.4)] transition-[left] ${enrichmentEnabled ? "left-[25px]" : "left-[3px]"}`}
@@ -268,7 +268,7 @@ export default function ApiCostsPage() {
 
         {/* Daily spend ceiling — hard auto-pause once today's DeepSeek spend hits this. */}
         <div className={`${CARD} px-[22px] py-5 flex items-start gap-3.5 flex-wrap`}>
-          <span className="h-[38px] w-[38px] rounded-[11px] grid place-items-center shrink-0 bg-[rgba(110,178,255,.12)] text-[#6EB2FF]">
+          <span className="h-[38px] w-[38px] rounded-[11px] grid place-items-center shrink-0 bg-[rgba(110,178,255,.12)] text-[color:var(--hx-6EB2FF)]">
             <AlertTriangle className="h-4 w-4" />
           </span>
           <div className="flex-[1_1_320px] min-w-0 max-w-[720px]">
@@ -279,11 +279,11 @@ export default function ApiCostsPage() {
               auto-pauses for the rest of the UTC day once today&rsquo;s spend hits the ceiling.
             </p>
             {ceiling != null && todaySpend != null && (
-              <div className="mt-2.5 h-1.5 rounded-[3px] bg-[#132430] overflow-hidden">
-                <div className="h-full rounded-[3px]" style={{ width: `${ceilPct}%`, background: ceilPct > 85 ? "#FB7185" : "#6EB2FF" }} />
+              <div className="mt-2.5 h-1.5 rounded-[3px] bg-[color:var(--hx-132430)] overflow-hidden">
+                <div className="h-full rounded-[3px]" style={{ width: `${ceilPct}%`, background: ceilPct > 85 ? "var(--hx-FB7185)" : "var(--hx-6EB2FF)" }} />
               </div>
             )}
-            {ceilingState === "error" && <p className="mt-2 text-[12px] text-[#FB7185]">{ceilingError}</p>}
+            {ceilingState === "error" && <p className="mt-2 text-[12px] text-[color:var(--hx-FB7185)]">{ceilingError}</p>}
           </div>
           <div className="flex items-center gap-2.5 shrink-0 self-center ml-auto">
             <label htmlFor="spend-ceiling-input" className="text-[12px] text-ds-t3 whitespace-nowrap">Ceiling (USD)</label>
@@ -299,7 +299,7 @@ export default function ApiCostsPage() {
               type="button"
               onClick={saveCeiling}
               disabled={ceilingState === "loading"}
-              className="h-[38px] px-[18px] rounded-full bg-ds-gold text-[#060D14] text-[13px] font-bold hover:bg-[#F4D58C] disabled:opacity-50"
+              className="h-[38px] px-[18px] rounded-full bg-ds-gold text-[color:var(--hx-060D14)] text-[13px] font-bold hover:bg-[color:var(--hx-F4D58C)] disabled:opacity-50"
             >
               {ceilingState === "loading" ? "Saving…" : "Save"}
             </button>
@@ -343,17 +343,17 @@ export default function ApiCostsPage() {
           {/* Headline cards */}
           <section className="grid grid-cols-1 sm:grid-cols-3 gap-3.5 mt-3.5">
             {[
-              { v: usd(total), l: coverageLabel, c: "#FB923C", Icon: DollarSign },
+              { v: usd(total), l: coverageLabel, c: "var(--hx-FB923C)", Icon: DollarSign },
               {
                 v: projectionReliable ? usd(projMonthly) : "—",
                 l: projectionReliable ? "Projected next 30 days (forward run-rate, excl. one-time backfill)" : "Forward projection pending — backfill still draining",
-                c: "#6EB2FF",
+                c: "var(--hx-6EB2FF)",
                 Icon: TrendingUp,
               },
               {
                 v: projectionReliable ? usd(projDaily) : "—",
                 l: projectionReliable ? "Forward daily run-rate (steady state)" : "Available once at steady state",
-                c: "#00D7A0",
+                c: "var(--hx-00D7A0)",
                 Icon: Activity,
               },
             ].map(({ v, l, c, Icon }) => (
@@ -369,8 +369,8 @@ export default function ApiCostsPage() {
 
           {/* Top-up guidance + authoritative-source / shared-key disclosure */}
           <section className="grid gap-3.5 mt-3.5 [grid-template-columns:repeat(auto-fit,minmax(min(100%,380px),1fr))]">
-            <div className="flex gap-3 items-start px-[18px] py-4 rounded-[14px] bg-[rgba(110,178,255,.06)] border border-[rgba(110,178,255,.25)] text-[12.5px] leading-[1.6] text-[#C9D2DC]">
-              <Info className="h-[15px] w-[15px] text-[#6EB2FF] shrink-0 mt-0.5" />
+            <div className="flex gap-3 items-start px-[18px] py-4 rounded-[14px] bg-[rgba(110,178,255,.06)] border border-[rgba(110,178,255,.25)] text-[12.5px] leading-[1.6] text-[color:var(--hx-C9D2DC)]">
+              <Info className="h-[15px] w-[15px] text-[color:var(--hx-6EB2FF)] shrink-0 mt-0.5" />
               <span>
                 {projectionReliable ? (
                   <>
@@ -388,7 +388,7 @@ export default function ApiCostsPage() {
                 Meta Graph and YouTube are <b className="text-ds-text font-semibold">free within their quotas</b> — they show call volume, not dollars, so you can spot a quota cliff before it bites.
               </span>
             </div>
-            <div className="flex gap-3 items-start px-[18px] py-4 rounded-[14px] bg-[rgba(233,189,98,.05)] border border-[rgba(233,189,98,.25)] text-[12.5px] leading-[1.6] text-[#C9D2DC]">
+            <div className="flex gap-3 items-start px-[18px] py-4 rounded-[14px] bg-[rgba(233,189,98,.05)] border border-[rgba(233,189,98,.25)] text-[12.5px] leading-[1.6] text-[color:var(--hx-C9D2DC)]">
               <AlertTriangle className="h-[15px] w-[15px] text-ds-gold shrink-0 mt-0.5" />
               <span className="flex flex-col gap-2">
                 <span>
@@ -407,7 +407,7 @@ export default function ApiCostsPage() {
           {/* Daily spend chart */}
           {bars.length > 0 && (
             <section className={`${CARD} mt-3.5 px-6 py-[22px]`}>
-              <CardTitle icon={<DollarSign className="h-4 w-4" />} color="#E9BD62" note={fullWindow ? `${usd(total)} over ${days} days` : `${usd(total)} since ${fmtDay(trackingSince)}`}>
+              <CardTitle icon={<DollarSign className="h-4 w-4" />} color="var(--hx-E9BD62)" note={fullWindow ? `${usd(total)} over ${days} days` : `${usd(total)} since ${fmtDay(trackingSince)}`}>
                 Daily Spend (paid providers)
               </CardTitle>
               <div className="grid grid-cols-[44px_minmax(0,1fr)] gap-2.5 h-[230px]">
@@ -416,7 +416,7 @@ export default function ApiCostsPage() {
                 </div>
                 <div className="relative flex flex-col min-w-0">
                   <div className="absolute inset-x-0 top-0 bottom-[22px] flex flex-col justify-between pointer-events-none" aria-hidden="true">
-                    {yTicks.map((_, i) => <span key={i} className="h-0 border-t border-dashed border-[#1A2C38]" />)}
+                    {yTicks.map((_, i) => <span key={i} className="h-0 border-t border-dashed border-[color:var(--hx-1A2C38)]" />)}
                   </div>
                   <div
                     className="relative flex-1 flex items-end"
@@ -428,7 +428,7 @@ export default function ApiCostsPage() {
                       <div
                         key={i}
                         title={`${b.label} · ${usd(b.cost)}`}
-                        className="flex-1 min-h-[2px] rounded-t-[4px] bg-[linear-gradient(180deg,#E9BD62,rgba(233,189,98,.45))] hover:bg-[#F4D58C]"
+                        className="flex-1 min-h-[2px] rounded-t-[4px] bg-[linear-gradient(180deg,var(--hx-E9BD62),rgba(233,189,98,.45))] hover:bg-[color:var(--hx-F4D58C)]"
                         style={{ height: `${top > 0 ? (b.cost / top) * 100 : 0}%` }}
                       />
                     ))}
@@ -443,7 +443,7 @@ export default function ApiCostsPage() {
 
           {/* Paid providers breakdown */}
           <section className={`${CARD} mt-3.5 px-6 py-[22px]`}>
-            <CardTitle icon={<DollarSign className="h-4 w-4" />} color="#E9BD62" note="Gemini is the only active LLM — OpenAI/Anthropic are historical">
+            <CardTitle icon={<DollarSign className="h-4 w-4" />} color="var(--hx-E9BD62)" note="Gemini is the only active LLM — OpenAI/Anthropic are historical">
               Paid AI Providers
             </CardTitle>
             {paidProviders.length === 0 ? (
@@ -467,11 +467,11 @@ export default function ApiCostsPage() {
                         <tr key={p.provider} className={historical ? "opacity-70" : ""}>
                           <td className={`${TD} font-semibold text-ds-text`}>
                             <span className="inline-flex items-center gap-2.5">
-                              <i className="h-2 w-2 rounded-full" style={{ background: PROVIDER_DOT[p.provider] ?? "#A7B3C2" }} />
+                              <i className="h-2 w-2 rounded-full" style={{ background: PROVIDER_DOT[p.provider] ?? "var(--hx-A7B3C2)" }} />
                               {PROVIDER_LABEL[p.provider] ?? p.provider}
                               {historical && (
                                 <span
-                                  className="inline-flex items-center h-5 px-2 rounded-full bg-[#132430] border border-ds-line2 text-ds-t3 text-[10.5px] font-semibold"
+                                  className="inline-flex items-center h-5 px-2 rounded-full bg-[color:var(--hx-132430)] border border-ds-line2 text-ds-t3 text-[10.5px] font-semibold"
                                   title="No longer used — extraction switched to Gemini-only on 29 Jun 2026. This is past spend, kept for the record; no new cost accrues."
                                 >
                                   historical
@@ -497,7 +497,7 @@ export default function ApiCostsPage() {
               {/* Free-within-quota providers (call volume) */}
               {freeProviders.length > 0 && (
                 <div className={`${CARD} px-6 py-[22px] min-w-0`}>
-                  <CardTitle icon={<Server className="h-4 w-4" />} color="#00D7A0">Free within Quota — Call Volume</CardTitle>
+                  <CardTitle icon={<Server className="h-4 w-4" />} color="var(--hx-00D7A0)">Free within Quota — Call Volume</CardTitle>
                   <div className="text-[11.5px] text-ds-t3 -mt-2 mb-3.5">no dollar cost; watch for quota limits</div>
                   <table className="w-full border-collapse">
                     <thead>
@@ -521,7 +521,7 @@ export default function ApiCostsPage() {
               {/* Per-operation breakdown */}
               {byOperation.length > 0 && (
                 <div className={`${CARD} px-6 py-[22px] min-w-0`}>
-                  <CardTitle icon={<Activity className="h-4 w-4" />} color="#6EB2FF">By Operation</CardTitle>
+                  <CardTitle icon={<Activity className="h-4 w-4" />} color="var(--hx-6EB2FF)">By Operation</CardTitle>
                   <div className="overflow-x-auto">
                     <table className="w-full min-w-[400px] border-collapse">
                       <thead>

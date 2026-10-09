@@ -12,13 +12,13 @@ const MONTHS_FULL = ["January", "February", "March", "April", "May", "June", "Ju
 const WD = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const WDL = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const TYPEC: Record<string, [string, string]> = {
-  PUBLIC: ["Public", "#00D7A0"],
-  RESTRICTED: ["Restricted", "#E9BD62"],
-  COMPANY: ["Company", "#6EB2FF"],
+  PUBLIC: ["Public", "var(--hx-00D7A0)"],
+  RESTRICTED: ["Restricted", "var(--hx-E9BD62)"],
+  COMPANY: ["Company", "var(--hx-6EB2FF)"],
 };
 const TYPE_KEYS = ["PUBLIC", "RESTRICTED", "COMPANY"];
 const rgba = (hex: string, a: number) => {
-  const n = parseInt(hex.slice(1), 16);
+  if (hex.startsWith("var(")) return `color-mix(in srgb, ${hex} ${Math.round(a * 100)}%, transparent)`; const n = parseInt(hex.slice(1), 16);
   return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`;
 };
 // Local date parts, never toISOString (IST rule).
@@ -157,16 +157,16 @@ export default function HolidaysPage() {
     return (
       <div
         key={r.h.id}
-        className={`grid [grid-template-columns:56px_minmax(0,1fr)_auto] items-center gap-3.5 sm:gap-[18px] px-4 sm:px-5 py-4 border-t ${i ? "border-[#132430]" : "border-transparent"} hover:bg-[#0A1620] transition-colors`}
+        className={`grid [grid-template-columns:56px_minmax(0,1fr)_auto] items-center gap-3.5 sm:gap-[18px] px-4 sm:px-5 py-4 border-t ${i ? "border-[color:var(--hx-132430)]" : "border-transparent"} hover:bg-[color:var(--hx-0A1620)] transition-colors`}
       >
         <span
           className="h-[60px] w-14 rounded-[12px] border flex flex-col items-center justify-center leading-none"
-          style={{ background: isNext ? "#E9BD62" : "#0B1720", borderColor: isNext ? "#E9BD62" : "#223543" }}
+          style={{ background: isNext ? "var(--hx-E9BD62)" : "var(--hx-0B1720)", borderColor: isNext ? "var(--hx-E9BD62)" : "var(--hx-223543)" }}
         >
-          <span className="text-[24px] font-extrabold tracking-[-.03em] tabular-nums" style={{ color: isNext ? "#060D14" : "#F4F6F8" }}>
+          <span className="text-[24px] font-extrabold tracking-[-.03em] tabular-nums" style={{ color: isNext ? "var(--hx-060D14)" : "var(--hx-F4F6F8)" }}>
             {r.d ? r.d.getDate() : "—"}
           </span>
-          <span className="mt-[5px] text-[10px] font-bold tracking-[.14em]" style={{ color: isNext ? "rgba(6,13,20,.7)" : "#738395" }}>
+          <span className="mt-[5px] text-[10px] font-bold tracking-[.14em]" style={{ color: isNext ? "rgba(6,13,20,.7)" : "var(--hx-738395)" }}>
             {r.d ? WD[r.d.getDay()].toUpperCase() : ""}
           </span>
         </span>
@@ -181,7 +181,7 @@ export default function HolidaysPage() {
               {tl}
             </span>
             {isNext && (
-              <span className="inline-flex items-center h-[22px] px-2.5 rounded-full bg-ds-gold text-[#060D14] text-[10.5px] font-extrabold tracking-[.08em] whitespace-nowrap shrink-0">
+              <span className="inline-flex items-center h-[22px] px-2.5 rounded-full bg-ds-gold text-[color:var(--hx-060D14)] text-[10.5px] font-extrabold tracking-[.08em] whitespace-nowrap shrink-0">
                 NEXT UP
               </span>
             )}
@@ -193,7 +193,7 @@ export default function HolidaysPage() {
           onClick={() => { setDeleteError(""); setDeleteTarget(r.h); }}
           title="Delete holiday"
           aria-label={`Delete ${r.h.name || "holiday"}`}
-          className="h-9 w-9 rounded-full border border-[#1F3442] text-ds-t3 grid place-items-center shrink-0 hover:text-[#FB7185] hover:border-[rgba(229,72,77,.5)] hover:bg-[rgba(229,72,77,.08)] transition-colors"
+          className="h-9 w-9 rounded-full border border-[color:var(--hx-1F3442)] text-ds-t3 grid place-items-center shrink-0 hover:text-[color:var(--hx-FB7185)] hover:border-[rgba(229,72,77,.5)] hover:bg-[rgba(229,72,77,.08)] transition-colors"
         >
           <Trash2 className="h-3.5 w-3.5" />
         </button>
@@ -223,7 +223,7 @@ export default function HolidaysPage() {
           <button
             type="button"
             onClick={openModal}
-            className="inline-flex items-center gap-2 h-11 px-5 rounded-full bg-ds-gold text-[#060D14] text-[13.5px] font-bold whitespace-nowrap hover:bg-[#F4D58C] transition-colors"
+            className="inline-flex items-center gap-2 h-11 px-5 rounded-full bg-ds-gold text-[color:var(--hx-060D14)] text-[13.5px] font-bold whitespace-nowrap hover:bg-[color:var(--hx-F4D58C)] transition-colors"
           >
             <Plus className="h-[15px] w-[15px]" strokeWidth={2.4} /> Add Holiday
           </button>
@@ -232,9 +232,9 @@ export default function HolidaysPage() {
 
       {/* Next holiday hero */}
       {next && next.d && (
-        <section className="relative grid [grid-template-columns:auto_minmax(0,1fr)] sm:[grid-template-columns:auto_minmax(0,1fr)_auto] items-center gap-5 sm:gap-7 mb-[18px] px-5 sm:px-8 py-6 sm:py-7 rounded-[20px] border border-[rgba(233,189,98,.45)] bg-[radial-gradient(120%_140%_at_0%_0%,rgba(233,189,98,.16),rgba(233,189,98,.03)_55%,#08131C_100%)] shadow-[0_18px_40px_rgba(0,0,0,.4)] overflow-hidden">
-          <span aria-hidden="true" className="absolute left-0 right-0 top-0 h-px bg-[linear-gradient(90deg,transparent,#E9BD62_30%,#E9BD62_70%,transparent)]" />
-          <span className="w-[76px] h-[84px] sm:w-[92px] sm:h-[100px] rounded-[16px] bg-ds-gold text-[#060D14] flex flex-col items-center justify-center leading-none shadow-[0_10px_24px_rgba(233,189,98,.25)]">
+        <section className="relative grid [grid-template-columns:auto_minmax(0,1fr)] sm:[grid-template-columns:auto_minmax(0,1fr)_auto] items-center gap-5 sm:gap-7 mb-[18px] px-5 sm:px-8 py-6 sm:py-7 rounded-[20px] border border-[rgba(233,189,98,.45)] bg-[radial-gradient(120%_140%_at_0%_0%,rgba(233,189,98,.16),rgba(233,189,98,.03)_55%,var(--hx-08131C)_100%)] shadow-[0_18px_40px_rgba(0,0,0,.4)] overflow-hidden">
+          <span aria-hidden="true" className="absolute left-0 right-0 top-0 h-px bg-[linear-gradient(90deg,transparent,var(--hx-E9BD62)_30%,var(--hx-E9BD62)_70%,transparent)]" />
+          <span className="w-[76px] h-[84px] sm:w-[92px] sm:h-[100px] rounded-[16px] bg-ds-gold text-[color:var(--hx-060D14)] flex flex-col items-center justify-center leading-none shadow-[0_10px_24px_rgba(233,189,98,.25)]">
             <span className="text-[12px] font-extrabold tracking-[.18em]">{MONTHS[next.d.getMonth()].toUpperCase()}</span>
             <span className="text-[34px] sm:text-[42px] font-extrabold tracking-[-.04em] mt-1.5 tabular-nums">{next.d.getDate()}</span>
           </span>
@@ -243,7 +243,7 @@ export default function HolidaysPage() {
             <div className="mt-2 text-[22px] sm:text-[30px] font-extrabold tracking-[-.03em] leading-[1.1] text-ds-text [text-wrap:balance] [overflow-wrap:anywhere]">{next.h.name || "—"}</div>
             <div className="mt-2 flex items-center gap-2.5 flex-wrap text-[13px] text-ds-t2">
               <span>{WDL[next.d.getDay()]}</span>
-              <span className="h-[3px] w-[3px] rounded-full bg-[#4A6275]" />
+              <span className="h-[3px] w-[3px] rounded-full bg-[color:var(--hx-4A6275)]" />
               <span className="font-semibold" style={{ color: (TYPEC[next.h.type] || TYPEC.PUBLIC)[1] }}>{(TYPEC[next.h.type] || TYPEC.PUBLIC)[0]}</span>
             </div>
           </div>
@@ -263,7 +263,7 @@ export default function HolidaysPage() {
             const [label, c] = TYPEC[k];
             const n = counts.find(([kk]) => kk === k)?.[1] ?? 0;
             return (
-              <span key={k} className="inline-flex items-center gap-2 h-[34px] px-3.5 rounded-full bg-ds-card border border-[#1F3442] text-[12.5px] font-semibold text-ds-t5">
+              <span key={k} className="inline-flex items-center gap-2 h-[34px] px-3.5 rounded-full bg-ds-card border border-[color:var(--hx-1F3442)] text-[12.5px] font-semibold text-ds-t5">
                 <i className="h-2 w-2 rounded-full" style={{ background: c }} />
                 {label}
                 <span className="text-ds-t3 tabular-nums">{n}</span>
@@ -280,11 +280,11 @@ export default function HolidaysPage() {
             <div key={i} className="h-[120px] rounded-[18px] bg-ds-card border border-ds-line motion-safe:animate-pulse" />
           ))
         ) : error && !data ? (
-          <div className="rounded-[18px] border border-[#2A4658] bg-ds-card py-14 px-5 text-center text-ds-t3 text-[13px]">
+          <div className="rounded-[18px] border border-[color:var(--hx-2A4658)] bg-ds-card py-14 px-5 text-center text-ds-t3 text-[13px]">
             Holidays couldn&apos;t be loaded just now. Refresh to try again.
           </div>
         ) : rows.length === 0 ? (
-          <div className="rounded-[18px] border border-[#2A4658] bg-ds-card py-16 px-5 flex flex-col items-center gap-3 text-ds-t3 text-[13.5px]">
+          <div className="rounded-[18px] border border-[color:var(--hx-2A4658)] bg-ds-card py-16 px-5 flex flex-col items-center gap-3 text-ds-t3 text-[13.5px]">
             <Icon d={CAL_ICON} className="h-8 w-8" sw={1.5} />
             No holidays for {year}
           </div>
@@ -297,13 +297,13 @@ export default function HolidaysPage() {
                 <div
                   key={g.mi}
                   className="grid grid-cols-1 sm:[grid-template-columns:160px_minmax(0,1fr)] rounded-[18px] border bg-ds-card overflow-hidden shadow-[0_10px_28px_rgba(0,0,0,.28)]"
-                  style={{ borderColor: hasNext ? "rgba(233,189,98,.45)" : "#1F3442", opacity: past ? 0.6 : 1 }}
+                  style={{ borderColor: hasNext ? "rgba(233,189,98,.45)" : "var(--hx-1F3442)", opacity: past ? 0.6 : 1 }}
                 >
                   <div
-                    className="px-5 py-4 sm:py-[22px] border-b sm:border-b-0 sm:border-r border-[#1A2C38] flex sm:flex-col items-baseline sm:items-start justify-between sm:justify-start gap-1.5"
-                    style={{ background: hasNext ? "rgba(233,189,98,.08)" : "#0B1720" }}
+                    className="px-5 py-4 sm:py-[22px] border-b sm:border-b-0 sm:border-r border-[color:var(--hx-1A2C38)] flex sm:flex-col items-baseline sm:items-start justify-between sm:justify-start gap-1.5"
+                    style={{ background: hasNext ? "rgba(233,189,98,.08)" : "var(--hx-0B1720)" }}
                   >
-                    <span className="text-[22px] font-extrabold tracking-[-.03em] [overflow-wrap:anywhere]" style={{ color: hasNext ? "#E9BD62" : "#F4F6F8" }}>
+                    <span className="text-[22px] font-extrabold tracking-[-.03em] [overflow-wrap:anywhere]" style={{ color: hasNext ? "var(--hx-E9BD62)" : "var(--hx-F4F6F8)" }}>
                       {MONTHS_FULL[g.mi]}
                     </span>
                     <span className="text-[11px] font-semibold tracking-[.14em] uppercase text-ds-t3 whitespace-nowrap">
@@ -315,8 +315,8 @@ export default function HolidaysPage() {
               );
             })}
             {undated.length > 0 && (
-              <div className="grid grid-cols-1 sm:[grid-template-columns:160px_minmax(0,1fr)] rounded-[18px] border border-[#1F3442] bg-ds-card overflow-hidden">
-                <div className="px-5 py-4 sm:py-[22px] bg-ds-inset border-b sm:border-b-0 sm:border-r border-[#1A2C38]">
+              <div className="grid grid-cols-1 sm:[grid-template-columns:160px_minmax(0,1fr)] rounded-[18px] border border-[color:var(--hx-1F3442)] bg-ds-card overflow-hidden">
+                <div className="px-5 py-4 sm:py-[22px] bg-ds-inset border-b sm:border-b-0 sm:border-r border-[color:var(--hx-1A2C38)]">
                   <span className="text-[22px] font-extrabold tracking-[-.03em] text-ds-text">No date</span>
                 </div>
                 <div className="flex flex-col min-w-0">{undated.map(renderRow)}</div>
@@ -339,8 +339,8 @@ export default function HolidaysPage() {
                 aria-label="Add Holiday"
                 className="relative w-full max-w-[500px] max-h-full overflow-y-auto bg-ds-card border border-ds-line2 rounded-[18px] shadow-[0_24px_60px_rgba(0,0,0,.6)]"
               >
-                <span aria-hidden="true" className="absolute left-0 right-0 top-0 h-px bg-[linear-gradient(90deg,transparent,#E9BD62_30%,#E9BD62_70%,transparent)]" />
-                <div className="flex items-center justify-between px-6 py-[18px] border-b border-[#1A2C38]">
+                <span aria-hidden="true" className="absolute left-0 right-0 top-0 h-px bg-[linear-gradient(90deg,transparent,var(--hx-E9BD62)_30%,var(--hx-E9BD62)_70%,transparent)]" />
+                <div className="flex items-center justify-between px-6 py-[18px] border-b border-[color:var(--hx-1A2C38)]">
                   <span className="flex items-center gap-2.5 text-[16px] font-semibold text-ds-text">
                     <span className="text-ds-gold flex"><Icon d={CAL_ICON} className="h-[17px] w-[17px]" /></span>
                     Add Holiday
@@ -350,7 +350,7 @@ export default function HolidaysPage() {
                     onClick={() => setModalOpen(false)}
                     disabled={adding}
                     aria-label="Close"
-                    className="h-[30px] w-[30px] rounded-[8px] grid place-items-center text-ds-t3 hover:bg-[#132430] hover:text-ds-text transition-colors"
+                    className="h-[30px] w-[30px] rounded-[8px] grid place-items-center text-ds-t3 hover:bg-[color:var(--hx-132430)] hover:text-ds-text transition-colors"
                   >
                     <X className="h-4 w-4" />
                   </button>
@@ -393,7 +393,7 @@ export default function HolidaysPage() {
                     />
                   </label>
                   {addError && (
-                    <div role="alert" className="px-3 py-2.5 rounded-[8px] bg-[rgba(229,72,77,.08)] border border-[rgba(229,72,77,.3)] text-[#FB7185] text-[12.5px]">
+                    <div role="alert" className="px-3 py-2.5 rounded-[8px] bg-[rgba(229,72,77,.08)] border border-[rgba(229,72,77,.3)] text-[color:var(--hx-FB7185)] text-[12.5px]">
                       {addError}
                     </div>
                   )}
@@ -402,7 +402,7 @@ export default function HolidaysPage() {
                       type="button"
                       onClick={() => setModalOpen(false)}
                       disabled={adding}
-                      className="h-[42px] px-5 rounded-full border border-ds-line2 text-ds-t2 text-[13px] font-semibold hover:text-ds-text hover:border-[#2A4658] disabled:opacity-50 transition-colors"
+                      className="h-[42px] px-5 rounded-full border border-ds-line2 text-ds-t2 text-[13px] font-semibold hover:text-ds-text hover:border-[color:var(--hx-2A4658)] disabled:opacity-50 transition-colors"
                     >
                       Cancel
                     </button>
@@ -410,7 +410,7 @@ export default function HolidaysPage() {
                       type="submit"
                       disabled={adding}
                       aria-live="polite"
-                      className="inline-flex items-center gap-2 h-[42px] px-5 rounded-full bg-ds-gold text-[#060D14] text-[13.5px] font-bold whitespace-nowrap hover:bg-[#F4D58C] disabled:opacity-60 transition-colors"
+                      className="inline-flex items-center gap-2 h-[42px] px-5 rounded-full bg-ds-gold text-[color:var(--hx-060D14)] text-[13.5px] font-bold whitespace-nowrap hover:bg-[color:var(--hx-F4D58C)] disabled:opacity-60 transition-colors"
                     >
                       <Plus className="h-3.5 w-3.5" strokeWidth={2.4} />
                       {adding ? "Adding..." : "Add Holiday"}
@@ -435,7 +435,7 @@ export default function HolidaysPage() {
                 aria-label="Delete holiday?"
                 className="w-full max-w-[380px] bg-ds-card border border-ds-line2 rounded-[16px] p-6 shadow-[0_20px_50px_rgba(0,0,0,.6)]"
               >
-                <div className="h-10 w-10 rounded-[11px] grid place-items-center bg-[rgba(229,72,77,.12)] text-[#FB7185]">
+                <div className="h-10 w-10 rounded-[11px] grid place-items-center bg-[rgba(229,72,77,.12)] text-[color:var(--hx-FB7185)]">
                   <Trash2 className="h-[17px] w-[17px]" />
                 </div>
                 <div className="mt-3.5 text-[15px] font-semibold text-ds-text">Delete holiday?</div>
@@ -443,7 +443,7 @@ export default function HolidaysPage() {
                   <b className="text-ds-text font-semibold">{deleteTarget.name || "This holiday"}</b> will be removed. This cannot be undone.
                 </div>
                 {deleteError && (
-                  <div role="alert" className="mt-3.5 px-3 py-2.5 rounded-[8px] bg-[rgba(229,72,77,.08)] border border-[rgba(229,72,77,.3)] text-[#FB7185] text-[12px]">
+                  <div role="alert" className="mt-3.5 px-3 py-2.5 rounded-[8px] bg-[rgba(229,72,77,.08)] border border-[rgba(229,72,77,.3)] text-[color:var(--hx-FB7185)] text-[12px]">
                     {deleteError}
                   </div>
                 )}
@@ -460,7 +460,7 @@ export default function HolidaysPage() {
                     type="button"
                     onClick={confirmDelete}
                     disabled={deleting}
-                    className="h-[38px] px-[18px] rounded-full bg-[#E5484D] text-white text-[13px] font-bold disabled:opacity-60"
+                    className="h-[38px] px-[18px] rounded-full bg-[color:var(--hx-E5484D)] text-white text-[13px] font-bold disabled:opacity-60"
                   >
                     {deleting ? "Deleting..." : "Delete"}
                   </button>

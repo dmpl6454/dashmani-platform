@@ -122,42 +122,52 @@ export default function AddAdminPage() {
     }
   }
 
-  const inputClass = "w-full rounded-xl border border-[#F0EAD8] bg-[#FFF8E1]/60 px-4 py-3 text-sm outline-none focus:border-[#F5D547] focus:ring-2 focus:ring-[#F5D547]/20 transition-all placeholder:text-[#B0B0B0]";
+  const inputClass = "w-full h-12 px-[18px] rounded-[14px] border border-ds-line2 bg-ds-inset text-ds-text text-[16px] sm:text-[14px] outline-none focus:border-[rgba(233,189,98,.6)] min-w-0 transition-colors placeholder:text-ds-t4";
+  const labelClass = "block text-[10.5px] font-bold tracking-[.14em] uppercase text-ds-t3 mb-2";
+  const roleChip = (on: boolean) =>
+    `inline-flex items-center h-[30px] px-3 rounded-[15px] border text-[12px] font-semibold whitespace-nowrap transition-colors ${
+      on ? "border-ds-gold/55 bg-ds-gold/[.14] text-ds-gold" : "border-ds-line2 bg-ds-inset text-ds-t2 hover:text-ds-text hover:border-ds-line4"
+    }`;
+  const goldBtn = "inline-flex items-center gap-2 h-11 px-6 rounded-full bg-ds-gold text-[color:var(--hx-060D14)] text-[13.5px] font-bold whitespace-nowrap hover:bg-[color:var(--hx-F4D58C)] disabled:opacity-60 transition-colors";
+  const cancelBtn = "inline-flex items-center h-11 px-6 rounded-full border border-ds-line2 text-[13.5px] font-semibold text-ds-t2 hover:border-ds-line4 hover:text-ds-text transition-colors";
+  const errClass = "flex items-center gap-2 text-[13px] font-semibold text-[color:var(--hx-FB7185)] bg-[rgba(229,72,77,.08)] border border-[rgba(229,72,77,.3)] rounded-[12px] px-3.5 py-2.5";
+  const okClass = "flex items-center gap-2 text-[13px] font-semibold text-ds-teal bg-ds-teal/[.08] border border-ds-teal/30 rounded-[12px] px-3.5 py-2.5";
 
   function DupWarning({ dups, onDismiss }: { dups: Employee[]; onDismiss: () => void }) {
     return (
-      <div className="flex items-start gap-2 text-sm text-amber-700 bg-amber-50/80 border border-amber-200 rounded-lg px-3 py-2.5">
+      <div className="flex items-start gap-2 text-[13px] text-ds-gold2 bg-ds-gold/[.08] border border-ds-gold/30 rounded-[12px] px-3.5 py-2.5">
         <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
         <div className="flex-1">
           <span className="font-medium">Possible duplicate: </span>
           {dups.map((d) => `${d.name} (${d.email})`).join(", ")}
-          <span className="text-amber-500 ml-1">— you can still proceed.</span>
+          <span className="text-ds-t2 ml-1">— you can still proceed.</span>
         </div>
-        <button type="button" onClick={onDismiss} className="text-amber-400 hover:text-amber-600 text-xs shrink-0">Dismiss</button>
+        <button type="button" onClick={onDismiss} className="text-ds-gold hover:text-ds-gold2 text-[12px] font-semibold shrink-0">Dismiss</button>
       </div>
     );
   }
 
   return (
-    <div className="max-w-2xl mx-auto">
-      <div className="flex items-center gap-3 mb-6">
-        <Link href="/employees" className="p-2 rounded-lg hover:bg-white/60 transition-colors">
-          <ArrowLeft className="h-5 w-5 text-[#7A7A7A]" />
+    <div className="max-w-2xl mx-auto pb-8">
+      <section className="pt-[22px] pb-[22px]">
+        <Link href="/employees" className="inline-flex items-center gap-1.5 text-[12px] font-medium text-ds-t2 hover:text-ds-gold transition-colors">
+          <ArrowLeft className="h-[13px] w-[13px]" strokeWidth={2} /> Employees
         </Link>
-        <div>
-          <h1 className="text-2xl font-semibold text-[#1A1A1A]">Add Admin User</h1>
-          <p className="text-sm text-[#7A7A7A] mt-0.5">Create a new admin directly or send an email invite</p>
+        <div className="mt-4">
+          <h1 className="text-[34px] font-bold tracking-[-.03em] text-ds-text leading-tight">Add Admin User</h1>
+          <p className="mt-1.5 text-[13.5px] text-ds-t2">Create a new admin directly or send an email invite</p>
         </div>
-      </div>
+      </section>
 
       {/* Tabs */}
-      <div className="flex gap-1 bg-white/60 rounded-xl p-1 border border-white/50 mb-6 w-fit">
+      <div className="flex gap-0.5 p-0.5 rounded-[15px] bg-ds-inset border border-ds-line mb-5 w-fit" role="group" aria-label="Mode">
         {(["create", "invite"] as const).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
-            className={`px-5 py-2 rounded-lg text-sm font-medium transition-all ${
-              tab === t ? "bg-[#F5D547] text-[#1A1A1A] shadow-sm" : "text-[#7A7A7A] hover:text-[#1A1A1A]"
+            aria-pressed={tab === t}
+            className={`h-[26px] px-3.5 rounded-[13px] text-[11px] font-semibold whitespace-nowrap transition-colors ${
+              tab === t ? "bg-ds-blue text-white" : "text-ds-t2 hover:text-ds-text"
             }`}
           >
             {t === "create" ? "Direct Create" : "Send Invite"}
@@ -165,16 +175,17 @@ export default function AddAdminPage() {
         ))}
       </div>
 
-      <div className="bg-white/60 backdrop-blur-xl rounded-2xl border border-white/50 shadow-[0_8px_40px_rgba(0,0,0,0.06)] p-7">
+      <div className="relative rounded-[20px] border border-[color:var(--hx-2A4658)] bg-ds-card shadow-[0_14px_36px_rgba(0,0,0,.32)] overflow-hidden px-5 py-6 sm:px-[30px] sm:py-7">
+        <span aria-hidden="true" className="absolute left-0 right-0 top-0 h-px opacity-60 bg-[linear-gradient(90deg,transparent,var(--hx-E9BD62)_30%,var(--hx-E9BD62)_70%,transparent)]" />
         {tab === "create" ? (
           <form onSubmit={handleCreate} className="space-y-5">
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
-                <label className="block text-xs text-[#7A7A7A] mb-1.5 font-medium">Full Name *</label>
+                <label className={labelClass}>Full Name *</label>
                 <input className={inputClass} required placeholder="Jane Doe" value={createForm.name} onChange={(e) => updateCreateForm({ name: e.target.value })} />
               </div>
               <div>
-                <label className="block text-xs text-[#7A7A7A] mb-1.5 font-medium">Email *</label>
+                <label className={labelClass}>Email *</label>
                 <input type="email" className={inputClass} required placeholder="jane@digitalsukoon.com" value={createForm.email} onChange={(e) => updateCreateForm({ email: e.target.value })} />
               </div>
             </div>
@@ -184,36 +195,33 @@ export default function AddAdminPage() {
             )}
 
             <div>
-              <label className="block text-xs text-[#7A7A7A] mb-1.5 font-medium">Password *</label>
+              <label className={labelClass}>Password *</label>
               <div className="relative">
-                <input type={showPass ? "text" : "password"} className={inputClass + " pr-10"} required placeholder="Set initial password" value={createForm.password} onChange={(e) => setCreateForm({ ...createForm, password: e.target.value })} />
-                <button type="button" onClick={() => setShowPass(!showPass)} className="absolute right-3 top-1/2 -translate-y-1/2 text-[#B0B0B0] hover:text-[#7A7A7A]">
+                <input type={showPass ? "text" : "password"} className={inputClass + " pr-12"} required placeholder="Set initial password" value={createForm.password} onChange={(e) => setCreateForm({ ...createForm, password: e.target.value })} />
+                <button type="button" onClick={() => setShowPass(!showPass)} aria-label={showPass ? "Hide password" : "Show password"} className="absolute right-2 top-1/2 -translate-y-1/2 h-[34px] w-[34px] rounded-[10px] text-ds-t3 grid place-items-center hover:text-ds-text">
                   {showPass ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
                 </button>
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
-                <label className="block text-xs text-[#7A7A7A] mb-1.5 font-medium">Designation</label>
+                <label className={labelClass}>Designation</label>
                 <input className={inputClass} placeholder="e.g. Senior Manager" value={createForm.designation} onChange={(e) => setCreateForm({ ...createForm, designation: e.target.value })} />
               </div>
               <div>
-                <label className="block text-xs text-[#7A7A7A] mb-1.5 font-medium">Monthly Salary (₹)</label>
+                <label className={labelClass}>Monthly Salary (₹)</label>
                 <input type="number" className={inputClass} placeholder="0" value={createForm.salary} onChange={(e) => setCreateForm({ ...createForm, salary: e.target.value })} />
               </div>
             </div>
 
             <div>
-              <label className="block text-xs text-[#7A7A7A] mb-2 font-medium">Roles</label>
+              <label className={labelClass}>Roles</label>
               <div className="flex flex-wrap gap-2">
                 {roles.map((role) => (
                   <button key={role.id} type="button" onClick={() => toggleRole(role.id, createRoleIds, setCreateRoleIds)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${
-                      createRoleIds.includes(role.id)
-                        ? "bg-[#F5D547] border-[#F5D547] text-[#1A1A1A]"
-                        : "bg-white/60 border-[#F0EAD8] text-[#7A7A7A] hover:border-[#F5D547]"
-                    }`}
+                    aria-pressed={createRoleIds.includes(role.id)}
+                    className={roleChip(createRoleIds.includes(role.id))}
                   >
                     {role.name}
                   </button>
@@ -221,32 +229,32 @@ export default function AddAdminPage() {
               </div>
             </div>
 
-            {createError && <div className="flex items-center gap-2 text-sm text-[#E74C3C] bg-red-50/60 border border-red-100 rounded-lg px-3 py-2">{createError}</div>}
-            {createSuccess && <div className="flex items-center gap-2 text-sm text-emerald-700 bg-emerald-50/60 border border-emerald-100 rounded-lg px-3 py-2">{createSuccess}</div>}
+            {createError && <div role="alert" className={errClass}>{createError}</div>}
+            {createSuccess && <div role="status" className={okClass}>{createSuccess}</div>}
 
-            <div className="flex gap-3 pt-2">
+            <div className="flex flex-wrap gap-3 pt-5 border-t border-[color:var(--hx-1A2C38)]">
               <button type="submit" disabled={createLoading}
-                className="flex items-center gap-2 px-6 py-3 rounded-full bg-[#F5D547] text-[#1A1A1A] text-sm font-semibold shadow-[0_4px_16px_rgba(245,213,71,0.35)] hover:shadow-[0_8px_32px_rgba(245,213,71,0.45)] hover:-translate-y-0.5 disabled:opacity-50 transition-all"
+                className={goldBtn}
               >
                 <UserPlus className="h-4 w-4" />
                 {createLoading ? "Creating..." : "Create Admin User"}
               </button>
-              <Link href="/employees" className="px-6 py-3 rounded-full border border-[#F0EAD8] text-sm text-[#7A7A7A] hover:border-[#E8D8B4] transition-colors">
+              <Link href="/employees" className={cancelBtn}>
                 Cancel
               </Link>
             </div>
           </form>
         ) : (
           <form onSubmit={handleInvite} className="space-y-5">
-            <p className="text-sm text-[#7A7A7A]">The recipient will receive an email with a signup link valid for 7 days.</p>
+            <p className="text-[13px] text-ds-t2">The recipient will receive an email with a signup link valid for 7 days.</p>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
-                <label className="block text-xs text-[#7A7A7A] mb-1.5 font-medium">Email Address *</label>
+                <label className={labelClass}>Email Address *</label>
                 <input type="email" className={inputClass} required placeholder="newadmin@digitalsukoon.com" value={inviteForm.email} onChange={(e) => updateInviteForm({ email: e.target.value })} />
               </div>
               <div>
-                <label className="block text-xs text-[#7A7A7A] mb-1.5 font-medium">Designation</label>
+                <label className={labelClass}>Designation</label>
                 <input className={inputClass} placeholder="e.g. Content Manager" value={inviteForm.designation} onChange={(e) => setInviteForm({ ...inviteForm, designation: e.target.value })} />
               </div>
             </div>
@@ -256,15 +264,12 @@ export default function AddAdminPage() {
             )}
 
             <div>
-              <label className="block text-xs text-[#7A7A7A] mb-2 font-medium">Roles</label>
+              <label className={labelClass}>Roles</label>
               <div className="flex flex-wrap gap-2">
                 {roles.map((role) => (
                   <button key={role.id} type="button" onClick={() => toggleRole(role.id, inviteRoleIds, setInviteRoleIds)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${
-                      inviteRoleIds.includes(role.id)
-                        ? "bg-[#F5D547] border-[#F5D547] text-[#1A1A1A]"
-                        : "bg-white/60 border-[#F0EAD8] text-[#7A7A7A] hover:border-[#F5D547]"
-                    }`}
+                    aria-pressed={inviteRoleIds.includes(role.id)}
+                    className={roleChip(inviteRoleIds.includes(role.id))}
                   >
                     {role.name}
                   </button>
@@ -272,17 +277,17 @@ export default function AddAdminPage() {
               </div>
             </div>
 
-            {inviteError && <div className="flex items-center gap-2 text-sm text-[#E74C3C] bg-red-50/60 border border-red-100 rounded-lg px-3 py-2">{inviteError}</div>}
-            {inviteSuccess && <div className="flex items-center gap-2 text-sm text-emerald-700 bg-emerald-50/60 border border-emerald-100 rounded-lg px-3 py-2">{inviteSuccess}</div>}
+            {inviteError && <div role="alert" className={errClass}>{inviteError}</div>}
+            {inviteSuccess && <div role="status" className={okClass}>{inviteSuccess}</div>}
 
-            <div className="flex gap-3 pt-2">
+            <div className="flex flex-wrap gap-3 pt-5 border-t border-[color:var(--hx-1A2C38)]">
               <button type="submit" disabled={inviteLoading}
-                className="flex items-center gap-2 px-6 py-3 rounded-full bg-[#F5D547] text-[#1A1A1A] text-sm font-semibold shadow-[0_4px_16px_rgba(245,213,71,0.35)] hover:shadow-[0_8px_32px_rgba(245,213,71,0.45)] hover:-translate-y-0.5 disabled:opacity-50 transition-all"
+                className={goldBtn}
               >
                 <Send className="h-4 w-4" />
                 {inviteLoading ? "Sending..." : "Send Invite Email"}
               </button>
-              <Link href="/employees" className="px-6 py-3 rounded-full border border-[#F0EAD8] text-sm text-[#7A7A7A] hover:border-[#E8D8B4] transition-colors">
+              <Link href="/employees" className={cancelBtn}>
                 Cancel
               </Link>
             </div>

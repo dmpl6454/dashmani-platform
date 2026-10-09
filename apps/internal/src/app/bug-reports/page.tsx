@@ -9,16 +9,16 @@ import { usePageTitle } from "@/lib/hooks/use-page-title";
 
 const STATUSES = ["", "OPEN", "IN_PROGRESS", "RESOLVED", "CLOSED"];
 // Mockup palette.
-const STATUS_COLOR: Record<string, string> = { OPEN: "#FB7185", IN_PROGRESS: "#E9BD62", RESOLVED: "#00D7A0", CLOSED: "#738395", WONT_FIX: "#738395" };
-const SEVERITY_COLOR: Record<string, string> = { LOW: "#6EB2FF", MEDIUM: "#E9BD62", HIGH: "#FB923C", CRITICAL: "#FB7185" };
+const STATUS_COLOR: Record<string, string> = { OPEN: "var(--hx-FB7185)", IN_PROGRESS: "var(--hx-E9BD62)", RESOLVED: "var(--hx-00D7A0)", CLOSED: "var(--hx-738395)", WONT_FIX: "var(--hx-738395)" };
+const SEVERITY_COLOR: Record<string, string> = { LOW: "var(--hx-6EB2FF)", MEDIUM: "var(--hx-E9BD62)", HIGH: "var(--hx-FB923C)", CRITICAL: "var(--hx-FB7185)" };
 const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const rgba = (hex: string, a: number) => {
-  const n = parseInt(hex.slice(1), 16);
+  if (hex.startsWith("var(")) return `color-mix(in srgb, ${hex} ${Math.round(a * 100)}%, transparent)`; const n = parseInt(hex.slice(1), 16);
   return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`;
 };
 const fdY = (v: string) => { const d = new Date(v); return `${d.getDate()} ${MONTH_SHORT[d.getMonth()]} ${d.getFullYear()}`; };
 const statusLabel = (s: string) => (s === "WONT_FIX" ? "Won't Fix" : formatStatus(s));
-const Dot = () => <span aria-hidden="true" className="h-[3px] w-[3px] rounded-full bg-[#4A6275] shrink-0" />;
+const Dot = () => <span aria-hidden="true" className="h-[3px] w-[3px] rounded-full bg-[color:var(--hx-4A6275)] shrink-0" />;
 
 function Pill({ color, dot, children }: { color: string; dot?: boolean; children: React.ReactNode }) {
   return (
@@ -82,8 +82,8 @@ export default function BugReportsPage() {
         <div className="flex items-center gap-3.5 flex-wrap min-w-0">
           <h1 className="text-[34px] font-bold tracking-[-.03em] text-ds-text leading-tight">Bug Reports</h1>
           {openCount > 0 && (
-            <span className="inline-flex items-center gap-1.5 h-7 px-3 rounded-full bg-[rgba(251,113,133,.1)] border border-[rgba(251,113,133,.35)] text-[#FB7185] text-[12px] font-semibold whitespace-nowrap">
-              <i className="h-[5px] w-[5px] rounded-full bg-[#FB7185]" />
+            <span className="inline-flex items-center gap-1.5 h-7 px-3 rounded-full bg-[rgba(251,113,133,.1)] border border-[rgba(251,113,133,.35)] text-[color:var(--hx-FB7185)] text-[12px] font-semibold whitespace-nowrap">
+              <i className="h-[5px] w-[5px] rounded-full bg-[color:var(--hx-FB7185)]" />
               {openCount} Open
             </span>
           )}
@@ -98,7 +98,7 @@ export default function BugReportsPage() {
                 role="tab"
                 aria-selected={on}
                 onClick={() => setStatusFilter(s)}
-                className={`inline-flex items-center gap-2 h-9 px-4 rounded-full text-[13px] font-semibold whitespace-nowrap shrink-0 transition-colors ${on ? "bg-ds-gold text-[#060D14]" : "text-ds-t2 hover:text-ds-text"}`}
+                className={`inline-flex items-center gap-2 h-9 px-4 rounded-full text-[13px] font-semibold whitespace-nowrap shrink-0 transition-colors ${on ? "bg-ds-gold text-[color:var(--hx-060D14)]" : "text-ds-t2 hover:text-ds-text"}`}
               >
                 {s ? statusLabel(s) : "All"}
                 {data && <span className={`text-[11px] font-semibold ${on ? "text-[rgba(6,13,20,.6)]" : "text-ds-t3"}`}>{count(s)}</span>}
@@ -109,7 +109,7 @@ export default function BugReportsPage() {
       </section>
 
       {actionError && (
-        <div className="mb-3.5 px-3.5 py-2.5 rounded-[8px] bg-[rgba(229,72,77,.08)] border border-[rgba(229,72,77,.3)] text-[#FB7185] text-[12.5px] flex items-center justify-between gap-3">
+        <div className="mb-3.5 px-3.5 py-2.5 rounded-[8px] bg-[rgba(229,72,77,.08)] border border-[rgba(229,72,77,.3)] text-[color:var(--hx-FB7185)] text-[12.5px] flex items-center justify-between gap-3">
           <span>{actionError}</span>
           <button type="button" onClick={() => setActionError("")} aria-label="Dismiss" className="shrink-0 hover:text-ds-text"><X className="h-4 w-4" /></button>
         </div>
@@ -119,30 +119,30 @@ export default function BugReportsPage() {
         {isLoading && !data ? (
           Array.from({ length: 4 }).map((_, i) => <div key={i} className="h-[86px] rounded-[16px] bg-ds-card border border-ds-line motion-safe:animate-pulse" />)
         ) : error ? (
-          <div className="rounded-[16px] border border-[#2A4658] bg-ds-card py-14 px-5 text-center text-[13px] text-ds-t3">
+          <div className="rounded-[16px] border border-[color:var(--hx-2A4658)] bg-ds-card py-14 px-5 text-center text-[13px] text-ds-t3">
             Bug reports couldn&apos;t be loaded just now. Refresh to try again.
           </div>
         ) : bugs.length === 0 ? (
-          <div className="rounded-[16px] border border-[#2A4658] bg-ds-card py-14 px-5 flex flex-col items-center gap-3 text-[13px] text-ds-t3">
+          <div className="rounded-[16px] border border-[color:var(--hx-2A4658)] bg-ds-card py-14 px-5 flex flex-col items-center gap-3 text-[13px] text-ds-t3">
             <Bug className="h-8 w-8" strokeWidth={1.5} />
             No bug reports
           </div>
         ) : (
           bugs.map((bug: any) => {
             const open = expandedId === bug.id;
-            const sevColor = SEVERITY_COLOR[bug.severity] ?? "#A7B3C2";
-            const stColor = STATUS_COLOR[bug.status] ?? "#738395";
+            const sevColor = SEVERITY_COLOR[bug.severity] ?? "var(--hx-A7B3C2)";
+            const stColor = STATUS_COLOR[bug.status] ?? "var(--hx-738395)";
             const live = bug.status === "OPEN" || bug.status === "IN_PROGRESS";
             return (
               <div
                 key={bug.id}
-                className={`rounded-[16px] border bg-ds-card overflow-hidden shadow-[0_8px_24px_rgba(0,0,0,.25)] transition-colors ${open ? "border-[rgba(233,189,98,.4)]" : "border-[#2A4658]"}`}
+                className={`rounded-[16px] border bg-ds-card overflow-hidden shadow-[0_8px_24px_rgba(0,0,0,.25)] transition-colors ${open ? "border-[rgba(233,189,98,.4)]" : "border-[color:var(--hx-2A4658)]"}`}
               >
                 <button
                   type="button"
                   aria-expanded={open}
                   onClick={() => { setExpandedId(open ? null : bug.id); setResolution(""); }}
-                  className={`w-full flex items-center gap-3.5 px-6 py-5 text-left hover:bg-[#0A1620] transition-colors ${open ? "bg-[#0A1620]" : ""}`}
+                  className={`w-full flex items-center gap-3.5 px-6 py-5 text-left hover:bg-[color:var(--hx-0A1620)] transition-colors ${open ? "bg-[color:var(--hx-0A1620)]" : ""}`}
                 >
                   <span className="flex-1 min-w-0 flex flex-col gap-[5px]">
                     <span className="flex items-center gap-2 flex-wrap min-w-0">
@@ -170,10 +170,10 @@ export default function BugReportsPage() {
                     {bug.resolution && (
                       <div className="px-3.5 py-3 rounded-[12px] bg-[rgba(0,215,160,.06)] border border-[rgba(0,215,160,.25)]">
                         <div className="text-[10.5px] font-semibold tracking-[.1em] uppercase text-ds-teal">Resolution</div>
-                        <p className="mt-1.5 text-[13px] leading-[1.55] text-[#E3E8EE] whitespace-pre-line break-words">{bug.resolution}</p>
+                        <p className="mt-1.5 text-[13px] leading-[1.55] text-[color:var(--hx-E3E8EE)] whitespace-pre-line break-words">{bug.resolution}</p>
                       </div>
                     )}
-                    <div className="flex items-center gap-2 flex-wrap pt-3.5 border-t border-[#132430]">
+                    <div className="flex items-center gap-2 flex-wrap pt-3.5 border-t border-[color:var(--hx-132430)]">
                       <input
                         type="text"
                         placeholder="Resolution note (optional)"
@@ -183,16 +183,16 @@ export default function BugReportsPage() {
                         className="h-10 px-3 rounded-[10px] border border-ds-line2 bg-ds-inset text-ds-text text-[16px] sm:text-[13px] outline-none focus:border-ds-gold placeholder:text-ds-t4 flex-[1_1_220px] min-w-[180px]"
                       />
                       {bug.status === "OPEN" && (
-                        <ActionBtn color="#E9BD62" disabled={busy} onClick={() => updateStatus(bug.id, "IN_PROGRESS")} icon={<Clock className="h-[13px] w-[13px]" strokeWidth={2.2} />}>
+                        <ActionBtn color="var(--hx-E9BD62)" disabled={busy} onClick={() => updateStatus(bug.id, "IN_PROGRESS")} icon={<Clock className="h-[13px] w-[13px]" strokeWidth={2.2} />}>
                           In Progress
                         </ActionBtn>
                       )}
                       {live && (
                         <>
-                          <ActionBtn color="#00D7A0" disabled={busy} onClick={() => updateStatus(bug.id, "RESOLVED")} icon={<Check className="h-[13px] w-[13px]" strokeWidth={2.2} />}>
+                          <ActionBtn color="var(--hx-00D7A0)" disabled={busy} onClick={() => updateStatus(bug.id, "RESOLVED")} icon={<Check className="h-[13px] w-[13px]" strokeWidth={2.2} />}>
                             Resolve
                           </ActionBtn>
-                          <ActionBtn color="#A7B3C2" disabled={busy} onClick={() => updateStatus(bug.id, "WONT_FIX")} icon={<X className="h-[13px] w-[13px]" strokeWidth={2.2} />}>
+                          <ActionBtn color="var(--hx-A7B3C2)" disabled={busy} onClick={() => updateStatus(bug.id, "WONT_FIX")} icon={<X className="h-[13px] w-[13px]" strokeWidth={2.2} />}>
                             Won&apos;t Fix
                           </ActionBtn>
                         </>

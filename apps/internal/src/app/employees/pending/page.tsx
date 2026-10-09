@@ -69,43 +69,42 @@ export default function PendingEmployeesPage() {
   }
 
   return (
-    <div className="max-w-5xl mx-auto space-y-6 crx-animate-fade">
-      <div className="flex items-center gap-3">
-        <Link href="/employees" className="text-[#B0B0B0] hover:text-[#1A1A1A] transition-colors">
-          <ArrowLeft className="h-5 w-5" />
+    <div className="max-w-5xl mx-auto pb-8 crx-animate-fade">
+      <section className="pt-[22px] pb-[22px]">
+        <Link href="/employees" className="inline-flex items-center gap-1.5 text-[12px] font-medium text-ds-t2 hover:text-ds-gold transition-colors">
+          <ArrowLeft className="h-[13px] w-[13px]" strokeWidth={2} /> Employees
         </Link>
-        <div>
-          <h1 className="font-serif text-4xl font-light text-[#1A1A1A]">Pending Approvals</h1>
-          <p className="text-[#7A7A7A] mt-1">
+        <div className="mt-4">
+          <h1 className="text-[34px] font-bold tracking-[-.03em] text-ds-text leading-tight">Pending Approvals</h1>
+          <p className="mt-1.5 text-[13.5px] text-ds-t2">
             {employees.length} employee{employees.length !== 1 ? "s" : ""} waiting for approval
           </p>
         </div>
-      </div>
+      </section>
 
       {employees.length === 0 ? (
-        <div className="bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0] p-12 text-center crx-animate-slide crx-delay-1">
-          <Clock className="h-12 w-12 text-[#B0B0B0] mx-auto mb-3" />
-          <p className="text-[#7A7A7A]">No pending employee registrations</p>
+        <div className="py-14 px-5 text-center rounded-[16px] border border-dashed border-ds-line2 crx-animate-slide crx-delay-1">
+          <Clock className="h-10 w-10 text-ds-t4 mx-auto mb-3" strokeWidth={1.6} />
+          <p className="text-[13px] text-ds-t3">No pending employee registrations</p>
         </div>
       ) : (
         <div className="space-y-3">
           {employees.map((emp, i) => (
             <div
               key={emp.id}
-              className={`bg-white rounded-2xl shadow-[0_2px_16px_rgba(0,0,0,0.05)] border border-[#E8E0D0] p-5 flex items-center justify-between transition-all hover:shadow-[0_4px_24px_rgba(0,0,0,0.07)] crx-animate-slide crx-delay-${Math.min(i + 1, 6)}`}
+              className={`rounded-[16px] border border-[color:var(--hx-2A4658)] bg-ds-card shadow-[0_12px_32px_rgba(0,0,0,.35)] p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 transition-colors hover:border-ds-line4 crx-animate-slide crx-delay-${Math.min(i + 1, 6)}`}
             >
               <div className="flex items-center gap-4 flex-1">
                 <div
-                  className="h-10 w-10 rounded-full flex items-center justify-center text-white text-sm font-semibold shrink-0"
-                  style={{ background: "linear-gradient(135deg, #5B4BF5, #3023D0)" }}
+                  className="h-10 w-10 rounded-full border border-ds-line2 bg-[rgba(233,189,98,.1)] text-ds-gold flex items-center justify-center text-[13px] font-bold shrink-0"
                 >
                   {emp.name?.[0]?.toUpperCase()}
                 </div>
-                <div>
-                  <p className="font-medium text-[#1A1A1A]">{emp.name}</p>
-                  <p className="text-sm text-[#7A7A7A]">{emp.email}</p>
-                  {emp.phone && <p className="text-sm text-[#B0B0B0]">{emp.phone}</p>}
-                  <p className="text-xs text-[#B0B0B0] mt-1">
+                <div className="min-w-0">
+                  <p className="text-[14.5px] font-semibold text-ds-text truncate">{emp.name}</p>
+                  <p className="text-[12.5px] text-ds-t2 truncate">{emp.email}</p>
+                  {emp.phone && <p className="text-[12.5px] text-ds-t3">{emp.phone}</p>}
+                  <p className="text-[11px] text-ds-t3 mt-1">
                     Registered: {new Date(emp.createdAt).toLocaleDateString("en-IN", {
                       day: "numeric",
                       month: "short",
@@ -121,17 +120,17 @@ export default function PendingEmployeesPage() {
                 <button
                   onClick={() => handleApprove(emp.id)}
                   disabled={actionLoading === emp.id}
-                  className="flex items-center gap-1.5 bg-[#6BCB77] text-white px-4 py-2 rounded-full text-sm font-medium hover:bg-[#5ab868] disabled:opacity-50 transition-colors"
+                  className="inline-flex items-center justify-center gap-1.5 h-9 px-3.5 rounded-full bg-ds-teal text-[color:var(--hx-04130D)] text-[12px] font-bold whitespace-nowrap shrink-0 hover:bg-[color:var(--hx-33E2B5)] disabled:opacity-50 transition-colors"
                 >
-                  <Check className="h-4 w-4" />
+                  <Check className="h-3.5 w-3.5" strokeWidth={2.4} />
                   Approve
                 </button>
                 <button
                   onClick={() => handleReject(emp.id)}
                   disabled={actionLoading === emp.id}
-                  className="flex items-center gap-1.5 bg-[rgba(231,76,60,0.1)] text-[#E74C3C] px-4 py-2 rounded-full text-sm font-medium hover:bg-[rgba(231,76,60,0.18)] disabled:opacity-50 transition-colors"
+                  className="inline-flex items-center justify-center gap-1.5 h-9 px-3.5 rounded-full border border-[rgba(229,72,77,.4)] text-[color:var(--hx-FB7185)] text-[12px] font-bold whitespace-nowrap shrink-0 hover:bg-[rgba(229,72,77,.1)] disabled:opacity-50 transition-colors"
                 >
-                  <X className="h-4 w-4" />
+                  <X className="h-3.5 w-3.5" strokeWidth={2.4} />
                   Reject
                 </button>
               </div>

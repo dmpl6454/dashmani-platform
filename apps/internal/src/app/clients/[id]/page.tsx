@@ -13,18 +13,36 @@ import {
 import { useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 
-const statusBadge: Record<string, string> = {
-  ACTIVE: "bg-emerald-100 text-emerald-700",
-  INACTIVE: "bg-[rgba(0,0,0,0.06)] text-[#7A7A7A]",
-  PAUSED: "bg-[#FFF3C4] text-[#B8960C]",
+// Mockup palette.
+const STATUS_COLOR: Record<string, string> = { ACTIVE: "var(--hx-00D7A0)", PAUSED: "var(--hx-6EB2FF)", INACTIVE: "var(--hx-738395)" };
+const PROJECT_STATUS_COLOR: Record<string, string> = {
+  ACTIVE: "var(--hx-00D7A0)",
+  PAUSED: "var(--hx-FBBF24)",
+  COMPLETED: "var(--hx-6EB2FF)",
+  ARCHIVED: "var(--hx-738395)",
 };
+const rgba = (hex: string, a: number) => {
+  if (hex.startsWith("var(")) return `color-mix(in srgb, ${hex} ${Math.round(a * 100)}%, transparent)`; const n = parseInt(hex.slice(1), 16);
+  return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`;
+};
+function StatusPill({ color, label }: { color: string; label: string }) {
+  return (
+    <span
+      className="inline-flex items-center gap-1.5 h-[26px] px-[11px] rounded-full text-[11.5px] font-semibold whitespace-nowrap border"
+      style={{ background: rgba(color, 0.1), borderColor: rgba(color, 0.28), color }}
+    >
+      <i className="h-[5px] w-[5px] rounded-full" style={{ background: color }} />
+      {label}
+    </span>
+  );
+}
 
-const projectStatusBadge: Record<string, string> = {
-  ACTIVE: "bg-emerald-100 text-emerald-700",
-  PAUSED: "bg-[#FFF3C4] text-[#B8960C]",
-  COMPLETED: "bg-indigo-100 text-indigo-700",
-  ARCHIVED: "bg-[rgba(0,0,0,0.06)] text-[#7A7A7A]",
-};
+const LABEL = "flex flex-col gap-[7px] text-[10.5px] text-ds-t3 font-semibold tracking-[.1em] uppercase min-w-0";
+const FIELD =
+  "h-[38px] w-full px-3 rounded-[6px] border border-ds-line2 bg-ds-inset text-ds-text text-[16px] sm:text-[12.5px] tracking-normal normal-case font-normal outline-none focus:border-ds-gold placeholder:text-ds-t4 [color-scheme:dark] min-w-0";
+const BTN_GHOST = "h-9 px-3.5 rounded-[6px] border border-ds-line2 text-ds-t2 text-[12px] font-semibold hover:text-ds-text hover:border-ds-line4 disabled:opacity-50";
+const BTN_PILL = "inline-flex items-center gap-1.5 h-8 px-[13px] rounded-full border text-[12px] font-semibold whitespace-nowrap transition-colors disabled:opacity-55";
+const CARD = "rounded-[12px] border border-[color:var(--hx-1D3444)] bg-ds-card shadow-[inset_0_1px_0_rgba(233,189,98,.06),0_12px_32px_rgba(0,0,0,.35)]";
 
 // Next 14: read the route id with useParams(). React 18 has no use(), so use(params)
 // crashed this page with "An unsupported type was passed to use()".
@@ -108,9 +126,10 @@ export default function ClientDetailPage() {
 
   if (isLoading) {
     return (
-      <div className="space-y-4 crx-animate-fade">
+      <div className="pt-[26px] space-y-3.5" aria-hidden="true">
+        <div className="h-3 w-16 rounded-[4px] bg-ds-hover motion-safe:animate-pulse" />
         {[1, 2, 3].map((i) => (
-          <div key={i} className="h-24 bg-[#F5F0E8] rounded-2xl animate-pulse" />
+          <div key={i} className="h-24 rounded-[12px] bg-ds-card border border-ds-line motion-safe:animate-pulse" />
         ))}
       </div>
     );
@@ -118,126 +137,135 @@ export default function ClientDetailPage() {
 
   if (isError || !client) {
     return (
-      <div className="text-center py-20">
-        <Building2 size={40} className="mx-auto mb-3 text-ink-4" />
-        <p className="text-ink-3 font-medium">Client not found.</p>
-        <Link href="/clients" className="text-indigo text-sm font-semibold hover:underline mt-2 inline-block">
+      <div className="py-20 px-5 text-center text-ds-t3 text-[13px]">
+        <Building2 className="h-[30px] w-[30px] mx-auto mb-2.5 opacity-50" strokeWidth={1.5} />
+        <p>Client not found.</p>
+        <Link href="/clients" className="mt-2 inline-block text-[12.5px] font-semibold text-ds-gold hover:text-[color:var(--hx-F4D58C)]">
           ← Back to clients
         </Link>
       </div>
     );
   }
 
+  const statusColor = STATUS_COLOR[client.status] ?? "var(--hx-738395)";
+
   return (
-    <div className="space-y-6 crx-animate-fade max-w-3xl">
+    <div className="pb-8 max-w-3xl">
       {/* Back + actions */}
-      <div className="flex items-center justify-between">
-        <Link href="/clients" className="flex items-center gap-1.5 text-sm text-ink-3 hover:text-ink font-medium transition-colors">
-          <ChevronLeft size={16} /> Clients
+      <section className="flex items-center justify-between gap-3 flex-wrap pt-[26px] pb-[18px]">
+        <Link href="/clients" className="inline-flex items-center gap-1.5 text-[13px] text-ds-t2 hover:text-ds-text transition-colors">
+          <ChevronLeft className="h-3.5 w-3.5" /> Clients
         </Link>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           {client.email && (
             <button
               onClick={sendInvite}
               disabled={inviting}
-              className="flex items-center gap-1.5 text-sm border border-[#E8E0D0] rounded-full px-4 py-2 hover:bg-[rgba(245,213,71,0.1)] transition-colors font-medium"
+              className={`${BTN_PILL} border-ds-line2 text-ds-t5 hover:border-[rgba(35,139,255,.55)] hover:text-[color:var(--hx-6EB2FF)]`}
             >
-              <Send size={14} /> {inviting ? "Sending…" : "Invite to Portal"}
+              <Send className="h-[13px] w-[13px]" /> {inviting ? "Sending…" : "Invite to Portal"}
             </button>
           )}
           {isAdmin && (
             <>
               <button
                 onClick={startEdit}
-                className="flex items-center gap-1.5 text-sm border border-[#E8E0D0] rounded-full px-4 py-2 hover:bg-[rgba(245,213,71,0.1)] transition-colors font-medium"
+                className={`${BTN_PILL} border-ds-line2 text-ds-t5 hover:border-[rgba(233,189,98,.55)] hover:text-ds-gold`}
               >
-                <Pencil size={14} /> Edit
+                <Pencil className="h-[13px] w-[13px]" /> Edit
               </button>
               <button
                 onClick={handleDelete}
-                className="flex items-center gap-1.5 text-sm border border-red-100 text-red-500 rounded-full px-4 py-2 hover:bg-red-50 transition-colors font-medium"
+                className={`${BTN_PILL} border-[rgba(229,72,77,.3)] text-[color:var(--hx-FB7185)] hover:border-[rgba(229,72,77,.6)] hover:bg-[rgba(229,72,77,.08)]`}
               >
-                <Trash2 size={14} /> Delete
+                <Trash2 className="h-[13px] w-[13px]" /> Delete
               </button>
             </>
           )}
         </div>
-      </div>
+      </section>
 
       {inviteMsg && (
-        <div className={`flex items-center gap-2 text-sm rounded-xl px-4 py-2.5 ${inviteMsg.type === "success" ? "bg-emerald-50 border border-emerald-100 text-emerald-700" : "bg-red-50 border border-red-100 text-red-600"}`}>
-          {inviteMsg.type === "success" ? <Check size={14} /> : <X size={14} />}
+        <div
+          className={`flex items-center gap-2 mb-4 px-3 py-2.5 rounded-[6px] text-[12px] font-semibold border ${
+            inviteMsg.type === "success"
+              ? "bg-[rgba(0,215,160,.08)] border-[rgba(0,215,160,.3)] text-ds-teal"
+              : "bg-[rgba(229,72,77,.08)] border-[rgba(229,72,77,.3)] text-[color:var(--hx-FB7185)]"
+          }`}
+        >
+          {inviteMsg.type === "success" ? <Check className="h-4 w-4 shrink-0" /> : <X className="h-4 w-4 shrink-0" />}
           {inviteMsg.text}
         </div>
       )}
 
       {/* Client card */}
       {editing ? (
-        <form onSubmit={handleSave} className="v3-card p-6 space-y-4">
-          <h2 className="font-semibold text-ink mb-2">Edit Client</h2>
-          <div className="grid grid-cols-2 gap-4">
+        <form onSubmit={handleSave} className={`${CARD} relative overflow-hidden p-6`}>
+          <span aria-hidden="true" className="absolute left-0 right-0 top-0 h-px opacity-70 bg-[linear-gradient(90deg,transparent,var(--hx-E9BD62)_30%,var(--hx-E9BD62)_70%,transparent)]" />
+          <h2 className="text-[16px] font-semibold text-ds-text mb-5">Edit Client</h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {(["companyName", "contactName", "email", "phone"] as const).map((field) => (
-              <div key={field}>
-                <label className="block text-xs font-medium text-ink-3 mb-1 capitalize">{field.replace(/([A-Z])/g, " $1")}</label>
+              <label key={field} className={LABEL}>
+                <span>{field.replace(/([A-Z])/g, " $1")}</span>
                 <input
                   type={field === "email" ? "email" : "text"}
                   value={form[field]}
                   onChange={(e) => setForm((f) => ({ ...f, [field]: e.target.value }))}
                   required={field === "companyName"}
-                  className="w-full border-2 border-ink/15 bg-surface rounded-xl px-4 py-2.5 text-sm text-ink focus:outline-none focus:border-indigo transition-colors"
+                  className={FIELD}
                 />
-              </div>
+              </label>
             ))}
-            <div>
-              <label className="block text-xs font-medium text-ink-3 mb-1">Status</label>
+            <label className={LABEL}>
+              <span>Status</span>
               <select
                 value={form.status}
                 onChange={(e) => setForm((f) => ({ ...f, status: e.target.value }))}
-                className="w-full border-2 border-ink/15 bg-surface rounded-xl px-4 py-2.5 text-sm text-ink focus:outline-none focus:border-indigo transition-colors"
+                className={`${FIELD} px-2.5 cursor-pointer`}
               >
-                <option value="ACTIVE">Active</option>
-                <option value="INACTIVE">Inactive</option>
-                <option value="PAUSED">Paused</option>
+                <option value="ACTIVE" className="bg-ds-card">Active</option>
+                <option value="INACTIVE" className="bg-ds-card">Inactive</option>
+                <option value="PAUSED" className="bg-ds-card">Paused</option>
               </select>
-            </div>
+            </label>
           </div>
-          {saveError && <p className="text-danger text-sm font-medium">{saveError}</p>}
-          <div className="flex gap-3 pt-2">
-            <button type="submit" disabled={saving} className="bg-ink text-white px-6 py-2.5 rounded-full text-sm font-semibold hover:bg-ink/80 disabled:opacity-50 transition-colors">
+          {saveError && (
+            <div className="mt-4 px-3 py-2.5 rounded-[6px] bg-[rgba(229,72,77,.08)] border border-[rgba(229,72,77,.3)] text-[color:var(--hx-FB7185)] text-[12px]">{saveError}</div>
+          )}
+          <div className="flex gap-2 mt-5">
+            <button type="submit" disabled={saving} className="h-9 px-[18px] rounded-[6px] bg-ds-gold text-[color:var(--hx-060D14)] text-[12px] font-bold hover:bg-[color:var(--hx-F4D58C)] disabled:opacity-60">
               {saving ? "Saving…" : "Save"}
             </button>
-            <button type="button" onClick={() => setEditing(false)} className="border border-[#E8E0D0] px-6 py-2.5 rounded-full text-sm font-semibold text-ink-3 hover:bg-[rgba(0,0,0,0.04)] transition-colors">
+            <button type="button" onClick={() => setEditing(false)} className={BTN_GHOST}>
               Cancel
             </button>
           </div>
         </form>
       ) : (
-        <div className="v3-card p-6">
+        <div className={`${CARD} p-6`}>
           <div className="flex items-start gap-4">
-            <div className="h-14 w-14 rounded-2xl bg-[#FFF3C4] flex items-center justify-center shrink-0">
-              <Building2 size={28} className="text-ink" />
-            </div>
+            <span className="h-14 w-14 rounded-[14px] bg-[rgba(233,189,98,.1)] border border-[rgba(233,189,98,.3)] text-ds-gold grid place-items-center shrink-0">
+              <Building2 className="h-6 w-6" strokeWidth={1.7} />
+            </span>
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-3 flex-wrap">
-                <h1 className="font-serif text-3xl font-light text-ink">{client.companyName}</h1>
-                <span className={`rounded-full px-3 py-1 text-xs font-medium ${statusBadge[client.status] ?? "bg-[rgba(0,0,0,0.06)] text-[#7A7A7A]"}`}>
-                  {formatStatus(client.status)}
-                </span>
+                <h1 className="text-[28px] font-bold tracking-[-.03em] text-ds-text leading-tight">{client.companyName}</h1>
+                <StatusPill color={statusColor} label={formatStatus(client.status)} />
               </div>
-              <div className="flex flex-wrap gap-4 mt-3 text-sm text-ink-3">
-                {client.contactName && <span className="font-medium text-ink">{client.contactName}</span>}
+              <div className="flex flex-wrap gap-x-4 gap-y-1.5 mt-3 text-[13px] text-ds-t2">
+                {client.contactName && <span className="font-semibold text-ds-text">{client.contactName}</span>}
                 {client.email && (
-                  <a href={`mailto:${client.email}`} className="flex items-center gap-1.5 hover:text-indigo transition-colors">
-                    <Mail size={14} /> {client.email}
+                  <a href={`mailto:${client.email}`} className="flex items-center gap-1.5 hover:text-ds-gold transition-colors">
+                    <Mail className="h-3.5 w-3.5" /> {client.email}
                   </a>
                 )}
                 {client.phone && (
-                  <a href={`tel:${client.phone}`} className="flex items-center gap-1.5 hover:text-indigo transition-colors">
-                    <Phone size={14} /> {client.phone}
+                  <a href={`tel:${client.phone}`} className="flex items-center gap-1.5 hover:text-ds-gold transition-colors">
+                    <Phone className="h-3.5 w-3.5" /> {client.phone}
                   </a>
                 )}
               </div>
-              <p className="text-xs text-ink-4 mt-2">
+              <p className="text-[12px] text-ds-t3 mt-2">
                 Client since {new Date(client.createdAt).toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" })}
               </p>
             </div>
@@ -246,40 +274,38 @@ export default function ClientDetailPage() {
       )}
 
       {/* Projects */}
-      <div className="v3-card p-6">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="font-semibold text-ink flex items-center gap-2">
-            <FolderOpen size={16} className="text-ink-4" /> Projects
+      <section className={`${CARD} mt-4 overflow-hidden`}>
+        <div className="flex items-center justify-between gap-3 h-[60px] px-6 border-b border-ds-line">
+          <h2 className="flex items-center gap-2 text-[15px] font-semibold tracking-[-.01em] text-ds-text">
+            <FolderOpen className="h-4 w-4 text-ds-t3" /> Projects
           </h2>
           <Link
             href={`/projects/new?clientId=${id}`}
-            className="text-sm text-indigo font-semibold hover:underline"
+            className="text-[12.5px] font-semibold text-ds-gold hover:text-[color:var(--hx-F4D58C)] whitespace-nowrap"
           >
             + New project
           </Link>
         </div>
         {client.projects?.length === 0 ? (
-          <p className="text-ink-4 text-sm text-center py-8">No projects yet.</p>
+          <div className="py-12 px-5 text-center text-ds-t3 text-[13px]">No projects yet.</div>
         ) : (
-          <div className="space-y-2">
+          <div>
             {(client.projects ?? []).map((p: any) => (
               <Link
                 key={p.id}
                 href={`/projects/${p.id}`}
-                className="flex items-center justify-between p-3 rounded-xl border border-[#F0EAD8] hover:bg-[rgba(245,213,71,0.06)] transition-colors"
+                className="group flex items-center justify-between gap-3 px-6 py-3.5 border-b border-[color:var(--hx-132430)] last:border-b-0 hover:bg-[color:var(--hx-0A1620)] transition-colors"
               >
-                <div>
-                  <p className="font-medium text-ink text-sm">{p.name}</p>
-                  {p.description && <p className="text-xs text-ink-4 truncate max-w-xs">{p.description}</p>}
+                <div className="min-w-0">
+                  <p className="text-[14px] font-semibold text-ds-text truncate group-hover:text-ds-gold transition-colors">{p.name}</p>
+                  {p.description && <p className="text-[12px] text-ds-t3 truncate max-w-xs">{p.description}</p>}
                 </div>
-                <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${projectStatusBadge[p.status] ?? "bg-[rgba(0,0,0,0.06)] text-[#7A7A7A]"}`}>
-                  {formatStatus(p.status)}
-                </span>
+                <StatusPill color={PROJECT_STATUS_COLOR[p.status] ?? "var(--hx-738395)"} label={formatStatus(p.status)} />
               </Link>
             ))}
           </div>
         )}
-      </div>
+      </section>
     </div>
   );
 }

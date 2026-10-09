@@ -10,37 +10,37 @@ import { useTasks } from "@/lib/hooks/use-tasks";
 import { usePageTitle } from "@/lib/hooks/use-page-title";
 
 const STATUS: Record<string, { label: string; color: string }> = {
-  TODO: { label: "To Do", color: "#A7B3C2" },
-  IN_PROGRESS: { label: "In Progress", color: "#238BFF" },
-  IN_REVIEW: { label: "In Review", color: "#FBBF24" },
-  DONE: { label: "Done", color: "#00D7A0" },
-  CANCELLED: { label: "Cancelled", color: "#738395" },
+  TODO: { label: "To Do", color: "var(--hx-A7B3C2)" },
+  IN_PROGRESS: { label: "In Progress", color: "var(--hx-238BFF)" },
+  IN_REVIEW: { label: "In Review", color: "var(--hx-FBBF24)" },
+  DONE: { label: "Done", color: "var(--hx-00D7A0)" },
+  CANCELLED: { label: "Cancelled", color: "var(--hx-738395)" },
 };
 const COLUMNS = ["TODO", "IN_PROGRESS", "IN_REVIEW", "DONE"] as const;
 const PRIO: Record<string, { label: string; color: string }> = {
-  CRITICAL: { label: "Critical", color: "#FB7185" },
-  HIGH: { label: "High", color: "#FBBF24" },
-  MEDIUM: { label: "Medium", color: "#6EB2FF" },
-  LOW: { label: "Low", color: "#A7B3C2" },
+  CRITICAL: { label: "Critical", color: "var(--hx-FB7185)" },
+  HIGH: { label: "High", color: "var(--hx-FBBF24)" },
+  MEDIUM: { label: "Medium", color: "var(--hx-6EB2FF)" },
+  LOW: { label: "Low", color: "var(--hx-A7B3C2)" },
 };
-const AV_BG = ["#10222E", "#0E2A22", "#1B1630", "#2A2410", "#2A1116"];
-const AV_FG = ["#238BFF", "#34D399", "#9B7EDE", "#E9BD62", "#FB7185"];
+const AV_BG = ["var(--hx-10222E)", "var(--hx-0E2A22)", "var(--hx-1B1630)", "var(--hx-2A2410)", "var(--hx-2A1116)"];
+const AV_FG = ["var(--hx-238BFF)", "var(--hx-34D399)", "var(--hx-9B7EDE)", "var(--hx-E9BD62)", "var(--hx-FB7185)"];
 const hash = (s: string) => { let h = 0; for (let i = 0; i < s.length; i++) h = s.charCodeAt(i) + ((h << 5) - h); return Math.abs(h); };
-const rgba = (hex: string, a: number) => { const n = parseInt(hex.slice(1), 16); return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`; };
+const rgba = (hex: string, a: number) => { if (hex.startsWith("var(")) return `color-mix(in srgb, ${hex} ${Math.round(a * 100)}%, transparent)`; const n = parseInt(hex.slice(1), 16); return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`; };
 const DAY = 86_400_000;
 const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
 
 const isOpen = (t: any) => t.status !== "DONE" && t.status !== "CANCELLED";
 function dueOf(t: any, todayMs: number): { text: string; color: string } {
-  if (!t.dueDate) return { text: "—", color: "#738395" };
+  if (!t.dueDate) return { text: "—", color: "var(--hx-738395)" };
   const d = new Date(t.dueDate);
   const short = d.toLocaleDateString("en-IN", { day: "numeric", month: "short" });
-  if (!isOpen(t)) return { text: short, color: "#738395" };
+  if (!isOpen(t)) return { text: short, color: "var(--hx-738395)" };
   const days = Math.round((startOfDay(d) - todayMs) / DAY);
-  if (days < 0) return { text: `${-days}d overdue`, color: "#FB7185" };
-  if (days === 0) return { text: "Today", color: "#FBBF24" };
-  if (days === 1) return { text: "Tomorrow", color: "#FBBF24" };
-  return { text: short, color: "#A7B3C2" };
+  if (days < 0) return { text: `${-days}d overdue`, color: "var(--hx-FB7185)" };
+  if (days === 0) return { text: "Today", color: "var(--hx-FBBF24)" };
+  if (days === 1) return { text: "Tomorrow", color: "var(--hx-FBBF24)" };
+  return { text: short, color: "var(--hx-A7B3C2)" };
 }
 const contextOf = (t: any) => (t.account ? `${t.account.platform?.name ?? ""} · ${t.account.displayName || t.account.handle}`.replace(/^ · /, "") : "");
 
@@ -93,10 +93,10 @@ export default function TasksPage() {
   const more = hasMore ? "+" : "";
 
   const kpis = [
-    { label: "Open Tasks", value: kpi.open, color: "#238BFF", icon: ListChecks, note: "open now" },
-    { label: "Due This Week", value: kpi.dueWeek, color: "#FBBF24", icon: CalendarDays, note: "next 7 days" },
-    { label: "Overdue", value: kpi.overdue, color: "#FB7185", icon: AlertCircle, note: "needs attention" },
-    { label: "Completed", value: kpi.doneMonth, color: "#00D7A0", icon: CheckSquare, note: "this month" },
+    { label: "Open Tasks", value: kpi.open, color: "var(--hx-238BFF)", icon: ListChecks, note: "open now" },
+    { label: "Due This Week", value: kpi.dueWeek, color: "var(--hx-FBBF24)", icon: CalendarDays, note: "next 7 days" },
+    { label: "Overdue", value: kpi.overdue, color: "var(--hx-FB7185)", icon: AlertCircle, note: "needs attention" },
+    { label: "Completed", value: kpi.doneMonth, color: "var(--hx-00D7A0)", icon: CheckSquare, note: "this month" },
   ];
 
   return (
@@ -164,7 +164,7 @@ export default function TasksPage() {
           />
         </label>
         <div className="flex flex-wrap gap-1.5" role="group" aria-label="Priority">
-          {[["ALL", "All priorities", "#E9BD62"] as const, ...Object.entries(PRIO).map(([k, p]) => [k, p.label, p.color] as const)].map(([k, label, dot]) => {
+          {[["ALL", "All priorities", "var(--hx-E9BD62)"] as const, ...Object.entries(PRIO).map(([k, p]) => [k, p.label, p.color] as const)].map(([k, label, dot]) => {
             const sel = prio === k;
             return (
               <button
@@ -210,7 +210,7 @@ export default function TasksPage() {
                       const who = t.assignee?.name as string | undefined;
                       const ctx = contextOf(t);
                       return (
-                        <Link key={t.id} href={`/tasks/${t.id}`} className="flex flex-col gap-2.5 p-3 rounded-[8px] bg-ds-inset border border-ds-line text-ds-text transition-colors hover:border-ds-line3 hover:bg-[#0D1B26]">
+                        <Link key={t.id} href={`/tasks/${t.id}`} className="flex flex-col gap-2.5 p-3 rounded-[8px] bg-ds-inset border border-ds-line text-ds-text transition-colors hover:border-ds-line3 hover:bg-[color:var(--hx-0D1B26)]">
                           <span className="flex items-center gap-1.5 min-w-0">
                             <Chip color={p.color} caps>{p.label}</Chip>
                             {ctx && <span className="ml-auto text-[10px] text-ds-t3 truncate" title={ctx}>{ctx}</span>}
@@ -218,7 +218,7 @@ export default function TasksPage() {
                           <span className="text-[12.5px] font-semibold leading-[1.4] [text-wrap:pretty]">{t.title}</span>
                           <span className="flex items-center gap-2 pt-2.5 border-t border-ds-grid">
                             {who ? <Avatar name={who} size={22} /> : <span className="h-[22px] w-[22px] rounded-full border border-dashed border-ds-line3 shrink-0" />}
-                            <span className={`text-[11px] flex-1 min-w-0 truncate ${who ? "text-ds-t2" : "text-[#FBBF24]"}`}>{who ?? "Unassigned"}</span>
+                            <span className={`text-[11px] flex-1 min-w-0 truncate ${who ? "text-ds-t2" : "text-[color:var(--hx-FBBF24)]"}`}>{who ?? "Unassigned"}</span>
                             {t._count?.comments > 0 && <span className="inline-flex items-center gap-1 text-[10px] text-ds-t3 whitespace-nowrap" title={`${t._count.comments} comment${t._count.comments !== 1 ? "s" : ""}`}><MessageSquare className="h-[11px] w-[11px]" strokeWidth={1.8} />{t._count.comments}</span>}
                             <span className="inline-flex items-center gap-1 text-[10.5px] whitespace-nowrap" style={{ color: due.color }}>
                               <CalendarDays className="h-[11px] w-[11px]" strokeWidth={1.8} />{due.text}
@@ -238,7 +238,7 @@ export default function TasksPage() {
         <section className="mt-3.5 rounded-[8px] bg-ds-card border border-ds-line overflow-hidden">
           <div className="overflow-x-auto">
             <div className="min-w-[760px]" role="table" aria-label="Tasks">
-              <div role="row" className={`${LIST_GRID} px-5 py-2.5 text-[10px] tracking-[.12em] uppercase text-ds-t3 font-semibold border-b border-ds-line bg-[#0A1620]`}>
+              <div role="row" className={`${LIST_GRID} px-5 py-2.5 text-[10px] tracking-[.12em] uppercase text-ds-t3 font-semibold border-b border-ds-line bg-[color:var(--hx-0A1620)]`}>
                 <span role="columnheader">Title</span><span role="columnheader">Status</span><span role="columnheader">Priority</span>
                 <span role="columnheader">Assignee</span><span role="columnheader">Due</span>
               </div>
@@ -259,7 +259,7 @@ export default function TasksPage() {
                   const who = t.assignee?.name as string | undefined;
                   const ctx = contextOf(t);
                   return (
-                    <div key={t.id} role="row" className={`${LIST_GRID} items-center px-5 py-[11px] border-b border-ds-grid text-[12.5px] transition-colors hover:bg-[#0B1824]`}>
+                    <div key={t.id} role="row" className={`${LIST_GRID} items-center px-5 py-[11px] border-b border-ds-grid text-[12.5px] transition-colors hover:bg-[color:var(--hx-0B1824)]`}>
                       <Link href={`/tasks/${t.id}`} role="cell" className="min-w-0 text-ds-text leading-[1.35] hover:text-ds-gold">
                         <span className="block font-semibold truncate">{t.title}</span>
                         <span className="text-[10.5px] text-ds-t3">{ctx || "—"}</span>
@@ -274,7 +274,7 @@ export default function TasksPage() {
                       </span>
                       <span role="cell" className="flex items-center gap-2 min-w-0">
                         {who ? <Avatar name={who} size={24} /> : <span className="h-6 w-6 rounded-full border border-dashed border-ds-line3 shrink-0" />}
-                        <span className={`truncate ${who ? "text-ds-t5" : "text-[#FBBF24]"}`}>{who ?? "Unassigned"}</span>
+                        <span className={`truncate ${who ? "text-ds-t5" : "text-[color:var(--hx-FBBF24)]"}`}>{who ?? "Unassigned"}</span>
                       </span>
                       <span role="cell" className="whitespace-nowrap" style={{ color: due.color }}>{due.text}</span>
                     </div>

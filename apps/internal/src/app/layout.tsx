@@ -4,13 +4,12 @@ import { usePathname, useRouter } from "next/navigation";
 import { AuthContext } from "@/lib/auth";
 import { apiFetch } from "@/lib/api";
 import { clearSwrCache } from "@/lib/swr-cache";
-import { Sidebar } from "@/components/sidebar";
-import { TopNav } from "@/components/top-nav";
 import { CommandPalette } from "@/components/command-palette";
 import { DsSidebar } from "@/components/ds/ds-sidebar";
 import { DsTopNav } from "@/components/ds/ds-topnav";
 import { isDsRoute } from "@/lib/ds-routes";
 import { BoxesLoader } from "@/components/boxes-loader";
+import { THEME_INIT_SCRIPT } from "@/lib/theme";
 import "./globals.css";
 
 /** Minimum time the startup loader stays visible (ms). */
@@ -99,8 +98,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
   if (isLoading) {
     return (
-      <html lang="en">
+      <html lang="en" suppressHydrationWarning>
         <head>
+          {/* Applies the remembered light/dark theme before first paint — see lib/theme.ts. */}
+          <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
           <meta name="viewport" content="width=device-width, initial-scale=1" />
         </head>
         <body>
@@ -115,8 +116,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   if (!user && !isPublicPage) {
     // useEffect above handles the redirect — just show spinner while it fires.
     return (
-      <html lang="en">
+      <html lang="en" suppressHydrationWarning>
         <head>
+          {/* Applies the remembered light/dark theme before first paint — see lib/theme.ts. */}
+          <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
           <meta name="viewport" content="width=device-width, initial-scale=1" />
         </head>
         <body>
@@ -129,8 +132,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   }
 
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <head>
+          {/* Applies the remembered light/dark theme before first paint — see lib/theme.ts. */}
+          <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <title>Dashmani Portal</title>
       </head>
@@ -144,8 +149,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             // navigates straight out of it — the same cross-plane leak as the old
             // nav rail, from a second source. The overview has its own channel search.
             children
-          ) : isDsRoute(pathname) ? (
-            // Premium dark shell — only for modules already redesigned (src/lib/ds-routes.ts).
+          ) : (
+            // Premium dark shell — every authenticated route, including unknown ones (404s),
+            // so no page ever renders in the old cream theme.
             // ⚠️ The content column is its own scroll container on purpose: globals.css sets
             // overflow-x:hidden on html/body, which silently disables position:sticky for
             // anything scrolling with the page (see the /overview rail note in CLAUDE.md).
@@ -158,25 +164,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                   {children}
                 </main>
               </div>
-              <CommandPalette open={cmdOpen} onClose={() => setCmdOpen(false)} />
-            </div>
-          ) : (
-            <div className="flex min-h-screen bg-bg">
-              {/* Collapsible left rail */}
-              <Sidebar />
-
-              {/* Main column */}
-              <div className="flex flex-col flex-1 min-w-0 pt-[57px] lg:pt-0">
-                {/* Thin topstrip */}
-                <TopNav onOpenSearch={() => setCmdOpen(true)} />
-
-                {/* Page content */}
-                <main className="flex-1 px-4 sm:px-6 py-6 overflow-y-auto overflow-x-hidden">
-                  {children}
-                </main>
-              </div>
-
-              {/* Global command palette */}
               <CommandPalette open={cmdOpen} onClose={() => setCmdOpen(false)} />
             </div>
           )}

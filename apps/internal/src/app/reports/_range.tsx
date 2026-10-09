@@ -72,8 +72,8 @@ export function RangePills({ startDate, endDate, onChange, defaultLabel = "30d" 
               onClick={() => onChange(presetStart(p.days), todayISO())}
               className={`h-8 px-3.5 rounded-full text-xs font-semibold transition-all border ${
                 isActive
-                  ? "bg-[#1A1A1A] text-white border-[#1A1A1A] shadow-sm"
-                  : "bg-white text-[#7A7A7A] border-[#E8E0D0] hover:border-[#1A1A1A]/30 hover:text-[#1A1A1A]"
+                  ? "bg-[color:var(--hx-1A1A1A)] text-white border-[color:var(--hx-1A1A1A)] shadow-sm"
+                  : "bg-white text-[color:var(--hx-7A7A7A)] border-[color:var(--hx-E8E0D0)] hover:border-[var(--hx-1A1A1A)]/30 hover:text-[color:var(--hx-1A1A1A)]"
               }`}
             >
               {p.label}
@@ -81,34 +81,34 @@ export function RangePills({ startDate, endDate, onChange, defaultLabel = "30d" 
           );
         })}
 
-        <span className="mx-1 h-5 w-px bg-[#E8E0D0]" />
+        <span className="mx-1 h-5 w-px bg-[color:var(--hx-E8E0D0)]" />
 
         <div className="flex items-center gap-1.5">
-          <label className="text-[10px] font-medium text-[#B0B0B0] uppercase tracking-wide">From</label>
+          <label className="text-[10px] font-medium text-[color:var(--hx-B0B0B0)] uppercase tracking-wide">From</label>
           <input
             type="date"
             value={startDate}
             max={endDate}
             onChange={(e) => onChange(e.target.value, endDate)}
-            className="h-8 rounded-lg border border-[#E8E0D0] bg-[#FEFCF8] text-xs px-2 focus:outline-none focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547]"
+            className="h-8 rounded-lg border border-[color:var(--hx-E8E0D0)] bg-[color:var(--hx-FEFCF8)] text-xs px-2 focus:outline-none focus:ring-2 focus:ring-[color:var(--hx-F5D547)] focus:border-[color:var(--hx-F5D547)]"
           />
         </div>
         <div className="flex items-center gap-1.5">
-          <label className="text-[10px] font-medium text-[#B0B0B0] uppercase tracking-wide">To</label>
+          <label className="text-[10px] font-medium text-[color:var(--hx-B0B0B0)] uppercase tracking-wide">To</label>
           <input
             type="date"
             value={endDate}
             min={startDate}
             max={todayISO()}
             onChange={(e) => onChange(startDate, e.target.value)}
-            className="h-8 rounded-lg border border-[#E8E0D0] bg-[#FEFCF8] text-xs px-2 focus:outline-none focus:ring-2 focus:ring-[#F5D547] focus:border-[#F5D547]"
+            className="h-8 rounded-lg border border-[color:var(--hx-E8E0D0)] bg-[color:var(--hx-FEFCF8)] text-xs px-2 focus:outline-none focus:ring-2 focus:ring-[color:var(--hx-F5D547)] focus:border-[color:var(--hx-F5D547)]"
           />
         </div>
 
         {isCustom && (
           <button
             onClick={() => onChange(presetStart(defPreset.days), todayISO())}
-            className="h-8 flex items-center gap-1 rounded-lg border border-[#E8E0D0] bg-white px-2.5 text-[11px] text-[#7A7A7A] hover:text-[#E74C3C] hover:border-red-200 transition-colors"
+            className="h-8 flex items-center gap-1 rounded-lg border border-[color:var(--hx-E8E0D0)] bg-white px-2.5 text-[11px] text-[color:var(--hx-7A7A7A)] hover:text-[color:var(--hx-E74C3C)] hover:border-red-200 transition-colors"
             title={`Reset to last ${defaultLabel}`}
           >
             <X className="h-3 w-3" /> Reset
@@ -145,7 +145,7 @@ export function DsRangeFilters({ startDate, endDate, onChange, defaultLabel = "3
                 aria-pressed={isActive}
                 onClick={() => onChange(presetStart(p.days), todayISO())}
                 className={`h-8 px-[13px] rounded-full text-[12.5px] font-semibold whitespace-nowrap shrink-0 transition-colors ${
-                  isActive ? "bg-ds-gold text-[#060D14]" : "text-ds-t2 hover:text-ds-text"
+                  isActive ? "bg-ds-gold text-[color:var(--hx-060D14)]" : "text-ds-t2 hover:text-ds-text"
                 }`}
               >
                 {p.label}
@@ -166,7 +166,7 @@ export function DsRangeFilters({ startDate, endDate, onChange, defaultLabel = "3
         <button
           type="button"
           onClick={() => onChange(presetStart(defPreset.days), todayISO())}
-          className="h-10 inline-flex items-center gap-1 rounded-full border border-ds-line2 px-3 text-[12px] text-ds-t2 hover:text-[#FB7185] hover:border-[rgba(229,72,77,.4)] self-end"
+          className="h-10 inline-flex items-center gap-1 rounded-full border border-ds-line2 px-3 text-[12px] text-ds-t2 hover:text-[color:var(--hx-FB7185)] hover:border-[rgba(229,72,77,.4)] self-end"
           title={`Reset to last ${defaultLabel}`}
         >
           <X className="h-3 w-3" /> Reset

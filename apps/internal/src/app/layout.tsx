@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { AuthContext } from "@/lib/auth";
+import { AuthContext, type InternalSession } from "@/lib/auth";
 import { apiFetch } from "@/lib/api";
 import { clearSwrCache } from "@/lib/swr-cache";
 import { CommandPalette } from "@/components/command-palette";
@@ -70,6 +70,18 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     return () => window.removeEventListener("keydown", onKey);
   }, [isFullBleed]);
 
+  // Store a session and land on the dashboard — shared by password login and Google sign-in.
+  const adoptSession = useCallback((session: InternalSession) => {
+    localStorage.setItem("accessToken", session.accessToken);
+    localStorage.setItem("refreshToken", session.refreshToken);
+    localStorage.setItem("user", JSON.stringify(session.user));
+    // Forget the previous user's cached SWR responses (bell list above all) —
+    // navigation is client-side, so the cache survives a user switch. lib/swr-cache.ts.
+    void clearSwrCache();
+    setUser(session.user);
+    router.push("/dashboard");
+  }, [router]);
+
   const login = useCallback(async (email: string, password: string, rememberMe = false) => {
     // rememberMe stretches the refresh token 7d -> 30d server-side; the choice
     // survives rotation because it rides inside the token (see auth.service).
@@ -77,15 +89,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       method: "POST",
       body: JSON.stringify({ email, password, rememberMe }),
     });
-    localStorage.setItem("accessToken", res.data.accessToken);
-    localStorage.setItem("refreshToken", res.data.refreshToken);
-    localStorage.setItem("user", JSON.stringify(res.data.user));
-    // Forget the previous user's cached SWR responses (bell list above all) —
-    // navigation is client-side, so the cache survives a user switch. lib/swr-cache.ts.
-    void clearSwrCache();
-    setUser(res.data.user);
-    router.push("/dashboard");
-  }, [router]);
+    adoptSession(res.data);
+  }, [adoptSession]);
 
   const logout = useCallback(() => {
     localStorage.removeItem("accessToken");
@@ -140,7 +145,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <title>Dashmani Portal</title>
       </head>
       <body className="bg-bg">
-        <AuthContext.Provider value={{ user, login, logout, isLoading }}>
+        <AuthContext.Provider value={{ user, login, adoptSession, logout, isLoading }}>
           {isPublicPage ? (
             children
           ) : isFullBleed ? (

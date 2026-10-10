@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@/lib/auth";
 import { apiFetch } from "@/lib/api";
+import { GoogleSignIn } from "@/components/google-signin";
 import useSWR from "swr";
 import {
   Mail, Lock, Eye, EyeOff, Check, AlertCircle, ArrowRight, Shield, Command, X,
@@ -39,7 +40,7 @@ function useCounter(target: number, duration = 1400) {
 }
 
 export default function LoginPage() {
-  const { login } = useAuth();
+  const { login, adoptSession } = useAuth();
   // Wired for real this time — the previous "Keep me signed in" checkbox was
   // removed in 2026-05 precisely because it did nothing.
   const [rememberMe, setRememberMe] = useState(false);
@@ -248,6 +249,13 @@ export default function LoginPage() {
                 <SubmitBtn state={submitState} />
               </div>
             </form>
+
+            <GoogleSignIn
+              rememberMe={rememberMe}
+              disabled={submitState !== "idle"}
+              onSession={(s) => { setSubmitState("success"); adoptSession(s); }}
+              onError={(m) => { setError(m); setSubmitState("idle"); }}
+            />
 
             <p className="text-[11.5px] text-ink-4 text-center mt-6 font-medium">
               Access is invite-only. Need an account?{" "}

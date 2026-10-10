@@ -1,7 +1,7 @@
 "use client";
 import { useRouter } from "next/navigation";
 import { Topstrip } from "@/components/portal-topstrip";
-import { Empty, Skeleton, PageError, StatusBadge } from "@/components/portal-shared";
+import { Empty, Skeleton, PageError, StatusBadge, CountUp } from "@/components/portal-shared";
 import { Icon } from "@/components/portal-icons";
 import { useClientAnalytics } from "@/lib/hooks/use-analytics";
 import { useClientProjects } from "@/lib/hooks/use-projects";
@@ -164,7 +164,7 @@ export default function ClientAnalyticsPage() {
                       <IC size={16} sw={2} />
                     </div>
                     <div>
-                      <div className="font-num text-[34px] font-semibold leading-none text-ink">{tile.value}</div>
+                      <div className="font-num text-[34px] font-semibold leading-none text-ink"><CountUp value={tile.value} /></div>
                       <div className="text-[13px] font-semibold text-ink mt-1">{tile.label}</div>
                       <div className="text-[11.5px] text-ink-3 font-medium mt-0.5">{tile.sub}</div>
                     </div>

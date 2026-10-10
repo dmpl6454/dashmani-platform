@@ -152,6 +152,31 @@
 *::-webkit-scrollbar-thumb { background: var(--accent); border-radius: 0; }
 *::-webkit-scrollbar-thumb:hover { background: var(--accent-600); }
 
+/* ── Channel surf: the site's scanlines, static burst and edge hint ── */
+@keyframes ds-static { 0% { background-position: 0 0 } 25% { background-position: -40px 20px } 50% { background-position: 30px -30px } 75% { background-position: -20px -10px } 100% { background-position: 0 0 } }
+.scanlines {
+  position: absolute; inset: 0; pointer-events: none; z-index: 31;
+  background: repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.025) 0 1px, transparent 1px 3px);
+}
+.static {
+  position: absolute; inset: 0; pointer-events: none; z-index: 45; opacity: 0; transition: opacity 0.12s;
+  animation: ds-static 0.2s steps(2) infinite;
+  background-color: #111;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='1.2' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+.static.on { opacity: 1; }
+.edge-hint {
+  position: fixed; right: 0; bottom: 0; z-index: 32; display: none; align-items: center; gap: 14px;
+  font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--light); background: #000;
+  padding: 8px 14px; border-top: 2px solid var(--divider); border-left: 2px solid var(--divider); pointer-events: none;
+}
+.edge-hint .edge-ch { color: var(--text-2); font-variant-numeric: tabular-nums; }
+@media (min-width: 1024px) and (hover: hover) and (pointer: fine) { .edge-hint { display: flex; } }
+/* Tilting cards need a transform origin and a quick return. */
+.v3-card-lift { transform-origin: center; will-change: transform; }
+/* Magnetic buttons: the transform is driven inline; this is the spring back. */
+.btn-3d { transition: transform 0.35s var(--ease), background-color 0.2s, border-color 0.2s, color 0.2s; }
+
 /* ── Site text styles reused inside the portal ── */
 .kicker { font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--light); }
 .ds-divider { border-color: var(--divider); }
@@ -355,4 +380,5 @@ kbd {
 /* ── Reduced motion ── */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; }
+  .static { display: none; }
 }

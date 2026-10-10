@@ -3,7 +3,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { mutate } from "swr";
 import { Topstrip } from "@/components/portal-topstrip";
-import { Button, StatusBadge, FormatPill, AspectThumb, Empty, Skeleton, PageError } from "@/components/portal-shared";
+import { Button, StatusBadge, FormatPill, AspectThumb, Empty, Skeleton, PageError, CountUp } from "@/components/portal-shared";
 import { Icon } from "@/components/portal-icons";
 import { fmt, Actions } from "@/lib/portal-store";
 import { apiFetch } from "@/lib/api";
@@ -125,7 +125,7 @@ export default function DashboardPage() {
                 <div>
                   <h2 className="font-display text-[22px] font-semibold leading-tight text-ink">
                     {mappedPending.length > 0
-                      ? <>{mappedPending.length} item{mappedPending.length !== 1 ? "s" : ""} waiting for review</>
+                      ? <><CountUp value={mappedPending.length} /> item{mappedPending.length !== 1 ? "s" : ""} waiting for review</>
                       : <>You&rsquo;re all caught up</>}
                   </h2>
                   <p className="text-[13px] text-ink-3 mt-0.5 font-medium">
@@ -189,7 +189,7 @@ export default function DashboardPage() {
                       <IC size={16} sw={2} />
                     </div>
                     <div>
-                      <div className="font-num text-[34px] font-semibold leading-none text-ink">{tile.value}</div>
+                      <div className="font-num text-[34px] font-semibold leading-none text-ink"><CountUp value={tile.value} /></div>
                       <div className="text-[13px] font-semibold text-ink mt-1">{tile.label}</div>
                       <div className="text-[11.5px] text-ink-3 font-medium mt-0.5">{tile.sub}</div>
                     </div>

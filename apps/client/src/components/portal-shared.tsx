@@ -2,6 +2,7 @@
 import { forwardRef, useEffect, type ButtonHTMLAttributes, type ReactNode } from "react";
 import { Icon } from "./portal-icons";
 import { STATUS, STATUS_STYLE, sel, usePortalStore, type StatusKey } from "@/lib/portal-store";
+import { magnet, unmagnet, useCountUp } from "@/lib/motion";
 
 /* ── Button ── */
 type ButtonVariant = "primary" | "default" | "ghost" | "danger" | "subtle" | "ink";
@@ -35,8 +36,17 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
     subtle:  "bg-surface text-ink border-transparent hover:bg-muted transition-colors",
     ink:     "bg-indigo text-white border-indigo hover:bg-indigo-deep btn-3d",
   };
+  // Solid buttons are magnetic, like the site's primary .btn: they drift toward
+  // the cursor and spring back on leave (no-op under reduced motion).
+  const magnetic = variant === "primary" || variant === "ink";
   return (
-    <button ref={ref} className={`${base} ${sizes[size]} ${variants[variant]} ${className}`} {...rest}>
+    <button
+      ref={ref}
+      className={`${base} ${sizes[size]} ${variants[variant]} ${className}`}
+      onMouseMove={magnetic ? (e) => { magnet(e); rest.onMouseMove?.(e); } : rest.onMouseMove}
+      onMouseLeave={magnetic ? (e) => { unmagnet(e); rest.onMouseLeave?.(e); } : rest.onMouseLeave}
+      {...Object.fromEntries(Object.entries(rest).filter(([k]) => k !== "onMouseMove" && k !== "onMouseLeave"))}
+    >
       {icon && <span className="shrink-0">{icon}</span>}
       <span>{children}</span>
       {iconRight && <span className="shrink-0">{iconRight}</span>}
@@ -273,6 +283,15 @@ export function Empty({ icon, title, hint, cta }: { icon?: ReactNode; title: str
       {cta && <div className="mt-4">{cta}</div>}
     </div>
   );
+}
+
+/* ── CountUp ──
+   A stat value that counts up from 0 on mount (the site's reach counter).
+   Non-numeric values ("—", "4h") render as given. */
+export function CountUp({ value, className = "" }: { value: number | string; className?: string }) {
+  const numeric = typeof value === "number" && Number.isFinite(value);
+  const n = useCountUp(numeric ? (value as number) : 0);
+  return <span className={className}>{numeric ? n.toLocaleString("en-IN") : value}</span>;
 }
 
 /* ── Skeleton ── */

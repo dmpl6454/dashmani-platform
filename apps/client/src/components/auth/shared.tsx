@@ -2,6 +2,40 @@
 import { useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { AlertCircle, Eye, EyeOff } from "lucide-react";
+import { magnet, unmagnet, reducedMotion } from "@/lib/motion";
+
+// The network's pages, for the tile wall (the site's CH 01 "Network" grid).
+const TILE_NAMES = [
+  "Movified", "Total Filmi", "Bollywood Society", "Bollywood Chronicle", "Bollywood Paparazzi", "Paparazzzee",
+  "Crazy 4 TV", "Dubai Paps", "Telly Drama", "Bachelors Society", "Luxe Lifestyle", "Inde News",
+  "Crazy 4 Bolly", "Bollywood Shots", "Intl. Fashion", "Movified South", "Bollywood Masala", "Paps Central",
+  "Mobile Multiplex", "Just Bollywood", "Filme Flicks", "Viral Paps", "Movified Hollywood", "Bollywood Insider",
+];
+const TILE_COUNT = 48;
+
+/** The site's tile wall: a grid of pages, 10 of which light up in the accent every 700 ms. */
+function TileWall() {
+  const [lit, setLit] = useState<Set<number>>(() => new Set([2, 7, 13, 21, 30, 38, 44]));
+  useEffect(() => {
+    if (reducedMotion()) return;
+    const tick = () => {
+      const next = new Set<number>();
+      for (let i = 0; i < 10; i++) next.add(Math.floor(Math.random() * TILE_COUNT));
+      setLit(next);
+    };
+    const iv = window.setInterval(tick, 700);
+    return () => clearInterval(iv);
+  }, []);
+  return (
+    <div className="auth-tiles" aria-hidden>
+      {Array.from({ length: TILE_COUNT }, (_, i) => (
+        <div key={i} className={`auth-tile${lit.has(i) ? " on" : ""}${lit.has(i) && i % 3 === 0 ? " hot" : ""}`}>
+          <span>{TILE_NAMES[i % TILE_NAMES.length]}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 /* ── Auth pages share the website's shell ──
    digitalsukoon.com ("Channel Surf", apps/web): a 2px-divided header with the
@@ -26,6 +60,20 @@ export function AuthShell({
     const t = setInterval(() => setClock(istClock()), 1000);
     return () => clearInterval(t);
   }, []);
+  // Magnetic submit buttons, delegated so every auth page gets the site's .btn feel.
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      const btn = (e.target as HTMLElement | null)?.closest?.(".auth-btn") as HTMLElement | null;
+      if (btn) magnet({ currentTarget: btn, clientX: e.clientX, clientY: e.clientY });
+    };
+    const onOut = (e: MouseEvent) => {
+      const btn = (e.target as HTMLElement | null)?.closest?.(".auth-btn") as HTMLElement | null;
+      if (btn && !btn.contains(e.relatedTarget as Node | null)) unmagnet({ currentTarget: btn });
+    };
+    document.addEventListener("mousemove", onMove, { passive: true });
+    document.addEventListener("mouseout", onOut);
+    return () => { document.removeEventListener("mousemove", onMove); document.removeEventListener("mouseout", onOut); };
+  }, []);
   const items = ticker ?? [
     "Client portal", "Book promotion on 100+ owned pages", "Review every draft before it ships",
     "Live engagement on every post", "Facebook · Instagram · YouTube · Snapchat",
@@ -49,6 +97,7 @@ export function AuthShell({
             <p className="auth-kicker">{kicker}</p>
             <h1 className="auth-h1">{title}</h1>
           </div>
+          <TileWall />
           <div className="auth-lines">
             {lines.map((l, i) => <p key={i}>{l}</p>)}
           </div>
@@ -186,6 +235,19 @@ export function AuthStyles() {
       .auth-form-inner { width: 100%; max-width: 440px; margin: 0 auto; display: flex; flex-direction: column; gap: 22px; }
       .auth-form-head h2 { margin: 0; font-weight: 800; letter-spacing: -0.04em; font-size: clamp(28px, 3vw, 40px); line-height: 1; }
       .auth-form-head p { margin: 10px 0 0; font-size: 15px; line-height: 1.5; color: var(--text-2); max-width: 40ch; }
+
+      /* Tile wall (the site's network grid, 12 × 4) */
+      .auth-tiles { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 3px; }
+      .auth-tile {
+        aspect-ratio: 16 / 10; background: rgba(0, 0, 0, 0.35); border: 1px solid rgba(255, 255, 255, 0.10);
+        display: flex; align-items: flex-end; padding: 3px 4px; overflow: hidden; transition: background 0.5s, border-color 0.5s;
+      }
+      .auth-tile span { font-size: 8px; letter-spacing: 0.04em; color: rgba(255, 255, 255, 0.35); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .auth-tile.on { background: rgba(255, 255, 255, 0.16); border-color: var(--light); }
+      .auth-tile.on.hot { background: #fff; }
+      .auth-tile.on span { color: #fff; }
+      .auth-tile.on.hot span { color: var(--accent-deep); }
+      @media (max-width: 899px) { .auth-tiles { grid-template-columns: repeat(8, minmax(0, 1fr)); } .auth-tile:nth-child(n + 33) { display: none; } }
 
       /* Chips (the sign in / create account switch) */
       .auth-chips { display: flex; flex-wrap: wrap; gap: 8px; }

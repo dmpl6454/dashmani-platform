@@ -49,6 +49,7 @@ async function bookingWithClient(bookingId: string) {
       brand: true,
       status: true,
       totalPaise: true,
+      paidAt: true,
       reviewNote: true,
       campaignType: true,
       audioIntegration: true,
@@ -105,7 +106,11 @@ export async function sendDeliveryEmail(bookingId: string, opts: { force?: boole
   const notLive = b.items.filter((i) => !i.permalink);
   const refundNote = notLive.length
     ? `<p style="color:#8a4b00">${notLive.length} booking${notLive.length === 1 ? "" : "s"} could not be posted. ${
-        notLive.some((i) => i.status === "refunded") ? "The amount for those has been refunded to your original payment method." : "Our team will contact you about them."
+        notLive.some((i) => i.status === "refunded")
+          ? b.paidAt
+            ? "The amount for those has been refunded to your original payment method."
+            : "They will not be charged — our team will confirm the final amount with you."
+          : "Our team will contact you about them."
       }</p>`
     : "";
 
@@ -152,12 +157,21 @@ export async function sendStatusEmail(bookingId: string, kind: "paid" | "approve
   const b = await bookingWithClient(bookingId);
   if (!b) return;
   const total = b.totalPaise != null ? formatPaise(b.totalPaise) : "";
+  // paidAt is set only by the Razorpay webhook; a booking submitted without online payment
+  // (offline mode) has none, and its money wording must not claim a payment or a refund.
+  const paidOnline = Boolean(b.paidAt);
   const copy: Record<typeof kind, { subject: string; title: string; body: string }> = {
-    paid: {
-      subject: `Payment received: ${b.name}`,
-      title: "Payment received — we're reviewing your campaign",
-      body: `<p>We received your payment of <strong>${esc(total)}</strong> for <strong>${esc(b.name)}</strong>. Our team will review the creative, usually within one working day, and let you know.</p>`,
-    },
+    paid: paidOnline
+      ? {
+          subject: `Payment received: ${b.name}`,
+          title: "Payment received — we're reviewing your campaign",
+          body: `<p>We received your payment of <strong>${esc(total)}</strong> for <strong>${esc(b.name)}</strong>. Our team will review the creative, usually within one working day, and let you know.</p>`,
+        }
+      : {
+          subject: `Submitted for review: ${b.name}`,
+          title: "We've got your campaign — we're reviewing it",
+          body: `<p><strong>${esc(b.name)}</strong> has been submitted. The booking total is <strong>${esc(total)}</strong>; our team will confirm the amount and the payment details with you, review the creative (usually within one working day), and let you know.</p>`,
+        },
     approved: {
       subject: `Approved: ${b.name}`,
       title: "Your campaign is approved",
@@ -166,12 +180,16 @@ export async function sendStatusEmail(bookingId: string, kind: "paid" | "approve
     changes_requested: {
       subject: `Changes needed: ${b.name}`,
       title: "A small change is needed",
-      body: `<p>Our team reviewed <strong>${esc(b.name)}</strong> and needs a change before it can go live:</p><blockquote style="margin:12px 0;padding:10px 14px;background:#f7f7f7;border-left:3px solid #1a1a1a">${esc(b.reviewNote ?? "")}</blockquote><p>Your payment is safe — update the creative in the portal and resubmit.</p>`,
+      body: `<p>Our team reviewed <strong>${esc(b.name)}</strong> and needs a change before it can go live:</p><blockquote style="margin:12px 0;padding:10px 14px;background:#f7f7f7;border-left:3px solid #1a1a1a">${esc(b.reviewNote ?? "")}</blockquote>${paidOnline ? "<p>Your payment is safe — update the creative in the portal and resubmit.</p>" : "<p>Update the creative in the portal and resubmit.</p>"}`,
     },
     rejected: {
       subject: `Not approved: ${b.name}`,
       title: "We couldn't run this campaign",
-      body: `<p>We're sorry — we can't run <strong>${esc(b.name)}</strong> on our network.</p>${b.reviewNote ? `<blockquote style="margin:12px 0;padding:10px 14px;background:#f7f7f7;border-left:3px solid #1a1a1a">${esc(b.reviewNote)}</blockquote>` : ""}<p>The full amount (${esc(total)}) is being refunded to your original payment method. Refunds usually arrive in 5–7 working days.</p>`,
+      body: `<p>We're sorry — we can't run <strong>${esc(b.name)}</strong> on our network.</p>${b.reviewNote ? `<blockquote style="margin:12px 0;padding:10px 14px;background:#f7f7f7;border-left:3px solid #1a1a1a">${esc(b.reviewNote)}</blockquote>` : ""}${
+        paidOnline
+          ? `<p>The full amount (${esc(total)}) is being refunded to your original payment method. Refunds usually arrive in 5–7 working days.</p>`
+          : "<p>Nothing has been charged for this booking. If you have already paid us for it, our team will arrange the refund with you.</p>"
+      }`,
     },
   };
   const c = copy[kind];
@@ -187,15 +205,16 @@ export async function sendStatusEmail(bookingId: string, kind: "paid" | "approve
 export async function notifyStaffPaid(bookingId: string) {
   const b = await bookingWithClient(bookingId);
   if (!b) return;
+  const paidOnline = Boolean(b.paidAt);
   await notifyAdminByEmail(
-    `New paid campaign to review: ${b.name}`,
+    paidOnline ? `New paid campaign to review: ${b.name}` : `New campaign to review (payment to be collected): ${b.name}`,
     [
       { label: "Client", value: b.client.companyName },
       { label: "Brand", value: b.brand },
       { label: "Type", value: CAMPAIGN_TYPE_LABELS[b.campaignType as CampaignType] ?? b.campaignType },
       ...(b.audioIntegration ? [{ label: "Song audio", value: b.audioTrack ?? "yes" }] : []),
       { label: "Accounts", value: String(b.items.length) },
-      { label: "Paid", value: b.totalPaise != null ? formatPaise(b.totalPaise) : "—" },
+      { label: paidOnline ? "Paid" : "Amount (not yet collected)", value: b.totalPaise != null ? formatPaise(b.totalPaise) : "—" },
     ],
     `/campaigns/${b.id}`,
   );

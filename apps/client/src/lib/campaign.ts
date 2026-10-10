@@ -58,6 +58,8 @@ export interface Campaign {
   totalPaise: number | null;
   reviewNote: string | null;
   paidAt: string | null;
+  /** "razorpay" opens the gateway at checkout; "offline" submits for review, amount settled by hand. */
+  paymentMode?: "razorpay" | "offline";
   deliveredAt: string | null;
   media: CampaignMedia[];
   items: CampaignItem[];

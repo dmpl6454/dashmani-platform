@@ -67,4 +67,12 @@ export const razorpayConfig = {
   keySecret: () => process.env.RAZORPAY_KEY_SECRET || "",
   webhookSecret: () => process.env.RAZORPAY_WEBHOOK_SECRET || "",
   configured: () => Boolean(process.env.RAZORPAY_KEY_ID && process.env.RAZORPAY_KEY_SECRET),
+  /**
+   * How a booking is paid. "razorpay" needs the keys; "offline" (the default while the gateway
+   * is not set up, or CAMPAIGN_PAYMENT_MODE=offline) submits the booking for review without
+   * online payment — the amount is settled with the client by hand (invoice / bank transfer).
+   * Everything else (review, posting, delivery) is identical in both modes.
+   */
+  paymentMode: (): "razorpay" | "offline" =>
+    process.env.CAMPAIGN_PAYMENT_MODE === "offline" || !razorpayConfig.configured() ? "offline" : "razorpay",
 };

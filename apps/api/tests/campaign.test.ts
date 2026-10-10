@@ -378,6 +378,61 @@ describe("campaign booking flow", () => {
     expect(rzpCalls.filter((c) => c.url.includes("/refund"))).toHaveLength(1);
   });
 
+  it("offline mode (no Razorpay keys): checkout submits for review with no payment row; reject and drop charge nothing", async () => {
+    const { id } = await readyBooking();
+    const keys = { id: process.env.RAZORPAY_KEY_ID, secret: process.env.RAZORPAY_KEY_SECRET };
+    delete process.env.RAZORPAY_KEY_ID;
+    delete process.env.RAZORPAY_KEY_SECRET;
+    try {
+      expect((await request(app).get(`/v1/client/campaigns/${id}`).set("Authorization", `Bearer ${tokA}`)).body.data.paymentMode).toBe("offline");
+      const calls = rzpCalls.length;
+      const co = await request(app).post(`/v1/client/campaigns/${id}/checkout`).set("Authorization", `Bearer ${tokA}`);
+      expect(co.status).toBe(200);
+      expect(co.body.data).toMatchObject({ offline: true, amount: 250_000, status: "paid_pending_review" });
+      expect(co.body.data.orderId).toBeUndefined();
+      expect(rzpCalls).toHaveLength(calls); // the gateway was never called
+      const b = await prisma.campaignBooking.findUniqueOrThrow({ where: { id }, include: { payments: true, items: true } });
+      expect(b.status).toBe("paid_pending_review");
+      expect(b.paidAt).toBeNull();
+      expect(b.submittedAt).not.toBeNull();
+      expect(b.totalPaise).toBe(250_000);
+      expect(b.pricingSnapshot).not.toBeNull();
+      expect(b.payments).toHaveLength(0);
+      expect(b.items[0].pricePaise).toBe(250_000);
+      // Editing is locked, exactly as after an online payment.
+      expect((await request(app).put(`/v1/client/campaigns/${id}/info`).set("Authorization", `Bearer ${tokA}`).send(info())).status).toBe(409);
+      await new Promise((r) => setTimeout(r, 50));
+      // The client email says "submitted", never "payment received"; staff are told to collect.
+      const clientMail = vi.mocked(sendEmail).mock.calls.find(([o]) => o.to === "a@brand.test" && o.subject.includes("Submitted for review"));
+      expect(clientMail).toBeDefined();
+      expect(vi.mocked(sendEmail).mock.calls.some(([o]) => o.to === "a@brand.test" && o.subject.startsWith("Payment received"))).toBe(false);
+
+      // Dropping an item needs no captured payment and calls no refund.
+      expect((await request(app).post(`/v1/admin/campaigns/${id}/approve`).set("Authorization", `Bearer ${admin}`)).status).toBe(200);
+      const item = await prisma.campaignBookingItem.findFirstOrThrow({ where: { bookingId: id } });
+      const rf = await request(app).post(`/v1/admin/campaigns/${id}/items/${item.id}/refund`).set("Authorization", `Bearer ${admin}`);
+      expect(rf.status).toBe(200);
+      expect((await prisma.campaignBookingItem.findUniqueOrThrow({ where: { id: item.id } })).status).toBe("refunded");
+      expect(rzpCalls.filter((c) => c.url.includes("/refund"))).toHaveLength(0);
+
+      // Rejecting an offline booking stays `rejected` (never claims a refund) and calls no refund.
+      const { id: id2 } = await readyBooking();
+      expect((await request(app).post(`/v1/client/campaigns/${id2}/checkout`).set("Authorization", `Bearer ${tokA}`)).status).toBe(200);
+      const rj = await request(app).post(`/v1/admin/campaigns/${id2}/reject`).set("Authorization", `Bearer ${admin}`).send({ note: "Not on our network" });
+      expect(rj.status).toBe(200);
+      expect(rj.body.data.refundError).toBeNull();
+      expect((await prisma.campaignBooking.findUniqueOrThrow({ where: { id: id2 } })).status).toBe("rejected");
+      expect(rzpCalls.filter((c) => c.url.includes("/refund"))).toHaveLength(0);
+      await new Promise((r) => setTimeout(r, 50));
+      const rejMail = vi.mocked(sendEmail).mock.calls.find(([o]) => o.to === "a@brand.test" && o.subject.startsWith("Not approved"));
+      expect(rejMail?.[0].html).toContain("Nothing has been charged");
+      expect(rejMail?.[0].html).not.toContain("refunded to your original payment method");
+    } finally {
+      process.env.RAZORPAY_KEY_ID = keys.id;
+      process.env.RAZORPAY_KEY_SECRET = keys.secret;
+    }
+  });
+
   it("changes requested → client re-submits; refunding the only item lists it honestly in delivery", async () => {
     const { id } = await readyBooking();
     await pay(id);

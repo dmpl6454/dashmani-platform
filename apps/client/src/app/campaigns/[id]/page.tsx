@@ -130,12 +130,18 @@ function PayStep({ campaign: c, onChanged, onEdit, onCancelled }: { campaign: Ca
   const rendering = c.media.some((m) => m.renderStatus === "queued" || m.renderStatus === "rendering");
   const renderFailed = c.media.some((m) => m.renderStatus === "failed");
   const total = c.items.reduce((s, i) => s + i.pricePaise, 0);
+  const offline = c.paymentMode === "offline";
 
   const pay = async () => {
     setBusy(true);
     setError(null);
     try {
-      const order = await mutateJson<{ orderId: string; amount: number; currency: string; keyId: string; name: string }>(`/client/campaigns/${c.id}/checkout`, "POST");
+      const order = await mutateJson<{ offline?: boolean; orderId: string; amount: number; currency: string; keyId: string; name: string }>(`/client/campaigns/${c.id}/checkout`, "POST");
+      if (order.offline) {
+        // No gateway: the booking is now in review. The parent re-fetches and shows the status.
+        onChanged();
+        return;
+      }
       await loadRazorpay();
       const user = (() => {
         try {
@@ -171,7 +177,7 @@ function PayStep({ campaign: c, onChanged, onEdit, onCancelled }: { campaign: Ca
       rz.open();
       onChanged();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Payment couldn't start.");
+      setError(e instanceof Error ? e.message : offline ? "The campaign couldn't be submitted." : "Payment couldn't start.");
       setBusy(false);
     }
   };
@@ -221,7 +227,9 @@ function PayStep({ campaign: c, onChanged, onEdit, onCancelled }: { campaign: Ca
           <span className="text-[19px] font-bold text-ink tabular-nums">{rupees(total)}</span>
         </div>
         <p className="text-[12px] text-ink-3 mt-2">
-          After payment our team reviews the creative (usually within a working day). If we can&apos;t run it, you get a full refund. You&apos;ll get an email with the link to every post once it&apos;s live.
+          {offline
+            ? "No online payment is needed now. Submit the campaign and our team will review the creative (usually within a working day) and confirm the amount and payment details with you. You'll get an email with the link to every post once it's live."
+            : "After payment our team reviews the creative (usually within a working day). If we can't run it, you get a full refund. You'll get an email with the link to every post once it's live."}
         </p>
       </Card>
 
@@ -238,7 +246,7 @@ function PayStep({ campaign: c, onChanged, onEdit, onCancelled }: { campaign: Ca
           Cancel campaign
         </Button>
         <Button variant="ink" onClick={pay} disabled={busy || rendering || renderFailed} aria-live="polite">
-          {busy ? "Opening payment…" : rendering ? "Preparing preview…" : `Pay ${rupees(total)}`}
+          {busy ? (offline ? "Submitting…" : "Opening payment…") : rendering ? "Preparing preview…" : offline ? `Submit for review · ${rupees(total)}` : `Pay ${rupees(total)}`}
         </Button>
       </div>
     </div>
@@ -296,13 +304,22 @@ function AfterPayment({ campaign: c, onChanged }: { campaign: Campaign; onChange
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // paidAt is set only by an online payment; a booking submitted without one must never be
+  // told it paid or that a refund is on its way.
+  const paidOnline = Boolean(c.paidAt);
   const message: Record<string, string> = {
-    paid_pending_review: "Payment received. Our team is reviewing your creative — usually within one working day.",
+    paid_pending_review: paidOnline
+      ? "Payment received. Our team is reviewing your creative — usually within one working day."
+      : "Submitted. Our team is reviewing your creative — usually within one working day — and will confirm the amount and payment details with you.",
     approved: "Approved. Your posts are scheduled; you'll get an email with each link as it goes live.",
     publishing: "Your posts are going live. Links appear below as each one is posted.",
     completed: "Every post is live. The links are below and in your email.",
-    partially_published: "Your campaign is done. Some posts couldn't go live — those were refunded.",
-    rejected: "We couldn't run this campaign. A full refund is on its way (5–7 working days).",
+    partially_published: paidOnline
+      ? "Your campaign is done. Some posts couldn't go live — those were refunded."
+      : "Your campaign is done. Some posts couldn't go live — those won't be charged.",
+    rejected: paidOnline
+      ? "We couldn't run this campaign. A full refund is on its way (5–7 working days)."
+      : "We couldn't run this campaign. Nothing has been charged for it.",
     refunded: "This campaign was refunded in full.",
     cancelled: "This campaign was cancelled.",
     expired: "This campaign wasn't paid in time and has expired. Start a new one any time.",
@@ -311,7 +328,7 @@ function AfterPayment({ campaign: c, onChanged }: { campaign: Campaign; onChange
   return (
     <div className="grid gap-4">
       {c.status === "changes_requested" ? (
-        <Card title="A change is needed" sub="Your payment is safe. Update the creative and send it back for review.">
+        <Card title="A change is needed" sub={paidOnline ? "Your payment is safe. Update the creative and send it back for review." : "Update the creative and send it back for review."}>
           <blockquote className="rounded-xl bg-attention-bg text-ink px-4 py-3 text-[13.5px] whitespace-pre-line">{c.reviewNote}</blockquote>
           {!editing && <div className="mt-3"><Button variant="ink" onClick={() => setEditing(true)}>Update creative</Button></div>}
         </Card>
@@ -321,7 +338,11 @@ function AfterPayment({ campaign: c, onChanged }: { campaign: Campaign; onChange
           {c.reviewNote && ["rejected", "refunded"].includes(c.status) && (
             <blockquote className="mt-3 rounded-xl bg-muted px-4 py-3 text-[13px] whitespace-pre-line">{c.reviewNote}</blockquote>
           )}
-          {c.totalPaise != null && <p className="text-[12.5px] text-ink-3 mt-2">Paid {rupees(c.totalPaise)}{c.paidAt ? ` on ${fmtDateTime(c.paidAt)}` : ""}</p>}
+          {c.totalPaise != null && (
+            <p className="text-[12.5px] text-ink-3 mt-2">
+              {paidOnline ? `Paid ${rupees(c.totalPaise)} on ${fmtDateTime(c.paidAt as string)}` : `Booking total ${rupees(c.totalPaise)} — to be settled with our team`}
+            </p>
+          )}
         </Card>
       )}
 

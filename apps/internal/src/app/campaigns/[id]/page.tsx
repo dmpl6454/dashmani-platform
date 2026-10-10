@@ -66,6 +66,9 @@ export default function CampaignBookingDetail() {
   const rejectable = ["paid_pending_review", "changes_requested", "approved"].includes(b.status);
   const postable = ["approved", "publishing", "completed", "partially_published"].includes(b.status);
   const captured = b.payments.filter((p) => p.razorpayPaymentId);
+  // Submitted without online payment (offline mode): no payment row, yet past the pay step.
+  // Rejecting / refunding such a booking changes no money online — staff settle by hand.
+  const offline = b.payments.length === 0 && !["draft", "awaiting_payment"].includes(b.status);
 
   return (
     <div className="pb-10">
@@ -148,7 +151,7 @@ export default function CampaignBookingDetail() {
               )}
             </div>
             {b.items.map((i) => (
-              <ItemRow key={i.id} item={i} bookingId={b.id} postable={postable} autoPublish={!!b.autoPublish?.enabled} busy={busy} act={act} />
+              <ItemRow key={i.id} item={i} bookingId={b.id} postable={postable} autoPublish={!!b.autoPublish?.enabled} offline={offline} busy={busy} act={act} />
             ))}
           </section>
         </div>
@@ -157,7 +160,11 @@ export default function CampaignBookingDetail() {
           {(reviewable || rejectable) && (
             <section className={`${CARD} p-5`}>
               <h2 className="text-[15px] font-semibold text-ds-text mb-1">Review</h2>
-              <p className="text-[12.5px] text-ds-t3 mb-3">Approving schedules every account for posting. Rejecting refunds the client in full.</p>
+              <p className="text-[12.5px] text-ds-t3 mb-3">
+                {offline
+                  ? `Approving schedules every account for posting. No online payment was taken — collect ${rupees(b.totalPaise)} from the client by hand. Rejecting charges nothing.`
+                  : "Approving schedules every account for posting. Rejecting refunds the client in full."}
+              </p>
               {reviewable && (
                 <button type="button" className={`${BTN_GOLD} w-full mb-3`} disabled={!!busy} onClick={() => act("approve", `/admin/campaigns/${b.id}/approve`)}>
                   {busy === "approve" ? "Approving…" : "Approve"}
@@ -175,9 +182,9 @@ export default function CampaignBookingDetail() {
                   type="button"
                   className={`${BTN_RED} flex-1`}
                   disabled={!!busy || note.trim().length < 3}
-                  onClick={async () => { if (await act("reject", `/admin/campaigns/${b.id}/reject`, { note }, `Reject and refund ${rupees(b.totalPaise)} to ${b.client.companyName}?`)) setNote(""); }}
+                  onClick={async () => { if (await act("reject", `/admin/campaigns/${b.id}/reject`, { note }, offline ? `Reject this booking from ${b.client.companyName}?` : `Reject and refund ${rupees(b.totalPaise)} to ${b.client.companyName}?`)) setNote(""); }}
                 >
-                  Reject & refund
+                  {offline ? "Reject" : "Reject & refund"}
                 </button>
               </div>
             </section>
@@ -195,7 +202,11 @@ export default function CampaignBookingDetail() {
 
           <section className={`${CARD} p-5`}>
             <h2 className="text-[15px] font-semibold text-ds-text mb-3">Payments</h2>
-            {b.payments.length === 0 && <p className="text-[13px] text-ds-t3">No payment yet.</p>}
+            {b.payments.length === 0 && (
+              <p className="text-[13px] text-ds-t3">
+                {offline ? `No online payment — submitted without the gateway. Collect ${rupees(b.totalPaise)} from the client by hand.` : "No payment yet."}
+              </p>
+            )}
             <ul className="grid gap-2.5">
               {b.payments.map((p) => (
                 <li key={p.id} className="text-[12.5px]">
@@ -240,8 +251,8 @@ function Kv({ k, v }: { k: string; v: React.ReactNode }) {
   );
 }
 
-function ItemRow({ item: i, bookingId, postable, autoPublish, busy, act }: {
-  item: Item; bookingId: string; postable: boolean; autoPublish: boolean; busy: string | null;
+function ItemRow({ item: i, bookingId, postable, autoPublish, offline, busy, act }: {
+  item: Item; bookingId: string; postable: boolean; autoPublish: boolean; offline: boolean; busy: string | null;
   act: (key: string, path: string, body?: unknown, confirmText?: string) => Promise<boolean | undefined>;
 }) {
   const [url, setUrl] = useState(i.permalink ?? "");
@@ -319,9 +330,18 @@ function ItemRow({ item: i, bookingId, postable, autoPublish, busy, act }: {
               type="button"
               className="text-ds-redsoft hover:underline"
               disabled={!!busy}
-              onClick={() => act(`refund-${i.id}`, `/admin/campaigns/${bookingId}/items/${i.id}/refund`, undefined, `Refund ${rupees(i.pricePaise)} for ${i.accountName}? It won't be posted.`)}
+              onClick={() =>
+                act(
+                  `refund-${i.id}`,
+                  `/admin/campaigns/${bookingId}/items/${i.id}/refund`,
+                  undefined,
+                  offline
+                    ? `Drop ${i.accountName} (${rupees(i.pricePaise)}) from this booking? It won't be posted and won't be charged.`
+                    : `Refund ${rupees(i.pricePaise)} for ${i.accountName}? It won't be posted.`,
+                )
+              }
             >
-              Refund this account
+              {offline ? "Drop this account" : "Refund this account"}
             </button>
           )}
         </div>

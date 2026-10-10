@@ -23,8 +23,14 @@ export function computeTotal(items: Array<{ pricePaise: number }>): number {
   return items.reduce((s, i) => s + i.pricePaise, 0);
 }
 
+/**
+ * Checkout. In "razorpay" mode it creates the order and the booking waits for the webhook. In
+ * "offline" mode (no gateway configured — the state while Razorpay is deferred) the SAME
+ * re-pricing and price freeze happen, and the booking goes straight to review
+ * (`paid_pending_review`) with no payment row and no `paidAt`; the amount is collected by hand.
+ */
 export async function checkout(clientId: string, bookingId: string) {
-  if (!razorpayConfig.configured()) throw new AppError(503, "PAYMENTS_UNAVAILABLE", "Online payment isn't available right now. Please contact us.");
+  const mode = razorpayConfig.paymentMode();
   const b = await prisma.campaignBooking.findFirst({
     where: { id: bookingId, clientId },
     select: { id: true, status: true, name: true, launchFrom: true, format: true, campaignType: true, audioIntegration: true, audioTrack: true, items: { select: { id: true, rateCardId: true, pricePaise: true, platform: true, format: true, accountName: true } } },
@@ -50,27 +56,44 @@ export async function checkout(clientId: string, bookingId: string) {
   const total = computeTotal(priced);
   if (total < 100) throw new AppError(400, "AMOUNT_TOO_LOW", "The total is below the minimum payment.");
 
+  const snapshot = {
+    campaignType: b.campaignType,
+    audioIntegration: b.audioIntegration,
+    audioTrack: b.audioTrack,
+    items: priced.map((i) => ({
+      itemId: i.id,
+      rateCardId: i.rateCardId,
+      platform: i.platform,
+      format: i.format,
+      accountName: i.accountName,
+      basePaise: i.basePaise,
+      audioAddonPaise: i.audioAddonPaise,
+      pricePaise: i.pricePaise,
+    })),
+  };
+
+  if (mode === "offline") {
+    await prisma.$transaction(async (tx) => {
+      for (const i of priced) await tx.campaignBookingItem.update({ where: { id: i.id }, data: { pricePaise: i.pricePaise, audioAddonPaise: i.audioAddonPaise } });
+      // No payment row and no paidAt: the webhook is the only writer of paidAt, and every
+      // "was this paid online?" decision (refunds, email wording) keys on it.
+      await transitionBooking(b.id, ["draft", "awaiting_payment"], "paid_pending_review", { type: "client", id: clientId }, {
+        tx,
+        note: `Submitted for review without online payment (offline mode) — ${total} paise to be collected by hand`,
+        data: { totalPaise: total, pricingSnapshot: snapshot as unknown as Prisma.InputJsonValue, submittedAt: new Date() },
+      });
+    });
+    void sendStatusEmail(b.id, "paid").catch((e) => console.error("[campaign] submitted email failed", e));
+    void notifyStaffPaid(b.id).catch((e) => console.error("[campaign] staff email failed", e));
+    return { offline: true as const, amount: total, currency: "INR", name: b.name, status: "paid_pending_review" };
+  }
+
   const order = await rzp.createOrder(total, `cb_${b.id.slice(0, 30)}`, { bookingId: b.id, clientId });
   if (order.amount !== total || order.currency !== "INR") throw new AppError(502, "PAYMENT_ERROR", "Payment setup failed. Please try again.");
 
   await prisma.$transaction(async (tx) => {
     for (const i of priced) await tx.campaignBookingItem.update({ where: { id: i.id }, data: { pricePaise: i.pricePaise, audioAddonPaise: i.audioAddonPaise } });
     await tx.campaignPayment.create({ data: { bookingId: b.id, razorpayOrderId: order.id, amountPaise: total } });
-    const snapshot = {
-      campaignType: b.campaignType,
-      audioIntegration: b.audioIntegration,
-      audioTrack: b.audioTrack,
-      items: priced.map((i) => ({
-        itemId: i.id,
-        rateCardId: i.rateCardId,
-        platform: i.platform,
-        format: i.format,
-        accountName: i.accountName,
-        basePaise: i.basePaise,
-        audioAddonPaise: i.audioAddonPaise,
-        pricePaise: i.pricePaise,
-      })),
-    };
     if (b.status === "draft") {
       await transitionBooking(b.id, ["draft"], "awaiting_payment", { type: "client", id: clientId }, {
         tx,
@@ -81,7 +104,7 @@ export async function checkout(clientId: string, bookingId: string) {
     }
   });
 
-  return { orderId: order.id, amount: total, currency: "INR", keyId: razorpayConfig.keyId(), name: b.name };
+  return { offline: false as const, orderId: order.id, amount: total, currency: "INR", keyId: razorpayConfig.keyId(), name: b.name };
 }
 
 /** Checkout success callback. Confirms the signature for the UI; the webhook does the real work. */
@@ -189,7 +212,9 @@ async function onRefundEvent(r: any, event: string): Promise<WebhookResult> {
 
 async function maybeMarkRefunded(bookingId: string) {
   const b = await prisma.campaignBooking.findUnique({ where: { id: bookingId }, select: { status: true, payments: { select: { status: true } } } });
-  if (b?.status === "rejected" && b.payments.every((p) => p.status !== "captured" && p.status !== "refund_pending" && p.status !== "refund_failed")) {
+  // A booking with no payment row at all (offline mode) has nothing to refund online, so it
+  // stays `rejected`: "refunded" would claim money went back that we never collected here.
+  if (b?.status === "rejected" && b.payments.length > 0 && b.payments.every((p) => p.status !== "captured" && p.status !== "refund_pending" && p.status !== "refund_failed")) {
     await transitionBooking(bookingId, ["rejected"], "refunded", { type: "system" }).catch(() => undefined);
   }
 }

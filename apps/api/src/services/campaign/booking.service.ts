@@ -11,6 +11,7 @@ import {
   type CampaignFormat,
 } from "@dashmani/shared";
 import { AppError } from "../../middleware/error-handler";
+import { razorpayConfig } from "./config";
 import { durationLimitSec } from "./media.service";
 import { priceFor, resolveCatalogueTargets } from "./rate-card.service";
 
@@ -117,6 +118,9 @@ function shapeBooking(b: any) {
     reviewNote: b.reviewNote,
     submittedAt: b.submittedAt,
     paidAt: b.paidAt,
+    // "razorpay" → the Pay step opens the gateway; "offline" → it submits for review and the
+    // amount is collected by hand (the state while the gateway is deferred).
+    paymentMode: razorpayConfig.paymentMode(),
     approvedAt: b.approvedAt,
     deliveredAt: b.deliveredAt,
     createdAt: b.createdAt,

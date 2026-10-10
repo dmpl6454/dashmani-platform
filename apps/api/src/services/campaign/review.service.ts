@@ -227,13 +227,25 @@ export async function refundItem(bookingId: string, itemId: string, staffId: str
     throw new AppError(409, "INVALID_STATE", "Only an item that wasn't posted can be refunded.");
   }
   const pay = await capturedPaymentFor(bookingId, item.pricePaise);
-  if (!pay) throw new AppError(409, "NOTHING_TO_REFUND", "There is no captured payment that can cover this refund.");
+  if (!pay) {
+    // A booking submitted without online payment has no payment row at all: the item is
+    // dropped from the amount to collect, and the money (if any changed hands) is settled by
+    // hand. A booking that DOES have an online payment which can't cover the item is a real
+    // conflict and stays an error.
+    const online = await prisma.campaignPayment.count({ where: { bookingId, razorpayPaymentId: { not: null } } });
+    if (online > 0) throw new AppError(409, "NOTHING_TO_REFUND", "There is no captured payment that can cover this refund.");
+  }
   // Claim the item first so two clicks cannot refund it twice.
   const claim = await prisma.campaignBookingItem.updateMany({
     where: { id: itemId, status: item.status, OR: [{ lockedUntil: null }, { lockedUntil: { lt: new Date() } }] },
     data: { status: "refunded" },
   });
   if (claim.count !== 1) throw new AppError(409, "INVALID_STATE", "This item changed — refresh and try again.");
+  if (!pay) {
+    await logBookingEvent(bookingId, staff(staffId), `${item.accountName} removed from the booking (${item.pricePaise} paise) — no online payment on this booking; settle by hand if the client has already paid.`);
+    await afterItemChange(bookingId, staffId);
+    return getBookingForStaff(bookingId);
+  }
   try {
     await refundPaymentRow(pay.id, item.pricePaise, `item:${itemId.slice(0, 30)}`, staff(staffId));
   } catch (err) {

@@ -80,7 +80,7 @@ export const SETTLED_ITEM_STATUSES: readonly ItemStatus[] = ["posted_manual", "p
 export const BOOKING_STATUS_LABELS: Record<BookingStatus, string> = {
   draft: "Draft",
   awaiting_payment: "Awaiting payment",
-  paid_pending_review: "Paid — in review",
+  paid_pending_review: "In review",
   changes_requested: "Changes requested",
   approved: "Approved — scheduling",
   publishing: "Going live",

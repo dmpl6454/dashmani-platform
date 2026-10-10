@@ -57,7 +57,7 @@ const STATUS_TONE: Record<string, string> = {
 export const STATUS_LABEL: Record<string, string> = {
   draft: "Draft",
   awaiting_payment: "Awaiting payment",
-  paid_pending_review: "Paid — in review",
+  paid_pending_review: "In review",
   changes_requested: "Changes requested",
   approved: "Approved — scheduling",
   publishing: "Going live",

@@ -108,6 +108,8 @@ export const CAMPAIGN_LIMITS = {
   carouselMax: 10,
   superTextMax: 120,
   superTextLinesMax: 3,
+  /** Distinct per-account overlays one booking may carry (each is one extra render of every file). */
+  customOverlaysMax: 8,
   launchWindowMaxDays: 60,
   itemsMax: 50,
   videoMaxBytes: 500 * 1024 * 1024,

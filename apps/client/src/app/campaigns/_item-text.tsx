@@ -125,6 +125,8 @@ export function ItemTextEditor({ campaign: c, item, onSaved }: { campaign: Campa
 /** What one account will post: its own render when customised, else the campaign's files. */
 export function ItemPreview({ campaign: c, item }: { campaign: Campaign; item: CampaignItem }) {
   const [files, setFiles] = useState<ItemPreviewFile[] | null>(null);
+  // The default render finishing changes what a caption-only account posts, so refetch on it too.
+  const renderSig = [...c.media, ...(c.thumbnail ? [c.thumbnail] : [])].map((m) => `${m.id}:${m.renderStatus}`).join(",");
   useEffect(() => {
     let live = true;
     apiFetch<ItemPreviewFile[]>(`/client/campaigns/${c.id}/items/${item.id}/preview-urls`)
@@ -133,7 +135,7 @@ export function ItemPreview({ campaign: c, item }: { campaign: Campaign; item: C
     return () => {
       live = false;
     };
-  }, [c.id, item.id, item.renderStatus, item.superTextOverride, item.superTextStyleOverride]);
+  }, [c.id, item.id, item.renderStatus, item.superTextOverride, item.superTextStyleOverride, renderSig]);
   if (!files?.length) return null;
   return (
     <div className="flex gap-2 overflow-x-auto pb-1 pt-3">

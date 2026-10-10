@@ -161,6 +161,13 @@ router.get("/campaign-media/:id/:variant", asyncHandler(async (req: Request, res
   res.set("Cache-Control", "private, max-age=600");
   res.set("X-Content-Type-Options", "nosniff");
   if (variant === "original") res.attachment(m.originalName);
+  else if (req.query.download === "1") {
+    // The portal and the API are different origins, so an <a download> is ignored by the browser:
+    // staff ask for a real attachment. The query flag is not part of the signature on purpose
+    // (it only changes the disposition, never which file is served).
+    const base = m.originalName.replace(/\.[^.]+$/, "").replace(/[^\w.-]+/g, "_").slice(0, 80) || "post";
+    res.attachment(`${base}${renderIdOfVariant(variant) ? "-account" : "-post"}.${m.kind === "video" ? "mp4" : "jpg"}`);
+  }
   // sendFile handles Range requests, so videos can seek without downloading everything.
   res.sendFile(file, { dotfiles: "deny" });
 }));

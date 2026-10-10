@@ -370,7 +370,7 @@ function AfterPayment({ campaign: c, onChanged }: { campaign: Campaign; onChange
           <div className="flex justify-end">
             <Button
               variant="ink"
-              disabled={busy || renderPending(c)}
+              disabled={busy || renderPending(c) || renderFailed(c)}
               onClick={async () => {
                 setBusy(true);
                 setError(null);

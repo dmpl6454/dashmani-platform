@@ -187,13 +187,18 @@ export async function renderNext(opts: { ignoreLoad?: boolean } = {}): Promise<s
   if (!opts.ignoreLoad && boxTooBusy()) return null;
   running = true;
   try {
-    return (await renderDefault()) ?? (await renderVariant());
+    // One ffmpeg job per tick: the default render ATTEMPTED (even if it failed or lost its
+    // done-check and returned null) uses this tick; only a tick with no default work to do
+    // goes on to a per-account variant. The load gate above is not re-checked in between.
+    const d = await renderDefault();
+    if (d.attempted) return d.id;
+    return renderVariant();
   } finally {
     running = false;
   }
 }
 
-async function renderDefault(): Promise<string | null> {
+async function renderDefault(): Promise<{ attempted: boolean; id: string | null }> {
   const now = new Date();
   const candidate = await prisma.campaignMedia.findFirst({
     where: {
@@ -204,12 +209,13 @@ async function renderDefault(): Promise<string | null> {
     },
     orderBy: { updatedAt: "asc" },
   });
-  if (!candidate) return null;
+  if (!candidate) return { attempted: false, id: null };
   const claim = await prisma.campaignMedia.updateMany({
     where: { id: candidate.id, renderStatus: candidate.renderStatus, updatedAt: candidate.updatedAt },
     data: { renderStatus: "rendering", renderLockedUntil: new Date(Date.now() + campaignConfig.renderTimeoutMs() + 5 * 60_000) },
   });
-  if (claim.count !== 1) return null;
+  // Lost the claim to another worker: nothing was run here, let a variant use this tick.
+  if (claim.count !== 1) return { attempted: false, id: null };
 
   const booking = await prisma.campaignBooking.findUnique({
     where: { id: candidate.bookingId! },
@@ -224,17 +230,17 @@ async function renderDefault(): Promise<string | null> {
     });
     if (done.count !== 1) {
       await fsp.rm(out, { force: true });
-      return null;
+      return { attempted: true, id: null };
     }
     if (candidate.renderKey) await fsp.rm(renderPath(candidate)!, { force: true });
-    return candidate.id;
+    return { attempted: true, id: candidate.id };
   } catch (err) {
     console.error(`[campaign-render] ${candidate.id} failed:`, (err as Error).message);
     await prisma.campaignMedia.updateMany({
       where: { id: candidate.id, renderStatus: "rendering" },
       data: { renderStatus: "failed", renderError: (err as Error).message.slice(0, 500), renderLockedUntil: null },
     });
-    return null;
+    return { attempted: true, id: null };
   }
 }
 

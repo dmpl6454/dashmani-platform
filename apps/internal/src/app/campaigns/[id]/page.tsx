@@ -118,7 +118,7 @@ export default function CampaignBookingDetail() {
                     </div>
                     {u && (
                       <div className="mt-1.5 flex gap-2 text-[12px]">
-                        <a href={`${API_BASE}${u.preview}`} download className="inline-flex items-center gap-1 text-ds-gold hover:underline"><Download className="h-3.5 w-3.5" />Post file</a>
+                        <a href={`${API_BASE}${u.preview}&download=1`} download className="inline-flex items-center gap-1 text-ds-gold hover:underline"><Download className="h-3.5 w-3.5" />Post file</a>
                         <a href={`${API_BASE}${u.original}`} className="inline-flex items-center gap-1 text-ds-t2 hover:underline">Original</a>
                       </div>
                     )}
@@ -300,7 +300,7 @@ function ItemRow({ item: i, booking: b, files, bookingId, postable, autoPublish,
           <span className="text-ds-t3">{files.custom ? "This account's files:" : "Files:"}</span>
           {files.files.map((f, n) =>
             f.url ? (
-              <a key={f.mediaId} href={`${API_BASE}${f.url}`} download className="inline-flex items-center gap-1 text-ds-gold hover:underline">
+              <a key={f.mediaId} href={`${API_BASE}${f.url}&download=1`} download className="inline-flex items-center gap-1 text-ds-gold hover:underline">
                 <Download className="h-3.5 w-3.5" />{f.role === "thumbnail" ? "Thumbnail" : files.files.filter((x) => x.role !== "thumbnail").length > 1 ? `File ${n + 1}` : "Post file"}
               </a>
             ) : (

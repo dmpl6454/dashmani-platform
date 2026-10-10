@@ -68,7 +68,7 @@ export async function getBookingForStaff(id: string) {
     include: {
       client: { select: { id: true, companyName: true, contactName: true, email: true, phone: true } },
       media: { where: { purgedAt: null }, orderBy: { position: "asc" } },
-      items: { orderBy: { createdAt: "asc" } },
+      items: { orderBy: [{ createdAt: "asc" }, { accountName: "asc" }, { id: "asc" }] },
       payments: { orderBy: { createdAt: "asc" } },
       events: { orderBy: { createdAt: "desc" }, take: 100 },
     },
@@ -83,6 +83,7 @@ export async function getBookingForStaff(id: string) {
       id: m.id,
       position: m.position,
       kind: m.kind,
+      role: m.role,
       originalName: m.originalName,
       mime: m.mime,
       bytes: Number(m.bytes),

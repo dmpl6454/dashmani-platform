@@ -1,5 +1,6 @@
 import { prisma, Prisma } from "@dashmani/db";
 import {
+  CAMPAIGN_LIMITS,
   EDITABLE_BOOKING_STATUSES,
   PLATFORM_FORMATS,
   SETTLED_ITEM_STATUSES,
@@ -31,6 +32,16 @@ import { priceFor, resolveCatalogueTargets } from "./rate-card.service";
 export type Actor = { type: "client" | "staff" | "system"; id?: string | null };
 
 type Tx = Prisma.TransactionClient;
+
+/**
+ * Serialise every client edit of ONE booking. Items, creative and per-account text edits each
+ * read-then-rewrite the booking's items and render variants; two overlapping edits (two tabs,
+ * a double click) would otherwise delete each other's variant rows or hit the unique key. The
+ * row lock is taken first in every such transaction, so there is one lock order.
+ */
+async function lockBooking(tx: Tx, bookingId: string) {
+  await tx.$queryRaw`SELECT id FROM campaign_bookings WHERE id = ${bookingId} FOR UPDATE`;
+}
 
 export async function transitionBooking(
   bookingId: string,
@@ -249,7 +260,7 @@ export async function getClientBooking(clientId: string, id: string) {
     where: { id, clientId },
     include: {
       media: { where: { purgedAt: null }, orderBy: { position: "asc" }, select: mediaSelect },
-      items: { orderBy: { createdAt: "asc" }, select: itemSelect },
+      items: { orderBy: [{ createdAt: "asc" }, { accountName: "asc" }, { id: "asc" }], select: itemSelect },
     },
   });
   if (!b) throw new AppError(404, "NOT_FOUND", "Campaign not found");
@@ -308,6 +319,7 @@ async function resetCheckoutIfNeeded(tx: Tx, bookingId: string, status: string, 
 export async function updateInfo(clientId: string, id: string, info: CampaignInfoInput) {
   const b = await requireEditable(clientId, id, ["draft", "awaiting_payment"]);
   await prisma.$transaction(async (tx) => {
+    await lockBooking(tx, id);
     await tx.campaignBooking.update({
       where: { id },
       data: {
@@ -319,7 +331,9 @@ export async function updateInfo(clientId: string, id: string, info: CampaignInf
         launchTo: dateOf(info.launchTo),
       },
     });
+    // repriceItems can DROP items; their custom overlays' renders must go with them.
     await repriceItems(tx, id);
+    await syncRenderVariants(tx, id);
     await resetCheckoutIfNeeded(tx, id, b.status, clientId);
   });
   return getClientBooking(clientId, id);
@@ -370,6 +384,7 @@ export async function updateCreative(clientId: string, id: string, c: CampaignCr
   }
 
   await prisma.$transaction(async (tx) => {
+    await lockBooking(tx, id);
     // Detach files that are no longer part of the creative (they stay with the client and
     // are purged by retention if never reused).
     await tx.campaignMedia.updateMany({
@@ -425,6 +440,7 @@ export async function updateItemOverrides(clientId: string, id: string, itemId: 
   const item = await prisma.campaignBookingItem.findFirst({ where: { id: itemId, bookingId: id }, select: { id: true } });
   if (!item) throw new AppError(404, "NOT_FOUND", "Account not found on this campaign");
   await prisma.$transaction(async (tx) => {
+    await lockBooking(tx, id);
     await tx.campaignBookingItem.update({
       where: { id: itemId },
       data: {
@@ -453,7 +469,7 @@ export async function syncRenderVariants(tx: Tx, bookingId: string) {
       format: true, superText: true, superTextStyle: true,
       media: { where: { purgedAt: null, uploadStatus: "complete" }, select: { id: true } },
       items: { select: { superTextOverride: true, superTextStyleOverride: true } },
-      renders: { select: { id: true, mediaId: true, overlayKey: true } },
+      renders: { select: { id: true, mediaId: true, overlayKey: true, status: true } },
     },
   });
   if (!b) return;
@@ -462,12 +478,22 @@ export async function syncRenderVariants(tx: Tx, bookingId: string) {
     const ov = itemOverlay(b, item);
     if (ov.custom) wanted.set(ov.key, { text: ov.text, style: ov.style });
   }
+  // Every distinct custom overlay is one more render of every file — bound it so a booking
+  // cannot queue an unbounded amount of ffmpeg work and disk.
+  if (wanted.size > CAMPAIGN_LIMITS.customOverlaysMax) {
+    throw new AppError(400, "TOO_MANY_OVERLAYS", `A campaign can carry at most ${CAMPAIGN_LIMITS.customOverlaysMax} different super texts across its accounts. Reuse the same text on several accounts.`);
+  }
   const keep = new Set<string>();
   for (const m of b.media) {
     for (const [key, ov] of wanted) {
       const existing = b.renders.find((r) => r.mediaId === m.id && r.overlayKey === key);
-      if (existing) keep.add(existing.id);
-      else {
+      if (existing) {
+        keep.add(existing.id);
+        // A failed render is retried by any later edit, exactly like the default render is.
+        if (existing.status === "failed") {
+          await tx.campaignMediaRender.update({ where: { id: existing.id }, data: { status: "queued", error: null, lockedUntil: null } });
+        }
+      } else {
         const created = await tx.campaignMediaRender.create({
           data: { mediaId: m.id, bookingId, overlayKey: key, overlayText: ov.text, overlayStyle: ov.style, status: "queued" },
           select: { id: true },
@@ -518,6 +544,7 @@ export async function updateItems(clientId: string, id: string, rateCardIds: str
   }
 
   await prisma.$transaction(async (tx) => {
+    await lockBooking(tx, id);
     // Accounts kept across the edit keep their own caption / overlay.
     const previous = await tx.campaignBookingItem.findMany({
       where: { bookingId: id },
@@ -600,7 +627,9 @@ export async function assertCreativeReady(id: string) {
     select: {
       format: true,
       media: { where: { purgedAt: null }, select: { role: true, renderStatus: true, uploadStatus: true } },
-      renders: { select: { status: true } },
+      // Only renders of files still attached to this booking: a variant of a purged or detached
+      // file is never rendered and must not hold checkout hostage.
+      renders: { where: { media: { purgedAt: null, bookingId: id } }, select: { status: true } },
     },
   });
   if (!b?.format || b.media.filter((m) => m.role !== "thumbnail").length === 0) throw new AppError(400, "NO_CREATIVE", "Add your creative first.");

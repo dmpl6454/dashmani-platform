@@ -207,8 +207,12 @@ export function CreativeStep({ campaign, onSaved, submitLabel }: { campaign: Cam
   const [error, setError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => setMedia(campaign.media), [campaign.media]);
-  useEffect(() => setThumb(campaign.thumbnail), [campaign.thumbnail]);
+  // A refetch (render polling, saving one account's text) must not wipe edits the client has
+  // not saved yet: take the server's render state for files we already show, keep the rest.
+  useEffect(() => {
+    setMedia((cur) => cur.map((m) => campaign.media.find((x) => x.id === m.id) ?? m));
+    setThumb((cur) => (cur && campaign.thumbnail && campaign.thumbnail.id === cur.id ? campaign.thumbnail : cur));
+  }, [campaign.media, campaign.thumbnail]);
 
   const maxFiles = format === "carousel" ? CAMPAIGN_LIMITS.carouselMax : 1;
   const tagCount = countHashtags(caption, splitTags(hashtags));
@@ -263,6 +267,10 @@ export function CreativeStep({ campaign, onSaved, submitLabel }: { campaign: Cam
     const f = files?.[0];
     if (!f) return;
     const key = `thumb-${f.name}-${f.size}-${f.lastModified}`;
+    if (f.type !== "image/jpeg" && f.type !== "image/png") {
+      setThumbUpload({ key, name: f.name, progress: 0, file: f, resumeId: null, error: "Too large or wrong type — the thumbnail must be a JPG or PNG image" });
+      return;
+    }
     if (f.size > CAMPAIGN_LIMITS.imageMaxBytes) {
       setThumbUpload({ key, name: f.name, progress: 0, file: f, resumeId: null, error: `Too large — images can be up to ${Math.round(CAMPAIGN_LIMITS.imageMaxBytes / 1048576)} MB` });
       return;
@@ -285,7 +293,7 @@ export function CreativeStep({ campaign, onSaved, submitLabel }: { campaign: Cam
     if (media.length === 0) return setError("Upload your creative first.");
     if (format === "carousel" && media.length < CAMPAIGN_LIMITS.carouselMin) return setError("A carousel needs at least 2 files.");
     if (format === "reel" && media.some((m) => m.kind !== "video")) return setError("A reel needs a video.");
-    if (uploads.some((u) => !u.error) || (thumbUpload && !thumbUpload.error)) return setError("Wait for the uploads to finish.");
+    if (uploads.some((u) => !u.error) || (thumbApplies && thumbUpload && !thumbUpload.error)) return setError("Wait for the uploads to finish.");
     const withAudio = format === "reel" && audio;
     if (withAudio && audioTrack.trim().length < 2) return setError("Tell us which song to integrate, or turn song audio off.");
     setBusy(true);

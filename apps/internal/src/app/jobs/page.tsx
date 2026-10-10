@@ -15,20 +15,20 @@ const DEPARTMENTS = [
 ];
 
 const rgba = (hex: string, a: number) => {
-  const n = parseInt(hex.slice(1), 16);
+  if (hex.startsWith("var(")) return `color-mix(in srgb, ${hex} ${Math.round(a * 100)}%, transparent)`; const n = parseInt(hex.slice(1), 16);
   return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`;
 };
-const HUES = ["#238BFF", "#E9BD62", "#9B7EDE", "#00D7A0", "#FB7185", "#6EB2FF"];
+const HUES = ["var(--hx-238BFF)", "var(--hx-E9BD62)", "var(--hx-9B7EDE)", "var(--hx-00D7A0)", "var(--hx-FB7185)", "var(--hx-6EB2FF)"];
 const hash = (s: string) => { let h = 0; for (let i = 0; i < s.length; i++) h = s.charCodeAt(i) + ((h << 5) - h); return Math.abs(h); };
 const hueOf = (s: string) => HUES[hash(s || "?") % HUES.length];
 const initials = (n: string) => (n || "?").trim().split(/\s+/).map((p) => p[0]).slice(0, 2).join("").toUpperCase();
 
 const JSTAT: Record<string, [string, string]> = {
-  ACTIVE: ["Active", "#00D7A0"], DRAFT: ["Draft", "#A7B3C2"], PAUSED: ["Paused", "#E9BD62"], CLOSED: ["Closed", "#FB7185"],
+  ACTIVE: ["Active", "var(--hx-00D7A0)"], DRAFT: ["Draft", "var(--hx-A7B3C2)"], PAUSED: ["Paused", "var(--hx-E9BD62)"], CLOSED: ["Closed", "var(--hx-FB7185)"],
 };
 const ASTAT: Record<string, [string, string]> = {
-  RECEIVED: ["New", "#A7B3C2"], REVIEWING: ["Reviewing", "#6EB2FF"], SHORTLISTED: ["Shortlisted", "#9B7EDE"],
-  INTERVIEW: ["Interview", "#E9BD62"], OFFERED: ["Offered", "#00D7A0"], HIRED: ["Hired", "#34D399"], REJECTED: ["Rejected", "#FB7185"],
+  RECEIVED: ["New", "var(--hx-A7B3C2)"], REVIEWING: ["Reviewing", "var(--hx-6EB2FF)"], SHORTLISTED: ["Shortlisted", "var(--hx-9B7EDE)"],
+  INTERVIEW: ["Interview", "var(--hx-E9BD62)"], OFFERED: ["Offered", "var(--hx-00D7A0)"], HIRED: ["Hired", "var(--hx-34D399)"], REJECTED: ["Rejected", "var(--hx-FB7185)"],
 };
 const appStatusSteps = ["RECEIVED", "REVIEWING", "SHORTLISTED", "INTERVIEW", "OFFERED", "HIRED"];
 
@@ -81,11 +81,11 @@ const FIELD =
 const AREA =
   "w-full px-[18px] py-3.5 rounded-[18px] border border-ds-line2 bg-ds-inset text-ds-text text-[16px] sm:text-[13.5px] leading-[1.55] outline-none resize-none placeholder:text-ds-t4 focus:border-[rgba(233,189,98,.6)] min-w-0";
 const GOLD_BTN =
-  "inline-flex items-center gap-2 rounded-full bg-ds-gold text-[#060D14] font-bold whitespace-nowrap hover:bg-[#F4D58C] disabled:opacity-60";
+  "inline-flex items-center gap-2 rounded-full bg-ds-gold text-[color:var(--hx-060D14)] font-bold whitespace-nowrap hover:bg-[color:var(--hx-F4D58C)] disabled:opacity-60";
 const GHOST_SM =
   "h-8 px-3 rounded-full border border-ds-line2 text-ds-t5 text-[12px] font-semibold transition-colors";
 const ERR_BOX =
-  "px-3.5 py-2.5 rounded-[10px] bg-[rgba(229,72,77,.08)] border border-[rgba(229,72,77,.3)] text-[#FB7185] text-[12.5px]";
+  "px-3.5 py-2.5 rounded-[10px] bg-[rgba(229,72,77,.08)] border border-[rgba(229,72,77,.3)] text-[color:var(--hx-FB7185)] text-[12.5px]";
 
 type View = "jobs" | "applications";
 
@@ -271,12 +271,12 @@ export default function JobsPage() {
               role="tab"
               aria-selected={on}
               onClick={() => setView(v.key)}
-              className={`inline-flex items-center gap-[9px] h-10 px-5 rounded-full text-[13.5px] font-bold whitespace-nowrap transition-colors ${on ? "bg-ds-gold text-[#060D14]" : "text-ds-t2 hover:text-ds-text"}`}
+              className={`inline-flex items-center gap-[9px] h-10 px-5 rounded-full text-[13.5px] font-bold whitespace-nowrap transition-colors ${on ? "bg-ds-gold text-[color:var(--hx-060D14)]" : "text-ds-t2 hover:text-ds-text"}`}
             >
               <Icon d={v.d} className="h-[15px] w-[15px]" />
               {v.label}
               {v.badge > 0 && (
-                <span className="min-w-[20px] h-5 px-1.5 rounded-full bg-[#E5484D] text-white text-[10.5px] font-extrabold inline-flex items-center justify-center">{v.badge}</span>
+                <span className="min-w-[20px] h-5 px-1.5 rounded-full bg-[color:var(--hx-E5484D)] text-white text-[10.5px] font-extrabold inline-flex items-center justify-center">{v.badge}</span>
               )}
             </button>
           );
@@ -292,8 +292,8 @@ export default function JobsPage() {
 
       {/* Create / Edit form */}
       {showForm && view === "jobs" && (
-        <form onSubmit={handleSubmit} className="relative rounded-[18px] border border-[#2A4658] bg-ds-card shadow-[0_12px_32px_rgba(0,0,0,.32)] px-5 py-6 sm:px-7 sm:py-[26px] mb-[18px] overflow-hidden">
-          <span aria-hidden="true" className="absolute left-0 right-0 top-0 h-px bg-[linear-gradient(90deg,transparent,#E9BD62_30%,#E9BD62_70%,transparent)]" />
+        <form onSubmit={handleSubmit} className="relative rounded-[18px] border border-[color:var(--hx-2A4658)] bg-ds-card shadow-[0_12px_32px_rgba(0,0,0,.32)] px-5 py-6 sm:px-7 sm:py-[26px] mb-[18px] overflow-hidden">
+          <span aria-hidden="true" className="absolute left-0 right-0 top-0 h-px bg-[linear-gradient(90deg,transparent,var(--hx-E9BD62)_30%,var(--hx-E9BD62)_70%,transparent)]" />
           <div className="text-[18px] font-bold tracking-[-.01em] text-ds-text mb-[18px]">{editingJob ? "Edit Job Listing" : "Create Job Listing"}</div>
           <div className="grid gap-x-4 gap-y-3.5 [grid-template-columns:repeat(auto-fill,minmax(220px,1fr))]">
             <input type="text" placeholder="Job Title *" aria-label="Job Title" value={form.title} onChange={(e) => updateForm("title", e.target.value)} required className={FIELD} />
@@ -338,8 +338,8 @@ export default function JobsPage() {
 
       {/* ===== APPLICATIONS VIEW ===== */}
       {view === "applications" && (
-        <section className="rounded-[18px] border border-[#2A4658] bg-ds-card shadow-[0_12px_32px_rgba(0,0,0,.32)] overflow-hidden">
-          <div className="px-4 py-5 sm:px-6 sm:py-[22px] border-b border-[#1A2C38] flex flex-col gap-4">
+        <section className="rounded-[18px] border border-[color:var(--hx-2A4658)] bg-ds-card shadow-[0_12px_32px_rgba(0,0,0,.32)] overflow-hidden">
+          <div className="px-4 py-5 sm:px-6 sm:py-[22px] border-b border-[color:var(--hx-1A2C38)] flex flex-col gap-4">
             <div className="flex items-center justify-between gap-3 flex-wrap">
               <span className="text-[18px] font-bold tracking-[-.01em] text-ds-text">All Applications</span>
               <span className="flex items-center gap-3">
@@ -347,7 +347,7 @@ export default function JobsPage() {
                 <button
                   type="button"
                   onClick={() => mutateApps()}
-                  className="inline-flex items-center gap-[7px] h-[34px] px-3.5 rounded-full border border-ds-line2 text-ds-t2 text-[12px] font-semibold hover:text-ds-text hover:border-[#2A4658]"
+                  className="inline-flex items-center gap-[7px] h-[34px] px-3.5 rounded-full border border-ds-line2 text-ds-t2 text-[12px] font-semibold hover:text-ds-text hover:border-[color:var(--hx-2A4658)]"
                 >
                   <RefreshCw className={`h-3 w-3 ${appsValidating ? "motion-safe:animate-spin" : ""}`} />
                   {appsValidating ? "Refreshing…" : "Refresh"}
@@ -372,7 +372,7 @@ export default function JobsPage() {
                       key={s || "all"}
                       type="button"
                       onClick={() => setAppStatusFilter(s)}
-                      className={`h-8 px-3.5 rounded-full border text-[12px] font-semibold whitespace-nowrap shrink-0 transition-colors ${on ? "bg-ds-gold border-ds-gold text-[#060D14]" : "border-ds-line2 text-ds-t2 hover:text-ds-text"}`}
+                      className={`h-8 px-3.5 rounded-full border text-[12px] font-semibold whitespace-nowrap shrink-0 transition-colors ${on ? "bg-ds-gold border-ds-gold text-[color:var(--hx-060D14)]" : "border-ds-line2 text-ds-t2 hover:text-ds-text"}`}
                     >
                       {s ? (ASTAT[s]?.[0] ?? formatStatus(s)) : "All"}
                     </button>
@@ -384,7 +384,7 @@ export default function JobsPage() {
 
           {!allAppsData ? (
             Array.from({ length: 4 }).map((_, i) => (
-              <div key={i} className="flex items-center gap-4 px-6 py-[18px] border-b border-[#132430]">
+              <div key={i} className="flex items-center gap-4 px-6 py-[18px] border-b border-[color:var(--hx-132430)]">
                 <div className="h-11 w-11 rounded-full bg-ds-hover motion-safe:animate-pulse shrink-0" />
                 <div className="flex-1 space-y-2">
                   <div className="h-3.5 w-40 rounded-[4px] bg-ds-hover motion-safe:animate-pulse" />
@@ -402,20 +402,20 @@ export default function JobsPage() {
             allApps.map((app: any) => {
               const hue = hueOf(app.applicantName || "");
               const on = selectedApp?.id === app.id;
-              const [sl, sc] = ASTAT[app.status] ?? [formatStatus(app.status || ""), "#A7B3C2"];
+              const [sl, sc] = ASTAT[app.status] ?? [formatStatus(app.status || ""), "var(--hx-A7B3C2)"];
               const tags = [
-                app.resumeUrl && { l: "CV", fg: "#6EB2FF" },
-                app.linkedinUrl && { l: "LinkedIn", fg: "#6EB2FF" },
-                app.portfolioUrl && { l: "Portfolio", fg: "#9B7EDE" },
-                app.notes && { l: "Notes", fg: "#E9BD62" },
+                app.resumeUrl && { l: "CV", fg: "var(--hx-6EB2FF)" },
+                app.linkedinUrl && { l: "LinkedIn", fg: "var(--hx-6EB2FF)" },
+                app.portfolioUrl && { l: "Portfolio", fg: "var(--hx-9B7EDE)" },
+                app.notes && { l: "Notes", fg: "var(--hx-E9BD62)" },
               ].filter(Boolean) as { l: string; fg: string }[];
               return (
                 <button
                   key={app.id}
                   type="button"
                   onClick={() => openAppReview(app)}
-                  className="w-full grid [grid-template-columns:44px_minmax(0,1fr)] sm:[grid-template-columns:44px_minmax(0,1fr)_auto] gap-x-4 gap-y-2 items-center px-4 py-[18px] sm:px-6 border-b border-[#132430] last:border-b-0 text-left hover:bg-[#0A1620] transition-colors"
-                  style={{ background: on ? "rgba(233,189,98,.07)" : undefined, boxShadow: `inset 3px 0 0 ${on ? "#E9BD62" : "transparent"}` }}
+                  className="w-full grid [grid-template-columns:44px_minmax(0,1fr)] sm:[grid-template-columns:44px_minmax(0,1fr)_auto] gap-x-4 gap-y-2 items-center px-4 py-[18px] sm:px-6 border-b border-[color:var(--hx-132430)] last:border-b-0 text-left hover:bg-[color:var(--hx-0A1620)] transition-colors"
+                  style={{ background: on ? "rgba(233,189,98,.07)" : undefined, boxShadow: `inset 3px 0 0 ${on ? "var(--hx-E9BD62)" : "transparent"}` }}
                 >
                   <span
                     className="relative h-11 w-11 rounded-full grid place-items-center text-[14px] font-extrabold border"
@@ -423,7 +423,7 @@ export default function JobsPage() {
                   >
                     {initials(app.applicantName)}
                     {app.status === "RECEIVED" && (
-                      <i title="New" className="absolute top-0 right-0 h-[11px] w-[11px] rounded-full bg-[#E5484D] border-2 border-ds-card" />
+                      <i title="New" className="absolute top-0 right-0 h-[11px] w-[11px] rounded-full bg-[color:var(--hx-E5484D)] border-2 border-ds-card" />
                     )}
                   </span>
                   <span className="min-w-0 flex flex-col gap-1">
@@ -437,9 +437,9 @@ export default function JobsPage() {
                     </span>
                     <span className="flex items-center gap-1.5 flex-wrap mt-0.5">
                       {tags.map((t) => (
-                        <span key={t.l} className="h-5 px-2 rounded-[6px] bg-[#0F1F2B] border border-[#1F3442] text-[10.5px] font-semibold inline-flex items-center" style={{ color: t.fg }}>{t.l}</span>
+                        <span key={t.l} className="h-5 px-2 rounded-[6px] bg-[color:var(--hx-0F1F2B)] border border-[color:var(--hx-1F3442)] text-[10.5px] font-semibold inline-flex items-center" style={{ color: t.fg }}>{t.l}</span>
                       ))}
-                      <span className="text-[11px] text-[#4A6275] ml-1">{fdt(app.createdAt)}</span>
+                      <span className="text-[11px] text-[color:var(--hx-4A6275)] ml-1">{fdt(app.createdAt)}</span>
                     </span>
                   </span>
                   <span className="col-start-2 sm:col-start-auto">
@@ -457,21 +457,21 @@ export default function JobsPage() {
         <section className="grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(min(300px,100%),1fr))]">
           {!data ? (
             Array.from({ length: 3 }).map((_, i) => (
-              <div key={i} className="h-[250px] rounded-[18px] bg-ds-card border border-[#2A4658] motion-safe:animate-pulse" />
+              <div key={i} className="h-[250px] rounded-[18px] bg-ds-card border border-[color:var(--hx-2A4658)] motion-safe:animate-pulse" />
             ))
           ) : jobs.length === 0 ? (
-            <div className="col-span-full rounded-[18px] border border-[#2A4658] bg-ds-card shadow-[0_12px_32px_rgba(0,0,0,.32)] py-14 px-5 flex flex-col items-center gap-2.5 text-ds-t3 text-[13px]">
+            <div className="col-span-full rounded-[18px] border border-[color:var(--hx-2A4658)] bg-ds-card shadow-[0_12px_32px_rgba(0,0,0,.32)] py-14 px-5 flex flex-col items-center gap-2.5 text-ds-t3 text-[13px]">
               <Icon d={IC.brief} className="h-[30px] w-[30px]" sw={1.5} />
               No job listings yet.
             </div>
           ) : (
             jobs.map((job: any) => {
-              const [sl, sc] = JSTAT[job.status] ?? [formatStatus(job.status || ""), "#A7B3C2"];
+              const [sl, sc] = JSTAT[job.status] ?? [formatStatus(job.status || ""), "var(--hx-A7B3C2)"];
               const count = job._count?.applications;
               return (
                 <div
                   key={job.id}
-                  className="relative rounded-[18px] border border-[#2A4658] bg-ds-card shadow-[0_12px_32px_rgba(0,0,0,.32)] px-[22px] pt-[22px] pb-[18px] flex flex-col gap-4 overflow-hidden"
+                  className="relative rounded-[18px] border border-[color:var(--hx-2A4658)] bg-ds-card shadow-[0_12px_32px_rgba(0,0,0,.32)] px-[22px] pt-[22px] pb-[18px] flex flex-col gap-4 overflow-hidden"
                   style={{ opacity: job.status === "CLOSED" ? 0.65 : 1 }}
                 >
                   <span aria-hidden="true" className="absolute left-0 right-0 top-0 h-[2px] opacity-70" style={{ background: sc }} />
@@ -486,17 +486,17 @@ export default function JobsPage() {
                     <div className="mt-1.5 text-[12.5px] text-ds-t2">{job.department || "—"}{job.experience ? ` · ${job.experience}` : ""}</div>
                   </div>
                   <div className="flex flex-wrap gap-1.5">
-                    <span className="inline-flex items-center gap-1.5 h-[26px] px-2.5 rounded-full bg-ds-inset border border-[#1F3442] text-ds-t5 text-[11.5px] font-semibold">
+                    <span className="inline-flex items-center gap-1.5 h-[26px] px-2.5 rounded-full bg-ds-inset border border-[color:var(--hx-1F3442)] text-ds-t5 text-[11.5px] font-semibold">
                       <MapPin className="h-[11px] w-[11px]" strokeWidth={2} />{job.location || "—"}
                     </span>
-                    <span className="inline-flex items-center gap-1.5 h-[26px] px-2.5 rounded-full bg-ds-inset border border-[#1F3442] text-ds-t5 text-[11.5px] font-semibold">
+                    <span className="inline-flex items-center gap-1.5 h-[26px] px-2.5 rounded-full bg-ds-inset border border-[color:var(--hx-1F3442)] text-ds-t5 text-[11.5px] font-semibold">
                       <Clock className="h-[11px] w-[11px]" strokeWidth={2} />{job.type ? formatStatus(job.type) : "—"}
                     </span>
                     {job.salary && (
-                      <span className="inline-flex items-center h-[26px] px-2.5 rounded-full bg-ds-inset border border-[#1F3442] text-ds-gold text-[11.5px] font-bold">{job.salary}</span>
+                      <span className="inline-flex items-center h-[26px] px-2.5 rounded-full bg-ds-inset border border-[color:var(--hx-1F3442)] text-ds-gold text-[11.5px] font-bold">{job.salary}</span>
                     )}
                   </div>
-                  <div className="flex items-center justify-between flex-wrap gap-x-2.5 gap-y-3 pt-3.5 border-t border-[#1A2C38] mt-auto">
+                  <div className="flex items-center justify-between flex-wrap gap-x-2.5 gap-y-3 pt-3.5 border-t border-[color:var(--hx-1A2C38)] mt-auto">
                     <button
                       type="button"
                       onClick={() => { setAppJobFilter(job.id); setAppStatusFilter(""); setView("applications"); }}
@@ -508,19 +508,19 @@ export default function JobsPage() {
                     <span className="flex items-center gap-1.5">
                       <button type="button" onClick={() => startEdit(job)} className={`${GHOST_SM} hover:border-[rgba(233,189,98,.5)] hover:text-ds-gold`}>Edit</button>
                       {job.status === "ACTIVE" ? (
-                        <button type="button" onClick={() => toggleJobStatus(job.id, "PAUSED")} className={`${GHOST_SM} hover:border-[#2A4658] hover:text-ds-text`}>Pause</button>
+                        <button type="button" onClick={() => toggleJobStatus(job.id, "PAUSED")} className={`${GHOST_SM} hover:border-[color:var(--hx-2A4658)] hover:text-ds-text`}>Pause</button>
                       ) : job.status !== "CLOSED" ? (
-                        <button type="button" onClick={() => toggleJobStatus(job.id, "ACTIVE")} className={`${GHOST_SM} hover:border-[#2A4658] hover:text-ds-text`}>Activate</button>
+                        <button type="button" onClick={() => toggleJobStatus(job.id, "ACTIVE")} className={`${GHOST_SM} hover:border-[color:var(--hx-2A4658)] hover:text-ds-text`}>Activate</button>
                       ) : null}
                       {job.status === "ACTIVE" && (
-                        <button type="button" onClick={() => toggleJobStatus(job.id, "CLOSED")} className={`${GHOST_SM} hover:border-[rgba(229,72,77,.5)] hover:text-[#FB7185]`}>Close</button>
+                        <button type="button" onClick={() => toggleJobStatus(job.id, "CLOSED")} className={`${GHOST_SM} hover:border-[rgba(229,72,77,.5)] hover:text-[color:var(--hx-FB7185)]`}>Close</button>
                       )}
                       <button
                         type="button"
                         onClick={() => { setDeleteError(""); setDeleteJobId(job.id); }}
                         title="Delete"
                         aria-label={`Delete ${job.title}`}
-                        className="h-8 w-8 rounded-full border border-ds-line2 text-ds-t3 grid place-items-center hover:text-[#FB7185] hover:border-[rgba(229,72,77,.5)] transition-colors"
+                        className="h-8 w-8 rounded-full border border-ds-line2 text-ds-t3 grid place-items-center hover:text-[color:var(--hx-FB7185)] hover:border-[rgba(229,72,77,.5)] transition-colors"
                       >
                         <Trash2 className="h-[13px] w-[13px]" />
                       </button>
@@ -536,7 +536,7 @@ export default function JobsPage() {
       {/* Application review drawer */}
       {selectedApp && (() => {
         const hue = hueOf(selectedApp.applicantName || "");
-        const [sl, sc] = ASTAT[selectedApp.status] ?? [formatStatus(selectedApp.status || ""), "#A7B3C2"];
+        const [sl, sc] = ASTAT[selectedApp.status] ?? [formatStatus(selectedApp.status || ""), "var(--hx-A7B3C2)"];
         const currentIdx = appStatusSteps.indexOf(selectedApp.status);
         const facts = [
           { d: IC.mail, v: selectedApp.applicantEmail },
@@ -545,9 +545,9 @@ export default function JobsPage() {
           selectedApp.currentCompany && { d: IC.bldg, v: selectedApp.currentCompany },
         ].filter(Boolean) as { d: string; v: string }[];
         const links = [
-          { href: selectedApp.resumeUrl ? `${API_BASE}${selectedApp.resumeUrl}` : null, on: "View CV", off: "No Resume", d: IC.cv, c: "#FB7185" },
-          { href: selectedApp.linkedinUrl || null, on: "LinkedIn", off: "No LinkedIn", d: IC.li, c: "#6EB2FF" },
-          { href: selectedApp.portfolioUrl || null, on: "Portfolio", off: "No Portfolio", d: IC.globe, c: "#9B7EDE" },
+          { href: selectedApp.resumeUrl ? `${API_BASE}${selectedApp.resumeUrl}` : null, on: "View CV", off: "No Resume", d: IC.cv, c: "var(--hx-FB7185)" },
+          { href: selectedApp.linkedinUrl || null, on: "LinkedIn", off: "No LinkedIn", d: IC.li, c: "var(--hx-6EB2FF)" },
+          { href: selectedApp.portfolioUrl || null, on: "Portfolio", off: "No Portfolio", d: IC.globe, c: "var(--hx-9B7EDE)" },
         ];
         return (
           <ModalPortal>
@@ -580,14 +580,14 @@ export default function JobsPage() {
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                     {facts.map((x, i) => (
-                      <span key={i} className="flex items-center gap-2.5 px-3.5 py-3 rounded-[12px] bg-ds-inset border border-[#1A2C38] text-[12.5px] text-ds-t5 min-w-0">
+                      <span key={i} className="flex items-center gap-2.5 px-3.5 py-3 rounded-[12px] bg-ds-inset border border-[color:var(--hx-1A2C38)] text-[12.5px] text-ds-t5 min-w-0">
                         <span className="text-ds-t3 flex"><Icon d={x.d} className="h-3.5 w-3.5" /></span>
                         <span className="truncate" title={x.v}>{x.v || "—"}</span>
                       </span>
                     ))}
                   </div>
 
-                  <div className="p-[18px] rounded-[16px] bg-ds-inset border border-[#1A2C38]">
+                  <div className="p-[18px] rounded-[16px] bg-ds-inset border border-[color:var(--hx-1A2C38)]">
                     <div className="text-[11px] font-bold tracking-[.14em] uppercase text-ds-t3 mb-3">Application Pipeline</div>
                     <div className="grid grid-cols-3 sm:grid-cols-6 gap-1">
                       {appStatusSteps.map((step, i) => {
@@ -600,9 +600,9 @@ export default function JobsPage() {
                             onClick={() => updateAppStatus(selectedApp.id, step)}
                             className="h-[34px] rounded-[8px] border text-[11px] font-bold whitespace-nowrap overflow-hidden text-ellipsis px-1 transition-colors"
                             style={{
-                              background: cur ? "#E9BD62" : act ? "rgba(233,189,98,.18)" : "transparent",
-                              color: cur ? "#060D14" : act ? "#F4F6F8" : "#738395",
-                              borderColor: cur ? "#E9BD62" : act ? "rgba(233,189,98,.35)" : "#223543",
+                              background: cur ? "var(--hx-E9BD62)" : act ? "rgba(233,189,98,.18)" : "transparent",
+                              color: cur ? "var(--hx-060D14)" : act ? "var(--hx-F4F6F8)" : "var(--hx-738395)",
+                              borderColor: cur ? "var(--hx-E9BD62)" : act ? "rgba(233,189,98,.35)" : "var(--hx-223543)",
                             }}
                           >
                             {ASTAT[step][0]}
@@ -613,7 +613,7 @@ export default function JobsPage() {
                     <div className="flex items-center justify-between gap-2.5 mt-3.5 flex-wrap">
                       <StatusChip label={sl} color={sc} />
                       {selectedApp.status !== "REJECTED" ? (
-                        <button type="button" onClick={() => updateAppStatus(selectedApp.id, "REJECTED")} className="inline-flex items-center gap-1.5 text-[#FB7185] text-[12.5px] font-semibold hover:opacity-80">
+                        <button type="button" onClick={() => updateAppStatus(selectedApp.id, "REJECTED")} className="inline-flex items-center gap-1.5 text-[color:var(--hx-FB7185)] text-[12.5px] font-semibold hover:opacity-80">
                           <Icon d={IC.reject} className="h-3.5 w-3.5" />Reject Applicant
                         </button>
                       ) : (
@@ -645,7 +645,7 @@ export default function JobsPage() {
                           <Icon d={l.d} className="h-[18px] w-[18px]" sw={1.8} />{l.on}
                         </a>
                       ) : (
-                        <div key={l.on} className="flex flex-col items-center gap-2 px-2.5 py-4 rounded-[14px] border border-[#1A2C38] bg-ds-inset text-[#4A6275] text-[12.5px] font-semibold text-center opacity-70">
+                        <div key={l.on} className="flex flex-col items-center gap-2 px-2.5 py-4 rounded-[14px] border border-[color:var(--hx-1A2C38)] bg-ds-inset text-[color:var(--hx-4A6275)] text-[12.5px] font-semibold text-center opacity-70">
                           <Icon d={l.d} className="h-[18px] w-[18px]" sw={1.8} />{l.off}
                         </div>
                       )
@@ -655,7 +655,7 @@ export default function JobsPage() {
                   {selectedApp.coverLetter && (
                     <div>
                       <div className="text-[11px] font-bold tracking-[.14em] uppercase text-ds-t3 mb-2.5">Cover Letter</div>
-                      <div className="px-[18px] py-4 rounded-[14px] bg-ds-inset border border-[#1A2C38] text-[13.5px] leading-[1.65] text-[#C9D2DC] whitespace-pre-line break-words">
+                      <div className="px-[18px] py-4 rounded-[14px] bg-ds-inset border border-[color:var(--hx-1A2C38)] text-[13.5px] leading-[1.65] text-[color:var(--hx-C9D2DC)] whitespace-pre-line break-words">
                         {selectedApp.coverLetter}
                       </div>
                     </div>
@@ -698,7 +698,7 @@ export default function JobsPage() {
                 aria-label="Delete job listing?"
                 className="w-full max-w-[380px] bg-ds-card border border-ds-line2 rounded-[16px] p-6 shadow-[0_20px_50px_rgba(0,0,0,.6)] text-ds-text"
               >
-                <div className="h-10 w-10 rounded-[11px] bg-[rgba(229,72,77,.12)] text-[#FB7185] grid place-items-center">
+                <div className="h-10 w-10 rounded-[11px] bg-[rgba(229,72,77,.12)] text-[color:var(--hx-FB7185)] grid place-items-center">
                   <Trash2 className="h-[17px] w-[17px]" />
                 </div>
                 <div className="mt-3.5 text-[15px] font-semibold">Delete job listing?</div>
@@ -710,7 +710,7 @@ export default function JobsPage() {
                   <button type="button" onClick={() => setDeleteJobId(null)} disabled={deleting} className="h-[38px] px-4 rounded-full border border-ds-line2 text-ds-t2 text-[13px] font-semibold hover:text-ds-text disabled:opacity-50">
                     Cancel
                   </button>
-                  <button type="button" onClick={confirmDeleteJob} disabled={deleting} className="h-[38px] px-[18px] rounded-full bg-[#E5484D] text-white text-[13px] font-bold disabled:opacity-60">
+                  <button type="button" onClick={confirmDeleteJob} disabled={deleting} className="h-[38px] px-[18px] rounded-full bg-[color:var(--hx-E5484D)] text-white text-[13px] font-bold disabled:opacity-60">
                     {deleting ? "Deleting..." : "Delete"}
                   </button>
                 </div>

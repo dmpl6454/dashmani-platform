@@ -31,10 +31,10 @@ interface DownloadButtonProps {
 
 function skinFor(variant: Variant) {
   if (variant === "ds")
-    return "h-[42px] !px-4 !py-0 border border-ds-line2 bg-ds-inset text-ds-t5 !text-[13px] !font-semibold whitespace-nowrap hover:border-[#2A4658] hover:text-ds-text";
+    return "h-[42px] !px-4 !py-0 border border-ds-line2 bg-ds-inset text-ds-t5 !text-[13px] !font-semibold whitespace-nowrap hover:border-[color:var(--hx-2A4658)] hover:text-ds-text";
   return variant === "dark"
-    ? "bg-[#1A1A1A] text-white shadow-[0_4px_16px_rgba(0,0,0,0.18)] hover:shadow-[0_6px_24px_rgba(0,0,0,0.22)]"
-    : "bg-white border border-[#E8E0D0] text-[#1A1A1A] hover:shadow-[0_4px_12px_rgba(0,0,0,0.08)]";
+    ? "bg-[color:var(--hx-1A1A1A)] text-white shadow-[0_4px_16px_rgba(0,0,0,0.18)] hover:shadow-[0_6px_24px_rgba(0,0,0,0.22)]"
+    : "bg-white border border-[color:var(--hx-E8E0D0)] text-[color:var(--hx-1A1A1A)] hover:shadow-[0_4px_12px_rgba(0,0,0,0.08)]";
 }
 
 const BASE =
@@ -92,7 +92,7 @@ function DownloadButton({
         )}
         {loading ? busyLabel : idleLabel}
       </button>
-      {error && <span className={`text-xs max-w-[220px] text-right ${variant === "ds" ? "text-[#FB7185]" : "text-red-600"}`}>{error}</span>}
+      {error && <span className={`text-xs max-w-[220px] text-right ${variant === "ds" ? "text-[color:var(--hx-FB7185)]" : "text-red-600"}`}>{error}</span>}
     </div>
   );
 }

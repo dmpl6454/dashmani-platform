@@ -7,9 +7,9 @@ import useSWR from "swr";
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/v1";
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-const HUES = ["#238BFF", "#E9BD62", "#9B7EDE", "#00D7A0", "#FB7185", "#6EB2FF"];
+const HUES = ["var(--hx-238BFF)", "var(--hx-E9BD62)", "var(--hx-9B7EDE)", "var(--hx-00D7A0)", "var(--hx-FB7185)", "var(--hx-6EB2FF)"];
 const rgba = (hex: string, a: number) => {
-  const n = parseInt(hex.slice(1), 16);
+  if (hex.startsWith("var(")) return `color-mix(in srgb, ${hex} ${Math.round(a * 100)}%, transparent)`; const n = parseInt(hex.slice(1), 16);
   return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`;
 };
 const hash = (s: string) => {
@@ -128,7 +128,7 @@ export default function OfferLettersPage() {
           type="button"
           onClick={() => { setShowForm((p) => !p); setFormError(null); }}
           aria-expanded={showForm}
-          className="inline-flex items-center gap-2 h-[46px] px-[22px] rounded-full bg-ds-gold text-[#060D14] text-[14px] font-bold whitespace-nowrap hover:bg-[#F4D58C] transition-colors"
+          className="inline-flex items-center gap-2 h-[46px] px-[22px] rounded-full bg-ds-gold text-[color:var(--hx-060D14)] text-[14px] font-bold whitespace-nowrap hover:bg-[color:var(--hx-F4D58C)] transition-colors"
         >
           <Icon d={showForm ? "M18 15l-6-6-6 6" : "M12 5v14M5 12h14"} className="h-[15px] w-[15px]" sw={2.4} />
           {showForm ? "Close Form" : "Generate Offer Letter"}
@@ -139,9 +139,9 @@ export default function OfferLettersPage() {
       {showForm && (
         <form
           onSubmit={handleSubmit}
-          className="relative mb-4 rounded-[18px] border border-[#2A4658] bg-ds-card px-5 sm:px-[26px] py-6 shadow-[0_12px_32px_rgba(0,0,0,.35)] overflow-hidden"
+          className="relative mb-4 rounded-[18px] border border-[color:var(--hx-2A4658)] bg-ds-card px-5 sm:px-[26px] py-6 shadow-[0_12px_32px_rgba(0,0,0,.35)] overflow-hidden"
         >
-          <span aria-hidden="true" className="absolute left-0 right-0 top-0 h-px opacity-70 bg-[linear-gradient(90deg,transparent,#E9BD62_30%,#E9BD62_70%,transparent)]" />
+          <span aria-hidden="true" className="absolute left-0 right-0 top-0 h-px opacity-70 bg-[linear-gradient(90deg,transparent,var(--hx-E9BD62)_30%,var(--hx-E9BD62)_70%,transparent)]" />
           <div className="flex items-center gap-2.5 mb-5">
             <span className="h-[34px] w-[34px] rounded-[10px] bg-[rgba(233,189,98,.12)] text-ds-gold grid place-items-center shrink-0">
               <Icon d={DOC_ICON} className="h-[15px] w-[15px]" />
@@ -195,7 +195,7 @@ export default function OfferLettersPage() {
             </label>
           </div>
           {formError && (
-            <div role="alert" className="mt-4 px-3.5 py-2.5 rounded-[10px] bg-[rgba(229,72,77,.08)] border border-[rgba(229,72,77,.3)] text-[#FB7185] text-[12.5px]">
+            <div role="alert" className="mt-4 px-3.5 py-2.5 rounded-[10px] bg-[rgba(229,72,77,.08)] border border-[rgba(229,72,77,.3)] text-[color:var(--hx-FB7185)] text-[12.5px]">
               {formError}
             </div>
           )}
@@ -204,7 +204,7 @@ export default function OfferLettersPage() {
               type="submit"
               disabled={submitting}
               aria-live="polite"
-              className="inline-flex items-center gap-2 h-11 px-[22px] rounded-full bg-ds-gold text-[#060D14] text-[14px] font-bold whitespace-nowrap hover:bg-[#F4D58C] disabled:opacity-60 transition-colors"
+              className="inline-flex items-center gap-2 h-11 px-[22px] rounded-full bg-ds-gold text-[color:var(--hx-060D14)] text-[14px] font-bold whitespace-nowrap hover:bg-[color:var(--hx-F4D58C)] disabled:opacity-60 transition-colors"
             >
               {submitting ? "Generating..." : "Generate Offer Letter"}
             </button>
@@ -213,7 +213,7 @@ export default function OfferLettersPage() {
       )}
 
       {/* Table */}
-      <section className="rounded-[16px] border border-[#2A4658] bg-ds-card overflow-hidden shadow-[0_12px_32px_rgba(0,0,0,.35)]">
+      <section className="rounded-[16px] border border-[color:var(--hx-2A4658)] bg-ds-card overflow-hidden shadow-[0_12px_32px_rgba(0,0,0,.35)]">
         <div className="overflow-x-auto [color-scheme:dark]">
           <div className="min-w-[600px]">
             <div className={`${GRID} h-[52px] px-5 bg-ds-inset border-b border-ds-line2 text-[11px] font-semibold tracking-[.08em] uppercase text-ds-t3 whitespace-nowrap`}>
@@ -221,7 +221,7 @@ export default function OfferLettersPage() {
             </div>
             {isLoading && !lettersData ? (
               Array.from({ length: 4 }).map((_, i) => (
-                <div key={i} className={`${GRID} h-[80px] px-5 border-b border-[#132430]`}>
+                <div key={i} className={`${GRID} h-[80px] px-5 border-b border-[color:var(--hx-132430)]`}>
                   <div className="flex items-center gap-3">
                     <div className="h-[38px] w-[38px] rounded-full bg-ds-hover motion-safe:animate-pulse" />
                     <div className="h-3.5 w-28 rounded-[4px] bg-ds-hover motion-safe:animate-pulse" />
@@ -245,7 +245,7 @@ export default function OfferLettersPage() {
                 return (
                   <div
                     key={letter.id}
-                    className={`${GRID} min-h-[80px] py-3 px-5 border-b border-[#132430] last:border-b-0 text-[13.5px] tabular-nums hover:bg-[#0A1620] transition-colors`}
+                    className={`${GRID} min-h-[80px] py-3 px-5 border-b border-[color:var(--hx-132430)] last:border-b-0 text-[13.5px] tabular-nums hover:bg-[color:var(--hx-0A1620)] transition-colors`}
                   >
                     <span className="flex items-center gap-3 min-w-0">
                       <span

@@ -11,19 +11,19 @@ import { usePageTitle } from "@/lib/hooks/use-page-title";
 import { toTitleCase } from "@dashmani/shared";
 
 const TYPES: Record<string, { label: string; color: string; icon: any }> = {
-  DEPARTMENT: { label: "Department", color: "#E9BD62", icon: Building2 },
-  TEAM: { label: "Team", color: "#238BFF", icon: Users },
-  SUB_TEAM: { label: "Sub team", color: "#00D7A0", icon: Users },
+  DEPARTMENT: { label: "Department", color: "var(--hx-E9BD62)", icon: Building2 },
+  TEAM: { label: "Team", color: "var(--hx-238BFF)", icon: Users },
+  SUB_TEAM: { label: "Sub team", color: "var(--hx-00D7A0)", icon: Users },
 };
 const STATUS: Record<string, { label: string; color: string }> = {
-  ACTIVE: { label: "Active", color: "#00D7A0" },
-  ONBOARDING: { label: "Onboarding", color: "#FBBF24" },
-  INACTIVE: { label: "Inactive", color: "#738395" },
+  ACTIVE: { label: "Active", color: "var(--hx-00D7A0)" },
+  ONBOARDING: { label: "Onboarding", color: "var(--hx-FBBF24)" },
+  INACTIVE: { label: "Inactive", color: "var(--hx-738395)" },
 };
-const AV_BG = ["#10222E", "#0E2A22", "#1B1630", "#2A2410", "#2A1116"];
-const AV_FG = ["#238BFF", "#34D399", "#9B7EDE", "#E9BD62", "#FB7185"];
+const AV_BG = ["var(--hx-10222E)", "var(--hx-0E2A22)", "var(--hx-1B1630)", "var(--hx-2A2410)", "var(--hx-2A1116)"];
+const AV_FG = ["var(--hx-238BFF)", "var(--hx-34D399)", "var(--hx-9B7EDE)", "var(--hx-E9BD62)", "var(--hx-FB7185)"];
 const hash = (s: string) => { let h = 0; for (let i = 0; i < s.length; i++) h = s.charCodeAt(i) + ((h << 5) - h); return Math.abs(h); };
-const rgba = (hex: string, a: number) => { const n = parseInt(hex.slice(1), 16); return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`; };
+const rgba = (hex: string, a: number) => { if (hex.startsWith("var(")) return `color-mix(in srgb, ${hex} ${Math.round(a * 100)}%, transparent)`; const n = parseInt(hex.slice(1), 16); return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`; };
 const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
 
 const fieldLabel = "flex flex-col gap-1.5 text-[10.5px] text-ds-t3 font-semibold tracking-[.08em] uppercase";
@@ -171,10 +171,10 @@ export default function TeamsPage() {
   }
   const totalMembers = memberIds.size || summed;
   const kpis = [
-    { label: "Departments", value: allUnits.filter((u) => u.type === "DEPARTMENT").length, color: "#E9BD62", icon: Building2, note: "departments" },
-    { label: "Teams", value: allUnits.filter((u) => u.type === "TEAM").length, color: "#238BFF", icon: Users, note: "teams" },
-    { label: "Sub Teams", value: allUnits.filter((u) => u.type === "SUB_TEAM").length, color: "#00D7A0", icon: Users, note: "nested" },
-    { label: "Total Members", value: totalMembers, color: "#9B7EDE", icon: Users, note: "unique people" },
+    { label: "Departments", value: allUnits.filter((u) => u.type === "DEPARTMENT").length, color: "var(--hx-E9BD62)", icon: Building2, note: "departments" },
+    { label: "Teams", value: allUnits.filter((u) => u.type === "TEAM").length, color: "var(--hx-238BFF)", icon: Users, note: "teams" },
+    { label: "Sub Teams", value: allUnits.filter((u) => u.type === "SUB_TEAM").length, color: "var(--hx-00D7A0)", icon: Users, note: "nested" },
+    { label: "Total Members", value: totalMembers, color: "var(--hx-9B7EDE)", icon: Users, note: "unique people" },
   ];
 
   function renderUnit(team: any, depth = 0): React.ReactNode {
@@ -194,8 +194,8 @@ export default function TeamsPage() {
           className="flex items-center gap-3 px-3 py-2.5 rounded-[8px] border"
           style={{
             marginLeft: depth * 28,
-            background: isSel ? "rgba(35,139,255,.08)" : isOpen ? "#0B1720" : "#0A1520",
-            borderColor: isSel ? "rgba(35,139,255,.4)" : isOpen ? "#223543" : "#182C39",
+            background: isSel ? "rgba(35,139,255,.08)" : isOpen ? "var(--hx-0B1720)" : "var(--hx-0A1520)",
+            borderColor: isSel ? "rgba(35,139,255,.4)" : isOpen ? "var(--hx-223543)" : "var(--hx-182C39)",
           }}
         >
           <button
@@ -204,7 +204,7 @@ export default function TeamsPage() {
             aria-pressed={isSel}
             aria-label={`${isSel ? "Deselect" : "Select"} ${team.name}`}
             className="h-4 w-4 shrink-0 rounded-[4px] border-[1.5px] grid place-items-center text-white"
-            style={{ borderColor: isSel ? "#238BFF" : "#33506A", background: isSel ? "#238BFF" : "transparent" }}
+            style={{ borderColor: isSel ? "var(--hx-238BFF)" : "var(--hx-33506A)", background: isSel ? "var(--hx-238BFF)" : "transparent" }}
           >
             {isSel && <Check className="h-2.5 w-2.5" strokeWidth={3} />}
           </button>
@@ -237,7 +237,7 @@ export default function TeamsPage() {
             <button type="button" onClick={() => setAssignModal({ teamId: team.id, teamName: team.name })} title="Add member" aria-label={`Add member to ${team.name}`} className={`${iconBtn} hover:border-ds-gold/55 hover:text-ds-gold`}>
               <UserPlus className="h-[13px] w-[13px]" strokeWidth={1.8} />
             </button>
-            <button type="button" onClick={() => handleDelete(team.id)} title="Delete" aria-label={`Delete ${team.name}`} className={`${iconBtn} hover:border-[rgba(229,72,77,.6)] hover:text-[#FB7185]`}>
+            <button type="button" onClick={() => handleDelete(team.id)} title="Delete" aria-label={`Delete ${team.name}`} className={`${iconBtn} hover:border-[rgba(229,72,77,.6)] hover:text-[color:var(--hx-FB7185)]`}>
               <Trash2 className="h-[13px] w-[13px]" strokeWidth={1.8} />
             </button>
           </span>
@@ -261,10 +261,10 @@ export default function TeamsPage() {
                     <i className="h-[5px] w-[5px] rounded-full" style={{ background: st.color }} />{st.label}
                   </span>
                   <span className="flex gap-1 shrink-0">
-                    <button type="button" onClick={() => { setMoveModal({ memberId: m.id, memberName: m.name }); setMoveTargetTeamId(""); }} title="Add to another team" aria-label={`Add ${m.name} to another team`} className="h-6 w-6 rounded-[5px] border border-ds-line2 text-ds-t3 grid place-items-center transition-colors hover:border-[rgba(35,139,255,.55)] hover:text-[#6EB2FF]">
+                    <button type="button" onClick={() => { setMoveModal({ memberId: m.id, memberName: m.name }); setMoveTargetTeamId(""); }} title="Add to another team" aria-label={`Add ${m.name} to another team`} className="h-6 w-6 rounded-[5px] border border-ds-line2 text-ds-t3 grid place-items-center transition-colors hover:border-[rgba(35,139,255,.55)] hover:text-[color:var(--hx-6EB2FF)]">
                       <ArrowRightLeft className="h-3 w-3" strokeWidth={1.8} />
                     </button>
-                    <button type="button" onClick={() => handleRemoveMember(team.id, m.id)} title="Remove from this team" aria-label={`Remove ${m.name} from ${team.name}`} className="h-6 w-6 rounded-[5px] border border-ds-line2 text-ds-t3 grid place-items-center transition-colors hover:border-[rgba(229,72,77,.6)] hover:text-[#FB7185]">
+                    <button type="button" onClick={() => handleRemoveMember(team.id, m.id)} title="Remove from this team" aria-label={`Remove ${m.name} from ${team.name}`} className="h-6 w-6 rounded-[5px] border border-ds-line2 text-ds-t3 grid place-items-center transition-colors hover:border-[rgba(229,72,77,.6)] hover:text-[color:var(--hx-FB7185)]">
                       <UserMinus className="h-3 w-3" strokeWidth={1.8} />
                     </button>
                   </span>
@@ -343,7 +343,7 @@ export default function TeamsPage() {
               <button type="submit" disabled={creating} className={`${goldBtn} px-[18px]`}>{creating ? "Creating…" : "Create"}</button>
             </div>
           </form>
-          {createError && <p id="team-create-error" role="alert" className="mt-2.5 text-[11.5px] text-[#FB7185]">{createError}</p>}
+          {createError && <p id="team-create-error" role="alert" className="mt-2.5 text-[11.5px] text-[color:var(--hx-FB7185)]">{createError}</p>}
         </section>
       )}
 
@@ -371,7 +371,7 @@ export default function TeamsPage() {
       {/* Action error */}
       {actionError && (
         <section role="alert" className="flex items-center gap-3 mt-3.5 px-4 py-2.5 rounded-[8px] border border-[rgba(229,72,77,.4)] bg-[rgba(229,72,77,.08)]">
-          <span className="flex-1 text-[12.5px] text-[#FB7185]">{actionError}</span>
+          <span className="flex-1 text-[12.5px] text-[color:var(--hx-FB7185)]">{actionError}</span>
           <button type="button" onClick={() => setActionError(null)} aria-label="Dismiss" className="text-ds-t3 hover:text-ds-text"><X className="h-4 w-4" /></button>
         </section>
       )}
@@ -379,9 +379,9 @@ export default function TeamsPage() {
       {/* Bulk selection bar */}
       {selected.size > 0 && (
         <section className="flex items-center gap-3 flex-wrap mt-3.5 px-4 py-2.5 rounded-[8px] border border-[rgba(35,139,255,.35)] bg-[rgba(35,139,255,.08)]">
-          <span className="flex-1 text-[12.5px] font-semibold text-[#6EB2FF]">{plural(selected.size, "team")} selected</span>
+          <span className="flex-1 text-[12.5px] font-semibold text-[color:var(--hx-6EB2FF)]">{plural(selected.size, "team")} selected</span>
           <button type="button" onClick={() => setSelected(new Set())} className="h-7 px-3 rounded-[14px] border border-ds-line2 text-ds-t5 text-[11px] font-semibold hover:text-ds-text">Clear</button>
-          <button type="button" onClick={handleBulkDelete} disabled={bulkDeleting} className="inline-flex items-center gap-1.5 h-7 px-3.5 rounded-[14px] bg-[#E5484D] text-white text-[11px] font-bold whitespace-nowrap disabled:opacity-60">
+          <button type="button" onClick={handleBulkDelete} disabled={bulkDeleting} className="inline-flex items-center gap-1.5 h-7 px-3.5 rounded-[14px] bg-[color:var(--hx-E5484D)] text-white text-[11px] font-bold whitespace-nowrap disabled:opacity-60">
             <Trash2 className="h-3 w-3" strokeWidth={1.8} />
             {bulkDeleting ? "Deleting…" : `Delete selected (${selected.size})`}
           </button>

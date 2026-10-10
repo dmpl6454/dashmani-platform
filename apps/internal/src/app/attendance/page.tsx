@@ -15,21 +15,21 @@ const DOW = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "
 
 // Mockup palette.
 const STATUS: Record<string, { label: string; color: string }> = {
-  PRESENT:  { label: "Present",  color: "#00D7A0" },
-  LATE:     { label: "Late",     color: "#E9BD62" },
-  ABSENT:   { label: "Absent",   color: "#FB7185" },
-  HALF_DAY: { label: "Half Day", color: "#6EB2FF" },
-  LEAVE:    { label: "Leave",    color: "#9B7EDE" },
+  PRESENT:  { label: "Present",  color: "var(--hx-00D7A0)" },
+  LATE:     { label: "Late",     color: "var(--hx-E9BD62)" },
+  ABSENT:   { label: "Absent",   color: "var(--hx-FB7185)" },
+  HALF_DAY: { label: "Half Day", color: "var(--hx-6EB2FF)" },
+  LEAVE:    { label: "Leave",    color: "var(--hx-9B7EDE)" },
 };
 const STATUS_OPTIONS = ["PRESENT", "LATE", "ABSENT", "HALF_DAY", "LEAVE"];
-const HUES = ["#238BFF", "#E9BD62", "#9B7EDE", "#00D7A0", "#FB7185", "#6EB2FF"];
+const HUES = ["var(--hx-238BFF)", "var(--hx-E9BD62)", "var(--hx-9B7EDE)", "var(--hx-00D7A0)", "var(--hx-FB7185)", "var(--hx-6EB2FF)"];
 const hash = (s: string) => {
   let h = 0;
   for (let i = 0; i < s.length; i++) h = s.charCodeAt(i) + ((h << 5) - h);
   return Math.abs(h);
 };
 const rgba = (hex: string, a: number) => {
-  const n = parseInt(hex.slice(1), 16);
+  if (hex.startsWith("var(")) return `color-mix(in srgb, ${hex} ${Math.round(a * 100)}%, transparent)`; const n = parseInt(hex.slice(1), 16);
   return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`;
 };
 const initials = (name: string) =>
@@ -75,7 +75,7 @@ function ClockCard({ onChange }: { onChange: () => void }) {
   const checkIn: string | undefined = mine?.checkIn || local.checkIn;
   const checkOut: string | undefined = mine?.checkOut || local.checkOut;
 
-  const state = !checkIn ? { label: "Not checked in", color: "#738395" } : !checkOut ? { label: "Checked in", color: "#00D7A0" } : { label: "Day complete", color: "#6EB2FF" };
+  const state = !checkIn ? { label: "Not checked in", color: "var(--hx-738395)" } : !checkOut ? { label: "Checked in", color: "var(--hx-00D7A0)" } : { label: "Day complete", color: "var(--hx-6EB2FF)" };
   let worked = "—";
   if (checkIn && now) {
     const end = checkOut ? new Date(checkOut).getTime() : now.getTime();
@@ -105,8 +105,8 @@ function ClockCard({ onChange }: { onChange: () => void }) {
 
   const done = !!checkOut;
   return (
-    <div className="relative p-6 rounded-[16px] bg-ds-card border border-[#2A4658] overflow-hidden">
-      <span aria-hidden="true" className="absolute left-6 right-6 top-0 h-px bg-[linear-gradient(90deg,transparent,#E9BD62,transparent)] opacity-70" />
+    <div className="relative p-6 rounded-[16px] bg-ds-card border border-[color:var(--hx-2A4658)] overflow-hidden">
+      <span aria-hidden="true" className="absolute left-6 right-6 top-0 h-px bg-[linear-gradient(90deg,transparent,var(--hx-E9BD62),transparent)] opacity-70" />
       <div className="flex items-center justify-between gap-2.5">
         <span className="text-[10px] font-semibold tracking-[.18em] uppercase text-ds-t3">
           {now ? `${DOW[now.getDay()]}, ${now.getDate()} ${MONTH_NAMES[now.getMonth()]}` : "Today"}
@@ -128,14 +128,14 @@ function ClockCard({ onChange }: { onChange: () => void }) {
         <span>Worked <b className="text-ds-t5 font-semibold ml-1">{worked}</b></span>
       </div>
       {error && (
-        <div className="mt-3 px-3 py-2 rounded-[6px] bg-[rgba(229,72,77,.08)] border border-[rgba(229,72,77,.3)] text-[#FB7185] text-[12px]">{error}</div>
+        <div className="mt-3 px-3 py-2 rounded-[6px] bg-[rgba(229,72,77,.08)] border border-[rgba(229,72,77,.3)] text-[color:var(--hx-FB7185)] text-[12px]">{error}</div>
       )}
       <button
         type="button"
         onClick={punch}
         disabled={loading || done}
         className={`mt-5 w-full inline-flex items-center justify-center h-11 rounded-full border text-[13px] font-bold transition-colors disabled:opacity-50 ${
-          !checkIn ? "bg-ds-gold border-ds-gold text-[#060D14] hover:bg-[#F4D58C]" : "bg-transparent border-[#2A4658] text-ds-text hover:border-ds-gold"
+          !checkIn ? "bg-ds-gold border-ds-gold text-[color:var(--hx-060D14)] hover:bg-[color:var(--hx-F4D58C)]" : "bg-transparent border-[color:var(--hx-2A4658)] text-ds-text hover:border-ds-gold"
         }`}
       >
         {loading ? "Please wait…" : !checkIn ? "Check In" : !checkOut ? "Check Out" : "Checked out"}
@@ -175,10 +175,10 @@ export default function AttendancePage() {
   const count = (s: string) => records.filter((r) => r.status === s).length;
   const total = records.length;
   const stats = [
-    { label: "Present", value: count("PRESENT"), color: "#00D7A0" },
-    { label: "Late", value: count("LATE"), color: "#E9BD62" },
-    { label: "Absent", value: count("ABSENT"), color: "#FB7185" },
-    { label: "On Leave", value: count("LEAVE") + count("HALF_DAY"), color: "#9B7EDE", note: "leave + half day" },
+    { label: "Present", value: count("PRESENT"), color: "var(--hx-00D7A0)" },
+    { label: "Late", value: count("LATE"), color: "var(--hx-E9BD62)" },
+    { label: "Absent", value: count("ABSENT"), color: "var(--hx-FB7185)" },
+    { label: "On Leave", value: count("LEAVE") + count("HALF_DAY"), color: "var(--hx-9B7EDE)", note: "leave + half day" },
   ];
 
   useEffect(() => {
@@ -273,7 +273,7 @@ export default function AttendancePage() {
         <button
           type="button"
           onClick={openAdd}
-          className="inline-flex items-center gap-[7px] h-10 px-5 rounded-full bg-ds-gold text-[#060D14] text-[13px] font-bold whitespace-nowrap hover:bg-[#F4D58C]"
+          className="inline-flex items-center gap-[7px] h-10 px-5 rounded-full bg-ds-gold text-[color:var(--hx-060D14)] text-[13px] font-bold whitespace-nowrap hover:bg-[color:var(--hx-F4D58C)]"
         >
           <Plus className="h-3.5 w-3.5" strokeWidth={2.4} /> Add Record
         </button>
@@ -303,13 +303,13 @@ export default function AttendancePage() {
       {/* Controls */}
       <section className="flex items-center gap-2.5 flex-wrap mt-[22px]">
         <div className="flex items-center gap-1 h-[42px] px-1.5 rounded-full bg-ds-inset border border-ds-line2">
-          <button type="button" onClick={prevMonth} aria-label="Previous month" className="h-8 w-8 rounded-full grid place-items-center text-ds-t2 hover:bg-[#132430] hover:text-ds-text">
+          <button type="button" onClick={prevMonth} aria-label="Previous month" className="h-8 w-8 rounded-full grid place-items-center text-ds-t2 hover:bg-[color:var(--hx-132430)] hover:text-ds-text">
             <ChevronLeft className="h-4 w-4" />
           </button>
           <span className="min-w-[140px] text-center text-[13.5px] font-semibold text-ds-text whitespace-nowrap">
             {MONTH_NAMES[viewMonth]} {viewYear}
           </span>
-          <button type="button" onClick={nextMonth} aria-label="Next month" className="h-8 w-8 rounded-full grid place-items-center text-ds-t2 hover:bg-[#132430] hover:text-ds-text">
+          <button type="button" onClick={nextMonth} aria-label="Next month" className="h-8 w-8 rounded-full grid place-items-center text-ds-t2 hover:bg-[color:var(--hx-132430)] hover:text-ds-text">
             <ChevronRight className="h-4 w-4" />
           </button>
         </div>
@@ -341,7 +341,7 @@ export default function AttendancePage() {
       </section>
 
       {/* Table */}
-      <section className="mt-[18px] rounded-[16px] border border-[#2A4658] bg-ds-card overflow-hidden shadow-[0_12px_32px_rgba(0,0,0,.35)]">
+      <section className="mt-[18px] rounded-[16px] border border-[color:var(--hx-2A4658)] bg-ds-card overflow-hidden shadow-[0_12px_32px_rgba(0,0,0,.35)]">
         <div className="overflow-x-auto">
           <div className="min-w-[1000px]">
             <div className={`${GRID} h-[50px] px-6 bg-ds-inset border-b border-ds-line2 text-[10.5px] font-semibold tracking-[.1em] uppercase text-ds-t3 whitespace-nowrap`}>
@@ -350,7 +350,7 @@ export default function AttendancePage() {
             </div>
             {isLoading && !data ? (
               Array.from({ length: 5 }).map((_, i) => (
-                <div key={i} className={`${GRID} h-[70px] px-6 border-b border-[#132430]`}>
+                <div key={i} className={`${GRID} h-[70px] px-6 border-b border-[color:var(--hx-132430)]`}>
                   <div className="h-3.5 w-16 rounded-[4px] bg-ds-hover motion-safe:animate-pulse" />
                   <div className="flex items-center gap-3">
                     <div className="h-9 w-9 rounded-full bg-ds-hover motion-safe:animate-pulse" />
@@ -368,14 +368,14 @@ export default function AttendancePage() {
               </div>
             ) : (
               shown.map((r: any) => {
-                const cfg = STATUS[r.status] || { label: r.status, color: "#738395" };
+                const cfg = STATUS[r.status] || { label: r.status, color: "var(--hx-738395)" };
                 const name = r.employee?.name || employees.find((x) => x.id === r.employeeId)?.name || "—";
                 const hue = HUES[hash(name) % HUES.length];
                 const key = (r.date || "").slice(0, 10);
                 const dt = key ? new Date(`${key}T00:00:00`) : null;
                 const ot = r.overtimeHours > 0 ? `${r.overtimeHours.toFixed(1)}h` : null;
                 return (
-                  <div key={r.id} className={`${GRID} h-[70px] px-6 border-b border-[#132430] last:border-b-0 text-[13px] hover:bg-[#0A1620] transition-colors tabular-nums`}>
+                  <div key={r.id} className={`${GRID} h-[70px] px-6 border-b border-[color:var(--hx-132430)] last:border-b-0 text-[13px] hover:bg-[color:var(--hx-0A1620)] transition-colors tabular-nums`}>
                     <span className="flex flex-col gap-0.5 min-w-0 leading-[1.25]">
                       <span className="font-medium text-ds-t5 whitespace-nowrap">{dt ? `${dt.getDate()} ${MONTH_SHORT[dt.getMonth()]}` : "—"}</span>
                       <span className="text-[11.5px] text-ds-t3">{dt ? DOW[dt.getDay()].slice(0, 3) : ""}</span>
@@ -400,8 +400,8 @@ export default function AttendancePage() {
                         {cfg.label}
                       </span>
                     </span>
-                    <span className={`whitespace-nowrap ${ot ? "text-ds-t5 font-semibold" : "text-[#4A6275]"}`}>{ot ?? "—"}</span>
-                    <span className={`text-[12.5px] truncate ${r.note ? "text-[#8B9AAB]" : "text-[#4A6275]"}`} title={r.note || undefined}>{r.note || "—"}</span>
+                    <span className={`whitespace-nowrap ${ot ? "text-ds-t5 font-semibold" : "text-[color:var(--hx-4A6275)]"}`}>{ot ?? "—"}</span>
+                    <span className={`text-[12.5px] truncate ${r.note ? "text-[color:var(--hx-8B9AAB)]" : "text-[color:var(--hx-4A6275)]"}`} title={r.note || undefined}>{r.note || "—"}</span>
                     <span className="flex justify-center">
                       <button
                         type="button"
@@ -434,7 +434,7 @@ export default function AttendancePage() {
                 aria-label={editRecord ? "Override Record" : "Add Manual Record"}
                 className="relative w-full max-w-[440px] max-h-[calc(100vh-32px)] overflow-y-auto bg-ds-card border border-ds-line2 rounded-[16px] p-6 shadow-[0_20px_50px_rgba(0,0,0,.6)] flex flex-col gap-4"
               >
-                <span aria-hidden="true" className="absolute left-0 right-0 top-0 h-px bg-[linear-gradient(90deg,transparent,#E9BD62_30%,#E9BD62_70%,transparent)]" />
+                <span aria-hidden="true" className="absolute left-0 right-0 top-0 h-px bg-[linear-gradient(90deg,transparent,var(--hx-E9BD62)_30%,var(--hx-E9BD62)_70%,transparent)]" />
                 <div className="flex items-center justify-between">
                   <span className="text-[16px] font-semibold text-ds-text">{editRecord ? "Override Record" : "Add Manual Record"}</span>
                   <button type="button" onClick={() => setShowModal(false)} disabled={saving} aria-label="Close" className="text-ds-t3 hover:text-ds-text">
@@ -483,11 +483,11 @@ export default function AttendancePage() {
                 </label>
 
                 {error && (
-                  <div className="px-3 py-2.5 rounded-[6px] bg-[rgba(229,72,77,.08)] border border-[rgba(229,72,77,.3)] text-[#FB7185] text-[12px]">{error}</div>
+                  <div className="px-3 py-2.5 rounded-[6px] bg-[rgba(229,72,77,.08)] border border-[rgba(229,72,77,.3)] text-[color:var(--hx-FB7185)] text-[12px]">{error}</div>
                 )}
 
                 <div className="flex gap-2 mt-1">
-                  <button type="submit" disabled={saving} className="h-10 px-5 rounded-full bg-ds-gold text-[#060D14] text-[13px] font-bold hover:bg-[#F4D58C] disabled:opacity-60">
+                  <button type="submit" disabled={saving} className="h-10 px-5 rounded-full bg-ds-gold text-[color:var(--hx-060D14)] text-[13px] font-bold hover:bg-[color:var(--hx-F4D58C)] disabled:opacity-60">
                     {saving ? "Saving..." : "Save Record"}
                   </button>
                   <button type="button" onClick={() => setShowModal(false)} disabled={saving} className="h-10 px-[18px] rounded-full border border-ds-line2 text-ds-t2 text-[13px] font-semibold hover:text-ds-text disabled:opacity-50">

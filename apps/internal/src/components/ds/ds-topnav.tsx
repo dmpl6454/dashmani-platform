@@ -7,8 +7,9 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState, useRef, useEffect } from "react";
 import useSWR from "swr";
-import { Bell, BellOff, CheckCheck, ChevronDown, LogOut, Megaphone, Plus, Search, Settings, CalendarDays } from "lucide-react";
+import { Bell, BellOff, CheckCheck, ChevronDown, LogOut, Megaphone, Moon, Plus, Search, Settings, Sun, CalendarDays } from "lucide-react";
 import { useAuth } from "@/lib/auth";
+import { useTheme } from "@/lib/theme";
 import { apiFetch, API_BASE } from "@/lib/api";
 import { QuickAnnounceModal } from "@/components/top-nav";
 // Deep import on purpose (see top-nav.tsx): the barrel would pull zod into every page.
@@ -34,6 +35,7 @@ const iconBtn = "relative h-8 w-8 flex items-center justify-center rounded-[6px]
 export function DsTopNav({ onOpenSearch }: { onOpenSearch?: () => void }) {
   const pathname = usePathname();
   const { user, logout } = useAuth();
+  const [theme, setTheme] = useTheme();
   const [isMac, setIsMac] = useState(true);
   const [today, setToday] = useState<string | null>(null);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -104,7 +106,7 @@ export function DsTopNav({ onOpenSearch }: { onOpenSearch?: () => void }) {
       n.message?.toLowerCase().includes("awaiting approval"));
 
   return (
-    <header className="sticky top-0 z-30 h-16 flex items-center gap-3 px-4 sm:px-6 bg-ds-bg border-b border-[#0F1E2A] shrink-0">
+    <header className="sticky top-0 z-30 h-16 flex items-center gap-3 px-4 sm:px-6 bg-ds-bg border-b border-[color:var(--hx-0F1E2A)] shrink-0">
       {announceOpen && <QuickAnnounceModal onClose={() => setAnnounceOpen(false)} />}
 
       {/* Search — opens the global command palette */}
@@ -135,6 +137,16 @@ export function DsTopNav({ onOpenSearch }: { onOpenSearch?: () => void }) {
         )}
         <button onClick={() => setAnnounceOpen(true)} title="Send announcement" aria-label="Send announcement" className={iconBtn}>
           <Plus className="h-4 w-4" />
+        </button>
+
+        {/* Light / dark theme — remembered per browser (lib/theme.ts). */}
+        <button
+          onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+          title={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+          aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+          className={iconBtn}
+        >
+          {theme === "dark" ? <Sun className="h-4 w-4" strokeWidth={1.8} /> : <Moon className="h-4 w-4" strokeWidth={1.8} />}
         </button>
 
         {/* Bell */}

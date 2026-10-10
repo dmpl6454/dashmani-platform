@@ -21,25 +21,25 @@ import { PostingWatchCard } from "./_posting-watch";
 
 /* ── Palette (design tokens) ── */
 const C = {
-  teal: "#00D7A0", blue: "#238BFF", gold: "#E9BD62", purple: "#A849F5",
-  green: "#20C46E", pink: "#EC42B7", red: "#E52D47",
+  teal: "var(--hx-00D7A0)", blue: "var(--hx-238BFF)", gold: "var(--hx-E9BD62)", purple: "var(--hx-A849F5)",
+  green: "var(--hx-20C46E)", pink: "var(--hx-EC42B7)", red: "var(--hx-E52D47)",
 };
 const PLATFORM_COLOR: Record<string, string> = {
-  facebook: "#2F86F0", instagram: "#DD3FAF", youtube: "#E52D47", snapchat: "#E9BD62",
+  facebook: "var(--hx-2F86F0)", instagram: "var(--hx-DD3FAF)", youtube: "var(--hx-E52D47)", snapchat: "var(--hx-E9BD62)",
 };
 const PLATFORM_ABBR: Record<string, string> = {
   facebook: "FB", instagram: "IG", youtube: "YT", snapchat: "SC", twitter: "X", linkedin: "IN", tiktok: "TT",
 };
 const PLATFORM_TILE: Record<string, string> = {
-  youtube: "linear-gradient(135deg,#E52D47,#7A1424)",
-  instagram: "linear-gradient(135deg,#F0803C,#EC42B7)",
-  facebook: "linear-gradient(135deg,#1877F2,#0B45BB)",
-  snapchat: "linear-gradient(135deg,#F4D58C,#B4872A)",
+  youtube: "linear-gradient(135deg,var(--hx-E52D47),var(--hx-7A1424))",
+  instagram: "linear-gradient(135deg,var(--hx-F0803C),var(--hx-EC42B7))",
+  facebook: "linear-gradient(135deg,var(--hx-1877F2),var(--hx-0B45BB))",
+  snapchat: "linear-gradient(135deg,var(--hx-F4D58C),var(--hx-B4872A))",
 };
-const AVATAR = ["#238BFF", "#A849F5", "#16AD85", "#D9632A", "#DD3FAF", "#B4872A"];
+const AVATAR = ["var(--hx-238BFF)", "var(--hx-A849F5)", "var(--hx-16AD85)", "var(--hx-D9632A)", "var(--hx-DD3FAF)", "var(--hx-B4872A)"];
 const PLATFORM_NAME: Record<string, string> = { facebook: "Facebook", instagram: "Instagram", youtube: "YouTube", snapchat: "Snapchat" };
 const platName = (p: string) => PLATFORM_NAME[p.toLowerCase()] ?? p.charAt(0).toUpperCase() + p.slice(1);
-const platColor = (p: string) => PLATFORM_COLOR[p.toLowerCase()] ?? "#738395";
+const platColor = (p: string) => PLATFORM_COLOR[p.toLowerCase()] ?? "var(--hx-738395)";
 const platAbbr = (p: string) => PLATFORM_ABBR[p.toLowerCase()] ?? p.slice(0, 2).toUpperCase();
 const fmtInt = (n: number | null | undefined) => (n == null ? "—" : n.toLocaleString("en-IN"));
 const initialsOf = (name: string) => name.split(/\s+/).filter(Boolean).map((w) => w[0]).join("").slice(0, 2).toUpperCase();
@@ -517,7 +517,7 @@ export default function DashboardPage() {
               href={k.href}
               className="relative flex flex-col min-[480px]:flex-row gap-2 min-[480px]:gap-2.5 min-h-[104px] p-3 rounded-[6px] bg-ds-card border border-ds-line text-ds-text overflow-hidden min-w-0 transition-colors hover:border-ds-line3"
             >
-              <span className="h-10 w-10 rounded-[9px] shrink-0 grid place-items-center" style={{ background: `${k.color}1F` }}>
+              <span className="h-10 w-10 rounded-[9px] shrink-0 grid place-items-center" style={{ background: `color-mix(in srgb, ${k.color} 12%, transparent)` }}>
                 <Icon className="h-[18px] w-[18px]" style={{ color: k.color }} strokeWidth={1.8} />
               </span>
               <span className="flex flex-col min-w-0 flex-1">
@@ -642,7 +642,7 @@ export default function DashboardPage() {
                 <div className="flex flex-col justify-between text-[9px] text-ds-t3 text-right pr-1.5 leading-none" aria-hidden="true">
                   {yTicks.map((y, i) => <span key={i}>{y}</span>)}
                 </div>
-                <div className="relative border-b border-ds-line [background:repeating-linear-gradient(180deg,#101E29_0_1px,transparent_1px_25%)]">
+                <div className="relative border-b border-ds-line [background:repeating-linear-gradient(180deg,var(--hx-101E29)_0_1px,transparent_1px_25%)]">
                   <div className="absolute inset-0 flex items-end gap-[3px] px-0.5" role="list" aria-label="Links per day">
                     {linksTrend.map((d, i) => {
                       const on = i === sel;
@@ -661,7 +661,7 @@ export default function DashboardPage() {
                             className="w-full rounded-t-[2px] transition-opacity group-hover:opacity-100"
                             style={{
                               height: `${Math.max(d.count ? 1.5 : 0, (d.count / ceil) * 100)}%`,
-                              background: on ? "linear-gradient(180deg,#F4D58C,#E9BD62)" : "linear-gradient(180deg,#C9973A,#7A5B1E)",
+                              background: on ? "linear-gradient(180deg,var(--hx-F4D58C),var(--hx-E9BD62))" : "linear-gradient(180deg,var(--hx-C9973A),var(--hx-7A5B1E))",
                               opacity: on ? 1 : 0.75,
                             }}
                           />
@@ -671,7 +671,7 @@ export default function DashboardPage() {
                   </div>
                   {sel >= 0 && linksTrend[sel] && (
                     <div
-                      className="absolute pointer-events-none whitespace-nowrap rounded-[5px] border border-ds-line3 bg-[#0B1A26] px-2.5 py-1 text-center shadow-[0_6px_16px_rgba(0,0,0,.5)] -translate-x-1/2 transition-[left,bottom] duration-200"
+                      className="absolute pointer-events-none whitespace-nowrap rounded-[5px] border border-ds-line3 bg-[color:var(--hx-0B1A26)] px-2.5 py-1 text-center shadow-[0_6px_16px_rgba(0,0,0,.5)] -translate-x-1/2 transition-[left,bottom] duration-200"
                       style={{
                         left: `${Math.min(Math.max(((sel + 0.5) / linksTrend.length) * 100, 12), 88)}%`,
                         bottom: `min(calc(${((linksTrend[sel].count / ceil) * 100).toFixed(1)}% + 8px), calc(100% - 40px))`,
@@ -714,9 +714,9 @@ export default function DashboardPage() {
             <div className="flex flex-col mt-2.5">
               {[
                 { label: "Approvals queue · total", n: stats.pendingApprovals ?? 0, c: C.gold, sub: false, href: "/approvals" },
-                { label: "↳ Leave requests", n: stats.pendingLeaveRequests ?? 0, c: "#33506A", sub: true, href: "/leave" },
-                { label: "↳ Documents to verify", n: stats.pendingDocuments ?? 0, c: "#33506A", sub: true, href: "/approvals" },
-                { label: "↳ Profile pictures", n: stats.pendingProfilePictures ?? 0, c: "#33506A", sub: true, href: "/approvals" },
+                { label: "↳ Leave requests", n: stats.pendingLeaveRequests ?? 0, c: "var(--hx-33506A)", sub: true, href: "/leave" },
+                { label: "↳ Documents to verify", n: stats.pendingDocuments ?? 0, c: "var(--hx-33506A)", sub: true, href: "/approvals" },
+                { label: "↳ Profile pictures", n: stats.pendingProfilePictures ?? 0, c: "var(--hx-33506A)", sub: true, href: "/approvals" },
                 { label: "New joiners to review", n: pendingEmployees, c: C.pink, sub: false, href: "/employees/pending" },
                 { label: "Not submitted today", n: notSubmitted, c: C.blue, sub: false, href: "/reports", note: isSundayIST ? "Sunday — no submissions expected" : undefined },
               ].map((q) => (
@@ -800,12 +800,12 @@ export default function DashboardPage() {
                 <svg viewBox="0 0 300 90" preserveAspectRatio="none" className="w-full h-[90px] mt-2.5 block" aria-label={`Follower trend over the last ${growthDays} days`}>
                   <defs>
                     <linearGradient id="dsGrowth" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0" stopColor="#00D7A0" stopOpacity=".35" />
-                      <stop offset="1" stopColor="#00D7A0" stopOpacity="0" />
+                      <stop offset="0" stopColor="var(--hx-00D7A0)" stopOpacity=".35" />
+                      <stop offset="1" stopColor="var(--hx-00D7A0)" stopOpacity="0" />
                     </linearGradient>
                   </defs>
                   <path d={growthPath.area} fill="url(#dsGrowth)" />
-                  <path d={growthPath.line} fill="none" stroke="#00D7A0" strokeWidth="2" vectorEffect="non-scaling-stroke" />
+                  <path d={growthPath.line} fill="none" stroke="var(--hx-00D7A0)" strokeWidth="2" vectorEffect="non-scaling-stroke" />
                 </svg>
               ) : (
                 <div className="h-[90px] mt-2.5 rounded-[4px] bg-ds-hover/40" aria-hidden="true" />
@@ -970,9 +970,9 @@ export default function DashboardPage() {
             <>
               <div className="grid grid-cols-3 mt-2">
                 {[
-                  { v: insights?.totalViews ?? 0, p: insightsPrev?.totalViews, l: "Views", c: "#2F86F0" },
-                  { v: insights?.totalLikes ?? 0, p: insightsPrev?.totalLikes, l: "Likes", c: "#DD3FAF" },
-                  { v: insights?.totalComments ?? 0, p: insightsPrev?.totalComments, l: "Comments", c: "#16AD85" },
+                  { v: insights?.totalViews ?? 0, p: insightsPrev?.totalViews, l: "Views", c: "var(--hx-2F86F0)" },
+                  { v: insights?.totalLikes ?? 0, p: insightsPrev?.totalLikes, l: "Likes", c: "var(--hx-DD3FAF)" },
+                  { v: insights?.totalComments ?? 0, p: insightsPrev?.totalComments, l: "Comments", c: "var(--hx-16AD85)" },
                 ].map((t, i) => (
                   <div key={t.l} className={`leading-tight min-w-0 ${i ? "border-l border-ds-line pl-2.5" : ""}`} title="vs. the previous 30 days">
                     <div className="text-base font-semibold text-ds-text truncate">{fmtCompact(t.v)}</div>
@@ -985,7 +985,7 @@ export default function DashboardPage() {
                 <div className="flex-1 grid [grid-template-columns:auto_minmax(0,1fr)] gap-4 items-center mt-3">
                   <div className="relative h-[120px] w-[120px]">
                     <svg viewBox="0 0 120 120" width="120" height="120" className="-rotate-90" aria-hidden="true">
-                      <circle cx="60" cy="60" r="46" fill="none" stroke="#0F1E2A" strokeWidth="14" />
+                      <circle cx="60" cy="60" r="46" fill="none" stroke="var(--hx-0F1E2A)" strokeWidth="14" />
                       {donut.segs.map((s) => (
                         <circle key={s.name} cx="60" cy="60" r="46" fill="none" stroke={s.c} strokeWidth="14" strokeDasharray={s.dash} strokeDashoffset={s.off} />
                       ))}
@@ -1042,7 +1042,7 @@ export default function DashboardPage() {
           const note = k.key === "presentToday" && employeeBase ? `of ${fmtInt(employeeBase)} today` : k.note;
           return (
             <Link key={k.key} href={k.href} className="flex items-center gap-2.5 px-3 py-2.5 rounded-[6px] bg-ds-card border border-ds-line text-ds-text min-w-0 transition-colors hover:border-ds-line3">
-              <span className="h-8 w-8 rounded-[8px] shrink-0 grid place-items-center" style={{ background: `${k.color}1F` }}>
+              <span className="h-8 w-8 rounded-[8px] shrink-0 grid place-items-center" style={{ background: `color-mix(in srgb, ${k.color} 12%, transparent)` }}>
                 <Icon className="h-4 w-4" style={{ color: k.color }} strokeWidth={1.8} />
               </span>
               <span className="flex flex-col min-w-0 flex-1">

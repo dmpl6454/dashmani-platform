@@ -5,8 +5,8 @@ import { useWorkload } from "@/lib/hooks/use-accounts";
 import { usePageTitle } from "@/lib/hooks/use-page-title";
 
 // Initials avatar, same palette as the Employees page.
-const AV_BG = ["#10222E", "#0E2A22", "#1B1630", "#2A2410", "#2A1116"];
-const AV_FG = ["#238BFF", "#34D399", "#9B7EDE", "#E9BD62", "#FB7185"];
+const AV_BG = ["var(--hx-10222E)", "var(--hx-0E2A22)", "var(--hx-1B1630)", "var(--hx-2A2410)", "var(--hx-2A1116)"];
+const AV_FG = ["var(--hx-238BFF)", "var(--hx-34D399)", "var(--hx-9B7EDE)", "var(--hx-E9BD62)", "var(--hx-FB7185)"];
 const hash = (s: string) => {
   let h = 0;
   for (let i = 0; i < s.length; i++) h = s.charCodeAt(i) + ((h << 5) - h);
@@ -15,30 +15,30 @@ const hash = (s: string) => {
 
 // Platform tile: name, short label, colour (mockup palette).
 const PLATFORM: Record<string, [string, string, string]> = {
-  instagram: ["Instagram", "IG", "#EC42B7"],
-  facebook: ["Facebook", "FB", "#238BFF"],
-  youtube: ["YouTube", "YT", "#FF5A5F"],
-  snapchat: ["Snapchat", "SC", "#E9D23A"],
-  linkedin: ["LinkedIn", "IN", "#4AA3DF"],
-  twitter: ["X / Twitter", "X", "#A7B3C2"],
-  x: ["X / Twitter", "X", "#A7B3C2"],
-  tiktok: ["TikTok", "TT", "#25F4EE"],
+  instagram: ["Instagram", "IG", "var(--hx-EC42B7)"],
+  facebook: ["Facebook", "FB", "var(--hx-238BFF)"],
+  youtube: ["YouTube", "YT", "var(--hx-FF5A5F)"],
+  snapchat: ["Snapchat", "SC", "var(--hx-E9D23A)"],
+  linkedin: ["LinkedIn", "IN", "var(--hx-4AA3DF)"],
+  twitter: ["X / Twitter", "X", "var(--hx-A7B3C2)"],
+  x: ["X / Twitter", "X", "var(--hx-A7B3C2)"],
+  tiktok: ["TikTok", "TT", "var(--hx-25F4EE)"],
 };
 function platformOf(slug?: string, name?: string): [string, string, string] {
   const k = (slug || name || "").toLowerCase();
-  return PLATFORM[k] ?? [name || slug || "Other", (name || slug || "?").slice(0, 2).toUpperCase(), "#738395"];
+  return PLATFORM[k] ?? [name || slug || "Other", (name || slug || "?").slice(0, 2).toUpperCase(), "var(--hx-738395)"];
 }
 const tint = (hex: string, a: number) => {
-  const n = parseInt(hex.slice(1), 16);
+  if (hex.startsWith("var(")) return `color-mix(in srgb, ${hex} ${Math.round(a * 100)}%, transparent)`; const n = parseInt(hex.slice(1), 16);
   return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`;
 };
 
 // Load = accounts + open tasks. Same thresholds the page always used to colour the Accounts figure.
 type BandKey = "over" | "busy" | "ok";
 const BANDS: { key: BandKey; label: string; color: string; rule: string; test: (l: number) => boolean }[] = [
-  { key: "over", label: "Overloaded", color: "#FB7185", rule: "load above 15", test: (l) => l > 15 },
-  { key: "busy", label: "Busy", color: "#FBBF24", rule: "load 9–15", test: (l) => l > 8 && l <= 15 },
-  { key: "ok", label: "Balanced", color: "#00D7A0", rule: "load 8 or less", test: (l) => l <= 8 },
+  { key: "over", label: "Overloaded", color: "var(--hx-FB7185)", rule: "load above 15", test: (l) => l > 15 },
+  { key: "busy", label: "Busy", color: "var(--hx-FBBF24)", rule: "load 9–15", test: (l) => l > 8 && l <= 15 },
+  { key: "ok", label: "Balanced", color: "var(--hx-00D7A0)", rule: "load 8 or less", test: (l) => l <= 8 },
 ];
 const bandOf = (l: number) => BANDS.find((b) => b.test(l)) ?? BANDS[2];
 
@@ -133,8 +133,8 @@ export default function WorkloadPage() {
       </section>
 
       {/* Total load + bands */}
-      <section className="relative rounded-[12px] bg-[linear-gradient(180deg,#0B1A27_0%,#08131C_75%)] border border-[#1D3444] overflow-hidden">
-        <span aria-hidden="true" className="absolute left-0 right-0 top-0 h-px bg-[linear-gradient(90deg,transparent,#E9BD62_30%,#E9BD62_70%,transparent)]" />
+      <section className="relative rounded-[12px] bg-[linear-gradient(180deg,var(--hx-0B1A27)_0%,var(--hx-08131C)_75%)] border border-[color:var(--hx-1D3444)] overflow-hidden">
+        <span aria-hidden="true" className="absolute left-0 right-0 top-0 h-px bg-[linear-gradient(90deg,transparent,var(--hx-E9BD62)_30%,var(--hx-E9BD62)_70%,transparent)]" />
         <div className="flex flex-wrap gap-x-10 gap-y-6 px-7 pt-[26px] pb-[22px] items-end">
           <div className="flex-none min-w-0">
             <div className="text-[10.5px] tracking-[.22em] uppercase text-ds-t2 font-semibold">Total Load</div>
@@ -159,7 +159,7 @@ export default function WorkloadPage() {
                   onClick={() => setBand((cur) => (cur === b.key ? "" : b.key))}
                   aria-pressed={band === b.key}
                   title={band === b.key ? "Show all" : `Show only ${b.label.toLowerCase()}`}
-                  className="flex-[1_1_120px] max-w-[200px] text-left py-1 px-[22px] border-l border-[#1D3444] text-ds-text transition-opacity"
+                  className="flex-[1_1_120px] max-w-[200px] text-left py-1 px-[22px] border-l border-[color:var(--hx-1D3444)] text-ds-text transition-opacity"
                   style={{ opacity: on ? 1 : 0.45 }}
                 >
                   <div className="flex items-center gap-[7px] text-[10px] tracking-[.16em] uppercase text-ds-t3 font-semibold whitespace-nowrap">
@@ -228,7 +228,7 @@ export default function WorkloadPage() {
       <section className="mt-3 bg-ds-card border border-ds-line rounded-[10px] overflow-hidden">
         <div className="overflow-x-auto">
           <div className="min-w-[1080px]">
-            <div className={`${GRID} px-[22px] py-[11px] text-[10px] tracking-[.12em] uppercase text-ds-t3 font-semibold border-b border-ds-line bg-[#0A1620]`}>
+            <div className={`${GRID} px-[22px] py-[11px] text-[10px] tracking-[.12em] uppercase text-ds-t3 font-semibold border-b border-ds-line bg-[color:var(--hx-0A1620)]`}>
               {HEADS.map((h, i) => {
                 const active = h.key !== null && sort.k === h.key;
                 const cls = `${h.align === "center" ? "text-center" : "text-left"} whitespace-nowrap uppercase tracking-[.12em] ${active ? "text-ds-text" : ""}`;
@@ -238,7 +238,7 @@ export default function WorkloadPage() {
                     {active && <span className="text-ds-gold ml-1 normal-case">{sort.dir < 0 ? "▼" : "▲"}</span>}
                   </>
                 );
-                const sticky = i === 0 ? "sticky left-0 z-[1] bg-[#0A1620] -my-[11px] -ml-[22px] py-[11px] pl-[22px]" : "";
+                const sticky = i === 0 ? "sticky left-0 z-[1] bg-[color:var(--hx-0A1620)] -my-[11px] -ml-[22px] py-[11px] pl-[22px]" : "";
                 return h.key ? (
                   <button key={h.label} type="button" onClick={() => clickHead(h.key)} className={`${cls} ${sticky} hover:text-ds-text`}>
                     {inner}
@@ -251,7 +251,7 @@ export default function WorkloadPage() {
 
             {isLoading && !data ? (
               Array.from({ length: 6 }).map((_, i) => (
-                <div key={i} className={`${GRID} px-[22px] py-3 border-b border-[#101E29]`}>
+                <div key={i} className={`${GRID} px-[22px] py-3 border-b border-[color:var(--hx-101E29)]`}>
                   <div className="flex items-center gap-[11px]">
                     <div className="h-8 w-8 rounded-full bg-ds-hover motion-safe:animate-pulse" />
                     <div className="h-3.5 w-28 rounded-[4px] bg-ds-hover motion-safe:animate-pulse" />
@@ -270,8 +270,8 @@ export default function WorkloadPage() {
                 const k = hash(e.name) % 5;
                 const color = bandOf(e.load).color;
                 return (
-                  <div key={e.id} className={`group ${GRID} px-[22px] py-3 border-b border-[#101E29] last:border-b-0 text-[12.5px] hover:bg-[#0B1824]`}>
-                    <span className="sticky left-0 z-[1] flex items-center gap-[11px] min-w-0 -my-3 -ml-[22px] py-3 pl-[22px] self-stretch bg-ds-card group-hover:bg-[#0B1824] shadow-[1px_0_0_#101E29]">
+                  <div key={e.id} className={`group ${GRID} px-[22px] py-3 border-b border-[color:var(--hx-101E29)] last:border-b-0 text-[12.5px] hover:bg-[color:var(--hx-0B1824)]`}>
+                    <span className="sticky left-0 z-[1] flex items-center gap-[11px] min-w-0 -my-3 -ml-[22px] py-3 pl-[22px] self-stretch bg-ds-card group-hover:bg-[color:var(--hx-0B1824)] shadow-[1px_0_0_#101E29]">
                       <span
                         aria-hidden="true"
                         className="h-8 w-8 rounded-full border border-ds-line2 grid place-items-center text-[12px] font-bold shrink-0"
@@ -286,16 +286,16 @@ export default function WorkloadPage() {
                     <span className="text-center text-ds-t5">{e.tasks}</span>
                     <span className="text-center">
                       {e.crit > 0 ? (
-                        <span className="inline-grid place-items-center min-w-[26px] h-[22px] px-2 rounded-full bg-[rgba(251,113,133,.12)] border border-[rgba(251,113,133,.3)] text-[#FB7185] text-[11px] font-bold">{e.crit}</span>
+                        <span className="inline-grid place-items-center min-w-[26px] h-[22px] px-2 rounded-full bg-[rgba(251,113,133,.12)] border border-[rgba(251,113,133,.3)] text-[color:var(--hx-FB7185)] text-[11px] font-bold">{e.crit}</span>
                       ) : (
-                        <span className="text-[#33506A]">—</span>
+                        <span className="text-[color:var(--hx-33506A)]">—</span>
                       )}
                     </span>
                     <span className="text-center">
                       {e.high > 0 ? (
-                        <span className="inline-grid place-items-center min-w-[26px] h-[22px] px-2 rounded-full bg-[rgba(251,191,36,.1)] border border-[rgba(251,191,36,.28)] text-[#FBBF24] text-[11px] font-bold">{e.high}</span>
+                        <span className="inline-grid place-items-center min-w-[26px] h-[22px] px-2 rounded-full bg-[rgba(251,191,36,.1)] border border-[rgba(251,191,36,.28)] text-[color:var(--hx-FBBF24)] text-[11px] font-bold">{e.high}</span>
                       ) : (
-                        <span className="text-[#33506A]">—</span>
+                        <span className="text-[color:var(--hx-33506A)]">—</span>
                       )}
                     </span>
                     <span className="flex flex-wrap gap-1 min-w-0 max-h-12 overflow-hidden">
@@ -322,7 +322,7 @@ export default function WorkloadPage() {
                           +{e.accounts.length - 3}
                         </span>
                       )}
-                      {e.accounts.length === 0 && <span className="text-[#33506A]">—</span>}
+                      {e.accounts.length === 0 && <span className="text-[color:var(--hx-33506A)]">—</span>}
                     </span>
                   </div>
                 );

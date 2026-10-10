@@ -52,7 +52,7 @@ function Icon({ d, className = "h-4 w-4", sw = 1.9 }: { d: string; className?: s
 
 function Msg({ kind, children }: { kind: "err" | "ok"; children: React.ReactNode }) {
   return (
-    <div className={`flex items-center gap-2 text-[13px] font-semibold ${kind === "err" ? "text-[#FB7185]" : "text-ds-teal"}`} role={kind === "err" ? "alert" : "status"}>
+    <div className={`flex items-center gap-2 text-[13px] font-semibold ${kind === "err" ? "text-[color:var(--hx-FB7185)]" : "text-ds-teal"}`} role={kind === "err" ? "alert" : "status"}>
       <Icon d={kind === "err" ? IC.alert : IC.check} className="h-3.5 w-3.5" sw={2.2} />
       <span>{children}</span>
     </div>
@@ -60,14 +60,14 @@ function Msg({ kind, children }: { kind: "err" | "ok"; children: React.ReactNode
 }
 
 const CARD =
-  "relative rounded-[20px] border border-[#2A4658] bg-ds-card shadow-[0_14px_36px_rgba(0,0,0,.32)] overflow-hidden";
+  "relative rounded-[20px] border border-[color:var(--hx-2A4658)] bg-ds-card shadow-[0_14px_36px_rgba(0,0,0,.32)] overflow-hidden";
 const TOP_LINE =
-  "absolute left-0 right-0 top-0 h-px opacity-60 bg-[linear-gradient(90deg,transparent,#E9BD62_30%,#E9BD62_70%,transparent)]";
+  "absolute left-0 right-0 top-0 h-px opacity-60 bg-[linear-gradient(90deg,transparent,var(--hx-E9BD62)_30%,var(--hx-E9BD62)_70%,transparent)]";
 const LABEL = "block text-[10.5px] font-bold tracking-[.14em] uppercase text-ds-t3 mb-2";
 const FIELD =
   "w-full h-12 px-[18px] rounded-[14px] border border-ds-line2 bg-ds-inset text-ds-text text-[16px] sm:text-[14px] outline-none focus:border-[rgba(233,189,98,.6)] min-w-0";
 const GOLD_BTN =
-  "inline-flex items-center gap-2 rounded-full bg-ds-gold text-[#060D14] font-bold whitespace-nowrap hover:bg-[#F4D58C] disabled:opacity-60";
+  "inline-flex items-center gap-2 rounded-full bg-ds-gold text-[color:var(--hx-060D14)] font-bold whitespace-nowrap hover:bg-[color:var(--hx-F4D58C)] disabled:opacity-60";
 
 const imgSrc = (u: string) => (u.startsWith("http") ? u : `${API_BASE}${u}`);
 
@@ -247,7 +247,7 @@ export default function SettingsPage() {
     (/[A-Z]/.test(nx) && /[a-z]/.test(nx) ? 1 : 0) +
     (/\d/.test(nx) ? 1 : 0) +
     (/[^A-Za-z0-9]/.test(nx) ? 1 : 0);
-  const [strengthLabel, strengthColor] = ([["", "#4A6275"], ["Weak", "#FB7185"], ["Fair", "#E9BD62"], ["Good", "#6EB2FF"], ["Strong", "#00D7A0"]] as const)[nx ? Math.max(1, score) : 0];
+  const [strengthLabel, strengthColor] = ([["", "var(--hx-4A6275)"], ["Weak", "var(--hx-FB7185)"], ["Fair", "var(--hx-E9BD62)"], ["Good", "var(--hx-6EB2FF)"], ["Strong", "var(--hx-00D7A0)"]] as const)[nx ? Math.max(1, score) : 0];
   const strengthPct = nx ? Math.max(1, score) * 25 : 0;
 
   const displayName = savedName ?? user?.name ?? "";
@@ -272,7 +272,7 @@ export default function SettingsPage() {
 
       <div className="max-w-[1040px] flex flex-col gap-[18px]">
         {/* Identity / photo card */}
-        <section className={`${CARD} p-5 sm:p-[30px] bg-[radial-gradient(120%_160%_at_0%_0%,rgba(233,189,98,.12),rgba(233,189,98,.02)_50%,#08131C_100%)]`}>
+        <section className={`${CARD} p-5 sm:p-[30px] bg-[radial-gradient(120%_160%_at_0%_0%,rgba(233,189,98,.12),rgba(233,189,98,.02)_50%,var(--hx-08131C)_100%)]`}>
           <span aria-hidden="true" className={TOP_LINE} />
           <input
             ref={fileInputRef}
@@ -302,7 +302,7 @@ export default function SettingsPage() {
                   title="Upload photo"
                   aria-label="Upload profile photo"
                   disabled={isPhotoLoading}
-                  className="h-28 w-28 rounded-[28px] border-2 border-[rgba(233,189,98,.5)] bg-[linear-gradient(135deg,#F4D58C,#E9BD62)] text-[#060D14] grid place-items-center text-[38px] font-extrabold tracking-[-.03em] shadow-[0_14px_30px_rgba(0,0,0,.45)]"
+                  className="h-28 w-28 rounded-[28px] border-2 border-[rgba(233,189,98,.5)] bg-[linear-gradient(135deg,var(--hx-F4D58C),var(--hx-E9BD62))] text-[color:var(--hx-060D14)] grid place-items-center text-[38px] font-extrabold tracking-[-.03em] shadow-[0_14px_30px_rgba(0,0,0,.45)]"
                 >
                   {avatarInitials}
                 </button>
@@ -313,7 +313,7 @@ export default function SettingsPage() {
                 disabled={isPhotoLoading}
                 title="Change photo"
                 aria-label="Change photo"
-                className="absolute -right-1.5 -bottom-1.5 h-[38px] w-[38px] rounded-full border-[3px] border-ds-card bg-ds-gold text-[#060D14] grid place-items-center hover:bg-[#F4D58C] disabled:opacity-50"
+                className="absolute -right-1.5 -bottom-1.5 h-[38px] w-[38px] rounded-full border-[3px] border-ds-card bg-ds-gold text-[color:var(--hx-060D14)] grid place-items-center hover:bg-[color:var(--hx-F4D58C)] disabled:opacity-50"
               >
                 <Icon d={IC.camera} className="h-[15px] w-[15px]" sw={2} />
               </button>
@@ -346,7 +346,7 @@ export default function SettingsPage() {
                     type="button"
                     onClick={() => setConfirmRemove(true)}
                     disabled={isPhotoLoading}
-                    className="inline-flex items-center gap-[7px] h-10 px-4 rounded-full border border-[rgba(229,72,77,.4)] text-[#FB7185] text-[13px] font-semibold hover:bg-[rgba(229,72,77,.1)] disabled:opacity-50"
+                    className="inline-flex items-center gap-[7px] h-10 px-4 rounded-full border border-[rgba(229,72,77,.4)] text-[color:var(--hx-FB7185)] text-[13px] font-semibold hover:bg-[rgba(229,72,77,.1)] disabled:opacity-50"
                   >
                     <Icon d={IC.trash} className="h-[13px] w-[13px]" /> Remove
                   </button>
@@ -388,7 +388,7 @@ export default function SettingsPage() {
               <span className={LABEL}>Email</span>
               <div
                 title={user?.email ?? undefined}
-                className="w-full h-12 px-[18px] rounded-[14px] border border-dashed border-ds-line2 bg-[#0A1620] text-ds-t2 text-[14px] flex items-center gap-2.5 select-all"
+                className="w-full h-12 px-[18px] rounded-[14px] border border-dashed border-ds-line2 bg-[color:var(--hx-0A1620)] text-ds-t2 text-[14px] flex items-center gap-2.5 select-all"
               >
                 <span className="flex-1 min-w-0 truncate">{user?.email ?? "—"}</span>
                 <span className="text-ds-t3 flex"><Icon d={IC.lock} className="h-3.5 w-3.5" /></span>
@@ -396,7 +396,7 @@ export default function SettingsPage() {
               <p className="mt-2 text-[11.5px] leading-[1.5] text-ds-t3">Your email is your sign-in and can&apos;t be changed here. Ask an admin if it needs updating.</p>
             </div>
           </div>
-          <div className="flex items-center justify-between gap-3 flex-wrap mt-[22px] pt-5 border-t border-[#1A2C38]">
+          <div className="flex items-center justify-between gap-3 flex-wrap mt-[22px] pt-5 border-t border-[color:var(--hx-1A2C38)]">
             <div>
               {profileError && <Msg kind="err">{profileError}</Msg>}
               {profileState === "success" && <Msg kind="ok">Profile updated.</Msg>}
@@ -447,12 +447,12 @@ export default function SettingsPage() {
             ))}
           </div>
           <div className="mt-3.5 flex items-center gap-2.5">
-            <div className="flex-1 max-w-[260px] h-[5px] rounded-[3px] bg-[#132430] overflow-hidden">
+            <div className="flex-1 max-w-[260px] h-[5px] rounded-[3px] bg-[color:var(--hx-132430)] overflow-hidden">
               <div className="h-full rounded-[3px] transition-[width] duration-200" style={{ width: `${strengthPct}%`, background: strengthColor }} />
             </div>
             <span className="text-[11.5px] font-semibold" style={{ color: strengthColor }}>{strengthLabel}</span>
           </div>
-          <div className="flex items-center justify-between gap-3 flex-wrap mt-[22px] pt-5 border-t border-[#1A2C38]">
+          <div className="flex items-center justify-between gap-3 flex-wrap mt-[22px] pt-5 border-t border-[color:var(--hx-1A2C38)]">
             <div>
               {pwError && <Msg kind="err">{pwError}</Msg>}
               {pwState === "success" && <Msg kind="ok">Password changed successfully.</Msg>}
@@ -485,7 +485,7 @@ export default function SettingsPage() {
                     type="button"
                     onClick={() => setConfirmRemove(true)}
                     disabled={isPhotoLoading}
-                    className="inline-flex items-center gap-[7px] h-[38px] px-4 rounded-full bg-[#E5484D] text-white text-[13px] font-semibold disabled:opacity-50"
+                    className="inline-flex items-center gap-[7px] h-[38px] px-4 rounded-full bg-[color:var(--hx-E5484D)] text-white text-[13px] font-semibold disabled:opacity-50"
                   >
                     <Icon d={IC.trash} className="h-[13px] w-[13px]" /> {isPhotoLoading ? "Removing…" : "Remove"}
                   </button>
@@ -516,7 +516,7 @@ export default function SettingsPage() {
                 aria-modal="true"
                 aria-label="Crop photo"
               >
-                <div className="flex items-center justify-between px-5 py-4 border-b border-[#1A2C38]">
+                <div className="flex items-center justify-between px-5 py-4 border-b border-[color:var(--hx-1A2C38)]">
                   <span className="flex items-center gap-2 text-[14px] font-bold">
                     <span className="text-ds-gold flex"><Icon d={IC.camera} className="h-[15px] w-[15px]" /></span>Crop Photo
                   </span>
@@ -544,7 +544,7 @@ export default function SettingsPage() {
                     style={{
                       containerStyle: { borderRadius: 0 },
                       cropAreaStyle: {
-                        border: "2px solid #ffffff",
+                        border: "2px solid var(--hx-FFFFFF)",
                         boxShadow: "0 0 0 9999px rgba(0,0,0,0.55)",
                       },
                     }}
@@ -560,7 +560,7 @@ export default function SettingsPage() {
                     type="range" min="1" max="3" step="0.05" value={zoom}
                     onChange={(e) => setZoom(parseFloat(e.target.value))}
                     aria-label="Zoom"
-                    className="w-full accent-[#E9BD62]"
+                    className="w-full accent-[color:var(--hx-E9BD62)]"
                     disabled={isPhotoLoading}
                   />
                 </div>
@@ -606,7 +606,7 @@ export default function SettingsPage() {
                 aria-label="Remove your profile picture?"
                 className="w-full max-w-[360px] bg-ds-card border border-ds-line2 rounded-[16px] p-6 shadow-[0_20px_50px_rgba(0,0,0,.6)] text-ds-text"
               >
-                <div className="h-10 w-10 rounded-[11px] bg-[rgba(229,72,77,.12)] text-[#FB7185] grid place-items-center">
+                <div className="h-10 w-10 rounded-[11px] bg-[rgba(229,72,77,.12)] text-[color:var(--hx-FB7185)] grid place-items-center">
                   <Icon d={IC.trash} className="h-[17px] w-[17px]" />
                 </div>
                 <div className="mt-3.5 text-[15px] font-semibold">Remove your profile picture?</div>
@@ -623,7 +623,7 @@ export default function SettingsPage() {
                     type="button"
                     onClick={handleRemovePhoto}
                     disabled={isPhotoLoading}
-                    className="h-[38px] px-[18px] rounded-full bg-[#E5484D] text-white text-[13px] font-bold disabled:opacity-60"
+                    className="h-[38px] px-[18px] rounded-full bg-[color:var(--hx-E5484D)] text-white text-[13px] font-bold disabled:opacity-60"
                   >
                     {isPhotoLoading ? "Removing…" : "Remove"}
                   </button>

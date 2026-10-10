@@ -6,6 +6,7 @@ import { Check, AlertCircle, ArrowRight } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { safeNext, nextQueryFor } from "@/lib/safe-next";
 import { AuthField, AuthShell, AuthTabs } from "@/components/auth/shared";
+import { GoogleSignIn } from "@/components/auth/google-signin";
 
 // Two modes on one route (the route shape is unchanged, see CLAUDE.md):
 //   /signup?token=<uuid>  → accept an admin invite (password only; the email is the invite's)
@@ -179,6 +180,14 @@ function SignupForm() {
             By creating an account you agree to work with Digital Sukoon under its standard terms. Questions: <a href="mailto:hello@digitalsukoon.com">hello@digitalsukoon.com</a>.
           </p>
         </form>
+
+        {/* Invite acceptance is tied to the invite's email and password, so Google is offered on public signup only. */}
+        {!invited && (
+          <GoogleSignIn
+            mode="signup"
+            onSession={(s) => { storeSession(s); setSubmitState("success"); setTimeout(() => router.push(safeNext() ?? "/dashboard"), 300); }}
+          />
+        )}
       </div>
     </AuthShell>
   );

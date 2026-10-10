@@ -7,6 +7,7 @@ import { apiFetch } from "@/lib/api";
 import { useSearchParams } from "next/navigation";
 import { nextQueryFor, safeNextValue } from "@/lib/safe-next";
 import { AuthField, AuthShell, AuthTabs } from "@/components/auth/shared";
+import { GoogleSignIn } from "@/components/auth/google-signin";
 
 // The client sign-in page, in the website's design (see components/auth/shared.tsx).
 // Wire unchanged: useAuth().login() → POST /v1/client/auth/login, the same token
@@ -16,7 +17,7 @@ import { AuthField, AuthShell, AuthTabs } from "@/components/auth/shared";
 const emailOk = (v: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
 
 function LoginForm() {
-  const { login } = useAuth();
+  const { login, adoptSession } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [emailBlurred, setEmailBlurred] = useState(false);
@@ -94,6 +95,8 @@ function LoginForm() {
             {submitState === "success" && (<><Check size={18} strokeWidth={3} /><span>Opening…</span></>)}
           </button>
         </form>
+
+        <GoogleSignIn mode="signin" onSession={(s) => adoptSession(s as any)} />
       </div>
 
       {forgotOpen && <ForgotPasswordModal onClose={() => setForgotOpen(false)} />}

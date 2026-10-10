@@ -119,6 +119,10 @@ app.use("/v1/client/auth/login", authLimiter);
 // Public self-signup: the same per-(client, account) bucket — 20 attempts per 15 min keeps a
 // bot from minting accounts in bulk without punishing a brand on a shared office IP.
 app.use("/v1/client/auth/signup", authLimiter);
+// Sign in with Google: the body carries no email, so the key falls back to the client IP.
+// ⚠️ POST on the exact path only — `app.use` would prefix-match GET /google/config, which every
+// sign-in page load reads, and spend the 20-per-15-min login bucket on page views (seen live).
+app.post("/v1/client/auth/google", authLimiter);
 
 if (process.env.NODE_ENV !== "test") {
   // P13: successful POST /v1/pipeline/sync polls are not logged (hundreds of thousands

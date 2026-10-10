@@ -321,6 +321,31 @@ router.post(
   }
 );
 
+// GET /v1/client/auth/google/config  (public: whether "Sign in with Google" is set up, and the
+// OAuth client id the browser's GIS button needs. Served at runtime so the portal needs no
+// rebuild — the deploy script overwrites apps/*/.env.local and would drop a NEXT_PUBLIC_ var.)
+router.get("/client/auth/google/config", async (_req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { googleClientId } = await import("../services/google-id-token");
+    const clientId = googleClientId();
+    res.setHeader("Cache-Control", "no-store");
+    return success(res, { enabled: clientId !== null, clientId });
+  } catch (err) { next(err); }
+});
+
+// POST /v1/client/auth/google  (public: sign in or sign up with a verified Google ID token;
+// rate-limited by authLimiter in app.ts)
+router.post(
+  "/client/auth/google",
+  validate(clientValidators.clientGoogleSchema),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const result = await clientAuthService.clientGoogleSignIn(req.body);
+      return success(res, result);
+    } catch (err) { next(err); }
+  }
+);
+
 // POST /v1/client/auth/register  (public: accept invite and set password)
 router.post(
   "/client/auth/register",

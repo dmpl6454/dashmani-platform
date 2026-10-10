@@ -2,7 +2,7 @@
 import { useState, useEffect } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import "./globals.css";
-import { AuthContext } from "@/lib/auth";
+import { AuthContext, type ClientSession } from "@/lib/auth";
 import { apiFetch } from "@/lib/api";
 import { PortalShell } from "@/components/portal-shell";
 import { safeNext } from "@/lib/safe-next";
@@ -29,16 +29,20 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pathname]);
 
+  function adoptSession(session: ClientSession) {
+    localStorage.setItem("clientAccessToken", session.accessToken);
+    localStorage.setItem("clientRefreshToken", session.refreshToken);
+    localStorage.setItem("clientUser", JSON.stringify(session.user));
+    setUser(session.user);
+    router.push(safeNext() ?? "/dashboard");
+  }
+
   async function login(email: string, password: string) {
     const res: any = await apiFetch("/client/auth/login", {
       method: "POST",
       body: JSON.stringify({ email, password }),
     });
-    localStorage.setItem("clientAccessToken", res.data.accessToken);
-    localStorage.setItem("clientRefreshToken", res.data.refreshToken);
-    localStorage.setItem("clientUser", JSON.stringify(res.data.user));
-    setUser(res.data.user);
-    router.push(safeNext() ?? "/dashboard");
+    adoptSession(res.data);
   }
 
   function logout() {
@@ -59,7 +63,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <title>Dashmani Client Portal</title>
       </head>
       <body>
-        <AuthContext.Provider value={{ user, login, logout, isLoading }}>
+        <AuthContext.Provider value={{ user, login, adoptSession, logout, isLoading }}>
           {isPublicPage ? children : <PortalShell>{children}</PortalShell>}
         </AuthContext.Provider>
       </body>

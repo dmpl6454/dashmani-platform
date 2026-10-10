@@ -301,6 +301,16 @@ export function AuthStyles() {
       .auth-fine { font-size: 12px; color: var(--muted); line-height: 1.5; }
       .auth-fine a { color: var(--text-2); text-decoration: underline; text-underline-offset: 3px; }
 
+      /* Sign in with Google: an "or" rule, then Google's own (iframe) button in a square slot */
+      .auth-google { display: flex; flex-direction: column; gap: 14px; margin-top: 18px; }
+      .auth-or { display: flex; align-items: center; gap: 12px; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); }
+      .auth-or::before, .auth-or::after { content: ""; flex: 1; height: 2px; background: rgba(255, 255, 255, 0.14); }
+      .auth-google-slot { min-height: 44px; display: flex; justify-content: center; }
+      .auth-google-slot iframe { border-radius: 0 !important; }
+      .auth-google-profile { margin-top: 18px; }
+      .auth-google-hello { font-size: 14px; line-height: 1.55; color: var(--text-2); }
+      .auth-google-hello strong { color: #fff; }
+
       /* Strength meter: four hairline segments */
       .auth-meter { display: flex; gap: 3px; height: 4px; }
       .auth-meter span { flex: 1; background: var(--dim); transition: background-color .3s; }

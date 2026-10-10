@@ -12,6 +12,10 @@ import { ensureMediaDirs, origPath, renderPath } from "./media.service";
 // (9:16 for reels and stories, ≤1080 px wide for posts). One file at a time, at low priority,
 // so the 1-vCPU box keeps serving the portals.
 //
+// Two kinds of job share the worker: the DEFAULT render of each file (the booking's overlay,
+// tracked on campaign_media.render_*) and PER-ACCOUNT VARIANTS (campaign_media_renders — one
+// per file × distinct overlay an account customised). The default is rendered first.
+//
 // ⚠️ Text safety: the client's text is written to a FILE and passed to drawtext with
 // `textfile=` and `expansion=none`. It is never placed inside the filter string, so no
 // quote, colon, backslash or %{…} in it can change the ffmpeg command. File paths that ARE in
@@ -46,6 +50,15 @@ export function wrapOverlay(text: string, width = 26): string {
     out.push(line);
   }
   return out.join("\n").trim();
+}
+
+/**
+ * The identity of an overlay variant: same format, style and text → same render. The text is
+ * compared after the trim the renderer applies, so "A " and "A" share one file.
+ */
+export function overlayKey(format: string, text: string | null, style: string | null): string {
+  const t = (text ?? "").trim();
+  return crypto.createHash("sha1").update(`${format}|${t ? style ?? "bottom" : ""}|${t}`).digest("hex");
 }
 
 /** Pure: the ffmpeg arguments for a job. Throws if a path is not filter-safe. */
@@ -125,85 +138,141 @@ export function boxTooBusy(): boolean {
   return load > Number(process.env.CAMPAIGN_RENDER_MAX_LOAD || 1.5) || free < 300 * 1024 * 1024;
 }
 
+/**
+ * Render one file with one overlay into a fresh render key. Returns the key; the caller
+ * records it. Temp text files are always removed.
+ */
+async function renderOne(media: { storageKey: string; ext: string; kind: string }, format: string, text: string | null, style: string | null) {
+  await ensureMediaDirs();
+  const renderKey = crypto.randomBytes(32).toString("base64url");
+  const out = renderPath({ renderKey, kind: media.kind })!;
+  const tmpOut = out.replace(/(\.\w+)$/, ".partial$1");
+  const textFiles: string[] = [];
+  try {
+    const wrapped = text?.trim() ? wrapOverlay(text) : "";
+    const font = wrapped ? pickFont() : null;
+    if (wrapped && !font) throw new Error("No overlay font installed (apt install fonts-noto-core)");
+    for (const [i, line] of (wrapped ? wrapped.split("\n") : []).entries()) {
+      const tf = path.join(mediaSubdirs.tmp(), `${renderKey}.${i}.txt`);
+      await fsp.writeFile(tf, line, { mode: 0o600 });
+      textFiles.push(tf);
+    }
+    await renderTools.run(
+      buildFfmpegArgs({
+        kind: media.kind as "video" | "image",
+        format,
+        input: origPath(media),
+        output: tmpOut,
+        textFiles,
+        style: wrapped ? style ?? "bottom" : null,
+        fontFile: font,
+      }),
+      campaignConfig.renderTimeoutMs(),
+    );
+    await fsp.rename(tmpOut, out);
+    return { renderKey, out };
+  } catch (err) {
+    await fsp.rm(tmpOut, { force: true });
+    throw err;
+  } finally {
+    for (const tf of textFiles) await fsp.rm(tf, { force: true });
+  }
+}
+
 let running = false;
 
-/** Render at most one queued file. Returns the media id rendered, or null. */
+/** Render at most one queued file (default render first, then per-account variants). Returns the media or render id rendered, or null. */
 export async function renderNext(opts: { ignoreLoad?: boolean } = {}): Promise<string | null> {
   if (running || !campaignConfig.renderEnabled()) return null;
   if (!opts.ignoreLoad && boxTooBusy()) return null;
   running = true;
   try {
-    const now = new Date();
-    const candidate = await prisma.campaignMedia.findFirst({
-      where: {
-        purgedAt: null,
-        uploadStatus: "complete",
-        bookingId: { not: null },
-        OR: [{ renderStatus: "queued" }, { renderStatus: "rendering", renderLockedUntil: { lt: now } }],
-      },
-      orderBy: { updatedAt: "asc" },
-    });
-    if (!candidate) return null;
-    const claim = await prisma.campaignMedia.updateMany({
-      where: { id: candidate.id, renderStatus: candidate.renderStatus, updatedAt: candidate.updatedAt },
-      data: { renderStatus: "rendering", renderLockedUntil: new Date(Date.now() + campaignConfig.renderTimeoutMs() + 5 * 60_000) },
-    });
-    if (claim.count !== 1) return null;
-
-    const booking = await prisma.campaignBooking.findUnique({
-      where: { id: candidate.bookingId! },
-      select: { format: true, superText: true, superTextStyle: true },
-    });
-    await ensureMediaDirs();
-    const renderKey = crypto.randomBytes(32).toString("base64url");
-    const out = renderPath({ renderKey, kind: candidate.kind })!;
-    const tmpOut = out.replace(/(\.\w+)$/, ".partial$1");
-    const textFiles: string[] = [];
-    try {
-      const text = booking?.superText ? wrapOverlay(booking.superText) : "";
-      const font = text ? pickFont() : null;
-      if (text && !font) throw new Error("No overlay font installed (apt install fonts-noto-core)");
-      for (const [i, line] of (text ? text.split("\n") : []).entries()) {
-        const tf = path.join(mediaSubdirs.tmp(), `${renderKey}.${i}.txt`);
-        await fsp.writeFile(tf, line, { mode: 0o600 });
-        textFiles.push(tf);
-      }
-      await renderTools.run(
-        buildFfmpegArgs({
-          kind: candidate.kind as "video" | "image",
-          format: booking?.format ?? "post",
-          input: origPath(candidate),
-          output: tmpOut,
-          textFiles,
-          style: booking?.superTextStyle ?? null,
-          fontFile: font,
-        }),
-        campaignConfig.renderTimeoutMs(),
-      );
-      await fsp.rename(tmpOut, out);
-      // Only accept the result if the creative wasn't changed while we rendered.
-      const done = await prisma.campaignMedia.updateMany({
-        where: { id: candidate.id, renderStatus: "rendering", bookingId: candidate.bookingId },
-        data: { renderStatus: "done", renderKey, renderError: null, renderLockedUntil: null },
-      });
-      if (done.count !== 1) {
-        await fsp.rm(out, { force: true });
-        return null;
-      }
-      if (candidate.renderKey) await fsp.rm(renderPath(candidate)!, { force: true });
-      return candidate.id;
-    } catch (err) {
-      await fsp.rm(tmpOut, { force: true });
-      console.error(`[campaign-render] ${candidate.id} failed:`, (err as Error).message);
-      await prisma.campaignMedia.updateMany({
-        where: { id: candidate.id, renderStatus: "rendering" },
-        data: { renderStatus: "failed", renderError: (err as Error).message.slice(0, 500), renderLockedUntil: null },
-      });
-      return null;
-    } finally {
-      for (const tf of textFiles) await fsp.rm(tf, { force: true });
-    }
+    return (await renderDefault()) ?? (await renderVariant());
   } finally {
     running = false;
+  }
+}
+
+async function renderDefault(): Promise<string | null> {
+  const now = new Date();
+  const candidate = await prisma.campaignMedia.findFirst({
+    where: {
+      purgedAt: null,
+      uploadStatus: "complete",
+      bookingId: { not: null },
+      OR: [{ renderStatus: "queued" }, { renderStatus: "rendering", renderLockedUntil: { lt: now } }],
+    },
+    orderBy: { updatedAt: "asc" },
+  });
+  if (!candidate) return null;
+  const claim = await prisma.campaignMedia.updateMany({
+    where: { id: candidate.id, renderStatus: candidate.renderStatus, updatedAt: candidate.updatedAt },
+    data: { renderStatus: "rendering", renderLockedUntil: new Date(Date.now() + campaignConfig.renderTimeoutMs() + 5 * 60_000) },
+  });
+  if (claim.count !== 1) return null;
+
+  const booking = await prisma.campaignBooking.findUnique({
+    where: { id: candidate.bookingId! },
+    select: { format: true, superText: true, superTextStyle: true },
+  });
+  try {
+    const { renderKey, out } = await renderOne(candidate, booking?.format ?? "post", booking?.superText ?? null, booking?.superTextStyle ?? null);
+    // Only accept the result if the creative wasn't changed while we rendered.
+    const done = await prisma.campaignMedia.updateMany({
+      where: { id: candidate.id, renderStatus: "rendering", bookingId: candidate.bookingId },
+      data: { renderStatus: "done", renderKey, renderError: null, renderLockedUntil: null },
+    });
+    if (done.count !== 1) {
+      await fsp.rm(out, { force: true });
+      return null;
+    }
+    if (candidate.renderKey) await fsp.rm(renderPath(candidate)!, { force: true });
+    return candidate.id;
+  } catch (err) {
+    console.error(`[campaign-render] ${candidate.id} failed:`, (err as Error).message);
+    await prisma.campaignMedia.updateMany({
+      where: { id: candidate.id, renderStatus: "rendering" },
+      data: { renderStatus: "failed", renderError: (err as Error).message.slice(0, 500), renderLockedUntil: null },
+    });
+    return null;
+  }
+}
+
+async function renderVariant(): Promise<string | null> {
+  const now = new Date();
+  const candidate = await prisma.campaignMediaRender.findFirst({
+    where: {
+      OR: [{ status: "queued" }, { status: "rendering", lockedUntil: { lt: now } }],
+      media: { purgedAt: null, uploadStatus: "complete" },
+    },
+    orderBy: { updatedAt: "asc" },
+    include: { media: true, booking: { select: { format: true } } },
+  });
+  if (!candidate) return null;
+  const claim = await prisma.campaignMediaRender.updateMany({
+    where: { id: candidate.id, status: candidate.status, updatedAt: candidate.updatedAt },
+    data: { status: "rendering", lockedUntil: new Date(Date.now() + campaignConfig.renderTimeoutMs() + 5 * 60_000) },
+  });
+  if (claim.count !== 1) return null;
+  try {
+    const { renderKey, out } = await renderOne(candidate.media, candidate.booking.format ?? "post", candidate.overlayText, candidate.overlayStyle);
+    const done = await prisma.campaignMediaRender.updateMany({
+      where: { id: candidate.id, status: "rendering" },
+      data: { status: "done", renderKey, error: null, lockedUntil: null },
+    });
+    if (done.count !== 1) {
+      // The variant was dropped (creative edited) while we rendered.
+      await fsp.rm(out, { force: true });
+      return null;
+    }
+    if (candidate.renderKey) await fsp.rm(renderPath({ renderKey: candidate.renderKey, kind: candidate.media.kind })!, { force: true });
+    return candidate.id;
+  } catch (err) {
+    console.error(`[campaign-render] variant ${candidate.id} failed:`, (err as Error).message);
+    await prisma.campaignMediaRender.updateMany({
+      where: { id: candidate.id, status: "rendering" },
+      data: { status: "failed", error: (err as Error).message.slice(0, 500), lockedUntil: null },
+    });
+    return null;
   }
 }

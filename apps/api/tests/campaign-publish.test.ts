@@ -24,6 +24,7 @@ import app from "../src/app";
 import { sendEmail } from "../src/services/email.service";
 import { encryptToken } from "../src/utils/token-crypto";
 import { buildCaption, launchAt, publishItem, runPublishTick } from "../src/services/campaign/publish.service";
+import { overlayKey } from "../src/services/campaign/render.service";
 import { generateToken } from "./helpers";
 
 // ── Fake Graph API ─────────────────────────────────────────────────────────────
@@ -107,9 +108,11 @@ async function booking(opts: {
   status?: string;
   format: string;
   kinds: Array<"video" | "image">;
-  items: Array<{ assetId: string; platform: "instagram" | "facebook"; status?: string; containerId?: string | null }>;
+  items: Array<{ assetId: string; platform: "instagram" | "facebook"; status?: string; containerId?: string | null; caption?: string; superText?: string }>;
   audio?: boolean;
   launchFrom?: Date;
+  /** Attach a client thumbnail (rendered). */
+  thumbnail?: boolean;
 }) {
   const b = await prisma.campaignBooking.create({
     data: {
@@ -129,15 +132,19 @@ async function booking(opts: {
       totalPaise: 100_000,
     },
   });
-  for (const [position, kind] of opts.kinds.entries()) {
+  const mediaIds: string[] = [];
+  const files: Array<[string, "video" | "image"]> = opts.kinds.map((k, i) => [`creative${i}`, k]);
+  if (opts.thumbnail) files.push(["thumbnail", "image"]);
+  for (const [position, [role, kind]] of files.entries()) {
     keySeq++;
-    await prisma.campaignMedia.create({
+    const m = await prisma.campaignMedia.create({
       data: {
-        clientId, bookingId: b.id, position, kind, originalName: `f${position}`, bytes: 10n, storageKey: `pubkey${keySeq}`,
+        clientId, bookingId: b.id, position, kind, role: role === "thumbnail" ? "thumbnail" : "creative", originalName: `f${position}`, bytes: 10n, storageKey: `pubkey${keySeq}`,
         ext: kind === "video" ? "mp4" : "jpg", uploadStatus: "complete", chunkSize: 1, totalChunks: 1,
         renderStatus: "done", renderKey: `pubrender${keySeq}`,
       },
     });
+    mediaIds.push(m.id);
   }
   const items = [];
   for (const it of opts.items) {
@@ -147,11 +154,22 @@ async function booking(opts: {
           bookingId: b.id, rateCardId: "00000000-0000-0000-0000-000000000000", targetType: "meta_asset", targetId: it.assetId,
           platform: it.platform, format: opts.format, accountName: it.platform === "instagram" ? "Bollywood Society" : "Filme Flicks",
           pricePaise: 100_000, status: it.status ?? "queued", containerId: it.containerId ?? null,
+          captionOverride: it.caption ?? null, hashtagsOverride: it.caption != null ? ["own"] : [],
+          superTextOverride: it.superText ?? null, superTextStyleOverride: it.superText ? "top" : null,
         },
       }),
     );
+    // A custom overlay's renders, already finished (the render worker is covered in campaign.test.ts).
+    if (it.superText) {
+      for (const mediaId of mediaIds) {
+        keySeq++;
+        await prisma.campaignMediaRender.create({
+          data: { mediaId, bookingId: b.id, overlayKey: overlayKey(opts.format, it.superText, "top"), overlayText: it.superText, overlayStyle: "top", status: "done", renderKey: `pubvar${keySeq}` },
+        });
+      }
+    }
   }
-  return { id: b.id, items };
+  return { id: b.id, items, mediaIds };
 }
 
 // ⚠️ Everything lives inside ONE describe so this beforeEach runs AFTER tests/setup.ts's
@@ -293,6 +311,36 @@ describe("Instagram auto-publish", () => {
     expect((await prisma.campaignBookingItem.findUniqueOrThrow({ where: { id: itemId } })).permalink).toBe("https://www.instagram.com/reel/ABC123/");
   });
 
+  it("an account's own caption, overlay render and the client's thumbnail reach Instagram", async () => {
+    igFake();
+    const b = await booking({
+      format: "reel", kinds: ["video"], thumbnail: true,
+      items: [{ assetId: igAssetId, platform: "instagram", caption: "Just for Bollywood Society", superText: "BS ONLY" }],
+    });
+    expect((await publishItem(b.items[0].id))?.kind).toBe("wait");
+    const create = calls.find((c) => c.method === "POST" && c.path === `/${IG_ID}/media`)!;
+    expect(create.body.get("caption")).toBe("Just for Bollywood Society\n\n#own");
+    const variants = await prisma.campaignMediaRender.findMany({ where: { bookingId: b.id } });
+    const vOf = (mediaId: string) => variants.find((v) => v.mediaId === mediaId)!.id;
+    // The video and the cover are THIS account's renders, not the default ones.
+    expect(create.body.get("video_url")).toMatch(new RegExp(`/v1/campaign-media/${b.mediaIds[0]}/v-${vOf(b.mediaIds[0])}\\?exp=`));
+    expect(create.body.get("cover_url")).toMatch(new RegExp(`/v1/campaign-media/${b.mediaIds[1]}/v-${vOf(b.mediaIds[1])}\\?exp=`));
+  });
+
+  it("without customisation the default files go out, the thumbnail as cover_url, and an unfinished render is waited for", async () => {
+    igFake();
+    const b = await booking({ format: "reel", kinds: ["video"], thumbnail: true, items: [{ assetId: igAssetId, platform: "instagram" }] });
+    await prisma.campaignMedia.update({ where: { id: b.mediaIds[1] }, data: { renderStatus: "queued" } });
+    expect((await publishItem(b.items[0].id))?.kind).toBe("wait");
+    expect(calls).toHaveLength(0); // nothing asked of Meta while a file is still rendering
+    await prisma.campaignMedia.update({ where: { id: b.mediaIds[1] }, data: { renderStatus: "done" } });
+    expect((await publishItem(b.items[0].id))?.kind).toBe("wait");
+    const create = calls.find((c) => c.method === "POST" && c.path === `/${IG_ID}/media`)!;
+    expect(create.body.get("caption")).toBe("Glow up this Diwali #diwali\n\n#sale");
+    expect(create.body.get("video_url")).toMatch(new RegExp(`/v1/campaign-media/${b.mediaIds[0]}/preview\\?exp=`));
+    expect(create.body.get("cover_url")).toMatch(new RegExp(`/v1/campaign-media/${b.mediaIds[1]}/preview\\?exp=`));
+  });
+
   it("an expired container is replaced by a fresh one", async () => {
     igFake({ statuses: ["EXPIRED"] });
     const b = await booking({ format: "reel", kinds: ["video"], items: [{ assetId: igAssetId, platform: "instagram", containerId: "CONT1" }] });
@@ -342,6 +390,19 @@ describe("Facebook auto-publish", () => {
     expect(post.body.get("access_token")).toBe("PAGE_TOKEN");
     expect(post.body.get("caption")).toContain("Glow up this Diwali");
     expect((await prisma.campaignBookingItem.findUniqueOrThrow({ where: { id: b.items[0].id } })).permalink).toBe("https://www.facebook.com/filmeflicks/posts/1");
+  });
+
+  it("a Facebook video with a client thumbnail is posted by hand (the API takes no cover URL)", async () => {
+    const b = await booking({ status: "paid_pending_review", format: "reel", kinds: ["video"], thumbnail: true, items: [{ assetId: fbAssetId, platform: "facebook", status: "pending" }] });
+    await request(app).post(`/v1/admin/campaigns/${b.id}/approve`).set("Authorization", `Bearer ${admin}`);
+    const item = await prisma.campaignBookingItem.findFirstOrThrow({ where: { bookingId: b.id } });
+    expect(item.status).toBe("manual_pending");
+    const notes = (await prisma.campaignBookingEvent.findMany({ where: { bookingId: b.id } })).map((e) => e.note ?? "");
+    expect(notes.some((n) => /thumbnail/i.test(n))).toBe(true);
+    // A photo post with a stray thumbnail is unaffected: a cover only applies to a video.
+    const photo = await booking({ status: "paid_pending_review", format: "post", kinds: ["image"], thumbnail: true, items: [{ assetId: fbAssetId, platform: "facebook", status: "pending" }] });
+    await request(app).post(`/v1/admin/campaigns/${photo.id}/approve`).set("Authorization", `Bearer ${admin}`);
+    expect((await prisma.campaignBookingItem.findFirstOrThrow({ where: { bookingId: photo.id } })).status).toBe("queued");
   });
 
   it("an unconfirmed Facebook post goes to staff instead of being posted again", async () => {

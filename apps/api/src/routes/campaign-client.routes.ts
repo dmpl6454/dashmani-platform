@@ -5,6 +5,7 @@ import {
   campaignInfoSchema,
   campaignCreativeSchema,
   campaignItemsSchema,
+  campaignItemOverridesSchema,
   campaignUploadInitSchema,
 } from "@dashmani/shared";
 import { authenticateClient } from "../middleware/client-auth";
@@ -17,7 +18,8 @@ import * as media from "../services/campaign/media.service";
 import * as payment from "../services/campaign/payment.service";
 import { getCatalogue } from "../services/campaign/rate-card.service";
 import { getResults } from "../services/campaign/delivery.service";
-import { signedMediaPath, verifyMediaSignature } from "../services/campaign/media-url";
+import { renderIdOfVariant, signedMediaPath, verifyMediaSignature } from "../services/campaign/media-url";
+import { renderPath } from "../services/campaign/media.service";
 
 // Client portal: self-serve campaign booking. Every query is scoped to the signed-in client;
 // another client's booking or upload is a 404.
@@ -91,6 +93,29 @@ router.put("/client/campaigns/:id/items", authenticateClient, validate(campaignI
   return success(res, await booking.updateItems(clientId(req), req.params.id, req.body.rateCardIds));
 }));
 
+/** Per-account caption / hashtags / overlay (null = the campaign's). */
+router.put("/client/campaigns/:id/items/:itemId/text", authenticateClient, validate(campaignItemOverridesSchema), asyncHandler(async (req, res) => {
+  return success(res, await booking.updateItemOverrides(clientId(req), req.params.id, req.params.itemId, req.body));
+}));
+
+/** Signed preview URLs of the files ONE account will post (its own render when customised). */
+router.get("/client/campaigns/:id/items/:itemId/preview-urls", authenticateClient, asyncHandler(async (req, res) => {
+  const owned = await prisma.campaignBooking.count({ where: { id: req.params.id, clientId: clientId(req) } });
+  if (!owned) throw new AppError(404, "NOT_FOUND", "Campaign not found");
+  const files = (await booking.resolveItemFiles(req.params.id)).get(req.params.itemId);
+  if (!files) throw new AppError(404, "NOT_FOUND", "Account not found on this campaign");
+  return success(
+    res,
+    files.map((f) => ({
+      mediaId: f.mediaId,
+      kind: f.kind,
+      role: f.role,
+      status: f.status,
+      url: f.status === "done" ? signedMediaPath(f.mediaId, f.renderId ? `v-${f.renderId}` : "preview") : null,
+    })),
+  );
+}));
+
 router.post("/client/campaigns/:id/cancel", authenticateClient, asyncHandler(async (req, res) => {
   return success(res, await booking.cancelBooking(clientId(req), req.params.id));
 }));
@@ -122,7 +147,16 @@ router.get("/campaign-media/:id/:variant", asyncHandler(async (req: Request, res
   }
   const m = await prisma.campaignMedia.findFirst({ where: { id, purgedAt: null, uploadStatus: "complete" } });
   if (!m) throw new AppError(404, "NOT_FOUND", "File not found");
-  const file = variant === "original" ? media.origPath(m) : media.previewFile(m);
+  let file: string;
+  const renderId = renderIdOfVariant(variant);
+  if (renderId) {
+    // A per-account render: it must belong to THIS file and be finished.
+    const r = await prisma.campaignMediaRender.findFirst({ where: { id: renderId, mediaId: m.id, status: "done" }, select: { renderKey: true } });
+    if (!r?.renderKey) throw new AppError(404, "NOT_FOUND", "File not found");
+    file = renderPath({ renderKey: r.renderKey, kind: m.kind })!;
+  } else {
+    file = variant === "original" ? media.origPath(m) : media.previewFile(m);
+  }
   if (!fs.existsSync(file)) throw new AppError(404, "NOT_FOUND", "File not found");
   res.set("Cache-Control", "private, max-age=600");
   res.set("X-Content-Type-Options", "nosniff");

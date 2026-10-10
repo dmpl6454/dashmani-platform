@@ -353,13 +353,17 @@ export async function deleteUpload(clientId: string, id: string) {
   return { deleted: true };
 }
 
-/** Remove every file a media row owns (chunks, original, render). Idempotent. */
-export async function purgeMediaFiles(m: { storageKey: string; ext: string; totalChunks: number; renderKey: string | null; kind: string }) {
+/** Remove every file a media row owns (chunks, original, default render, per-account renders). Idempotent. */
+export async function purgeMediaFiles(m: { id?: string; storageKey: string; ext: string; totalChunks: number; renderKey: string | null; kind: string }) {
   for (let n = 0; n < m.totalChunks; n++) await fsp.rm(chunkPath(m.storageKey, n), { force: true });
   await fsp.rm(origPath(m), { force: true });
   await fsp.rm(`${origPath(m)}.assembling`, { force: true });
   const r = renderPath(m);
   if (r) await fsp.rm(r, { force: true });
+  if (m.id) {
+    const variants = await prisma.campaignMediaRender.findMany({ where: { mediaId: m.id, renderKey: { not: null } }, select: { renderKey: true } });
+    for (const v of variants) await fsp.rm(renderPath({ renderKey: v.renderKey, kind: m.kind })!, { force: true });
+  }
 }
 
 /** Resolve a media row to the file to show: the render when ready, else the original. */

@@ -6,8 +6,9 @@ import { Topstrip } from "@/components/portal-topstrip";
 import { Button, PageError, Skeleton } from "@/components/portal-shared";
 import { Icon } from "@/components/portal-icons";
 import { CAMPAIGN_TYPE_LABELS, FORMAT_LABELS, type CampaignFormat } from "@dashmani/shared/src/validators/campaign";
-import { compact, mutateJson, previewUrl, rupees, useCampaign, useResults, PLATFORM_LABEL, type Campaign } from "@/lib/campaign";
+import { compact, mutateJson, previewUrl, renderFailed, renderPending, rupees, useCampaign, useResults, PLATFORM_LABEL, type Campaign } from "@/lib/campaign";
 import { AccountsStep, CreativeStep, InfoForm } from "../_steps";
+import { ItemTextRow } from "../_item-text";
 import { Card, CampaignStatus, ErrorBanner, ItemStatus, PlatformDot, fmtDate, fmtDateTime } from "../_ui";
 
 type Step = "info" | "creative" | "accounts" | "pay";
@@ -127,8 +128,8 @@ function PayStep({ campaign: c, onChanged, onEdit, onCancelled }: { campaign: Ca
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
-  const rendering = c.media.some((m) => m.renderStatus === "queued" || m.renderStatus === "rendering");
-  const renderFailed = c.media.some((m) => m.renderStatus === "failed");
+  const rendering = renderPending(c);
+  const failed = renderFailed(c);
   const total = c.items.reduce((s, i) => s + i.pricePaise, 0);
   const offline = c.paymentMode === "offline";
 
@@ -194,7 +195,7 @@ function PayStep({ campaign: c, onChanged, onEdit, onCancelled }: { campaign: Ca
     <div className="grid gap-4">
       <Card title="Preview" sub="This is what will be posted, with your overlay text in place." right={<Button size="sm" variant="ghost" onClick={() => onEdit("creative")}>Edit</Button>}>
         {rendering && <p className="text-[13px] text-ink-2 mb-3">We're preparing your preview — this takes a minute or two for videos. You can pay once it's ready.</p>}
-        {renderFailed && <ErrorBanner>We couldn't prepare one of your files. Go back to Creative and upload it again.</ErrorBanner>}
+        {failed && <ErrorBanner>We couldn't prepare one of your files. Go back to Creative and upload it again.</ErrorBanner>}
         <PreviewStrip campaign={c} />
         <dl className="mt-4 grid gap-2 text-[13px]">
           <Row k="Campaign type" v={CAMPAIGN_TYPE_LABELS[c.campaignType] ?? c.campaignType} />
@@ -208,7 +209,7 @@ function PayStep({ campaign: c, onChanged, onEdit, onCancelled }: { campaign: Ca
         </dl>
       </Card>
 
-      <Card title="Accounts" right={<Button size="sm" variant="ghost" onClick={() => onEdit("accounts")}>Edit</Button>}>
+      <Card title="Accounts" sub="Every account posts the campaign's caption and super text unless you customise it here." right={<Button size="sm" variant="ghost" onClick={() => onEdit("accounts")}>Edit</Button>}>
         <ul className="divide-y divide-ink/5">
           {c.items.map((i) => (
             <li key={i.id} className="py-2.5 flex items-center gap-3 text-[13px]">
@@ -220,6 +221,12 @@ function PayStep({ campaign: c, onChanged, onEdit, onCancelled }: { campaign: Ca
                 {i.audioAddonPaise > 0 && <span className="block text-[11px] text-ink-3 tabular-nums">incl. {rupees(i.audioAddonPaise)} audio</span>}
               </span>
             </li>
+          ))}
+        </ul>
+        <h3 className="mt-4 text-[13px] font-bold text-ink">Text per account</h3>
+        <ul className="divide-y divide-ink/5">
+          {c.items.map((i) => (
+            <ItemTextRow key={i.id} campaign={c} item={i} editable onSaved={() => onChanged()} />
           ))}
         </ul>
         <div className="mt-3 pt-3 flex items-center justify-between" style={{ borderTop: "2px solid rgba(255,255,255,0.18)" }}>
@@ -245,7 +252,7 @@ function PayStep({ campaign: c, onChanged, onEdit, onCancelled }: { campaign: Ca
         >
           Cancel campaign
         </Button>
-        <Button variant="ink" onClick={pay} disabled={busy || rendering || renderFailed} aria-live="polite">
+        <Button variant="ink" onClick={pay} disabled={busy || rendering || failed} aria-live="polite">
           {busy ? (offline ? "Submitting…" : "Opening payment…") : rendering ? "Preparing preview…" : offline ? `Submit for review · ${rupees(total)}` : `Pay ${rupees(total)}`}
         </Button>
       </div>
@@ -264,10 +271,11 @@ function Row({ k, v }: { k: string; v: React.ReactNode }) {
 
 function PreviewStrip({ campaign: c }: { campaign: Campaign }) {
   const [urls, setUrls] = useState<Record<string, string>>({});
-  const key = c.media.map((m) => `${m.id}:${m.renderStatus}`).join(",");
+  const files = c.thumbnail ? [...c.media, c.thumbnail] : c.media;
+  const key = files.map((m) => `${m.id}:${m.renderStatus}`).join(",");
   useEffect(() => {
     let live = true;
-    Promise.all(c.media.map(async (m) => [m.id, await previewUrl(m.id).catch(() => "")] as const)).then((pairs) => {
+    Promise.all(files.map(async (m) => [m.id, await previewUrl(m.id).catch(() => "")] as const)).then((pairs) => {
       if (live) setUrls(Object.fromEntries(pairs));
     });
     return () => {
@@ -277,8 +285,9 @@ function PreviewStrip({ campaign: c }: { campaign: Campaign }) {
   }, [key]);
   return (
     <div className="flex gap-3 overflow-x-auto pb-1">
-      {c.media.map((m) => (
-        <div key={m.id} className="shrink-0 w-[180px] aspect-[9/16] rounded-xl bg-surface overflow-hidden grid place-items-center">
+      {files.map((m) => (
+        <div key={m.id} className="relative shrink-0 w-[180px] aspect-[9/16] rounded-xl bg-surface overflow-hidden grid place-items-center">
+          {m.role === "thumbnail" && <span className="absolute top-2 left-2 z-10 bg-black/70 text-white text-[11px] font-bold px-2 py-0.5">Thumbnail</span>}
           {urls[m.id] ? (
             m.kind === "video" ? (
               <video src={urls[m.id]} controls playsInline preload="metadata" className="w-full h-full object-contain" />
@@ -349,11 +358,19 @@ function AfterPayment({ campaign: c, onChanged }: { campaign: Campaign; onChange
       {c.status === "changes_requested" && editing && (
         <>
           <CreativeStep campaign={c} submitLabel="Save changes" onSaved={() => onChanged()} />
+          <Card title="Text per account" sub="Give any account its own caption or super text.">
+            <ul className="divide-y divide-ink/5">
+              {c.items.map((i) => (
+                <ItemTextRow key={i.id} campaign={c} item={i} editable onSaved={() => onChanged()} />
+              ))}
+            </ul>
+          </Card>
+          {renderPending(c) && <p className="text-[13px] text-ink-2">We're preparing the previews — you can send for review once they're ready.</p>}
           {error && <ErrorBanner>{error}</ErrorBanner>}
           <div className="flex justify-end">
             <Button
               variant="ink"
-              disabled={busy}
+              disabled={busy || renderPending(c)}
               onClick={async () => {
                 setBusy(true);
                 setError(null);

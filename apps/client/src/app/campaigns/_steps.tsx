@@ -198,6 +198,9 @@ export function CreativeStep({ campaign, onSaved, submitLabel }: { campaign: Cam
   const [style, setStyle] = useState(campaign.superTextStyle ?? "bottom");
   const [audio, setAudio] = useState(campaign.audioIntegration);
   const [audioTrack, setAudioTrack] = useState(campaign.audioTrack ?? "");
+  const [thumb, setThumb] = useState<CampaignMedia | null>(campaign.thumbnail);
+  const [thumbUpload, setThumbUpload] = useState<Uploading | null>(null);
+  const thumbRef = useRef<HTMLInputElement>(null);
   // After payment the format and the audio option are what was paid for — frozen.
   const termsLocked = campaign.status === "changes_requested";
   const [busy, setBusy] = useState(false);
@@ -205,6 +208,7 @@ export function CreativeStep({ campaign, onSaved, submitLabel }: { campaign: Cam
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => setMedia(campaign.media), [campaign.media]);
+  useEffect(() => setThumb(campaign.thumbnail), [campaign.thumbnail]);
 
   const maxFiles = format === "carousel" ? CAMPAIGN_LIMITS.carouselMax : 1;
   const tagCount = countHashtags(caption, splitTags(hashtags));
@@ -242,6 +246,32 @@ export function CreativeStep({ campaign, onSaved, submitLabel }: { campaign: Cam
     }
   };
 
+  const startThumbUpload = (u: Uploading) => {
+    setThumbUpload({ ...u, error: null });
+    uploadChunked(u.file, {
+      resumeId: u.resumeId,
+      onId: (id) => setThumbUpload((x) => (x ? { ...x, resumeId: id } : x)),
+      onProgress: (p) => setThumbUpload((x) => (x ? { ...x, progress: p } : x)),
+    })
+      .then((m) => {
+        setThumbUpload(null);
+        setThumb(m);
+      })
+      .catch((e) => setThumbUpload((x) => (x ? { ...x, error: errMsg(e) } : x)));
+  };
+  const pickThumb = (files: FileList | null) => {
+    const f = files?.[0];
+    if (!f) return;
+    const key = `thumb-${f.name}-${f.size}-${f.lastModified}`;
+    if (f.size > CAMPAIGN_LIMITS.imageMaxBytes) {
+      setThumbUpload({ key, name: f.name, progress: 0, file: f, resumeId: null, error: `Too large — images can be up to ${Math.round(CAMPAIGN_LIMITS.imageMaxBytes / 1048576)} MB` });
+      return;
+    }
+    startThumbUpload({ key, name: f.name, progress: 0, file: f, resumeId: null, error: null });
+  };
+  // A thumbnail is a cover for a video: it only applies to a single-video reel or post.
+  const thumbApplies = format !== "carousel" && media.some((m) => m.kind === "video");
+
   const move = (i: number, d: -1 | 1) => setMedia((m) => {
     const j = i + d;
     if (j < 0 || j >= m.length) return m;
@@ -255,7 +285,7 @@ export function CreativeStep({ campaign, onSaved, submitLabel }: { campaign: Cam
     if (media.length === 0) return setError("Upload your creative first.");
     if (format === "carousel" && media.length < CAMPAIGN_LIMITS.carouselMin) return setError("A carousel needs at least 2 files.");
     if (format === "reel" && media.some((m) => m.kind !== "video")) return setError("A reel needs a video.");
-    if (uploads.some((u) => !u.error)) return setError("Wait for the uploads to finish.");
+    if (uploads.some((u) => !u.error) || (thumbUpload && !thumbUpload.error)) return setError("Wait for the uploads to finish.");
     const withAudio = format === "reel" && audio;
     if (withAudio && audioTrack.trim().length < 2) return setError("Tell us which song to integrate, or turn song audio off.");
     setBusy(true);
@@ -271,6 +301,7 @@ export function CreativeStep({ campaign, onSaved, submitLabel }: { campaign: Cam
         superTextStyle: superText.trim() ? style : null,
         audioIntegration: withAudio,
         audioTrack: withAudio ? audioTrack.trim() : null,
+        thumbnailMediaId: thumbApplies && thumb ? thumb.id : null,
       });
       onSaved(c);
     } catch (e) {
@@ -412,7 +443,84 @@ export function CreativeStep({ campaign, onSaved, submitLabel }: { campaign: Cam
         </Card>
       )}
 
-      <Card title="Super text" sub="Text we add on top of your image or video, exactly as you type it. Leave empty for none.">
+      {thumbApplies && (
+        <Card
+          title="Thumbnail"
+          sub="Optional. Your own cover image for the video (JPG or PNG). Leave it out and the platform picks a frame."
+          right={
+            !thumbUpload ? (
+              <Button size="sm" variant="default" icon={<Icon.Upload size={14} />} onClick={() => thumbRef.current?.click()}>
+                {thumb ? "Replace" : "Upload"}
+              </Button>
+            ) : undefined
+          }
+        >
+          <input
+            ref={thumbRef}
+            type="file"
+            className="hidden"
+            accept="image/jpeg,image/png"
+            onChange={(e) => {
+              pickThumb(e.target.files);
+              e.target.value = "";
+            }}
+          />
+          {thumb || thumbUpload ? (
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+              {thumb && !thumbUpload && (
+                <div className="min-w-0">
+                  <MediaPreview media={thumb} renderPending={campaign.thumbnail?.id === thumb.id && (thumb.renderStatus === "queued" || thumb.renderStatus === "rendering")} />
+                  <div className="mt-1.5 flex items-center gap-1 text-[12px] text-ink-2">
+                    <span className="truncate flex-1" title={thumb.originalName}>{thumb.originalName}</span>
+                    <button type="button" aria-label="Remove thumbnail" className="p-1 hover:text-danger" onClick={() => setThumb(null)}><Icon.Close size={14} /></button>
+                  </div>
+                </div>
+              )}
+              {thumbUpload && (
+                <div className="rounded-xl border-2 border-ink/10 p-3 aspect-[4/5] flex flex-col justify-end min-w-0">
+                  <div className="text-[12px] font-semibold text-ink truncate" title={thumbUpload.name}>{thumbUpload.name}</div>
+                  {thumbUpload.error ? (
+                    <>
+                      <div className="text-[12px] text-danger mt-1">{thumbUpload.error}</div>
+                      <div className="flex gap-2 mt-2">
+                        {thumbUpload.resumeId !== null || !thumbUpload.error.startsWith("Too large") ? (
+                          <Button size="sm" variant="default" onClick={() => startThumbUpload(thumbUpload)}>Retry</Button>
+                        ) : null}
+                        <Button size="sm" variant="ghost" onClick={() => setThumbUpload(null)}>Dismiss</Button>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="mt-2 h-2 rounded-full bg-muted overflow-hidden" role="progressbar" aria-valuenow={Math.round(thumbUpload.progress * 100)} aria-valuemin={0} aria-valuemax={100}>
+                        <div className="h-full bg-indigo transition-all" style={{ width: `${Math.round(thumbUpload.progress * 100)}%` }} />
+                      </div>
+                      <div className="text-[11.5px] text-ink-3 mt-1 tabular-nums">{thumbUpload.progress >= 1 ? "Checking file…" : `Uploading ${Math.round(thumbUpload.progress * 100)}%`}</div>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => thumbRef.current?.click()}
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => {
+                e.preventDefault();
+                pickThumb(e.dataTransfer.files);
+              }}
+              className="w-full rounded-xl border-2 border-dashed border-ink/20 py-6 grid place-items-center text-ink-3 hover:border-ink/40 transition-colors"
+            >
+              <Icon.Image size={20} />
+              <span className="mt-2 text-[13px] font-semibold text-ink">Drop a cover image here or click to upload</span>
+              <span className="text-[12px]">Vertical works best for reels · the super text is added to it too</span>
+            </button>
+          )}
+          <p className="text-[12px] text-ink-3 mt-3">Instagram takes the thumbnail automatically. On Facebook our team sets it when posting.</p>
+        </Card>
+      )}
+
+      <Card title="Super text" sub="Text we add on top of your image or video, exactly as you type it. Leave empty for none. You can give any single account its own text (or none) at the review step.">
         <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-start">
           <Field label="Overlay text" htmlFor="c-super" hint={`${superText.length}/${CAMPAIGN_LIMITS.superTextMax} · up to 3 lines`} error={superText.length > CAMPAIGN_LIMITS.superTextMax || superLines > 3 ? "Keep it to 120 characters and 3 lines" : null}>
             <textarea id="c-super" className={textareaCls} rows={3} value={superText} onChange={(e) => setSuperText(e.target.value)} placeholder={"FLAT 50% OFF\nToday only"} />

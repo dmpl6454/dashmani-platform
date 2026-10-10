@@ -7,12 +7,14 @@ import {
   type BookingStatus,
   type CampaignCreativeInput,
   type CampaignInfoInput,
+  type CampaignItemOverridesInput,
   type CampaignPlatform,
   type CampaignFormat,
 } from "@dashmani/shared";
 import { AppError } from "../../middleware/error-handler";
 import { razorpayConfig } from "./config";
 import { durationLimitSec } from "./media.service";
+import { overlayKey } from "./render.service";
 import { priceFor, resolveCatalogueTargets } from "./rate-card.service";
 
 // Campaign bookings — the client's side of the lifecycle and the one state-transition helper
@@ -67,6 +69,7 @@ const mediaSelect = {
   id: true,
   position: true,
   kind: true,
+  role: true,
   originalName: true,
   mime: true,
   bytes: true,
@@ -89,13 +92,85 @@ const itemSelect = {
   accountHandle: true,
   pricePaise: true,
   audioAddonPaise: true,
+  captionOverride: true,
+  hashtagsOverride: true,
+  superTextOverride: true,
+  superTextStyleOverride: true,
   status: true,
   permalink: true,
   postedAt: true,
   lastError: true,
 } satisfies Prisma.CampaignBookingItemSelect;
 
-function shapeBooking(b: any) {
+/**
+ * The overlay an item actually carries: its own override when set ("" = none), else the
+ * booking's. Returned as the text + style the renderer uses, so callers compare keys, never
+ * strings.
+ */
+export function itemOverlay(
+  b: { format: string | null; superText: string | null; superTextStyle: string | null },
+  item: { superTextOverride: string | null; superTextStyleOverride: string | null },
+): { text: string | null; style: string | null; key: string; custom: boolean } {
+  const format = b.format ?? "post";
+  const defaultKey = overlayKey(format, b.superText, b.superTextStyle);
+  if (item.superTextOverride == null) return { text: b.superText, style: b.superTextStyle, key: defaultKey, custom: false };
+  const text = item.superTextOverride.trim() || null;
+  const style = text ? item.superTextStyleOverride ?? "bottom" : null;
+  const key = overlayKey(format, text, style);
+  return { text, style, key, custom: key !== defaultKey };
+}
+
+/** The caption + hashtags an item posts with: its own when it has a caption override, else the booking's. */
+export function itemText(
+  b: { caption: string | null; hashtags: string[] },
+  item: { captionOverride: string | null; hashtagsOverride: string[] },
+): { caption: string; hashtags: string[]; custom: boolean } {
+  if (item.captionOverride == null) return { caption: b.caption ?? "", hashtags: b.hashtags, custom: false };
+  return { caption: item.captionOverride, hashtags: item.hashtagsOverride, custom: true };
+}
+
+/**
+ * Per item, the file to post for each creative (and the thumbnail): the per-account render
+ * when the item customised its overlay, else the default render on the media row. `status`
+ * is the render's state so callers can wait for it; `renderId` names the variant for a signed
+ * "v-<id>" URL (null = the media's own preview).
+ */
+export async function resolveItemFiles(bookingId: string) {
+  const b = await prisma.campaignBooking.findUnique({
+    where: { id: bookingId },
+    select: {
+      format: true, superText: true, superTextStyle: true,
+      media: { where: { purgedAt: null, uploadStatus: "complete" }, orderBy: [{ role: "asc" }, { position: "asc" }], select: { id: true, kind: true, role: true, renderStatus: true } },
+      renders: { select: { id: true, mediaId: true, overlayKey: true, status: true } },
+      items: { select: { id: true, superTextOverride: true, superTextStyleOverride: true } },
+    },
+  });
+  const out = new Map<string, Array<{ mediaId: string; kind: string; role: string; custom: boolean; renderId: string | null; status: string }>>();
+  if (!b) return out;
+  for (const item of b.items) {
+    const ov = itemOverlay(b, item);
+    out.set(
+      item.id,
+      b.media.map((m) => {
+        if (!ov.custom) return { mediaId: m.id, kind: m.kind, role: m.role, custom: false, renderId: null, status: m.renderStatus };
+        const v = b.renders.find((r) => r.mediaId === m.id && r.overlayKey === ov.key);
+        return { mediaId: m.id, kind: m.kind, role: m.role, custom: true, renderId: v?.id ?? null, status: v?.status ?? "queued" };
+      }),
+    );
+  }
+  return out;
+}
+
+/** One status for an item's own renders: failed > queued/rendering > done; null when the item uses the default files. */
+function summariseRenders(files: Array<{ custom: boolean; status: string }>): string | null {
+  if (!files.some((f) => f.custom)) return null;
+  if (files.some((f) => f.status === "failed")) return "failed";
+  if (files.some((f) => f.status !== "done")) return "queued";
+  return "done";
+}
+
+function shapeBooking(b: any, files?: Awaited<ReturnType<typeof resolveItemFiles>>) {
+  const media = (b.media ?? []).map((m: any) => ({ ...m, bytes: Number(m.bytes) }));
   return {
     id: b.id,
     name: b.name,
@@ -125,8 +200,9 @@ function shapeBooking(b: any) {
     deliveredAt: b.deliveredAt,
     createdAt: b.createdAt,
     updatedAt: b.updatedAt,
-    media: (b.media ?? []).map((m: any) => ({ ...m, bytes: Number(m.bytes) })),
-    items: b.items ?? [],
+    media: media.filter((m: any) => m.role !== "thumbnail"),
+    thumbnail: media.find((m: any) => m.role === "thumbnail") ?? null,
+    items: (b.items ?? []).map((i: any) => ({ ...i, renderStatus: files ? summariseRenders(files.get(i.id) ?? []) : null })),
   };
 }
 
@@ -177,7 +253,7 @@ export async function getClientBooking(clientId: string, id: string) {
     },
   });
   if (!b) throw new AppError(404, "NOT_FOUND", "Campaign not found");
-  return shapeBooking(b);
+  return shapeBooking(b, await resolveItemFiles(b.id));
 }
 
 async function requireEditable(clientId: string, id: string, allowed: readonly BookingStatus[] = EDITABLE_BOOKING_STATUSES) {
@@ -265,20 +341,28 @@ export async function updateCreative(clientId: string, id: string, c: CampaignCr
     }
   }
 
+  const thumbId = c.thumbnailMediaId ?? null;
+  const wantedIds = thumbId ? [...c.mediaIds, thumbId] : c.mediaIds;
   const media = await prisma.campaignMedia.findMany({
-    where: { id: { in: c.mediaIds }, clientId, purgedAt: null },
+    where: { id: { in: wantedIds }, clientId, purgedAt: null },
     select: { id: true, kind: true, uploadStatus: true, bookingId: true, durationMs: true },
   });
-  if (media.length !== new Set(c.mediaIds).size) throw new AppError(400, "MEDIA_NOT_FOUND", "One of the files could not be found. Upload it again.");
+  if (media.length !== new Set(wantedIds).size) throw new AppError(400, "MEDIA_NOT_FOUND", "One of the files could not be found. Upload it again.");
   for (const m of media) {
     if (m.uploadStatus !== "complete") throw new AppError(400, "MEDIA_NOT_READY", "Wait for every upload to finish first.");
     if (m.bookingId && m.bookingId !== id) throw new AppError(400, "MEDIA_IN_USE", "A file is already used by another campaign. Upload it again.");
   }
-  const kinds = new Set(media.map((m) => m.kind));
+  const creative = media.filter((m) => m.id !== thumbId);
+  const thumb = thumbId ? media.find((m) => m.id === thumbId) : null;
+  const kinds = new Set(creative.map((m) => m.kind));
   if (c.format !== "carousel" && c.format !== "story" && c.format !== "post" && kinds.has("image")) {
     throw new AppError(400, "FORMAT_MISMATCH", "A reel needs a video.");
   }
-  for (const m of media) {
+  if (thumb) {
+    if (thumb.kind !== "image") throw new AppError(400, "THUMBNAIL_NOT_IMAGE", "The thumbnail must be a JPG or PNG image.");
+    if (!kinds.has("video")) throw new AppError(400, "THUMBNAIL_NEEDS_VIDEO", "A thumbnail applies to a video. Remove it for an image post.");
+  }
+  for (const m of creative) {
     const limit = durationLimitSec(c.format, m.kind);
     if (limit && m.durationMs != null && m.durationMs > limit * 1000) {
       throw new AppError(400, "TOO_LONG", `Videos for a ${c.format} can be at most ${limit} seconds.`);
@@ -289,13 +373,21 @@ export async function updateCreative(clientId: string, id: string, c: CampaignCr
     // Detach files that are no longer part of the creative (they stay with the client and
     // are purged by retention if never reused).
     await tx.campaignMedia.updateMany({
-      where: { bookingId: id, id: { notIn: c.mediaIds } },
-      data: { bookingId: null, renderStatus: "none", renderKey: null },
+      where: { bookingId: id, id: { notIn: wantedIds } },
+      data: { bookingId: null, role: "creative", renderStatus: "none", renderKey: null },
     });
     for (const [position, mediaId] of c.mediaIds.entries()) {
       await tx.campaignMedia.update({
         where: { id: mediaId },
-        data: { bookingId: id, position, renderStatus: "queued", renderKey: null, renderError: null, renderLockedUntil: null },
+        data: { bookingId: id, position, role: "creative", renderStatus: "queued", renderKey: null, renderError: null, renderLockedUntil: null },
+      });
+    }
+    if (thumbId) {
+      // The thumbnail is rendered like the creative (same format, same overlay) so the cover
+      // matches the post. It never counts as a carousel slide: role keeps it apart.
+      await tx.campaignMedia.update({
+        where: { id: thumbId },
+        data: { bookingId: id, position: 0, role: "thumbnail", renderStatus: "queued", renderKey: null, renderError: null, renderLockedUntil: null },
       });
     }
     await tx.campaignBooking.update({
@@ -317,9 +409,74 @@ export async function updateCreative(clientId: string, id: string, c: CampaignCr
     // Audio integration toggled → prices change (and accounts without an audio price drop out).
     // Never after payment: paid item prices stay what was paid.
     if (b.status !== "changes_requested") await repriceItems(tx, id);
+    await syncRenderVariants(tx, id);
     await resetCheckoutIfNeeded(tx, id, b.status, clientId);
   });
   return getClientBooking(clientId, id);
+}
+
+/**
+ * Per-account text: this account's own caption / hashtags / overlay, or back to the
+ * booking's. An overlay that differs from the booking's queues its own render of every file
+ * (the preview and the checkout gate cover it like the default render).
+ */
+export async function updateItemOverrides(clientId: string, id: string, itemId: string, o: CampaignItemOverridesInput) {
+  const b = await requireEditable(clientId, id);
+  const item = await prisma.campaignBookingItem.findFirst({ where: { id: itemId, bookingId: id }, select: { id: true } });
+  if (!item) throw new AppError(404, "NOT_FOUND", "Account not found on this campaign");
+  await prisma.$transaction(async (tx) => {
+    await tx.campaignBookingItem.update({
+      where: { id: itemId },
+      data: {
+        captionOverride: o.caption,
+        hashtagsOverride: o.caption == null ? [] : o.hashtags ?? [],
+        // "" is kept as-is: it means "no overlay on this account" (null = the booking's overlay).
+        superTextOverride: o.superText == null ? null : o.superText.trim(),
+        superTextStyleOverride: o.superText?.trim() ? o.superTextStyle ?? "bottom" : null,
+      },
+    });
+    await syncRenderVariants(tx, id);
+    await resetCheckoutIfNeeded(tx, id, b.status, clientId);
+  });
+  return getClientBooking(clientId, id);
+}
+
+/**
+ * Make campaign_media_renders match what the items ask for: one row per (file, overlay) for
+ * every item whose overlay differs from the booking's, nothing else. New rows start queued;
+ * rows nobody needs any more are deleted (retention removes their files once unreferenced).
+ */
+export async function syncRenderVariants(tx: Tx, bookingId: string) {
+  const b = await tx.campaignBooking.findUnique({
+    where: { id: bookingId },
+    select: {
+      format: true, superText: true, superTextStyle: true,
+      media: { where: { purgedAt: null, uploadStatus: "complete" }, select: { id: true } },
+      items: { select: { superTextOverride: true, superTextStyleOverride: true } },
+      renders: { select: { id: true, mediaId: true, overlayKey: true } },
+    },
+  });
+  if (!b) return;
+  const wanted = new Map<string, { text: string | null; style: string | null }>();
+  for (const item of b.items) {
+    const ov = itemOverlay(b, item);
+    if (ov.custom) wanted.set(ov.key, { text: ov.text, style: ov.style });
+  }
+  const keep = new Set<string>();
+  for (const m of b.media) {
+    for (const [key, ov] of wanted) {
+      const existing = b.renders.find((r) => r.mediaId === m.id && r.overlayKey === key);
+      if (existing) keep.add(existing.id);
+      else {
+        const created = await tx.campaignMediaRender.create({
+          data: { mediaId: m.id, bookingId, overlayKey: key, overlayText: ov.text, overlayStyle: ov.style, status: "queued" },
+          select: { id: true },
+        });
+        keep.add(created.id);
+      }
+    }
+  }
+  await tx.campaignMediaRender.deleteMany({ where: { bookingId, id: { notIn: [...keep] } } });
 }
 
 /**
@@ -361,10 +518,17 @@ export async function updateItems(clientId: string, id: string, rateCardIds: str
   }
 
   await prisma.$transaction(async (tx) => {
+    // Accounts kept across the edit keep their own caption / overlay.
+    const previous = await tx.campaignBookingItem.findMany({
+      where: { bookingId: id },
+      select: { rateCardId: true, captionOverride: true, hashtagsOverride: true, superTextOverride: true, superTextStyleOverride: true },
+    });
+    const kept = new Map(previous.map((p) => [p.rateCardId, p]));
     await tx.campaignBookingItem.deleteMany({ where: { bookingId: id } });
     await tx.campaignBookingItem.createMany({
       data: cards.map((c) => {
         const t = targets.get(`${c.targetType}:${c.targetId}`)!;
+        const p = kept.get(c.id);
         return {
           bookingId: id,
           rateCardId: c.id,
@@ -376,9 +540,14 @@ export async function updateItems(clientId: string, id: string, rateCardIds: str
           accountHandle: t.username?.slice(0, 100) ?? null,
           pricePaise: prices.get(c.id)!.total,
           audioAddonPaise: prices.get(c.id)!.addon,
+          captionOverride: p?.captionOverride ?? null,
+          hashtagsOverride: p?.hashtagsOverride ?? [],
+          superTextOverride: p?.superTextOverride ?? null,
+          superTextStyleOverride: p?.superTextStyleOverride ?? null,
         };
       }),
     });
+    await syncRenderVariants(tx, id);
     await resetCheckoutIfNeeded(tx, id, b.status, clientId);
   });
   return getClientBooking(clientId, id);
@@ -428,13 +597,18 @@ export async function submitChanges(clientId: string, id: string) {
 export async function assertCreativeReady(id: string) {
   const b = await prisma.campaignBooking.findUnique({
     where: { id },
-    select: { format: true, media: { where: { purgedAt: null }, select: { renderStatus: true, uploadStatus: true } } },
+    select: {
+      format: true,
+      media: { where: { purgedAt: null }, select: { role: true, renderStatus: true, uploadStatus: true } },
+      renders: { select: { status: true } },
+    },
   });
-  if (!b?.format || b.media.length === 0) throw new AppError(400, "NO_CREATIVE", "Add your creative first.");
-  if (b.media.some((m) => m.renderStatus === "failed")) {
+  if (!b?.format || b.media.filter((m) => m.role !== "thumbnail").length === 0) throw new AppError(400, "NO_CREATIVE", "Add your creative first.");
+  const states = [...b.media.map((m) => m.renderStatus), ...b.renders.map((r) => r.status)];
+  if (states.some((s) => s === "failed")) {
     throw new AppError(400, "RENDER_FAILED", "We couldn't prepare one of your files. Upload it again or contact us.");
   }
-  if (b.media.some((m) => m.renderStatus !== "done")) {
+  if (states.some((s) => s !== "done")) {
     throw new AppError(409, "RENDER_PENDING", "We're still preparing your preview. Try again in a minute.");
   }
 }

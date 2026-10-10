@@ -13,7 +13,10 @@ import {
 type Item = {
   id: string; platform: string; format: string; accountName: string; accountHandle: string | null; pricePaise: number;
   audioAddonPaise: number; status: string; nextAttemptAt: string | null; attempts: number; permalink: string | null; postedAt: string | null; lastError: string | null;
+  /** Per-account text: null = the booking's. superTextOverride "" = no overlay on this account. */
+  captionOverride: string | null; hashtagsOverride: string[]; superTextOverride: string | null; superTextStyleOverride: string | null;
 };
+type ItemFiles = { itemId: string; custom: boolean; files: Array<{ mediaId: string; kind: string; role: string; status: string; url: string | null }> };
 type Booking = {
   id: string; name: string; brand: string; objective: string | null; status: string; format: string | null;
   campaignType: string; audioIntegration: boolean; audioTrack: string | null;
@@ -22,12 +25,12 @@ type Booking = {
   collaborators: string[]; superText: string | null; superTextStyle: string | null; totalPaise: number | null;
   reviewNote: string | null; paidAt: string | null; deliveredAt: string | null;
   client: { companyName: string; contactName: string; email: string; phone: string | null };
-  media: Array<{ id: string; kind: string; originalName: string; bytes: number; durationMs: number | null; width: number | null; height: number | null; renderStatus: string; renderError: string | null }>;
+  media: Array<{ id: string; kind: string; role: string; originalName: string; bytes: number; durationMs: number | null; width: number | null; height: number | null; renderStatus: string; renderError: string | null }>;
   items: Item[];
   payments: Array<{ id: string; razorpayOrderId: string; razorpayPaymentId: string | null; amountPaise: number; refundedPaise: number; status: string; createdAt: string }>;
   events: Array<{ id: string; actorType: string; fromStatus: string | null; toStatus: string | null; note: string | null; createdAt: string }>;
 };
-type MediaUrls = Array<{ id: string; kind: string; renderStatus: string; preview: string; original: string }>;
+type MediaUrls = { media: Array<{ id: string; kind: string; role: string; renderStatus: string; preview: string; original: string }>; items: ItemFiles[] };
 
 const unwrap = <T,>(u: string) => apiFetch<{ data: T }>(u).then((r) => r.data);
 
@@ -90,10 +93,11 @@ export default function CampaignBookingDetail() {
             <h2 className="text-[15px] font-semibold text-ds-text mb-3">Creative</h2>
             <div className="flex gap-3 overflow-x-auto pb-1">
               {b.media.map((m) => {
-                const u = urls?.find((x) => x.id === m.id);
+                const u = urls?.media.find((x) => x.id === m.id);
                 return (
                   <div key={m.id} className="shrink-0 w-[200px]">
-                    <div className="aspect-[9/16] rounded-[12px] bg-ds-inset overflow-hidden grid place-items-center">
+                    <div className="relative aspect-[9/16] rounded-[12px] bg-ds-inset overflow-hidden grid place-items-center">
+                      {m.role === "thumbnail" && <span className="absolute top-2 left-2 z-10 rounded-full bg-black/70 text-white text-[10.5px] font-semibold px-2 py-0.5">Thumbnail</span>}
                       {u ? (
                         m.kind === "video" ? (
                           <video src={`${API_BASE}${u.preview}`} controls playsInline preload="metadata" className="w-full h-full object-contain" />
@@ -125,8 +129,12 @@ export default function CampaignBookingDetail() {
             <dl className="mt-4 grid gap-2.5 text-[13px]">
               <Kv k="Campaign type" v={b.campaignType === "entertainment" ? "Entertainment (film, OTT, music)" : "Brand promotion"} />
               {b.audioIntegration && <Kv k="Song audio" v={<span className="break-words font-semibold text-ds-gold">{b.audioTrack}</span>} />}
+              {b.media.some((m) => m.role === "thumbnail") && <Kv k="Thumbnail" v="Client-supplied cover image — Instagram takes it through the API; set it by hand on Facebook / YouTube." />}
               {b.superText && <Kv k="Overlay" v={<span className="whitespace-pre-line">{b.superText} <span className="text-ds-t4">({b.superTextStyle})</span></span>} />}
               <Kv k="Caption" v={b.caption ? <span className="whitespace-pre-line break-words">{b.caption}</span> : "—"} />
+              {b.items.some((i) => i.captionOverride != null || i.superTextOverride != null) && (
+                <Kv k="Per account" v={<span className="text-ds-gold">Some accounts have their own caption or overlay — see each account below and use ITS post files.</span>} />
+              )}
               {b.hashtags.length > 0 && <Kv k="Hashtags" v={b.hashtags.map((h) => `#${h}`).join(" ")} />}
               {b.userTags.length > 0 && <Kv k="Tag" v={b.userTags.map((h) => `@${h}`).join(" ")} />}
               {b.collaborators.length > 0 && <Kv k="Collaborators" v={b.collaborators.map((h) => `@${h}`).join(" ")} />}
@@ -151,7 +159,7 @@ export default function CampaignBookingDetail() {
               )}
             </div>
             {b.items.map((i) => (
-              <ItemRow key={i.id} item={i} bookingId={b.id} postable={postable} autoPublish={!!b.autoPublish?.enabled} offline={offline} busy={busy} act={act} />
+              <ItemRow key={i.id} item={i} booking={b} files={urls?.items.find((f) => f.itemId === i.id)} bookingId={b.id} postable={postable} autoPublish={!!b.autoPublish?.enabled} offline={offline} busy={busy} act={act} />
             ))}
           </section>
         </div>
@@ -251,8 +259,8 @@ function Kv({ k, v }: { k: string; v: React.ReactNode }) {
   );
 }
 
-function ItemRow({ item: i, bookingId, postable, autoPublish, offline, busy, act }: {
-  item: Item; bookingId: string; postable: boolean; autoPublish: boolean; offline: boolean; busy: string | null;
+function ItemRow({ item: i, booking: b, files, bookingId, postable, autoPublish, offline, busy, act }: {
+  item: Item; booking: Booking; files: ItemFiles | undefined; bookingId: string; postable: boolean; autoPublish: boolean; offline: boolean; busy: string | null;
   act: (key: string, path: string, body?: unknown, confirmText?: string) => Promise<boolean | undefined>;
 }) {
   const [url, setUrl] = useState(i.permalink ?? "");
@@ -260,6 +268,10 @@ function ItemRow({ item: i, bookingId, postable, autoPublish, offline, busy, act
   const open = ["manual_pending", "queued", "failed"].includes(i.status);
   const queued = i.status === "queued";
   const live = i.status === "posted_manual" || i.status === "published";
+  const ownCaption = i.captionOverride != null;
+  const ownOverlay = i.superTextOverride != null;
+  const caption = ownCaption ? i.captionOverride : b.caption;
+  const hashtags = ownCaption ? i.hashtagsOverride : b.hashtags;
   return (
     <div className="px-5 py-3.5 border-t border-[#132430]">
       <div className="flex flex-wrap items-center gap-2.5">
@@ -273,6 +285,30 @@ function ItemRow({ item: i, bookingId, postable, autoPublish, offline, busy, act
           <a href={i.permalink} target="_blank" rel="noopener noreferrer" className="text-ds-gold hover:text-ds-gold2" aria-label="Open post"><ExternalLink className="h-4 w-4" /></a>
         )}
       </div>
+      {(ownCaption || ownOverlay) && (
+        <dl className="mt-2 grid gap-1 text-[12px] rounded-[8px] bg-ds-inset px-3 py-2">
+          {ownOverlay && (
+            <div className="grid grid-cols-[72px_1fr] gap-2"><dt className="text-ds-t3">Overlay</dt><dd className="text-ds-t5 whitespace-pre-line">{i.superTextOverride ? <>{i.superTextOverride} <span className="text-ds-t4">({i.superTextStyleOverride})</span></> : <span className="text-ds-t3">none on this account</span>}</dd></div>
+          )}
+          {ownCaption && (
+            <div className="grid grid-cols-[72px_1fr] gap-2"><dt className="text-ds-t3">Caption</dt><dd className="text-ds-t5 whitespace-pre-line break-words">{caption || <span className="text-ds-t3">(hashtags only)</span>}{hashtags.length > 0 && <span className="block text-ds-t2">{hashtags.map((h) => `#${h}`).join(" ")}</span>}</dd></div>
+          )}
+        </dl>
+      )}
+      {postable && !live && files && files.files.length > 0 && (
+        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px]">
+          <span className="text-ds-t3">{files.custom ? "This account's files:" : "Files:"}</span>
+          {files.files.map((f, n) =>
+            f.url ? (
+              <a key={f.mediaId} href={`${API_BASE}${f.url}`} download className="inline-flex items-center gap-1 text-ds-gold hover:underline">
+                <Download className="h-3.5 w-3.5" />{f.role === "thumbnail" ? "Thumbnail" : files.files.filter((x) => x.role !== "thumbnail").length > 1 ? `File ${n + 1}` : "Post file"}
+              </a>
+            ) : (
+              <span key={f.mediaId} className="text-ds-t3">{f.role === "thumbnail" ? "Thumbnail" : "Post file"} · {f.status === "failed" ? "render failed" : "rendering…"}</span>
+            ),
+          )}
+        </div>
+      )}
       {queued && (
         <div className="mt-1.5 text-[12px] text-ds-t2">
           {i.nextAttemptAt && new Date(i.nextAttemptAt) > new Date()

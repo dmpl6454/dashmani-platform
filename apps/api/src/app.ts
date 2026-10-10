@@ -115,6 +115,10 @@ app.use(express.urlencoded({ extended: true }));
 // Login limiter needs req.body (per-account key) → after the body parsers.
 app.use("/v1/auth/login", authLimiter);
 app.use("/v1/hr/auth/login", authLimiter);
+app.use("/v1/client/auth/login", authLimiter);
+// Public self-signup: the same per-(client, account) bucket — 20 attempts per 15 min keeps a
+// bot from minting accounts in bulk without punishing a brand on a shared office IP.
+app.use("/v1/client/auth/signup", authLimiter);
 
 if (process.env.NODE_ENV !== "test") {
   // P13: successful POST /v1/pipeline/sync polls are not logged (hundreds of thousands

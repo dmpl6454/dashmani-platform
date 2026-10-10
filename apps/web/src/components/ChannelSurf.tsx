@@ -281,9 +281,9 @@ export default function ChannelSurf() {
         <span className="clock" suppressHydrationWarning>
           IST {clock}
         </span>
-        <button type="button" className="btn btn-primary" onClick={() => go(5)} onMouseMove={magnet} onMouseLeave={unmagnet}>
+        <a className="btn btn-primary" href={CLIENT_BOOKING_URL} onMouseMove={magnet} onMouseLeave={unmagnet}>
           Start a campaign <span aria-hidden="true">→</span>
-        </button>
+        </a>
       </header>
 
       <div className="body">
@@ -612,7 +612,7 @@ export default function ChannelSurf() {
                     {CONTACT_PHONE.display}
                   </a>
                   <a href={CLIENT_BOOKING_URL} style={{ fontWeight: 400 }}>
-                    Clients: book &amp; pay online <span aria-hidden="true">→</span>
+                    Book a campaign online <span aria-hidden="true">→</span>
                   </a>
                 </div>
               </div>

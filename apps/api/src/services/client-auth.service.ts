@@ -241,6 +241,73 @@ export async function updateClient(id: string, data: { companyName?: string; con
   });
 }
 
+/**
+ * Public self-signup (website "Start a campaign" → client portal). Creates an ACTIVE client
+ * with instant access, like HR self-registration — the portal only ever shows a client its
+ * own data, and a brand-new account has nothing but the campaign booking flow.
+ *
+ * ⚠️ It can never take over an existing account: any existing client row for the email, in
+ * any status and any casing, is a 409 (the lookup is case-insensitive because Postgres's
+ * unique index is not). A pending admin invite for the same email is consumed, so the
+ * invite link cannot later create a second account.
+ */
+export async function clientSignup(data: { companyName: string; contactName: string; email: string; password: string; phone?: string }) {
+  const email = data.email.trim().toLowerCase();
+  const existing = await prisma.client.findFirst({ where: { email: { equals: email, mode: "insensitive" } }, select: { id: true } });
+  if (existing) throw new AppError(409, "EMAIL_EXISTS", "An account with this email already exists. Sign in, or use “Forgot password”.");
+
+  const passwordHash = await hash(data.password, 12);
+  let client;
+  try {
+    client = await prisma.$transaction(async (tx) => {
+      const created = await tx.client.create({
+        data: { companyName: data.companyName, contactName: data.contactName, email, passwordHash, phone: data.phone ?? null, status: "ACTIVE" },
+      });
+      await tx.clientInvite.updateMany({ where: { email, usedAt: null }, data: { usedAt: new Date() } });
+      return created;
+    });
+  } catch (err: any) {
+    // Two signups racing on one email: the unique index decides, the loser gets the same 409.
+    if (err?.code === "P2002") throw new AppError(409, "EMAIL_EXISTS", "An account with this email already exists. Sign in, or use “Forgot password”.");
+    throw err;
+  }
+
+  void (async () => {
+    const { notifyAdminByEmail } = await import("./email.service");
+    await notifyAdminByEmail(
+      `New client signed up: ${client.companyName}`,
+      [
+        { label: "Company", value: client.companyName },
+        { label: "Contact", value: client.contactName },
+        { label: "Email", value: client.email },
+        ...(client.phone ? [{ label: "Phone", value: client.phone }] : []),
+      ],
+      `/clients/${client.id}`,
+    );
+  })().catch((e) => console.error("[client-signup] admin email failed", e));
+
+  return issueClientSession(client);
+}
+
+/** Access + refresh token pair for a freshly created or authenticated client (same shape as clientLogin). */
+async function issueClientSession(client: { id: string; email: string; contactName: string; companyName: string }) {
+  const accessToken = jwt.sign(
+    { userId: client.id, email: client.email, roles: [], type: "client" as const },
+    JWT_SECRET,
+    { expiresIn: ACCESS_TOKEN_EXPIRY }
+  );
+  const refreshToken = jwt.sign({ userId: client.id }, JWT_SECRET, { expiresIn: REFRESH_TOKEN_EXPIRY, jwtid: crypto.randomUUID() });
+  const tokenHash = crypto.createHash("sha256").update(refreshToken).digest("hex");
+  await prisma.clientRefreshToken.create({
+    data: { clientId: client.id, token: tokenHash, expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) },
+  });
+  return {
+    accessToken,
+    refreshToken,
+    user: { id: client.id, name: client.contactName, companyName: client.companyName, email: client.email, roles: [] },
+  };
+}
+
 export async function createInvite(email: string): Promise<{ id: string; email: string; token: string; expiresAt: Date }> {
   const normalized = email.trim().toLowerCase();
 

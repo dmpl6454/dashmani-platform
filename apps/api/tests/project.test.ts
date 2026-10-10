@@ -3,7 +3,7 @@ import request from "supertest";
 import app from "../src/app";
 import { prisma } from "@dashmani/db";
 import { hash } from "bcrypt";
-import { createTestUser, createTestRole, generateToken } from "./helpers";
+import { createTestUser, createTestRole, generateToken, generateClientToken } from "./helpers";
 import "./setup";
 
 describe("Projects API", () => {
@@ -36,11 +36,9 @@ describe("Projects API", () => {
     });
     clientId = client.id;
 
-    // Get client token
-    const loginRes = await request(app)
-      .post("/v1/client/auth/login")
-      .send({ email: "client@test.com", password: "Client@123" });
-    clientToken = loginRes.body.data.accessToken;
+    // Sign the client token directly (see generateClientToken: the login route is
+    // behind the per-account login limiter, so fixtures must not log in per test).
+    clientToken = generateClientToken(client.id, client.email);
   });
 
   describe("POST /v1/projects", () => {

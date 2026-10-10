@@ -1,10 +1,16 @@
 "use client";
-import { Suspense, useEffect, useRef, useState } from "react";
+import { Suspense, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Mail, Lock, User, Check, AlertCircle, ArrowRight, AlertTriangle } from "lucide-react";
+import { Mail, Lock, User, Building2, Phone, Check, AlertCircle, ArrowRight } from "lucide-react";
 import { apiFetch } from "@/lib/api";
+import { safeNext, nextQuery } from "@/lib/safe-next";
 import { AuthField, AuthStyles } from "@/components/auth/shared";
+
+// Two modes on one route (the route shape is unchanged, see CLAUDE.md):
+//   /signup?token=<uuid>  → accept an admin invite (password only; the email is the invite's)
+//   /signup               → public self-signup, where the website's "Start a campaign" lands
+// Both store the same token keys as /login and then honour a same-site ?next=.
 
 const pwScore = (v: string) => {
   let s = 0;
@@ -15,13 +21,26 @@ const pwScore = (v: string) => {
   return s;
 };
 const pwLabel = ["", "Weak", "Fair", "Good", "Strong"];
+const emailOk = (v: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
+
+function storeSession(data: { accessToken: string; refreshToken: string; user: unknown }) {
+  localStorage.setItem("clientAccessToken", data.accessToken);
+  localStorage.setItem("clientRefreshToken", data.refreshToken);
+  localStorage.setItem("clientUser", JSON.stringify(data.user));
+}
 
 function SignupForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const token = searchParams.get("token");
+  const invited = Boolean(token);
+  const bookingIntent = (searchParams.get("next") ?? "").startsWith("/campaigns");
 
+  const [company, setCompany] = useState("");
   const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
+  const [emailBlurred, setEmailBlurred] = useState(false);
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [pwBlurred, setPwBlurred] = useState(false);
@@ -32,33 +51,47 @@ function SignupForm() {
 
   const score = pwScore(password);
   const pwErr = pwBlurred && password && score < 2 ? "Make it harder to guess" : null;
+  const emailErr = emailBlurred && email && !emailOk(email) ? "Please enter a valid email" : null;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
+    if (!invited) {
+      if (company.trim().length < 2) { setError("Tell us your company or brand name."); return; }
+      if (name.trim().length < 2) { setError("Tell us your name."); return; }
+      if (!emailOk(email)) { setEmailBlurred(true); setError("Please enter a valid email."); return; }
+    }
     if (password !== confirmPassword) { setError("Passwords do not match."); return; }
     if (password.length < 8) { setError("Password must be at least 8 characters."); return; }
     if (score < 2) { setError("Make it harder to guess — try a longer, mixed password."); return; }
     setSubmitState("loading");
     try {
-      const res = await apiFetch<{ accessToken: string; refreshToken: string; user: any }>(
-        "/client/auth/register",
-        {
-          method: "POST",
-          body: JSON.stringify({ token, password, ...(name.trim() ? { contactName: name.trim() } : {}) }),
-        }
-      );
+      const res = invited
+        ? await apiFetch<{ accessToken: string; refreshToken: string; user: unknown }>("/client/auth/register", {
+            method: "POST",
+            body: JSON.stringify({ token, password, ...(name.trim() ? { contactName: name.trim() } : {}) }),
+          })
+        : await apiFetch<{ accessToken: string; refreshToken: string; user: unknown }>("/client/auth/signup", {
+            method: "POST",
+            body: JSON.stringify({
+              companyName: company.trim(),
+              contactName: name.trim(),
+              email: email.trim(),
+              password,
+              ...(phone.trim() ? { phone: phone.trim() } : {}),
+            }),
+          });
       const data = (res as any).data ?? res;
-      localStorage.setItem("clientAccessToken", data.accessToken);
-      localStorage.setItem("clientRefreshToken", data.refreshToken);
-      localStorage.setItem("clientUser", JSON.stringify(data.user));
+      storeSession(data);
       setSubmitState("success");
-      setTimeout(() => router.push("/dashboard"), 600);
+      setTimeout(() => router.push(safeNext() ?? "/dashboard"), 600);
     } catch (err: any) {
       setError(err.message || "Something went wrong. Please try again.");
       setSubmitState("idle");
     }
   }
+
+  const signInHref = `/login${nextQuery()}`;
 
   return (
     <main className="auth-page min-h-screen w-full bg-bg relative overflow-x-hidden text-ink">
@@ -76,11 +109,8 @@ function SignupForm() {
             </p>
           </div>
         </Link>
-        <Link
-          href="/login"
-          className="text-[12.5px] font-bold text-ink-2 hover:text-ink"
-        >
-          ← Back to sign in
+        <Link href={signInHref} className="text-[12.5px] font-bold text-ink-2 hover:text-ink">
+          Already have an account? Sign in →
         </Link>
       </header>
 
@@ -90,7 +120,9 @@ function SignupForm() {
           style={{ boxShadow: "2px 2px 0 #F5D547" }}
         >
           <span className="ripple-dot" aria-hidden />
-          <span className="font-mono-auth uppercase tracking-[0.18em]">You're invited</span>
+          <span className="font-mono-auth uppercase tracking-[0.18em]">
+            {invited ? "You're invited" : bookingIntent ? "Start a campaign" : "Create your account"}
+          </span>
         </div>
 
         <h1 className="mt-6" style={{ fontSize: "clamp(48px,7vw,96px)", lineHeight: "0.94" }}>
@@ -99,7 +131,11 @@ function SignupForm() {
         </h1>
 
         <p className="mt-6 text-ink-3 text-[16px] lg:text-[18px] font-medium leading-snug auth-fade-up d4 max-w-[480px] mx-auto">
-          We'll have your room ready in a moment — just choose a password and we'll take it from there.
+          {invited
+            ? "We'll have your room ready in a moment — just choose a password and we'll take it from there."
+            : bookingIntent
+              ? "Create a free account to book promotion on our network — pick accounts, upload your creative, and our team takes it from there."
+              : "Create a free account to work with Digital Sukoon — campaigns, reviews and results in one place."}
         </p>
       </section>
 
@@ -113,127 +149,161 @@ function SignupForm() {
             hello.
           </div>
 
-          {!token ? (
-            <InvalidInvite />
-          ) : (
-            <>
-              <div className="mb-5">
-                <h2 className="font-display text-[24px] font-semibold text-ink leading-tight">Open your review room.</h2>
-                <p className="font-instr italic text-ink-3 text-[16px] mt-1 leading-snug">
-                  Just a couple of details and we'll take it from there.
-                </p>
-              </div>
+          <div className="mb-5">
+            <h2 className="font-display text-[24px] font-semibold text-ink leading-tight">
+              {invited ? "Open your review room." : "Create your account."}
+            </h2>
+            <p className="font-instr italic text-ink-3 text-[16px] mt-1 leading-snug">
+              {invited ? "Just a couple of details and we'll take it from there." : "Takes under a minute. No card needed."}
+            </p>
+          </div>
 
-              <div className="seg mb-5" data-active="signup" role="tablist" aria-label="Auth options">
-                <span className="seg-pill" aria-hidden />
-                <Link
-                  href="/login"
-                  data-tab="signin"
-                  role="tab"
-                  aria-selected={false}
-                  className="seg-btn"
-                >
-                  Sign in
-                </Link>
-                <button
-                  type="button"
-                  data-tab="signup"
-                  role="tab"
-                  aria-selected={true}
-                  className="seg-btn active"
-                >
-                  I have an invite
-                </button>
-              </div>
+          <div className="seg mb-5" data-active="signup" role="tablist" aria-label="Auth options">
+            <span className="seg-pill" aria-hidden />
+            <Link href={signInHref} data-tab="signin" role="tab" aria-selected={false} className="seg-btn">
+              Sign in
+            </Link>
+            <button type="button" data-tab="signup" role="tab" aria-selected={true} className="seg-btn active">
+              {invited ? "I have an invite" : "Create account"}
+            </button>
+          </div>
 
-              <form onSubmit={handleSubmit} noValidate className="space-y-3.5">
+          <form onSubmit={handleSubmit} noValidate className="space-y-3.5">
+            {!invited && (
+              <>
                 <div className="auth-fade-up">
                   <AuthField
-                    id="cname"
-                    label="Your name"
-                    icon={<User size={16} />}
-                    value={name}
-                    onChange={setName}
+                    id="ccompany"
+                    label="Company or brand"
+                    icon={<Building2 size={16} />}
+                    value={company}
+                    onChange={(v) => { setCompany(v); if (error) setError(""); }}
                     error={null}
-                    autoComplete="name"
-                    hint="Optional — what should we call you?"
+                    autoComplete="organization"
                   />
                 </div>
-
-                <div className="auth-fade-up" style={{ animationDelay: ".04s" }}>
+                <div className="auth-fade-up" style={{ animationDelay: ".02s" }}>
                   <AuthField
-                    id="cpw"
-                    label="Choose a password"
-                    type="password"
-                    icon={<Lock size={16} />}
-                    value={password}
-                    onChange={(v) => { setPassword(v); if (error) setError(""); }}
-                    onBlur={() => setPwBlurred(true)}
-                    error={pwErr}
-                    autoComplete="new-password"
-                    showPass={showPass}
-                    onToggleShowPass={() => setShowPass((s) => !s)}
-                  />
-                  {password && (
-                    <div className="mt-2 ml-1 auth-fade-up">
-                      <div className="meter">
-                        {[1, 2, 3, 4].map((i) => (
-                          <div key={i} className={`meter-seg ${score >= i ? `on-${score}` : ""}`} />
-                        ))}
-                      </div>
-                      <p className="text-[11px] mt-1.5 font-display italic">
-                        <span className={["text-ink-4", "text-danger", "text-attention", "text-action-deep", "text-success"][score]}>
-                          {pwLabel[score] || "—"}
-                        </span>
-                        <span className="text-ink-4 not-italic font-sans"> · {password.length} chars</span>
-                      </p>
-                    </div>
-                  )}
-                </div>
-
-                <div className="auth-fade-up" style={{ animationDelay: ".08s" }}>
-                  <AuthField
-                    id="cpw2"
-                    label="Confirm password"
-                    type="password"
-                    icon={<Lock size={16} />}
-                    value={confirmPassword}
-                    onChange={(v) => { setConfirmPassword(v); if (error) setError(""); }}
-                    error={null}
-                    autoComplete="new-password"
-                    showPass={showConfirm}
-                    onToggleShowPass={() => setShowConfirm((s) => !s)}
+                    id="cemail"
+                    label="Work email"
+                    type="email"
+                    icon={<Mail size={16} />}
+                    value={email}
+                    onChange={(v) => { setEmail(v); if (error) setError(""); }}
+                    onBlur={() => setEmailBlurred(true)}
+                    error={emailErr}
+                    autoComplete="email"
                   />
                 </div>
+              </>
+            )}
 
-                {error && (
-                  <div role="alert" className="flex items-center gap-2.5 px-3 py-2 rounded-lg bg-danger-bg border border-danger/30 auth-fade-up">
-                    <AlertCircle size={14} className="text-danger shrink-0" />
-                    <span className="text-[12.5px] text-danger font-semibold">{error}</span>
+            <div className="auth-fade-up" style={{ animationDelay: ".03s" }}>
+              <AuthField
+                id="cname"
+                label="Your name"
+                icon={<User size={16} />}
+                value={name}
+                onChange={(v) => { setName(v); if (error) setError(""); }}
+                error={null}
+                autoComplete="name"
+                hint={invited ? "Optional — what should we call you?" : undefined}
+              />
+            </div>
+
+            {!invited && (
+              <div className="auth-fade-up" style={{ animationDelay: ".035s" }}>
+                <AuthField
+                  id="cphone"
+                  label="Phone"
+                  type="tel"
+                  icon={<Phone size={16} />}
+                  value={phone}
+                  onChange={setPhone}
+                  error={null}
+                  autoComplete="tel"
+                  hint="Optional — so our team can reach you about a booking."
+                />
+              </div>
+            )}
+
+            <div className="auth-fade-up" style={{ animationDelay: ".04s" }}>
+              <AuthField
+                id="cpw"
+                label="Choose a password"
+                type="password"
+                icon={<Lock size={16} />}
+                value={password}
+                onChange={(v) => { setPassword(v); if (error) setError(""); }}
+                onBlur={() => setPwBlurred(true)}
+                error={pwErr}
+                autoComplete="new-password"
+                showPass={showPass}
+                onToggleShowPass={() => setShowPass((s) => !s)}
+              />
+              {password && (
+                <div className="mt-2 ml-1 auth-fade-up">
+                  <div className="meter">
+                    {[1, 2, 3, 4].map((i) => (
+                      <div key={i} className={`meter-seg ${score >= i ? `on-${score}` : ""}`} />
+                    ))}
                   </div>
-                )}
-
-                <div className="pt-1 auth-fade-up" style={{ animationDelay: ".16s" }}>
-                  <button
-                    type="submit"
-                    disabled={submitState !== "idle"}
-                    className="btn-3d-y w-full flex items-center justify-center gap-2 px-5 py-3.5 rounded-full bg-ink text-white font-bold text-[14px] tracking-tight border-2 border-ink disabled:opacity-70 disabled:cursor-not-allowed"
-                    aria-live="polite"
-                  >
-                    {submitState === "idle"    && (<><span>Create my review room</span><ArrowRight size={16} /></>)}
-                    {submitState === "loading" && (<><span className="auth-spinner" aria-hidden /><span>Setting things up…</span></>)}
-                    {submitState === "success" && (<><Check size={20} color="#F5D547" strokeWidth={3} /><span>Welcome aboard</span></>)}
-                  </button>
+                  <p className="text-[11px] mt-1.5 font-display italic">
+                    <span className={["text-ink-4", "text-danger", "text-attention", "text-action-deep", "text-success"][score]}>
+                      {pwLabel[score] || "—"}
+                    </span>
+                    <span className="text-ink-4 not-italic font-sans"> · {password.length} chars</span>
+                  </p>
                 </div>
-              </form>
+              )}
+            </div>
 
-              <p className="text-center text-[11px] text-ink-4 mt-5 font-instr italic leading-snug">
-                By creating your account you accept our{" "}
-                <a href="#" className="underline hover:text-ink not-italic">terms</a> &amp;{" "}
-                <a href="#" className="underline hover:text-ink not-italic">privacy notice</a>.
-              </p>
-            </>
-          )}
+            <div className="auth-fade-up" style={{ animationDelay: ".08s" }}>
+              <AuthField
+                id="cpw2"
+                label="Confirm password"
+                type="password"
+                icon={<Lock size={16} />}
+                value={confirmPassword}
+                onChange={(v) => { setConfirmPassword(v); if (error) setError(""); }}
+                error={null}
+                autoComplete="new-password"
+                showPass={showConfirm}
+                onToggleShowPass={() => setShowConfirm((s) => !s)}
+              />
+            </div>
+
+            {error && (
+              <div role="alert" className="flex items-center gap-2.5 px-3 py-2 rounded-lg bg-danger-bg border border-danger/30 auth-fade-up">
+                <AlertCircle size={14} className="text-danger shrink-0" />
+                <span className="text-[12.5px] text-danger font-semibold">{error}</span>
+              </div>
+            )}
+
+            <div className="pt-1 auth-fade-up" style={{ animationDelay: ".16s" }}>
+              <button
+                type="submit"
+                disabled={submitState !== "idle"}
+                className="btn-3d-y w-full flex items-center justify-center gap-2 px-5 py-3.5 rounded-full bg-ink text-white font-bold text-[14px] tracking-tight border-2 border-ink disabled:opacity-70 disabled:cursor-not-allowed"
+                aria-live="polite"
+              >
+                {submitState === "idle" && (
+                  <>
+                    <span>{invited ? "Create my review room" : bookingIntent ? "Create account & start a campaign" : "Create my account"}</span>
+                    <ArrowRight size={16} />
+                  </>
+                )}
+                {submitState === "loading" && (<><span className="auth-spinner" aria-hidden /><span>Setting things up…</span></>)}
+                {submitState === "success" && (<><Check size={20} color="#F5D547" strokeWidth={3} /><span>Welcome aboard</span></>)}
+              </button>
+            </div>
+          </form>
+
+          <p className="text-center text-[11px] text-ink-4 mt-5 font-instr italic leading-snug">
+            By creating your account you accept our{" "}
+            <a href="#" className="underline hover:text-ink not-italic">terms</a> &amp;{" "}
+            <a href="#" className="underline hover:text-ink not-italic">privacy notice</a>.
+          </p>
         </div>
       </section>
 
@@ -258,26 +328,6 @@ function SignupForm() {
 
       <AuthStyles />
     </main>
-  );
-}
-
-function InvalidInvite() {
-  return (
-    <div className="text-center space-y-4 py-6">
-      <div className="h-12 w-12 rounded-2xl bg-muted flex items-center justify-center mx-auto border-2 border-ink">
-        <AlertTriangle size={20} className="text-ink-3" />
-      </div>
-      <h2 className="font-display text-[22px] font-semibold text-ink">Invalid invite link</h2>
-      <p className="text-[13px] text-ink-3 font-medium max-w-[300px] mx-auto leading-relaxed">
-        This invite is missing or invalid. Ask your account manager at Digital Sukoon for a new one.
-      </p>
-      <Link
-        href="/login"
-        className="inline-block text-[13px] text-ink font-semibold underline underline-offset-4 decoration-ink-4 hover:decoration-ink"
-      >
-        Back to sign in
-      </Link>
-    </div>
   );
 }
 

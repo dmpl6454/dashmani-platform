@@ -61,7 +61,7 @@ export function ReasonModal({
               <button
                 key={r}
                 onClick={() => setReason(r)}
-                className={`h-8 px-3 inline-flex items-center rounded-md text-[12.5px] font-medium border transition-colors ${reason === r ? "bg-ink text-bg border-ink" : "bg-surface text-ink-2 border-border hover:bg-muted/60"}`}
+                className={`h-8 px-3 inline-flex items-center rounded-md text-[12.5px] font-medium border transition-colors ${reason === r ? "bg-indigo text-white border-indigo" : "bg-surface text-ink-2 border-border hover:bg-muted/60"}`}
               >
                 {r}
               </button>

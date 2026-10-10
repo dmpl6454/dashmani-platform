@@ -711,6 +711,16 @@ The client portal has `/campaigns`, `/campaigns/new` and `/campaigns/[id]`. The 
 
 **Tests:** `apps/api/tests/campaign.test.ts` stubs ffprobe, ffmpeg, Razorpay and SMTP. It covers pure helpers plus the whole flow: catalogue field allow-list, cross-client 404s, chunk 413 / out-of-order / missing / fake-type, webhook replay and tamper, outdated-order refund, reject refunding exactly once, the delivery email sent exactly once, and resend.
 
+## Client Portal (`apps/client`) — design system = digitalsukoon.com (2026-10-10)
+
+The client portal shares the website's "Channel Surf" look (`apps/web/src/app/globals.css`): black canvas, white type, one indigo accent (`#403cfa`), 2px hairline dividers at 18% white, **square corners**, Manrope. The portal was already token-driven, so the restyle lives in two files and the token NAMES did not change, only their values:
+- `apps/client/tailwind.config.ts` — `bg`/`surface`/`muted`/`border`, the `ink` scale (now the LIGHT type scale: `ink`=#fff … `ink-4`=#5c5c66), `indigo`/`action` (both the accent; `action` used to be the yellow highlight), status tones, and **every `borderRadius` token = 0** so `rounded-xl` etc. collapse without touching pages (`rounded-full` stays for dots). Shadows are `none`.
+- `apps/client/src/app/globals.css` — the site's CSS variables, `.v3-card` (surface + 2px divider, accent border on hover), flat `.btn-3d`, `.nav-active` = solid accent, `.kicker`/`.on-air`.
+- Shell: `portal-rail.tsx` is the site's numbered-channel rail (CH 01…, current = solid accent); `portal-topstrip.tsx` carries the title, a kicker, Search, ON AIR and the IST clock; `portal-shared.tsx` controls are the site's `.btn` / `.chip` / `.tag` / square `.avatar`.
+- Auth pages (`/login`, `/signup`, `/reset-password`) use `components/auth/shared.tsx` `AuthShell`: the site's header, the Contact channel's accent-gradient panel + form, and the LIVE ticker footer. Wire unchanged (see "Portal hero" method above).
+- ⚠️ `ink` is WHITE now. Never write `bg-ink text-white` (white on white); the selected/strongest state is `bg-indigo text-white`. The 2026-10-10 restyle replaced every such pair and every inline `rgba(26,26,26,…)` border; grep for both before merging a cherry-pick from before that date.
+- Verified in a headless browser at 1366 and 390 px on every page: 0 horizontal overflow, 0 page errors.
+
 ## Client Portal (`apps/client`) — Implementation Status
 
 All 9 implementation phases + 5-wave audit remediation complete + TC-191 (forgot-password) verified implemented. See `.planning/CLIENT-PORTAL-AUDIT.md` for the full issue register. The `/login` page has a `forgotOpen` state that opens a `ForgotPasswordModal` calling `POST /client/auth/forgot-password`; `apps/client/src/app/reset-password/` page handles the token-based reset flow calling `POST /client/auth/reset-password`.

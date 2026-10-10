@@ -27,7 +27,7 @@ export default function CampaignsPage() {
         <div className="v3-card overflow-hidden">
           {error && !isLoading && <div className="p-5"><PageError message="Could not load your campaigns. Please refresh." /></div>}
           {isLoading && [...Array(3)].map((_, i) => (
-            <div key={i} className="px-5 py-4 flex gap-4" style={{ borderBottom: "1px solid rgba(26,26,26,0.06)" }}>
+            <div key={i} className="px-5 py-4 flex gap-4" style={{ borderBottom: "1px solid rgba(255,255,255,0.10)" }}>
               <Skeleton className="h-4 w-1/3" /><Skeleton className="h-4 w-20 ml-auto" />
             </div>
           ))}
@@ -44,7 +44,7 @@ export default function CampaignsPage() {
               key={r.id}
               href={`/campaigns/${r.id}`}
               className="flex flex-col sm:flex-row sm:items-center gap-1.5 sm:gap-4 px-5 py-4 v3-row transition-colors"
-              style={i < rows.length - 1 ? { borderBottom: "1px solid rgba(26,26,26,0.06)" } : undefined}
+              style={i < rows.length - 1 ? { borderBottom: "1px solid rgba(255,255,255,0.10)" } : undefined}
             >
               <div className="min-w-0 flex-1">
                 <div className="text-[14px] font-semibold text-ink truncate">{r.name}</div>

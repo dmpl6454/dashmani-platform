@@ -121,7 +121,7 @@ export default function DashboardPage() {
           {/* ── Row 1: Approvals hero ── */}
           <section className="fade-up d1">
             <div className={`v3-card overflow-hidden ${mappedPending.length === 0 ? "border-success/40" : ""}`}>
-              <div className="px-6 py-4 flex items-center justify-between gap-3 flex-wrap" style={{ borderBottom: "2px solid rgba(26,26,26,0.07)" }}>
+              <div className="px-6 py-4 flex items-center justify-between gap-3 flex-wrap" style={{ borderBottom: "2px solid rgba(255,255,255,0.18)" }}>
                 <div>
                   <h2 className="font-display text-[22px] font-semibold leading-tight text-ink">
                     {mappedPending.length > 0
@@ -167,7 +167,7 @@ export default function DashboardPage() {
                       <button
                         onClick={() => router.push("/approvals")}
                         className="w-full h-11 text-[13px] font-semibold text-indigo hover:bg-indigo-soft transition-colors flex items-center justify-center gap-1.5"
-                        style={{ borderTop: "1px solid rgba(26,26,26,0.07)" }}
+                        style={{ borderTop: "1px solid rgba(255,255,255,0.10)" }}
                       >
                         {mappedPending.length - 4} more in inbox <Icon.ArrowRight size={13} />
                       </button>
@@ -203,7 +203,7 @@ export default function DashboardPage() {
           <div className="grid grid-cols-1 lg:grid-cols-[3fr_2fr] gap-4">
             <div className="fade-up d6">
               <div className="v3-card overflow-hidden">
-                <div className="px-5 h-12 flex items-center justify-between" style={{ borderBottom: "2px solid rgba(26,26,26,0.07)" }}>
+                <div className="px-5 h-12 flex items-center justify-between" style={{ borderBottom: "2px solid rgba(255,255,255,0.18)" }}>
                   <h3 className="text-[14px] font-bold text-ink">Your projects</h3>
                   <button onClick={() => router.push("/projects")} className="text-[12.5px] text-indigo font-semibold hover:underline inline-flex items-center gap-1">
                     View all <Icon.ArrowRight size={12} />
@@ -211,7 +211,7 @@ export default function DashboardPage() {
                 </div>
                 <ul>
                   {projects.filter((p) => p.status === "ACTIVE").slice(0, 4).map((p, i, arr) => (
-                    <li key={p.id} style={i < arr.length - 1 ? { borderBottom: "1px solid rgba(26,26,26,0.06)" } : {}}>
+                    <li key={p.id} style={i < arr.length - 1 ? { borderBottom: "1px solid rgba(255,255,255,0.10)" } : {}}>
                       <button
                         onClick={() => router.push("/projects")}
                         className="w-full px-5 h-12 flex items-center gap-3 v3-row text-left"
@@ -231,7 +231,7 @@ export default function DashboardPage() {
 
             <div className="fade-up d7">
               <div className="v3-card overflow-hidden">
-                <div className="px-5 h-12 flex items-center justify-between" style={{ borderBottom: "2px solid rgba(26,26,26,0.07)" }}>
+                <div className="px-5 h-12 flex items-center justify-between" style={{ borderBottom: "2px solid rgba(255,255,255,0.18)" }}>
                   <h3 className="text-[14px] font-bold text-ink">Recent activity</h3>
                   <span className="text-[11px] text-ink-3 font-medium">last 12h</span>
                 </div>
@@ -271,7 +271,7 @@ function DashApprovalRow({ post, divider, delay }: { post: any; divider: boolean
   return (
     <li
       className={`group flex items-center gap-3 px-5 py-3.5 v3-row cursor-pointer fade-up ${delay}`}
-      style={divider ? { borderBottom: "1px solid rgba(26,26,26,0.06)" } : {}}
+      style={divider ? { borderBottom: "1px solid rgba(255,255,255,0.10)" } : {}}
       onClick={() => router.push(`/content/${post.id}`)}
     >
       <AspectThumb aspect={post.aspect || "1:1"} format={post.format} />

@@ -19,18 +19,21 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
   { variant = "default", size = "md", icon, iconRight, kbd, children, className = "", ...rest },
   ref
 ) {
-  const base = "inline-flex items-center justify-center gap-1.5 font-semibold select-none disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap border-2 rounded-xl";
+  // The site's .btn (solid accent, 800 weight, square) and .chip (2px outline
+  // that brightens on hover). `ink` was the black "strongest" button on the
+  // cream theme; on black the strongest control is the accent, same as primary.
+  const base = "inline-flex items-center justify-center gap-1.5 font-extrabold select-none disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap border-2 rounded-none";
   const sizes: Record<ButtonSize, string> = {
     sm: "h-8 px-3.5 text-[13px]",
     md: "h-10 px-5 text-[14px]",
   };
   const variants: Record<ButtonVariant, string> = {
-    primary: "bg-indigo  text-white  border-ink btn-3d",
-    default: "bg-surface text-ink    border-ink btn-3d",
-    ghost:   "bg-transparent text-ink-2 border-transparent hover:bg-muted/80 transition-colors",
-    danger:  "bg-danger-bg text-danger border-danger btn-3d",
-    subtle:  "bg-muted text-ink border-transparent hover:bg-muted/80 transition-colors",
-    ink:     "bg-ink text-white border-ink btn-3d",
+    primary: "bg-indigo text-white border-indigo hover:bg-indigo-deep btn-3d",
+    default: "bg-transparent text-ink border-[rgba(255,255,255,0.3)] hover:border-indigo-light btn-3d",
+    ghost:   "bg-transparent text-ink-2 border-transparent hover:bg-surface hover:text-ink transition-colors",
+    danger:  "bg-transparent text-danger border-danger/50 hover:bg-danger-bg btn-3d",
+    subtle:  "bg-surface text-ink border-transparent hover:bg-muted transition-colors",
+    ink:     "bg-indigo text-white border-indigo hover:bg-indigo-deep btn-3d",
   };
   return (
     <button ref={ref} className={`${base} ${sizes[size]} ${variants[variant]} ${className}`} {...rest}>
@@ -51,11 +54,11 @@ interface IconButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 }
 
 export function IconButton({ icon, label, size = "md", variant = "ghost", className = "", ...rest }: IconButtonProps) {
-  const dims = { sm: "h-8 w-8 rounded-lg", md: "h-10 w-10 rounded-xl" }[size] || "h-10 w-10 rounded-xl";
+  const dims = { sm: "h-8 w-8", md: "h-10 w-10" }[size] || "h-10 w-10";
   const variants = {
-    ghost:   "text-ink-2 hover:bg-muted/80 hover:text-ink transition-colors",
-    default: "bg-surface border-2 border-ink rounded-xl btn-3d text-ink",
-    ink:     "bg-ink text-white border-2 border-ink rounded-xl btn-3d",
+    ghost:   "text-ink-2 hover:bg-surface hover:text-ink transition-colors",
+    default: "bg-transparent border-2 border-[rgba(255,255,255,0.3)] hover:border-indigo-light btn-3d text-ink",
+    ink:     "bg-indigo text-white border-2 border-indigo hover:bg-indigo-deep btn-3d",
   };
   return (
     <button aria-label={label} title={label} className={`${dims} ${variants[variant] || variants.ghost} inline-flex items-center justify-center shrink-0 ${className}`} {...rest}>
@@ -78,13 +81,14 @@ export function IconButton({ icon, label, size = "md", variant = "ghost", classN
 type TagTone = "neutral" | "attention" | "success";
 
 export function Tag({ tone = "neutral", children, className = "" }: { tone?: TagTone; children: ReactNode; className?: string }) {
+  // The site's .tag: a square outline, light text, 11px with a little tracking.
   const tones: Record<TagTone, string> = {
-    neutral:   "bg-muted/80     text-ink-3    border-ink/10",
-    attention: "bg-attention-bg text-attention border-attention/20",
-    success:   "bg-success-bg   text-success  border-success/20",
+    neutral:   "bg-transparent  text-indigo-light border-indigo-light/35",
+    attention: "bg-attention-bg text-attention    border-attention/30",
+    success:   "bg-success-bg   text-success      border-success/30",
   };
   return (
-    <span className={`inline-flex items-center gap-1 h-5 sm:h-6 px-2 sm:px-2.5 rounded-full text-[10px] sm:text-[11px] font-bold border shrink-0 whitespace-nowrap ${tones[tone]} ${className}`}>
+    <span className={`inline-flex items-center gap-1 h-5 sm:h-6 px-2 sm:px-2.5 text-[10px] sm:text-[11px] tracking-[0.02em] font-semibold border shrink-0 whitespace-nowrap ${tones[tone]} ${className}`}>
       {children}
     </span>
   );
@@ -98,10 +102,10 @@ export function FilterChip({ active, count, dot, onClick, children }: {
       type="button"
       onClick={onClick}
       aria-pressed={active}
-      className={`h-8 sm:h-9 px-3 sm:px-4 inline-flex items-center gap-1.5 rounded-lg sm:rounded-xl text-[12.5px] sm:text-[13px] font-semibold border-2 transition-all whitespace-nowrap
+      className={`h-8 sm:h-9 px-3 sm:px-4 inline-flex items-center gap-1.5 text-[12px] sm:text-[13px] tracking-[0.06em] uppercase font-semibold border-2 transition-colors whitespace-nowrap
         ${active
-          ? "bg-ink text-white border-ink btn-3d"
-          : "bg-surface text-ink-2 border-ink/20 hover:border-ink/50 hover:text-ink"}`}
+          ? "bg-indigo text-white border-indigo"
+          : "bg-transparent text-ink border-[rgba(255,255,255,0.3)] hover:border-indigo-light"}`}
     >
       {children}
       {typeof count === "number" && (
@@ -117,8 +121,7 @@ export function SegTabs<T extends string>({ value, onChange, options, className 
 }) {
   return (
     <div
-      className={`flex items-center gap-1 p-0.5 bg-muted rounded-lg sm:rounded-xl shrink-0 ${className}`}
-      style={{ border: "2px solid rgba(26,26,26,0.1)" }}
+      className={`flex items-center shrink-0 border-2 border-border divide-x-2 divide-[rgba(255,255,255,0.18)] ${className}`}
       role="tablist"
     >
       {options.map((o) => (
@@ -128,8 +131,8 @@ export function SegTabs<T extends string>({ value, onChange, options, className 
           role="tab"
           aria-selected={value === o.value}
           onClick={() => onChange(o.value)}
-          className={`h-6 sm:h-7 px-2 sm:px-3 text-[11.5px] sm:text-[12.5px] font-semibold rounded-md sm:rounded-lg transition-all whitespace-nowrap
-            ${value === o.value ? "bg-surface text-ink shadow-hard-ink" : "text-ink-3 hover:text-ink"}`}
+          className={`h-7 sm:h-8 px-2.5 sm:px-3 text-[11px] sm:text-[12px] tracking-[0.06em] uppercase font-semibold transition-colors whitespace-nowrap
+            ${value === o.value ? "bg-indigo text-white" : "text-ink-2 hover:text-ink hover:bg-surface"}`}
         >
           {o.label}
         </button>
@@ -143,7 +146,7 @@ export function StatusBadge({ status, withDot = true, className = "" }: { status
   const s = STATUS[status] || STATUS.DRAFT;
   const st = STATUS_STYLE[s.kind];
   return (
-    <span className={`inline-flex items-center gap-1 sm:gap-1.5 h-5 sm:h-6 px-2 sm:px-2.5 rounded-full text-[10.5px] sm:text-[11.5px] font-semibold whitespace-nowrap ${st.bg} ${st.text} border border-current/15 ${className}`}>
+    <span className={`inline-flex items-center gap-1 sm:gap-1.5 h-5 sm:h-6 px-2 sm:px-2.5 text-[10.5px] sm:text-[11.5px] font-semibold whitespace-nowrap ${st.bg} ${st.text} border border-current/30 ${className}`}>
       {withDot && <span className={`h-1.5 w-1.5 rounded-full ${st.dot} shrink-0`} />}
       {s.label}
     </span>
@@ -160,7 +163,8 @@ export function Avatar({ initial = "?", size = "md", className = "" }: { initial
     lg: "h-11 w-11 text-[15px] border-2",
   };
   return (
-    <span className={`${dims[size]} inline-flex items-center justify-center rounded-full bg-muted text-ink-2 border-ink/20 font-bold shrink-0 ${className}`}>
+    // The site's .avatar: a square surface tile with accent initials.
+    <span className={`${dims[size]} inline-flex items-center justify-center bg-surface text-indigo border-[rgba(255,255,255,0.12)] font-extrabold shrink-0 ${className}`}>
       {initial}
     </span>
   );
@@ -176,7 +180,7 @@ export function FormatPill({ format, aspect, className = "" }: { format: string;
     DOC:      <Icon.File     size={9} sw={2} />,
   };
   return (
-    <span className={`inline-flex items-center gap-1 h-5 px-2 rounded-full bg-muted/80 text-ink-3 text-[9.5px] font-bold uppercase tracking-wider border border-ink/8 ${className}`}>
+    <span className={`inline-flex items-center gap-1 h-5 px-2 bg-transparent text-indigo-light text-[9.5px] font-bold uppercase tracking-wider border border-indigo-light/35 ${className}`}>
       {icons[format] || null}
       {format}
       {aspect && <span className="text-ink-4 normal-case tracking-normal font-medium">·{aspect}</span>}
@@ -195,9 +199,9 @@ export function AspectThumb({ aspect = "1:1", format = "POST", size = "row", cla
   const w = ratio >= 1 ? box : box * ratio;
   const h = ratio >= 1 ? box / ratio : box;
   return (
-    <div className={`ig-hatch rounded-md relative border border-ink/15 shrink-0 ${className}`} style={{ width: w, height: h }}>
+    <div className={`ig-hatch relative border border-[rgba(255,255,255,0.15)] shrink-0 ${className}`} style={{ width: w, height: h }}>
       {format === "REEL" && (
-        <span className="absolute bottom-0.5 right-0.5 text-[8px] font-bold text-ink-3 bg-bg/90 px-1 rounded-sm leading-tight">9:16</span>
+        <span className="absolute bottom-0.5 right-0.5 text-[8px] font-bold text-ink-3 bg-bg/90 px-1 leading-tight">9:16</span>
       )}
     </div>
   );
@@ -210,13 +214,13 @@ export function ToastStack() {
     <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[80] flex flex-col items-center gap-2 pointer-events-none">
       {toasts.map((t) => {
         const tone: Record<string, string> = {
-          success:   "bg-success-bg  text-success  border-success/30",
-          attention: "bg-attention-bg text-attention border-attention/30",
-          danger:    "bg-danger-bg   text-danger   border-danger/30",
-          neutral:   "bg-surface     text-ink       border-ink/20",
+          success:   "text-success   border-success/50",
+          attention: "text-attention border-attention/50",
+          danger:    "text-danger    border-danger/50",
+          neutral:   "text-ink       border-[rgba(255,255,255,0.3)]",
         };
         return (
-          <div key={t.id} className={`toast-pop pointer-events-auto v3-card-sm border px-4 py-2.5 text-[13px] font-semibold min-w-[200px] text-center ${tone[t.kind] || tone.neutral}`}>
+          <div key={t.id} className={`toast-pop pointer-events-auto bg-surface border-2 px-4 py-2.5 text-[13px] font-bold min-w-[200px] text-center ${tone[t.kind] || tone.neutral}`}>
             {t.text}
           </div>
         );
@@ -236,17 +240,17 @@ export function Modal({ open, onClose, title, children, footer, size = "md" }: {
   if (!open) return null;
   const widths = { sm: "max-w-sm", md: "max-w-md", lg: "max-w-lg", xl: "max-w-2xl" };
   return (
-    <div className="fixed inset-0 z-[70] bg-ink/20 grid place-items-center p-4 pop-in" onClick={onClose}>
+    <div className="fixed inset-0 z-[70] bg-black/70 grid place-items-center p-4 pop-in" onClick={onClose}>
       <div className={`v3-card w-full ${widths[size] || widths.md} overflow-hidden`} onClick={(e) => e.stopPropagation()}>
         {title && (
-          <div className="px-5 py-4 flex items-center justify-between gap-3" style={{ borderBottom: "2px solid rgba(26,26,26,0.08)" }}>
+          <div className="px-5 py-4 flex items-center justify-between gap-3" style={{ borderBottom: "2px solid rgba(255,255,255,0.18)" }}>
             <h2 className="text-[15px] font-bold text-ink">{title}</h2>
             <IconButton size="sm" icon={<Icon.Close size={16} />} label="Close" onClick={onClose} />
           </div>
         )}
         <div className="p-5">{children}</div>
         {footer && (
-          <div className="px-5 py-3 flex items-center justify-end gap-2" style={{ borderTop: "2px solid rgba(26,26,26,0.08)", background: "rgba(243,238,216,0.3)" }}>
+          <div className="px-5 py-3 flex items-center justify-end gap-2" style={{ borderTop: "2px solid rgba(255,255,255,0.18)", background: "rgba(255,255,255,0.03)" }}>
             {footer}
           </div>
         )}
@@ -260,7 +264,7 @@ export function Empty({ icon, title, hint, cta }: { icon?: ReactNode; title: str
   return (
     <div className="text-center py-14 px-6">
       {icon && (
-        <div className="h-12 w-12 mx-auto rounded-2xl bg-indigo-soft border border-indigo/20 text-indigo grid place-items-center mb-4">
+        <div className="h-12 w-12 mx-auto bg-indigo-soft border border-indigo text-indigo-light grid place-items-center mb-4">
           {icon}
         </div>
       )}
@@ -273,7 +277,7 @@ export function Empty({ icon, title, hint, cta }: { icon?: ReactNode; title: str
 
 /* ── Skeleton ── */
 export function Skeleton({ className = "" }: { className?: string }) {
-  return <div className={`animate-pulse bg-muted rounded-xl ${className}`} />;
+  return <div className={`animate-pulse bg-surface border border-[rgba(255,255,255,0.08)] ${className}`} />;
 }
 
 /* ── PageError ── */

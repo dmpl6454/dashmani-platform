@@ -1,15 +1,85 @@
 "use client";
-import { useState } from "react";
-import { AlertCircle, Check, Eye, EyeOff } from "lucide-react";
+import { useEffect, useState, type ReactNode } from "react";
+import Link from "next/link";
+import { AlertCircle, Eye, EyeOff } from "lucide-react";
 
+/* ── Auth pages share the website's shell ──
+   digitalsukoon.com ("Channel Surf", apps/web): a 2px-divided header with the
+   brand, ON AIR and an IST clock; a two-column body like its Contact channel —
+   an accent-gradient panel on the left, the form on the right — and the LIVE
+   ticker footer. Design only: every form still calls the real client auth API. */
+
+const istClock = () => new Date().toLocaleTimeString("en-GB", { timeZone: "Asia/Kolkata" });
+
+export function AuthShell({
+  kicker, title, lines, children, ticker,
+}: {
+  kicker: string;
+  title: ReactNode;
+  lines: ReactNode[];
+  children: ReactNode;
+  ticker?: string[];
+}) {
+  const [clock, setClock] = useState("");
+  useEffect(() => {
+    setClock(istClock());
+    const t = setInterval(() => setClock(istClock()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  const items = ticker ?? [
+    "Client portal", "Book promotion on 100+ owned pages", "Review every draft before it ships",
+    "Live engagement on every post", "Facebook · Instagram · YouTube · Snapchat",
+  ];
+  return (
+    <main className="auth-shell">
+      <header className="auth-header">
+        <Link href="/" className="auth-brand">
+          <img src="/logo-mark.svg" alt="" />
+          <span>Digital Sukoon</span>
+        </Link>
+        <span className="auth-onair"><i aria-hidden /> On air</span>
+        <span className="auth-chcount">Client portal</span>
+        <span className="auth-clock" suppressHydrationWarning>{clock}</span>
+        <a className="auth-site" href="https://digitalsukoon.com" target="_blank" rel="noopener noreferrer">digitalsukoon.com ↗</a>
+      </header>
+
+      <div className="auth-body">
+        <section className="auth-panel">
+          <div className="auth-panel-top">
+            <p className="auth-kicker">{kicker}</p>
+            <h1 className="auth-h1">{title}</h1>
+          </div>
+          <div className="auth-lines">
+            {lines.map((l, i) => <p key={i}>{l}</p>)}
+          </div>
+        </section>
+        <section className="auth-form-col">{children}</section>
+      </div>
+
+      <footer className="auth-footer">
+        <span className="auth-live">LIVE</span>
+        <div className="auth-ticker" aria-hidden>
+          <div className="auth-ticker-track">
+            {[...items, ...items].map((t, i) => <span key={i} className={i % 2 ? "alt" : ""}>{t}</span>)}
+          </div>
+        </div>
+        <span className="auth-views">© {new Date().getFullYear()} Digital Sukoon</span>
+      </footer>
+      <AuthStyles />
+    </main>
+  );
+}
+
+/* A labelled field in the site's .field / .input style: uppercase tracked
+   label above, a 44px square input with a 2px 25%-white border. */
 export function AuthField({
-  id, label, type = "text", icon, value, onChange, error, success, hint, autoComplete, onBlur,
-  showPass, onToggleShowPass,
+  id, label, type = "text", value, onChange, error, hint, autoComplete, onBlur, placeholder,
+  showPass, onToggleShowPass, inputMode,
 }: {
   id: string;
   label: string;
   type?: string;
-  icon: React.ReactNode;
+  icon?: ReactNode;
   value: string;
   onChange: (v: string) => void;
   error: string | null;
@@ -17,53 +87,57 @@ export function AuthField({
   hint?: string;
   autoComplete?: string;
   onBlur?: () => void;
+  placeholder?: string;
   showPass?: boolean;
   onToggleShowPass?: () => void;
+  inputMode?: "email" | "tel" | "text";
 }) {
-  const [focused, setFocused] = useState(false);
   const isPw = type === "password";
   const realType = isPw ? (showPass ? "text" : "password") : type;
-  const filled = value.length > 0;
   return (
-    <div className={`auth-field-wrap ${error ? "error" : focused ? "is-focused" : ""} ${filled ? "is-filled" : ""}`}>
-      <span className="auth-field-icon">{icon}</span>
-      <input
-        id={id}
-        type={realType}
-        value={value}
-        placeholder=" "
-        autoComplete={autoComplete}
-        onChange={(e) => onChange(e.target.value)}
-        onFocus={() => setFocused(true)}
-        onBlur={() => { setFocused(false); onBlur?.(); }}
-        className={`auth-field ${error ? "error" : ""} ${success ? "success" : ""} ${isPw || success ? "has-adornment" : ""}`}
-        aria-invalid={!!error}
-        aria-describedby={error ? `${id}-err` : hint ? `${id}-hint` : undefined}
-      />
-      <label htmlFor={id} className="auth-field-label">{label}</label>
-      {isPw && (
-        <button
-          type="button"
-          aria-label={showPass ? "Hide password" : "Show password"}
-          onClick={onToggleShowPass}
-          className="absolute right-2.5 top-[22px] text-ink-3 hover:text-ink p-1 rounded-md transition-colors"
-        >
-          {showPass ? <EyeOff size={16} /> : <Eye size={16} />}
-        </button>
-      )}
-      {success && !isPw && (
-        <span className="absolute right-3 top-[22px] text-success">
-          <Check size={14} />
-        </span>
-      )}
+    <label className="auth-field" htmlFor={id}>
+      <span className="auth-label">{label}</span>
+      <span className="auth-input-wrap">
+        <input
+          id={id}
+          type={realType}
+          inputMode={inputMode}
+          value={value}
+          placeholder={placeholder}
+          autoComplete={autoComplete}
+          onChange={(e) => onChange(e.target.value)}
+          onBlur={onBlur}
+          className={`auth-input ${isPw ? "has-eye" : ""}`}
+          aria-invalid={!!error}
+          aria-describedby={error ? `${id}-err` : hint ? `${id}-hint` : undefined}
+        />
+        {isPw && (
+          <button
+            type="button"
+            aria-label={showPass ? "Hide password" : "Show password"}
+            onClick={onToggleShowPass}
+            className="auth-eye"
+          >
+            {showPass ? <EyeOff size={16} /> : <Eye size={16} />}
+          </button>
+        )}
+      </span>
       {error && (
-        <p id={`${id}-err`} role="alert" className="mt-1.5 ml-1 text-[12px] text-danger font-semibold flex items-center gap-1.5">
-          <AlertCircle size={14} /> {error}
-        </p>
+        <span id={`${id}-err`} role="alert" className="auth-field-err"><AlertCircle size={13} /> {error}</span>
       )}
-      {!error && hint && (
-        <p id={`${id}-hint`} className="mt-1.5 ml-1 text-[11.5px] text-ink-4 font-medium">{hint}</p>
-      )}
+      {!error && hint && <span id={`${id}-hint`} className="auth-field-hint">{hint}</span>}
+    </label>
+  );
+}
+
+/* The site's .chip pair, used as the Sign in / Create account switch. */
+export function AuthTabs({ active, signInHref, signUpHref, signUpLabel = "Create account" }: {
+  active: "signin" | "signup"; signInHref: string; signUpHref: string; signUpLabel?: string;
+}) {
+  return (
+    <div className="auth-chips" role="tablist" aria-label="Auth options">
+      <Link href={signInHref} role="tab" aria-selected={active === "signin"} aria-pressed={active === "signin"} className="auth-chip">Sign in</Link>
+      <Link href={signUpHref} role="tab" aria-selected={active === "signup"} aria-pressed={active === "signup"} className="auth-chip">{signUpLabel}</Link>
     </div>
   );
 }
@@ -71,230 +145,137 @@ export function AuthField({
 export function AuthStyles() {
   return (
     <style jsx global>{`
-      @keyframes auth-popIn { 0% { opacity: 0; transform: scale(.93) translateY(6px); } 65% { transform: scale(1.025) translateY(-1px); } 100% { opacity: 1; transform: scale(1) translateY(0); } }
-      @keyframes auth-fadeUp { 0% { transform: translateY(14px); opacity: 0; } 100% { transform: translateY(0); opacity: 1; } }
-      @keyframes auth-slideInRight { 0% { transform: translateX(28px); opacity: 0; } 100% { transform: translateX(0); opacity: 1; } }
-      @keyframes auth-pulseDot { 0%,100% { opacity: 1; } 50% { opacity: .4; } }
-      @keyframes auth-spin { to { transform: rotate(360deg); } }
-      @keyframes auth-checkmark { 0% { stroke-dashoffset: 24; } 100% { stroke-dashoffset: 0; } }
-      @keyframes auth-meshDrift { 0% { background-position: 0% 0%; } 50% { background-position: 100% 100%; } 100% { background-position: 0% 0%; } }
-      @keyframes auth-drift { 0%,100% { transform: translateY(0) rotate(var(--r,0deg)); } 50% { transform: translateY(-7px) rotate(calc(var(--r,0deg) - .6deg)); } }
-      @keyframes auth-underlineDraw { from { stroke-dashoffset: 240; } to { stroke-dashoffset: 0; } }
-      @keyframes auth-rotate { from { transform: rotate(0); } to { transform: rotate(360deg); } }
-      @keyframes auth-stampDrop {
-        0% { transform: translateY(-30px) rotate(0deg) scale(1.4); opacity: 0; }
-        55% { transform: translateY(0) rotate(-14deg) scale(1.05); opacity: 1; }
-        75% { transform: translateY(-3px) rotate(-12deg) scale(.98); }
-        100% { transform: translateY(0) rotate(-12deg) scale(1); opacity: 1; }
-      }
-      @keyframes auth-ripple { 0% { transform: scale(1); opacity: .4; } 100% { transform: scale(2.2); opacity: 0; } }
-      @keyframes auth-scaleIn { 0% { transform: scale(.7); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
+      @keyframes auth-blink { 0%, 100% { opacity: 1 } 50% { opacity: 0.3 } }
+      @keyframes auth-tick { to { transform: translateX(-50%) } }
+      @keyframes auth-in { from { opacity: 0; transform: translateY(16px) } to { opacity: 1; transform: none } }
+      @keyframes auth-spin { to { transform: rotate(360deg) } }
 
-      .auth-fade-up   { animation: auth-fadeUp .46s cubic-bezier(0.34,1.45,0.64,1) both; }
-      .auth-pop-in    { animation: auth-popIn .44s cubic-bezier(0.34,1.45,0.64,1) both; }
-      .auth-slide-right { animation: auth-slideInRight .50s cubic-bezier(0.34,1.3,0.64,1) both; }
-      .auth-scale-in  { animation: auth-scaleIn .42s cubic-bezier(0.34,1.45,0.64,1) both; }
-      .auth-stamp-drop { animation: auth-stampDrop .9s cubic-bezier(0.34,1.45,0.64,1) both; transform-origin: center; }
-      .auth-spin-slow { animation: auth-rotate 22s linear infinite; }
-
-      .d1 { animation-delay: .04s; } .d2 { animation-delay: .12s; } .d3 { animation-delay: .20s; }
-      .d4 { animation-delay: .30s; } .d5 { animation-delay: .40s; } .d6 { animation-delay: .52s; }
-      .d7 { animation-delay: .64s; } .d8 { animation-delay: .76s; } .d9 { animation-delay: .90s; }
-      .d10 { animation-delay: 1.06s; } .d11 { animation-delay: 1.22s; } .d12 { animation-delay: 1.36s; }
-
-      /* ── Backgrounds ── */
-      .cream-mesh {
-        background:
-          radial-gradient(ellipse 70% 60% at 12% 15%, rgba(245,213,71,.30), transparent 65%),
-          radial-gradient(ellipse 60% 55% at 88% 18%, rgba(93,95,239,.18), transparent 65%),
-          radial-gradient(ellipse 80% 70% at 50% 95%, rgba(224,122,95,.16), transparent 65%);
-        background-size: 200% 200%, 200% 200%, 200% 200%;
-        animation: auth-meshDrift 26s cubic-bezier(0.22,1,0.36,1) infinite;
+      .auth-shell {
+        min-height: 100vh; min-height: 100dvh; display: grid; grid-template-rows: auto minmax(0, 1fr) auto;
+        background: #000; color: #fff; font-family: 'Manrope', system-ui, sans-serif; -webkit-font-smoothing: antialiased;
       }
-      .dots-bg {
-        background-image: radial-gradient(rgba(26,26,26,.10) 1px, transparent 1px);
-        background-size: 22px 22px;
-      }
-      /* NOTE: the xmlns is percent-encoded on purpose. A literal "//" here reads as a
-         line comment to the styled-jsx minifier, which truncates the url() mid-string —
-         the unterminated quote then swallows every rule below this one. */
-      .grain {
-        position: absolute; inset: 0; pointer-events: none; opacity: .35; mix-blend-mode: multiply;
-        background-image: url("data:image/svg+xml;utf8,<svg viewBox='0 0 200 200' xmlns='http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.05 0 0 0 0 0.05 0 0 0 0 0.05 0 0 0 0.35 0'/></filter><rect width='100%' height='100%' filter='url(%23n)' opacity='0.35'/></svg>");
-      }
+      .auth-shell a { color: #fff; text-decoration: none; }
+      .auth-shell a:hover { color: var(--light); }
 
-      /* ── Card system ── */
-      .v3-card        { background: #FFFFFF; border: 2px solid #1A1A1A; border-radius: 20px; box-shadow: 4px 4px 0 rgba(93,95,239,0.13); }
-      .v3-card-lift   { transition: transform .22s cubic-bezier(0.34,1.45,0.64,1), box-shadow .22s cubic-bezier(0.34,1.45,0.64,1); }
-      .v3-card-lift:hover { transform: translate(-2px,-2px); box-shadow: 6px 6px 0 rgba(93,95,239,0.20); }
-      .v3-card-sm     { background: #FFFFFF; border: 1.5px solid rgba(26,26,26,0.14); border-radius: 14px; box-shadow: 2px 2px 0 rgba(93,95,239,0.09); }
-      .v3-card-action { background: #FFFFFF; border: 2px solid #1A1A1A; border-radius: 20px; box-shadow: 5px 5px 0 #F5D547; }
-
-      /* ── 3D buttons ── */
-      .btn-3d { box-shadow: 3px 3px 0 #1A1A1A; transition: transform .09s ease, box-shadow .09s ease, background-color .14s ease, color .14s ease; position: relative; }
-      .btn-3d:hover:not(:disabled)  { transform: translate(-1px,-1px); box-shadow: 4px 4px 0 #1A1A1A; }
-      .btn-3d:active:not(:disabled) { transform: translate(2px,2px); box-shadow: 1px 1px 0 #1A1A1A; }
-      .btn-3d:disabled { opacity: .7; cursor: not-allowed; }
-
-      .btn-3d-y { box-shadow: 3px 3px 0 #1A1A1A, 5px 5px 0 #F5D547; transition: transform .09s ease, box-shadow .09s ease, background-color .14s ease, color .14s ease; }
-      .btn-3d-y:hover:not(:disabled)  { transform: translate(-1px,-1px); box-shadow: 4px 4px 0 #1A1A1A, 6px 6px 0 #F5D547; }
-      .btn-3d-y:active:not(:disabled) { transform: translate(2px,2px);  box-shadow: 1px 1px 0 #1A1A1A, 3px 3px 0 #F5D547; }
-      .btn-3d-y:disabled { opacity: .7; cursor: not-allowed; }
-
-      /* ── Form field ── */
-      .auth-field-wrap { position: relative; }
-      .auth-field {
-        width: 100%; min-width: 0; background: #FDFCF0; border: 1.5px solid #D4CBBA; border-radius: 14px;
-        padding: 22px 14px 8px 38px; font: 500 13.5px/1.2 'Plus Jakarta Sans', sans-serif; color: #1A1A1A;
-        transition: border-color .2s cubic-bezier(0.22,1,0.36,1), box-shadow .2s cubic-bezier(0.22,1,0.36,1), background-color .2s cubic-bezier(0.22,1,0.36,1);
-        outline: none; text-overflow: ellipsis;
+      /* Header */
+      .auth-header {
+        display: flex; align-items: center; gap: clamp(12px, 2vw, 24px); padding: 14px clamp(16px, 3vw, 32px);
+        border-bottom: 2px solid var(--divider); font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase;
       }
-      /* Only reserve room on the right when the eye toggle or success tick is actually there */
-      .auth-field.has-adornment { padding-right: 36px; }
-      /* Placeholder exists only so :placeholder-shown can drive the floating label */
-      .auth-field::placeholder { color: transparent; }
-      .auth-field:hover:not(:focus) { border-color: #9C947C; }
-      .auth-field:focus { border-color: #5D5FEF; background: #FFFFFF; box-shadow: 0 0 0 3px rgba(93,95,239,0.28); }
-      .auth-field.error { border-color: #B83728; background: #FDECEA; box-shadow: 0 0 0 3px rgba(184,55,40,.12); }
-      .auth-field.success { border-color: #4A7C52; background: #EDF4EE; }
-      .auth-field-label {
-        position: absolute; left: 38px; top: 13px; font-size: 13px; color: #6C6555; font-weight: 500;
-        pointer-events: none; transition: transform .2s cubic-bezier(0.22,1,0.36,1), color .2s, font-size .2s;
-        transform-origin: left top;
-      }
-      .auth-field-wrap.is-focused .auth-field-label,
-      .auth-field-wrap.is-filled .auth-field-label,
-      .auth-field:focus ~ .auth-field-label,
-      .auth-field:not(:placeholder-shown) ~ .auth-field-label {
-        transform: translateY(-9px) scale(.78);
-        color: #5D5FEF; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
-      }
-      /* Browser autofill fires before React state updates — float the label anyway
-         and keep the cream field colour instead of the UA's blue wash. */
-      .auth-field:-webkit-autofill ~ .auth-field-label {
-        transform: translateY(-9px) scale(.78);
-        color: #5D5FEF; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
-      }
-      .auth-field:-webkit-autofill,
-      .auth-field:-webkit-autofill:hover {
-        -webkit-text-fill-color: #1A1A1A;
-        -webkit-box-shadow: 0 0 0 1000px #FDFCF0 inset;
-        caret-color: #1A1A1A;
-      }
-      .auth-field:-webkit-autofill:focus {
-        -webkit-text-fill-color: #1A1A1A;
-        -webkit-box-shadow: 0 0 0 1000px #FFFFFF inset, 0 0 0 3px rgba(93,95,239,0.28);
-        caret-color: #1A1A1A;
-      }
-      .auth-field-wrap.error .auth-field-label { color: #B83728; }
-      .auth-field-icon {
-        position: absolute; left: 14px; top: 50%; transform: translateY(-50%);
-        color: #9C947C; transition: color .2s; pointer-events: none;
-      }
-      .auth-field-wrap.is-focused .auth-field-icon { color: #5D5FEF; }
-      .auth-field-wrap.error .auth-field-icon { color: #B83728; }
+      .auth-brand { display: flex; align-items: center; gap: 10px; font-weight: 800; letter-spacing: -0.02em; font-size: 18px; text-transform: none; white-space: nowrap; }
+      .auth-brand img { width: 32px; height: 32px; display: block; }
+      .auth-onair { display: flex; align-items: center; gap: 8px; color: var(--light); }
+      .auth-onair i { width: 8px; height: 8px; border-radius: 50%; background: var(--light); animation: auth-blink 1.2s infinite; }
+      .auth-chcount { margin-left: auto; color: var(--text-2); white-space: nowrap; }
+      .auth-clock { color: var(--text-2); font-variant-numeric: tabular-nums; }
+      .auth-site { color: var(--text-2); white-space: nowrap; }
 
-      /* ── Segmented control ── */
-      .seg {
-        position: relative; display: flex; background: #F3EED8;
-        border: 1.5px solid rgba(26,26,26,0.09); border-radius: 999px; padding: 4px;
+      /* Body: the site's Contact channel — gradient panel + form */
+      .auth-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); min-height: 0; }
+      .auth-panel {
+        background: linear-gradient(140deg, var(--accent-deep), var(--accent)); padding: clamp(24px, 4vw, 56px);
+        display: flex; flex-direction: column; justify-content: space-between; gap: 32px; animation: auth-in 0.5s var(--ease);
       }
-      .seg-btn {
-        /* flex-basis 0 + min-width 0 forces two exactly equal halves. Without
-           min-width:0 the longer label sets its own floor, the tabs end up
-           uneven, and the pill no longer lines up with either of them. */
-        flex: 1 1 0; min-width: 0; padding: 10px 14px; font-weight: 700; font-size: 13.5px;
-        color: #3A3A3A; border-radius: 999px; cursor: pointer; position: relative; z-index: 2; transition: color .2s;
-        background: transparent; border: 0; text-align: center; white-space: nowrap;
-        overflow: hidden; text-overflow: ellipsis;
+      .auth-kicker { margin: 0 0 14px; font-size: 13px; letter-spacing: 0.12em; text-transform: uppercase; color: rgba(255,255,255,0.75); }
+      .auth-h1 { margin: 0; font-weight: 800; letter-spacing: -0.05em; font-size: clamp(44px, 6vw, 96px); line-height: 0.92; }
+      .auth-h1 em { font-style: normal; color: var(--light); }
+      .auth-lines { display: flex; flex-direction: column; gap: 8px; font-size: 15px; line-height: 1.5; color: rgba(255,255,255,0.9); }
+      .auth-lines p { margin: 0; max-width: 46ch; }
+      .auth-lines a { font-weight: 700; color: #fff; text-decoration: underline; text-underline-offset: 3px; }
+      .auth-form-col { padding: clamp(24px, 4vw, 56px); display: flex; flex-direction: column; justify-content: center; animation: auth-in 0.5s var(--ease) 0.08s both; }
+      .auth-form-inner { width: 100%; max-width: 440px; margin: 0 auto; display: flex; flex-direction: column; gap: 22px; }
+      .auth-form-head h2 { margin: 0; font-weight: 800; letter-spacing: -0.04em; font-size: clamp(28px, 3vw, 40px); line-height: 1; }
+      .auth-form-head p { margin: 10px 0 0; font-size: 15px; line-height: 1.5; color: var(--text-2); max-width: 40ch; }
+
+      /* Chips (the sign in / create account switch) */
+      .auth-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+      .auth-chip {
+        font-size: 13px; letter-spacing: 0.06em; text-transform: uppercase; padding: 10px 14px;
+        border: 2px solid rgba(255, 255, 255, 0.3); background: transparent; color: #fff; cursor: pointer; white-space: nowrap;
       }
-      .seg-btn.active { color: #FFFFFF; }
-      /* Sized in CSS, not measured in JS. The old script read offsetWidth once on
-         mount — before the display fonts loaded — then kept that stale pixel
-         width while the labels reflowed underneath it, so the pill crept over
-         the neighbouring tab. */
-      .seg-pill {
-        position: absolute; top: 4px; bottom: 4px; left: 4px; width: calc(50% - 4px);
-        background: #1A1A1A; border-radius: 999px;
-        transition: transform .32s cubic-bezier(0.34,1.45,0.64,1);
-        z-index: 1; box-shadow: 2px 2px 0 #5D5FEF;
+      .auth-chip:hover { border-color: var(--light); color: #fff; }
+      .auth-chip[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); }
+
+      /* Fields */
+      .auth-form { display: flex; flex-direction: column; gap: 14px; }
+      .auth-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr)); gap: 14px; }
+      .auth-fields .full { grid-column: 1 / -1; }
+      .auth-field { display: flex; flex-direction: column; gap: 6px; }
+      .auth-label { font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-2); }
+      .auth-input-wrap { position: relative; display: block; }
+      .auth-input {
+        width: 100%; min-height: 44px; padding: 6px 10px; font: inherit; font-size: 14px; letter-spacing: normal; text-transform: none;
+        color: #fff; caret-color: var(--accent); background: var(--surface); border: 2px solid var(--input-border); border-radius: 0; outline: none;
+        transition: border-color 0.2s;
       }
-      .seg[data-active="signup"] .seg-pill { transform: translateX(100%); }
-
-      /* ── Strength meter ── */
-      .meter { height: 4px; border-radius: 99px; background: #EDE7D2; overflow: hidden; display: flex; gap: 3px; }
-      .meter-seg { flex: 1; background: #EDE7D2; border-radius: 99px; transition: background-color .3s cubic-bezier(0.22,1,0.36,1); }
-      .meter-seg.on-1 { background: #B83728; }
-      .meter-seg.on-2 { background: #C05826; }
-      .meter-seg.on-3 { background: #E8C83A; }
-      .meter-seg.on-4 { background: #4A7C52; }
-
-      /* ── Spinner ── */
-      .auth-spinner { width: 18px; height: 18px; border: 2.5px solid rgba(255,255,255,.35); border-top-color: #FFFFFF; border-radius: 50%; animation: auth-spin .7s linear infinite; }
-
-      /* ── Stamp (Approved sticker) ── */
-      .stamp {
-        position: relative; width: 160px; height: 160px; border-radius: 50%;
-        background: #F5D547; border: 2.5px solid #1A1A1A;
-        display: grid; place-items: center; box-shadow: 4px 4px 0 #1A1A1A;
+      .auth-input.has-eye { padding-right: 42px; }
+      .auth-input::placeholder { color: var(--muted); }
+      .auth-input:hover { border-color: rgba(255, 255, 255, 0.45); }
+      .auth-input:focus-visible { border-color: var(--accent); outline: none; }
+      .auth-input[aria-invalid="true"] { border-color: #ff8a8a; }
+      .auth-input:-webkit-autofill, .auth-input:-webkit-autofill:hover, .auth-input:-webkit-autofill:focus {
+        -webkit-text-fill-color: #fff; -webkit-box-shadow: 0 0 0 1000px var(--surface) inset; caret-color: #fff;
       }
-      .stamp::before {
-        content: ""; position: absolute; inset: 8px;
-        border: 1.5px dashed #1A1A1A; border-radius: 50%; opacity: .6;
+      .auth-eye { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); background: none; border: 0; padding: 6px; cursor: pointer; color: var(--text-2); display: grid; place-items: center; }
+      .auth-eye:hover { color: #fff; }
+      .auth-field-err { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: #ff8a8a; }
+      .auth-field-hint { font-size: 12px; color: var(--muted); line-height: 1.4; }
+      .auth-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 13px; }
+      .auth-link { background: none; border: 0; padding: 0; cursor: pointer; font: inherit; font-size: 13px; font-weight: 700; color: var(--light); }
+      .auth-link:hover { color: #fff; text-decoration: underline; text-underline-offset: 3px; }
+      .auth-err { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border: 2px solid rgba(255, 138, 138, 0.4); color: #ff8a8a; font-size: 13px; font-weight: 600; }
+      .auth-ok { padding: 12px 14px; border: 2px solid rgba(110, 231, 160, 0.4); color: #6ee7a0; font-size: 14px; line-height: 1.5; }
+
+      /* Buttons: the site's .btn */
+      .auth-btn {
+        display: inline-flex; align-items: center; justify-content: center; gap: 10px; cursor: pointer; font: inherit; font-weight: 800; font-size: 16px; line-height: 1.2;
+        color: #fff; background: var(--accent); border: 1px solid transparent; border-radius: 0; padding: 16px 24px; white-space: nowrap;
+        transition: transform 0.35s var(--ease), background 0.2s; width: 100%;
       }
-      .stamp-ring text {
-        font-family: 'JetBrains Mono', ui-monospace, monospace;
-        font-size: 9.5px; letter-spacing: .18em; fill: #1A1A1A; font-weight: 700;
+      .auth-btn:hover:not(:disabled) { background: var(--accent-600); }
+      .auth-btn:active:not(:disabled) { background: var(--accent-700); }
+      .auth-btn:disabled { opacity: 0.6; cursor: progress; }
+      .auth-spinner { width: 16px; height: 16px; border: 2px solid rgba(255,255,255,.35); border-top-color: #fff; border-radius: 50%; animation: auth-spin .7s linear infinite; }
+      .auth-fine { font-size: 12px; color: var(--muted); line-height: 1.5; }
+      .auth-fine a { color: var(--text-2); text-decoration: underline; text-underline-offset: 3px; }
+
+      /* Strength meter: four hairline segments */
+      .auth-meter { display: flex; gap: 3px; height: 4px; }
+      .auth-meter span { flex: 1; background: var(--dim); transition: background-color .3s; }
+      .auth-meter span.on-1 { background: #ff8a8a; } .auth-meter span.on-2 { background: #f5b445; }
+      .auth-meter span.on-3 { background: var(--light); } .auth-meter span.on-4 { background: #6ee7a0; }
+      .auth-meter-label { display: flex; justify-content: space-between; margin-top: 6px; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-2); }
+
+      /* Footer ticker */
+      .auth-footer { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: stretch; border-top: 2px solid var(--divider); font-size: 13px; }
+      .auth-live { background: var(--accent); padding: 12px 18px; font-weight: 800; letter-spacing: 0.1em; }
+      .auth-ticker { overflow: hidden; white-space: nowrap; display: flex; align-items: center; min-width: 0; }
+      .auth-ticker-track { display: inline-flex; gap: 40px; padding-right: 40px; animation: auth-tick 40s linear infinite; }
+      .auth-ticker-track .alt { color: var(--light); }
+      .auth-views { padding: 12px 18px; border-left: 2px solid var(--divider); color: var(--light); white-space: nowrap; background: #000; }
+
+      /* Modal */
+      .auth-modal-overlay { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: 16px; background: rgba(0,0,0,.75); }
+      .auth-modal { position: relative; width: 100%; max-width: 420px; background: var(--surface); border: 2px solid rgba(255,255,255,.3); padding: 28px; display: flex; flex-direction: column; gap: 14px; animation: auth-in 0.3s var(--ease); }
+      .auth-modal h3 { margin: 0; font-weight: 800; letter-spacing: -0.03em; font-size: 24px; }
+      .auth-modal p { margin: 0; font-size: 14px; line-height: 1.5; color: var(--text-2); }
+      .auth-modal-x { position: absolute; top: 12px; right: 12px; background: none; border: 0; cursor: pointer; color: var(--text-2); padding: 6px; }
+      .auth-modal-x:hover { color: #fff; }
+
+      @media (max-width: 899px) {
+        .auth-body { grid-template-columns: minmax(0, 1fr); }
+        .auth-panel { gap: 24px; }
+        .auth-h1 { font-size: clamp(40px, 11vw, 64px); }
+        .auth-onair, .auth-clock, .auth-site { display: none; }
       }
-      .stamp-core {
-        position: absolute; font-family: 'Instrument Serif', serif; font-style: italic;
-        font-size: 32px; font-weight: 500; color: #1A1A1A; letter-spacing: -.02em; line-height: 1;
+      @media (max-width: 699px) {
+        .auth-header { padding: 10px 16px; }
+        .auth-views { display: none; }
+        .auth-footer { grid-template-columns: auto minmax(0, 1fr); }
       }
-      .stamp-core::before { content: "\\2713  "; font-style: normal; }
-
-      /* ── Display fonts ── */
-      .display-instr    { font-family: 'Instrument Serif', Georgia, serif; font-style: italic; font-weight: 400; letter-spacing: -.025em; }
-      .display-fraunces { font-family: 'Fraunces', Georgia, serif; font-weight: 600; letter-spacing: -.025em; }
-      .font-instr       { font-family: 'Instrument Serif', Georgia, serif; }
-      .font-mono-auth   { font-family: 'JetBrains Mono', ui-monospace, monospace; }
-
-      /* ── Drift / pulse ── */
-      .float-a { animation: auth-drift 11s ease-in-out infinite; }
-      .float-b { animation: auth-drift 14s ease-in-out infinite .8s; }
-      .float-c { animation: auth-drift 9s ease-in-out infinite .4s; }
-      .dot-pulse { animation: auth-pulseDot 1.8s ease-in-out infinite; }
-
-      /* ── Tiny ✓ chip stamp (marquee posts) ── */
-      .ok-stamp {
-        position: absolute; top: 8px; right: 8px;
-        width: 42px; height: 42px; border-radius: 50%;
-        background: #F5D547; border: 2px solid #1A1A1A;
-        display: grid; place-items: center; transform: rotate(-12deg);
-        box-shadow: 2px 2px 0 #1A1A1A;
-        font-family: 'Instrument Serif', serif; font-style: italic; font-weight: 500;
-        font-size: 14px; color: #1A1A1A; line-height: 1; letter-spacing: -.02em;
-      }
-      .ok-stamp::before { content: "\\2713  "; font-style: normal; font-family: inherit; }
-
-      /* ── Hand-drawn underline ── */
-      .arc-underline { stroke-dasharray: 240; animation: auth-underlineDraw 1.1s cubic-bezier(0.22,1,0.36,1) .9s both; }
-
-      /* ── Pulse ripple ── */
-      .ripple-dot { position: relative; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #F5D547; vertical-align: middle; }
-      .ripple-dot::after { content: ""; position: absolute; inset: 0; border-radius: 50%; background: #F5D547; animation: auth-ripple 2s ease-out infinite; }
-
-      /* ── Reveal-on-scroll ── */
-      .reveal { opacity: 0; transform: translateY(28px); transition: opacity .8s cubic-bezier(0.22,1,0.36,1), transform .8s cubic-bezier(0.22,1,0.36,1); }
-      .reveal.in { opacity: 1; transform: translateY(0); }
-
-      /* ── Focus / selection ── */
-      .auth-page *:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(93,95,239,.30) !important; border-radius: 8px; }
-      .auth-page ::selection { background: #FFF3C4; color: #1A1A1A; }
-
       @media (prefers-reduced-motion: reduce) {
-        .float-a, .float-b, .float-c, .auth-spin-slow, .cream-mesh, .dot-pulse { animation: none !important; }
-        .reveal { opacity: 1; transform: none; }
-        *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+        .auth-shell *, .auth-shell *::before, .auth-shell *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; }
+        .auth-ticker { overflow-x: auto; }
       }
     `}</style>
   );

@@ -157,7 +157,7 @@ export default function FilesPage() {
           <div className="files-storage mt-auto px-3 py-4">
             <div className="v3-card-sm p-3 space-y-2">
               <div className="text-[11px] uppercase tracking-wider font-bold text-ink-3">Storage</div>
-              <div className="h-2 bg-muted rounded-full overflow-hidden" style={{ border: "1px solid rgba(26,26,26,0.1)" }}>
+              <div className="h-2 bg-muted rounded-full overflow-hidden" style={{ border: "1px solid rgba(255,255,255,0.18)" }}>
                 <div className="h-full bg-indigo rounded-full" style={{ width: "34%" }} />
               </div>
               <div className="text-[11.5px] font-semibold text-ink-2">
@@ -205,7 +205,7 @@ export default function FilesPage() {
                 value={uploadProjectId}
                 onChange={(e) => setUploadProjectId(e.target.value)}
                 className="h-8 sm:h-9 px-2 sm:px-2.5 bg-surface rounded-lg sm:rounded-xl text-[12px] sm:text-[12.5px] text-ink outline-none font-medium"
-                style={{ border: "2px solid rgba(26,26,26,0.15)" }}
+                style={{ border: "2px solid rgba(255,255,255,0.25)" }}
               >
                 <option value="">Select a project…</option>
                 {projects.map((p) => (
@@ -233,7 +233,7 @@ export default function FilesPage() {
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 className="h-8 sm:h-9 pl-8 pr-3 bg-surface rounded-lg sm:rounded-xl text-[12px] sm:text-[12.5px] text-ink placeholder:text-ink-4 outline-none font-medium"
-                style={{ border: "2px solid rgba(26,26,26,0.15)" }}
+                style={{ border: "2px solid rgba(255,255,255,0.25)" }}
               />
             </div>
           </div>
@@ -244,13 +244,13 @@ export default function FilesPage() {
             <div className="v3-card overflow-x-auto fade-up d2">
               <div
                 className="tbl-head row-files px-5 h-11 bg-muted/40 text-[11px] uppercase tracking-wider font-bold text-ink-3 items-center"
-                style={{ borderBottom: "2px solid rgba(26,26,26,0.07)" }}
+                style={{ borderBottom: "2px solid rgba(255,255,255,0.18)" }}
               >
                 <span></span><span>Name</span><span>Type</span><span className="text-right">Size</span><span>Uploaded</span><span></span>
               </div>
 
               {isLoading && [...Array(4)].map((_, i) => (
-                <div key={i} className="row-files px-5 items-center h-row" style={{ borderBottom: "1px solid rgba(26,26,26,0.06)" }}>
+                <div key={i} className="row-files px-5 items-center h-row" style={{ borderBottom: "1px solid rgba(255,255,255,0.10)" }}>
                   <Skeleton className="h-7 w-7" />
                   <Skeleton className="h-3.5 w-2/3" />
                   <Skeleton className="h-5 w-12" />
@@ -272,10 +272,10 @@ export default function FilesPage() {
                     className="row-files px-5 items-center h-row v3-row cursor-pointer group fade-up"
                     style={{
                       animationDelay: `${(i + 3) * 0.05}s`,
-                      ...(i < displayed.length - 1 ? { borderBottom: "1px solid rgba(26,26,26,0.06)" } : {}),
+                      ...(i < displayed.length - 1 ? { borderBottom: "1px solid rgba(255,255,255,0.10)" } : {}),
                     }}
                   >
-                    <div className="h-7 w-7 rounded-lg bg-muted flex items-center justify-center text-ink-3" style={{ border: "1.5px solid rgba(26,26,26,0.1)" }}>
+                    <div className="h-7 w-7 rounded-lg bg-muted flex items-center justify-center text-ink-3" style={{ border: "1px solid rgba(255,255,255,0.18)" }}>
                       <Icon.File size={14} sw={1.5} />
                     </div>
                     <div className="flex items-center gap-2 min-w-0">
@@ -330,7 +330,7 @@ export default function FilesPage() {
                       rel="noopener noreferrer"
                       className="block"
                     >
-                      <div className="h-9 w-9 rounded-xl bg-muted flex items-center justify-center text-ink-3 mb-3" style={{ border: "1.5px solid rgba(26,26,26,0.1)" }}>
+                      <div className="h-9 w-9 rounded-xl bg-muted flex items-center justify-center text-ink-3 mb-3" style={{ border: "1px solid rgba(255,255,255,0.18)" }}>
                         <Icon.File size={16} sw={1.5} />
                       </div>
                       <div className="text-[13px] font-bold text-ink leading-tight line-clamp-2 mb-2">{file.name}</div>

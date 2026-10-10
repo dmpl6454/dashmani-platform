@@ -308,6 +308,19 @@ router.post(
   }
 );
 
+// POST /v1/client/auth/signup  (public: self-serve account from the website's "Start a campaign";
+// rate-limited by authLimiter in app.ts — mounted there because the key reads req.body)
+router.post(
+  "/client/auth/signup",
+  validate(clientValidators.clientSignupSchema),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const result = await clientAuthService.clientSignup(req.body);
+      return success(res, result, undefined, 201);
+    } catch (err) { next(err); }
+  }
+);
+
 // POST /v1/client/auth/register  (public: accept invite and set password)
 router.post(
   "/client/auth/register",

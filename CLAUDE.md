@@ -1269,6 +1269,10 @@ The reset-password handler reads `{ token, newPassword }` from the body (NOT `pa
 5. New admin submits name + password → `POST /v1/admin/users/accept-invite` → user row created, tokens issued, marked `usedAt`
 
 ### Client signup (client portal)
+
+**Public self-signup exists since 2026-10-10 (owner decision, for the website's "Start a campaign" button).** `POST /v1/client/auth/signup` `{ companyName, contactName, email, password, phone? }` (public, behind `authLimiter`) creates an **`ACTIVE`** client with instant access and returns the same token payload as login; `/signup` with no `?token=` renders that form, and the website's `CLIENT_BOOKING_URL` is `client.digitalsukoon.com/signup?next=/campaigns/new`. Rules, mirroring HR self-registration: it can **never take over an existing account** — any existing client row for the email, in any casing, is a `409 EMAIL_EXISTS` and nothing is written; a pending admin invite for that email is marked used so the link cannot later create a duplicate; names go through `safeString`; the admin inbox gets a "New client signed up" email. A self-signed-up client sees only its own data, which for a new account is just the campaign booking flow. The invite flow below still exists for agency clients an admin onboards.
+
+**Invite flow (admin-initiated):**
 1. Existing admin POSTs `/v1/client/auth/invite-request` with `{ email }` (requires `clients.create` permission)
 2. Server creates `client_invites` row. Email send currently not wired — only the response contains the token, admin forwards manually.
 3. Client visits **`https://client.digitalsukoon.com/signup?token=<uuid>`** (locally: `http://localhost:3001/signup?token=<uuid>`) and submits `POST /v1/client/auth/register` with `{ token, password, contactName }` → client row created, tokens issued

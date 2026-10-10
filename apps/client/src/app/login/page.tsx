@@ -179,7 +179,7 @@ export default function ClientLoginPage() {
       {/* Hero */}
       <section className="omd-hero">
         <div className="omd-hero-left">
-          <span className="omd-eyebrow"><span className="omd-live" aria-hidden /> {greeting} — private client studio, invite only</span>
+          <span className="omd-eyebrow"><span className="omd-live" aria-hidden /> {greeting} — your private client studio</span>
           <h1 className="omd-h1">
             Your <RotatingWord words={["content", "reels", "stories", "campaigns"]} /><br />
             <span className="omd-accent">approved in a tap.</span>
@@ -192,7 +192,7 @@ export default function ClientLoginPage() {
             <button type="button" className="omd-btn omd-btn-primary omd-magnetic" onClick={() => formRef.current?.scrollIntoView({ behavior: "smooth", block: "center" })}>
               Enter your studio <ArrowUpRight size={18} />
             </button>
-            <Link href="/signup" className="omd-btn omd-btn-ghost">I have an invite</Link>
+            <Link href="/signup" className="omd-btn omd-btn-ghost">Create an account</Link>
           </div>
         </div>
 
@@ -236,7 +236,7 @@ export default function ClientLoginPage() {
             <li><span className="omd-perk-ic"><Check size={13} strokeWidth={3} /></span> Approve or request changes in a tap</li>
             <li><span className="omd-perk-ic"><Check size={13} strokeWidth={3} /></span> Live reach &amp; engagement, every platform</li>
           </ul>
-          <p className="omd-note">Access is invite-only. No login yet? <a href="mailto:hello@digitalsukoon.com">Email your strategist</a>.</p>
+          <p className="omd-note">New here? <Link href="/signup">Create a free account</Link> to book a campaign on our network.</p>
         </div>
 
         <div className="omd-cardwrap">
@@ -247,7 +247,7 @@ export default function ClientLoginPage() {
             </div>
             <div className="omd-seg" role="tablist" aria-label="Auth options">
               <span className="omd-seg-btn active" role="tab" aria-selected={true}>Sign in</span>
-              <Link href="/signup" className="omd-seg-btn" role="tab" aria-selected={false}>I have an invite</Link>
+              <Link href="/signup" className="omd-seg-btn" role="tab" aria-selected={false}>Create account</Link>
             </div>
             <form onSubmit={handleSubmit} noValidate className="omd-form">
               <div className="omd-field">

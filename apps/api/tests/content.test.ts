@@ -3,7 +3,7 @@ import request from "supertest";
 import app from "../src/app";
 import { prisma } from "@dashmani/db";
 import { hash } from "bcrypt";
-import { createTestUser, createTestRole, generateToken } from "./helpers";
+import { createTestUser, createTestRole, generateToken, generateClientToken } from "./helpers";
 import "./setup";
 
 describe("Content API", () => {
@@ -49,11 +49,9 @@ describe("Content API", () => {
     });
     clientId = client.id;
 
-    // Get client token
-    const loginRes = await request(app)
-      .post("/v1/client/auth/login")
-      .send({ email: "content-client@test.com", password: "Client@123" });
-    clientToken = loginRes.body.data.accessToken;
+    // Sign the client token directly — logging in here 23 times would trip the
+    // per-account login limiter (20/15 min) and 429 from the 21st test on.
+    clientToken = generateClientToken(client.id, client.email);
 
     // Create project
     const project = await prisma.project.create({

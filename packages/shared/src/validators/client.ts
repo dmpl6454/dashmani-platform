@@ -76,6 +76,17 @@ export const clientSignupSchema = z.object({
   phone: safeString.pipe(z.string().max(20)).optional().or(z.literal("").transform(() => undefined)),
 });
 
+/**
+ * "Sign in with Google" (client portal). `credential` is the Google Identity Services ID token;
+ * the API verifies it with Google before trusting a byte of it. `companyName` is sent only on
+ * the second round-trip of a FIRST sign-in, when the portal has asked the new client to name
+ * their company (the token carries a person's name and email, not a business).
+ */
+export const clientGoogleSchema = z.object({
+  credential: z.string().min(20).max(4096),
+  companyName: safeString.pipe(z.string().min(2, "Company or brand name must be at least 2 characters").max(200)).optional(),
+});
+
 export const createInviteSchema = z.object({
   email: normalizedEmail,
 });

@@ -3,10 +3,11 @@ import type { ReactNode } from "react";
 
 // Small building blocks shared by the campaign pages (module-scoped: `_` keeps Next from routing it).
 
+// The site's .input: surface fill, a 2px 25%-white border, accent caret and focus.
 export const inputCls =
-  "w-full h-10 px-3 text-[13.5px] bg-surface border-2 border-ink/15 rounded-xl outline-none focus:border-ink transition-colors";
+  "w-full h-11 px-3 text-[14px] bg-surface text-ink caret-indigo border-2 border-[rgba(255,255,255,0.25)] hover:border-[rgba(255,255,255,0.45)] outline-none focus:border-indigo transition-colors placeholder:text-ink-4";
 export const textareaCls =
-  "w-full px-3 py-2.5 text-[13.5px] bg-surface border-2 border-ink/15 rounded-xl outline-none focus:border-ink transition-colors resize-y";
+  "w-full px-3 py-2.5 text-[14px] bg-surface text-ink caret-indigo border-2 border-[rgba(255,255,255,0.25)] hover:border-[rgba(255,255,255,0.45)] outline-none focus:border-indigo transition-colors resize-y placeholder:text-ink-4";
 
 export function Field({ label, hint, error, children, htmlFor }: { label: string; hint?: ReactNode; error?: string | null; children: ReactNode; htmlFor?: string }) {
   return (
@@ -71,7 +72,7 @@ export const STATUS_LABEL: Record<string, string> = {
 
 export function CampaignStatus({ status }: { status: string }) {
   return (
-    <span className={`inline-flex items-center h-6 px-2.5 rounded-full text-[11.5px] font-bold whitespace-nowrap ${STATUS_TONE[status] ?? "bg-muted text-ink-2"}`}>
+    <span className={`inline-flex items-center h-6 px-2.5 text-[11px] tracking-[0.02em] font-bold whitespace-nowrap border border-current/30 ${STATUS_TONE[status] ?? "bg-muted text-ink-2"}`}>
       {STATUS_LABEL[status] ?? status}
     </span>
   );
@@ -89,7 +90,7 @@ const ITEM: Record<string, { label: string; cls: string }> = {
 
 export function ItemStatus({ status }: { status: string }) {
   const s = ITEM[status] ?? { label: status, cls: "bg-muted text-ink-2" };
-  return <span className={`inline-flex items-center h-6 px-2.5 rounded-full text-[11.5px] font-bold whitespace-nowrap ${s.cls}`}>{s.label}</span>;
+  return <span className={`inline-flex items-center h-6 px-2.5 text-[11px] tracking-[0.02em] font-bold whitespace-nowrap border border-current/30 ${s.cls}`}>{s.label}</span>;
 }
 
 export function PlatformDot({ platform }: { platform: string }) {
@@ -99,7 +100,7 @@ export function PlatformDot({ platform }: { platform: string }) {
 
 export function ErrorBanner({ children }: { children: ReactNode }) {
   return (
-    <div className="rounded-xl bg-danger-bg text-danger text-[13px] font-medium px-4 py-3" role="alert">
+    <div className="bg-danger-bg border-2 border-danger/40 text-danger text-[13px] font-medium px-4 py-3" role="alert">
       {children}
     </div>
   );

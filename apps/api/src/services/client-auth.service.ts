@@ -289,6 +289,78 @@ export async function clientSignup(data: { companyName: string; contactName: str
   return issueClientSession(client);
 }
 
+/**
+ * "Sign in with Google" (client portal). The GIS credential is verified with Google first
+ * (`verifyGoogleIdToken`: our audience, Google's issuer, unexpired, email VERIFIED); only
+ * then is the verified email looked up:
+ *
+ * - An existing client with that email (any casing) signs straight in. Google has proven
+ *   they control the address, which is exactly what the password-reset email proves, so
+ *   this is not a takeover path. An INACTIVE/ONBOARDING account is refused like password login.
+ * - An unknown email creates an ACTIVE client, mirroring public self-signup — but a Google
+ *   token names a person, not a business, so the first call answers `needsProfile` and the
+ *   portal asks for the company name; the second call carries `companyName` and creates the
+ *   row. Nothing is written on the first call. The row gets an unusable random password
+ *   (bcrypt of 256 random bits), so password login says "invalid credentials" until the
+ *   client sets one through "Forgot password"; it can never be guessed.
+ *
+ * Returns the same session shape as clientLogin, or `{ needsProfile: true, email, name }`.
+ */
+export async function clientGoogleSignIn(input: { credential: string; companyName?: string }) {
+  const { verifyGoogleIdToken } = await import("./google-id-token");
+  const identity = await verifyGoogleIdToken(input.credential);
+  const email = identity.email;
+
+  const existing = await prisma.client.findFirst({ where: { email: { equals: email, mode: "insensitive" } } });
+  if (existing) {
+    if (existing.status !== "ACTIVE") throw new AppError(403, "ACCOUNT_INACTIVE", "Account is not active");
+    return issueClientSession(existing);
+  }
+
+  const companyName = input.companyName?.trim();
+  if (!companyName) {
+    return { needsProfile: true as const, email, name: identity.name, suggestedCompany: identity.hostedDomain };
+  }
+
+  const contactName = identity.name.slice(0, 200);
+  const passwordHash = await hash(crypto.randomBytes(32).toString("hex"), 12);
+  let client;
+  try {
+    client = await prisma.$transaction(async (tx) => {
+      const created = await tx.client.create({
+        data: { companyName, contactName, email, passwordHash, phone: null, status: "ACTIVE" },
+      });
+      await tx.clientInvite.updateMany({ where: { email, usedAt: null }, data: { usedAt: new Date() } });
+      return created;
+    });
+  } catch (err: any) {
+    // Two first sign-ins racing on one verified email: the unique index decides, and the
+    // loser simply signs in to the row the winner made (ownership of the email is proven).
+    if (err?.code === "P2002") {
+      const raced = await prisma.client.findFirst({ where: { email: { equals: email, mode: "insensitive" } } });
+      if (raced && raced.status === "ACTIVE") return issueClientSession(raced);
+      throw new AppError(409, "EMAIL_EXISTS", "An account with this email already exists. Sign in instead.");
+    }
+    throw err;
+  }
+
+  void (async () => {
+    const { notifyAdminByEmail } = await import("./email.service");
+    await notifyAdminByEmail(
+      `New client signed up (Google): ${client.companyName}`,
+      [
+        { label: "Company", value: client.companyName },
+        { label: "Contact", value: client.contactName },
+        { label: "Email", value: client.email },
+        { label: "Method", value: "Sign in with Google" },
+      ],
+      `/clients/${client.id}`,
+    );
+  })().catch((e) => console.error("[client-google-signin] admin email failed", e));
+
+  return issueClientSession(client);
+}
+
 /** Access + refresh token pair for a freshly created or authenticated client (same shape as clientLogin). */
 async function issueClientSession(client: { id: string; email: string; contactName: string; companyName: string }) {
   const accessToken = jwt.sign(

@@ -123,7 +123,7 @@ export default function ApprovalsPage() {
           /* Wraps on a phone — four controls in one 390px row overflowed the page.
              The sticky offset tracks the topstrip, which is h-14 there and h-16 up. */
           className="sticky top-14 sm:top-16 z-20 px-4 sm:px-6 py-2 sm:py-0 sm:h-12 flex flex-wrap items-center gap-x-3 gap-y-2 slide-right"
-          style={{ background: "#EDEDFD", borderBottom: "2px solid rgba(93,95,239,0.25)" }}
+          style={{ background: "#1a1760", borderBottom: "2px solid #403cfa" }}
         >
           <span className="text-[13px] font-bold text-indigo">
             {selectedArray.length} selected
@@ -179,7 +179,7 @@ export default function ApprovalsPage() {
         </div>
 
         {/* Preview panel */}
-        <div className="approvals-detail overflow-y-auto" style={{ background: "rgba(243,238,216,0.3)" }}>
+        <div className="approvals-detail overflow-y-auto" style={{ background: "rgba(255,255,255,0.03)" }}>
           {focusPost ? (
             <ApprovalPreview
               post={focusPost}
@@ -213,7 +213,7 @@ export default function ApprovalsPage() {
           Approving <b className="text-ink">{selectedArray.length}</b> items in{" "}
           <b className="text-ink">{projects.find((pr) => pr.id === (selectedArray[0]?.project?.id ?? selectedArray[0]?.project))?.name ?? "—"}</b>. They&apos;ll all go to scheduled.
         </p>
-        <ul className="v3-card-sm max-h-[240px] overflow-y-auto divide-y" style={{ borderColor: "rgba(26,26,26,0.07)" }}>
+        <ul className="v3-card-sm max-h-[240px] overflow-y-auto divide-y" style={{ borderColor: "rgba(255,255,255,0.10)" }}>
           {selectedArray.map((p) => (
             <li key={p.id} className="px-3 py-2.5 flex items-center gap-2.5 text-[13px]">
               <AspectThumb aspect={(p.aspectRatio ?? p.aspect) || "1:1"} format={p.format} />
@@ -254,7 +254,7 @@ function ApprovalListRow({ post, project, selected, focused, onSelect, onFocus, 
         ${focused  ? "border-l-[3px] border-indigo bg-indigo-soft/60" : ""}
         ${selected && !focused ? "border-l-[3px] border-action bg-action-soft/30" : ""}
         ${!focused && !selected ? "border-l-[3px] border-transparent hover:bg-surface/70" : ""}`}
-      style={divider ? { borderBottom: "1px solid rgba(26,26,26,0.07)" } : {}}
+      style={divider ? { borderBottom: "1px solid rgba(255,255,255,0.10)" } : {}}
     >
       <div className="px-3 py-3 flex items-start gap-2.5">
         <label className="pt-0.5 shrink-0" onClick={(e) => e.stopPropagation()}>
@@ -316,7 +316,7 @@ function ApprovalPreview({ post, project, onOpen, onApprove, onRevise, onReject 
             {post.hashtags?.length > 0 && <p className="text-[12.5px] text-ink-3 mt-2 font-medium">{post.hashtags.join(" ")}</p>}
           </div>
           <div className="v3-card overflow-hidden">
-            <div className="px-4 h-10 flex items-center justify-between" style={{ borderBottom: "2px solid rgba(26,26,26,0.07)" }}>
+            <div className="px-4 h-10 flex items-center justify-between" style={{ borderBottom: "2px solid rgba(255,255,255,0.18)" }}>
               <h3 className="text-[11px] uppercase tracking-wider font-bold text-ink-3">Discussion</h3>
               <span className="text-[11px] text-ink-3 font-medium">{(post.thread ?? post.comments ?? []).length}</span>
             </div>
@@ -340,7 +340,7 @@ function ApprovalPreview({ post, project, onOpen, onApprove, onRevise, onReject 
       {/* Sticky decision bar */}
       <div
         className="fixed bottom-0 right-0 left-0 px-8 py-4 flex items-center gap-3"
-        style={{ background: "rgba(253,252,240,0.97)", borderTop: "2px solid rgba(26,26,26,0.08)", backdropFilter: "blur(6px)", zIndex: 20 }}
+        style={{ background: "rgba(0,0,0,0.92)", borderTop: "2px solid rgba(255,255,255,0.18)", backdropFilter: "blur(6px)", zIndex: 20 }}
       >
         <div className="text-[12px] text-ink-3 font-medium hidden md:block">A to approve · R to revise · X to reject</div>
         <div className="flex-1" />
@@ -370,7 +370,7 @@ function BulkReviseModal({ open, items, onClose, onConfirm }: {
       <textarea value={note} onChange={(e) => setNote(e.target.value)} autoFocus rows={4}
         placeholder="What needs to change across all of these?"
         className="w-full text-[13px] bg-bg rounded-xl px-3.5 py-2.5 outline-none resize-none font-medium"
-        style={{ border: "2px solid rgba(26,26,26,0.2)" }}
+        style={{ border: "2px solid rgba(255,255,255,0.25)" }}
       />
       <div className="text-[11.5px] text-ink-3 font-medium mt-1.5">
         {!canSubmit ? `${6 - note.trim().length} more characters needed.` : "Looks good ✓"}

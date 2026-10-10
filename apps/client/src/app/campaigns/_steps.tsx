@@ -86,7 +86,7 @@ export function InfoForm({ initial, submitLabel, onSubmit, disabled }: {
             <div className="grid gap-2 sm:grid-cols-2">
               {CAMPAIGN_TYPES.map((t) => (
                 <label key={t} className={`flex items-start gap-2.5 rounded-xl border-2 px-3 py-2.5 cursor-pointer ${campaignType === t ? "border-ink" : "border-ink/15"}`}>
-                  <input type="radio" name="ctype" value={t} checked={campaignType === t} onChange={() => setCampaignType(t)} disabled={disabled} className="mt-0.5 accent-[#1a1a1a]" />
+                  <input type="radio" name="ctype" value={t} checked={campaignType === t} onChange={() => setCampaignType(t)} disabled={disabled} className="mt-0.5 accent-[#403cfa]" />
                   <span>
                     <span className="block text-[13.5px] font-semibold text-ink">{CAMPAIGN_TYPE_LABELS[t]}</span>
                     <span className="block text-[12px] text-ink-3">{t === "brand" ? "A product, app or brand." : "A film, OTT show, song or event."}</span>
@@ -165,7 +165,7 @@ function MediaPreview({ media, renderPending }: { media: CampaignMedia; renderPe
     };
   }, [media.id, media.renderStatus]);
   return (
-    <div className="relative rounded-xl overflow-hidden bg-ink/90 aspect-[4/5] grid place-items-center">
+    <div className="relative rounded-xl overflow-hidden bg-surface aspect-[4/5] grid place-items-center">
       {url && !failed ? (
         media.kind === "video" ? (
           <video src={url} controls playsInline preload="metadata" className="w-full h-full object-contain" onError={() => setFailed(true)} />
@@ -300,7 +300,7 @@ export function CreativeStep({ campaign, onSaved, submitLabel }: { campaign: Cam
                   if (f !== "carousel") setMedia((m) => m.slice(0, 1));
                 }}
                 aria-pressed={active}
-                className={`text-left rounded-xl border-2 p-3 transition-colors disabled:opacity-40 ${active ? "border-ink bg-ink text-white" : "border-ink/15 bg-surface hover:border-ink/40"}`}
+                className={`text-left rounded-xl border-2 p-3 transition-colors disabled:opacity-40 ${active ? "border-indigo bg-indigo text-white" : "border-ink/15 bg-surface hover:border-ink/40"}`}
               >
                 <F size={18} />
                 <div className="mt-2 text-[13.5px] font-bold">{FORMAT_LABELS[f]}</div>
@@ -398,7 +398,7 @@ export function CreativeStep({ campaign, onSaved, submitLabel }: { campaign: Cam
       {format === "reel" && (
         <Card title="Song audio integration" sub="Optional, reels only. We set your song as the reel's audio. Each account charges an extra fee for this.">
           <label className="flex items-center gap-2.5 text-[13.5px] font-semibold text-ink cursor-pointer">
-            <input type="checkbox" checked={audio} disabled={termsLocked} onChange={(e) => setAudio(e.target.checked)} className="h-4 w-4 accent-[#1a1a1a]" />
+            <input type="checkbox" checked={audio} disabled={termsLocked} onChange={(e) => setAudio(e.target.checked)} className="h-4 w-4 accent-[#403cfa]" />
             Integrate a song in this reel
           </label>
           {audio && (
@@ -422,7 +422,7 @@ export function CreativeStep({ campaign, onSaved, submitLabel }: { campaign: Cam
             <div className="flex sm:flex-col gap-2">
               {(["top", "center", "bottom"] as const).map((s) => (
                 <label key={s} className={`flex items-center gap-2 h-9 px-3 rounded-xl border-2 cursor-pointer text-[13px] font-semibold ${style === s ? "border-ink" : "border-ink/15"}`}>
-                  <input type="radio" name="superstyle" value={s} checked={style === s} onChange={() => setStyle(s)} className="accent-[#1a1a1a]" />
+                  <input type="radio" name="superstyle" value={s} checked={style === s} onChange={() => setStyle(s)} className="accent-[#403cfa]" />
                   {s[0].toUpperCase() + s.slice(1)}
                 </label>
               ))}
@@ -553,7 +553,7 @@ export function AccountsStep({ campaign, onSaved }: { campaign: Campaign; onSave
               role="tab"
               aria-selected={platform === p}
               onClick={() => setPlatform(p)}
-              className={`h-8 px-3 rounded-full text-[12.5px] font-semibold border-2 ${platform === p ? "bg-ink text-white border-ink" : "border-ink/15 text-ink-2"}`}
+              className={`h-8 px-3 rounded-full text-[12.5px] font-semibold border-2 ${platform === p ? "bg-indigo text-white border-indigo" : "border-ink/15 text-ink-2"}`}
             >
               {p === "all" ? "All" : PLATFORM_LABEL[p]} <span className="opacity-70 tabular-nums">{counts[p] ?? 0}</span>
             </button>
@@ -574,7 +574,7 @@ export function AccountsStep({ campaign, onSaved }: { campaign: Campaign; onSave
             return (
               <li key={a.offer.rateCardId}>
                 <label className={`flex items-center gap-3 rounded-xl border-2 px-3 py-2.5 cursor-pointer transition-colors ${on ? "border-ink bg-indigo/5" : "border-ink/10 hover:border-ink/30"}`}>
-                  <input type="checkbox" checked={on} onChange={() => toggle(a.offer.rateCardId)} className="h-4 w-4 accent-[#1a1a1a] shrink-0" />
+                  <input type="checkbox" checked={on} onChange={() => toggle(a.offer.rateCardId)} className="h-4 w-4 accent-[#403cfa] shrink-0" />
                   {a.pictureUrl ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img src={a.pictureUrl} alt="" className="h-9 w-9 rounded-full object-cover shrink-0 bg-muted" loading="lazy" referrerPolicy="no-referrer" />

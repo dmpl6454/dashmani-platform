@@ -1,7 +1,7 @@
 "use client";
 import { useRouter } from "next/navigation";
 import { Topstrip } from "@/components/portal-topstrip";
-import { Empty, Skeleton, PageError, StatusBadge } from "@/components/portal-shared";
+import { Empty, Skeleton, PageError, StatusBadge, CountUp } from "@/components/portal-shared";
 import { Icon } from "@/components/portal-icons";
 import { useClientAnalytics } from "@/lib/hooks/use-analytics";
 import { useClientProjects } from "@/lib/hooks/use-projects";
@@ -48,7 +48,7 @@ function HBar({ label, value, max, count, colorClass = "bg-indigo" }: {
         <span className="text-[13px] font-semibold text-ink">{label}</span>
         <span className="text-[12px] text-ink-3 font-bold tabular-nums">{count}</span>
       </div>
-      <div className="h-8 bg-muted rounded-xl overflow-hidden" style={{ border: "2px solid rgba(26,26,26,0.1)" }}>
+      <div className="h-8 bg-muted rounded-xl overflow-hidden" style={{ border: "2px solid rgba(255,255,255,0.18)" }}>
         <div
           className={`h-full ${colorClass} border-r-2 border-ink rounded-xl`}
           style={{ width: `${Math.max((value / max) * 100, 4)}%`, transition: "width 0.6s cubic-bezier(0.34,1.4,0.64,1)" }}
@@ -164,7 +164,7 @@ export default function ClientAnalyticsPage() {
                       <IC size={16} sw={2} />
                     </div>
                     <div>
-                      <div className="font-num text-[34px] font-semibold leading-none text-ink">{tile.value}</div>
+                      <div className="font-num text-[34px] font-semibold leading-none text-ink"><CountUp value={tile.value} /></div>
                       <div className="text-[13px] font-semibold text-ink mt-1">{tile.label}</div>
                       <div className="text-[11.5px] text-ink-3 font-medium mt-0.5">{tile.sub}</div>
                     </div>
@@ -229,7 +229,7 @@ export default function ClientAnalyticsPage() {
             {/* Project health */}
             <div className="fade-up d7">
               <div className="v3-card overflow-hidden">
-                <div className="px-5 h-12 flex items-center justify-between" style={{ borderBottom: "2px solid rgba(26,26,26,0.07)" }}>
+                <div className="px-5 h-12 flex items-center justify-between" style={{ borderBottom: "2px solid rgba(255,255,255,0.18)" }}>
                   <h3 className="text-[14px] font-bold text-ink">Project health</h3>
                   <button onClick={() => router.push("/projects")} className="text-[12.5px] text-indigo font-semibold hover:underline inline-flex items-center gap-1">
                     View projects <Icon.ArrowRight size={12} />
@@ -252,7 +252,7 @@ export default function ClientAnalyticsPage() {
                             {health != null && <span className="text-[13px] font-bold tabular-nums text-ink-2">{health}</span>}
                           </div>
                         </div>
-                        <div className="h-3 bg-muted rounded-full overflow-hidden" style={{ border: "2px solid rgba(26,26,26,0.1)" }}>
+                        <div className="h-3 bg-muted rounded-full overflow-hidden" style={{ border: "2px solid rgba(255,255,255,0.18)" }}>
                           <div className={`h-full ${hColor} rounded-full transition-all duration-700`} style={{ width: `${health ?? 0}%` }} />
                         </div>
                       </div>
@@ -266,13 +266,13 @@ export default function ClientAnalyticsPage() {
           {/* ── Top posts table ── */}
           <div className="fade-up d8">
             <div className="v3-card overflow-hidden">
-              <div className="px-5 h-12 flex items-center justify-between" style={{ borderBottom: "2px solid rgba(26,26,26,0.07)" }}>
+              <div className="px-5 h-12 flex items-center justify-between" style={{ borderBottom: "2px solid rgba(255,255,255,0.18)" }}>
                 <h3 className="text-[14px] font-bold text-ink">Project summaries</h3>
                 <span className="text-[11px] text-ink-3 font-medium">by activity</span>
               </div>
               <div
                 className="tbl-head row-analytics px-5 h-10 bg-muted/40 text-[11px] uppercase tracking-wider font-bold text-ink-3 items-center"
-                style={{ borderBottom: "1px solid rgba(26,26,26,0.07)" }}
+                style={{ borderBottom: "1px solid rgba(255,255,255,0.10)" }}
               >
                 <span>Project</span>
                 <span className="text-right">Posts</span>
@@ -289,7 +289,7 @@ export default function ClientAnalyticsPage() {
                   <div
                     key={p.projectId}
                     className="row-analytics px-5 items-center h-row v3-row"
-                    style={{ ...(i < arr.length - 1 ? { borderBottom: "1px solid rgba(26,26,26,0.06)" } : {}) }}
+                    style={{ ...(i < arr.length - 1 ? { borderBottom: "1px solid rgba(255,255,255,0.10)" } : {}) }}
                   >
                     <span className="text-[13.5px] font-semibold text-ink truncate">{p.name}</span>
                     <span className="text-right text-[13px] font-bold tabular-nums text-ink">{p.postCount}</span>
@@ -301,7 +301,7 @@ export default function ClientAnalyticsPage() {
                     <div className="pl-3 flex items-center gap-2">
                       {health != null ? (
                         <>
-                          <div className="flex-1 h-2 rounded-full bg-muted overflow-hidden" style={{ border: "1px solid rgba(26,26,26,0.08)" }}>
+                          <div className="flex-1 h-2 rounded-full bg-muted overflow-hidden" style={{ border: "1px solid rgba(255,255,255,0.10)" }}>
                             <div className={`h-full ${hColor} rounded-full`} style={{ width: `${health}%` }} />
                           </div>
                           <span className="text-[11.5px] tabular-nums text-ink-2 w-6 text-right font-bold">{health}</span>

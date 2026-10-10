@@ -77,7 +77,7 @@ export default function CampaignPage() {
                     disabled={!reached[s.id]}
                     onClick={() => setStep(s.id)}
                     aria-current={active ? "step" : undefined}
-                    className={`shrink-0 h-9 px-3.5 rounded-full text-[12.5px] font-semibold border-2 disabled:opacity-40 ${active ? "bg-ink text-white border-ink" : "border-ink/15 text-ink-2"}`}
+                    className={`shrink-0 h-9 px-3.5 rounded-full text-[12.5px] font-semibold border-2 disabled:opacity-40 ${active ? "bg-indigo text-white border-indigo" : "border-ink/15 text-ink-2"}`}
                   >
                     {i + 1}. {s.label}
                   </button>
@@ -158,7 +158,7 @@ function PayStep({ campaign: c, onChanged, onEdit, onCancelled }: { campaign: Ca
         name: "Digital Sukoon",
         description: order.name,
         prefill: { email: user.email, name: user.contactName },
-        theme: { color: "#1a1a1a" },
+        theme: { color: "#403cfa" },
         handler: async (r: { razorpay_order_id: string; razorpay_payment_id: string; razorpay_signature: string }) => {
           setConfirming(true);
           try {
@@ -222,7 +222,7 @@ function PayStep({ campaign: c, onChanged, onEdit, onCancelled }: { campaign: Ca
             </li>
           ))}
         </ul>
-        <div className="mt-3 pt-3 flex items-center justify-between" style={{ borderTop: "2px solid rgba(26,26,26,0.08)" }}>
+        <div className="mt-3 pt-3 flex items-center justify-between" style={{ borderTop: "2px solid rgba(255,255,255,0.18)" }}>
           <span className="text-[13px] font-semibold text-ink-2">Total</span>
           <span className="text-[19px] font-bold text-ink tabular-nums">{rupees(total)}</span>
         </div>
@@ -278,7 +278,7 @@ function PreviewStrip({ campaign: c }: { campaign: Campaign }) {
   return (
     <div className="flex gap-3 overflow-x-auto pb-1">
       {c.media.map((m) => (
-        <div key={m.id} className="shrink-0 w-[180px] aspect-[9/16] rounded-xl bg-ink/90 overflow-hidden grid place-items-center">
+        <div key={m.id} className="shrink-0 w-[180px] aspect-[9/16] rounded-xl bg-surface overflow-hidden grid place-items-center">
           {urls[m.id] ? (
             m.kind === "video" ? (
               <video src={urls[m.id]} controls playsInline preload="metadata" className="w-full h-full object-contain" />

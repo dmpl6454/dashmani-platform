@@ -2,10 +2,11 @@
 import { Suspense, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Mail, Lock, User, Building2, Phone, Check, AlertCircle, ArrowRight } from "lucide-react";
+import { Check, AlertCircle, ArrowRight } from "lucide-react";
 import { apiFetch } from "@/lib/api";
-import { safeNext, nextQuery } from "@/lib/safe-next";
-import { AuthField, AuthStyles } from "@/components/auth/shared";
+import { safeNext, nextQueryFor } from "@/lib/safe-next";
+import { AuthField, AuthShell, AuthTabs } from "@/components/auth/shared";
+import { GoogleSignIn } from "@/components/auth/google-signin";
 
 // Two modes on one route (the route shape is unchanged, see CLAUDE.md):
 //   /signup?token=<uuid>  → accept an admin invite (password only; the email is the invite's)
@@ -91,254 +92,104 @@ function SignupForm() {
     }
   }
 
-  const signInHref = `/login${nextQuery()}`;
+  const nextParam = searchParams.get("next");
+  const signInHref = `/login${nextQueryFor(nextParam)}`;
+  const signUpHref = `/signup${nextQueryFor(nextParam)}`;
 
   return (
-    <main className="auth-page min-h-screen w-full bg-bg relative overflow-x-hidden text-ink">
-      <div className="fixed inset-0 cream-mesh pointer-events-none" aria-hidden />
-      <div className="fixed inset-0 dots-bg pointer-events-none opacity-50" aria-hidden />
-      <div className="grain" aria-hidden />
-
-      <header className="relative z-20 max-w-[1340px] mx-auto px-6 lg:px-10 pt-6 flex items-center justify-between auth-fade-up d1">
-        <Link href="/" className="flex items-center gap-3">
-          <Mark size={34} />
-          <div className="leading-tight">
-            <p className="text-[13.5px] font-bold text-ink">Digital Sukoon</p>
-            <p className="text-[11px] text-ink-3 font-medium font-mono-auth uppercase tracking-[0.16em] -mt-0.5">
-              Client review room
-            </p>
-          </div>
-        </Link>
-        <Link href={signInHref} className="text-[12.5px] font-bold text-ink-2 hover:text-ink">
-          Already have an account? Sign in →
-        </Link>
-      </header>
-
-      <section className="relative z-10 max-w-[640px] mx-auto px-6 pt-12 lg:pt-16 pb-8 text-center">
-        <div
-          className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white border-2 border-ink text-[11px] font-bold text-ink-2 auth-fade-up d2"
-          style={{ boxShadow: "2px 2px 0 #F5D547" }}
-        >
-          <span className="ripple-dot" aria-hidden />
-          <span className="font-mono-auth uppercase tracking-[0.18em]">
-            {invited ? "You're invited" : bookingIntent ? "Start a campaign" : "Create your account"}
-          </span>
+    <AuthShell
+      kicker={invited ? "CH 07 · You're invited" : bookingIntent ? "CH 07 · Start a campaign" : "CH 07 · Create your account"}
+      title={bookingIntent ? <>Book the <em>network.</em></> : <>Start <em>here.</em></>}
+      lines={
+        invited
+          ? [<>Your account is ready. Choose a password and we will take you straight in.</>]
+          : [
+              <>Pick the pages, upload your creative, add the caption. Our team reviews the booking, posts it, and sends you every link.</>,
+              <>Free to create. No card needed to get started.</>,
+              <>Already a client? <Link href={signInHref}>Sign in</Link>.</>,
+            ]
+      }
+    >
+      <div className="auth-form-inner">
+        <div className="auth-form-head">
+          <h2>{invited ? "Open your account." : "Create your account."}</h2>
+          <p>{invited ? "Just a password, and a name if you like." : "Takes under a minute."}</p>
         </div>
 
-        <h1 className="mt-6" style={{ fontSize: "clamp(48px,7vw,96px)", lineHeight: "0.94" }}>
-          <span className="display-fraunces text-ink auth-fade-up d3">Hello, </span>
-          <span className="display-instr text-ink auth-fade-up d3">friend.</span>
-        </h1>
+        <AuthTabs active="signup" signInHref={signInHref} signUpHref={signUpHref} signUpLabel={invited ? "I have an invite" : "Create account"} />
 
-        <p className="mt-6 text-ink-3 text-[16px] lg:text-[18px] font-medium leading-snug auth-fade-up d4 max-w-[480px] mx-auto">
-          {invited
-            ? "We'll have your room ready in a moment — just choose a password and we'll take it from there."
-            : bookingIntent
-              ? "Create a free account to book promotion on our network — pick accounts, upload your creative, and our team takes it from there."
-              : "Create a free account to work with Digital Sukoon — campaigns, reviews and results in one place."}
-        </p>
-      </section>
+        <form onSubmit={handleSubmit} noValidate className="auth-form">
+          {!invited && (
+            <div className="auth-fields">
+              <div className="full">
+                <AuthField id="ccompany" label="Company or brand" autoComplete="organization" placeholder="Acme Studios"
+                  value={company} onChange={(v) => { setCompany(v); if (error) setError(""); }} error={null} />
+              </div>
+              <div className="full">
+                <AuthField id="cemail" label="Work email" type="email" inputMode="email" autoComplete="email" placeholder="you@company.com"
+                  value={email} onChange={(v) => { setEmail(v); if (error) setError(""); }} onBlur={() => setEmailBlurred(true)} error={emailErr} />
+              </div>
+            </div>
+          )}
 
-      <section className="relative z-10 max-w-[480px] mx-auto px-6 pb-20">
-        <div className="v3-card-action p-6 sm:p-7 auth-pop-in d5 relative">
-          <div
-            className="absolute -top-3 -right-3 w-16 h-16 rounded-full bg-action border-2 border-ink grid place-items-center font-instr italic text-[15px] font-medium text-ink leading-none"
-            style={{ transform: "rotate(8deg)", boxShadow: "2px 2px 0 #1A1A1A", animation: "auth-stampDrop .9s cubic-bezier(0.34,1.45,0.64,1) .6s both" }}
-            aria-hidden
-          >
-            hello.
-          </div>
-
-          <div className="mb-5">
-            <h2 className="font-display text-[24px] font-semibold text-ink leading-tight">
-              {invited ? "Open your review room." : "Create your account."}
-            </h2>
-            <p className="font-instr italic text-ink-3 text-[16px] mt-1 leading-snug">
-              {invited ? "Just a couple of details and we'll take it from there." : "Takes under a minute. No card needed."}
-            </p>
-          </div>
-
-          <div className="seg mb-5" data-active="signup" role="tablist" aria-label="Auth options">
-            <span className="seg-pill" aria-hidden />
-            <Link href={signInHref} data-tab="signin" role="tab" aria-selected={false} className="seg-btn">
-              Sign in
-            </Link>
-            <button type="button" data-tab="signup" role="tab" aria-selected={true} className="seg-btn active">
-              {invited ? "I have an invite" : "Create account"}
-            </button>
-          </div>
-
-          <form onSubmit={handleSubmit} noValidate className="space-y-3.5">
+          <div className="auth-fields">
+            <AuthField id="cname" label="Your name" autoComplete="name" placeholder="Full name"
+              value={name} onChange={(v) => { setName(v); if (error) setError(""); }} error={null}
+              hint={invited ? "Optional — what should we call you?" : undefined} />
             {!invited && (
+              <AuthField id="cphone" label="Phone (optional)" type="tel" inputMode="tel" autoComplete="tel" placeholder="+91"
+                value={phone} onChange={setPhone} error={null} />
+            )}
+          </div>
+
+          <div>
+            <AuthField id="cpw" label="Choose a password" type="password" autoComplete="new-password" placeholder="At least 8 characters"
+              value={password} onChange={(v) => { setPassword(v); if (error) setError(""); }} onBlur={() => setPwBlurred(true)} error={pwErr}
+              showPass={showPass} onToggleShowPass={() => setShowPass((s) => !s)} />
+            {password && (
+              <div className="mt-2">
+                <div className="auth-meter" aria-hidden>
+                  {[1, 2, 3, 4].map((i) => <span key={i} className={score >= i ? `on-${score}` : ""} />)}
+                </div>
+                <div className="auth-meter-label">
+                  <span>{pwLabel[score] || "—"}</span>
+                  <span>{password.length} chars</span>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <AuthField id="cpw2" label="Confirm password" type="password" autoComplete="new-password" placeholder="Repeat it"
+            value={confirmPassword} onChange={(v) => { setConfirmPassword(v); if (error) setError(""); }} error={null}
+            showPass={showConfirm} onToggleShowPass={() => setShowConfirm((s) => !s)} />
+
+          {error && <div role="alert" className="auth-err"><AlertCircle size={14} /> <span>{error}</span></div>}
+
+          <button type="submit" disabled={submitState !== "idle"} className="auth-btn" aria-live="polite">
+            {submitState === "idle" && (
               <>
-                <div className="auth-fade-up">
-                  <AuthField
-                    id="ccompany"
-                    label="Company or brand"
-                    icon={<Building2 size={16} />}
-                    value={company}
-                    onChange={(v) => { setCompany(v); if (error) setError(""); }}
-                    error={null}
-                    autoComplete="organization"
-                  />
-                </div>
-                <div className="auth-fade-up" style={{ animationDelay: ".02s" }}>
-                  <AuthField
-                    id="cemail"
-                    label="Work email"
-                    type="email"
-                    icon={<Mail size={16} />}
-                    value={email}
-                    onChange={(v) => { setEmail(v); if (error) setError(""); }}
-                    onBlur={() => setEmailBlurred(true)}
-                    error={emailErr}
-                    autoComplete="email"
-                  />
-                </div>
+                <span>{invited ? "Open my account" : bookingIntent ? "Create account & start a campaign" : "Create my account"}</span>
+                <ArrowRight size={17} />
               </>
             )}
+            {submitState === "loading" && (<><span className="auth-spinner" aria-hidden /><span>Setting things up…</span></>)}
+            {submitState === "success" && (<><Check size={18} strokeWidth={3} /><span>Welcome aboard</span></>)}
+          </button>
 
-            <div className="auth-fade-up" style={{ animationDelay: ".03s" }}>
-              <AuthField
-                id="cname"
-                label="Your name"
-                icon={<User size={16} />}
-                value={name}
-                onChange={(v) => { setName(v); if (error) setError(""); }}
-                error={null}
-                autoComplete="name"
-                hint={invited ? "Optional — what should we call you?" : undefined}
-              />
-            </div>
-
-            {!invited && (
-              <div className="auth-fade-up" style={{ animationDelay: ".035s" }}>
-                <AuthField
-                  id="cphone"
-                  label="Phone"
-                  type="tel"
-                  icon={<Phone size={16} />}
-                  value={phone}
-                  onChange={setPhone}
-                  error={null}
-                  autoComplete="tel"
-                  hint="Optional — so our team can reach you about a booking."
-                />
-              </div>
-            )}
-
-            <div className="auth-fade-up" style={{ animationDelay: ".04s" }}>
-              <AuthField
-                id="cpw"
-                label="Choose a password"
-                type="password"
-                icon={<Lock size={16} />}
-                value={password}
-                onChange={(v) => { setPassword(v); if (error) setError(""); }}
-                onBlur={() => setPwBlurred(true)}
-                error={pwErr}
-                autoComplete="new-password"
-                showPass={showPass}
-                onToggleShowPass={() => setShowPass((s) => !s)}
-              />
-              {password && (
-                <div className="mt-2 ml-1 auth-fade-up">
-                  <div className="meter">
-                    {[1, 2, 3, 4].map((i) => (
-                      <div key={i} className={`meter-seg ${score >= i ? `on-${score}` : ""}`} />
-                    ))}
-                  </div>
-                  <p className="text-[11px] mt-1.5 font-display italic">
-                    <span className={["text-ink-4", "text-danger", "text-attention", "text-action-deep", "text-success"][score]}>
-                      {pwLabel[score] || "—"}
-                    </span>
-                    <span className="text-ink-4 not-italic font-sans"> · {password.length} chars</span>
-                  </p>
-                </div>
-              )}
-            </div>
-
-            <div className="auth-fade-up" style={{ animationDelay: ".08s" }}>
-              <AuthField
-                id="cpw2"
-                label="Confirm password"
-                type="password"
-                icon={<Lock size={16} />}
-                value={confirmPassword}
-                onChange={(v) => { setConfirmPassword(v); if (error) setError(""); }}
-                error={null}
-                autoComplete="new-password"
-                showPass={showConfirm}
-                onToggleShowPass={() => setShowConfirm((s) => !s)}
-              />
-            </div>
-
-            {error && (
-              <div role="alert" className="flex items-center gap-2.5 px-3 py-2 rounded-lg bg-danger-bg border border-danger/30 auth-fade-up">
-                <AlertCircle size={14} className="text-danger shrink-0" />
-                <span className="text-[12.5px] text-danger font-semibold">{error}</span>
-              </div>
-            )}
-
-            <div className="pt-1 auth-fade-up" style={{ animationDelay: ".16s" }}>
-              <button
-                type="submit"
-                disabled={submitState !== "idle"}
-                className="btn-3d-y w-full flex items-center justify-center gap-2 px-5 py-3.5 rounded-full bg-ink text-white font-bold text-[14px] tracking-tight border-2 border-ink disabled:opacity-70 disabled:cursor-not-allowed"
-                aria-live="polite"
-              >
-                {submitState === "idle" && (
-                  <>
-                    <span>{invited ? "Create my review room" : bookingIntent ? "Create account & start a campaign" : "Create my account"}</span>
-                    <ArrowRight size={16} />
-                  </>
-                )}
-                {submitState === "loading" && (<><span className="auth-spinner" aria-hidden /><span>Setting things up…</span></>)}
-                {submitState === "success" && (<><Check size={20} color="#F5D547" strokeWidth={3} /><span>Welcome aboard</span></>)}
-              </button>
-            </div>
-          </form>
-
-          <p className="text-center text-[11px] text-ink-4 mt-5 font-instr italic leading-snug">
-            By creating your account you accept our{" "}
-            <a href="#" className="underline hover:text-ink not-italic">terms</a> &amp;{" "}
-            <a href="#" className="underline hover:text-ink not-italic">privacy notice</a>.
+          <p className="auth-fine">
+            By creating an account you agree to work with Digital Sukoon under its standard terms. Questions: <a href="mailto:hello@digitalsukoon.com">hello@digitalsukoon.com</a>.
           </p>
-        </div>
-      </section>
+        </form>
 
-      <footer
-        className="relative z-10 max-w-[1340px] mx-auto px-6 lg:px-10 pb-10 pt-6"
-        style={{ borderTop: "1.5px dashed rgba(26,26,26,.15)" }}
-      >
-        <div className="flex flex-wrap items-end justify-between gap-6">
-          <div className="flex items-center gap-3">
-            <Mark size={28} />
-            <p className="font-mono-auth text-[10.5px] uppercase tracking-[0.18em] text-ink-3 font-bold">
-              © {new Date().getFullYear()} Digital Sukoon · A small studio · Mumbai &amp; Lisbon
-            </p>
-          </div>
-          <div className="flex gap-6 text-[12px] font-bold text-ink-3">
-            <a href="#" className="hover:text-indigo">Terms</a>
-            <a href="#" className="hover:text-indigo">Privacy</a>
-            <a href="mailto:hello@digitalsukoon.com" className="hover:text-indigo">Contact</a>
-          </div>
-        </div>
-      </footer>
-
-      <AuthStyles />
-    </main>
-  );
-}
-
-function Mark({ size = 32 }: { size?: number }) {
-  return (
-    <div
-      className="rounded-xl bg-ink text-white grid place-items-center font-black tracking-widest flex-shrink-0"
-      style={{ width: size, height: size, fontSize: size * 0.34 }}
-    >
-      DS
-    </div>
+        {/* Invite acceptance is tied to the invite's email and password, so Google is offered on public signup only. */}
+        {!invited && (
+          <GoogleSignIn
+            mode="signup"
+            onSession={(s) => { storeSession(s); setSubmitState("success"); setTimeout(() => router.push(safeNext() ?? "/dashboard"), 300); }}
+          />
+        )}
+      </div>
+    </AuthShell>
   );
 }
 

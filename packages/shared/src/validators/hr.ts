@@ -45,6 +45,15 @@ export const registerEmployeeSchema = z.object({
     .min(6, "Password must be at least 6 characters"),
 });
 
+/**
+ * "Sign in with Google" (HR portal). `credential` is the Google Identity Services ID token;
+ * the API verifies it with Google before trusting a byte of it. Nothing else is accepted:
+ * the name and email come from the verified token, never from the body.
+ */
+export const hrGoogleSchema = z.object({
+  credential: z.string().min(20).max(4096),
+});
+
 export const passwordLoginSchema = z.object({
   identifier: z.string().trim().min(1, "Email or phone is required"),
   password: z.string().min(1, "Password is required"),

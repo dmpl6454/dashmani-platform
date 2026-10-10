@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import request from "supertest";
 import app from "../src/app";
 import { createTestUser, createTestRole } from "./helpers";
@@ -498,6 +498,132 @@ describe("HR Auth API", () => {
         .send({});
 
       expect(res.status).toBe(400);
+    });
+  });
+  describe("Sign in with Google", () => {
+    const GOOGLE = "/v1/hr/auth/google";
+    const CLIENT_ID = "123-test.apps.googleusercontent.com";
+    const CREDENTIAL = "eyJhbGciOiJSUzI1NiJ9.test-credential-payload-that-is-long-enough.signature";
+    const baseClaims = () => ({
+      iss: "https://accounts.google.com",
+      aud: CLIENT_ID,
+      sub: "1029384756",
+      email: "Priya@DigitalSukoon.test",
+      email_verified: "true",
+      name: "Priya Nair",
+      given_name: "Priya",
+      exp: String(Math.floor(Date.now() / 1000) + 3600),
+    });
+    let fetchMock: ReturnType<typeof vi.fn>;
+    function googleAnswers(status: number, claims: Record<string, unknown>) {
+      fetchMock.mockResolvedValue({ ok: status < 400, status, json: async () => claims });
+    }
+
+    beforeEach(() => {
+      vi.stubEnv("GOOGLE_CLIENT_ID", CLIENT_ID);
+      fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock);
+    });
+    // ⚠️ The suite runs every file in ONE fork — a leaked env or fetch stub breaks unrelated tests.
+    afterEach(() => {
+      vi.unstubAllEnvs();
+      vi.unstubAllGlobals();
+    });
+
+    it("config reports enabled with the client id, and disabled when the env is blank", async () => {
+      let res = await request(app).get("/v1/hr/auth/google/config");
+      expect(res.status).toBe(200);
+      expect(res.body.data).toEqual({ enabled: true, clientId: CLIENT_ID });
+      expect(res.headers["cache-control"]).toBe("no-store");
+      vi.stubEnv("GOOGLE_CLIENT_ID", "");
+      res = await request(app).get("/v1/hr/auth/google/config");
+      expect(res.body.data).toEqual({ enabled: false, clientId: null });
+    });
+
+    it("is a clean 503 when not configured, and never calls Google", async () => {
+      vi.stubEnv("GOOGLE_CLIENT_ID", "");
+      const res = await request(app).post(GOOGLE).send({ credential: CREDENTIAL });
+      expect(res.status).toBe(503);
+      expect(res.body.error.code).toBe("GOOGLE_SIGNIN_DISABLED");
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("signs an existing ACTIVE user in by verified email, in any casing, with an hr token and no new row", async () => {
+      const existing = await createTestUser({ email: "priya@digitalsukoon.test", name: "Priya N", roleNames: ["Employee"] });
+      const before = await prisma.user.findUniqueOrThrow({ where: { id: existing.id } });
+      googleAnswers(200, baseClaims());
+      const res = await request(app).post(GOOGLE).send({ credential: CREDENTIAL });
+      expect(res.status).toBe(200);
+      expect(res.body.data.created).toBe(false);
+      expect(res.body.data.user).toMatchObject({ id: existing.id, name: "Priya N", roles: ["Employee"] });
+      expect(await prisma.user.count()).toBe(1);
+      // The row is untouched: Google sign-in never renames or re-passwords an account.
+      expect(await prisma.user.findUniqueOrThrow({ where: { id: existing.id } })).toEqual(before);
+      // The session works on an HR-gated route.
+      const me = await request(app).get("/v1/hr/profile").set("Authorization", `Bearer ${res.body.data.accessToken}`);
+      expect(me.status).toBe(200);
+      expect(String(fetchMock.mock.calls[0][0])).toContain("oauth2.googleapis.com/tokeninfo?id_token=");
+    });
+
+    it("creates an ACTIVE Employee for an unknown email, with an unusable password and a profile", async () => {
+      googleAnswers(200, baseClaims());
+      const res = await request(app).post(GOOGLE).send({ credential: CREDENTIAL });
+      expect(res.status).toBe(200);
+      expect(res.body.data.created).toBe(true);
+      expect(res.body.data.user).toMatchObject({ name: "Priya Nair", email: "priya@digitalsukoon.test", roles: ["Employee"] });
+      const row = await prisma.user.findUnique({ where: { email: "priya@digitalsukoon.test" } });
+      expect(row?.status).toBe("ACTIVE");
+      expect(await prisma.employeeProfile.count({ where: { userId: row!.id } })).toBe(1);
+      // Password login cannot guess its way in.
+      const pw = await request(app).post("/v1/hr/auth/login").send({ identifier: "priya@digitalsukoon.test", password: "anything-at-all" });
+      expect(pw.status).toBe(401);
+      // A second Google sign-in is a plain sign-in, not a second account.
+      googleAnswers(200, baseClaims());
+      const again = await request(app).post(GOOGLE).send({ credential: CREDENTIAL });
+      expect(again.status).toBe(200);
+      expect(again.body.data.created).toBe(false);
+      expect(await prisma.user.count()).toBe(1);
+    });
+
+    it("refuses an ONBOARDING or INACTIVE account like password login, without touching it", async () => {
+      const u = await createTestUser({ email: "priya@digitalsukoon.test", roleNames: ["Employee"] });
+      await prisma.user.update({ where: { id: u.id }, data: { status: "ONBOARDING" } });
+      googleAnswers(200, baseClaims());
+      let res = await request(app).post(GOOGLE).send({ credential: CREDENTIAL });
+      expect(res.status).toBe(403);
+      expect(res.body.error.code).toBe("PENDING_APPROVAL");
+      expect((await prisma.user.findUniqueOrThrow({ where: { id: u.id } })).status).toBe("ONBOARDING");
+
+      await prisma.user.update({ where: { id: u.id }, data: { status: "INACTIVE" } });
+      googleAnswers(200, baseClaims());
+      res = await request(app).post(GOOGLE).send({ credential: CREDENTIAL });
+      expect(res.status).toBe(403);
+      expect(res.body.error.code).toBe("ACCOUNT_INACTIVE");
+      expect(await prisma.user.count()).toBe(1);
+    });
+
+    it("rejects a token for another audience, an unverified email, an expired one, a foreign issuer, or a Google 400 — and writes nothing", async () => {
+      const cases: Array<Record<string, unknown> | null> = [
+        { ...baseClaims(), aud: "someone-else.apps.googleusercontent.com" },
+        { ...baseClaims(), email_verified: "false" },
+        { ...baseClaims(), exp: String(Math.floor(Date.now() / 1000) - 10) },
+        { ...baseClaims(), iss: "https://evil.example" },
+        null,
+      ];
+      for (const claims of cases) {
+        if (claims) googleAnswers(200, claims);
+        else googleAnswers(400, { error_description: "Invalid Value" });
+        const res = await request(app).post(GOOGLE).send({ credential: CREDENTIAL });
+        expect(res.status).toBe(401);
+      }
+      expect(await prisma.user.count()).toBe(0);
+    });
+
+    it("is a 503 when Google cannot be reached", async () => {
+      fetchMock.mockRejectedValue(new Error("ECONNRESET"));
+      const res = await request(app).post(GOOGLE).send({ credential: CREDENTIAL });
+      expect(res.status).toBe(503);
+      expect(res.body.error.code).toBe("GOOGLE_UNAVAILABLE");
     });
   });
 });

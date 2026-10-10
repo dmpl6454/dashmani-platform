@@ -642,6 +642,75 @@ At GA a reload shows the nav at once. An open HR tab shows it by itself at its f
 
 ---
 
+## Campaign booking: self-serve "Start a campaign" (client portal, Phase 1, 2026-10-08)
+
+**What it is.** An invited client books promotion on our network and pays online:
+1. **Details:** name, brand, objective, go-live window (IST, at most 60 days).
+2. **Creative:** reel / story / post / carousel. Chunked upload, plus **super text** that WE burn into the media, a caption, hashtags, @tags and collaborators.
+3. **Accounts:** a searchable catalogue of our accounts with followers, category, engagement and price.
+4. **Review & pay:** Razorpay checkout.
+5. **Our team reviews,** then posts and records each post's link. The client gets a "post is live" email per post and ONE delivery email with every link, and sees the links (plus views/likes once the Meta sync picks them up) on the campaign page.
+
+The client portal has `/campaigns`, `/campaigns/new` and `/campaigns/[id]`. The internal portal has `/campaigns`, `/campaigns/[id]` and `/campaigns/rate-cards`, gated to Admin/Super Admin. The website's contact channel links to `client.digitalsukoon.com/login?next=/campaigns/new`; the login page now honours a same-site `?next=`.
+
+**Phases.**
+- **Phase 1 (this):** staff post by hand and paste the link; the link must be on the item's platform host.
+- **Phase 2 (built, ships DARK):** Meta auto-publish, `services/campaign/publish.service.ts`, OFF unless `CAMPAIGN_PUBLISH_ENABLED=1`.
+  - **Approval decides per item** (`planPublishing`): `queued` (auto) when the API can post it, else `manual_pending` with the reason logged. By hand: YouTube, stories, **song audio** (the API cannot attach a song), FB carousels with a video, a connection that is revoked/needs re-auth, or one whose `granted_scopes` lacks `instagram_content_publish` / `pages_manage_posts`.
+  - **No scope change.** `META_FORBIDDEN_SCOPES` still governs what we REQUEST; eligibility reads what the connection actually GRANTED (prod's grant already carries both publish scopes from an earlier authorisation). A reconnect that drops them simply sends items to staff.
+  - **Due time:** launch day at `CAMPAIGN_PUBLISH_HOUR_IST` (default 10:00 IST); staff "Publish now" overrides; "Post by hand instead" stops it.
+  - **Worker:** every 60 s (first +3 min), overlap guard claimed before the first await, ≤`CAMPAIGN_PUBLISH_BATCH` (3) items per tick, each leased 10 min via `locked_until`.
+  - **Instagram:** quota check → container (REELS / image; carousel children kept as `c:<ids>` until all FINISHED, then the parent) → poll `status_code` → `media_publish` → permalink. The container id is saved at once and reused; EXPIRED/ERROR → a fresh one.
+  - **Facebook (Page token):** photo → `/photos`; video post → `/videos`; reel → `/video_reels` start → rupload (`file_url`, `Authorization: OAuth`) → finish, then poll `status.publishing_phase` (`containerId = reel:<id>:<startedMs>`); carousel → unpublished `/photos` + one `/feed` post with `attached_media`.
+  - ⚠️ **Never post twice.** An unanswered IG `media_publish` is never repeated: the container is re-checked (PUBLISHED → the post is found among the newest media by caption). An unanswered FB post goes to staff ("check the Page first"). Hand-posting (`markPosted`) refuses a `queued` item; refund / mark-failed refuse a LOCKED (mid-publish) one.
+  - ⚠️ **Never fail a paid item silently.** Token rejected (190) or permission (10/2xx) → staff at once; other errors back off 2/10/30/120/360 min, then staff after 5 attempts. Only staff mark failed / refund.
+  - Meta downloads the media from `API_PUBLIC_URL` + a signed `/v1/campaign-media/:id/preview` URL valid `CAMPAIGN_PUBLISH_MEDIA_TTL_SEC` (6 h).
+  - Tests: `tests/campaign-publish.test.ts` (fake Graph behind a stubbed fetch). ⚠️ Before switching it on: post once to our own test Page/IG account with "Publish now" and check the permalink.
+- **Phase 3:** YouTube upload.
+- Plan: `/root/.claude/plans/plan-in-start-campaign-replicated-neumann.md` (session-local); the code comments carry the rules.
+
+**Schema.** Seven additive tables, `campaign_*` plus `razorpay_webhook_events`. Statuses are VARCHAR and money is integer **paise**. ⚠️ Apply `scripts/campaign-booking-ddl.sql` by hand as the `dashmani` role **before** merging; CI rehearses it. There is no FK into hot tables and no enum change.
+
+**Pricing (owner's sheet, 2026-10-08).**
+- Each card (account × format) has a **Brand** price (`price_paise`, required: it is what offers the format), an **Entertainment** price (`entertainment_price_paise`, null = not offered for film/OTT/music campaigns) and, on Instagram reels, a **song audio add-on** (`audio_addon_paise`, null = "don't do").
+- The client picks the campaign type (step 1) and, for a reel, optionally song audio integration with the track (step 2). `priceFor()` in `rate-card.service.ts` is the ONE place the price is decided: base by type, + add-on when audio is on. An account that doesn't offer the combination is hidden from the list and refused by the API. Items store `audio_addon_paise` (the part of `price_paise` that is the add-on).
+- Changing the type or the audio option before payment re-prices the booked items (`repriceItems`). **After payment** (changes_requested) the format and the audio option are frozen (409 `PAID_TERMS_FROZEN`) and item prices are never re-priced.
+- Clients book **reel, post and carousel** only (`BOOKABLE_FORMATS`); `story` stays in the enum for stored data.
+- `scripts/import-campaign-rate-cards.ts` loads the sheet (`scripts/data/campaign-rate-cards.json`, 67 Instagram + 66 Facebook pages). Instagram matches by URL username only; Facebook by Page id, then username, then a unique exact name (flagged "NAME (check)"). Unmatched pages are listed, never guessed. The sheet's follower counts are ignored (live Meta counts are shown). Dry-run by default; `--apply --confirm-prod` from `packages/db`.
+
+**Payment mode (2026-10-10, owner: "skip the payment gateway for now").** `razorpayConfig.paymentMode()` is `offline` whenever the Razorpay keys are absent or `CAMPAIGN_PAYMENT_MODE=offline`, else `razorpay`. In offline mode checkout does the SAME re-pricing and price freeze, then moves the booking straight to `paid_pending_review` with `submittedAt`, no `campaign_payments` row and **no `paidAt`** — the amount is collected by hand. Review, posting and delivery are identical in both modes. ⚠️ `paidAt` is written only by the webhook and is the one signal for "was this paid online": every email and status message keys its money wording on it (offline bookings are told "submitted", never "payment received" or "refund on its way"); `reject` leaves an offline booking `rejected` (never `refunded`, which would claim money went back); the item "refund" becomes "drop" (no gateway call) only when the booking has no online payment at all — a booking WITH a captured payment that can't cover the item still 409s. The client shape carries `paymentMode` so the Pay step shows "Submit for review" instead of opening Razorpay. Switching to Razorpay later is env-only: set the keys, unset the override, `pm2 restart api`.
+
+**Money rules (do not regress).**
+- **The price comes only from `campaign_rate_cards`.** Checkout re-prices from the current cards and freezes each item; nothing the client sends is a price.
+- **Only the webhook marks a booking paid.** It is `POST /v1/webhooks/razorpay`, mounted in `app.ts` BEFORE `express.json` (raw body HMAC, `timingSafeEqual`), and is idempotent on `x-razorpay-event-id`. The checkout handler's verify only drives the UI.
+- **A captured payment that doesn't match the booking is refunded automatically.** This covers an old order paid after the client edited, and paying twice. Any edit after checkout drops the booking back to `draft`.
+- **Refunds claim the DB row first** (`refundedPaise` / item status), then call Razorpay, and roll back on failure. A double click can never refund twice.
+- **Reject = full refund.** The booking moves to `refunded` once Razorpay reports the refund processed.
+
+**State machine.**
+- Every booking status change goes through `transitionBooking()`: an `updateMany WHERE status IN (…)`, a 409 on a race, and an audit row in `campaign_booking_events`.
+- Booking path: draft → awaiting_payment → paid_pending_review ⇄ changes_requested → approved → publishing → completed | partially_published. Side exits: rejected → refunded, cancelled, expired. Unpaid bookings expire after 24h; untouched drafts after 30 days.
+
+**Media safety.**
+- **Where files live.** Files go to `CAMPAIGN_MEDIA_DIR` (prod `/var/lib/dashmani/campaign-media`, mode 0700), **never under `uploads/`, which is public**. File names are 256-bit random keys.
+- **Uploads.** 8 MB chunks (`PUT …/chunks/:n`, `application/octet-stream`), resumable and re-sendable. On complete, the real type is sniffed from magic bytes (JPEG/PNG/MP4/MOV only) and checked with ffprobe.
+- **Limits.** Video ≤ 500 MB, image ≤ 20 MB, reel ≤ 90 s, story ≤ 60 s.
+- **Disk guard.** Uploads get a 507 when free space minus 2.2× the file size falls below `CAMPAIGN_MIN_FREE_GB` (default 5). Each client has a 2 GB quota and at most 3 uploads in flight.
+- **Previews** use short-lived HMAC-signed URLs, `/v1/campaign-media/:id/:variant?exp&sig`, because `<video>` cannot send the Authorization header.
+
+**Render worker** (`cron/campaign.cron.ts` → `services/campaign/render.service.ts`).
+- Every 30 s, ONE file per tick, `nice -n 15 ffmpeg -threads 1`, with a 10-minute timeout. It skips a tick when load > 1.5 or free memory < 300 MB.
+- Reels and stories are padded to 1080×1920; posts are scaled to ≤1080 px wide.
+- ⚠️ **The client's text is written to a file per line and passed as `drawtext textfile=… expansion=none`. Never put user text in the filter string.** Paths in the filter must match `[A-Za-z0-9/_.-]`; they are checked, not escaped.
+- Checkout is blocked until every render is `done`, so the client pays after seeing the preview.
+- Kill switch: `CAMPAIGN_RENDER_ENABLED=0`, or `CAMPAIGN_CRONS_ENABLED=0` for both workers.
+
+**Retention** (every 6h). It purges media 14 days after a booking finishes (`CAMPAIGN_RETENTION_DAYS`), unused uploads after 48h, abandoned uploads after 24h, and orphaned renders. It emails an admin when the disk is low. Rows are kept, with `purged_at` set.
+
+**Server setup (once).** Run `sudo bash scripts/setup-campaigns.sh`. It installs ffmpeg and fonts-noto-core, creates the media folder and adds `CAMPAIGN_MEDIA_DIR`. Then add `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET` and `RAZORPAY_WEBHOOK_SECRET` to `apps/api/.env`, run `pm2 restart api`, and set the Razorpay webhook to `/v1/webhooks/razorpay` for payment.captured, payment.failed, order.paid, refund.processed and refund.failed. Checkout returns 503 until the keys exist.
+
+**Tests:** `apps/api/tests/campaign.test.ts` stubs ffprobe, ffmpeg, Razorpay and SMTP. It covers pure helpers plus the whole flow: catalogue field allow-list, cross-client 404s, chunk 413 / out-of-order / missing / fake-type, webhook replay and tamper, outdated-order refund, reject refunding exactly once, the delivery email sent exactly once, and resend.
+
 ## Client Portal (`apps/client`) — Implementation Status
 
 All 9 implementation phases + 5-wave audit remediation complete + TC-191 (forgot-password) verified implemented. See `.planning/CLIENT-PORTAL-AUDIT.md` for the full issue register. The `/login` page has a `forgotOpen` state that opens a `ForgotPasswordModal` calling `POST /client/auth/forgot-password`; `apps/client/src/app/reset-password/` page handles the token-based reset flow calling `POST /client/auth/reset-password`.

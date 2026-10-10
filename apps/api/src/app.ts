@@ -9,6 +9,7 @@ import { errorHandler } from "./middleware/error-handler";
 import { rateLimitKey, loginRateLimitKey, isHealthProbe, isPipelinePath, envInt } from "./middleware/rate-limit-key";
 import { pipelineNoStore, pipelineRateLimiter, pipelineJson, skipPipelineSyncLog } from "./middleware/pipeline-rate-limit";
 import { pipelineErrorMiddleware } from "./services/pipeline/errors";
+import campaignWebhookRoutes from "./routes/campaign-webhook.routes";
 import { bigintJsonReplacer } from "./utils/bigint-json";
 
 const app = express();
@@ -103,6 +104,10 @@ app.use("/v1/internship/apply", publicLimiter);
 // already-parsed request). Its 413 / malformed-JSON errors are answered in JSON by the
 // pipeline error middleware here — they would otherwise reach the global 500.
 app.use("/v1/pipeline", pipelineJson, pipelineErrorMiddleware);
+
+// Razorpay webhook: raw body (the signature is an HMAC of the exact bytes), so it is mounted
+// BEFORE the global JSON parser, which would otherwise consume and re-shape the body.
+app.use("/v1/webhooks/razorpay", campaignWebhookRoutes);
 
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true }));

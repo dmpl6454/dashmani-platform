@@ -77,3 +77,6 @@ export type { GenerateOfferLetterInput } from "./validators/offer-letter";
 export * as siteEnquiryValidators from "./validators/site-enquiry";
 export { siteEnquirySchema, SITE_ENQUIRY_INTENTS, SITE_ENQUIRY_BUDGETS } from "./validators/site-enquiry";
 export type { SiteEnquiryInput } from "./validators/site-enquiry";
+
+// Self-serve campaign booking (client portal "Start a campaign")
+export * from "./validators/campaign";

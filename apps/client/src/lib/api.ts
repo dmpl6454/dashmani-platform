@@ -32,7 +32,10 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}): Prom
       if (refreshed) return apiFetch(path, options);
       localStorage.removeItem("clientAccessToken");
       localStorage.removeItem("clientRefreshToken");
-      window.location.href = "/login";
+      // Keep where they were going, so signing in returns them there (e.g. /campaigns/new).
+      const here = window.location.pathname;
+      const keep = here && !["/", "/login", "/signup", "/reset-password"].includes(here);
+      window.location.href = keep ? `/login?next=${encodeURIComponent(here)}` : "/login";
     }
     throw new Error(data.error?.message || "API error");
   }

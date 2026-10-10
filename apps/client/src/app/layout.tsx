@@ -8,6 +8,13 @@ import { PortalShell } from "@/components/portal-shell";
 
 const publicRoutes = ["/login", "/signup", "/reset-password"];
 
+/** `?next=` from the login URL, only when it is a same-site path (never `//evil.com`). */
+function safeNext(): string | null {
+  if (typeof window === "undefined") return null;
+  const next = new URLSearchParams(window.location.search).get("next");
+  return next && /^\/(?!\/)[\w\-/?=&.%]*$/.test(next) ? next : null;
+}
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -20,7 +27,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     if (token && stored) {
       try { setUser(JSON.parse(stored)); } catch { /* malformed stored user */ }
     } else if (!publicRoutes.includes(pathname)) {
-      router.push("/login");
+      // Keep where they were going (e.g. the website's "Start a campaign" → /campaigns/new).
+      const next = pathname && pathname !== "/" ? `?next=${encodeURIComponent(pathname)}` : "";
+      router.push(`/login${next}`);
     }
     setIsLoading(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -35,7 +44,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     localStorage.setItem("clientRefreshToken", res.data.refreshToken);
     localStorage.setItem("clientUser", JSON.stringify(res.data.user));
     setUser(res.data.user);
-    router.push("/dashboard");
+    router.push(safeNext() ?? "/dashboard");
   }
 
   function logout() {

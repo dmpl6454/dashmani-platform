@@ -60,12 +60,36 @@ export const STEPS = [
   "Hundreds of millions of views",
 ];
 
-export const WORK = [
-  { name: "Helios Luxe", kind: "Event amplification", tag: "Event" },
-  { name: "SKF", kind: "Entertainment", tag: "Film" },
-  { name: "Titan Eye+", kind: "Brand integration", tag: "Brand" },
-  { name: "Coke Studio", kind: "Music integration", tag: "Music" },
+// CH 04 Work — brand-campaign case studies, each showing the campaign's top reel.
+// To add a reel: paste its Instagram link into `reelUrl` (reel, post or tv links all work,
+// e.g. "https://www.instagram.com/reel/ABC123xyz/"). Leave it "" and the card shows the
+// placeholder until a link is added. `results` is optional — only add real, verified numbers.
+export type CaseStudy = {
+  brand: string;
+  campaign: string;
+  tag: string;
+  reelUrl: string;
+  results?: { label: string; value: string }[];
+};
+
+export const CASE_STUDIES: CaseStudy[] = [
+  { brand: "Helios Luxe", campaign: "Event amplification", tag: "Event", reelUrl: "" },
+  { brand: "SKF", campaign: "Entertainment", tag: "Film", reelUrl: "" },
+  { brand: "Titan Eye+", campaign: "Brand integration", tag: "Brand", reelUrl: "" },
+  { brand: "Coke Studio", campaign: "Music integration", tag: "Music", reelUrl: "" },
 ];
+
+/**
+ * Turns any Instagram post/reel link into its official embed URL, or null if the link
+ * is not an Instagram post. Accepts /reel/, /reels/, /p/, /tv/ and profile-prefixed
+ * links (instagram.com/<user>/reel/<code>/); drops query strings like ?igsh=.
+ */
+export function instagramEmbedUrl(url: string): string | null {
+  const m = /^https?:\/\/(?:www\.)?instagram\.com\/(?:[A-Za-z0-9._]+\/)?(reels?|p|tv)\/([A-Za-z0-9_-]+)/.exec(url.trim());
+  if (!m) return null;
+  const kind = m[1] === "reels" ? "reel" : m[1];
+  return `https://www.instagram.com/${kind}/${m[2]}/embed/`;
+}
 
 export const LOGOS = ["Movified", "Total Filmi", "Bollywood Society", "Bollywood Chronicle", "Bollywood Paparazzi", "Paparazzzee", "Crazy 4 TV", "Dubai Paps"];
 
@@ -100,6 +124,9 @@ export const OFFICES = [
 ];
 
 export const CONTACT_EMAIL = "hello@digitalsukoon.com";
+
+/** Self-serve booking for existing (invited) clients: the client portal's campaign wizard. */
+export const CLIENT_BOOKING_URL = "https://client.digitalsukoon.com/login?next=/campaigns/new";
 export const CONTACT_PHONE = { tel: "+918709788368", display: "+91 87097 88368" };
 
 // Audience by platform (owner-supplied, 2026-10-07). Sums to the 400M+ headline.

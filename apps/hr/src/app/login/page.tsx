@@ -3,6 +3,7 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { useHrAuth } from "@/lib/auth";
 import { nextPathFromSearch } from "@/lib/return-path";
+import { GoogleSignIn, type GoogleHrSession } from "@/components/google-signin";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/v1";
 
@@ -830,6 +831,19 @@ export default function LoginPage() {
     }
   }
 
+  // Google handed us a verified session (existing account, or one it just opened). Same
+  // landing as password login: store it, honour the allowlisted ?next=, go.
+  function handleGoogleSession(s: GoogleHrSession) {
+    const destination = nextPathFromSearch(window.location.search);
+    setErrs({});
+    setSuccessMsg(s.created ? "Account created with Google — taking you in." : "");
+    setSubmitState("success");
+    setTimeout(() => {
+      login(s.accessToken, s.refreshToken, s.user);
+      router.push(destination);
+    }, s.created ? 900 : 400);
+  }
+
   async function handleRegister(e: React.FormEvent) {
     e.preventDefault();
     const next: Record<string, string | null> = {};
@@ -1106,6 +1120,13 @@ export default function LoginPage() {
                   <p className="text-[11px] text-[#9C947C] text-center mt-1">You can sign in as soon as your account is created.</p>
                 </form>
               )}
+
+              <GoogleSignIn
+                mode={tab}
+                disabled={submitState !== "idle"}
+                onSession={handleGoogleSession}
+                onError={(m) => setErrs({ general: m })}
+              />
 
               <p className="text-[11px] text-[#9C947C] text-center mt-5 font-medium">
                 By continuing you agree to our{" "}<a href="#" className="underline hover:text-[#1A1A1A]">team handbook</a>{" "}&amp;{" "}<a href="#" className="underline hover:text-[#1A1A1A]">privacy notice</a>.

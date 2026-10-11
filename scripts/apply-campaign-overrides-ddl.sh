@@ -20,7 +20,9 @@
 #   7. drift check (inspect only, never applied): no campaign_* statement may remain between
 #      the database and the PR's schema.prisma.
 # It restarts nothing and changes no file in /opt/dashmani-platform. Safe to re-run: a second
-# run changes nothing. Exit code 0 means every step passed.
+# run changes nothing. Exit code 0 means every step passed; 1 means a step failed (the output says
+# whether the DDL was applied); 2 means the DDL is applied and verified but the drift check could
+# not run.
 #
 # APP_DIR / BRANCH / EXPECT_ROLE / HEALTH_URL may be overridden for a local rehearsal only.
 set -uo pipefail
@@ -34,8 +36,18 @@ WORK="/root/campaign-overrides-ddl-$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$WORK"
 export PGCONNECT_TIMEOUT=10
 
-fail() { echo "FAIL: $*"; echo "Nothing after this point ran. Logs in $WORK"; exit 1; }
-health() { curl -s -m 10 -o /dev/null -w "%{http_code}" "$HEALTH_URL" 2>/dev/null || echo "unreachable"; }
+APPLIED=0   # flips to 1 once the DDL transaction has committed
+fail() {
+  echo "FAIL: $*"
+  if [ "$APPLIED" = "1" ]; then
+    echo "The DDL itself IS applied (it committed in step 5) and is safe to leave in place — it is additive and the running API ignores it."
+    echo "Do NOT merge PR #197 yet: send this output and $WORK to Claude first."
+  else
+    echo "Nothing was changed in the database. Logs in $WORK"
+  fi
+  exit 1
+}
+health() { local c; c=$(curl -s -m 10 -o /dev/null -w "%{http_code}" "$HEALTH_URL" 2>/dev/null); [ -n "$c" ] && [ "$c" != "000" ] && echo "$c" || echo "unreachable"; }
 
 cd "$APP_DIR" 2>/dev/null || fail "$APP_DIR missing — this must run on the prod box (ssh dashmani-prod)"
 
@@ -45,7 +57,9 @@ git show "origin/$BRANCH:scripts/campaign-overrides-ddl.sql" > "$WORK/campaign-o
   || fail "scripts/campaign-overrides-ddl.sql is not on origin/$BRANCH"
 git show "origin/$BRANCH:packages/db/prisma/schema.prisma" > "$WORK/schema.prisma" \
   || fail "packages/db/prisma/schema.prisma is not on origin/$BRANCH"
-echo "    branch head: $(git rev-parse --short "origin/$BRANCH")"
+HEAD_SHA=$(git rev-parse "origin/$BRANCH")
+HEADSHORT=$(git rev-parse --short "origin/$BRANCH")
+echo "    branch head: $HEAD_SHA"
 echo "    DDL: $(wc -l < "$WORK/campaign-overrides-ddl.sql") lines, sha256 $(sha256sum "$WORK/campaign-overrides-ddl.sql" | cut -c1-12)"
 
 echo "==> 2. DATABASE_URL (the app role) from apps/api/.env"
@@ -53,7 +67,7 @@ DBURL=$(grep -hE '^DATABASE_URL=' "$APP_DIR/apps/api/.env" "$APP_DIR/.env" 2>/de
 DBURL="${DBURL%\"}"; DBURL="${DBURL#\"}"; DBURL="${DBURL%\'}"; DBURL="${DBURL#\'}"; DBURL="${DBURL%%\?*}"
 [ -n "$DBURL" ] || fail "no DATABASE_URL in $APP_DIR/apps/api/.env"
 q() { psql "$DBURL" -X -At -v ON_ERROR_STOP=1 -c "$1"; }
-ROLE=$(q "SELECT current_user" 2>&1) || fail "cannot connect: $ROLE"
+ROLE=$(q "SELECT current_user" 2> "$WORK/connect.err") || fail "cannot connect: $(head -c 300 "$WORK/connect.err")"
 echo "    connected as: $ROLE  (database $(q "SELECT current_database()"), $(q "SHOW server_version"))"
 [ "$ROLE" = "$EXPECT_ROLE" ] || fail "connected as '$ROLE', expected '$EXPECT_ROLE'. Never apply as postgres: tables it creates are owned by postgres and every later Prisma DDL fails."
 
@@ -86,17 +100,18 @@ fi
 
 LONG=$(q "SELECT a.pid || ' ' || coalesce(a.application_name,'') || ' ' || date_trunc('second', now() - a.xact_start) || ' ' || left(regexp_replace(coalesce(a.query,''), '\s+', ' ', 'g'), 80)
   FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid
-  WHERE l.relation IN ('public.campaign_media'::regclass, 'public.campaign_booking_items'::regclass)
+  WHERE l.relation IN ('public.campaign_media'::regclass, 'public.campaign_booking_items'::regclass, 'public.campaign_bookings'::regclass)
     AND a.pid <> pg_backend_pid() AND a.xact_start < now() - interval '5 seconds'")
 if [ -n "$LONG" ]; then
   echo "$LONG" | sed 's/^/      /'
   fail "a transaction older than 5 s holds a lock on a campaign table; wait a minute and re-run"
 fi
-echo "    no long transaction on campaign_media / campaign_booking_items"
+echo "    no long transaction on campaign_media / campaign_booking_items / campaign_bookings"
 
 echo "==> 4. Schema-only backup"
 pg_dump "$DBURL" --schema-only --no-owner --no-privileges --lock-wait-timeout=5s > "$WORK/pre-ddl-schema.sql" 2> "$WORK/pg_dump.err"
-[ -s "$WORK/pre-ddl-schema.sql" ] || { cat "$WORK/pg_dump.err"; fail "schema dump is empty"; }
+DUMP_EXIT=$?
+[ "$DUMP_EXIT" -eq 0 ] && [ -s "$WORK/pre-ddl-schema.sql" ] || { head -c 500 "$WORK/pg_dump.err"; fail "schema dump failed (exit $DUMP_EXIT) — wait a minute and re-run"; }
 echo "    $WORK/pre-ddl-schema.sql ($(wc -c < "$WORK/pre-ddl-schema.sql") bytes)"
 
 echo "==> 5. Apply the DDL (one transaction)"
@@ -110,6 +125,7 @@ if [ "$DDL_EXIT" -ne 0 ]; then
   fi
   fail "DDL did not apply — see $WORK/apply.log (the script runs in one transaction, so it rolled back)"
 fi
+APPLIED=1
 
 echo "==> 6. Verify"
 COLS=$(q "SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND (
@@ -137,6 +153,7 @@ echo "    campaign_media by role: $(q "SELECT coalesce(string_agg(role || '=' ||
 echo "    campaign_media_renders rows: $(q "SELECT count(*) FROM campaign_media_renders")"
 
 echo "==> 7. Drift check against the PR's schema.prisma (inspect only, never applied)"
+DRIFT_RAN=0
 if [ -d "$APP_DIR/packages/db" ] && (cd "$APP_DIR/packages/db" && DATABASE_URL="$DBURL" timeout 300 npx --no-install prisma migrate diff \
       --from-url "$DBURL" --to-schema-datamodel "$WORK/schema.prisma" --script > "$WORK/drift.sql" 2> "$WORK/drift.err"); then
   STMTS=$(grep -cvE '^\s*(--.*)?$' "$WORK/drift.sql" || true)
@@ -146,14 +163,26 @@ if [ -d "$APP_DIR/packages/db" ] && (cd "$APP_DIR/packages/db" && DATABASE_URL="
     fail "the database still differs from the PR schema on a campaign object — do NOT merge; see $WORK/drift.sql"
   fi
   echo "    no campaign_* drift"
+  DRIFT_RAN=1
 else
-  echo "    WARNING: could not run prisma migrate diff ($(head -c 200 "$WORK/drift.err" 2>/dev/null)); steps 5-6 already verified every object, so this is informational"
+  echo "    WARNING: could not run prisma migrate diff: $(head -c 300 "$WORK/drift.err" 2>/dev/null)"
 fi
 
 HEALTH_AFTER=$(health)
 echo "    API health after: $HEALTH_AFTER (before: $HEALTH_BEFORE)"
+if [ "$HEALTH_AFTER" != "200" ]; then
+  echo "    WARNING: the API health check is not 200. This DDL cannot cause that (it is additive and the running"
+  echo "    API never reads the new objects) — check 'pm2 status' / 'pm2 logs api --lines 50' before merging."
+fi
 
 echo
+if [ "$DRIFT_RAN" != "1" ]; then
+  echo "APPLIED AND VERIFIED (steps 5-6), but the drift check in step 7 did not run. Logs in $WORK."
+  echo "Send this output to Claude before merging PR #197."
+  exit 2
+fi
 echo "ALL DONE — DDL applied as $ROLE and verified. Logs in $WORK."
-echo "Safe to merge PR #197. Until it is merged and deployed, do NOT run 'prisma db push' on prod:"
-echo "a push from main's schema would drop the new (still empty) campaign_media_renders table."
+echo "Safe to merge PR #197 while its head is still $HEADSHORT."
+echo "If commits land on the PR after this run, re-run this script (it is safe to re-run) before merging."
+echo "Until the PR is merged and deployed, do NOT run 'prisma db push' on prod: a push from main's schema"
+echo "would drop the new (still empty) campaign_media_renders table."

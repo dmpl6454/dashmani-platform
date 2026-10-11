@@ -72,7 +72,9 @@ export async function runCampaignRetention(now = new Date()) {
     const st = await fsp.stat(full).catch(() => null);
     if (!st || +now - st.mtimeMs < 6 * HOUR) continue;
     const key = f.replace(/(\.partial)?\.(mp4|jpg)$/, "");
-    const used = await prisma.campaignMedia.count({ where: { renderKey: key, purgedAt: null } });
+    const used =
+      (await prisma.campaignMedia.count({ where: { renderKey: key, purgedAt: null } })) +
+      (await prisma.campaignMediaRender.count({ where: { renderKey: key, media: { purgedAt: null } } }));
     if (!used) {
       await fsp.rm(full, { force: true });
       stats.strayRenders++;

@@ -8,6 +8,7 @@ import { useSearchParams } from "next/navigation";
 import { nextQueryFor, safeNextValue } from "@/lib/safe-next";
 import { AuthField, AuthShell, AuthTabs } from "@/components/auth/shared";
 import { GoogleSignIn } from "@/components/auth/google-signin";
+import { useHydrated } from "@/lib/hooks/use-hydrated";
 
 // The client sign-in page, in the website's design (see components/auth/shared.tsx).
 // Wire unchanged: useAuth().login() → POST /v1/client/auth/login, the same token
@@ -25,6 +26,7 @@ function LoginForm() {
   const [error, setError] = useState("");
   const [submitState, setSubmitState] = useState<"idle" | "loading" | "success">("idle");
   const [forgotOpen, setForgotOpen] = useState(false);
+  const hydrated = useHydrated();
 
   const emailErr = emailBlurred && email && !emailOk(email) ? "Please enter a valid email" : null;
   const nextParam = useSearchParams().get("next");
@@ -89,7 +91,7 @@ function LoginForm() {
             <button type="button" onClick={() => setForgotOpen(true)} className="auth-link">Forgot password?</button>
           </div>
           {error && <div role="alert" className="auth-err"><AlertCircle size={14} /> <span>{error}</span></div>}
-          <button type="submit" disabled={submitState !== "idle"} className="auth-btn" aria-live="polite">
+          <button type="submit" disabled={submitState !== "idle" || !hydrated} className="auth-btn" aria-live="polite">
             {submitState === "idle" && (<><span>Enter the portal</span><ArrowRight size={17} /></>)}
             {submitState === "loading" && (<><span className="auth-spinner" aria-hidden /><span>One moment…</span></>)}
             {submitState === "success" && (<><Check size={18} strokeWidth={3} /><span>Opening…</span></>)}

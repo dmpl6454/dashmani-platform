@@ -11,6 +11,8 @@ export interface CampaignMedia {
   id: string;
   position: number;
   kind: "image" | "video";
+  /** creative = part of the post; thumbnail = the client's cover image for a video. */
+  role: "creative" | "thumbnail";
   originalName: string;
   mime: string | null;
   bytes: number;
@@ -32,6 +34,13 @@ export interface CampaignItem {
   accountHandle: string | null;
   pricePaise: number;
   audioAddonPaise: number;
+  /** Per-account text — null means "same as the campaign". superTextOverride "" = no overlay. */
+  captionOverride: string | null;
+  hashtagsOverride: string[];
+  superTextOverride: string | null;
+  superTextStyleOverride: string | null;
+  /** State of this account's own renders (null when it posts the campaign's default files). */
+  renderStatus: "queued" | "done" | "failed" | null;
   status: string;
   permalink: string | null;
   postedAt: string | null;
@@ -61,8 +70,19 @@ export interface Campaign {
   /** "razorpay" opens the gateway at checkout; "offline" submits for review, amount settled by hand. */
   paymentMode?: "razorpay" | "offline";
   deliveredAt: string | null;
+  /** The creative (never the thumbnail). */
   media: CampaignMedia[];
+  /** The client's cover image for a video, if they supplied one. */
+  thumbnail: CampaignMedia | null;
   items: CampaignItem[];
+}
+
+export interface ItemPreviewFile {
+  mediaId: string;
+  kind: "image" | "video";
+  role: "creative" | "thumbnail";
+  status: string;
+  url: string | null;
 }
 
 export interface CampaignListRow {
@@ -120,8 +140,7 @@ export function useCampaigns() {
 /** Polls while a render or payment confirmation is pending, so the page moves on by itself. */
 export function useCampaign(id: string | null) {
   return useSWR<Campaign>(id ? `/client/campaigns/${id}` : null, unwrap, {
-    refreshInterval: (c) =>
-      c && (c.media.some((m) => m.renderStatus === "queued" || m.renderStatus === "rendering") || c.status === "awaiting_payment") ? 5000 : 0,
+    refreshInterval: (c) => (c && (renderPending(c) || c.status === "awaiting_payment") ? 5000 : 0),
   });
 }
 
@@ -131,6 +150,17 @@ export function useCatalogue(enabled: boolean) {
 
 export function useResults(id: string | null, enabled: boolean) {
   return useSWR<CampaignResults>(id && enabled ? `/client/campaigns/${id}/results` : null, unwrap, { revalidateOnFocus: true, refreshInterval: 120_000 });
+}
+
+/** Any file (creative, thumbnail or a per-account variant) still being prepared. */
+export function renderPending(c: Campaign): boolean {
+  const files = c.thumbnail ? [...c.media, c.thumbnail] : c.media;
+  return files.some((m) => m.renderStatus === "queued" || m.renderStatus === "rendering") || c.items.some((i) => i.renderStatus === "queued");
+}
+
+export function renderFailed(c: Campaign): boolean {
+  const files = c.thumbnail ? [...c.media, c.thumbnail] : c.media;
+  return files.some((m) => m.renderStatus === "failed") || c.items.some((i) => i.renderStatus === "failed");
 }
 
 export function mutateJson<T>(path: string, method: "POST" | "PUT" | "DELETE", body?: unknown) {

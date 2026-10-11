@@ -108,6 +108,8 @@ export const CAMPAIGN_LIMITS = {
   carouselMax: 10,
   superTextMax: 120,
   superTextLinesMax: 3,
+  /** Distinct per-account overlays one booking may carry (each is one extra render of every file). */
+  customOverlaysMax: 8,
   launchWindowMaxDays: 60,
   itemsMax: 50,
   videoMaxBytes: 500 * 1024 * 1024,
@@ -213,8 +215,16 @@ export const campaignCreativeSchema = z
     /** Reel only: integrate the client's song audio (an extra per-account price). */
     audioIntegration: z.boolean().optional().default(false),
     audioTrack: safeString.pipe(z.string().max(300)).optional().nullable(),
+    /** Optional cover image (JPG / PNG upload) for a video. null = the platform picks a frame. */
+    thumbnailMediaId: z.string().uuid().optional().nullable(),
   })
   .superRefine((v, ctx) => {
+    if (v.thumbnailMediaId && v.mediaIds.includes(v.thumbnailMediaId)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["thumbnailMediaId"], message: "The thumbnail must be a separate image from the creative" });
+    }
+    if (v.thumbnailMediaId && v.format === "carousel") {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["thumbnailMediaId"], message: "Carousels take no thumbnail" });
+    }
     if (v.audioIntegration) {
       if (v.format !== "reel") {
         ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["audioIntegration"], message: "Song audio integration is available on reels only" });
@@ -248,6 +258,50 @@ export const campaignCreativeSchema = z
     }
   });
 export type CampaignCreativeInput = z.infer<typeof campaignCreativeSchema>;
+
+/**
+ * Per-account text (one booked account). null = use the booking's value. An empty superText
+ * means "no overlay on this account"; an empty caption means a caption of just the hashtags.
+ */
+export const campaignItemOverridesSchema = z
+  .object({
+    caption: safeString.pipe(z.string().max(CAMPAIGN_LIMITS.captionMax)).nullable(),
+    hashtags: z
+      .array(
+        z
+          .string()
+          .trim()
+          .transform((s) => s.replace(/^#/, ""))
+          .pipe(z.string().regex(/^[\p{L}\p{N}_]{1,100}$/u, "Hashtags use letters, numbers and _")),
+      )
+      .max(CAMPAIGN_LIMITS.hashtagsMax)
+      .optional()
+      .default([]),
+    superText: safeString
+      .transform((s) => s.normalize("NFC"))
+      .pipe(z.string().max(CAMPAIGN_LIMITS.superTextMax))
+      .nullable(),
+    superTextStyle: z.enum(SUPER_TEXT_STYLES).optional().nullable(),
+  })
+  .superRefine((v, ctx) => {
+    if (v.caption != null) {
+      if (countHashtags(v.caption, v.hashtags) > CAMPAIGN_LIMITS.hashtagsMax) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["hashtags"], message: "Instagram allows at most 30 hashtags" });
+      }
+      if (countMentions(v.caption) > CAMPAIGN_LIMITS.mentionsMax) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["caption"], message: "Instagram allows at most 20 @mentions" });
+      }
+    }
+    if (v.superText) {
+      if (v.superText.split("\n").length > CAMPAIGN_LIMITS.superTextLinesMax) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["superText"], message: "Keep the overlay text to 3 lines" });
+      }
+      if (/[\u0000-\u0009\u000B-\u001F\u007F]/.test(v.superText)) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["superText"], message: "The overlay text contains unsupported characters" });
+      }
+    }
+  });
+export type CampaignItemOverridesInput = z.infer<typeof campaignItemOverridesSchema>;
 
 export const campaignItemsSchema = z.object({
   rateCardIds: z.array(z.string().uuid()).min(1, "Pick at least one account").max(CAMPAIGN_LIMITS.itemsMax),

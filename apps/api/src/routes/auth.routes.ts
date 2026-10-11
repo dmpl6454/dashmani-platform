@@ -3,6 +3,7 @@ import { validate } from "../middleware/validate";
 import { authenticate } from "../middleware/auth";
 import { authValidators } from "@dashmani/shared";
 import * as authService from "../services/auth.service";
+import { googleClientId, googleSignInEnabled } from "../services/google-id-token";
 import { success } from "../utils/response";
 import { prisma } from "@dashmani/db";
 import { z } from "zod";
@@ -14,6 +15,25 @@ const router = Router();
 router.post("/auth/login", validate(authValidators.loginSchema), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const result = await authService.login(req.body.email, req.body.password, req.body.rememberMe === true);
+    return success(res, result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /auth/google/config — tells the sign-in page whether to render Google's button and with
+// which OAuth client id. Runtime-only (no NEXT_PUBLIC_* to bake); blank env = no button.
+router.get("/auth/google/config", (_req: Request, res: Response) => {
+  res.setHeader("Cache-Control", "no-store");
+  const enabled = googleSignInEnabled();
+  return success(res, { enabled, clientId: enabled ? googleClientId() : null });
+});
+
+// POST /auth/google — Google ID token → internal session for an EXISTING active user (invite-only:
+// never creates an account). The login limiter is mounted on this exact path in app.ts.
+router.post("/auth/google", validate(authValidators.googleSchema), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const result = await authService.googleSignIn(req.body.credential, req.body.rememberMe === true);
     return success(res, result);
   } catch (err) {
     next(err);

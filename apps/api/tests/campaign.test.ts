@@ -513,6 +513,214 @@ describe("campaign booking flow", () => {
     expect((await prisma.campaignBookingItem.findFirstOrThrow({ where: { bookingId: id } })).pricePaise).toBe(350_000);
   });
 
+  it("thumbnail + per-account text: own renders, checkout waits for them, staff get each account's files", async () => {
+    // Two accounts bookable for a reel.
+    const fb = await prisma.metaAsset.create({
+      data: { connectionId: (await prisma.metaConnection.findFirstOrThrow()).id, kind: "FACEBOOK_PAGE", metaId: "5555", name: "Filme Flicks", followerCount: 10 },
+    });
+    const rates = await request(app).put("/v1/admin/campaign-rate-cards").set("Authorization", `Bearer ${admin}`).send({
+      cards: [
+        { targetType: "meta_asset", targetId: assetId, format: "reel", pricePaise: 100_000 },
+        { targetType: "meta_asset", targetId: fb.id, format: "reel", pricePaise: 100_000 },
+      ],
+    });
+    expect(rates.status).toBe(200);
+    const created = await request(app).post("/v1/client/campaigns").set("Authorization", `Bearer ${tokA}`).send(info());
+    const id = created.body.data.id;
+    const video = await upload(tokA, Buffer.concat([MP4_HEAD, Buffer.alloc(2000, 1)]), "video/mp4");
+    const cover = await upload(tokA, JPEG, "image/jpeg");
+    const creative = (extra: Record<string, unknown> = {}) =>
+      request(app).put(`/v1/client/campaigns/${id}/creative`).set("Authorization", `Bearer ${tokA}`)
+        .send({ format: "reel", mediaIds: [video.id], caption: "Campaign caption", hashtags: ["diwali"], superText: "FLAT 50% OFF", superTextStyle: "bottom", thumbnailMediaId: cover.id, ...extra });
+
+    // The thumbnail can't double as the creative, and must be an image.
+    expect((await creative({ thumbnailMediaId: video.id })).status).toBe(400);
+    expect((await creative({ mediaIds: [cover.id], thumbnailMediaId: video.id })).status).toBe(400);
+    const cr = await creative();
+    expect(cr.status).toBe(200);
+    expect(cr.body.data.media).toHaveLength(1);
+    expect(cr.body.data.thumbnail).toMatchObject({ id: cover.id, role: "thumbnail", kind: "image", renderStatus: "queued" });
+    // Both files render with the default overlay (creative first, then the thumbnail).
+    expect(await renderNext({ ignoreLoad: true })).toBe(video.id);
+    expect(await renderNext({ ignoreLoad: true })).toBe(cover.id);
+    expect(await renderNext({ ignoreLoad: true })).toBeNull();
+
+    const cat = await request(app).get("/v1/client/campaigns/catalogue").set("Authorization", `Bearer ${tokA}`);
+    const cards = cat.body.data.flatMap((a: any) => a.offers.map((o: any) => o.rateCardId));
+    const items = await request(app).put(`/v1/client/campaigns/${id}/items`).set("Authorization", `Bearer ${tokA}`).send({ rateCardIds: cards });
+    expect(items.status).toBe(200);
+    expect(items.body.data.items).toHaveLength(2);
+    const [itemA, itemB] = items.body.data.items;
+    expect(itemA.renderStatus).toBeNull(); // posts the default files
+
+    // Account A gets its own caption and overlay → its own render of BOTH files is queued.
+    const text = (body: Record<string, unknown>) => request(app).put(`/v1/client/campaigns/${id}/items/${itemA.id}/text`).set("Authorization", `Bearer ${tokA}`).send(body);
+    expect((await text({ caption: "x".repeat(2201), superText: null })).status).toBe(400);
+    const set = await text({ caption: "Only for Bollywood Society", hashtags: ["bs"], superText: "BS SPECIAL", superTextStyle: "top" });
+    expect(set.status).toBe(200);
+    const a = set.body.data.items.find((i: any) => i.id === itemA.id);
+    expect(a).toMatchObject({ captionOverride: "Only for Bollywood Society", hashtagsOverride: ["bs"], superTextOverride: "BS SPECIAL", superTextStyleOverride: "top", renderStatus: "queued" });
+    expect(set.body.data.items.find((i: any) => i.id === itemB.id).renderStatus).toBeNull();
+    expect(await prisma.campaignMediaRender.count({ where: { bookingId: id } })).toBe(2);
+    // Another client can't touch it.
+    expect((await request(app).put(`/v1/client/campaigns/${id}/items/${itemA.id}/text`).set("Authorization", `Bearer ${tokB}`).send({ caption: "hi", superText: null })).status).toBe(404);
+
+    // Checkout waits for the variant renders exactly as it waits for the default ones.
+    const early = await request(app).post(`/v1/client/campaigns/${id}/checkout`).set("Authorization", `Bearer ${tokA}`);
+    expect(early.status).toBe(409);
+    expect(early.body.error.code).toBe("RENDER_PENDING");
+    const r1 = await renderNext({ ignoreLoad: true });
+    const r2 = await renderNext({ ignoreLoad: true });
+    expect(await renderNext({ ignoreLoad: true })).toBeNull();
+    const renders = await prisma.campaignMediaRender.findMany({ where: { bookingId: id } });
+    expect(renders.map((r) => r.id).sort()).toEqual([r1, r2].sort());
+    expect(renders.every((r) => r.status === "done" && r.renderKey)).toBe(true);
+    expect((await request(app).get(`/v1/client/campaigns/${id}`).set("Authorization", `Bearer ${tokA}`)).body.data.items.find((i: any) => i.id === itemA.id).renderStatus).toBe("done");
+
+    // The variant is served through a signed "v-<id>" link bound to its own file; the default stays separate.
+    const pv = await request(app).get(`/v1/client/campaigns/${id}/items/${itemA.id}/preview-urls`).set("Authorization", `Bearer ${tokA}`);
+    expect(pv.status).toBe(200);
+    expect(pv.body.data).toHaveLength(2);
+    const vid = pv.body.data.find((f: any) => f.mediaId === video.id);
+    expect(vid.url).toMatch(new RegExp(`/v1/campaign-media/${video.id}/v-[0-9a-f-]{36}\\?exp=`));
+    expect((await request(app).get(vid.url)).status).toBe(200);
+    const other = renders.find((r) => r.mediaId !== video.id)!;
+    const swapped = vid.url.replace(/v-[0-9a-f-]{36}/, `v-${other.id}`);
+    expect((await request(app).get(swapped)).status).toBe(403); // signature covers the variant
+    expect((await request(app).get(signedMediaPath(video.id, `v-${other.id}`))).status).toBe(404); // right signature, wrong file
+    const pvB = await request(app).get(`/v1/client/campaigns/${id}/items/${itemB.id}/preview-urls`).set("Authorization", `Bearer ${tokA}`);
+    expect(pvB.body.data.every((f: any) => f.url.includes("/preview?"))).toBe(true);
+
+    // Re-picking accounts keeps A's text; staff see each account's own files.
+    const again = await request(app).put(`/v1/client/campaigns/${id}/items`).set("Authorization", `Bearer ${tokA}`).send({ rateCardIds: cards });
+    expect(again.body.data.items.find((i: any) => i.accountName === "Bollywood Society")).toMatchObject({ captionOverride: "Only for Bollywood Society", superTextOverride: "BS SPECIAL" });
+    expect(await prisma.campaignMediaRender.count({ where: { bookingId: id } })).toBe(2);
+    const co = await request(app).post(`/v1/client/campaigns/${id}/checkout`).set("Authorization", `Bearer ${tokA}`);
+    expect(co.status).toBe(200);
+    const mu = await request(app).get(`/v1/admin/campaigns/${id}/media-urls`).set("Authorization", `Bearer ${admin}`);
+    expect(mu.status).toBe(200);
+    expect(mu.body.data.media.map((m: any) => m.role).sort()).toEqual(["creative", "thumbnail"]);
+    const custom = mu.body.data.items.find((x: any) => x.custom);
+    expect(custom.files.map((f: any) => f.role).sort()).toEqual(["creative", "thumbnail"]);
+    expect(custom.files.every((f: any) => /\/v-[0-9a-f-]{36}\?/.test(f.url))).toBe(true);
+    expect(mu.body.data.items.find((x: any) => !x.custom).files.every((f: any) => f.url.includes("/preview?"))).toBe(true);
+
+    // Back to the campaign's text → the variants are dropped.
+    await webhook("payment.captured", { id: "pay_ov", order_id: co.body.data.orderId, amount: co.body.data.amount, currency: "INR", status: "captured" });
+    await request(app).post(`/v1/admin/campaigns/${id}/request-changes`).set("Authorization", `Bearer ${admin}`).send({ note: "Tone it down" });
+    const itemAId = again.body.data.items.find((i: any) => i.accountName === "Bollywood Society").id;
+    const reset = await request(app).put(`/v1/client/campaigns/${id}/items/${itemAId}/text`).set("Authorization", `Bearer ${tokA}`).send({ caption: null, superText: null });
+    expect(reset.status).toBe(200);
+    expect(reset.body.data.items.find((i: any) => i.id === itemAId)).toMatchObject({ captionOverride: null, superTextOverride: null, renderStatus: null });
+    expect(await prisma.campaignMediaRender.count({ where: { bookingId: id } })).toBe(0);
+    // "" = no overlay on this account: a variant with no text.
+    const none = await request(app).put(`/v1/client/campaigns/${id}/items/${itemAId}/text`).set("Authorization", `Bearer ${tokA}`).send({ caption: null, superText: "" });
+    expect(none.body.data.items.find((i: any) => i.id === itemAId)).toMatchObject({ superTextOverride: "", renderStatus: "queued" });
+    expect((await prisma.campaignMediaRender.findFirstOrThrow({ where: { bookingId: id } })).overlayText).toBeNull();
+  });
+
+  it("per-account text guards: staff see file roles, variants follow dropped accounts and retry, overlays are capped, one ffmpeg job per tick", async () => {
+    const conn = await prisma.metaConnection.findFirstOrThrow();
+    const fb = await prisma.metaAsset.create({ data: { connectionId: conn.id, kind: "FACEBOOK_PAGE", metaId: "6666", name: "Filme Flicks", followerCount: 10 } });
+    const put = (cards: unknown[]) => request(app).put("/v1/admin/campaign-rate-cards").set("Authorization", `Bearer ${admin}`).send({ cards });
+    expect(
+      (await put([
+        { targetType: "meta_asset", targetId: assetId, format: "reel", pricePaise: 100_000, entertainmentPricePaise: 120_000 },
+        { targetType: "meta_asset", targetId: fb.id, format: "reel", pricePaise: 100_000 }, // brand only
+      ])).status,
+    ).toBe(200);
+    const id = (await request(app).post("/v1/client/campaigns").set("Authorization", `Bearer ${tokA}`).send(info())).body.data.id;
+    const video = await upload(tokA, Buffer.concat([MP4_HEAD, Buffer.alloc(2000, 1)]), "video/mp4");
+    const cover = await upload(tokA, JPEG, "image/jpeg");
+    expect(
+      (await request(app).put(`/v1/client/campaigns/${id}/creative`).set("Authorization", `Bearer ${tokA}`)
+        .send({ format: "reel", mediaIds: [video.id], caption: "Campaign caption", superText: "FLAT 50% OFF", superTextStyle: "bottom", thumbnailMediaId: cover.id })).status,
+    ).toBe(200);
+    await renderNext({ ignoreLoad: true });
+    await renderNext({ ignoreLoad: true });
+    const cat = await request(app).get("/v1/client/campaigns/catalogue").set("Authorization", `Bearer ${tokA}`);
+    const cards: string[] = cat.body.data.flatMap((a: any) => a.offers.map((o: any) => o.rateCardId));
+    const items = await request(app).put(`/v1/client/campaigns/${id}/items`).set("Authorization", `Bearer ${tokA}`).send({ rateCardIds: cards });
+    // Items come back in a stable order (same-instant createMany rows used to shuffle).
+    expect(items.body.data.items.map((i: any) => i.accountName)).toEqual(["Bollywood Society", "Filme Flicks"]);
+    const [itemA, itemB] = items.body.data.items;
+    const text = (item: { id: string }, body: Record<string, unknown>) =>
+      request(app).put(`/v1/client/campaigns/${id}/items/${item.id}/text`).set("Authorization", `Bearer ${tokA}`).send(body);
+
+    // Staff see which file is the thumbnail (the media list carries `role`).
+    const staff = await request(app).get(`/v1/admin/campaigns/${id}`).set("Authorization", `Bearer ${admin}`);
+    expect(staff.status).toBe(200);
+    expect(staff.body.data.media.map((m: any) => m.role).sort()).toEqual(["creative", "thumbnail"]);
+
+    // The signed link only becomes a download when asked (the portal and API are different origins).
+    const link = signedMediaPath(video.id, "preview");
+    const plain = await request(app).get(link);
+    expect(plain.status).toBe(200);
+    expect(plain.headers["content-disposition"]).toBeUndefined();
+    const dl = await request(app).get(`${link}&download=1`);
+    expect(dl.status).toBe(200);
+    expect(dl.headers["content-disposition"]).toMatch(/^attachment; filename="[\w.-]+-post\.mp4"$/);
+
+    // A failed per-account render is retried by the next edit, like the default render is.
+    expect((await text(itemB, { caption: null, superText: "B ONLY", superTextStyle: "top" })).status).toBe(200);
+    expect(await prisma.campaignMediaRender.count({ where: { bookingId: id } })).toBe(2); // creative + thumbnail
+    await prisma.campaignMediaRender.updateMany({ where: { bookingId: id }, data: { status: "failed", error: "boom" } });
+    expect((await text(itemA, { caption: "Own caption", hashtags: ["a"], superText: null })).status).toBe(200);
+    const retried = await prisma.campaignMediaRender.findMany({ where: { bookingId: id } });
+    expect(retried).toHaveLength(2);
+    expect(retried.every((r) => r.status === "queued" && r.error === null)).toBe(true);
+
+    // A queued DEFAULT render that fails still uses the tick: no second ffmpeg run for a variant.
+    await prisma.campaignMedia.update({ where: { id: video.id }, data: { renderStatus: "queued" } });
+    const run = vi.fn(async () => {
+      throw new Error("ffmpeg exploded");
+    });
+    renderTools.run = run;
+    expect(await renderNext({ ignoreLoad: true })).toBeNull();
+    expect(run).toHaveBeenCalledTimes(1);
+    expect((await prisma.campaignMedia.findUniqueOrThrow({ where: { id: video.id } })).renderStatus).toBe("failed");
+    expect((await prisma.campaignMediaRender.findMany({ where: { bookingId: id } })).every((r) => r.status === "queued")).toBe(true);
+    renderTools.run = async (args: string[]) => {
+      fs.writeFileSync(args[args.length - 1], "rendered");
+    };
+    await prisma.campaignMedia.update({ where: { id: video.id }, data: { renderStatus: "done" } });
+    expect(await renderNext({ ignoreLoad: true })).not.toBeNull();
+    expect(await renderNext({ ignoreLoad: true })).not.toBeNull();
+    expect(await renderNext({ ignoreLoad: true })).toBeNull();
+
+    // A render of a purged file is never produced and must not hold checkout hostage.
+    const gone = await upload(tokA, JPEG, "image/jpeg");
+    await prisma.campaignMedia.update({ where: { id: gone.id }, data: { purgedAt: new Date(), bookingId: id } });
+    await prisma.campaignMediaRender.create({ data: { mediaId: gone.id, bookingId: id, overlayKey: "k".repeat(40), overlayText: "X", overlayStyle: "top", status: "queued" } });
+    const co = await request(app).post(`/v1/client/campaigns/${id}/checkout`).set("Authorization", `Bearer ${tokA}`);
+    expect(co.status).toBe(200);
+    await prisma.campaignMediaRender.deleteMany({ where: { mediaId: gone.id } });
+
+    // Changing the campaign type drops accounts that don't offer it — and their custom-overlay renders.
+    expect((await request(app).put(`/v1/client/campaigns/${id}/info`).set("Authorization", `Bearer ${tokA}`).send({ ...info(), campaignType: "entertainment" })).body.data.items.map((i: any) => i.accountName)).toEqual(["Bollywood Society"]);
+    expect(await prisma.campaignMediaRender.count({ where: { bookingId: id } })).toBe(0);
+    expect((await request(app).put(`/v1/client/campaigns/${id}/info`).set("Authorization", `Bearer ${tokA}`).send({ ...info(), campaignType: "brand" })).status).toBe(200);
+
+    // Each distinct overlay is one more render of every file, so a booking may carry only a few.
+    const extra = await Promise.all(
+      Array.from({ length: 8 }, (_, i) => prisma.metaAsset.create({ data: { connectionId: conn.id, kind: "FACEBOOK_PAGE", metaId: `70${i}`, name: `Page ${i}`, followerCount: 5 } })),
+    );
+    expect((await put(extra.map((a) => ({ targetType: "meta_asset", targetId: a.id, format: "reel", pricePaise: 100_000 })))).status).toBe(200);
+    const all = await request(app).get("/v1/client/campaigns/catalogue").set("Authorization", `Bearer ${tokA}`);
+    const ten: string[] = all.body.data.flatMap((a: any) => a.offers.map((o: any) => o.rateCardId));
+    expect(ten).toHaveLength(10);
+    const many = await request(app).put(`/v1/client/campaigns/${id}/items`).set("Authorization", `Bearer ${tokA}`).send({ rateCardIds: ten });
+    expect(many.status).toBe(200);
+    const list = many.body.data.items as Array<{ id: string }>;
+    for (let i = 0; i < 8; i++) expect((await text(list[i], { caption: null, superText: `Text ${i}`, superTextStyle: "top" })).status).toBe(200);
+    const ninth = await text(list[8], { caption: null, superText: "Text 8", superTextStyle: "top" });
+    expect(ninth.status).toBe(400);
+    expect(ninth.body.error.code).toBe("TOO_MANY_OVERLAYS");
+    expect((await prisma.campaignBookingItem.findUniqueOrThrow({ where: { id: list[8].id } })).superTextOverride).toBeNull(); // rolled back
+    // Reusing an overlay already on the booking is free.
+    expect((await text(list[8], { caption: null, superText: "Text 3", superTextStyle: "top" })).status).toBe(200);
+  });
+
   it("an account without an entertainment price can't be booked for an entertainment campaign", async () => {
     await setRates(100_000); // brand price only
     const created = await request(app).post("/v1/client/campaigns").set("Authorization", `Bearer ${tokA}`).send({ ...info(), campaignType: "entertainment" });

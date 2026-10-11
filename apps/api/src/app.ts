@@ -124,6 +124,7 @@ app.use("/v1/client/auth/signup", authLimiter);
 // sign-in page load reads, and spend the 20-per-15-min login bucket on page views (seen live).
 app.post("/v1/client/auth/google", authLimiter);
 app.post("/v1/hr/auth/google", authLimiter);
+app.post("/v1/auth/google", authLimiter);
 
 if (process.env.NODE_ENV !== "test") {
   // P13: successful POST /v1/pipeline/sync polls are not logged (hundreds of thousands

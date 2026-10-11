@@ -4,7 +4,7 @@ import { oauthGraphFetch, oauthGraphPost, type OauthGraphResult } from "../meta-
 import { metaGraphVersion } from "../meta-oauth/meta-config";
 import { campaignConfig } from "./config";
 import { signedMediaPath } from "./media-url";
-import { logBookingEvent, settleBooking, type Actor } from "./booking.service";
+import { itemText, logBookingEvent, resolveItemFiles, settleBooking, type Actor } from "./booking.service";
 import { sendDeliveryEmail, sendItemLiveEmail } from "./delivery.service";
 
 // Phase 2 — publish approved campaign items on our connected Instagram accounts and Facebook
@@ -54,7 +54,8 @@ interface ItemLike {
 }
 interface BookingLike {
   audioIntegration: boolean;
-  media: Array<{ kind: string }>;
+  /** Every attached file; role "thumbnail" is the client's cover image, the rest the creative. */
+  media: Array<{ kind: string; role?: string }>;
 }
 
 /** Can this item be published by the API right now? Reason is shown to staff when not. */
@@ -67,9 +68,16 @@ export async function checkEligibility(item: ItemLike, booking: BookingLike): Pr
     return { ok: false, reason: "Song audio integration has to be added in the app — the API cannot attach a song." };
   }
   if (item.format === "story") return { ok: false, reason: "Stories are posted by hand." };
-  if (booking.media.length === 0) return { ok: false, reason: "No prepared media." };
-  if (item.platform === "facebook" && item.format === "carousel" && booking.media.some((m) => m.kind === "video")) {
+  const creative = booking.media.filter((m) => m.role !== "thumbnail");
+  const hasThumbnail = booking.media.some((m) => m.role === "thumbnail");
+  if (creative.length === 0) return { ok: false, reason: "No prepared media." };
+  if (item.platform === "facebook" && item.format === "carousel" && creative.some((m) => m.kind === "video")) {
     return { ok: false, reason: "Facebook carousels can only hold images through the API." };
+  }
+  if (item.platform === "facebook" && hasThumbnail && creative.some((m) => m.kind === "video")) {
+    // The Graph API takes a video thumbnail only as a multipart file upload, which this
+    // publisher does not do; Instagram takes a cover_url. Honour the client's cover by hand.
+    return { ok: false, reason: "The client chose a thumbnail — Facebook can't take it through the API, so post it by hand with the thumbnail." };
   }
 
   const asset = await prisma.metaAsset.findUnique({
@@ -118,7 +126,7 @@ export async function planPublishing(bookingId: string) {
     select: {
       launchFrom: true,
       audioIntegration: true,
-      media: { where: { purgedAt: null }, select: { kind: true } },
+      media: { where: { purgedAt: null }, select: { kind: true, role: true } },
       items: { where: { status: "pending" }, select: { id: true, targetType: true, targetId: true, platform: true, format: true, accountName: true } },
     },
   });
@@ -147,7 +155,10 @@ interface PublishJob {
   caption: string;
   userTags: string[];
   collaborators: string[];
-  media: Array<{ id: string; kind: string }>;
+  /** The creative files for THIS account, each with the signed URL Meta downloads it from. */
+  media: Array<{ id: string; kind: string; url: string }>;
+  /** The client's cover image (rendered), when they supplied one. Instagram reels only. */
+  coverUrl: string | null;
 }
 
 /** The caption we post: the client's caption, then any hashtags not already in it. */
@@ -158,8 +169,8 @@ export function buildCaption(caption: string, hashtags: string[]): string {
   return [base, extra.join(" ")].filter(Boolean).join("\n\n").slice(0, 2200);
 }
 
-function mediaUrl(mediaId: string): string {
-  return `${campaignConfig.apiPublicUrl()}${signedMediaPath(mediaId, "preview", campaignConfig.publishMediaTtlSec())}`;
+function mediaUrl(mediaId: string, renderId: string | null): string {
+  return `${campaignConfig.apiPublicUrl()}${signedMediaPath(mediaId, renderId ? `v-${renderId}` : "preview", campaignConfig.publishMediaTtlSec())}`;
 }
 
 /** Map a failed Graph call to an outcome. `ambiguous` decides what a status-0 means. */
@@ -213,8 +224,8 @@ async function igCreate(target: PublishTarget, job: PublishJob): Promise<Outcome
       const r = await oauthGraphPost<{ id?: string }>(
         path,
         m.kind === "video"
-          ? { media_type: "VIDEO", is_carousel_item: true, video_url: mediaUrl(m.id) }
-          : { is_carousel_item: true, image_url: mediaUrl(m.id) },
+          ? { media_type: "VIDEO", is_carousel_item: true, video_url: m.url }
+          : { is_carousel_item: true, image_url: m.url },
         target.token,
         { label: "campaign-ig-child", timeoutMs: 30_000 },
       );
@@ -229,14 +240,15 @@ async function igCreate(target: PublishTarget, job: PublishJob): Promise<Outcome
     m.kind === "video"
       ? {
           media_type: "REELS",
-          video_url: mediaUrl(m.id),
+          video_url: m.url,
+          cover_url: job.coverUrl ?? undefined,
           caption,
           share_to_feed: true,
           collaborators,
           user_tags: job.userTags.length ? JSON.stringify(job.userTags.slice(0, 20).map((username) => ({ username }))) : undefined,
         }
       : {
-          image_url: mediaUrl(m.id),
+          image_url: m.url,
           caption,
           collaborators,
           user_tags: job.userTags.length ? JSON.stringify(job.userTags.slice(0, 20).map((username) => ({ username, x: 0.5, y: 0.5 }))) : undefined,
@@ -338,7 +350,7 @@ async function fbStep(target: PublishTarget, job: PublishJob): Promise<Outcome> 
       const videoId = start.data.video_id;
       const up = await oauthGraphPost<{ success?: boolean }>(
         `https://rupload.facebook.com/video-upload/${metaGraphVersion()}/${videoId}`, {}, target.token,
-        { label: "campaign-fb-reel-upload", tokenInHeader: true, headers: { file_url: mediaUrl(m.id) }, timeoutMs: 120_000 },
+        { label: "campaign-fb-reel-upload", tokenInHeader: true, headers: { file_url: m.url }, timeoutMs: 120_000 },
       );
       if (!up.ok) return failure(up, "reel upload", null); // an unfinished upload is never shown
       const fin = await oauthGraphPost<{ success?: boolean }>(
@@ -372,7 +384,7 @@ async function fbStep(target: PublishTarget, job: PublishJob): Promise<Outcome> 
     // A multi-photo post: each photo uploaded unpublished, then one feed post.
     const fbids: string[] = [];
     for (const m of job.media.slice(0, 10)) {
-      const r = await oauthGraphPost<{ id?: string }>(`${page}/photos`, { url: mediaUrl(m.id), published: false }, target.token, { label: "campaign-fb-photo", timeoutMs: 60_000 });
+      const r = await oauthGraphPost<{ id?: string }>(`${page}/photos`, { url: m.url, published: false }, target.token, { label: "campaign-fb-photo", timeoutMs: 60_000 });
       if (!r.ok || !r.data?.id) return failure(r, "carousel photo", null); // unpublished photos are never shown
       fbids.push(r.data.id);
     }
@@ -388,8 +400,8 @@ async function fbStep(target: PublishTarget, job: PublishJob): Promise<Outcome> 
   const m = job.media[0];
   const r =
     m.kind === "video"
-      ? await oauthGraphPost<{ id?: string }>(`${page}/videos`, { file_url: mediaUrl(m.id), description: message }, target.token, { label: "campaign-fb-video", timeoutMs: 120_000 })
-      : await oauthGraphPost<{ id?: string; post_id?: string }>(`${page}/photos`, { url: mediaUrl(m.id), caption: message }, target.token, { label: "campaign-fb-photo", timeoutMs: 60_000 });
+      ? await oauthGraphPost<{ id?: string }>(`${page}/videos`, { file_url: m.url, description: message }, target.token, { label: "campaign-fb-video", timeoutMs: 120_000 })
+      : await oauthGraphPost<{ id?: string; post_id?: string }>(`${page}/photos`, { url: m.url, caption: message }, target.token, { label: "campaign-fb-photo", timeoutMs: 60_000 });
   if (r.ok && r.data?.id) {
     const postId = (r.data as { post_id?: string }).post_id ?? r.data.id;
     return { kind: "published", remotePostId: postId, permalink: await fbPermalink(postId, target.token) };
@@ -406,11 +418,11 @@ export async function publishItem(itemId: string): Promise<Outcome | null> {
     where: { id: itemId },
     select: {
       id: true, bookingId: true, status: true, targetType: true, targetId: true, platform: true, format: true,
-      accountName: true, attempts: true, containerId: true,
+      accountName: true, attempts: true, containerId: true, captionOverride: true, hashtagsOverride: true,
       booking: {
         select: {
           status: true, caption: true, hashtags: true, userTags: true, collaborators: true, audioIntegration: true,
-          media: { where: { purgedAt: null, renderStatus: "done" }, orderBy: { position: "asc" }, select: { id: true, kind: true } },
+          media: { where: { purgedAt: null, uploadStatus: "complete" }, orderBy: { position: "asc" }, select: { id: true, kind: true, role: true } },
         },
       },
     },
@@ -423,14 +435,29 @@ export async function publishItem(itemId: string): Promise<Outcome | null> {
   if (!e.ok) {
     outcome = { kind: "manual", reason: e.reason };
   } else {
+    // The files THIS account posts: its own render when it customised the overlay. A render
+    // still in progress is waited for, never skipped (the checkout gate makes this rare).
+    const files = (await resolveItemFiles(item.bookingId)).get(item.id) ?? [];
+    if (files.some((f) => f.status === "failed")) {
+      await applyOutcome(item, { kind: "manual", reason: "One of this account's files could not be prepared — post it by hand." });
+      return { kind: "manual", reason: "render failed" };
+    }
+    if (files.some((f) => f.status !== "done")) {
+      const o: Outcome = { kind: "wait", delayMs: 60_000, containerId: item.containerId };
+      await applyOutcome(item, o);
+      return o;
+    }
+    const text = itemText(item.booking, item);
+    const cover = files.find((f) => f.role === "thumbnail");
     const job: PublishJob = {
       itemId: item.id,
       format: item.format,
       containerId: item.containerId,
-      caption: buildCaption(item.booking.caption ?? "", item.booking.hashtags),
+      caption: buildCaption(text.caption, text.hashtags),
       userTags: item.booking.userTags,
       collaborators: item.booking.collaborators,
-      media: item.booking.media,
+      media: files.filter((f) => f.role !== "thumbnail").map((f) => ({ id: f.mediaId, kind: f.kind, url: mediaUrl(f.mediaId, f.renderId) })),
+      coverUrl: cover ? mediaUrl(cover.mediaId, cover.renderId) : null,
     };
     try {
       outcome = e.target.platform === "instagram" ? await igStep(e.target, job) : await fbStep(e.target, job);

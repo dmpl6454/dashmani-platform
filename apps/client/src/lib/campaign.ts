@@ -158,6 +158,44 @@ export function renderPending(c: Campaign): boolean {
   return files.some((m) => m.renderStatus === "queued" || m.renderStatus === "rendering") || c.items.some((i) => i.renderStatus === "queued");
 }
 
+/**
+ * How much is still being prepared: files (creative + thumbnail default renders) and accounts
+ * with their own printed text (variant renders). Drives the "Preparing your preview: …" line.
+ */
+export function renderPendingCounts(c: Campaign): { files: number; accounts: number } {
+  const files = (c.thumbnail ? [...c.media, c.thumbnail] : c.media).filter((m) => m.renderStatus === "queued" || m.renderStatus === "rendering").length;
+  const accounts = c.items.filter((i) => i.renderStatus === "queued").length;
+  return { files, accounts };
+}
+
+/** "Where you left off" for a draft row on the campaign list and the home page. null once submitted. */
+export function nextStepHint(r: Pick<CampaignListRow, "status" | "format" | "itemCount">): string | null {
+  if (r.status !== "draft") return null;
+  return !r.format ? "Next: add your video or image" : r.itemCount === 0 ? "Next: choose accounts" : "Next: review & submit";
+}
+
+/**
+ * Discard an upload the client cancelled or never saved (frees one of the 3 in-flight upload
+ * slots at once instead of waiting for it to go stale). Fire-and-forget: never throws.
+ * `keepalive` lets it outlive a closing tab, but browsers may drop a keepalive request that
+ * needs a CORS preflight — it is best-effort; the server stops counting a stale upload anyway.
+ */
+export function deleteCampaignUpload(id: string, opts: { keepalive?: boolean } = {}): Promise<void> {
+  let token: string | null = null;
+  try {
+    token = localStorage.getItem("clientAccessToken");
+  } catch {
+    /* storage blocked */
+  }
+  return fetch(`${API_URL}/client/campaign-uploads/${id}`, {
+    method: "DELETE",
+    keepalive: opts.keepalive,
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  })
+    .then(() => undefined)
+    .catch(() => undefined);
+}
+
 export function renderFailed(c: Campaign): boolean {
   const files = c.thumbnail ? [...c.media, c.thumbnail] : c.media;
   return files.some((m) => m.renderStatus === "failed") || c.items.some((i) => i.renderStatus === "failed");

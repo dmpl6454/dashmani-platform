@@ -48,6 +48,9 @@ function wire(page, bucket) {
   page.on("console", (m) => { if (m.type() === "error") out.consoleErrors.push({ where: bucket, text: m.text().slice(0, 300) }); });
 }
 /** Click a submit button only once React has hydrated and enabled it (a native submit would GET-reload the page and drop the typed fields). */
+async function waitHydrated(page, selector, timeout = 30_000) {
+  await page.waitForFunction((sel) => { const b = document.querySelector(sel); return b && !b.disabled; }, selector, { timeout });
+}
 async function clickSubmit(page, selector, timeout = 30_000) {
   const btn = page.locator(selector).first();
   await btn.waitFor({ state: "visible", timeout });
@@ -75,6 +78,7 @@ try {
   // 1. Website CTA lands on signup with the booking intent.
   await page.goto(`${BASE}/signup?next=%2Fcampaigns%2Fnew`, { waitUntil: "domcontentloaded" });
   await page.waitForSelector("#cemail", { timeout: 30_000 });
+  await waitHydrated(page, "button.auth-btn[type=submit]");
   step("signup page", { heading: (await page.textContent("h2"))?.trim(), fields: await page.$$eval("form.auth-form input", (els) => els.map((e) => e.id || e.name)) });
   await shot(page, "01-signup");
   await page.fill("#ccompany", "Acme Studios");
@@ -90,6 +94,7 @@ try {
 
   // 2. Details.
   await page.waitForSelector("#c-name", { timeout: 30_000 });
+  await waitHydrated(page, "form button[type=submit]");
   step("details step", { brandPrefilled: await page.inputValue("#c-brand"), fromDefault: await page.inputValue("#c-from"), toDefault: await page.inputValue("#c-to") });
   await shot(page, "02-details");
   await page.fill("#c-name", "E2E Diwali launch");
@@ -163,6 +168,8 @@ try {
   current = m;
   wire(m, "mobile");
   await m.goto(`${BASE}/login`, { waitUntil: "domcontentloaded" });
+  await m.waitForSelector("#cemail", { timeout: 30_000 });
+  await waitHydrated(m, "button.auth-btn[type=submit]");
   await m.fill("#cemail", email);
   await m.fill("#cpw", password);
   await clickSubmit(m, "button.auth-btn[type=submit]");
@@ -174,6 +181,7 @@ try {
   await shot(m, "m1-campaigns");
   await m.goto(`${BASE}/campaigns/new`, { waitUntil: "domcontentloaded" });
   await m.waitForSelector("#c-name", { timeout: 30_000 });
+  await waitHydrated(m, "form button[type=submit]");
   out.mobile.details = await overflow(m);
   await shot(m, "m2-details");
   await m.fill("#c-name", "E2E mobile post");

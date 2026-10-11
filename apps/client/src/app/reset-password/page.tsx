@@ -5,6 +5,7 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { AlertCircle, ArrowRight } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { AuthField, AuthShell } from "@/components/auth/shared";
+import { useHydrated } from "@/lib/hooks/use-hydrated";
 
 // Token-based reset in the website's design. Wire unchanged:
 // POST /v1/client/auth/reset-password with { token, newPassword }.
@@ -18,6 +19,7 @@ function ResetPasswordForm() {
   const [confirm, setConfirm] = useState("");
   const [showPass, setShowPass] = useState(false);
   const [loading, setLoading] = useState(false);
+  const hydrated = useHydrated();
   const [done, setDone] = useState(false);
   const [error, setError] = useState("");
 
@@ -69,7 +71,7 @@ function ResetPasswordForm() {
               value={confirm} onChange={(v) => { setConfirm(v); if (error) setError(""); }} error={null}
               showPass={showPass} onToggleShowPass={() => setShowPass((s) => !s)} />
             {error && <div role="alert" className="auth-err"><AlertCircle size={14} /> <span>{error}</span></div>}
-            <button type="submit" disabled={loading} className="auth-btn">
+            <button type="submit" disabled={loading || !hydrated} className="auth-btn">
               {loading ? (<><span className="auth-spinner" aria-hidden /><span>Resetting…</span></>) : (<><span>Reset password</span><ArrowRight size={17} /></>)}
             </button>
           </form>

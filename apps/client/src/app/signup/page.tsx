@@ -7,6 +7,7 @@ import { apiFetch } from "@/lib/api";
 import { safeNext, nextQueryFor } from "@/lib/safe-next";
 import { AuthField, AuthShell, AuthTabs } from "@/components/auth/shared";
 import { GoogleSignIn } from "@/components/auth/google-signin";
+import { useHydrated } from "@/lib/hooks/use-hydrated";
 
 // Two modes on one route (the route shape is unchanged, see CLAUDE.md):
 //   /signup?token=<uuid>  → accept an admin invite (password only; the email is the invite's)
@@ -49,6 +50,7 @@ function SignupForm() {
   const [showConfirm, setShowConfirm] = useState(false);
   const [error, setError] = useState("");
   const [submitState, setSubmitState] = useState<"idle" | "loading" | "success">("idle");
+  const hydrated = useHydrated();
 
   const score = pwScore(password);
   const pwErr = pwBlurred && password && score < 2 ? "Make it harder to guess" : null;
@@ -165,7 +167,7 @@ function SignupForm() {
 
           {error && <div role="alert" className="auth-err"><AlertCircle size={14} /> <span>{error}</span></div>}
 
-          <button type="submit" disabled={submitState !== "idle"} className="auth-btn" aria-live="polite">
+          <button type="submit" disabled={submitState !== "idle" || !hydrated} className="auth-btn" aria-live="polite">
             {submitState === "idle" && (
               <>
                 <span>{invited ? "Open my account" : bookingIntent ? "Create account & start a campaign" : "Create my account"}</span>

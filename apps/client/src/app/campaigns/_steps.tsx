@@ -28,6 +28,7 @@ import {
   type CampaignMedia,
 } from "@/lib/campaign";
 import { Card, ErrorBanner, Field, PlatformDot, inputCls, textareaCls } from "./_ui";
+import { useHydrated } from "@/lib/hooks/use-hydrated";
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : "Something went wrong. Please try again.");
 
@@ -46,6 +47,8 @@ export function InfoForm({ initial, submitLabel, onSubmit, disabled }: {
   const [campaignType, setCampaignType] = useState<CampaignType>(initial?.campaignType ?? "brand");
   const [from, setFrom] = useState(initial?.launchFrom ?? today);
   const [to, setTo] = useState(initial?.launchTo ?? today);
+  // Submitting before hydration would GET-reload the page and drop the fields (see useHydrated).
+  const hydrated = useHydrated();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -110,7 +113,7 @@ export function InfoForm({ initial, submitLabel, onSubmit, disabled }: {
           {error && <ErrorBanner>{error}</ErrorBanner>}
           {!disabled && (
             <div className="flex justify-end">
-              <Button type="submit" variant="ink" disabled={busy} aria-live="polite" iconRight={<Icon.ArrowRight size={15} />}>
+              <Button type="submit" variant="ink" disabled={busy || !hydrated} aria-live="polite" iconRight={<Icon.ArrowRight size={15} />}>
                 {busy ? "Saving…" : submitLabel}
               </Button>
             </div>

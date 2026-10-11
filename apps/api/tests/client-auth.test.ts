@@ -4,6 +4,7 @@ import app from "../src/app";
 import { prisma } from "@dashmani/db";
 import { hash } from "bcrypt";
 import { createTestUser, createTestRole, generateToken } from "./helpers";
+import { companyFromDomain } from "../src/services/client-auth.service";
 import "./setup";
 
 describe("Client Auth API", () => {
@@ -217,6 +218,39 @@ describe("Client Auth API", () => {
       expect(res.body.data).toMatchObject({ needsProfile: true, email: "nina@brandnew.test", name: "Nina Rao" });
       expect(res.body.data.accessToken).toBeUndefined();
       expect(await prisma.client.count()).toBe(1);
+    });
+
+    it("suggests a company name from a Workspace domain — never the bare domain", async () => {
+      googleAnswers(200, { ...baseClaims(), hd: "acme-studios.co.in" });
+      const res = await request(app).post("/v1/client/auth/google").send({ credential: CREDENTIAL });
+      expect(res.status).toBe(200);
+      expect(res.body.data).toMatchObject({ needsProfile: true, suggestedCompany: "Acme Studios" });
+      // A plain Gmail account carries no hd: nothing is suggested.
+      googleAnswers(200, baseClaims());
+      const plain = await request(app).post("/v1/client/auth/google").send({ credential: CREDENTIAL });
+      expect(plain.body.data.suggestedCompany).toBeNull();
+    });
+
+    it("companyFromDomain strips the public suffix and capitalises, or gives null", () => {
+      expect(companyFromDomain("acme.com")).toBe("Acme");
+      expect(companyFromDomain("acme.co.in")).toBe("Acme");
+      expect(companyFromDomain("mail.acme.co.uk")).toBe("Acme");
+      expect(companyFromDomain("Acme.COM.AU")).toBe("Acme");
+      expect(companyFromDomain("www.acme.io")).toBe("Acme");
+      expect(companyFromDomain("big-brand-films.in")).toBe("Big Brand Films");
+      expect(companyFromDomain(null)).toBeNull();
+      expect(companyFromDomain("")).toBeNull();
+      expect(companyFromDomain("com")).toBeNull();
+      expect(companyFromDomain("co.in")).toBeNull();
+      expect(companyFromDomain("123.com")).toBeNull();
+      expect(companyFromDomain("a.com")).toBeNull();
+      // Unlisted country second levels are still a suffix, never the company ("Co", "Edu").
+      expect(companyFromDomain("acme.co.ae")).toBe("Acme");
+      expect(companyFromDomain("acme.edu.au")).toBe("Acme");
+      expect(companyFromDomain("acme.com.qa")).toBe("Acme");
+      expect(companyFromDomain("acme.org.sg")).toBe("Acme");
+      expect(companyFromDomain("co.ae")).toBeNull();
+      expect(companyFromDomain("com.io")).toBeNull();
     });
 
     it("creates an ACTIVE client on the second call, with an unusable password, and consumes a pending invite", async () => {

@@ -342,7 +342,9 @@ export async function updateInfo(clientId: string, id: string, info: CampaignInf
 /**
  * Save the creative: format, media (ordered), caption, tags, overlay text. Media must be this
  * client's completed uploads that are not attached to another booking. Rendering (re)starts
- * for every attached file, because the overlay may have changed.
+ * for files newly attached, for failed ones, and for every file when the format or the printed
+ * text/style changed — a caption, tag or audio-only re-save keeps finished renders, so fixing
+ * a typo from Review does not block submission for minutes.
  */
 export async function updateCreative(clientId: string, id: string, c: CampaignCreativeInput) {
   const b = await requireEditable(clientId, id);
@@ -351,7 +353,7 @@ export async function updateCreative(clientId: string, id: string, c: CampaignCr
     // what they cost, so they are frozen. Only the creative itself may change.
     const cur = await prisma.campaignBooking.findUnique({ where: { id }, select: { format: true, audioIntegration: true } });
     if (cur && (cur.format !== c.format || cur.audioIntegration !== (c.format === "reel" && !!c.audioIntegration))) {
-      throw new AppError(409, "PAID_TERMS_FROZEN", "The format and song audio option can't change after payment. Contact us if you need to change them.");
+      throw new AppError(409, "PAID_TERMS_FROZEN", "The format and the song option can't change after the campaign was submitted. Contact us if you need to change them.");
     }
   }
 
@@ -385,6 +387,26 @@ export async function updateCreative(clientId: string, id: string, c: CampaignCr
 
   await prisma.$transaction(async (tx) => {
     await lockBooking(tx, id);
+    // Read what is saved now, under the lock: a render's inputs are the file, the format and
+    // the printed text + style. Anything else (caption, tags, audio) never needs a re-render.
+    const prev = await tx.campaignBooking.findUnique({ where: { id }, select: { format: true, superText: true, superTextStyle: true } });
+    const cur = await tx.campaignMedia.findMany({
+      where: { id: { in: wantedIds } },
+      select: { id: true, bookingId: true, renderStatus: true, role: true },
+    });
+    const nextText = c.superText?.trim() ? c.superText.trim() : null;
+    // superTextStyle is stored null when there is no text, so compare like for like.
+    const nextStyle = nextText ? c.superTextStyle ?? "bottom" : null;
+    const overlayChanged =
+      prev?.format !== c.format || (prev?.superText ?? null) !== nextText || (prev?.superTextStyle ?? null) !== nextStyle;
+    // A file keeps its render only when it was already this booking's, in the same role, and
+    // its render is finished or on its way (an in-flight one finishes with the same inputs).
+    // "none" and "failed" re-queue on any save — a failed render is retried by any edit.
+    const needsRender = (mediaId: string, role: "creative" | "thumbnail") => {
+      const m = cur.find((x) => x.id === mediaId);
+      return overlayChanged || !m || m.bookingId !== id || m.role !== role || !["done", "queued", "rendering"].includes(m.renderStatus);
+    };
+    const requeue = { renderStatus: "queued", renderKey: null, renderError: null, renderLockedUntil: null } as const;
     // Detach files that are no longer part of the creative (they stay with the client and
     // are purged by retention if never reused).
     await tx.campaignMedia.updateMany({
@@ -394,7 +416,7 @@ export async function updateCreative(clientId: string, id: string, c: CampaignCr
     for (const [position, mediaId] of c.mediaIds.entries()) {
       await tx.campaignMedia.update({
         where: { id: mediaId },
-        data: { bookingId: id, position, role: "creative", renderStatus: "queued", renderKey: null, renderError: null, renderLockedUntil: null },
+        data: { bookingId: id, position, role: "creative", ...(needsRender(mediaId, "creative") ? requeue : {}) },
       });
     }
     if (thumbId) {
@@ -402,7 +424,7 @@ export async function updateCreative(clientId: string, id: string, c: CampaignCr
       // matches the post. It never counts as a carousel slide: role keeps it apart.
       await tx.campaignMedia.update({
         where: { id: thumbId },
-        data: { bookingId: id, position: 0, role: "thumbnail", renderStatus: "queued", renderKey: null, renderError: null, renderLockedUntil: null },
+        data: { bookingId: id, position: 0, role: "thumbnail", ...(needsRender(thumbId, "thumbnail") ? requeue : {}) },
       });
     }
     await tx.campaignBooking.update({
@@ -481,7 +503,7 @@ export async function syncRenderVariants(tx: Tx, bookingId: string) {
   // Every distinct custom overlay is one more render of every file — bound it so a booking
   // cannot queue an unbounded amount of ffmpeg work and disk.
   if (wanted.size > CAMPAIGN_LIMITS.customOverlaysMax) {
-    throw new AppError(400, "TOO_MANY_OVERLAYS", `A campaign can carry at most ${CAMPAIGN_LIMITS.customOverlaysMax} different super texts across its accounts. Reuse the same text on several accounts.`);
+    throw new AppError(400, "TOO_MANY_OVERLAYS", `A campaign can carry at most ${CAMPAIGN_LIMITS.customOverlaysMax} different printed texts across its accounts. Reuse the same text on several accounts.`);
   }
   const keep = new Set<string>();
   for (const m of b.media) {
@@ -515,7 +537,7 @@ export async function updateItems(clientId: string, id: string, rateCardIds: str
     where: { id },
     select: { format: true, campaignType: true, audioIntegration: true },
   });
-  if (!booking?.format) throw new AppError(400, "NO_FORMAT", "Add your creative before choosing accounts.");
+  if (!booking?.format) throw new AppError(400, "NO_FORMAT", "Add your video or image before choosing accounts.");
 
   const cards = await prisma.campaignRateCard.findMany({ where: { id: { in: rateCardIds }, active: true } });
   if (cards.length !== new Set(rateCardIds).size) {
@@ -530,7 +552,7 @@ export async function updateItems(clientId: string, id: string, rateCardIds: str
         400,
         "RATE_CARD_UNAVAILABLE",
         booking.audioIntegration
-          ? "One of the accounts doesn't offer song audio integration for this campaign type. Refresh the list."
+          ? "One of the accounts doesn't offer a song for this campaign type. Refresh the list."
           : "One of the accounts isn't offered for this campaign type. Refresh the list.",
       );
     }
@@ -632,10 +654,10 @@ export async function assertCreativeReady(id: string) {
       renders: { where: { media: { purgedAt: null, bookingId: id } }, select: { status: true } },
     },
   });
-  if (!b?.format || b.media.filter((m) => m.role !== "thumbnail").length === 0) throw new AppError(400, "NO_CREATIVE", "Add your creative first.");
+  if (!b?.format || b.media.filter((m) => m.role !== "thumbnail").length === 0) throw new AppError(400, "NO_CREATIVE", "Add your video or image first.");
   const states = [...b.media.map((m) => m.renderStatus), ...b.renders.map((r) => r.status)];
   if (states.some((s) => s === "failed")) {
-    throw new AppError(400, "RENDER_FAILED", "We couldn't prepare one of your files. Upload it again or contact us.");
+    throw new AppError(400, "RENDER_FAILED", "We couldn't prepare one of your files. Open the Content step and press Try again, or contact us.");
   }
   if (states.some((s) => s !== "done")) {
     throw new AppError(409, "RENDER_PENDING", "We're still preparing your preview. Try again in a minute.");

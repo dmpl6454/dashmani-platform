@@ -106,15 +106,28 @@ export async function initUpload(clientId: string, input: CampaignUploadInitInpu
     throw new AppError(413, "TOO_LARGE", `${kind === "video" ? "Videos" : "Images"} can be at most ${Math.round(max / 1024 / 1024)} MB.`);
   }
 
+  // Only RECENT uploads count toward the in-flight cap: an abandoned one stops blocking after
+  // uploadStaleMinutes (count only — the row is not touched, so a slow live upload keeps working;
+  // retention purges it after 24 h). ⚠️ The storage QUOTA still counts every unpurged upload,
+  // stale or not: a stale row can still receive chunks and be completed, so leaving it out would
+  // let one account open 3 × 500 MB every hour and fill the disk (caught in review).
+  const staleCutoff = new Date(Date.now() - campaignConfig.uploadStaleMinutes() * 60_000);
   const [active, inFlight] = await Promise.all([
     prisma.campaignMedia.aggregate({
       where: { clientId, purgedAt: null, uploadStatus: { in: ["uploading", "complete"] } },
       _sum: { bytes: true },
     }),
-    prisma.campaignMedia.count({ where: { clientId, uploadStatus: "uploading", purgedAt: null } }),
+    prisma.campaignMedia.count({
+      where: { clientId, uploadStatus: "uploading", purgedAt: null, createdAt: { gt: staleCutoff } },
+    }),
   ]);
-  if (inFlight >= campaignConfig.maxUploadsInFlight()) {
-    throw new AppError(429, "TOO_MANY_UPLOADS", "Finish your current uploads before starting another.");
+  const maxInFlight = campaignConfig.maxUploadsInFlight();
+  if (inFlight >= maxInFlight) {
+    throw new AppError(
+      429,
+      "TOO_MANY_UPLOADS",
+      `You already have ${inFlight} uploads in progress (limit ${maxInFlight}). Wait for them to finish, or remove one.`,
+    );
   }
   if (Number(active._sum.bytes ?? 0) + input.size > campaignConfig.clientQuotaBytes()) {
     throw new AppError(413, "QUOTA", "You've reached your storage limit. Remove unused files or finish a campaign first.");

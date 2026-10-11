@@ -36,7 +36,14 @@ export async function checkout(clientId: string, bookingId: string) {
     select: { id: true, status: true, name: true, launchFrom: true, format: true, campaignType: true, audioIntegration: true, audioTrack: true, items: { select: { id: true, rateCardId: true, pricePaise: true, platform: true, format: true, accountName: true } } },
   });
   if (!b) throw new AppError(404, "NOT_FOUND", "Campaign not found");
-  if (!["draft", "awaiting_payment"].includes(b.status)) throw new AppError(409, "INVALID_STATE", "This campaign has already been paid for.");
+  if (!["draft", "awaiting_payment"].includes(b.status)) {
+    // Never "paid": an offline booking was submitted, not paid, and a double submit lands here.
+    throw new AppError(
+      409,
+      "INVALID_STATE",
+      ["cancelled", "expired"].includes(b.status) ? "This campaign is closed — start a new one any time." : "This campaign has already been submitted.",
+    );
+  }
   if (!b.launchFrom) throw new AppError(400, "NO_INFO", "Add the campaign details first.");
   if (b.items.length === 0) throw new AppError(400, "NO_ITEMS", "Pick at least one account.");
   await assertCreativeReady(bookingId);

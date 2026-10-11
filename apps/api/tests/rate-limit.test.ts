@@ -12,9 +12,16 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import request from "supertest";
 import jwt from "jsonwebtoken";
+import { googleAccountOf } from "../src/middleware/rate-limit-key";
 
 vi.stubEnv("RATE_LIMIT_MAX", "4");
 vi.stubEnv("RATE_LIMIT_LOGIN_MAX", "2");
+// Per-IP ceiling on the Google sign-in POSTs. Below the global 4 so a 429 from it is
+// observable before the global limiter would refuse.
+vi.stubEnv("RATE_LIMIT_GOOGLE_IP_MAX", "3");
+// Google sign-in off: the Google routes answer 503 without ever calling Google, so these
+// tests exercise the limiter's keying only (never the network).
+vi.stubEnv("GOOGLE_CLIENT_ID", "");
 
 let app: import("express").Express;
 beforeAll(async () => {
@@ -114,5 +121,77 @@ describe("login limiter keying", () => {
     expect((await attempt("dave@example.com")).status).not.toBe(429);
     expect((await attempt("dave@example.com")).status).toBe(429);
     expect((await attempt("erin@example.com")).status).not.toBe(429);
+  });
+
+  // An unsigned JWT-shaped credential: header.payload.signature, base64url. Only the payload
+  // is read (unverified) to choose a bucket.
+  const fakeGoogleJwt = (claims: Record<string, unknown>) =>
+    [
+      Buffer.from(JSON.stringify({ alg: "RS256", typ: "JWT" })).toString("base64url"),
+      Buffer.from(JSON.stringify(claims)).toString("base64url"),
+      "c2lnbmF0dXJl",
+    ].join(".");
+
+  it("Sign in with Google is keyed per Google account (the token's sub), not per edge IP", async () => {
+    const edge = "162.158.6.6";
+    const attempt = (credential: string) =>
+      request(app).post("/v1/client/auth/google").set("X-Forwarded-For", edge).send({ credential });
+    const alice = fakeGoogleJwt({ sub: "1001", email: "alice@gmail.com" });
+    const bob = fakeGoogleJwt({ sub: "1002", email: "bob@gmail.com" });
+    expect((await attempt(alice)).status).not.toBe(429);
+    expect((await attempt(alice)).status).not.toBe(429);
+    // The same credential past the cap is refused …
+    const blocked = await attempt(alice);
+    expect(blocked.status).toBe(429);
+    expect(blocked.body).toMatchObject({ success: false, error: { code: "RATE_LIMIT" } });
+    // … while a different Google account through the same edge has its own bucket.
+    expect((await attempt(bob)).status).not.toBe(429);
+  });
+
+  it("a Google credential that cannot be decoded falls back to the ip-only bucket", async () => {
+    const edge = "162.158.7.7";
+    const attempt = (credential: string) =>
+      request(app).post("/v1/hr/auth/google").set("X-Forwarded-For", edge).send({ credential });
+    expect((await attempt("not-a-jwt")).status).not.toBe(429);
+    expect((await attempt("still.not!.a-jwt")).status).not.toBe(429);
+    expect((await attempt("garbage")).status).toBe(429);
+  });
+
+  it("a `credential` field cannot lift the per-account cap on password login (fresh fake sub per guess)", async () => {
+    const edge = "162.158.8.8";
+    let n = 0;
+    const attempt = () =>
+      request(app)
+        .post("/v1/client/auth/login")
+        .set("X-Forwarded-For", edge)
+        .send({ email: "dave@example.com", password: "wrong-password-1", credential: fakeGoogleJwt({ sub: `evil-${++n}` }) });
+    expect((await attempt()).status).not.toBe(429);
+    expect((await attempt()).status).not.toBe(429);
+    const blocked = await attempt();
+    expect(blocked.status).toBe(429);
+    expect(blocked.body).toMatchObject({ success: false, error: { code: "RATE_LIMIT", message: "Too many login attempts, please try again later" } });
+  });
+
+  it("Google sign-in has a per-IP ceiling, so minting a fresh fake sub per request cannot dodge it", async () => {
+    const edge = "162.158.9.9";
+    const attempt = (sub: string) =>
+      request(app).post("/v1/auth/google").set("X-Forwarded-For", edge).send({ credential: fakeGoogleJwt({ sub }) });
+    expect((await attempt("s1")).status).not.toBe(429);
+    expect((await attempt("s2")).status).not.toBe(429);
+    expect((await attempt("s3")).status).not.toBe(429);
+    // The 4th distinct account from the same IP: every per-account bucket is fresh and the
+    // global cap (4) still has room, so only the Google per-IP limiter can be refusing.
+    const blocked = await attempt("s4");
+    expect(blocked.status).toBe(429);
+    expect(blocked.body).toMatchObject({ success: false, error: { code: "RATE_LIMIT", message: "Too many sign-in attempts, please try again later" } });
+  });
+
+  it("googleAccountOf: sub first, then email, null for anything undecodable or oversized", () => {
+    expect(googleAccountOf(fakeGoogleJwt({ sub: "42", email: "X@Y.com" }))).toBe("42");
+    expect(googleAccountOf(fakeGoogleJwt({ email: " X@Y.com " }))).toBe("x@y.com");
+    expect(googleAccountOf(fakeGoogleJwt({ name: "nobody" }))).toBeNull();
+    expect(googleAccountOf("a.b")).toBeNull();
+    expect(googleAccountOf("a.%%%.c")).toBeNull();
+    expect(googleAccountOf(fakeGoogleJwt({ sub: "1", pad: "x".repeat(9000) }))).toBeNull();
   });
 });

@@ -35,8 +35,13 @@ import { generateToken } from "./helpers";
 const SECRET = process.env.JWT_SECRET || "dev-secret";
 const WEBHOOK_SECRET = "whsec_test";
 let mediaDir: string;
+// A local .env set up for the offline e2e journey carries CAMPAIGN_PAYMENT_MODE=offline, which
+// would turn every Razorpay test here offline. The offline test switches modes itself.
+let savedPaymentMode: string | undefined;
 
 beforeAll(() => {
+  savedPaymentMode = process.env.CAMPAIGN_PAYMENT_MODE;
+  delete process.env.CAMPAIGN_PAYMENT_MODE;
   mediaDir = fs.mkdtempSync(path.join(os.tmpdir(), "campaign-media-"));
   process.env.CAMPAIGN_MEDIA_DIR = mediaDir;
   process.env.CAMPAIGN_MIN_FREE_GB = "0";
@@ -47,6 +52,7 @@ beforeAll(() => {
 afterAll(() => {
   fs.rmSync(mediaDir, { recursive: true, force: true });
   for (const k of ["CAMPAIGN_MEDIA_DIR", "CAMPAIGN_MIN_FREE_GB", "RAZORPAY_KEY_ID", "RAZORPAY_KEY_SECRET", "RAZORPAY_WEBHOOK_SECRET"]) delete process.env[k];
+  if (savedPaymentMode !== undefined) process.env.CAMPAIGN_PAYMENT_MODE = savedPaymentMode;
 });
 
 // ── Pure helpers ────────────────────────────────────────────────────────────────
@@ -276,6 +282,51 @@ describe("campaign booking flow", () => {
     expect(f.complete.body.error.code).toBe("FILE_REJECTED");
   });
 
+  it("upload cap: a 4th concurrent init is 429 TOO_MANY_UPLOADS; a stale uploading row stops counting; DELETE frees a slot", async () => {
+    const init = () =>
+      request(app).post("/v1/client/campaign-uploads").set("Authorization", `Bearer ${tokA}`).send({ filename: "a.jpg", size: JPEG.length, mime: "image/jpeg" });
+    const ids: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      const r = await init();
+      expect(r.status).toBe(201);
+      ids.push(r.body.data.id);
+    }
+    const fourth = await init();
+    expect(fourth.status).toBe(429);
+    expect(fourth.body.error.code).toBe("TOO_MANY_UPLOADS");
+    expect(fourth.body.error.message).toMatch(/^You already have 3 uploads in progress \(limit 3\)\./);
+    // An upload abandoned 2 h ago (closed tab) no longer blocks — its row is left as it is.
+    await prisma.campaignMedia.update({ where: { id: ids[0] }, data: { createdAt: new Date(Date.now() - 2 * 3600_000) } });
+    expect((await init()).status).toBe(201);
+    expect((await prisma.campaignMedia.findUniqueOrThrow({ where: { id: ids[0] } })).uploadStatus).toBe("uploading");
+    // Removing an upload frees its slot at once.
+    expect((await init()).status).toBe(429);
+    expect((await request(app).delete(`/v1/client/campaign-uploads/${ids[1]}`).set("Authorization", `Bearer ${tokA}`)).status).toBe(200);
+    expect((await init()).status).toBe(201);
+  });
+
+  it("storage quota: an abandoned upload's bytes keep counting until it is purged (it could still be completed)", async () => {
+    const init = () =>
+      request(app).post("/v1/client/campaign-uploads").set("Authorization", `Bearer ${tokA}`).send({ filename: "a.jpg", size: JPEG.length, mime: "image/jpeg" });
+    const twoHoursAgo = new Date(Date.now() - 2 * 3600_000);
+    const abandoned = (n: number) =>
+      prisma.campaignMedia.create({
+        data: {
+          clientId: clientA.id, kind: "video", originalName: `big-${n}.mp4`, bytes: BigInt(1024 ** 3),
+          storageKey: `quota-test-${n}-${Date.now()}`, ext: "mp4", chunkSize: 8 * 1024 * 1024, totalChunks: 128, createdAt: twoHoursAgo,
+        },
+      });
+    const [a, b] = await Promise.all([abandoned(1), abandoned(2)]);
+    // Two stale uploads no longer hold an in-flight slot, but their 2 GB still counts toward the quota.
+    const over = await init();
+    expect(over.status).toBe(413);
+    expect(over.body.error.code).toBe("QUOTA");
+    // Removing one (the client's Cancel / Dismiss DELETE) frees its bytes.
+    expect((await request(app).delete(`/v1/client/campaign-uploads/${a.id}`).set("Authorization", `Bearer ${tokA}`)).status).toBe(200);
+    expect((await init()).status).toBe(201);
+    void b;
+  });
+
   it("full flow: pay via webhook, review, post, one delivery email with every link", async () => {
     const { id } = await readyBooking();
     // Another client's booking is invisible.
@@ -353,6 +404,52 @@ describe("campaign booking flow", () => {
     expect(co.body.data.amount).toBe(100_000);
   });
 
+  it("a caption-only re-save keeps finished renders; an overlay or format change re-queues them; a failed render is re-queued by any save", async () => {
+    await setRates();
+    const created = await request(app).post("/v1/client/campaigns").set("Authorization", `Bearer ${tokA}`).send(info());
+    const id = created.body.data.id;
+    const up = await upload(tokA, JPEG, "image/jpeg");
+    const creative = { format: "post", mediaIds: [up.id], caption: "Big news", superText: "50% OFF", superTextStyle: "bottom" };
+    const save = (patch: Record<string, unknown>) =>
+      request(app).put(`/v1/client/campaigns/${id}/creative`).set("Authorization", `Bearer ${tokA}`).send({ ...creative, ...patch });
+    const status = async () => (await prisma.campaignMedia.findUniqueOrThrow({ where: { id: up.id } })).renderStatus;
+
+    expect((await save({})).status).toBe(200);
+    while (await renderNext({ ignoreLoad: true })) { /* drain */ }
+    expect(await status()).toBe("done");
+
+    // Caption, hashtags and tags are not render inputs: the finished render stays.
+    expect((await save({ caption: "Big news — fixed typo", hashtags: ["diwali"], userTags: ["brand_a"] })).status).toBe(200);
+    expect(await status()).toBe("done");
+    // …and checkout is not held back by a render that didn't need to happen.
+    const cat = await request(app).get("/v1/client/campaigns/catalogue").set("Authorization", `Bearer ${tokA}`);
+    await request(app).put(`/v1/client/campaigns/${id}/items`).set("Authorization", `Bearer ${tokA}`).send({ rateCardIds: [cat.body.data[0].offers[0].rateCardId] });
+    const co = await request(app).post(`/v1/client/campaigns/${id}/checkout`).set("Authorization", `Bearer ${tokA}`);
+    expect(co.status).toBe(200);
+
+    // New printed text → re-render.
+    expect((await save({ superText: "60% OFF" })).status).toBe(200);
+    expect(await status()).toBe("queued");
+    while (await renderNext({ ignoreLoad: true })) { /* drain */ }
+    // A different position is a different overlay too.
+    expect((await save({ superText: "60% OFF", superTextStyle: "top" })).status).toBe(200);
+    expect(await status()).toBe("queued");
+    while (await renderNext({ ignoreLoad: true })) { /* drain */ }
+    // A format change (post → carousel) re-renders every file, the one already there included.
+    const up2 = await upload(tokA, JPEG, "image/jpeg");
+    const carousel = { format: "carousel", mediaIds: [up.id, up2.id], superText: "60% OFF", superTextStyle: "top" };
+    expect((await save(carousel)).status).toBe(200);
+    expect(await status()).toBe("queued");
+    while (await renderNext({ ignoreLoad: true })) { /* drain */ }
+    expect(await status()).toBe("done");
+
+    // A failed render is retried by any save, even a caption-only one; its finished sibling stays.
+    await prisma.campaignMedia.update({ where: { id: up.id }, data: { renderStatus: "failed", renderError: "boom" } });
+    expect((await save({ ...carousel, caption: "again" })).status).toBe(200);
+    expect(await status()).toBe("queued");
+    expect((await prisma.campaignMedia.findUniqueOrThrow({ where: { id: up2.id } })).renderStatus).toBe("done");
+  });
+
   it("a payment for an outdated order is refunded, not accepted", async () => {
     const { id } = await readyBooking();
     const co = await request(app).post(`/v1/client/campaigns/${id}/checkout`).set("Authorization", `Bearer ${tokA}`);
@@ -389,6 +486,10 @@ describe("campaign booking flow", () => {
       const co = await request(app).post(`/v1/client/campaigns/${id}/checkout`).set("Authorization", `Bearer ${tokA}`);
       expect(co.status).toBe(200);
       expect(co.body.data).toMatchObject({ offline: true, amount: 250_000, status: "paid_pending_review" });
+      // A second submit (stale tab, double click) is told "submitted", never "paid".
+      const again = await request(app).post(`/v1/client/campaigns/${id}/checkout`).set("Authorization", `Bearer ${tokA}`);
+      expect(again.status).toBe(409);
+      expect(again.body.error).toMatchObject({ code: "INVALID_STATE", message: "This campaign has already been submitted." });
       expect(co.body.data.orderId).toBeUndefined();
       expect(rzpCalls).toHaveLength(calls); // the gateway was never called
       const b = await prisma.campaignBooking.findUniqueOrThrow({ where: { id }, include: { payments: true, items: true } });
@@ -414,6 +515,17 @@ describe("campaign booking flow", () => {
       expect(rf.status).toBe(200);
       expect((await prisma.campaignBookingItem.findUniqueOrThrow({ where: { id: item.id } })).status).toBe("refunded");
       expect(rzpCalls.filter((c) => c.url.includes("/refund"))).toHaveLength(0);
+      await new Promise((r) => setTimeout(r, 50));
+      // The approval names the go-live window (date-only columns, formatted in UTC).
+      const approvedMail = vi.mocked(sendEmail).mock.calls.find(([o]) => o.to === "a@brand.test" && o.subject.startsWith("Approved"));
+      const day = new Date(`${todayIST()}T00:00:00Z`).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+      expect(approvedMail?.[0].html).toContain(`Your go-live window is ${day} – ${day}.`);
+      // The delivery email for the dropped post says it isn't charged — nothing was paid online.
+      const delivered = vi.mocked(sendEmail).mock.calls.find(([o]) => o.to === "a@brand.test" && o.subject.startsWith("Delivered"));
+      expect(delivered?.[0].html).toContain("Not posted — not charged");
+      expect(delivered?.[0].html).toContain("1 post could not be made.");
+      expect(delivered?.[0].html).not.toContain("Not posted — refunded");
+      expect(delivered?.[0].html).not.toContain("refunded to your original payment method");
 
       // Rejecting an offline booking stays `rejected` (never claims a refund) and calls no refund.
       const { id: id2 } = await readyBooking();

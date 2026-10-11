@@ -48,7 +48,9 @@ export async function runCampaignRetention(now = new Date()) {
     // A payment can still be in flight for an awaiting_payment booking: only expire it when no
     // payment row is captured (the webhook accepts a late capture from `expired` anyway).
     try {
-      await transitionBooking(b.id, [b.status as "draft" | "awaiting_payment"], "expired", { type: "system" }, { note: "Not paid in time" });
+      await transitionBooking(b.id, [b.status as "draft" | "awaiting_payment"], "expired", { type: "system" }, {
+        note: b.status === "draft" ? "Draft left unfinished for 30 days" : "Not paid in time",
+      });
       stats.expired++;
     } catch {
       /* moved on concurrently */

@@ -78,7 +78,21 @@ async function api(pathname, { method = "GET", token, body, raw = false } = {}) 
   if (!res.ok || json.success === false) throw new Error(`${method} ${pathname} → ${res.status} ${JSON.stringify(json.error ?? json).slice(0, 200)}`);
   return json.data;
 }
-const overflow = (page) => page.evaluate(() => ({ scrollWidth: document.documentElement.scrollWidth, innerWidth: window.innerWidth, overflowPx: Math.max(0, document.documentElement.scrollWidth - window.innerWidth) }));
+// overflowPx: the page scrolls sideways. clippedPx: some box ends past the viewport even though an
+// ancestor hides the scroll (a card wider than the phone, a price pushed off-screen) — the
+// document-level number alone missed exactly that. Deliberate horizontal scrollers are skipped.
+const overflow = (page) => page.evaluate(() => {
+  const vw = window.innerWidth;
+  const scrolls = (el) => { for (let a = el.parentElement; a; a = a.parentElement) { const ox = getComputedStyle(a).overflowX; if (ox === "auto" || ox === "scroll") return true; } return false; };
+  let clipped = 0, worst = null;
+  for (const el of document.querySelectorAll("main *")) {
+    const r = el.getBoundingClientRect();
+    if (!r.width || !r.height || getComputedStyle(el).position === "fixed") continue;
+    const over = Math.round(r.right - vw);
+    if (over > clipped && !scrolls(el)) { clipped = over; worst = `${el.tagName.toLowerCase()}.${String(el.className).slice(0, 60)}`; }
+  }
+  return { scrollWidth: document.documentElement.scrollWidth, innerWidth: vw, overflowPx: Math.max(0, document.documentElement.scrollWidth - vw), clippedPx: clipped, worst };
+});
 const bodyText = (page) => page.evaluate(() => document.body.innerText);
 const stepNav = (page) => page.evaluate(() => {
   const nav = document.querySelector("nav[aria-label=Steps]");
@@ -98,6 +112,7 @@ const psql = (sql) => {
 let campaignId = null;
 let current = null; // the page being driven right now (for the failure screenshot)
 let clientToken = null;
+let staleId = null;
 try {
   const ctx = await browser.newContext({ viewport: { width: 1366, height: 860 } });
   const page = await ctx.newPage();
@@ -135,7 +150,7 @@ try {
   check("details: earliest posting date defaults to tomorrow (IST)", det.from === tomorrow, { got: det.from, want: tomorrow });
   check("details: latest posting date defaults to +7 days", det.to === addDays(tomorrow, 7), { got: det.to, want: addDays(tomorrow, 7) });
   const detText = await bodyText(page);
-  check("details: date labels are plain", detText.includes("Earliest posting date") && detText.includes("Latest posting date"));
+  check("details: date labels are plain", /Earliest posting date/i.test(detText) && /Latest posting date/i.test(detText));
   const nav1 = await stepNav(page);
   check("details: step indicator shows 4 steps, step 1 current, later steps locked", nav1 && nav1.pills.length === 4 && nav1.pills[0].current && nav1.pills.slice(1).every((p) => p.disabled), nav1);
   await shot(page, "02-details");
@@ -175,7 +190,7 @@ try {
   check("content: arrow / digit / g-chord keys do not navigate away", out.probes.keyboard.pathAfter === pathBefore, out.probes.keyboard);
   check("content: the edge hint does not promise channel keys here", !/change channel/.test(out.probes.keyboard.edgeHint ?? ""), out.probes.keyboard.edgeHint);
   const emptyText = await bodyText(page);
-  check("content: no 'Position' choice before any printed text", !/\bPosition\b/.test(emptyText));
+  check("content: no 'Position' choice before any printed text", !/\bPosition\b/i.test(emptyText));
   check("content: 'More options' starts folded", await page.evaluate(() => { const m = document.getElementById("creative-more"); return Boolean(m && m.hidden); }));
   check("content: plain card titles", emptyText.includes("Printed text") && /\bCaption\b/.test(emptyText) && !/super text/i.test(emptyText), null);
   await shot(page, "03-content-empty");
@@ -188,21 +203,32 @@ try {
   step("video uploaded", { uploadMs: out.timings.uploadMs });
   await page.fill("#c-super", "FLAT 50% OFF");
   await page.waitForTimeout(200);
-  check("content: Position appears once there is printed text", /\bPosition\b/.test(await bodyText(page)));
+  check("content: Position appears once there is printed text", /\bPosition\b/i.test(await bodyText(page)));
   check("content: an unsaved upload is labelled", (await bodyText(page)).includes("Not saved yet"));
   const dialogsBefore = (out.dialogs ?? []).length;
+  await page.evaluate(() => { window.__beforeReload = true; });
   await page.reload({ waitUntil: "domcontentloaded" });
-  await page.waitForSelector("input[type=file]", { state: "attached", timeout: 30_000 });
-  await page.waitForFunction(() => document.querySelector("video"), null, { timeout: 30_000 }).catch(() => {});
-  out.probes.reloadRestore = { leaveWarning: (out.dialogs ?? []).slice(dialogsBefore).some((d) => d.type === "beforeunload"), videoBack: Boolean(await page.$("video")), labelled: (await bodyText(page)).includes("Not saved yet") };
+  await page.waitForFunction(() => !window.__beforeReload && document.querySelector("input[type=file]"), null, { timeout: 30_000 });
+  await page.waitForFunction(() => document.body.innerText.includes("Not saved yet"), null, { timeout: 30_000 }).catch(() => {});
+  step("reloaded");
+  // ⚠️ Playwright's Chromium is an open-source build without H.264, so every <video> here ends in
+  // "Preview unavailable" (MediaError 4) — real Chrome/Safari play it. The restored tile is
+  // therefore identified by its file name; the save below (a reel refuses anything but a video)
+  // proves it came back as the video it was.
+  out.probes.reloadRestore = {
+    leaveWarning: (out.dialogs ?? []).slice(dialogsBefore).some((d) => d.type === "beforeunload"),
+    tileBack: await page.evaluate(() => [...document.querySelectorAll("span[title]")].some((e) => e.getAttribute("title") === "reel.mp4")),
+    labelled: (await bodyText(page)).includes("Not saved yet"),
+  };
   check("content: reload with unsaved work raises the leave warning", out.probes.reloadRestore.leaveWarning, out.probes.reloadRestore);
-  check("content: the unsaved upload is restored after a reload", out.probes.reloadRestore.videoBack && out.probes.reloadRestore.labelled, out.probes.reloadRestore);
+  check("content: the unsaved upload is restored after a reload", out.probes.reloadRestore.tileBack && out.probes.reloadRestore.labelled, out.probes.reloadRestore);
 
   // 3c. A bad collaborator handle is caught on the field, with no request.
   await page.fill("#c-super", "FLAT 50% OFF");
   await page.fill("#c-caption", "E2E launch — only this week #diwali #sale");
   const moreToggle = page.locator("button[aria-controls=creative-more]");
   if (await moreToggle.count()) await moreToggle.click();
+  step("more options opened");
   await page.fill("#c-collab", "@my-brand");
   let creativePuts = 0;
   const countPut = (r) => { if (r.method() === "PUT" && /\/creative$/.test(r.url())) creativePuts++; };
@@ -327,7 +353,7 @@ try {
   // 11. Passed posting date on a draft blocks submit with a way out. The draft is built through
   //     the API (upload → content → one account) so the Review step is reachable.
   const newDraft = (name) => api("/client/campaigns", { method: "POST", token: clientToken, body: { name, brand: "Acme Studios", campaignType: "brand", launchFrom: addDays(istToday(), 1), launchTo: addDays(istToday(), 3) } });
-  const staleId = (await newDraft("E2E stale")).id;
+  staleId = (await newDraft("E2E stale")).id;
   try {
     const bytes = fs.readFileSync(MEDIA_IMAGE);
     const up = await api("/client/campaign-uploads", { method: "POST", token: clientToken, body: { filename: "post.jpg", size: bytes.length, mime: "image/jpeg" } });
@@ -354,7 +380,8 @@ try {
   await page.waitForSelector("input[type=file]", { state: "attached", timeout: 30_000 });
   await page.getByRole("button", { name: /Carousel/ }).first().click();
   // Slow each chunk down so the queue is observable.
-  await page.route("**/chunks/**", async (route) => { await new Promise((r) => setTimeout(r, 1500)); await route.continue(); });
+  // A cancelled upload aborts its request, which also settles the route: continue() may then throw.
+  await page.route("**/chunks/**", async (route) => { await new Promise((r) => setTimeout(r, 1500)); await route.continue().catch(() => {}); });
   const deletes = [];
   page.on("request", (r) => { if (r.method() === "DELETE" && /campaign-uploads/.test(r.url())) deletes.push(r.url()); });
   await page.setInputFiles("input[type=file] >> nth=0", SLIDES);
@@ -403,6 +430,7 @@ try {
   await m.fill("#c-name", "E2E mobile post");
   await m.click("form button[type=submit]");
   await m.waitForURL(/\/campaigns\/[0-9a-f-]{36}/, { timeout: 30_000 });
+  const mobileDraftId = m.url().match(/\/campaigns\/([0-9a-f-]{36})/)[1];
   await m.waitForSelector("input[type=file]", { state: "attached", timeout: 30_000 });
   await m.waitForTimeout(800);
   out.mobile.content = { nav: await stepNav(m), stepLine: (await bodyText(m)).includes("Step 2 of 4"), cancel: await m.getByRole("button", { name: "Cancel campaign" }).isVisible() };
@@ -434,13 +462,32 @@ try {
   check("mobile: account rows show engagement", out.mobile.accounts.engagementShown);
   check("mobile: the bottom bar never covers the last account", out.mobile.accounts.lastRowCoveredPx === 0 && out.mobile.accounts.continueVisible, out.mobile.accounts);
   await shot(m, "m4-accounts");
+  // Review (the passed-date draft from the desktop pass) and the live campaign page, on a phone.
+  if (typeof staleId === "string") {
+    await m.goto(`${BASE}/campaigns/${staleId}?step=pay`, { waitUntil: "domcontentloaded" });
+    await m.waitForFunction(() => /Submit for review|Preparing preview|Pay ₹/.test(document.body.innerText), null, { timeout: 30_000 }).catch(() => {});
+    out.mobile.review = await overflow(m);
+    await shot(m, "m5-review");
+  }
+  if (campaignId) {
+    await m.goto(`${BASE}/campaigns/${campaignId}`, { waitUntil: "domcontentloaded" });
+    await m.waitForSelector("a:has-text('View post')", { timeout: 30_000 }).catch(() => {});
+    out.mobile.live = await overflow(m);
+    await shot(m, "m6-live");
+  }
+  await m.goto(`${BASE}/campaigns/${mobileDraftId}?step=accounts`, { waitUntil: "domcontentloaded" });
+  await m.waitForSelector("ul li input[type=checkbox]", { timeout: 30_000 });
   // Cancel this draft from the header.
   await m.evaluate(() => window.scrollTo(0, 0));
   await m.getByRole("button", { name: "Cancel campaign" }).click();
   await m.waitForURL(/\/campaigns$/, { timeout: 30_000 }).catch(() => {});
+  await m.waitForFunction(() => document.body.innerText.includes("E2E mobile post") && /Cancelled/i.test(document.body.innerText), null, { timeout: 15_000 }).catch(() => {});
   out.mobile.cancelled = { url: m.url(), text: (await bodyText(m)).includes("Cancelled") };
   check("mobile: cancelling lands on the list with the row cancelled", /\/campaigns$/.test(out.mobile.cancelled.url) && out.mobile.cancelled.text, out.mobile.cancelled);
-  for (const k of ["landing", "list", "details", "creative", "accounts"]) check(`mobile: no horizontal overflow on ${k}`, (out.mobile[k]?.overflowPx ?? 0) === 0, out.mobile[k]?.overflowPx);
+  for (const k of ["landing", "list", "details", "creative", "accounts", "review", "live"]) {
+    if (!out.mobile[k]) continue;
+    check(`mobile: nothing runs off the screen on ${k}`, out.mobile[k].overflowPx === 0 && out.mobile[k].clippedPx <= 0, { overflowPx: out.mobile[k].overflowPx, clippedPx: out.mobile[k].clippedPx, worst: out.mobile[k].worst });
+  }
   await mctx.close();
 
   // Deliberate 409 (second checkout) and the slowed / cancelled carousel upload are expected.

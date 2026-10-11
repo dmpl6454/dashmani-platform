@@ -1,24 +1,23 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
+import { mutate as revalidate } from "swr";
 import { Topstrip } from "@/components/portal-topstrip";
 import { Button, PageError, Skeleton } from "@/components/portal-shared";
 import { Icon } from "@/components/portal-icons";
 import { CAMPAIGN_TYPE_LABELS, FORMAT_LABELS, type CampaignFormat } from "@dashmani/shared/src/validators/campaign";
-import { compact, mutateJson, previewUrl, renderFailed, renderPending, rupees, useCampaign, useResults, PLATFORM_LABEL, type Campaign } from "@/lib/campaign";
+import { todayIST } from "@dashmani/shared/src/utils/date";
+import { useAuth } from "@/lib/auth";
+import { compact, mutateJson, previewUrl, renderFailed, renderPending, renderPendingCounts, rupees, useCampaign, useResults, PLATFORM_LABEL, type Campaign, type CampaignListRow } from "@/lib/campaign";
 import { AccountsStep, CreativeStep, InfoForm } from "../_steps";
 import { ItemTextRow } from "../_item-text";
+import { StepNav, STEPS, type Step } from "../_step-nav";
 import { Card, CampaignStatus, ErrorBanner, ItemStatus, PlatformDot, fmtDate, fmtDateTime } from "../_ui";
 
-type Step = "info" | "creative" | "accounts" | "pay";
-const STEPS: { id: Step; label: string }[] = [
-  { id: "info", label: "Details" },
-  { id: "creative", label: "Creative" },
-  { id: "accounts", label: "Accounts" },
-  { id: "pay", label: "Review & pay" },
-];
 const PRE_PAY = ["draft", "awaiting_payment"];
+/** Statuses where an offline campaign's amount is still to be settled with our team. */
+const SETTLING = ["paid_pending_review", "approved", "publishing", "completed", "partially_published"];
 
 function firstIncomplete(c: Campaign): Step {
   if (!c.format || c.media.length === 0) return "creative";
@@ -26,81 +25,216 @@ function firstIncomplete(c: Campaign): Step {
   return "pay";
 }
 
-export default function CampaignPage() {
-  const { id } = useParams<{ id: string }>();
-  const router = useRouter();
-  const { data: c, error, isLoading, mutate } = useCampaign(id);
-  const [step, setStep] = useState<Step | null>(null);
-
-  useEffect(() => {
-    if (c && !step) {
-      const q = new URLSearchParams(window.location.search).get("step") as Step | null;
-      setStep(q && STEPS.some((s) => s.id === q) ? q : firstIncomplete(c));
-    }
-  }, [c, step]);
-
-  if (error && !c) return <><Topstrip title="Campaign" /><div className="p-6"><PageError message={error.message || "Could not load this campaign."} /></div></>;
-  if (isLoading || !c) return <><Topstrip title="Campaign" /><div className="p-6 grid gap-3"><Skeleton className="h-6 w-1/3" /><Skeleton className="h-40 w-full" /></div></>;
-
-  const saved = (next: Campaign, go?: Step) => {
-    mutate(next, { revalidate: true });
-    if (go) {
-      setStep(go);
-      window.scrollTo({ top: 0, behavior: "smooth" });
-    }
-  };
-
-  const prePay = PRE_PAY.includes(c.status);
-  const reached: Record<Step, boolean> = {
+function reachedOf(c: Campaign): Record<Step, boolean> {
+  return {
     info: true,
     creative: true,
     accounts: Boolean(c.format && c.media.length),
     pay: Boolean(c.format && c.media.length && c.items.length),
   };
+}
+
+const reducedMotion = () => {
+  try {
+    return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  } catch {
+    return false;
+  }
+};
+
+export default function CampaignPage() {
+  const { id } = useParams<{ id: string }>();
+  const router = useRouter();
+  const { data: c, error, isLoading, mutate } = useCampaign(id);
+  const [step, setStep] = useState<Step | null>(null);
+  const [cancelBusy, setCancelBusy] = useState(false);
+  const [cancelError, setCancelError] = useState<string | null>(null);
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const focusStep = useRef(false);
+  // Checkout state lives here, not in PayStep, so the header can hide "Cancel campaign" while a
+  // payment is being confirmed or a checkout is in flight (cancel must never race money).
+  const [payBusy, setPayBusy] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  // Where a detour should come back to: Accounts → "change the type in Details" returns to
+  // Accounts, Review → "Update dates" returns to Review. Cleared by any direct step pick.
+  const returnTo = useRef<Step | null>(null);
+
+  // The step lives in the URL (?step=), so a refresh stays put. A ?step= the campaign hasn't
+  // reached yet falls back to the first unfinished step.
+  useEffect(() => {
+    if (c && !step) {
+      const q = new URLSearchParams(window.location.search).get("step") as Step | null;
+      setStep(q && STEPS.some((s) => s.id === q) && reachedOf(c)[q] ? q : firstIncomplete(c));
+    }
+  }, [c, step]);
+
+  const prePayNow = !!c && PRE_PAY.includes(c.status);
+  useEffect(() => {
+    if (!step || !prePayNow) return;
+    const want = `?step=${step}`;
+    // history.replaceState (Next 14.1+ keeps the router in sync) — no RSC round-trip, no new history entry.
+    if (window.location.search !== want) window.history.replaceState(null, "", `${window.location.pathname}${want}`);
+  }, [step, prePayNow]);
+
+  // After a step change, put keyboard / screen-reader focus on the new step's heading.
+  useEffect(() => {
+    if (!focusStep.current) return;
+    focusStep.current = false;
+    headingRef.current?.focus({ preventScroll: true });
+  }, [step]);
+
+  if (error && !c) return <><Topstrip title="Campaign" /><div className="p-6"><PageError message={error.message || "Could not load this campaign."} /></div></>;
+  if (isLoading || !c) return <><Topstrip title="Campaign" /><div className="p-6 grid gap-3"><Skeleton className="h-6 w-1/3" /><Skeleton className="h-40 w-full" /></div></>;
+
+  const goTo = (s: Step) => {
+    focusStep.current = true;
+    setStep(s);
+    window.scrollTo({ top: 0, behavior: reducedMotion() ? "auto" : "smooth" });
+  };
+
+  const saved = (next: Campaign, go?: Step) => {
+    mutate(next, { revalidate: true });
+    if (go) goTo(go);
+  };
+
+  // Take the pending detour target if there is one; a step the saved campaign no longer
+  // reaches (a type change can drop every account) falls back to the first unfinished one.
+  const resume = (next: Campaign, fallback: Step) => {
+    const want = returnTo.current ?? fallback;
+    returnTo.current = null;
+    saved(next, reachedOf(next)[want] ? want : firstIncomplete(next));
+  };
+
+  const detour = (from: Step) => (to: Step, next?: Campaign) => {
+    returnTo.current = from;
+    if (next) mutate(next, { revalidate: true });
+    goTo(to);
+  };
+
+  const cancel = async () => {
+    if (!window.confirm("Cancel this campaign? You can start a new one any time.")) return;
+    setCancelBusy(true);
+    setCancelError(null);
+    try {
+      await mutateJson(`/client/campaigns/${c.id}/cancel`, "POST");
+      // Mark the row in the cached list before landing on it (the list hook isn't mounted yet, so a
+      // bare revalidate would do nothing), so it never shows this campaign as a draft first.
+      await revalidate<CampaignListRow[]>("/client/campaigns", (rows) => rows?.map((r) => (r.id === c.id ? { ...r, status: "cancelled" } : r)), { revalidate: false }).catch(() => undefined);
+      router.push("/campaigns");
+    } catch (e) {
+      setCancelError(e instanceof Error && e.message ? e.message : "Couldn't cancel this campaign — please try again.");
+      mutate();
+    } finally {
+      setCancelBusy(false);
+    }
+  };
+
+  const prePay = PRE_PAY.includes(c.status);
+  const reached = reachedOf(c);
+  const offline = c.paymentMode === "offline";
+  const current = step ?? firstIncomplete(c);
+  // No cancelling once money may have moved (captured, being confirmed) or while checkout runs.
+  const canCancel = prePay && !c.paidAt && !confirming && !payBusy;
 
   return (
     <>
       <Topstrip title={c.name} sub={c.brand} right={<CampaignStatus status={c.status} />} />
       <div className="px-4 sm:px-6 py-6 max-w-[900px] mx-auto w-full flex-1 overflow-y-auto">
-        <div className="mb-4">
+        <div className="mb-4 flex items-center justify-between gap-3">
           <Link href="/campaigns" className="text-[12.5px] text-ink-3 hover:text-ink inline-flex items-center gap-1"><Icon.ChevLeft size={14} />All campaigns</Link>
+          {canCancel && (
+            <Button size="sm" variant="ghost" disabled={cancelBusy} onClick={cancel}>
+              {cancelBusy ? "Cancelling…" : "Cancel campaign"}
+            </Button>
+          )}
         </div>
+        {cancelError && <div className="mb-4"><ErrorBanner>{cancelError}</ErrorBanner></div>}
 
         {prePay ? (
           <>
-            <nav aria-label="Steps" className="mb-5 flex gap-1.5 overflow-x-auto pb-1">
-              {STEPS.map((s, i) => {
-                const active = step === s.id;
-                return (
-                  <button
-                    key={s.id}
-                    type="button"
-                    disabled={!reached[s.id]}
-                    onClick={() => setStep(s.id)}
-                    aria-current={active ? "step" : undefined}
-                    className={`shrink-0 h-9 px-3.5 rounded-full text-[12.5px] font-semibold border-2 disabled:opacity-40 ${active ? "bg-indigo text-white border-indigo" : "border-ink/15 text-ink-2"}`}
-                  >
-                    {i + 1}. {s.label}
-                  </button>
-                );
-              })}
-            </nav>
-            {step === "info" && (
+            <StepNav
+              current={current}
+              reached={reached}
+              offline={offline}
+              onSelect={(s) => {
+                returnTo.current = null;
+                goTo(s);
+              }}
+              headingRef={headingRef}
+            />
+            {current === "info" && (
               <InfoForm
                 initial={c}
                 submitLabel="Save & continue"
-                onSubmit={async (v) => saved(await mutateJson<Campaign>(`/client/campaigns/${c.id}/info`, "PUT", v), "creative")}
+                onSubmit={async (v) => resume(await mutateJson<Campaign>(`/client/campaigns/${c.id}/info`, "PUT", v), "creative")}
               />
             )}
-            {step === "creative" && <CreativeStep campaign={c} submitLabel="Save & choose accounts" onSaved={(n) => saved(n, "accounts")} />}
-            {step === "accounts" && c.format && <AccountsStep campaign={c} onSaved={(n) => saved(n, "pay")} />}
-            {step === "pay" && <PayStep campaign={c} onChanged={() => mutate()} onEdit={setStep} onCancelled={() => router.push("/campaigns")} />}
+            {current === "creative" && (
+              <CreativeStep
+                campaign={c}
+                submitLabel={c.items.length ? "Save & review" : "Save & choose accounts"}
+                // Accounts already picked and still all there → straight back to Review — unless the
+                // client came here from Accounts (to turn the song off), which is where they return.
+                onSaved={(n) => {
+                  const intact = n.items.length > 0 && n.items.length === c.items.length;
+                  // Lost accounts (a format or song change) are always shown, whatever the detour.
+                  if (!intact) returnTo.current = null;
+                  resume(n, intact ? "pay" : "accounts");
+                }}
+              />
+            )}
+            {current === "accounts" && c.format && <AccountsStep campaign={c} onSaved={(n) => resume(n, "pay")} onEdit={detour("accounts")} />}
+            {current === "pay" && (
+              <PayStep
+                campaign={c}
+                onChanged={() => mutate()}
+                onEdit={detour("pay")}
+                busy={payBusy}
+                setBusy={setPayBusy}
+                confirming={confirming}
+                setConfirming={setConfirming}
+              />
+            )}
           </>
         ) : (
-          <AfterPayment campaign={c} onChanged={() => mutate()} />
+          <AfterPayment campaign={c} onChanged={(n?: Campaign) => (n ? mutate(n, { revalidate: true }) : mutate())} />
         )}
       </div>
     </>
+  );
+}
+
+/**
+ * The wait for our renders, explained: what is being prepared, that it takes minutes, and that
+ * the client may leave. After 10 minutes on the page it says so and gives a way out.
+ */
+function RenderWait({ campaign: c, action }: { campaign: Campaign; action: string }) {
+  const pending = renderPending(c);
+  const firstSeen = useRef<number | null>(null);
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (!pending) {
+      firstSeen.current = null;
+      return;
+    }
+    if (firstSeen.current == null) firstSeen.current = Date.now();
+    const t = setInterval(() => setTick((n) => n + 1), 30_000);
+    return () => clearInterval(t);
+  }, [pending]);
+  if (!pending) return null;
+  const { files, accounts } = renderPendingCounts(c);
+  const parts = [
+    files > 0 ? `${files} file${files === 1 ? "" : "s"}` : null,
+    accounts > 0 ? `${accounts} account${accounts === 1 ? "" : "s"} with their own text` : null,
+  ]
+    .filter(Boolean)
+    .join(", plus ");
+  const slow = firstSeen.current != null && Date.now() - firstSeen.current >= 10 * 60_000;
+  return (
+    <p role="status" aria-live="polite" className="text-[13px] text-ink-2 mb-3">
+      Preparing your preview: {parts || "your files"}. This usually takes a few minutes, longer when our servers are busy. Your campaign is saved — you can leave this page and come back from Campaigns; this page updates by itself. You can {action} once it&apos;s ready.
+      {slow && " This is taking longer than usual. You don't need to wait here — if it still isn't ready later today, email hello@digitalsukoon.com."}
+    </p>
   );
 }
 
@@ -124,14 +258,34 @@ function loadRazorpay(): Promise<void> {
   });
 }
 
-function PayStep({ campaign: c, onChanged, onEdit, onCancelled }: { campaign: Campaign; onChanged: () => void; onEdit: (s: Step) => void; onCancelled: () => void }) {
-  const [busy, setBusy] = useState(false);
+function PayStep({ campaign: c, onChanged, onEdit, busy, setBusy, confirming, setConfirming }: {
+  campaign: Campaign;
+  onChanged: () => void;
+  onEdit: (s: Step) => void;
+  /** Lifted to the page so the header's Cancel hides while checkout runs or a payment confirms. */
+  busy: boolean;
+  setBusy: (b: boolean) => void;
+  confirming: boolean;
+  setConfirming: (b: boolean) => void;
+}) {
   const [error, setError] = useState<string | null>(null);
-  const [confirming, setConfirming] = useState(false);
+  const [userOpen, setUserOpen] = useState<boolean | null>(null);
   const rendering = renderPending(c);
   const failed = renderFailed(c);
+  // Only a per-account variant failed: Content has no Try again for it — a re-save of that
+  // account's text re-queues it (syncRenderVariants).
+  const fileFailed = failedFile(c);
   const total = c.items.reduce((s, i) => s + i.pricePaise, 0);
   const offline = c.paymentMode === "offline";
+  // Only the campaign's own files (not per-account variants) are shown in the strip below.
+  const defaultPending = (c.thumbnail ? [...c.media, c.thumbnail] : c.media).some((m) => m.renderStatus === "queued" || m.renderStatus === "rendering");
+  // The window opened before the client got here (dates are IST day keys, so a string compare is exact).
+  const datePassed = !!c.launchFrom && c.launchFrom < todayIST();
+
+  // "Text per account" is folded away unless something there needs the client's eye.
+  const forced = c.items.some((i) => i.renderStatus === "queued" || i.renderStatus === "failed");
+  const nCustom = c.items.filter((i) => i.captionOverride != null || i.superTextOverride != null).length;
+  const open = forced || (userOpen ?? nCustom > 0);
 
   const pay = async () => {
     setBusy(true);
@@ -158,7 +312,8 @@ function PayStep({ campaign: c, onChanged, onEdit, onCancelled }: { campaign: Ca
         order_id: order.orderId,
         name: "Digital Sukoon",
         description: order.name,
-        prefill: { email: user.email, name: user.contactName },
+        // The stored session user is { id, name, companyName, email } (lib/auth.ts).
+        prefill: { email: user.email, name: user.name },
         theme: { color: "#403cfa" },
         handler: async (r: { razorpay_order_id: string; razorpay_payment_id: string; razorpay_signature: string }) => {
           setConfirming(true);
@@ -180,6 +335,8 @@ function PayStep({ campaign: c, onChanged, onEdit, onCancelled }: { campaign: Ca
     } catch (e) {
       setError(e instanceof Error ? e.message : offline ? "The campaign couldn't be submitted." : "Payment couldn't start.");
       setBusy(false);
+      // A stale tab (already submitted, cancelled, expired) re-fetches and lands on the right view.
+      onChanged();
     }
   };
 
@@ -192,24 +349,41 @@ function PayStep({ campaign: c, onChanged, onEdit, onCancelled }: { campaign: Ca
   }
 
   return (
-    <div className="grid gap-4">
-      <Card title="Preview" sub="This is what will be posted, with your overlay text in place." right={<Button size="sm" variant="ghost" onClick={() => onEdit("creative")}>Edit</Button>}>
-        {rendering && <p className="text-[13px] text-ink-2 mb-3">We're preparing your preview — this takes a minute or two for videos. You can pay once it's ready.</p>}
-        {failed && <ErrorBanner>We couldn't prepare one of your files. Go back to Creative and upload it again.</ErrorBanner>}
+    <div className="grid grid-cols-1 gap-4">
+      <Card
+        title="Preview"
+        sub={defaultPending ? "Your files are shown without the printed text until the preview is ready." : c.superText ? "This is what will be posted, with your printed text in place." : "This is what will be posted."}
+        right={<Button size="sm" variant="ghost" onClick={() => onEdit("creative")}>Edit</Button>}
+      >
+        <RenderWait campaign={c} action={offline ? "submit it for review" : "pay"} />
+        {failed && (
+          <div className="mb-3">
+            <ErrorBanner>
+              {fileFailed ? (
+                <>
+                  We couldn&apos;t prepare one of your files. Go back to Content and press Try again.{" "}
+                  <button type="button" className="underline font-semibold" onClick={() => onEdit("creative")}>Open Content</button>
+                </>
+              ) : (
+                <>We couldn&apos;t prepare the files for one of your accounts. In the account list below, press Customise on the account marked “Couldn&apos;t prepare”, then press Save for this account.</>
+              )}
+            </ErrorBanner>
+          </div>
+        )}
         <PreviewStrip campaign={c} />
         <dl className="mt-4 grid gap-2 text-[13px]">
           <Row k="Campaign type" v={CAMPAIGN_TYPE_LABELS[c.campaignType] ?? c.campaignType} />
           <Row k="Format" v={FORMAT_LABELS[c.format as CampaignFormat] ?? c.format ?? "—"} />
-          {c.audioIntegration && <Row k="Song audio" v={<span className="break-words">{c.audioTrack}</span>} />}
-          <Row k="Go live" v={`${fmtDate(c.launchFrom)} – ${fmtDate(c.launchTo)}`} />
-          {c.superText && <Row k="Overlay" v={<span className="whitespace-pre-line">{c.superText}</span>} />}
+          {c.audioIntegration && <Row k="Song" v={<span className="break-words">{c.audioTrack}</span>} />}
+          <Row k="Post between" v={`${fmtDate(c.launchFrom)} – ${fmtDate(c.launchTo)}`} />
+          {c.superText && <Row k="Printed text" v={<span className="whitespace-pre-line">{c.superText}</span>} />}
           {c.caption && <Row k="Caption" v={<span className="whitespace-pre-line break-words">{c.caption}</span>} />}
           {c.hashtags.length > 0 && <Row k="Hashtags" v={c.hashtags.map((h) => `#${h}`).join(" ")} />}
           {(c.userTags.length > 0 || c.collaborators.length > 0) && <Row k="Tags" v={[...c.userTags, ...c.collaborators].map((h) => `@${h}`).join(" ")} />}
         </dl>
       </Card>
 
-      <Card title="Accounts" sub="Every account posts the campaign's caption and super text unless you customise it here." right={<Button size="sm" variant="ghost" onClick={() => onEdit("accounts")}>Edit</Button>}>
+      <Card title="Accounts" sub={nCustom ? "Accounts without their own text post the campaign's caption and printed text." : "Every account posts the campaign's caption and printed text."} right={<Button size="sm" variant="ghost" onClick={() => onEdit("accounts")}>Edit</Button>}>
         <ul className="divide-y divide-ink/5">
           {c.items.map((i) => (
             <li key={i.id} className="py-2.5 flex items-center gap-3 text-[13px]">
@@ -218,13 +392,24 @@ function PayStep({ campaign: c, onChanged, onEdit, onCancelled }: { campaign: Ca
               <span className="text-ink-3 hidden sm:inline">{PLATFORM_LABEL[i.platform]}</span>
               <span className="text-right">
                 <span className="block font-semibold tabular-nums">{rupees(i.pricePaise)}</span>
-                {i.audioAddonPaise > 0 && <span className="block text-[11px] text-ink-3 tabular-nums">incl. {rupees(i.audioAddonPaise)} audio</span>}
+                {i.audioAddonPaise > 0 && <span className="block text-[11px] text-ink-3 tabular-nums">incl. {rupees(i.audioAddonPaise)} for the song</span>}
               </span>
             </li>
           ))}
         </ul>
-        <h3 className="mt-4 text-[13px] font-bold text-ink">Text per account</h3>
-        <ul className="divide-y divide-ink/5">
+        <button
+          type="button"
+          aria-expanded={open}
+          aria-controls="item-text-list"
+          disabled={forced && open}
+          onClick={() => setUserOpen(!open)}
+          className="mt-4 text-[13px] font-semibold text-ink-2 hover:text-ink disabled:cursor-default disabled:hover:text-ink-2"
+        >
+          {nCustom
+            ? `${nCustom} account${nCustom === 1 ? " has its" : "s have their"} own text`
+            : "Different text on some accounts? Customise per account"}
+        </button>
+        <ul id="item-text-list" hidden={!open} className="divide-y divide-ink/5">
           {c.items.map((i) => (
             <ItemTextRow key={i.id} campaign={c} item={i} editable onSaved={() => onChanged()} />
           ))}
@@ -233,31 +418,32 @@ function PayStep({ campaign: c, onChanged, onEdit, onCancelled }: { campaign: Ca
           <span className="text-[13px] font-semibold text-ink-2">Total</span>
           <span className="text-[19px] font-bold text-ink tabular-nums">{rupees(total)}</span>
         </div>
-        <p className="text-[12px] text-ink-3 mt-2">
+        <p className="text-[13px] text-ink-2 mt-2">
           {offline
-            ? "No online payment is needed now. Submit the campaign and our team will review the creative (usually within a working day) and confirm the amount and payment details with you. You'll get an email with the link to every post once it's live."
-            : "After payment our team reviews the creative (usually within a working day). If we can't run it, you get a full refund. You'll get an email with the link to every post once it's live."}
+            ? "No online payment is needed now. Submit the campaign and our team will review it (usually within a working day) and confirm the amount and payment details with you. You'll get an email with the link to every post once it's live."
+            : "After payment our team reviews your campaign (usually within a working day). If we can't run it, you get a full refund. You'll get an email with the link to every post once it's live."}
         </p>
       </Card>
 
+      {datePassed && (
+        <ErrorBanner>
+          Your earliest posting date has passed — update the dates before submitting.{" "}
+          <button type="button" className="underline font-semibold" onClick={() => onEdit("info")}>Update dates</button>
+        </ErrorBanner>
+      )}
       {error && <ErrorBanner>{error}</ErrorBanner>}
-      <div className="flex flex-col-reverse sm:flex-row gap-2 sm:justify-between">
-        <Button
-          variant="ghost"
-          onClick={async () => {
-            if (!window.confirm("Cancel this campaign? You can start a new one any time.")) return;
-            await mutateJson(`/client/campaigns/${c.id}/cancel`, "POST").catch(() => undefined);
-            onCancelled();
-          }}
-        >
-          Cancel campaign
-        </Button>
-        <Button variant="ink" onClick={pay} disabled={busy || rendering || failed} aria-live="polite">
+      <div className="flex justify-end">
+        <Button variant="ink" onClick={pay} disabled={busy || rendering || failed || datePassed} aria-live="polite">
           {busy ? (offline ? "Submitting…" : "Opening payment…") : rendering ? "Preparing preview…" : offline ? `Submit for review · ${rupees(total)}` : `Pay ${rupees(total)}`}
         </Button>
       </div>
     </div>
   );
+}
+
+/** A failed render of the campaign's own file (or thumbnail) — the kind Content can retry. */
+function failedFile(c: Campaign): boolean {
+  return (c.thumbnail ? [...c.media, c.thumbnail] : c.media).some((m) => m.renderStatus === "failed");
 }
 
 function Row({ k, v }: { k: string; v: React.ReactNode }) {
@@ -296,7 +482,18 @@ function PreviewStrip({ campaign: c }: { campaign: Campaign }) {
               <img src={urls[m.id]} alt={m.originalName} className="w-full h-full object-contain" />
             )
           ) : (
-            <span className="text-white/60 text-[12px]">{m.renderStatus === "done" ? "Loading…" : "Preparing…"}</span>
+            <span className="text-white/60 text-[12px]">{m.renderStatus === "done" ? "Loading…" : m.renderStatus === "failed" ? "" : "Preparing…"}</span>
+          )}
+          {/* Until the render is done the strip shows the raw upload — say so, so nobody reads it as final. */}
+          {urls[m.id] && (m.renderStatus === "queued" || m.renderStatus === "rendering") && (
+            <span className="absolute bottom-2 left-2 right-2 z-10 rounded-full bg-black/70 text-white text-[11px] font-semibold px-2.5 py-1">
+              Preparing preview…{c.superText ? " — your text isn't on this yet" : ""}
+            </span>
+          )}
+          {m.renderStatus === "failed" && (
+            <span className="absolute bottom-2 left-2 right-2 z-10 rounded-full bg-black/80 text-danger border border-danger/60 text-[11px] font-semibold px-2.5 py-1">
+              Couldn&apos;t prepare — press Try again in Content
+            </span>
           )}
         </div>
       ))}
@@ -306,9 +503,10 @@ function PreviewStrip({ campaign: c }: { campaign: Campaign }) {
 
 // ── After payment: status, changes, results ─────────────────────────────────────
 
-function AfterPayment({ campaign: c, onChanged }: { campaign: Campaign; onChanged: () => void }) {
+function AfterPayment({ campaign: c, onChanged }: { campaign: Campaign; onChanged: (saved?: Campaign) => void }) {
   const live = ["approved", "publishing", "completed", "partially_published"].includes(c.status);
   const { data: results } = useResults(c.id, live);
+  const { user } = useAuth();
   const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -316,11 +514,15 @@ function AfterPayment({ campaign: c, onChanged }: { campaign: Campaign; onChange
   // paidAt is set only by an online payment; a booking submitted without one must never be
   // told it paid or that a refund is on its way.
   const paidOnline = Boolean(c.paidAt);
+  const hasWindow = Boolean(c.launchFrom && c.launchTo);
+  const windowText = hasWindow ? `${fmtDate(c.launchFrom)} – ${fmtDate(c.launchTo)}` : null;
   const message: Record<string, string> = {
     paid_pending_review: paidOnline
-      ? "Payment received. Our team is reviewing your creative — usually within one working day."
-      : "Submitted. Our team is reviewing your creative — usually within one working day — and will confirm the amount and payment details with you.",
-    approved: "Approved. Your posts are scheduled; you'll get an email with each link as it goes live.",
+      ? "Payment received. Our team is reviewing your campaign — usually within one working day."
+      : "Submitted. Our team is reviewing your campaign — usually within one working day — and will confirm the amount and payment details with you.",
+    approved: hasWindow
+      ? `Approved. Your posts will go live between ${fmtDate(c.launchFrom)} and ${fmtDate(c.launchTo)}; you'll get an email with each link as it goes live.`
+      : "Approved. Your posts are scheduled; you'll get an email with each link as it goes live.",
     publishing: "Your posts are going live. Links appear below as each one is posted.",
     completed: "Every post is live. The links are below and in your email.",
     partially_published: paidOnline
@@ -329,27 +531,49 @@ function AfterPayment({ campaign: c, onChanged }: { campaign: Campaign; onChange
     rejected: paidOnline
       ? "We couldn't run this campaign. A full refund is on its way (5–7 working days)."
       : "We couldn't run this campaign. Nothing has been charged for it.",
-    refunded: "This campaign was refunded in full.",
+    refunded: paidOnline ? "This campaign was refunded in full." : "This campaign was closed. Nothing has been charged for it.",
     cancelled: "This campaign was cancelled.",
-    expired: "This campaign wasn't paid in time and has expired. Start a new one any time.",
+    expired: "This campaign wasn't completed in time and has expired. Start a new one any time.",
   };
+  const showWindow = hasWindow && ["paid_pending_review", "approved", "publishing"].includes(c.status);
+  // In "changes requested" the dates can't be edited here; a window that has closed goes to our team.
+  const windowPassed = !!c.launchTo && c.launchTo < todayIST();
 
   return (
-    <div className="grid gap-4">
+    <div className="grid grid-cols-1 gap-4">
       {c.status === "changes_requested" ? (
-        <Card title="A change is needed" sub={paidOnline ? "Your payment is safe. Update the creative and send it back for review." : "Update the creative and send it back for review."}>
+        <Card title="A change is needed" sub={paidOnline ? "Your payment is safe. Update your video, image or text and send it back for review." : "Update your video, image or text and send it back for review."}>
           <blockquote className="rounded-xl bg-attention-bg text-ink px-4 py-3 text-[13.5px] whitespace-pre-line">{c.reviewNote}</blockquote>
-          {!editing && <div className="mt-3"><Button variant="ink" onClick={() => setEditing(true)}>Update creative</Button></div>}
+          {windowText && <p className="text-[12.5px] text-ink-3 mt-3">Go-live window: {windowText}</p>}
+          {windowPassed && (
+            <p className="text-[13px] text-attention mt-2">
+              Your posting window has passed — reply to the review email or write to{" "}
+              <a href="mailto:hello@digitalsukoon.com" className="underline font-semibold">hello@digitalsukoon.com</a> and our team will agree new dates with you.
+            </p>
+          )}
+          {!editing && <div className="mt-3"><Button variant="ink" onClick={() => setEditing(true)}>Update your campaign</Button></div>}
         </Card>
       ) : (
         <Card>
           <p className="text-[14px] text-ink">{message[c.status] ?? ""}</p>
+          {c.status === "paid_pending_review" && (
+            <p className="text-[13px] text-ink-2 mt-2">
+              We&apos;re sending a confirmation to {user?.email ?? "your email"} — check your inbox (and spam). Our team replies from that thread.
+            </p>
+          )}
+          {showWindow && <p className="text-[12.5px] text-ink-3 mt-2">Go-live window: {windowText}</p>}
           {c.reviewNote && ["rejected", "refunded"].includes(c.status) && (
             <blockquote className="mt-3 rounded-xl bg-muted px-4 py-3 text-[13px] whitespace-pre-line">{c.reviewNote}</blockquote>
           )}
-          {c.totalPaise != null && (
+          {/* Offline, the total is only news while there is still something to settle — never under
+              "Nothing has been charged" (rejected), a cancelled or an expired campaign. */}
+          {c.totalPaise != null && (paidOnline || SETTLING.includes(c.status)) && (
             <p className="text-[12.5px] text-ink-3 mt-2">
-              {paidOnline ? `Paid ${rupees(c.totalPaise)} on ${fmtDateTime(c.paidAt as string)}` : `Booking total ${rupees(c.totalPaise)} — to be settled with our team`}
+              {paidOnline
+                ? `Paid ${rupees(c.totalPaise)} on ${fmtDateTime(c.paidAt as string)}`
+                : c.status === "partially_published"
+                  ? `Campaign total before the posts that couldn't be made: ${rupees(c.totalPaise)} — our team will confirm the final amount with you`
+                  : `Campaign total ${rupees(c.totalPaise)} — our team will confirm payment with you`}
             </p>
           )}
         </Card>
@@ -357,19 +581,29 @@ function AfterPayment({ campaign: c, onChanged }: { campaign: Campaign; onChange
 
       {c.status === "changes_requested" && editing && (
         <>
-          <CreativeStep campaign={c} submitLabel="Save changes" onSaved={() => onChanged()} />
-          <Card title="Text per account" sub="Give any account its own caption or super text.">
+          {/* The saved campaign goes straight into the cache, so the step never treats the file
+              it just saved as "not saved yet" (which would let a × or a Replace delete it). */}
+          <CreativeStep campaign={c} submitLabel="Save changes" onSaved={(n) => onChanged(n)} />
+          <Card title="Text per account" sub="Give any account its own caption or printed text.">
             <ul className="divide-y divide-ink/5">
               {c.items.map((i) => (
                 <ItemTextRow key={i.id} campaign={c} item={i} editable onSaved={() => onChanged()} />
               ))}
             </ul>
           </Card>
-          {renderPending(c) && <p className="text-[13px] text-ink-2">We're preparing the previews — you can send for review once they're ready.</p>}
+          <RenderWait campaign={c} action="send it for review" />
+          {renderFailed(c) && (
+            <ErrorBanner>
+              {failedFile(c)
+                ? "We couldn't prepare one of your files. Press Try again in the content section above, then send it for review."
+                : "We couldn't prepare the files for one of your accounts. Open it under Text per account above and press Save for this account again, then send it for review."}
+            </ErrorBanner>
+          )}
           {error && <ErrorBanner>{error}</ErrorBanner>}
           <div className="flex justify-end">
             <Button
               variant="ink"
+              aria-live="polite"
               disabled={busy || renderPending(c) || renderFailed(c)}
               onClick={async () => {
                 setBusy(true);
@@ -379,7 +613,8 @@ function AfterPayment({ campaign: c, onChanged }: { campaign: Campaign; onChange
                   setEditing(false);
                   onChanged();
                 } catch (e) {
-                  setError(e instanceof Error ? e.message : "Couldn't resubmit.");
+                  setError(e instanceof Error ? e.message : "Couldn't send it for review. Please try again.");
+                  onChanged();
                 } finally {
                   setBusy(false);
                 }
@@ -419,7 +654,7 @@ function AfterPayment({ campaign: c, onChanged }: { campaign: Campaign; onChange
                 </div>
               )}
               <div className="flex items-center gap-2 shrink-0">
-                <ItemStatus status={i.status} />
+                <ItemStatus status={i.status} paidOnline={paidOnline} />
                 {i.permalink && (
                   <a href={i.permalink} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 h-8 px-3 rounded-xl border-2 border-ink text-[12.5px] font-semibold text-ink btn-3d bg-surface">
                     View post <Icon.External size={12} />

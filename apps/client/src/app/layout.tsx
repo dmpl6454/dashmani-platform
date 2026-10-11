@@ -34,7 +34,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     localStorage.setItem("clientRefreshToken", session.refreshToken);
     localStorage.setItem("clientUser", JSON.stringify(session.user));
     setUser(session.user);
-    router.push(safeNext() ?? "/dashboard");
+    // replace, not push: Back from the portal must not land on the sign-in form again.
+    router.replace(safeNext() ?? "/dashboard");
   }
 
   async function login(email: string, password: string) {
@@ -61,6 +62,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <head>
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <title>Dashmani Client Portal</title>
+        {/* The browser asks for /favicon.ico on every first load; the portal ships only the SVG mark. */}
+        <link rel="icon" href="/logo-mark.svg" type="image/svg+xml" />
       </head>
       <body>
         <AuthContext.Provider value={{ user, login, adoptSession, logout, isLoading }}>

@@ -34,8 +34,18 @@ function ResetPasswordForm() {
         method: "POST",
         body: JSON.stringify({ token, newPassword: password }),
       });
+      // The reset revoked that account's sessions on the server. Drop whatever session this browser
+      // still holds (it may even be another account on a shared machine): /login sends a signed-in
+      // visitor straight on, so without this the "Taking you to sign in" step would be skipped.
+      try {
+        localStorage.removeItem("clientAccessToken");
+        localStorage.removeItem("clientRefreshToken");
+        localStorage.removeItem("clientUser");
+      } catch {
+        /* storage blocked: nothing stored either */
+      }
       setDone(true);
-      setTimeout(() => router.push("/login"), 2500);
+      setTimeout(() => router.replace("/login"), 2500);
     } catch (err: any) {
       setError(err.message || "Reset failed. The link may have expired.");
     } finally {

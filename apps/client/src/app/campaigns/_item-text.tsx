@@ -2,14 +2,14 @@
 import { useEffect, useState } from "react";
 import { Button } from "@/components/portal-shared";
 import { Icon } from "@/components/portal-icons";
-import { CAMPAIGN_LIMITS, countHashtags, countMentions } from "@dashmani/shared/src/validators/campaign";
+import { CAMPAIGN_LIMITS, HASHTAG_RE, countHashtags, countMentions } from "@dashmani/shared/src/validators/campaign";
 import { API_ORIGIN, mutateJson, type Campaign, type CampaignItem, type ItemPreviewFile } from "@/lib/campaign";
 import { apiFetch } from "@/lib/api";
 import { ErrorBanner, Field, PlatformDot, inputCls, textareaCls } from "./_ui";
 
-// Per-account text: a different caption / hashtags / overlay for ONE booked account. Everything
-// defaults to the campaign's; the client opts a single account out of it here. A custom overlay
-// queues that account's own render, so the preview shows exactly what that page gets.
+// Per-account text: a different caption / hashtags / printed text for ONE booked account.
+// Everything defaults to the campaign's; the client opts a single account out of it here. Its own
+// printed text queues that account's own render, so the preview shows exactly what that page gets.
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : "Something went wrong. Please try again.");
 const splitTags = (s: string) => s.split(/[\s,]+/).map((t) => t.trim().replace(/^[#@]/, "")).filter(Boolean);
@@ -31,11 +31,17 @@ export function ItemTextEditor({ campaign: c, item, onSaved }: { campaign: Campa
   const mentionCount = countMentions(caption);
   const captionBad = caption.length > CAMPAIGN_LIMITS.captionMax || tagCount > CAMPAIGN_LIMITS.hashtagsMax || mentionCount > CAMPAIGN_LIMITS.mentionsMax;
   const superBad = superText.length > CAMPAIGN_LIMITS.superTextMax || superText.split("\n").length > CAMPAIGN_LIMITS.superTextLinesMax;
+  // "pay" only when the gateway will open next; offline and after-review campaigns are sent for review.
+  const aboutToPay = c.paymentMode !== "offline" && ["draft", "awaiting_payment"].includes(c.status);
 
   const save = async () => {
     setError(null);
     if (captionMode === "custom" && captionBad) return setError("Instagram allows 2,200 characters, 30 hashtags and 20 @mentions.");
-    if (overlayMode === "custom" && (!superText.trim() || superBad)) return setError("Enter the overlay text — up to 120 characters and 3 lines.");
+    if (captionMode === "custom") {
+      const bad = splitTags(hashtags).find((t) => !HASHTAG_RE.test(t));
+      if (bad) return setError(`"#${bad}" isn't a valid hashtag — use letters, numbers and _ only.`);
+    }
+    if (overlayMode === "custom" && (!superText.trim() || superBad)) return setError("Enter the printed text — up to 120 characters and 3 lines.");
     setBusy(true);
     try {
       const next = await mutateJson<Campaign>(`/client/campaigns/${c.id}/items/${item.id}/text`, "PUT", {
@@ -82,7 +88,7 @@ export function ItemTextEditor({ campaign: c, item, onSaved }: { campaign: Campa
       </fieldset>
 
       <fieldset>
-        <legend className="block text-[11px] uppercase tracking-wider font-bold text-ink-3 mb-1.5">Super text on this account</legend>
+        <legend className="block text-[11px] uppercase tracking-wider font-bold text-ink-3 mb-1.5">Printed text on this account</legend>
         <div className="flex flex-wrap gap-2">
           {(["same", "custom", "none"] as const).map((m) => (
             <label key={m} className={`flex items-center gap-2 h-9 px-3 border-2 cursor-pointer text-[13px] font-semibold ${overlayMode === m ? "border-ink" : "border-ink/15"}`}>
@@ -93,7 +99,7 @@ export function ItemTextEditor({ campaign: c, item, onSaved }: { campaign: Campa
         </div>
         {overlayMode === "custom" && (
           <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-start mt-3">
-            <Field label="Overlay text" htmlFor={`sup-${item.id}`} hint={`${superText.length}/${CAMPAIGN_LIMITS.superTextMax} · up to 3 lines`} error={superBad ? "Keep it to 120 characters and 3 lines" : null}>
+            <Field label="Printed text" htmlFor={`sup-${item.id}`} hint={`${superText.length}/${CAMPAIGN_LIMITS.superTextMax} · up to 3 lines`} error={superBad ? "Keep it to 120 characters and 3 lines" : null}>
               <textarea id={`sup-${item.id}`} className={textareaCls} rows={3} value={superText} onChange={(e) => setSuperText(e.target.value)} />
             </Field>
             <div>
@@ -109,7 +115,11 @@ export function ItemTextEditor({ campaign: c, item, onSaved }: { campaign: Campa
             </div>
           </div>
         )}
-        {overlayMode !== "same" && <p className="text-[12px] text-ink-3 mt-2">We prepare this account&apos;s own files with the text in place — check its preview below before you pay.</p>}
+        {overlayMode !== "same" && (
+          <p className="text-[12px] text-ink-3 mt-2">
+            We prepare this account&apos;s own files with the text in place. That adds a few minutes before you can {aboutToPay ? "pay" : "send the campaign for review"}; check its preview below.
+          </p>
+        )}
       </fieldset>
 
       {error && <ErrorBanner>{error}</ErrorBanner>}
@@ -149,7 +159,7 @@ export function ItemPreview({ campaign: c, item }: { campaign: Campaign; item: C
               <img src={`${API_ORIGIN}${f.url}`} alt="" className="w-full h-full object-contain" />
             )
           ) : (
-            <span className="text-white/60 text-[11px]">{f.status === "failed" ? "Failed" : "Preparing…"}</span>
+            <span className="text-white/60 text-[11px]">{f.status === "failed" ? "Couldn't prepare" : "Preparing…"}</span>
           )}
           {f.role === "thumbnail" && <span className="absolute top-1 left-1 bg-black/70 text-white text-[10px] font-bold px-1.5 py-0.5">Thumbnail</span>}
         </div>
@@ -182,7 +192,7 @@ export function ItemTextRow({ campaign: c, item, onSaved, editable }: { campaign
       {!open && custom && (
         <div className="mt-1 pl-5 text-[12px] text-ink-3 grid gap-0.5">
           {item.captionOverride != null && <div className="truncate">Caption: <span className="text-ink-2">{item.captionOverride || "(hashtags only)"}</span></div>}
-          {item.superTextOverride != null && <div className="truncate">Super text: <span className="text-ink-2">{item.superTextOverride || "none"}</span></div>}
+          {item.superTextOverride != null && <div className="truncate">Printed text: <span className="text-ink-2">{item.superTextOverride || "none"}</span></div>}
         </div>
       )}
       {open && (

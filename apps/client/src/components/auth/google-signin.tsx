@@ -49,16 +49,36 @@ function loadGis(): Promise<void> {
   return gisLoading;
 }
 
-export function GoogleSignIn({ mode, onSession }: { mode: "signin" | "signup"; onSession: (s: Session) => void }) {
+export function GoogleSignIn({ mode, onSession, initialCompany, onProfileStep }: {
+  mode: "signin" | "signup";
+  onSession: (s: Session) => void;
+  /** The company the client already typed on the sign-up form, used to prefill the profile step. */
+  initialCompany?: string;
+  /** Told when the company step opens/closes, so the host page can hide its own form meanwhile. */
+  onProfileStep?: (active: boolean) => void;
+}) {
   const [clientId, setClientId] = useState<string | null>(null);
   const [credential, setCredential] = useState<string | null>(null);
   const [profile, setProfile] = useState<{ email: string; name: string; suggestedCompany: string | null } | null>(null);
   const [company, setCompany] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [companyErr, setCompanyErr] = useState<string | null>(null);
   const slot = useRef<HTMLDivElement>(null);
   const onSessionRef = useRef(onSession);
   onSessionRef.current = onSession;
+  const initialCompanyRef = useRef(initialCompany);
+  initialCompanyRef.current = initialCompany;
+  const onProfileStepRef = useRef(onProfileStep);
+  onProfileStepRef.current = onProfileStep;
+  const profileStep = !!(profile && credential);
+
+  useEffect(() => { onProfileStepRef.current?.(profileStep); }, [profileStep]);
+  // The company step replaces the button (and, on /signup, the whole form above it): move focus to
+  // its greeting so a keyboard / screen-reader user lands on it instead of on <body>.
+  const helloRef = useRef<HTMLParagraphElement>(null);
+  useEffect(() => { if (profileStep) helloRef.current?.focus(); }, [profileStep]);
+  useEffect(() => () => { onProfileStepRef.current?.(false); }, []);
 
   // 1. Is it set up on the server?
   useEffect(() => {
@@ -82,7 +102,9 @@ export function GoogleSignIn({ mode, onSession }: { mode: "signin" | "signup"; o
         const p = r.data;
         setCredential(cred);
         setProfile({ email: p.email, name: p.name, suggestedCompany: p.suggestedCompany });
-        setCompany((c) => c || p.suggestedCompany || "");
+        // Set outright each time the step opens: what the client typed on the form
+        // (possibly edited since a previous visit to this step) wins over Google's guess (a Workspace domain).
+        setCompany(initialCompanyRef.current?.trim() || p.suggestedCompany || "");
       } else {
         onSessionRef.current(r.data);
       }
@@ -93,9 +115,10 @@ export function GoogleSignIn({ mode, onSession }: { mode: "signin" | "signup"; o
     }
   }
 
-  // 3. Render Google's button once the script and the id are both here.
+  // 3. Render Google's button once the script and the id are both here (and again
+  //    when the company step closes, since its slot was unmounted meanwhile).
   useEffect(() => {
-    if (!clientId || !slot.current) return;
+    if (!clientId || profileStep || !slot.current) return;
     let cancelled = false;
     const el = slot.current;
     loadGis()
@@ -122,27 +145,36 @@ export function GoogleSignIn({ mode, onSession }: { mode: "signin" | "signup"; o
       .catch((e: Error) => { if (!cancelled) setError(e.message); });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clientId, mode]);
+  }, [clientId, mode, profileStep]);
 
   if (!clientId) return null;
+
+  const leaveProfile = () => { setProfile(null); setCredential(null); setError(""); setCompanyErr(null); };
 
   if (profile && credential) {
     return (
       <form
         className="auth-form auth-google-profile"
-        onSubmit={(e) => { e.preventDefault(); if (company.trim().length < 2) { setError("Tell us your company or brand name."); return; } void exchange(credential, company.trim()); }}
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (company.trim().length < 2) { setCompanyErr("Tell us your company or brand name."); return; }
+          void exchange(credential, company.trim());
+        }}
         noValidate
       >
-        <p className="auth-google-hello">
+        <p ref={helloRef} tabIndex={-1} className="auth-google-hello outline-none">
           Hi {profile.name.split(" ")[0]} — Google confirmed <strong>{profile.email}</strong>. One more thing to open your account.
         </p>
         <AuthField id="gcompany" label="Company or brand" autoComplete="organization" placeholder="Acme Studios"
-          value={company} onChange={(v) => { setCompany(v); if (error) setError(""); }} error={null} />
+          value={company} onChange={(v) => { setCompany(v); if (error) setError(""); if (companyErr) setCompanyErr(null); }} error={companyErr} />
         {error && <div role="alert" className="auth-err"><AlertCircle size={14} /> <span>{error}</span></div>}
         <button type="submit" disabled={busy} className="auth-btn" aria-live="polite">
           {busy ? (<><span className="auth-spinner" aria-hidden /><span>Setting things up…</span></>) : (<><span>Create my account</span><ArrowRight size={17} /></>)}
         </button>
-        <button type="button" className="auth-link" onClick={() => { setProfile(null); setCredential(null); setError(""); }}>Use a different account</button>
+        <div className="auth-row">
+          <button type="button" className="auth-link" onClick={leaveProfile}>Use a different account</button>
+          {onProfileStep && <button type="button" className="auth-link" onClick={leaveProfile}>Use email instead</button>}
+        </div>
       </form>
     );
   }

@@ -171,7 +171,9 @@ export function renderPendingCounts(c: Campaign): { files: number; accounts: num
 /** "Where you left off" for a draft row on the campaign list and the home page. null once submitted. */
 export function nextStepHint(r: Pick<CampaignListRow, "status" | "format" | "itemCount">): string | null {
   if (r.status !== "draft") return null;
-  return !r.format ? "Next: add your video or image" : r.itemCount === 0 ? "Next: choose accounts" : "Next: review & submit";
+  // Mode-neutral on purpose: list rows carry no paymentMode, and step 4 is "Review & submit"
+  // offline but "Review & pay" with Razorpay.
+  return !r.format ? "Next: add your video or image" : r.itemCount === 0 ? "Next: choose accounts" : "Next: review your campaign";
 }
 
 /**

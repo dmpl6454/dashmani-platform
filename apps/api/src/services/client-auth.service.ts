@@ -289,6 +289,44 @@ export async function clientSignup(data: { companyName: string; contactName: str
   return issueClientSession(client);
 }
 
+/** Two-label public suffixes a Workspace domain commonly ends in ("acme.co.in" → "acme"). */
+const MULTI_PART_SUFFIXES = new Set([
+  "co.in", "net.in", "org.in", "firm.in", "gen.in", "ind.in", "ac.in", "edu.in", "gov.in",
+  "co.uk", "org.uk", "ac.uk", "gov.uk", "ltd.uk", "plc.uk",
+  "com.au", "net.au", "org.au", "co.nz", "co.za", "co.jp", "co.id", "co.kr",
+  "com.sg", "com.my", "com.hk", "com.cn", "com.br", "com.mx", "com.ar", "com.tr",
+  "com.pk", "com.bd", "com.np", "com.lk", "com.ng", "com.ph", "com.vn", "com.sa", "com.eg",
+]);
+
+// Generic second-level labels many country TLDs register under ("acme.co.ae", "acme.edu.au",
+// "acme.com.qa"). Paired with a two-letter country code they are a public suffix even when the
+// pair is not listed above, and on their own they are never a company name ("Co", "Com").
+const GENERIC_SECOND_LEVEL = new Set([
+  "co", "com", "net", "org", "ac", "edu", "gov", "ltd", "plc", "gen", "ind", "firm", "or", "ne", "go", "biz", "info", "mil", "nic",
+]);
+
+function isTwoPartSuffix(lastTwo: string[]): boolean {
+  const [sld, tld] = lastTwo;
+  return MULTI_PART_SUFFIXES.has(lastTwo.join(".")) || (tld?.length === 2 && GENERIC_SECOND_LEVEL.has(sld ?? ""));
+}
+
+/**
+ * A company-name suggestion from a Google Workspace domain — never the bare domain itself
+ * (the portal would otherwise prefill "acme.com" as the company, and the campaign brand
+ * after it). "acme.com" / "mail.acme.co.in" → "Acme"; "acme-studios.com" → "Acme Studios".
+ * Null when nothing sensible remains (no domain, a lone TLD, or a numeric label).
+ */
+export function companyFromDomain(domain: string | null | undefined): string | null {
+  const labels = (domain ?? "").trim().toLowerCase().replace(/\.+$/, "").split(".").filter(Boolean);
+  if (labels.length < 2 || (labels.length === 2 && isTwoPartSuffix(labels))) return null;
+  const rest = labels.slice(0, labels.length - (labels.length >= 3 && isTwoPartSuffix(labels.slice(-2)) ? 2 : 1));
+  const name = rest[rest.length - 1] ?? "";
+  if (!/^[a-z0-9-]+$/.test(name) || /^[0-9-]+$/.test(name) || GENERIC_SECOND_LEVEL.has(name)) return null;
+  const words = name.split("-").filter(Boolean);
+  const out = words.map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+  return out.length >= 2 ? out.slice(0, 200) : null;
+}
+
 /**
  * "Sign in with Google" (client portal). The GIS credential is verified with Google first
  * (`verifyGoogleIdToken`: our audience, Google's issuer, unexpired, email VERIFIED); only
@@ -319,7 +357,7 @@ export async function clientGoogleSignIn(input: { credential: string; companyNam
 
   const companyName = input.companyName?.trim();
   if (!companyName) {
-    return { needsProfile: true as const, email, name: identity.name, suggestedCompany: identity.hostedDomain };
+    return { needsProfile: true as const, email, name: identity.name, suggestedCompany: companyFromDomain(identity.hostedDomain) };
   }
 
   const contactName = identity.name.slice(0, 200);

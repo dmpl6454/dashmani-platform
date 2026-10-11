@@ -1,5 +1,5 @@
 "use client";
-import type { ReactNode } from "react";
+import { Children, cloneElement, isValidElement, type ReactElement, type ReactNode } from "react";
 
 // Small building blocks shared by the campaign pages (module-scoped: `_` keeps Next from routing it).
 
@@ -9,15 +9,31 @@ export const inputCls =
 export const textareaCls =
   "w-full px-3 py-2.5 text-[14px] bg-surface text-ink caret-indigo border-2 border-[rgba(255,255,255,0.25)] hover:border-[rgba(255,255,255,0.45)] outline-none focus:border-indigo transition-colors resize-y placeholder:text-ink-4";
 
+/**
+ * A labelled form control. With `htmlFor`, the hint and the error get ids and a single child
+ * control is given `aria-describedby` (the error when there is one, else the hint) and
+ * `aria-invalid`, so a screen reader announces the problem on the field itself. A child that
+ * already sets its own `aria-describedby` keeps it.
+ */
 export function Field({ label, hint, error, children, htmlFor }: { label: string; hint?: ReactNode; error?: string | null; children: ReactNode; htmlFor?: string }) {
+  const hintId = htmlFor && hint && !error ? `${htmlFor}-hint` : undefined;
+  const errId = htmlFor && error ? `${htmlFor}-err` : undefined;
+  let control = children;
+  if (htmlFor && Children.count(children) === 1 && isValidElement(children)) {
+    const el = children as ReactElement<Record<string, unknown>>;
+    control = cloneElement(el, {
+      "aria-describedby": el.props["aria-describedby"] ?? errId ?? hintId,
+      "aria-invalid": error ? true : el.props["aria-invalid"],
+    });
+  }
   return (
     <div>
       <label htmlFor={htmlFor} className="block text-[11px] uppercase tracking-wider font-bold text-ink-3 mb-1.5">{label}</label>
-      {children}
+      {control}
       {error ? (
-        <div className="mt-1 text-[12px] text-danger font-medium" role="alert">{error}</div>
+        <div id={errId} className="mt-1 text-[12px] text-danger font-medium" role="alert">{error}</div>
       ) : hint ? (
-        <div className="mt-1 text-[12px] text-ink-3">{hint}</div>
+        <div id={hintId} className="mt-1 text-[12px] text-ink-3">{hint}</div>
       ) : null}
     </div>
   );
@@ -88,8 +104,15 @@ const ITEM: Record<string, { label: string; cls: string }> = {
   refunded: { label: "Not posted — refunded", cls: "bg-muted text-ink-2" },
 };
 
-export function ItemStatus({ status }: { status: string }) {
-  const s = ITEM[status] ?? { label: status, cls: "bg-muted text-ink-2" };
+/**
+ * One post's state. `paidOnline` is the booking's paidAt: a post dropped from a campaign that was
+ * never paid online was not charged, so it must never read "refunded".
+ */
+export function ItemStatus({ status, paidOnline }: { status: string; paidOnline: boolean }) {
+  const s =
+    status === "refunded" && !paidOnline
+      ? { label: "Not posted — not charged", cls: "bg-muted text-ink-2" }
+      : ITEM[status] ?? { label: status, cls: "bg-muted text-ink-2" };
   return <span className={`inline-flex items-center h-6 px-2.5 text-[11px] tracking-[0.02em] font-bold whitespace-nowrap border border-current/30 ${s.cls}`}>{s.label}</span>;
 }
 

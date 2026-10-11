@@ -1,13 +1,14 @@
 "use client";
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { ArrowRight, Check, AlertCircle, X } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { apiFetch } from "@/lib/api";
-import { useSearchParams } from "next/navigation";
-import { nextQueryFor, safeNextValue } from "@/lib/safe-next";
+import { useRouter, useSearchParams } from "next/navigation";
+import { nextQueryFor, safeNext, safeNextValue } from "@/lib/safe-next";
 import { AuthField, AuthShell, AuthTabs } from "@/components/auth/shared";
 import { GoogleSignIn } from "@/components/auth/google-signin";
+import { useHydrated } from "@/lib/hooks/use-hydrated";
 
 // The client sign-in page, in the website's design (see components/auth/shared.tsx).
 // Wire unchanged: useAuth().login() → POST /v1/client/auth/login, the same token
@@ -25,6 +26,18 @@ function LoginForm() {
   const [error, setError] = useState("");
   const [submitState, setSubmitState] = useState<"idle" | "loading" | "success">("idle");
   const [forgotOpen, setForgotOpen] = useState(false);
+  const hydrated = useHydrated();
+  const router = useRouter();
+
+  // Already signed in (Back or a refresh after signing in): go on, not back to the form.
+  useEffect(() => {
+    try {
+      if (localStorage.getItem("clientAccessToken") && localStorage.getItem("clientUser")) {
+        router.replace(safeNext() ?? "/dashboard");
+      }
+    } catch { /* storage blocked: just show the form */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const emailErr = emailBlurred && email && !emailOk(email) ? "Please enter a valid email" : null;
   const nextParam = useSearchParams().get("next");
@@ -55,7 +68,7 @@ function LoginForm() {
       kicker="CH 07 · Client portal"
       title={<>Your <em>network,</em><br />one room.</>}
       lines={[
-        <>Book promotion on our pages, upload the creative, and watch every post go live with its link and numbers.</>,
+        <>Book promotion on our pages, upload your video or image, and watch every post go live with its link and numbers.</>,
         <>Review drafts, leave notes, approve in a tap. Facebook, Instagram, YouTube and Snapchat, in one place.</>,
         <>New here? <Link href={signUpHref}>Create a free account</Link> to book a campaign on our network.</>,
       ]}
@@ -89,7 +102,7 @@ function LoginForm() {
             <button type="button" onClick={() => setForgotOpen(true)} className="auth-link">Forgot password?</button>
           </div>
           {error && <div role="alert" className="auth-err"><AlertCircle size={14} /> <span>{error}</span></div>}
-          <button type="submit" disabled={submitState !== "idle"} className="auth-btn" aria-live="polite">
+          <button type="submit" disabled={submitState !== "idle" || !hydrated} className="auth-btn" aria-live="polite">
             {submitState === "idle" && (<><span>Enter the portal</span><ArrowRight size={17} /></>)}
             {submitState === "loading" && (<><span className="auth-spinner" aria-hidden /><span>One moment…</span></>)}
             {submitState === "success" && (<><Check size={18} strokeWidth={3} /><span>Opening…</span></>)}

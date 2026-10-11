@@ -48,7 +48,9 @@ export async function runCampaignRetention(now = new Date()) {
     // A payment can still be in flight for an awaiting_payment booking: only expire it when no
     // payment row is captured (the webhook accepts a late capture from `expired` anyway).
     try {
-      await transitionBooking(b.id, [b.status as "draft" | "awaiting_payment"], "expired", { type: "system" }, { note: "Not paid in time" });
+      await transitionBooking(b.id, [b.status as "draft" | "awaiting_payment"], "expired", { type: "system" }, {
+        note: b.status === "draft" ? "Draft left unfinished for 30 days" : "Not paid in time",
+      });
       stats.expired++;
     } catch {
       /* moved on concurrently */
@@ -72,7 +74,9 @@ export async function runCampaignRetention(now = new Date()) {
     const st = await fsp.stat(full).catch(() => null);
     if (!st || +now - st.mtimeMs < 6 * HOUR) continue;
     const key = f.replace(/(\.partial)?\.(mp4|jpg)$/, "");
-    const used = await prisma.campaignMedia.count({ where: { renderKey: key, purgedAt: null } });
+    const used =
+      (await prisma.campaignMedia.count({ where: { renderKey: key, purgedAt: null } })) +
+      (await prisma.campaignMediaRender.count({ where: { renderKey: key, media: { purgedAt: null } } }));
     if (!used) {
       await fsp.rm(full, { force: true });
       stats.strayRenders++;

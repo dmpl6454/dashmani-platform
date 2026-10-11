@@ -92,6 +92,10 @@ export function AuthShell({
       </header>
 
       <div className="auth-body">
+        {/* The form comes first in the DOM so that, on a phone (one column), tab
+            order, reading order and the visible order all match; at ≥900px CSS
+            moves the panel back into the left column. */}
+        <section className="auth-form-col">{children}</section>
         <section className="auth-panel">
           <div className="auth-panel-top">
             <p className="auth-kicker">{kicker}</p>
@@ -102,7 +106,6 @@ export function AuthShell({
             {lines.map((l, i) => <p key={i}>{l}</p>)}
           </div>
         </section>
-        <section className="auth-form-col">{children}</section>
       </div>
 
       <footer className="auth-footer">
@@ -179,15 +182,17 @@ export function AuthField({
   );
 }
 
-/* The site's .chip pair, used as the Sign in / Create account switch. */
+/* The site's .chip pair, used as the Sign in / Create account switch. They are
+   links to two pages, not tabs, so they carry link semantics: a nav landmark and
+   aria-current on the page you are on. */
 export function AuthTabs({ active, signInHref, signUpHref, signUpLabel = "Create account" }: {
   active: "signin" | "signup"; signInHref: string; signUpHref: string; signUpLabel?: string;
 }) {
   return (
-    <div className="auth-chips" role="tablist" aria-label="Auth options">
-      <Link href={signInHref} role="tab" aria-selected={active === "signin"} aria-pressed={active === "signin"} className="auth-chip">Sign in</Link>
-      <Link href={signUpHref} role="tab" aria-selected={active === "signup"} aria-pressed={active === "signup"} className="auth-chip">{signUpLabel}</Link>
-    </div>
+    <nav className="auth-chips" aria-label="Account">
+      <Link href={signInHref} aria-current={active === "signin" ? "page" : undefined} className="auth-chip">Sign in</Link>
+      <Link href={signUpHref} aria-current={active === "signup" ? "page" : undefined} className="auth-chip">{signUpLabel}</Link>
+    </nav>
   );
 }
 
@@ -232,6 +237,8 @@ export function AuthStyles() {
       .auth-lines p { margin: 0; max-width: 46ch; }
       .auth-lines a { font-weight: 700; color: #fff; text-decoration: underline; text-underline-offset: 3px; }
       .auth-form-col { padding: clamp(24px, 4vw, 56px); display: flex; flex-direction: column; justify-content: center; animation: auth-in 0.5s var(--ease) 0.08s both; }
+      /* Two columns: the panel sits on the left although it follows the form in the DOM. */
+      @media (min-width: 900px) { .auth-panel { order: -1; } }
       .auth-form-inner { width: 100%; max-width: 440px; margin: 0 auto; display: flex; flex-direction: column; gap: 22px; }
       .auth-form-head h2 { margin: 0; font-weight: 800; letter-spacing: -0.04em; font-size: clamp(28px, 3vw, 40px); line-height: 1; }
       .auth-form-head p { margin: 10px 0 0; font-size: 15px; line-height: 1.5; color: var(--text-2); max-width: 40ch; }
@@ -256,7 +263,7 @@ export function AuthStyles() {
         border: 2px solid rgba(255, 255, 255, 0.3); background: transparent; color: #fff; cursor: pointer; white-space: nowrap;
       }
       .auth-chip:hover { border-color: var(--light); color: #fff; }
-      .auth-chip[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); }
+      .auth-chip[aria-current="page"] { background: var(--accent); border-color: var(--accent); }
 
       /* Fields */
       .auth-form { display: flex; flex-direction: column; gap: 14px; }
@@ -339,9 +346,13 @@ export function AuthStyles() {
         .auth-panel { gap: 24px; }
         .auth-h1 { font-size: clamp(40px, 11vw, 64px); }
         .auth-onair, .auth-clock, .auth-site { display: none; }
+        /* One column: the form is first in the DOM, so it is the first thing on a
+           phone; the gradient panel follows as the closing pitch. */
+        .auth-form-col { padding-bottom: 8px; }
       }
       @media (max-width: 699px) {
         .auth-header { padding: 10px 16px; }
+        .auth-tiles { display: none; }
         .auth-views { display: none; }
         .auth-footer { grid-template-columns: auto minmax(0, 1fr); }
       }

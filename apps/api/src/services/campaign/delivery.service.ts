@@ -54,6 +54,8 @@ async function bookingWithClient(bookingId: string) {
       campaignType: true,
       audioIntegration: true,
       audioTrack: true,
+      launchFrom: true,
+      launchTo: true,
       client: { select: { email: true, contactName: true, companyName: true } },
       items: {
         orderBy: { createdAt: "asc" },
@@ -65,13 +67,17 @@ async function bookingWithClient(bookingId: string) {
 
 const portalLink = (id: string) => `${campaignConfig.clientAppUrl()}/campaigns/${id}`;
 
-function itemStatusText(status: string): string {
+/** launch_from / launch_to are @db.Date (midnight UTC): format them in UTC, never as IST instants. */
+const dateOnly = (d: Date) => d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+
+/** paidOnline = the booking has a paidAt; without one nothing was charged, so nothing is "refunded". */
+function itemStatusText(status: string, paidOnline: boolean): string {
   switch (status) {
     case "posted_manual":
     case "published":
       return "Live";
     case "refunded":
-      return "Not posted — refunded";
+      return paidOnline ? "Not posted — refunded" : "Not posted — not charged";
     case "failed":
       return "Not posted";
     default:
@@ -94,7 +100,7 @@ export async function sendDeliveryEmail(bookingId: string, opts: { force?: boole
   const rows = b.items
     .map((i) => {
       const acct = i.accountHandle ? `${esc(i.accountName)} <span style="color:#777">@${esc(i.accountHandle)}</span>` : esc(i.accountName);
-      const link = i.permalink ? `<a href="${esc(i.permalink)}" style="color:#1a56db;font-weight:600">View post</a>` : esc(itemStatusText(i.status));
+      const link = i.permalink ? `<a href="${esc(i.permalink)}" style="color:#1a56db;font-weight:600">View post</a>` : esc(itemStatusText(i.status, Boolean(b.paidAt)));
       return `<tr>
 <td style="padding:10px 8px;border-bottom:1px solid #eee">${esc(PLATFORM_LABEL[i.platform] ?? i.platform)}</td>
 <td style="padding:10px 8px;border-bottom:1px solid #eee">${acct}</td>
@@ -105,7 +111,7 @@ export async function sendDeliveryEmail(bookingId: string, opts: { force?: boole
     .join("");
   const notLive = b.items.filter((i) => !i.permalink);
   const refundNote = notLive.length
-    ? `<p style="color:#8a4b00">${notLive.length} booking${notLive.length === 1 ? "" : "s"} could not be posted. ${
+    ? `<p style="color:#8a4b00">${notLive.length} post${notLive.length === 1 ? "" : "s"} could not be made. ${
         notLive.some((i) => i.status === "refunded")
           ? b.paidAt
             ? "The amount for those has been refunded to your original payment method."
@@ -165,22 +171,24 @@ export async function sendStatusEmail(bookingId: string, kind: "paid" | "approve
       ? {
           subject: `Payment received: ${b.name}`,
           title: "Payment received — we're reviewing your campaign",
-          body: `<p>We received your payment of <strong>${esc(total)}</strong> for <strong>${esc(b.name)}</strong>. Our team will review the creative, usually within one working day, and let you know.</p>`,
+          body: `<p>We received your payment of <strong>${esc(total)}</strong> for <strong>${esc(b.name)}</strong>. Our team will review your campaign, usually within one working day, and let you know.</p>`,
         }
       : {
           subject: `Submitted for review: ${b.name}`,
           title: "We've got your campaign — we're reviewing it",
-          body: `<p><strong>${esc(b.name)}</strong> has been submitted. The booking total is <strong>${esc(total)}</strong>; our team will confirm the amount and the payment details with you, review the creative (usually within one working day), and let you know.</p>`,
+          body: `<p><strong>${esc(b.name)}</strong> has been submitted. The campaign total is <strong>${esc(total)}</strong>; our team will confirm the amount and the payment details with you, review your campaign (usually within one working day), and let you know.</p>`,
         },
     approved: {
       subject: `Approved: ${b.name}`,
       title: "Your campaign is approved",
-      body: `<p><strong>${esc(b.name)}</strong> is approved and scheduled. You'll get an email with the link as each post goes live.</p>`,
+      body: `<p><strong>${esc(b.name)}</strong> is approved and scheduled. You'll get an email with the link as each post goes live.</p>${
+        b.launchFrom && b.launchTo ? `<p>Your go-live window is ${esc(dateOnly(b.launchFrom))} – ${esc(dateOnly(b.launchTo))}.</p>` : ""
+      }`,
     },
     changes_requested: {
       subject: `Changes needed: ${b.name}`,
       title: "A small change is needed",
-      body: `<p>Our team reviewed <strong>${esc(b.name)}</strong> and needs a change before it can go live:</p><blockquote style="margin:12px 0;padding:10px 14px;background:#f7f7f7;border-left:3px solid #1a1a1a">${esc(b.reviewNote ?? "")}</blockquote>${paidOnline ? "<p>Your payment is safe — update the creative in the portal and resubmit.</p>" : "<p>Update the creative in the portal and resubmit.</p>"}`,
+      body: `<p>Our team reviewed <strong>${esc(b.name)}</strong> and needs a change before it can go live:</p><blockquote style="margin:12px 0;padding:10px 14px;background:#f7f7f7;border-left:3px solid #1a1a1a">${esc(b.reviewNote ?? "")}</blockquote>${paidOnline ? "<p>Your payment is safe — make the change in the portal and resubmit.</p>" : "<p>Make the change in the portal and resubmit.</p>"}`,
     },
     rejected: {
       subject: `Not approved: ${b.name}`,
@@ -188,7 +196,7 @@ export async function sendStatusEmail(bookingId: string, kind: "paid" | "approve
       body: `<p>We're sorry — we can't run <strong>${esc(b.name)}</strong> on our network.</p>${b.reviewNote ? `<blockquote style="margin:12px 0;padding:10px 14px;background:#f7f7f7;border-left:3px solid #1a1a1a">${esc(b.reviewNote)}</blockquote>` : ""}${
         paidOnline
           ? `<p>The full amount (${esc(total)}) is being refunded to your original payment method. Refunds usually arrive in 5–7 working days.</p>`
-          : "<p>Nothing has been charged for this booking. If you have already paid us for it, our team will arrange the refund with you.</p>"
+          : "<p>Nothing has been charged for this campaign. If you have already paid us for it, our team will arrange the refund with you.</p>"
       }`,
     },
   };

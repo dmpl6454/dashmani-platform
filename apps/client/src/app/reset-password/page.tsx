@@ -5,6 +5,7 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { AlertCircle, ArrowRight } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { AuthField, AuthShell } from "@/components/auth/shared";
+import { useHydrated } from "@/lib/hooks/use-hydrated";
 
 // Token-based reset in the website's design. Wire unchanged:
 // POST /v1/client/auth/reset-password with { token, newPassword }.
@@ -18,6 +19,7 @@ function ResetPasswordForm() {
   const [confirm, setConfirm] = useState("");
   const [showPass, setShowPass] = useState(false);
   const [loading, setLoading] = useState(false);
+  const hydrated = useHydrated();
   const [done, setDone] = useState(false);
   const [error, setError] = useState("");
 
@@ -32,8 +34,18 @@ function ResetPasswordForm() {
         method: "POST",
         body: JSON.stringify({ token, newPassword: password }),
       });
+      // The reset revoked that account's sessions on the server. Drop whatever session this browser
+      // still holds (it may even be another account on a shared machine): /login sends a signed-in
+      // visitor straight on, so without this the "Taking you to sign in" step would be skipped.
+      try {
+        localStorage.removeItem("clientAccessToken");
+        localStorage.removeItem("clientRefreshToken");
+        localStorage.removeItem("clientUser");
+      } catch {
+        /* storage blocked: nothing stored either */
+      }
       setDone(true);
-      setTimeout(() => router.push("/login"), 2500);
+      setTimeout(() => router.replace("/login"), 2500);
     } catch (err: any) {
       setError(err.message || "Reset failed. The link may have expired.");
     } finally {
@@ -69,7 +81,7 @@ function ResetPasswordForm() {
               value={confirm} onChange={(v) => { setConfirm(v); if (error) setError(""); }} error={null}
               showPass={showPass} onToggleShowPass={() => setShowPass((s) => !s)} />
             {error && <div role="alert" className="auth-err"><AlertCircle size={14} /> <span>{error}</span></div>}
-            <button type="submit" disabled={loading} className="auth-btn">
+            <button type="submit" disabled={loading || !hydrated} className="auth-btn">
               {loading ? (<><span className="auth-spinner" aria-hidden /><span>Resetting…</span></>) : (<><span>Reset password</span><ArrowRight size={17} /></>)}
             </button>
           </form>

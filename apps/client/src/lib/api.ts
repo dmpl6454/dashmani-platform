@@ -12,6 +12,39 @@ export interface ApiEnvelope<T> {
   meta?: { cursor?: string; has_more?: boolean };
 }
 
+/**
+ * A failed API call. `message` is the most useful line for a person: a validation failure's
+ * first field message (e.g. "Hashtags use letters, numbers and _") rather than the envelope's
+ * generic "Invalid request data". `code` / `details` / `status` are there for callers that
+ * want to place the error on a field. Still an Error, so `e instanceof Error ? e.message` works.
+ */
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    public code?: string,
+    public details?: Array<{ field?: string; message: string }>,
+    public status?: number,
+  ) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
+/** A non-JSON body (an nginx 502 page while the API restarts) must not surface as "Unexpected token <". */
+function badResponse(status: number): ApiError {
+  return new ApiError(
+    status >= 500 ? "The server is restarting — try again in a moment." : "Unexpected response from the server — try again.",
+    "BAD_RESPONSE",
+    undefined,
+    status,
+  );
+}
+
+function apiErrorFrom(data: any, status: number, fallback: string): ApiError {
+  const details: ApiError["details"] = Array.isArray(data?.error?.details) ? data.error.details : undefined;
+  return new ApiError(details?.[0]?.message || data?.error?.message || fallback, data?.error?.code, details, status);
+}
+
 export async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<ApiEnvelope<T>> {
   const token = typeof window !== "undefined" ? localStorage.getItem("clientAccessToken") : null;
 
@@ -24,9 +57,14 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}): Prom
     },
   });
 
-  const data = await res.json();
+  let data: any;
+  try {
+    data = await res.json();
+  } catch {
+    throw badResponse(res.status);
+  }
 
-  if (!data.success) {
+  if (!data?.success) {
     if (res.status === 401 && typeof window !== "undefined") {
       const refreshed = await tryRefresh();
       if (refreshed) return apiFetch(path, options);
@@ -37,7 +75,7 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}): Prom
       const keep = here && !["/", "/login", "/signup", "/reset-password"].includes(here);
       window.location.href = keep ? `/login?next=${encodeURIComponent(here)}` : "/login";
     }
-    throw new Error(data.error?.message || "API error");
+    throw apiErrorFrom(data, res.status, "API error");
   }
 
   return data as ApiEnvelope<T>;
@@ -51,9 +89,14 @@ export async function uploadFile<T>(path: string, formData: FormData): Promise<T
     headers: token ? { Authorization: `Bearer ${token}` } : {},
     body: formData,
   });
-  const data = await res.json();
-  if (!data.success) {
-    throw new Error(data.error?.message || "Upload failed");
+  let data: any;
+  try {
+    data = await res.json();
+  } catch {
+    throw badResponse(res.status);
+  }
+  if (!data?.success) {
+    throw apiErrorFrom(data, res.status, "Upload failed");
   }
   return data.data as T;
 }

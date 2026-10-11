@@ -11,6 +11,8 @@ export interface CampaignMedia {
   id: string;
   position: number;
   kind: "image" | "video";
+  /** creative = part of the post; thumbnail = the client's cover image for a video. */
+  role: "creative" | "thumbnail";
   originalName: string;
   mime: string | null;
   bytes: number;
@@ -32,6 +34,13 @@ export interface CampaignItem {
   accountHandle: string | null;
   pricePaise: number;
   audioAddonPaise: number;
+  /** Per-account text — null means "same as the campaign". superTextOverride "" = no overlay. */
+  captionOverride: string | null;
+  hashtagsOverride: string[];
+  superTextOverride: string | null;
+  superTextStyleOverride: string | null;
+  /** State of this account's own renders (null when it posts the campaign's default files). */
+  renderStatus: "queued" | "done" | "failed" | null;
   status: string;
   permalink: string | null;
   postedAt: string | null;
@@ -61,8 +70,19 @@ export interface Campaign {
   /** "razorpay" opens the gateway at checkout; "offline" submits for review, amount settled by hand. */
   paymentMode?: "razorpay" | "offline";
   deliveredAt: string | null;
+  /** The creative (never the thumbnail). */
   media: CampaignMedia[];
+  /** The client's cover image for a video, if they supplied one. */
+  thumbnail: CampaignMedia | null;
   items: CampaignItem[];
+}
+
+export interface ItemPreviewFile {
+  mediaId: string;
+  kind: "image" | "video";
+  role: "creative" | "thumbnail";
+  status: string;
+  url: string | null;
 }
 
 export interface CampaignListRow {
@@ -120,8 +140,7 @@ export function useCampaigns() {
 /** Polls while a render or payment confirmation is pending, so the page moves on by itself. */
 export function useCampaign(id: string | null) {
   return useSWR<Campaign>(id ? `/client/campaigns/${id}` : null, unwrap, {
-    refreshInterval: (c) =>
-      c && (c.media.some((m) => m.renderStatus === "queued" || m.renderStatus === "rendering") || c.status === "awaiting_payment") ? 5000 : 0,
+    refreshInterval: (c) => (c && (renderPending(c) || c.status === "awaiting_payment") ? 5000 : 0),
   });
 }
 
@@ -131,6 +150,57 @@ export function useCatalogue(enabled: boolean) {
 
 export function useResults(id: string | null, enabled: boolean) {
   return useSWR<CampaignResults>(id && enabled ? `/client/campaigns/${id}/results` : null, unwrap, { revalidateOnFocus: true, refreshInterval: 120_000 });
+}
+
+/** Any file (creative, thumbnail or a per-account variant) still being prepared. */
+export function renderPending(c: Campaign): boolean {
+  const files = c.thumbnail ? [...c.media, c.thumbnail] : c.media;
+  return files.some((m) => m.renderStatus === "queued" || m.renderStatus === "rendering") || c.items.some((i) => i.renderStatus === "queued");
+}
+
+/**
+ * How much is still being prepared: files (creative + thumbnail default renders) and accounts
+ * with their own printed text (variant renders). Drives the "Preparing your preview: …" line.
+ */
+export function renderPendingCounts(c: Campaign): { files: number; accounts: number } {
+  const files = (c.thumbnail ? [...c.media, c.thumbnail] : c.media).filter((m) => m.renderStatus === "queued" || m.renderStatus === "rendering").length;
+  const accounts = c.items.filter((i) => i.renderStatus === "queued").length;
+  return { files, accounts };
+}
+
+/** "Where you left off" for a draft row on the campaign list and the home page. null once submitted. */
+export function nextStepHint(r: Pick<CampaignListRow, "status" | "format" | "itemCount">): string | null {
+  if (r.status !== "draft") return null;
+  // Mode-neutral on purpose: list rows carry no paymentMode, and step 4 is "Review & submit"
+  // offline but "Review & pay" with Razorpay.
+  return !r.format ? "Next: add your video or image" : r.itemCount === 0 ? "Next: choose accounts" : "Next: review your campaign";
+}
+
+/**
+ * Discard an upload the client cancelled or never saved (frees one of the 3 in-flight upload
+ * slots at once instead of waiting for it to go stale). Fire-and-forget: never throws.
+ * `keepalive` lets it outlive a closing tab, but browsers may drop a keepalive request that
+ * needs a CORS preflight — it is best-effort; the server stops counting a stale upload anyway.
+ */
+export function deleteCampaignUpload(id: string, opts: { keepalive?: boolean } = {}): Promise<void> {
+  let token: string | null = null;
+  try {
+    token = localStorage.getItem("clientAccessToken");
+  } catch {
+    /* storage blocked */
+  }
+  return fetch(`${API_URL}/client/campaign-uploads/${id}`, {
+    method: "DELETE",
+    keepalive: opts.keepalive,
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  })
+    .then(() => undefined)
+    .catch(() => undefined);
+}
+
+export function renderFailed(c: Campaign): boolean {
+  const files = c.thumbnail ? [...c.media, c.thumbnail] : c.media;
+  return files.some((m) => m.renderStatus === "failed") || c.items.some((i) => i.renderStatus === "failed");
 }
 
 export function mutateJson<T>(path: string, method: "POST" | "PUT" | "DELETE", body?: unknown) {

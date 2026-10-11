@@ -2342,6 +2342,7 @@ model CampaignBooking {
 
   client   Client                 @relation(fields: [clientId], references: [id], onDelete: Restrict)
   media    CampaignMedia[]
+  renders  CampaignMediaRender[]
   items    CampaignBookingItem[]
   payments CampaignPayment[]
   events   CampaignBookingEvent[]
@@ -2358,6 +2359,8 @@ model CampaignMedia {
   bookingId         String?   @map("booking_id")
   position          Int       @default(0)
   kind              String    @db.VarChar(8) // video | image
+  /// creative = the post itself; thumbnail = the client's own cover image for a video (one per booking).
+  role              String    @default("creative") @db.VarChar(16)
   originalName      String    @map("original_name") @db.VarChar(255)
   /// Sniffed from magic bytes on complete (the client-declared type is ignored).
   mime              String?   @db.VarChar(64)
@@ -2382,11 +2385,38 @@ model CampaignMedia {
 
   client  Client           @relation(fields: [clientId], references: [id], onDelete: Restrict)
   booking CampaignBooking? @relation(fields: [bookingId], references: [id], onDelete: SetNull)
+  renders CampaignMediaRender[]
 
   @@index([clientId, uploadStatus])
   @@index([bookingId, position])
   @@index([renderStatus])
   @@map("campaign_media")
+}
+/// A render of one media file with an overlay that differs from the booking's default — one
+/// per (file, overlay text + style). Items that customise their super text point at these; the
+/// default overlay stays on campaign_media.render_*. Files live beside the default renders.
+model CampaignMediaRender {
+  id           String    @id @default(uuid())
+  mediaId      String    @map("media_id")
+  bookingId    String    @map("booking_id")
+  /// sha1 of format|style|text — the identity of the variant.
+  overlayKey   String    @map("overlay_key") @db.VarChar(64)
+  overlayText  String?   @map("overlay_text") @db.VarChar(200)
+  overlayStyle String?   @map("overlay_style") @db.VarChar(24)
+  renderKey    String?   @unique @map("render_key") @db.VarChar(64)
+  status       String    @default("queued") @db.VarChar(16) // queued | rendering | done | failed
+  error        String?   @db.VarChar(500)
+  lockedUntil  DateTime? @map("locked_until")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  media   CampaignMedia   @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+  booking CampaignBooking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@unique([mediaId, overlayKey])
+  @@index([status])
+  @@index([bookingId])
+  @@map("campaign_media_renders")
 }
 
 /// One (account, format) the client paid for. Price frozen at checkout. Carries its own posting
@@ -2406,6 +2436,12 @@ model CampaignBookingItem {
   pricePaise    Int       @map("price_paise")
   /// The audio add-on part of pricePaise (0 when not booked).
   audioAddonPaise Int     @default(0) @map("audio_addon_paise")
+  /// Per-account text. null = the booking's caption / hashtags / overlay; a value replaces it for
+  /// THIS account only. superTextOverride "" = no overlay on this account.
+  captionOverride        String?  @map("caption_override") @db.Text
+  hashtagsOverride       String[] @default([]) @map("hashtags_override")
+  superTextOverride      String?  @map("super_text_override") @db.VarChar(200)
+  superTextStyleOverride String?  @map("super_text_style_override") @db.VarChar(24)
   status        String    @default("pending") @db.VarChar(24)
   attempts      Int       @default(0)
   nextAttemptAt DateTime? @map("next_attempt_at")

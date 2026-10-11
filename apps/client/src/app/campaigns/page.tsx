@@ -4,8 +4,14 @@ import { useRouter } from "next/navigation";
 import { Topstrip } from "@/components/portal-topstrip";
 import { Button, Empty, PageError, Skeleton } from "@/components/portal-shared";
 import { Icon } from "@/components/portal-icons";
-import { useCampaigns, rupees } from "@/lib/campaign";
+import { useCampaigns, rupees, nextStepHint } from "@/lib/campaign";
 import { CampaignStatus, fmtDate } from "./_ui";
+
+/** Same words as the dashboard's campaign card (a page file may not export it).
+ *  No platform list: the catalogue decides which networks are bookable, so the
+ *  copy never promises one it lacks. */
+const CAMPAIGNS_EMPTY_HINT =
+  "Book promotion on our network of pages — pick the accounts, upload your video or image and send it for review.";
 
 export default function CampaignsPage() {
   const router = useRouter();
@@ -35,11 +41,13 @@ export default function CampaignsPage() {
             <Empty
               icon={<Icon.Megaphone size={20} />}
               title="No campaigns yet"
-              hint="Book promotion on our Instagram, Facebook and YouTube network — pick accounts, upload your creative and pay online."
+              hint={CAMPAIGNS_EMPTY_HINT}
               cta={<Button size="sm" variant="ink" onClick={() => router.push("/campaigns/new")}>Start a campaign</Button>}
             />
           )}
-          {rows.map((r, i) => (
+          {rows.map((r, i) => {
+            const hint = nextStepHint(r);
+            return (
             <Link
               key={r.id}
               href={`/campaigns/${r.id}`}
@@ -51,6 +59,8 @@ export default function CampaignsPage() {
                 <div className="text-[12px] text-ink-3 truncate">
                   {r.brand} · {r.launchFrom ? `${fmtDate(r.launchFrom)} – ${fmtDate(r.launchTo)}` : "dates not set"}
                 </div>
+                {/* Own line: appended to the truncating brand/date line it was cut off on phones. */}
+                {hint && <div className="text-[12px] text-ink-2 font-semibold truncate">{hint}</div>}
               </div>
               <div className="flex items-center gap-3 sm:gap-4 text-[12.5px] text-ink-2 shrink-0">
                 {r.itemCount > 0 && (
@@ -62,7 +72,8 @@ export default function CampaignsPage() {
                 <CampaignStatus status={r.status} />
               </div>
             </Link>
-          ))}
+            );
+          })}
         </div>
       </div>
     </>

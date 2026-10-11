@@ -32,6 +32,13 @@ export const campaignConfig = {
   /** Active (not purged) bytes one client may hold at once. */
   clientQuotaBytes: () => envNum("CAMPAIGN_CLIENT_QUOTA_GB", 2) * 1024 ** 3,
   maxUploadsInFlight: () => envNum("CAMPAIGN_MAX_UPLOADS_IN_FLIGHT", 3, 1),
+  /**
+   * An `uploading` row older than this (minutes) no longer counts toward maxUploadsInFlight:
+   * an upload the client abandoned (closed the tab, lost the network) must not lock them out
+   * until retention purges it 24 h later. The row itself is untouched — a slow live upload
+   * keeps working — and retention still removes abandoned ones.
+   */
+  uploadStaleMinutes: () => envNum("CAMPAIGN_UPLOAD_STALE_MIN", 60, 5),
   retentionDays: () => envNum("CAMPAIGN_RETENTION_DAYS", 14, 1),
   unpaidExpiryHours: () => envNum("CAMPAIGN_UNPAID_EXPIRY_HOURS", 24, 1),
   renderEnabled: () => process.env.CAMPAIGN_RENDER_ENABLED !== "0",

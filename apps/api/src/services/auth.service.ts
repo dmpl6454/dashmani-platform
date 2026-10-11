@@ -5,6 +5,7 @@ import { AppError } from "../middleware/error-handler";
 import type { JwtPayload } from "@dashmani/shared";
 import { sendEmail } from "./email.service";
 import crypto from "crypto";
+import { likeLiteral } from "../utils/like-literal";
 
 export async function login(email: string, password: string, rememberMe = false) {
   const normalizedEmailValue = email.trim().toLowerCase();
@@ -26,6 +27,20 @@ export async function login(email: string, password: string, rememberMe = false)
     throw new AppError(401, "INVALID_CREDENTIALS", "Invalid email or password");
   }
 
+  return issueEmployeeSession(user, rememberMe);
+}
+
+/** Mint the internal-portal session for a user row — shared by password login and Google sign-in. */
+async function issueEmployeeSession(
+  user: {
+    id: string;
+    name: string;
+    email: string;
+    profileImageUrl: string | null;
+    roles: Array<{ role: { name: string } }>;
+  },
+  rememberMe: boolean,
+) {
   const roleNames = user.roles.map((ur) => ur.role.name);
 
   const payload: JwtPayload = {
@@ -61,6 +76,42 @@ export async function login(email: string, password: string, rememberMe = false)
       profileImageUrl: user.profileImageUrl,
     },
   };
+}
+
+/**
+ * Sign in with a Google ID token (internal portal).
+ *
+ * The token is verified with Google first (our audience, Google issuer, unexpired, verified
+ * email) — services/google-id-token.ts. Unlike the HR and client portals this NEVER creates an
+ * account: the internal portal is invite-only (admin-signup), and an internal session carries
+ * admin-grade power, so an unknown email is refused with an honest message rather than minted
+ * into a user. An existing user signs in under the SAME rule as password login (ACTIVE only),
+ * matched case-insensitively, and the row is never modified.
+ */
+export async function googleSignIn(credential: string, rememberMe = false) {
+  const { verifyGoogleIdToken } = await import("./google-id-token");
+  const identity = await verifyGoogleIdToken(credential);
+  const email = identity.email.trim().toLowerCase();
+
+  const user = await prisma.user.findFirst({
+    // likeLiteral: Prisma compiles `equals` + insensitive to ILIKE without escaping, so a raw
+    // '_' or '%' in the address would widen the match.
+    where: { email: { equals: likeLiteral(email), mode: "insensitive" }, deletedAt: null },
+    include: { roles: { include: { role: true } } },
+  });
+
+  if (!user) {
+    throw new AppError(
+      403,
+      "GOOGLE_NO_ACCOUNT",
+      "No Digital Sukoon portal account uses this Google email. Access is invite-only — email an admin.",
+    );
+  }
+  if (user.status !== "ACTIVE") {
+    throw new AppError(403, "ACCOUNT_INACTIVE", "Account is not active");
+  }
+
+  return issueEmployeeSession(user, rememberMe);
 }
 
 export async function refresh(refreshToken: string) {

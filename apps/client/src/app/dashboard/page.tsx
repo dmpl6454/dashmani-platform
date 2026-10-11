@@ -1,5 +1,6 @@
 "use client";
 import { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { mutate } from "swr";
 import { Topstrip } from "@/components/portal-topstrip";
@@ -11,6 +12,8 @@ import { useClientProjects } from "@/lib/hooks/use-projects";
 import { useClientPendingApprovals, PENDING_APPROVALS_KEY } from "@/lib/hooks/use-content";
 import { useClientAnalytics } from "@/lib/hooks/use-analytics";
 import { NewBriefModal } from "@/components/new-brief-modal";
+import { useCampaigns, nextStepHint, type CampaignListRow } from "@/lib/campaign";
+import { CampaignStatus } from "../campaigns/_ui";
 
 interface ApiPost {
   id: string;
@@ -42,8 +45,9 @@ export default function DashboardPage() {
   const [briefOpen, setBriefOpen] = useState(false);
 
   const { data: approvalsData, isLoading: approvalsLoading, error: approvalsError } = useClientPendingApprovals();
-  const { data: projectsRaw, isLoading: projectsLoading } = useClientProjects();
+  const { data: projectsRaw, isLoading: projectsLoading, error: projectsError } = useClientProjects();
   const { data: analyticsData } = useClientAnalytics();
+  const { data: campaigns, error: campaignsError, isLoading: campaignsLoading } = useCampaigns();
 
   const isLoading = approvalsLoading || projectsLoading;
   const now = new Date();
@@ -63,6 +67,15 @@ export default function DashboardPage() {
     authorName: p.authorName,
     overdue: !!(p.scheduledAt && new Date(p.scheduledAt) < now && p.status === "PENDING_APPROVAL"),
   }));
+
+  // A self-serve client (signed up to book campaigns) has no projects and nothing
+  // to approve: the agency panels would be empty and "New brief" could never be
+  // submitted, so they get their campaigns instead. Only when BOTH hooks have
+  // actually answered — a failed or pending request keeps today's agency view.
+  const projectsLoaded = !projectsLoading && projectsRaw !== undefined && !projectsError;
+  const pendingLoaded = !approvalsLoading && approvalsData !== undefined && !approvalsError;
+  const campaignOnly = projectsLoaded && pendingLoaded && projects.length === 0 && mappedPending.length === 0;
+  const noProjects = projectsLoaded && projects.length === 0;
 
   const overdue = mappedPending.filter((p) => p.overdue).length;
   const dueToday = mappedPending.filter((p) => p.scheduled && new Date(p.scheduled).toDateString() === now.toDateString()).length;
@@ -108,14 +121,24 @@ export default function DashboardPage() {
         title="Home"
         sub={now.toLocaleDateString("en", { weekday: "long", month: "short", day: "numeric" })}
         right={
-          <Button variant="ink" size="sm" icon={<Icon.Plus size={14} sw={2.5} />} onClick={() => setBriefOpen(true)}>
-            New brief
-          </Button>
+          noProjects ? (
+            <Button variant="ink" size="sm" icon={<Icon.Plus size={14} sw={2.5} />} onClick={() => router.push("/campaigns/new")}>
+              Start a campaign
+            </Button>
+          ) : (
+            <Button variant="ink" size="sm" icon={<Icon.Plus size={14} sw={2.5} />} onClick={() => setBriefOpen(true)}>
+              New brief
+            </Button>
+          )
         }
       />
-      <NewBriefModal open={briefOpen} onClose={() => setBriefOpen(false)} />
+      {/* A brief needs a project to attach to; without one the modal could never submit. */}
+      {!noProjects && <NewBriefModal open={briefOpen} onClose={() => setBriefOpen(false)} />}
 
       <div className="px-6 py-6 max-w-[1260px] mx-auto w-full overflow-y-auto flex-1">
+        {campaignOnly ? (
+          <DashCampaigns rows={campaigns} error={campaignsError} loading={campaignsLoading} />
+        ) : (
         <div className="bento grid-cols-1">
 
           {/* ── Row 1: Approvals hero ── */}
@@ -241,8 +264,66 @@ export default function DashboardPage() {
           </div>
 
         </div>
+        )}
       </div>
     </>
+  );
+}
+
+/** Same words as the empty state on /campaigns. No platform list: the catalogue
+ *  decides which networks are bookable. */
+const CAMPAIGNS_EMPTY_HINT =
+  "Book promotion on our network of pages — pick the accounts, upload your video or image and send it for review.";
+
+/** The campaign-first home for a self-serve client: their campaigns, newest first, each with its next step. */
+function DashCampaigns({ rows, error, loading }: { rows: CampaignListRow[] | undefined; error: unknown; loading: boolean }) {
+  const router = useRouter();
+  const list = rows ?? [];
+  return (
+    <section className="v3-card overflow-hidden fade-up d1">
+      <div className="px-5 h-12 flex items-center justify-between" style={{ borderBottom: "2px solid rgba(255,255,255,0.18)" }}>
+        <h2 className="text-[14px] font-bold text-ink">Your campaigns</h2>
+        <Link href="/campaigns" className="text-[12.5px] text-indigo font-semibold hover:underline inline-flex items-center gap-1">
+          View all <Icon.ArrowRight size={12} />
+        </Link>
+      </div>
+      {error && !rows ? (
+        <div className="p-5"><PageError message="Could not load your campaigns. Please refresh." /></div>
+      ) : loading && !rows ? (
+        [...Array(3)].map((_, i) => (
+          <div key={i} className="px-5 py-4 flex gap-4" style={{ borderBottom: "1px solid rgba(255,255,255,0.10)" }}>
+            <Skeleton className="h-4 w-1/3" /><Skeleton className="h-4 w-20 ml-auto" />
+          </div>
+        ))
+      ) : list.length === 0 ? (
+        rows ? (
+          <Empty
+            icon={<Icon.Megaphone size={20} />}
+            title="No campaigns yet"
+            hint={CAMPAIGNS_EMPTY_HINT}
+            cta={<Button size="sm" variant="ink" onClick={() => router.push("/campaigns/new")}>Start a campaign</Button>}
+          />
+        ) : null
+      ) : (
+        <ul>
+          {list.slice(0, 4).map((r, i, arr) => {
+            const hint = nextStepHint(r);
+            return (
+              <li key={r.id} style={i < arr.length - 1 ? { borderBottom: "1px solid rgba(255,255,255,0.10)" } : undefined}>
+                <Link href={`/campaigns/${r.id}`} className="px-5 py-3.5 flex items-center gap-3 v3-row">
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[13.5px] font-semibold text-ink truncate">{r.name}</div>
+                    {hint && <div className="text-[12px] text-ink-2 truncate">{hint}</div>}
+                  </div>
+                  <CampaignStatus status={r.status} />
+                  <Icon.ChevRight size={14} className="text-ink-4 shrink-0" />
+                </Link>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </section>
   );
 }
 

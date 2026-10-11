@@ -7,6 +7,7 @@ import { Icon } from "./portal-icons";
 import { Avatar } from "./portal-shared";
 import { useClientPendingApprovals } from "@/lib/hooks/use-content";
 import { useAuth } from "@/lib/auth";
+import { NAV_CHANNELS, channelIndex } from "@/lib/nav";
 
 // The site's rail: numbered "channels", a 2px divider under each, the current
 // one solid accent. Same seven destinations the portal always had.
@@ -49,6 +50,10 @@ export function PortalRail() {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
       if (target?.matches("input, textarea, select")) return;
+      // Channel roots only, like the arrow keys: on a sub-page (a booking step)
+      // a stray g-chord would navigate away from unsaved work.
+      const ci = channelIndex(pathname);
+      if (ci < 0 || pathname !== NAV_CHANNELS[ci].href) { primed = false; return; }
       if (e.key === "g") {
         primed = true;
         if (timer) clearTimeout(timer);
@@ -62,7 +67,7 @@ export function PortalRail() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [router]);
+  }, [router, pathname]);
 
   const initial = (user?.name?.charAt(0) ?? "?").toUpperCase();
   const displayName = user?.name ?? "";

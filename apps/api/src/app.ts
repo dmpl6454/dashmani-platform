@@ -6,7 +6,7 @@ import path from "path";
 import rateLimit from "express-rate-limit";
 import routes from "./routes";
 import { errorHandler } from "./middleware/error-handler";
-import { rateLimitKey, loginRateLimitKey, isHealthProbe, isPipelinePath, envInt } from "./middleware/rate-limit-key";
+import { rateLimitKey, loginRateLimitKey, googleIpRateLimitKey, isHealthProbe, isPipelinePath, envInt } from "./middleware/rate-limit-key";
 import { pipelineNoStore, pipelineRateLimiter, pipelineJson, skipPipelineSyncLog } from "./middleware/pipeline-rate-limit";
 import { pipelineErrorMiddleware } from "./services/pipeline/errors";
 import campaignWebhookRoutes from "./routes/campaign-webhook.routes";
@@ -91,6 +91,17 @@ const authLimiter = rateLimit({
   message: { success: false, error: { code: "RATE_LIMIT", message: "Too many login attempts, please try again later" } },
 });
 
+// Sign in with Google: a per-client ceiling across the three Google POSTs (see the mounts;
+// keyed on req.ip — the edge IP under `trust proxy 1`, hence the generous default).
+const googleIpLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: envInt("RATE_LIMIT_GOOGLE_IP_MAX", 200),
+  keyGenerator: googleIpRateLimitKey,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, error: { code: "RATE_LIMIT", message: "Too many sign-in attempts, please try again later" } },
+});
+
 // Stricter rate limit on public job applications (prevent spam)
 const publicLimiter = rateLimit({
   windowMs: 60 * 60 * 1000,
@@ -119,11 +130,18 @@ app.use("/v1/client/auth/login", authLimiter);
 // Public self-signup: the same per-(client, account) bucket — 20 attempts per 15 min keeps a
 // bot from minting accounts in bulk without punishing a brand on a shared office IP.
 app.use("/v1/client/auth/signup", authLimiter);
-// Sign in with Google: the body carries no email, so the key falls back to the client IP.
+// Sign in with Google: the body carries no email, so loginRateLimitKey buckets by the ID
+// token's (unverified) `sub` — per (client, Google account), like the password logins.
 // ⚠️ POST on the exact path only — `app.use` would prefix-match GET /google/config, which every
 // sign-in page load reads, and spend the 20-per-15-min login bucket on page views (seen live).
-app.post("/v1/client/auth/google", authLimiter);
-app.post("/v1/hr/auth/google", authLimiter);
+// The per-account key reads an UNVERIFIED `sub`, so a script could mint a fresh bucket per
+// request — and every Google POST makes us call Google's tokeninfo. googleIpLimiter restores a
+// hard per-client ceiling (looser than the per-account one) so our box can never be driven to
+// hammer Google from its one IP, which would break Sign in with Google for every portal.
+// Mounted AFTER authLimiter, so it counts only the requests that would actually reach Google.
+for (const path of ["/v1/client/auth/google", "/v1/hr/auth/google", "/v1/auth/google"]) {
+  app.post(path, authLimiter, googleIpLimiter);
+}
 
 if (process.env.NODE_ENV !== "test") {
   // P13: successful POST /v1/pipeline/sync polls are not logged (hundreds of thousands

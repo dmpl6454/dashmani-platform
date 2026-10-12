@@ -33,7 +33,7 @@ describe("meta token health", () => {
     prisma.metaConnection.create({ data: { metaUserId, connectedById: staffId, status: "ACTIVE", ...data } });
 
   it("warns on the login token when it runs out before data access", async () => {
-    const c = await conn("mu-h1", { tokenExpiresAt: new Date(Date.now() + 5 * DAY + 3_600_000), dataAccessExpiresAt: new Date(Date.now() + 60 * DAY) });
+    const c = await conn("mu-h1", { tokenExpiresAt: new Date(Date.now() + 5 * DAY - 3_600_000), dataAccessExpiresAt: new Date(Date.now() + 60 * DAY) });
     const out = await runMetaTokenHealth();
     expect(out.warned).toBe(1);
     const row = await prisma.metaConnection.findUniqueOrThrow({ where: { id: c.id } });
@@ -50,11 +50,19 @@ describe("meta token health", () => {
   });
 
   it("still watches data access when the login token never expires", async () => {
-    const c = await conn("mu-h3", { tokenExpiresAt: null, dataAccessExpiresAt: new Date(Date.now() + 3 * DAY + 3_600_000) });
+    const c = await conn("mu-h3", { tokenExpiresAt: null, dataAccessExpiresAt: new Date(Date.now() + 3 * DAY - 3_600_000) });
     await runMetaTokenHealth();
     const row = await prisma.metaConnection.findUniqueOrThrow({ where: { id: c.id } });
     expect(row.status).toBe("NEEDS_REAUTH_SOON");
     expect(row.lastError).toMatch(/data access expires in 3 day/);
+  });
+
+  it("a login token with hours left is 'expires in 1 day', never expired early", async () => {
+    const c = await conn("mu-h5", { tokenExpiresAt: new Date(Date.now() + 20 * 3_600_000), dataAccessExpiresAt: new Date(Date.now() + 60 * DAY) });
+    await runMetaTokenHealth();
+    const row = await prisma.metaConnection.findUniqueOrThrow({ where: { id: c.id } });
+    expect(row.status).toBe("NEEDS_REAUTH_SOON");
+    expect(row.lastError).toMatch(/expires in 1 day/);
   });
 
   it("leaves a healthy connection alone", async () => {

@@ -89,9 +89,13 @@ export async function checkEligibility(item: ItemLike, booking: BookingLike): Pr
   });
   if (!asset || asset.disconnectedAt || !asset.selected) return { ok: false, reason: "The account is no longer connected." };
   const conn = asset.connection;
-  if (!conn || conn.revokedAt || conn.status === "REVOKED" || conn.status === "NEEDS_REAUTH") {
+  if (!conn || conn.revokedAt || conn.status === "REVOKED") {
     return { ok: false, reason: "The Meta connection for this account needs reconnecting." };
   }
+  // NEEDS_REAUTH means the LOGIN token (or data access) has lapsed. Page tokens have no timer and
+  // usually still work, so Facebook posts and Instagram-via-its-Page are still tried; a token Meta
+  // rejects hands the item to staff at once (failure() → authInvalid), and nothing was posted.
+  const loginLapsed = conn.status === "NEEDS_REAUTH" || (conn.tokenExpiresAt != null && conn.tokenExpiresAt.getTime() <= Date.now());
   const scopes = new Set((conn.grantedScopes ?? "").split(",").map((s) => s.trim()).filter(Boolean));
   const needed = item.platform === "instagram" ? IG_SCOPE : FB_SCOPE;
   if (!scopes.has(needed)) return { ok: false, reason: `The connected account didn't grant publishing (${needed}).` };
@@ -100,10 +104,10 @@ export async function checkEligibility(item: ItemLike, booking: BookingLike): Pr
     if (item.platform === "instagram") {
       if (asset.kind !== "INSTAGRAM_ACCOUNT") return { ok: false, reason: "No Instagram token for this account." };
       // The connecting person's user token is what has published every live post so far. Once
-      // it has expired (~60 days after connecting) the linked Facebook Page's token — which has
-      // no timer — takes over, so posting doesn't stop until someone reconnects.
-      const userTokenExpired = conn.tokenExpiresAt != null && conn.tokenExpiresAt.getTime() <= Date.now();
-      if (conn.userTokenEnc && !userTokenExpired) {
+      // it has lapsed (~60 days after connecting) the linked Facebook Page's token — which has no
+      // timer — takes over, so posting doesn't stop until someone reconnects. The link to the
+      // Page (parentPageId) is recorded by discovery and by the daily token-health backfill.
+      if (conn.userTokenEnc && !loginLapsed) {
         return { ok: true, target: { platform: "instagram", metaId: asset.metaId, token: decryptToken(conn.userTokenEnc) } };
       }
       const page = asset.parentPageId

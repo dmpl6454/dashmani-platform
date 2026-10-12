@@ -144,6 +144,15 @@ ${refundNote}
 
 /** "Your post is live on @account" — once per item. */
 export async function sendItemLiveEmail(itemId: string): Promise<boolean> {
+  const pre = await prisma.campaignBookingItem.findUnique({ where: { id: itemId }, select: { bookingId: true } });
+  if (!pre) return false;
+  const pb = await prisma.campaignBooking.findUnique({ where: { id: pre.bookingId }, select: { deliveredAt: true, items: { select: { status: true } } } });
+  if (!pb) return false;
+  // The last item of a multi-item booking: the delivery email (every link) follows immediately,
+  // so this one is skipped — decided BEFORE claiming, so the claim is never spent on a skip. A
+  // link that arrives AFTER delivery (a post the API published without a readable link) is
+  // still sent on its own: the delivery email told the client "link to follow".
+  if (!pb.deliveredAt && pb.items.length > 1 && pb.items.every((i) => (SETTLED_ITEM_STATUSES as readonly string[]).includes(i.status))) return false;
   const claim = await prisma.campaignBookingItem.updateMany({
     where: { id: itemId, notifiedAt: null, permalink: { not: null } },
     data: { notifiedAt: new Date() },
@@ -153,14 +162,12 @@ export async function sendItemLiveEmail(itemId: string): Promise<boolean> {
   if (!item?.permalink) return false;
   const b = await bookingWithClient(item.bookingId);
   if (!b) return false;
-  // When this is the last item the delivery email follows immediately — skip the single one.
-  if (b.items.every((i) => (SETTLED_ITEM_STATUSES as readonly string[]).includes(i.status)) && b.items.length > 1) return false;
   const where = item.accountHandle ? `@${item.accountHandle}` : item.accountName;
   const html = shell(`Your post is live on ${where}`, `
 <p>Hi ${esc(b.client.contactName)},</p>
 <p>Your ${esc(FORMAT_LABELS[item.format as CampaignFormat] ?? item.format)} for <strong>${esc(b.name)}</strong> is now live on ${esc(PLATFORM_LABEL[item.platform] ?? item.platform)} (${esc(where)}), posted ${esc(fmtIST(item.postedAt))}.</p>
 <p>${button(item.permalink, "View post")}</p>
-<p style="color:#777">We'll send every link together once the whole campaign is live.</p>`);
+${pb.deliveredAt ? "" : `<p style="color:#777">We'll send every link together once the whole campaign is live.</p>`}`);
   await sendEmail({ to: b.client.email, subject: `Live on ${where}: ${b.name}`, html, fromName: "Digital Sukoon", replyTo: campaignConfig.teamEmail() });
   return true;
 }
@@ -249,7 +256,7 @@ export async function getResults(clientId: string, bookingId: string) {
       deliveredAt: true,
       items: {
         orderBy: { createdAt: "asc" },
-        select: { id: true, platform: true, format: true, accountName: true, accountHandle: true, status: true, permalink: true, postedAt: true, remotePostId: true, nextAttemptAt: true },
+        select: { id: true, platform: true, format: true, accountName: true, accountHandle: true, status: true, permalink: true, postedAt: true, remotePostId: true, nextAttemptAt: true, attempts: true, containerId: true },
       },
     },
   });
@@ -278,6 +285,7 @@ export async function getResults(clientId: string, bookingId: string) {
     if (!byRemote.has(p.metaPostId)) byRemote.set(p.metaPostId, p);
   }
 
+  const autoOn = campaignConfig.publishEnabled();
   return {
     id: b.id,
     status: b.status,
@@ -294,8 +302,10 @@ export async function getResults(clientId: string, bookingId: string) {
         status: i.status,
         permalink: i.permalink,
         postedAt: i.postedAt,
-        // When an auto-published post is due (only while it waits for the API).
-        scheduledFor: i.status === "queued" ? i.nextAttemptAt : null,
+        // When an automatic post is due — only for its FIRST scheduled run with the publisher on.
+        // Retry / processing times are not a promise, and with auto-publishing switched off a
+        // queued post will not go out by itself, so no time is shown then.
+        scheduledFor: autoOn && i.status === "queued" && i.attempts === 0 && !i.containerId ? i.nextAttemptAt : null,
         metrics: measured ? { views: p!.views, likes: p!.likes, comments: p!.comments, measuredAt: p!.metricsFetchedAt } : null,
       };
     }),

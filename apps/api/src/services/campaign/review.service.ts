@@ -150,7 +150,7 @@ export async function reject(id: string, staffId: string, note: string) {
     note,
     data: { reviewNote: note, reviewedById: staffId },
   });
-  await prisma.campaignBookingItem.updateMany({ where: { bookingId: id, status: { in: ["pending", "manual_pending", "queued"] } }, data: { status: "refunded" } });
+  await prisma.campaignBookingItem.updateMany({ where: { bookingId: id, status: { in: ["pending", "manual_pending", "queued"] } }, data: { status: "refunded", lastError: null } });
   let refundError: string | null = null;
   try {
     await refundBookingInFull(id, staff(staffId));
@@ -243,7 +243,8 @@ export async function refundItem(bookingId: string, itemId: string, staffId: str
   // Claim the item first so two clicks cannot refund it twice.
   const claim = await prisma.campaignBookingItem.updateMany({
     where: { id: itemId, status: item.status, OR: [{ lockedUntil: null }, { lockedUntil: { lt: new Date() } }] },
-    data: { status: "refunded" },
+    // The hand-post reason no longer applies to an item that will not be posted.
+    data: { status: "refunded", lastError: null },
   });
   if (claim.count !== 1) throw new AppError(409, "INVALID_STATE", "This item changed — refresh and try again.");
   if (!pay) {

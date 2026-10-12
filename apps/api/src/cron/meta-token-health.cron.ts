@@ -18,6 +18,7 @@ import { prisma } from "@dashmani/db";
 import { oauthGraphFetch, makeBudget } from "../services/meta-oauth/oauth-graph";
 import { metaOauthAppId, metaOauthAppSecret, metaOauthConfigured } from "../services/meta-oauth/meta-config";
 import { decryptToken, scrubSecrets } from "../utils/token-crypto";
+import { backfillParentPages } from "../services/meta-oauth/parent-pages";
 
 /** Warn this far ahead so there is time to act before reads break. */
 const WARN_DAYS = 14;
@@ -129,9 +130,10 @@ export async function runMetaTokenHealth(): Promise<{
     ].filter((x): x is { at: Date; what: string } => x !== null);
     if (clocks.length === 0) continue;
     const first = clocks.reduce((a, b) => (b.at.getTime() < a.at.getTime() ? b : a));
-    const daysLeft = Math.floor((first.at.getTime() - now) / 86_400_000);
+    // Whole days left, rounded UP: a token with 20 hours to go has "1 day", not "0 / expired".
+    const daysLeft = Math.ceil((first.at.getTime() - now) / 86_400_000);
 
-    if (daysLeft <= 0) {
+    if (first.at.getTime() <= now) {
       await prisma.metaConnection.update({
         where: { id: c.id },
         data: {
@@ -164,6 +166,10 @@ export async function runMetaTokenHealth(): Promise<{
       });
     }
   }
+
+  // Instagram → parent Page links, so the publisher can fall back to the Page's token once the
+  // login token lapses. A no-op once every account is linked (see parent-pages.ts).
+  for (const c of conns) await backfillParentPages(c.id);
 
   console.log(
     `[meta-token-health] checked=${out.checked} warned=${out.warned} expired=${out.expired} ` +

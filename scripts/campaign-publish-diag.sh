@@ -181,8 +181,13 @@ echo "      render worker: $([ "${EFF[CAMPAIGN_RENDER_ENABLED]}" = "0" ] && echo
 echo "      publish hour: ${EFF[CAMPAIGN_PUBLISH_HOUR_IST]:-10}:00 IST on launch day; batch ${EFF[CAMPAIGN_PUBLISH_BATCH]:-3} per minute"
 API_PUBLIC="${EFF[API_PUBLIC_URL]:-https://api.digitalsukoon.com}"; API_PUBLIC="${API_PUBLIC%/}"
 echo "      media URL base Meta downloads from: $API_PUBLIC (config.ts:61)"
-HC=$(curl -s -m 10 -o /dev/null -w '%{http_code}' -A 'facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)' "$API_PUBLIC/v1/health" 2>/dev/null)
-echo "      GET $API_PUBLIC/v1/health from this box with Meta's user agent: HTTP ${HC:-000}$([ "${HC:-000}" = "200" ] || echo '  <- the API is not reachable at the URL Meta downloads media from')"
+HC=$(curl -s -m 10 -o /dev/null -w '%{http_code}' -A 'Mozilla/5.0 (campaign-publish-diag)' "$API_PUBLIC/v1/health" 2>/dev/null)
+case "${HC:-000}" in
+  200) HC_NOTE="" ;;
+  000) HC_NOTE="  <- no answer: the API is not reachable at the address Meta downloads media from" ;;
+  *) HC_NOTE="  <- unexpected; check the address (a 403/503 can also be Cloudflare challenging this box)" ;;
+esac
+echo "      GET $API_PUBLIC/v1/health from this box: HTTP ${HC:-000}$HC_NOTE"
 echo "      (a check that the address answers — not proof Meta's own servers can fetch a signed media link)"
 
 # ─── Database connection ────────────────────────────────────────────────────────────────────
@@ -192,6 +197,14 @@ DBURL=$(grep -hE '^DATABASE_URL=' "$ENV_FILE" 2>/dev/null | tail -1 | cut -d= -f
 [ -n "$DBURL" ] || DBURL=$(grep -hE '^DATABASE_URL=' "$APP_DIR/.env" 2>/dev/null | tail -1 | cut -d= -f2-)
 DBURL="${DBURL%$'\r'}"
 DBURL="${DBURL%\"}"; DBURL="${DBURL#\"}"; DBURL="${DBURL%\'}"; DBURL="${DBURL#\'}"; DBURL="${DBURL%%\?*}"
+# Keep the password OFF psql's command line (visible to every local user in ps / /proc/*/cmdline,
+# and this box has other tenants): move it to PGPASSWORD (root-only environ), percent-decoded.
+if [[ "$DBURL" =~ ^(postgres(ql)?://)([^:@/]+):([^@]*)@(.*)$ ]]; then
+  _enc="${BASH_REMATCH[4]}"
+  PGPASSWORD="$(printf '%b' "${_enc//%/\\x}")"; export PGPASSWORD
+  DBURL="${BASH_REMATCH[1]}${BASH_REMATCH[3]}@${BASH_REMATCH[5]}"
+  unset _enc
+fi
 q() { psql "$DBURL" -X -At -F $'\t' -v ON_ERROR_STOP=1 -P pager=off -c "$1"; }
 # Same, but fields separated by the ASCII unit separator (0x1f). Tab is IFS whitespace, so
 # `IFS=$'\t' read` would merge two tabs and shift every field after an empty one.
@@ -306,6 +319,10 @@ section_sql "SELECT left(c.id,8) AS connection, left(coalesce(c.meta_user_name,'
        (SELECT count(*) FROM meta_assets a WHERE a.connection_id=c.id AND a.disconnected_at IS NULL) AS live_assets,
        left(regexp_replace(coalesce(c.last_error,''), '\s+', ' ', 'g'), 100) AS last_error
 FROM meta_connections c ORDER BY c.created_at"
+if [ "$DB_OK" = "1" ]; then
+  echo "    Instagram accounts with no linked Page recorded (the publisher's fallback once the login token lapses;"
+  echo "    the daily token check fills these): $(q "SELECT count(*) FILTER (WHERE parent_page_id IS NULL) || ' of ' || count(*) FROM meta_assets WHERE kind::text='INSTAGRAM_ACCOUNT' AND disconnected_at IS NULL" 2>&1 | head -c 200)"
+fi
 
 # ─── 6. Target assets ───────────────────────────────────────────────────────────────────────
 hr "6. Each account's Meta asset, and what publish.service.ts checkEligibility (:62-109) would say"
@@ -438,12 +455,15 @@ while IFS="$US" read -r bid _bstatus acct pf istatus due nextist lock attempts i
     published|posted_manual) n_live=$((n_live + 1)) ;;
     failed) n_failed=$((n_failed + 1)) ;;
     refunded) n_refunded=$((n_refunded + 1)) ;;
-    pending) n_pending=$((n_pending + 1)) ;;
+    pending)
+      # Items of a booking still in review are legitimately pending; only an APPROVED booking
+      # with a pending item is wrong.
+      case "$_bstatus" in approved|publishing|completed|partially_published) n_pending=$((n_pending + 1)) ;; esac ;;
   esac
 done <<< "$ITEMS"
 while IFS="$US" read -r bid bname; do [ -n "${bid:-}" ] && NAME_OF[$bid]="$bname"; done <<< "$(qus "WITH $RECENT SELECT b.id, replace(b.name, E'\x1f', ' ') FROM campaign_bookings b JOIN recent r ON r.id=b.id" 2>/dev/null)"
 
-echo "    $n_total account(s) across the bookings above: $n_live live, $n_manual 'To post' (by hand), $((n_q_later + n_q_due + n_q_over + n_q_wait)) queued for auto-publish, $n_failed failed, $n_refunded refunded/dropped, $n_pending still pending."
+echo "    $n_total account(s) across the bookings above: $n_live live, $n_manual 'To post' (by hand), $((n_q_later + n_q_due + n_q_over + n_q_wait)) queued for auto-publish, $n_failed failed, $n_refunded refunded/dropped, $n_pending wrongly still pending."
 if [ -n "$REVIEW" ]; then
   echo
   echo "    NOT APPROVED YET — these are still 'Needs review' (paid_pending_review); nothing is posted before Approve:"

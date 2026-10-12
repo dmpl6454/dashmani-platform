@@ -200,6 +200,13 @@ Pushing to `main` automatically deploys to production via GitHub Actions (`.gith
 
 **Do not** add `.env.local` to git. Do not change this rewrite step without thinking through what happens when someone copies a localhost-pointing `.env.local` to the server.
 
+⚠️ **Turbo's build cache key must include `.env.local`** (`turbo.json` → `build.inputs: ["$TURBO_DEFAULT$", ".env.local"]`, since 2026-10-12). The file is gitignored, so Turbo did not hash it before, and a build made without it was replayed on later deploys. This is what put `localhost:4000` into the first creators.digitalsukoon.com bundle:
+- The deploy that first added `creators` to the `.env.local` loop ran the OLD `deploy.sh`. GitHub Actions starts `bash scripts/deploy.sh`, and bash had already read the old copy before `git reset --hard` replaced the file. So a new step in `deploy.sh` does not run on the deploy that introduces it.
+- The creators app was therefore built with no `.env.local` (its build log lacks the "Environments: .env.local" line that every other app has).
+- The next deploy wrote the file, but Turbo reported a cache hit and restored the localhost build.
+
+To repair one app on the box: `cd /opt/dashmani-platform && cat apps/<app>/.env.local && NODE_OPTIONS=--max-old-space-size=900 npx turbo build --filter=@dashmani/<app> --force` (`--force` = `--cache=local:w,remote:w`: it rebuilds AND overwrites the bad cache entry, so the next deploy cannot restore it). Check the result by fetching a chunk from the live site and confirming it contains `api.digitalsukoon.com/v1`.
+
 **Required GitHub secrets** at `github.com/dmpl6454/dashmani-platform/settings/secrets/actions`:
 
 | Secret | Value |

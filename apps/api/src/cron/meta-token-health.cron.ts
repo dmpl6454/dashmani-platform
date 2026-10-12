@@ -38,6 +38,7 @@ export async function runMetaTokenHealth(): Promise<{
       metaUserName: true,
       status: true,
       userTokenEnc: true,
+      tokenExpiresAt: true,
       dataAccessExpiresAt: true,
     },
   });
@@ -79,14 +80,21 @@ export async function runMetaTokenHealth(): Promise<{
             console.warn(`[meta-token-health] ${c.metaUserName ?? c.id}: grant INVALID — needs reauth`);
             continue;
           }
-          if (dae && dae.getTime() !== (c.dataAccessExpiresAt?.getTime() ?? 0)) {
+          // expires_at 0 = the token itself never expires (only data access does).
+          // A missing field keeps what we stored rather than erasing it.
+          const tea = typeof d.expires_at === "number" ? (d.expires_at > 0 ? new Date(d.expires_at * 1000) : null) : c.tokenExpiresAt;
+          if (
+            (dae && dae.getTime() !== (c.dataAccessExpiresAt?.getTime() ?? 0)) ||
+            (tea?.getTime() ?? 0) !== (c.tokenExpiresAt?.getTime() ?? 0)
+          ) {
             await prisma.metaConnection.update({
               where: { id: c.id },
-              data: { dataAccessExpiresAt: dae, lastVerifiedAt: new Date() },
+              data: { ...(dae ? { dataAccessExpiresAt: dae } : {}), tokenExpiresAt: tea, lastVerifiedAt: new Date() },
             });
             out.refreshedMetadata++;
           }
           c.dataAccessExpiresAt = dae ?? c.dataAccessExpiresAt;
+          c.tokenExpiresAt = tea;
         } else if (res.authInvalid) {
           await prisma.metaConnection.update({
             where: { id: c.id },
@@ -113,19 +121,26 @@ export async function runMetaTokenHealth(): Promise<{
       }
     }
 
-    if (!c.dataAccessExpiresAt) continue;
-    const daysLeft = Math.floor((c.dataAccessExpiresAt.getTime() - now) / 86_400_000);
+    // Two clocks: the user token's own expiry (~60 days; Instagram reads and publishing use
+    // it) and data access (~90 days). Whichever runs out first is the one that matters.
+    const clocks = [
+      c.tokenExpiresAt ? { at: c.tokenExpiresAt, what: "The Meta login token" } : null,
+      c.dataAccessExpiresAt ? { at: c.dataAccessExpiresAt, what: "Meta data access" } : null,
+    ].filter((x): x is { at: Date; what: string } => x !== null);
+    if (clocks.length === 0) continue;
+    const first = clocks.reduce((a, b) => (b.at.getTime() < a.at.getTime() ? b : a));
+    const daysLeft = Math.floor((first.at.getTime() - now) / 86_400_000);
 
     if (daysLeft <= 0) {
       await prisma.metaConnection.update({
         where: { id: c.id },
         data: {
           status: "NEEDS_REAUTH",
-          lastError: "Meta data access has expired — reconnect to resume reading posts.",
+          lastError: `${first.what} has expired — reconnect to resume.`,
         },
       });
       out.expired++;
-      console.warn(`[meta-token-health] ${c.metaUserName ?? c.id}: data access EXPIRED`);
+      console.warn(`[meta-token-health] ${c.metaUserName ?? c.id}: ${first.what} EXPIRED`);
     } else if (daysLeft <= WARN_DAYS) {
       // Don't clobber a more severe status (NEEDS_REAUTH / PARTIAL_SCOPE).
       if (c.status === "ACTIVE" || c.status === "NEEDS_REAUTH_SOON") {
@@ -133,13 +148,13 @@ export async function runMetaTokenHealth(): Promise<{
           where: { id: c.id },
           data: {
             status: "NEEDS_REAUTH_SOON",
-            lastError: `Meta data access expires in ${daysLeft} day(s) — reconnect to extend it.`,
+            lastError: `${first.what} expires in ${daysLeft} day(s) — reconnect to extend it.`,
           },
         });
       }
       out.warned++;
       console.warn(
-        `[meta-token-health] ${c.metaUserName ?? c.id}: data access expires in ${daysLeft}d`,
+        `[meta-token-health] ${c.metaUserName ?? c.id}: ${first.what} expires in ${daysLeft}d`,
       );
     } else if (c.status === "NEEDS_REAUTH_SOON") {
       // A reconnect happened — clear the warning rather than leaving it stuck on.

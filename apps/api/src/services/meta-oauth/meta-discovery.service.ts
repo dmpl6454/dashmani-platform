@@ -306,6 +306,9 @@ export async function discoverConnectionAssets(
   // ── B3/B4: IG business accounts hanging off those Pages ───────────────────
   if (!out.rateLimited && !out.authInvalid && b.used < b.max) {
     const igIds: string[] = [];
+    // IG account → the Facebook Page it hangs off (stored as parentPageId: the publisher falls
+    // back to that Page's token when the user token expires).
+    const parentOf = new Map<string, string>();
     let igUrl: string | null = "me/accounts";
     let igParams: Record<string, string | number | undefined> | undefined = {
       fields: "instagram_business_account", // BARE — see the interface note
@@ -342,7 +345,10 @@ export async function discoverConnectionAssets(
       if (!res.ok || !res.data) break;
       for (const row of res.data.data ?? []) {
         const id = row.instagram_business_account?.id;
-        if (id) igIds.push(id);
+        if (id) {
+          igIds.push(id);
+          if (row.id) parentOf.set(id, row.id);
+        }
       }
       igUrl = res.data.paging?.next ?? null;
       igParams = undefined;
@@ -376,6 +382,7 @@ export async function discoverConnectionAssets(
           followerCount: prof.data.followers_count ?? null,
           postCount: prof.data.media_count ?? null,
           pictureUrl: prof.data.profile_picture_url ?? null,
+          parentPageId: parentOf.get(igId) ?? null,
           // IG assets deliberately carry NO token: they are read with the user token,
           // so the same Page secret is never written into two rows.
           disconnectedAt: null,
@@ -386,6 +393,7 @@ export async function discoverConnectionAssets(
           followerCount: prof.data.followers_count ?? null,
           postCount: prof.data.media_count ?? null,
           pictureUrl: prof.data.profile_picture_url ?? null,
+          ...(parentOf.has(igId) ? { parentPageId: parentOf.get(igId) } : {}),
           disconnectedAt: null,
         },
       });

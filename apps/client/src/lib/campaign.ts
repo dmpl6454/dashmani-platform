@@ -127,6 +127,8 @@ export interface CampaignResults {
     status: string;
     permalink: string | null;
     postedAt: string | null;
+    /** When an automatic post is due (only while it waits). Absent on older API responses. */
+    scheduledFor?: string | null;
     metrics: { views: number | null; likes: number | null; comments: number | null; measuredAt: string | null } | null;
   }>;
 }

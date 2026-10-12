@@ -83,8 +83,8 @@ export async function checkEligibility(item: ItemLike, booking: BookingLike): Pr
   const asset = await prisma.metaAsset.findUnique({
     where: { id: item.targetId },
     select: {
-      kind: true, metaId: true, pageTokenEnc: true, disconnectedAt: true, selected: true,
-      connection: { select: { userTokenEnc: true, grantedScopes: true, status: true, revokedAt: true } },
+      kind: true, metaId: true, pageTokenEnc: true, disconnectedAt: true, selected: true, connectionId: true, parentPageId: true,
+      connection: { select: { userTokenEnc: true, grantedScopes: true, status: true, revokedAt: true, tokenExpiresAt: true } },
     },
   });
   if (!asset || asset.disconnectedAt || !asset.selected) return { ok: false, reason: "The account is no longer connected." };
@@ -98,8 +98,23 @@ export async function checkEligibility(item: ItemLike, booking: BookingLike): Pr
 
   try {
     if (item.platform === "instagram") {
-      if (asset.kind !== "INSTAGRAM_ACCOUNT" || !conn.userTokenEnc) return { ok: false, reason: "No Instagram token for this account." };
-      return { ok: true, target: { platform: "instagram", metaId: asset.metaId, token: decryptToken(conn.userTokenEnc) } };
+      if (asset.kind !== "INSTAGRAM_ACCOUNT") return { ok: false, reason: "No Instagram token for this account." };
+      // The connecting person's user token is what has published every live post so far. Once
+      // it has expired (~60 days after connecting) the linked Facebook Page's token — which has
+      // no timer — takes over, so posting doesn't stop until someone reconnects.
+      const userTokenExpired = conn.tokenExpiresAt != null && conn.tokenExpiresAt.getTime() <= Date.now();
+      if (conn.userTokenEnc && !userTokenExpired) {
+        return { ok: true, target: { platform: "instagram", metaId: asset.metaId, token: decryptToken(conn.userTokenEnc) } };
+      }
+      const page = asset.parentPageId
+        ? await prisma.metaAsset.findFirst({
+            where: { connectionId: asset.connectionId, kind: "FACEBOOK_PAGE", metaId: asset.parentPageId, disconnectedAt: null, pageTokenEnc: { not: null } },
+            select: { pageTokenEnc: true },
+          })
+        : null;
+      if (page?.pageTokenEnc) return { ok: true, target: { platform: "instagram", metaId: asset.metaId, token: decryptToken(page.pageTokenEnc) } };
+      if (conn.userTokenEnc) return { ok: false, reason: "The Meta login for this account has expired — reconnect Meta (Account Growth → Connect) to resume posting." };
+      return { ok: false, reason: "No Instagram token for this account." };
     }
     if (asset.kind !== "FACEBOOK_PAGE" || !asset.pageTokenEnc) return { ok: false, reason: "No Page token for this Page." };
     return { ok: true, target: { platform: "facebook", metaId: asset.metaId, token: decryptToken(asset.pageTokenEnc) } };
@@ -373,7 +388,8 @@ async function fbStep(target: PublishTarget, job: PublishJob): Promise<Outcome> 
     const vs = st.data?.status?.video_status;
     const ps = st.data?.status?.publishing_phase?.status;
     if (vs === "error" || ps === "error") return { kind: "manual", reason: "Facebook could not process the reel — post it by hand." };
-    if (ps === "complete") return { kind: "published", remotePostId: videoId, permalink: await fbPermalink(videoId, target.token) };
+    // Meta's docs spell the finished phase both "complete" and "completed"; accept either.
+    if (ps === "complete" || ps === "completed") return { kind: "published", remotePostId: videoId, permalink: await fbPermalink(videoId, target.token) };
     if (Date.now() - startedAt > CONTAINER_STUCK_MS) {
       return { kind: "manual", reason: "Facebook is still processing the reel after hours — check the Page and paste the link." };
     }

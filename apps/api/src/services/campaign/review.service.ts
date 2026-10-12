@@ -118,18 +118,18 @@ export async function approve(id: string, staffId: string) {
     for (const p of plan) {
       await tx.campaignBookingItem.updateMany({
         where: { id: p.itemId, status: "pending" },
+        // A hand-posted item carries its reason on the row itself ("Auto-publishing is switched
+        // off", "the API cannot attach a song", …), so staff never have to dig through History.
         data: p.auto
           ? { status: "queued", nextAttemptAt: p.at, attempts: 0, containerId: null, lastError: null }
-          : { status: "manual_pending" },
+          : { status: "manual_pending", lastError: p.reason ? p.reason.slice(0, 500) : null },
       });
     }
     // Anything the plan didn't see (it can't miss any, but never leave an item pending).
     await tx.campaignBookingItem.updateMany({ where: { bookingId: id, status: "pending" }, data: { status: "manual_pending" } });
   });
-  if (campaignConfig.publishEnabled()) {
-    for (const p of plan.filter((x) => !x.auto)) {
-      await logBookingEvent(id, staff(staffId), `Post by hand on ${p.accountName}: ${p.reason}`);
-    }
+  for (const p of plan.filter((x) => !x.auto)) {
+    await logBookingEvent(id, staff(staffId), `Post by hand on ${p.accountName}: ${p.reason}`);
   }
   void sendStatusEmail(id, "approved").catch((e) => console.error("[campaign] approved email failed", e));
   return getBookingForStaff(id);
@@ -201,6 +201,10 @@ export async function markPosted(bookingId: string, itemId: string, staffId: str
       : "This item can't be marked posted (it may have been refunded).");
   }
   await logBookingEvent(bookingId, staff(staffId), `${editingLink ? "Link updated" : "Posted"} on ${item.accountName} (${item.format}): ${url}`);
+  if (editingLink && !item.permalink) {
+    // Auto-published, but Meta never returned the link: the client hasn't been told it is live.
+    void sendItemLiveEmail(itemId).catch((e) => console.error("[campaign] live email failed", e));
+  }
   if (!editingLink) {
     void sendItemLiveEmail(itemId).catch((e) => console.error("[campaign] live email failed", e));
     await afterItemChange(bookingId, staffId);
@@ -287,7 +291,7 @@ export async function switchToManual(bookingId: string, itemId: string, staffId:
   const item = await itemOf(bookingId, itemId);
   const res = await prisma.campaignBookingItem.updateMany({
     where: { id: itemId, status: "queued", OR: [{ lockedUntil: null }, { lockedUntil: { lt: new Date() } }] },
-    data: { status: "manual_pending", nextAttemptAt: null, lastError: null },
+    data: { status: "manual_pending", nextAttemptAt: null, lastError: "Staff chose to post this by hand." },
   });
   if (res.count !== 1) throw new AppError(409, "BUSY", "This item is being published right now — try again in a minute.");
   await logBookingEvent(bookingId, staff(staffId), `Switched to posting by hand: ${item.accountName} (${item.format})`);

@@ -72,6 +72,10 @@ export default function CampaignBookingDetail() {
   // Submitted without online payment (offline mode): no payment row, yet past the pay step.
   // Rejecting / refunding such a booking changes no money online — staff settle by hand.
   const offline = b.payments.length === 0 && !["draft", "awaiting_payment"].includes(b.status);
+  const autoOn = !!b.autoPublish?.enabled;
+  const queuedItems = b.items.filter((i) => i.status === "queued");
+  const toPostItems = b.items.filter((i) => i.status === "manual_pending");
+  const nextAuto = queuedItems.map((i) => i.nextAttemptAt).filter((x): x is string => Boolean(x)).sort()[0] ?? null;
 
   return (
     <div className="pb-10">
@@ -85,6 +89,22 @@ export default function CampaignBookingDetail() {
       <div className="grid gap-4 mb-4">
         {err && <ErrorBar message={err} onClose={() => setErr("")} />}
         {info && <div className="px-3.5 py-2.5 rounded-[8px] bg-[rgba(0,215,160,.08)] border border-[rgba(0,215,160,.3)] text-ds-teal text-[12.5px]">{info}</div>}
+        {postable && queuedItems.length > 0 && (autoOn ? (
+          <div className="px-3.5 py-2.5 rounded-[8px] bg-[rgba(35,139,255,.08)] border border-[rgba(35,139,255,.3)] text-[#7DB8FF] text-[12.5px]">
+            {queuedItems.length === 1 ? "1 account posts" : `${queuedItems.length} accounts post`} automatically through the Meta API
+            {nextAuto && new Date(nextAuto) > new Date() ? <> — the first on <strong>{fmtWhen(nextAuto)}</strong>, the start of the posting window</> : " — now"}.
+            {" "}Press <strong>Publish now</strong> on an account to post it sooner.
+          </div>
+        ) : (
+          <div className="px-3.5 py-2.5 rounded-[8px] bg-[rgba(233,189,98,.08)] border border-[rgba(233,189,98,.35)] text-ds-gold text-[12.5px]">
+            Auto-publishing is switched off, so {queuedItems.length === 1 ? "the account" : `the ${queuedItems.length} accounts`} marked Auto-publish will not post by themselves. Press <strong>Post by hand instead</strong> on each, then post it and paste the link.
+          </div>
+        ))}
+        {postable && toPostItems.length > 0 && (
+          <div className="px-3.5 py-2.5 rounded-[8px] bg-[rgba(233,189,98,.08)] border border-[rgba(233,189,98,.35)] text-ds-gold text-[12.5px]">
+            {toPostItems.length === 1 ? "1 account needs" : `${toPostItems.length} accounts need`} a person to post {toPostItems.length === 1 ? "it" : "them"}: download that account&apos;s file, post it on the page, then paste the post&apos;s link and press <strong>Mark posted</strong>. Each account says why it can&apos;t post automatically. The client is emailed when you mark it posted.
+          </div>
+        )}
       </div>
 
       <div className="grid gap-4 lg:grid-cols-[1.35fr_1fr]">
@@ -129,7 +149,7 @@ export default function CampaignBookingDetail() {
             <dl className="mt-4 grid gap-2.5 text-[13px]">
               <Kv k="Campaign type" v={b.campaignType === "entertainment" ? "Entertainment (film, OTT, music)" : "Brand promotion"} />
               {b.audioIntegration && <Kv k="Song audio" v={<span className="break-words font-semibold text-ds-gold">{b.audioTrack}</span>} />}
-              {b.media.some((m) => m.role === "thumbnail") && <Kv k="Thumbnail" v="Client-supplied cover image — Instagram takes it through the API; set it by hand on Facebook / YouTube." />}
+              {b.media.some((m) => m.role === "thumbnail") && <Kv k="Thumbnail" v={autoOn ? "Client-supplied cover image — Instagram takes it through the API; set it by hand on Facebook / YouTube." : "Client-supplied cover image — set it by hand when posting."} />}
               {b.superText && <Kv k="Overlay" v={<span className="whitespace-pre-line">{b.superText} <span className="text-ds-t4">({b.superTextStyle})</span></span>} />}
               <Kv k="Caption" v={b.caption ? <span className="whitespace-pre-line break-words">{b.caption}</span> : "—"} />
               {b.items.some((i) => i.captionOverride != null || i.superTextOverride != null) && (
@@ -169,9 +189,13 @@ export default function CampaignBookingDetail() {
             <section className={`${CARD} p-5`}>
               <h2 className="text-[15px] font-semibold text-ds-text mb-1">Review</h2>
               <p className="text-[12.5px] text-ds-t3 mb-3">
+                {autoOn
+                  ? `Approving queues each account to post automatically on ${fmtWhen(b.autoPublish?.dueAt ?? null)}, the start of the posting window. Accounts the API can't post — song audio, stories, some Facebook videos — go to "To post" for someone to post by hand.`
+                  : "Auto-publishing is switched off: approving sends every account to \"To post\" — someone posts each one by hand and pastes the link."}
+                {" "}
                 {offline
-                  ? `Approving schedules every account for posting. No online payment was taken — collect ${rupees(b.totalPaise)} from the client by hand. Rejecting charges nothing.`
-                  : "Approving schedules every account for posting. Rejecting refunds the client in full."}
+                  ? `No online payment was taken — collect ${rupees(b.totalPaise)} from the client by hand. Rejecting charges nothing.`
+                  : "Rejecting refunds the client in full."}
               </p>
               {reviewable && (
                 <button type="button" className={`${BTN_GOLD} w-full mb-3`} disabled={!!busy} onClick={() => act("approve", `/admin/campaigns/${b.id}/approve`)}>
@@ -310,14 +334,20 @@ function ItemRow({ item: i, booking: b, files, bookingId, postable, autoPublish,
         </div>
       )}
       {queued && (
-        <div className="mt-1.5 text-[12px] text-ds-t2">
-          {i.nextAttemptAt && new Date(i.nextAttemptAt) > new Date()
-            ? `Publishes through the Meta API · ${fmtWhen(i.nextAttemptAt)}`
-            : "Publishing through the Meta API now…"}
-          {i.attempts > 0 ? ` · attempt ${i.attempts + 1} of 5` : ""}
+        <div className={`mt-1.5 text-[12px] ${autoPublish ? "text-ds-t2" : "text-ds-gold"}`}>
+          {!autoPublish
+            ? "Auto-publishing is switched off — this won't post by itself. Choose \"Post by hand instead\"."
+            : i.nextAttemptAt && new Date(i.nextAttemptAt) > new Date()
+              ? `Posts automatically on ${fmtWhen(i.nextAttemptAt)}`
+              : "Publishing through the Meta API now…"}
+          {autoPublish && i.attempts > 0 ? ` · attempt ${i.attempts + 1} of 5` : ""}
         </div>
       )}
-      {i.lastError && <div className={`mt-1.5 text-[12px] ${queued ? "text-ds-t3" : "text-[#FB7185]"}`}>{queued ? `Last try: ${i.lastError}` : i.lastError}</div>}
+      {i.lastError && (
+        <div className={`mt-1.5 text-[12px] ${queued ? "text-ds-t3" : i.status === "manual_pending" ? "text-ds-gold" : "text-[#FB7185]"}`}>
+          {queued ? `Last try: ${i.lastError}` : i.status === "manual_pending" ? `Post by hand — ${i.lastError}` : i.lastError}
+        </div>
+      )}
       {postable && !queued && (open || editing) && (
         <form
           className="mt-2.5 flex flex-col sm:flex-row gap-2"

@@ -1,6 +1,7 @@
 import { prisma } from "@dashmani/db";
 import { hash } from "bcrypt";
 import jwt from "jsonwebtoken";
+import { signCreatorAccessToken } from "../src/services/creator/creator-jwt";
 
 export async function createTestRole(name: string, permissions: { resource: string; action: string; scope: string }[]) {
   const role = await prisma.role.create({
@@ -84,4 +85,12 @@ export function generateHrToken(userId: string, email: string, roles: string[] =
     process.env.JWT_SECRET || "dev-secret",
     { expiresIn: "15m" }
   );
+}
+
+/**
+ * A creator-portal access token (creators.digitalsukoon.com), minted exactly as the API does —
+ * with the CREATOR secret and `aud: "creators"`, so staff / HR / client gates reject it.
+ */
+export function generateCreatorToken(creatorId: string, email: string) {
+  return signCreatorAccessToken({ creatorId, email });
 }

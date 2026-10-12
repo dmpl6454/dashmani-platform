@@ -2511,3 +2511,193 @@ model CampaignBookingEvent {
   @@index([bookingId, createdAt])
   @@map("campaign_booking_events")
 }
+
+// ─── Creators: creators.digitalsukoon.com (Phase A, 2026-10-12) ─────────────────────────────
+// Creators and publishers anywhere sign up, connect their Facebook Pages / Instagram professional
+// accounts, and (Phase B) accept bookings that are published on their own pages.
+// ⚠️ Creator pages live in THESE tables, never in meta_connections / meta_assets: every analytics
+// surface (overview, Account Growth, the channel/posts/demographics syncs and their budgets,
+// posting-watch, duplicate resolution, the campaign catalogue) reads meta_assets with no owner
+// filter, so a creator row there would leak into all of them. Statuses are VARCHAR validated in
+// code (an enum value can never be removed). No foreign key to users: staff ids are plain ids.
+
+/// A creator / publisher account (its own login, separate from clients and staff).
+model Creator {
+  id                String    @id @default(uuid())
+  /// Stored lowercase; looked up case-insensitively.
+  email             String    @unique
+  passwordHash      String    @map("password_hash")
+  name              String    @db.VarChar(120)
+  /// ISO 3166-1 alpha-2.
+  country           String?   @db.Char(2)
+  phone             String?   @db.VarChar(32)
+  /// draft | in_review | approved | rejected | suspended | closed
+  status            String    @default("draft") @db.VarChar(16)
+  emailVerifiedAt   DateTime? @map("email_verified_at")
+  termsVersion      String?   @map("terms_version") @db.VarChar(16)
+  termsAcceptedAt   DateTime? @map("terms_accepted_at")
+  adultConfirmedAt  DateTime? @map("adult_confirmed_at")
+  /// Payouts (Phase C). ISO 4217; details encrypted, hint = e.g. "UPI ••••42".
+  payoutCurrency    String?   @map("payout_currency") @db.Char(3)
+  payoutMethod      String?   @map("payout_method") @db.VarChar(16)
+  payoutDetailsEnc  String?   @map("payout_details_enc")
+  payoutDetailsHint String?   @map("payout_details_hint") @db.VarChar(80)
+  submittedAt       DateTime? @map("submitted_at")
+  reviewNote        String?   @map("review_note")
+  reviewedById      String?   @map("reviewed_by_id")
+  reviewedAt        DateTime? @map("reviewed_at")
+  closedAt          DateTime? @map("closed_at")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  refreshTokens CreatorRefreshToken[]
+  tokens        CreatorToken[]
+  oauthStates   CreatorOauthState[]
+  connections   CreatorConnection[]
+  assets        CreatorAsset[]
+
+  @@index([status])
+  @@index([createdAt])
+  @@map("creators")
+}
+
+/// One row per issued refresh token (SHA-256), consumed once on refresh.
+model CreatorRefreshToken {
+  id        String   @id @default(uuid())
+  creatorId String   @map("creator_id")
+  tokenHash String   @unique @map("token_hash")
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  creator Creator @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+
+  @@index([creatorId])
+  @@map("creator_refresh_tokens")
+}
+
+/// Single-use email tokens (SHA-256 of the emailed value): verify_email | reset_password.
+model CreatorToken {
+  id        String    @id @default(uuid())
+  creatorId String    @map("creator_id")
+  purpose   String    @db.VarChar(16)
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at")
+  usedAt    DateTime? @map("used_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  creator Creator @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+
+  @@index([creatorId, purpose])
+  @@map("creator_tokens")
+}
+
+/// OAuth `state` for a creator's Facebook Login (consumed once, 60-minute TTL).
+model CreatorOauthState {
+  state     String    @id
+  creatorId String    @map("creator_id")
+  mode      String    @default("connect") @db.VarChar(16)
+  usedAt    DateTime? @map("used_at")
+  expiresAt DateTime  @map("expires_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  creator Creator @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+
+  @@index([expiresAt])
+  @@map("creator_oauth_states")
+}
+
+/// A creator's Facebook Login grant. One Facebook identity belongs to at most one creator.
+model CreatorConnection {
+  id                  String    @id @default(uuid())
+  creatorId           String    @map("creator_id")
+  metaUserId          String    @unique @map("meta_user_id")
+  metaUserName        String?   @map("meta_user_name")
+  /// enc:v1 (utils/token-crypto); null once revoked.
+  userTokenEnc        String?   @map("user_token_enc")
+  grantedScopes       String    @default("") @map("granted_scopes")
+  granularScopes      Json?     @map("granular_scopes")
+  tokenExpiresAt      DateTime? @map("token_expires_at")
+  dataAccessExpiresAt DateTime? @map("data_access_expires_at")
+  graphVersion        String    @default("v21.0") @map("graph_version") @db.VarChar(16)
+  /// ACTIVE | PARTIAL_SCOPE | NEEDS_REAUTH_SOON | NEEDS_REAUTH | REVOKED
+  status              String    @default("ACTIVE") @db.VarChar(20)
+  /// pending | running | done | failed
+  discoveryState      String    @default("pending") @map("discovery_state") @db.VarChar(16)
+  lastVerifiedAt      DateTime? @map("last_verified_at")
+  lastError           String?   @map("last_error") @db.VarChar(500)
+  revokedAt           DateTime? @map("revoked_at")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
+
+  creator Creator        @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+  assets  CreatorAsset[]
+
+  @@index([creatorId])
+  @@index([status])
+  @@map("creator_connections")
+}
+
+/// A Facebook Page or Instagram professional account a creator connected. One claim per page.
+model CreatorAsset {
+  id                 String    @id @default(uuid())
+  creatorId          String    @map("creator_id")
+  connectionId       String    @map("connection_id")
+  /// facebook_page | instagram_account
+  kind               String    @db.VarChar(20)
+  metaId             String    @map("meta_id")
+  name               String
+  username           String?
+  /// Instagram: the Facebook Page it is linked to (its token publishes when needed).
+  parentPageId       String?   @map("parent_page_id")
+  /// Facebook Pages only (enc:v1).
+  pageTokenEnc       String?   @map("page_token_enc")
+  tasks              String[]  @default([])
+  /// Our probe says the API can publish here (CREATE_CONTENT task / content_publishing_limit).
+  canPublish         Boolean   @default(false) @map("can_publish")
+  publishProbeError  String?   @map("publish_probe_error") @db.VarChar(300)
+  followerCount      Int?      @map("follower_count")
+  mediaCount         Int?      @map("media_count")
+  pictureUrl         String?   @map("picture_url")
+  views28d           BigInt?   @map("views_28d")
+  engagements28d     BigInt?   @map("engagements_28d")
+  reach28d           BigInt?   @map("reach_28d")
+  metricsFetchedAt   DateTime? @map("metrics_fetched_at")
+  metricsError       String?   @map("metrics_error") @db.VarChar(300)
+  /// A meta_assets.id when this page is already on OUR network (never bookable as a creator page).
+  networkDuplicateOf String?   @map("network_duplicate_of")
+  /// Staff switch: offered for booking (Phase B). Off until staff turn it on.
+  enabled            Boolean   @default(false)
+  enabledById        String?   @map("enabled_by_id")
+  enabledAt          DateTime? @map("enabled_at")
+  disconnectedAt     DateTime? @map("disconnected_at")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+
+  creator    Creator           @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+  connection CreatorConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@unique([kind, metaId])
+  @@index([creatorId])
+  @@index([connectionId])
+  @@map("creator_assets")
+}
+
+/// Meta "deauthorize" and "data deletion" callbacks (app-wide: they also arrive for people who
+/// never used our creator flow). Only a SHA-256 of the app-scoped user id is kept.
+model MetaDeletionRequest {
+  id               String    @id @default(uuid())
+  confirmationCode String    @unique @map("confirmation_code") @db.VarChar(16)
+  userHash         String    @map("user_hash") @db.Char(64)
+  /// deauthorize | deletion
+  kind             String    @db.VarChar(16)
+  /// creator | staff_grant | none
+  matched          String    @db.VarChar(24)
+  /// received | completed | no_data
+  status           String    @db.VarChar(16)
+  note             String?   @db.VarChar(500)
+  receivedAt       DateTime  @default(now()) @map("received_at")
+  completedAt      DateTime? @map("completed_at")
+
+  @@index([userHash])
+  @@map("meta_deletion_requests")
+}

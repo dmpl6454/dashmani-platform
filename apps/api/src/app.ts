@@ -39,6 +39,8 @@ app.use(cors({
     process.env.CLIENT_APP_URL || "http://localhost:3001",
     process.env.HR_APP_URL || "http://localhost:3002",
     process.env.JOBS_APP_URL || "http://localhost:3003",
+    // Creator portal (apps/creators, creators.digitalsukoon.com).
+    process.env.CREATORS_APP_URL || "http://localhost:3005",
     // Public marketing site (apps/web, served as static files by nginx) — posts the
     // CH 06 contact form to /v1/public/enquiries.
     ...(process.env.WEBSITE_ORIGINS || "https://digitalsukoon.com,https://www.digitalsukoon.com,http://localhost:3004")
@@ -139,9 +141,27 @@ app.use("/v1/client/auth/signup", authLimiter);
 // hard per-client ceiling (looser than the per-account one) so our box can never be driven to
 // hammer Google from its one IP, which would break Sign in with Google for every portal.
 // Mounted AFTER authLimiter, so it counts only the requests that would actually reach Google.
-for (const path of ["/v1/client/auth/google", "/v1/hr/auth/google", "/v1/auth/google"]) {
+for (const path of ["/v1/client/auth/google", "/v1/hr/auth/google", "/v1/auth/google", "/v1/creator/auth/google"]) {
   app.post(path, authLimiter, googleIpLimiter);
 }
+// Creator portal: password login, public sign-up and forgot-password share the per-(client,
+// account) bucket (the key reads `email`). POST on the exact paths, like the Google mounts —
+// no prefix match can catch a GET. forgot-password is included because every request sends
+// an email: without a cap a script could make our SMTP account mail one inbox endlessly.
+for (const path of ["/v1/creator/auth/login", "/v1/creator/auth/signup", "/v1/creator/auth/forgot-password"]) {
+  app.post(path, authLimiter);
+}
+// The creator Meta OAuth callback is public (Facebook redirects the browser to it with no
+// session), so it gets the same tight per-IP ceiling as the admin callback's router-local
+// limiter in routes/meta-oauth.routes.ts (20 per minute).
+const creatorMetaCallbackLimiter = rateLimit({
+  windowMs: 60_000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, error: { code: "RATE_LIMIT", message: "Too many requests, please try again later" } },
+});
+app.get("/v1/creator/meta/oauth/callback", creatorMetaCallbackLimiter);
 
 if (process.env.NODE_ENV !== "test") {
   // P13: successful POST /v1/pipeline/sync polls are not logged (hundreds of thousands

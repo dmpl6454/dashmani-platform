@@ -161,9 +161,14 @@ export interface ExchangeOutcome {
  * The redirect_uri here must be BYTE-IDENTICAL to the one used in the authorize
  * URL or Meta rejects the exchange; both read the same env var, never a derived value.
  */
-export async function exchangeCodeForLongLivedToken(code: string): Promise<ExchangeOutcome> {
-  const appId = metaOauthAppId();
-  const appSecret = metaOauthAppSecret();
+export async function exchangeCodeForLongLivedToken(
+  code: string,
+  /** The creator portal's Facebook Login (services/creator/creator-oauth.service.ts) uses its
+   *  own redirect URI and, optionally, its own app. Omitted = the admin flow, unchanged. */
+  opts?: { redirectUri?: string; appId?: string; appSecret?: string },
+): Promise<ExchangeOutcome> {
+  const appId = opts?.appId ?? metaOauthAppId();
+  const appSecret = opts?.appSecret ?? metaOauthAppSecret();
   if (!appId || !appSecret) return { ok: false, reason: "config" };
 
   // A2 — short-lived user token. A dedicated budget so a pathological retry can
@@ -175,7 +180,7 @@ export async function exchangeCodeForLongLivedToken(code: string): Promise<Excha
     {
       client_id: appId,
       client_secret: appSecret,
-      redirect_uri: metaOauthRedirectUri(),
+      redirect_uri: opts?.redirectUri ?? metaOauthRedirectUri(),
       code,
     },
     // This call authenticates with the client_secret, not a bearer token.

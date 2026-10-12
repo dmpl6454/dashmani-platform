@@ -3,6 +3,7 @@ import { type CampaignRateCardUpsertInput, PLATFORM_FORMATS, type CampaignPlatfo
 import { AppError } from "../../middleware/error-handler";
 import { resolveDuplicateAssetIds } from "../meta-oauth/meta-channels.service";
 import { createSingleFlightMemo } from "../../utils/single-flight-memo";
+import { LINK_DELIVERY_MINUTES } from "./config";
 
 // Rate cards (our price per account per format) and the client-facing catalogue built from
 // them. A "target" is either a connected Meta asset (Facebook Page / Instagram account) or a
@@ -245,6 +246,8 @@ export interface CatalogueEntry {
   views28d: number | null;
   category: string | null;
   profileUrl: string | null;
+  /** How long after posting the link is ready (approximate). Same for every account today. */
+  linkDeliveryMinutes: { min: number; max: number };
   /** pricePaise = brand price; entertainmentPricePaise / audioAddonPaise null when not offered. */
   offers: Array<{
     rateCardId: string;
@@ -283,6 +286,7 @@ export async function getCatalogue(): Promise<CatalogueEntry[]> {
         views28d: t.views28d,
         category: own.find((c) => c.category)?.category ?? null,
         profileUrl: t.profileUrl,
+        linkDeliveryMinutes: { ...LINK_DELIVERY_MINUTES },
         offers: own
           .filter((c) => (PLATFORM_FORMATS[t.platform] as readonly string[]).includes(c.format))
           .map((c) => ({

@@ -12,6 +12,7 @@ import {
   type CampaignType,
 } from "@dashmani/shared/src/validators/campaign";
 import { addDaysIST, todayIST } from "@dashmani/shared/src/utils/date";
+import { categoryTabs, inCategory } from "@dashmani/shared/src/campaign/categories";
 import { ApiError } from "@/lib/api";
 import {
   compact,
@@ -176,6 +177,8 @@ export function AccountsStep({ campaign, onSaved, onEdit }: {
   const { data, error: loadError, isLoading, mutate: reload } = useCatalogue(true);
   const [q, setQ] = useState("");
   const [platform, setPlatform] = useState<"all" | "instagram" | "facebook" | "youtube">("all");
+  // null = every category; otherwise a categoryKey() from categoryTabs().
+  const [cat, setCat] = useState<string | null>(null);
   const [sort, setSort] = useState<Sort>("followers");
   const [picked, setPicked] = useState<Set<string>>(() => new Set(campaign.items.map((i) => i.rateCardId)));
   const [busy, setBusy] = useState(false);
@@ -209,17 +212,28 @@ export function AccountsStep({ campaign, onSaved, onEdit }: {
   // Picked earlier but no longer offered (withdrawn, or the type/format/song changed since).
   const gone = data ? campaign.items.filter((i) => picked.has(i.rateCardId) && !offerIds.has(i.rateCardId)) : [];
 
+  // The rows on the selected platform tab. The category tabs count these, so each number is what
+  // that tab would list.
+  const onPlatform = useMemo(
+    () => offers.filter((a) => platform === "all" || a.platform === platform),
+    [offers, platform],
+  );
+  const catTabs = useMemo(() => categoryTabs(onPlatform), [onPlatform]);
+  // Labels come from every account for this format, so a category reads the same on each platform tab.
+  const labelOf = useMemo(() => new Map(categoryTabs(offers).map((t) => [t.key, t.label])), [offers]);
+  // A category picked on another platform or format may not exist here: then show everything.
+  const activeCat = cat !== null && catTabs.some((t) => t.key === cat) ? cat : null;
+
   const visible = useMemo(() => {
     const term = q.trim().toLowerCase().replace(/^@/, "");
-    return offers
-      .filter((a) => platform === "all" || a.platform === platform)
+    return inCategory(onPlatform, activeCat)
       .filter((a) => !term || a.name.toLowerCase().includes(term) || (a.username ?? "").toLowerCase().includes(term) || (a.category ?? "").toLowerCase().includes(term))
       .sort((a, b) =>
         sort === "price" ? a.price.total - b.price.total :
         sort === "engagement" ? (b.engagementRatePct ?? -1) - (a.engagementRatePct ?? -1) :
         (b.followers ?? 0) - (a.followers ?? 0),
       );
-  }, [offers, q, platform, sort]);
+  }, [onPlatform, activeCat, q, sort]);
 
   const selected = offers.filter((a) => picked.has(a.offer.rateCardId));
   const total = selected.reduce((s, a) => s + a.price.total, 0);
@@ -323,6 +337,33 @@ export function AccountsStep({ campaign, onSaved, onEdit }: {
           ))}
         </div>
 
+        {/* Category tabs appear once there are two or more to choose between: one category is just the list. */}
+        {catTabs.length > 1 && (
+          <div className="flex flex-wrap gap-1.5 mb-4" role="tablist" aria-label="Categories">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeCat === null}
+              onClick={() => setCat(null)}
+              className={`h-8 px-3 rounded-full text-[12.5px] font-semibold border-2 ${activeCat === null ? "bg-indigo text-white border-indigo" : "border-ink/15 text-ink-2"}`}
+            >
+              All <span className="opacity-70 tabular-nums">{onPlatform.length}</span>
+            </button>
+            {catTabs.map((t) => (
+              <button
+                key={t.key === "" ? "(uncategorised)" : t.key}
+                type="button"
+                role="tab"
+                aria-selected={activeCat === t.key}
+                onClick={() => setCat(t.key)}
+                className={`max-w-full h-8 px-3 rounded-full text-[12.5px] font-semibold border-2 ${activeCat === t.key ? "bg-indigo text-white border-indigo" : "border-ink/15 text-ink-2"}`}
+              >
+                <span className="truncate">{labelOf.get(t.key) ?? t.label}</span> <span className="opacity-70 tabular-nums">{t.count}</span>
+              </button>
+            ))}
+          </div>
+        )}
+
         {data && (hidden.byType > 0 || hidden.bySong > 0) && (
           <div className="mb-4 grid gap-1 text-[12.5px] text-ink-3">
             {hidden.byType > 0 && (
@@ -387,6 +428,7 @@ export function AccountsStep({ campaign, onSaved, onEdit }: {
                       {a.username && <span className="truncate max-w-[160px]">@{a.username}</span>}
                       <span>{PLATFORM_LABEL[a.platform]}</span>
                       {a.category && <span>{a.category}</span>}
+                      <span title="About how long after posting the link is ready.">Link in ~{a.linkDeliveryMinutes.min}–{a.linkDeliveryMinutes.max} min after posting</span>
                     </div>
                     <div className="sm:hidden text-[11px] text-ink-3 tabular-nums">
                       {compact(a.followers)} followers · {a.engagementRatePct != null ? `${a.engagementRatePct}%` : "—"} engagement

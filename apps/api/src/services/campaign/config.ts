@@ -26,6 +26,13 @@ export const mediaSubdirs = {
   render: () => path.join(campaignMediaDir(), "render"),
 };
 
+/**
+ * Approximate time from a post going live to its link reaching the client. Shown on every account
+ * in the picker. One value for now (every account currently takes 5–10 minutes); it is carried
+ * per catalogue entry, so a per-account figure can replace it later without a client change.
+ */
+export const LINK_DELIVERY_MINUTES = { min: 5, max: 10 } as const;
+
 export const campaignConfig = {
   /** Refuse new uploads when the disk has less free space than this. */
   minFreeBytes: () => envNum("CAMPAIGN_MIN_FREE_GB", 5) * 1024 ** 3,

@@ -60,7 +60,8 @@ export async function updateCreatorMe(
     data: {
       ...(data.name !== undefined ? { name: data.name } : {}),
       ...(data.country !== undefined ? { country: data.country } : clear.country ? { country: null } : {}),
-      ...(data.phone !== undefined ? { phone: data.phone } : clear.phone ? { phone: null } : {}),
+      // The schema lets an emptied phone through as "" (country arrives as undefined instead).
+      ...(data.phone !== undefined ? { phone: data.phone || null } : clear.phone ? { phone: null } : {}),
     },
   });
   return toCreatorMe(c);

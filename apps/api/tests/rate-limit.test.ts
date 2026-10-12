@@ -12,7 +12,8 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import request from "supertest";
 import jwt from "jsonwebtoken";
-import { googleAccountOf } from "../src/middleware/rate-limit-key";
+import { googleAccountOf, isGoogleSignInPath } from "../src/middleware/rate-limit-key";
+import { signCreatorAccessToken } from "../src/services/creator/creator-jwt";
 
 vi.stubEnv("RATE_LIMIT_MAX", "4");
 vi.stubEnv("RATE_LIMIT_LOGIN_MAX", "2");
@@ -193,5 +194,57 @@ describe("login limiter keying", () => {
     expect(googleAccountOf("a.b")).toBeNull();
     expect(googleAccountOf("a.%%%.c")).toBeNull();
     expect(googleAccountOf(fakeGoogleJwt({ sub: "1", pad: "x".repeat(9000) }))).toBeNull();
+  });
+});
+
+describe("creator portal keying", () => {
+  // Creator tokens are signed with the CREATOR secret (creator-jwt.ts), so the staff check
+  // fails on them; they must still be keyed per creator, not per edge IP.
+  const creatorToken = (id: string) => signCreatorAccessToken({ creatorId: id, email: `${id}@creators.test` });
+  const CREATOR_ROUTE = "/v1/creator/me";
+
+  it("two creators behind one edge IP get separate buckets", async () => {
+    const edge = "162.158.10.10";
+    const a = creatorToken("creator-a"), b = creatorToken("creator-b");
+    for (let i = 0; i < 4; i++) {
+      const r = await request(app).get(CREATOR_ROUTE).set("Authorization", `Bearer ${a}`).set("X-Forwarded-For", edge);
+      expect(r.status).not.toBe(429);
+    }
+    expect((await request(app).get(CREATOR_ROUTE).set("Authorization", `Bearer ${a}`).set("X-Forwarded-For", edge)).status).toBe(429);
+    expect((await request(app).get(CREATOR_ROUTE).set("Authorization", `Bearer ${b}`).set("X-Forwarded-For", edge)).status).not.toBe(429);
+  });
+
+  it("a creator-shaped token signed with the wrong secret is keyed by IP", async () => {
+    const edge = "162.158.11.11";
+    const forged = (id: string) =>
+      jwt.sign({ creatorId: id, email: "x@y.z", type: "creator" }, "not-the-creator-secret", { audience: "creators", expiresIn: "1h" });
+    for (let i = 0; i < 4; i++) {
+      const r = await request(app).get(CREATOR_ROUTE).set("Authorization", `Bearer ${forged(`f-${i}`)}`).set("X-Forwarded-For", edge);
+      expect(r.status).not.toBe(429);
+    }
+    expect((await request(app).get(CREATOR_ROUTE).set("Authorization", `Bearer ${forged("f-99")}`).set("X-Forwarded-For", edge)).status).toBe(429);
+  });
+
+  it("creator password login is limited per (client, account)", async () => {
+    const edge = "162.158.12.12";
+    const attempt = (email: string) =>
+      request(app).post("/v1/creator/auth/login").set("X-Forwarded-For", edge).send({ email, password: "wrong-password-1" });
+    expect((await attempt("Fay@Example.com")).status).not.toBe(429);
+    expect((await attempt("fay@example.com")).status).not.toBe(429);
+    expect((await attempt("fay@example.com")).status).toBe(429);
+    expect((await attempt("gus@example.com")).status).not.toBe(429);
+  });
+
+  it("creator forgot-password shares the same per-account bucket (each request sends an email)", async () => {
+    const edge = "162.158.13.13";
+    const attempt = () => request(app).post("/v1/creator/auth/forgot-password").set("X-Forwarded-For", edge).send({ email: "hal@example.com" });
+    expect((await attempt()).status).not.toBe(429);
+    expect((await attempt()).status).not.toBe(429);
+    expect((await attempt()).status).toBe(429);
+  });
+
+  it("the creator Google path is recognised for per-Google-account keying", () => {
+    expect(isGoogleSignInPath({ originalUrl: "/v1/creator/auth/google" })).toBe(true);
+    expect(isGoogleSignInPath({ originalUrl: "/v1/creator/auth/google/config" })).toBe(false);
   });
 });

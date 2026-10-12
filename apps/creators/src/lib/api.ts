@@ -80,6 +80,18 @@ function isPublicPath(path: string): boolean {
   return PUBLIC_ROUTES.includes(p);
 }
 
+/** Public auth endpoints whose 401 means "wrong credentials / bad token", never "session expired". */
+const ANSWERS_401 = new Set([
+  "/creator/auth/login",
+  "/creator/auth/signup",
+  "/creator/auth/google",
+  "/creator/auth/refresh",
+  "/creator/auth/logout",
+  "/creator/auth/forgot-password",
+  "/creator/auth/reset-password",
+  "/creator/auth/verify-email",
+]);
+
 export async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<ApiEnvelope<T>> {
   const token = read(TOKEN_KEYS.access);
 
@@ -107,7 +119,7 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}): Prom
   if (!data?.success) {
     // A 401 from a sign-in form (wrong password) is an answer, not an expired session: only
     // try a refresh when we actually sent an access token to a signed-in route.
-    if (res.status === 401 && token && !path.startsWith("/creator/auth/") && typeof window !== "undefined") {
+    if (res.status === 401 && token && !ANSWERS_401.has(path.split("?")[0]) && typeof window !== "undefined") {
       const refreshed = await tryRefresh();
       if (refreshed) return apiFetch(path, options);
       clearSession();

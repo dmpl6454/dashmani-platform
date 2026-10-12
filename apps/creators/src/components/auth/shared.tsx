@@ -103,6 +103,17 @@ export function AuthShell({
   );
 }
 
+/** Suspense fallback for the auth pages: the same shell with a loading line, never a bare spinner. */
+export function AuthFallback({ title }: { title: string }) {
+  return (
+    <AuthShell kicker="Creator portal" title={<>Digital Sukoon <em>Creators.</em></>} lines={[<>Brands book promotion on your page. You approve every booking.</>]}>
+      <div className="auth-form-inner">
+        <div className="auth-form-head"><h2>{title}</h2><p>Loading…</p></div>
+      </div>
+    </AuthShell>
+  );
+}
+
 /* A labelled field in the site's .field / .input style. */
 export function AuthField({
   id, label, type = "text", value, onChange, error, hint, autoComplete, onBlur, placeholder,

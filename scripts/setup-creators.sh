@@ -57,8 +57,10 @@ ADDED=0
 # trailing newline. A key that is already present is never rewritten.
 add_key() {
   local key="$1" value="$2"
-  if grep -q "^$key=" "$ENV_FILE"; then
+  if grep -q "^$key=." "$ENV_FILE"; then
     echo "    $key: already set (left as is)"
+  elif grep -q "^$key=" "$ENV_FILE"; then
+    echo "    $key: present but EMPTY — left as is; fill it in by hand (a second line would be ambiguous)"
   else
     printf '\n%s=%s\n' "$key" "$value" >> "$ENV_FILE"
     echo "    $key: added"
@@ -68,10 +70,9 @@ add_key() {
 add_key CREATORS_APP_URL "https://$SITE"
 # Generated only when absent: rotating them signs every creator out, so a re-run must not.
 # The values are written to the file and never printed.
-grep -q '^CREATOR_JWT_SECRET=' "$ENV_FILE" || add_key CREATOR_JWT_SECRET "$(openssl rand -hex 32)"
-grep -q '^CREATOR_JWT_SECRET=' "$ENV_FILE" && echo "    CREATOR_JWT_SECRET: present"
-grep -q '^CREATOR_JWT_REFRESH_SECRET=' "$ENV_FILE" || add_key CREATOR_JWT_REFRESH_SECRET "$(openssl rand -hex 32)"
-grep -q '^CREATOR_JWT_REFRESH_SECRET=' "$ENV_FILE" && echo "    CREATOR_JWT_REFRESH_SECRET: present"
+# Two DIFFERENT values, and never JWT_SECRET's: see the creator-jwt.ts header.
+add_key CREATOR_JWT_SECRET "$(openssl rand -hex 32)"
+add_key CREATOR_JWT_REFRESH_SECRET "$(openssl rand -hex 32)"
 add_key META_CREATOR_REDIRECT_URI "https://api.digitalsukoon.com/v1/creator/meta/oauth/callback"
 if [ "$ADDED" = "0" ]; then
   rm -f "$BACKUP"
@@ -79,8 +80,15 @@ if [ "$ADDED" = "0" ]; then
 else
   echo "    backup of the previous file: $BACKUP"
 fi
+# Read, never written here: the Meta app (shared with the admin connect) and Google sign-in.
 for k in META_OAUTH_APP_ID META_OAUTH_APP_SECRET META_TOKEN_ENC_KEY GOOGLE_CLIENT_ID; do
-  if grep -q "^$k=." "$ENV_FILE"; then echo "    $k: set"; else echo "    $k: MISSING — the creator Meta connect (or Google sign-in) stays off without it"; fi
+  if grep -q "^$k=." "$ENV_FILE"; then
+    echo "    $k: set"
+  elif [ "$k" = GOOGLE_CLIENT_ID ]; then
+    echo "    $k: missing — the creator portal shows no Google button (password sign-up still works)"
+  else
+    echo "    $k: MISSING — 'Connect Facebook' answers 503 META_NOT_CONFIGURED without it"
+  fi
 done
 if grep -q '^CREATORS_ENABLED=1' "$ENV_FILE"; then
   echo "    CREATORS_ENABLED=1 — the portal is ON"
@@ -92,7 +100,8 @@ cat <<EOF
 
 ==> Manual steps (once)
  1. Cloudflare → digitalsukoon.com zone → DNS: add an A record 'creators' → this server's IP,
-    proxied (orange cloud). SSL mode stays Full (strict); the existing origin cert covers *.digitalsukoon.com.
+    proxied (orange cloud). SSL mode stays Full (strict) with the same origin certificate the other
+    subdomains use — its names: $(openssl x509 -in /etc/ssl/cloudflare-cert.pem -noout -ext subjectAltName 2>/dev/null | tail -n +2 | tr -d ' ' || echo '(could not read)')
     Check: curl -sk --resolve $SITE:443:127.0.0.1 https://$SITE/ | head -c 300
  2. Google Cloud → the OAuth client behind GOOGLE_CLIENT_ID → Authorized JavaScript origins:
     add https://$SITE (no trailing slash).
@@ -108,6 +117,8 @@ cat <<EOF
       before switching the portal on.
  4. Restart the API so it reads the new keys:  pm2 restart api
  5. Switching the portal ON is a separate step, after the checks above:
-      printf '\nCREATORS_ENABLED=1\n' >> $ENV_FILE && pm2 restart api
-    (Off again: change that line to CREATORS_ENABLED=0 and pm2 restart api.)
+      grep -q '^CREATORS_ENABLED=' $ENV_FILE && sed -i 's/^CREATORS_ENABLED=.*/CREATORS_ENABLED=1/' $ENV_FILE \
+        || printf '\nCREATORS_ENABLED=1\n' >> $ENV_FILE
+      pm2 restart api
+    Off again (the kill switch): set that line to CREATORS_ENABLED=0 and pm2 restart api.
 EOF

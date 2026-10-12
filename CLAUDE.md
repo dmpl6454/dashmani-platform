@@ -741,6 +741,45 @@ The client portal has `/campaigns`, `/campaigns/new` and `/campaigns/[id]`. The 
 
 **Tests:** `apps/api/tests/campaign.test.ts` stubs ffprobe, ffmpeg, Razorpay and SMTP. It covers pure helpers plus the whole flow: catalogue field allow-list, cross-client 404s, chunk 413 / out-of-order / missing / fake-type, webhook replay and tamper, outdated-order refund, reject refunding exactly once, the delivery email sent exactly once, and resend.
 
+## Creator portal (creators.digitalsukoon.com) — Phase A
+
+**What it is.** Creators and publishers anywhere sign up on `apps/creators`, connect their Facebook Pages / Instagram professional accounts with Facebook Login, and submit for review; our staff approve them in the internal portal (`/creators`, `/creators/[id]`). Phase A is accounts + connection + vetting only — **no bookings, offers, prices or payouts yet**.
+
+**Owner decisions.**
+- Phase B: we book a creator's page and the **creator accepts each booking** before anything is posted.
+- Phase C: the **creator sets the price**; payouts are made **by hand** (the `payout_*` columns are reserved for it).
+- One Meta app: **"Post Automation 2"** (`META_OAUTH_APP_ID`), unless `CREATOR_META_APP_ID/SECRET` split it out (env only, no deploy).
+- **Staff approve every creator**, and enable each page individually.
+
+**Rules.**
+- ⚠️ **Separate tables:** `creators`, `creator_refresh_tokens`, `creator_tokens`, `creator_oauth_states`, `creator_connections`, `creator_assets`, `meta_deletion_requests`. **Never put a creator page in `meta_connections` / `meta_assets`**: the overview, Account Growth, every Meta sync and its budget, posting-watch, duplicate resolution and the campaign catalogue read `meta_assets` with no owner filter, so one creator row would leak into all of them. A creator page that is also one of ours is flagged `networkDuplicate` and can never be enabled. No FK to `users`; statuses are VARCHAR.
+- ⚠️ **Separate JWT secrets + `aud: "creators"`** (`CREATOR_JWT_SECRET`, `CREATOR_JWT_REFRESH_SECRET`). `authenticate` checks only the signature and the other three portals share `JWT_SECRET`, so a creator token signed with it would pass any staff gate that forgets a type check. Missing in production → 503, never a fallback.
+- ⚠️ The creator scope list (`CREATOR_META_SCOPES`, incl. the publish scopes for Phase B) is separate from the admin connect's read-only list; `CREATOR_FORBIDDEN_SCOPES` (comments, messages, ads, `email`, `business_management`) is locked by a test. Disconnect is a LOCAL revoke — never call Meta's `DELETE /{user}/permissions`: the app is shared with the staff connect and postautomation.co.in, so it would cut every other grant that person gave it. The creator removes the app on Facebook; our deauthorize callback handles that side.
+- **Static export served by nginx, no pm2** (like `apps/web`): `apps/creators/out` → `nginx/creators.digitalsukoon.com`. No dynamic route segments (detail views take `?id=`). `deploy.sh` writes its `.env.local`, wipes its `.next` and `chmod`s `out/`; it is NOT in the pm2 restart loop.
+
+**Dark switches** (runtime, `apps/api/.env` + `pm2 restart api`):
+- `CREATORS_ENABLED=1` turns the portal on; anything else → every `/v1/creator/*` answers 503. `scripts/setup-creators.sh` never sets it.
+- `META_CREATOR_REDIRECT_URI` unset → "Connect Facebook" answers 503 `META_NOT_CONFIGURED` (also without the app id/secret or `META_TOKEN_ENC_KEY`).
+- `CREATOR_CRONS_ENABLED=0` stops the daily job (token health on both Meta clocks with emails at 14 and 3 days left, page stats within `CREATOR_METRICS_CALL_BUDGET` (200), OAuth-state pruning).
+
+**Server setup (once).** `sudo bash scripts/setup-creators.sh`: installs the nginx site and APPENDS the missing keys to `apps/api/.env` after a backup (`CREATORS_APP_URL`, both JWT secrets via `openssl rand -hex 32` — only if absent, rotating them signs every creator out — and `META_CREATOR_REDIRECT_URI`). Then by hand: Cloudflare A record `creators` (proxied), the Google OAuth client's JavaScript origin `https://creators.digitalsukoon.com`, `pm2 restart api`.
+
+**Meta app settings the owner must set** (App Dashboard of "Post Automation 2"):
+- Facebook Login → Valid OAuth Redirect URIs: `https://api.digitalsukoon.com/v1/creator/meta/oauth/callback`.
+- Deauthorize callback `https://api.digitalsukoon.com/v1/meta/deauthorize`; Data deletion request URL `https://api.digitalsukoon.com/v1/meta/data-deletion`. Both are app-wide: they also receive staff grantors and strangers (a staff grant is flagged for a human, never deleted).
+- ⚠️ Contact email, Privacy Policy and Terms URLs are **app-wide and shared with postautomation.co.in**: the published policy must cover creators before `CREATORS_ENABLED=1`.
+
+**Schema.** ⚠️ Apply `scripts/creators-ddl.sql` on prod as the `dashmani` role **before** merging, with `bash scripts/apply-creators-ddl.sh` (fetches the PR branch, `git show`s the DDL, role check, shape pre-flight, schema backup, one-transaction apply, verifies 7 tables / 23 indexes / 6 cascading FKs, inspect-only drift check; exit 0 = safe to merge, 2 = applied but drift unchecked). CI rehearses the script twice with zero drift. Never a blanket `db:push`: until the deploy, a push from main's schema drops the empty creator tables without a prompt.
+
+**Endpoints.**
+- `/v1/creator/auth/*` — signup, login, refresh (one-time consume), logout, forgot/reset-password (24h), verify-email (7d), resend-verification (≤1 per 2 min), `google/config`, `google` (new email → `needsProfile`, then created with a verified email).
+- `/v1/creator/me` — GET (with checklist), PUT profile, PUT `/me/password`, POST `/me/submit` (draft/rejected → in_review; needs a verified email and a publishable page), DELETE (close: tokens nulled, pages off).
+- `/v1/creator/meta/*` — POST `oauth/start`, GET `oauth/callback` (public; always 302 to `/connect?connected=1` or `?error=`), GET `connection`, POST `refresh` (≤1 per 10 min), DELETE `connection`.
+- `POST /v1/meta/deauthorize`, `POST /v1/meta/data-deletion` (signed_request HMAC; returns `{url, confirmation_code}`), `GET /v1/public/meta-data-deletion/:code`.
+- `/v1/admin/creators` (authenticate + requireInternalUser + requireAdminRole) — list, detail, approve / reject / suspend / reinstate, `PUT :id/assets/:assetId` (enable a page; 409 `NOT_ENABLEABLE`).
+
+**Tests:** `creator-auth`, `creator-self`, `creator-meta-oauth`, `meta-signed-request`, `creator-admin`, `creator-isolation` (a full connect changes nothing in `meta_*`; a creator token is refused by the admin channels view and a staff token by the creator routes), all in `apps/api/tests/`.
+
 ## Client Portal (`apps/client`) — design system = digitalsukoon.com (2026-10-10)
 
 The client portal shares the website's "Channel Surf" look (`apps/web/src/app/globals.css`): black canvas, white type, one indigo accent (`#403cfa`), 2px hairline dividers at 18% white, **square corners**, Manrope. The portal was already token-driven, so the restyle lives in two files and the token NAMES did not change, only their values:

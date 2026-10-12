@@ -49,6 +49,8 @@
 @keyframes spin { to { transform: rotate(360deg); } }
 .fade-up { animation: fadeUp 0.45s var(--ease) both; }
 
+/* In @layer components so a Tailwind utility on the same element (hidden, mt-3…) wins. */
+@layer components {
 /* ── Cards, buttons, fields (the site's .card / .btn / .input) ── */
 .card { background: var(--surface); border: 2px solid var(--divider); }
 .card-inset { background: var(--bg); border: 1px solid var(--divider-soft); }
@@ -66,6 +68,8 @@
 .btn-ghost:hover:not(:disabled) { background: transparent; border-color: var(--light); color: #fff; }
 .btn-danger { background: transparent; border-color: rgba(255,138,138,0.5); color: #ff8a8a; }
 .btn-danger:hover:not(:disabled) { background: rgba(255,138,138,0.12); border-color: #ff8a8a; color: #ff8a8a; }
+.btn-light { background: #fff; border-color: #fff; color: var(--accent-deep); }
+.btn-light:hover:not(:disabled) { background: var(--light); border-color: var(--light); color: var(--accent-deep); }
 .btn-sm { font-size: 13px; padding: 8px 12px; }
 
 .field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
@@ -84,17 +88,21 @@ select.input option { background: #0d0d12; color: #fff; }
 .kicker { font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--light); }
 .spinner { width: 16px; height: 16px; border: 2px solid rgba(255,255,255,.35); border-top-color: #fff; border-radius: 50%; animation: spin .7s linear infinite; display: inline-block; flex-shrink: 0; }
 .dot-live { width: 8px; height: 8px; border-radius: 50%; background: var(--light); animation: pulseDot 1.2s infinite; display: inline-block; }
+}
 
-/* Long-form copy (landing, legal pages). */
+/* Long-form copy (landing, legal pages). :where() keeps these at one-class specificity, and the
+   components layer puts them before utilities, so a utility class inside the copy still wins. */
+@layer components {
 .prose-ds { font-size: 16px; line-height: 1.7; color: var(--text-2); }
-.prose-ds h2 { color: #fff; font-weight: 800; letter-spacing: -0.03em; font-size: 24px; line-height: 1.2; margin: 40px 0 12px; }
-.prose-ds h3 { color: #fff; font-weight: 700; font-size: 17px; margin: 24px 0 8px; }
-.prose-ds p { margin: 0 0 14px; }
-.prose-ds ul { margin: 0 0 14px; padding-left: 20px; list-style: square; }
-.prose-ds li { margin: 0 0 6px; }
-.prose-ds strong { color: #fff; }
-.prose-ds a { color: var(--light); text-decoration: underline; text-underline-offset: 3px; overflow-wrap: anywhere; }
-.prose-ds a:hover { color: #fff; }
+.prose-ds :where(h2) { color: #fff; font-weight: 800; letter-spacing: -0.03em; font-size: 24px; line-height: 1.2; margin: 40px 0 12px; }
+.prose-ds :where(h3) { color: #fff; font-weight: 700; font-size: 17px; margin: 24px 0 8px; }
+.prose-ds :where(p) { margin: 0 0 14px; }
+.prose-ds :where(ul) { margin: 0 0 14px; padding-left: 20px; list-style: square; }
+.prose-ds :where(li) { margin: 0 0 6px; }
+.prose-ds :where(strong) { color: #fff; }
+.prose-ds :where(a) { color: var(--light); text-decoration: underline; text-underline-offset: 3px; overflow-wrap: anywhere; }
+.prose-ds :where(a):hover { color: #fff; }
+}
 
 /* ── Focus / selection / scrollbar ── */
 *:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

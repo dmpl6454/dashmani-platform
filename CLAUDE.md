@@ -741,6 +741,79 @@ The client portal has `/campaigns`, `/campaigns/new` and `/campaigns/[id]`. The 
 
 **Tests:** `apps/api/tests/campaign.test.ts` stubs ffprobe, ffmpeg, Razorpay and SMTP. It covers pure helpers plus the whole flow: catalogue field allow-list, cross-client 404s, chunk 413 / out-of-order / missing / fake-type, webhook replay and tamper, outdated-order refund, reject refunding exactly once, the delivery email sent exactly once, and resend.
 
+## Creator portal (creators.digitalsukoon.com) — Phase A
+
+**What it is.** Creators and publishers anywhere sign up on `apps/creators`, connect their Facebook Pages / Instagram professional accounts with Facebook Login, and submit for review; our staff approve them in the internal portal (`/creators`, `/creators/[id]`). Phase A is accounts + connection + vetting only — **no bookings, offers, prices or payouts yet**.
+
+**Owner decisions.**
+- Phase B: we book a creator's page and the **creator accepts each booking** before anything is posted.
+- Phase C: the **creator sets the price**; payouts are made **by hand** (the `payout_*` columns are reserved for it).
+- One Meta app: **"Post Automation 2"** (`META_OAUTH_APP_ID`), unless `CREATOR_META_APP_ID/SECRET` split it out (env only, no deploy).
+- **Staff approve every creator**, and enable each page individually.
+
+**Rules.**
+- ⚠️ **Separate tables:** `creators`, `creator_refresh_tokens`, `creator_tokens`, `creator_oauth_states`, `creator_connections`, `creator_assets`, `meta_deletion_requests`. **Never put a creator page in `meta_connections` / `meta_assets`**: the overview, Account Growth, every Meta sync and its budget, posting-watch, duplicate resolution and the campaign catalogue read `meta_assets` with no owner filter, so one creator row would leak into all of them. A creator page that is also one of ours is flagged `networkDuplicate` and can never be enabled. No FK to `users`; statuses are VARCHAR.
+- ⚠️ **Separate JWT secrets + `aud: "creators"`** (`CREATOR_JWT_SECRET`, `CREATOR_JWT_REFRESH_SECRET`). `authenticate` checks only the signature and the other three portals share `JWT_SECRET`, so a creator token signed with it would pass any staff gate that forgets a type check. Missing in production → 503, never a fallback.
+- ⚠️ The creator scope list (`CREATOR_META_SCOPES`, incl. the publish scopes for Phase B) is separate from the admin connect's read-only list; `CREATOR_FORBIDDEN_SCOPES` (comments, messages, ads, `email`, `business_management`) is locked by a test. Disconnect is a LOCAL revoke — never call Meta's `DELETE /{user}/permissions`: the app is shared with the staff connect and postautomation.co.in, so it would cut every other grant that person gave it. The creator removes the app on Facebook; our deauthorize callback handles that side.
+- **Static export served by nginx, no pm2** (like `apps/web`): `apps/creators/out` → `nginx/creators.digitalsukoon.com`. No dynamic route segments (detail views take `?id=`). `deploy.sh` writes its `.env.local`, wipes its `.next` and `chmod`s `out/`; it is NOT in the pm2 restart loop.
+
+**Hardening after the adversarial review (2026-10-12, before merge). Do not regress any of these.**
+- ⚠️ **Connecting Facebook takes two steps, so the creator who started it finishes it.** The public `GET …/oauth/callback` exchanges nothing: it 302s to `/connect#state=…&code=…`, putting the code in a URL fragment. The creators app then POSTs the pair to `POST /v1/creator/meta/oauth/complete` with the creator's own bearer token. The state is consumed only when it was started by that same creator; otherwise the answer is 403 `WRONG_ACCOUNT` and the state is left unconsumed. Before this, anyone could start a connect on their own account and send the facebook.com link to a page owner, and the owner's approval would have stored their Page tokens under the attacker's account.
+  - A creator who comes back signed out keeps the result in `sessionStorage` (`PENDING_CONNECT_KEY`) across the sign-in, never in `?next=`.
+  - ⚠️ The callback's own request line still carries `?code=` (Meta's redirect). The API's morgan log blanks it (`redactOauthQuery` in app.ts); nginx's access log on the box still has it (root-only). A code is usable for minutes by someone holding a live state of their own. **PKCE** would close that, but Meta documents it only for its OIDC flow ("still in testing", needs `openid`), so it was not added untested — live-test it before relying on it.
+  - The global rate limiter skips the callback path; its own per-IP limiter answers with a redirect (`?error=busy`), never a JSON 429.
+- ⚠️ **A staff grantor's Facebook identity is refused (409 `STAFF_ACCOUNT`) and nothing is stored.** This covers any `meta_connections` row with `revokedAt` null. Staff get an alert, because Facebook's Page picker on the way may already have narrowed the staff grant to this shared app. Never test the creator connect with a staff Facebook account.
+- **An identity claim is released when it can no longer be used:** the account is closed, or that connection was revoked (disconnected in the portal, superseded, or the app was removed on Facebook). A LIVE claim held by another creator is still refused with `already_linked`.
+- **Page claims** (`claimOf` / `upsertAsset` in creator-discovery):
+  - Released to ANYONE when the page is disconnected, the holder's connection is revoked or lapsed (not in `LIVE_CONNECTION_STATUSES`), or the holder's account is closed.
+  - Released only to a claimant who can PUBLISH there when the holder cannot (an analyst or moderator role never locks the owner out), or when the holder's account is rejected (they may resubmit) or suspended.
+  - A take-over resets the staff switch. A unique-index loss is re-read before it is counted as "claimed elsewhere".
+- **Our-network duplicates count ANY `meta_assets` row,** including disconnected or deselected ones. A duplicate is always switched OFF: by discovery (also on the creator's own row), by the daily re-check (`syncNetworkDuplicates`, DB only — also a flagged row somehow still on), and by the live re-check just before staff switch a page on.
+- **Pages need a live connection** (`LIVE_CONNECTION_STATUSES`: ACTIVE, PARTIAL_SCOPE, NEEDS_REAUTH_SOON) to be submitted or switched on.
+  - A 190 in the metrics job on the USER token (Instagram), or with a session subcode (458/459/460/463/464/467), sets the connection to NEEDS_REAUTH and skips its other pages.
+  - A Facebook PAGE token refused for a page reason (e.g. 492, lost role) only marks that page unpublishable and switched off.
+  - A complete discovery pass lifts NEEDS_REAUTH again (the token works).
+- ⚠️ **`creators.session_version` ends every session at once.** Access and refresh tokens carry it as `sv`; `authenticateCreator` and `creatorRefresh` refuse a token whose `sv` no longer matches (this also closes the refresh-just-before-the-bump race). It is bumped by a password reset, a password change (that device gets a fresh session in the response) and closing the account.
+- **Google sign-in on an UNVERIFIED account first claims it** (`claimUnverifiedAccount`): the password becomes unusable, `session_version` moves on, and every refresh token and pending emailed link ends. Without this, anyone could pre-register someone else's email, wait for the real owner to use Google, and keep their own password and sessions.
+- **The confirmation link verifies only for the SIGNED-IN owner** of its account (`POST /creator/auth/verify-email` is behind `authenticateCreator`; another creator's session gets 403 `WRONG_ACCOUNT`). Otherwise the owner of an address could be tricked into confirming a squatter's account, which would then dodge the Google claim. The page asks a signed-out visitor to sign in and comes back.
+- **Daily creator email cap:**
+  - `CREATOR_EMAIL_DAILY_CAP` (default 300) counts verification and reset links across all creators. Over the cap a sign-up still succeeds without its email, a resend answers 503 `EMAIL_BUSY`, and a forgot-password request is dropped.
+  - Per account, a reset email goes out at most once per 2 minutes and 5 times a day, so one client cannot spend the shared cap on a single address.
+  - The "new creator" staff alert stops after `CREATOR_SIGNUP_ALERT_DAILY_CAP` (default 25) per day.
+  - Sign-up also has a per-IP ceiling, `RATE_LIMIT_CREATOR_SIGNUP_IP_MAX` (30 per hour), keyed on the edge IP.
+  - Why: every email goes out from hr@digitalsukoon.com, which also sends password resets for every portal.
+- **The daily job is idempotent across restarts.** `creator_connections.expiry_warned_days` stores the reminder stage already mailed (14, then 3), is reset on reconnect, and a failed send releases it.
+- **The daily job purges** page details disconnected, and connections revoked, more than 30 days ago (`purgeCreatorPageData`), which is what the privacy page promises. ⚠️ In Phase B, keep any asset that has offers.
+- **A discovery left "running" for 10+ minutes reads as interrupted** (`DISCOVERY_STALE_MS`). While one is running, Refresh answers 409 `DISCOVERY_RUNNING`.
+- **`appsecret_proof` is signed with the secret of the app that minted the token** (the `appSecret` option of `oauthGraphFetch`). This keeps a `CREATOR_META_APP_ID/SECRET` split working with `META_OAUTH_APPSECRET_PROOF=1`.
+- **`scripts/setup-creators.sh` backs up the nginx site it replaces** and, if `nginx -t` fails, puts it back exactly as it was. A re-run never removes a working site.
+
+**Dark switches** (runtime, `apps/api/.env` + `pm2 restart api`):
+- `CREATORS_ENABLED=1` turns the portal on; anything else → every `/v1/creator/*` answers 503. `scripts/setup-creators.sh` never sets it.
+- `META_CREATOR_REDIRECT_URI` unset → "Connect Facebook" answers 503 `META_NOT_CONFIGURED` (also without the app id/secret or `META_TOKEN_ENC_KEY`).
+- `CREATOR_CRONS_ENABLED=0` stops the daily job (token health on both Meta clocks with emails at 14 and 3 days left, page stats within `CREATOR_METRICS_CALL_BUDGET` (200), OAuth-state pruning).
+
+**Server setup (once).** `sudo bash scripts/setup-creators.sh`: installs the nginx site and APPENDS the missing keys to `apps/api/.env` after a backup (`CREATORS_APP_URL`, both JWT secrets via `openssl rand -hex 32` — only if absent, rotating them signs every creator out — and `META_CREATOR_REDIRECT_URI`). Then by hand: Cloudflare A record `creators` (proxied), the Google OAuth client's JavaScript origin `https://creators.digitalsukoon.com`, `pm2 restart api`.
+
+**Meta app settings the owner must set** (App Dashboard of "Post Automation 2"):
+- Facebook Login → Valid OAuth Redirect URIs: `https://api.digitalsukoon.com/v1/creator/meta/oauth/callback`.
+- Deauthorize callback `https://api.digitalsukoon.com/v1/meta/deauthorize`; Data deletion request URL `https://api.digitalsukoon.com/v1/meta/data-deletion`. Both are app-wide: they also receive staff grantors and strangers (a staff grant is flagged for a human, never deleted). ⚠️ Each is ONE value for the whole app, and postautomation.co.in uses the same app, so setting it REPLACES theirs. Read the current values first (on 2026-10-12 the deletion URL was a placeholder). A staff-grant deletion request stays `received` until someone completes it by hand: `UPDATE meta_deletion_requests SET status='completed', completed_at=now() WHERE confirmation_code='…';`.
+- ⚠️ Contact email, Privacy Policy and Terms URLs are **app-wide and shared with postautomation.co.in**: the published policy must cover creators before `CREATORS_ENABLED=1`.
+
+**Schema.** ⚠️ Apply `scripts/creators-ddl.sql` on prod as the `dashmani` role **before** merging, with `bash scripts/apply-creators-ddl.sh` (fetches the PR branch, `git show`s the DDL, role check, shape pre-flight, schema backup, one-transaction apply, verifies 7 tables / 23 indexes / 6 cascading FKs, inspect-only drift check; exit 0 = safe to merge, 2 = applied but drift unchecked). CI rehearses the script twice with zero drift. Never a blanket `db:push`: until the deploy, a push from main's schema drops the empty creator tables without a prompt.
+
+**Endpoints.**
+- `/v1/creator/auth/*` — signup, login, refresh (one-time consume), logout, forgot/reset-password (24h), verify-email (7d), resend-verification (≤1 per 2 min), `google/config`, `google` (new email → `needsProfile`, then created with a verified email).
+- `/v1/creator/me` — GET (with checklist), PUT profile, PUT `/me/password`, POST `/me/submit` (draft/rejected → in_review; needs a verified email and a publishable page), DELETE (close: tokens nulled, pages off).
+- `/v1/creator/meta/*` — POST `oauth/start`, GET `oauth/callback` (public; always a 302: `/connect#state=…&code=…` or `/connect?error=`), POST `oauth/complete` (the signed-in creator who started it; 400 EXPIRED / 403 WRONG_ACCOUNT / 409 ALREADY_LINKED · STAFF_ACCOUNT / 502 EXCHANGE_FAILED), GET `connection`, POST `refresh` (≤1 per 10 min, 409 while a discovery runs), DELETE `connection`.
+- `POST /v1/meta/deauthorize`, `POST /v1/meta/data-deletion` (signed_request HMAC; returns `{url, confirmation_code}`), `GET /v1/public/meta-data-deletion/:code`.
+- `/v1/admin/creators` (authenticate + requireInternalUser + requireAdminRole) — list, detail, approve / reject / suspend / reinstate, `PUT :id/assets/:assetId` (enable a page; 409 `NOT_ENABLEABLE`).
+
+**Tests:** `creator-auth`, `creator-self`, `creator-meta-oauth`, `meta-signed-request`, `creator-admin` and `creator-isolation`, all in `apps/api/tests/`.
+- `creator-isolation`: a full connect changes nothing in `meta_*`; a staff identity is refused; a creator token is refused by the admin channels view, and a staff token by the creator routes.
+- `creator-meta-oauth` covers the review fixes: wrong account, staff refusal, identity release, page take-over, inconclusive probe, the daily duplicate re-check, 190 → NEEDS_REAUTH, idempotent reminders and the purge.
+- `creator-auth` covers Google pre-account hijack and the email cap.
+
 ## Client Portal (`apps/client`) — design system = digitalsukoon.com (2026-10-10)
 
 The client portal shares the website's "Channel Surf" look (`apps/web/src/app/globals.css`): black canvas, white type, one indigo accent (`#403cfa`), 2px hairline dividers at 18% white, **square corners**, Manrope. The portal was already token-driven, so the restyle lives in two files and the token NAMES did not change, only their values:

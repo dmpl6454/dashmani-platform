@@ -637,6 +637,7 @@ function AfterPayment({ campaign: c, onChanged }: { campaign: Campaign; onChange
                   <div className="text-[12px] text-ink-3">
                     {PLATFORM_LABEL[i.platform]} · {FORMAT_LABELS[i.format as CampaignFormat] ?? i.format}
                     {i.postedAt ? ` · posted ${fmtDateTime(i.postedAt)}` : ""}
+                    {!i.postedAt && "scheduledFor" in i && i.scheduledFor && new Date(i.scheduledFor) > new Date() ? ` · posts ${fmtDateTime(i.scheduledFor)}` : ""}
                   </div>
                 </div>
               </div>

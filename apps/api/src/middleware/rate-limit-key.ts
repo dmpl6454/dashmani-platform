@@ -1,5 +1,6 @@
 import type { Request } from "express";
 import { verifyAccessToken, verifyAccessTokenSignature } from "../utils/jwt";
+import { verifyCreatorAccessToken } from "../services/creator/creator-jwt";
 
 // ── Rate-limit keying ───────────────────────────────────────────────────────────
 //
@@ -19,6 +20,9 @@ import { verifyAccessToken, verifyAccessTokenSignature } from "../utils/jwt";
 //      (`u:<type>:<userId>`). Verified, not just decoded — a forged token cannot mint
 //      itself a fresh bucket; it falls through to the IP key like any anonymous call.
 //      This is the bulk of traffic and the part that caused the storm.
+//      Creator-portal tokens are signed with their OWN secret (creator-jwt.ts), so they
+//      fail the staff check and are tried against the creator secret next:
+//      `u:creator:<creatorId>` — also verified, never merely decoded.
 //   2. Everything else is keyed by `req.ip` — still the edge IP under `trust proxy 1`.
 //      Anonymous traffic (login, forgot-password, public jobs, bots) is small, and the
 //      login endpoints have their own per-(ip, account) limiter below, so one edge's
@@ -38,7 +42,13 @@ export function rateLimitKey(req: Request): string {
         return `u:${payload.type ?? "x"}:${payload.userId}`;
       }
     } catch {
-      // invalid/expired token → anonymous keying below
+      // not a staff/HR/client token → maybe a creator token, below
+    }
+    try {
+      const creator = verifyCreatorAccessToken(auth.slice(7));
+      if (creator.creatorId) return `u:creator:${creator.creatorId}`;
+    } catch {
+      // invalid/expired (or creator secrets missing in production) → anonymous keying below
     }
   }
   return `ip:${req.ip ?? "unknown"}`;
@@ -78,7 +88,7 @@ export function loginRateLimitKey(req: Request): string {
   return `login:${req.ip ?? "unknown"}:${account}`;
 }
 
-/** POST /v1/{client,hr,}/auth/google — the full path, case-insensitive, query string ignored. */
+/** POST /v1/{client,hr,creator,}/auth/google — the full path, case-insensitive, query string ignored. */
 export function isGoogleSignInPath(req: Pick<Request, "originalUrl">): boolean {
   const path = (req.originalUrl ?? "").split("?")[0].toLowerCase().replace(/\/+$/, "");
   return path.endsWith("/auth/google");

@@ -11,6 +11,19 @@ import { pipelineNoStore, pipelineRateLimiter, pipelineJson, skipPipelineSyncLog
 import { pipelineErrorMiddleware } from "./services/pipeline/errors";
 import campaignWebhookRoutes from "./routes/campaign-webhook.routes";
 import { bigintJsonReplacer } from "./utils/bigint-json";
+import { creatorMetaReturnUrl } from "./services/creator/creator-meta-config";
+
+const CREATOR_META_CALLBACK_PATH = "/v1/creator/meta/oauth/callback";
+
+/**
+ * The request line as logged, with any OAuth `code` / `state` value blanked on the two Meta
+ * callbacks. The creator callback no longer redeems the code itself (the creator's own browser
+ * does, via POST /oauth/complete), so a code in a log line would still be usable for minutes.
+ */
+export function redactOauthQuery(url: string): string {
+  if (!/\/oauth\/callback(?:\?|$)/.test(url.split("#")[0])) return url;
+  return url.replace(/([?&](?:code|state)=)[^&#]*/g, "$1[redacted]");
+}
 
 const app = express();
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(process.cwd(), "uploads");
@@ -39,6 +52,8 @@ app.use(cors({
     process.env.CLIENT_APP_URL || "http://localhost:3001",
     process.env.HR_APP_URL || "http://localhost:3002",
     process.env.JOBS_APP_URL || "http://localhost:3003",
+    // Creator portal (apps/creators, creators.digitalsukoon.com).
+    process.env.CREATORS_APP_URL || "http://localhost:3005",
     // Public marketing site (apps/web, served as static files by nginx) — posts the
     // CH 06 contact form to /v1/public/enquiries.
     ...(process.env.WEBSITE_ORIGINS || "https://digitalsukoon.com,https://www.digitalsukoon.com,http://localhost:3004")
@@ -70,7 +85,9 @@ app.use(rateLimit({
   windowMs: 15 * 60 * 1000,
   max: envInt("RATE_LIMIT_MAX", 1000),
   keyGenerator: rateLimitKey,
-  skip: (req) => isHealthProbe(req) || isPipelinePath(req),
+  // The creator Meta OAuth callback has its own per-IP ceiling below, which answers with a
+  // REDIRECT; this JSON 429 must never reach a creator coming back from Facebook.
+  skip: (req) => isHealthProbe(req) || isPipelinePath(req) || req.path === CREATOR_META_CALLBACK_PATH,
   standardHeaders: true,
   legacyHeaders: false,
   message: { success: false, error: { code: "RATE_LIMIT", message: "Too many requests, please try again later" } },
@@ -139,9 +156,45 @@ app.use("/v1/client/auth/signup", authLimiter);
 // hard per-client ceiling (looser than the per-account one) so our box can never be driven to
 // hammer Google from its one IP, which would break Sign in with Google for every portal.
 // Mounted AFTER authLimiter, so it counts only the requests that would actually reach Google.
-for (const path of ["/v1/client/auth/google", "/v1/hr/auth/google", "/v1/auth/google"]) {
+for (const path of ["/v1/client/auth/google", "/v1/hr/auth/google", "/v1/auth/google", "/v1/creator/auth/google"]) {
   app.post(path, authLimiter, googleIpLimiter);
 }
+// Creator portal: password login, public sign-up and forgot-password share the per-(client,
+// account) bucket (the key reads `email`). POST on the exact paths, like the Google mounts —
+// no prefix match can catch a GET. forgot-password is included because every request sends
+// an email: without a cap a script could make our SMTP account mail one inbox endlessly.
+for (const path of ["/v1/creator/auth/login", "/v1/creator/auth/signup", "/v1/creator/auth/forgot-password"]) {
+  app.post(path, authLimiter);
+}
+// Creator sign-up also gets a per-client ceiling that IGNORES the email: the per-(client,
+// account) bucket above is fresh for every new address, and every sign-up sends a verification
+// email from the Gmail account shared with password resets on every portal (review SEC-5).
+// Keyed on req.ip — the Cloudflare edge IP under `trust proxy 1` — hence a generous default;
+// the hard backstop is the daily creator-email cap in creator-auth.service.ts.
+const creatorSignupIpLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: envInt("RATE_LIMIT_CREATOR_SIGNUP_IP_MAX", 30),
+  keyGenerator: (req) => `csu:${req.ip ?? "unknown"}`,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, error: { code: "RATE_LIMIT", message: "Too many sign-ups from this network, please try again later" } },
+});
+app.post("/v1/creator/auth/signup", creatorSignupIpLimiter);
+// The creator Meta OAuth callback is public (Facebook redirects the browser to it with no
+// session). It only reads one row and redirects, but a per-IP ceiling still bounds it. Over the
+// limit it REDIRECTS (?error=busy) like every other outcome of that route — a raw JSON 429 on
+// api.digitalsukoon.com would strand the creator outside the app.
+const creatorMetaCallbackLimiter = rateLimit({
+  windowMs: 60_000,
+  max: envInt("RATE_LIMIT_CREATOR_META_CALLBACK_MAX", 60),
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (_req, res) => {
+    res.setHeader("Cache-Control", "no-store");
+    res.redirect(302, creatorMetaReturnUrl("?error=busy"));
+  },
+});
+app.get(CREATOR_META_CALLBACK_PATH, creatorMetaCallbackLimiter);
 
 if (process.env.NODE_ENV !== "test") {
   // P13: successful POST /v1/pipeline/sync polls are not logged (hundreds of thousands
@@ -149,6 +202,7 @@ if (process.env.NODE_ENV !== "test") {
   // 413 / INVALID_JSON bodies are answered ABOVE this line and never reach morgan (as
   // the global limiter's 429s never did) — the pipeline limiter and error middleware log
   // those themselves, throttled (utils/throttled-warn.ts).
+  morgan.token("url", (req) => redactOauthQuery((req as express.Request).originalUrl || req.url || ""));
   app.use(morgan("combined", { skip: skipPipelineSyncLog }));
 }
 

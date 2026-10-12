@@ -472,4 +472,210 @@ describe("worker and staff controls", () => {
     expect(res.body.error.message).toMatch(/pages_manage_posts/);
   });
 });
+
+// ── Clarity (2026-10-12): every hand-posted account says why; links and tokens ──
+
+describe("why an account is posted by hand, and the edge cases around it", () => {
+  it("approval writes the reason onto each hand-posted item, including 'switched off'", async () => {
+    const withAudio = await booking({ status: "paid_pending_review", format: "reel", kinds: ["video"], audio: true, items: [{ assetId: igAssetId, platform: "instagram", status: "pending" }] });
+    await request(app).post(`/v1/admin/campaigns/${withAudio.id}/approve`).set("Authorization", `Bearer ${admin}`);
+    const a = await prisma.campaignBookingItem.findFirstOrThrow({ where: { bookingId: withAudio.id } });
+    expect(a.status).toBe("manual_pending");
+    expect(a.lastError).toMatch(/song/i);
+
+    process.env.CAMPAIGN_PUBLISH_ENABLED = "0";
+    const off = await booking({ status: "paid_pending_review", format: "reel", kinds: ["video"], items: [{ assetId: igAssetId, platform: "instagram", status: "pending" }] });
+    await request(app).post(`/v1/admin/campaigns/${off.id}/approve`).set("Authorization", `Bearer ${admin}`);
+    const o = await prisma.campaignBookingItem.findFirstOrThrow({ where: { bookingId: off.id } });
+    expect(o.status).toBe("manual_pending");
+    expect(o.lastError).toBe("Auto-publishing is switched off.");
+    // …and History says so too, even with the publisher off.
+    const notes = (await prisma.campaignBookingEvent.findMany({ where: { bookingId: off.id } })).map((e) => e.note ?? "");
+    expect(notes.some((n) => n.startsWith("Post by hand on") && n.includes("switched off"))).toBe(true);
+  });
+
+  it("a Facebook reel whose phase reads 'completed' (Meta's other spelling) is published", async () => {
+    handler = (c) => {
+      if (c.method === "POST" && c.path === `/${PAGE_ID}/video_reels` && c.body.get("upload_phase") === "start") return json({ video_id: "VID2" });
+      if (c.method === "POST" && c.path.endsWith("/VID2")) return json({ success: true });
+      if (c.method === "POST" && c.path === `/${PAGE_ID}/video_reels`) return json({ success: true });
+      if (c.method === "GET" && c.path === "/VID2" && c.query.get("fields") === "status") return json({ status: { video_status: "ready", publishing_phase: { status: "completed" } } });
+      if (c.method === "GET" && c.path === "/VID2") return json({ permalink_url: "/reel/111" });
+      return graphError(100, `unexpected ${c.method} ${c.path}`);
+    };
+    const b = await booking({ format: "reel", kinds: ["video"], items: [{ assetId: fbAssetId, platform: "facebook" }] });
+    expect((await publishItem(b.items[0].id))?.kind).toBe("wait");
+    expect((await publishItem(b.items[0].id))?.kind).toBe("published");
+  });
+
+  it("Instagram falls back to the linked Page's token once the user token has expired", async () => {
+    igFake();
+    const ig = await prisma.metaAsset.update({ where: { id: igAssetId }, data: { parentPageId: PAGE_ID }, select: { connectionId: true } });
+    await prisma.metaConnection.update({ where: { id: ig.connectionId }, data: { tokenExpiresAt: new Date(Date.now() - 60_000) } });
+    const b = await booking({ format: "reel", kinds: ["video"], items: [{ assetId: igAssetId, platform: "instagram" }] });
+    expect((await publishItem(b.items[0].id))?.kind).toBe("wait");
+    const create = calls.find((c) => c.method === "POST" && c.path === `/${IG_ID}/media`)!;
+    expect(create.body.get("access_token")).toBe("PAGE_TOKEN");
+  });
+
+  it("an unexpired user token is still used for Instagram (what has published every live post)", async () => {
+    igFake();
+    const ig = await prisma.metaAsset.update({ where: { id: igAssetId }, data: { parentPageId: PAGE_ID }, select: { connectionId: true } });
+    await prisma.metaConnection.update({ where: { id: ig.connectionId }, data: { tokenExpiresAt: new Date(Date.now() + 86_400_000) } });
+    const b = await booking({ format: "reel", kinds: ["video"], items: [{ assetId: igAssetId, platform: "instagram" }] });
+    await publishItem(b.items[0].id);
+    expect(calls.find((c) => c.method === "POST" && c.path === `/${IG_ID}/media`)!.body.get("access_token")).toBe("USER_TOKEN");
+  });
+
+  it("an expired user token with no linked Page hands the item to staff with a reconnect message", async () => {
+    igFake();
+    const ig = await prisma.metaAsset.findUniqueOrThrow({ where: { id: igAssetId }, select: { connectionId: true } });
+    await prisma.metaConnection.update({ where: { id: ig.connectionId }, data: { tokenExpiresAt: new Date(Date.now() - 60_000) } });
+    const b = await booking({ format: "reel", kinds: ["video"], items: [{ assetId: igAssetId, platform: "instagram" }] });
+    expect((await publishItem(b.items[0].id))?.kind).toBe("manual");
+    expect(calls).toHaveLength(0);
+    expect((await prisma.campaignBookingItem.findUniqueOrThrow({ where: { id: b.items[0].id } })).lastError).toMatch(/expired.*reconnect/i);
+  });
+
+  it("a post published without a readable link is reported live, and pasting the link later tells the client", async () => {
+    // Meta publishes but never answers the permalink read.
+    handler = (c) => {
+      if (c.path === `/${IG_ID}/content_publishing_limit`) return json({ data: [{ quota_usage: 1, config: { quota_total: 100 } }] });
+      if (c.method === "POST" && c.path === `/${IG_ID}/media`) return json({ id: "CONT9" });
+      if (c.method === "GET" && c.path === "/CONT9") return json({ status_code: "FINISHED" });
+      if (c.method === "POST" && c.path === `/${IG_ID}/media_publish`) return json({ id: "MEDIA9" });
+      return graphError(1, "temporarily unavailable", 500);
+    };
+    const b = await booking({ format: "post", kinds: ["image"], items: [{ assetId: igAssetId, platform: "instagram" }] });
+    const id = b.items[0].id;
+    await publishItem(id);
+    expect((await publishItem(id))?.kind).toBe("published");
+    await new Promise((r) => setTimeout(r, 30));
+    expect((await prisma.campaignBookingItem.findUniqueOrThrow({ where: { id } })).permalink).toBeNull();
+    const delivered = vi.mocked(sendEmail).mock.calls.filter(([o]) => o.subject.startsWith("Delivered"));
+    expect(delivered.length).toBeGreaterThan(0);
+    expect(delivered[0][0].html).toContain("Live — link to follow");
+    expect(delivered[0][0].html).not.toContain("could not be made");
+
+    vi.mocked(sendEmail).mockClear();
+    const res = await request(app).post(`/v1/admin/campaigns/${b.id}/items/${id}/posted`).set("Authorization", `Bearer ${admin}`).send({ url: "https://www.instagram.com/p/LINK9/" });
+    expect(res.status).toBe(200);
+    await new Promise((r) => setTimeout(r, 30));
+    expect(vi.mocked(sendEmail).mock.calls.some(([o]) => o.subject.startsWith("Live on"))).toBe(true);
+  });
+
+  it("'Post by hand instead' leaves a reason on the row", async () => {
+    const b = await booking({ format: "reel", kinds: ["video"], items: [{ assetId: igAssetId, platform: "instagram" }] });
+    await prisma.campaignBookingItem.update({ where: { id: b.items[0].id }, data: { nextAttemptAt: launchAt(new Date("2099-01-05T00:00:00Z")) } });
+    await request(app).post(`/v1/admin/campaigns/${b.id}/items/${b.items[0].id}/manual`).set("Authorization", `Bearer ${admin}`);
+    expect((await prisma.campaignBookingItem.findUniqueOrThrow({ where: { id: b.items[0].id } })).lastError).toMatch(/by hand/);
+  });
+});
+
+// ── Review follow-ups (2026-10-12) ─────────────────────────────────────────────
+
+describe("a lapsed login token, late links and what the client is told", () => {
+  it("a NEEDS_REAUTH connection still publishes through Page tokens: Facebook, and Instagram via its linked Page", async () => {
+    igFake();
+    const ig = await prisma.metaAsset.update({ where: { id: igAssetId }, data: { parentPageId: PAGE_ID }, select: { connectionId: true } });
+    await prisma.metaConnection.update({ where: { id: ig.connectionId }, data: { status: "NEEDS_REAUTH" } });
+    const b = await booking({
+      status: "paid_pending_review", format: "post", kinds: ["image"], launchFrom: new Date("2099-01-05T00:00:00Z"),
+      items: [{ assetId: igAssetId, platform: "instagram", status: "pending" }, { assetId: fbAssetId, platform: "facebook", status: "pending" }],
+    });
+    await request(app).post(`/v1/admin/campaigns/${b.id}/approve`).set("Authorization", `Bearer ${admin}`);
+    const items = await prisma.campaignBookingItem.findMany({ where: { bookingId: b.id } });
+    expect(items.map((i) => i.status).sort()).toEqual(["queued", "queued"]);
+    const igItem = items.find((i) => i.targetId === igAssetId)!;
+    await publishItem(igItem.id);
+    expect(calls.find((c) => c.method === "POST" && c.path === `/${IG_ID}/media`)!.body.get("access_token")).toBe("PAGE_TOKEN");
+  });
+
+  it("the parent-Page backfill links Instagram accounts — through me/accounts while the login works, through Page tokens after", async () => {
+    const { backfillParentPages } = await import("../src/services/meta-oauth/parent-pages");
+    const ig = await prisma.metaAsset.findUniqueOrThrow({ where: { id: igAssetId }, select: { connectionId: true } });
+    handler = (c) =>
+      c.path === "/me/accounts"
+        ? json({ data: [{ id: PAGE_ID, instagram_business_account: { id: IG_ID } }, { id: "999", instagram_business_account: { id: "888" } }] })
+        : graphError(100, `unexpected ${c.path}`);
+    expect((await backfillParentPages(ig.connectionId)).linked).toBe(1);
+    expect((await prisma.metaAsset.findUniqueOrThrow({ where: { id: igAssetId } })).parentPageId).toBe(PAGE_ID);
+    expect(calls[0].query.get("access_token") ?? calls[0].body.get("access_token")).toBe("USER_TOKEN");
+
+    // Once linked it costs nothing.
+    calls = [];
+    expect((await backfillParentPages(ig.connectionId)).calls).toBe(0);
+    expect(calls).toHaveLength(0);
+
+    // Login lapsed: each Page answers with its own token.
+    await prisma.metaAsset.update({ where: { id: igAssetId }, data: { parentPageId: null } });
+    await prisma.metaConnection.update({ where: { id: ig.connectionId }, data: { status: "NEEDS_REAUTH" } });
+    handler = (c) => (c.path === `/${PAGE_ID}` ? json({ id: PAGE_ID, instagram_business_account: { id: IG_ID } }) : graphError(100, "unexpected"));
+    calls = [];
+    expect((await backfillParentPages(ig.connectionId)).linked).toBe(1);
+    expect(calls.every((c) => (c.query.get("access_token") ?? c.body.get("access_token")) === "PAGE_TOKEN")).toBe(true);
+  });
+
+  it("a link pasted after delivery reaches the client on a multi-account booking", async () => {
+    handler = (c) => {
+      if (c.path === `/${IG_ID}/content_publishing_limit`) return json({ data: [{ quota_usage: 1, config: { quota_total: 100 } }] });
+      if (c.method === "POST" && c.path === `/${IG_ID}/media`) return json({ id: "CONT8" });
+      if (c.method === "GET" && c.path === "/CONT8") return json({ status_code: "FINISHED" });
+      if (c.method === "POST" && c.path === `/${IG_ID}/media_publish`) return json({ id: "MEDIA8" });
+      return graphError(1, "temporarily unavailable", 500);
+    };
+    const b = await booking({
+      format: "post", kinds: ["image"],
+      items: [{ assetId: igAssetId, platform: "instagram" }, { assetId: fbAssetId, platform: "facebook", status: "posted_manual" }],
+    });
+    await prisma.campaignBookingItem.update({ where: { id: b.items[1].id }, data: { permalink: "https://www.facebook.com/p/x", postedAt: new Date(), notifiedAt: new Date() } });
+    await publishItem(b.items[0].id);
+    expect((await publishItem(b.items[0].id))?.kind).toBe("published");
+    await new Promise((r) => setTimeout(r, 40));
+    expect((await prisma.campaignBooking.findUniqueOrThrow({ where: { id: b.id } })).deliveredAt).not.toBeNull();
+
+    vi.mocked(sendEmail).mockClear();
+    const res = await request(app).post(`/v1/admin/campaigns/${b.id}/items/${b.items[0].id}/posted`).set("Authorization", `Bearer ${admin}`).send({ url: "https://www.instagram.com/p/LINK8/" });
+    expect(res.status).toBe(200);
+    await new Promise((r) => setTimeout(r, 40));
+    const live = vi.mocked(sendEmail).mock.calls.filter(([o]) => o.subject.startsWith("Live on"));
+    expect(live).toHaveLength(1);
+    expect(live[0][0].html).not.toContain("send every link together");
+  });
+
+  it("the client sees a posting time only for a first scheduled run with the publisher on", async () => {
+    const b = await booking({
+      format: "reel", kinds: ["video"],
+      items: [{ assetId: igAssetId, platform: "instagram" }, { assetId: fbAssetId, platform: "facebook", containerId: "reel:1:2" }],
+    });
+    const due = new Date("2099-01-05T04:30:00Z");
+    await prisma.campaignBookingItem.updateMany({ where: { bookingId: b.id }, data: { nextAttemptAt: due } });
+    const { generateClientToken } = await import("./helpers");
+    const tok = generateClientToken(clientId, "p@brand.test");
+    const r1 = await request(app).get(`/v1/client/campaigns/${b.id}/results`).set("Authorization", `Bearer ${tok}`);
+    expect(r1.status).toBe(200);
+    const byId = new Map<string, { scheduledFor: string | null; lastError?: unknown }>(r1.body.data.items.map((i: { id: string }) => [i.id, i]));
+    expect(byId.get(b.items[0].id)!.scheduledFor).toBe(due.toISOString());
+    expect(byId.get(b.items[1].id)!.scheduledFor).toBeNull(); // mid-publish: no promise
+
+    process.env.CAMPAIGN_PUBLISH_ENABLED = "0";
+    const r2 = await request(app).get(`/v1/client/campaigns/${b.id}/results`).set("Authorization", `Bearer ${tok}`);
+    expect(r2.body.data.items.every((i: { scheduledFor: string | null }) => i.scheduledFor === null)).toBe(true);
+
+    // Staff-only reasons never reach the client.
+    await prisma.campaignBookingItem.update({ where: { id: b.items[0].id }, data: { lastError: "internal reason" } });
+    const r3 = await request(app).get(`/v1/client/campaigns/${b.id}`).set("Authorization", `Bearer ${tok}`);
+    expect(JSON.stringify(r3.body)).not.toContain("internal reason");
+  });
+
+  it("a refunded item drops its hand-post reason", async () => {
+    const b = await booking({ format: "post", kinds: ["image"], items: [{ assetId: fbNoScopeAssetId, platform: "facebook", status: "manual_pending" }] });
+    await prisma.campaignBookingItem.update({ where: { id: b.items[0].id }, data: { lastError: "Auto-publishing is switched off." } });
+    const res = await request(app).post(`/v1/admin/campaigns/${b.id}/items/${b.items[0].id}/refund`).set("Authorization", `Bearer ${admin}`);
+    expect(res.status).toBe(200);
+    const it = await prisma.campaignBookingItem.findUniqueOrThrow({ where: { id: b.items[0].id } });
+    expect(it.status).toBe("refunded");
+    expect(it.lastError).toBeNull();
+  });
+});
 });

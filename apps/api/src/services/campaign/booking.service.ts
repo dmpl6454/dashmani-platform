@@ -110,7 +110,7 @@ const itemSelect = {
   status: true,
   permalink: true,
   postedAt: true,
-  lastError: true,
+  // ⚠️ No lastError: it carries staff-only reasons and raw Meta error text.
 } satisfies Prisma.CampaignBookingItemSelect;
 
 /**

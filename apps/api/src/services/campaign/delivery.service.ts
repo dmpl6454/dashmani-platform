@@ -1,5 +1,5 @@
 import { prisma } from "@dashmani/db";
-import { canonicalKey, CAMPAIGN_TYPE_LABELS, FORMAT_LABELS, formatPaise, type CampaignFormat, type CampaignType } from "@dashmani/shared";
+import { canonicalKey, CAMPAIGN_TYPE_LABELS, FORMAT_LABELS, formatPaise, LIVE_ITEM_STATUSES, SETTLED_ITEM_STATUSES, type CampaignFormat, type CampaignType, type ItemStatus } from "@dashmani/shared";
 import { sendEmail, notifyAdminByEmail } from "../email.service";
 import { campaignConfig } from "./config";
 
@@ -70,6 +70,8 @@ const portalLink = (id: string) => `${campaignConfig.clientAppUrl()}/campaigns/$
 /** launch_from / launch_to are @db.Date (midnight UTC): format them in UTC, never as IST instants. */
 const dateOnly = (d: Date) => d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
 
+const isLive = (status: string) => (LIVE_ITEM_STATUSES as readonly string[]).includes(status as ItemStatus);
+
 /** paidOnline = the booking has a paidAt; without one nothing was charged, so nothing is "refunded". */
 function itemStatusText(status: string, paidOnline: boolean): string {
   switch (status) {
@@ -100,7 +102,9 @@ export async function sendDeliveryEmail(bookingId: string, opts: { force?: boole
   const rows = b.items
     .map((i) => {
       const acct = i.accountHandle ? `${esc(i.accountName)} <span style="color:#777">@${esc(i.accountHandle)}</span>` : esc(i.accountName);
-      const link = i.permalink ? `<a href="${esc(i.permalink)}" style="color:#1a56db;font-weight:600">View post</a>` : esc(itemStatusText(i.status, Boolean(b.paidAt)));
+      const link = i.permalink
+        ? `<a href="${esc(i.permalink)}" style="color:#1a56db;font-weight:600">View post</a>`
+        : isLive(i.status) ? "Live — link to follow" : esc(itemStatusText(i.status, Boolean(b.paidAt)));
       return `<tr>
 <td style="padding:10px 8px;border-bottom:1px solid #eee">${esc(PLATFORM_LABEL[i.platform] ?? i.platform)}</td>
 <td style="padding:10px 8px;border-bottom:1px solid #eee">${acct}</td>
@@ -109,7 +113,9 @@ export async function sendDeliveryEmail(bookingId: string, opts: { force?: boole
 <td style="padding:10px 8px;border-bottom:1px solid #eee">${link}</td></tr>`;
     })
     .join("");
-  const notLive = b.items.filter((i) => !i.permalink);
+  // Decided by status, never by the link: a post the API published but whose link Meta didn't
+  // return yet IS live, and must not be reported as "could not be made".
+  const notLive = b.items.filter((i) => !isLive(i.status));
   const refundNote = notLive.length
     ? `<p style="color:#8a4b00">${notLive.length} post${notLive.length === 1 ? "" : "s"} could not be made. ${
         notLive.some((i) => i.status === "refunded")
@@ -120,7 +126,7 @@ export async function sendDeliveryEmail(bookingId: string, opts: { force?: boole
       }</p>`
     : "";
 
-  const anyLive = b.items.some((i) => i.permalink);
+  const anyLive = b.items.some((i) => isLive(i.status));
   const html = shell(anyLive ? `Your campaign "${b.name}" is live` : `Update on your campaign "${b.name}"`, `
 <p>Hi ${esc(b.client.contactName)},</p>
 <p>${anyLive ? `Your campaign for <strong>${esc(b.brand)}</strong> has been delivered. Here is every post:` : `Here is the final status of your campaign for <strong>${esc(b.brand)}</strong>:`}</p>
@@ -138,6 +144,15 @@ ${refundNote}
 
 /** "Your post is live on @account" — once per item. */
 export async function sendItemLiveEmail(itemId: string): Promise<boolean> {
+  const pre = await prisma.campaignBookingItem.findUnique({ where: { id: itemId }, select: { bookingId: true } });
+  if (!pre) return false;
+  const pb = await prisma.campaignBooking.findUnique({ where: { id: pre.bookingId }, select: { deliveredAt: true, items: { select: { status: true } } } });
+  if (!pb) return false;
+  // The last item of a multi-item booking: the delivery email (every link) follows immediately,
+  // so this one is skipped — decided BEFORE claiming, so the claim is never spent on a skip. A
+  // link that arrives AFTER delivery (a post the API published without a readable link) is
+  // still sent on its own: the delivery email told the client "link to follow".
+  if (!pb.deliveredAt && pb.items.length > 1 && pb.items.every((i) => (SETTLED_ITEM_STATUSES as readonly string[]).includes(i.status))) return false;
   const claim = await prisma.campaignBookingItem.updateMany({
     where: { id: itemId, notifiedAt: null, permalink: { not: null } },
     data: { notifiedAt: new Date() },
@@ -147,14 +162,12 @@ export async function sendItemLiveEmail(itemId: string): Promise<boolean> {
   if (!item?.permalink) return false;
   const b = await bookingWithClient(item.bookingId);
   if (!b) return false;
-  // When this is the last item the delivery email follows immediately — skip the single one.
-  if (b.items.every((i) => ["posted_manual", "published", "failed", "refunded"].includes(i.status)) && b.items.length > 1) return false;
   const where = item.accountHandle ? `@${item.accountHandle}` : item.accountName;
   const html = shell(`Your post is live on ${where}`, `
 <p>Hi ${esc(b.client.contactName)},</p>
 <p>Your ${esc(FORMAT_LABELS[item.format as CampaignFormat] ?? item.format)} for <strong>${esc(b.name)}</strong> is now live on ${esc(PLATFORM_LABEL[item.platform] ?? item.platform)} (${esc(where)}), posted ${esc(fmtIST(item.postedAt))}.</p>
 <p>${button(item.permalink, "View post")}</p>
-<p style="color:#777">We'll send every link together once the whole campaign is live.</p>`);
+${pb.deliveredAt ? "" : `<p style="color:#777">We'll send every link together once the whole campaign is live.</p>`}`);
   await sendEmail({ to: b.client.email, subject: `Live on ${where}: ${b.name}`, html, fromName: "Digital Sukoon", replyTo: campaignConfig.teamEmail() });
   return true;
 }
@@ -243,7 +256,7 @@ export async function getResults(clientId: string, bookingId: string) {
       deliveredAt: true,
       items: {
         orderBy: { createdAt: "asc" },
-        select: { id: true, platform: true, format: true, accountName: true, accountHandle: true, status: true, permalink: true, postedAt: true, remotePostId: true },
+        select: { id: true, platform: true, format: true, accountName: true, accountHandle: true, status: true, permalink: true, postedAt: true, remotePostId: true, nextAttemptAt: true, attempts: true, containerId: true },
       },
     },
   });
@@ -272,6 +285,7 @@ export async function getResults(clientId: string, bookingId: string) {
     if (!byRemote.has(p.metaPostId)) byRemote.set(p.metaPostId, p);
   }
 
+  const autoOn = campaignConfig.publishEnabled();
   return {
     id: b.id,
     status: b.status,
@@ -288,6 +302,10 @@ export async function getResults(clientId: string, bookingId: string) {
         status: i.status,
         permalink: i.permalink,
         postedAt: i.postedAt,
+        // When an automatic post is due — only for its FIRST scheduled run with the publisher on.
+        // Retry / processing times are not a promise, and with auto-publishing switched off a
+        // queued post will not go out by itself, so no time is shown then.
+        scheduledFor: autoOn && i.status === "queued" && i.attempts === 0 && !i.containerId ? i.nextAttemptAt : null,
         metrics: measured ? { views: p!.views, likes: p!.likes, comments: p!.comments, measuredAt: p!.metricsFetchedAt } : null,
       };
     }),

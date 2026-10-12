@@ -75,7 +75,7 @@ export function PortalRail() {
 
   const Brand = ({ small = false }: { small?: boolean }) => (
     <span className="flex items-center gap-2.5 min-w-0">
-      <img src="/logo-mark.svg" alt="" className={`${small ? "h-7 w-7" : "h-8 w-8"} shrink-0`} />
+      <img src="/brand-logo.png" alt="" width={32} height={32} className={`${small ? "h-7 w-7" : "h-8 w-8"} shrink-0`} />
       <span className="text-[17px] font-extrabold tracking-[-0.02em] text-ink whitespace-nowrap">Digital Sukoon</span>
     </span>
   );
@@ -86,7 +86,7 @@ export function PortalRail() {
       <>
         {/* Brand */}
         <div className={`flex items-center h-16 shrink-0 border-b-2 border-border ${narrow ? "justify-center px-0" : "gap-3 px-5"}`}>
-          {narrow ? <img src="/logo-mark.svg" alt="Digital Sukoon" className="h-8 w-8" /> : <Brand />}
+          {narrow ? <img src="/brand-logo.png" alt="Digital Sukoon" width={32} height={32} className="h-8 w-8" /> : <Brand />}
           {onClose && (
             <button onClick={onClose} className="ml-auto p-1 text-ink-3 hover:text-ink" aria-label="Close menu">
               <CloseIcon size={18} />

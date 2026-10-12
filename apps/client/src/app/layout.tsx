@@ -62,8 +62,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <head>
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <title>Dashmani Client Portal</title>
-        {/* The browser asks for /favicon.ico on every first load; the portal ships only the SVG mark. */}
-        <link rel="icon" href="/logo-mark.svg" type="image/svg+xml" />
+        {/* The Digital Sukoon circle logo (same artwork as digitalsukoon.com's /logo.png). */}
+        <link rel="icon" href="/favicon.png" type="image/png" sizes="64x64" />
+        <link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180" />
       </head>
       <body>
         <AuthContext.Provider value={{ user, login, adoptSession, logout, isLoading }}>

@@ -13,11 +13,19 @@ export const UNCATEGORISED_LABEL = "Uncategorised";
 
 /** Trim, collapse inner spaces, lower-case. Blank or missing → "" (the uncategorised key). */
 export function categoryKey(raw: string | null | undefined): string {
-  return spaced(raw).toLowerCase();
+  const key = spaced(raw).toLowerCase();
+  // A category typed as "Uncategorised" (or the US spelling) means the same as none: one tab, not two.
+  return UNCATEGORISED_WORDS.has(key) ? "" : key;
 }
 
+const UNCATEGORISED_WORDS = new Set([UNCATEGORISED_LABEL.toLowerCase(), "uncategorized"]);
+
+/**
+ * Unicode-normalised (so a pasted accent in another encoding matches), with zero-width characters
+ * dropped (pasted from a web page or a word processor, they are invisible), trimmed, inner spaces collapsed.
+ */
 function spaced(raw: string | null | undefined): string {
-  return (raw ?? "").trim().replace(/\s+/g, " ");
+  return (raw ?? "").normalize("NFC").replace(/[​-‍⁠﻿]/g, "").trim().replace(/\s+/g, " ");
 }
 
 export interface CategoryTab {
@@ -56,16 +64,25 @@ export function categoryTabs(rows: ReadonlyArray<{ category: string | null }>): 
     );
 }
 
+/** Most used wins; on a tie, a spelling that starts with a capital, then fewer capitals, then alphabetical. */
 function mostUsedSpelling(spellings: Map<string, number>): string {
   let best = "";
   let bestCount = -1;
   for (const [spelling, count] of spellings) {
-    if (count > bestCount || (count === bestCount && spelling < best)) {
+    if (count > bestCount || (count === bestCount && preferredSpelling(spelling, best))) {
       best = spelling;
       bestCount = count;
     }
   }
   return best;
+}
+
+/** Title-cased labels read best, so "Bollywood news" beats both "bollywood news" and "BOLLYWOOD NEWS". */
+function preferredSpelling(a: string, b: string): boolean {
+  const startsUpper = (s: string) => /^\p{Lu}/u.test(s);
+  if (startsUpper(a) !== startsUpper(b)) return startsUpper(a);
+  const caps = (s: string) => (s.match(/\p{Lu}/gu) ?? []).length;
+  return caps(a) !== caps(b) ? caps(a) < caps(b) : a.localeCompare(b) < 0;
 }
 
 /** The rows in one category. `key` null = no category filter (every row). */

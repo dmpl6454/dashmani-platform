@@ -12,7 +12,7 @@ import {
   type CampaignType,
 } from "@dashmani/shared/src/validators/campaign";
 import { addDaysIST, todayIST } from "@dashmani/shared/src/utils/date";
-import { categoryTabs, inCategory } from "@dashmani/shared/src/campaign/categories";
+import { categoryKey, categoryTabs, inCategory } from "@dashmani/shared/src/campaign/categories";
 import { ApiError } from "@/lib/api";
 import {
   compact,
@@ -28,6 +28,12 @@ import { Card, ErrorBanner, Field, PlatformDot, inputCls, textareaCls } from "./
 import { useHydrated } from "@/lib/hooks/use-hydrated";
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : "Something went wrong. Please try again.");
+
+/** Search matches a category the same way the category tabs group it (case and spacing ignored). */
+const matchesCategory = (category: string | null, term: string) => {
+  const want = categoryKey(term);
+  return want !== "" && categoryKey(category).includes(want);
+};
 
 // ── Step 1: details ─────────────────────────────────────────────────────────────
 
@@ -212,8 +218,8 @@ export function AccountsStep({ campaign, onSaved, onEdit }: {
   // Picked earlier but no longer offered (withdrawn, or the type/format/song changed since).
   const gone = data ? campaign.items.filter((i) => picked.has(i.rateCardId) && !offerIds.has(i.rateCardId)) : [];
 
-  // The rows on the selected platform tab. The category tabs count these, so each number is what
-  // that tab would list.
+  // The rows on the selected platform tab. Category counts are per platform and, like the platform
+  // counts, ignore the search box.
   const onPlatform = useMemo(
     () => offers.filter((a) => platform === "all" || a.platform === platform),
     [offers, platform],
@@ -227,7 +233,7 @@ export function AccountsStep({ campaign, onSaved, onEdit }: {
   const visible = useMemo(() => {
     const term = q.trim().toLowerCase().replace(/^@/, "");
     return inCategory(onPlatform, activeCat)
-      .filter((a) => !term || a.name.toLowerCase().includes(term) || (a.username ?? "").toLowerCase().includes(term) || (a.category ?? "").toLowerCase().includes(term))
+      .filter((a) => !term || a.name.toLowerCase().includes(term) || (a.username ?? "").toLowerCase().includes(term) || matchesCategory(a.category, term))
       .sort((a, b) =>
         sort === "price" ? a.price.total - b.price.total :
         sort === "engagement" ? (b.engagementRatePct ?? -1) - (a.engagementRatePct ?? -1) :
@@ -339,28 +345,31 @@ export function AccountsStep({ campaign, onSaved, onEdit }: {
 
         {/* Category tabs appear once there are two or more to choose between: one category is just the list. */}
         {catTabs.length > 1 && (
-          <div className="flex flex-wrap gap-1.5 mb-4" role="tablist" aria-label="Categories">
-            <button
-              type="button"
-              role="tab"
-              aria-selected={activeCat === null}
-              onClick={() => setCat(null)}
-              className={`h-8 px-3 rounded-full text-[12.5px] font-semibold border-2 ${activeCat === null ? "bg-indigo text-white border-indigo" : "border-ink/15 text-ink-2"}`}
-            >
-              All <span className="opacity-70 tabular-nums">{onPlatform.length}</span>
-            </button>
-            {catTabs.map((t) => (
+          <div className="mb-4">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-3 mb-1.5">Category</p>
+            <div className="flex flex-wrap gap-1.5" role="tablist" aria-label="Categories">
               <button
-                key={t.key === "" ? "(uncategorised)" : t.key}
                 type="button"
                 role="tab"
-                aria-selected={activeCat === t.key}
-                onClick={() => setCat(t.key)}
-                className={`max-w-full h-8 px-3 rounded-full text-[12.5px] font-semibold border-2 ${activeCat === t.key ? "bg-indigo text-white border-indigo" : "border-ink/15 text-ink-2"}`}
+                aria-selected={activeCat === null}
+                onClick={() => setCat(null)}
+                className={`h-8 px-3 rounded-full text-[12.5px] font-semibold border-2 ${activeCat === null ? "bg-indigo text-white border-indigo" : "border-ink/15 text-ink-2"}`}
               >
-                <span className="truncate">{labelOf.get(t.key) ?? t.label}</span> <span className="opacity-70 tabular-nums">{t.count}</span>
+                All <span className="opacity-70 tabular-nums">{onPlatform.length}</span>
               </button>
-            ))}
+              {catTabs.map((t) => (
+                <button
+                  key={t.key === "" ? "(uncategorised)" : t.key}
+                  type="button"
+                  role="tab"
+                  aria-selected={activeCat === t.key}
+                  onClick={() => setCat(t.key)}
+                  className={`max-w-full min-w-0 h-8 px-3 rounded-full text-[12.5px] font-semibold border-2 ${activeCat === t.key ? "bg-indigo text-white border-indigo" : "border-ink/15 text-ink-2"}`}
+                >
+                  <span className="block truncate">{labelOf.get(t.key) ?? t.label} <span className="opacity-70 tabular-nums">{t.count}</span></span>
+                </button>
+              ))}
+            </div>
           </div>
         )}
 
@@ -428,7 +437,7 @@ export function AccountsStep({ campaign, onSaved, onEdit }: {
                       {a.username && <span className="truncate max-w-[160px]">@{a.username}</span>}
                       <span>{PLATFORM_LABEL[a.platform]}</span>
                       {a.category && <span>{a.category}</span>}
-                      <span title="About how long after posting the link is ready.">Link in ~{a.linkDeliveryMinutes.min}–{a.linkDeliveryMinutes.max} min after posting</span>
+                      {a.linkDeliveryMinutes && <span title="About how long after posting the link is ready.">Link in ~{a.linkDeliveryMinutes.min}–{a.linkDeliveryMinutes.max} min after posting</span>}
                     </div>
                     <div className="sm:hidden text-[11px] text-ink-3 tabular-nums">
                       {compact(a.followers)} followers · {a.engagementRatePct != null ? `${a.engagementRatePct}%` : "—"} engagement

@@ -47,8 +47,8 @@ export default function TermsPage() {
 
       <h2>5. Bookings — you approve each one</h2>
       <ul>
-        <li>You set the price for a post on your page.</li>
-        <li>Each booking is offered to you with the brand, the post and the price. <strong>Nothing is published until you accept it.</strong> You may decline any booking without giving a reason.</li>
+        <li>You set your asking price for each type of post, in your own currency. Our team agrees the booking price with the brand separately.</li>
+        <li>Each booking is offered to you with the brand, the post and what you will be paid for it. <strong>Nothing is published until you accept it.</strong> You may decline any booking without giving a reason.</li>
         <li>Once you accept, we publish exactly the post you accepted, on the page and at the time agreed. Please don&apos;t delete or edit it for the period agreed in the booking.</li>
       </ul>
 

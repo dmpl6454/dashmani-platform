@@ -11,6 +11,7 @@ import { pipelineNoStore, pipelineRateLimiter, pipelineJson, skipPipelineSyncLog
 import { pipelineErrorMiddleware } from "./services/pipeline/errors";
 import campaignWebhookRoutes from "./routes/campaign-webhook.routes";
 import { bigintJsonReplacer } from "./utils/bigint-json";
+import { creatorMetaReturnUrl } from "./services/creator/creator-meta-config";
 
 const app = express();
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(process.cwd(), "uploads");
@@ -151,15 +152,33 @@ for (const path of ["/v1/client/auth/google", "/v1/hr/auth/google", "/v1/auth/go
 for (const path of ["/v1/creator/auth/login", "/v1/creator/auth/signup", "/v1/creator/auth/forgot-password"]) {
   app.post(path, authLimiter);
 }
-// The creator Meta OAuth callback is public (Facebook redirects the browser to it with no
-// session), so it gets the same tight per-IP ceiling as the admin callback's router-local
-// limiter in routes/meta-oauth.routes.ts (20 per minute).
-const creatorMetaCallbackLimiter = rateLimit({
-  windowMs: 60_000,
-  max: 20,
+// Creator sign-up also gets a per-client ceiling that IGNORES the email: the per-(client,
+// account) bucket above is fresh for every new address, and every sign-up sends a verification
+// email from the Gmail account shared with password resets on every portal (review SEC-5).
+// Keyed on req.ip — the Cloudflare edge IP under `trust proxy 1` — hence a generous default;
+// the hard backstop is the daily creator-email cap in creator-auth.service.ts.
+const creatorSignupIpLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: envInt("RATE_LIMIT_CREATOR_SIGNUP_IP_MAX", 30),
+  keyGenerator: (req) => `csu:${req.ip ?? "unknown"}`,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { success: false, error: { code: "RATE_LIMIT", message: "Too many requests, please try again later" } },
+  message: { success: false, error: { code: "RATE_LIMIT", message: "Too many sign-ups from this network, please try again later" } },
+});
+app.post("/v1/creator/auth/signup", creatorSignupIpLimiter);
+// The creator Meta OAuth callback is public (Facebook redirects the browser to it with no
+// session). It only reads one row and redirects, but a per-IP ceiling still bounds it. Over the
+// limit it REDIRECTS (?error=busy) like every other outcome of that route — a raw JSON 429 on
+// api.digitalsukoon.com would strand the creator outside the app.
+const creatorMetaCallbackLimiter = rateLimit({
+  windowMs: 60_000,
+  max: envInt("RATE_LIMIT_CREATOR_META_CALLBACK_MAX", 60),
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (_req, res) => {
+    res.setHeader("Cache-Control", "no-store");
+    res.redirect(302, creatorMetaReturnUrl("?error=busy"));
+  },
 });
 app.get("/v1/creator/meta/oauth/callback", creatorMetaCallbackLimiter);
 

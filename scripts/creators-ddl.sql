@@ -111,6 +111,7 @@ CREATE TABLE IF NOT EXISTS "creator_connections" (
     "last_verified_at" TIMESTAMP(3),
     "last_error" VARCHAR(500),
     "revoked_at" TIMESTAMP(3),
+    "expiry_warned_days" SMALLINT,
     "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMP(3) NOT NULL,
 

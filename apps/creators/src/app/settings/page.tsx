@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import useSWR from "swr";
 import { creatorProfileSchema } from "@dashmani/shared/src/validators/creator";
-import { apiFetch, ApiError, clearSession, fetcher } from "@/lib/api";
+import { apiFetch, ApiError, clearSession, fetcher, storeTokens } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { errorSentence } from "@/lib/messages";
 import { countries } from "@/lib/countries";
@@ -129,6 +129,9 @@ function ProfileForm({ me, onSaved }: { me: CreatorMe; onSaved: (c: CreatorMe) =
   );
 }
 
+/** PUT /creator/me/password: the new tokens for this device. */
+type PasswordChanged = { changed: true; accessToken: string; refreshToken: string };
+
 function PasswordForm() {
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
@@ -144,9 +147,15 @@ function PasswordForm() {
     if (next.length < 8) { setMsg({ tone: "danger", text: "Use at least 8 characters for the new password." }); return; }
     setBusy(true);
     try {
-      await apiFetch("/creator/me/password", { method: "PUT", body: JSON.stringify({ currentPassword: current, newPassword: next }) });
+      // The API signs out every device (all refresh tokens deleted) and issues this one a fresh
+      // pair; keep it, or this tab is signed out when its current access token expires.
+      const r = await apiFetch<PasswordChanged>("/creator/me/password", {
+        method: "PUT",
+        body: JSON.stringify({ currentPassword: current, newPassword: next }),
+      });
+      if (r.data?.accessToken && r.data.refreshToken) storeTokens(r.data.accessToken, r.data.refreshToken);
       setCurrent(""); setNext("");
-      setMsg({ tone: "success", text: "Password changed." });
+      setMsg({ tone: "success", text: "Password changed. Your other devices will need to sign in again." });
     } catch (err) {
       setMsg({ tone: "danger", text: errorSentence(err) });
     } finally {
@@ -230,7 +239,7 @@ function CloseModal({ onClose }: { onClose: () => void }) {
     <Modal title="Close your account?" onClose={onClose}>
       <form onSubmit={closeAccount} className="flex flex-col gap-4" noValidate>
         <p className="text-sm text-ink-3 leading-relaxed">
-          Type <span className="font-mono text-white">{CONFIRM_WORD}</span> to confirm. Your pages stop being offered for booking at once.
+          Type <span className="font-mono text-white">{CONFIRM_WORD}</span> to confirm. Your pages come off Digital Sukoon Creators at once.
         </p>
         <label className="field" htmlFor="closeword">
           <span className="field-label">Confirmation</span>

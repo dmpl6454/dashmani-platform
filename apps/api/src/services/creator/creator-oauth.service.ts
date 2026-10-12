@@ -10,8 +10,15 @@
  *    and replayed here is refused;
  *  • one Facebook identity belongs to at most one creator: a second creator connecting the same
  *    identity is refused and NOTHING is stored (the first creator's token is never overwritten);
- *  • nothing here ever writes a meta_* table. If a staff grantor uses the creator flow we only
- *    alert staff — the two systems stay separate.
+ *  • ⚠️ the browser that FINISHES the flow must be the creator who started it. Meta redirects
+ *    to our public callback, which only hands `state` + `code` back to the creators app in a URL
+ *    fragment; the signed-in creator's own browser then POSTs them to /oauth/complete, and the
+ *    state is consumed only when its creatorId is that bearer's. Before this, anyone could start a
+ *    connect on their own account and send the facebook.com link to a page owner: the owner's
+ *    approval would have stored their Page tokens under the attacker's account (review SEC-1);
+ *  • a Facebook identity that holds one of OUR staff Meta connections is refused and nothing is
+ *    stored: its Page tokens are our network's, and the creator flow shares the staff app;
+ *  • nothing here ever writes a meta_* table — the two systems stay separate.
  */
 
 import { randomBytes } from "crypto";
@@ -54,20 +61,36 @@ export async function startCreatorMetaOauth(input: { creatorId: string; rereques
   return { authorizeUrl: url.toString(), expiresAt };
 }
 
+/** Is this a live (unused, unexpired) state? Read-only — the public callback uses it to send a
+ *  stale link straight to "expired" instead of handing it on. */
+export async function creatorOauthStateIsLive(state: string): Promise<boolean> {
+  if (!state || state.length > 200) return false;
+  const row = await prisma.creatorOauthState.findUnique({ where: { state }, select: { usedAt: true, expiresAt: true } });
+  return !!row && !row.usedAt && row.expiresAt > new Date();
+}
+
+export type ConsumeResult = { ok: true } | { ok: false; error: "expired" | "wrong_account" };
+
 /**
- * Atomic one-time consume: updateMany({usedAt:null, not expired}) + a count check, never a bare
- * update/delete (a double callback would 500 the loser). Unknown / used / expired → null.
+ * Atomic one-time consume, bound to the creator who STARTED the flow: updateMany({state,
+ * creatorId, usedAt:null, not expired}) + a count check, never a bare update/delete (a double
+ * submit would 500 the loser). A state started by ANOTHER creator is never consumed — that is
+ * the account-linking attack this binding exists to stop.
  */
-export async function consumeCreatorOauthState(state: string): Promise<{ creatorId: string } | null> {
-  if (!state || state.length > 200) return null;
+export async function consumeCreatorOauthState(state: string, creatorId: string): Promise<ConsumeResult> {
+  if (!state || state.length > 200) return { ok: false, error: "expired" };
   const now = new Date();
   const claimed = await prisma.creatorOauthState.updateMany({
-    where: { state, usedAt: null, expiresAt: { gt: now } },
+    where: { state, creatorId, usedAt: null, expiresAt: { gt: now } },
     data: { usedAt: now },
   });
-  if (claimed.count === 0) return null;
+  if (claimed.count === 1) return { ok: true };
   const row = await prisma.creatorOauthState.findUnique({ where: { state }, select: { creatorId: true } });
-  return row ? { creatorId: row.creatorId } : null;
+  if (row && row.creatorId !== creatorId) {
+    console.warn(`[creator-meta] a connect started by another creator was completed by creator=${creatorId} — refused`);
+    return { ok: false, error: "wrong_account" };
+  }
+  return { ok: false, error: "expired" };
 }
 
 /** Expired states older than a day. Fail-open housekeeping (cron + start). */
@@ -82,14 +105,15 @@ export async function pruneCreatorOauthStates(): Promise<number> {
   }
 }
 
-export type ConnectError = "already_linked" | "app_mismatch" | "exchange_failed" | "disabled";
+export type ConnectError = "already_linked" | "app_mismatch" | "exchange_failed" | "disabled" | "staff_account";
 export type ConnectResult = { ok: true; connectionId: string } | { ok: false; error: ConnectError };
 
 const isUniqueViolation = (e: unknown) => (e as { code?: string })?.code === "P2002";
 
 /**
  * Exchange the code and store the creator's connection. Never throws for an expected outcome;
- * the route maps `error` straight onto the ?error= of its redirect.
+ * the route maps `error` onto its error code. Call it only after consumeCreatorOauthState
+ * succeeded for THIS creator.
  */
 export async function completeCreatorConnect(creatorId: string, code: string): Promise<ConnectResult> {
   const creator = await prisma.creator.findUnique({ where: { id: creatorId }, select: { id: true, status: true, email: true, name: true } });
@@ -114,19 +138,50 @@ export async function completeCreatorConnect(creatorId: string, code: string): P
   }
   const metaUserId = String(debug.user_id);
 
-  // One Facebook identity ↔ one creator. A CLOSED account's old claim is released (its token is
-  // already gone and it can never be used again); a live account's claim is never touched.
+  // ⚠️ A staff grantor is refused and NOTHING is stored. Their Page tokens belong to our own
+  // network, and the creator flow shares the staff Meta app — so the Page picker they just went
+  // through may also have narrowed the staff grant. Staff are told to check it. READ ONLY.
+  const staff = await prisma.metaConnection.findFirst({ where: { metaUserId, revokedAt: null }, select: { id: true } });
+  if (staff) {
+    console.warn(`[creator-meta] refused a staff Facebook identity on the creator flow (creator=${creatorId})`);
+    void adminAlert(
+      "A staff Facebook account tried to connect through the creator portal",
+      [
+        { label: "Creator account", value: `${creator.name} <${creator.email}>` },
+        { label: "What happened", value: "The connection was refused and nothing was stored." },
+        {
+          label: "Check",
+          value:
+            "The creator portal uses the same Meta app as Account Growth. If this person chose only some Pages in Facebook's Page picker, the staff connection may now reach fewer Pages. Reconnect from Account Growth and select all Pages if the channel count dropped.",
+        },
+      ],
+      `/creators/${creator.id}`,
+    ).catch(() => undefined);
+    return { ok: false, error: "staff_account" };
+  }
+
+  // One Facebook identity ↔ one creator. The previous holder's claim is released when it can
+  // never be used again: the account is closed, OR that connection was revoked (disconnected in
+  // the portal, superseded by another identity, or the app was removed on Facebook). A LIVE
+  // claim by another creator is never touched.
   const existing = await prisma.creatorConnection.findUnique({
     where: { metaUserId },
-    select: { id: true, creatorId: true, creator: { select: { status: true } } },
+    select: { id: true, creatorId: true, revokedAt: true, creator: { select: { status: true } } },
   });
   if (existing && existing.creatorId !== creatorId) {
-    if (existing.creator.status !== "closed") {
+    if (existing.creator.status !== "closed" && !existing.revokedAt) {
       console.warn(`[creator-meta] identity already linked to another creator (creator=${creatorId})`);
       return { ok: false, error: "already_linked" };
     }
-    // Cascade removes the closed account's asset rows too, so its pages can be claimed again.
-    await prisma.creatorConnection.deleteMany({ where: { id: existing.id, creatorId: existing.creatorId } });
+    // Guarded on the same facts, so a holder who reconnects in between keeps it. Cascade removes
+    // that connection's asset rows too, so its pages can be claimed again.
+    await prisma.creatorConnection.deleteMany({
+      where: {
+        id: existing.id,
+        creatorId: existing.creatorId,
+        OR: [{ revokedAt: { not: null } }, { creator: { status: "closed" } }],
+      },
+    });
   }
 
   const granted = (debug.scopes ?? []).map(String);
@@ -143,6 +198,8 @@ export async function completeCreatorConnect(creatorId: string, code: string): P
     lastError: null,
     revokedAt: null,
     lastVerifiedAt: new Date(),
+    // New expiry dates ⇒ the 14- and 3-day reminders may be due again.
+    expiryWarnedDays: null,
   };
 
   // Update only OUR row (creatorId in the WHERE), else create. A concurrent claim by another
@@ -182,22 +239,9 @@ export async function completeCreatorConnect(creatorId: string, code: string): P
     });
   }
 
-  // A staff grantor (meta_connections) using the creator flow is legal but worth a human look:
-  // their pages are likely already on our network. READ ONLY — meta_* is never written here.
-  const staff = await prisma.metaConnection.findFirst({ where: { metaUserId }, select: { id: true } });
-  if (staff) {
-    void adminAlert(
-      "A staff Facebook account connected through the creator portal",
-      [
-        { label: "Creator", value: `${creator.name} <${creator.email}>` },
-        { label: "Note", value: "This Facebook identity also holds a staff Meta connection. Its pages are flagged as duplicates of our network and cannot be offered." },
-      ],
-      `/creators/${creator.id}`,
-    ).catch(() => undefined);
-  }
-
   // Discovery is FIRE AND FORGET: the one-time state is already consumed, so a slow Meta must
-  // never turn the redirect into a 504.
+  // never turn the request into a 504. A restart mid-run leaves discovery_state "running";
+  // creator-view.ts reads a stale "running" as interrupted.
   void discoverCreatorAssets(connectionId).catch((e) =>
     console.error("[creator-meta] post-connect discovery failed:", scrubSecrets(String(e))),
   );

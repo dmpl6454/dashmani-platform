@@ -12,8 +12,13 @@ import { AuthFallback, AuthField, AuthShell, PasswordMeter } from "@/components/
 // signs the creator out everywhere (the API deletes every refresh token), so this tab's stored
 // session is dropped too and the creator signs in with the new password.
 
+/** The API rejects codes shorter than this as invalid; a cut-off link can't work, so don't ask. */
+const MIN_TOKEN_LENGTH = 20;
+const LINK_INVALID = "This reset link has expired, was already used, or was cut off. Ask for a new one from the sign-in page.";
+
 function ResetForm() {
-  const token = useSearchParams().get("token");
+  const raw = useSearchParams().get("token");
+  const token = raw && raw.trim().length >= MIN_TOKEN_LENGTH ? raw.trim() : null;
   const hydrated = useHydrated();
   const [password, setPassword] = useState("");
   const [showPass, setShowPass] = useState(false);
@@ -31,9 +36,14 @@ function ResetForm() {
       clearSession();
       setDone(true);
     } catch (err) {
-      setError(err instanceof ApiError && err.code === "INVALID_TOKEN"
-        ? "This reset link has expired or was already used. Ask for a new one from the sign-in page."
-        : errorSentence(err));
+      // A cut-off code fails the API's schema (VALIDATION_ERROR on `token`) rather than its lookup —
+      // to the creator both mean the same thing: this link won't work. A VALIDATION_ERROR on the
+      // new password ("That password is too long") still reads as the API wrote it.
+      const badToken = err instanceof ApiError && (
+        err.code === "INVALID_TOKEN"
+        || (err.code === "VALIDATION_ERROR" && (!err.details?.length || err.details.some((d) => d.field === "token")))
+      );
+      setError(badToken ? LINK_INVALID : errorSentence(err));
     } finally {
       setLoading(false);
     }
@@ -52,7 +62,10 @@ function ResetForm() {
         </div>
         {!token ? (
           <>
-            <div role="alert" className="auth-err"><AlertCircle size={14} /> <span>This link is missing its reset code. Open the link from the email again, or ask for a new one.</span></div>
+            <div role="alert" className="auth-err">
+              <AlertCircle size={14} />{" "}
+              <span>{raw ? LINK_INVALID : "This link is missing its reset code. Open the link from the email again, or ask for a new one."}</span>
+            </div>
             <Link href="/login" className="auth-btn">Back to sign in <ArrowRight size={17} /></Link>
           </>
         ) : done ? (

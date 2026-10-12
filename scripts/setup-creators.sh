@@ -31,18 +31,27 @@ for f in /etc/ssl/cloudflare-cert.pem /etc/ssl/cloudflare-key.pem; do
 done
 
 echo "==> nginx site $SITE"
+# ⚠️ Test BEFORE leaving the site enabled: a broken file left in sites-enabled does not stop the
+# running nginx, but the NEXT reload by anyone (certbot, another site's setup) would fail for
+# every site on this box — api, portal, hr, client. On a failed test the new file is removed.
 if [ -d /etc/nginx/sites-available ]; then
+  ENABLED="/etc/nginx/sites-enabled/$SITE"
   cp "$APP_DIR/nginx/$SITE" "/etc/nginx/sites-available/$SITE"
-  ln -sf "/etc/nginx/sites-available/$SITE" "/etc/nginx/sites-enabled/$SITE"
+  ln -sf "/etc/nginx/sites-available/$SITE" "$ENABLED"
 else
-  cp "$APP_DIR/nginx/$SITE" "/etc/nginx/conf.d/$SITE.conf"
+  ENABLED="/etc/nginx/conf.d/$SITE.conf"
+  cp "$APP_DIR/nginx/$SITE" "$ENABLED"
 fi
 
 # nginx (often www-data) must be able to read the export.
 chmod o+x /opt "$APP_DIR" "$APP_DIR/apps" "$APP_DIR/apps/creators" || true
 chmod -R o+rX "$APP_DIR/apps/creators/out"
 
-nginx -t
+if ! nginx -t; then
+  rm -f "$ENABLED"
+  echo "nginx -t failed with the new site — it was removed again, nothing reloaded. Fix nginx/$SITE and re-run."
+  exit 1
+fi
 systemctl reload nginx || nginx -s reload
 echo "    nginx now serves $SITE from $APP_DIR/apps/creators/out"
 
@@ -112,6 +121,14 @@ cat <<EOF
         https://api.digitalsukoon.com/v1/meta/deauthorize
       Data deletion request URL:
         https://api.digitalsukoon.com/v1/meta/data-deletion
+      ⚠️ These two fields are ONE value each for the whole app, which postautomation.co.in also
+      uses: setting them REPLACES whatever is there. Read the current values first; on
+      2026-10-12 the data-deletion URL was a placeholder. If postautomation has a real handler,
+      agree with its owner which endpoint forwards to the other before changing either.
+    - ⚠️ Never test the creator connect with a Facebook account that holds one of our staff Meta
+      connections (Account Growth). It is refused, but Facebook's Page picker on the way can
+      already have narrowed that account's grant to this app — the Account Growth channels then
+      silently lose Pages. Use a separate test Facebook account.
     - Contact email, Privacy Policy URL and Terms of Service URL are APP-WIDE and shared with
       postautomation.co.in: make sure the published policy covers creators.digitalsukoon.com
       before switching the portal on.

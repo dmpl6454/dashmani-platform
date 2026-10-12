@@ -2626,6 +2626,9 @@ model CreatorConnection {
   lastVerifiedAt      DateTime? @map("last_verified_at")
   lastError           String?   @map("last_error") @db.VarChar(500)
   revokedAt           DateTime? @map("revoked_at")
+  /// The lowest expiry reminder already emailed (14, then 3); null after a (re)connect. Makes
+  /// the daily reminder idempotent across API restarts.
+  expiryWarnedDays    Int?      @map("expiry_warned_days") @db.SmallInt
   createdAt           DateTime  @default(now()) @map("created_at")
   updatedAt           DateTime  @updatedAt @map("updated_at")
 

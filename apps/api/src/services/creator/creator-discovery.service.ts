@@ -6,9 +6,12 @@
  * history behind the page sizes and the BARE instagram_business_account field), but:
  *  • rows go to creator_assets, never meta_assets — this file WRITES NO meta_* TABLE and never
  *    links to the channel registry (linkToChannel). meta_assets is only READ, to flag a page that
- *    is already on our own network (networkDuplicateOf) so it can never be sold twice;
- *  • a page another LIVE creator has claimed is never taken over — it is skipped and the
- *    creator is told why;
+ *    is or ever was on our own network (networkDuplicateOf) so it can never be sold twice; the
+ *    flag is re-checked daily (syncNetworkDuplicates) and before staff switch a page on;
+ *  • a page another creator LIVE-claims is never taken over — it is skipped and the creator is
+ *    told why. A claim stops counting once it can no longer be used (page disconnected, its
+ *    connection revoked, its creator closed or rejected), and a claimant who can PUBLISH there
+ *    takes over from one who cannot (an analyst/moderator role must never lock the owner out);
  *  • canPublish is a real probe, not a guess: Facebook needs pages_manage_posts AND a
  *    CREATE_CONTENT/MANAGE task on the Page; Instagram needs instagram_content_publish AND a
  *    content_publishing_limit answer.
@@ -18,6 +21,7 @@
 import { prisma } from "@dashmani/db";
 import { oauthGraphFetch, makeBudget, type CallBudget, type OauthGraphResult } from "../meta-oauth/oauth-graph";
 import { decryptToken, encryptToken, scrubSecrets } from "../../utils/token-crypto";
+import { creatorMetaAppSecret } from "./creator-meta-config";
 
 /** Creators have a handful of pages; this is a runaway backstop, not a tuning knob. */
 const DISCOVERY_CALL_BUDGET = 300;
@@ -83,12 +87,12 @@ async function pagedFetch<T>(
   label: string,
   budget: CallBudget,
 ): Promise<OauthGraphResult<T>> {
-  let res: OauthGraphResult<T> = await oauthGraphFetch<T>(url, params ?? {}, token, { label, budget, timeoutMs: DISCOVERY_TIMEOUT_MS });
+  let res: OauthGraphResult<T> = await oauthGraphFetch<T>(url, params ?? {}, token, { label, budget, timeoutMs: DISCOVERY_TIMEOUT_MS, appSecret: creatorMetaAppSecret() });
   if (!res.ok && !res.rateLimited && !res.authInvalid && res.error !== "call budget exhausted") {
     res = await oauthGraphFetch<T>(url, { ...(params ?? {}), ...retryParams, limit: 5 }, token, {
       label: `${label}-retry`,
       budget,
-      timeoutMs: DISCOVERY_TIMEOUT_MS,
+      timeoutMs: DISCOVERY_TIMEOUT_MS, appSecret: creatorMetaAppSecret(),
     });
   }
   return res;
@@ -96,62 +100,137 @@ async function pagedFetch<T>(
 
 type Claim = "ours" | "free" | "taken";
 
+/** A holder in one of these statuses can never use the claim again (rejected must resubmit). */
+const RELEASED_CREATOR_STATUSES = ["closed", "rejected"];
+
 /**
- * Who holds (kind, metaId) today. A row held by a CLOSED creator account is free — that account
- * can never use it again, and keeping the claim would lock the page out of the portal forever.
+ * Who holds (kind, metaId) today, from the point of view of `creatorId`. The holder's claim
+ * counts only while it can still be used — the page is connected, its connection not revoked,
+ * and the account not closed or rejected — and only against a claimant who could not publish
+ * there either. Mirrored by the WHERE in upsertAsset's take-over step; keep the two in step.
  */
-async function claimOf(kind: string, metaId: string, creatorId: string): Promise<Claim> {
+async function claimOf(kind: string, metaId: string, creatorId: string, iCanPublish: boolean): Promise<Claim> {
   const row = await prisma.creatorAsset.findUnique({
     where: { kind_metaId: { kind, metaId } },
-    select: { creatorId: true, creator: { select: { status: true } } },
+    select: {
+      creatorId: true,
+      disconnectedAt: true,
+      canPublish: true,
+      creator: { select: { status: true } },
+      connection: { select: { revokedAt: true } },
+    },
   });
   if (!row) return "free";
   if (row.creatorId === creatorId) return "ours";
-  return row.creator.status === "closed" ? "free" : "taken";
+  const holderLive = !row.disconnectedAt && !row.connection.revokedAt && !RELEASED_CREATOR_STATUSES.includes(row.creator.status);
+  if (!holderLive) return "free";
+  return iCanPublish && !row.canPublish ? "free" : "taken";
 }
 
-/** Upsert one asset under this creator + connection; false when another creator won a race. */
+/**
+ * Upsert one asset under this creator + connection; false when another creator holds it.
+ * Our own row is updated in place (the staff switch is kept). A row whose holder lost the claim
+ * (see claimOf) is TAKEN OVER with the staff switch reset — staff must turn it on again for the
+ * new owner. Otherwise a new row; a unique-index loss is re-read so our own concurrent pass is
+ * not reported as "claimed by another creator".
+ */
 async function upsertAsset(
   kind: "facebook_page" | "instagram_account",
   metaId: string,
   creatorId: string,
   connectionId: string,
   fields: Record<string, unknown>,
+  iCanPublish: boolean,
 ): Promise<boolean> {
   const data = { ...fields, creatorId, connectionId, disconnectedAt: null };
   try {
-    // The WHERE pins either our own row or a closed account's; a live creator's row never matches.
-    const updated = await prisma.creatorAsset.updateMany({
+    const own = await prisma.creatorAsset.updateMany({ where: { kind, metaId, creatorId }, data: data as never });
+    if (own.count > 0) return true;
+
+    const took = await prisma.creatorAsset.updateMany({
       where: {
         kind,
         metaId,
-        OR: [{ creatorId }, { creator: { status: "closed" } }],
+        creatorId: { not: creatorId },
+        OR: [
+          { disconnectedAt: { not: null } },
+          { connection: { revokedAt: { not: null } } },
+          { creator: { status: { in: RELEASED_CREATOR_STATUSES } } },
+          ...(iCanPublish ? [{ canPublish: false }] : []),
+        ],
       },
-      data: data as never,
+      data: { ...data, enabled: false, enabledById: null, enabledAt: null } as never,
     });
-    if (updated.count > 0) return true;
+    if (took.count > 0) {
+      console.log(`[creator-discovery] ${kind} ${metaId} taken over by creator=${creatorId} (the previous claim could no longer be used)`);
+      return true;
+    }
+
     await prisma.creatorAsset.create({ data: { kind, metaId, ...data } as never });
     return true;
   } catch (e) {
-    if (isUniqueViolation(e)) return false;
-    throw e;
+    if (!isUniqueViolation(e)) throw e;
+    const row = await prisma.creatorAsset.findUnique({ where: { kind_metaId: { kind, metaId } }, select: { creatorId: true } });
+    return row?.creatorId === creatorId;
   }
 }
 
 /**
- * meta_assets ids of OUR live channels with these metaIds (READ ONLY). Keyed by metaId.
+ * meta_assets ids of OUR channels with these metaIds (READ ONLY), keyed by metaId. ANY row
+ * counts — also a disconnected or deselected one: a page that is or was on our network is never
+ * sold as a creator page, and a staff connection briefly being revoked must not let one through.
  * kind mapping: facebook_page ↔ FACEBOOK_PAGE, instagram_account ↔ INSTAGRAM_ACCOUNT.
  */
 async function networkDuplicates(kind: "FACEBOOK_PAGE" | "INSTAGRAM_ACCOUNT", metaIds: string[]): Promise<Map<string, string>> {
   const out = new Map<string, string>();
   if (metaIds.length === 0) return out;
   const rows = await prisma.metaAsset.findMany({
-    where: { kind, metaId: { in: metaIds }, disconnectedAt: null },
+    where: { kind, metaId: { in: metaIds } },
     select: { id: true, metaId: true },
     orderBy: { createdAt: "asc" },
   });
   for (const r of rows) if (!out.has(r.metaId)) out.set(r.metaId, r.id);
   return out;
+}
+
+const META_KIND = { facebook_page: "FACEBOOK_PAGE", instagram_account: "INSTAGRAM_ACCOUNT" } as const;
+
+/**
+ * Re-check networkDuplicateOf against meta_assets (no Graph calls) for these creator assets, or
+ * for all of them. A page that has become a duplicate is flagged AND switched off; one whose
+ * meta_assets row is gone is cleared (staff still have to turn it on). Run daily by the creator
+ * cron and before staff switch a page on — the flag written at discovery goes stale as soon as
+ * staff connect one of the same pages.
+ */
+export async function syncNetworkDuplicates(assetIds?: string[]): Promise<{ flagged: number; cleared: number; switchedOff: number }> {
+  const res = { flagged: 0, cleared: 0, switchedOff: 0 };
+  const assets = await prisma.creatorAsset.findMany({
+    where: assetIds ? { id: { in: assetIds } } : {},
+    select: { id: true, kind: true, metaId: true, networkDuplicateOf: true, enabled: true },
+  });
+  for (const kind of ["facebook_page", "instagram_account"] as const) {
+    const ofKind = assets.filter((a) => a.kind === kind);
+    for (let i = 0; i < ofKind.length; i += 500) {
+      const chunk = ofKind.slice(i, i + 500);
+      const dupes = await networkDuplicates(META_KIND[kind], chunk.map((a) => a.metaId));
+      for (const a of chunk) {
+        const dup = dupes.get(a.metaId) ?? null;
+        if (dup === a.networkDuplicateOf) continue;
+        if (dup) {
+          await prisma.creatorAsset.updateMany({
+            where: { id: a.id },
+            data: { networkDuplicateOf: dup, enabled: false, enabledById: null, enabledAt: null },
+          });
+          res.flagged++;
+          if (a.enabled) res.switchedOff++;
+        } else {
+          await prisma.creatorAsset.updateMany({ where: { id: a.id }, data: { networkDuplicateOf: null } });
+          res.cleared++;
+        }
+      }
+    }
+  }
+  return res;
 }
 
 /** Discover (or refresh) one creator connection's assets. Never throws. */
@@ -201,7 +280,7 @@ export async function discoverCreatorAssets(connectionId: string, budget?: CallB
     const me = await oauthGraphFetch<{ id?: string; name?: string }>("me", { fields: "id,name" }, token, {
       label: "creator-discover-me",
       budget: b,
-      timeoutMs: DISCOVERY_TIMEOUT_MS,
+      timeoutMs: DISCOVERY_TIMEOUT_MS, appSecret: creatorMetaAppSecret(),
     });
     if (me.authInvalid) {
       out.authInvalid = true;
@@ -237,8 +316,8 @@ export async function discoverCreatorAssets(connectionId: string, budget?: CallB
     for (const pg of pages) {
       if (!pg.id || !pg.access_token || !Array.isArray(pg.tasks) || pg.tasks.length === 0) continue;
       seen.add(`facebook_page:${pg.id}`);
-      if ((await claimOf("facebook_page", pg.id, creatorId)) === "taken") { out.claimedElsewhere++; continue; }
       const publish = canFbPublish && pg.tasks.some((t) => PUBLISH_TASKS.has(t));
+      if ((await claimOf("facebook_page", pg.id, creatorId, publish)) === "taken") { out.claimedElsewhere++; continue; }
       const ok = await upsertAsset("facebook_page", pg.id, creatorId, connectionId, {
         name: clip(pg.name ?? pg.id, 300),
         username: pg.username ?? null,
@@ -253,7 +332,7 @@ export async function discoverCreatorAssets(connectionId: string, budget?: CallB
         followerCount: intOrNull(pg.followers_count) ?? intOrNull(pg.fan_count),
         pictureUrl: pg.picture?.data?.url ?? null,
         networkDuplicateOf: fbDupes.get(pg.id) ?? null,
-      });
+      }, publish);
       if (ok) out.pagesFound++;
       else out.claimedElsewhere++;
     }
@@ -295,27 +374,39 @@ export async function discoverCreatorAssets(connectionId: string, budget?: CallB
         igId,
         { fields: "username,name,followers_count,media_count,profile_picture_url" },
         token,
-        { label: "creator-discover-ig-profile", budget: b, timeoutMs: DISCOVERY_TIMEOUT_MS },
+        { label: "creator-discover-ig-profile", budget: b, timeoutMs: DISCOVERY_TIMEOUT_MS, appSecret: creatorMetaAppSecret() },
       );
       if (prof.rateLimited) { out.rateLimited = true; complete = false; break; }
       if (prof.authInvalid) { out.authInvalid = true; complete = false; break; }
       if (!prof.ok || !prof.data) { complete = false; continue; }
       seen.add(`instagram_account:${igId}`);
-      if ((await claimOf("instagram_account", igId, creatorId)) === "taken") { out.claimedElsewhere++; continue; }
 
       let canPublish = false;
       let probeError: string | null = "Permission to publish to Instagram was not granted — reconnect and allow it.";
+      // A probe that did not get a DEFINITIVE answer (throttled, timed out, Meta 5xx, budget)
+      // must not flip a publishable account to "can't publish": the stored answer is kept.
+      let probeInconclusive = false;
       if (canIgPublishScope) {
         const probe = await oauthGraphFetch<{ data?: unknown[] }>(
           `${igId}/content_publishing_limit`,
           { fields: "quota_usage,config" },
           token,
-          { label: "creator-discover-ig-probe", budget: b, timeoutMs: DISCOVERY_TIMEOUT_MS },
+          { label: "creator-discover-ig-probe", budget: b, timeoutMs: DISCOVERY_TIMEOUT_MS, appSecret: creatorMetaAppSecret() },
         );
         if (probe.rateLimited) { out.rateLimited = true; complete = false; }
+        if (probe.authInvalid) { out.authInvalid = true; complete = false; }
+        probeInconclusive =
+          !probe.ok &&
+          (probe.rateLimited || probe.authInvalid || probe.status === 0 || probe.status >= 500 || probe.error === "call budget exhausted");
         canPublish = probe.ok;
-        probeError = probe.ok ? null : clip(scrubSecrets(probe.error ?? "Instagram did not confirm publishing access."), 300);
+        probeError = probe.ok
+          ? null
+          : probeInconclusive
+            ? "Instagram didn't answer when we checked publishing access — press “Check pages again” in a few minutes."
+            : clip(scrubSecrets(probe.error ?? "Instagram did not confirm publishing access."), 300);
       }
+      const claim = await claimOf("instagram_account", igId, creatorId, canPublish);
+      if (claim === "taken") { out.claimedElsewhere++; continue; }
 
       const p = prof.data;
       const ok = await upsertAsset("instagram_account", igId, creatorId, connectionId, {
@@ -325,13 +416,13 @@ export async function discoverCreatorAssets(connectionId: string, budget?: CallB
         // IG rows carry NO token: they are read with the user token (or the parent Page's).
         pageTokenEnc: null,
         tasks: [],
-        canPublish,
-        publishProbeError: probeError,
+        // An inconclusive probe keeps our own row's stored answer; a new row starts at false.
+        ...(probeInconclusive && claim === "ours" ? {} : { canPublish, publishProbeError: probeError }),
         followerCount: intOrNull(p.followers_count),
         mediaCount: intOrNull(p.media_count),
         pictureUrl: p.profile_picture_url ?? null,
         networkDuplicateOf: igDupes.get(igId) ?? null,
-      });
+      }, canPublish);
       if (ok) out.igFound++;
       else out.claimedElsewhere++;
     }

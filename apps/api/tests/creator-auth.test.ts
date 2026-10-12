@@ -141,6 +141,36 @@ describe("Creator auth API", () => {
     });
   });
 
+  describe("daily creator email cap", () => {
+    it("past the cap: sign-up still succeeds without its email, resend is 503 EMAIL_BUSY, forgot sends nothing", async () => {
+      vi.stubEnv("CREATOR_EMAIL_DAILY_CAP", "1");
+      try {
+        const first = uniqEmail("cap1");
+        expect((await request(app).post("/v1/creator/auth/signup").send(signupBody(first))).status).toBe(201);
+        await tokenFromEmail(first, "verify-email"); // the first one goes out
+
+        sendEmailMock.mockClear();
+        const second = uniqEmail("cap2");
+        const res = await request(app).post("/v1/creator/auth/signup").send(signupBody(second));
+        expect(res.status).toBe(201);
+        const c2 = await prisma.creator.findFirstOrThrow({ where: { email: second } });
+        expect(await prisma.creatorToken.count({ where: { creatorId: c2.id } })).toBe(0);
+
+        const resend = await request(app)
+          .post("/v1/creator/auth/resend-verification")
+          .set("Authorization", `Bearer ${res.body.data.accessToken}`);
+        expect(resend.status).toBe(503);
+        expect(resend.body.error.code).toBe("EMAIL_BUSY");
+
+        expect((await request(app).post("/v1/creator/auth/forgot-password").send({ email: first })).status).toBe(200);
+        await new Promise((r) => setTimeout(r, 50));
+        expect(sendEmailMock.mock.calls.filter((c) => (c[0] as { to: string }).to === first || (c[0] as { to: string }).to === second)).toHaveLength(0);
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    });
+  });
+
   describe("POST /login", () => {
     it("signs in with the right password, any email casing", async () => {
       const c = await seedCreator();
@@ -411,6 +441,40 @@ describe("Creator auth API", () => {
       const again = await request(app).post("/v1/creator/auth/google").send({ credential: CREDENTIAL });
       expect(again.status).toBe(200);
       expect(await prisma.creator.count()).toBe(1);
+    });
+
+    it("⚠️ pre-account hijack: Google on an UNVERIFIED account ends the pre-registrant's password, sessions and pending links", async () => {
+      // Someone signs up with the owner's address and a password of their own, and keeps a session.
+      const email = uniqEmail("prereg");
+      const squat = await request(app).post("/v1/creator/auth/signup").send(signupBody(email, { password: "Squatter@123" }));
+      expect(squat.status).toBe(201);
+      const squatRefresh = squat.body.data.refreshToken as string;
+      const c = await prisma.creator.findFirstOrThrow({ where: { email } });
+
+      // The real owner then uses Google.
+      googleAnswers(200, claims(email));
+      const owner = await request(app).post("/v1/creator/auth/google").send({ credential: CREDENTIAL });
+      expect(owner.status).toBe(200);
+      expect(owner.body.data.creator.id).toBe(c.id);
+      expect(owner.body.data.creator.emailVerified).toBe(true);
+
+      // The squatter's password no longer works, their refresh token is dead, their emailed link is spent…
+      const login = await request(app).post("/v1/creator/auth/login").send({ email, password: "Squatter@123" });
+      expect(login.status).toBe(401);
+      const refresh = await request(app).post("/v1/creator/auth/refresh").send({ refreshToken: squatRefresh });
+      expect(refresh.status).toBe(401);
+      expect(await prisma.creatorToken.count({ where: { creatorId: c.id, usedAt: null } })).toBe(0);
+      // …while the owner's own new session works.
+      const ownerRefresh = await request(app).post("/v1/creator/auth/refresh").send({ refreshToken: owner.body.data.refreshToken });
+      expect(ownerRefresh.status).toBe(200);
+
+      // A VERIFIED account signing in with Google keeps its password and other sessions.
+      const verified = await seedCreator({ emailVerifiedAt: new Date() });
+      const keep = await request(app).post("/v1/creator/auth/login").send({ email: verified.email, password: "Creator@123" });
+      googleAnswers(200, claims(verified.email));
+      expect((await request(app).post("/v1/creator/auth/google").send({ credential: CREDENTIAL })).status).toBe(200);
+      expect((await request(app).post("/v1/creator/auth/login").send({ email: verified.email, password: "Creator@123" })).status).toBe(200);
+      expect((await request(app).post("/v1/creator/auth/refresh").send({ refreshToken: keep.body.data.refreshToken })).status).toBe(200);
     });
 
     it("refuses a closed account, a token for another app, and an unverified email", async () => {

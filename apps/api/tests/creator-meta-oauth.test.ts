@@ -5,12 +5,18 @@
  * What is locked here:
  *  • the creator authorize URL asks for the creator scopes on the creator redirect and NONE of
  *    the forbidden ones — and the ADMIN authorize URL still carries no publish scope;
- *  • state is single-use (expired / used / unknown all → ?error=expired);
- *  • a grant for another app, or a Facebook identity another creator holds, stores NOTHING;
- *  • discovery: CREATE_CONTENT gating, the Instagram publish probe, our-network duplicates,
- *    and another creator's page is never taken over;
+ *  • the public callback exchanges NOTHING: it hands state + code to the creators app in a URL
+ *    fragment, and only the creator who STARTED the flow can finish it (POST /oauth/complete) —
+ *    another creator's token is refused and the state survives (review SEC-1);
+ *  • state is single-use (expired / used / unknown all → expired);
+ *  • a grant for another app, a Facebook identity another creator LIVE-holds, or a staff
+ *    grantor's identity stores NOTHING; a revoked identity is released to the next creator;
+ *  • discovery: CREATE_CONTENT gating, the Instagram publish probe (an inconclusive probe keeps
+ *    the stored answer), our-network duplicates (any meta_assets row, re-checked daily), and
+ *    another creator's live page is never taken over — unless its holder cannot publish there;
  *  • no token ever reaches a response; DELETE /connection makes no Graph call;
- *  • metrics are NULL (never 0) on failure; token health rounds days UP and emails at 14/3.
+ *  • metrics are NULL (never 0) on failure, and a refused token marks the connection
+ *    NEEDS_REAUTH; token health rounds days UP and emails once per stage (14, then 3).
  */
 import { describe, it, expect, beforeEach, afterEach, afterAll, vi } from "vitest";
 import request from "supertest";
@@ -28,9 +34,9 @@ import { decryptToken } from "../src/utils/token-crypto";
 import { generateCreatorToken, createTestUser } from "./helpers";
 import { CREATOR_FORBIDDEN_SCOPES, CREATOR_META_SCOPES } from "../src/services/creator/creator-meta-config";
 import { startMetaOauth } from "../src/services/meta-oauth/meta-oauth.service";
-import { discoverCreatorAssets } from "../src/services/creator/creator-discovery.service";
+import { discoverCreatorAssets, syncNetworkDuplicates } from "../src/services/creator/creator-discovery.service";
 import { refreshCreatorMetrics } from "../src/services/creator/creator-metrics.service";
-import { daysLeft, runCreatorTokenHealth } from "../src/cron/creator.cron";
+import { daysLeft, purgeCreatorPageData, runCreatorTokenHealth } from "../src/cron/creator.cron";
 import { resetCreatorRefreshThrottle } from "../src/routes/creator-meta.routes";
 import { encryptToken } from "../src/utils/token-crypto";
 
@@ -52,7 +58,11 @@ let graph: {
   pages: Array<{ id: string; name: string; tasks: string[]; access_token: string; followers_count?: number }>;
   igNodes: Array<{ id: string; instagram_business_account?: { id: string } }>;
   probeFails: Set<string>;
+  /** Publish probe answers a 500 (inconclusive) for these. */
+  probeServerError: Set<string>;
   insightsFail: Set<string>;
+  /** Profile reads answer code 190 (token refused) for these. */
+  authFail: Set<string>;
 };
 
 function json(body: unknown, status = 200) {
@@ -74,7 +84,9 @@ function defaultGraph() {
       { id: PAGE_READONLY, instagram_business_account: { id: IG_NOPROBE } },
     ],
     probeFails: new Set([IG_NOPROBE]),
+    probeServerError: new Set(),
     insightsFail: new Set(),
+    authFail: new Set(),
   };
 }
 
@@ -98,7 +110,10 @@ function handle(c: Call): Response {
   const m = p.match(/^\/(\d+)(?:\/(.+))?$/);
   if (m) {
     const [, id, edge] = m;
-    if (edge === "content_publishing_limit") return graph.probeFails.has(id) ? gErr(10, "Application does not have permission") : json({ data: [{ quota_usage: 0 }] });
+    if (edge === "content_publishing_limit") {
+      if (graph.probeServerError.has(id)) return gErr(1, "An unknown error occurred", 500);
+      return graph.probeFails.has(id) ? gErr(10, "Application does not have permission") : json({ data: [{ quota_usage: 0 }] });
+    }
     if (edge === "insights") {
       if (graph.insightsFail.has(id)) return gErr(100, "insights unavailable");
       if (c.query.get("metric_type") === "total_value") {
@@ -112,6 +127,7 @@ function handle(c: Call): Response {
       ] });
     }
     if (!edge) {
+      if (graph.authFail.has(id)) return gErr(190, "Error validating access token: The session has been invalidated");
       if (id.startsWith("1784")) return json({ id, username: `user${id.slice(-2)}`, name: `IG ${id.slice(-2)}`, followers_count: 777, media_count: 12, profile_picture_url: "https://cdn.example/p.jpg" });
       return json({ id, followers_count: 1300 });
     }
@@ -148,7 +164,17 @@ async function seedCreator(email: string, status = "draft") {
   return prisma.creator.create({ data: { email, passwordHash: "x", name: "Test Creator", status } });
 }
 
-/** Run the full OAuth round-trip through the routes; returns the callback's Location. */
+/** POST /oauth/complete as `token`; "connected", or the lower-case error code. */
+async function complete(token: string, state: string, code = "abc") {
+  const res = await request(app).post("/v1/creator/meta/oauth/complete").set("Authorization", `Bearer ${token}`).send({ state, code });
+  return { res, outcome: res.status === 200 ? "connected" : String(res.body.error?.code ?? res.status).toLowerCase() };
+}
+
+/**
+ * Run the full round-trip through the routes: start → Meta's redirect to our callback (which
+ * must hand state + code back in a fragment, exchanging nothing) → the creators app finishing it
+ * with the creator's own token.
+ */
 async function connectVia(creator: { id: string; email: string }) {
   const token = generateCreatorToken(creator.id, creator.email);
   const start = await request(app).post("/v1/creator/meta/oauth/start").set("Authorization", `Bearer ${token}`).send({});
@@ -156,7 +182,10 @@ async function connectVia(creator: { id: string; email: string }) {
   const state = new URL(start.body.data.authorizeUrl).searchParams.get("state")!;
   const cb = await request(app).get(`/v1/creator/meta/oauth/callback?code=abc&state=${encodeURIComponent(state)}`);
   expect(cb.status).toBe(302);
-  return { location: cb.headers.location as string, state, token };
+  const location = cb.headers.location as string;
+  expect(location).toBe(`https://creators.example.com/connect#${new URLSearchParams({ state, code: "abc" }).toString()}`);
+  const { res, outcome } = await complete(token, state);
+  return { location, state, token, outcome, res };
 }
 
 /** The callback fires discovery and does not wait; wait for it so no write outlives the test. */
@@ -244,11 +273,25 @@ describe("creator Meta connect", () => {
     });
   });
 
-  describe("callback", () => {
-    it("connects: 302 ?connected=1, token encrypted at rest, discovery runs", async () => {
+  describe("callback + complete", () => {
+    it("connects: the callback only relays (fragment, no exchange); complete stores the encrypted token; discovery runs", async () => {
       const c = await seedCreator("ok@example.com");
-      const { location } = await connectVia(c);
-      expect(location).toBe("https://creators.example.com/connect?connected=1");
+      const token = generateCreatorToken(c.id, c.email);
+      const start = await request(app).post("/v1/creator/meta/oauth/start").set("Authorization", `Bearer ${token}`).send({});
+      const state = new URL(start.body.data.authorizeUrl).searchParams.get("state")!;
+      calls = [];
+      const cb = await request(app).get(`/v1/creator/meta/oauth/callback?code=abc&state=${encodeURIComponent(state)}`);
+      expect(cb.status).toBe(302);
+      expect(cb.headers["cache-control"]).toBe("no-store");
+      expect(cb.headers.location).toMatch(/^https:\/\/creators\.example\.com\/connect#state=.+&code=abc$/);
+      // The public callback never exchanges the code and never consumes the state.
+      expect(calls).toHaveLength(0);
+      expect((await prisma.creatorOauthState.findUnique({ where: { state } }))?.usedAt).toBeNull();
+
+      const { res, outcome } = await complete(token, state);
+      expect(outcome).toBe("connected");
+      expect(res.body.data).toEqual({ connected: true });
+      expect(res.headers["cache-control"]).toBe("no-store");
       const conn = await settleDiscovery(c.id);
       expect(conn?.status).toBe("ACTIVE");
       expect(conn?.discoveryState).toBe("done");
@@ -261,21 +304,49 @@ describe("creator Meta connect", () => {
       expect(exchange?.query.get("redirect_uri")).toBe(ENV.META_CREATOR_REDIRECT_URI);
     });
 
-    it("state is single-use: used, expired and unknown all redirect ?error=expired", async () => {
+    it("⚠️ only the creator who STARTED the flow can finish it — another creator is refused, stores nothing, and the state survives", async () => {
+      const victim = await seedCreator("victim@example.com");
+      const attacker = await seedCreator("attacker@example.com");
+      const attackerToken = generateCreatorToken(attacker.id, attacker.email);
+      const victimToken = generateCreatorToken(victim.id, victim.email);
+      // The attacker starts a connect on their own account and sends the facebook.com link…
+      const start = await request(app).post("/v1/creator/meta/oauth/start").set("Authorization", `Bearer ${attackerToken}`).send({});
+      const state = new URL(start.body.data.authorizeUrl).searchParams.get("state")!;
+      // …the victim approves it, and the callback hands the code to the victim's own browser,
+      // which is signed in to the victim's account: refused, nothing exchanged or stored.
+      calls = [];
+      const { res, outcome } = await complete(victimToken, state);
+      expect(res.status).toBe(403);
+      expect(outcome).toBe("wrong_account");
+      expect(calls.some((x) => x.path === "/oauth/access_token")).toBe(false);
+      expect(await prisma.creatorConnection.count()).toBe(0);
+      // Not consumed by the refusal.
+      expect((await prisma.creatorOauthState.findUnique({ where: { state } }))?.usedAt).toBeNull();
+      // An unauthenticated complete is a 401, never an exchange.
+      const anon = await request(app).post("/v1/creator/meta/oauth/complete").send({ state, code: "abc" });
+      expect(anon.status).toBe(401);
+      expect(await prisma.creatorConnection.count()).toBe(0);
+    });
+
+    it("state is single-use: used, expired and unknown are all refused", async () => {
       const c = await seedCreator("once@example.com");
-      const { state } = await connectVia(c);
+      const { state, token, outcome } = await connectVia(c);
+      expect(outcome).toBe("connected");
       await settleDiscovery(c.id);
       const again = await request(app).get(`/v1/creator/meta/oauth/callback?code=abc&state=${encodeURIComponent(state)}`);
       expect(again.headers.location).toBe("https://creators.example.com/connect?error=expired");
+      expect((await complete(token, state)).outcome).toBe("expired");
 
       await prisma.creatorOauthState.create({ data: { state: "expired-state-xyz", creatorId: c.id, expiresAt: new Date(Date.now() - 1000) } });
       const exp = await request(app).get("/v1/creator/meta/oauth/callback?code=abc&state=expired-state-xyz");
       expect(exp.headers.location).toBe("https://creators.example.com/connect?error=expired");
+      expect((await complete(token, "expired-state-xyz")).outcome).toBe("expired");
 
       const unknown = await request(app).get("/v1/creator/meta/oauth/callback?code=abc&state=never-issued");
       expect(unknown.status).toBe(302);
       expect(unknown.headers.location).toBe("https://creators.example.com/connect?error=expired");
       expect(unknown.headers["cache-control"]).toBe("no-store");
+      expect((await complete(token, "never-issued")).outcome).toBe("expired");
     });
 
     it("maps a declined consent to ?error=denied", async () => {
@@ -286,20 +357,20 @@ describe("creator Meta connect", () => {
     it("refuses a grant issued to another app and stores nothing", async () => {
       graph.appId = "999999999999999";
       const c = await seedCreator("mismatch@example.com");
-      const { location } = await connectVia(c);
-      expect(location).toBe("https://creators.example.com/connect?error=app_mismatch");
+      const { outcome } = await connectVia(c);
+      expect(outcome).toBe("app_mismatch");
       expect(await prisma.creatorConnection.count()).toBe(0);
       expect(calls.some((x) => x.path === "/me/accounts")).toBe(false);
     });
 
-    it("refuses a Facebook identity another creator holds and stores nothing", async () => {
+    it("refuses a Facebook identity another creator LIVE-holds and stores nothing", async () => {
       const first = await seedCreator("first@example.com");
       await connectVia(first);
       const firstConn = await settleDiscovery(first.id);
 
       const second = await seedCreator("second@example.com");
-      const { location } = await connectVia(second);
-      expect(location).toBe("https://creators.example.com/connect?error=already_linked");
+      const { outcome } = await connectVia(second);
+      expect(outcome).toBe("already_linked");
       expect(await prisma.creatorConnection.count({ where: { creatorId: second.id } })).toBe(0);
       expect(await prisma.creatorAsset.count({ where: { creatorId: second.id } })).toBe(0);
       const still = await prisma.creatorConnection.findUnique({ where: { id: firstConn!.id } });
@@ -307,14 +378,32 @@ describe("creator Meta connect", () => {
       expect(still?.userTokenEnc).toBe(firstConn!.userTokenEnc);
     });
 
-    it("alerts staff when the identity also holds a staff Meta connection (and never writes it)", async () => {
+    it("releases an identity whose connection was revoked: the next creator can connect it", async () => {
+      const first = await seedCreator("leaver@example.com");
+      const { token } = await connectVia(first);
+      await settleDiscovery(first.id);
+      expect((await request(app).delete("/v1/creator/meta/connection").set("Authorization", `Bearer ${token}`)).status).toBe(200);
+
+      const second = await seedCreator("newowner@example.com");
+      const { outcome } = await connectVia(second);
+      expect(outcome).toBe("connected");
+      await settleDiscovery(second.id);
+      expect(await prisma.creatorConnection.count({ where: { creatorId: first.id } })).toBe(0);
+      const conn = await prisma.creatorConnection.findUnique({ where: { metaUserId: META_USER } });
+      expect(conn?.creatorId).toBe(second.id);
+      expect(await prisma.creatorAsset.count({ where: { creatorId: second.id } })).toBe(4);
+    });
+
+    it("⚠️ refuses a staff grantor's identity: nothing stored, staff alerted, meta_* untouched", async () => {
       const admin = await createTestUser();
       await prisma.metaConnection.create({ data: { metaUserId: META_USER, connectedById: admin.id, status: "ACTIVE" } });
       const before = await prisma.metaConnection.findFirst({ where: { metaUserId: META_USER } });
       const c = await seedCreator("staffish@example.com");
-      const { location } = await connectVia(c);
-      expect(location).toBe("https://creators.example.com/connect?connected=1");
-      await settleDiscovery(c.id);
+      const { outcome, res } = await connectVia(c);
+      expect(res.status).toBe(409);
+      expect(outcome).toBe("staff_account");
+      expect(await prisma.creatorConnection.count()).toBe(0);
+      expect(await prisma.creatorAsset.count()).toBe(0);
       expect(vi.mocked(notifyAdminByEmail)).toHaveBeenCalled();
       const after = await prisma.metaConnection.findFirst({ where: { metaUserId: META_USER } });
       expect(after).toEqual(before);
@@ -372,18 +461,71 @@ describe("creator Meta connect", () => {
       expect(calls.some((x) => x.path.endsWith("/content_publishing_limit"))).toBe(false);
     });
 
-    it("flags a page already on our network as a duplicate", async () => {
+    it("flags a page that is or was on our network as a duplicate (a disconnected meta_assets row counts too)", async () => {
       const admin = await createTestUser();
       const mc = await prisma.metaConnection.create({ data: { metaUserId: "staff-1", connectedById: admin.id, status: "ACTIVE" } });
       const ours = await prisma.metaAsset.create({ data: { connectionId: mc.id, kind: "FACEBOOK_PAGE", metaId: PAGE_PUBLISH, name: "Ours" } });
-      await prisma.metaAsset.create({ data: { connectionId: mc.id, kind: "INSTAGRAM_ACCOUNT", metaId: IG_OK, name: "Ours IG", disconnectedAt: new Date() } });
+      const oursIg = await prisma.metaAsset.create({ data: { connectionId: mc.id, kind: "INSTAGRAM_ACCOUNT", metaId: IG_OK, name: "Ours IG", disconnectedAt: new Date() } });
       const { c, conn } = await connectedCreator("dupe@example.com");
       await discoverCreatorAssets(conn.id);
       const fb = await prisma.creatorAsset.findFirst({ where: { creatorId: c.id, metaId: PAGE_PUBLISH } });
       expect(fb?.networkDuplicateOf).toBe(ours.id);
-      // A DISCONNECTED meta_assets row is not "live" and does not count.
+      // A briefly revoked staff connection must not let one of our pages through.
       const ig = await prisma.creatorAsset.findFirst({ where: { creatorId: c.id, metaId: IG_OK } });
-      expect(ig?.networkDuplicateOf).toBeNull();
+      expect(ig?.networkDuplicateOf).toBe(oursIg.id);
+    });
+
+    it("re-checks duplicates later: a page staff connect AFTER the creator is flagged and switched off", async () => {
+      const { c, conn } = await connectedCreator("later@example.com");
+      await discoverCreatorAssets(conn.id);
+      await prisma.creatorAsset.updateMany({ where: { creatorId: c.id, metaId: PAGE_PUBLISH }, data: { enabled: true } });
+      const admin = await createTestUser();
+      const mc = await prisma.metaConnection.create({ data: { metaUserId: "staff-2", connectedById: admin.id, status: "ACTIVE" } });
+      const ours = await prisma.metaAsset.create({ data: { connectionId: mc.id, kind: "FACEBOOK_PAGE", metaId: PAGE_PUBLISH, name: "Ours now" } });
+      calls = [];
+      const r = await syncNetworkDuplicates();
+      expect(r).toMatchObject({ flagged: 1, switchedOff: 1 });
+      expect(calls).toHaveLength(0); // DB only
+      const fb = await prisma.creatorAsset.findFirst({ where: { creatorId: c.id, metaId: PAGE_PUBLISH } });
+      expect(fb).toMatchObject({ networkDuplicateOf: ours.id, enabled: false });
+      expect((await syncNetworkDuplicates()).flagged).toBe(0); // idempotent
+    });
+
+    it("takes a page over from a holder who can no longer use it, or who cannot publish there", async () => {
+      // A holds both pages with an ANALYZE-only role (cannot publish).
+      graph.pages = graph.pages.map((p) => ({ ...p, tasks: ["ANALYZE"] }));
+      graph.igNodes = [];
+      const a = await connectedCreator("analyst@example.com");
+      await discoverCreatorAssets(a.conn.id);
+      await prisma.creatorAsset.updateMany({ where: { creatorId: a.c.id }, data: { enabled: true } });
+
+      // B can publish to PAGE_PUBLISH: takes it over (staff switch reset); PAGE_READONLY stays A's.
+      defaultGraph();
+      graph.igNodes = [];
+      const b = await connectedCreator("owner@example.com");
+      const out = await discoverCreatorAssets(b.conn.id);
+      expect(out.claimedElsewhere).toBe(1);
+      const pub = await prisma.creatorAsset.findFirst({ where: { metaId: PAGE_PUBLISH } });
+      expect(pub).toMatchObject({ creatorId: b.c.id, connectionId: b.conn.id, canPublish: true, enabled: false });
+      const ro = await prisma.creatorAsset.findFirst({ where: { metaId: PAGE_READONLY } });
+      expect(ro?.creatorId).toBe(a.c.id);
+
+      // Once A is rejected, A's claim stops counting even against a non-publisher.
+      await prisma.creator.update({ where: { id: a.c.id }, data: { status: "rejected" } });
+      const again = await discoverCreatorAssets(b.conn.id);
+      expect(again.claimedElsewhere).toBe(0);
+      expect((await prisma.creatorAsset.findFirst({ where: { metaId: PAGE_READONLY } }))?.creatorId).toBe(b.c.id);
+    });
+
+    it("an inconclusive Instagram probe keeps the stored answer instead of flipping to 'can't publish'", async () => {
+      const { c, conn } = await connectedCreator("flaky@example.com");
+      await discoverCreatorAssets(conn.id);
+      expect((await prisma.creatorAsset.findFirst({ where: { creatorId: c.id, metaId: IG_OK } }))?.canPublish).toBe(true);
+      graph.probeServerError.add(IG_OK);
+      await discoverCreatorAssets(conn.id);
+      const ig = await prisma.creatorAsset.findFirst({ where: { creatorId: c.id, metaId: IG_OK } });
+      expect(ig?.canPublish).toBe(true);
+      expect(ig?.publishProbeError).toBeNull();
     });
 
     it("never takes another creator's page; says so on the connection", async () => {
@@ -499,6 +641,8 @@ describe("creator Meta connect", () => {
       expect(Number(by(IG_OK).views28d)).toBe(900);
       expect(by(IG_OK).engagements28d).toBeNull(); // -1 sentinel
       expect(by(IG_OK).metricsFetchedAt).not.toBeNull();
+      // Still live: a merely withheld figure does not touch the connection.
+      expect((await prisma.creatorConnection.findFirst({ where: { creatorId: c.id } }))?.status).toBe("ACTIVE");
       const igCall = calls.find((x) => x.path === `/${IG_OK}/insights`);
       const until = Number(igCall?.query.get("until"));
       expect(until % 86400).toBe(0); // a completed UTC day boundary
@@ -508,7 +652,37 @@ describe("creator Meta connect", () => {
       expect(fbCall?.query.get("since")).toBeTruthy();
     });
 
-    it("rounds days UP, flags both clocks, and emails only at 14 and 3 days", async () => {
+    it("a token Meta refuses (190) marks the connection NEEDS_REAUTH and stops its pages", async () => {
+      const c = await seedCreator("lapsed@example.com");
+      await connectVia(c);
+      await settleDiscovery(c.id);
+      graph.authFail.add(IG_OK).add(IG_NOPROBE).add(PAGE_PUBLISH).add(PAGE_READONLY);
+      calls = [];
+      await refreshCreatorMetrics();
+      const conn = await prisma.creatorConnection.findFirst({ where: { creatorId: c.id } });
+      expect(conn?.status).toBe("NEEDS_REAUTH");
+      expect(conn?.lastError).toMatch(/reconnect/);
+      // Only the first page of that connection was tried (one profile read, no insights); the
+      // rest were skipped.
+      expect(calls).toHaveLength(1);
+      // …and it can no longer be submitted (no live connection behind its pages).
+      const token = generateCreatorToken(c.id, c.email);
+      const me = await request(app).get("/v1/creator/me").set("Authorization", `Bearer ${token}`);
+      expect(me.body.data.checklist.publishablePages).toBe(0);
+    });
+
+    it("purges page details 30 days after a disconnect, and revoked connections with them", async () => {
+      const c = await seedCreator("purge@example.com");
+      const { token } = await connectVia(c);
+      await settleDiscovery(c.id);
+      await request(app).delete("/v1/creator/meta/connection").set("Authorization", `Bearer ${token}`);
+      expect(await purgeCreatorPageData(new Date(Date.now() + 29 * 86_400_000))).toEqual({ assets: 0, connections: 0 });
+      expect(await purgeCreatorPageData(new Date(Date.now() + 31 * 86_400_000))).toEqual({ assets: 4, connections: 1 });
+      expect(await prisma.creatorAsset.count()).toBe(0);
+      expect(await prisma.creator.count({ where: { id: c.id } })).toBe(1);
+    });
+
+    it("rounds days UP, flags both clocks, and emails once per stage (≤14, then ≤3) — idempotent across runs", async () => {
       expect(daysLeft(new Date(Date.now() + 60_000), new Date())).toBe(1);
       expect(daysLeft(new Date(Date.now() - 60_000), new Date())).toBe(0);
       const now = new Date();
@@ -530,15 +704,25 @@ describe("creator Meta connect", () => {
       const gone = await mk("d0@example.com", 0, 30);
       const fine = await mk("d40@example.com", 40, 60);
       const out = await runCreatorTokenHealth(now);
-      expect(out.emailed).toBe(2);
+      // d14 (≤14) and d3 (≤3), plus d10: ≤14 days and never warned (a missed day still mails).
+      expect(out.emailed).toBe(3);
       const to = vi.mocked(sendEmail).mock.calls.map((x) => (x[0] as { to: string }).to).sort();
-      expect(to).toEqual(["d14@example.com", "d3@example.com"]);
+      expect(to).toEqual(["d10@example.com", "d14@example.com", "d3@example.com"]);
+
       const status = async (id: string) => (await prisma.creatorConnection.findUnique({ where: { id } }))!.status;
       expect(await status(fourteen.id)).toBe("NEEDS_REAUTH_SOON");
       expect(await status(three.id)).toBe("NEEDS_REAUTH_SOON");
       expect(await status(ten.id)).toBe("NEEDS_REAUTH_SOON");
       expect(await status(gone.id)).toBe("NEEDS_REAUTH");
       expect(await status(fine.id)).toBe("ACTIVE");
+      // ⚠️ Idempotent across restarts: a second pass the same day mails nobody again.
+      vi.mocked(sendEmail).mockClear();
+      expect((await runCreatorTokenHealth(now)).emailed).toBe(0);
+      // The 14-day stage moves on to the 3-day one when it arrives — once.
+      expect((await runCreatorTokenHealth(new Date(now.getTime() + 11 * 86_400_000))).emailed).toBe(1);
+      const warned = async (id: string) => (await prisma.creatorConnection.findUnique({ where: { id } }))!.expiryWarnedDays;
+      expect(await warned(fourteen.id)).toBe(3);
+      expect(await warned(fine.id)).toBeNull();
     });
   });
 });

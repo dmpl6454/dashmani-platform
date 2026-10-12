@@ -22,6 +22,7 @@ import { oauthGraphFetch, makeBudget, type CallBudget } from "../meta-oauth/oaut
 import { splitFbSeries } from "../meta-oauth/meta-channels.service";
 import { decryptToken, scrubSecrets } from "../../utils/token-crypto";
 import { creatorConfig } from "./creator-config";
+import { creatorMetaAppSecret } from "./creator-meta-config";
 
 const DAY = 86_400;
 /** How far back the Facebook request reaches; the last CLOSED point is what we keep. */
@@ -77,9 +78,27 @@ export async function refreshCreatorMetrics(opts?: { budget?: CallBudget; now?: 
       pageTokenEnc: true,
       followerCount: true,
       mediaCount: true,
+      connectionId: true,
       connection: { select: { userTokenEnc: true } },
     },
   });
+  /** Connections Meta refused this run (code 190): their remaining pages are skipped. */
+  const lapsed = new Set<string>();
+  // Meta no longer accepts the token (password changed, app removed without a deauthorize
+  // callback reaching us): the CONNECTION needs a reconnect — say so, and stop offering its
+  // pages (LIVE_CONNECTION_STATUSES in creator-view.ts excludes NEEDS_REAUTH).
+  const markLapsed = async (assetId: string, connectionId: string) => {
+    lapsed.add(connectionId);
+    out.failed++;
+    await prisma.creatorConnection.updateMany({
+      where: { id: connectionId, revokedAt: null },
+      data: { status: "NEEDS_REAUTH", lastError: "Facebook no longer accepts this connection — please reconnect." },
+    });
+    await prisma.creatorAsset.update({
+      where: { id: assetId },
+      data: { views28d: null, engagements28d: null, metricsFetchedAt: now, metricsError: "Facebook no longer accepts this connection." },
+    });
+  };
 
   const nowTs = Math.floor(now.getTime() / 1000);
   // Instagram: the last 28 COMPLETED UTC days.
@@ -88,6 +107,7 @@ export async function refreshCreatorMetrics(opts?: { budget?: CallBudget; now?: 
 
   for (const a of assets) {
     if (budget.used + CALLS_PER_ASSET > budget.max) break;
+    if (lapsed.has(a.connectionId)) continue;
     const isIg = a.kind === "instagram_account";
     let token: string;
     try {
@@ -107,9 +127,10 @@ export async function refreshCreatorMetrics(opts?: { budget?: CallBudget; now?: 
       a.metaId,
       { fields: isIg ? "followers_count,media_count" : "followers_count,fan_count" },
       token,
-      { label: "creator-metrics-profile", budget },
+      { label: "creator-metrics-profile", budget, appSecret: creatorMetaAppSecret() },
     );
     if (prof.rateLimited) { out.rateLimited = true; break; }
+    if (prof.authInvalid) { await markLapsed(a.id, a.connectionId); continue; }
 
     const ins = await oauthGraphFetch<InsightsResponse>(
       `${a.metaId}/insights`,
@@ -117,9 +138,11 @@ export async function refreshCreatorMetrics(opts?: { budget?: CallBudget; now?: 
         ? { metric: "views,total_interactions", metric_type: "total_value", period: "day", since: igSince, until: igUntil }
         : { metric: "page_media_view,page_post_engagements", period: "days_28", since: nowTs - FB_LOOKBACK_DAYS * DAY, until: nowTs },
       token,
-      { label: isIg ? "creator-metrics-ig-insights" : "creator-metrics-fb-insights", budget },
+      { label: isIg ? "creator-metrics-ig-insights" : "creator-metrics-fb-insights", budget, appSecret: creatorMetaAppSecret() },
     );
     if (ins.rateLimited) { out.rateLimited = true; break; }
+
+    if (ins.authInvalid) { await markLapsed(a.id, a.connectionId); continue; }
 
     let views: number | null = null;
     let engagements: number | null = null;

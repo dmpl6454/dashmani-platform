@@ -42,7 +42,7 @@ export default function DashboardPage() {
   return (
     <div className="flex flex-col gap-8">
       <PageHead kicker="Overview" title={<>Hi {first}.</>}>
-        Brands book promotion on your page through Digital Sukoon, and you approve every booking before anything is posted.
+        Brands will book promotion on your page through Digital Sukoon, and you approve every booking before anything is posted.
         Finish the steps below and our team will review your profile.
       </PageHead>
       <StatusBanner me={me} />
@@ -114,16 +114,28 @@ function Step({ n, done, title, children }: { n: number; done: boolean; title: s
   );
 }
 
+/** POST /creator/auth/resend-verification: `sent` is false when the address was already confirmed. */
+type ResendResult = { sent: boolean; alreadyVerified?: boolean };
+
 function Checklist({ me, onChange }: { me: CreatorMeWithChecklist; onChange: (next?: CreatorMe) => void }) {
   const c = me.checklist;
-  const [resend, setResend] = useState<{ state: "idle" | "sending" | "sent"; error: string }>({ state: "idle", error: "" });
+  const [resend, setResend] = useState<{ state: "idle" | "sending" | "sent" | "verified"; error: string }>({ state: "idle", error: "" });
   const [submit, setSubmit] = useState<{ busy: boolean; error: string }>({ busy: false, error: "" });
 
   async function resendLink() {
     setResend({ state: "sending", error: "" });
     try {
-      await apiFetch("/creator/auth/resend-verification", { method: "POST" });
-      setResend({ state: "sent", error: "" });
+      const r = await apiFetch<ResendResult>("/creator/auth/resend-verification", { method: "POST" });
+      if (r.data?.alreadyVerified) {
+        // Confirmed in another tab (or on another device) since this page loaded: say so and
+        // re-read the account so the checklist ticks this step.
+        setResend({ state: "verified", error: "" });
+        onChange();
+      } else if (r.data?.sent) {
+        setResend({ state: "sent", error: "" });
+      } else {
+        setResend({ state: "idle", error: "We couldn't send a new link. Please try again in a moment." });
+      }
     } catch (err: any) {
       setResend({
         state: "idle",
@@ -163,6 +175,7 @@ function Checklist({ me, onChange }: { me: CreatorMeWithChecklist; onChange: (ne
                 </button>
                 <span aria-live="polite" className="text-sm">
                   {resend.state === "sent" && <span className="text-success">Sent — check your inbox in a minute.</span>}
+                  {resend.state === "verified" && <span className="text-success">Your email is already confirmed.</span>}
                   {resend.error && <span className="text-danger">{resend.error}</span>}
                 </span>
               </div>

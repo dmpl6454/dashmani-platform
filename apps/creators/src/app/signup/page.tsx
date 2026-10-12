@@ -94,7 +94,9 @@ function SignupForm() {
     } catch (err) {
       if (err instanceof ApiError && err.code === "EMAIL_EXISTS") {
         setErrors({ email: "There's already an account with this email." });
-        setError("There's already an account with this email — sign in instead, or use Forgot password on the sign-in page.");
+        setError(
+          "There's already an account with this email — sign in instead, or use Forgot password on the sign-in page. If you closed your account, email creators@digitalsukoon.com to reopen it.",
+        );
       } else if (err instanceof ApiError && err.details?.length) {
         const next: Partial<Record<Field, string>> = {};
         for (const d of err.details) {
@@ -118,7 +120,7 @@ function SignupForm() {
       kicker="Creator portal · Join"
       title={<>Get <em>booked.</em></>}
       lines={[
-        <>Brands and agencies book promotion on your page through Digital Sukoon. You set your price.</>,
+        <>Brands and agencies will book promotion on your page through Digital Sukoon. You name your asking price and see your payout before you accept.</>,
         <>Nothing is posted without your approval, and you can disconnect at any time.</>,
         <>Already a creator? <Link href={signInHref}>Sign in</Link>.</>,
       ]}

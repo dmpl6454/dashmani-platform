@@ -2,15 +2,20 @@
 import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { AuthContext } from "@/lib/auth";
-import { apiFetch, clearSession, PUBLIC_ROUTES, storeSession, TOKEN_KEYS } from "@/lib/api";
+import { apiFetch, clearSession, isPrivatePath, storeSession, TOKEN_KEYS } from "@/lib/api";
 import { safeNext } from "@/lib/safe-next";
 import type { CreatorMe, CreatorSession } from "@/lib/types";
 import { AppShell } from "./app-shell";
 
 // Client-side auth guard. The app is a static export, so there is no server to check a session:
-// signed-in pages render a placeholder until we have read localStorage, and a visitor without a
-// session is sent to /login?next=<where they were going>. The API is the real gate — every
-// signed-in request carries the creator's access token and 401s without it.
+// the signed-in pages (PRIVATE_ROUTES: /dashboard, /connect, /settings and anything under them)
+// render a placeholder until we have read localStorage, and a visitor without a session is sent
+// to /login?next=<where they were going>. Every other path — the public pages and unknown URLs,
+// so the 404 page can show — renders as is. The API is the real gate — every signed-in request
+// carries the creator's access token and 401s without it.
+//
+// /connect can open with a URL fragment after Facebook (`#state=…&code=…`); `next` carries only
+// the path and query, so a signed-out visitor's fragment is dropped on the way to /login.
 
 const normalise = (p: string | null) => (p && p.length > 1 ? p.replace(/\/+$/, "") : p || "/");
 
@@ -27,7 +32,7 @@ function readStoredCreator(): CreatorMe | null {
 export function Providers({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = normalise(usePathname());
-  const isPublic = PUBLIC_ROUTES.includes(pathname);
+  const isPublic = !isPrivatePath(pathname);
   const [creator, setCreator] = useState<CreatorMe | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 

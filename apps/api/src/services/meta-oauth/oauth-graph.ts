@@ -204,6 +204,9 @@ export async function oauthGraphFetch<T = unknown>(
     timeoutMs?: number;
     label?: string;
     budget?: CallBudget;
+    /** Secret of the app that minted `token`, for appsecret_proof. Default: the admin app's
+     *  (META_OAUTH_APP_SECRET). The creator portal passes its own when it is split out. */
+    appSecret?: string;
     signal?: AbortSignal;
     /**
      * Default true: one api_usage row per call. A high-frequency caller (the posting
@@ -253,7 +256,7 @@ export async function oauthGraphFetch<T = unknown>(
     url.searchParams.set("access_token", token);
   }
   if (metaTuning.appsecretProof()) {
-    const secret = metaOauthAppSecret();
+    const secret = opts?.appSecret || metaOauthAppSecret();
     if (secret) {
       url.searchParams.set(
         "appsecret_proof",
@@ -339,6 +342,9 @@ export async function oauthGraphPost<T = unknown>(
     timeoutMs?: number;
     label?: string;
     budget?: CallBudget;
+    /** Secret of the app that minted `token`, for appsecret_proof. Default: the admin app's
+     *  (META_OAUTH_APP_SECRET). The creator portal passes its own when it is split out. */
+    appSecret?: string;
     headers?: Record<string, string>;
     tokenInHeader?: boolean;
   },
@@ -369,7 +375,7 @@ export async function oauthGraphPost<T = unknown>(
   } else {
     body.set("access_token", token);
     if (metaTuning.appsecretProof()) {
-      const secret = metaOauthAppSecret();
+      const secret = opts?.appSecret || metaOauthAppSecret();
       if (secret) body.set("appsecret_proof", createHmac("sha256", secret).update(token).digest("hex"));
     }
   }

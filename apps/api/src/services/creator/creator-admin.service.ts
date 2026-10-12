@@ -4,7 +4,8 @@ import { CREATOR_STATUSES, type CreatorStatus } from "@dashmani/shared/src/valid
 import { AppError } from "../../middleware/error-handler";
 import { likeLiteral } from "../../utils/like-literal";
 import { scrubSecrets } from "../../utils/token-crypto";
-import { toAssetView, toConnectionView, toCreatorMe, isPublishable } from "./creator-view";
+import { toAssetView, toConnectionView, toCreatorMe, isPublishable, liveConnectionWhere, LIVE_CONNECTION_STATUSES } from "./creator-view";
+import { syncNetworkDuplicates } from "./creator-discovery.service";
 import { sendCreatorEmail, esc, button, creatorLink } from "./creator-email";
 
 // Staff review queue for the creator portal (internal portal → /creators).
@@ -227,36 +228,52 @@ export async function reviewCreator(id: string, action: ReviewAction, staffId: s
   }
 
   const c = await prisma.creator.findUnique({ where: { id }, select: { email: true, name: true } });
+  let emailSent = false;
   if (c) {
     const mail = reviewEmail(action, c.name, reviewNote);
     // The status change stands even when the email cannot be sent (no SMTP, Gmail refusing).
+    // sendEmail answers null for both; the staff screen says so instead of claiming delivery.
     try {
-      await sendCreatorEmail(c.email, mail.subject, mail.title, mail.body);
+      emailSent = (await sendCreatorEmail(c.email, mail.subject, mail.title, mail.body)) != null;
     } catch (e) {
       console.warn(`[creator-admin] ${action} email failed for ${id}: ${scrubSecrets(e instanceof Error ? e.message : String(e))}`);
     }
+    if (!emailSent) console.warn(`[creator-admin] ${action} email for ${id} was not sent`);
   }
 
-  return getCreatorDetail(id);
+  return { ...(await getCreatorDetail(id)), emailSent };
 }
 
 // ── Page (asset) switch ───────────────────────────────────────────────────────
 
-type BlockReason = "creator_not_approved" | "disconnected" | "network_duplicate" | "cannot_publish";
+type BlockReason = "creator_not_approved" | "disconnected" | "connection_not_live" | "network_duplicate" | "cannot_publish";
 
 const BLOCK_MESSAGE: Record<BlockReason, string> = {
   creator_not_approved: "The creator must be approved before their pages can be turned on.",
   disconnected: "This page is disconnected — the creator must reconnect it first.",
+  connection_not_live: "The creator's Facebook connection has lapsed — they must reconnect it first.",
   network_duplicate: "This page is already on our network, so it can't be offered as a creator page.",
   cannot_publish: "We can't publish to this page through the API yet (see the probe error).",
 };
 
-function blockReason(
-  a: Pick<CreatorAsset, "disconnectedAt" | "networkDuplicateOf" | "canPublish">,
-  creatorStatus: string,
-): BlockReason | null {
-  if (creatorStatus !== "approved") return "creator_not_approved";
+type AssetGate = Pick<CreatorAsset, "disconnectedAt" | "networkDuplicateOf" | "canPublish"> & {
+  creator: { status: string };
+  connection: { status: string; revokedAt: Date | null };
+};
+const GATE_SELECT = {
+  disconnectedAt: true,
+  networkDuplicateOf: true,
+  canPublish: true,
+  creator: { select: { status: true } },
+  connection: { select: { status: true, revokedAt: true } },
+} as const;
+
+function blockReason(a: AssetGate): BlockReason | null {
+  if (a.creator.status !== "approved") return "creator_not_approved";
   if (a.disconnectedAt) return "disconnected";
+  if (a.connection.revokedAt || !(LIVE_CONNECTION_STATUSES as readonly string[]).includes(a.connection.status)) {
+    return "connection_not_live";
+  }
   if (a.networkDuplicateOf) return "network_duplicate";
   if (!a.canPublish) return "cannot_publish";
   return null;
@@ -267,14 +284,16 @@ function notEnableable(reason: BlockReason): never {
 }
 
 export async function setAssetEnabled(creatorId: string, assetId: string, enabled: boolean, staffId: string) {
-  const asset = await prisma.creatorAsset.findFirst({
-    where: { id: assetId, creatorId },
-    select: { id: true, disconnectedAt: true, networkDuplicateOf: true, canPublish: true, creator: { select: { status: true } } },
-  });
-  if (!asset) throw new AppError(404, "NOT_FOUND", "Page not found");
+  const exists = await prisma.creatorAsset.findFirst({ where: { id: assetId, creatorId }, select: { id: true } });
+  if (!exists) throw new AppError(404, "NOT_FOUND", "Page not found");
 
   if (enabled) {
-    const reason = blockReason(asset, asset.creator.status);
+    // The stored duplicate flag is only as fresh as the creator's last discovery: re-check it
+    // against our network NOW, so a page staff connected since can never be switched on here.
+    await syncNetworkDuplicates([assetId]);
+    const asset = await prisma.creatorAsset.findFirst({ where: { id: assetId, creatorId }, select: GATE_SELECT });
+    if (!asset) throw new AppError(404, "NOT_FOUND", "Page not found");
+    const reason = blockReason(asset);
     if (reason) notEnableable(reason);
     // Re-assert every condition in the write itself: a suspend, a disconnect or a re-discovery
     // that lands between the read above and this write must win.
@@ -286,16 +305,14 @@ export async function setAssetEnabled(creatorId: string, assetId: string, enable
         networkDuplicateOf: null,
         disconnectedAt: null,
         creator: { status: "approved" },
+        connection: liveConnectionWhere,
       },
       data: { enabled: true, enabledById: staffId, enabledAt: new Date() },
     });
     if (res.count === 0) {
-      const now = await prisma.creatorAsset.findFirst({
-        where: { id: assetId, creatorId },
-        select: { disconnectedAt: true, networkDuplicateOf: true, canPublish: true, creator: { select: { status: true } } },
-      });
+      const now = await prisma.creatorAsset.findFirst({ where: { id: assetId, creatorId }, select: GATE_SELECT });
       if (!now) throw new AppError(404, "NOT_FOUND", "Page not found");
-      notEnableable(blockReason(now, now.creator.status) ?? "cannot_publish");
+      notEnableable(blockReason(now) ?? "cannot_publish");
     }
   } else {
     await prisma.creatorAsset.updateMany({

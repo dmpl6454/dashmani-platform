@@ -185,7 +185,7 @@ export async function exchangeCodeForLongLivedToken(
     },
     // This call authenticates with the client_secret, not a bearer token.
     "",
-    { label: "oauth-exchange", timeoutMs: 10_000, budget },
+    { label: "oauth-exchange", timeoutMs: 10_000, budget, appSecret },
   );
   const shortToken = short.data?.access_token;
   if (!short.ok || !shortToken) {
@@ -202,7 +202,7 @@ export async function exchangeCodeForLongLivedToken(
       fb_exchange_token: shortToken,
     },
     "",
-    { label: "oauth-longlived", timeoutMs: 10_000, budget },
+    { label: "oauth-longlived", timeoutMs: 10_000, budget, appSecret },
   );
   const longToken = long.data?.access_token;
   if (!long.ok || !longToken) {
@@ -215,7 +215,7 @@ export async function exchangeCodeForLongLivedToken(
     "debug_token",
     { input_token: longToken },
     `${appId}|${appSecret}`,
-    { label: "oauth-debug-token", timeoutMs: 10_000, budget },
+    { label: "oauth-debug-token", timeoutMs: 10_000, budget, appSecret },
   );
   const data = dbg.data?.data;
   if (!dbg.ok || !data || data.is_valid !== true || !data.user_id) {

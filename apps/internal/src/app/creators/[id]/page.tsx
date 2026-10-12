@@ -214,6 +214,8 @@ export default function CreatorDetailPage() {
   const [busy, setBusy] = useState(false);
   const [dialogErr, setDialogErr] = useState("");
   const [info, setInfo] = useState("");
+  /** The action worked but its email didn't go out: show the note in the warning tone. */
+  const [infoWarn, setInfoWarn] = useState(false);
 
   if (error && !data) return <div className="pt-8"><ErrorBar message={error.message || "Couldn't load this creator."} /></div>;
   if (!data) return <div className="pt-8 text-ds-t3 text-[13px]">Loading…</div>;
@@ -231,9 +233,16 @@ export default function CreatorDetailPage() {
         method: "POST",
         body: JSON.stringify(note ? { note } : {}),
       });
-      await mutate(r.data, { revalidate: false });
+      const { emailSent, ...detail } = r.data;
+      await mutate(detail, { revalidate: false });
       setPending(null);
-      setInfo(`${DONE[action]} — the creator has been emailed.`);
+      // An older API sends no flag: keep the old sentence rather than claim a failure.
+      setInfoWarn(emailSent === false);
+      setInfo(
+        emailSent === false
+          ? `${DONE[action]} — but the email to the creator could not be sent, so tell them another way.`
+          : `${DONE[action]} — the creator has been emailed.`,
+      );
     } catch (e) {
       setDialogErr(e instanceof Error && e.message ? e.message : "That didn't work.");
     } finally {
@@ -255,7 +264,14 @@ export default function CreatorDetailPage() {
       />
 
       {info && (
-        <div className="mb-4 px-3.5 py-2.5 rounded-[8px] bg-[rgba(0,215,160,.08)] border border-[rgba(0,215,160,.3)] text-ds-teal text-[12.5px] flex justify-between gap-3">
+        <div
+          role={infoWarn ? "alert" : "status"}
+          className={`mb-4 px-3.5 py-2.5 rounded-[8px] text-[12.5px] flex justify-between gap-3 ${
+            infoWarn
+              ? "bg-[rgba(233,189,98,.08)] border border-[rgba(233,189,98,.35)] text-ds-gold"
+              : "bg-[rgba(0,215,160,.08)] border border-[rgba(0,215,160,.3)] text-ds-teal"
+          }`}
+        >
           <span>{info}</span>
           <button type="button" className="hover:text-ds-text" onClick={() => setInfo("")} aria-label="Dismiss">×</button>
         </div>

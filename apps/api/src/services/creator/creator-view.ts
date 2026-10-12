@@ -12,6 +12,21 @@ export const CREATOR_REQUIRED_SCOPES = [
   "instagram_content_publish",
 ] as const;
 
+/**
+ * Connection statuses whose tokens still work. NEEDS_REAUTH (the token or the grant is gone)
+ * and REVOKED are not: a page on such a connection cannot be submitted, enabled or booked.
+ */
+export const LIVE_CONNECTION_STATUSES = ["ACTIVE", "PARTIAL_SCOPE", "NEEDS_REAUTH_SOON"] as const;
+/** Prisma filter for a CreatorAsset whose connection is live (see LIVE_CONNECTION_STATUSES). */
+export const liveConnectionWhere = { revokedAt: null, status: { in: [...LIVE_CONNECTION_STATUSES] } };
+
+/**
+ * Discovery is fire-and-forget; an API restart mid-pass leaves discovery_state "running" for
+ * good. Past this age (measured from the row's updatedAt, which the "running" write stamps) it
+ * reads as interrupted, and Refresh is allowed again.
+ */
+export const DISCOVERY_STALE_MS = 10 * 60 * 1000;
+
 const iso = (d: Date | null | undefined) => (d ? d.toISOString() : null);
 const num = (b: bigint | number | null | undefined) => (b == null ? null : Number(b));
 
@@ -61,8 +76,9 @@ export function toAssetView(a: CreatorAsset) {
 }
 export type CreatorAssetView = ReturnType<typeof toAssetView>;
 
-export function toConnectionView(c: CreatorConnection) {
+export function toConnectionView(c: CreatorConnection, now: Date = new Date()) {
   const granted = c.grantedScopes ? c.grantedScopes.split(",").map((s) => s.trim()).filter(Boolean) : [];
+  const interrupted = c.discoveryState === "running" && now.getTime() - c.updatedAt.getTime() >= DISCOVERY_STALE_MS;
   return {
     status: c.status,
     metaUserName: c.metaUserName,
@@ -70,8 +86,8 @@ export function toConnectionView(c: CreatorConnection) {
     missingScopes: CREATOR_REQUIRED_SCOPES.filter((s) => !granted.includes(s)),
     tokenExpiresAt: iso(c.tokenExpiresAt),
     dataAccessExpiresAt: iso(c.dataAccessExpiresAt),
-    discoveryState: c.discoveryState,
-    lastError: c.lastError,
+    discoveryState: interrupted ? "failed" : c.discoveryState,
+    lastError: interrupted ? "Checking your pages was interrupted. Press “Check pages again”." : c.lastError,
     connectedAt: c.createdAt.toISOString(),
   };
 }

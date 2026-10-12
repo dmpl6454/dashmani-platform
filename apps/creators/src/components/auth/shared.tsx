@@ -46,7 +46,7 @@ function TileWall() {
 
 const DEFAULT_TICKER = [
   "Digital Sukoon Creators", "Brands book promotion on your page", "You approve every booking first",
-  "You set your own price", "Facebook Pages · Instagram professional accounts", "Creators worldwide",
+  "You set your asking price", "Facebook Pages · Instagram professional accounts", "Creators worldwide",
 ];
 
 export function AuthShell({

@@ -66,14 +66,14 @@ async function seedConnection(creatorId: string) {
 async function seedAsset(
   creatorId: string,
   connectionId: string,
-  over: Partial<{ canPublish: boolean; networkDuplicateOf: string | null; disconnectedAt: Date | null; enabled: boolean; followerCount: number }> = {},
+  over: Partial<{ canPublish: boolean; networkDuplicateOf: string | null; disconnectedAt: Date | null; enabled: boolean; followerCount: number; metaId: string }> = {},
 ) {
   return prisma.creatorAsset.create({
     data: {
       creatorId,
       connectionId,
       kind: "facebook_page",
-      metaId: `page-${Date.now()}-${++n}`,
+      metaId: over.metaId ?? `page-${Date.now()}-${++n}`,
       name: "Asha Eats",
       pageTokenEnc: "enc:v1:secret-page-token",
       tasks: ["CREATE_CONTENT", "ANALYZE"],
@@ -209,6 +209,7 @@ describe("Creator admin API", () => {
       const row = await prisma.creator.findUnique({ where: { id: c.id } });
       expect(row!.reviewedAt).not.toBeNull();
       expect(sendMock).toHaveBeenCalledTimes(1);
+      expect(res.body.data.emailSent).toBe(true);
       const mail = sendMock.mock.calls[0][0] as { to: string; html: string };
       expect(mail.to).toBe(c.email);
       expect(mail.html).toContain("Welcome aboard");
@@ -216,9 +217,13 @@ describe("Creator admin API", () => {
       expect(mail.html).not.toContain("<b>Iyer</b>");
     });
 
-    it("approve without a body works; approving twice is 409 INVALID_STATE", async () => {
+    it("approve without a body works; approving twice is 409 INVALID_STATE; an unsent email is reported, not claimed", async () => {
       const c = await seedCreator();
-      expect((await request(app).post(`/v1/admin/creators/${c.id}/approve`).set("Authorization", admin)).status).toBe(200);
+      sendMock.mockResolvedValueOnce(null as never); // no SMTP / Gmail refused
+      const first = await request(app).post(`/v1/admin/creators/${c.id}/approve`).set("Authorization", admin);
+      expect(first.status).toBe(200);
+      expect(first.body.data.emailSent).toBe(false);
+      expect(first.body.data.creator.status).toBe("approved");
       const again = await request(app).post(`/v1/admin/creators/${c.id}/approve`).set("Authorization", admin).send({});
       expect(again.status).toBe(409);
       expect(again.body.error.code).toBe("INVALID_STATE");
@@ -303,7 +308,7 @@ describe("Creator admin API", () => {
       expect(off.body.data.enabled).toBe(false);
     });
 
-    it("refuses to enable with a reason: not approved, network duplicate, can't publish, disconnected", async () => {
+    it("refuses to enable with a reason: not approved, network duplicate, can't publish, disconnected, lapsed connection", async () => {
       const metaConn = await prisma.metaConnection.create({ data: { metaUserId: `mu-ca2-${Date.now()}`, connectedById: staff.id, status: "ACTIVE" } });
       const net = await prisma.metaAsset.create({ data: { connectionId: metaConn.id, kind: "FACEBOOK_PAGE", metaId: `fb-net2-${n}`, name: "Ours" } });
 
@@ -313,13 +318,22 @@ describe("Creator admin API", () => {
 
       const c = await seedCreator({ status: "approved" });
       const conn = await seedConnection(c.id);
-      const dup = await seedAsset(c.id, conn.id, { networkDuplicateOf: net.id });
+      const dup = await seedAsset(c.id, conn.id, { networkDuplicateOf: net.id, metaId: net.metaId });
+      // Joined our network AFTER the creator's discovery: the stored flag is still null, the
+      // live re-check at enable time must catch it.
+      const net2 = await prisma.metaAsset.create({ data: { connectionId: metaConn.id, kind: "FACEBOOK_PAGE", metaId: `fb-net3-${n}`, name: "Ours later" } });
+      const lateDup = await seedAsset(c.id, conn.id, { metaId: net2.metaId });
       const noPub = await seedAsset(c.id, conn.id, { canPublish: false });
       const gone = await seedAsset(c.id, conn.id, { disconnectedAt: new Date() });
+      const lapsedConn = await seedConnection(c.id);
+      await prisma.creatorConnection.update({ where: { id: lapsedConn.id }, data: { status: "NEEDS_REAUTH" } });
+      const lapsed = await seedAsset(c.id, lapsedConn.id);
 
       const cases: Array<[string, string, string, RegExp]> = [
         [pending.id, pAsset.id, "creator_not_approved", /approved/],
         [c.id, dup.id, "network_duplicate", /already on our network/],
+        [c.id, lateDup.id, "network_duplicate", /already on our network/],
+        [c.id, lapsed.id, "connection_not_live", /reconnect/],
         [c.id, noPub.id, "cannot_publish", /can't publish/],
         [c.id, gone.id, "disconnected", /disconnected/],
       ];

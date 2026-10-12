@@ -41,7 +41,7 @@ export default function PrivacyPage() {
       <ul>
         <li>To run your account: signing in, confirming your email, password resets and messages about your account.</li>
         <li>To review your profile: checking that the pages are yours, active, and that we can publish to them.</li>
-        <li>To offer your pages to brands: showing a page&apos;s name, picture and public statistics to brands considering a booking.</li>
+        <li>To offer your pages to brands, once bookings open: showing a page&apos;s name, picture and public statistics to brands considering a booking.</li>
         <li>To publish the campaigns you accept, report how they performed, and pay you.</li>
         <li>To prevent fraud and keep the service secure, and to meet legal obligations such as tax and accounting records.</li>
       </ul>
@@ -50,25 +50,41 @@ export default function PrivacyPage() {
       <h2>Who sees it</h2>
       <p>
         Our team, to review and support your account. Brands see only what is needed to choose a booking (page name, picture, public
-        statistics, price). We use service providers to host the service and send email, under agreements that let them use the data
-        only for us. We share data with authorities only when the law requires it.
+        statistics, and the booking price our team agrees with them) — never your asking price. We use service providers to host the
+        service and send email, under agreements that let them use the data only for us. We share data with authorities only when the
+        law requires it.
       </p>
 
       <h2>How long we keep it</h2>
       <ul>
         <li><strong>While your account is open</strong>, we keep your account and page data so the service works.</li>
-        <li><strong>When you disconnect Facebook or close your account</strong>, we delete our copy of your Meta access tokens straight away and stop reading your pages.</li>
-        <li>Page details and insights we collected are deleted within 30 days of closing your account or receiving a deletion request from Meta.</li>
-        <li>Records of bookings and payments are kept for as long as tax and accounting law requires, then deleted.</li>
+        <li>
+          <strong>Meta access tokens</strong> are deleted straight away — and we stop reading your pages — when you disconnect Facebook in
+          the portal, remove “Post Automation 2” on Facebook, close your account, or send us a data-deletion request through Meta.
+        </li>
+        <li>
+          <strong>Page details and insights</strong> (page names, pictures, follower counts and 28-day figures) are deleted within 30 days
+          after a page is disconnected, your Facebook connection is removed (in the portal or by removing our app on Facebook), or your
+          account is closed. A data-deletion request through Meta deletes them at once.
+        </li>
+        <li>
+          <strong>When you close your account</strong>, we keep a basic record of it — your name, email address, country and the history of
+          our reviews — so nobody can reuse your email address to sign up as you. Email{" "}
+          <a href="mailto:creators@digitalsukoon.com">creators@digitalsukoon.com</a> to have that record erased.
+        </li>
+        <li>Records of any bookings and payments are kept for as long as tax and accounting law requires, then deleted.</li>
         <li>Email links (confirmation and password reset) expire after 7 days and 24 hours respectively, and work only once.</li>
       </ul>
 
       <h2>Deleting your data</h2>
       <p>You can delete your data in any of these ways:</p>
       <ul>
-        <li>Close your account in <Link href="/settings">Settings</Link>.</li>
-        <li>Remove “Post Automation 2” from your Facebook account (Facebook → Settings → Business integrations). Meta tells us, and we delete the data we hold from that connection.</li>
-        <li>Email <a href="mailto:creators@digitalsukoon.com">creators@digitalsukoon.com</a> from the address on your account.</li>
+        <li>Disconnect Facebook on the <Link href="/connect">Pages</Link> screen, or close your account in <Link href="/settings">Settings</Link>.</li>
+        <li>
+          Remove “Post Automation 2” from your Facebook account (Facebook → Settings → Business integrations). Meta tells us, and we
+          delete the data we hold from that connection as described above — at once if you also ask Facebook to request deletion.
+        </li>
+        <li>Email <a href="mailto:creators@digitalsukoon.com">creators@digitalsukoon.com</a> from the address on your account — including to erase the record of a closed account.</li>
       </ul>
       <p>See <Link href="/data-deletion">data deletion</Link> for details and to check the status of a request.</p>
 

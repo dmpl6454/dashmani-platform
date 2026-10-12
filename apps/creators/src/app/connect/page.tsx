@@ -1,5 +1,5 @@
 "use client";
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import useSWR from "swr";
 import { Check, ExternalLink, RefreshCw, ShieldCheck, Unplug, X } from "lucide-react";
@@ -9,10 +9,14 @@ import { daysUntil, fmtCompact, fmtDate, fmtUntil } from "@/lib/format";
 import type { ConnectionPayload, ConnectionView, CreatorAssetView } from "@/lib/types";
 import { Banner, Loading, Modal, PageHead } from "@/components/ui";
 
-// Facebook connection: what the permission lets us do, the Connect / Reconnect button
-// (POST /v1/creator/meta/oauth/start → Facebook → GET …/oauth/callback → back here with
-// ?connected=1 or ?error=<code>), and every Page / Instagram account we found
-// (GET /v1/creator/meta/connection), with whether we can publish to it.
+// Facebook connection: what the permission lets us do, the Connect / Reconnect button, and every
+// Page / Instagram account we found (GET /v1/creator/meta/connection), with whether we can
+// publish to it. The flow: POST /v1/creator/meta/oauth/start → Facebook → GET …/oauth/callback →
+// back here with `#state=…&code=…` (or `?error=<code>`) → THIS page, signed in, POSTs the pair to
+// /oauth/complete. ⚠️ The finishing step must stay here, with the creator's own token: the API
+// accepts the code only from the creator who started the flow, so a Facebook link someone else
+// sent can never attach your pages to their account. The fragment is wiped from the address bar
+// before anything else runs.
 
 const SCOPE_LABELS: Record<string, string> = {
   pages_show_list: "See the list of Facebook Pages you manage",
@@ -35,8 +39,30 @@ const STATUS_LABELS: Record<string, { label: string; tone: string }> = {
 function ConnectInner() {
   const router = useRouter();
   const params = useSearchParams();
-  const connected = params.get("connected") === "1";
-  const errorCode = params.get("error");
+  const queryError = params.get("error");
+
+  // `#state=…&code=…` from the callback → finish the connect here (once, even in dev's double
+  // effect: the fragment is cleared before the request goes out).
+  const [completion, setCompletion] = useState<{ state: "working" } | { state: "done" } | { state: "error"; code: string } | null>(null);
+  const completing = useRef(false);
+  const mutateRef = useRef<(() => Promise<unknown>) | null>(null);
+  useEffect(() => {
+    const hash = window.location.hash.replace(/^#/, "");
+    if (!hash) return;
+    const h = new URLSearchParams(hash);
+    const state = h.get("state");
+    const code = h.get("code");
+    window.history.replaceState(null, "", window.location.pathname + window.location.search);
+    if (!state || !code || completing.current) return;
+    completing.current = true;
+    setCompletion({ state: "working" });
+    apiFetch("/creator/meta/oauth/complete", { method: "POST", body: JSON.stringify({ state, code }) })
+      .then(() => setCompletion({ state: "done" }))
+      .catch((err) => setCompletion({ state: "error", code: err instanceof ApiError && err.code ? err.code.toLowerCase() : "exchange_failed" }))
+      .finally(() => void mutateRef.current?.());
+  }, []);
+  const connected = completion?.state === "done";
+  const errorCode = completion?.state === "error" ? completion.code : queryError;
 
   const { data, error, isLoading, mutate } = useSWR<ConnectionPayload>("/creator/meta/connection", fetcher, {
     revalidateOnFocus: true,
@@ -49,6 +75,7 @@ function ConnectInner() {
   const [refreshing, setRefreshing] = useState(false);
   const [refreshMsg, setRefreshMsg] = useState<{ tone: "success" | "danger"; text: string } | null>(null);
   const [confirmDisconnect, setConfirmDisconnect] = useState(false);
+  mutateRef.current = () => mutate();
 
   async function start(rerequest = false) {
     setStarting(true);
@@ -85,7 +112,10 @@ function ConnectInner() {
     }
   }
 
-  const dismissQuery = () => router.replace("/connect");
+  const dismissQuery = () => {
+    setCompletion(null);
+    router.replace("/connect");
+  };
   const conn = data?.connection && data.connection.status !== "REVOKED" ? data.connection : null;
   const assets = (data?.assets ?? []).filter((a) => !a.disconnected || conn);
 
@@ -96,6 +126,11 @@ function ConnectInner() {
         will show the name of our Meta app, <span className="text-white font-semibold">“Post Automation 2”</span> — that&apos;s us.
       </PageHead>
 
+      {completion?.state === "working" && (
+        <Banner tone="info" role="status" title="Finishing the connection…">
+          Facebook sent you back to us — we&apos;re saving the connection now.
+        </Banner>
+      )}
       {connected && !errorCode && (
         <Banner tone="success" role="status" title="Facebook is connected." action={<button className="btn btn-ghost btn-sm" onClick={dismissQuery}>Dismiss</button>}>
           We&apos;re checking your pages now — they appear below in a moment.
@@ -124,7 +159,11 @@ function ConnectInner() {
             You&apos;ll need a Facebook Page you manage, or an Instagram professional (business or creator) account that is linked to a
             Facebook Page you manage. In the Facebook window, choose the Pages and Instagram accounts you want to bring.
           </p>
-          <button type="button" className="btn" onClick={() => start(false)} disabled={starting}>
+          <p className="text-ink-4 text-xs leading-relaxed max-w-2xl">
+            Facebook keeps one list of Pages per app. If you also use Post Automation, which runs on the same Facebook app, keep the
+            Pages it uses ticked too — otherwise it loses access to them.
+          </p>
+          <button type="button" className="btn" onClick={() => start(false)} disabled={starting || completion?.state === "working"}>
             {starting ? <><span className="spinner" aria-hidden /> Opening Facebook…</> : data?.connection ? "Reconnect Facebook" : "Connect Facebook"}
           </button>
           {startError && <p role="alert" className="text-sm text-danger">{startError}</p>}
@@ -205,6 +244,7 @@ function ConnectionCard({ conn, starting, refreshing, onReconnect, onGrantMissin
   const soonest = Math.min(daysUntil(conn.tokenExpiresAt, now) ?? Infinity, daysUntil(conn.dataAccessExpiresAt, now) ?? Infinity);
   const needsReconnect = conn.status === "NEEDS_REAUTH" || soonest <= 0;
   const expiringSoon = !needsReconnect && (conn.status === "NEEDS_REAUTH_SOON" || soonest < 14);
+  const discovering = ["pending", "running"].includes(conn.discoveryState);
 
   return (
     <section className="card p-5 sm:p-7 flex flex-col gap-5" aria-labelledby="conn-title">
@@ -217,7 +257,7 @@ function ConnectionCard({ conn, starting, refreshing, onReconnect, onGrantMissin
           <p className="mt-1 text-sm text-ink-3">Connected {fmtDate(conn.connectedAt)}</p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <button type="button" className="btn btn-ghost btn-sm" onClick={onRefresh} disabled={refreshing}>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={onRefresh} disabled={refreshing || discovering}>
             {refreshing ? <span className="spinner" aria-hidden /> : <RefreshCw size={14} aria-hidden />} Check pages again
           </button>
           <button type="button" className="btn btn-ghost btn-sm" onClick={onReconnect} disabled={starting}>
@@ -268,8 +308,14 @@ function ConnectionCard({ conn, starting, refreshing, onReconnect, onGrantMissin
       )}
       {conn.discoveryState === "failed" && (
         <Banner tone="danger" title="We couldn't check your pages.">
-          {conn.lastError ? <p className="break-words">Facebook said: {conn.lastError}</p> : null}
+          {conn.lastError ? <p className="break-words">{conn.lastError}</p> : null}
           <p className={conn.lastError ? "mt-1" : ""}>Use “Check pages again” in a few minutes, or reconnect.</p>
+        </Banner>
+      )}
+      {conn.discoveryState === "done" && conn.lastError && (
+        <Banner tone="warn" title="Some pages aren't shown.">
+          <p className="break-words">{conn.lastError}.</p>
+          <p className="mt-1">If one of them is yours, email creators@digitalsukoon.com and we&apos;ll look into it.</p>
         </Banner>
       )}
     </section>
@@ -338,7 +384,7 @@ function AssetCard({ a }: { a: CreatorAssetView }) {
             {a.publishProbeError || "Facebook didn't confirm that we can publish here. Check that you have full control of the Page and granted the publishing permission, then reconnect."}
           </p>
         )}
-        {a.enabled && !a.disconnected && <p className="mt-1 text-xs text-success">Turned on for booking by our team.</p>}
+        {a.enabled && !a.disconnected && <p className="mt-1 text-xs text-success">Approved by our team — we&apos;ll email you when brands can book it.</p>}
         {a.profileUrl && (
           <a href={a.profileUrl} target="_blank" rel="noopener noreferrer" className="mt-2 inline-flex items-center gap-1 text-sm text-indigo-light hover:text-white">
             View on {ig ? "Instagram" : "Facebook"} <ExternalLink size={13} aria-hidden />

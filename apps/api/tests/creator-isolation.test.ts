@@ -23,6 +23,7 @@ import { invalidateRangeCache } from "../src/services/meta-oauth/meta-range.serv
 
 const APP_ID = "298449321694397";
 const META_USER = "10000000000000099";
+const STAFF_META_USER = "10000000000000098";
 const PAGE = "300000000000001";
 const IG = "17841400000000031";
 
@@ -86,8 +87,10 @@ describe("creator portal ↔ our Meta network isolation", () => {
     const admin = await createTestUser({ roleNames: ["Admin"] });
     adminToken = generateToken(admin.id, admin.email, ["Admin"]);
 
-    // Our own network: the SAME Facebook identity and the SAME page/IG the creator will connect.
-    const mc = await prisma.metaConnection.create({ data: { metaUserId: META_USER, connectedById: admin.id, status: "ACTIVE", grantedScopes: "pages_show_list" } });
+    // Our own network: the SAME page/IG the creator will connect, under a DIFFERENT staff
+    // identity (someone outside who also manages our pages, e.g. an agency). A staff grantor's
+    // OWN identity is refused outright — see the test below.
+    const mc = await prisma.metaConnection.create({ data: { metaUserId: STAFF_META_USER, connectedById: admin.id, status: "ACTIVE", grantedScopes: "pages_show_list" } });
     const page = await prisma.metaAsset.create({
       data: { connectionId: mc.id, kind: "FACEBOOK_PAGE", metaId: PAGE, name: "Our Page", selected: true, followerCount: 123456 },
     });
@@ -116,7 +119,9 @@ describe("creator portal ↔ our Meta network isolation", () => {
     const start = await request(app).post("/v1/creator/meta/oauth/start").set("Authorization", `Bearer ${token}`).send({});
     const state = new URL(start.body.data.authorizeUrl).searchParams.get("state")!;
     const cb = await request(app).get(`/v1/creator/meta/oauth/callback?code=x&state=${encodeURIComponent(state)}`);
-    expect(cb.headers.location).toBe("https://creators.example.com/connect?connected=1");
+    expect(cb.headers.location).toBe(`https://creators.example.com/connect#${new URLSearchParams({ state, code: "x" }).toString()}`);
+    const done = await request(app).post("/v1/creator/meta/oauth/complete").set("Authorization", `Bearer ${token}`).send({ state, code: "x" });
+    expect(done.status).toBe(200);
 
     // Wait for the background discovery, then run a manual refresh too.
     for (let i = 0; i < 100; i++) {
@@ -140,6 +145,21 @@ describe("creator portal ↔ our Meta network isolation", () => {
     const channelsAfter = await request(app).get("/v1/admin/meta/channels").set("Authorization", `Bearer ${adminToken}`);
     expect(channelsAfter.status).toBe(200);
     expect(channelsAfter.body).toEqual(channelsBefore.body);
+  });
+
+  it("a staff grantor's own Facebook identity is refused by the creator flow, and nothing on either side changes", async () => {
+    await prisma.metaConnection.updateMany({ data: { metaUserId: META_USER } });
+    const before = await snapshotMeta();
+    const creator = await prisma.creator.create({ data: { email: "iso3@example.com", passwordHash: "x", name: "Iso" } });
+    const token = generateCreatorToken(creator.id, creator.email);
+    const start = await request(app).post("/v1/creator/meta/oauth/start").set("Authorization", `Bearer ${token}`).send({});
+    const state = new URL(start.body.data.authorizeUrl).searchParams.get("state")!;
+    const done = await request(app).post("/v1/creator/meta/oauth/complete").set("Authorization", `Bearer ${token}`).send({ state, code: "x" });
+    expect(done.status).toBe(409);
+    expect(done.body.error.code).toBe("STAFF_ACCOUNT");
+    expect(await prisma.creatorConnection.count()).toBe(0);
+    expect(await prisma.creatorAsset.count()).toBe(0);
+    expect(await snapshotMeta()).toEqual(before);
   });
 
   it("a creator token is refused by the admin channels view, and a staff token by the creator routes", async () => {

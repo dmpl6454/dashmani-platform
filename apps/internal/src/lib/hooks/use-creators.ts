@@ -77,6 +77,11 @@ export interface AdminCreatorDetail {
   creator: AdminCreator;
   connection: CreatorConnectionView | null;
   assets: AdminAssetView[];
+  /**
+   * Only on approve/reject/suspend/reinstate responses: true when the email to the creator was
+   * handed to SMTP. Absent on GET /admin/creators/:id (and on responses from an older API).
+   */
+  emailSent?: boolean;
 }
 
 const unwrap = <T,>(u: string) => apiFetch<{ data: T }>(u).then((r) => r.data);

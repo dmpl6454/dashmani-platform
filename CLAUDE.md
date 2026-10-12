@@ -757,6 +757,28 @@ The client portal has `/campaigns`, `/campaigns/new` and `/campaigns/[id]`. The 
 - ⚠️ The creator scope list (`CREATOR_META_SCOPES`, incl. the publish scopes for Phase B) is separate from the admin connect's read-only list; `CREATOR_FORBIDDEN_SCOPES` (comments, messages, ads, `email`, `business_management`) is locked by a test. Disconnect is a LOCAL revoke — never call Meta's `DELETE /{user}/permissions`: the app is shared with the staff connect and postautomation.co.in, so it would cut every other grant that person gave it. The creator removes the app on Facebook; our deauthorize callback handles that side.
 - **Static export served by nginx, no pm2** (like `apps/web`): `apps/creators/out` → `nginx/creators.digitalsukoon.com`. No dynamic route segments (detail views take `?id=`). `deploy.sh` writes its `.env.local`, wipes its `.next` and `chmod`s `out/`; it is NOT in the pm2 restart loop.
 
+**Hardening after the adversarial review (2026-10-12, before merge). Do not regress any of these.**
+- ⚠️ **Connecting Facebook takes two steps, so the creator who started it finishes it.** The public `GET …/oauth/callback` exchanges nothing: it 302s to `/connect#state=…&code=…`, putting the code in a URL fragment so it never reaches a server log or a Referer. The creators app then POSTs the pair to `POST /v1/creator/meta/oauth/complete` with the creator's own bearer token. The state is consumed only when it was started by that same creator; otherwise the answer is 403 `WRONG_ACCOUNT` and the state is left unconsumed. Before this, anyone could start a connect on their own account and send the facebook.com link to a page owner, and the owner's approval would have stored their Page tokens under the attacker's account.
+- ⚠️ **A staff grantor's Facebook identity is refused (409 `STAFF_ACCOUNT`) and nothing is stored.** This covers any `meta_connections` row with `revokedAt` null. Staff get an alert, because Facebook's Page picker on the way may already have narrowed the staff grant to this shared app. Never test the creator connect with a staff Facebook account.
+- **An identity claim is released when it can no longer be used:** the account is closed, or that connection was revoked (disconnected in the portal, superseded, or the app was removed on Facebook). A LIVE claim held by another creator is still refused with `already_linked`.
+- **Page claims** (`claimOf` / `upsertAsset` in creator-discovery):
+  - A claim counts only while the page is connected, its connection is not revoked, and its creator is not closed or rejected.
+  - A claimant who can PUBLISH there takes the page over from one who cannot, so an analyst or moderator role never locks the owner out. A take-over resets the staff switch.
+  - A unique-index loss is re-read before it is counted as "claimed elsewhere".
+- **Our-network duplicates count ANY `meta_assets` row,** including disconnected or deselected ones. The flag is re-checked daily (`syncNetworkDuplicates`, DB only; a page that has become a duplicate is also switched off) and again just before staff switch a page on.
+- **Pages need a live connection** (`LIVE_CONNECTION_STATUSES`: ACTIVE, PARTIAL_SCOPE, NEEDS_REAUTH_SOON) to be submitted or switched on. A 190 answer in the metrics job sets the connection to NEEDS_REAUTH and skips its other pages.
+- **Google sign-in on an UNVERIFIED account first claims it** (`claimUnverifiedAccount`): the password becomes unusable, and every session and pending emailed link ends. Without this, anyone could pre-register someone else's email, wait for the real owner to use Google, and keep their own password.
+- **Daily creator email cap:**
+  - `CREATOR_EMAIL_DAILY_CAP` (default 300) counts verification and reset links across all creators. Over the cap a sign-up still succeeds without its email, a resend answers 503 `EMAIL_BUSY`, and a forgot-password request is dropped.
+  - The "new creator" staff alert stops after `CREATOR_SIGNUP_ALERT_DAILY_CAP` (default 25) per day.
+  - Sign-up also has a per-IP ceiling, `RATE_LIMIT_CREATOR_SIGNUP_IP_MAX` (30 per hour), keyed on the edge IP.
+  - Why: every email goes out from hr@digitalsukoon.com, which also sends password resets for every portal.
+- **The daily job is idempotent across restarts.** `creator_connections.expiry_warned_days` stores the reminder stage already mailed (14, then 3), is reset on reconnect, and a failed send releases it.
+- **The daily job purges** page details disconnected, and connections revoked, more than 30 days ago (`purgeCreatorPageData`), which is what the privacy page promises. ⚠️ In Phase B, keep any asset that has offers.
+- **A discovery left "running" for 10+ minutes reads as interrupted** (`DISCOVERY_STALE_MS`). While one is running, Refresh answers 409 `DISCOVERY_RUNNING`.
+- **`appsecret_proof` is signed with the secret of the app that minted the token** (the `appSecret` option of `oauthGraphFetch`). This keeps a `CREATOR_META_APP_ID/SECRET` split working with `META_OAUTH_APPSECRET_PROOF=1`.
+- **Over its limit, the OAuth callback redirects to `?error=busy`**, never a JSON 429.
+
 **Dark switches** (runtime, `apps/api/.env` + `pm2 restart api`):
 - `CREATORS_ENABLED=1` turns the portal on; anything else → every `/v1/creator/*` answers 503. `scripts/setup-creators.sh` never sets it.
 - `META_CREATOR_REDIRECT_URI` unset → "Connect Facebook" answers 503 `META_NOT_CONFIGURED` (also without the app id/secret or `META_TOKEN_ENC_KEY`).
@@ -766,7 +788,7 @@ The client portal has `/campaigns`, `/campaigns/new` and `/campaigns/[id]`. The 
 
 **Meta app settings the owner must set** (App Dashboard of "Post Automation 2"):
 - Facebook Login → Valid OAuth Redirect URIs: `https://api.digitalsukoon.com/v1/creator/meta/oauth/callback`.
-- Deauthorize callback `https://api.digitalsukoon.com/v1/meta/deauthorize`; Data deletion request URL `https://api.digitalsukoon.com/v1/meta/data-deletion`. Both are app-wide: they also receive staff grantors and strangers (a staff grant is flagged for a human, never deleted).
+- Deauthorize callback `https://api.digitalsukoon.com/v1/meta/deauthorize`; Data deletion request URL `https://api.digitalsukoon.com/v1/meta/data-deletion`. Both are app-wide: they also receive staff grantors and strangers (a staff grant is flagged for a human, never deleted). ⚠️ Each is ONE value for the whole app, and postautomation.co.in uses the same app, so setting it REPLACES theirs. Read the current values first (on 2026-10-12 the deletion URL was a placeholder). A staff-grant deletion request stays `received` until someone completes it by hand: `UPDATE meta_deletion_requests SET status='completed', completed_at=now() WHERE confirmation_code='…';`.
 - ⚠️ Contact email, Privacy Policy and Terms URLs are **app-wide and shared with postautomation.co.in**: the published policy must cover creators before `CREATORS_ENABLED=1`.
 
 **Schema.** ⚠️ Apply `scripts/creators-ddl.sql` on prod as the `dashmani` role **before** merging, with `bash scripts/apply-creators-ddl.sh` (fetches the PR branch, `git show`s the DDL, role check, shape pre-flight, schema backup, one-transaction apply, verifies 7 tables / 23 indexes / 6 cascading FKs, inspect-only drift check; exit 0 = safe to merge, 2 = applied but drift unchecked). CI rehearses the script twice with zero drift. Never a blanket `db:push`: until the deploy, a push from main's schema drops the empty creator tables without a prompt.
@@ -774,11 +796,14 @@ The client portal has `/campaigns`, `/campaigns/new` and `/campaigns/[id]`. The 
 **Endpoints.**
 - `/v1/creator/auth/*` — signup, login, refresh (one-time consume), logout, forgot/reset-password (24h), verify-email (7d), resend-verification (≤1 per 2 min), `google/config`, `google` (new email → `needsProfile`, then created with a verified email).
 - `/v1/creator/me` — GET (with checklist), PUT profile, PUT `/me/password`, POST `/me/submit` (draft/rejected → in_review; needs a verified email and a publishable page), DELETE (close: tokens nulled, pages off).
-- `/v1/creator/meta/*` — POST `oauth/start`, GET `oauth/callback` (public; always 302 to `/connect?connected=1` or `?error=`), GET `connection`, POST `refresh` (≤1 per 10 min), DELETE `connection`.
+- `/v1/creator/meta/*` — POST `oauth/start`, GET `oauth/callback` (public; always a 302: `/connect#state=…&code=…` or `/connect?error=`), POST `oauth/complete` (the signed-in creator who started it; 400 EXPIRED / 403 WRONG_ACCOUNT / 409 ALREADY_LINKED · STAFF_ACCOUNT / 502 EXCHANGE_FAILED), GET `connection`, POST `refresh` (≤1 per 10 min, 409 while a discovery runs), DELETE `connection`.
 - `POST /v1/meta/deauthorize`, `POST /v1/meta/data-deletion` (signed_request HMAC; returns `{url, confirmation_code}`), `GET /v1/public/meta-data-deletion/:code`.
 - `/v1/admin/creators` (authenticate + requireInternalUser + requireAdminRole) — list, detail, approve / reject / suspend / reinstate, `PUT :id/assets/:assetId` (enable a page; 409 `NOT_ENABLEABLE`).
 
-**Tests:** `creator-auth`, `creator-self`, `creator-meta-oauth`, `meta-signed-request`, `creator-admin`, `creator-isolation` (a full connect changes nothing in `meta_*`; a creator token is refused by the admin channels view and a staff token by the creator routes), all in `apps/api/tests/`.
+**Tests:** `creator-auth`, `creator-self`, `creator-meta-oauth`, `meta-signed-request`, `creator-admin` and `creator-isolation`, all in `apps/api/tests/`.
+- `creator-isolation`: a full connect changes nothing in `meta_*`; a staff identity is refused; a creator token is refused by the admin channels view, and a staff token by the creator routes.
+- `creator-meta-oauth` covers the review fixes: wrong account, staff refusal, identity release, page take-over, inconclusive probe, the daily duplicate re-check, 190 → NEEDS_REAUTH, idempotent reminders and the purge.
+- `creator-auth` covers Google pre-account hijack and the email cap.
 
 ## Client Portal (`apps/client`) — design system = digitalsukoon.com (2026-10-10)
 

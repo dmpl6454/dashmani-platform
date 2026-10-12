@@ -50,7 +50,7 @@ declare -A EXPECTED_COLS=(
   [creator_refresh_tokens]="created_at,creator_id,expires_at,id,token_hash"
   [creator_tokens]="created_at,creator_id,expires_at,id,purpose,token_hash,used_at"
   [creator_oauth_states]="created_at,creator_id,expires_at,mode,state,used_at"
-  [creator_connections]="created_at,creator_id,data_access_expires_at,discovery_state,granted_scopes,granular_scopes,graph_version,id,last_error,last_verified_at,meta_user_id,meta_user_name,revoked_at,status,token_expires_at,updated_at,user_token_enc"
+  [creator_connections]="created_at,creator_id,data_access_expires_at,discovery_state,expiry_warned_days,granted_scopes,granular_scopes,graph_version,id,last_error,last_verified_at,meta_user_id,meta_user_name,revoked_at,status,token_expires_at,updated_at,user_token_enc"
   [creator_assets]="can_publish,connection_id,created_at,creator_id,disconnected_at,enabled,enabled_at,enabled_by_id,engagements_28d,follower_count,id,kind,media_count,meta_id,metrics_error,metrics_fetched_at,name,network_duplicate_of,page_token_enc,parent_page_id,picture_url,publish_probe_error,reach_28d,tasks,updated_at,username,views_28d"
   [meta_deletion_requests]="completed_at,confirmation_code,id,kind,matched,note,received_at,status,user_hash"
 )

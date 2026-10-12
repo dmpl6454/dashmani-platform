@@ -29,6 +29,41 @@ const VERIFY_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const RESET_TTL_MS = 24 * 60 * 60 * 1000;
 /** "Resend verification email" at most once per this window (signup's own email counts). */
 export const RESEND_VERIFICATION_COOLDOWN_MS = 2 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** A non-negative integer env knob, or the default (NaN-safe). */
+function envCap(name: string, fallback: number): number {
+  const n = Number.parseInt(process.env[name] ?? "", 10);
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
+}
+
+/**
+ * ⚠️ Hard daily ceiling on creator emails (verification + reset links), all creators together.
+ * Every sign-up mails an address the caller chooses from hr@digitalsukoon.com — the Gmail
+ * account that also sends password resets for every portal and the HR mail. Per-client rate
+ * limits key on the Cloudflare edge IP, so they cannot be the last line (review SEC-5). Over the
+ * cap a sign-up still succeeds without its email (the creator can ask again later), a resend
+ * answers 503 EMAIL_BUSY, and a reset request is dropped (that route is opaque anyway).
+ */
+async function creatorEmailBudgetLeft(): Promise<boolean> {
+  const sent = await prisma.creatorToken.count({ where: { createdAt: { gte: new Date(Date.now() - DAY_MS) } } });
+  const ok = sent < envCap("CREATOR_EMAIL_DAILY_CAP", 300);
+  if (!ok) warnOnce("[creator-auth] daily creator email cap reached — skipping verification/reset emails");
+  return ok;
+}
+
+/** Staff "new creator" alerts per rolling 24 h; past it the review queue is the record. */
+async function signupAlertBudgetLeft(): Promise<boolean> {
+  const n = await prisma.creator.count({ where: { createdAt: { gte: new Date(Date.now() - DAY_MS) } } });
+  return n <= envCap("CREATOR_SIGNUP_ALERT_DAILY_CAP", 25);
+}
+
+let lastWarnAt = 0;
+function warnOnce(msg: string) {
+  if (Date.now() - lastWarnAt < 10 * 60 * 1000) return;
+  lastWarnAt = Date.now();
+  console.warn(msg);
+}
 
 type TokenPurpose = "verify_email" | "reset_password";
 
@@ -157,9 +192,11 @@ export async function creatorSignup(data: { name: string; email: string; passwor
     throw err;
   }
 
-  const token = await issueEmailToken(creator.id, "verify_email");
-  sendVerifyEmail(creator, token);
-  alertNewCreator(creator, "Email and password");
+  if (await creatorEmailBudgetLeft()) {
+    const token = await issueEmailToken(creator.id, "verify_email");
+    sendVerifyEmail(creator, token);
+  }
+  if (await signupAlertBudgetLeft()) alertNewCreator(creator, "Email and password");
   return issueCreatorSession(creator);
 }
 
@@ -216,6 +253,7 @@ export async function creatorLogout(refreshToken: string) {
 export async function creatorForgotPassword(email: string) {
   const c = await findCreatorByEmail(email);
   if (!c || c.status === "closed") return;
+  if (!(await creatorEmailBudgetLeft())) return;
   const token = await issueEmailToken(c.id, "reset_password");
   const link = creatorLink(`/reset-password?token=${token}`);
   background("reset email", () =>
@@ -308,6 +346,9 @@ export async function creatorResendVerification(creatorId: string) {
     const wait = Math.ceil((RESEND_VERIFICATION_COOLDOWN_MS - (Date.now() - last.createdAt.getTime())) / 1000);
     throw new AppError(429, "TOO_SOON", `We just sent one — check your inbox (and spam). You can ask again in ${wait} seconds.`);
   }
+  if (!(await creatorEmailBudgetLeft())) {
+    throw new AppError(503, "EMAIL_BUSY", "We can't send emails right now. Please try again in a little while.");
+  }
   const token = await issueEmailToken(c.id, "verify_email");
   sendVerifyEmail(c, token);
   return { sent: true as const };
@@ -316,11 +357,31 @@ export async function creatorResendVerification(creatorId: string) {
 // ── Continue with Google ───────────────────────────────────────────────────────
 
 /**
+ * ⚠️ Pre-account hijack guard (review SEC-2). Anyone can sign up with someone else's address and
+ * a password of their choosing, and use it before verifying. When the address's real owner then
+ * proves control through Google, the account becomes theirs ALONE: the password is replaced by an
+ * unusable one, every session and pending emailed link ends — only then is a session issued.
+ * Conditional on emailVerifiedAt still being null, so a concurrent second Google sign-in does
+ * not end the first one's fresh session.
+ */
+async function claimUnverifiedAccount(creatorId: string) {
+  const now = new Date();
+  const unusable = await hash(crypto.randomBytes(32).toString("hex"), BCRYPT_ROUNDS);
+  await prisma.$transaction(async (tx) => {
+    const r = await tx.creator.updateMany({ where: { id: creatorId, emailVerifiedAt: null }, data: { emailVerifiedAt: now, passwordHash: unusable } });
+    if (r.count === 0) return;
+    await tx.creatorRefreshToken.deleteMany({ where: { creatorId } });
+    await tx.creatorToken.updateMany({ where: { creatorId, usedAt: null }, data: { usedAt: now } });
+  });
+}
+
+/**
  * The GIS credential is verified with Google first (our audience, Google's issuer, unexpired,
  * email VERIFIED). Then:
  * - an existing creator with that email (any casing) signs in — Google proved control of the
- *   address, exactly what a reset email proves — and an unverified account becomes verified;
- *   a closed one is refused;
+ *   address, exactly what a reset email proves. An UNVERIFIED account is claimed first
+ *   (claimUnverifiedAccount: whoever made it loses the password and every session); a closed
+ *   one is refused;
  * - an unknown email without both confirmations answers `{ needsProfile }` and writes NOTHING;
  *   the creators app then asks for the terms + 18+ confirmations (and country) and calls again;
  * - with both, a creator is created with `emailVerifiedAt = now` and an unusable random
@@ -351,9 +412,8 @@ export async function creatorGoogleSignIn(input: {
   const existing = await findCreatorByEmail(email);
   if (existing) {
     if (existing.status === "closed") throw ACCOUNT_CLOSED();
-    const c = existing.emailVerifiedAt
-      ? existing
-      : await prisma.creator.update({ where: { id: existing.id }, data: { emailVerifiedAt: new Date() } });
+    if (!existing.emailVerifiedAt) await claimUnverifiedAccount(existing.id);
+    const c = await prisma.creator.findUniqueOrThrow({ where: { id: existing.id } });
     return { kind: "session", created: false, session: await issueCreatorSession(c) };
   }
 
@@ -386,6 +446,6 @@ export async function creatorGoogleSignIn(input: {
     }
     throw err;
   }
-  alertNewCreator(creator, "Continue with Google");
+  if (await signupAlertBudgetLeft()) alertNewCreator(creator, "Continue with Google");
   return { kind: "session", created: true, session: await issueCreatorSession(creator) };
 }

@@ -11,8 +11,17 @@ export const TOKEN_KEYS = {
   user: "creatorUser",
 } as const;
 
-/** Routes reachable without signing in; a 401 elsewhere sends the creator to /login?next=. */
-export const PUBLIC_ROUTES = ["/", "/login", "/signup", "/reset-password", "/verify-email", "/privacy", "/terms", "/data-deletion"];
+/**
+ * The signed-in pages (and anything under them). Only these are guarded: a signed-out visitor is
+ * sent to /login?next=. Every other path renders publicly — including unknown ones, so a
+ * mistyped URL shows the 404 page instead of the sign-in form.
+ */
+export const PRIVATE_ROUTES = ["/dashboard", "/connect", "/settings"];
+
+export function isPrivatePath(path: string): boolean {
+  const p = path.length > 1 ? path.replace(/\/+$/, "") : path;
+  return PRIVATE_ROUTES.some((r) => p === r || p.startsWith(`${r}/`));
+}
 
 export interface ApiEnvelope<T> {
   success: true;
@@ -58,9 +67,20 @@ function read(key: string): string | null {
 }
 
 export function storeSession(session: CreatorSession) {
-  localStorage.setItem(TOKEN_KEYS.access, session.accessToken);
-  localStorage.setItem(TOKEN_KEYS.refresh, session.refreshToken);
+  storeTokens(session.accessToken, session.refreshToken);
   localStorage.setItem(TOKEN_KEYS.user, JSON.stringify(session.creator));
+}
+
+/**
+ * Replace this device's tokens and leave the cached creator as it is — for responses that issue
+ * a fresh pair without a whole session (a password change signs out every other device and
+ * hands this one new tokens; keeping the old pair would sign the creator out an hour later).
+ */
+export function storeTokens(accessToken: string, refreshToken: string) {
+  try {
+    localStorage.setItem(TOKEN_KEYS.access, accessToken);
+    localStorage.setItem(TOKEN_KEYS.refresh, refreshToken);
+  } catch { /* storage blocked */ }
 }
 
 export function clearSession() {
@@ -75,11 +95,6 @@ export function hasSession(): boolean {
   return !!(read(TOKEN_KEYS.access) && read(TOKEN_KEYS.user));
 }
 
-function isPublicPath(path: string): boolean {
-  const p = path.length > 1 ? path.replace(/\/+$/, "") : path;
-  return PUBLIC_ROUTES.includes(p);
-}
-
 /** Public auth endpoints whose 401 means "wrong credentials / bad token", never "session expired". */
 const ANSWERS_401 = new Set([
   "/creator/auth/login",
@@ -92,7 +107,7 @@ const ANSWERS_401 = new Set([
   "/creator/auth/verify-email",
 ]);
 
-export async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<ApiEnvelope<T>> {
+export async function apiFetch<T>(path: string, options: RequestInit = {}, _retried = false): Promise<ApiEnvelope<T>> {
   const token = read(TOKEN_KEYS.access);
 
   let res: Response;
@@ -118,13 +133,14 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}): Prom
 
   if (!data?.success) {
     // A 401 from a sign-in form (wrong password) is an answer, not an expired session: only
-    // try a refresh when we actually sent an access token to a signed-in route.
+    // try a refresh when we actually sent an access token to a signed-in route. At most ONE
+    // refresh per request: if the retry with fresh tokens is refused too, the session is not
+    // usable and the creator signs in again (never an endless refresh-and-retry loop).
     if (res.status === 401 && token && !ANSWERS_401.has(path.split("?")[0]) && typeof window !== "undefined") {
-      const refreshed = await tryRefresh();
-      if (refreshed) return apiFetch(path, options);
+      if (!_retried && (await tryRefresh())) return apiFetch<T>(path, options, true);
       clearSession();
       const here = window.location.pathname + window.location.search;
-      const keep = !isPublicPath(window.location.pathname);
+      const keep = isPrivatePath(window.location.pathname);
       window.location.href = keep ? `/login?next=${encodeURIComponent(here)}` : "/login";
     }
     throw apiErrorFrom(data, res.status);

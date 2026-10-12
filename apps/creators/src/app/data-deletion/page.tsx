@@ -14,18 +14,28 @@ import { LegalPage } from "@/components/site-shell";
 
 type DeletionStatus = { code: string; status: string; receivedAt: string; completedAt: string | null };
 
+// What each status means, exactly as POST /v1/meta/data-deletion leaves it:
+// - completed: the creator connection and its pages (tokens, page details, insights) were deleted
+//   at once. The creator account itself (name, email) is not Facebook data and stays.
+// - received: nothing was deleted automatically — a person on our team handles it.
+// - no_data: nothing of this Facebook account is held by Digital Sukoon Creators. Say nothing about
+//   other products that connect through the same Facebook app: we can't speak for them.
 const STATUS_TEXT: Record<string, { title: string; body: string }> = {
   received: {
-    title: "Received — deletion in progress.",
-    body: "We have your request and are deleting the data we hold from your Facebook connection. This finishes within 30 days.",
+    title: "Received.",
+    body: "A member of our team is handling your request. We complete deletion requests within 30 days.",
   },
   completed: {
     title: "Completed.",
-    body: "We have deleted the data we held from your Facebook connection.",
+    body:
+      "We have deleted your Facebook access tokens and the page details and insights we held from your Facebook connection. " +
+      "If you also have a Digital Sukoon Creators account, it stays open until you close it — see below.",
   },
   no_data: {
     title: "Nothing to delete.",
-    body: "We checked and hold no data from your Facebook account for this app, so there was nothing to delete.",
+    body:
+      "Digital Sukoon Creators holds no data from your Facebook account, so there was nothing for us to delete. " +
+      "If you used another service that connects through the same Facebook app, contact that service as well.",
   },
 };
 
@@ -89,28 +99,42 @@ function Instructions() {
       <h2>1. Remove our app from Facebook</h2>
       <p>
         In Facebook, open <strong>Settings &amp; privacy → Settings → Business integrations</strong> (on some accounts: Apps and websites),
-        find <strong>“Post Automation 2”</strong> and remove it. You can also tick the option to have Facebook ask us to delete your data.
-        When Facebook tells us, we stop reading your pages, delete our copy of your access tokens straight away, and delete the page
-        details and insights we collected within 30 days. Facebook gives you a confirmation code; open the link it shows to check the
-        status here.
+        find <strong>“Post Automation 2”</strong> and remove it. When Facebook tells us, we stop reading your pages and delete our copy of
+        your access tokens straight away; the page details and insights we collected are deleted within 30 days.
+      </p>
+      <p>
+        If you also choose to have Facebook ask us to delete your data, Meta sends us a deletion request and we delete your access
+        tokens, page details and insights at once. Facebook gives you a confirmation code; open the link it shows to check the status
+        here.
       </p>
 
-      <h2>2. Close your creator account</h2>
+      <h2>2. Disconnect Facebook in the portal</h2>
+      <p>
+        <Link href="/login?next=%2Fconnect">Sign in</Link> and choose <strong>Pages → Disconnect</strong>. We delete our copy of your access
+        tokens at once and stop reading your pages; the page details and insights we collected are deleted within 30 days. Your creator
+        account stays open, and you can connect again later.
+      </p>
+
+      <h2>3. Close your creator account</h2>
       <p>
         If you have a Digital Sukoon Creators account, <Link href="/login?next=%2Fsettings">sign in</Link> and choose{" "}
-        <strong>Settings → Close my account</strong>. That disconnects Facebook, deletes our copy of your access tokens and takes your
-        pages off booking at once.
+        <strong>Settings → Close my account</strong>. That disconnects Facebook, deletes our copy of your access tokens at once and takes
+        your pages off Digital Sukoon Creators. The page details and insights we collected are deleted within 30 days.
+      </p>
+      <p>
+        We keep a basic record of a closed account — your name, email address, country and the history of our reviews — so nobody can
+        reuse your email address to sign up as you. Email us if you want that record erased too.
       </p>
 
-      <h2>3. Email us</h2>
+      <h2>4. Email us</h2>
       <p>
         Write to <a href="mailto:creators@digitalsukoon.com">creators@digitalsukoon.com</a> from the email address on your account and
-        ask us to delete your data. We&apos;ll confirm when it&apos;s done, within 30 days.
+        ask us to delete your data, including the record of a closed account. We&apos;ll confirm when it&apos;s done, within 30 days.
       </p>
 
       <h2>What we keep</h2>
       <p>
-        Records of bookings and payments are kept for as long as tax and accounting law requires, then deleted. Everything else is
+        Records of any bookings and payments are kept for as long as tax and accounting law requires, then deleted. Everything else is
         deleted as described above. See the <Link href="/privacy">privacy policy</Link> for the full list of what we store.
       </p>
     </>

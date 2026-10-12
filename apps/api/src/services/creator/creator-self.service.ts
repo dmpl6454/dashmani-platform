@@ -2,7 +2,7 @@ import { prisma } from "@dashmani/db";
 import { compare, hash } from "bcrypt";
 import { AppError } from "../../middleware/error-handler";
 import { scrubSecrets } from "../../utils/token-crypto";
-import { toCreatorMe } from "./creator-view";
+import { liveConnectionWhere, toCreatorMe } from "./creator-view";
 import { adminAlert } from "./creator-email";
 import { issueCreatorSession } from "./creator-auth.service";
 
@@ -12,12 +12,16 @@ import { issueCreatorSession } from "./creator-auth.service";
 /** Statuses from which a creator may (re)submit for review. */
 const SUBMITTABLE = ["draft", "rejected"];
 
-/** The `isPublishable` rule (creator-view.ts) as a Prisma filter. Keep the two in step. */
+/**
+ * The `isPublishable` rule (creator-view.ts) as a Prisma filter, PLUS a live connection: a page
+ * whose Facebook login has lapsed (NEEDS_REAUTH) or was revoked cannot be submitted.
+ */
 const publishableWhere = (creatorId: string) => ({
   creatorId,
   canPublish: true,
   networkDuplicateOf: null,
   disconnectedAt: null,
+  connection: liveConnectionWhere,
 });
 
 async function loadCreator(id: string) {

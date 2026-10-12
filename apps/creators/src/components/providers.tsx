@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { AuthContext } from "@/lib/auth";
-import { apiFetch, clearSession, isPrivatePath, storeSession, TOKEN_KEYS } from "@/lib/api";
+import { apiFetch, clearSession, isPrivatePath, PENDING_CONNECT_KEY, storeSession, TOKEN_KEYS } from "@/lib/api";
 import { safeNext } from "@/lib/safe-next";
 import type { CreatorMe, CreatorSession } from "@/lib/types";
 import { AppShell } from "./app-shell";
@@ -40,6 +40,16 @@ export function Providers({ children }: { children: React.ReactNode }) {
     const stored = readStoredCreator();
     setCreator(stored);
     if (!stored && !isPublic) {
+      // Back from Facebook but signed out: keep the result for /connect to finish after sign-in
+      // (it is never put in ?next=, so it stays out of the URL and any server log).
+      const hash = window.location.hash.replace(/^#/, "");
+      if (pathname === "/connect" && /(^|&)state=/.test(hash) && /(^|&)code=/.test(hash)) {
+        try {
+          sessionStorage.setItem(PENDING_CONNECT_KEY, hash);
+        } catch {
+          // storage blocked: the creator simply starts the connection again
+        }
+      }
       const here = pathname + window.location.search;
       router.replace(`/login?next=${encodeURIComponent(here)}`);
     }

@@ -46,7 +46,7 @@ export PGCONNECT_TIMEOUT=10
 # byte-wise — exactly the CREATE TABLE lists in scripts/creators-ddl.sql.
 TABLES="creator_assets creator_connections creator_oauth_states creator_tokens creator_refresh_tokens creators meta_deletion_requests"
 declare -A EXPECTED_COLS=(
-  [creators]="adult_confirmed_at,closed_at,country,created_at,email,email_verified_at,id,name,password_hash,payout_currency,payout_details_enc,payout_details_hint,payout_method,phone,review_note,reviewed_at,reviewed_by_id,status,submitted_at,terms_accepted_at,terms_version,updated_at"
+  [creators]="adult_confirmed_at,closed_at,country,created_at,email,email_verified_at,id,name,password_hash,payout_currency,payout_details_enc,payout_details_hint,payout_method,phone,review_note,reviewed_at,reviewed_by_id,session_version,status,submitted_at,terms_accepted_at,terms_version,updated_at"
   [creator_refresh_tokens]="created_at,creator_id,expires_at,id,token_hash"
   [creator_tokens]="created_at,creator_id,expires_at,id,purpose,token_hash,used_at"
   [creator_oauth_states]="created_at,creator_id,expires_at,mode,state,used_at"

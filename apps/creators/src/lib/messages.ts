@@ -9,7 +9,7 @@ const CONNECT_APP_MISMATCH = "Facebook answered for a different app than the one
 const CONNECT_EXCHANGE_FAILED = "Facebook didn't finish the connection on its side. Please try again in a moment.";
 const CONNECT_DISABLED = "Connecting pages is paused right now. Please try again later.";
 const CONNECT_WRONG_ACCOUNT =
-  "This Facebook connection was started from a different creator account. Sign in to the account you started from, or start the connection again here.";
+  "This Facebook connection was started from a different creator account, so nothing was saved. If this is the account you want to connect, press Connect Facebook here and approve it again. If you didn't start it, someone may have sent you their link — you can ignore it.";
 const CONNECT_STAFF_ACCOUNT =
   "This Facebook account is used by our own team, so it can't be connected as a creator account. Please connect with your own Facebook account.";
 const CONNECT_BUSY = "Too many connection attempts right now. Please wait a minute and try again.";

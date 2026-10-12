@@ -174,8 +174,12 @@ describe("Creator self API", () => {
       res = await request(app).put("/v1/creator/me/password").set("Authorization", auth).send({ currentPassword: "Creator@123", newPassword: "Fresh@12345" });
       expect(res.status).toBe(200);
       expect(res.body.data.changed).toBe(true);
-      // This device gets a fresh session; every other refresh token is gone.
+      // This device gets a fresh session; every other session ends — refresh AND access tokens
+      // (session_version moved on), including the token this request itself was made with.
       expect((await request(app).post("/v1/creator/auth/refresh").send({ refreshToken: otherDevice })).status).toBe(401);
+      expect((await request(app).get("/v1/creator/me").set("Authorization", `Bearer ${login.body.data.accessToken}`)).status).toBe(401);
+      expect((await request(app).get("/v1/creator/me").set("Authorization", auth)).status).toBe(401);
+      expect((await request(app).get("/v1/creator/me").set("Authorization", `Bearer ${res.body.data.accessToken}`)).status).toBe(200);
       expect((await request(app).post("/v1/creator/auth/refresh").send({ refreshToken: res.body.data.refreshToken })).status).toBe(200);
       expect((await request(app).post("/v1/creator/auth/login").send({ email: c.email, password: "Fresh@12345" })).status).toBe(200);
     });

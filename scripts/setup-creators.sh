@@ -33,25 +33,41 @@ done
 echo "==> nginx site $SITE"
 # ⚠️ Test BEFORE leaving the site enabled: a broken file left in sites-enabled does not stop the
 # running nginx, but the NEXT reload by anyone (certbot, another site's setup) would fail for
-# every site on this box — api, portal, hr, client. On a failed test the new file is removed.
+# every site on this box — api, portal, hr, client. On a failed test everything this script
+# changed is put back exactly as it was (a re-run never removes a site that was already working).
 if [ -d /etc/nginx/sites-available ]; then
+  TARGET="/etc/nginx/sites-available/$SITE"
   ENABLED="/etc/nginx/sites-enabled/$SITE"
-  cp "$APP_DIR/nginx/$SITE" "/etc/nginx/sites-available/$SITE"
-  ln -sf "/etc/nginx/sites-available/$SITE" "$ENABLED"
 else
-  ENABLED="/etc/nginx/conf.d/$SITE.conf"
-  cp "$APP_DIR/nginx/$SITE" "$ENABLED"
+  TARGET="/etc/nginx/conf.d/$SITE.conf"
+  ENABLED="$TARGET"
 fi
+NGX_BACKUP=""
+if [ -e "$TARGET" ]; then
+  NGX_BACKUP="$(mktemp)"
+  cp -p "$TARGET" "$NGX_BACKUP"
+fi
+LINK_EXISTED=0
+if [ "$ENABLED" != "$TARGET" ] && [ -L "$ENABLED" ]; then LINK_EXISTED=1; fi
+cp "$APP_DIR/nginx/$SITE" "$TARGET"
+[ "$ENABLED" = "$TARGET" ] || ln -sf "$TARGET" "$ENABLED"
 
 # nginx (often www-data) must be able to read the export.
 chmod o+x /opt "$APP_DIR" "$APP_DIR/apps" "$APP_DIR/apps/creators" || true
 chmod -R o+rX "$APP_DIR/apps/creators/out"
 
 if ! nginx -t; then
-  rm -f "$ENABLED"
-  echo "nginx -t failed with the new site — it was removed again, nothing reloaded. Fix nginx/$SITE and re-run."
+  if [ -n "$NGX_BACKUP" ]; then
+    cp -p "$NGX_BACKUP" "$TARGET"          # the previous version of this site, back as it was
+  else
+    rm -f "$TARGET"
+  fi
+  [ "$LINK_EXISTED" = 1 ] || [ "$ENABLED" = "$TARGET" ] || rm -f "$ENABLED"
+  echo "nginx -t failed — the creators site was put back exactly as it was before this run; nothing was reloaded."
+  echo "If the failure names a DIFFERENT site, that one is broken on its own. Fix it (or nginx/$SITE) and re-run."
   exit 1
 fi
+[ -n "$NGX_BACKUP" ] && rm -f "$NGX_BACKUP"
 systemctl reload nginx || nginx -s reload
 echo "    nginx now serves $SITE from $APP_DIR/apps/creators/out"
 

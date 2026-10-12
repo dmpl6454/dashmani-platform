@@ -2547,6 +2547,9 @@ model Creator {
   reviewedById      String?   @map("reviewed_by_id")
   reviewedAt        DateTime? @map("reviewed_at")
   closedAt          DateTime? @map("closed_at")
+  /// Bumped to end EVERY session at once (password reset/change, a Google claim of an
+  /// unverified account): tokens carry it as `sv` and are refused when it no longer matches.
+  sessionVersion    Int       @default(0) @map("session_version")
   createdAt         DateTime  @default(now()) @map("created_at")
   updatedAt         DateTime  @updatedAt @map("updated_at")
 

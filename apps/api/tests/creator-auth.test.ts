@@ -257,6 +257,8 @@ describe("Creator auth API", () => {
       const c = await seedCreator();
       const login = await request(app).post("/v1/creator/auth/login").send({ email: c.email, password: "Creator@123" });
       const oldRefresh = login.body.data.refreshToken;
+      const oldAccess = login.body.data.accessToken;
+      expect((await request(app).get("/v1/creator/me").set("Authorization", `Bearer ${oldAccess}`)).status).toBe(200);
 
       const res = await request(app).post("/v1/creator/auth/forgot-password").send({ email: c.email.toUpperCase() });
       expect(res.body.data).toEqual({ sent: true });
@@ -273,18 +275,26 @@ describe("Creator auth API", () => {
       expect(twice.status).toBe(400);
       expect(twice.body.error.code).toBe("INVALID_TOKEN");
 
-      // Every refresh token is gone; the new password works, the old one does not.
+      // Every session is gone — refresh tokens AND access tokens (session_version moved on).
       expect((await request(app).post("/v1/creator/auth/refresh").send({ refreshToken: oldRefresh })).status).toBe(401);
+      expect((await request(app).get("/v1/creator/me").set("Authorization", `Bearer ${oldAccess}`)).status).toBe(401);
+      // The new password works, the old one does not.
       expect((await request(app).post("/v1/creator/auth/login").send({ email: c.email, password: "Creator@123" })).status).toBe(401);
       expect((await request(app).post("/v1/creator/auth/login").send({ email: c.email, password: "Brand-New@1" })).status).toBe(200);
       expect((await prisma.creator.findUniqueOrThrow({ where: { id: c.id } })).emailVerifiedAt).not.toBeNull();
     });
 
-    it("refuses an expired link, and only the newest link works", async () => {
+    it("refuses an expired link, and only the newest link works; at most one reset email per 2 minutes and 5 a day per account", async () => {
       const c = await seedCreator();
       await request(app).post("/v1/creator/auth/forgot-password").send({ email: c.email });
       const first = await tokenFromEmail(c.email, "reset-password");
       sendEmailMock.mockClear();
+      // Within the cooldown: answered the same, nothing sent, no new token.
+      expect((await request(app).post("/v1/creator/auth/forgot-password").send({ email: c.email })).body.data).toEqual({ sent: true });
+      await new Promise((r) => setTimeout(r, 50));
+      expect(sendEmailMock).not.toHaveBeenCalled();
+      expect(await prisma.creatorToken.count({ where: { creatorId: c.id, purpose: "reset_password" } })).toBe(1);
+      await prisma.creatorToken.updateMany({ where: { tokenHash: hashToken(first) }, data: { createdAt: new Date(Date.now() - 3 * 60 * 1000) } });
       await request(app).post("/v1/creator/auth/forgot-password").send({ email: c.email });
       const second = await tokenFromEmail(c.email, "reset-password");
       expect(second).not.toBe(first);
@@ -292,6 +302,18 @@ describe("Creator auth API", () => {
 
       await prisma.creatorToken.updateMany({ where: { tokenHash: hashToken(second) }, data: { expiresAt: new Date(Date.now() - 1000) } });
       expect((await request(app).post("/v1/creator/auth/reset-password").send({ token: second, newPassword: "Brand-New@1" })).status).toBe(400);
+
+      // The daily per-account ceiling: 5 reset tokens in a day and no more, cooldown or not.
+      await prisma.creatorToken.updateMany({ where: { creatorId: c.id }, data: { createdAt: new Date(Date.now() - 3 * 60 * 1000) } });
+      for (let i = 0; i < 3; i++) {
+        await prisma.creatorToken.create({
+          data: { creatorId: c.id, purpose: "reset_password", tokenHash: `seeded-${i}-${c.id}`, expiresAt: new Date(Date.now() + 3600_000), createdAt: new Date(Date.now() - 3 * 60 * 1000) },
+        });
+      }
+      sendEmailMock.mockClear();
+      await request(app).post("/v1/creator/auth/forgot-password").send({ email: c.email });
+      await new Promise((r) => setTimeout(r, 50));
+      expect(sendEmailMock).not.toHaveBeenCalled();
     });
 
     it("does not let a verify-email token reset a password", async () => {
@@ -309,7 +331,12 @@ describe("Creator auth API", () => {
       const signup = await request(app).post("/v1/creator/auth/signup").send(signupBody(email));
       const token = await tokenFromEmail(email, "verify-email");
 
-      const res = await request(app).post("/v1/creator/auth/verify-email").send({ token });
+      const auth = `Bearer ${signup.body.data.accessToken}`;
+      // Signed out: refused — the link confirms only for the signed-in owner.
+      expect((await request(app).post("/v1/creator/auth/verify-email").send({ token })).status).toBe(401);
+      expect((await prisma.creator.findUniqueOrThrow({ where: { email } })).emailVerifiedAt).toBeNull();
+
+      const res = await request(app).post("/v1/creator/auth/verify-email").set("Authorization", auth).send({ token });
       expect(res.status).toBe(200);
       expect(res.body.data).toEqual({ verified: true });
       const row = await prisma.creator.findUniqueOrThrow({ where: { email } });
@@ -317,12 +344,12 @@ describe("Creator auth API", () => {
       const tok = await prisma.creatorToken.findFirstOrThrow({ where: { creatorId: row.id } });
       expect(tok.usedAt).not.toBeNull();
 
-      const repeat = await request(app).post("/v1/creator/auth/verify-email").send({ token });
+      const repeat = await request(app).post("/v1/creator/auth/verify-email").set("Authorization", auth).send({ token });
       expect(repeat.status).toBe(200);
       // The repeat does not move the verified timestamp.
       expect((await prisma.creator.findUniqueOrThrow({ where: { email } })).emailVerifiedAt).toEqual(row.emailVerifiedAt);
 
-      const bad = await request(app).post("/v1/creator/auth/verify-email").send({ token: "A".repeat(43) });
+      const bad = await request(app).post("/v1/creator/auth/verify-email").set("Authorization", auth).send({ token: "A".repeat(43) });
       expect(bad.status).toBe(400);
       expect(bad.body.error.code).toBe("INVALID_TOKEN");
 
@@ -330,12 +357,32 @@ describe("Creator auth API", () => {
       expect(me.body.data.emailVerified).toBe(true);
     });
 
-    it("a superseded or expired link does not verify", async () => {
-      const email = uniqEmail();
+    it("⚠️ a link verifies only for the signed-in owner of its account — never for someone else's session", async () => {
+      // A pre-registrant signs up with the victim's address; the victim, signed in to their own
+      // account, opens the "Confirm email" mail: refused, the squatter's account stays unverified.
+      const email = uniqEmail("squat");
       await request(app).post("/v1/creator/auth/signup").send(signupBody(email));
       const token = await tokenFromEmail(email, "verify-email");
+      const victim = await request(app).post("/v1/creator/auth/signup").send(signupBody(uniqEmail("victim")));
+      const res = await request(app)
+        .post("/v1/creator/auth/verify-email")
+        .set("Authorization", `Bearer ${victim.body.data.accessToken}`)
+        .send({ token });
+      expect(res.status).toBe(403);
+      expect(res.body.error.code).toBe("WRONG_ACCOUNT");
+      expect((await prisma.creator.findUniqueOrThrow({ where: { email } })).emailVerifiedAt).toBeNull();
+      expect((await prisma.creatorToken.findFirstOrThrow({ where: { tokenHash: hashToken(token) } })).usedAt).toBeNull();
+    });
+
+    it("a superseded or expired link does not verify", async () => {
+      const email = uniqEmail();
+      const signup = await request(app).post("/v1/creator/auth/signup").send(signupBody(email));
+      const token = await tokenFromEmail(email, "verify-email");
       await prisma.creatorToken.updateMany({ where: { tokenHash: hashToken(token) }, data: { expiresAt: new Date(Date.now() - 1000) } });
-      const res = await request(app).post("/v1/creator/auth/verify-email").send({ token });
+      const res = await request(app)
+        .post("/v1/creator/auth/verify-email")
+        .set("Authorization", `Bearer ${signup.body.data.accessToken}`)
+        .send({ token });
       expect(res.status).toBe(400);
       expect((await prisma.creator.findUniqueOrThrow({ where: { email } })).emailVerifiedAt).toBeNull();
     });
@@ -359,8 +406,8 @@ describe("Creator auth API", () => {
       const second = await tokenFromEmail(email, "verify-email");
       expect(second).not.toBe(first);
       // The older link is retired, the new one verifies.
-      expect((await request(app).post("/v1/creator/auth/verify-email").send({ token: first })).status).toBe(400);
-      expect((await request(app).post("/v1/creator/auth/verify-email").send({ token: second })).status).toBe(200);
+      expect((await request(app).post("/v1/creator/auth/verify-email").set("Authorization", auth).send({ token: first })).status).toBe(400);
+      expect((await request(app).post("/v1/creator/auth/verify-email").set("Authorization", auth).send({ token: second })).status).toBe(200);
 
       const done = await request(app).post("/v1/creator/auth/resend-verification").set("Authorization", auth);
       expect(done.status).toBe(200);
@@ -449,7 +496,12 @@ describe("Creator auth API", () => {
       const squat = await request(app).post("/v1/creator/auth/signup").send(signupBody(email, { password: "Squatter@123" }));
       expect(squat.status).toBe(201);
       const squatRefresh = squat.body.data.refreshToken as string;
+      const squatAccess = squat.body.data.accessToken as string;
       const c = await prisma.creator.findFirstOrThrow({ where: { email } });
+      // A refresh the squatter started just BEFORE the claim (it consumed its token first): its
+      // new tokens are minted with the old session version.
+      const raced = await request(app).post("/v1/creator/auth/refresh").send({ refreshToken: squatRefresh });
+      expect(raced.status).toBe(200);
 
       // The real owner then uses Google.
       googleAnswers(200, claims(email));
@@ -458,10 +510,15 @@ describe("Creator auth API", () => {
       expect(owner.body.data.creator.id).toBe(c.id);
       expect(owner.body.data.creator.emailVerified).toBe(true);
 
-      // The squatter's password no longer works, their refresh token is dead, their emailed link is spent…
+      // The squatter's password no longer works, every session they hold ends AT ONCE (access
+      // tokens included, so they cannot close the account in the next hour), their emailed link
+      // is spent…
       const login = await request(app).post("/v1/creator/auth/login").send({ email, password: "Squatter@123" });
       expect(login.status).toBe(401);
-      const refresh = await request(app).post("/v1/creator/auth/refresh").send({ refreshToken: squatRefresh });
+      expect((await request(app).get("/v1/creator/me").set("Authorization", `Bearer ${squatAccess}`)).status).toBe(401);
+      expect((await request(app).get("/v1/creator/me").set("Authorization", `Bearer ${raced.body.data.accessToken}`)).status).toBe(401);
+      expect((await request(app).delete("/v1/creator/me").set("Authorization", `Bearer ${raced.body.data.accessToken}`)).status).toBe(401);
+      const refresh = await request(app).post("/v1/creator/auth/refresh").send({ refreshToken: raced.body.data.refreshToken });
       expect(refresh.status).toBe(401);
       expect(await prisma.creatorToken.count({ where: { creatorId: c.id, usedAt: null } })).toBe(0);
       // …while the owner's own new session works.

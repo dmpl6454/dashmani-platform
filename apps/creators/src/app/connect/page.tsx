@@ -3,7 +3,7 @@ import { Suspense, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import useSWR from "swr";
 import { Check, ExternalLink, RefreshCw, ShieldCheck, Unplug, X } from "lucide-react";
-import { apiFetch, ApiError, fetcher } from "@/lib/api";
+import { apiFetch, ApiError, fetcher, PENDING_CONNECT_KEY } from "@/lib/api";
 import { connectErrorSentence, errorSentence } from "@/lib/messages";
 import { daysUntil, fmtCompact, fmtDate, fmtUntil } from "@/lib/format";
 import type { ConnectionPayload, ConnectionView, CreatorAssetView } from "@/lib/types";
@@ -47,7 +47,16 @@ function ConnectInner() {
   const completing = useRef(false);
   const mutateRef = useRef<(() => Promise<unknown>) | null>(null);
   useEffect(() => {
-    const hash = window.location.hash.replace(/^#/, "");
+    let hash = window.location.hash.replace(/^#/, "");
+    if (!hash) {
+      // The result kept across a sign-in (components/providers.tsx).
+      try {
+        hash = sessionStorage.getItem(PENDING_CONNECT_KEY) ?? "";
+        sessionStorage.removeItem(PENDING_CONNECT_KEY);
+      } catch {
+        hash = "";
+      }
+    }
     if (!hash) return;
     const h = new URLSearchParams(hash);
     const state = h.get("state");

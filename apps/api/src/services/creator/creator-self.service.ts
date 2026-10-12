@@ -81,8 +81,10 @@ export async function changeCreatorPassword(creatorId: string, currentPassword: 
     throw new AppError(400, "WRONG_PASSWORD", "Your current password is not right.");
   }
   const passwordHash = await hash(newPassword, 12);
+  // session_version moves on, so access tokens elsewhere stop working at once too; the
+  // session below is minted from the UPDATED row and carries the new version.
   const [updated] = await prisma.$transaction([
-    prisma.creator.update({ where: { id: creatorId }, data: { passwordHash } }),
+    prisma.creator.update({ where: { id: creatorId }, data: { passwordHash, sessionVersion: { increment: 1 } } }),
     prisma.creatorRefreshToken.deleteMany({ where: { creatorId } }),
   ]);
   const session = await issueCreatorSession(updated);
@@ -141,7 +143,7 @@ export async function closeCreatorAccount(creatorId: string) {
   await loadCreator(creatorId);
   const now = new Date();
   await prisma.$transaction([
-    prisma.creator.update({ where: { id: creatorId }, data: { status: "closed", closedAt: now } }),
+    prisma.creator.update({ where: { id: creatorId }, data: { status: "closed", closedAt: now, sessionVersion: { increment: 1 } } }),
     prisma.creatorConnection.updateMany({
       where: { creatorId, revokedAt: null },
       data: { status: "REVOKED", userTokenEnc: null, revokedAt: now },

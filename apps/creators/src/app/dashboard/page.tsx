@@ -168,7 +168,7 @@ function Checklist({ me, onChange }: { me: CreatorMeWithChecklist; onChange: (ne
             <p>{me.email} is confirmed.</p>
           ) : (
             <>
-              <p>We sent a link to <span className="text-white font-semibold break-all">{me.email}</span>. Open it to confirm your address — check spam too.</p>
+              <p>Confirm <span className="text-white font-semibold break-all">{me.email}</span> with the link we email you — check spam too, and open it while signed in. No email? Send a new one.</p>
               <div className="mt-3 flex flex-wrap items-center gap-3">
                 <button type="button" className="btn btn-ghost btn-sm" onClick={resendLink} disabled={resend.state === "sending"}>
                   {resend.state === "sending" ? <><span className="spinner" aria-hidden /> Sending…</> : "Send a new link"}

@@ -52,6 +52,7 @@ CREATE TABLE IF NOT EXISTS "creators" (
     "reviewed_by_id" TEXT,
     "reviewed_at" TIMESTAMP(3),
     "closed_at" TIMESTAMP(3),
+    "session_version" INTEGER NOT NULL DEFAULT 0,
     "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMP(3) NOT NULL,
 

@@ -10,8 +10,9 @@
  *    flag is re-checked daily (syncNetworkDuplicates) and before staff switch a page on;
  *  • a page another creator LIVE-claims is never taken over — it is skipped and the creator is
  *    told why. A claim stops counting once it can no longer be used (page disconnected, its
- *    connection revoked, its creator closed or rejected), and a claimant who can PUBLISH there
- *    takes over from one who cannot (an analyst/moderator role must never lock the owner out);
+ *    connection revoked or lapsed, its creator closed); and a claimant who can PUBLISH there
+ *    takes over from a holder who cannot, or whose account is rejected or suspended (an
+ *    analyst/moderator role, or an account we turned down, must never lock the owner out);
  *  • canPublish is a real probe, not a guess: Facebook needs pages_manage_posts AND a
  *    CREATE_CONTENT/MANAGE task on the Page; Instagram needs instagram_content_publish AND a
  *    content_publishing_limit answer.
@@ -22,6 +23,7 @@ import { prisma } from "@dashmani/db";
 import { oauthGraphFetch, makeBudget, type CallBudget, type OauthGraphResult } from "../meta-oauth/oauth-graph";
 import { decryptToken, encryptToken, scrubSecrets } from "../../utils/token-crypto";
 import { creatorMetaAppSecret } from "./creator-meta-config";
+import { CREATOR_REQUIRED_SCOPES, LIVE_CONNECTION_STATUSES } from "./creator-view";
 
 /** Creators have a handful of pages; this is a runaway backstop, not a tuning knob. */
 const DISCOVERY_CALL_BUDGET = 300;
@@ -100,14 +102,19 @@ async function pagedFetch<T>(
 
 type Claim = "ours" | "free" | "taken";
 
-/** A holder in one of these statuses can never use the claim again (rejected must resubmit). */
-const RELEASED_CREATOR_STATUSES = ["closed", "rejected"];
+const LIVE = [...LIVE_CONNECTION_STATUSES] as string[];
+/** Holder statuses that yield to a claimant who can PUBLISH there (a rejected creator may
+ *  resubmit, so a non-publisher cannot take their pages; a closed one is released outright). */
+const YIELDING_CREATOR_STATUSES = ["rejected", "suspended"];
 
 /**
- * Who holds (kind, metaId) today, from the point of view of `creatorId`. The holder's claim
- * counts only while it can still be used — the page is connected, its connection not revoked,
- * and the account not closed or rejected — and only against a claimant who could not publish
- * there either. Mirrored by the WHERE in upsertAsset's take-over step; keep the two in step.
+ * Who holds (kind, metaId) today, from the point of view of `creatorId`:
+ *  • released to anyone — the page is disconnected, the holder's connection is revoked or
+ *    lapsed (NEEDS_REAUTH: its token no longer works), or the holder's account is closed;
+ *  • released to a claimant who can PUBLISH there — the holder cannot, or the holder's account
+ *    is rejected or suspended;
+ *  • otherwise taken.
+ * Mirrored by the WHERE in upsertAsset's take-over step; keep the two in step.
  */
 async function claimOf(kind: string, metaId: string, creatorId: string, iCanPublish: boolean): Promise<Claim> {
   const row = await prisma.creatorAsset.findUnique({
@@ -117,14 +124,16 @@ async function claimOf(kind: string, metaId: string, creatorId: string, iCanPubl
       disconnectedAt: true,
       canPublish: true,
       creator: { select: { status: true } },
-      connection: { select: { revokedAt: true } },
+      connection: { select: { revokedAt: true, status: true } },
     },
   });
   if (!row) return "free";
   if (row.creatorId === creatorId) return "ours";
-  const holderLive = !row.disconnectedAt && !row.connection.revokedAt && !RELEASED_CREATOR_STATUSES.includes(row.creator.status);
+  const holderLive =
+    !row.disconnectedAt && !row.connection.revokedAt && LIVE.includes(row.connection.status) && row.creator.status !== "closed";
   if (!holderLive) return "free";
-  return iCanPublish && !row.canPublish ? "free" : "taken";
+  if (iCanPublish && (!row.canPublish || YIELDING_CREATOR_STATUSES.includes(row.creator.status))) return "free";
+  return "taken";
 }
 
 /**
@@ -143,8 +152,10 @@ async function upsertAsset(
   iCanPublish: boolean,
 ): Promise<boolean> {
   const data = { ...fields, creatorId, connectionId, disconnectedAt: null };
+  // A page that is (now) on our network is never left switched on — also on our own row.
+  const offIfDuplicate = fields.networkDuplicateOf ? { enabled: false, enabledById: null, enabledAt: null } : {};
   try {
-    const own = await prisma.creatorAsset.updateMany({ where: { kind, metaId, creatorId }, data: data as never });
+    const own = await prisma.creatorAsset.updateMany({ where: { kind, metaId, creatorId }, data: { ...data, ...offIfDuplicate } as never });
     if (own.count > 0) return true;
 
     const took = await prisma.creatorAsset.updateMany({
@@ -155,8 +166,9 @@ async function upsertAsset(
         OR: [
           { disconnectedAt: { not: null } },
           { connection: { revokedAt: { not: null } } },
-          { creator: { status: { in: RELEASED_CREATOR_STATUSES } } },
-          ...(iCanPublish ? [{ canPublish: false }] : []),
+          { connection: { status: { notIn: LIVE } } },
+          { creator: { status: "closed" } },
+          ...(iCanPublish ? [{ canPublish: false }, { creator: { status: { in: YIELDING_CREATOR_STATUSES } } }] : []),
         ],
       },
       data: { ...data, enabled: false, enabledById: null, enabledAt: null } as never,
@@ -215,7 +227,8 @@ export async function syncNetworkDuplicates(assetIds?: string[]): Promise<{ flag
       const dupes = await networkDuplicates(META_KIND[kind], chunk.map((a) => a.metaId));
       for (const a of chunk) {
         const dup = dupes.get(a.metaId) ?? null;
-        if (dup === a.networkDuplicateOf) continue;
+        // Unchanged — unless it is a duplicate that is somehow still switched on.
+        if (dup === a.networkDuplicateOf && !(dup && a.enabled)) continue;
         if (dup) {
           await prisma.creatorAsset.updateMany({
             where: { id: a.id },
@@ -474,7 +487,13 @@ export async function discoverCreatorAssets(connectionId: string, budget?: CallB
         discoveryState: out.state,
         lastError: lastError ? clip(lastError, 500) : null,
         lastVerifiedAt: new Date(),
-        ...(out.authInvalid ? { status: "NEEDS_REAUTH" } : {}),
+        // A COMPLETE pass proves the token works again: a NEEDS_REAUTH set by the metrics job
+        // (or an earlier failed pass) is lifted. Token health re-applies NEEDS_REAUTH_SOON.
+        ...(out.authInvalid
+          ? { status: "NEEDS_REAUTH" }
+          : complete && conn.status === "NEEDS_REAUTH"
+            ? { status: CREATOR_REQUIRED_SCOPES.every((s) => granted.has(s)) ? "ACTIVE" : "PARTIAL_SCOPE" }
+            : {}),
       },
     });
 

@@ -83,12 +83,14 @@ router.post(
   }),
 );
 
+// Signed in: the link verifies only for the account it was sent to (see creatorVerifyEmail).
 router.post(
   "/creator/auth/verify-email",
   requireCreatorsEnabled,
+  authenticateCreator,
   validate(creatorVerifyEmailSchema),
   asyncHandler(async (req: Request, res: Response) => {
-    await creatorAuth.creatorVerifyEmail(req.body.token);
+    await creatorAuth.creatorVerifyEmail(req.body.token, creatorOf(req).id);
     return success(res, { verified: true });
   }),
 );

@@ -30,10 +30,16 @@ export interface CreatorAccessPayload {
   creatorId: string;
   email: string;
   type: "creator";
+  /** creators.session_version when the token was minted (absent ⇒ 0). */
+  sv: number;
 }
 
-export function signCreatorAccessToken(p: { creatorId: string; email: string }): string {
-  return jwt.sign({ creatorId: p.creatorId, email: p.email, type: "creator" }, secret("access"), {
+const svOf = (v: unknown) => (typeof v === "number" && Number.isInteger(v) && v >= 0 ? v : 0);
+
+/** `sv` = the creator's session_version; a token whose sv no longer matches the row is refused
+ *  (authenticateCreator, creatorRefresh) — that is how every session ends at once. */
+export function signCreatorAccessToken(p: { creatorId: string; email: string; sv?: number }): string {
+  return jwt.sign({ creatorId: p.creatorId, email: p.email, type: "creator", sv: p.sv ?? 0 }, secret("access"), {
     expiresIn: CREATOR_ACCESS_TTL,
     audience: AUD,
   });
@@ -41,8 +47,8 @@ export function signCreatorAccessToken(p: { creatorId: string; email: string }):
 
 /** ⚠️ The jwtid nonce is load-bearing: two tokens minted in the same second must not collide on
  *  creator_refresh_tokens.token_hash UNIQUE. */
-export function signCreatorRefreshToken(creatorId: string): string {
-  return jwt.sign({ creatorId, type: "creator-refresh" }, secret("refresh"), {
+export function signCreatorRefreshToken(creatorId: string, sv = 0): string {
+  return jwt.sign({ creatorId, type: "creator-refresh", sv }, secret("refresh"), {
     expiresIn: `${CREATOR_REFRESH_TTL_DAYS}d`,
     audience: AUD,
     jwtid: crypto.randomUUID(),
@@ -53,13 +59,13 @@ export function signCreatorRefreshToken(creatorId: string): string {
 export function verifyCreatorAccessToken(token: string): CreatorAccessPayload {
   const p = jwt.verify(token, secret("access"), { audience: AUD }) as Partial<CreatorAccessPayload>;
   if (p.type !== "creator" || !p.creatorId) throw new Error("not a creator access token");
-  return { creatorId: p.creatorId, email: p.email ?? "", type: "creator" };
+  return { creatorId: p.creatorId, email: p.email ?? "", type: "creator", sv: svOf(p.sv) };
 }
 
-export function verifyCreatorRefreshToken(token: string): { creatorId: string } {
-  const p = jwt.verify(token, secret("refresh"), { audience: AUD }) as { creatorId?: string; type?: string };
+export function verifyCreatorRefreshToken(token: string): { creatorId: string; sv: number } {
+  const p = jwt.verify(token, secret("refresh"), { audience: AUD }) as { creatorId?: string; type?: string; sv?: unknown };
   if (p.type !== "creator-refresh" || !p.creatorId) throw new Error("not a creator refresh token");
-  return { creatorId: p.creatorId };
+  return { creatorId: p.creatorId, sv: svOf(p.sv) };
 }
 
 /** SHA-256 of an opaque token (refresh tokens, emailed tokens) — only the hash is stored. */

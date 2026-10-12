@@ -84,9 +84,32 @@ export async function refreshCreatorMetrics(opts?: { budget?: CallBudget; now?: 
   });
   /** Connections Meta refused this run (code 190): their remaining pages are skipped. */
   const lapsed = new Set<string>();
-  // Meta no longer accepts the token (password changed, app removed without a deauthorize
-  // callback reaching us): the CONNECTION needs a reconnect — say so, and stop offering its
-  // pages (LIVE_CONNECTION_STATUSES in creator-view.ts excludes NEEDS_REAUTH).
+  // Meta refused the token (code 190). It is the CONNECTION that lapsed when the token was the
+  // user token (Instagram), or when the subcode is about the person's session (password
+  // changed, expired, app removed…): say so, and stop offering its pages
+  // (LIVE_CONNECTION_STATUSES in creator-view.ts excludes NEEDS_REAUTH). A Facebook PAGE token
+  // refused for another reason (e.g. 492: the person lost their role on that one Page) affects
+  // only that page — it is marked unpublishable until the creator checks their pages again.
+  const USER_SESSION_SUBCODES = new Set([458, 459, 460, 463, 464, 467]);
+  const onAuthInvalid = async (a: { id: string; connectionId: string; kind: string }, subcode: number | undefined) => {
+    if (a.kind === "instagram_account" || (subcode != null && USER_SESSION_SUBCODES.has(subcode))) {
+      await markLapsed(a.id, a.connectionId);
+      return;
+    }
+    out.failed++;
+    await prisma.creatorAsset.update({
+      where: { id: a.id },
+      data: {
+        views28d: null,
+        engagements28d: null,
+        metricsFetchedAt: now,
+        metricsError: "Facebook no longer gives us access to this Page.",
+        canPublish: false,
+        enabled: false,
+        publishProbeError: "Facebook no longer gives us access to this Page — check your role on it, then press “Check pages again”.",
+      },
+    });
+  };
   const markLapsed = async (assetId: string, connectionId: string) => {
     lapsed.add(connectionId);
     out.failed++;
@@ -130,7 +153,7 @@ export async function refreshCreatorMetrics(opts?: { budget?: CallBudget; now?: 
       { label: "creator-metrics-profile", budget, appSecret: creatorMetaAppSecret() },
     );
     if (prof.rateLimited) { out.rateLimited = true; break; }
-    if (prof.authInvalid) { await markLapsed(a.id, a.connectionId); continue; }
+    if (prof.authInvalid) { await onAuthInvalid(a, prof.errorSubcode); continue; }
 
     const ins = await oauthGraphFetch<InsightsResponse>(
       `${a.metaId}/insights`,
@@ -142,7 +165,7 @@ export async function refreshCreatorMetrics(opts?: { budget?: CallBudget; now?: 
     );
     if (ins.rateLimited) { out.rateLimited = true; break; }
 
-    if (ins.authInvalid) { await markLapsed(a.id, a.connectionId); continue; }
+    if (ins.authInvalid) { await onAuthInvalid(a, ins.errorSubcode); continue; }
 
     let views: number | null = null;
     let engagements: number | null = null;

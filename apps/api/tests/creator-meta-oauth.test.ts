@@ -38,6 +38,7 @@ import { discoverCreatorAssets, syncNetworkDuplicates } from "../src/services/cr
 import { refreshCreatorMetrics } from "../src/services/creator/creator-metrics.service";
 import { daysLeft, purgeCreatorPageData, runCreatorTokenHealth } from "../src/cron/creator.cron";
 import { resetCreatorRefreshThrottle } from "../src/routes/creator-meta.routes";
+import { redactOauthQuery } from "../src/app";
 import { encryptToken } from "../src/utils/token-crypto";
 
 // ── Fake Graph ─────────────────────────────────────────────────────────────────
@@ -61,8 +62,9 @@ let graph: {
   /** Publish probe answers a 500 (inconclusive) for these. */
   probeServerError: Set<string>;
   insightsFail: Set<string>;
-  /** Profile reads answer code 190 (token refused) for these. */
+  /** Profile reads answer code 190 (token refused) for these, with the subcode if mapped. */
   authFail: Set<string>;
+  authSubcode: Map<string, number>;
 };
 
 function json(body: unknown, status = 200) {
@@ -87,6 +89,7 @@ function defaultGraph() {
     probeServerError: new Set(),
     insightsFail: new Set(),
     authFail: new Set(),
+    authSubcode: new Map(),
   };
 }
 
@@ -127,7 +130,9 @@ function handle(c: Call): Response {
       ] });
     }
     if (!edge) {
-      if (graph.authFail.has(id)) return gErr(190, "Error validating access token: The session has been invalidated");
+      if (graph.authFail.has(id)) {
+        return json({ error: { code: 190, error_subcode: graph.authSubcode.get(id), message: "Error validating access token" } }, 400);
+      }
       if (id.startsWith("1784")) return json({ id, username: `user${id.slice(-2)}`, name: `IG ${id.slice(-2)}`, followers_count: 777, media_count: 12, profile_picture_url: "https://cdn.example/p.jpg" });
       return json({ id, followers_count: 1300 });
     }
@@ -491,7 +496,7 @@ describe("creator Meta connect", () => {
       expect((await syncNetworkDuplicates()).flagged).toBe(0); // idempotent
     });
 
-    it("takes a page over from a holder who can no longer use it, or who cannot publish there", async () => {
+    it("takes a page over from a holder who cannot publish there; a lapsed holder yields to anyone, a rejected one only to a publisher", async () => {
       // A holds both pages with an ANALYZE-only role (cannot publish).
       graph.pages = graph.pages.map((p) => ({ ...p, tasks: ["ANALYZE"] }));
       graph.igNodes = [];
@@ -507,14 +512,55 @@ describe("creator Meta connect", () => {
       expect(out.claimedElsewhere).toBe(1);
       const pub = await prisma.creatorAsset.findFirst({ where: { metaId: PAGE_PUBLISH } });
       expect(pub).toMatchObject({ creatorId: b.c.id, connectionId: b.conn.id, canPublish: true, enabled: false });
-      const ro = await prisma.creatorAsset.findFirst({ where: { metaId: PAGE_READONLY } });
-      expect(ro?.creatorId).toBe(a.c.id);
+      expect((await prisma.creatorAsset.findFirst({ where: { metaId: PAGE_READONLY } }))?.creatorId).toBe(a.c.id);
 
-      // Once A is rejected, A's claim stops counting even against a non-publisher.
+      // A REJECTED holder may resubmit: a non-publisher still cannot take its page…
       await prisma.creator.update({ where: { id: a.c.id }, data: { status: "rejected" } });
-      const again = await discoverCreatorAssets(b.conn.id);
-      expect(again.claimedElsewhere).toBe(0);
+      expect((await discoverCreatorAssets(b.conn.id)).claimedElsewhere).toBe(1);
+      expect((await prisma.creatorAsset.findFirst({ where: { metaId: PAGE_READONLY } }))?.creatorId).toBe(a.c.id);
+
+      // …but once A's connection has LAPSED (its token no longer works), anyone may.
+      await prisma.creator.update({ where: { id: a.c.id }, data: { status: "draft" } });
+      await prisma.creatorConnection.update({ where: { id: a.conn.id }, data: { status: "NEEDS_REAUTH" } });
+      expect((await discoverCreatorAssets(b.conn.id)).claimedElsewhere).toBe(0);
       expect((await prisma.creatorAsset.findFirst({ where: { metaId: PAGE_READONLY } }))?.creatorId).toBe(b.c.id);
+    });
+
+    it("a SUSPENDED or rejected holder yields to a claimant who can publish", async () => {
+      const a = await connectedCreator("suspended@example.com");
+      await discoverCreatorAssets(a.conn.id);
+      await prisma.creator.update({ where: { id: a.c.id }, data: { status: "suspended" } });
+      const b = await connectedCreator("publisher@example.com");
+      await discoverCreatorAssets(b.conn.id);
+      // B can publish to PAGE_PUBLISH and IG_OK → taken over; not to the read-only pair → kept.
+      const owner = async (id: string) => (await prisma.creatorAsset.findFirst({ where: { metaId: id } }))?.creatorId;
+      expect(await owner(PAGE_PUBLISH)).toBe(b.c.id);
+      expect(await owner(IG_OK)).toBe(b.c.id);
+      expect(await owner(PAGE_READONLY)).toBe(a.c.id);
+      expect(await owner(IG_NOPROBE)).toBe(a.c.id);
+    });
+
+    it("a page that joins our network is switched OFF when the creator checks their pages again (own row), and stays off", async () => {
+      const { c, conn } = await connectedCreator("own-dup@example.com");
+      await discoverCreatorAssets(conn.id);
+      await prisma.creatorAsset.updateMany({ where: { creatorId: c.id, metaId: PAGE_PUBLISH }, data: { enabled: true } });
+      const admin = await createTestUser();
+      const mc = await prisma.metaConnection.create({ data: { metaUserId: "staff-3", connectedById: admin.id, status: "ACTIVE" } });
+      await prisma.metaAsset.create({ data: { connectionId: mc.id, kind: "FACEBOOK_PAGE", metaId: PAGE_PUBLISH, name: "Ours" } });
+      await discoverCreatorAssets(conn.id);
+      expect((await prisma.creatorAsset.findFirst({ where: { creatorId: c.id, metaId: PAGE_PUBLISH } }))?.enabled).toBe(false);
+      // Even a row left switched on with the flag already set is switched off by the daily re-check.
+      await prisma.creatorAsset.updateMany({ where: { creatorId: c.id, metaId: PAGE_PUBLISH }, data: { enabled: true } });
+      expect((await syncNetworkDuplicates()).switchedOff).toBe(1);
+      expect((await prisma.creatorAsset.findFirst({ where: { creatorId: c.id, metaId: PAGE_PUBLISH } }))?.enabled).toBe(false);
+    });
+
+    it("a complete pass lifts a NEEDS_REAUTH left by an earlier failure", async () => {
+      const { conn } = await connectedCreator("revive@example.com");
+      await prisma.creatorConnection.update({ where: { id: conn.id }, data: { status: "NEEDS_REAUTH" } });
+      const out = await discoverCreatorAssets(conn.id);
+      expect(out.state).toBe("done");
+      expect((await prisma.creatorConnection.findUnique({ where: { id: conn.id } }))?.status).toBe("ACTIVE");
     });
 
     it("an inconclusive Instagram probe keeps the stored answer instead of flipping to 'can't publish'", async () => {
@@ -652,11 +698,28 @@ describe("creator Meta connect", () => {
       expect(fbCall?.query.get("since")).toBeTruthy();
     });
 
-    it("a token Meta refuses (190) marks the connection NEEDS_REAUTH and stops its pages", async () => {
+    it("a Facebook PAGE token refused for a page reason (190 / 492) affects only that page", async () => {
+      const c = await seedCreator("pagelost@example.com");
+      await connectVia(c);
+      await settleDiscovery(c.id);
+      await prisma.creatorAsset.updateMany({ where: { creatorId: c.id, metaId: PAGE_PUBLISH }, data: { enabled: true } });
+      graph.authFail.add(PAGE_PUBLISH);
+      graph.authSubcode.set(PAGE_PUBLISH, 492);
+      await refreshCreatorMetrics();
+      expect((await prisma.creatorConnection.findFirst({ where: { creatorId: c.id } }))?.status).toBe("ACTIVE");
+      const pg = await prisma.creatorAsset.findFirst({ where: { creatorId: c.id, metaId: PAGE_PUBLISH } });
+      expect(pg).toMatchObject({ canPublish: false, enabled: false });
+      expect(pg?.publishProbeError).toMatch(/role/);
+      // The other pages were still read.
+      expect(Number((await prisma.creatorAsset.findFirst({ where: { creatorId: c.id, metaId: IG_OK } }))?.views28d)).toBe(900);
+    });
+
+    it("a refused USER token (Instagram, or a session subcode) marks the connection NEEDS_REAUTH and stops its pages", async () => {
       const c = await seedCreator("lapsed@example.com");
       await connectVia(c);
       await settleDiscovery(c.id);
-      graph.authFail.add(IG_OK).add(IG_NOPROBE).add(PAGE_PUBLISH).add(PAGE_READONLY);
+      graph.authFail.add(PAGE_PUBLISH);
+      graph.authSubcode.set(PAGE_PUBLISH, 460); // password changed
       calls = [];
       await refreshCreatorMetrics();
       const conn = await prisma.creatorConnection.findFirst({ where: { creatorId: c.id } });
@@ -669,6 +732,23 @@ describe("creator Meta connect", () => {
       const token = generateCreatorToken(c.id, c.email);
       const me = await request(app).get("/v1/creator/me").set("Authorization", `Bearer ${token}`);
       expect(me.body.data.checklist.publishablePages).toBe(0);
+
+      // Instagram (user token) without any subcode: the connection too.
+      const c2 = await seedCreator("lapsed-ig@example.com");
+      graph.userId = "10000000000000002";
+      graph.authFail.clear();
+      await connectVia(c2);
+      await settleDiscovery(c2.id);
+      await prisma.creatorAsset.updateMany({ where: { creatorId: c2.id, kind: "facebook_page" }, data: { metricsFetchedAt: new Date() } });
+      graph.authFail.add(IG_OK).add(IG_NOPROBE);
+      await refreshCreatorMetrics();
+      expect((await prisma.creatorConnection.findFirst({ where: { creatorId: c2.id } }))?.status).toBe("NEEDS_REAUTH");
+    });
+
+    it("blanks OAuth code/state in logged callback URLs only", () => {
+      expect(redactOauthQuery("/v1/creator/meta/oauth/callback?code=AQBsecret&state=abc")).toBe("/v1/creator/meta/oauth/callback?code=[redacted]&state=[redacted]");
+      expect(redactOauthQuery("/v1/meta/oauth/callback?state=s&code=c")).toBe("/v1/meta/oauth/callback?state=[redacted]&code=[redacted]");
+      expect(redactOauthQuery("/v1/reports?code=keep")).toBe("/v1/reports?code=keep");
     });
 
     it("purges page details 30 days after a disconnect, and revoked connections with them", async () => {

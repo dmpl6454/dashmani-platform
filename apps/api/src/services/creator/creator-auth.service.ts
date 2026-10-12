@@ -30,6 +30,8 @@ const RESET_TTL_MS = 24 * 60 * 60 * 1000;
 /** "Resend verification email" at most once per this window (signup's own email counts). */
 export const RESEND_VERIFICATION_COOLDOWN_MS = 2 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
+/** Reset emails per account per rolling day (on top of the cooldown above). */
+const RESETS_PER_DAY = 5;
 
 /** A non-negative integer env knob, or the default (NaN-safe). */
 function envCap(name: string, fallback: number): number {
@@ -84,15 +86,18 @@ export async function findCreatorByEmail(email: string): Promise<Creator | null>
   return prisma.creator.findFirst({ where: { email: { equals: likeLiteral(e), mode: "insensitive" } } });
 }
 
-/** Mint a session: a 1h access token and a single-use refresh token (only its hash is stored). */
+/**
+ * Mint a session: a 1h access token and a single-use refresh token (only its hash is stored),
+ * both stamped with the row's session_version — pass the row as it is AFTER any bump.
+ */
 export async function issueCreatorSession(c: Creator) {
-  const accessToken = signCreatorAccessToken({ creatorId: c.id, email: c.email });
-  const refreshToken = await storeRefreshToken(c.id);
+  const accessToken = signCreatorAccessToken({ creatorId: c.id, email: c.email, sv: c.sessionVersion });
+  const refreshToken = await storeRefreshToken(c.id, c.sessionVersion);
   return { accessToken, refreshToken, creator: toCreatorMe(c) };
 }
 
-async function storeRefreshToken(creatorId: string): Promise<string> {
-  const refreshToken = signCreatorRefreshToken(creatorId);
+async function storeRefreshToken(creatorId: string, sv: number): Promise<string> {
+  const refreshToken = signCreatorRefreshToken(creatorId, sv);
   await prisma.creatorRefreshToken.create({
     data: {
       creatorId,
@@ -218,8 +223,9 @@ export async function creatorLogin(email: string, password: string) {
  */
 export async function creatorRefresh(refreshToken: string) {
   let creatorId: string;
+  let sv: number;
   try {
-    creatorId = verifyCreatorRefreshToken(refreshToken).creatorId;
+    ({ creatorId, sv } = verifyCreatorRefreshToken(refreshToken));
   } catch (e) {
     if (e instanceof AppError) throw e; // CREATORS_NOT_CONFIGURED (503), never a 401
     throw new AppError(401, "INVALID_TOKEN", "Invalid or expired refresh token");
@@ -231,10 +237,14 @@ export async function creatorRefresh(refreshToken: string) {
 
   const c = await prisma.creator.findUnique({ where: { id: creatorId } });
   if (!c || c.status === "closed") throw new AppError(401, "INVALID_TOKEN", "Invalid or expired refresh token");
+  // ⚠️ Every session ended since this token was minted (session_version moved on). Also closes
+  // the race where this refresh consumed its token just before a claim/reset deleted the rest:
+  // what it mints here carries the OLD version and is refused at its first use.
+  if (sv !== c.sessionVersion) throw new AppError(401, "INVALID_TOKEN", "Your session has ended — please sign in again.");
 
   return {
-    accessToken: signCreatorAccessToken({ creatorId: c.id, email: c.email }),
-    refreshToken: await storeRefreshToken(c.id),
+    accessToken: signCreatorAccessToken({ creatorId: c.id, email: c.email, sv: c.sessionVersion }),
+    refreshToken: await storeRefreshToken(c.id, c.sessionVersion),
   };
 }
 
@@ -253,6 +263,17 @@ export async function creatorLogout(refreshToken: string) {
 export async function creatorForgotPassword(email: string) {
   const c = await findCreatorByEmail(email);
   if (!c || c.status === "closed") return;
+  // Per account: at most one reset email per RESEND_VERIFICATION_COOLDOWN_MS and
+  // RESETS_PER_DAY a day — without this one client could spend the shared daily cap on a
+  // single address and silently stop every other creator's resets.
+  const recent = await prisma.creatorToken.findMany({
+    where: { creatorId: c.id, purpose: "reset_password", createdAt: { gte: new Date(Date.now() - DAY_MS) } },
+    orderBy: { createdAt: "desc" },
+    select: { createdAt: true },
+    take: RESETS_PER_DAY,
+  });
+  if (recent.length >= RESETS_PER_DAY) return;
+  if (recent[0] && Date.now() - recent[0].createdAt.getTime() < RESEND_VERIFICATION_COOLDOWN_MS) return;
   if (!(await creatorEmailBudgetLeft())) return;
   const token = await issueEmailToken(c.id, "reset_password");
   const link = creatorLink(`/reset-password?token=${token}`);
@@ -295,8 +316,13 @@ export async function creatorResetPassword(token: string, newPassword: string) {
   await prisma.$transaction([
     prisma.creator.update({
       where: { id: row.creatorId },
-      // The link was opened from the inbox, which proves the address as well as verify_email does.
-      data: { passwordHash, ...(row.creator.emailVerifiedAt ? {} : { emailVerifiedAt: new Date() }) },
+      // The link was opened from the inbox, which proves the address as well as verify_email
+      // does. session_version moves on, so every access token out there stops working too.
+      data: {
+        passwordHash,
+        sessionVersion: { increment: 1 },
+        ...(row.creator.emailVerifiedAt ? {} : { emailVerifiedAt: new Date() }),
+      },
     }),
     prisma.creatorRefreshToken.deleteMany({ where: { creatorId: row.creatorId } }),
   ]);
@@ -309,14 +335,21 @@ export async function creatorResetPassword(token: string, newPassword: string) {
  * account that is now verified answers `verified` again (a double click, or a mail scanner
  * that opened the page first, must not show "invalid link" to someone who IS verified);
  * an unknown, expired or superseded link is a 400.
+ * ⚠️ It verifies only for the SIGNED-IN owner of the account (`creatorId` from the session). If
+ * anyone who opens the email could verify, a pre-registrant could sign up with someone else's
+ * address and wait for its owner to click "Confirm email" — the account would then read as
+ * verified and a later Google sign-in by the owner would no longer claim it (review, 2026-10-12).
  */
-export async function creatorVerifyEmail(token: string) {
+export async function creatorVerifyEmail(token: string, creatorId: string) {
   const invalid = () => new AppError(400, "INVALID_TOKEN", "This confirmation link is invalid or has expired. Sign in to send a new one.");
   const row = await prisma.creatorToken.findUnique({
     where: { tokenHash: hashToken(token) },
     include: { creator: { select: { id: true, status: true, emailVerifiedAt: true } } },
   });
   if (!row || row.purpose !== "verify_email" || row.creator.status === "closed") throw invalid();
+  if (row.creatorId !== creatorId) {
+    throw new AppError(403, "WRONG_ACCOUNT", "This confirmation link is for a different account. Sign out, then sign in to the account it was sent for.");
+  }
 
   if (await consumeEmailToken(row.id)) {
     await prisma.creator.updateMany({ where: { id: row.creatorId, emailVerifiedAt: null }, data: { emailVerifiedAt: new Date() } });
@@ -360,7 +393,9 @@ export async function creatorResendVerification(creatorId: string) {
  * ⚠️ Pre-account hijack guard (review SEC-2). Anyone can sign up with someone else's address and
  * a password of their choosing, and use it before verifying. When the address's real owner then
  * proves control through Google, the account becomes theirs ALONE: the password is replaced by an
- * unusable one, every session and pending emailed link ends — only then is a session issued.
+ * unusable one, every session (session_version) and pending emailed link ends — only then is a
+ * session issued. The confirmation link cannot be used to dodge this: it verifies only for the
+ * signed-in owner of the account (creatorVerifyEmail).
  * Conditional on emailVerifiedAt still being null, so a concurrent second Google sign-in does
  * not end the first one's fresh session.
  */
@@ -368,7 +403,11 @@ async function claimUnverifiedAccount(creatorId: string) {
   const now = new Date();
   const unusable = await hash(crypto.randomBytes(32).toString("hex"), BCRYPT_ROUNDS);
   await prisma.$transaction(async (tx) => {
-    const r = await tx.creator.updateMany({ where: { id: creatorId, emailVerifiedAt: null }, data: { emailVerifiedAt: now, passwordHash: unusable } });
+    const r = await tx.creator.updateMany({
+      where: { id: creatorId, emailVerifiedAt: null },
+      // session_version moves on: every access AND refresh token minted before this is refused.
+      data: { emailVerifiedAt: now, passwordHash: unusable, sessionVersion: { increment: 1 } },
+    });
     if (r.count === 0) return;
     await tx.creatorRefreshToken.deleteMany({ where: { creatorId } });
     await tx.creatorToken.updateMany({ where: { creatorId, usedAt: null }, data: { usedAt: now } });

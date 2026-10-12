@@ -13,6 +13,18 @@ import campaignWebhookRoutes from "./routes/campaign-webhook.routes";
 import { bigintJsonReplacer } from "./utils/bigint-json";
 import { creatorMetaReturnUrl } from "./services/creator/creator-meta-config";
 
+const CREATOR_META_CALLBACK_PATH = "/v1/creator/meta/oauth/callback";
+
+/**
+ * The request line as logged, with any OAuth `code` / `state` value blanked on the two Meta
+ * callbacks. The creator callback no longer redeems the code itself (the creator's own browser
+ * does, via POST /oauth/complete), so a code in a log line would still be usable for minutes.
+ */
+export function redactOauthQuery(url: string): string {
+  if (!/\/oauth\/callback(?:\?|$)/.test(url.split("#")[0])) return url;
+  return url.replace(/([?&](?:code|state)=)[^&#]*/g, "$1[redacted]");
+}
+
 const app = express();
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(process.cwd(), "uploads");
 
@@ -73,7 +85,9 @@ app.use(rateLimit({
   windowMs: 15 * 60 * 1000,
   max: envInt("RATE_LIMIT_MAX", 1000),
   keyGenerator: rateLimitKey,
-  skip: (req) => isHealthProbe(req) || isPipelinePath(req),
+  // The creator Meta OAuth callback has its own per-IP ceiling below, which answers with a
+  // REDIRECT; this JSON 429 must never reach a creator coming back from Facebook.
+  skip: (req) => isHealthProbe(req) || isPipelinePath(req) || req.path === CREATOR_META_CALLBACK_PATH,
   standardHeaders: true,
   legacyHeaders: false,
   message: { success: false, error: { code: "RATE_LIMIT", message: "Too many requests, please try again later" } },
@@ -180,7 +194,7 @@ const creatorMetaCallbackLimiter = rateLimit({
     res.redirect(302, creatorMetaReturnUrl("?error=busy"));
   },
 });
-app.get("/v1/creator/meta/oauth/callback", creatorMetaCallbackLimiter);
+app.get(CREATOR_META_CALLBACK_PATH, creatorMetaCallbackLimiter);
 
 if (process.env.NODE_ENV !== "test") {
   // P13: successful POST /v1/pipeline/sync polls are not logged (hundreds of thousands
@@ -188,6 +202,7 @@ if (process.env.NODE_ENV !== "test") {
   // 413 / INVALID_JSON bodies are answered ABOVE this line and never reach morgan (as
   // the global limiter's 429s never did) — the pipeline limiter and error middleware log
   // those themselves, throttled (utils/throttled-warn.ts).
+  morgan.token("url", (req) => redactOauthQuery((req as express.Request).originalUrl || req.url || ""));
   app.use(morgan("combined", { skip: skipPipelineSyncLog }));
 }
 

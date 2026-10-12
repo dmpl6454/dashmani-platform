@@ -34,6 +34,13 @@ export interface ApiEnvelope<T> {
  * first field message rather than the envelope's generic "Invalid request data"); `code`,
  * `details` and `status` let a caller place it on a field or swap in its own sentence.
  */
+/**
+ * sessionStorage key for a Facebook connect result (`state=…&code=…`) that arrived while signed
+ * out: the guard keeps it across the sign-in, and /connect finishes it. Same tab only, removed
+ * as soon as it is read.
+ */
+export const PENDING_CONNECT_KEY = "creatorPendingConnect";
+
 export class ApiError extends Error {
   constructor(
     message: string,

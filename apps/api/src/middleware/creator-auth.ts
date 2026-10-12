@@ -19,21 +19,27 @@ export function requireCreatorsEnabled(_req: Request, _res: Response, next: Next
 
 /**
  * A creator session: verified with the CREATOR secret (staff, HR and client tokens fail here),
- * and the creator row is re-read so a closed account stops working at once.
+ * and the creator row is re-read so a closed account — or a session ended by a password reset,
+ * a password change or a Google claim (session_version moved on) — stops working at once.
  */
 export const authenticateCreator = asyncHandler(async (req: Request, _res: Response, next: NextFunction) => {
   const header = req.headers.authorization;
   if (!header?.startsWith("Bearer ")) throw new AppError(401, "NO_TOKEN", "Authentication required");
   let creatorId: string;
+  let sv: number;
   try {
-    creatorId = verifyCreatorAccessToken(header.slice(7)).creatorId;
+    ({ creatorId, sv } = verifyCreatorAccessToken(header.slice(7)));
   } catch (e) {
     if (e instanceof AppError) throw e;
     throw new AppError(401, "INVALID_TOKEN", "Invalid or expired token");
   }
-  const c = await prisma.creator.findUnique({ where: { id: creatorId }, select: { id: true, email: true, status: true } });
+  const c = await prisma.creator.findUnique({
+    where: { id: creatorId },
+    select: { id: true, email: true, status: true, sessionVersion: true },
+  });
   if (!c || c.status === "closed") throw new AppError(401, "ACCOUNT_CLOSED", "This account is closed.");
-  (req as Request & { creator?: CreatorRequestContext }).creator = c;
+  if (c.sessionVersion !== sv) throw new AppError(401, "INVALID_TOKEN", "Your session has ended — please sign in again.");
+  (req as Request & { creator?: CreatorRequestContext }).creator = { id: c.id, email: c.email, status: c.status };
   next();
 });
 

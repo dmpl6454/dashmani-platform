@@ -610,7 +610,6 @@ export default function ChannelSurf() {
                       <span className="client-sector" aria-hidden="true">
                         {c.sector}
                       </span>
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img src={c.logo} alt={c.name} loading="lazy" decoding="async" />
                       <span className="client-name" aria-hidden="true">
                         {c.name}

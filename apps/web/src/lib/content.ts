@@ -5,6 +5,7 @@ export const CHANNELS = [
   { slug: "reach", name: "Reach" },
   { slug: "services", name: "Services" },
   { slug: "work", name: "Work" },
+  { slug: "clients", name: "Clients" },
   { slug: "studio", name: "Studio" },
   { slug: "contact", name: "Contact" },
 ] as const;
@@ -64,19 +65,47 @@ export const STEPS = [
 // To add a reel: paste its Instagram link into `reelUrl` (reel, post or tv links all work,
 // e.g. "https://www.instagram.com/reel/ABC123xyz/"). Leave it "" and the card shows the
 // placeholder until a link is added. `results` is optional — only add real, verified numbers.
+// To play our own copy of the campaign video instead, put the .mp4 and a poster frame (.jpg)
+// in apps/web/public/work/ and fill `video` (`landscape: true` for a wide clip). A video
+// wins over `reelUrl` when both are set.
 export type CaseStudy = {
   brand: string;
   campaign: string;
   tag: string;
   reelUrl: string;
+  video?: { src: string; poster: string; landscape?: boolean };
   results?: { label: string; value: string }[];
 };
 
 export const CASE_STUDIES: CaseStudy[] = [
-  { brand: "Helios Luxe", campaign: "Event amplification", tag: "Event", reelUrl: "" },
-  { brand: "SKF", campaign: "Entertainment", tag: "Film", reelUrl: "" },
-  { brand: "Titan Eye+", campaign: "Brand integration", tag: "Brand", reelUrl: "" },
-  { brand: "Coke Studio", campaign: "Music integration", tag: "Music", reelUrl: "" },
+  {
+    brand: "Helios Luxe",
+    campaign: "Event amplification",
+    tag: "Event",
+    reelUrl: "",
+    video: { src: "/work/helios-luxe.mp4", poster: "/work/helios-luxe.jpg" },
+  },
+  {
+    brand: "SKF",
+    campaign: "Entertainment",
+    tag: "Film",
+    reelUrl: "",
+    video: { src: "/work/skf.mp4", poster: "/work/skf.jpg", landscape: true },
+  },
+  {
+    brand: "Titan Eye+",
+    campaign: "Brand integration",
+    tag: "Brand",
+    reelUrl: "",
+    video: { src: "/work/titan-eye.mp4", poster: "/work/titan-eye.jpg" },
+  },
+  {
+    brand: "Bonkers Corner",
+    campaign: "Music integration",
+    tag: "Music",
+    reelUrl: "",
+    video: { src: "/work/bonkers-corner.mp4", poster: "/work/bonkers-corner.jpg" },
+  },
 ];
 
 /**
@@ -90,6 +119,26 @@ export function instagramEmbedUrl(url: string): string | null {
   const kind = m[1] === "reels" ? "reel" : m[1];
   return `https://www.instagram.com/${kind}/${m[2]}/embed/`;
 }
+
+// CH 05 Clients — brands we have worked with, shown as a logo wall.
+// To add one: put the logo file in apps/web/public/clients/ (SVG best, else a PNG with a
+// transparent background, ideally 400px+ wide) and add a row here with its file name.
+// Logos are shown in white so the wall reads as one set on the black screen; set
+// `mono: false` for a logo that must keep its own colours (e.g. a multi-colour mark that
+// turns into a solid blob in white). `colour` is the brand colour the tile glows with on
+// hover — pick one that is visible on black. `tall: true` gives a portrait logo more height;
+// `wide: true` lets a long, thin wordmark use more of the tile so its small text stays readable.
+export type Client = { name: string; logo: string; sector: string; colour: string; mono?: boolean; tall?: boolean; wide?: boolean };
+
+export const CLIENTS: Client[] = [
+  { name: "adidas", logo: "/clients/adidas.svg", sector: "Sportswear", colour: "#4d7cff" },
+  { name: "Crocs", logo: "/clients/crocs.svg", sector: "Footwear", colour: "#7cc242" },
+  { name: "Rungta Steel", logo: "/clients/rungta-steel.png", sector: "Steel", colour: "#e4252c" },
+  { name: "T-Series", logo: "/clients/t-series.svg", sector: "Music", colour: "#ff3b3b", tall: true, mono: false },
+  { name: "U.S. Polo Assn.", logo: "/clients/us-polo-assn.png", sector: "Apparel", colour: "#5b7fd6", wide: true },
+  { name: "Nutella", logo: "/clients/nutella.svg", sector: "Food", colour: "#d8343a" },
+  { name: "Denver", logo: "/clients/denver.png", sector: "Grooming", colour: "#d4ab62" },
+];
 
 export const LOGOS = ["Movified", "Total Filmi", "Bollywood Society", "Bollywood Chronicle", "Bollywood Paparazzi", "Paparazzzee", "Crazy 4 TV", "Dubai Paps"];
 

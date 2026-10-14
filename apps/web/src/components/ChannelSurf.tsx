@@ -1,9 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { MouseEvent as ReactMouseEvent, TouchEvent as ReactTouchEvent } from "react";
+import type { CSSProperties, MouseEvent as ReactMouseEvent, TouchEvent as ReactTouchEvent } from "react";
 import {
   CHANNELS,
+  CLIENTS,
   CLIENT_BOOKING_URL,
   CONTACT_EMAIL,
   CASE_STUDIES,
@@ -20,6 +21,7 @@ import {
   initials,
   instagramEmbedUrl,
 } from "@/lib/content";
+import CaseVideo from "./CaseVideo";
 import ContactForm from "./ContactForm";
 
 const N = CHANNELS.length;
@@ -56,6 +58,14 @@ function tilt(e: ReactMouseEvent<HTMLElement>) {
   const px = (e.clientX - r.left) / r.width - 0.5;
   const py = (e.clientY - r.top) / r.height - 0.5;
   el.style.transform = `perspective(900px) rotateY(${px * 8}deg) rotateX(${-py * 8}deg) translateY(-4px)`;
+}
+// Client tiles: the tilt above, plus a brand-coloured light that follows the cursor.
+function spotlight(e: ReactMouseEvent<HTMLElement>) {
+  const el = e.currentTarget;
+  const r = el.getBoundingClientRect();
+  el.style.setProperty("--mx", `${e.clientX - r.left}px`);
+  el.style.setProperty("--my", `${e.clientY - r.top}px`);
+  tilt(e);
 }
 function reducedMotion() {
   return typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -175,7 +185,7 @@ export default function ChannelSurf() {
     };
   }, []);
 
-  // Keyboard: ↓/→ next, ↑/← previous, 1–6 jump. Ignored while typing in a form field.
+  // Keyboard: ↓/→ next, ↑/← previous, 1–N jump. Ignored while typing in a form field.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
@@ -187,7 +197,7 @@ export default function ChannelSurf() {
       } else if (e.key === "ArrowUp" || e.key === "ArrowLeft") {
         e.preventDefault();
         go(chRef.current - 1);
-      } else if (/^[1-6]$/.test(e.key)) {
+      } else if (/^[1-9]$/.test(e.key) && Number(e.key) <= N) {
         go(Number(e.key) - 1);
       }
     };
@@ -276,7 +286,7 @@ export default function ChannelSurf() {
           On air
         </span>
         <span className="ch-count" aria-live="polite">
-          CH {pad2(ch + 1)} / 06
+          CH {pad2(ch + 1)} / {pad2(N)}
         </span>
         <span className="clock" suppressHydrationWarning>
           IST {clock}
@@ -292,14 +302,14 @@ export default function ChannelSurf() {
         </nav>
         <nav aria-label="Channels" className="rail">
           {navButtons("rail-btn")}
-          <p className="rail-help">Scroll, ↑ ↓ or 1–6 to change channel</p>
+          <p className="rail-help">Scroll, ↑ ↓ or 1–{N} to change channel</p>
         </nav>
 
         <main className="screen" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
           <div className="scanlines" aria-hidden="true" />
           <div className={`static${noise ? " on" : ""}`} aria-hidden="true" />
           <div className="edge-hint" aria-hidden="true">
-            <span className="desk">{ch < 5 ? `Keep scrolling for CH ${pad2(ch + 2)}` : "Scroll up to rewind"}</span>
+            <span className="desk">{ch < N - 1 ? `Keep scrolling for CH ${pad2(ch + 2)}` : "Scroll up to rewind"}</span>
             <span className="touch">Swipe ← → to change channel</span>
           </div>
 
@@ -498,15 +508,24 @@ export default function ChannelSurf() {
               </div>
               <div className="cards cases">
                 {CASE_STUDIES.map((c) => {
-                  const embed = c.reelUrl ? instagramEmbedUrl(c.reelUrl) : null;
+                  const embed = !c.video && c.reelUrl ? instagramEmbedUrl(c.reelUrl) : null;
+                  const still = !embed && !c.video;
                   return (
                     <article
                       key={c.brand}
-                      className={`card${embed ? " has-reel" : ""}`}
-                      onMouseMove={embed ? undefined : tilt}
-                      onMouseLeave={embed ? undefined : unmagnet}
+                      className={`card${embed ? " has-reel" : ""}${c.video ? " has-video" : ""}`}
+                      onMouseMove={still ? tilt : undefined}
+                      onMouseLeave={still ? unmagnet : undefined}
                     >
-                      {embed ? (
+                      {c.video ? (
+                        <CaseVideo
+                          src={c.video.src}
+                          poster={c.video.poster}
+                          landscape={c.video.landscape}
+                          title={c.brand}
+                          tag={c.tag}
+                        />
+                      ) : embed ? (
                         <div className="card-reel">
                           <iframe
                             src={embed}
@@ -563,7 +582,60 @@ export default function ChannelSurf() {
           )}
 
           {ch === 4 && (
-            <section key="studio" ref={setScroll} className="channel pad studio" aria-label="CH 05 Studio">
+            <section key="clients" ref={setScroll} className="channel pad clients" aria-label="CH 05 Clients">
+              <div className="head-row">
+                <div className="stack-12">
+                  <p className="kicker">Our clients</p>
+                  <h2 className="h2">
+                    Brands that
+                    <br />
+                    <span className="accent">trust the network.</span>
+                  </h2>
+                </div>
+                <p className="lede">From sportswear to steel, brands that put their campaigns on our network. Hover a logo to tune in.</p>
+              </div>
+              {CLIENTS.length > 0 ? (
+                <ul className="client-wall" aria-label="Clients">
+                  {CLIENTS.map((c, i) => (
+                    <li
+                      key={c.name}
+                      className={[c.mono === false && "keep-colour", c.tall && "tall", c.wide && "wide"].filter(Boolean).join(" ") || undefined}
+                      style={{ "--brand": c.colour, "--i": i } as CSSProperties}
+                      onMouseMove={spotlight}
+                      onMouseLeave={unmagnet}
+                    >
+                      <span className="client-n" aria-hidden="true">
+                        {pad2(i + 1)}
+                      </span>
+                      <span className="client-sector" aria-hidden="true">
+                        {c.sector}
+                      </span>
+                      <img src={c.logo} alt={c.name} loading="lazy" decoding="async" />
+                      <span className="client-name" aria-hidden="true">
+                        {c.name}
+                      </span>
+                    </li>
+                  ))}
+                  <li className="client-next">
+                    <a href={CLIENT_BOOKING_URL} onMouseMove={magnet} onMouseLeave={unmagnet}>
+                      <span className="client-n" aria-hidden="true">
+                        {pad2(CLIENTS.length + 1)}
+                      </span>
+                      <span className="t">Your brand next?</span>
+                      <span className="go">
+                        Start a campaign <span aria-hidden="true">→</span>
+                      </span>
+                    </a>
+                  </li>
+                </ul>
+              ) : (
+                <p className="client-empty">Client logos coming soon.</p>
+              )}
+            </section>
+          )}
+
+          {ch === 5 && (
+            <section key="studio" ref={setScroll} className="channel pad studio" aria-label="CH 06 Studio">
               <div className="head-row">
                 <div className="stack-12">
                   <p className="kicker">Behind the broadcast</p>
@@ -598,8 +670,8 @@ export default function ChannelSurf() {
             </section>
           )}
 
-          {ch === 5 && (
-            <section key="contact" ref={setScroll} className="channel contact" aria-label="CH 06 Contact">
+          {ch === 6 && (
+            <section key="contact" ref={setScroll} className="channel contact" aria-label="CH 07 Contact">
               <div className="contact-panel">
                 <h2 className="h1">
                   Book a slot

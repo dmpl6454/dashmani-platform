@@ -101,8 +101,8 @@ export const CASE_STUDIES: CaseStudy[] = [
   },
   {
     brand: "Bonkers Corner",
-    campaign: "Music integration",
-    tag: "Music",
+    campaign: "Brand integration",
+    tag: "Brand",
     reelUrl: "",
     video: { src: "/work/bonkers-corner.mp4", poster: "/work/bonkers-corner.jpg" },
   },

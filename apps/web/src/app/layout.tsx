@@ -34,8 +34,8 @@ const orgJsonLd = {
   legalName: "Dashmani Media Private Limited",
   url: SITE_URL,
   logo: `${SITE_URL}/logo.png`,
-  email: "hello@digitalsukoon.com",
-  telephone: "+91 87097 88368",
+  email: "biz@digitalsukoon.com",
+  telephone: "+91 60001 89766",
   address: {
     "@type": "PostalAddress",
     streetAddress: "701/702 Parinee I, Shah Industrial Estate, Off Veera Desai Rd, Andheri West",

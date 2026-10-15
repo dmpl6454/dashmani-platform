@@ -172,13 +172,13 @@ export const OFFICES = [
   { city: "Bangalore", address: "I-1703, Brigade Metropolis, Garudacharpalya, Mahadevapura Post, Bangalore 560048", tel: "+917738257242", phone: "+91 77382 57242" },
 ];
 
-export const CONTACT_EMAIL = "hello@digitalsukoon.com";
+export const CONTACT_EMAIL = "biz@digitalsukoon.com";
 
 /** Self-serve booking for existing (invited) clients: the client portal's campaign wizard. */
 // Where "Start a campaign" sends a visitor: the client portal's signup page, which offers
 // "sign in" for existing clients, and lands them on the booking wizard afterwards.
 export const CLIENT_BOOKING_URL = "https://client.digitalsukoon.com/signup?next=/campaigns/new";
-export const CONTACT_PHONE = { tel: "+918709788368", display: "+91 87097 88368" };
+export const CONTACT_PHONE = { tel: "+916000189766", display: "+91 60001 89766" };
 
 // Audience by platform (owner-supplied, 2026-10-07). Sums to the 400M+ headline.
 export const PLATFORM_REACH = [

@@ -111,6 +111,8 @@ export interface CatalogueEntry {
   views28d: number | null;
   category: string | null;
   profileUrl: string | null;
+  /** About how long after posting the link is ready. */
+  linkDeliveryMinutes: { min: number; max: number };
   offers: Array<{ rateCardId: string; format: string; pricePaise: number; entertainmentPricePaise: number | null; audioAddonPaise: number | null }>;
 }
 

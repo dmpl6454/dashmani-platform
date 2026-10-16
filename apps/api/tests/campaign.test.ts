@@ -242,9 +242,9 @@ describe("campaign booking flow", () => {
     const res = await request(app).get("/v1/client/campaigns/catalogue").set("Authorization", `Bearer ${tokA}`);
     expect(res.status).toBe(200);
     expect(Object.keys(res.body.data[0]).sort()).toEqual(
-      ["category", "engagementRatePct", "followers", "name", "offers", "pictureUrl", "platform", "profileUrl", "targetId", "targetType", "username", "views28d"].sort(),
+      ["category", "engagementRatePct", "followers", "linkDeliveryMinutes", "name", "offers", "pictureUrl", "platform", "profileUrl", "targetId", "targetType", "username", "views28d"].sort(),
     );
-    expect(res.body.data[0]).toMatchObject({ category: "Bollywood news", followers: 4_600_000, engagementRatePct: 5, offers: [{ format: "post", pricePaise: 250_000 }] });
+    expect(res.body.data[0]).toMatchObject({ category: "Bollywood news", followers: 4_600_000, engagementRatePct: 5, linkDeliveryMinutes: { min: 5, max: 10 }, offers: [{ format: "post", pricePaise: 250_000 }] });
   });
 
   it("rejects staff-only and cross-portal access", async () => {

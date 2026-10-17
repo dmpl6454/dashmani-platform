@@ -6,8 +6,8 @@ import { refundBookingInFull, refundPaymentRow, capturedPaymentFor, maybeMarkRef
 import { sendDeliveryEmail, sendItemLiveEmail, sendStatusEmail } from "./delivery.service";
 import { campaignConfig } from "./config";
 import { checkEligibility, launchAt, planPublishing } from "./publish.service";
-import { onCreatorLinkVerified, prepareCreatorItemRefund, reconcileCreatorOwnership } from "../creator/payout-ledger";
-import { alertOfferProblems, createOffersForBooking, listOffersForBooking, sendOfferEmails, verifyCreatorItem, withdrawOffer as withdrawCreatorOffer, type CreatedOffers } from "../creator/creator-offer.service";
+import { onCreatorLinkVerified, prepareCreatorItemRefund, reconcileCreatorOwnership, type WithdrawnOffer } from "../creator/payout-ledger";
+import { alertOfferProblems, createOffersForBooking, listOffersForBooking, sendOfferEmails, sendOfferWithdrawnEmails, verifyCreatorItem, withdrawOffer as withdrawCreatorOffer, type CreatedOffers } from "../creator/creator-offer.service";
 
 // Staff side: the review queue, booking detail, approve / reject / request changes, and the
 // per-item actions (mark posted with its link, mark failed, refund one item).
@@ -229,6 +229,7 @@ export async function reject(id: string, staffId: string, note: string) {
 
   const owed: string[] = [];
   const claimed: Array<{ id: string; pricePaise: number }> = [];
+  const withdrawn: WithdrawnOffer[] = [];
   await prisma.$transaction(async (tx) => {
     await transitionBooking(id, REJECTABLE, "rejected", staff(staffId), {
       tx,
@@ -249,7 +250,7 @@ export async function reject(id: string, staffId: string, note: string) {
       // A creator's post: void its payout (or refuse), and withdraw the creator's offer, in THIS transaction. A throw
       // (the share is already on its way to the creator, or they have posted) undoes the whole rejection.
       if (i.targetType === CREATOR_TARGET_TYPE) {
-        await prepareCreatorItemRefund(tx, i.id, { actor: staff(staffId), reason: "booking_rejected", closedReason: "booking_rejected" });
+        await prepareCreatorItemRefund(tx, i.id, { actor: staff(staffId), reason: "booking_rejected", closedReason: "booking_rejected", withdrawn });
       }
       claimed.push({ id: i.id, pricePaise: i.pricePaise });
     }
@@ -261,6 +262,8 @@ export async function reject(id: string, staffId: string, note: string) {
     await tx.campaignPayment.updateMany({ where: { id: { in: owed } }, data: { status: "refund_due" } });
   });
 
+  // The creators who had seen their offer are told it is gone (after the commit, never blocking the refunds below).
+  void sendOfferWithdrawnEmails(withdrawn).catch(() => undefined);
   const errors: string[] = [];
   let confirming = false;
   for (const item of claimed) {
@@ -306,13 +309,13 @@ async function markCreatorPosted(
   bookingId: string,
   item: { id: string; accountName: string },
   staffId: string,
-  o: { url?: string | null; ownershipCheckedByHand?: boolean },
+  o: { url?: string | null; expectedLinkKey?: string | null; ownershipCheckedByHand?: boolean },
 ) {
   const b = await prisma.campaignBooking.findUnique({ where: { id: bookingId }, select: { status: true } });
   if (!b || !["approved", "publishing", "completed", "partially_published"].includes(b.status)) {
     throw new AppError(409, "INVALID_STATE", "Approve the campaign before recording posts.");
   }
-  await verifyCreatorItem(bookingId, item.id, { staffId, url: o.url ?? null, ownershipCheckedByHand: o.ownershipCheckedByHand === true });
+  await verifyCreatorItem(bookingId, item.id, { staffId, url: o.url ?? null, expectedLinkKey: o.expectedLinkKey ?? null, ownershipCheckedByHand: o.ownershipCheckedByHand === true });
   void sendItemLiveEmail(item.id).catch((e) => console.error("[campaign] live email failed", e));
   await afterItemChange(bookingId, staffId);
   // Nothing is paid in this phase (the seam does nothing); it must never undo a verification that already committed.
@@ -320,11 +323,16 @@ async function markCreatorPosted(
   return getBookingForStaff(bookingId);
 }
 
-/** "Verify link & release": make the creator's submitted link the live post (see markCreatorPosted). */
-export async function verifyCreatorLink(bookingId: string, itemId: string, staffId: string, o: { ownershipCheckedByHand?: boolean } = {}) {
+/**
+ * "Verify link & release": make the creator's submitted link the live post (see markCreatorPosted). `linkCanonicalKey` is the
+ * key of the link the staff member was looking at (the offer's `linkCanonicalKey` in the booking detail): when the creator has
+ * since sent another link it is 409 LINK_CHANGED and nothing is verified, so a "checked by hand" tick can never land on a link
+ * nobody looked at.
+ */
+export async function verifyCreatorLink(bookingId: string, itemId: string, staffId: string, o: { ownershipCheckedByHand?: boolean; linkCanonicalKey: string }) {
   const item = await itemOf(bookingId, itemId);
   if (item.targetType !== CREATOR_TARGET_TYPE) throw new AppError(409, "NOT_CREATOR_ITEM", "This isn't a creator's post: record its link with “Mark posted”.");
-  return markCreatorPosted(bookingId, item, staffId, { ownershipCheckedByHand: o.ownershipCheckedByHand === true });
+  return markCreatorPosted(bookingId, item, staffId, { ownershipCheckedByHand: o.ownershipCheckedByHand === true, expectedLinkKey: o.linkCanonicalKey });
 }
 
 /**
@@ -433,14 +441,17 @@ export async function refundItem(bookingId: string, itemId: string, staffId: str
     });
   // A creator's post is claimed together with the end of its payout and its offer: ONE transaction, so a payout that
   // can't be voided (the share is already on its way to the creator) refuses the refund and leaves everything as it was.
+  const withdrawn: WithdrawnOffer[] = [];
   const claim = isCreator
     ? await prisma.$transaction(async (tx) => {
         const c = await claimItem(tx);
-        if (c.count === 1) await prepareCreatorItemRefund(tx, itemId, { actor: staff(staffId), reason: "item_refunded", closedReason: "withdrawn" });
+        if (c.count === 1) await prepareCreatorItemRefund(tx, itemId, { actor: staff(staffId), reason: "item_refunded", closedReason: "withdrawn", withdrawn });
         return c;
       })
     : await claimItem(prisma);
   if (claim.count !== 1) throw new AppError(409, "INVALID_STATE", "This item changed — refresh and try again.");
+  // The creator, if they had seen the offer, is told not to post (once the claim is committed, whatever Razorpay answers next).
+  void sendOfferWithdrawnEmails(withdrawn).catch(() => undefined);
   if (!pay) {
     await logBookingEvent(bookingId, staff(staffId), `${item.accountName} removed from the booking (${item.pricePaise} paise) — no online payment on this booking; settle by hand if the client has already paid.`);
     await afterItemChange(bookingId, staffId);

@@ -233,16 +233,22 @@ export function AccountsStep({ campaign, onSaved, onEdit }: {
   // A category picked on another platform or format may not exist here: then show everything.
   const activeCat = cat !== null && catTabs.some((t) => t.key === cat) ? cat : null;
 
+  // A creator's page has NO engagement figure (the API sends null: a creator's reach is their private Page Insights, not a public
+  // statistic). So "Highest engagement" can't rank one: it is offered while at least one network account is on this platform tab,
+  // and the creator rows then follow the ranked ones. A tab of creator pages alone falls back to "Most followers".
+  const canSortByEngagement = onPlatform.length === 0 || onPlatform.some((a) => !isCreator(a));
+  const effSort: Sort = sort === "engagement" && !canSortByEngagement ? "followers" : sort;
+
   const visible = useMemo(() => {
     const term = q.trim().toLowerCase().replace(/^@/, "");
     return inCategory(onPlatform, activeCat)
       .filter((a) => !term || a.name.toLowerCase().includes(term) || (a.username ?? "").toLowerCase().includes(term) || matchesCategory(a.category, term) || (isCreator(a) && (a.provider?.name ?? "").toLowerCase().includes(term)))
       .sort((a, b) =>
-        sort === "price" ? a.price.total - b.price.total :
-        sort === "engagement" ? (b.engagementRatePct ?? -1) - (a.engagementRatePct ?? -1) :
+        effSort === "price" ? a.price.total - b.price.total :
+        effSort === "engagement" ? (isCreator(a) !== isCreator(b) ? (isCreator(a) ? 1 : -1) : (b.engagementRatePct ?? -1) - (a.engagementRatePct ?? -1)) :
         (b.followers ?? 0) - (a.followers ?? 0),
       );
-  }, [onPlatform, activeCat, q, sort]);
+  }, [onPlatform, activeCat, q, effSort]);
 
   const selected = offers.filter((a) => picked.has(a.offer.rateCardId));
   const total = selected.reduce((s, a) => s + a.price.total, 0);
@@ -329,9 +335,9 @@ export function AccountsStep({ campaign, onSaved, onEdit }: {
             <span className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-3"><Icon.Search size={15} /></span>
             <input className={`${inputCls} pl-9`} placeholder="Search name, @handle or category" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search accounts" />
           </div>
-          <select className={`${inputCls} !w-auto`} value={sort} onChange={(e) => setSort(e.target.value as Sort)} aria-label="Sort">
+          <select className={`${inputCls} !w-auto`} value={effSort} onChange={(e) => setSort(e.target.value as Sort)} aria-label="Sort">
             <option value="followers">Most followers</option>
-            <option value="engagement">Highest engagement</option>
+            {canSortByEngagement && <option value="engagement">Highest engagement</option>}
             <option value="price">Lowest price</option>
           </select>
         </div>
@@ -400,6 +406,9 @@ export function AccountsStep({ campaign, onSaved, onEdit }: {
             <button type="button" className="underline font-semibold" onClick={() => reload()}>Try again</button>
           </ErrorBanner>
         )}
+        {effSort === "engagement" && visible.some(isCreator) && (
+          <p className="mb-3 text-[12px] text-ink-3">Creator accounts have no engagement figure, so they are listed after the others.</p>
+        )}
         {isLoading && <div className="text-[13px] text-ink-3 py-6 text-center">Loading accounts…</div>}
         {data && visible.length === 0 && <div className="text-[13px] text-ink-3 py-8 text-center">{emptyText}</div>}
 
@@ -453,14 +462,23 @@ export function AccountsStep({ campaign, onSaved, onEdit }: {
                       {a.linkDeliveryMinutes && !isCreator(a) && <span title="About how long after posting the link is ready.">Link in ~{a.linkDeliveryMinutes.min}–{a.linkDeliveryMinutes.max} min after posting</span>}
                     </div>
                     <div className="sm:hidden text-[11px] text-ink-3 tabular-nums">
-                      {compact(a.followers)} followers · {a.engagementRatePct != null ? `${a.engagementRatePct}%` : "—"} engagement
+                      {isCreator(a)
+                        ? <>{compact(a.followers)} followers</>
+                        : <>{compact(a.followers)} followers · {a.engagementRatePct != null ? `${a.engagementRatePct}%` : "—"} engagement</>}
                     </div>
                   </div>
                   <div className="hidden sm:grid grid-cols-2 gap-x-5 text-right shrink-0">
                     <span className="text-[13px] font-semibold text-ink tabular-nums">{compact(a.followers)}</span>
-                    <span className="text-[13px] font-semibold text-ink tabular-nums" title="Engagements per view over the last 28 days">{a.engagementRatePct != null ? `${a.engagementRatePct}%` : "—"}</span>
+                    {/* A creator's page has no engagement figure to show. The cell stays EMPTY (not a dash, which would read as "unknown"),
+                        and the label cell keeps the width of the word it replaces (invisible, so it is neither seen nor read), so the grid is
+                        as wide as a network row's and followers stay in one column down the list. */}
+                    {isCreator(a)
+                      ? <span aria-hidden="true" />
+                      : <span className="text-[13px] font-semibold text-ink tabular-nums" title="Engagements per view over the last 28 days">{a.engagementRatePct != null ? `${a.engagementRatePct}%` : "—"}</span>}
                     <span className="text-[10.5px] uppercase tracking-wider text-ink-3">Followers</span>
-                    <span className="text-[10.5px] uppercase tracking-wider text-ink-3">Engagement</span>
+                    {isCreator(a)
+                      ? <span aria-hidden="true" className="invisible text-[10.5px] uppercase tracking-wider">Engagement</span>
+                      : <span className="text-[10.5px] uppercase tracking-wider text-ink-3">Engagement</span>}
                   </div>
                   <div className="text-right shrink-0 w-[80px] sm:w-[96px]">
                     <div className="text-[14px] font-bold text-ink tabular-nums">{rupees(a.price.total)}</div>

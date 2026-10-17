@@ -319,4 +319,48 @@ describe("creator-portal tokens against the campaign, rate-card and payout route
     expect(await prisma.creatorOffer.findUniqueOrThrow({ where: { id: offer.id } })).toEqual(before);
     expect((await prisma.campaignBookingItem.findUniqueOrThrow({ where: { id: item.id } })).status).toBe("manual_pending");
   });
+
+  it("⚠️ what a creator reads back about THEIR OWN link is an exact allow-list: the staff verify key, the check's internal detail and who verified are staff-only, and a verified (completed) offer reads the same way", async () => {
+    const creator = await prisma.creator.create({ data: { email: "iso-link@example.com", passwordHash: "x", name: "Iso", status: "approved", emailVerifiedAt: new Date() } });
+    const client = await prisma.client.create({ data: { companyName: "Iso Brand 2", contactName: "Iso", email: "iso2@brand.test", passwordHash: "x" } });
+    const booking = await prisma.campaignBooking.create({ data: { clientId: client.id, name: "Iso", brand: "B", status: "approved", format: "post", totalPaise: 250_000, paidAt: new Date() } });
+    const card = await prisma.campaignRateCard.create({ data: { targetType: "creator_asset", targetId: "00000000-0000-0000-0000-0000000000bb", platform: "instagram", format: "post", pricePaise: 250_000 } });
+    const item = await prisma.campaignBookingItem.create({ data: { bookingId: booking.id, rateCardId: card.id, targetType: "creator_asset", targetId: card.targetId, platform: "instagram", format: "post", accountName: "Page", pricePaise: 250_000, status: "manual_pending" } });
+    const offer = await prisma.creatorOffer.create({
+      data: {
+        bookingId: booking.id,
+        bookingItemId: item.id,
+        creatorId: creator.id,
+        creatorAssetId: card.targetId,
+        pageName: "Page",
+        platform: "instagram",
+        format: "post",
+        status: "accepted",
+        payoutPaise: 100_000,
+        expiresAt: new Date(Date.now() + 86_400_000),
+        linkUrl: "https://www.instagram.com/p/ABCsecret/",
+        linkCanonicalKey: "ig:ABCsecretkey",
+        linkSubmittedAt: new Date(),
+        ownershipCheck: "unverifiable",
+        ownershipDetail: "token_lapsed_internal_detail",
+        ownershipCheckedById: "staff-who-ticked-id",
+      },
+    });
+    const token = generateCreatorToken(creator.id, creator.email);
+    vi.stubEnv("RAZORPAY_KEY_ID", "rzp_test_key"); // the offers routes also need Razorpay configured (marketplaceAvailable)
+    vi.stubEnv("RAZORPAY_KEY_SECRET", "rzp_test_secret");
+    try {
+      for (const status of ["accepted", "completed"]) {
+        await prisma.creatorOffer.update({ where: { id: offer.id }, data: { status, ...(status === "completed" ? { linkVerifiedAt: new Date(), linkVerifiedById: "staff-who-verified-id" } : {}) } });
+        const res = await call("get", `/v1/creator/offers/${offer.id}`, token);
+        expect(res.status, status).toBe(200);
+        expect(Object.keys(res.body.data.link).sort(), status).toEqual(["check", "message", "submittedAt", "url", "verified"]);
+        const text = JSON.stringify(res.body);
+        for (const never of ["ig:ABCsecretkey", "linkCanonicalKey", "token_lapsed_internal_detail", "ownershipDetail", "staff-who-ticked-id", "staff-who-verified-id", "Iso Brand 2", "iso2@brand.test"]) expect(text, `${status}: ${never}`).not.toContain(never);
+      }
+      expect((await call("get", `/v1/creator/offers/${offer.id}`, token)).body.data).toMatchObject({ status: "completed", link: { verified: true }, actions: { submitLink: false } });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
 });

@@ -89,4 +89,15 @@ export const razorpayConfig = {
    */
   paymentMode: (): "razorpay" | "offline" =>
     process.env.CAMPAIGN_PAYMENT_MODE === "offline" || !razorpayConfig.configured() ? "offline" : "razorpay",
+  /**
+   * How ONE booking is paid. A booking that pays a creator is ALWAYS online (the creator's share is moved out of
+   * the brand's captured payment, and an offline submission has no payment to move it from), so for it
+   * CAMPAIGN_PAYMENT_MODE is ignored and only the keys decide: "razorpay" with them, "offline" without (which
+   * checkout then refuses with CREATOR_ONLINE_ONLY). A network-only booking keeps the global mode exactly: with
+   * the gateway live and CAMPAIGN_PAYMENT_MODE=offline, the owner's decision that our own network's bookings
+   * stay offline still holds. Checkout and the booking the client sees both ask THIS, so the Pay step can
+   * never say "Submit for review" for a booking that checkout will only take online.
+   */
+  bookingPaymentMode: (hasCreatorItems: boolean): "razorpay" | "offline" =>
+    hasCreatorItems ? (razorpayConfig.configured() ? "razorpay" : "offline") : razorpayConfig.paymentMode(),
 };

@@ -300,7 +300,9 @@ function PayStep({ campaign: c, onChanged, onEdit, busy, setBusy, confirming, se
     setError(null);
     setErrorFix(false);
     try {
-      const order = await mutateJson<{ offline?: boolean; orderId: string; amount: number; currency: string; keyId: string; name: string }>(`/client/campaigns/${c.id}/checkout`, "POST");
+      // `description` is present only when a creator provides a post ("<campaign> — includes posts by A, B"): the checkout window
+      // shows it under the campaign name, so the brand sees who they are paying for. Absent for a network-only campaign.
+      const order = await mutateJson<{ offline?: boolean; orderId: string; amount: number; currency: string; keyId: string; name: string; description?: string }>(`/client/campaigns/${c.id}/checkout`, "POST");
       if (order.offline) {
         // No gateway: the booking is now in review. The parent re-fetches and shows the status.
         onChanged();
@@ -320,7 +322,7 @@ function PayStep({ campaign: c, onChanged, onEdit, busy, setBusy, confirming, se
         currency: order.currency,
         order_id: order.orderId,
         name: "Digital Sukoon",
-        description: order.name,
+        description: order.description ?? order.name,
         // The stored session user is { id, name, companyName, email } (lib/auth.ts).
         prefill: { email: user.email, name: user.name },
         theme: { color: "#403cfa" },

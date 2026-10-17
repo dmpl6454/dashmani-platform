@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto";
 import { prisma, Prisma, type CreatorOffer } from "@dashmani/db";
-import { CREATOR_TARGET_TYPE, FORMAT_LABELS, canonicalKey, isPlatformPostUrl, type CampaignPlatform } from "@dashmani/shared";
+import { CREATOR_TARGET_TYPE, FORMAT_LABELS, isPlatformPostUrl, type CampaignPlatform } from "@dashmani/shared";
 import { AppError } from "../../middleware/error-handler";
 import { decryptToken, scrubSecrets } from "../../utils/token-crypto";
 import { oauthGraphFetch, makeBudget } from "../meta-oauth/oauth-graph";
@@ -12,7 +12,11 @@ import { creatorMetaAppSecret } from "./creator-meta-config";
 import { LIVE_CONNECTION_STATUSES } from "./creator-view";
 import { button, creatorLink, esc, sendCreatorEmail } from "./creator-email";
 import { alertStaffOncePerHour } from "./payout-alert";
-import { ensurePayoutRefundable, payoutAllowsLink, withdrawOpenOffers, type PayoutActor } from "./payout-ledger";
+import { ensurePayoutRefundable, payoutAllowsLink, withdrawOpenOffers, type PayoutActor, type WithdrawnOffer } from "./payout-ledger";
+import { GRACE_KEEP, GRACE_KEY, LINK_CHECK_MAX_PAGES, alertMarker } from "./creator-offers-config";
+import { isIdentityKey, ownershipMatchKey, parseCreatorLink } from "./offer-link";
+
+export { ownershipMatchKey } from "./offer-link";
 
 // Creator OFFERS (payout plan Phase 3): what happens between "staff approved a campaign that books a creator's page"
 // and "staff verified the post the creator made".
@@ -24,6 +28,8 @@ import { ensurePayoutRefundable, payoutAllowsLink, withdrawOpenOffers, type Payo
 //           →  withdrawn (staff, or the missed-window worker)   same
 //   accepted   the creator pastes the post's link (submitOfferLink): it is checked against the creator's OWN recent
 //              posts through their live connection; staff then verify it (verifyCreatorItem)
+//           →  completed (staff verified the link)              the post is live and the offer is over: no longer open work
+//   A creator who had seen an offer that is then withdrawn is emailed not to post it (sendOfferWithdrawnEmails).
 //
 // ⚠️ THE RULES THIS FILE KEEPS
 //   • Every transition is ONE set of conditional updateMany calls under the booking's row lock, so two racing actors
@@ -67,7 +73,7 @@ export function inr(paise: number): string {
 
 /** A stored IST calendar day (a DATE column, read back as that day at 00:00 UTC). */
 const fmtDay = (d: Date) => new Intl.DateTimeFormat("en-IN", { timeZone: "UTC", day: "numeric", month: "short", year: "numeric" }).format(d);
-const fmtDateTimeIST = (d: Date) =>
+export const fmtDateTimeIST = (d: Date) =>
   `${new Intl.DateTimeFormat("en-IN", { timeZone: "Asia/Kolkata", day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit", hour12: true }).format(d)} IST`;
 
 /**
@@ -89,6 +95,48 @@ export const offerWindow = (o: Pick<CreatorOffer, "windowFrom" | "windowTo">) =>
 export function linkDeadline(o: Pick<CreatorOffer, "windowTo">): Date | null {
   const end = postingWindow(null, o.windowTo).to;
   return end ? new Date(end.getTime() + POSTING_GRACE_MS) : null;
+}
+
+/**
+ * A stretch of time (epoch ms) in which the offers worker was not running, so creators could not act (the marketplace was
+ * switched off, or the API was down): a link deadline that fell inside [from, until] moves to `until`. The worker records
+ * one when it comes back (cron/creator-offers.cron.ts); `offered` offers are extended on their `expires_at` instead.
+ */
+export interface GraceWindow {
+  from: number;
+  until: number;
+}
+
+/** The recorded grace windows. A DB error throws (a worker that cannot tell must not withdraw anything); corrupt JSON reads as none. */
+export async function loadDeadlineGrace(): Promise<GraceWindow[]> {
+  const row = await prisma.systemSetting.findUnique({ where: { key: GRACE_KEY } });
+  if (!row) return [];
+  try {
+    const parsed: unknown = JSON.parse(row.value);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((g): g is GraceWindow => g && Number.isFinite(g.from) && Number.isFinite(g.until) && g.until >= g.from);
+  } catch {
+    return [];
+  }
+}
+
+export async function recordDeadlineGrace(g: GraceWindow, now: Date = new Date()): Promise<void> {
+  const kept = (await loadDeadlineGrace()).filter((x) => x.until > now.getTime());
+  const value = JSON.stringify([...kept, g].slice(-GRACE_KEEP));
+  await prisma.systemSetting.upsert({ where: { key: GRACE_KEY }, create: { key: GRACE_KEY, value }, update: { value } });
+}
+
+/**
+ * The last instant a creator can hand in their link, with any grace after an outage applied: the plain deadline, or the end
+ * of the grace window it fell in. EVERY place that asks "is it too late?" uses this (the creator's submit, the offer view, the
+ * missed-window worker), so they can never disagree.
+ */
+export function effectiveLinkDeadline(o: Pick<CreatorOffer, "windowTo">, grace: GraceWindow[]): Date | null {
+  const base = linkDeadline(o);
+  if (!base) return null;
+  let t = base.getTime();
+  for (const g of grace) if (base.getTime() >= g.from && base.getTime() <= g.until) t = Math.max(t, g.until);
+  return new Date(t);
 }
 
 /** The window as the two IST calendar days a creator reads ("post between"): the first day and the LAST day, both inclusive. */
@@ -266,58 +314,67 @@ const formatLabel = (f: string) => (FORMAT_LABELS as Record<string, string>)[f] 
 
 const offerLink = (offerId: string) => creatorLink(`/booking?id=${encodeURIComponent(offerId)}`);
 
+/** What happened to one mail: it went out, there was nothing (more) to send, or the mailer did not take it. */
+export type MailOutcome = "sent" | "skipped" | "failed";
+
+const offerEmailBody = (o: CreatorOffer, creatorName: string) => {
+  const w = windowDays(o);
+  return (
+    `<p>Hi ${esc(creatorName)},</p>` +
+    `<p>You have a new booking offer for <b>${esc(o.pageName)}</b>: one ${esc(PLATFORM_LABEL[o.platform] ?? o.platform)} ${esc(formatLabel(o.format).toLowerCase())}.</p>` +
+    `<table style="border-collapse:collapse;margin:8px 0 16px">` +
+    `<tr><td style="padding:4px 18px 4px 0;color:#555">You will receive</td><td style="padding:4px 0"><b>${esc(inr(o.payoutPaise))}</b> <span style="color:#555">(after any tax deducted at source)</span></td></tr>` +
+    (w.from && w.to ? `<tr><td style="padding:4px 18px 4px 0;color:#555">Post between</td><td style="padding:4px 0"><b>${esc(fmtDay(o.windowFrom!))}</b> and <b>${esc(fmtDay(o.windowTo!))}</b> (IST)</td></tr>` : "") +
+    `<tr><td style="padding:4px 18px 4px 0;color:#555">Accept by</td><td style="padding:4px 0"><b>${esc(fmtDateTimeIST(o.expiresAt))}</b></td></tr>` +
+    `</table>` +
+    `<p><b>What you need to do</b></p>` +
+    `<ol style="margin:0 0 16px;padding-left:20px"><li>Open the offer, check the files, the caption and the amount, and accept it before it expires.</li>` +
+    `<li>Post it yourself on your page during the window, exactly as given.</li>` +
+    `<li>Paste the link of your post into the offer so we can check it.</li></ol>` +
+    `<p><b>Paid partnership.</b> ${esc(CREATOR_DISCLOSURE_INSTRUCTION)}</p>` +
+    `<p>${button(offerLink(o.id), "View the offer")}</p>` +
+    `<p style="color:#555">If you don't accept in time the offer simply lapses, and nothing is owed either way.</p>`
+  );
+};
+
 /**
- * Email the creators of freshly made offers. ⚠️ What goes in: the page, the format, the window, the exact ₹ they will
- * receive, when the offer expires, what to do, the disclosure line. What never does: the brand's price, the booking
- * total, the client, other items, other creators. Everything interpolated is escaped. Never throws; `notified_at` is
- * stamped only for a mail that really went out, so a failed send is simply retried by nobody (the offer is on screen).
+ * Email ONE offer to its creator, once. `notified_at` is stamped only for a mail the mailer really took, so NULL means "not
+ * delivered yet": it is what the worker retries on (cron resendOfferEmails). `skipped` = nothing to send: the offer is no longer
+ * `offered`, it was mailed already, or the creator is not an approved account (a suspended or closed creator cannot answer).
+ * Never throws.
+ */
+export async function sendOfferEmail(offerId: string): Promise<MailOutcome> {
+  try {
+    const o = await prisma.creatorOffer.findFirst({ where: { id: offerId, status: "offered", notifiedAt: null } });
+    if (!o) return "skipped";
+    const c = await prisma.creator.findUnique({ where: { id: o.creatorId }, select: { name: true, email: true, status: true } });
+    if (!c || c.status !== "approved") return "skipped";
+    const res = await sendCreatorEmail(c.email, `You have a booking offer: ${inr(o.payoutPaise)} for ${o.pageName}`, "You have a booking offer", offerEmailBody(o, c.name));
+    if (res == null) return "failed";
+    await prisma.creatorOffer.updateMany({ where: { id: o.id, notifiedAt: null }, data: { notifiedAt: new Date() } });
+    return "sent";
+  } catch (e) {
+    console.warn(`[creator-offers] offer email failed for ${offerId}: ${scrubSecrets(String(e)).slice(0, 200)}`);
+    return "failed";
+  }
+}
+
+/**
+ * Email the creators of freshly made offers (right after approve; a failure is retried by the worker). ⚠️ What goes in: the
+ * page, the format, the window, the exact ₹ they will receive, when the offer expires, what to do, the disclosure line. What
+ * never does: the brand's price, the booking total, the client, other items, other creators. Everything interpolated is
+ * escaped. Never throws. Returns how many went out.
  */
 export async function sendOfferEmails(offerIds: string[]): Promise<number> {
-  if (offerIds.length === 0) return 0;
   let sent = 0;
-  try {
-    const offers = await prisma.creatorOffer.findMany({ where: { id: { in: offerIds }, status: "offered", notifiedAt: null } });
-    const creators = await prisma.creator.findMany({ where: { id: { in: [...new Set(offers.map((o) => o.creatorId))] } }, select: { id: true, name: true, email: true, status: true } });
-    const byId = new Map(creators.map((c) => [c.id, c]));
-    for (const o of offers) {
-      const c = byId.get(o.creatorId);
-      if (!c || c.status === "closed") continue;
-      try {
-        const w = windowDays(o);
-        const body =
-          `<p>Hi ${esc(c.name)},</p>` +
-          `<p>You have a new booking offer for <b>${esc(o.pageName)}</b>: one ${esc(PLATFORM_LABEL[o.platform] ?? o.platform)} ${esc(formatLabel(o.format).toLowerCase())}.</p>` +
-          `<table style="border-collapse:collapse;margin:8px 0 16px">` +
-          `<tr><td style="padding:4px 18px 4px 0;color:#555">You will receive</td><td style="padding:4px 0"><b>${esc(inr(o.payoutPaise))}</b> <span style="color:#555">(after any tax deducted at source)</span></td></tr>` +
-          (w.from && w.to ? `<tr><td style="padding:4px 18px 4px 0;color:#555">Post between</td><td style="padding:4px 0"><b>${esc(fmtDay(o.windowFrom!))}</b> and <b>${esc(fmtDay(o.windowTo!))}</b> (IST)</td></tr>` : "") +
-          `<tr><td style="padding:4px 18px 4px 0;color:#555">Accept by</td><td style="padding:4px 0"><b>${esc(fmtDateTimeIST(o.expiresAt))}</b></td></tr>` +
-          `</table>` +
-          `<p><b>What you need to do</b></p>` +
-          `<ol style="margin:0 0 16px;padding-left:20px"><li>Open the offer, check the files, the caption and the amount, and accept it before it expires.</li>` +
-          `<li>Post it yourself on your page during the window, exactly as given.</li>` +
-          `<li>Paste the link of your post into the offer so we can check it.</li></ol>` +
-          `<p><b>Paid partnership.</b> ${esc(CREATOR_DISCLOSURE_INSTRUCTION)}</p>` +
-          `<p>${button(offerLink(o.id), "View the offer")}</p>` +
-          `<p style="color:#555">If you don't accept in time the offer simply lapses, and nothing is owed either way.</p>`;
-        const res = await sendCreatorEmail(c.email, `You have a booking offer: ${inr(o.payoutPaise)} for ${o.pageName}`, "You have a booking offer", body);
-        if (res != null) {
-          await prisma.creatorOffer.updateMany({ where: { id: o.id, notifiedAt: null }, data: { notifiedAt: new Date() } });
-          sent++;
-        }
-      } catch (e) {
-        console.warn(`[creator-offers] offer email failed for ${o.id}: ${scrubSecrets(String(e)).slice(0, 200)}`);
-      }
-    }
-  } catch (e) {
-    console.warn(`[creator-offers] offer emails failed: ${scrubSecrets(String(e)).slice(0, 200)}`);
-  }
+  for (const id of offerIds) if ((await sendOfferEmail(id)) === "sent") sent++;
   return sent;
 }
 
-/** The launch-day reminder: one email to a creator whose accepted offer has no link yet. Returns whether the mail went out. */
-export async function sendLaunchReminder(o: CreatorOffer): Promise<boolean> {
+/** The launch-day reminder: one email to a creator whose accepted offer has no link yet. `skipped`: there is no one to remind (an account that is not approved, or an offer with no window). */
+export async function sendLaunchReminder(o: CreatorOffer): Promise<MailOutcome> {
   const c = await prisma.creator.findUnique({ where: { id: o.creatorId }, select: { name: true, email: true, status: true } });
-  if (!c || c.status === "closed" || !o.windowTo) return false;
+  if (!c || c.status !== "approved" || !o.windowTo) return "skipped";
   const body =
     `<p>Hi ${esc(c.name)},</p>` +
     `<p>Your posting window for <b>${esc(o.pageName)}</b> is open. Post the ${esc(PLATFORM_LABEL[o.platform] ?? o.platform)} ${esc(formatLabel(o.format).toLowerCase())} on your page by <b>${esc(fmtDay(o.windowTo))}</b> (IST), then paste its link into the offer.</p>` +
@@ -325,11 +382,45 @@ export async function sendLaunchReminder(o: CreatorOffer): Promise<boolean> {
     `<p><b>Paid partnership.</b> ${esc(CREATOR_DISCLOSURE_INSTRUCTION)}</p>` +
     `<p>${button(offerLink(o.id), "Open the offer")}</p>`;
   try {
-    return (await sendCreatorEmail(c.email, `Reminder: post for ${o.pageName}`, "Your posting window is open", body)) != null;
+    return (await sendCreatorEmail(c.email, `Reminder: post for ${o.pageName}`, "Your posting window is open", body)) != null ? "sent" : "failed";
   } catch (e) {
     console.warn(`[creator-offers] reminder failed for ${o.id}: ${scrubSecrets(String(e)).slice(0, 200)}`);
-    return false;
+    return "failed";
   }
+}
+
+/**
+ * Tell a creator an offer they had seen (accepted, or offered and emailed) has been withdrawn, so they do not make a post for
+ * a booking that no longer exists. ⚠️ What goes in: the page and "do not post it" (remove it if already live). What never does: the
+ * brand, the client, any price, the reason. Sent AFTER the withdrawing transaction committed; never throws; not retried (the
+ * offer page shows the withdrawal too). Returns how many went out.
+ */
+export async function sendOfferWithdrawnEmails(withdrawn: WithdrawnOffer[]): Promise<number> {
+  let sent = 0;
+  const seen = withdrawn.filter((w) => w.status === "accepted" || w.notifiedAt != null);
+  if (seen.length === 0) return 0;
+  try {
+    const creators = await prisma.creator.findMany({ where: { id: { in: [...new Set(seen.map((w) => w.creatorId))] } }, select: { id: true, name: true, email: true, status: true } });
+    const byId = new Map(creators.map((c) => [c.id, c]));
+    for (const w of seen) {
+      const c = byId.get(w.creatorId);
+      if (!c || c.status === "closed") continue;
+      try {
+        const body =
+          `<p>Hi ${esc(c.name)},</p>` +
+          `<p>Our team has withdrawn your booking for <b>${esc(w.pageName)}</b> (${esc(PLATFORM_LABEL[w.platform] ?? w.platform)} ${esc(formatLabel(w.format).toLowerCase())}).</p>` +
+          `<p><b>Please don't post it</b> (or take it down if it is already live). Nothing is owed either way.</p>` +
+          `<p style="color:#555">Questions? Reply to this email.</p>`;
+        const res = await sendCreatorEmail(c.email, `Booking withdrawn: please don't post for ${w.pageName}`, "Booking withdrawn", body);
+        if (res != null) sent++;
+      } catch (e) {
+        console.warn(`[creator-offers] withdrawn email failed for ${w.id}: ${scrubSecrets(String(e)).slice(0, 200)}`);
+      }
+    }
+  } catch (e) {
+    console.warn(`[creator-offers] withdrawn emails failed: ${scrubSecrets(String(e)).slice(0, 200)}`);
+  }
+  return sent;
 }
 
 // ── Transitions ─────────────────────────────────────────────────────────────────────────────────
@@ -341,15 +432,29 @@ async function ownOffer(creatorId: string, offerId: string): Promise<CreatorOffe
   return o;
 }
 
-/** The lines on the item row (staff-only) when a closed offer sends its item to refund_due. */
-const REFUND_DUE_TEXT = {
-  declined: "The creator declined this offer. Refund this post.",
-  expired: "The creator didn't respond before the offer expired. Refund this post.",
-  withdrawn: "The offer was withdrawn. Refund this post.",
-  missed_window: "The creator didn't post within the posting window. Refund this post.",
-} as const;
-type ClosedReason = keyof typeof REFUND_DUE_TEXT;
+/**
+ * What closed an offer, in words for staff (no call to action). An offer that expired without its creator ever being emailed
+ * (every send failed, or the account could not be mailed) is NOT "the creator didn't respond": nobody asked them.
+ */
+export function closedOfferText(reason: string | null, neverEmailed = false): string {
+  switch (reason) {
+    case "declined":
+      return "The creator declined this offer.";
+    case "expired":
+      return neverEmailed ? "The creator was never emailed this offer, so it expired unseen." : "The creator didn't respond before the offer expired.";
+    case "missed_window":
+      return "The creator didn't post within the posting window.";
+    case "creator_unavailable":
+      return "The creator's account is suspended or closed, so they couldn't act on this offer.";
+    default:
+      return "The offer was withdrawn.";
+  }
+}
+type ClosedReason = "declined" | "expired" | "withdrawn" | "missed_window" | "creator_unavailable";
 type CloseKind = "declined" | "expired" | "withdrawn";
+
+/** The line on the item row (staff-only) when a closed offer sends its item to refund_due. */
+const refundDueText = (reason: ClosedReason, neverEmailed: boolean) => `${closedOfferText(reason, neverEmailed)} Refund this post.`;
 
 interface CloseArgs {
   offerId: string;
@@ -362,7 +467,11 @@ interface CloseArgs {
   note?: string | null;
   /** withdraw: also close an accepted offer whose submitted link has not been verified (staff decided the link is no good). */
   discardSubmittedLink?: boolean;
-  /** Tell staff the item needs a refund (the workers and the creator do; a member of staff clicking Withdraw is already looking at it). */
+  /**
+   * Tell staff NOW that the item needs a refund (the creator declining does; a member of staff clicking Withdraw is already
+   * looking at it). The worker passes false and sends one digest per booking instead (cron alertPending), because a per-offer
+   * alert against the shared hourly ceiling drops the 13th of 15 offers that expire together.
+   */
   alert: boolean;
 }
 
@@ -375,9 +484,10 @@ function whyNotClosable(o: CreatorOffer, a: CloseArgs): AppError | null {
     if (o.status !== "offered") return new AppError(409, "OFFER_CLOSED", "This offer is no longer open.");
     return o.expiresAt.getTime() <= a.now.getTime() ? null : new AppError(409, "NOT_EXPIRED", "This offer hasn't expired yet.");
   }
+  // A verified post is live: it can never be withdrawn (checked first: a verified offer is `completed`, and that must not read as merely "closed").
+  if (o.linkVerifiedAt) return new AppError(409, "ALREADY_VERIFIED", "This post has already been verified and is live. It can't be withdrawn.");
   if (o.status === "offered") return null;
   if (o.status !== "accepted") return new AppError(409, "OFFER_CLOSED", "This offer is already closed.");
-  if (o.linkVerifiedAt) return new AppError(409, "ALREADY_VERIFIED", "This post has already been verified and is live. It can't be withdrawn.");
   if (o.linkSubmittedAt && !a.discardSubmittedLink) {
     return new AppError(409, "LINK_SUBMITTED", "The creator has already submitted their link. Check it and verify it, or (if it is not their post) withdraw with “discard the submitted link”.");
   }
@@ -399,16 +509,17 @@ async function closeOffer(a: CloseArgs): Promise<CreatorOffer> {
   if (!found || (a.creatorId && found.creatorId !== a.creatorId)) throw new AppError(404, "NOT_FOUND", "Offer not found");
   const staffId = a.actor.type === "staff" ? a.actor.id ?? null : null;
 
-  const closed = await prisma.$transaction(async (tx) => {
+  const { closed, before } = await prisma.$transaction(async (tx) => {
     await lockBookingRow(tx, found.bookingId);
     const o = await tx.creatorOffer.findUnique({ where: { id: a.offerId } });
     if (!o) throw new AppError(404, "NOT_FOUND", "Offer not found");
     const bad = whyNotClosable(o, a);
     if (bad) throw bad;
+    const neverEmailed = a.kind === "expired" && a.closedReason === "expired" && !o.notifiedAt;
 
     // Item, then payout, then offer: the same order refundItem takes its rows in.
     const itemFrom = a.kind === "withdrawn" ? ["awaiting_creator", "manual_pending"] : ["awaiting_creator"];
-    const item = await tx.campaignBookingItem.updateMany({ where: { id: o.bookingItemId, status: { in: itemFrom } }, data: { status: "refund_due", lastError: REFUND_DUE_TEXT[a.closedReason] } });
+    const item = await tx.campaignBookingItem.updateMany({ where: { id: o.bookingItemId, status: { in: itemFrom } }, data: { status: "refund_due", lastError: refundDueText(a.closedReason, neverEmailed) } });
     if (item.count !== 1) throw new AppError(409, "INVALID_STATE", "This post is no longer waiting on the creator. Refresh and try again.");
     await ensurePayoutRefundable(o.bookingItemId, { tx, actor: a.actor, reason: a.closedReason });
 
@@ -422,14 +533,14 @@ async function closeOffer(a: CloseArgs): Promise<CreatorOffer> {
       a.kind === "declined"
         ? { status: "declined", declinedAt: a.now, closedReason: "declined", creatorNote: a.note ? clip(a.note, 500) : null }
         : a.kind === "expired"
-          ? { status: "expired", expiredAt: a.now, closedReason: "expired" }
+          ? { status: "expired", expiredAt: a.now, closedReason: a.closedReason }
           : { status: "withdrawn", withdrawnAt: a.now, withdrawnById: staffId, closedReason: a.closedReason };
     const res = await tx.creatorOffer.updateMany({ where, data });
     if (res.count !== 1) throw new AppError(409, "OFFER_CLOSED", "This offer changed while it was being closed. Refresh and try again.");
 
-    const what = { declined: "declined the offer", expired: "did not respond: the offer expired", withdrawn: a.closedReason === "missed_window" ? "did not post in the window: the offer was withdrawn" : "offer withdrawn" }[a.kind];
+    const what = a.kind === "declined" ? "declined the offer" : a.kind === "expired" ? (neverEmailed ? "never got the offer email: the offer expired unseen" : a.closedReason === "creator_unavailable" ? "could not respond (their account is suspended or closed): the offer expired" : "did not respond: the offer expired") : a.closedReason === "missed_window" ? "did not post in the window: the offer was withdrawn" : "offer withdrawn";
     await logBookingEvent(o.bookingId, { type: staffId ? "staff" : "system", id: staffId }, `Creator post on ${o.pageName}: ${what}. The post needs a refund (nothing has been refunded).`.slice(0, 500), tx);
-    return (await tx.creatorOffer.findUniqueOrThrow({ where: { id: o.id } }));
+    return { closed: await tx.creatorOffer.findUniqueOrThrow({ where: { id: o.id } }), before: { status: o.status, notifiedAt: o.notifiedAt, neverEmailed } };
   });
 
   if (a.alert) {
@@ -439,12 +550,18 @@ async function closeOffer(a: CloseArgs): Promise<CreatorOffer> {
       [
         { label: "Campaign", value: closed.bookingId },
         { label: "Page", value: closed.pageName },
-        { label: "What happened", value: REFUND_DUE_TEXT[a.closedReason].replace(/ Refund this post\.$/, "") },
+        { label: "What happened", value: closedOfferText(a.closedReason, before.neverEmailed) },
         ...(a.note ? [{ label: "The creator wrote", value: clip(a.note, 300) }] : []),
         { label: "What to do", value: "Open the campaign and press Refund on that post. Nothing is refunded automatically." },
       ],
       `/campaigns/${closed.bookingId}`,
+      // The marker proves the email WENT OUT; without it the worker's digest (cron alertPending) sends it again.
+      { onSent: () => logBookingEvent(closed.bookingId, { type: "system" }, alertMarker("refund", closed.id)) },
     );
+  }
+  // The creator is told only when a person decided: the offer is withdrawn (staff, a refund, a rejected campaign), not when it lapsed, ran out of window or their own account is the reason.
+  if (a.kind === "withdrawn" && a.closedReason === "withdrawn" && (before.status === "accepted" || before.notifiedAt)) {
+    void sendOfferWithdrawnEmails([{ id: closed.id, creatorId: closed.creatorId, pageName: closed.pageName, platform: closed.platform, format: closed.format, status: before.status, notifiedAt: before.notifiedAt }]).catch(() => undefined);
   }
   return closed;
 }
@@ -474,19 +591,24 @@ export async function declineOffer(creatorId: string, offerId: string, reason?: 
   return closeOffer({ offerId, kind: "declined", closedReason: "declined", actor: { type: "creator", id: creatorId }, creatorId, note: reason?.trim() || null, now, alert: true });
 }
 
-/** The worker: an offer past its expiry that nobody answered. Throws 409 NOT_EXPIRED when it is not yet due. */
-export async function expireOffer(offerId: string, now: Date = new Date()): Promise<CreatorOffer> {
-  return closeOffer({ offerId, kind: "expired", closedReason: "expired", actor: { type: "system" }, now, alert: true });
+/**
+ * The worker: an offer past its expiry that nobody answered. Throws 409 NOT_EXPIRED when it is not yet due. `closedReason`
+ * says why nobody answered when it is not the creator's doing (their account is suspended or closed); `alert: false` leaves
+ * the staff email to the worker's per-booking digest.
+ */
+export async function expireOffer(offerId: string, now: Date = new Date(), opts: { alert?: boolean; closedReason?: "expired" | "creator_unavailable" } = {}): Promise<CreatorOffer> {
+  return closeOffer({ offerId, kind: "expired", closedReason: opts.closedReason ?? "expired", actor: { type: "system" }, now, alert: opts.alert ?? true });
 }
 
 /**
  * Staff (or the missed-window worker) withdraw an offer: `offered`, or `accepted` with NO link submitted yet.
  * `discardSubmittedLink` (staff only, explicit) also closes an accepted offer whose link was submitted but NOT verified:
  * the way out when staff have looked at the link and it is not the creator's post. A verified post can never be withdrawn.
+ * A creator who had seen the offer (accepted it, or was emailed it) is emailed that it is withdrawn, unless the worker did it.
  */
 export async function withdrawOffer(
   offerId: string,
-  o: { staffId?: string | null; closedReason?: "withdrawn" | "missed_window"; discardSubmittedLink?: boolean; alert?: boolean; now?: Date } = {},
+  o: { staffId?: string | null; closedReason?: "withdrawn" | "missed_window" | "creator_unavailable"; discardSubmittedLink?: boolean; alert?: boolean; now?: Date } = {},
 ): Promise<CreatorOffer> {
   return closeOffer({
     offerId,
@@ -503,7 +625,13 @@ export async function withdrawOffer(
 
 export interface LinkOwnership {
   check: Exclude<OwnershipCheck, "manual_ok">;
-  /** A short reason CODE (never a Graph body, never a token): matched | not_found | outside_window | token_lapsed | permission | … */
+  /**
+   * A short reason CODE (never a Graph body, never a token): matched | not_found | outside_window | token_lapsed | permission |
+   * rate_limited | unreachable | graph_error | no_page | connection_lapsed | no_token | token_unreadable | no_timestamp |
+   * share_link (an opaque share link: send the post's own link) | link_shape (a link form we cannot read) |
+   * feed_shape (their page lists posts in a form we cannot compare) | page_too_busy (their page posts too often for us to
+   * reach the posting window in the pages we read).
+   */
   detail: string;
   /** When the matched post went live. */
   postedAt: Date | null;
@@ -512,58 +640,49 @@ export interface LinkOwnership {
    * For a Facebook /share/ link that could be followed it is the key of the post it led to, not of the share code.
    */
   key: string;
+  /** Meta's own URL for the matched post (null when nothing matched): what is stored and later shown instead of the creator's string. */
+  permalink: string | null;
 }
 
-interface MediaRow {
-  permalink?: string;
-  timestamp?: string;
-  permalink_url?: string;
-  created_time?: string;
+interface FeedPage {
+  data?: Array<{ permalink?: string; timestamp?: string; permalink_url?: string; created_time?: string }>;
+  paging?: { next?: string };
 }
 
-/**
- * What a post's link is compared on. canonicalKey for every form it understands (ig:/yt:/fb:/sc:); for the ones it
- * leaves as a raw URL (an opaque Facebook /posts/pfbid… or story.php link) the host and path, so a tracking query or a
- * www./m. prefix cannot hide a real match. ⚠️ The path keeps its CASE: pfbid ids are case-sensitive, and the Facebook
- * reel id (/reel/<n>) is a DIFFERENT id from the {page}_{post} composite, so canonical keys are compared, never raw strings.
- */
-export function ownershipMatchKey(raw: string): string {
-  const k = canonicalKey(raw);
-  if (/^(ig|yt|fb|sc):/.test(k)) return k;
+/** A paging.next URL Meta returned, only when it really is one of Meta's (the token travels with it). */
+function metaPagingUrl(next: unknown): string | null {
+  if (typeof next !== "string") return null;
   try {
-    const u = new URL(raw.trim());
-    const host = u.hostname.toLowerCase().replace(/^(www\.|m\.|mobile\.|web\.)/, "");
-    const path = u.pathname.replace(/\/+$/, "");
-    if (/\/(story|permalink)\.php$/i.test(path)) return `${host}${path.toLowerCase()}?${u.searchParams.get("story_fbid") ?? ""}&${u.searchParams.get("id") ?? ""}`;
-    return `${host}${path}`;
+    const u = new URL(next);
+    return u.protocol === "https:" && /(^|\.)(facebook|instagram)\.com$/i.test(u.hostname) ? next : null;
   } catch {
-    return k;
+    return null;
   }
 }
-
-const isFacebookShareLink = (raw: string) => {
-  try {
-    const u = new URL(raw.trim());
-    return /(^|\.)facebook\.com$/i.test(u.hostname) && /^\/share\//i.test(u.pathname);
-  } catch {
-    return false;
-  }
-};
 
 /**
  * Is this link one of the creator's OWN recent posts inside the posting window? Read through the creator's own live
  * connection: Instagram `/{ig-id}/media` with the user token, Facebook `/{page-id}/published_posts` with the Page
- * token, ONE call, never stored (the list is read and dropped).
+ * token, newest first, a few pages at most (LINK_CHECK_MAX_PAGES), never stored (the list is read and dropped).
  *
  *   found, inside the window        → auto_ok
- *   read fine, not there / outside  → auto_failed   (the creator is told and can send another link)
- *   could not read their page       → unverifiable  (token lapsed, permission, throttled, unreachable…): a person decides
+ *   read to the window's start (or the whole feed), not there → auto_failed   (the creator is told and can send another link)
+ *   could not read their page, could not reach the window's start in the pages we read, a link we cannot compare →
+ *                                     unverifiable (a person decides)
  *
- * Never throws; never logs a token or a Graph body.
+ * ⚠️ "Not found" is only ever claimed when the feed was read far enough to know: the booked post is older than the newest
+ * page on a busy page, and that is NOT a failure of the creator's. Never throws; never logs a token or a Graph body.
  */
 export async function checkLinkOwnership(offer: CreatorOffer, url: string): Promise<LinkOwnership> {
-  let key = ownershipMatchKey(url);
-  const unverifiable = (detail: string): LinkOwnership => ({ check: "unverifiable", detail, postedAt: null, key });
+  const parsed = parseCreatorLink(offer.platform, url);
+  let key = parsed.ok ? parsed.link.key : ownershipMatchKey(url);
+  const unverifiable = (detail: string, permalink: string | null = null): LinkOwnership => ({ check: "unverifiable", detail, postedAt: null, key, permalink });
+  if (!parsed.ok) return unverifiable("link_shape");
+  const shape = parsed.link.shape;
+  // These name no post we can compare, so there is nothing to look for in their page (and no call to spend).
+  if (shape === "opaque") return unverifiable("link_shape");
+  if (shape === "share" && offer.platform === "instagram") return unverifiable("share_link");
+
   const asset = await prisma.creatorAsset.findUnique({
     where: { id: offer.creatorAssetId },
     select: {
@@ -588,40 +707,81 @@ export async function checkLinkOwnership(offer: CreatorOffer, url: string): Prom
   }
 
   // An opaque Facebook /share/ link names no post: follow its one redirect (fail-open) to the clean /reel/<id> form.
-  let compareUrl = url;
-  if (!isIg && !/^fb:/.test(canonicalKey(url)) && isFacebookShareLink(url)) {
+  if (shape === "share") {
     const resolved = await resolveFacebookShareUrl(url);
-    if (!resolved) return unverifiable("share_link");
-    compareUrl = resolved;
-    key = ownershipMatchKey(resolved);
-  }
-
-  const res = await oauthGraphFetch<{ data?: MediaRow[] }>(
-    isIg ? `${asset.metaId}/media` : `${asset.metaId}/published_posts`,
-    isIg ? { fields: "permalink,timestamp", limit: 50 } : { fields: "permalink_url,created_time", limit: 25 },
-    token,
-    { label: "creator-offer-link-check", budget: makeBudget(1), appSecret: creatorMetaAppSecret() },
-  );
-  if (!res.ok) {
-    if (res.authInvalid) return unverifiable("token_lapsed");
-    if (res.rateLimited) return unverifiable("rate_limited");
-    if (res.status === 0) return unverifiable("unreachable");
-    if (res.errorCode === 10 || (res.errorCode != null && res.errorCode >= 200 && res.errorCode < 300)) return unverifiable("permission");
-    return unverifiable("graph_error");
+    const r = resolved ? parseCreatorLink("facebook", resolved) : null;
+    if (!r || !r.ok || r.link.shape !== "identity") return unverifiable("share_link");
+    key = r.link.key;
   }
 
   const want = key;
-  const match = (res.data?.data ?? []).find((m) => {
-    const link = isIg ? m.permalink : m.permalink_url;
-    return typeof link === "string" && link !== "" && ownershipMatchKey(link) === want;
-  });
-  if (!match) return { check: "auto_failed", detail: "not_found", postedAt: null, key };
-  const ts = Date.parse((isIg ? match.timestamp : match.created_time) ?? "");
-  if (!Number.isFinite(ts)) return unverifiable("no_timestamp");
+  const limit = isIg ? 50 : 25;
+  const winFrom = offerWindow(offer).from?.getTime() ?? null;
+  const budget = makeBudget(LINK_CHECK_MAX_PAGES);
+  let cursor: string | null = null;
+  let match: { link: string; stamp: string | undefined } | null = null;
+  let exhausted = false;
+  let reachedWindowStart = false;
+  let oddRows = false;
+  for (let page = 0; page < LINK_CHECK_MAX_PAGES && !match; page++) {
+    const res: Awaited<ReturnType<typeof oauthGraphFetch<FeedPage>>> = await oauthGraphFetch<FeedPage>(
+      cursor ?? (isIg ? `${asset.metaId}/media` : `${asset.metaId}/published_posts`),
+      cursor ? {} : isIg ? { fields: "permalink,timestamp", limit } : { fields: "permalink_url,created_time", limit },
+      token,
+      { label: "creator-offer-link-check", budget, appSecret: creatorMetaAppSecret() },
+    );
+    if (!res.ok) {
+      if (res.authInvalid) return unverifiable("token_lapsed");
+      if (res.rateLimited) return unverifiable("rate_limited");
+      if (res.status === 0) return unverifiable("unreachable");
+      if (res.errorCode === 10 || (res.errorCode != null && res.errorCode >= 200 && res.errorCode < 300)) return unverifiable("permission");
+      return unverifiable("graph_error");
+    }
+    const rows = res.data?.data ?? [];
+    let oldest = Infinity;
+    for (const m of rows) {
+      const link = isIg ? m.permalink : m.permalink_url;
+      const stamp = isIg ? m.timestamp : m.created_time;
+      const ts = Date.parse(stamp ?? "");
+      if (Number.isFinite(ts)) oldest = Math.min(oldest, ts);
+      if (typeof link !== "string" || link === "") {
+        oddRows = true;
+        continue;
+      }
+      const k = ownershipMatchKey(link);
+      if (k === want) {
+        match = { link, stamp };
+        break;
+      }
+      if (!isIdentityKey(k)) oddRows = true;
+    }
+    if (match) break;
+    const next = metaPagingUrl(res.data?.paging?.next);
+    if (rows.length === 0 || !res.data?.paging?.next) {
+      exhausted = true; // Meta has no more: the whole feed was read
+      break;
+    }
+    // Newest first: once a page reaches back before the window opened, a post made inside the window would already have shown.
+    if (winFrom !== null && oldest < winFrom) {
+      reachedWindowStart = true;
+      break;
+    }
+    cursor = next;
+    if (!cursor) break; // a next link that is not Meta's: do not follow it, and do not claim to have read everything
+  }
+
+  if (!match) {
+    if (!exhausted && !reachedWindowStart) return unverifiable("page_too_busy");
+    // Posts in a form we cannot compare may be the one we are looking for: say so, rather than "not found".
+    if (oddRows) return unverifiable("feed_shape");
+    return { check: "auto_failed", detail: "not_found", postedAt: null, key, permalink: null };
+  }
+  const ts = Date.parse(match.stamp ?? "");
+  if (!Number.isFinite(ts)) return unverifiable("no_timestamp", match.link);
   const postedAt = new Date(ts);
   const win = offerWindow(offer);
   const inside = (!win.from || postedAt.getTime() >= win.from.getTime()) && (!win.to || postedAt.getTime() < win.to.getTime());
-  return inside ? { check: "auto_ok", detail: "matched", postedAt, key } : { check: "auto_failed", detail: "outside_window", postedAt, key };
+  return { check: inside ? "auto_ok" : "auto_failed", detail: inside ? "matched" : "outside_window", postedAt, key, permalink: match.link };
 }
 
 /** What a creator is told about the check on the link they just sent. */
@@ -635,57 +795,85 @@ export function linkCheckMessage(check: string | null, detail: string | null): s
         ? "That post was published outside the posting window. If it is the right post, our team can still look at it; otherwise post within the window and send that link."
         : "We couldn't find that post on your connected page. Check that you pasted the link of the post itself, from the page you connected, and send it again.";
     case "unverifiable":
+      if (detail === "share_link") {
+        return "That is a share link, which doesn't tell us which post it is. Open your post and paste the post's own link (Instagram: instagram.com/reel/… or instagram.com/p/…; Facebook: facebook.com/reel/… or the post's address bar link). Our team will also look at this one by hand.";
+      }
+      if (detail === "page_too_busy") return "Your page posts so often that we couldn't reach this post to check it automatically, so our team will check this link by hand.";
+      if (detail === "link_shape" || detail === "feed_shape") return "We can't compare that kind of link automatically, so our team will check it by hand. If you can, paste the post's own link.";
       return "We couldn't check your page automatically right now, so our team will check this link by hand.";
     default:
       return "";
   }
 }
 
-/** Whether the creator may still hand in (or replace) a link. */
-function assertLinkable(o: CreatorOffer, now: Date): void {
-  if (o.status !== "accepted") throw new AppError(409, "OFFER_NOT_ACCEPTED", o.status === "offered" ? "Accept the offer before you send the link." : "This offer is closed.");
+/** Whether the creator may still hand in (or replace) a link. `grace` is the recorded outage grace (loadDeadlineGrace). */
+function assertLinkable(o: CreatorOffer, now: Date, grace: GraceWindow[]): void {
+  // Verified first: a verified offer is `completed`, and that must read "already verified", not "closed".
   if (o.linkVerifiedAt) throw new AppError(409, "ALREADY_VERIFIED", "Your post has already been verified.");
-  const deadline = linkDeadline(o);
+  if (o.status !== "accepted") throw new AppError(409, "OFFER_NOT_ACCEPTED", o.status === "offered" ? "Accept the offer before you send the link." : "This offer is closed.");
+  // Once our team has vouched for the link (checked it by hand) it is the link: it cannot be swapped for another.
+  if (o.ownershipCheck === "manual_ok") throw new AppError(409, "LINK_FROZEN", "Our team has already checked your link, so it can't be changed. Contact us if it is the wrong one.");
+  const deadline = effectiveLinkDeadline(o, grace);
   if (deadline && now.getTime() >= deadline.getTime()) throw new AppError(409, "POSTING_CLOSED", "The posting window for this booking has closed.");
 }
 
 /**
- * The creator sends the link of the post they made BY HAND. It must be a link on the item's platform, the offer must be
- * accepted and not past the window + 24 h grace, the item must still wait for the post and its payout must not be void or
- * failed. The link is then checked against the creator's own recent posts (outside any transaction: it is a network call)
- * and stored with the verdict. The item stays `manual_pending`: only staff make a post live (verifyCreatorItem).
+ * The creator sends the link of the post they made BY HAND. It must be a post link on the item's platform, in its own form
+ * (no redirect or shortened wrapper), the offer must be accepted and not past the window + 24 h grace, the item must still wait
+ * for the post and its payout must not be void or failed. The link is then checked against the creator's own recent posts
+ * (outside any transaction: it is a network call) and stored with the verdict. The item stays `manual_pending`: only staff make
+ * a post live (verifyCreatorItem).
  *
- * Re-sending replaces the link and the verdict until staff verify it. One post can pay for one booking only
- * (409 LINK_ALREADY_USED when the same post is already on another offer).
+ * ⚠️ WHAT IS STORED is never the pasted string: it is Meta's own URL for the post when the check found it, else the link in its
+ * clean form (https, www., no tracking query), because that is what staff verify and the client is shown.
+ *
+ * Re-sending replaces the link and the verdict until staff verify it (or vouch for it by hand). A post that PASSED its check on
+ * another booking blocks this one (409 LINK_ALREADY_USED); a link that did not pass never blocks anyone: one creator pasting
+ * another creator's post cannot lock the real owner out. The strict "one post, one booking" check is staff's verify.
  */
 export async function submitOfferLink(creatorId: string, offerId: string, rawUrl: string, now: Date = new Date()) {
   const offer = await ownOffer(creatorId, offerId);
-  assertLinkable(offer, now);
+  const grace = await loadDeadlineGrace();
+  assertLinkable(offer, now, grace);
   const url = rawUrl.trim();
   // creator_offers.link_url is VARCHAR(500): refuse a longer one here, cleanly, before it can become a database error.
   if (url.length > 500) throw new AppError(400, "VALIDATION_ERROR", "That link is too long.");
+  const platformName = PLATFORM_LABEL[offer.platform] ?? offer.platform;
   if (!isPlatformPostUrl(offer.platform as CampaignPlatform, url)) {
-    throw new AppError(400, "WRONG_PLATFORM", `That isn't a ${PLATFORM_LABEL[offer.platform] ?? offer.platform} link.`);
+    throw new AppError(400, "WRONG_PLATFORM", `That isn't a ${platformName} link.`);
+  }
+  const parsed = parseCreatorLink(offer.platform, url);
+  if (!parsed.ok) {
+    if (parsed.reason === "host") throw new AppError(400, "WRONG_PLATFORM", `That isn't a ${platformName} post link. Paste the post's own link, not a redirect or shortened one.`);
+    if (parsed.reason === "redirect") throw new AppError(400, "INVALID_LINK", "That link redirects somewhere else. Paste the post's own link.");
+    throw new AppError(400, "NOT_A_POST", `That isn't the link of a ${platformName} post. Open the post and paste its own link.`);
   }
 
   const check = await checkLinkOwnership(offer, url);
-  const key = clip(check.key, 255);
+  const key = check.key;
+  const stored = check.permalink && check.permalink.length <= 500 ? check.permalink : parsed.link.url;
 
   await prisma.$transaction(async (tx) => {
     await lockBookingRow(tx, offer.bookingId);
     const cur = await tx.creatorOffer.findUnique({ where: { id: offer.id } });
     if (!cur || cur.creatorId !== creatorId) throw new AppError(404, "NOT_FOUND", "Offer not found");
-    assertLinkable(cur, now);
+    assertLinkable(cur, now, grace);
     const item = await tx.campaignBookingItem.findUnique({ where: { id: cur.bookingItemId }, select: { status: true } });
     if (item?.status !== "manual_pending") throw new AppError(409, "OFFER_CLOSED", "This booking can no longer take a post.");
     const payout = await tx.creatorPayout.findUnique({ where: { bookingItemId: cur.bookingItemId }, select: { status: true } });
     if (!payout || !payoutAllowsLink(payout.status)) throw new AppError(409, "OFFER_UNAVAILABLE", "This booking can't go ahead any more. Contact us if you think that is a mistake.");
-    const used = await tx.creatorOffer.count({ where: { linkCanonicalKey: key, id: { not: cur.id }, status: { in: ["accepted", "completed"] }, linkSubmittedAt: { not: null } } });
-    if (used > 0) throw new AppError(409, "LINK_ALREADY_USED", "That post has already been sent in for another booking. Send the link of the post you made for this one.");
+    // Only a claim that HELD UP reserves the post, and only for a link that held up itself: a link that failed its check is not
+    // anyone's claim (and a 409 to it would tell a stranger that somebody else sent this post in).
+    if (check.check !== "auto_failed") {
+      const used = await tx.creatorOffer.count({
+        where: { linkCanonicalKey: key, id: { not: cur.id }, status: { in: ["accepted", "completed"] }, linkSubmittedAt: { not: null }, ownershipCheck: { in: ["auto_ok", "manual_ok"] } },
+      });
+      if (used > 0) throw new AppError(409, "LINK_ALREADY_USED", "That post has already been sent in for another booking. Send the link of the post you made for this one.");
+    }
     const res = await tx.creatorOffer.updateMany({
-      where: { id: cur.id, creatorId, status: "accepted", linkVerifiedAt: null },
+      where: { id: cur.id, creatorId, status: "accepted", linkVerifiedAt: null, OR: [{ ownershipCheck: null }, { ownershipCheck: { not: "manual_ok" } }] },
       data: {
-        linkUrl: url,
+        linkUrl: stored,
         linkCanonicalKey: key,
         linkSubmittedAt: now,
         linkPostedAt: check.postedAt,
@@ -706,16 +894,22 @@ export async function submitOfferLink(creatorId: string, offerId: string, rawUrl
 
 /**
  * Staff verify the link the creator submitted, which makes the post LIVE (the item goes posted_manual with the creator's
- * link). Refused, with nothing changed, unless ALL of these hold: an accepted offer, a link the creator submitted
- * (`url`, when given, must be that very post), the item waiting in manual_pending, a payout that is not void or failed, an
- * ownership check that PASSED (auto_ok / manual_ok), or one that did not (auto_failed / unverifiable) with the staff member
- * saying they checked by hand (`ownershipCheckedByHand`, which records manual_ok and who). One post can be verified for one
- * booking only. Stamps link_verified_at / link_verified_by_id. Nothing is paid here: see onCreatorLinkVerified (Phase 4).
+ * link). Refused, with nothing changed, unless ALL of these hold: an accepted offer, a link the creator submitted, the item
+ * waiting in manual_pending, a payout that is not void or failed, an ownership check that PASSED (auto_ok / manual_ok), or one
+ * that did not (auto_failed / unverifiable) with the staff member saying they checked by hand (`ownershipCheckedByHand`, which
+ * records manual_ok and who). One post can be verified for one booking only. Stamps link_verified_at / link_verified_by_id and
+ * moves the offer to `completed`: it is finished, so it no longer counts as open work. Nothing is paid here: see
+ * onCreatorLinkVerified (Phase 4).
+ *
+ * ⚠️ BOUND TO THE LINK STAFF LOOKED AT. `expectedLinkKey` is the offer's `linkCanonicalKey` as the staff member saw it; when the
+ * creator has since sent a different link it is 409 LINK_CHANGED and nothing is verified (a hand tick vouches for ONE link: the
+ * creator may re-send until verification, so without this the tick could end up on a link nobody looked at). `url`, when given
+ * (the generic "mark posted" route), must be that very post (400 LINK_MISMATCH).
  */
 export async function verifyCreatorItem(
   bookingId: string,
   itemId: string,
-  o: { staffId: string; url?: string | null; ownershipCheckedByHand?: boolean; now?: Date },
+  o: { staffId: string; url?: string | null; expectedLinkKey?: string | null; ownershipCheckedByHand?: boolean; now?: Date },
 ): Promise<{ offerId: string; accountName: string; permalink: string; format: string; manual: boolean }> {
   const now = o.now ?? new Date();
   return prisma.$transaction(async (tx) => {
@@ -729,8 +923,15 @@ export async function verifyCreatorItem(
     const offer = await tx.creatorOffer.findUnique({ where: { bookingItemId: itemId } });
     if (!offer || offer.status !== "accepted") throw new AppError(409, "OFFER_NOT_ACCEPTED", "There is no accepted offer for this post.");
     if (!offer.linkSubmittedAt || !offer.linkUrl) throw new AppError(409, "NO_LINK", "The creator hasn't sent their link yet.");
-    if (o.url && ownershipMatchKey(o.url) !== ownershipMatchKey(offer.linkUrl)) {
-      throw new AppError(400, "LINK_MISMATCH", "A creator's post is recorded from the link the creator sent. That isn't their link.");
+    const haveKey = offer.linkCanonicalKey ?? ownershipMatchKey(offer.linkUrl);
+    if (o.expectedLinkKey != null && o.expectedLinkKey !== haveKey) {
+      throw new AppError(409, "LINK_CHANGED", "The creator sent a different link since you opened this. Reload, look at the new link, and verify again.");
+    }
+    if (o.url) {
+      const typed = ownershipMatchKey(o.url);
+      if (typed !== haveKey && typed !== ownershipMatchKey(offer.linkUrl)) {
+        throw new AppError(400, "LINK_MISMATCH", "A creator's post is recorded from the link the creator sent. That isn't their link.");
+      }
     }
     if (!isPlatformPostUrl(item.platform as CampaignPlatform, offer.linkUrl)) throw new AppError(400, "WRONG_PLATFORM", `The creator's link isn't a ${item.platform} link.`);
 
@@ -756,8 +957,11 @@ export async function verifyCreatorItem(
     if (claimed.count !== 1) throw new AppError(409, "INVALID_STATE", "This post changed. Refresh and try again.");
     const manual = !passed;
     const stamped = await tx.creatorOffer.updateMany({
-      where: { id: offer.id, status: "accepted", linkVerifiedAt: null, linkSubmittedAt: { not: null } },
+      // Bound to the link just read, too: the booking lock already stops a re-send in between, and this keeps it true if that ever changes.
+      where: { id: offer.id, status: "accepted", linkVerifiedAt: null, linkSubmittedAt: { not: null }, linkUrl: offer.linkUrl },
       data: {
+        // The post is delivered and the offer is over: `completed` (not `accepted` forever, which would count as open work).
+        status: "completed",
         linkVerifiedAt: now,
         linkVerifiedById: o.staffId,
         ...(manual ? { ownershipCheck: "manual_ok", ownershipCheckedAt: now, ownershipCheckedById: o.staffId } : {}),
@@ -849,7 +1053,7 @@ export async function getOfferForCreator(creatorId: string, offerId: string, now
     };
   }
 
-  const deadline = linkDeadline(o);
+  const deadline = effectiveLinkDeadline(o, await loadDeadlineGrace());
   const open = status === "offered";
   return {
     ...toOfferRow(o, now),
@@ -869,7 +1073,7 @@ export async function getOfferForCreator(creatorId: string, offerId: string, now
     actions: {
       accept: open,
       decline: open,
-      submitLink: o.status === "accepted" && !o.linkVerifiedAt && (!deadline || now.getTime() < deadline.getTime()),
+      submitLink: o.status === "accepted" && !o.linkVerifiedAt && o.ownershipCheck !== "manual_ok" && (!deadline || now.getTime() < deadline.getTime()),
     },
   };
 }
@@ -898,6 +1102,8 @@ export async function listOffersForBooking(bookingId: string) {
     withdrawnAt: o.withdrawnAt,
     creatorNote: o.creatorNote,
     linkUrl: o.linkUrl,
+    // What a verify request must quote back (verify-creator-link's `linkCanonicalKey`): the link the staff member is looking at.
+    linkCanonicalKey: o.linkCanonicalKey,
     linkSubmittedAt: o.linkSubmittedAt,
     linkPostedAt: o.linkPostedAt,
     ownershipCheck: o.ownershipCheck,

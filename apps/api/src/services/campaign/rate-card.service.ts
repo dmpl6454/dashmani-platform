@@ -31,8 +31,9 @@ import { LINK_DELIVERY_MINUTES } from "./config";
 //   • listCreatorTargets()  — what STAFF can price: the creator is approved and the page is switched on,
 //     publishable, not a duplicate of our own network and on a live connection. No switches involved: staff
 //     can set a page up while the marketplace is still dark.
-//   • listBookableTargets() / getCatalogue() — what a CLIENT can book. Everything above PLUS the marketplace and
-//     Route switches and Razorpay's keys, an ACTIVATED payout account that is past its 24-hour wait with no bank
+//   • listBookableTargets() / getCatalogue() — what a CLIENT can book. Everything above PLUS the creator portal's
+//     master switch, the marketplace and Route switches and Razorpay's keys (creatorConfig.marketplaceAvailable()),
+//     an ACTIVATED payout account that is past its 24-hour wait with no bank
 //     change in flight, and (in getCatalogue) an active card WITH a share. Evaluated on EVERY read, never cached,
 //     so a suspended creator, a lapsed payout account or a bank change takes the page out of the list at once.
 // listRateCardGrid() (our own network's grid) never contains a creator page.
@@ -174,8 +175,15 @@ function notBookableReason(acct: PayoutAccountFacts | null | undefined, now: Dat
  * The creator pages STAFF can price (see the header): approved creator, page switched on, publishable, not
  * a duplicate of our own network, connection live. `creator.notBookable` says whether a CLIENT could book it
  * today (ignoring the switches). Read fresh every time.
+ *
+ * ⚠️ `audience: "client"` (the booking path: bookableCreatorPages) never reads the creator's Page Insights at
+ * all: views28d / engagements28d come from the creator's OWN token (creator-metrics.service) and are private
+ * analytics, while the creators' privacy page promises brands only a page's "name, picture and public
+ * statistics". A client-path target carries null for views28d, engagements28d and engagementRatePct, so no
+ * later field-copy can hand them to a brand. Staff (the default) still see them to price a page.
  */
-export async function listCreatorTargets(opts: { onlyIds?: string[] } = {}): Promise<CatalogueTarget[]> {
+export async function listCreatorTargets(opts: { onlyIds?: string[]; audience?: "staff" | "client" } = {}): Promise<CatalogueTarget[]> {
+  const forClient = opts.audience === "client";
   if (opts.onlyIds && opts.onlyIds.length === 0) return [];
   const assets = await prisma.creatorAsset.findMany({
     where: {
@@ -195,8 +203,7 @@ export async function listCreatorTargets(opts: { onlyIds?: string[] } = {}): Pro
       username: true,
       pictureUrl: true,
       followerCount: true,
-      views28d: true,
-      engagements28d: true,
+      ...(forClient ? {} : { views28d: true, engagements28d: true }),
       creatorId: true,
       creator: { select: { name: true } },
     },
@@ -210,8 +217,9 @@ export async function listCreatorTargets(opts: { onlyIds?: string[] } = {}): Pro
   const now = new Date();
   return assets.map((a): CatalogueTarget => {
     const acct = byCreator.get(a.creatorId) ?? null;
-    const views = big(a.views28d);
-    const eng = big(a.engagements28d);
+    // Private Page Insights: staff only (see above). A client-audience row never even had them selected.
+    const views = forClient ? null : big(a.views28d);
+    const eng = forClient ? null : big(a.engagements28d);
     return {
       targetType: "creator_asset",
       targetId: a.id,
@@ -240,14 +248,15 @@ type OfferableCard = Awaited<ReturnType<typeof prisma.campaignRateCard.findMany<
 
 /**
  * The creator pages a CLIENT can book, each with the cards that are really on offer. A page counts only when ALL of
- * this holds: the marketplace + Route switches and Razorpay's keys are on; the creator is approved and the page is
+ * this holds: the creator portal's master switch, the marketplace + Route switches and Razorpay's keys are on; the creator is approved and the page is
  * switched on, publishable and live (listCreatorTargets); the payout account can take a booking (activated, past its
  * wait, no bank change in flight); and at least one of its cards is ACTIVE, has a share, and still pays the creator the
  * minimum at its lowest price. EMPTY (and no query at all) while any switch is off. Read fresh on every call.
  */
 async function bookableCreatorPages(opts: { onlyIds?: string[] } = {}): Promise<Array<{ target: CatalogueTarget; cards: OfferableCard[] }>> {
   if (!creatorConfig.marketplaceAvailable()) return [];
-  const targets = (await listCreatorTargets(opts)).filter((t) => t.creator?.notBookable === null);
+  // The CLIENT audience: no private Page Insights (see listCreatorTargets).
+  const targets = (await listCreatorTargets({ ...opts, audience: "client" })).filter((t) => t.creator?.notBookable === null);
   if (targets.length === 0) return [];
   const cards = await prisma.campaignRateCard.findMany({
     where: { targetType: CREATOR_TARGET, active: true, targetId: { in: targets.map((t) => t.targetId) }, creatorTerm: { isNot: null } },
@@ -609,8 +618,11 @@ async function creatorCatalogue(): Promise<CatalogueEntry[]> {
       username: t.username,
       pictureUrl: t.pictureUrl,
       followers: t.followers,
-      engagementRatePct: t.engagementRatePct,
-      views28d: t.views28d,
+      // ⚠️ Always null for a creator's page, whatever the target carries: a creator's reach and engagement are their
+      // private Page Insights, not public statistics, and are not shown to brands. The keys stay (same shape as a
+      // network entry) and the picker renders null as a dash.
+      engagementRatePct: null,
+      views28d: null,
       category: own.find((c) => c.category)?.category ?? null,
       profileUrl: t.profileUrl,
       linkDeliveryMinutes: { ...LINK_DELIVERY_MINUTES },

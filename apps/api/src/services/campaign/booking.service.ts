@@ -225,8 +225,9 @@ function shapeBooking(b: any, files?: Awaited<ReturnType<typeof resolveItemFiles
     submittedAt: b.submittedAt,
     paidAt: b.paidAt,
     // "razorpay" → the Pay step opens the gateway; "offline" → it submits for review and the
-    // amount is collected by hand (the state while the gateway is deferred).
-    paymentMode: razorpayConfig.paymentMode(),
+    // amount is collected by hand (the state while the gateway is deferred). PER BOOKING, from the same helper
+    // checkout uses: a booking with a creator's page is online whatever CAMPAIGN_PAYMENT_MODE says.
+    paymentMode: razorpayConfig.bookingPaymentMode((b.items ?? []).some((i: any) => i.targetType === CREATOR_TARGET_TYPE)),
     approvedAt: b.approvedAt,
     deliveredAt: b.deliveredAt,
     createdAt: b.createdAt,

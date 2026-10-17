@@ -82,10 +82,14 @@ router.post("/admin/campaigns/:id/items/:itemId/posted", ...gate, validate(campa
  * "Verify link & release": the creator's link for a creator item is what goes live. Refused (409) unless the creator
  * accepted, submitted a link, and the page-ownership check passed; for a check that did not, `ownershipCheckedByHand`
  * says staff opened the link and checked it themselves. Nothing is paid here (that is the later payout phase).
+ *
+ * ⚠️ `linkCanonicalKey` (REQUIRED) is the `linkCanonicalKey` of the creator's offer exactly as the staff member saw it in the
+ * booking detail. The creator may send another link until it is verified, so a verify (and a hand tick above all) must name the
+ * link it is about: if the creator's current link is a different one the answer is 409 LINK_CHANGED and nothing is verified.
  */
-const verifyCreatorLinkSchema = z.object({ ownershipCheckedByHand: z.boolean().optional() });
+const verifyCreatorLinkSchema = z.object({ ownershipCheckedByHand: z.boolean().optional(), linkCanonicalKey: z.string().trim().min(1).max(800) });
 router.post("/admin/campaigns/:id/items/:itemId/verify-creator-link", ...gate, validate(verifyCreatorLinkSchema), asyncHandler(async (req, res) => {
-  return success(res, await review.verifyCreatorLink(req.params.id, req.params.itemId, staffId(req), { ownershipCheckedByHand: req.body.ownershipCheckedByHand === true }));
+  return success(res, await review.verifyCreatorLink(req.params.id, req.params.itemId, staffId(req), { ownershipCheckedByHand: req.body.ownershipCheckedByHand === true, linkCanonicalKey: req.body.linkCanonicalKey }));
 }));
 
 /**

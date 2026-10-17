@@ -328,7 +328,7 @@ function PageCard({ t, changed, valueOf, dirty, evalOf, category, onValue, onCat
         {tdsBps > 0
           ? `${tdsBps / 100}% TDS is withheld from the creator's share and is not ours. `
           : "No TDS rate is set for this creator, so the amounts above are before any tax withheld. "}
-        &ldquo;We keep&rdquo; is the price minus the creator&apos;s share. Razorpay&apos;s 0.25% transfer fee + GST and the gateway fee are ours, never taken from the creator.
+        &ldquo;We keep&rdquo; is the price minus the creator&apos;s share. Razorpay&apos;s 0.25% transfer fee + GST and the gateway fee are paid by us. We expect Razorpay to take nothing from the creator&apos;s own settlement, but that is not confirmed yet: check the first live payout before you promise a creator the full &ldquo;creator gets&rdquo; amount.
       </p>
     </article>
   );

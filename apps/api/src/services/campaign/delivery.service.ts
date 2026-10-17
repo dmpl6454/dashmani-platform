@@ -1,5 +1,5 @@
 import { prisma } from "@dashmani/db";
-import { canonicalKey, CAMPAIGN_TYPE_LABELS, FORMAT_LABELS, formatPaise, LIVE_ITEM_STATUSES, SETTLED_ITEM_STATUSES, type CampaignFormat, type CampaignType, type ItemStatus } from "@dashmani/shared";
+import { canonicalKey, CAMPAIGN_TYPE_LABELS, CREATOR_TARGET_TYPE, FORMAT_LABELS, formatPaise, LIVE_ITEM_STATUSES, SETTLED_ITEM_STATUSES, type CampaignFormat, type CampaignProvider, type CampaignType, type ItemStatus } from "@dashmani/shared";
 import { sendEmail, notifyAdminByEmail } from "../email.service";
 import { campaignConfig } from "./config";
 import { providersOfItems } from "../creator/payout-ledger";
@@ -57,13 +57,34 @@ async function bookingWithClient(bookingId: string) {
       audioTrack: true,
       launchFrom: true,
       launchTo: true,
+      // Read only to NAME a creator's posts (providersOfItems takes the name frozen at checkout from it).
+      pricingSnapshot: true,
       client: { select: { email: true, contactName: true, companyName: true } },
       items: {
         orderBy: { createdAt: "asc" },
-        select: { id: true, platform: true, format: true, accountName: true, accountHandle: true, status: true, permalink: true, postedAt: true, pricePaise: true },
+        select: { id: true, platform: true, format: true, accountName: true, accountHandle: true, status: true, permalink: true, postedAt: true, pricePaise: true, targetType: true, targetId: true },
       },
     },
   });
+}
+
+type EmailBooking = NonNullable<Awaited<ReturnType<typeof bookingWithClient>>>;
+type EmailItem = EmailBooking["items"][number];
+
+/** The creator's name for the client: the one FROZEN at checkout, never the live account name (see providersOfItems). */
+const creatorNameOf = (providers: Map<string, CampaignProvider>, itemId: string) => providers.get(itemId)?.name || "the creator";
+
+/**
+ * "<strong>Meera Kapoor</strong> (Meera Eats on Instagram)" for the creator posts given: who makes which post, the
+ * way the portal names the provider. Names only: nothing of a creator's payout, share or tax ever goes in an email.
+ */
+function creatorPostsList(items: EmailItem[], providers: Map<string, CampaignProvider>): string {
+  const byCreator = new Map<string, string[]>();
+  for (const i of items) {
+    const name = providers.get(i.id)?.name || "A creator";
+    byCreator.set(name, [...(byCreator.get(name) ?? []), `${i.accountName} on ${PLATFORM_LABEL[i.platform] ?? i.platform}`]);
+  }
+  return [...byCreator].map(([name, posts]) => `<strong>${esc(name)}</strong> (${esc(posts.join(", "))})`).join("; ");
 }
 
 const portalLink = (id: string) => `${campaignConfig.clientAppUrl()}/campaigns/${id}`;
@@ -240,13 +261,16 @@ export async function sendDeliveryEmail(bookingId: string, opts: { force?: boole
   }
   const b = await bookingWithClient(bookingId);
   if (!b) return false;
+  // A creator's post names its provider (empty, and no query, for a network-only booking).
+  const providers = await providersOfItems(b);
 
   // "Refunded" is said only of an item whose money Razorpay has accepted back (see confirmedRefundItemIds).
   const confirmedRefunds = await confirmedRefundsFor(b);
 
   const rows = b.items
     .map((i) => {
-      const acct = i.accountHandle ? `${esc(i.accountName)} <span style="color:#777">@${esc(i.accountHandle)}</span>` : esc(i.accountName);
+      const acctName = i.accountHandle ? `${esc(i.accountName)} <span style="color:#777">@${esc(i.accountHandle)}</span>` : esc(i.accountName);
+      const acct = providers.has(i.id) ? `${acctName}<br><span style="color:#777">Posted by ${esc(creatorNameOf(providers, i.id))}</span>` : acctName;
       const link = i.permalink
         ? `<a href="${esc(i.permalink)}" style="color:#1a56db;font-weight:600">View post</a>`
         : isLive(i.status) ? "Live — link to follow" : esc(itemStatusText(i.status, Boolean(b.paidAt), confirmedRefunds.has(i.id)));
@@ -297,18 +321,54 @@ export async function sendItemLiveEmail(itemId: string): Promise<boolean> {
     data: { notifiedAt: new Date() },
   });
   if (claim.count !== 1) return false;
-  const item = await prisma.campaignBookingItem.findUnique({ where: { id: itemId }, select: { bookingId: true, accountName: true, accountHandle: true, platform: true, format: true, permalink: true, postedAt: true } });
+  const item = await prisma.campaignBookingItem.findUnique({ where: { id: itemId }, select: { id: true, bookingId: true, targetType: true, accountName: true, accountHandle: true, platform: true, format: true, permalink: true, postedAt: true } });
   if (!item?.permalink) return false;
   const b = await bookingWithClient(item.bookingId);
   if (!b) return false;
   const where = item.accountHandle ? `@${item.accountHandle}` : item.accountName;
+  // A creator's post says who made it. A network post's wording is exactly what it was.
+  const providers = item.targetType === CREATOR_TARGET_TYPE ? await providersOfItems(b) : new Map<string, CampaignProvider>();
+  const postedBy = providers.has(item.id) ? ` by <strong>${esc(creatorNameOf(providers, item.id))}</strong>` : "";
   const html = shell(`Your post is live on ${where}`, `
 <p>Hi ${esc(b.client.contactName)},</p>
-<p>Your ${esc(FORMAT_LABELS[item.format as CampaignFormat] ?? item.format)} for <strong>${esc(b.name)}</strong> is now live on ${esc(PLATFORM_LABEL[item.platform] ?? item.platform)} (${esc(where)}), posted ${esc(fmtIST(item.postedAt))}.</p>
+<p>Your ${esc(FORMAT_LABELS[item.format as CampaignFormat] ?? item.format)} for <strong>${esc(b.name)}</strong> is now live on ${esc(PLATFORM_LABEL[item.platform] ?? item.platform)} (${esc(where)}), posted ${esc(fmtIST(item.postedAt))}${postedBy}.</p>
 <p>${button(item.permalink, "View post")}</p>
 ${pb.deliveredAt ? "" : `<p style="color:#777">We'll send every link together once the whole campaign is live.</p>`}`);
   await sendEmail({ to: b.client.email, subject: `Live on ${where}: ${b.name}`, html, fromName: "Digital Sukoon", replyTo: campaignConfig.teamEmail() });
   return true;
+}
+
+/**
+ * What a booking's emails say about its CREATOR posts: the receipt line (who makes which post) and the approval text.
+ * Mirrors the portal's own wording (client campaigns/[id]/page.tsx), so an email and the page never disagree.
+ * ⚠️ It never says a creator's post is "scheduled" or promises a time: the creator confirms, posts by hand inside
+ * the window, and the link follows once our team has checked it. A creator post that went `refund_due` (its page
+ * changed hands after the payment) is said to be returned, not waited for.
+ */
+async function creatorEmailParts(b: EmailBooking, creatorItems: EmailItem[], paidOnline: boolean) {
+  const providers = await providersOfItems(b);
+  const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+  const dropped = creatorItems.filter((i) => i.status === "refund_due");
+  const withCreators = creatorItems.filter((i) => i.status !== "refund_due");
+  return {
+    receipt: `<p>This includes ${plural(creatorItems.length, "post", "posts")} made by creators: ${creatorPostsList(creatorItems, providers)}. Once we approve your campaign, each creator is asked to confirm their post; a post a creator doesn't confirm is refunded to you.</p>`,
+    approved: (alsoNetwork: boolean) => {
+      const head = alsoNetwork
+        ? `<p><strong>${esc(b.name)}</strong> is approved. Posts on our own accounts are scheduled, and you'll get an email with each link as it goes live.</p>`
+        : `<p><strong>${esc(b.name)}</strong> is approved.</p>`;
+      const waiting =
+        withCreators.length > 0
+          ? `<p>Posts by creators: ${creatorPostsList(withCreators, providers)}. Each creator is asked to confirm their post and posts it by hand within your go-live window. A post a creator doesn't confirm is refunded to you. You'll get an email with each link once our team has checked the post.</p>`
+          : "";
+      const gone =
+        dropped.length > 0
+          ? `<p>${plural(dropped.length, "creator post won't", "creator posts won't")} go ahead. ${
+              paidOnline ? `The amount for ${dropped.length === 1 ? "it is" : "them is"} being returned to you.` : "You weren't charged for it."
+            }</p>`
+          : "";
+      return head + waiting + gone;
+    },
+  };
 }
 
 export async function sendStatusEmail(bookingId: string, kind: "paid" | "approved" | "changes_requested" | "rejected") {
@@ -318,12 +378,17 @@ export async function sendStatusEmail(bookingId: string, kind: "paid" | "approve
   // paidAt is set only by the Razorpay webhook; a booking submitted without online payment
   // (offline mode) has none, and its money wording must not claim a payment or a refund.
   const paidOnline = Boolean(b.paidAt);
+  // A creator's posts are named (the name FROZEN at checkout) and never called "scheduled": the creator is asked to
+  // confirm each one, may decline or not answer, and the amount for a post that doesn't go ahead is refunded.
+  // `creatorMoney` is empty for a network-only booking, whose wording below is exactly what it always was.
+  const creatorItems = b.items.filter((i) => i.targetType === CREATOR_TARGET_TYPE);
+  const creatorMoney = creatorItems.length > 0 && (kind === "paid" || kind === "approved") ? await creatorEmailParts(b, creatorItems, paidOnline) : null;
   const copy: Record<typeof kind, { subject: string; title: string; body: string }> = {
     paid: paidOnline
       ? {
           subject: `Payment received: ${b.name}`,
           title: "Payment received — we're reviewing your campaign",
-          body: `<p>We received your payment of <strong>${esc(total)}</strong> for <strong>${esc(b.name)}</strong>. Our team will review your campaign, usually within one working day, and let you know.</p>`,
+          body: `<p>We received your payment of <strong>${esc(total)}</strong> for <strong>${esc(b.name)}</strong>. Our team will review your campaign, usually within one working day, and let you know.</p>${creatorMoney?.receipt ?? ""}`,
         }
       : {
           subject: `Submitted for review: ${b.name}`,
@@ -333,9 +398,11 @@ export async function sendStatusEmail(bookingId: string, kind: "paid" | "approve
     approved: {
       subject: `Approved: ${b.name}`,
       title: "Your campaign is approved",
-      body: `<p><strong>${esc(b.name)}</strong> is approved and scheduled. You'll get an email with the link as each post goes live.</p>${
-        b.launchFrom && b.launchTo ? `<p>Your go-live window is ${esc(dateOnly(b.launchFrom))} – ${esc(dateOnly(b.launchTo))}.</p>` : ""
-      }`,
+      body: `${
+        creatorMoney
+          ? creatorMoney.approved(creatorItems.length < b.items.length)
+          : `<p><strong>${esc(b.name)}</strong> is approved and scheduled. You'll get an email with the link as each post goes live.</p>`
+      }${b.launchFrom && b.launchTo ? `<p>Your go-live window is ${esc(dateOnly(b.launchFrom))} – ${esc(dateOnly(b.launchTo))}.</p>` : ""}`,
     },
     changes_requested: {
       subject: `Changes needed: ${b.name}`,

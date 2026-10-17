@@ -383,12 +383,33 @@ export async function ensurePayoutRefundable(
   return opts.tx ? run(opts.tx) : prisma.$transaction(run);
 }
 
+/** An offer closed by withdrawOpenOffers, as it stood just before: enough to tell its creator (sendOfferWithdrawnEmails) and nothing more. */
+export interface WithdrawnOffer {
+  id: string;
+  creatorId: string;
+  pageName: string;
+  platform: string;
+  format: string;
+  /** `offered` or `accepted`. An offer that was never emailed and never accepted needs no word to its creator. */
+  status: string;
+  notifiedAt: Date | null;
+}
+
 /**
  * Close the offers still open on these items (a creator can no longer accept or post for a campaign that has been
- * refunded or rejected). Conditional, so it never touches an offer that is already finished.
+ * refunded or rejected). Conditional, so it never touches an offer that is already finished. `collect`, when given, receives
+ * the offers it is about to close, read in the same transaction.
  */
-export async function withdrawOpenOffers(tx: Tx, itemIds: string[], closedReason: string, staffId: string | null): Promise<number> {
+export async function withdrawOpenOffers(tx: Tx, itemIds: string[], closedReason: string, staffId: string | null, collect?: WithdrawnOffer[]): Promise<number> {
   if (itemIds.length === 0) return 0;
+  // What the creator had seen, read BEFORE it is closed (and in the same transaction), so the caller can tell them once it commits.
+  if (collect) {
+    const before = await tx.creatorOffer.findMany({
+      where: { bookingItemId: { in: itemIds }, status: { in: ["offered", "accepted"] } },
+      select: { id: true, creatorId: true, pageName: true, platform: true, format: true, status: true, notifiedAt: true },
+    });
+    collect.push(...before);
+  }
   const res = await tx.creatorOffer.updateMany({
     where: { bookingItemId: { in: itemIds }, status: { in: ["offered", "accepted"] } },
     data: { status: "withdrawn", withdrawnAt: new Date(), withdrawnById: staffId, closedReason: closedReason.slice(0, 40) },
@@ -405,14 +426,14 @@ export async function withdrawOpenOffers(tx: Tx, itemIds: string[], closedReason
 export async function prepareCreatorItemRefund(
   tx: Tx,
   itemId: string,
-  opts: { actor?: PayoutActor; reason: string; closedReason: string },
+  opts: { actor?: PayoutActor; reason: string; closedReason: string; withdrawn?: WithdrawnOffer[] },
 ): Promise<void> {
   const submitted = await tx.creatorOffer.count({ where: { bookingItemId: itemId, status: { in: ["offered", "accepted"] }, linkSubmittedAt: { not: null } } });
   if (submitted > 0) {
     throw new AppError(409, "CREATOR_LINK_SUBMITTED", "The creator has already submitted the link for this post. Check the link and mark it posted instead of refunding it.");
   }
   await ensurePayoutRefundable(itemId, { tx, actor: opts.actor, reason: opts.reason });
-  await withdrawOpenOffers(tx, [itemId], opts.closedReason, opts.actor?.type === "staff" ? opts.actor.id ?? null : null);
+  await withdrawOpenOffers(tx, [itemId], opts.closedReason, opts.actor?.type === "staff" ? opts.actor.id ?? null : null, opts.withdrawn);
 }
 
 // ── Offers: when a creator may hand in their link, and what verifying it will start ──────────────
@@ -433,6 +454,9 @@ export function payoutAllowsLink(status: string): boolean {
 /**
  * Called after staff verified a creator's link and the item went live (review.verifyCreatorLink). It does NOTHING in
  * Phase 3: no money moves when a link is verified, and the payout stays exactly as it was.
+ *
+ * ⚠️ By the time this runs the creator's offer is `completed` (verifyCreatorItem moves it there together with stamping
+ * link_verified_at): a release gate must read link_verified_at, never `status = 'accepted'`.
  *
  * TODO(Phase 4): this is where the release starts. Claim the payout (`updateMany WHERE status = 'held' AND paused_at IS
  * NULL`), wait out `release_after` (at least one day when ownership was checked by hand), re-fetch the transfer and only

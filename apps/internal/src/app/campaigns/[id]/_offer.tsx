@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ExternalLink } from "lucide-react";
 import { BTN_GHOST, BTN_GOLD, BTN_RED, CARD, ErrorBar, Pill, fmtDate, fmtWhen, rupees } from "../_ds";
 import {
-  OFFER_STATUS, RELEASE_ON_VERIFY, closedReasonText, dayOf, isOpenOffer, offerExpiredNow, ownershipView, safeHref,
+  LinkChangedError, OFFER_STATUS, RELEASE_ON_VERIFY, closedReasonText, dayOf, isOpenOffer, offerEmailState, offerExpiredNow, ownershipView, safeHref,
   type OwnershipView, type StaffOffer,
 } from "../_creator";
 
@@ -48,6 +48,8 @@ export interface OfferPanelProps {
   /** What the creator is to be paid, after TDS, as frozen at checkout (shown before there is an offer). */
   frozenPayoutPaise: number | null;
   offer: StaffOffer | undefined;
+  /** The booking's History lines (newest first): the only record of failed offer emails and of the staff alert. */
+  events: ReadonlyArray<{ note: string | null }>;
   /** Whether the booking is in a state where posts can be verified (approved or later). */
   postable: boolean;
   clientName: string;
@@ -55,12 +57,28 @@ export interface OfferPanelProps {
   /** True while the offers list could not be read at all, so "no offer" isn't claimed falsely. */
   offersUnavailable: boolean;
   onWithdraw: (discardSubmittedLink: boolean) => Promise<unknown>;
-  /** Throws an Error whose message is shown in the dialog when the API refuses. */
-  onVerify: (ownershipCheckedByHand: boolean) => Promise<void>;
+  /**
+   * `linkCanonicalKey` is the key of the link the dialog showed (snapshotted when it opened, never the live prop) and `shown`
+   * the ownership result it displayed. Throws an Error whose message is shown in the dialog when the API refuses, or a
+   * LinkChangedError when the link (or its check) is no longer what the dialog showed.
+   */
+  onVerify: (ownershipCheckedByHand: boolean, linkCanonicalKey: string, shown: { check: string | null; detail: string | null }) => Promise<void>;
+}
+
+/** What the verify dialog is about: the link as staff were shown it. A later change to the offer never alters this by itself. */
+interface VerifySnapshot {
+  url: string;
+  key: string;
+  check: string | null;
+  detail: string | null;
+  /** Why the dialog moved to a new link while it was open. */
+  notice?: string;
 }
 
 export function OfferPanel(p: OfferPanelProps) {
-  const [verifying, setVerifying] = useState(false);
+  const [verifying, setVerifying] = useState<VerifySnapshot | null>(null);
+  // Shown when the dialog had to close because the creator's link went away (withdrawn, or no link any more) while it was open.
+  const [closedNotice, setClosedNotice] = useState("");
   const who = p.creatorName ?? "the creator";
   const o = p.offer;
 
@@ -93,8 +111,12 @@ export function OfferPanel(p: OfferPanelProps) {
   const own = ownershipView(o.ownershipCheck, o.ownershipDetail);
   const href = safeHref(o.linkUrl);
   const st = OFFER_STATUS[o.status] ?? { label: o.status, color: "#738395" };
-  const closed = !open ? closedReasonText(o.closedReason) : null;
+  const closed = !open ? closedReasonText(o.closedReason, o.notifiedAt) : null;
   const anyBusy = !!p.busy;
+  const email = offerEmailState(o, p.events);
+  // The creator has seen the offer once they accepted it or were emailed it: only then do they get a "don't post" email on withdrawal.
+  const seen = o.status === "accepted" || !!o.notifiedAt;
+  const canVerify = !!o.linkUrl && !!o.linkCanonicalKey;
 
   return (
     <div role="group" className="mt-2.5 rounded-[10px] bg-ds-inset px-3 py-3 text-[12px]" aria-label={`Offer to ${who} for ${p.accountName}`}>
@@ -109,6 +131,21 @@ export function OfferPanel(p: OfferPanelProps) {
         <Row k="Payout"><strong className="text-ds-text tabular-nums">{rupees(o.payoutPaise)}</strong> <span className="text-ds-t3">after TDS: the amount the creator is shown</span></Row>
         <Row k="Window">{fmtDate(dayOf(o.windowFrom))} – {fmtDate(dayOf(o.windowTo))} <span className="text-ds-t3">(IST days)</span></Row>
         {o.status === "offered" && <Row k="Expires">{fmtWhen(o.expiresAt)}{expired ? <span className="text-ds-t3"> — passed; it closes in a few minutes</span> : null}</Row>}
+        {email && (
+          <Row k="Emailed">
+            {email.kind === "sent" ? (
+              fmtWhen(email.at)
+            ) : email.kind === "pending" ? (
+              <span className="text-ds-t3">Not yet. The email goes out in the minutes after approval; one that fails is retried automatically.</span>
+            ) : (
+              <span className="text-ds-gold">
+                {email.staffAlerted ? "Email not delivered — staff alerted. " : "Email not delivered yet. "}
+                {email.stopped ? "We have stopped retrying. " : email.staffAlerted ? "We are still retrying. " : "We are retrying automatically. "}
+                Until it arrives, {who} may not know about this offer: contact them directly, or withdraw it. It still expires on its own at the time above.
+              </span>
+            )}
+          </Row>
+        )}
         {o.acceptedAt && <Row k="Accepted">{fmtWhen(o.acceptedAt)}</Row>}
         {o.creatorNote && <Row k="Their note"><span className="whitespace-pre-line">{o.creatorNote}</span></Row>}
         {hasLink && (
@@ -138,13 +175,26 @@ export function OfferPanel(p: OfferPanelProps) {
       {verified && (
         <p className="mt-2 text-ds-t3">
           {RELEASE_ON_VERIFY ? "The creator's payout has been released." : "The creator's link is the live post. Their payout isn't released by verifying yet: that is a later step."}
+          {" "}This is final: the offer can no longer be withdrawn.
         </p>
       )}
+      {closedNotice && !verifying && open && !verified && <p role="alert" className="mt-2 text-ds-gold">{closedNotice}</p>}
 
-      {open && (
+      {/* A verified post is finished: Verify and Withdraw are both gone (the API refuses a withdrawal with ALREADY_VERIFIED). */}
+      {open && !verified && (
         <div className="mt-3 flex flex-col sm:flex-row sm:flex-wrap gap-2">
-          {o.status === "accepted" && hasLink && !verified && (
-            <button type="button" className={`${BTN_GOLD} w-full sm:w-auto`} disabled={anyBusy || !p.postable} onClick={() => setVerifying(true)}>
+          {o.status === "accepted" && hasLink && (
+            <button
+              type="button"
+              className={`${BTN_GOLD} w-full sm:w-auto`}
+              disabled={anyBusy || !p.postable || !canVerify}
+              onClick={() => {
+                if (!o.linkUrl || !o.linkCanonicalKey) return;
+                setClosedNotice("");
+                // The dialog is about THIS link: its key goes back with the request, so a link the creator sends after this click is refused.
+                setVerifying({ url: o.linkUrl, key: o.linkCanonicalKey, check: o.ownershipCheck, detail: o.ownershipDetail });
+              }}
+            >
               Verify link &amp; release
             </button>
           )}
@@ -154,7 +204,7 @@ export function OfferPanel(p: OfferPanelProps) {
               className={`${BTN_RED} w-full sm:w-auto`}
               disabled={anyBusy}
               onClick={() => {
-                if (!window.confirm(`Discard ${who}'s link and withdraw the offer for ${p.accountName}? Only do this if the link is not their post. The post goes to "refund due" and their payout is cancelled. Nothing is refunded to the client until you press Refund on the post.`)) return;
+                if (!window.confirm(`Discard ${who}'s link and withdraw the offer for ${p.accountName}? Only do this if the link is not their post. The post goes to "refund due" and their payout is cancelled. ${who} is emailed not to post it (the email names the page only: no brand, no price). Nothing is refunded to the client until you press Refund on the post.`)) return;
                 void p.onWithdraw(true);
               }}
             >
@@ -166,7 +216,7 @@ export function OfferPanel(p: OfferPanelProps) {
               className={`${BTN_RED} w-full sm:w-auto`}
               disabled={anyBusy}
               onClick={() => {
-                if (!window.confirm(`Withdraw the offer to ${who} for ${p.accountName}? The post goes to "refund due" and their payout is cancelled. Nothing is refunded to the client until you press Refund on the post.`)) return;
+                if (!window.confirm(`Withdraw the offer to ${who} for ${p.accountName}? The post goes to "refund due" and their payout is cancelled.${seen ? ` ${who} has seen this offer, so they are emailed not to post it (the email names the page only: no brand, no price).` : ""} Nothing is refunded to the client until you press Refund on the post.`)) return;
                 void p.onWithdraw(false);
               }}
             >
@@ -175,20 +225,47 @@ export function OfferPanel(p: OfferPanelProps) {
           )}
         </div>
       )}
-      {open && !p.postable && hasLink && <p className="mt-2 text-ds-t3">Approve the campaign before verifying a post.</p>}
+      {open && !verified && !p.postable && hasLink && <p className="mt-2 text-ds-t3">Approve the campaign before verifying a post.</p>}
+      {open && !verified && o.status === "accepted" && hasLink && !o.linkCanonicalKey && (
+        <p role="alert" className="mt-2 text-ds-gold">This link has no reference on record, so it can&apos;t be verified from here. Reload the page; if this stays, discard the link and withdraw the offer.</p>
+      )}
 
-      {verifying && o.linkUrl && (
+      {verifying && (
         <VerifyDialog
+          // A new key = a new link: the dialog starts again (tick cleared, no stale error).
+          key={`${verifying.key}|${verifying.check}|${verifying.detail}`}
           accountName={p.accountName}
           platform={p.platform}
           creatorName={who}
           clientName={p.clientName}
-          linkUrl={o.linkUrl}
-          own={own}
-          onCancel={() => setVerifying(false)}
+          linkUrl={verifying.url}
+          own={ownershipView(verifying.check, verifying.detail)}
+          notice={verifying.notice}
+          onCancel={() => setVerifying(null)}
           onConfirm={async (hand) => {
-            await p.onVerify(hand);
-            setVerifying(false);
+            try {
+              await p.onVerify(hand, verifying.key, { check: verifying.check, detail: verifying.detail });
+              setVerifying(null);
+            } catch (e) {
+              if (!(e instanceof LinkChangedError)) throw e;
+              // The creator's link (or the check on it) moved on while the dialog was open, and nothing was verified. The
+              // dialog follows to what the offer says now, with the tick cleared, so the next verify is about a link staff have seen.
+              const n = e.offer;
+              if (n && n.status === "accepted" && !n.linkVerifiedAt && n.linkUrl && n.linkCanonicalKey) {
+                setVerifying({
+                  url: n.linkUrl,
+                  key: n.linkCanonicalKey,
+                  check: n.ownershipCheck,
+                  detail: n.ownershipDetail,
+                  notice: n.linkCanonicalKey !== verifying.key
+                    ? `${who} sent a different link since you opened this. Nothing was verified. The new link is shown below: open it, check it, then verify again.`
+                    : "The check on this link changed since you opened this. Nothing was verified. Its result is shown below: look again, then verify.",
+                });
+              } else {
+                setVerifying(null);
+                setClosedNotice(`${who}'s link is no longer waiting to be verified (the offer or the link changed while the dialog was open). Nothing was verified. What the page shows now is current.`);
+              }
+            }
           }}
         />
       )}
@@ -196,13 +273,15 @@ export function OfferPanel(p: OfferPanelProps) {
   );
 }
 
-function VerifyDialog({ accountName, platform, creatorName, clientName, linkUrl, own, onCancel, onConfirm }: {
+function VerifyDialog({ accountName, platform, creatorName, clientName, linkUrl, own, notice, onCancel, onConfirm }: {
   accountName: string;
   platform: string;
   creatorName: string;
   clientName: string;
   linkUrl: string;
   own: OwnershipView;
+  /** Set when the dialog moved to a different link or check while it was open. */
+  notice?: string;
   onCancel: () => void;
   onConfirm: (ownershipCheckedByHand: boolean) => Promise<void>;
 }) {
@@ -256,6 +335,7 @@ function VerifyDialog({ accountName, platform, creatorName, clientName, linkUrl,
     >
       <div ref={box} role="dialog" aria-modal="true" aria-labelledby="verify-title" tabIndex={-1} className={`${CARD} w-full max-w-[520px] max-h-[calc(100vh-32px)] overflow-y-auto p-5`}>
         <h2 id="verify-title" className="text-[16px] font-semibold text-ds-text">Verify this link &amp; release</h2>
+        {notice && <div role="alert" className="mt-2 rounded-[8px] px-3 py-2 text-[12.5px] text-ds-gold" style={{ background: TONE.warn.bg, border: `1px solid ${TONE.warn.border}` }}>{notice}</div>}
         <p className="mt-1.5 text-[13px] text-ds-t2">
           {creatorName} sent this <span className="capitalize">{platform}</span> link for <strong className="text-ds-text">{accountName}</strong>. Open it and look at the post before you verify.
         </p>

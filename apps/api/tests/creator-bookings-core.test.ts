@@ -35,8 +35,9 @@ vi.mock("../src/services/email.service", async (orig) => {
 import app from "../src/app";
 import { notifyAdminByEmail, sendEmail } from "../src/services/email.service";
 import { razorpayHttp } from "../src/services/campaign/razorpay";
+import { razorpayConfig } from "../src/services/campaign/config";
 import * as bookingSvc from "../src/services/campaign/booking.service";
-import { sendDeliveryEmail } from "../src/services/campaign/delivery.service";
+import { sendDeliveryEmail, sendItemLiveEmail } from "../src/services/campaign/delivery.service";
 import { invalidateCatalogueCache, listBookableTargets, listCreatorTargets, creatorCardOfferable } from "../src/services/campaign/rate-card.service";
 import { checkEligibility, runPublishTick } from "../src/services/campaign/publish.service";
 import { computePayout, payoutAmountsAreValid } from "../src/services/creator/payout-math";
@@ -231,6 +232,7 @@ describe("creator bookings, the core", () => {
     vi.stubEnv("RAZORPAY_KEY_SECRET", "rzp_test_secret");
     vi.stubEnv("RAZORPAY_WEBHOOK_SECRET", WEBHOOK_SECRET);
     vi.stubEnv("CAMPAIGN_PAYMENT_MODE", "");
+    vi.stubEnv("CREATORS_ENABLED", "1");
     vi.stubEnv("CREATORS_MARKETPLACE_ENABLED", "1");
     vi.stubEnv("CREATOR_ROUTE_ENABLED", "1");
     vi.stubEnv("CAMPAIGN_PUBLISH_ENABLED", "");
@@ -561,10 +563,10 @@ describe("creator bookings, the core", () => {
       expect(JSON.stringify(off)).toBe(JSON.stringify(baseline));
     });
 
-    it("each of the three conditions alone keeps creator pages out: marketplace, Route, Razorpay's keys", async () => {
+    it("each of the four conditions alone keeps creator pages out: the portal's master switch, marketplace, Route, Razorpay's keys", async () => {
       const page = await seedPage();
       expect(await entryFor(page)).toBeTruthy();
-      for (const [name, off] of [["CREATORS_MARKETPLACE_ENABLED", "0"], ["CREATOR_ROUTE_ENABLED", "0"], ["RAZORPAY_KEY_SECRET", ""]] as const) {
+      for (const [name, off] of [["CREATORS_ENABLED", "0"], ["CREATORS_MARKETPLACE_ENABLED", "0"], ["CREATOR_ROUTE_ENABLED", "0"], ["RAZORPAY_KEY_SECRET", ""]] as const) {
         vi.stubEnv(name, off);
         expect(await entryFor(page), name).toBeUndefined();
         expect(creatorConfig.marketplaceAvailable()).toBe(false);
@@ -574,10 +576,80 @@ describe("creator bookings, the core", () => {
         vi.stubEnv("RAZORPAY_KEY_SECRET", "rzp_test_secret");
         vi.stubEnv("RAZORPAY_WEBHOOK_SECRET", WEBHOOK_SECRET);
         vi.stubEnv("CAMPAIGN_PAYMENT_MODE", "");
+        vi.stubEnv("CREATORS_ENABLED", "1");
         vi.stubEnv("CREATORS_MARKETPLACE_ENABLED", "1");
         vi.stubEnv("CREATOR_ROUTE_ENABLED", "1");
       }
       expect(await entryFor(page)).toBeTruthy();
+    });
+
+    it("⚠️ the creator portal's master switch (CREATORS_ENABLED) alone closes EVERY client-facing creator path, with the other switches on", async () => {
+      // With it off every /v1/creator/* answers 503, so a creator cannot sign in to accept: a client who could still
+      // see, pick, pay for or be offered the page would only end in an expiry and a refund.
+      const page = await seedPage();
+      const net = await seedNetwork();
+      const booking = await seedBooking();
+      expect((await pick(booking.id, [page.card.id])).status).toBe(200);
+      const paid = await bookAndPay([page.card.id]);
+
+      vi.stubEnv("CREATORS_ENABLED", "0");
+      // The catalogue is the network's alone.
+      expect((await catalogue()).map((e) => e.targetId)).toEqual([net.asset.id]);
+      expect(await listBookableTargets()).toHaveLength(1);
+      // Picking the page is refused, and so is checking out a booking that already holds it.
+      const second = await seedBooking();
+      const refusedPick = await pick(second.id, [page.card.id]);
+      expect(refusedPick.status).toBe(400);
+      expect(refusedPick.body.error.code).toBe("RATE_CARD_UNAVAILABLE");
+      const orders = rz.calls.filter((c) => c.url.endsWith("/orders")).length;
+      const co = await checkout(booking.id);
+      expect(co.status).toBe(409);
+      expect(rz.calls.filter((c) => c.url.endsWith("/orders"))).toHaveLength(orders);
+      // Approval makes no offer for it (the 409 rolls the approval back, nothing is half done).
+      const approve = await adminPost(`/v1/admin/campaigns/${paid.booking.id}/approve`);
+      expect(approve.status).toBe(409);
+      expect(approve.body.error.code).toBe("MARKETPLACE_OFF");
+      expect((await prisma.campaignBooking.findUniqueOrThrow({ where: { id: paid.booking.id } })).status).toBe("paid_pending_review");
+      expect(await prisma.creatorOffer.count()).toBe(0);
+      // Staff can still price the page (their screen never depends on the switches).
+      expect((await listCreatorTargets()).map((t) => t.targetId)).toContain(page.asset.id);
+
+      vi.stubEnv("CREATORS_ENABLED", "1");
+      expect((await adminPost(`/v1/admin/campaigns/${paid.booking.id}/approve`)).status).toBe(200);
+    });
+
+    it("⚠️ a creator's PRIVATE Page Insights never reach a client: views and engagement are null on a creator entry, and the client list never reads them", async () => {
+      // The creator's own token filled these (creator-metrics), and the creators' privacy page promises brands only "public statistics".
+      const net = await seedNetwork();
+      const page = await seedPage({ followers: 321_000 });
+      await prisma.creatorAsset.update({ where: { id: page.asset.id }, data: { views28d: 987_654_321n, engagements28d: 12_345_678n, reach28d: 876_543_219n } });
+      const all = await catalogue();
+      const entry = all.find((e) => e.targetId === page.asset.id)!;
+      const networkEntry = all.find((e) => e.targetId === net.asset.id)!;
+      // The keys stay (the same shape as a network entry), the values are empty.
+      expect(Object.keys(entry).sort()).toEqual(Object.keys(networkEntry).sort());
+      expect(entry.views28d).toBeNull();
+      expect(entry.engagementRatePct).toBeNull();
+      // Public statistics stay.
+      expect(entry.followers).toBe(321_000);
+      expect(entry.name).toBe(page.asset.name);
+      const json = JSON.stringify(entry);
+      for (const figure of ["987654321", "12345678", "876543219"]) expect(json, figure).not.toContain(figure);
+      // Our own network's figures are our own data and are unchanged.
+      expect(networkEntry.views28d).toBe(1_000_000);
+      expect(networkEntry.engagementRatePct).toBe(5);
+
+      // The client path of the list carries nothing either (a later field-copy cannot hand them over).
+      for (const t of await listBookableTargets()) {
+        if (t.targetType !== "creator_asset") continue;
+        expect([t.views28d, t.engagements28d, t.engagementRatePct]).toEqual([null, null, null]);
+      }
+      // Staff still see them, to price the page.
+      const staffList = await listCreatorTargets();
+      expect(staffList[0]).toMatchObject({ views28d: 987_654_321, engagements28d: 12_345_678 });
+      const res = await request(app).get("/v1/admin/campaigns/rate-cards/creator-targets").set("Authorization", `Bearer ${admin}`);
+      expect(res.body.data[0]).toMatchObject({ views28d: 987_654_321, engagements28d: 12_345_678 });
+      expect(res.body.data[0].engagementRatePct).toBeCloseTo(1.25, 2);
     });
 
     it("lists a bookable page with an allow-listed set of fields and a NAMED provider, and leaks nothing else of the creator", async () => {
@@ -719,22 +791,108 @@ describe("creator bookings, the core", () => {
       expect(rz.calls.filter((c) => c.url.endsWith("/orders"))).toHaveLength(1);
     });
 
-    it("⚠️ a creator booking is ONLINE PAYMENT ONLY: offline mode is 409 CREATOR_ONLINE_ONLY, never a silent fallback", async () => {
+    it("⚠️ a creator booking is ONLINE PAYMENT ONLY: without Razorpay's keys it is 409 CREATOR_ONLINE_ONLY, never a silent fallback to offline", async () => {
       const page = await seedPage();
       const booking = await seedBooking();
       expect((await pick(booking.id, [page.card.id])).status).toBe(200);
+      for (const globalMode of ["", "offline"]) {
+        vi.stubEnv("CAMPAIGN_PAYMENT_MODE", globalMode);
+        vi.stubEnv("RAZORPAY_KEY_SECRET", "");
+        const res = await checkout(booking.id);
+        expect(res.status, globalMode).toBe(409);
+        expect(res.body.error.code).toBe("CREATOR_ONLINE_ONLY");
+        const after = await prisma.campaignBooking.findUniqueOrThrow({ where: { id: booking.id } });
+        expect(after).toMatchObject({ status: "draft", totalPaise: null, paidAt: null, submittedAt: null });
+        expect(await prisma.campaignPayment.count()).toBe(0);
+        expect(rz.calls).toHaveLength(0);
+        // And the booking the client sees says so too: the Pay step must not offer "Submit for review".
+        const shown = await request(app).get(`/v1/client/campaigns/${booking.id}`).set(auth());
+        expect(shown.body.data.paymentMode, globalMode).toBe("offline");
+      }
+    });
+
+    it("⚠️ CAMPAIGN_PAYMENT_MODE=offline is for OUR network's bookings: a creator booking is still paid online with the keys set (the plan's go-live config)", async () => {
       vi.stubEnv("CAMPAIGN_PAYMENT_MODE", "offline");
-      const res = await checkout(booking.id);
-      expect(res.status).toBe(409);
-      expect(res.body.error.code).toBe("CREATOR_ONLINE_ONLY");
-      const after = await prisma.campaignBooking.findUniqueOrThrow({ where: { id: booking.id } });
-      expect(after).toMatchObject({ status: "draft", totalPaise: null, paidAt: null, submittedAt: null });
-      expect(await prisma.campaignPayment.count()).toBe(0);
-      expect(rz.calls).toHaveLength(0);
-      // Without Razorpay's keys the mode is offline too, and the answer is the same.
-      vi.stubEnv("CAMPAIGN_PAYMENT_MODE", "");
+      const page = await seedPage({ price: 250_000 });
+      const net = await seedNetwork(150_000);
+      // A creator-only booking: an order is created, a payment row waits for the webhook, nothing is submitted offline.
+      const booking = await seedBooking();
+      expect((await pick(booking.id, [page.card.id])).status).toBe(200);
+      const co = await checkout(booking.id);
+      expect(co.status).toBe(200);
+      expect(co.body.data).toMatchObject({ offline: false, amount: 250_000, currency: "INR", keyId: "rzp_test_key" });
+      expect(rz.calls.filter((c) => c.url.endsWith("/orders"))).toHaveLength(1);
+      const row = await prisma.campaignBooking.findUniqueOrThrow({ where: { id: booking.id } });
+      expect(row).toMatchObject({ status: "awaiting_payment", totalPaise: 250_000, paidAt: null, submittedAt: null });
+      expect(await prisma.campaignPayment.count({ where: { bookingId: booking.id } })).toBe(1);
+      // A mixed booking is one online order for the WHOLE total, the network post included.
+      const mixed = await seedBooking();
+      expect((await pick(mixed.id, [net.card.id, page.card.id])).status).toBe(200);
+      const coMixed = await checkout(mixed.id);
+      expect(coMixed.status).toBe(200);
+      expect(coMixed.body.data).toMatchObject({ offline: false, amount: 400_000 });
+      // The capture then lands exactly as in any online booking: paid, in review, one payout planned.
+      const cap = await webhook("payment.captured", { id: "pay_offline_env", order_id: co.body.data.orderId, amount: 250_000, currency: "INR" });
+      expect(cap.status).toBe(200);
+      const paid = await prisma.campaignBooking.findUniqueOrThrow({ where: { id: booking.id } });
+      expect(paid.status).toBe("paid_pending_review");
+      expect(paid.paidAt).not.toBeNull();
+      expect(await prisma.creatorPayout.count({ where: { bookingId: booking.id } })).toBe(1);
+    });
+
+    it("the booking the client sees follows ITS items: a creator booking reports 'razorpay' under offline + keys, a network-only one still 'offline'", async () => {
+      vi.stubEnv("CAMPAIGN_PAYMENT_MODE", "offline");
+      const page = await seedPage();
+      const net = await seedNetwork();
+      const modeOf = async (id: string) => (await request(app).get(`/v1/client/campaigns/${id}`).set(auth())).body.data.paymentMode;
+      const empty = await seedBooking();
+      const netOnly = await seedBooking();
+      const withCreator = await seedBooking();
+      const mixed = await seedBooking();
+      expect((await pick(netOnly.id, [net.card.id])).status).toBe(200);
+      expect((await pick(withCreator.id, [page.card.id])).status).toBe(200);
+      expect((await pick(mixed.id, [net.card.id, page.card.id])).status).toBe(200);
+      expect(await modeOf(empty.id)).toBe("offline");
+      expect(await modeOf(netOnly.id)).toBe("offline");
+      expect(await modeOf(withCreator.id)).toBe("razorpay");
+      expect(await modeOf(mixed.id)).toBe("razorpay");
+      // The pick response itself (what the wizard re-renders from) says it too.
+      const repicked = await pick(withCreator.id, [page.card.id]);
+      expect(repicked.body.data.paymentMode).toBe("razorpay");
+      // Without the gateway's keys every booking is offline again (and a creator one cannot be paid: see above).
       vi.stubEnv("RAZORPAY_KEY_SECRET", "");
-      expect((await checkout(booking.id)).body.error.code).toBe("CREATOR_ONLINE_ONLY");
+      expect(await modeOf(withCreator.id)).toBe("offline");
+      // With no global override the network-only booking is online too, as before.
+      vi.stubEnv("RAZORPAY_KEY_SECRET", "rzp_test_secret");
+      vi.stubEnv("CAMPAIGN_PAYMENT_MODE", "");
+      expect(await modeOf(netOnly.id)).toBe("razorpay");
+    });
+
+    it("bookingPaymentMode: creator items -> 'razorpay' with the keys whatever CAMPAIGN_PAYMENT_MODE says; network-only keeps paymentMode()", () => {
+      const withKeys = (globalMode: string) => {
+        vi.stubEnv("RAZORPAY_KEY_ID", "k");
+        vi.stubEnv("RAZORPAY_KEY_SECRET", "s");
+        vi.stubEnv("CAMPAIGN_PAYMENT_MODE", globalMode);
+      };
+      for (const g of ["", "offline", "razorpay", "anything"]) {
+        withKeys(g);
+        expect(razorpayConfig.bookingPaymentMode(true), g).toBe("razorpay");
+        expect(razorpayConfig.bookingPaymentMode(false), g).toBe(razorpayConfig.paymentMode());
+      }
+      withKeys("offline");
+      expect(razorpayConfig.bookingPaymentMode(false)).toBe("offline");
+      withKeys("");
+      expect(razorpayConfig.bookingPaymentMode(false)).toBe("razorpay");
+      // No keys: offline for both, so checkout can refuse the creator one.
+      for (const [id, secret] of [["", ""], ["k", ""], ["", "s"]]) {
+        vi.stubEnv("RAZORPAY_KEY_ID", id);
+        vi.stubEnv("RAZORPAY_KEY_SECRET", secret);
+        for (const g of ["", "offline"]) {
+          vi.stubEnv("CAMPAIGN_PAYMENT_MODE", g);
+          expect(razorpayConfig.bookingPaymentMode(true)).toBe("offline");
+          expect(razorpayConfig.bookingPaymentMode(false)).toBe("offline");
+        }
+      }
     });
 
     it("a network-only booking still submits offline exactly as before", async () => {
@@ -1346,6 +1504,167 @@ describe("creator bookings, the core", () => {
     });
   });
 
+  // ── What the client is told: the creator is named, and a creator's post is never "scheduled" ──
+
+  describe("what the client is told names the creator", () => {
+    type Mail = { to: string; subject: string; html: string };
+    const mails = (prefix: string): Mail[] =>
+      vi.mocked(sendEmail).mock.calls.map((c) => c[0] as Mail).filter((o) => o.to === "a@brand.test" && o.subject.startsWith(prefix));
+    const mailed = async (prefix: string): Promise<Mail> => {
+      await vi.waitFor(() => expect(mails(prefix).length).toBeGreaterThan(0));
+      return mails(prefix)[0];
+    };
+    /** Nothing of a creator's payout, share, tax or Razorpay account is ever in what a client reads. */
+    const expectNoPayoutData = (text: string, page: Page) => {
+      for (const secret of [page.creator.id, page.creator.email, page.account!.id, page.account!.razorpayAccountId!, "shareBps", "4321", "tdsBps", "grossPaise", "amountPaise", "payout"]) {
+        expect(text, secret).not.toContain(secret);
+      }
+    };
+
+    it("the order's notes and the checkout response name the creator and nothing of the payout; a network-only order is exactly what it was", async () => {
+      const page = await seedPage({ creatorName: "Meera Kapoor", name: "Meera Eats", tdsBps: 1000, shareBps: 4321 });
+      const other = await seedPage({ creatorName: "Rohan Sethi", name: "Rohan Reels" });
+      const net = await seedNetwork();
+      const orders = () => rz.calls.filter((c) => c.url.endsWith("/orders"));
+
+      const plain = await seedBooking();
+      expect((await pick(plain.id, [net.card.id])).status).toBe(200);
+      const coPlain = await checkout(plain.id);
+      expect(coPlain.status).toBe(200);
+      expect(orders()[0].body.notes).toEqual({ bookingId: plain.id, clientId });
+      expect(Object.keys(coPlain.body.data).sort()).toEqual(["amount", "currency", "keyId", "name", "offline", "orderId"]);
+
+      const booking = await seedBooking();
+      expect((await pick(booking.id, [net.card.id, page.card.id, other.card.id])).status).toBe(200);
+      const co = await checkout(booking.id);
+      expect(co.status).toBe(200);
+      const notes = orders()[1].body.notes as Record<string, string>;
+      expect(Object.keys(notes).sort()).toEqual(["bookingId", "clientId", "creators"]);
+      expect(notes.creators.split(", ").sort()).toEqual(["Meera Kapoor", "Rohan Sethi"]);
+      expect(co.body.data.description).toBe(`${booking.name} — includes posts by ${notes.creators}`);
+      expect(co.body.data.name).toBe(booking.name);
+      // The whole order request and the whole response: names only.
+      expectNoPayoutData(JSON.stringify(orders()[1].body), page);
+      expectNoPayoutData(JSON.stringify(co.body), page);
+    });
+
+    it("the 'payment received' email says who makes the creator posts (the name frozen at checkout), and a network-only receipt is unchanged", async () => {
+      const page = await seedPage({ creatorName: "Meera Kapoor", name: "Meera Eats", tdsBps: 1000, shareBps: 4321 });
+      const net = await seedNetwork();
+      vi.mocked(sendEmail).mockClear();
+      const plain = await bookAndPay([net.card.id]);
+      const plainMail = await mailed("Payment received");
+      expect(plainMail.html).toContain(`for <strong>${plain.booking.name}</strong>. Our team will review your campaign, usually within one working day, and let you know.</p><p><a href=`);
+      expect(plainMail.html).not.toContain("creators");
+
+      vi.mocked(sendEmail).mockClear();
+      const paid = await bookAndPay([net.card.id, page.card.id]);
+      // The creator renames themselves after the payment: the receipt is about who was booked.
+      await prisma.creator.update({ where: { id: page.creator.id }, data: { name: "Someone Else" } });
+      const mail = await mailed("Payment received");
+      expect(mail.html).toContain(`<strong>${paid.booking.name}</strong>`);
+      expect(mail.html).toContain("This includes 1 post made by creators: <strong>Meera Kapoor</strong> (Meera Eats on Instagram).");
+      expect(mail.html).toContain("a post a creator doesn't confirm is refunded to you");
+      expect(mail.html).not.toContain("scheduled");
+      expect(mail.html).not.toContain("Someone Else");
+      expectNoPayoutData(mail.html, page);
+    });
+
+    it("⚠️ the 'approved' email never calls a creator's post 'scheduled': it says the creator confirms and posts, and that an unconfirmed post is refunded", async () => {
+      const page = await seedPage({ creatorName: "Meera Kapoor", name: "Meera Eats", tdsBps: 1000, shareBps: 4321 });
+      const net = await seedNetwork();
+      // seedBooking's go-live window: today (IST) to a week later, as date-only columns formatted in UTC.
+      const fmt = (d: Date) => d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+      const from = new Date(`${todayIST()}T00:00:00Z`);
+      const windowText = `${fmt(from)} – ${fmt(new Date(from.getTime() + 7 * DAY))}`;
+
+      // Network-only: the sentence is exactly what it always was.
+      vi.mocked(sendEmail).mockClear();
+      const plain = await bookAndPay([net.card.id]);
+      expect((await adminPost(`/v1/admin/campaigns/${plain.booking.id}/approve`)).status).toBe(200);
+      const plainMail = await mailed("Approved");
+      expect(plainMail.html).toContain(`<p><strong>${plain.booking.name}</strong> is approved and scheduled. You'll get an email with the link as each post goes live.</p><p>Your go-live window is ${windowText}.</p>`);
+
+      // A creator-only booking.
+      vi.mocked(sendEmail).mockClear();
+      const only = await bookAndPay([page.card.id]);
+      expect((await adminPost(`/v1/admin/campaigns/${only.booking.id}/approve`)).status).toBe(200);
+      expect((await prisma.campaignBookingItem.findFirstOrThrow({ where: { bookingId: only.booking.id } })).status).toBe("awaiting_creator");
+      const onlyMail = await mailed("Approved");
+      expect(onlyMail.html).not.toContain("scheduled");
+      expect(onlyMail.html).toContain(`<strong>${only.booking.name}</strong> is approved.`);
+      expect(onlyMail.html).toContain("Posts by creators: <strong>Meera Kapoor</strong> (Meera Eats on Instagram).");
+      expect(onlyMail.html).toContain("Each creator is asked to confirm their post and posts it by hand within your go-live window.");
+      expect(onlyMail.html).toContain("A post a creator doesn't confirm is refunded to you.");
+      expect(onlyMail.html).toContain(`Your go-live window is ${windowText}.</p>`);
+      expectNoPayoutData(onlyMail.html, page);
+
+      // A mixed booking: "scheduled" is said of OUR accounts only.
+      vi.mocked(sendEmail).mockClear();
+      const mixed = await bookAndPay([net.card.id, page.card.id]);
+      expect((await adminPost(`/v1/admin/campaigns/${mixed.booking.id}/approve`)).status).toBe(200);
+      const mixedMail = await mailed("Approved");
+      expect(mixedMail.html).toContain("Posts on our own accounts are scheduled, and you'll get an email with each link as it goes live.");
+      expect(mixedMail.html).toContain("Posts by creators: <strong>Meera Kapoor</strong> (Meera Eats on Instagram).");
+      expect(mixedMail.html.match(/scheduled/g)).toHaveLength(1);
+    });
+
+    it("an approved creator post that will not go ahead (the page changed hands) is said to be returned, not waited for", async () => {
+      const page = await seedPage({ creatorName: "Meera Kapoor", name: "Meera Eats" });
+      const other = await seedPage();
+      vi.mocked(sendEmail).mockClear();
+      const paid = await bookAndPay([page.card.id]);
+      await prisma.creatorAsset.update({ where: { id: page.asset.id }, data: { creatorId: other.creator.id, connectionId: other.conn.id } });
+      expect((await adminPost(`/v1/admin/campaigns/${paid.booking.id}/approve`)).status).toBe(200);
+      expect((await prisma.campaignBookingItem.findFirstOrThrow({ where: { bookingId: paid.booking.id } })).status).toBe("refund_due");
+      const mail = await mailed("Approved");
+      expect(mail.html).not.toContain("scheduled");
+      expect(mail.html).toContain("1 creator post won't go ahead. The amount for it is being returned to you.");
+      expect(mail.html).not.toContain("Each creator is asked to confirm");
+    });
+
+    it("the 'post is live' and delivery emails name the creator (the name frozen at checkout) on a creator's post and only there", async () => {
+      const page = await seedPage({ creatorName: "Meera Kapoor", name: "Meera Eats", tdsBps: 1000, shareBps: 4321 });
+      const net = await seedNetwork();
+      const paid = await bookAndPay([page.card.id, net.card.id]);
+      await prisma.creator.update({ where: { id: page.creator.id }, data: { name: "Someone Else" } });
+      const creatorItem = paid.itemOf(page.asset.id);
+      await prisma.campaignBooking.update({ where: { id: paid.booking.id }, data: { status: "approved" } });
+      await prisma.campaignBookingItem.update({ where: { id: creatorItem.id }, data: { status: "posted_manual", permalink: "https://www.instagram.com/p/creatorpost/", postedAt: new Date() } });
+
+      vi.mocked(sendEmail).mockClear();
+      expect(await sendItemLiveEmail(creatorItem.id)).toBe(true);
+      const live = await mailed("Live on");
+      expect(live.html).toMatch(/posted [^<]* by <strong>Meera Kapoor<\/strong>\.<\/p>/);
+      expect(live.html).not.toContain("Someone Else");
+      expectNoPayoutData(live.html, page);
+
+      // A network post on a booking of its own (the last post of a multi-post booking is left to the delivery email).
+      const plainBooking = await bookAndPay([net.card.id]);
+      const plainItem = plainBooking.itemOf(net.asset.id);
+      await prisma.campaignBookingItem.update({ where: { id: plainItem.id }, data: { status: "posted_manual", permalink: "https://www.instagram.com/p/networkpost/", postedAt: new Date() } });
+      vi.mocked(sendEmail).mockClear();
+      expect(await sendItemLiveEmail(plainItem.id)).toBe(true);
+      const liveNet = await mailed("Live on");
+      expect(liveNet.html).toMatch(/posted [^<]*\.<\/p>/);
+      expect(liveNet.html).not.toContain(" by <strong>");
+
+      vi.mocked(sendEmail).mockClear();
+      await sendDeliveryEmail(paid.booking.id, { force: true });
+      const delivered = await mailed("Delivered");
+      expect(delivered.html.match(/Posted by /g)).toHaveLength(1);
+      expect(delivered.html).toContain("Posted by Meera Kapoor</span>");
+      expect(delivered.html).not.toContain("Someone Else");
+      expectNoPayoutData(delivered.html, page);
+      // A network-only booking's table has no "Posted by" at all.
+      const plain = await bookAndPay([net.card.id]);
+      await prisma.campaignBookingItem.updateMany({ where: { bookingId: plain.booking.id }, data: { status: "posted_manual", permalink: "https://www.instagram.com/p/plain/", postedAt: new Date() } });
+      vi.mocked(sendEmail).mockClear();
+      await sendDeliveryEmail(plain.booking.id, { force: true });
+      expect((await mailed("Delivered")).html).not.toContain("Posted by");
+    });
+  });
+
   // ── Page take-over and purge ──────────────────────────────────────────────────
 
   describe("a page with open work cannot change hands or be purged", () => {
@@ -1772,7 +2091,7 @@ describe("creator bookings, the core", () => {
       expect((await catalogue()).map((e) => e.targetId)).toEqual([net.asset.id]);
     });
 
-    it("marketplaceEnabled is exactly '1', and marketplaceAvailable needs all three", () => {
+    it("marketplaceEnabled is exactly '1', and marketplaceAvailable needs all FOUR: the portal's master switch, the marketplace, Route and Razorpay's keys", () => {
       for (const v of ["", "0", "true", "yes", "01", " 1"]) {
         vi.stubEnv("CREATORS_MARKETPLACE_ENABLED", v);
         expect(creatorConfig.marketplaceEnabled(), v).toBe(false);
@@ -1780,8 +2099,14 @@ describe("creator bookings, the core", () => {
       vi.stubEnv("CREATORS_MARKETPLACE_ENABLED", "1");
       expect(creatorConfig.marketplaceEnabled()).toBe(true);
       expect(creatorConfig.marketplaceAvailable()).toBe(true);
-      vi.stubEnv("CREATOR_ROUTE_ENABLED", "");
-      expect(creatorConfig.marketplaceAvailable()).toBe(false);
+      // Each one missing fails closed, on its own (beforeEach put every one of them on).
+      for (const [name, off] of [["CREATORS_ENABLED", ""], ["CREATORS_ENABLED", "0"], ["CREATORS_ENABLED", "true"], ["CREATORS_MARKETPLACE_ENABLED", ""], ["CREATOR_ROUTE_ENABLED", ""], ["RAZORPAY_KEY_ID", ""], ["RAZORPAY_KEY_SECRET", ""]] as const) {
+        const was = process.env[name] as string;
+        vi.stubEnv(name, off);
+        expect(creatorConfig.marketplaceAvailable(), `${name}=${off}`).toBe(false);
+        vi.stubEnv(name, was);
+        expect(creatorConfig.marketplaceAvailable(), `${name} restored`).toBe(true);
+      }
     });
   });
 });

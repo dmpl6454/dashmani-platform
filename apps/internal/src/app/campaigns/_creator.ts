@@ -26,7 +26,7 @@ export interface PayoutPreview {
   tdsPaise: number;
   /** What the creator is paid: gross − TDS. */
   amountPaise: number;
-  /** What stays with us out of the price: price − gross (Razorpay's fees come out of this, never out of the creator's side). */
+  /** What stays with us out of the price: price − gross. Our own Razorpay fees are paid from this; whether Razorpay also takes anything from the creator's settlement is NOT confirmed yet (plan question c), so nothing here promises it doesn't. */
   ourCutPaise: number;
 }
 
@@ -92,12 +92,19 @@ export interface StaffOffer {
   windowTo: string | null;
   offeredAt: string;
   expiresAt: string;
+  /** When the offer email was handed to the mailer: null = the creator has not been emailed (yet). */
+  notifiedAt: string | null;
   acceptedAt: string | null;
   declinedAt: string | null;
   expiredAt: string | null;
   withdrawnAt: string | null;
   creatorNote: string | null;
   linkUrl: string | null;
+  /**
+   * The identity of the link the creator sent, as the API computed it. A verify request must quote it back, so the API can
+   * tell when the creator sent a different link after staff opened the dialog. null only on a row the API never keyed.
+   */
+  linkCanonicalKey: string | null;
   linkSubmittedAt: string | null;
   linkPostedAt: string | null;
   ownershipCheck: string | null;
@@ -128,8 +135,15 @@ const CLOSED_REASON: Record<string, string> = {
   missed_window: "The creator didn't send a link by the end of the posting window.",
   booking_rejected: "The booking was rejected.",
   page_taken_over: "The page changed hands, so the creator who was booked no longer owns it.",
+  // Their account is suspended or closed: not that they chose not to answer or post. (Same sentence the API writes on the item row.)
+  creator_unavailable: "The creator's account is suspended or closed, so they couldn't act on this offer.",
 };
-export const closedReasonText = (r: string | null) => (r ? CLOSED_REASON[r] ?? r.replace(/_/g, " ") : null);
+/**
+ * Why an offer closed, in staff words. An offer that expired and was NEVER emailed is not "nobody accepted": nobody was asked
+ * (the API words it the same way on the item row).
+ */
+export const closedReasonText = (r: string | null, notifiedAt?: string | null) =>
+  r === "expired" && notifiedAt === null ? "The creator was never emailed this offer, so it expired unseen." : r ? CLOSED_REASON[r] ?? r.replace(/_/g, " ") : null;
 
 /** An offer is open while the creator can still act on it. */
 export const isOpenOffer = (o: Pick<StaffOffer, "status"> | undefined | null) => !!o && (o.status === "offered" || o.status === "accepted");
@@ -148,7 +162,13 @@ const OWNERSHIP_REASON: Record<string, string> = {
   connection_lapsed: "their connection needs reconnecting",
   no_token: "there is no saved login for their page",
   token_unreadable: "their saved login couldn't be read",
-  share_link: "it is a Facebook share link that couldn't be turned into a post",
+  // A share link (instagram.com/share/…, facebook.com/share/…) names no post, so there is nothing to compare. The creator
+  // is told to send the post's own link; a hand check of this one is still possible.
+  share_link: "it is a share link, which names no post",
+  link_shape: "it is a kind of link we can't compare automatically (for example fb.watch)",
+  feed_shape: "their page lists its posts in a form we can't compare with this link",
+  // Not found in the newest posts the check reads: the post is probably older than that, so this is NOT "not on their page".
+  page_too_busy: "their page posts so often that this post is further back than the check reads",
   no_timestamp: "Meta gave no time for the post",
 };
 
@@ -176,7 +196,9 @@ export function ownershipView(check: string | null, detail: string | null): Owne
       return {
         tone: "warn",
         headline: "Couldn't be checked automatically",
-        detail: `${detail ? `Because ${OWNERSHIP_REASON[detail] ?? detail.replace(/_/g, " ")}. ` : ""}Open the link and check it yourself.`,
+        detail: `${detail ? `Because ${OWNERSHIP_REASON[detail] ?? detail.replace(/_/g, " ")}. ` : ""}${
+          detail === "share_link" ? "The creator was asked to send the post's own link, so a new link may follow. " : ""
+        }Open the link and check it yourself.`,
         passed: false,
       };
     default:
@@ -225,7 +247,8 @@ export function creatorItemStatus(status: string, offer: StaffOffer | undefined,
       return { label: "No open offer", color: "#F59E66" };
     case "posted_manual":
     case "published":
-      return { label: "Posted by hand", color: "#00D7A0" };
+      // Only reached once staff verified the creator's own link (a creator's post is never marked posted any other way).
+      return { label: "Posted by the creator", color: "#00D7A0" };
     case "refund_due":
       return { label: "Being returned", color: "#F59E66" };
     case "refunded":
@@ -236,3 +259,60 @@ export function creatorItemStatus(status: string, offer: StaffOffer | undefined,
       return { label: status.replace(/_/g, " "), color: "#738395" };
   }
 }
+
+// ── Was the creator emailed their offer? ────────────────────────────────────────────────────────
+
+/**
+ * The offer email is sent once, fire-and-forget, when the campaign is approved; `notifiedAt` is stamped only when the mailer
+ * took it. A failed first send is retried by the offers worker, and staff are emailed once after enough failed retries. The
+ * worker keeps no counter on the offer, so each failed retry and the staff alert are written to the booking's History as
+ * fixed lines. ⚠️ Mirrors OFFER_EMAIL / retryMarker / alertMarker in apps/api (services/creator/creator-offers-config.ts): if
+ * that wording or those numbers change, change them here too. Nothing below claims more than a line on the page proves:
+ * "staff alerted" is said only when the alert's own line is in the History we were given (the newest 100 lines).
+ */
+const OFFER_EMAIL_FIRST_SEND_MS = 10 * 60_000;
+const OFFER_EMAIL_MAX_RETRIES = 5;
+const RETRY_LINE = /could not be sent \(offer ([0-9a-f-]{36}), retry (\d+)\)$/;
+const alertLine = (offerId: string) => `Staff alerted [undelivered] (offer ${offerId})`;
+
+export type OfferEmailState =
+  | { kind: "sent"; at: string }
+  /** Not stamped yet, and still inside the minutes the first send is allowed to take. */
+  | { kind: "pending" }
+  /** Nothing recorded as sent after the first-send window: `retries` failed re-sends so far, `staffAlerted` once our alert went out. */
+  | { kind: "failed"; retries: number; staffAlerted: boolean; stopped: boolean };
+
+/** Only an offer still waiting for an answer has an email state: an accepted offer was plainly seen, a closed one is over. */
+export function offerEmailState(
+  o: Pick<StaffOffer, "id" | "status" | "offeredAt" | "notifiedAt">,
+  events: ReadonlyArray<{ note: string | null }>,
+  now: number = Date.now(),
+): OfferEmailState | null {
+  if (o.status !== "offered") return null;
+  if (o.notifiedAt) return { kind: "sent", at: o.notifiedAt };
+  const offered = new Date(o.offeredAt).getTime();
+  const retries = events.reduce((n, e) => {
+    const m = e.note ? RETRY_LINE.exec(e.note) : null;
+    return m && m[1] === o.id ? Math.max(n, Number(m[2])) : n;
+  }, 0);
+  const staffAlerted = events.some((e) => e.note === alertLine(o.id));
+  if (Number.isFinite(offered) && now - offered < OFFER_EMAIL_FIRST_SEND_MS && retries === 0) return { kind: "pending" };
+  return { kind: "failed", retries, staffAlerted, stopped: retries >= OFFER_EMAIL_MAX_RETRIES };
+}
+
+// ── "Verify" is bound to the link staff looked at ───────────────────────────────────────────────
+
+/**
+ * Thrown by the page's verify call when the creator's link (or the check on it) is no longer what the dialog showed: the API
+ * answered 409 LINK_CHANGED, or the freshly loaded offer differs from what the verify request quoted. `offer` is the offer as
+ * it now stands (undefined if it could not be read again). Nothing was verified.
+ */
+export class LinkChangedError extends Error {
+  constructor(public offer: StaffOffer | undefined) {
+    super("The creator sent a different link since you opened this.");
+    this.name = "LinkChangedError";
+  }
+}
+
+/** apiFetch throws a plain Error carrying only the API's message, so the 409 is recognised by that sentence (the key comparison after a reload is the other, code-free, signal). */
+export const isLinkChangedMessage = (e: unknown) => e instanceof Error && /different link since you opened/i.test(e.message);

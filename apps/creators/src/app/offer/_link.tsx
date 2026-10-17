@@ -24,20 +24,50 @@ interface Props {
   onStale: () => void;
 }
 
-/** What the creator is told about the link they sent, by how it was checked. Headline and sentence are ours, picked by the check; only the "not found" sentence is the API's. */
-function verdict(check: string | null, apiMessage: string, platform: string): { tone: "info" | "warn"; title: string; text: string } {
+/**
+ * Details (of an "unverifiable" check) after which the link they sent can't be compared with their page for a reason that
+ * sending the post's own link fixes: a share link names no post, and some link forms can't be compared. The other reasons
+ * (Meta busy, a lapsed login, a page that posts too often to reach the post) are not the creator's to fix.
+ */
+const ASK_FOR_OWN_LINK: ReadonlySet<string> = new Set(["share_link", "link_shape", "feed_shape"]);
+
+/**
+ * What the creator is told about the link they sent, by how it was checked. Headline and sentence are ours, picked by the check;
+ * the API's sentence is the body, because it already says which case this is (and it carries no timing promise for these checks).
+ *
+ * ⚠️ `detail` (outside_window / not_found / share_link …) is known only in the answer to the send itself: the offer as it is read
+ * later carries the check and the API's sentence, not the detail. So a headline that must differ by detail is used only while
+ * the detail is in hand, and the headline for an auto_failed check without it is one that is true of BOTH outcomes ("didn't
+ * match a post in your posting window"), so the page never says "couldn't find" about a post that was found.
+ */
+function verdict(check: string | null, apiMessage: string, platform: string, detail: string | null): { tone: "info" | "warn"; title: string; text: string } {
   switch (check) {
     case "auto_ok":
     case "manual_ok":
       return { tone: "info", title: "Link received — our team is checking it.", text: "We found this post on your page. Our team still has to confirm it." };
     case "unverifiable":
-      return { tone: "info", title: "Link received — we'll check it by hand.", text: "We couldn't check your page automatically, so our team will check this link by hand." };
-    case "auto_failed":
+      return {
+        tone: detail && ASK_FOR_OWN_LINK.has(detail) ? "warn" : "info",
+        title:
+          detail === "share_link"
+            ? "That link doesn't say which post it is."
+            : detail && ASK_FOR_OWN_LINK.has(detail)
+              ? "We can't compare this kind of link automatically."
+              : "Link received — we couldn't check it automatically.",
+        text: apiMessage || "Our team will check this link by hand.",
+      };
+    case "auto_failed": {
+      const outside = detail === "outside_window";
       return {
         tone: "warn",
-        title: "We couldn't find this link on your page.",
+        title: outside
+          ? "We found that post, but it's outside the posting window."
+          : detail === "not_found"
+            ? "We couldn't find this link on your page."
+            : "This link didn't match a post in your posting window.",
         text: apiMessage || `Check that you pasted the link of the post itself, from the ${platform} page you connected, and send it again.`,
       };
+    }
     default:
       return { tone: "info", title: "Link received — our team is checking it.", text: "" };
   }
@@ -48,7 +78,6 @@ export function PostAndLink({ offer, onSent, onStale }: Props) {
   const link = offer.link;
   const canSend = offer.actions.submitLink;
   const failed = link?.check === "auto_failed";
-  const v = link ? verdict(link.check, link.message, platform) : null;
   const dates = windowText(offer.window);
 
   const hydrated = useHydrated();
@@ -59,6 +88,9 @@ export function PostAndLink({ offer, onSent, onStale }: Props) {
   // "Send a different link" is folded away once a link is in, unless that link was not found on the page.
   const [replacing, setReplacing] = useState(false);
   const [justSent, setJustSent] = useState(false);
+  // How the link we just sent was judged (the API's `detail`): only the answer to the send carries it, so it is kept here.
+  // A reload shows the check and the API's sentence without it, and the form then stays folded behind "Send a different link".
+  const [sentDetail, setSentDetail] = useState<string | null>(null);
   const sending = useRef(false);
   const input = useRef<HTMLInputElement>(null);
   const resultRef = useRef<HTMLHeadingElement>(null);
@@ -68,7 +100,10 @@ export function PostAndLink({ offer, onSent, onStale }: Props) {
     if (justSent) resultRef.current?.focus();
   }, [justSent]);
 
-  const formOpen = canSend && (!link || failed || replacing);
+  const v = link ? verdict(link.check, link.message, platform, sentDetail) : null;
+  // A share link (or a link form we can't compare) asks for the post's own link, so the form stays open for it.
+  const askForOwnLink = link?.check === "unverifiable" && !!sentDetail && ASK_FOR_OWN_LINK.has(sentDetail);
+  const formOpen = canSend && (!link || failed || askForOwnLink || replacing);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -90,9 +125,10 @@ export function PostAndLink({ offer, onSent, onStale }: Props) {
     setFormError("");
     try {
       const r = await apiFetch<PostedResponse>(`${offerPath(offer.id)}/posted`, { method: "POST", body: JSON.stringify({ url }) });
-      const { linkResult: _verdict, ...next } = r.data;
+      const { linkResult, ...next } = r.data;
       setValue("");
       setReplacing(false);
+      setSentDetail(linkResult?.detail ?? null);
       setJustSent(true);
       onSent(next);
     } catch (err) {
@@ -153,7 +189,7 @@ export function PostAndLink({ offer, onSent, onStale }: Props) {
         <p className="text-sm text-ink-3 leading-relaxed max-w-2xl">The link can&apos;t be changed any more. If it&apos;s wrong, email creators@digitalsukoon.com.</p>
       )}
 
-      {canSend && link && !failed && !replacing && (
+      {canSend && link && !failed && !askForOwnLink && !replacing && (
         <div>
           <button type="button" className="btn btn-ghost btn-sm" onClick={() => { setReplacing(true); setJustSent(false); }}>Send a different link</button>
         </div>
@@ -163,7 +199,7 @@ export function PostAndLink({ offer, onSent, onStale }: Props) {
         <form onSubmit={submit} noValidate className="flex flex-col gap-3">
           <div className="field">
             <label htmlFor="post-link" className="field-label">
-              {failed ? "Send the link again" : replacing ? "A different link" : "Link to your post"}
+              {failed ? "Send another link" : askForOwnLink ? "The post's own link" : replacing ? "A different link" : "Link to your post"}
             </label>
             <input
               ref={input}

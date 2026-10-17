@@ -46,7 +46,6 @@ export function computeTotal(items: Array<{ pricePaise: number }>): number {
  * (`paid_pending_review`) with no payment row and no `paidAt`; the amount is collected by hand.
  */
 export async function checkout(clientId: string, bookingId: string) {
-  const mode = razorpayConfig.paymentMode();
   const b = await prisma.campaignBooking.findFirst({
     where: { id: bookingId, clientId },
     select: { id: true, status: true, name: true, launchFrom: true, format: true, campaignType: true, audioIntegration: true, audioTrack: true, items: { select: { id: true, rateCardId: true, pricePaise: true, platform: true, format: true, accountName: true, accountHandle: true, targetType: true, targetId: true } } },
@@ -63,8 +62,11 @@ export async function checkout(clientId: string, bookingId: string) {
   if (!b.launchFrom) throw new AppError(400, "NO_INFO", "Add the campaign details first.");
   if (b.items.length === 0) throw new AppError(400, "NO_ITEMS", "Pick at least one account.");
   // A booking that pays a creator is ONLINE PAYMENT ONLY: the creator's share is moved out of the brand's captured
-  // payment, and an offline submission has no payment to move it from. Never a silent fallback to offline.
+  // payment, and an offline submission has no payment to move it from. So its mode ignores CAMPAIGN_PAYMENT_MODE
+  // (that switch is for our own network's bookings) and only the keys decide: here "not razorpay" means the keys
+  // are missing. Never a silent fallback to offline.
   const creatorItems = b.items.filter((i) => i.targetType === CREATOR_TARGET_TYPE);
+  const mode = razorpayConfig.bookingPaymentMode(creatorItems.length > 0);
   if (creatorItems.length > 0 && mode !== "razorpay") {
     throw new AppError(409, "CREATOR_ONLINE_ONLY", "A creator's page can only be booked with online payment, which isn't available right now. Remove the creator's page to continue, or contact us.");
   }
@@ -156,7 +158,16 @@ export async function checkout(clientId: string, bookingId: string) {
     return { offline: true as const, amount: total, currency: "INR", name: b.name, status: "paid_pending_review" };
   }
 
-  const order = await rzp.createOrder(total, `cb_${b.id.slice(0, 30)}`, { bookingId: b.id, clientId });
+  // Who provides the creator posts in this payment, by NAME only (the name frozen just above): on the order's notes
+  // (what Razorpay and our team see against the payment) and as the `description` the checkout window can show the
+  // brand. Never a share, tax, payout amount or account id. Absent for a network-only booking, which is unchanged.
+  const creatorNames = [...new Set([...frozenCreatorTerms.values()].map((f) => f.creatorName).filter(Boolean))];
+  const order = await rzp.createOrder(total, `cb_${b.id.slice(0, 30)}`, {
+    bookingId: b.id,
+    clientId,
+    // Razorpay allows 256 characters per note value.
+    ...(creatorNames.length > 0 ? { creators: creatorNames.join(", ").slice(0, 250) } : {}),
+  });
   if (order.amount !== total || order.currency !== "INR") throw new AppError(502, "PAYMENT_ERROR", "Payment setup failed. Please try again.");
 
   await prisma.$transaction(async (tx) => {
@@ -172,7 +183,16 @@ export async function checkout(clientId: string, bookingId: string) {
     }
   });
 
-  return { offline: false as const, orderId: order.id, amount: total, currency: "INR", keyId: razorpayConfig.keyId(), name: b.name };
+  return {
+    offline: false as const,
+    orderId: order.id,
+    amount: total,
+    currency: "INR",
+    keyId: razorpayConfig.keyId(),
+    name: b.name,
+    // Only when a creator provides a post: the line the checkout window can show under the campaign name.
+    ...(creatorNames.length > 0 ? { description: `${b.name} — includes posts by ${creatorNames.join(", ")}`.slice(0, 250) } : {}),
+  };
 }
 
 /** Checkout success callback. Confirms the signature for the UI; the webhook does the real work. */

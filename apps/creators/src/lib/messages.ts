@@ -184,6 +184,11 @@ const OFFER_SENTENCES: Record<string, string> = {
   ALREADY_VERIFIED: "Our team has already verified your post, so the link can't be changed.",
   POSTING_CLOSED: "The time to send a link for this booking has ended. If you did post, email creators@digitalsukoon.com.",
   LINK_ALREADY_USED: "That post has already been sent in for another booking. Send the link of the post you made for this one.",
+  // A link our team has already checked by hand is final; the page re-reads the offer, which then shows it as checked.
+  LINK_FROZEN: "Our team has already checked your link, so it can't be changed. If it is the wrong one, email creators@digitalsukoon.com.",
+  // The link names somewhere other than a post: a redirect wrapper (l.facebook.com/l.php?u=…, an app-link redirect) or a profile / other page.
+  INVALID_LINK: "That link redirects somewhere else. Open your post and paste the post's own link, not a redirect.",
+  NOT_A_POST: "That link isn't the link of a post. Open the post itself and paste its own link, not your profile or another page.",
   VALIDATION_ERROR: "Paste the link of your post.",
   RATE_LIMIT: "Too many attempts. Please try again in an hour.",
 };
@@ -194,7 +199,7 @@ export function offerErrorSentence(err: unknown, platform?: string): string {
     if (err.code === "NETWORK" || err.code === "BAD_RESPONSE") return err.message; // fixed client-side strings
     if (err.code === "WRONG_PLATFORM") {
       const p = platform || "social media";
-      return `That doesn't look like a link to a ${p} post. Paste the link of the post itself, from your ${p} page.`;
+      return `That doesn't look like a link to a ${p} post. Paste the link of the post itself, from your ${p} page, not a redirect or a shortened link.`;
     }
     if (err.code && OFFER_SENTENCES[err.code]) return OFFER_SENTENCES[err.code];
     if (err.status === 429) return OFFER_SENTENCES.RATE_LIMIT;
@@ -210,6 +215,7 @@ const OFFER_STATE_CODES: ReadonlySet<string> = new Set([
   "OFFER_NOT_ACCEPTED",
   "ALREADY_VERIFIED",
   "POSTING_CLOSED",
+  "LINK_FROZEN",
   "NOT_FOUND",
 ]);
 
@@ -219,5 +225,8 @@ export function offerErrorChangesState(err: unknown): boolean {
 
 /** Codes that belong on the link field (the creator can fix them by sending a different link). */
 export function offerErrorIsAboutTheLink(err: unknown): boolean {
-  return err instanceof ApiError && (err.code === "WRONG_PLATFORM" || err.code === "LINK_ALREADY_USED" || err.code === "VALIDATION_ERROR");
+  return (
+    err instanceof ApiError &&
+    (err.code === "WRONG_PLATFORM" || err.code === "INVALID_LINK" || err.code === "NOT_A_POST" || err.code === "LINK_ALREADY_USED" || err.code === "VALIDATION_ERROR")
+  );
 }

@@ -23,7 +23,7 @@ import "./setup";
 
 vi.mock("../src/services/email.service", async (orig) => {
   const actual = await orig<typeof import("../src/services/email.service")>();
-  return { ...actual, sendEmail: vi.fn(async () => ({ messageId: "test" })), notifyAdminByEmail: vi.fn(async () => null) };
+  return { ...actual, sendEmail: vi.fn(async () => ({ messageId: "test" })), notifyAdminByEmail: vi.fn(async () => ({ messageId: "test" })) };
 });
 
 import app from "../src/app";
@@ -42,7 +42,8 @@ import {
   toOfferRow,
   withdrawOffer,
 } from "../src/services/creator/creator-offer.service";
-import { payoutAllowsLink } from "../src/services/creator/payout-ledger";
+import { pageHasOpenWork, payoutAllowsLink } from "../src/services/creator/payout-ledger";
+import { isIdentityKey, parseCreatorLink } from "../src/services/creator/offer-link";
 import { flushPayoutAlertsForTests, resetPayoutAlertsForTests } from "../src/services/creator/payout-alert";
 import { encryptToken } from "../src/utils/token-crypto";
 import { generateClientToken, generateCreatorToken, generateHrToken, generateToken } from "./helpers";
@@ -63,6 +64,8 @@ const rz = {
   calls: [] as Array<{ method: string; url: string; body: any }>,
   refunds: new Map<string, Array<{ id: string; amount: number; status: string; receipt: string | null; key: string | null }>>(),
   n: 0,
+  /** What a refund POST gets: accepted, refused outright (a 400), or no answer we can use (a 500). */
+  refundMode: "ok" as "ok" | "reject400" | "http500",
 };
 const refundPosts = () => rz.calls.filter((c) => c.method === "POST" && c.url.endsWith("/refund"));
 
@@ -70,6 +73,7 @@ function stubRazorpay() {
   rz.calls.length = 0;
   rz.refunds.clear();
   rz.n = 0;
+  rz.refundMode = "ok";
   razorpayHttp.fetch = (async (url: any, init: any) => {
     const u = String(url);
     const method = init?.method ?? "GET";
@@ -81,6 +85,8 @@ function stubRazorpay() {
     }
     const post = /\/payments\/([^/?]+)\/refund$/.exec(u);
     if (method === "POST" && post) {
+      if (rz.refundMode === "reject400") return new Response(JSON.stringify({ error: { code: "BAD_REQUEST_ERROR", description: "Your account does not have enough balance to carry out the refund operation." } }), { status: 400 });
+      if (rz.refundMode === "http500") return new Response("upstream error", { status: 500 });
       const list = rz.refunds.get(post[1]) ?? [];
       let r = key ? list.find((x) => x.key === key) : undefined;
       if (!r) {
@@ -116,6 +122,12 @@ const graph = {
   fbPosts: [] as Array<{ id: string; permalink_url: string; created_time: string }>,
   /** /share/... path → redirect target (absent = no redirect). */
   shares: new Map<string, string>(),
+  /** Per-page feeds, by the page's meta id: they replace igMedia / fbPosts for that page only. */
+  feeds: new Map<string, Array<Record<string, string>>>(),
+  /** Answer `limit` rows at a time with a paging.next cursor, like Meta does. */
+  paginate: false,
+  /** The host of the paging.next link (anything that is not Meta's must never be followed). */
+  nextHost: "graph.facebook.com",
   /** Every Graph call, with the access token and its proof removed. */
   calls: [] as Array<{ path: string; params: Record<string, string>; token: string | null }>,
 };
@@ -124,6 +136,9 @@ const resetGraph = () => {
   graph.igMedia = [];
   graph.fbPosts = [];
   graph.shares.clear();
+  graph.feeds.clear();
+  graph.paginate = false;
+  graph.nextHost = "graph.facebook.com";
   graph.calls.length = 0;
 };
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -145,8 +160,18 @@ function fakeFetch(input: any): Promise<Response> | Response {
   if (graph.mode === "rateLimit") return json({ error: { code: 4, message: "Application request limit reached" } }, 400);
   if (graph.mode === "permission") return json({ error: { code: 10, message: "(#10) Application does not have permission for this action" } }, 400);
   if (graph.mode === "graphError") return json({ error: { code: 1, message: "An unknown error occurred" } }, 500);
-  if (path.endsWith("/media")) return json({ data: graph.igMedia });
-  if (path.endsWith("/published_posts")) return json({ data: graph.fbPosts });
+  const feed = (rows: Array<Record<string, string>>) => {
+    if (!graph.paginate) return json({ data: rows });
+    const limit = Number(url.searchParams.get("limit")) || rows.length;
+    const after = Number(url.searchParams.get("after") ?? 0);
+    const next = new URL(url.toString());
+    next.hostname = graph.nextHost;
+    next.searchParams.set("after", String(after + limit));
+    return json({ data: rows.slice(after, after + limit), ...(after + limit < rows.length ? { paging: { next: next.toString() } } : {}) });
+  };
+  const metaId = path.split("/")[1];
+  if (path.endsWith("/media")) return feed(graph.feeds.get(metaId) ?? graph.igMedia);
+  if (path.endsWith("/published_posts")) return feed(graph.feeds.get(metaId) ?? graph.fbPosts);
   return json({ error: { code: 100, message: `unexpected ${path}` } }, 400);
 }
 
@@ -180,6 +205,69 @@ describe("creator-offer helpers", () => {
     // An opaque Facebook permalink falls back to host + path (case kept: pfbid is case-sensitive), so a tracking query is ignored.
     expect(ownershipMatchKey("https://www.facebook.com/somepage/posts/pfbid02AbC?mibextid=1")).toBe(ownershipMatchKey("https://m.facebook.com/somepage/posts/pfbid02AbC/"));
     expect(ownershipMatchKey("https://www.facebook.com/somepage/posts/pfbid02AbC")).not.toBe(ownershipMatchKey("https://www.facebook.com/somepage/posts/pfbid02abc"));
+  });
+
+  it("⚠️ an Instagram /share/ link is NOT the post's shortcode: it has its own key, which can never equal (or collide with) an ig: key", () => {
+    const share = ownershipMatchKey("https://www.instagram.com/share/reel/ABC123/?igsh=x");
+    expect(share).toBe("share:instagram.com/share/reel/ABC123");
+    expect(share).not.toBe("ig:ABC123");
+    expect(ownershipMatchKey("https://www.instagram.com/share/p/ABC123")).not.toBe("ig:ABC123");
+    expect(isIdentityKey(share)).toBe(false);
+    expect(ownershipMatchKey("https://www.instagram.com/reel/ABC123/")).toBe("ig:ABC123");
+  });
+
+  it("a Facebook video is its id wherever the link is written: the page segment (numeric id, vanity name, any case) is never part of the key", () => {
+    for (const url of [
+      "https://www.facebook.com/987654321/videos/123456789",
+      "https://www.facebook.com/MyPage/videos/123456789/",
+      "https://m.facebook.com/mypage/videos/123456789?mibextid=x",
+      "https://www.facebook.com/mypage/videos/vb.987654321/123456789/",
+      "https://www.facebook.com/reel/123456789/",
+      "https://www.facebook.com/watch/?v=123456789",
+      "https://web.facebook.com/video.php?v=123456789",
+    ]) {
+      expect(ownershipMatchKey(url), url).toBe("fb:123456789");
+    }
+    expect(ownershipMatchKey("https://www.facebook.com/MyPage/videos/123456780")).not.toBe("fb:123456789");
+  });
+
+  it("a Facebook post is its token (pfbid is case-sensitive, the page segment is ignored), a photo its fbid, a story its two ids: and two different ones never share a key", () => {
+    expect(ownershipMatchKey("https://www.facebook.com/PageA/posts/pfbid02AbC")).toBe("fbpost:pfbid02AbC");
+    expect(ownershipMatchKey("https://www.facebook.com/987/posts/pfbid02AbC/")).toBe("fbpost:pfbid02AbC");
+    expect(ownershipMatchKey("https://www.facebook.com/PageA/posts/pfbid02abc")).not.toBe("fbpost:pfbid02AbC");
+    expect(ownershipMatchKey("https://www.facebook.com/PageA/posts/1234567")).toBe("fbpost:1234567");
+    // Photos: before, every photo.php link collapsed to ONE key, so any photo link matched any photo in the feed.
+    expect(ownershipMatchKey("https://www.facebook.com/photo.php?fbid=111&set=a.1")).toBe("fbphoto:111");
+    expect(ownershipMatchKey("https://www.facebook.com/photo/?fbid=111")).toBe("fbphoto:111");
+    expect(ownershipMatchKey("https://www.facebook.com/photo.php?fbid=222")).not.toBe(ownershipMatchKey("https://www.facebook.com/photo.php?fbid=111"));
+    expect(ownershipMatchKey("https://www.facebook.com/PageA/photos/a.100/777/")).toBe("fbphoto:777");
+    expect(ownershipMatchKey("https://www.facebook.com/permalink.php?story_fbid=5&id=9")).toBe("fbstory:5:9");
+    expect(ownershipMatchKey("https://www.facebook.com/permalink.php?story_fbid=6&id=9")).not.toBe("fbstory:5:9");
+  });
+
+  it("a link that names no post has no identity key, so it can never be 'the same post' as another: fb.watch, an unreadable path", () => {
+    for (const url of ["https://fb.watch/abcDEF/", "https://www.facebook.com/events/123/", "https://example.com/x"]) {
+      const k = ownershipMatchKey(url);
+      expect(isIdentityKey(k), url).toBe(false);
+      expect(k.startsWith("raw:"), url).toBe(true);
+    }
+  });
+
+  it("parseCreatorLink takes a post link on the platform's own host only: no subdomain wrapper, no redirect target, no profile", () => {
+    const reason = (platform: string, url: string) => {
+      const r = parseCreatorLink(platform, url);
+      return r.ok ? "ok" : r.reason;
+    };
+    expect(reason("facebook", "https://l.facebook.com/l.php?u=https%3A%2F%2Fphish.example&v=1234567890")).toBe("host");
+    expect(reason("facebook", "https://lm.facebook.com/l.php?u=x")).toBe("host");
+    expect(reason("facebook", "https://business.facebook.com/reel/1234567890")).toBe("host");
+    expect(reason("facebook", "https://www.facebook.com/login.php?next=https%3A%2F%2Fphish.example&v=1234567890")).toBe("redirect");
+    expect(reason("facebook", "https://www.facebook.com/somepage")).toBe("shape");
+    expect(reason("instagram", "https://l.instagram.com/?u=https%3A%2F%2Fphish.example&e=x")).toBe("host");
+    expect(reason("instagram", "https://www.instagram.com/creatorpage1/")).toBe("shape");
+    expect(reason("instagram", "https://www.instagram.com/stories/creatorpage1/123/")).toBe("shape");
+    expect(reason("instagram", "https://www.facebook.com/reel/1")).toBe("host");
+    for (const [platform, url] of [["instagram", "https://m.instagram.com/reel/AbC/"], ["facebook", "https://mbasic.facebook.com/reel/12/"], ["facebook", "https://fb.watch/abc/"]]) expect(reason(platform, url), url).toBe("ok");
   });
 
   it("payoutAllowsLink: planned, transfer_requested and held only", () => {
@@ -778,6 +866,136 @@ describe("creator offers", () => {
     });
   });
 
+  describe("a creator who had seen the offer is told when it is withdrawn (and nothing of the brand)", () => {
+    const withdrawnMail = (email: string) =>
+      vi.mocked(sendEmail).mock.calls.map((c) => c[0] as { to: string; subject: string; html: string }).filter((m) => m.to === email && /Booking withdrawn/.test(m.subject));
+    const settle = () => new Promise((r) => setTimeout(r, 60));
+
+    it("staff withdraw an ACCEPTED offer: one mail to the creator saying not to post, with no brand, no client and no price", async () => {
+      const { page, paid, item, offer } = await offered();
+      await accept(page, offer.id);
+      expect((await staffPost(paid.booking.id, item.id, "withdraw-offer")).status).toBe(200);
+      await vi.waitFor(() => expect(withdrawnMail(page.creator.email)).toHaveLength(1));
+      const m = withdrawnMail(page.creator.email)[0];
+      expect(m.subject).toContain(offer.pageName);
+      expect(m.html).toMatch(/don't post it/);
+      expect(m.html).toContain(offer.pageName);
+      for (const never of ["2,500", "250000", "₹1,000", "Brand A", "a@brand.test", "Asha", "Acme Cola", "40%", "share", String(paid.booking.id)]) expect(m.html, never).not.toContain(never);
+      await settle();
+      expect(withdrawnMail(page.creator.email)).toHaveLength(1); // once
+    });
+
+    it("an OFFERED offer is announced only if its creator was emailed it: withdrawn before they ever saw it, there is nothing to tell", async () => {
+      const seen = await offered(); // emailed (the default mock takes it)
+      expect((await staffPost(seen.paid.booking.id, seen.item.id, "withdraw-offer")).status).toBe(200);
+      await vi.waitFor(() => expect(withdrawnMail(seen.page.creator.email)).toHaveLength(1));
+
+      vi.mocked(sendEmail).mockImplementation(async (o: any) => (/booking offer/i.test(o.subject) ? (null as never) : ({ messageId: "test" } as never)));
+      const unseen = await offered();
+      await settle();
+      expect((await offerOf(unseen.offer.id)).notifiedAt).toBeNull();
+      expect((await staffPost(unseen.paid.booking.id, unseen.item.id, "withdraw-offer")).status).toBe(200);
+      await settle();
+      expect(withdrawnMail(unseen.page.creator.email)).toHaveLength(0);
+      vi.mocked(sendEmail).mockImplementation(async () => ({ messageId: "test" }) as never);
+    });
+
+    it("refunding the item, and rejecting the campaign, tell the creator who had accepted: one mail each", async () => {
+      const byRefund = await offered();
+      await accept(byRefund.page, byRefund.offer.id);
+      expect((await staffPost(byRefund.paid.booking.id, byRefund.item.id, "refund")).status).toBe(200);
+      await vi.waitFor(() => expect(withdrawnMail(byRefund.page.creator.email)).toHaveLength(1));
+
+      const byReject = await offered();
+      await accept(byReject.page, byReject.offer.id);
+      const rej = await request(app).post(`/v1/admin/campaigns/${byReject.paid.booking.id}/reject`).set(aAuth()).send({ note: "not suitable" });
+      expect(rej.status).toBe(200);
+      await vi.waitFor(() => expect(withdrawnMail(byReject.page.creator.email)).toHaveLength(1));
+      expect(await offerOf(byReject.offer.id)).toMatchObject({ status: "withdrawn", closedReason: "booking_rejected" });
+    });
+
+    it("⚠️ a close the creator's own side explains sends no such mail: the worker's missed window, an expiry, a decline", async () => {
+      const missed = await offered();
+      await accept(missed.page, missed.offer.id);
+      await withdrawOffer(missed.offer.id, { closedReason: "missed_window" });
+      const away = await offered();
+      await prisma.creatorOffer.update({ where: { id: away.offer.id }, data: { expiresAt: new Date(Date.now() - 1000) } });
+      await expireOffer(away.offer.id);
+      const declined = await offered();
+      await cPost(declined.page.token, `/creator/offers/${declined.offer.id}/decline`, {});
+      await settle();
+      for (const x of [missed, away, declined]) expect(withdrawnMail(x.page.creator.email), x.offer.id).toHaveLength(0);
+    });
+  });
+
+  describe("a refund Razorpay refuses, for a creator's post", () => {
+    const refund = (x: { paid: { booking: { id: string } }; item: { id: string } }) => staffPost(x.paid.booking.id, x.item.id, "refund");
+    const ledger = async () => (await prisma.campaignRefund.findMany({ orderBy: { createdAt: "asc" } })).map((r) => [r.idempotencyKey, r.status]);
+
+    it.each([["awaiting_creator", false], ["manual_pending", true]] as Array<[string, boolean]>)(
+      "⚠️ a refused refund (400) from %s leaves the post REFUND_DUE (never back 'waiting for the creator' with a withdrawn offer and a void payout), and the retry refunds it exactly once",
+      async (from, accepted) => {
+        const x = await offered();
+        if (accepted) await accept(x.page, x.offer.id);
+        expect(await itemStatus(x.item.id)).toBe(from);
+
+        rz.refundMode = "reject400";
+        const res = await refund(x);
+        expect(res.status).toBe(502);
+        expect(res.body.error.code).toBe("REFUND_FAILED");
+        expect(await itemStatus(x.item.id)).toBe("refund_due");
+        expect(await payoutOf(x.item.id)).toMatchObject({ status: "void", voidReason: "item_refunded" });
+        expect(await offerOf(x.offer.id)).toMatchObject({ status: "withdrawn", closedReason: "withdrawn" });
+        expect(await ledger()).toEqual([[`rf-item-${x.item.id}`, "failed"]]);
+        expect(await prisma.campaignPayment.findFirstOrThrow({ where: { bookingId: x.paid.booking.id } })).toMatchObject({ status: "captured", refundedPaise: 0 });
+
+        rz.refundMode = "ok";
+        const retry = await refund(x);
+        expect(retry.status).toBe(200);
+        expect(await ledger()).toEqual([[`rf-item-${x.item.id}`, "failed"], [`rf-item-${x.item.id}-r2`, "processed"]]);
+        expect([...rz.refunds.values()].flat().map((r) => r.amount)).toEqual([250_000]); // one refund, once
+        expect(await itemStatus(x.item.id)).toBe("refunded");
+        expect(await payoutOf(x.item.id)).toMatchObject({ status: "void" });
+      },
+    );
+
+    it("an answer Razorpay never gave (500) is not a refusal: the claim is kept, the item stays refunded and the refund is left to be confirmed", async () => {
+      const x = await offered();
+      rz.refundMode = "http500";
+      const res = await refund(x);
+      expect(res.status).toBe(200);
+      expect(res.body.data.refundNotice).toBeTruthy();
+      expect(await itemStatus(x.item.id)).toBe("refunded");
+      expect(await offerOf(x.offer.id)).toMatchObject({ status: "withdrawn" });
+      expect(await payoutOf(x.item.id)).toMatchObject({ status: "void" });
+    });
+  });
+
+  describe("an offer nobody could email", () => {
+    it("⚠️ expires as 'never emailed', not 'didn't respond': the item row, the booking history and the staff alert all say so", async () => {
+      vi.mocked(sendEmail).mockImplementation(async (o: any) => (/booking offer/i.test(o.subject) ? (null as never) : ({ messageId: "test" } as never)));
+      const { item, offer } = await offered();
+      await new Promise((r) => setTimeout(r, 60));
+      expect((await offerOf(offer.id)).notifiedAt).toBeNull();
+      await prisma.creatorOffer.update({ where: { id: offer.id }, data: { expiresAt: new Date(Date.now() - 1000) } });
+      await expireOffer(offer.id);
+      vi.mocked(sendEmail).mockImplementation(async () => ({ messageId: "test" }) as never);
+      const row = await prisma.campaignBookingItem.findUniqueOrThrow({ where: { id: item.id } });
+      expect(row.lastError).toMatch(/never emailed/);
+      expect(row.lastError).not.toMatch(/didn't respond/);
+      const events = (await prisma.campaignBookingEvent.findMany({ where: { bookingId: item.bookingId } })).map((e) => e.note ?? "");
+      expect(events.some((n) => /never got the offer email/.test(n))).toBe(true);
+      await flushPayoutAlertsForTests();
+      const alert = vi.mocked(notifyAdminByEmail).mock.calls.find((c) => c[0] === REFUND_ALERT)!;
+      expect(alert[1].map((d: any) => d.value).join(" ")).toMatch(/never emailed/);
+      // An offer its creator WAS emailed still reads as no response.
+      const seen = await offered();
+      await prisma.creatorOffer.update({ where: { id: seen.offer.id }, data: { expiresAt: new Date(Date.now() - 1000) } });
+      await expireOffer(seen.offer.id);
+      expect((await prisma.campaignBookingItem.findUniqueOrThrow({ where: { id: seen.item.id } })).lastError).toMatch(/didn't respond/);
+    });
+  });
+
   describe("the races", () => {
     /** The only end states an offer, its item and its payout may be in, whatever order the answers arrived in. */
     async function coherent(offerId: string, itemId: string) {
@@ -864,6 +1082,8 @@ describe("creator offers", () => {
       const b = await seedPage({ name: "Page of B", price: 120_000, shareBps: 5000 });
       const paid = await bookAndPay([a.card.id, b.card.id]);
       expect((await approve(paid.booking.id)).status).toBe(200);
+      // The offer emails go out after approve returns: let them finish (they stamp notified_at), so a test that compares an offer row before and after an action is not racing them.
+      await vi.waitFor(async () => expect(await prisma.creatorOffer.count({ where: { notifiedAt: null } })).toBe(0));
       const offerA = await prisma.creatorOffer.findFirstOrThrow({ where: { creatorId: a.creator.id } });
       const offerB = await prisma.creatorOffer.findFirstOrThrow({ where: { creatorId: b.creator.id } });
       return { a, b, paid, offerA, offerB };
@@ -1026,6 +1246,8 @@ describe("creator offers", () => {
     const post = (p: Page, offerId: string, url: string) => cPost(p.token, `/creator/offers/${offerId}/posted`, { url });
     const igPost = (code: string, at: Date = new Date()) => ({ id: `m_${code}`, permalink: `https://www.instagram.com/p/${code}/`, timestamp: metaTime(at) });
     const IG_URL = "https://www.instagram.com/creatorpage1/p/ABCdef123/?igsh=Zm9v";
+    /** What is stored for it: the post's own link, without the username path or the tracking query (never the pasted string). */
+    const IG_CLEAN = "https://www.instagram.com/p/ABCdef123/";
 
     it("⚠️ a link on the wrong platform is refused 400 WRONG_PLATFORM before any call to Meta, and stores nothing", async () => {
       const { page, offer } = await accepted();
@@ -1046,9 +1268,10 @@ describe("creator offers", () => {
       expect(res.status).toBe(200);
       expect(res.body.data.linkResult).toMatchObject({ check: "auto_ok", detail: "matched" });
       expect(res.body.data.linkResult.message).toMatch(/found your post/i);
-      expect(res.body.data.link).toMatchObject({ url: IG_URL, check: "auto_ok", verified: false });
+      // Meta's own URL for the post is what is kept, not the string the creator pasted (username path, igsh tracking token).
+      expect(res.body.data.link).toMatchObject({ url: IG_CLEAN, check: "auto_ok", verified: false });
       const row = await offerOf(offer.id);
-      expect(row).toMatchObject({ linkUrl: IG_URL, linkCanonicalKey: "ig:ABCdef123", ownershipCheck: "auto_ok", ownershipDetail: "matched", ownershipCheckedById: null });
+      expect(row).toMatchObject({ linkUrl: IG_CLEAN, linkCanonicalKey: "ig:ABCdef123", ownershipCheck: "auto_ok", ownershipDetail: "matched", ownershipCheckedById: null });
       expect(row.linkSubmittedAt).not.toBeNull();
       expect(row.ownershipCheckedAt).not.toBeNull();
       expect(Math.abs(row.linkPostedAt!.getTime() - (Date.now() - 1000))).toBeLessThan(10_000);
@@ -1072,7 +1295,7 @@ describe("creator offers", () => {
       expect(bad.status).toBe(200);
       expect(bad.body.data.linkResult).toMatchObject({ check: "auto_failed", detail: "not_found" });
       expect(bad.body.data.linkResult.message).toMatch(/couldn't find that post/i);
-      expect(await offerOf(offer.id)).toMatchObject({ ownershipCheck: "auto_failed", ownershipDetail: "not_found", linkUrl: IG_URL });
+      expect(await offerOf(offer.id)).toMatchObject({ ownershipCheck: "auto_failed", ownershipDetail: "not_found", linkUrl: IG_CLEAN });
       expect(await itemStatus(item.id)).toBe("manual_pending");
       graph.igMedia = [igPost("ABCdef123")];
       const good = await post(page, offer.id, "https://www.instagram.com/p/ABCdef123/");
@@ -1102,7 +1325,7 @@ describe("creator offers", () => {
       expect(res.body.data.linkResult).toMatchObject({ check: "unverifiable", detail });
       expect(res.body.data.linkResult.message).toMatch(/by hand/i);
       const row = await offerOf(offer.id);
-      expect(row).toMatchObject({ ownershipCheck: "unverifiable", ownershipDetail: detail, linkUrl: IG_URL });
+      expect(row).toMatchObject({ ownershipCheck: "unverifiable", ownershipDetail: detail, linkUrl: IG_CLEAN });
       expect(row.linkSubmittedAt).not.toBeNull();
       // Nothing Meta said is stored or returned.
       expect(JSON.stringify(res.body)).not.toMatch(/Error validating|request limit|does not have permission|unknown error|network down/i);
@@ -1154,8 +1377,8 @@ describe("creator offers", () => {
         graph.shares.set("/share/r/AbC123/", "https://www.facebook.com/reel/1234567890/?s=x");
         const ok = await post(page, offer.id, "https://www.facebook.com/share/r/AbC123/");
         expect(ok.body.data.linkResult.check).toBe("auto_ok");
-        // Stored as the creator sent it, keyed by the POST it led to (so one reel cannot be paid for twice under two share codes).
-        expect(await offerOf(offer.id)).toMatchObject({ linkUrl: "https://www.facebook.com/share/r/AbC123/", linkCanonicalKey: "fb:1234567890" });
+        // Keyed by the POST it led to (so one reel cannot be paid for twice under two share codes), and kept as Meta's own link to it.
+        expect(await offerOf(offer.id)).toMatchObject({ linkUrl: "https://www.facebook.com/reel/1234567890/", linkCanonicalKey: "fb:1234567890" });
         const un = await post(page, offer.id, "https://www.facebook.com/share/r/NoRedirect/");
         expect(un.body.data.linkResult).toMatchObject({ check: "unverifiable", detail: "share_link" });
       });
@@ -1171,11 +1394,245 @@ describe("creator offers", () => {
         expect(res.body.error.code).toBe("LINK_ALREADY_USED");
       });
 
+      it("⚠️ a /<page>/videos/<id> link matches the permalink Meta lists whatever the page segment is (numeric id, vanity name, other case), and the reel form of the same video", async () => {
+        const { page, offer } = await fbAccepted();
+        graph.fbPosts = [{ id: "p_1", permalink_url: "https://www.facebook.com/987654321/videos/5550001/", created_time: metaTime(new Date()) }];
+        for (const url of ["https://www.facebook.com/MyPage/videos/5550001/", "https://www.facebook.com/mypage/videos/5550001", "https://www.facebook.com/reel/5550001", "https://m.facebook.com/watch/?v=5550001"]) {
+          const res = await post(page, offer.id, url);
+          expect(res.body.data.linkResult, url).toMatchObject({ check: "auto_ok", detail: "matched" });
+        }
+        expect((await offerOf(offer.id)).linkCanonicalKey).toBe("fb:5550001");
+      });
+
+      it("⚠️ two different photos are two different posts: photo.php?fbid=111 is found, fbid=222 is not (it used to be 'any photo.php link')", async () => {
+        const { page, offer } = await fbAccepted();
+        graph.fbPosts = [{ id: "p_1", permalink_url: "https://www.facebook.com/photo.php?fbid=111&set=a.1", created_time: metaTime(new Date()) }];
+        const yes = await post(page, offer.id, "https://www.facebook.com/photo.php?fbid=111&set=a.9");
+        expect(yes.body.data.linkResult.check).toBe("auto_ok");
+        expect((await offerOf(offer.id)).linkCanonicalKey).toBe("fbphoto:111");
+        const no = await post(page, offer.id, "https://www.facebook.com/photo.php?fbid=222&set=a.9");
+        expect(no.body.data.linkResult).toMatchObject({ check: "auto_failed", detail: "not_found" });
+      });
+
+      it("a short fb.watch link names no post: unverifiable (link_shape) with no call, never 'not found'", async () => {
+        const { page, offer } = await fbAccepted();
+        const res = await post(page, offer.id, "https://fb.watch/abcDEF/");
+        expect(res.body.data.linkResult).toMatchObject({ check: "unverifiable", detail: "link_shape" });
+        expect(res.body.data.linkResult.message).toMatch(/by hand/i);
+        expect(graph.calls).toHaveLength(0);
+        expect((await offerOf(offer.id)).linkCanonicalKey!.startsWith("raw:")).toBe(true);
+      });
+
+      it("⚠️ a feed holding posts in a form we cannot compare never yields 'not found' (the post may be one of them): unverifiable (feed_shape)", async () => {
+        const { page, offer } = await fbAccepted();
+        graph.fbPosts = [
+          { id: "p_1", permalink_url: "https://www.facebook.com/somepage/posts/pfbid0Other", created_time: metaTime(new Date()) },
+          { id: "p_2", permalink_url: "https://www.facebook.com/events/123/", created_time: metaTime(new Date()) },
+        ];
+        const res = await post(page, offer.id, "https://www.facebook.com/reel/9999");
+        expect(res.body.data.linkResult).toMatchObject({ check: "unverifiable", detail: "feed_shape" });
+        // A feed of only readable posts, without it, is "not found".
+        graph.fbPosts = [graph.fbPosts[0]];
+        expect((await post(page, offer.id, "https://www.facebook.com/reel/9999")).body.data.linkResult).toMatchObject({ check: "auto_failed", detail: "not_found" });
+      });
+
       it("an opaque pfbid permalink matches on host + path, tracking query ignored", async () => {
         const { page, offer } = await fbAccepted();
         graph.fbPosts = [{ id: `${page.asset.metaId}_5`, permalink_url: "https://www.facebook.com/creatorpage/posts/pfbid02AbCdEf", created_time: metaTime(new Date()) }];
         const res = await post(page, offer.id, "https://m.facebook.com/creatorpage/posts/pfbid02AbCdEf/?mibextid=abc");
         expect(res.body.data.linkResult.check).toBe("auto_ok");
+      });
+    });
+
+    it("⚠️ a link that is a redirect wrapper or not a post is refused before anything is stored or any call is made: l.facebook.com/l.php?u=…&v=<own id>, login.php?next=…, a profile", async () => {
+      const fb = await accepted({ kind: "facebook_page" });
+      graph.fbPosts = [{ id: "x_1", permalink_url: "https://www.facebook.com/reel/1234567890/", created_time: metaTime(new Date()) }];
+      const send = async (x: typeof fb, url: string) => {
+        const res = await post(x.page, x.offer.id, url);
+        return [res.status, res.body.error.code];
+      };
+      // The creator owns video 1234567890, so the id in ?v= would have matched their own post and the shim would have been delivered to the client.
+      expect(await send(fb, "https://l.facebook.com/l.php?u=https%3A%2F%2Fphish.example%2Flogin&v=1234567890")).toEqual([400, "WRONG_PLATFORM"]);
+      expect(await send(fb, "https://www.facebook.com/login.php?next=https%3A%2F%2Fphish.example&v=1234567890")).toEqual([400, "INVALID_LINK"]);
+      expect(await send(fb, "https://www.facebook.com/somepage")).toEqual([400, "NOT_A_POST"]);
+      const ig = await accepted();
+      expect(await send(ig, "https://l.instagram.com/?u=https%3A%2F%2Fphish.example&e=x")).toEqual([400, "WRONG_PLATFORM"]);
+      expect(await send(ig, "https://www.instagram.com/creatorpage1/")).toEqual([400, "NOT_A_POST"]);
+      expect(graph.calls).toHaveLength(0);
+      expect(await offerOf(fb.offer.id)).toMatchObject({ linkUrl: null, linkSubmittedAt: null, ownershipCheck: null });
+      expect(await offerOf(ig.offer.id)).toMatchObject({ linkUrl: null, linkSubmittedAt: null, ownershipCheck: null });
+    });
+
+    it("⚠️ a creator pasting ANOTHER creator's post does not block its real owner: a failed claim (auto_failed or unverifiable) reserves nothing; a PASSED claim still does", async () => {
+      const owner = await accepted();
+      const squatter = await accepted();
+      const lapsed = await accepted();
+      const second = await accepted();
+      const url = "https://www.instagram.com/p/THEPOST1/";
+      graph.feeds.set(owner.page.asset.metaId, [igPost("THEPOST1")]);
+      graph.feeds.set(squatter.page.asset.metaId, [igPost("SQUATTER9")]);
+      graph.feeds.set(second.page.asset.metaId, [igPost("THEPOST1")]); // (a feed that, wrongly, also lists it: two PASSED claims)
+      await prisma.creatorConnection.update({ where: { id: lapsed.page.conn.id }, data: { status: "NEEDS_REAUTH" } }); // unverifiable, no call
+
+      const failed = await post(squatter.page, squatter.offer.id, url);
+      expect(failed.status).toBe(200); // not told that somebody else sent it in
+      expect(failed.body.data.linkResult).toMatchObject({ check: "auto_failed", detail: "not_found" });
+      const unverifiable = await post(lapsed.page, lapsed.offer.id, url);
+      expect(unverifiable.body.data.linkResult.check).toBe("unverifiable");
+      expect(await offerOf(squatter.offer.id)).toMatchObject({ linkCanonicalKey: "ig:THEPOST1", ownershipCheck: "auto_failed" });
+
+      // The real owner sends the same post: accepted, and the squatter's row is left exactly as it was.
+      const real = await post(owner.page, owner.offer.id, url);
+      expect(real.status).toBe(200);
+      expect(real.body.data.linkResult.check).toBe("auto_ok");
+      expect(await offerOf(squatter.offer.id)).toMatchObject({ ownershipCheck: "auto_failed", ownershipDetail: "not_found" });
+      expect(await offerOf(lapsed.offer.id)).toMatchObject({ ownershipCheck: "unverifiable" });
+
+      // Pasting a post whose claim PASSED tells a stranger nothing either: their own check failed, so for them it is simply "not found".
+      const stranger = await accepted();
+      graph.feeds.set(stranger.page.asset.metaId, [igPost("STRANGER7")]);
+      const probe = await post(stranger.page, stranger.offer.id, url);
+      expect(probe.status).toBe(200);
+      expect(probe.body.data.linkResult).toMatchObject({ check: "auto_failed", detail: "not_found" });
+
+      // A second PASSED claim on the same post is still refused.
+      const dup = await post(second.page, second.offer.id, url);
+      expect(dup.status).toBe(409);
+      expect(dup.body.error.code).toBe("LINK_ALREADY_USED");
+      expect((await offerOf(second.offer.id)).linkUrl).toBeNull();
+
+      // And staff can still verify ONE of them: the strict "one post, one booking" check at verify time is the real invariant.
+      const verifyKey = (x: typeof owner) => staffPost(x.paid.booking.id, x.item.id, "verify-creator-link", { ownershipCheckedByHand: true, linkCanonicalKey: "ig:THEPOST1" });
+      expect((await verifyKey(owner)).status).toBe(200);
+      const late = await verifyKey(squatter);
+      expect(late.status).toBe(409);
+      expect(late.body.error.code).toBe("LINK_ALREADY_USED");
+    });
+
+    it("⚠️ an Instagram /share/ link is not a shortcode: unverifiable (share_link) with no call to Meta, the creator is asked for the post's own link, and it can never match or block a real post", async () => {
+      const { page, offer } = await accepted();
+      graph.igMedia = [igPost("ABC123")]; // a REAL post whose shortcode equals the share code
+      const res = await post(page, offer.id, "https://www.instagram.com/share/reel/ABC123/?igsh=x");
+      expect(res.status).toBe(200);
+      expect(res.body.data.linkResult).toMatchObject({ check: "unverifiable", detail: "share_link" });
+      expect(res.body.data.linkResult.message).toMatch(/post's own link/i);
+      expect(res.body.data.linkResult.message).toMatch(/by hand/i);
+      expect(graph.calls).toHaveLength(0);
+      expect(await offerOf(offer.id)).toMatchObject({ linkCanonicalKey: "share:instagram.com/share/reel/ABC123", linkUrl: "https://www.instagram.com/share/reel/ABC123/", ownershipCheck: "unverifiable" });
+      // The real post, sent for ANOTHER booking, is its own key: not blocked by the share link.
+      const other = await accepted();
+      graph.feeds.set(other.page.asset.metaId, [igPost("ABC123")]);
+      const real = await post(other.page, other.offer.id, "https://www.instagram.com/reel/ABC123/");
+      expect(real.body.data.linkResult.check).toBe("auto_ok");
+      expect((await offerOf(other.offer.id)).linkCanonicalKey).toBe("ig:ABC123");
+      // And the creator replaces the share link with the post's own link.
+      graph.feeds.set(page.asset.metaId, [igPost("OWN4567")]);
+      expect((await post(page, offer.id, "https://www.instagram.com/p/OWN4567/")).body.data.linkResult.check).toBe("auto_ok");
+    });
+
+    describe("⚠️ the window's edges, and a post made after the window (the realistic late case, inside the 24 h link grace)", () => {
+      it("from is inclusive and to is exclusive; a post an hour after the window sent inside the grace is auto_failed (outside_window) and staff cannot verify it without the hand tick", async () => {
+        const { page, paid, item, offer } = await accepted();
+        const win = postingWindow(offer.windowFrom, offer.windowTo);
+        const at = async (instant: Date) => {
+          graph.igMedia = [igPost("EDGE1", instant)];
+          return checkLinkOwnership(offer, "https://www.instagram.com/p/EDGE1/");
+        };
+        expect(await at(win.from!)).toMatchObject({ check: "auto_ok", detail: "matched" });
+        expect(await at(new Date(win.from!.getTime() - 1000))).toMatchObject({ check: "auto_failed", detail: "outside_window" });
+        expect(await at(new Date(win.to!.getTime() - 1000))).toMatchObject({ check: "auto_ok", detail: "matched" });
+        expect(await at(win.to!)).toMatchObject({ check: "auto_failed", detail: "outside_window" });
+
+        const { submitOfferLink, linkDeadline } = await import("../src/services/creator/creator-offer.service");
+        graph.igMedia = [igPost("LATE1", new Date(win.to!.getTime() + HOUR))];
+        const sent = await submitOfferLink(page.creator.id, offer.id, "https://www.instagram.com/p/LATE1/", new Date(linkDeadline(offer)!.getTime() - 1000));
+        expect(sent).toMatchObject({ check: "auto_failed", detail: "outside_window" });
+        expect(await offerOf(offer.id)).toMatchObject({ ownershipCheck: "auto_failed", ownershipDetail: "outside_window" });
+        const res = await staffPost(paid.booking.id, item.id, "verify-creator-link", { linkCanonicalKey: "ig:LATE1" });
+        expect(res.status).toBe(409);
+        expect(res.body.error.code).toBe("OWNERSHIP_NOT_CHECKED");
+        expect(await itemStatus(item.id)).toBe("manual_pending");
+      });
+    });
+
+    describe("a busy page: the feed is read newest first, a few pages at most, and 'not found' is only said when it is known", () => {
+      /** n posts, newest first, one a minute, all inside the window; reel ids 1000.. */
+      const fbRows = (n: number) => Array.from({ length: n }, (_, i) => ({ id: `x_${i}`, permalink_url: `https://www.facebook.com/reel/${1000 + i}/`, created_time: metaTime(new Date(Date.now() - i * 60_000)) }));
+      const igRows = (n: number) => Array.from({ length: n }, (_, i) => igPost(`CODE${String(i).padStart(4, "0")}`, new Date(Date.now() - i * 60_000)));
+
+      it("finds the post on a later page: one call per page, the next page is Meta's own cursor, and the fields and page size are unchanged", async () => {
+        const { page, offer } = await accepted({ kind: "facebook_page" });
+        graph.paginate = true;
+        graph.fbPosts = fbRows(60);
+        const res = await post(page, offer.id, "https://www.facebook.com/reel/1030"); // row 30: the second page of 25
+        expect(res.body.data.linkResult).toMatchObject({ check: "auto_ok", detail: "matched" });
+        expect(graph.calls).toHaveLength(2);
+        expect(graph.calls[0].params).toMatchObject({ fields: "permalink_url,created_time", limit: "25" });
+        expect(graph.calls[1].params.after).toBe("25");
+      });
+
+      it("⚠️ a post beyond the pages it may read is unverifiable (page_too_busy) for staff to decide, NEVER 'not found'", async () => {
+        const { page, offer } = await accepted({ kind: "facebook_page" });
+        graph.paginate = true;
+        graph.fbPosts = fbRows(200); // all inside the window: the window's start is never reached
+        const res = await post(page, offer.id, "https://www.facebook.com/reel/9999");
+        expect(res.body.data.linkResult).toMatchObject({ check: "unverifiable", detail: "page_too_busy" });
+        expect(res.body.data.linkResult.message).toMatch(/by hand/i);
+        expect(graph.calls).toHaveLength(3); // LINK_CHECK_MAX_PAGES: bounded
+        expect(await offerOf(offer.id)).toMatchObject({ ownershipCheck: "unverifiable", ownershipDetail: "page_too_busy" });
+      });
+
+      it("a page that reaches back before the window opened has been read far enough: not there is definite, after ONE page", async () => {
+        const { page, offer } = await accepted({ kind: "facebook_page" });
+        graph.paginate = true;
+        const rows = fbRows(60);
+        rows[24] = { ...rows[24], created_time: metaTime(new Date(offer.windowFrom!.getTime() - 3 * DAY)) }; // the last of page 1 is older than the window
+        graph.fbPosts = rows;
+        const res = await post(page, offer.id, "https://www.facebook.com/reel/9999");
+        expect(res.body.data.linkResult).toMatchObject({ check: "auto_failed", detail: "not_found" });
+        expect(graph.calls).toHaveLength(1);
+      });
+
+      it("a feed that simply ends is the whole feed: not found is definite", async () => {
+        const { page, offer } = await accepted({ kind: "facebook_page" });
+        graph.paginate = true;
+        graph.fbPosts = fbRows(10);
+        const res = await post(page, offer.id, "https://www.facebook.com/reel/9999");
+        expect(res.body.data.linkResult).toMatchObject({ check: "auto_failed", detail: "not_found" });
+        expect(graph.calls).toHaveLength(1);
+      });
+
+      it("a next link that is not Meta's is never followed (the access token travels with it), and that is not 'not found' either", async () => {
+        const { page, offer } = await accepted({ kind: "facebook_page" });
+        graph.paginate = true;
+        graph.nextHost = "evil.example";
+        graph.fbPosts = fbRows(60);
+        const res = await post(page, offer.id, "https://www.facebook.com/reel/1030");
+        expect(res.body.data.linkResult).toMatchObject({ check: "unverifiable", detail: "page_too_busy" });
+        expect(graph.calls).toHaveLength(1);
+      });
+
+      it("Instagram reads 50 a page: a post at row 70 is on the second page", async () => {
+        const { page, offer } = await accepted();
+        graph.paginate = true;
+        graph.igMedia = igRows(120);
+        const res = await post(page, offer.id, "https://www.instagram.com/p/CODE0070/");
+        expect(res.body.data.linkResult.check).toBe("auto_ok");
+        expect(graph.calls).toHaveLength(2);
+        expect(graph.calls[0].params.limit).toBe("50");
+      });
+
+      it("a failure on a later page is a failure to read (a code), not a verdict on the post", async () => {
+        const { page, offer } = await accepted({ kind: "facebook_page" });
+        graph.paginate = true;
+        graph.fbPosts = fbRows(60);
+        // The second call is refused (rate limit): the first page alone proves nothing.
+        const real = globalThis.fetch;
+        let n = 0;
+        vi.stubGlobal("fetch", vi.fn(async (input: any) => (++n === 2 ? json({ error: { code: 4, message: "Application request limit reached" } }, 400) : fakeFetch(input))));
+        const res = await post(page, offer.id, "https://www.facebook.com/reel/1030");
+        vi.stubGlobal("fetch", real);
+        expect(res.body.data.linkResult).toMatchObject({ check: "unverifiable", detail: "rate_limited" });
       });
     });
 
@@ -1213,7 +1670,7 @@ describe("creator offers", () => {
       const inside = await submitOfferLink(page.creator.id, offer.id, IG_URL, new Date(deadline.getTime() - 1000));
       // Inside the grace the link is taken. (The check judges the POST's own time against the window, not the moment of sending.)
       expect(inside.check).toBe("auto_ok");
-      expect((await offerOf(offer.id)).linkUrl).toBe(IG_URL);
+      expect((await offerOf(offer.id)).linkUrl).toBe(IG_CLEAN);
     });
 
     it("refused when the item no longer waits for the creator's post, or the payout is void or failed", async () => {
@@ -1255,7 +1712,11 @@ describe("creator offers", () => {
       });
       return { ...x, url };
     }
-    const verify = (bookingId: string, itemId: string, body: object = {}) => staffPost(bookingId, itemId, "verify-creator-link", body);
+    /** Staff press "Verify link & release" on the link they were looking at: its key is quoted back, as the staff screen does. */
+    const verify = async (bookingId: string, itemId: string, body: { ownershipCheckedByHand?: boolean; linkCanonicalKey?: string } = {}) => {
+      const offer = await prisma.creatorOffer.findUnique({ where: { bookingItemId: itemId } });
+      return staffPost(bookingId, itemId, "verify-creator-link", { linkCanonicalKey: offer?.linkCanonicalKey ?? "no-link-yet", ...body });
+    };
 
     it("auto_ok: the creator's link goes live as the post (posted_manual, their link, who verified), the offer is stamped verified, the booking completes; NOTHING is paid", async () => {
       const { paid, item, offer, url } = await withLink("auto_ok");
@@ -1265,7 +1726,8 @@ describe("creator offers", () => {
       expect(it2).toMatchObject({ status: "posted_manual", permalink: url, postedById: staffId });
       expect(Math.abs(it2.postedAt!.getTime() - (Date.now() - HOUR))).toBeLessThan(10_000); // the post's own time
       const row = await offerOf(offer.id);
-      expect(row).toMatchObject({ status: "accepted", linkVerifiedById: staffId, ownershipCheck: "auto_ok" });
+      // The post is delivered and the offer is over: `completed`, so it no longer counts as open work.
+      expect(row).toMatchObject({ status: "completed", linkVerifiedById: staffId, ownershipCheck: "auto_ok" });
       expect(row.linkVerifiedAt).not.toBeNull();
       expect((await prisma.campaignBooking.findUniqueOrThrow({ where: { id: paid.booking.id } })).status).toBe("completed");
       const events = (await prisma.campaignBookingEvent.findMany({ where: { bookingId: paid.booking.id } })).map((e) => e.note ?? "");
@@ -1375,6 +1837,83 @@ describe("creator offers", () => {
       expect(res.status).toBe(409);
       expect(res.body.error.code).toBe("LINK_ALREADY_USED");
       expect(await itemStatus(b.item.id)).toBe("manual_pending");
+    });
+
+    it("⚠️ verify is bound to the link staff looked at: when the creator sends ANOTHER link in between, the verify is refused 409 LINK_CHANGED and nothing is verified, even with the hand tick; the key of the link that is there verifies", async () => {
+      const { page, paid, item, offer } = await withLink("auto_failed");
+      const seen = (await offerOf(offer.id)).linkCanonicalKey!; // what the staff screen showed when the dialog opened
+      expect(seen).toBe("ig:ABCdef123");
+      // The creator re-sends a different post (their page cannot be read, so it is unverifiable too: the hand tick would cover it).
+      graph.mode = "authError";
+      expect((await cPost(page.token, `/creator/offers/${offer.id}/posted`, { url: "https://www.instagram.com/p/SOMEONEELSE/" })).status).toBe(200);
+      const swapped = await verify(paid.booking.id, item.id, { ownershipCheckedByHand: true, linkCanonicalKey: seen });
+      expect(swapped.status).toBe(409);
+      expect(swapped.body.error.code).toBe("LINK_CHANGED");
+      expect(await itemStatus(item.id)).toBe("manual_pending");
+      expect(await offerOf(offer.id)).toMatchObject({ linkVerifiedAt: null, status: "accepted", ownershipCheck: "unverifiable", linkCanonicalKey: "ig:SOMEONEELSE" });
+      // Looking at the new link and verifying THAT is fine.
+      const ok = await verify(paid.booking.id, item.id, { ownershipCheckedByHand: true, linkCanonicalKey: "ig:SOMEONEELSE" });
+      expect(ok.status).toBe(200);
+      expect(await prisma.campaignBookingItem.findUniqueOrThrow({ where: { id: item.id } })).toMatchObject({ status: "posted_manual", permalink: "https://www.instagram.com/p/SOMEONEELSE/" });
+    });
+
+    it("a verify request must name the link it is about (400 without linkCanonicalKey), and the generic mark-posted route still answers LINK_MISMATCH for another post", async () => {
+      const { paid, item } = await withLink("auto_ok");
+      const none = await staffPost(paid.booking.id, item.id, "verify-creator-link", { ownershipCheckedByHand: true });
+      expect(none.status).toBe(400);
+      expect(none.body.error.code).toBe("VALIDATION_ERROR");
+      expect(await itemStatus(item.id)).toBe("manual_pending");
+    });
+
+    it("⚠️ a link staff vouched for cannot be swapped: after verification a re-send is ALREADY_VERIFIED, and a hand-checked (manual_ok) link that is not verified yet is LINK_FROZEN", async () => {
+      const a = await withLink("unverifiable");
+      expect((await verify(a.paid.booking.id, a.item.id, { ownershipCheckedByHand: true })).status).toBe(200);
+      const again = await cPost(a.page.token, `/creator/offers/${a.offer.id}/posted`, { url: "https://www.instagram.com/p/Another01/" });
+      expect([again.status, again.body.error.code]).toEqual([409, "ALREADY_VERIFIED"]);
+      expect(await offerOf(a.offer.id)).toMatchObject({ linkUrl: a.url, linkCanonicalKey: "ig:ABCdef123", status: "completed" });
+
+      const b = await withLink("auto_failed");
+      await prisma.creatorOffer.update({ where: { id: b.offer.id }, data: { ownershipCheck: "manual_ok", ownershipCheckedById: staffId, ownershipCheckedAt: new Date() } });
+      const frozen = await cPost(b.page.token, `/creator/offers/${b.offer.id}/posted`, { url: "https://www.instagram.com/p/Another02/" });
+      expect([frozen.status, frozen.body.error.code]).toEqual([409, "LINK_FROZEN"]);
+      expect(await offerOf(b.offer.id)).toMatchObject({ linkUrl: b.url, ownershipCheck: "manual_ok" });
+      expect((await cGet(b.page.token, `/creator/offers/${b.offer.id}`)).body.data.actions.submitLink).toBe(false);
+    });
+
+    it("⚠️ what is delivered to the client is the clean link, never the pasted string: no tracking query, no username path; a hand-verified link included", async () => {
+      const x = await offered();
+      await accept(x.page, x.offer.id);
+      graph.mode = "authError"; // the check cannot run: staff will verify it by hand
+      const pasted = "https://www.instagram.com/creatorpage1/reel/ABCdef123/?igsh=Zm9vYmFy&utm_source=ig_web_copy_link#frag";
+      expect((await cPost(x.page.token, `/creator/offers/${x.offer.id}/posted`, { url: pasted })).status).toBe(200);
+      expect((await offerOf(x.offer.id)).linkUrl).toBe("https://www.instagram.com/reel/ABCdef123/");
+      expect((await verify(x.paid.booking.id, x.item.id, { ownershipCheckedByHand: true })).status).toBe(200);
+      const live = await prisma.campaignBookingItem.findUniqueOrThrow({ where: { id: x.item.id } });
+      expect(live.permalink).toBe("https://www.instagram.com/reel/ABCdef123/");
+      expect(live.permalink).not.toMatch(/igsh|utm_|#/);
+    });
+
+    it("⚠️ a verified post's offer is `completed`: it no longer counts as open work (closing the account, a page changing hands), while an accepted offer that is not verified still does", async () => {
+      const a = await withLink("auto_ok");
+      const b = await withLink("auto_ok");
+      const closeB = await request(app).delete("/v1/creator/me").set("Authorization", `Bearer ${b.page.token}`);
+      expect([closeB.status, closeB.body.error.code]).toEqual([409, "OPEN_OFFERS"]);
+      expect(await pageHasOpenWork(b.page.asset.id)).toBe(true);
+
+      expect((await verify(a.paid.booking.id, a.item.id)).status).toBe(200);
+      expect(await offerOf(a.offer.id)).toMatchObject({ status: "completed" });
+      expect((await cGet(a.page.token, `/creator/offers/${a.offer.id}`)).body.data).toMatchObject({ status: "completed", link: { verified: true }, actions: { accept: false, decline: false, submitLink: false } });
+      // Nothing can end a finished offer.
+      const wd = await staffPost(a.paid.booking.id, a.item.id, "withdraw-offer", { discardSubmittedLink: true });
+      expect([wd.status, wd.body.error.code]).toEqual([409, "ALREADY_VERIFIED"]);
+      expect((await cPost(a.page.token, `/creator/offers/${a.offer.id}/decline`, {})).status).toBe(409);
+      const resend = await cPost(a.page.token, `/creator/offers/${a.offer.id}/posted`, { url: "https://www.instagram.com/p/Another03/" });
+      expect([resend.status, resend.body.error.code]).toEqual([409, "ALREADY_VERIFIED"]);
+      // Once its payout has settled (the money leg, a later phase) nothing holds the page or the account.
+      expect(await pageHasOpenWork(a.page.asset.id)).toBe(true); // the payout is still planned: the page stays busy for THAT reason
+      await prisma.creatorPayout.update({ where: { bookingItemId: a.item.id }, data: { status: "settled" } });
+      expect(await pageHasOpenWork(a.page.asset.id)).toBe(false);
+      expect((await request(app).delete("/v1/creator/me").set("Authorization", `Bearer ${a.page.token}`)).status).toBe(200);
     });
 
     it("⚠️ markFailed is refused on a creator's post: USE_WITHDRAW while the offer is open, CREATOR_ITEM after", async () => {

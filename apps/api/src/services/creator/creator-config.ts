@@ -40,16 +40,24 @@ export const creatorConfig = {
   routeEnabled: () => process.env.CREATOR_ROUTE_ENABLED === "1",
   /**
    * Creator pages in the client catalogue, and bookings that pay a creator. Dark unless exactly "1". Alone it
-   * does nothing: marketplaceAvailable() below also needs the Route switch and Razorpay's keys.
+   * does nothing: marketplaceAvailable() below also needs the creator portal switch (CREATORS_ENABLED), the
+   * Route switch and Razorpay's keys.
    */
   marketplaceEnabled: () => process.env.CREATORS_MARKETPLACE_ENABLED === "1",
   /**
-   * Whether a creator's page can be BOOKED today: the marketplace switch AND the Route switch AND Razorpay
-   * configured. The one gate every client-facing creator path asks (the catalogue, picking an account,
-   * checkout), and the creator's own offers (/v1/creator/offers*) and the offers worker. Staff pricing a page, and a
-   * creator's profile and payout screens, do not depend on it.
+   * Whether a creator's page can be BOOKED today: the creator portal's master switch (CREATORS_ENABLED) AND the
+   * marketplace switch AND the Route switch AND Razorpay configured. The one gate every client-facing creator
+   * path asks (the catalogue, picking an account, checkout), approval's offers, and the creator's own offers
+   * (/v1/creator/offers*) and the offers worker. Staff pricing a page, and a creator's profile and payout
+   * screens, do not depend on it.
+   *
+   * ⚠️ The master switch is part of it: with it off every /v1/creator/* route answers 503, so a creator cannot
+   * sign in to accept anything, and a client who could still pay for (or be offered) their page would just end
+   * in an expiry and a refund. (The payout terms are NOT repeated here: a page is bookable only through an
+   * ACTIVATED payout account, and that can only exist after a bank connect that passed the terms gate.)
    */
-  marketplaceAvailable: (): boolean => creatorConfig.marketplaceEnabled() && creatorConfig.routeEnabled() && razorpayConfig.configured(),
+  marketplaceAvailable: (): boolean =>
+    creatorConfig.enabled() && creatorConfig.marketplaceEnabled() && creatorConfig.routeEnabled() && razorpayConfig.configured(),
   /**
    * How long a creator has to accept a booking offer, in hours. The offer's real expiry is the EARLIER of this
    * and the end of the posting window (IST), so an offer never outlives the time the post can still be made.

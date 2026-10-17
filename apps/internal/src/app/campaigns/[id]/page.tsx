@@ -9,7 +9,7 @@ import { usePageTitle } from "@/lib/hooks/use-page-title";
 import {
   BTN_GHOST, BTN_GOLD, BTN_RED, CARD, INPUT, ITEM_STATUS, ErrorBar, PageHead, Pill, PlatformDot, StatusPill, fmtDate, fmtWhen, rupees,
 } from "../_ds";
-import { CREATOR_TARGET_TYPE, creatorItemStatus, frozenCreatorItems, isOpenOffer, safeHref, type StaffOffer } from "../_creator";
+import { CREATOR_TARGET_TYPE, LinkChangedError, creatorItemStatus, frozenCreatorItems, isLinkChangedMessage, isOpenOffer, safeHref, type StaffOffer } from "../_creator";
 import { OfferPanel } from "./_offer";
 
 type Item = {
@@ -47,9 +47,10 @@ const unwrap = <T,>(u: string) => apiFetch<{ data: T }>(u).then((r) => r.data);
 
 export default function CampaignBookingDetail() {
   const { id } = useParams<{ id: string }>();
-  // A creator accepts, declines and sends links on their own time, so while an offer is open the page re-reads itself.
+  // A creator accepts, declines and sends links on their own time, so while an offer is open the page re-reads itself. An
+  // offer whose link staff verified is finished (the API refuses to withdraw it) and nothing about it can change any more.
   const { data: b, error, mutate } = useSWR<Booking>(`/admin/campaigns/${id}`, unwrap, {
-    refreshInterval: (d) => (d?.creatorOffers?.some((o) => isOpenOffer(o)) ? 30_000 : 0),
+    refreshInterval: (d) => (d?.creatorOffers?.some((o) => isOpenOffer(o) && !o.linkVerifiedAt) ? 30_000 : 0),
   });
   const { data: urls } = useSWR<MediaUrls>(b ? `/admin/campaigns/${id}/media-urls` : null, unwrap, { revalidateOnFocus: false });
   usePageTitle(b?.name ?? "Campaign");
@@ -80,10 +81,23 @@ export default function CampaignBookingDetail() {
   };
 
   // "Verify link & release": the dialog shows the API's refusal itself, so this throws instead of using act().
-  const verifyCreatorLink = async (itemId: string, ownershipCheckedByHand: boolean) => {
+  // ⚠️ The request quotes `linkCanonicalKey`, the key of the link the dialog SHOWED (snapshotted when it opened): the
+  // creator may send another link until staff verify, and a hand tick must vouch for one link only.
+  const verifyCreatorLink = async (itemId: string, ownershipCheckedByHand: boolean, linkCanonicalKey: string, shown: { check: string | null; detail: string | null }) => {
     setErr("");
     setInfo("");
-    await apiFetch(`/admin/campaigns/${id}/items/${itemId}/verify-creator-link`, { method: "POST", body: JSON.stringify({ ownershipCheckedByHand }) });
+    try {
+      await apiFetch(`/admin/campaigns/${id}/items/${itemId}/verify-creator-link`, { method: "POST", body: JSON.stringify({ ownershipCheckedByHand, linkCanonicalKey }) });
+    } catch (e) {
+      // Whatever the refusal was, look at the booking again: if the creator's link (or the check on it) is not what the dialog
+      // showed, the dialog follows it. The API's 409 LINK_CHANGED says so by its sentence; the comparison also covers a refusal
+      // that arrives without a recognisable one.
+      const fresh = await mutate().catch(() => undefined);
+      const now = fresh?.creatorOffers?.find((o) => o.itemId === itemId);
+      const moved = !!now && (now.linkCanonicalKey !== linkCanonicalKey || now.ownershipCheck !== shown.check || now.ownershipDetail !== shown.detail);
+      if (isLinkChangedMessage(e) || moved) throw new LinkChangedError(now);
+      throw e;
+    }
     await mutate();
     setInfo("Verified. The creator's link is now the live post, and the client is emailed that it is live.");
   };
@@ -239,7 +253,7 @@ export default function CampaignBookingDetail() {
                 busy={busy}
                 act={act}
                 offer={offerOf(i.id)}
-                onVerify={(hand) => verifyCreatorLink(i.id, hand)}
+                onVerify={(hand, key, shown) => verifyCreatorLink(i.id, hand, key, shown)}
               />
             ))}
           </section>
@@ -253,7 +267,7 @@ export default function CampaignBookingDetail() {
                 {autoOn
                   ? `${dueLater ? `Approving queues each account to post automatically on ${fmtWhen(b.autoPublish?.dueAt ?? null)}, the start of the posting window.` : "The posting window has already opened, so approving starts posting through the Meta API straight away."} Accounts the API can't post — song audio, stories, some Facebook videos — go to "To post" for someone to post by hand.`
                   : "Auto-publishing is switched off: approving sends every account to \"To post\" — someone posts each one by hand and pastes the link."}
-                {creatorItems.length > 0 && " Posts on creator pages are not posted by us: approving sends each creator an offer showing their exact payout. They accept and post it by hand, and you verify the link they send. If a creator declines, lets the offer lapse or doesn't post in time, that post goes to \"refund due\" and you refund it."}
+                {creatorItems.length > 0 && " Posts on creator pages are not posted by us: approving makes each creator an offer showing their exact payout, and emails it. They accept and post it by hand, and you verify the link they send. If a creator declines, lets the offer lapse or doesn't post in time, that post goes to \"refund due\" and you refund it. If approving is refused (creator bookings are switched off, or the posting window has ended), press Refund this account on each creator post below, then approve the rest. Once a creator has an open offer, the order is Withdraw offer, then Refund."}
                 {" "}
                 {offline
                   ? `No online payment was taken — collect ${rupees(b.totalPaise)} from the client by hand. Rejecting charges nothing.`
@@ -336,9 +350,15 @@ export default function CampaignBookingDetail() {
   );
 }
 
-/** What staff are told after approving a booking that had creator posts. */
+/**
+ * What staff are told after approving a booking that had creator posts. The offers EXIST at this point; the emails to the
+ * creators go out after the response (and may fail), so the text never says they were sent: each offer's own row says when its
+ * creator was emailed, or that the email hasn't gone out.
+ */
 function offerSummaryText(x: { offered: number; refundDue: number; warnings: string[] }) {
-  const parts = [`Approved. ${x.offered === 1 ? "1 offer was" : `${x.offered} offers were`} sent to creators.`];
+  const parts = [x.offered > 0
+    ? `Approved. ${x.offered === 1 ? "1 offer was" : `${x.offered} offers were`} made to creators. Each creator is emailed separately: the offer below shows when, and says so if the email hasn't gone out.`
+    : "Approved. No creator offer could be made."];
   if (x.refundDue > 0) parts.push(`${x.refundDue === 1 ? "1 creator post can't" : `${x.refundDue} creator posts can't`} go ahead and ${x.refundDue === 1 ? "is" : "are"} marked "being returned": press Refund on ${x.refundDue === 1 ? "it" : "each"}.`);
   return [...parts, ...x.warnings].join(" ");
 }
@@ -357,7 +377,7 @@ function ItemRow({ item: i, booking: b, files, bookingId, postable, autoPublish,
   act: (key: string, path: string, body?: unknown, confirmText?: string) => Promise<boolean | undefined>;
   /** This post's creator offer (creator pages only). */
   offer: StaffOffer | undefined;
-  onVerify: (ownershipCheckedByHand: boolean) => Promise<void>;
+  onVerify: (ownershipCheckedByHand: boolean, linkCanonicalKey: string, shown: { check: string | null; detail: string | null }) => Promise<void>;
 }) {
   const [url, setUrl] = useState(i.permalink ?? "");
   const [editing, setEditing] = useState(false);
@@ -368,7 +388,13 @@ function ItemRow({ item: i, booking: b, files, bookingId, postable, autoPublish,
   const creatorName = frozen?.creatorName ?? null;
   const creatorStatus = isCreator ? creatorItemStatus(i.status, offer) : null;
   // Refund: a creator's post whose offer is open is withdrawn first; one that is being returned (or has no open offer) is refunded.
-  const creatorRefundable = isCreator && (i.status === "refund_due" || (["manual_pending", "awaiting_creator"].includes(i.status) && !isOpenOffer(offer)));
+  // A post that is still `pending` has no offer to withdraw: while the booking waits for review, Refund is how staff drop it
+  // (approve refuses with "refund the creator posts" when creator bookings are off or the window has ended).
+  const creatorRefundable = isCreator && (
+    i.status === "refund_due" ||
+    (["manual_pending", "awaiting_creator"].includes(i.status) && !isOpenOffer(offer)) ||
+    (i.status === "pending" && b.status === "paid_pending_review")
+  );
   const open = !isCreator && ["manual_pending", "queued", "failed"].includes(i.status);
   const queued = i.status === "queued";
   const live = i.status === "posted_manual" || i.status === "published";
@@ -412,6 +438,7 @@ function ItemRow({ item: i, booking: b, files, bookingId, postable, autoPublish,
           creatorName={creatorName}
           frozenPayoutPaise={frozen?.amountPaise ?? null}
           offer={offer}
+          events={b.events}
           postable={postable}
           clientName={b.client.companyName}
           busy={busy}
@@ -472,7 +499,7 @@ function ItemRow({ item: i, booking: b, files, bookingId, postable, autoPublish,
                 `refund-${i.id}`,
                 `/admin/campaigns/${bookingId}/items/${i.id}/refund`,
                 undefined,
-                `Refund ${rupees(i.pricePaise)} for ${i.accountName} to ${b.client.companyName}? The post won't happen and the creator's payout is cancelled.`,
+                `Refund ${rupees(i.pricePaise)} for ${i.accountName} to ${b.client.companyName}? The post won't happen and the creator's payout is cancelled.${i.status === "pending" ? " The creator hasn't been offered it yet, so nobody needs telling." : ""}`,
               )
             }
           >

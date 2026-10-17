@@ -514,6 +514,15 @@ function AfterPayment({ campaign: c, onChanged }: { campaign: Campaign; onChange
   // paidAt is set only by an online payment; a booking submitted without one must never be
   // told it paid or that a refund is on its way.
   const paidOnline = Boolean(c.paidAt);
+  // What happens to the money for the posts that didn't go live. "Refunded" only when the refund
+  // ledger says Razorpay has the refund (an item is marked refunded BEFORE it answers), and never
+  // of a post that is merely marked failed: each post's own label below says what applies to it.
+  const notLive = (results?.items ?? c.items).filter((i) => i.status !== "posted_manual" && i.status !== "published");
+  const notLiveMoney = notLive.every((i) => i.status === "refunded")
+    ? notLive.every((i) => i.refundConfirmed === true)
+      ? "those were refunded."
+      : "those are being returned to you."
+    : "what happens with each one is shown below.";
   const hasWindow = Boolean(c.launchFrom && c.launchTo);
   const windowText = hasWindow ? `${fmtDate(c.launchFrom)} – ${fmtDate(c.launchTo)}` : null;
   const message: Record<string, string> = {
@@ -526,7 +535,7 @@ function AfterPayment({ campaign: c, onChanged }: { campaign: Campaign; onChange
     publishing: "Your posts are going live. Links appear below as each one is posted.",
     completed: "Every post is live. The links are below and in your email.",
     partially_published: paidOnline
-      ? "Your campaign is done. Some posts couldn't go live — those were refunded."
+      ? `Your campaign is done. Some posts couldn't go live — ${notLiveMoney}`
       : "Your campaign is done. Some posts couldn't go live — those won't be charged.",
     rejected: paidOnline
       ? "We couldn't run this campaign. A full refund is on its way (5–7 working days)."
@@ -655,7 +664,7 @@ function AfterPayment({ campaign: c, onChanged }: { campaign: Campaign; onChange
                 </div>
               )}
               <div className="flex items-center gap-2 shrink-0">
-                <ItemStatus status={i.status} paidOnline={paidOnline} />
+                <ItemStatus status={i.status} paidOnline={paidOnline} refundConfirmed={i.refundConfirmed === true} />
                 {i.permalink && (
                   <a href={i.permalink} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 h-8 px-3 rounded-xl border-2 border-ink text-[12.5px] font-semibold text-ink btn-3d bg-surface">
                     View post <Icon.External size={12} />

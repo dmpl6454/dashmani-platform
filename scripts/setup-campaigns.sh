@@ -45,4 +45,4 @@ done
 
 df -h "$MEDIA_DIR" | tail -1
 echo "Done. Razorpay webhook URL: https://api.digitalsukoon.com/v1/webhooks/razorpay"
-echo "Events: payment.captured, payment.failed, order.paid, refund.processed, refund.failed"
+echo "Events: payment.captured, payment.failed, order.paid, refund.created, refund.processed, refund.failed"

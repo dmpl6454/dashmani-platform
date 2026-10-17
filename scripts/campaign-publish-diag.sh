@@ -30,7 +30,7 @@
 #     auto-publishing is off. A manual_pending account stays that way even
 #     if auto-publishing is switched on later, until staff press "Try auto-publish"
 #     (apps/internal/src/app/campaigns/[id]/page.tsx:346 -> review.service.ts:262-283).
-#   - cron/campaign.cron.ts:16 CAMPAIGN_CRONS_ENABLED=0 never starts the worker; :26-32 the publish
+#   - cron/campaign.cron.ts startCampaignCrons(): CAMPAIGN_CRONS_ENABLED=0 never starts the worker; its publish
 #     tick runs every 60 s from 3 min after boot; publish.service.ts:526 it returns at once
 #     while CAMPAIGN_PUBLISH_ENABLED is not 1.
 #   - publish.service.ts:112-117 a queued account is due on launch day at CAMPAIGN_PUBLISH_HOUR_IST
@@ -176,7 +176,7 @@ CONFIDENT=0
 [ "$PROC_OK" = "1" ] && [ "${EFFSRC[CAMPAIGN_PUBLISH_ENABLED]}" = "process env (wins over .env)" ] && CONFIDENT=1
 echo "    meaning (code defaults when unset):"
 echo "      auto-publish: $([ "$PUB_ON" = 1 ] && echo ON || echo "OFF (needs exactly \"1\", config.ts:59)")"
-echo "      campaign workers (render/publish/retention): $([ "$CRONS_ON" = 1 ] && echo started || echo "NOT started (CAMPAIGN_CRONS_ENABLED=0, campaign.cron.ts:16)")"
+echo "      campaign workers (render/publish/retention): $([ "$CRONS_ON" = 1 ] && echo started || echo "NOT started (CAMPAIGN_CRONS_ENABLED=0, campaign.cron.ts startCampaignCrons)")"
 echo "      render worker: $([ "${EFF[CAMPAIGN_RENDER_ENABLED]}" = "0" ] && echo "OFF (config.ts:44)" || echo on)"
 echo "      publish hour: ${EFF[CAMPAIGN_PUBLISH_HOUR_IST]:-10}:00 IST on launch day; batch ${EFF[CAMPAIGN_PUBLISH_BATCH]:-3} per minute"
 API_PUBLIC="${EFF[API_PUBLIC_URL]:-https://api.digitalsukoon.com}"; API_PUBLIC="${API_PUBLIC%/}"
@@ -505,7 +505,7 @@ else
   echo
   echo "    >>> Auto-publishing is ON (CAMPAIGN_PUBLISH_ENABLED=1)."
   if [ "$CRONS_ON" != "1" ]; then
-    echo "    BUT CAMPAIGN_CRONS_ENABLED=0: the publish worker is never started (campaign.cron.ts:16), so queued accounts never run."
+    echo "    BUT CAMPAIGN_CRONS_ENABLED=0: the publish worker is never started (campaign.cron.ts startCampaignCrons), so queued accounts never run."
   fi
   if [ "$n_q_later" -gt 0 ]; then
     echo "    $n_q_later queued account(s) are NOT DUE YET (launch day at ${EFF[CAMPAIGN_PUBLISH_HOUR_IST]:-10}:00 IST, publish.service.ts:112-117)."
@@ -514,7 +514,7 @@ else
   fi
   if [ "$n_q_over" -gt 0 ]; then
     echo "    $n_q_over queued account(s) were due more than 10 minutes ago and have not been picked up/finished."
-    echo "    The worker runs every minute (campaign.cron.ts:26-32). Unless one is locked (mid-publish, up to 10 min) or"
+    echo "    The worker runs every minute (campaign.cron.ts, the publish tick in startCampaignCrons). Unless one is locked (mid-publish, up to 10 min) or"
     echo "    waiting on Meta (container processing / backoff), the worker is not running: check 'pm2 logs api' and section 7."
     printf '%s' "$L_Q_OVER"
   fi

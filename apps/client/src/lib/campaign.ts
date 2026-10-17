@@ -42,6 +42,12 @@ export interface CampaignItem {
   /** State of this account's own renders (null when it posts the campaign's default files). */
   renderStatus: "queued" | "done" | "failed" | null;
   status: string;
+  /**
+   * For a `refunded` item: Razorpay has accepted the refund. An item is marked refunded BEFORE
+   * Razorpay answers, so "refunded" is shown on this and never on the status alone. Absent on an
+   * older API response, which reads as "not confirmed" (the honest side).
+   */
+  refundConfirmed?: boolean;
   permalink: string | null;
   postedAt: string | null;
 }
@@ -127,6 +133,8 @@ export interface CampaignResults {
     accountName: string;
     accountHandle: string | null;
     status: string;
+    /** See CampaignItem.refundConfirmed. */
+    refundConfirmed?: boolean;
     permalink: string | null;
     postedAt: string | null;
     /** When an automatic post is due (only while it waits). Absent on older API responses. */

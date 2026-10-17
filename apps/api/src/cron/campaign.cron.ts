@@ -1,7 +1,7 @@
 import { renderNext } from "../services/campaign/render.service";
 import { runCampaignRetention } from "../services/campaign/retention.service";
 import { runPublishTick } from "../services/campaign/publish.service";
-import { sweepRefundDue } from "../services/campaign/payment.service";
+import { sweepRefundDue, refundSweepEnabled } from "../services/campaign/payment.service";
 
 // Campaign booking background work:
 //  • render worker — every 30 s, at most ONE file per tick (renderNext has its own overlap
@@ -23,13 +23,14 @@ import { sweepRefundDue } from "../services/campaign/payment.service";
 //  • CAMPAIGN_REFUND_SWEEP_ENABLED=0 stops the sweep (it makes outbound Razorpay calls, so an
 //    operator may need it off during a Razorpay incident). Interrupted refunds then wait, safely
 //    (the state is in the database and the re-send reuses its idempotency keys), until it is
-//    switched on and the API restarted. Both flags are read once, at boot.
+//    switched on and the API restarted. Both flags are read once, at boot. The staff-facing refund
+//    notices read the same switch (refundSweepEnabled), so they never promise a check that is off.
 
 let retentionRunning = false;
 let refundSweepRunning = false;
 
 function startRefundSweep() {
-  if (process.env.CAMPAIGN_REFUND_SWEEP_ENABLED === "0") {
+  if (!refundSweepEnabled()) {
     console.warn("[campaign] CAMPAIGN_REFUND_SWEEP_ENABLED=0: the refund sweep is NOT running. Interrupted refunds wait until it is switched on and the API restarted.");
     return;
   }

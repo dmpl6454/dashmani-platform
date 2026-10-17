@@ -14,6 +14,7 @@ import {
 } from "@dashmani/shared";
 import { AppError } from "../../middleware/error-handler";
 import { razorpayConfig } from "./config";
+import { confirmedRefundItemIds } from "./delivery.service";
 import { durationLimitSec } from "./media.service";
 import { overlayKey } from "./render.service";
 import { priceFor, resolveCatalogueTargets } from "./rate-card.service";
@@ -180,7 +181,7 @@ function summariseRenders(files: Array<{ custom: boolean; status: string }>): st
   return "done";
 }
 
-function shapeBooking(b: any, files?: Awaited<ReturnType<typeof resolveItemFiles>>) {
+function shapeBooking(b: any, files?: Awaited<ReturnType<typeof resolveItemFiles>>, refundConfirmed?: Set<string>) {
   const media = (b.media ?? []).map((m: any) => ({ ...m, bytes: Number(m.bytes) }));
   return {
     id: b.id,
@@ -213,7 +214,9 @@ function shapeBooking(b: any, files?: Awaited<ReturnType<typeof resolveItemFiles
     updatedAt: b.updatedAt,
     media: media.filter((m: any) => m.role !== "thumbnail"),
     thumbnail: media.find((m: any) => m.role === "thumbnail") ?? null,
-    items: (b.items ?? []).map((i: any) => ({ ...i, renderStatus: files ? summariseRenders(files.get(i.id) ?? []) : null })),
+    // refundConfirmed: true only for a `refunded` item whose refund Razorpay has accepted. The item
+    // is marked refunded BEFORE Razorpay answers, so the portal may say "refunded" on this and nothing else.
+    items: (b.items ?? []).map((i: any) => ({ ...i, renderStatus: files ? summariseRenders(files.get(i.id) ?? []) : null, refundConfirmed: refundConfirmed?.has(i.id) ?? false })),
   };
 }
 
@@ -264,7 +267,8 @@ export async function getClientBooking(clientId: string, id: string) {
     },
   });
   if (!b) throw new AppError(404, "NOT_FOUND", "Campaign not found");
-  return shapeBooking(b, await resolveItemFiles(b.id));
+  const refundConfirmed = await confirmedRefundItemIds(b.items.filter((i) => i.status === "refunded").map((i) => i.id));
+  return shapeBooking(b, await resolveItemFiles(b.id), refundConfirmed);
 }
 
 async function requireEditable(clientId: string, id: string, allowed: readonly BookingStatus[] = EDITABLE_BOOKING_STATUSES) {

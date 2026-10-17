@@ -106,13 +106,18 @@ const ITEM: Record<string, { label: string; cls: string }> = {
 
 /**
  * One post's state. `paidOnline` is the booking's paidAt: a post dropped from a campaign that was
- * never paid online was not charged, so it must never read "refunded".
+ * never paid online was not charged, so it must never read "refunded". `refundConfirmed` is the
+ * refund ledger's word (Razorpay has accepted the refund): an item is marked refunded BEFORE
+ * Razorpay answers, and stays so if the refund fails, so a paid post reads "refunded" only on
+ * that fact and "being returned" otherwise.
  */
-export function ItemStatus({ status, paidOnline }: { status: string; paidOnline: boolean }) {
+export function ItemStatus({ status, paidOnline, refundConfirmed = false }: { status: string; paidOnline: boolean; refundConfirmed?: boolean }) {
   const s =
     status === "refunded" && !paidOnline
       ? { label: "Not posted — not charged", cls: "bg-muted text-ink-2" }
-      : ITEM[status] ?? { label: status, cls: "bg-muted text-ink-2" };
+      : status === "refunded" && !refundConfirmed
+        ? { label: "Not posted — being returned", cls: "bg-muted text-ink-2" }
+        : ITEM[status] ?? { label: status, cls: "bg-muted text-ink-2" };
   return <span className={`inline-flex items-center h-6 px-2.5 text-[11px] tracking-[0.02em] font-bold whitespace-nowrap border border-current/30 ${s.cls}`}>{s.label}</span>;
 }
 

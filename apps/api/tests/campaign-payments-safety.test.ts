@@ -31,7 +31,7 @@ import { notifyAdminByEmail, sendEmail } from "../src/services/email.service";
 import { razorpayHttp } from "../src/services/campaign/razorpay";
 import * as bookingSvc from "../src/services/campaign/booking.service";
 import { handleRouteEvent } from "../src/services/campaign/route-webhooks";
-import { sendDeliveryEmail } from "../src/services/campaign/delivery.service";
+import { sendDeliveryEmail, getResults } from "../src/services/campaign/delivery.service";
 import { refundableOn, refundPaymentRow, capturedPaymentFor, sweepRefundDue, reconcileRefunds, refundTuning, retryOnContention, isContention } from "../src/services/campaign/payment.service";
 import { generateToken } from "./helpers";
 
@@ -459,6 +459,26 @@ describe("campaign payment safety", () => {
       return seed({ booking: "approved", prices: [100_000, 150_000], items: ["manual_pending", "manual_pending"], payment: { status: "captured" } });
     }
 
+    it("an unanswered item refund tells staff the truth about the sweep: 'checking automatically' only while it runs", async () => {
+      const saved = process.env.CAMPAIGN_REFUND_SWEEP_ENABLED;
+      try {
+        rz.mode = "http500";
+        const on = await approvedWithTwoItems();
+        const running = await refundItem(on.booking.id, on.items[0].id);
+        expect(running.body.data.refundNotice).toContain("We're checking automatically");
+
+        process.env.CAMPAIGN_REFUND_SWEEP_ENABLED = "0";
+        const off = await approvedWithTwoItems();
+        const paused = await refundItem(off.booking.id, off.items[0].id);
+        expect(paused.status).toBe(200);
+        expect(paused.body.data.refundNotice).toContain("switched off");
+        expect(paused.body.data.refundNotice).not.toContain("checking automatically");
+      } finally {
+        if (saved === undefined) delete process.env.CAMPAIGN_REFUND_SWEEP_ENABLED;
+        else process.env.CAMPAIGN_REFUND_SWEEP_ENABLED = saved;
+      }
+    });
+
     it("a timeout never leads to a second refund: same key, one ledger row, the item stays claimed", async () => {
       const s = await approvedWithTwoItems();
       rz.mode = "timeout_after";
@@ -744,6 +764,145 @@ describe("campaign payment safety", () => {
       expect(swept).toMatchObject({ issued: 0, errors: 1 });
       expect(refundPosts().map((c) => c.key)).toEqual([`rf-item-${itemId}-r3`]);
       expect(alertSubjects()).toEqual(["A campaign refund keeps failing"]);
+    });
+
+    // ── It reads Razorpay before it re-sends ─────────────────────────────────────
+
+    /** Set when a ledger row "last failed" (updatedAt is that clock; the ORM would stamp it with the real now). */
+    const failedAt = (itemId: string, minutesAgo: number) =>
+      prisma.$executeRaw`UPDATE campaign_refunds SET updated_at = ${new Date(Date.now() - minutesAgo * 60_000)} WHERE booking_item_id = ${itemId}`;
+
+    it("reads Razorpay's refund list before re-sending: a dashboard refund that only exists at Razorpay is filed as external, and nothing is re-sent", async () => {
+      const { s } = await failedItemRefund();
+      const pid = s.payment!.razorpayPaymentId!;
+      // Staff refunded the item by hand in the Razorpay dashboard after the failure. NOTHING has filed it on our ledger:
+      // no refund event has been handled, and no requested/pending row makes the sweep look at this payment.
+      rz.refunds.set(pid, [{ id: "rfnd_dash_only", amount: 100_000, status: "pending", receipt: null, key: null }]);
+      expect(await prisma.campaignRefund.count({ where: { origin: "external" } })).toBe(0);
+
+      const swept = await sweepRefundDue({ now: later(10) });
+      expect(swept.issued).toBe(0);
+      expect(refundPosts()).toHaveLength(0); // the brand is NOT refunded a second time
+      expect(await prisma.campaignRefund.findFirstOrThrow({ where: { origin: "external" } })).toMatchObject({ razorpayRefundId: "rfnd_dash_only", status: "pending", amountPaise: 100_000 });
+      expect(await prisma.campaignPayment.findUniqueOrThrow({ where: { id: s.payment!.id } })).toMatchObject({ refundedPaise: 100_000 });
+      expect(alertSubjects().sort()).toEqual(["A failed campaign item refund was not re-sent", "Refund found on a campaign payment that we did not issue"]);
+
+      // Later ticks: nothing is sent and nobody is told again.
+      await sweepRefundDue({ now: later(20) });
+      expect(refundPosts()).toHaveLength(0);
+      expect(alertSubjects()).toHaveLength(2);
+    });
+
+    it("a refund.created event files a dashboard refund at once, so the sweep stands down without even reading Razorpay", async () => {
+      const { s } = await failedItemRefund();
+      const pid = s.payment!.razorpayPaymentId!;
+      rz.refunds.set(pid, [{ id: "rfnd_dash_new", amount: 100_000, status: "pending", receipt: null, key: null }]);
+      const res = await webhook("refund.created", { id: "rfnd_dash_new", payment_id: pid }, "refund");
+      expect(res.status).toBe(200);
+      expect(res.body.data).toEqual({ handled: true });
+      expect(await prisma.campaignRefund.findFirstOrThrow({ where: { origin: "external" } })).toMatchObject({ razorpayRefundId: "rfnd_dash_new", status: "pending" });
+      expect(alertSubjects()).toEqual(["Refund found on a campaign payment that we did not issue"]);
+
+      const reads = () => rz.calls.filter((c) => c.method === "GET").length;
+      const before = reads();
+      await sweepRefundDue({ now: later(10) });
+      expect(refundPosts()).toHaveLength(0);
+      expect(reads()).toBe(before); // the ledger already shows it: no Razorpay call
+      expect(alertSubjects()).toHaveLength(2);
+    });
+
+    it("a refund.created event is deferred, not failed, when the list cannot be read (the sweep's marker covers it)", async () => {
+      const { s } = await failedItemRefund();
+      rz.listFails = true;
+      const res = await webhook("refund.created", { id: "rfnd_dash_new", payment_id: s.payment!.razorpayPaymentId }, "refund", "evt-created-1");
+      expect(res.status).toBe(200);
+      expect(res.body.data.note).toBe("reconcile deferred");
+      expect((await prisma.campaignPayment.findUniqueOrThrow({ where: { id: s.payment!.id } })).lastEvent).toBe("refund.reconcile_pending");
+      expect((await prisma.razorpayWebhookEvent.findUniqueOrThrow({ where: { eventId: "evt-created-1" } })).processedAt).not.toBeNull();
+    });
+
+    it("does not re-send while Razorpay's refund list cannot be read, and tries again on the next tick", async () => {
+      const { itemId } = await failedItemRefund();
+      rz.listFails = true;
+      const first = await sweepRefundDue({ now: later(10) });
+      expect(first).toMatchObject({ issued: 0, errors: 1 });
+      expect(refundPosts()).toHaveLength(0);
+      rz.listFails = false;
+      expect((await sweepRefundDue({ now: later(11) })).issued).toBe(1);
+      expect(refundPosts().map((c) => c.key)).toEqual([`rf-item-${itemId}-r2`]);
+    });
+
+    // ── Parked refunds do not use up the tick ────────────────────────────────────
+
+    it("refunds the sweep gave up on or stood down for do not use up the tick's budget: a live retry still goes out", async () => {
+      const givenUp = await failedItemRefund({ attempts: 5 });
+      const standDown = await failedItemRefund();
+      await prisma.campaignRefund.create({
+        data: { razorpayRefundId: "rfnd_dash_parked", paymentId: standDown.s.payment!.id, razorpayPaymentId: standDown.s.payment!.razorpayPaymentId!, bookingId: standDown.s.booking.id, amountPaise: 100_000, status: "processed", origin: "external", reason: "external" },
+      });
+      const live = await failedItemRefund();
+      // One parked row older than the live one and one newer, so no ordering can put the live one first.
+      await failedAt(givenUp.itemId, 90);
+      await failedAt(live.itemId, 30);
+      await failedAt(standDown.itemId, 0);
+
+      // A budget of ONE: before, the first parked row spent it and the live retry was never reached.
+      const swept = await sweepRefundDue({ now: later(60), limit: 1 });
+      expect(swept.issued).toBe(1);
+      expect(refundPosts().map((c) => c.key)).toEqual([`rf-item-${live.itemId}-r2`]);
+      expect(alertSubjects().filter((x) => x === "A failed campaign item refund was not re-sent")).toHaveLength(1);
+      // The tick ended once its one Razorpay read was spent; the other parked row is dealt with on the next one, and each is told once.
+      await sweepRefundDue({ now: later(61), limit: 1 });
+      await sweepRefundDue({ now: later(62), limit: 1 });
+      expect(refundPosts()).toHaveLength(1);
+      expect(alertSubjects().filter((x) => x === "A campaign item refund needs a manual refund")).toHaveLength(1);
+      expect(alertSubjects().filter((x) => x === "A failed campaign item refund was not re-sent")).toHaveLength(1);
+    });
+
+    it("looks at the newest failures first: 200 parked refunds cannot crowd a live retry out of the candidates", async () => {
+      const s = await seed({ booking: "approved", prices: [100_000], items: ["refunded"], payment: { status: "captured" } });
+      const live = s.items[0];
+      await prisma.campaignBookingItem.createMany({
+        data: Array.from({ length: 201 }, (_, i) => ({ bookingId: s.booking.id, rateCardId: `rc-parked-${i}`, targetType: "meta_asset", targetId: `tp-${i}`, platform: "instagram", format: "post", accountName: `Parked ${i}`, pricePaise: 1_000, status: "manual_pending" })),
+      });
+      const parked = await prisma.campaignBookingItem.findMany({ where: { bookingId: s.booking.id, status: "manual_pending" }, select: { id: true } });
+      const row = (itemId: string, amountPaise: number, updatedAt: Date) => ({
+        idempotencyKey: `rf-item-${itemId}`, paymentId: s.payment!.id, razorpayPaymentId: s.payment!.razorpayPaymentId!, bookingId: s.booking.id, bookingItemId: itemId, amountPaise, status: "failed", origin: "ours", reason: "item_refunded", updatedAt,
+      });
+      // 201 re-opened items (the sweep stands down for each) that failed long ago, and one live item that failed 30 minutes ago.
+      await prisma.campaignRefund.createMany({ data: [...parked.map((i) => row(i.id, 1_000, new Date(Date.now() - 600 * 60_000))), row(live.id, 100_000, new Date(Date.now() - 30 * 60_000))] });
+
+      expect((await sweepRefundDue({ now: new Date(), limit: 1 })).issued).toBe(1);
+      expect(refundPosts().map((c) => c.key)).toEqual([`rf-item-${live.id}-r2`]);
+    });
+
+    // ── A sibling refund that stays pending ──────────────────────────────────────
+
+    it("reconciling a payment does not push back the retry of a refund that already failed", async () => {
+      const s = await seed({ booking: "approved", prices: [100_000, 150_000], items: ["refunded", "refunded"], payment: { status: "refund_pending", refunded: 150_000 } });
+      const pid = s.payment!.razorpayPaymentId!;
+      const [i0, i1] = s.items;
+      const base = { paymentId: s.payment!.id, razorpayPaymentId: pid, bookingId: s.booking.id, origin: "ours", reason: "item_refunded" };
+      // i1's refund is still pending at Razorpay and has never been checked: the sweep reconciles this payment on every pass.
+      await prisma.campaignRefund.create({ data: { ...base, idempotencyKey: `rf-item-${i1.id}`, bookingItemId: i1.id, amountPaise: 150_000, status: "pending", razorpayRefundId: "rfnd_sibling" } });
+      // i0's refund was accepted by Razorpay and then failed, twice: rows that carry a Razorpay id, which a reconcile used to re-stamp.
+      await prisma.campaignRefund.create({ data: { ...base, idempotencyKey: `rf-item-${i0.id}`, bookingItemId: i0.id, amountPaise: 100_000, status: "failed", razorpayRefundId: "rfnd_f1" } });
+      await prisma.campaignRefund.create({ data: { ...base, idempotencyKey: `rf-item-${i0.id}-r2`, bookingItemId: i0.id, amountPaise: 100_000, status: "failed", razorpayRefundId: "rfnd_f2" } });
+      rz.refunds.set(pid, [
+        { id: "rfnd_sibling", amount: 150_000, status: "pending", receipt: null, key: null },
+        { id: "rfnd_f1", amount: 100_000, status: "failed", receipt: null, key: null },
+        { id: "rfnd_f2", amount: 100_000, status: "failed", receipt: null, key: null },
+      ]);
+      await failedAt(i0.id, 30); // long past the 10 minute backoff for a second failure
+
+      const swept = await sweepRefundDue({ now: new Date() });
+      expect(swept.reconciled).toBe(1); // the pending sibling made the sweep reconcile the payment first
+      expect(swept.issued).toBe(1);
+      expect(refundPosts().map((c) => c.key)).toEqual([`rf-item-${i0.id}-r3`]);
+      // And a reconcile left the failed rows' clock alone.
+      const failedRows = await prisma.campaignRefund.findMany({ where: { bookingItemId: i0.id, status: "failed" } });
+      expect(failedRows).toHaveLength(2);
+      for (const r of failedRows) expect(r.updatedAt.getTime()).toBeLessThan(Date.now() - 20 * 60_000);
     });
   });
 
@@ -1087,6 +1246,40 @@ describe("campaign payment safety", () => {
       expect((await prisma.campaignBooking.findUniqueOrThrow({ where: { id: s.booking.id } })).status).toBe("rejected");
     });
 
+    describe("with the refund sweep switched off (CAMPAIGN_REFUND_SWEEP_ENABLED=0)", () => {
+      let saved: string | undefined;
+      beforeEach(() => {
+        saved = process.env.CAMPAIGN_REFUND_SWEEP_ENABLED;
+        process.env.CAMPAIGN_REFUND_SWEEP_ENABLED = "0";
+      });
+      afterEach(() => {
+        if (saved === undefined) delete process.env.CAMPAIGN_REFUND_SWEEP_ENABLED;
+        else process.env.CAMPAIGN_REFUND_SWEEP_ENABLED = saved;
+      });
+
+      it("an unanswered refund does not tell staff 'we're checking automatically': nothing is", async () => {
+        const s = await seed({ booking: "paid_pending_review", prices: [250_000], payment: { status: "captured" } });
+        rz.mode = "http500";
+        const res = await reject(s.booking.id);
+        expect(res.status).toBe(200);
+        expect(res.body.data.refundNotice).toContain("hasn't confirmed");
+        expect(res.body.data.refundNotice).toContain("switched off");
+        expect(res.body.data.refundNotice).not.toContain("checking automatically");
+        expect(res.body.data.refundNotice).not.toContain("nothing needs doing");
+        expect(res.body.data.refundNotice).toContain("can't be refunded twice");
+      });
+
+      it("a refused rejection refund is not promised an automatic retry", async () => {
+        const s = await seed({ booking: "paid_pending_review", prices: [100_000, 150_000], payment: { status: "captured" } });
+        rz.mode = "reject400";
+        const res = await reject(s.booking.id);
+        expect(res.status).toBe(200);
+        expect(res.body.data.refundError).not.toContain("retry automatically");
+        expect(res.body.data.refundError).toContain("will not be retried");
+        expect(res.body.data.status).toBe("rejected");
+      });
+    });
+
     it("an offline booking (no online payment) is unchanged: nothing refunded, stays rejected", async () => {
       const s = await seed({ booking: "paid_pending_review", prices: [100_000, 150_000], items: ["pending", "manual_pending"], payment: null });
       const res = await reject(s.booking.id);
@@ -1136,6 +1329,81 @@ describe("campaign payment safety", () => {
       expect(html).toContain("Not posted — not charged");
       expect(html).not.toContain("refunded");
       expect(html).not.toContain("being returned");
+    });
+
+    // A post marked `failed` was never refunded, whatever happened to its neighbour.
+    /** One live post plus the given others, on an online-paid booking; `ledger` is the refund row (by index into `others`) of a refunded one. */
+    async function mixedDelivery(others: string[], ledger: Record<number, string> = {}) {
+      const s = await seed({ booking: "partially_published", prices: [100_000, ...others.map(() => 100_000)], items: ["posted_manual", ...others], payment: { status: "captured" } });
+      for (const [i, status] of Object.entries(ledger)) {
+        const item = s.items[Number(i) + 1];
+        await prisma.campaignRefund.create({
+          data: { idempotencyKey: `rf-item-${item.id}`, paymentId: s.payment!.id, razorpayPaymentId: s.payment!.razorpayPaymentId!, bookingId: s.booking.id, bookingItemId: item.id, amountPaise: 100_000, status, origin: "ours", reason: "item_refunded" },
+        });
+      }
+      vi.mocked(sendEmail).mockClear();
+      expect(await sendDeliveryEmail(s.booking.id, { force: true })).toBe(true);
+      return String(vi.mocked(sendEmail).mock.calls.find(([o]) => o.to === "a@brand.test")![0].html);
+    }
+
+    it("does not say the amount was refunded for a post that was only marked failed", async () => {
+      const html = await mixedDelivery(["failed", "refunded"], { 1: "processed" });
+      expect(html).toContain("2 posts could not be made.");
+      expect(html).not.toContain("The amount for those has been refunded");
+      expect(html).toContain("The amount for 1 of them has been refunded to your original payment method.");
+      expect(html).toContain("Our team will contact you about 1 of them.");
+      // The failed post's own row still says only "Not posted", and the refunded one says refunded.
+      expect(html).toMatch(/<td[^>]*>Not posted<\/td>/);
+      expect(html).toContain("Not posted — refunded");
+    });
+
+    it("splits refunded posts whose refund Razorpay has from those still being returned, and failed ones from both", async () => {
+      const html = await mixedDelivery(["refunded", "refunded", "failed"], { 0: "processed", 1: "failed" });
+      expect(html).toContain("3 posts could not be made.");
+      expect(html).toContain("The amount for 1 of them has been refunded to your original payment method.");
+      expect(html).toContain("Our team is returning the amount for 1 of them.");
+      expect(html).toContain("Our team will contact you about 1 of them.");
+      expect(html).not.toContain("for those");
+    });
+
+    it("keeps the plain wording when every post that did not go live is in one group", async () => {
+      expect(await mixedDelivery(["refunded", "refunded"], { 0: "processed", 1: "pending" })).toContain("The amount for those has been refunded to your original payment method.");
+      expect(await mixedDelivery(["refunded", "refunded"], { 0: "requested" })).toContain("Our team is returning the amount for those to you.");
+      expect(await mixedDelivery(["failed", "failed"])).toContain("Our team will contact you about them.");
+    });
+  });
+
+  // ── What the client portal is told ──────────────────────────────────────────────
+
+  describe("the client's view says an item was refunded only when the ledger does", () => {
+    it("carries refundConfirmed on the booking and on the results, from the same ledger rule as the email", async () => {
+      const s = await seed({ booking: "partially_published", prices: [100_000, 100_000, 100_000, 100_000, 100_000, 100_000], items: ["posted_manual", "refunded", "refunded", "refunded", "refunded", "failed"], payment: { status: "captured" } });
+      const ledger = async (i: number, status: string, origin = "ours") =>
+        prisma.campaignRefund.create({
+          data: { idempotencyKey: origin === "ours" ? `rf-item-${s.items[i].id}` : null, razorpayRefundId: origin === "ours" ? null : `rfnd_ext_${i}`, paymentId: s.payment!.id, razorpayPaymentId: s.payment!.razorpayPaymentId!, bookingId: s.booking.id, bookingItemId: s.items[i].id, amountPaise: 100_000, status, origin, reason: origin === "ours" ? "item_refunded" : "external" },
+        });
+      await ledger(1, "processed");
+      await ledger(2, "pending");
+      await ledger(3, "failed"); // accepted and then failed: still being returned
+      // items[4]: refunded with no ledger row at all (the refund is still being sent); items[5]: failed, never refunded.
+      const want = Object.fromEntries(s.items.map((it, i) => [it.id, [false, true, true, false, false, false][i]]));
+      const byId = (items: Array<{ id: string; refundConfirmed?: boolean }>) => Object.fromEntries(items.map((i) => [i.id, i.refundConfirmed]));
+
+      expect(byId((await bookingSvc.getClientBooking(clientId, s.booking.id)).items as any)).toEqual(want);
+      expect(byId((await getResults(clientId, s.booking.id))!.items)).toEqual(want);
+    });
+
+    it("a refund we did not issue never makes an item read refunded", async () => {
+      const s = await seed({ booking: "partially_published", prices: [100_000, 100_000], items: ["posted_manual", "refunded"], payment: { status: "captured" } });
+      await prisma.campaignRefund.create({
+        data: { razorpayRefundId: "rfnd_dash", paymentId: s.payment!.id, razorpayPaymentId: s.payment!.razorpayPaymentId!, bookingId: s.booking.id, bookingItemId: s.items[1].id, amountPaise: 100_000, status: "processed", origin: "external", reason: "external" },
+      });
+      expect((await bookingSvc.getClientBooking(clientId, s.booking.id)).items.map((i: any) => i.refundConfirmed)).toEqual([false, false]);
+    });
+
+    it("an offline booking has no ledger rows, so nothing is confirmed (the portal says 'not charged' there)", async () => {
+      const s = await seed({ booking: "partially_published", prices: [100_000, 100_000], items: ["posted_manual", "refunded"], payment: null });
+      expect((await bookingSvc.getClientBooking(clientId, s.booking.id)).items.map((i: any) => i.refundConfirmed)).toEqual([false, false]);
     });
   });
 

@@ -73,6 +73,25 @@ const dateOnly = (d: Date) => d.toLocaleDateString("en-IN", { day: "numeric", mo
 const isLive = (status: string) => (LIVE_ITEM_STATUSES as readonly string[]).includes(status as ItemStatus);
 
 /**
+ * Which of these items have a refund Razorpay has ACCEPTED: a ledger row of ours that is processed
+ * or pending. THE one predicate behind every "refunded" a client reads (this file's delivery email
+ * and results, and the booking shape the portal renders), so an email and the portal can never
+ * disagree about the same item. An item is marked `refunded` BEFORE Razorpay answers, and stays so
+ * if the refund fails or is never confirmed, so its status alone proves nothing: a failed or
+ * unanswered refund is not in this set, and that money is still being returned by our team.
+ */
+export async function confirmedRefundItemIds(itemIds: string[]): Promise<Set<string>> {
+  const confirmed = new Set<string>();
+  if (itemIds.length === 0) return confirmed;
+  const ledger = await prisma.campaignRefund.findMany({
+    where: { bookingItemId: { in: itemIds }, origin: "ours", status: { in: ["processed", "pending"] } },
+    select: { bookingItemId: true },
+  });
+  for (const r of ledger) if (r.bookingItemId) confirmed.add(r.bookingItemId);
+  return confirmed;
+}
+
+/**
  * paidOnline = the booking has a paidAt; without one nothing was charged, so nothing is "refunded".
  * refundConfirmed = Razorpay has accepted (processed or pending) the refund of this item: a failed
  * or unanswered one is still being returned by our team, and the email must not say it was.
@@ -91,6 +110,33 @@ function itemStatusText(status: string, paidOnline: boolean, refundConfirmed = f
   }
 }
 
+/**
+ * What the delivery email says about the money for the posts that did not go live. ⚠️ It speaks
+ * per GROUP, because the groups differ: a post can be refunded (and Razorpay has the refund), be
+ * refunded with the refund still being returned by our team, or merely be `failed` (nothing was
+ * refunded, and staff may still re-post or refund it). One sentence for all of them said "has been
+ * refunded" of a post that was only marked failed. When every post is in ONE group the wording is
+ * the plain one; a mixed set lists each group with its own count. Offline bookings were never
+ * charged, so they never read "refunded".
+ */
+function notLiveSentence(notLive: Array<{ id: string; status: string }>, paidOnline: boolean, confirmed: Set<string>): string {
+  const refunded = notLive.filter((i) => i.status === "refunded");
+  if (refunded.length === 0) return "Our team will contact you about them.";
+  if (!paidOnline) return "They will not be charged — our team will confirm the final amount with you.";
+  const done = refunded.filter((i) => confirmed.has(i.id)).length;
+  const returning = refunded.length - done;
+  const other = notLive.length - refunded.length;
+  if (done === notLive.length) return "The amount for those has been refunded to your original payment method.";
+  if (returning === notLive.length) return "Our team is returning the amount for those to you.";
+  return [
+    done > 0 ? `The amount for ${done} of them has been refunded to your original payment method.` : "",
+    returning > 0 ? `Our team is returning the amount for ${returning} of them.` : "",
+    other > 0 ? `Our team will contact you about ${other} of them.` : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
 /** Every post with its link — sent once the last item has settled. */
 export async function sendDeliveryEmail(bookingId: string, opts: { force?: boolean } = {}): Promise<boolean> {
   if (!opts.force) {
@@ -105,15 +151,7 @@ export async function sendDeliveryEmail(bookingId: string, opts: { force?: boole
 
   // "Refunded" is said only of an item whose refund Razorpay has accepted (a ledger row that is
   // processed or pending). Without a paidAt (offline mode) there is no refund to look up.
-  const refundedItemIds = b.paidAt ? b.items.filter((i) => i.status === "refunded").map((i) => i.id) : [];
-  const confirmedRefunds = new Set<string>();
-  if (refundedItemIds.length > 0) {
-    const ledger = await prisma.campaignRefund.findMany({
-      where: { bookingItemId: { in: refundedItemIds }, origin: "ours", status: { in: ["processed", "pending"] } },
-      select: { bookingItemId: true },
-    });
-    for (const r of ledger) if (r.bookingItemId) confirmedRefunds.add(r.bookingItemId);
-  }
+  const confirmedRefunds = await confirmedRefundItemIds(b.paidAt ? b.items.filter((i) => i.status === "refunded").map((i) => i.id) : []);
 
   const rows = b.items
     .map((i) => {
@@ -133,15 +171,7 @@ export async function sendDeliveryEmail(bookingId: string, opts: { force?: boole
   // return yet IS live, and must not be reported as "could not be made".
   const notLive = b.items.filter((i) => !isLive(i.status));
   const refundNote = notLive.length
-    ? `<p style="color:#8a4b00">${notLive.length} post${notLive.length === 1 ? "" : "s"} could not be made. ${
-        notLive.some((i) => i.status === "refunded")
-          ? b.paidAt
-            ? notLive.filter((i) => i.status === "refunded").every((i) => confirmedRefunds.has(i.id))
-              ? "The amount for those has been refunded to your original payment method."
-              : "Our team is returning the amount for those to you."
-            : "They will not be charged — our team will confirm the final amount with you."
-          : "Our team will contact you about them."
-      }</p>`
+    ? `<p style="color:#8a4b00">${notLive.length} post${notLive.length === 1 ? "" : "s"} could not be made. ${notLiveSentence(notLive, Boolean(b.paidAt), confirmedRefunds)}</p>`
     : "";
 
   const anyLive = b.items.some((i) => isLive(i.status));
@@ -304,6 +334,7 @@ export async function getResults(clientId: string, bookingId: string) {
   }
 
   const autoOn = campaignConfig.publishEnabled();
+  const refundConfirmed = await confirmedRefundItemIds(b.items.filter((i) => i.status === "refunded").map((i) => i.id));
   return {
     id: b.id,
     status: b.status,
@@ -318,6 +349,8 @@ export async function getResults(clientId: string, bookingId: string) {
         accountName: i.accountName,
         accountHandle: i.accountHandle,
         status: i.status,
+        // True only for a `refunded` item whose refund Razorpay has accepted: the portal says "refunded" on that and nothing else.
+        refundConfirmed: refundConfirmed.has(i.id),
         permalink: i.permalink,
         postedAt: i.postedAt,
         // When an automatic post is due — only for its FIRST scheduled run with the publisher on.

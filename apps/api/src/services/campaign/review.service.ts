@@ -2,7 +2,7 @@ import { prisma } from "@dashmani/db";
 import { isPlatformPostUrl, LIVE_ITEM_STATUSES, type CampaignPlatform } from "@dashmani/shared";
 import { AppError } from "../../middleware/error-handler";
 import { transitionBooking, settleBooking, logBookingEvent } from "./booking.service";
-import { refundBookingInFull, refundPaymentRow, capturedPaymentFor, maybeMarkRefunded } from "./payment.service";
+import { refundBookingInFull, refundPaymentRow, capturedPaymentFor, maybeMarkRefunded, refundSweepEnabled } from "./payment.service";
 import { sendDeliveryEmail, sendItemLiveEmail, sendStatusEmail } from "./delivery.service";
 import { campaignConfig } from "./config";
 import { checkEligibility, launchAt, planPublishing } from "./publish.service";
@@ -144,8 +144,26 @@ export async function requestChanges(id: string, staffId: string, note: string) 
   return getBookingForStaff(id);
 }
 
-/** What staff are told when a refund was requested and Razorpay has not answered yet. */
-const REFUND_CONFIRMING = "The refund was requested and Razorpay hasn't confirmed it yet. We're checking automatically: nothing needs doing, and it can't be refunded twice.";
+/**
+ * What staff are told when a refund was requested and Razorpay has not answered yet.
+ *
+ * ⚠️ "We're checking automatically" is true only while the refund sweep runs. With
+ * CAMPAIGN_REFUND_SWEEP_ENABLED=0 (the Razorpay-incident kill switch) nothing re-sends, reconciles
+ * or alerts, and a refund that never reached Razorpay just sits there; the staff member who clicked
+ * may not be the person who switched it off. So the text follows the switch and says what to do.
+ */
+function refundConfirmingNotice(): string {
+  return refundSweepEnabled()
+    ? "The refund was requested and Razorpay hasn't confirmed it yet. We're checking automatically: nothing needs doing, and it can't be refunded twice."
+    : "The refund was requested and Razorpay hasn't confirmed it yet. The automatic refund check is switched off, so nothing will retry or settle it: look at this payment in Razorpay, and ask whoever runs the server to switch the refund check back on. It can't be refunded twice.";
+}
+
+/** The end of the message when a rejection's refund was refused: whether it is retried depends on the same switch. */
+function refundRetryClause(): string {
+  return refundSweepEnabled()
+    ? "we retry automatically every few minutes."
+    : "the automatic refund check is switched off, so it will not be retried: refund it from the Razorpay dashboard, or ask whoever runs the server to switch the refund check back on.";
+}
 
 /** Item statuses a rejection refunds: everything that was not, and now won't be, posted. */
 const NOT_POSTED_ITEM_STATUSES = ["pending", "manual_pending", "queued", "failed"];
@@ -234,8 +252,8 @@ export async function reject(id: string, staffId: string, note: string) {
   void sendStatusEmail(id, "rejected").catch((e) => console.error("[campaign] rejected email failed", e));
   const refundError = errors.length === 0
     ? null
-    : `${errors.length === 1 ? errors[0] : `${errors.length} refunds could not be issued (first: ${errors[0]})`} The campaign is rejected and the money is marked as owed back; we retry automatically every few minutes.`;
-  return { ...(await getBookingForStaff(id)), refundError, refundNotice: confirming ? REFUND_CONFIRMING : null };
+    : `${errors.length === 1 ? errors[0] : `${errors.length} refunds could not be issued (first: ${errors[0]})`} The campaign is rejected and the money is marked as owed back; ${refundRetryClause()}`;
+  return { ...(await getBookingForStaff(id)), refundError, refundNotice: confirming ? refundConfirmingNotice() : null };
 }
 
 async function itemOf(bookingId: string, itemId: string) {
@@ -351,7 +369,7 @@ export async function refundItem(bookingId: string, itemId: string, staffId: str
   // An unanswered request is NOT a failure: the item stays refunded (claimed) and the ledger row
   // stays pending, so a second click can neither refund it again nor undo the claim.
   await afterItemChange(bookingId, staffId);
-  return { ...(await getBookingForStaff(bookingId)), refundNotice: result.state === "confirming" ? REFUND_CONFIRMING : null };
+  return { ...(await getBookingForStaff(bookingId)), refundNotice: result.state === "confirming" ? refundConfirmingNotice() : null };
 }
 
 /** Staff: publish a queued item now (skipping the launch-day wait), or move a hand-posted item

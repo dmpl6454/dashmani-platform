@@ -53,7 +53,12 @@ before Phase 3 and the build follows.
 - GST §52 TCS, GST on our cut, and who invoices whom.
 - Whether we must keep the creator's PAN. The build stores none: if TDS applies, the PAN is read from Razorpay's stakeholder record at filing time through a staff-only path.
 
-## 4. Legal copy (before go-live)
+## 4. Legal copy (before bank connect opens: step 5 below, not only before go-live)
+
+The consent checkbox on the bank form links to the creator terms, and today the terms say
+"we do not pay creators". Bank connect therefore stays closed in the API (`terms_pending`)
+until the terms are rewritten and `CREATOR_TERMS_VERSION` is bumped past the pre-payout
+value (`2026-10-17`).
 
 - Creator terms §1, §5, §7, §8 and §11 rewritten for payouts, and `termsVersion` bumped. Razorpay's own terms (clause 2.22) require a contract with every seller we collect for; the creator terms accepted at bank connect are that contract.
 - Client terms: creator bookings are paid up front, the creator is named as the provider, and the refund policy.
@@ -65,7 +70,7 @@ before Phase 3 and the build follows.
 2. Deploy with every switch off.
 3. Rehearse every path in Razorpay **test mode** on a local stack.
 4. Production: set the keys, keep `CAMPAIGN_PAYMENT_MODE=offline` for network-only bookings, then subscribe the webhook events (`transfer.*`, `settlement.processed`, `product.route.*`, `payment.dispute.*`). Subscribe only after the code that handles them is deployed: unhandled events are otherwise stamped processed and lost.
-5. Turn on `CREATOR_ROUTE_ENABLED`, onboard one real Indian creator (never a staff Facebook identity), and confirm Allow Refunds and Dashboard Access are off.
+5. **Precondition:** creator terms §1/§5/§7/§8 and the privacy "Payment details" paragraph are rewritten (section 4) and `CREATOR_TERMS_VERSION` is bumped. Then turn on `CREATOR_ROUTE_ENABLED`, onboard one real Indian creator (never a staff Facebook identity), and confirm Allow Refunds and Dashboard Access are off.
 6. Run one small live booking end to end. Confirm the UTR **and the amount that reached the bank**, and record the release-to-bank time.
 7. Only then turn on `CREATORS_MARKETPLACE_ENABLED` and publish the go-live copy.
 

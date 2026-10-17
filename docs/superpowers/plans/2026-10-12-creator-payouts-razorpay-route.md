@@ -166,7 +166,7 @@ Sources: [R5], [R6], [R8], [R29]. Each Razorpay id is saved as soon as its call 
 - Staff raise the Razorpay ticket.
 - **Releases for that creator are paused** until Razorpay shows the new details, plus 72 hours.
 
-**Closing an account.** Blocked while any offer is open. Payouts already held or released keep reconciling. Terms §11 is amended to match.
+**Closing an account.** Blocked while any offer is open. Payouts already held or released keep reconciling. (Terms §11 is amended to match in Phase 3, when offers exist.)
 
 **UI:**
 - creators app `/payouts` page (form, consent, status card); the route is added to `PRIVATE_ROUTES` and the nav; a dashboard checklist item;
@@ -467,7 +467,7 @@ Lines to change today:
 | When | May claim | Must not claim | Wording |
 |---|---|---|---|
 | **Now (Phase 1 copy cleanup)** | Sign up, connect pages, our team reviews you | Prices you set, "your own currency", payouts of any kind, "direct", "worldwide" pay | "Join the Digital Sukoon creator network. Connect your Facebook Page or Instagram professional account and our team reviews it. **Paid bookings are coming soon.** Anyone can join; paid bookings will need a PAN and an Indian bank account." The same India line appears on sign-up before Facebook connect. "You name your asking price … in your own currency" and "Creators worldwide" are removed. |
-| **Phase 2 live** (bank connect on, no bookings) | You can add your bank through Razorpay now | Bookings, payment timing | "Add your bank account now so you're ready when paid bookings open. Your PAN and bank details go straight to Razorpay; we keep only a masked reference." |
+| **Phase 2 live** (bank connect on, no bookings). ⚠️ Only after the creator terms (§1, §5, §7, §8) and the privacy "Payment details" paragraph are rewritten and `CREATOR_TERMS_VERSION` is bumped: the API keeps bank connect closed (`terms_pending`) while the terms still carry the pre-payout version. | You can add your bank through Razorpay now | Bookings, payment timing | "Add your bank account now so you're ready when paid bookings open. We send your PAN and bank details to Razorpay, our payments partner, to set up your payout account. We do not store them - we keep only a masked reference." (Not "straight to Razorpay": the details pass through our server in memory.) |
 | **Phases 3–5 merged, switches off** | No change | — | — |
 | **Go-live** (after the first real UTR, Phase 6 step 7) | The direct-payout pitch, India only | "Directly from the brand", "instant" or "same day", "no fees" (until question c is answered), "guaranteed", "paid worldwide", "you set your price" (unless decision 2 says so) | **"No more chasing agencies for payment. Brands pay Digital Sukoon up front through Razorpay, before you even accept. Your share moves into a Razorpay account in your name and is held there. Once we've checked your post, we release it and Razorpay pays your bank — usually within 2 working days. Track every step: brief, campaign, link, payment, paid."** Footnote: "Paid bookings need a PAN and an Indian bank account. If a booking is cancelled before you post, no payment is due." Terms §1/§5/§7/§8/§11 rewritten, `termsVersion` bumped, acceptance recorded at bank connect. |
 | **Later** (after measuring 20+ payouts) | A measured figure | Any figure we haven't measured | "Most creators are paid within N working days of their post going live." |

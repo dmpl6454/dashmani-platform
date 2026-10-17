@@ -17,7 +17,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import request from "supertest";
 import crypto from "crypto";
-import { prisma } from "@dashmani/db";
+import fs from "fs";
+import path from "path";
+import { prisma, PrismaClient } from "@dashmani/db";
 import { todayIST } from "@dashmani/shared";
 import "./setup";
 
@@ -141,6 +143,15 @@ const resetGraph = () => {
   graph.nextHost = "graph.facebook.com";
   graph.calls.length = 0;
 };
+/** Poll until `cond` holds (50 ms steps, 10 s at most): for the tests that watch another connection from pg_stat_activity / pg_locks. */
+async function waitUntil(cond: () => Promise<boolean>, what: string): Promise<void> {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    if (await cond()) return;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  throw new Error(`timed out waiting for ${what}`);
+}
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
 function fakeFetch(input: any): Promise<Response> | Response {
@@ -1372,15 +1383,34 @@ describe("creator offers", () => {
         expect(res.body.data.linkResult).toMatchObject({ check: "auto_failed", detail: "not_found" });
       });
 
-      it("an opaque /share/ link is resolved through its one redirect; one that cannot be resolved is left for a person (share_link)", async () => {
+      it("an opaque /share/ link is resolved through its one redirect and keyed by the post it led to; one that cannot be resolved is refused (400 NEEDS_POST_LINK), never stored", async () => {
         const { page, offer } = await fbAccepted();
         graph.shares.set("/share/r/AbC123/", "https://www.facebook.com/reel/1234567890/?s=x");
         const ok = await post(page, offer.id, "https://www.facebook.com/share/r/AbC123/");
         expect(ok.body.data.linkResult.check).toBe("auto_ok");
         // Keyed by the POST it led to (so one reel cannot be paid for twice under two share codes), and kept as Meta's own link to it.
-        expect(await offerOf(offer.id)).toMatchObject({ linkUrl: "https://www.facebook.com/reel/1234567890/", linkCanonicalKey: "fb:1234567890" });
+        const stored = { linkUrl: "https://www.facebook.com/reel/1234567890/", linkCanonicalKey: "fb:1234567890", ownershipCheck: "auto_ok" };
+        expect(await offerOf(offer.id)).toMatchObject(stored);
+        // A share link that leads nowhere readable names no post: it would be stored under a `share:` key no other booking can match.
         const un = await post(page, offer.id, "https://www.facebook.com/share/r/NoRedirect/");
-        expect(un.body.data.linkResult).toMatchObject({ check: "unverifiable", detail: "share_link" });
+        expect([un.status, un.body.error.code]).toEqual([400, "NEEDS_POST_LINK"]);
+        expect(un.body.error.message).toMatch(/own link/i);
+        // ...and what the creator had sent before is exactly as it was.
+        expect(await offerOf(offer.id)).toMatchObject(stored);
+      });
+
+      it("⚠️ a share link whose redirect probe FAILS (the network is down, the redirect leads to a page that is not a post) is refused too: the probe is fail-open, so nothing may depend on it succeeding", async () => {
+        const { page, offer } = await fbAccepted();
+        // The share path itself cannot be reached: resolveFacebookShareUrl swallows the error and answers null.
+        vi.stubGlobal("fetch", vi.fn(async (input: any) => (new URL(String(input)).pathname.startsWith("/share/") ? Promise.reject(new Error("network down")) : fakeFetch(input))));
+        const down = await post(page, offer.id, "https://www.facebook.com/share/r/Down123/");
+        expect([down.status, down.body.error.code]).toEqual([400, "NEEDS_POST_LINK"]);
+        // A redirect that lands on a page that is not a post is just as unusable.
+        vi.stubGlobal("fetch", vi.fn(async (input: any) => fakeFetch(input)));
+        graph.shares.set("/share/p/Prof123/", "https://www.facebook.com/somepage/");
+        const prof = await post(page, offer.id, "https://www.facebook.com/share/p/Prof123/");
+        expect([prof.status, prof.body.error.code]).toEqual([400, "NEEDS_POST_LINK"]);
+        expect(await offerOf(offer.id)).toMatchObject({ linkUrl: null, linkCanonicalKey: null, linkSubmittedAt: null, ownershipCheck: null });
       });
 
       it("⚠️ one pfbid post cannot pay for two bookings even when the two links differ in host and tracking query", async () => {
@@ -1414,13 +1444,12 @@ describe("creator offers", () => {
         expect(no.body.data.linkResult).toMatchObject({ check: "auto_failed", detail: "not_found" });
       });
 
-      it("a short fb.watch link names no post: unverifiable (link_shape) with no call, never 'not found'", async () => {
+      it("a short fb.watch link names no post: refused (400 NEEDS_POST_LINK) with no call to Meta and nothing stored, never 'not found' and never kept under a raw: key", async () => {
         const { page, offer } = await fbAccepted();
         const res = await post(page, offer.id, "https://fb.watch/abcDEF/");
-        expect(res.body.data.linkResult).toMatchObject({ check: "unverifiable", detail: "link_shape" });
-        expect(res.body.data.linkResult.message).toMatch(/by hand/i);
+        expect([res.status, res.body.error.code]).toEqual([400, "NEEDS_POST_LINK"]);
         expect(graph.calls).toHaveLength(0);
-        expect((await offerOf(offer.id)).linkCanonicalKey!.startsWith("raw:")).toBe(true);
+        expect(await offerOf(offer.id)).toMatchObject({ linkUrl: null, linkCanonicalKey: null, linkSubmittedAt: null, ownershipCheck: null });
       });
 
       it("⚠️ a feed holding posts in a form we cannot compare never yields 'not found' (the post may be one of them): unverifiable (feed_shape)", async () => {
@@ -1509,23 +1538,21 @@ describe("creator offers", () => {
       expect(late.body.error.code).toBe("LINK_ALREADY_USED");
     });
 
-    it("⚠️ an Instagram /share/ link is not a shortcode: unverifiable (share_link) with no call to Meta, the creator is asked for the post's own link, and it can never match or block a real post", async () => {
+    it("⚠️ an Instagram /share/ link is not a shortcode: refused (400 NEEDS_POST_LINK) with no call to Meta and nothing stored, the creator is asked for the post's own link, and it can never match or block a real post", async () => {
       const { page, offer } = await accepted();
       graph.igMedia = [igPost("ABC123")]; // a REAL post whose shortcode equals the share code
       const res = await post(page, offer.id, "https://www.instagram.com/share/reel/ABC123/?igsh=x");
-      expect(res.status).toBe(200);
-      expect(res.body.data.linkResult).toMatchObject({ check: "unverifiable", detail: "share_link" });
-      expect(res.body.data.linkResult.message).toMatch(/post's own link/i);
-      expect(res.body.data.linkResult.message).toMatch(/by hand/i);
+      expect([res.status, res.body.error.code]).toEqual([400, "NEEDS_POST_LINK"]);
+      expect(res.body.error.message).toMatch(/post's own link/i);
       expect(graph.calls).toHaveLength(0);
-      expect(await offerOf(offer.id)).toMatchObject({ linkCanonicalKey: "share:instagram.com/share/reel/ABC123", linkUrl: "https://www.instagram.com/share/reel/ABC123/", ownershipCheck: "unverifiable" });
+      expect(await offerOf(offer.id)).toMatchObject({ linkUrl: null, linkCanonicalKey: null, linkSubmittedAt: null, ownershipCheck: null });
       // The real post, sent for ANOTHER booking, is its own key: not blocked by the share link.
       const other = await accepted();
       graph.feeds.set(other.page.asset.metaId, [igPost("ABC123")]);
       const real = await post(other.page, other.offer.id, "https://www.instagram.com/reel/ABC123/");
       expect(real.body.data.linkResult.check).toBe("auto_ok");
       expect((await offerOf(other.offer.id)).linkCanonicalKey).toBe("ig:ABC123");
-      // And the creator replaces the share link with the post's own link.
+      // And the creator, told what to send, sends the post's own link.
       graph.feeds.set(page.asset.metaId, [igPost("OWN4567")]);
       expect((await post(page, offer.id, "https://www.instagram.com/p/OWN4567/")).body.data.linkResult.check).toBe("auto_ok");
     });
@@ -1837,6 +1864,220 @@ describe("creator offers", () => {
       expect(res.status).toBe(409);
       expect(res.body.error.code).toBe("LINK_ALREADY_USED");
       expect(await itemStatus(b.item.id)).toBe("manual_pending");
+    });
+
+    // ── A link that names no post can never be verified (finding: one post paid twice through a share link) ──
+
+    /**
+     * An accepted offer whose link is stored under ANY key, as the database can hold one: a share:/raw: link from before the
+     * submit-time refusal existed, or one a failed redirect probe left behind. Written straight to the row, because the
+     * creator's own route no longer accepts such a link.
+     */
+    async function withStoredLink(url: string, key: string, check: "auto_ok" | "unverifiable" = "unverifiable", o: PageOpts = {}) {
+      const x = await offered(o);
+      expect((await accept(x.page, x.offer.id)).status).toBe(200);
+      await prisma.creatorOffer.update({
+        where: { id: x.offer.id },
+        data: { linkUrl: url, linkCanonicalKey: key, linkSubmittedAt: new Date(), linkPostedAt: null, ownershipCheck: check, ownershipDetail: check === "auto_ok" ? "matched" : "share_link", ownershipCheckedAt: new Date() },
+      });
+      return x;
+    }
+    const nothingVerified = async (x: Awaited<ReturnType<typeof withStoredLink>>) => {
+      expect(await itemStatus(x.item.id)).toBe("manual_pending");
+      expect(await offerOf(x.offer.id)).toMatchObject({ status: "accepted", linkVerifiedAt: null, linkVerifiedById: null });
+      expect((await payoutOf(x.item.id)).status).toBe("planned");
+    };
+
+    it.each([
+      ["an Instagram /share/ link", "https://www.instagram.com/share/reel/ABC123/", "share:instagram.com/share/reel/ABC123", "instagram_account"],
+      ["a Facebook /share/ link that never resolved", "https://www.facebook.com/share/r/AbC123/", "share:facebook.com/share/r/AbC123", "facebook_page"],
+      ["a fb.watch short link", "https://fb.watch/abcDEF/", "raw:fb.watch/abcDEF", "facebook_page"],
+    ] as const)("⚠️ %s can never be verified: 409 LINK_NOT_COMPARABLE with or without the hand tick, through both entry points, and nothing changes", async (_name, url, key, kind) => {
+      const x = await withStoredLink(url, key, "unverifiable", { kind });
+      // Without the tick it is not asked to be hand-checked (that would invite a tick that cannot work): it names no post.
+      const plain = await verify(x.paid.booking.id, x.item.id);
+      expect([plain.status, plain.body.error.code]).toEqual([409, "LINK_NOT_COMPARABLE"]);
+      expect(plain.body.error.message).toMatch(/post's own link/i);
+      // The hand tick cannot make it verifiable.
+      const ticked = await verify(x.paid.booking.id, x.item.id, { ownershipCheckedByHand: true });
+      expect([ticked.status, ticked.body.error.code]).toEqual([409, "LINK_NOT_COMPARABLE"]);
+      await nothingVerified(x);
+      // The generic "mark posted" route ends in the same function, so it is refused the same way.
+      const generic = await staffPost(x.paid.booking.id, x.item.id, "posted", { url });
+      expect([generic.status, generic.body.error.code]).toEqual([409, "LINK_NOT_COMPARABLE"]);
+      await nothingVerified(x);
+      // Even a row whose check says it passed (a stale or hand-edited one) is refused: the rule is about the key, not the verdict.
+      await prisma.creatorOffer.update({ where: { id: x.offer.id }, data: { ownershipCheck: "auto_ok" } });
+      expect((await verify(x.paid.booking.id, x.item.id)).body.error.code).toBe("LINK_NOT_COMPARABLE");
+      await nothingVerified(x);
+      // The refusal is not sticky: once the creator is asked for, and sends, the post's own link, it verifies.
+      await prisma.creatorOffer.update({ where: { id: x.offer.id }, data: { ownershipCheck: "unverifiable", linkCanonicalKey: kind === "instagram_account" ? "ig:ABC123" : "fb:555", linkUrl: kind === "instagram_account" ? "https://www.instagram.com/p/ABC123/" : "https://www.facebook.com/reel/555/" } });
+      expect((await verify(x.paid.booking.id, x.item.id, { ownershipCheckedByHand: true })).status).toBe(200);
+    });
+
+    it.each(["the share link first", "the post's own link first"] as const)(
+      "⚠️ one post never pays two bookings through a share link: a share link for booking A and the post's own link for booking B cannot BOTH verify (%s)",
+      async (order) => {
+        const a = await withStoredLink("https://www.instagram.com/share/reel/ABC123/", "share:instagram.com/share/reel/ABC123");
+        const b = await offered();
+        expect((await accept(b.page, b.offer.id)).status).toBe(200);
+        graph.feeds.set(b.page.asset.metaId, [{ id: "m_ABC123", permalink: "https://www.instagram.com/p/ABC123/", timestamp: metaTime(new Date()) }]);
+        const sent = await cPost(b.page.token, `/creator/offers/${b.offer.id}/posted`, { url: "https://www.instagram.com/reel/ABC123/" });
+        expect(sent.body.data.linkResult.check).toBe("auto_ok"); // not blocked by the share link: the two keys differ, which is the whole problem
+        expect((await offerOf(b.offer.id)).linkCanonicalKey).toBe("ig:ABC123");
+        const tickA = () => verify(a.paid.booking.id, a.item.id, { ownershipCheckedByHand: true });
+        const verifyB = () => verify(b.paid.booking.id, b.item.id);
+        let refusedA, okB;
+        if (order === "the share link first") {
+          refusedA = await tickA(); // staff open the share link, see the creator's own reel, tick the box
+          okB = await verifyB();
+        } else {
+          okB = await verifyB();
+          refusedA = await tickA();
+        }
+        expect([refusedA.status, refusedA.body.error.code]).toEqual([409, "LINK_NOT_COMPARABLE"]);
+        expect(okB.status).toBe(200);
+        // Exactly one booking is ever verified for the post, and it is the one whose link names it.
+        expect(await prisma.creatorOffer.count({ where: { id: { in: [a.offer.id, b.offer.id] }, linkVerifiedAt: { not: null } } })).toBe(1);
+        expect((await offerOf(b.offer.id)).linkVerifiedAt).not.toBeNull();
+        await nothingVerified(a);
+      },
+    );
+
+    // ── One post, one booking: serialised across bookings, with the database as the backstop ──
+
+    it("two verifications of one post, for two bookings, at the same time: exactly one wins, the other is 409 LINK_ALREADY_USED and its item stays waiting", async () => {
+      // ⚠️ WHAT THIS PROVES. CI runs the API with connection_limit=1, so the two requests queue for the one pooled connection and
+      // are really run one after the other: this is the OUTCOME RULE (whichever order, one winner, the loser refused and
+      // unchanged). The LOCK is proved by the two tests below, which hold the key from a second client on its own connections.
+      const a = await withLink("auto_ok");
+      const b = await withLink("auto_ok");
+      const [ra, rb] = await Promise.all([verify(a.paid.booking.id, a.item.id), verify(b.paid.booking.id, b.item.id)]);
+      expect([ra.status, rb.status].sort()).toEqual([200, 409]);
+      const loser = ra.status === 409 ? ra : rb;
+      expect(loser.body.error.code).toBe("LINK_ALREADY_USED");
+      const [loserX, winnerX] = ra.status === 409 ? [a, b] : [b, a];
+      expect(await itemStatus(loserX.item.id)).toBe("manual_pending");
+      expect(await itemStatus(winnerX.item.id)).toBe("posted_manual");
+      expect(await prisma.creatorOffer.count({ where: { linkVerifiedAt: { not: null } } })).toBe(1);
+    });
+
+    it("⚠️ THE LOCK: while another transaction holds the post's key, a verify of that post WAITS for it instead of reading around it, then sees what was committed and is refused", async () => {
+      const a = await withLink("auto_ok");
+      const b = await withLink("auto_ok");
+      // A second client on its own connections: the test pool is ONE connection, which can never show two transactions overlap.
+      const second = new PrismaClient({ datasources: { db: { url: process.env.DATABASE_URL!.replace(/connection_limit=\d+/, "connection_limit=3") } } });
+      let release!: () => void;
+      const gate = new Promise<void>((r) => (release = r));
+      let holding!: () => void;
+      const holds = new Promise<void>((r) => (holding = r));
+      // "Another verify of the same post": it takes the key lock exactly as verifyCreatorItem does, and only commits its verified
+      // stamp after the other verify has been seen waiting.
+      const holder = second.$transaction(
+        async (tx) => {
+          await tx.$queryRaw`SELECT 1 AS locked FROM (SELECT pg_advisory_xact_lock(hashtextextended(${"ig:ABCdef123"}, 0))) AS l`;
+          holding();
+          await gate;
+          await tx.creatorOffer.update({ where: { id: a.offer.id }, data: { status: "completed", linkVerifiedAt: new Date(), linkVerifiedById: staffId } });
+        },
+        { timeout: 30_000, maxWait: 10_000 },
+      );
+      try {
+        await Promise.race([holds, holder]); // (a holder that failed rejects here instead of hanging)
+        let settled = false;
+        const waiting = verify(b.paid.booking.id, b.item.id).then((r) => {
+          settled = true;
+          return r;
+        });
+        await waitUntil(
+          async () => (await second.$queryRaw<Array<{ n: number }>>`SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND NOT granted AND database = (SELECT oid FROM pg_database WHERE datname = current_database())`)[0].n > 0,
+          "the verify to wait for the post's key lock",
+        );
+        expect(settled).toBe(false);
+        release();
+        await holder;
+        const res = await waiting;
+        // It woke up after the holder's commit, read a fresh snapshot, and found the post already verified for the other booking.
+        expect([res.status, res.body.error.code]).toEqual([409, "LINK_ALREADY_USED"]);
+      } finally {
+        release();
+        await holder.catch(() => {});
+        await second.$disconnect();
+      }
+      expect(await itemStatus(b.item.id)).toBe("manual_pending");
+      expect((await offerOf(b.offer.id)).linkVerifiedAt).toBeNull();
+      expect((await offerOf(a.offer.id)).linkVerifiedAt).not.toBeNull();
+    });
+
+    it("⚠️ THE BACKSTOP: with the database's own unique index in place, a verified stamp that slips past the check (here: another transaction's, not yet committed) is refused as 409 LINK_ALREADY_USED, never a 500", async () => {
+      // The index is built by scripts/creator-payouts-ddl.sql (a partial index Prisma cannot express), not by `db push`: create it
+      // here, from the script's own statement, and drop it again whatever happens.
+      const ddl = fs.readFileSync(path.join(__dirname, "../../../scripts/creator-payouts-ddl.sql"), "utf8");
+      const stmt = /CREATE UNIQUE INDEX IF NOT EXISTS "creator_offers_verified_link_key_idx"[^;]+;/.exec(ddl)?.[0];
+      expect(stmt, "the partial unique index is in the DDL").toBeDefined();
+      await prisma.$executeRawUnsafe(stmt!);
+      const second = new PrismaClient({ datasources: { db: { url: process.env.DATABASE_URL!.replace(/connection_limit=\d+/, "connection_limit=3") } } });
+      let release!: () => void;
+      const gate = new Promise<void>((r) => (release = r));
+      let stamped!: () => void;
+      const stampedRow = new Promise<void>((r) => (stamped = r));
+      try {
+        const a = await withLink("auto_ok");
+        const b = await withLink("auto_ok");
+        // Another path that verified A WITHOUT the key lock and has not committed: invisible to B's duplicate count, but it owns the
+        // unique index entry for the post.
+        const winner = second.$transaction(
+          async (tx) => {
+            await tx.creatorOffer.update({ where: { id: a.offer.id }, data: { status: "completed", linkVerifiedAt: new Date(), linkVerifiedById: staffId } });
+            stamped();
+            await gate;
+          },
+          { timeout: 30_000, maxWait: 10_000 },
+        );
+        try {
+          await Promise.race([stampedRow, winner]);
+          let settled = false;
+          const loser = verify(b.paid.booking.id, b.item.id).then((r) => {
+            settled = true;
+            return r;
+          });
+          await waitUntil(
+            async () => (await second.$queryRaw<Array<{ n: number }>>`SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' AND query ILIKE '%creator_offers%'`)[0].n > 0,
+            "the verify's stamp to wait on the other transaction's index entry",
+          );
+          expect(settled).toBe(false);
+          release();
+          await winner;
+          const res = await loser;
+          expect([res.status, res.body.error.code]).toEqual([409, "LINK_ALREADY_USED"]);
+        } finally {
+          release();
+          await winner.catch(() => {});
+        }
+        // The refused verify rolled back whole: its item still waits, its offer is untouched.
+        expect(await itemStatus(b.item.id)).toBe("manual_pending");
+        expect(await offerOf(b.offer.id)).toMatchObject({ status: "accepted", linkVerifiedAt: null });
+        expect(await prisma.creatorOffer.count({ where: { linkVerifiedAt: { not: null } } })).toBe(1);
+      } finally {
+        await second.$disconnect();
+        await prisma.$executeRawUnsafe('DROP INDEX IF EXISTS "creator_offers_verified_link_key_idx"');
+      }
+    });
+
+    it("a verified offer always carries its post key (so the index covers it), and a link whose key was never stored is still compared on the key derived from it", async () => {
+      const a = await withLink("auto_ok");
+      const b = await withLink("auto_ok");
+      await prisma.creatorOffer.update({ where: { id: a.offer.id }, data: { linkCanonicalKey: null } });
+      expect((await verify(a.paid.booking.id, a.item.id, { linkCanonicalKey: "ig:ABCdef123" })).status).toBe(200);
+      expect((await offerOf(a.offer.id)).linkCanonicalKey).toBe("ig:ABCdef123");
+      // B names the same post: refused, though A's key was null until it was verified.
+      const dup = await verify(b.paid.booking.id, b.item.id);
+      expect([dup.status, dup.body.error.code]).toEqual([409, "LINK_ALREADY_USED"]);
+      // And the other way round: a verified row holds the key; an offer with no stored key is compared on its link, not skipped.
+      const c = await withLink("auto_ok");
+      await prisma.creatorOffer.update({ where: { id: c.offer.id }, data: { linkCanonicalKey: null } });
+      const cDup = await verify(c.paid.booking.id, c.item.id, { linkCanonicalKey: "ig:ABCdef123" });
+      expect([cDup.status, cDup.body.error.code]).toEqual([409, "LINK_ALREADY_USED"]);
     });
 
     it("⚠️ verify is bound to the link staff looked at: when the creator sends ANOTHER link in between, the verify is refused 409 LINK_CHANGED and nothing is verified, even with the hand tick; the key of the link that is there verifies", async () => {

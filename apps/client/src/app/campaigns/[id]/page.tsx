@@ -724,7 +724,7 @@ function AfterPayment({ campaign: c, onChanged }: { campaign: Campaign; onChange
         </>
       )}
 
-      <Card title="Your posts" sub={live ? "Each post with its link once it's live. Views and likes appear after our next sync." : undefined}>
+      <Card title="Your posts" sub={live ? "Each post with its link once it's live. For posts on our own network, views and likes appear after our next sync." : undefined}>
         <ul className="divide-y divide-ink/5">
           {(results?.items ?? c.items.map((i) => ({ ...i, metrics: null }))).map((i) => (
             <li key={i.id} className="py-3 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
@@ -751,7 +751,9 @@ function AfterPayment({ campaign: c, onChanged }: { campaign: Campaign; onChange
                   )}
                 </div>
               </div>
-              {i.permalink && (
+              {/* A creator's post is never measured (creator pages are kept out of our own metrics sync), so "Collecting stats…"
+                  would be a promise nothing keeps: only a post that has figures, or can get them, shows this block. */}
+              {i.permalink && !(isCreator(i) && !i.metrics) && (
                 <div className="text-[12px] text-ink-2 tabular-nums flex gap-3 shrink-0">
                   {i.metrics ? (
                     <>

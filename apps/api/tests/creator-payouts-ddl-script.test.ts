@@ -59,6 +59,15 @@ const REQUIRED_UNIQUE: Record<string, string[]> = {
   campaign_disputes: ["razorpay_dispute_id"],
 };
 
+// The one unique index Prisma cannot express (a PARTIAL one), so schema.prisma has no @@unique for it and only this script builds
+// it: at most one VERIFIED creator offer per post key ("one post, one booking", the database's own backstop behind the service's
+// advisory lock + count in verifyCreatorItem).
+const PARTIAL_UNIQUE = {
+  name: "creator_offers_verified_link_key_idx",
+  statement:
+    'CREATE UNIQUE INDEX IF NOT EXISTS "creator_offers_verified_link_key_idx" ON "creator_offers"("link_canonical_key") WHERE "link_verified_at" IS NOT NULL AND "link_canonical_key" IS NOT NULL;',
+};
+
 type Col = { name: string; type: string; notNull: boolean };
 
 /** The CREATE TABLE bodies of the script: table -> its columns (constraints excluded). */
@@ -81,7 +90,8 @@ function parseDdlIndexes() {
   const all: string[] = [];
   const unique: string[] = [];
   const onTable: Record<string, string> = {};
-  for (const m of code.matchAll(/CREATE (UNIQUE )?INDEX IF NOT EXISTS "([^"]+)" ON "([^"]+)"\(([^)]*)\);/g)) {
+  // (An optional WHERE clause: the partial unique index above.)
+  for (const m of code.matchAll(/CREATE (UNIQUE )?INDEX IF NOT EXISTS "([^"]+)" ON "([^"]+)"\(([^)]*)\)(?: WHERE [^;]+)?;/g)) {
     all.push(m[2]);
     if (m[1]) unique.push(m[2]);
     onTable[m[2]] = `${m[3]}(${m[4].replace(/"/g, "").replace(/, /g, ",")})`;
@@ -229,13 +239,27 @@ describe("scripts/creator-payouts-ddl.sql", () => {
     const expected = Object.entries(REQUIRED_UNIQUE)
       .flatMap(([table, cols]) => cols.map((c) => `${table}_${c}_key`))
       .sort();
-    expect([...ddlIndexes.unique].sort()).toEqual(expected);
     expect(expected).toHaveLength(9);
+    // The nine plain ones, plus the one partial index.
+    expect([...ddlIndexes.unique].sort()).toEqual([...expected, PARTIAL_UNIQUE.name].sort());
     for (const [table, cols] of Object.entries(REQUIRED_UNIQUE)) {
       for (const c of cols) {
         expect(code).toContain(`CREATE UNIQUE INDEX IF NOT EXISTS "${table}_${c}_key" ON "${table}"("${c}");`);
       }
     }
+  });
+
+  it("⚠️ makes a verified creator post unique per post key IN THE DATABASE: a PARTIAL unique index (verified rows with a key only), written exactly so", () => {
+    // Partial, not plain: two creators may paste one post before staff decide, and an offer with no link has no key. Only a
+    // VERIFIED offer reserves the post. A plain unique index here would refuse the unverified duplicates the service allows.
+    expect(code).toContain(PARTIAL_UNIQUE.statement);
+    expect(ddlIndexes.onTable[PARTIAL_UNIQUE.name]).toBe("creator_offers(link_canonical_key)");
+    expect(ddlIndexes.unique).toContain(PARTIAL_UNIQUE.name);
+    // Prisma cannot express it, so it must not appear in schema.prisma as a @@unique that `db push` would then try to own.
+    const schema = fs.readFileSync(path.join(ROOT, "packages/db/prisma/schema.prisma"), "utf8");
+    const model = /model CreatorOffer \{([\s\S]*?)\n\}/.exec(schema)?.[1] ?? "";
+    expect(model).not.toMatch(/@@unique\(\[linkCanonicalKey/);
+    expect(model).toMatch(/@@index\(\[linkCanonicalKey\]\)/);
   });
 
   it("creates the lookup indexes the reconciliation cron and the lists need", () => {
@@ -333,8 +357,11 @@ describe("scripts/apply-creator-payouts-ddl.sh", () => {
     expect(sh).toContain(`(expected ${ddlIndexes.all.length} incl. the 7 primary keys)`);
     expect(sh).toContain(`(expected ${ddlIndexes.unique.length})`);
     expect(sh).toContain(`CHECK constraints: $NCHECK (expected ${Object.keys(ddlChecks).length})`);
-    expect(ddlIndexes.all).toHaveLength(33);
-    expect(ddlIndexes.unique).toHaveLength(9);
+    expect(ddlIndexes.all).toHaveLength(34);
+    expect(ddlIndexes.unique).toHaveLength(10);
+    // The helper checks the partial index's definition itself, not just that an index of that name exists.
+    expect(sh).toContain("creator_offers_verified_link_key_idx");
+    expect(sh).toContain("link_verified_at IS NOT NULL");
   });
 
   it("keeps the creators helper's safety model", () => {

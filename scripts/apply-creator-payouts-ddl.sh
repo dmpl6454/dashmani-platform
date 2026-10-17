@@ -26,8 +26,9 @@
 #      so the long-transaction check looks at it and at the seven new tables;
 #   4. schema-only backup (seconds; this DDL rewrites no data);
 #   5. applies the DDL — one transaction, lock_timeout 3s, CREATE ... IF NOT EXISTS only;
-#   6. verifies the seven tables (owner + columns), their 33 indexes (9 unique, besides the primary
-#      keys), the ONE foreign key (creator_rate_terms -> campaign_rate_cards, ON DELETE CASCADE;
+#   6. verifies the seven tables (owner + columns), their 34 indexes (10 unique, besides the primary
+#      keys; one of them is the PARTIAL unique index that makes a verified creator post unique per
+#      post key, which Prisma cannot express), the ONE foreign key (creator_rate_terms -> campaign_rate_cards, ON DELETE CASCADE;
 #      any other foreign key on these tables fails the run) and the 3 CHECK constraints;
 #   7. drift check (inspect only, never applied): no payout / refund / dispute statement may remain
 #      between the database and the PR's schema.prisma.
@@ -68,12 +69,12 @@ declare -A EXPECTED_COLS=(
 # Every index the DDL creates (primary keys included); the unique ones are checked separately.
 EXPECTED_INDEXES="creator_payout_accounts_pkey creator_payout_accounts_creator_id_key creator_payout_accounts_razorpay_account_id_key creator_payout_accounts_activation_status_idx
 creator_rate_terms_pkey creator_rate_terms_rate_card_id_key
-creator_offers_pkey creator_offers_booking_item_id_key creator_offers_creator_id_status_idx creator_offers_booking_id_idx creator_offers_status_expires_at_idx creator_offers_link_canonical_key_idx
+creator_offers_pkey creator_offers_booking_item_id_key creator_offers_creator_id_status_idx creator_offers_booking_id_idx creator_offers_status_expires_at_idx creator_offers_link_canonical_key_idx creator_offers_verified_link_key_idx
 creator_payouts_pkey creator_payouts_booking_item_id_key creator_payouts_razorpay_transfer_id_key creator_payouts_status_next_attempt_at_idx creator_payouts_creator_id_idx creator_payouts_booking_id_idx creator_payouts_razorpay_payment_id_idx
 creator_payout_events_pkey creator_payout_events_payout_id_created_at_idx creator_payout_events_booking_id_created_at_idx
 campaign_refunds_pkey campaign_refunds_razorpay_refund_id_key campaign_refunds_idempotency_key_key campaign_refunds_razorpay_payment_id_idx campaign_refunds_booking_id_idx campaign_refunds_booking_item_id_idx campaign_refunds_status_last_checked_at_idx
 campaign_disputes_pkey campaign_disputes_razorpay_dispute_id_key campaign_disputes_razorpay_payment_id_idx campaign_disputes_status_idx"
-EXPECTED_UNIQUE="creator_payout_accounts_creator_id_key creator_payout_accounts_razorpay_account_id_key creator_rate_terms_rate_card_id_key creator_offers_booking_item_id_key creator_payouts_booking_item_id_key creator_payouts_razorpay_transfer_id_key campaign_refunds_razorpay_refund_id_key campaign_refunds_idempotency_key_key campaign_disputes_razorpay_dispute_id_key"
+EXPECTED_UNIQUE="creator_payout_accounts_creator_id_key creator_payout_accounts_razorpay_account_id_key creator_rate_terms_rate_card_id_key creator_offers_booking_item_id_key creator_offers_verified_link_key_idx creator_payouts_booking_item_id_key creator_payouts_razorpay_transfer_id_key campaign_refunds_razorpay_refund_id_key campaign_refunds_idempotency_key_key campaign_disputes_razorpay_dispute_id_key"
 # The ONLY foreign key: a share goes with its rate card. Everything else carries plain ids on purpose.
 EXPECTED_FKS="creator_rate_terms_rate_card_id_fkey"
 # table:constraint — Prisma cannot express CHECKs, so only this script creates them.
@@ -216,12 +217,20 @@ KEYTYPE=$(coltype_of creator_offers link_canonical_key)
 [ "$KEYTYPE" = "text" ] || fail "creator_offers.link_canonical_key is '$KEYTYPE', expected text"
 echo "    creator_offers.link_canonical_key: $KEYTYPE (a whole lowercased URL fits)"
 IDX=$(q "SELECT count(*) FROM pg_indexes WHERE schemaname='public' AND indexname IN ($(sqllist "$EXPECTED_INDEXES"))")
-echo "    indexes: $IDX (expected 33 incl. the 7 primary keys)"
-[ "$IDX" = "33" ] || fail "expected 33 indexes on the payout tables; missing: $(q "SELECT string_agg(x, ' ') FROM unnest(ARRAY[$(sqllist "$EXPECTED_INDEXES")]) x WHERE x NOT IN (SELECT indexname FROM pg_indexes WHERE schemaname='public')")"
+echo "    indexes: $IDX (expected 34 incl. the 7 primary keys)"
+[ "$IDX" = "34" ] || fail "expected 34 indexes on the payout tables; missing: $(q "SELECT string_agg(x, ' ') FROM unnest(ARRAY[$(sqllist "$EXPECTED_INDEXES")]) x WHERE x NOT IN (SELECT indexname FROM pg_indexes WHERE schemaname='public')")"
 UNIQ=$(q "SELECT count(*) FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid JOIN pg_namespace n ON n.oid = c.relnamespace
   WHERE n.nspname = 'public' AND i.indisunique AND i.indisvalid AND c.relname IN ($(sqllist "$EXPECTED_UNIQUE"))")
-echo "    unique indexes (besides primary keys): $UNIQ (expected 9)"
-[ "$UNIQ" = "9" ] || fail "expected 9 valid UNIQUE indexes ($EXPECTED_UNIQUE)"
+echo "    unique indexes (besides primary keys): $UNIQ (expected 10)"
+[ "$UNIQ" = "10" ] || fail "expected 10 valid UNIQUE indexes ($EXPECTED_UNIQUE)"
+# The one index Prisma cannot express: it must be PARTIAL (verified rows with a key only). A plain unique index on the key
+# would refuse two creators pasting the same post before staff decide, which the service allows on purpose.
+VLK_DEF=$(q "SELECT pg_get_indexdef(i.indexrelid) FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname='public' AND c.relname='creator_offers_verified_link_key_idx'")
+case "$VLK_DEF" in
+  *"(link_canonical_key)"*"link_verified_at IS NOT NULL"*"link_canonical_key IS NOT NULL"*) ;;
+  *) fail "creator_offers_verified_link_key_idx is not the partial unique index on link_canonical_key (verified rows with a key): $VLK_DEF" ;;
+esac
+echo "    one verified creator post per post key: $VLK_DEF"
 # The ONLY foreign key is the cascade to campaign_rate_cards; any other one on these tables is a mistake
 # (financial rows must outlive bookings, items, creators and pages).
 FK=$(q "SELECT count(*) FROM pg_constraint c JOIN pg_namespace n ON n.oid = c.connamespace

@@ -252,10 +252,14 @@ export function AccountsStep({ campaign, onSaved, onEdit }: {
 
   const selected = offers.filter((a) => picked.has(a.offer.rateCardId));
   const total = selected.reduce((s, a) => s + a.price.total, 0);
-  // Creator accounts are paid up front and need online payment; the note sits in the bar below (not in the
-  // list, so ticking one never moves the rows under the pointer) and says so for the payment mode in force.
+  // Creator accounts are paid up front; the note sits in the bar below (not in the list, so ticking one never
+  // moves the rows under the pointer).
+  // ⚠️ It never reads campaign.paymentMode. That is the SAVED booking's mode, and until a creator account is saved
+  // it is the global one, which reads "offline" under the go-live config (Razorpay keys set, offline kept for our own
+  // accounts) although checkout takes a booking with a creator account online. Creator accounts are listed only when
+  // online payment exists, so "not available" can never be true here; a config that changed after the list loaded is
+  // answered by the Pay step (creatorNeedsOnline) and by checkout (CREATOR_ONLINE_ONLY), which read the saved items.
   const nCreators = selected.filter(isCreator).length;
-  const creatorsOffline = nCreators > 0 && campaign.paymentMode === "offline";
   const withAudio = campaign.audioIntegration && format === "reel";
   const reach = selected.reduce((s, a) => s + (a.followers ?? 0), 0);
   const counts = { all: offers.length, instagram: 0, facebook: 0, youtube: 0 } as Record<string, number>;
@@ -495,10 +499,8 @@ export function AccountsStep({ campaign, onSaved, onEdit }: {
       <div className="fixed bottom-0 left-0 right-0 lg:left-auto lg:right-6 lg:bottom-6 z-20 bg-surface border-t-2 lg:border-2 border-ink lg:rounded-2xl shadow-hard-ink px-4 py-3 flex flex-wrap items-center gap-x-4 gap-y-2">
         {error && <div role="alert" className="basis-full order-first text-[12px] text-danger font-medium">{error}</div>}
         {nCreators > 0 && (
-          <p role="status" className={`basis-full order-first max-w-[420px] text-[12px] ${creatorsOffline ? "text-attention font-medium" : "text-ink-2"}`}>
-            {creatorsOffline
-              ? "Creator accounts need online payment, which isn't available right now — remove them to submit this campaign."
-              : "Creator accounts are paid up front. The creator confirms each booking; if they don't confirm, that account is refunded."}
+          <p role="status" className="basis-full order-first max-w-[420px] text-[12px] text-ink-2">
+            Creator accounts are paid up front. The creator confirms each booking; if they don't confirm, that account is refunded.
           </p>
         )}
         <div className="min-w-0 flex-1">

@@ -301,6 +301,16 @@ CREATE INDEX IF NOT EXISTS "creator_offers_status_expires_at_idx" ON "creator_of
 -- CreateIndex
 CREATE INDEX IF NOT EXISTS "creator_offers_link_canonical_key_idx" ON "creator_offers"("link_canonical_key");
 
+-- ⚠️ HAND-ADDED, NOT IN schema.prisma: the database's own "one post, one booking" rule. A post verified for one booking can
+-- never be verified again for another: at most ONE verified creator offer per post key. The service already refuses a second
+-- one (creator-offer.service verifyCreatorItem: a per-key advisory lock, then a count), and that check is what staff see as
+-- 409 LINK_ALREADY_USED; this index is the backstop that still holds if a code path ever misses it, because a verified offer
+-- is what Phase 4 pays out on. Partial, so unverified rows (two creators pasting one post before staff decide) and rows
+-- without a key stay unconstrained. Prisma 5 cannot express a partial index and ignores it when it introspects (the same as
+-- pipeline_email_outbox_pending_key in scripts/pipeline-email-ddl.sql), so `prisma migrate diff --exit-code` stays clean and a
+-- `db push` leaves it alone. A violation reaches the code as Prisma P2002 and is answered 409 LINK_ALREADY_USED.
+CREATE UNIQUE INDEX IF NOT EXISTS "creator_offers_verified_link_key_idx" ON "creator_offers"("link_canonical_key") WHERE "link_verified_at" IS NOT NULL AND "link_canonical_key" IS NOT NULL;
+
 -- CreateIndex
 CREATE UNIQUE INDEX IF NOT EXISTS "creator_payouts_booking_item_id_key" ON "creator_payouts"("booking_item_id");
 

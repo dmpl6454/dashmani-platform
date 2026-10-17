@@ -795,11 +795,13 @@ export function linkCheckMessage(check: string | null, detail: string | null): s
         ? "That post was published outside the posting window. If it is the right post, our team can still look at it; otherwise post within the window and send that link."
         : "We couldn't find that post on your connected page. Check that you pasted the link of the post itself, from the page you connected, and send it again.";
     case "unverifiable":
-      if (detail === "share_link") {
-        return "That is a share link, which doesn't tell us which post it is. Open your post and paste the post's own link (Instagram: instagram.com/reel/… or instagram.com/p/…; Facebook: facebook.com/reel/… or the post's address bar link). Our team will also look at this one by hand.";
+      // share_link / link_shape: a link that names no post can never be verified (verifyCreatorItem refuses it, hand tick or not), and a new
+      // one is refused when it is sent (NEEDS_POST_LINK). Only a link stored before that rule can still read this way, and what helps is a new link.
+      if (detail === "share_link" || detail === "link_shape") {
+        return "That link doesn't tell us which post it is. Open your post and paste the post's own link (Instagram: instagram.com/reel/… or instagram.com/p/…; Facebook: facebook.com/reel/… or the post's address-bar link) so our team can verify it.";
       }
       if (detail === "page_too_busy") return "Your page posts so often that we couldn't reach this post to check it automatically, so our team will check this link by hand.";
-      if (detail === "link_shape" || detail === "feed_shape") return "We can't compare that kind of link automatically, so our team will check it by hand. If you can, paste the post's own link.";
+      if (detail === "feed_shape") return "We can't compare some of the posts on your page automatically, so our team will check this link by hand. If you can, paste the post's own link.";
       return "We couldn't check your page automatically right now, so our team will check this link by hand.";
     default:
       return "";
@@ -817,9 +819,13 @@ function assertLinkable(o: CreatorOffer, now: Date, grace: GraceWindow[]): void 
   if (deadline && now.getTime() >= deadline.getTime()) throw new AppError(409, "POSTING_CLOSED", "The posting window for this booking has closed.");
 }
 
+/** The sentence for a link that names no post (a share or shortened link). Shown to the creator as it is. */
+const NEEDS_POST_LINK_MESSAGE =
+  "That link doesn't name a post (it is a share or shortened link). Open your post and paste the post's own link (Instagram: instagram.com/reel/… or instagram.com/p/…; Facebook: facebook.com/reel/… or the post's address-bar link).";
+
 /**
  * The creator sends the link of the post they made BY HAND. It must be a post link on the item's platform, in its own form
- * (no redirect or shortened wrapper), the offer must be accepted and not past the window + 24 h grace, the item must still wait
+ * (no redirect or shortened wrapper, and one that names a post: 400 NEEDS_POST_LINK for a share link), the offer must be accepted and not past the window + 24 h grace, the item must still wait
  * for the post and its payout must not be void or failed. The link is then checked against the creator's own recent posts
  * (outside any transaction: it is a network call) and stored with the verdict. The item stays `manual_pending`: only staff make
  * a post live (verifyCreatorItem).
@@ -849,7 +855,14 @@ export async function submitOfferLink(creatorId: string, offerId: string, rawUrl
     throw new AppError(400, "NOT_A_POST", `That isn't the link of a ${platformName} post. Open the post and paste its own link.`);
   }
 
+  // ⚠️ A LINK THAT NAMES NO POST IS NEVER STORED. An Instagram /share/ link, an fb.watch short link and a Facebook /share/ link that
+  // does not lead to a post get a `share:` / `raw:` key, which names the LINK and can never equal the `ig:` / `fb:` key of the same
+  // post sent for another booking: stored, one reel could be hand-verified for two clients. So ask for the post's own link now. The
+  // first two come back from checkLinkOwnership without a call to Meta; a Facebook share link is followed through its one redirect
+  // there (fail-open) and is decided on the key it came back with. verifyCreatorItem refuses a non-identity key as well and does not
+  // depend on this probe succeeding.
   const check = await checkLinkOwnership(offer, url);
+  if (!isIdentityKey(check.key)) throw new AppError(400, "NEEDS_POST_LINK", NEEDS_POST_LINK_MESSAGE);
   const key = check.key;
   const stored = check.permalink && check.permalink.length <= 500 ? check.permalink : parsed.link.url;
 
@@ -897,7 +910,8 @@ export async function submitOfferLink(creatorId: string, offerId: string, rawUrl
  * link). Refused, with nothing changed, unless ALL of these hold: an accepted offer, a link the creator submitted, the item
  * waiting in manual_pending, a payout that is not void or failed, an ownership check that PASSED (auto_ok / manual_ok), or one
  * that did not (auto_failed / unverifiable) with the staff member saying they checked by hand (`ownershipCheckedByHand`, which
- * records manual_ok and who). One post can be verified for one booking only. Stamps link_verified_at / link_verified_by_id and
+ * records manual_ok and who). One post can be verified for one booking only, and only a link that NAMES a post can be verified at
+ * all (409 LINK_NOT_COMPARABLE for a share or short link, hand tick or not). Stamps link_verified_at / link_verified_by_id and
  * moves the offer to `completed`: it is finished, so it no longer counts as open work. Nothing is paid here: see
  * onCreatorLinkVerified (Phase 4).
  *
@@ -934,6 +948,14 @@ export async function verifyCreatorItem(
       }
     }
     if (!isPlatformPostUrl(item.platform as CampaignPlatform, offer.linkUrl)) throw new AppError(400, "WRONG_PLATFORM", `The creator's link isn't a ${item.platform} link.`);
+    // ⚠️ THE ARBITER OF "ONE POST, ONE BOOKING" CAN ONLY COMPARE A LINK THAT NAMES A POST. A share:/raw: key (an Instagram /share/
+    // link, fb.watch, a Facebook share link that never resolved) names the link, so the duplicate check below would find nothing
+    // even when another booking already holds the same post under its ig:/fb: key. Refused before the hand tick is even asked
+    // about: no tick can make such a link verifiable. This does not lean on the submit-time refusal, whose redirect probe is
+    // fail-open and which cannot reach an offer stored before it existed.
+    if (!isIdentityKey(haveKey)) {
+      throw new AppError(409, "LINK_NOT_COMPARABLE", "This link doesn't name a post, so we can't tell whether it was already used for another booking. Ask the creator to send the post's own link.");
+    }
 
     const passed = offer.ownershipCheck === "auto_ok" || offer.ownershipCheck === "manual_ok";
     if (!passed && o.ownershipCheckedByHand !== true) {
@@ -945,10 +967,16 @@ export async function verifyCreatorItem(
     }
     const payout = await tx.creatorPayout.findUnique({ where: { bookingItemId: itemId }, select: { status: true } });
     if (!payout || !payoutAllowsLink(payout.status)) throw new AppError(409, "OFFER_UNAVAILABLE", "This creator's payout is void or has failed, so the post can't be verified. Refund it instead.");
-    if (offer.linkCanonicalKey) {
-      const dup = await tx.creatorOffer.count({ where: { linkCanonicalKey: offer.linkCanonicalKey, id: { not: offer.id }, linkVerifiedAt: { not: null } } });
-      if (dup > 0) throw new AppError(409, "LINK_ALREADY_USED", "This post has already been verified for another booking.");
-    }
+    // ⚠️ SERIALISE EVERY VERIFY OF ONE POST. The booking lock above is per booking, and under READ COMMITTED a verify of ANOTHER
+    // booking that has not committed yet is invisible to the count below: two staff members (or two tabs) verifying the same
+    // post for two bookings at the same moment would both see 0 and both succeed. A transaction-scoped advisory lock on the
+    // post's key makes the second wait for the first's commit, take a fresh snapshot, and be refused. Lock order is always the
+    // booking row, then the key (nothing takes them the other way round, so no cycle). The wrapper form is needed because
+    // Prisma cannot deserialize the bare `void` that pg_advisory_xact_lock returns. creator_offers_verified_link_key_idx (the
+    // payouts DDL) is the database's own backstop behind this.
+    await tx.$queryRaw`SELECT 1 AS locked FROM (SELECT pg_advisory_xact_lock(hashtextextended(${haveKey}, 0))) AS l`;
+    const dup = await tx.creatorOffer.count({ where: { linkCanonicalKey: haveKey, id: { not: offer.id }, linkVerifiedAt: { not: null } } });
+    if (dup > 0) throw new AppError(409, "LINK_ALREADY_USED", "This post has already been verified for another booking.");
 
     const claimed = await tx.campaignBookingItem.updateMany({
       where: { id: itemId, status: "manual_pending" },
@@ -956,17 +984,27 @@ export async function verifyCreatorItem(
     });
     if (claimed.count !== 1) throw new AppError(409, "INVALID_STATE", "This post changed. Refresh and try again.");
     const manual = !passed;
-    const stamped = await tx.creatorOffer.updateMany({
-      // Bound to the link just read, too: the booking lock already stops a re-send in between, and this keeps it true if that ever changes.
-      where: { id: offer.id, status: "accepted", linkVerifiedAt: null, linkSubmittedAt: { not: null }, linkUrl: offer.linkUrl },
-      data: {
-        // The post is delivered and the offer is over: `completed` (not `accepted` forever, which would count as open work).
-        status: "completed",
-        linkVerifiedAt: now,
-        linkVerifiedById: o.staffId,
-        ...(manual ? { ownershipCheck: "manual_ok", ownershipCheckedAt: now, ownershipCheckedById: o.staffId } : {}),
-      },
-    });
+    let stamped: { count: number };
+    try {
+      stamped = await tx.creatorOffer.updateMany({
+        // Bound to the link just read, too: the booking lock already stops a re-send in between, and this keeps it true if that ever changes.
+        where: { id: offer.id, status: "accepted", linkVerifiedAt: null, linkSubmittedAt: { not: null }, linkUrl: offer.linkUrl },
+        data: {
+          // The post is delivered and the offer is over: `completed` (not `accepted` forever, which would count as open work).
+          status: "completed",
+          linkVerifiedAt: now,
+          linkVerifiedById: o.staffId,
+          // Always carried on a verified row, so the partial unique index below covers it even if the key was only derived above.
+          linkCanonicalKey: haveKey,
+          ...(manual ? { ownershipCheck: "manual_ok", ownershipCheckedAt: now, ownershipCheckedById: o.staffId } : {}),
+        },
+      });
+    } catch (e) {
+      // The database's own backstop (a partial unique index on a verified link's key) refused a second verified row for this post:
+      // the same answer as the check above, never a 500. (This statement is the only unique write in the transaction.)
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") throw new AppError(409, "LINK_ALREADY_USED", "This post has already been verified for another booking.");
+      throw e;
+    }
     if (stamped.count !== 1) throw new AppError(409, "INVALID_STATE", "This offer changed. Refresh and try again.");
     await logBookingEvent(bookingId, { type: "staff", id: o.staffId }, `Verified the creator's link on ${item.accountName} (${item.format})${manual ? " — ownership checked by hand" : ""}: ${offer.linkUrl}`.slice(0, 500), tx);
     return { offerId: offer.id, accountName: item.accountName, permalink: offer.linkUrl, format: item.format, manual };

@@ -189,6 +189,9 @@ const OFFER_SENTENCES: Record<string, string> = {
   // The link names somewhere other than a post: a redirect wrapper (l.facebook.com/l.php?u=…, an app-link redirect) or a profile / other page.
   INVALID_LINK: "That link redirects somewhere else. Open your post and paste the post's own link, not a redirect.",
   NOT_A_POST: "That link isn't the link of a post. Open the post itself and paste its own link, not your profile or another page.",
+  // A share or shortened link (Instagram /share/…, fb.watch/…, a Facebook share link that doesn't lead to a post) names the link, not the post.
+  NEEDS_POST_LINK:
+    "That's a share or shortened link, which doesn't tell us which post it is. Open your post and paste the post's own link (Instagram: instagram.com/reel/… or instagram.com/p/…; Facebook: facebook.com/reel/… or the link in the post's address bar).",
   VALIDATION_ERROR: "Paste the link of your post.",
   RATE_LIMIT: "Too many attempts. Please try again in an hour.",
 };
@@ -227,6 +230,6 @@ export function offerErrorChangesState(err: unknown): boolean {
 export function offerErrorIsAboutTheLink(err: unknown): boolean {
   return (
     err instanceof ApiError &&
-    (err.code === "WRONG_PLATFORM" || err.code === "INVALID_LINK" || err.code === "NOT_A_POST" || err.code === "LINK_ALREADY_USED" || err.code === "VALIDATION_ERROR")
+    (err.code === "WRONG_PLATFORM" || err.code === "INVALID_LINK" || err.code === "NOT_A_POST" || err.code === "NEEDS_POST_LINK" || err.code === "LINK_ALREADY_USED" || err.code === "VALIDATION_ERROR")
   );
 }

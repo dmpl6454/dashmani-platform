@@ -4,10 +4,13 @@ import { LegalPage } from "@/components/site-shell";
 
 // Privacy policy for the creator portal. Linked from sign-up and listed as the Meta app's
 // privacy policy URL for the creator connect flow, so it names exactly what we read from Meta.
+// ⚠️ It must say only what is true today: no payment, bank or tax details are collected yet (there
+// are no paid bookings). The payout phases rewrite this page, and the creator terms, when bank
+// details start to be collected (payouts plan, section 5).
 
 export default function PrivacyPage() {
   return (
-    <LegalPage kicker="Privacy" title="Privacy policy" updated="12 October 2026">
+    <LegalPage kicker="Privacy" title="Privacy policy" updated="17 October 2026">
       <p>
         This policy explains what Digital Sukoon (Dashmani Media Private Limited, “we”, “us”) collects when you use Digital Sukoon
         Creators at creators.digitalsukoon.com, why, how long we keep it, and how to delete it. Questions or requests:{" "}
@@ -31,6 +34,11 @@ export default function PrivacyPage() {
         We do <strong>not</strong> read your personal Facebook profile, friends list, private messages, comments, ad accounts or payment
         methods. We don&apos;t ask Meta for permission to do any of those things.
       </p>
+      <h3>Payment details</h3>
+      <p>
+        We don&apos;t collect any payment details, bank details, PAN or tax details today — there are no paid bookings yet. If that
+        changes, this policy will say what we collect and why before we ask for it.
+      </p>
       <h3>Technical data</h3>
       <p>
         Our servers keep short-lived logs of requests (time, IP address, the page asked for) to keep the service secure and working.
@@ -42,17 +50,16 @@ export default function PrivacyPage() {
         <li>To run your account: signing in, confirming your email, password resets and messages about your account.</li>
         <li>To review your profile: checking that the pages are yours, active, and that we can publish to them.</li>
         <li>To offer your pages to brands, once bookings open: showing a page&apos;s name, picture and public statistics to brands considering a booking.</li>
-        <li>To publish the campaigns you accept, report how they performed, and pay you.</li>
+        <li>To publish the campaigns you accept, once bookings open, and report how they performed.</li>
         <li>To prevent fraud and keep the service secure, and to meet legal obligations such as tax and accounting records.</li>
       </ul>
       <p>We don&apos;t sell your data, and we don&apos;t use your Meta data to advertise to you.</p>
 
       <h2>Who sees it</h2>
       <p>
-        Our team, to review and support your account. Brands see only what is needed to choose a booking (page name, picture, public
-        statistics, and the booking price our team agrees with them) — never your asking price. We use service providers to host the
-        service and send email, under agreements that let them use the data only for us. We share data with authorities only when the
-        law requires it.
+        Our team, to review and support your account. Brands see only what is needed to choose a booking (page name, picture and
+        public statistics). We use service providers to host the service and send email, under agreements that let them use the data
+        only for us. We share data with authorities only when the law requires it.
       </p>
 
       <h2>How long we keep it</h2>
@@ -72,7 +79,7 @@ export default function PrivacyPage() {
           our reviews — so nobody can reuse your email address to sign up as you. Email{" "}
           <a href="mailto:creators@digitalsukoon.com">creators@digitalsukoon.com</a> to have that record erased.
         </li>
-        <li>Records of any bookings and payments are kept for as long as tax and accounting law requires, then deleted.</li>
+        <li>If bookings and payments start, records of them will be kept for as long as tax and accounting law requires, then deleted.</li>
         <li>Email links (confirmation and password reset) expire after 7 days and 24 hours respectively, and work only once.</li>
       </ul>
 

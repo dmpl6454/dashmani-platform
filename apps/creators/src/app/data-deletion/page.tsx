@@ -134,8 +134,8 @@ function Instructions() {
 
       <h2>What we keep</h2>
       <p>
-        Records of any bookings and payments are kept for as long as tax and accounting law requires, then deleted. Everything else is
-        deleted as described above. See the <Link href="/privacy">privacy policy</Link> for the full list of what we store.
+        If bookings and payments start, records of them will be kept for as long as tax and accounting law requires, then deleted.
+        Everything else is deleted as described above. See the <Link href="/privacy">privacy policy</Link> for the full list of what we store.
       </p>
     </>
   );
@@ -143,7 +143,7 @@ function Instructions() {
 
 export default function DataDeletionPage() {
   return (
-    <LegalPage kicker="Your data" title="Data deletion" updated="12 October 2026">
+    <LegalPage kicker="Your data" title="Data deletion" updated="17 October 2026">
       <Suspense fallback={<Instructions />}>
         <DeletionContent />
       </Suspense>

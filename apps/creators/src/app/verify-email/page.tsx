@@ -44,7 +44,7 @@ function Verify() {
     <AuthShell
       kicker="Creator portal · Email"
       title={<>Confirm<br /><em>your email.</em></>}
-      lines={[<>We confirm every creator&apos;s email so booking requests and payments reach the right person.</>]}
+      lines={[<>We confirm every creator&apos;s email so messages about your account reach the right person.</>]}
     >
       <div className="auth-form-inner" aria-live="polite">
         {state === "working" && (

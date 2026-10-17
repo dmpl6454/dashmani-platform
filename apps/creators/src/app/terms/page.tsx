@@ -3,10 +3,13 @@ import Link from "next/link";
 import { LegalPage } from "@/components/site-shell";
 
 // The creator agreement. Plain English on purpose; it describes what the portal actually does.
+// ⚠️ Today that is: sign up, connect pages, get reviewed. There are no bookings, prices or payments
+// yet, so §1, §5 and §8 say so and promise no price, payout, fee, amount or timeline (payouts plan,
+// section 5). The payment terms are written and the version bumped before any paid booking opens.
 
 export default function TermsPage() {
   return (
-    <LegalPage kicker="Creator agreement" title="Creator terms" updated="12 October 2026">
+    <LegalPage kicker="Creator agreement" title="Creator terms" updated="17 October 2026">
       <p>
         These terms are the agreement between you and Digital Sukoon (Dashmani Media Private Limited, “we”, “us”) when you join
         Digital Sukoon Creators at creators.digitalsukoon.com. Please read them — by creating an account you agree to them. If you
@@ -15,9 +18,14 @@ export default function TermsPage() {
 
       <h2>1. What Digital Sukoon Creators is</h2>
       <p>
-        Brands and agencies come to Digital Sukoon to promote their products, films, music and campaigns. Through Digital Sukoon
-        Creators they can book a promotional post on your Facebook Page or Instagram professional account. We handle the brand,
-        prepare the post, publish it on your page once you have accepted it, and pay you.
+        Brands and agencies come to Digital Sukoon to promote their products, films, music and campaigns. Digital Sukoon Creators is
+        where you connect your Facebook Page or Instagram professional account so that our team can review it. <strong>Paid
+        bookings are coming soon.</strong> When they open, a brand will be able to book a promotional post on a page you have
+        connected, and nothing will be posted on your page unless you accept it.
+      </p>
+      <p>
+        Today you can sign up, connect your pages and have them reviewed. There are no bookings and no payments yet. The payment
+        terms will be published, and you will be asked to accept them, before any paid booking is offered to you.
       </p>
 
       <h2>2. Who can join</h2>
@@ -26,6 +34,7 @@ export default function TermsPage() {
         <li>You may only connect pages that <strong>you own or are authorised to manage</strong> and to accept paid promotions on. If you manage a page for someone else, you confirm you have their permission.</li>
         <li>The details you give us (name, email, country, phone) must be true and kept up to date.</li>
         <li>One person, one account. Don&apos;t share your login.</li>
+        <li>You can sign up and connect your pages from any country. Paid bookings will need a PAN and an Indian bank account.</li>
       </ul>
 
       <h2>3. Connecting your pages</h2>
@@ -47,9 +56,9 @@ export default function TermsPage() {
 
       <h2>5. Bookings — you approve each one</h2>
       <ul>
-        <li>You set your asking price for each type of post, in your own currency. Our team agrees the booking price with the brand separately.</li>
-        <li>Each booking is offered to you with the brand, the post and what you will be paid for it. <strong>Nothing is published until you accept it.</strong> You may decline any booking without giving a reason.</li>
-        <li>Once you accept, we publish exactly the post you accepted, on the page and at the time agreed. Please don&apos;t delete or edit it for the period agreed in the booking.</li>
+        <li>Bookings are not open yet. This section says how they will work.</li>
+        <li>Each booking will be offered to you with the brand and the post. <strong>Nothing is published until you accept it.</strong> You may decline any booking without giving a reason.</li>
+        <li>When you accept, the booking sets out the page, the post and when it goes up. Please don&apos;t delete or edit the post for the period agreed in the booking.</li>
       </ul>
 
       <h2>6. Your content stays yours</h2>
@@ -61,17 +70,16 @@ export default function TermsPage() {
 
       <h2>7. Paid-partnership labelling</h2>
       <p>
-        Promoted posts must be clearly marked as paid or sponsored, as advertising rules and Meta&apos;s branded-content policies require.
-        The post we publish will carry a disclosure — such as Meta&apos;s “Paid partnership” label where it is available, or #ad in the
-        caption. Don&apos;t remove these labels.
+        Promoted posts must be clearly marked as paid or sponsored, as advertising rules and Meta&apos;s branded-content policies require
+        — for example with Meta&apos;s “Paid partnership” label where it is available, or #ad in the caption. Don&apos;t remove these
+        labels.
       </p>
 
       <h2>8. Payment</h2>
       <ul>
-        <li>The amount and currency are set per booking and shown to you before you accept.</li>
-        <li>We pay you <strong>manually after the post is live and we have verified it</strong> stayed up as agreed. We&apos;ll ask for your payout details before your first payment.</li>
-        <li>If a post is removed early, never goes live, or breaks these terms, we may reduce or withhold payment for that booking.</li>
-        <li>You are responsible for any taxes on what you earn, unless the law requires us to deduct them.</li>
+        <li><strong>There are no paid bookings yet, and we do not pay creators today.</strong> Joining, connecting pages and being approved do not entitle you to any payment.</li>
+        <li>Paid bookings are coming soon. They will need a PAN and an Indian bank account.</li>
+        <li>Before any paid booking is offered to you, we will publish the payment terms — what you are paid, how and when, and what happens if a post doesn&apos;t go live as agreed — and ask you to accept them. Until then, nothing in these terms promises you a payment.</li>
       </ul>
 
       <h2>9. Your responsibilities</h2>
@@ -85,13 +93,13 @@ export default function TermsPage() {
       <p>
         We may suspend your account — taking your pages off booking — if you break these terms, if a page is no longer yours or no
         longer meets Meta&apos;s rules, or if we see fraud or a risk to brands or audiences. We will tell you why by email, and you can
-        reply to discuss it. Bookings you already accepted and that went live as agreed will still be paid.
+        reply to discuss it.
       </p>
 
       <h2>11. Closing your account</h2>
       <p>
         You can close your account at any time from Settings. Closing it disconnects Facebook, deletes our copy of your Facebook access
-        and takes your pages off booking. Anything owed for posts that already went live as agreed will still be paid. See the{" "}
+        and takes your pages off booking. See the{" "}
         <Link href="/privacy">privacy policy</Link> for what we keep afterwards and for how long, and{" "}
         <Link href="/data-deletion">data deletion</Link> for removing your data.
       </p>

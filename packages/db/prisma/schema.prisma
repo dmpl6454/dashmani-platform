@@ -2296,6 +2296,9 @@ model CampaignRateCard {
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 
+  /// Creator payout share, only on a creator page's card (targetType "creator_asset").
+  creatorTerm CreatorRateTerm?
+
   @@unique([targetType, targetId, format])
   @@index([active, platform])
   @@map("campaign_rate_cards")
@@ -2706,4 +2709,343 @@ model MetaDeletionRequest {
 
   @@index([userHash])
   @@map("meta_deletion_requests")
+}
+
+// ─── Creator payouts: Razorpay Route direct payouts (2026-10-17) ─────────────────────────────
+// docs/superpowers/plans/2026-10-12-creator-payouts-razorpay-route.md, Appendix B. All seven tables
+// are created EMPTY by scripts/creator-payouts-ddl.sql (applied by hand before the merge, never
+// db push); the code that fills them ships in Phases 2-5, each behind its own switch.
+// ⚠️ The ONLY foreign key is CreatorRateTerm → CampaignRateCard (a share has no meaning without
+// its card, so it goes with it). Offers, payouts, the event log and the refund/dispute ledgers
+// carry plain ids with NO foreign key to bookings, items, creators or creator_assets, on purpose:
+// they are financial records and must outlive whatever they describe (a purged page, a closed
+// creator, a deleted booking row must never cascade away a payout trail), and a foreign key into
+// a hot table would take a lock on it at DDL time. Page name / handle are snapshotted instead.
+// ⚠️ Statuses are VARCHAR validated in code, NOT Postgres enums (an enum value can never be
+// removed). Money is integer PAISE, never floats; every amount here fits an INTEGER (one booking
+// is far below ₹2 crore), the same convention as campaign_payments.
+// ⚠️ Prisma does not model CHECK constraints: the ones in the DDL (share_bps, the payout amounts)
+// exist only on a database built from the script, NOT on a `db push` test database, so the code
+// must validate the same limits itself.
+// ⚠️ NOTHING here may store a PAN, a bank account number, an IFSC, an address or a name from the
+// bank form. Only Razorpay ids, statuses, requirement field references and a masked hint.
+
+/// One Razorpay linked account (route product) per creator: the ids Razorpay returned, how far
+/// setup got, and whether Razorpay has activated it. Written by the bank-connect flow (Phase 2).
+model CreatorPayoutAccount {
+  id                    String    @id @default(uuid())
+  /// creators.id (no foreign key).
+  creatorId             String    @unique @map("creator_id")
+  /// acc_… — null until the first Razorpay call succeeds.
+  razorpayAccountId     String?   @unique @map("razorpay_account_id") @db.VarChar(64)
+  razorpayStakeholderId String?   @map("razorpay_stakeholder_id") @db.VarChar(64)
+  razorpayProductId     String?   @map("razorpay_product_id") @db.VarChar(64)
+  /// The last setup step that SUCCEEDED, so a retry resumes instead of creating a second account
+  /// (Razorpay's duplicate check would refuse it): none | account | stakeholder | product | bank | done
+  setupStep             String    @default("none") @map("setup_step") @db.VarChar(24)
+  /// Razorpay's product activation_status: not_started | requested | needs_clarification |
+  /// under_review | activated | suspended
+  activationStatus      String    @default("not_started") @map("activation_status") @db.VarChar(24)
+  /// Razorpay's requirements[]: field REFERENCES and reason codes only, never values.
+  requirements          Json?
+  /// Masked, e.g. "HDFC ••••1234". The only trace of the bank account we keep.
+  destinationHint       String?   @map("destination_hint") @db.VarChar(80)
+  /// The creator terms the creator accepted at bank connect (Razorpay requires a contract with
+  /// every seller we collect for), and when Razorpay's own terms were sent as tnc_accepted.
+  termsVersion          String?   @map("terms_version") @db.VarChar(16)
+  termsAcceptedAt       DateTime? @map("terms_accepted_at")
+  razorpayTncAcceptedAt DateTime? @map("razorpay_tnc_accepted_at")
+  /// TDS withheld from this creator's share, in basis points. 0 until the accountant signs off.
+  tdsBps                Int       @default(0) @map("tds_bps")
+  /// When Razorpay created the linked account: the per-day account-creation cap counts this,
+  /// not created_at (the row exists before the first call).
+  accountCreatedAt      DateTime? @map("account_created_at")
+  activatedAt           DateTime? @map("activated_at")
+  /// activated_at + 24h (the conservative reading of Razorpay's cooling-period docs): the account
+  /// is not offered for client bookings before this.
+  bookableAfter         DateTime? @map("bookable_after")
+  /// A bank change is staff-mediated (Razorpay needs a support request). Releases for this
+  /// creator are paused from the request until Razorpay shows the new details, plus 72 hours.
+  bankChangeRequestedAt DateTime? @map("bank_change_requested_at")
+  bankChangeClearedAt   DateTime? @map("bank_change_cleared_at")
+  /// Last activation poll (Razorpay sends no notice when an account activates or fails).
+  lastCheckedAt         DateTime? @map("last_checked_at")
+  /// Scrubbed (utils scrubPayoutSecrets) before it is stored.
+  lastError             String?   @map("last_error") @db.VarChar(500)
+  createdAt             DateTime  @default(now()) @map("created_at")
+  updatedAt             DateTime  @updatedAt @map("updated_at")
+
+  @@index([activationStatus])
+  @@map("creator_payout_accounts")
+}
+
+/// The creator's share of one rate card's price (staff-set, per page and format). Only cards with
+/// targetType "creator_asset" have one. The share is capped at 90% so we always keep a cut.
+model CreatorRateTerm {
+  id          String   @id @default(uuid())
+  rateCardId  String   @unique @map("rate_card_id")
+  /// Basis points, 0..9000. CHECK in the DDL; the code validates it too (see the note above).
+  shareBps    Int      @map("share_bps")
+  updatedById String?  @map("updated_by_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  rateCard CampaignRateCard @relation(fields: [rateCardId], references: [id], onDelete: Cascade)
+
+  @@map("creator_rate_terms")
+}
+
+/// What a creator is asked to do for ONE booking item: post on their page for an exact payout.
+/// Created when staff approve a paid booking. The creator accepts or declines, posts by hand and
+/// submits the link; staff verify it, which is what lets the held money be released.
+model CreatorOffer {
+  id                   String    @id @default(uuid())
+  /// campaign_bookings.id / campaign_booking_items.id / creators.id / creator_assets.id — all
+  /// plain ids, no foreign keys (see the header).
+  bookingId            String    @map("booking_id")
+  bookingItemId        String    @unique @map("booking_item_id")
+  creatorId            String    @map("creator_id")
+  creatorAssetId       String    @map("creator_asset_id")
+  /// The page as the creator was offered it (the asset may be renamed, taken over or purged).
+  pageName             String    @map("page_name") @db.VarChar(200)
+  pageHandle           String?   @map("page_handle") @db.VarChar(100)
+  platform             String    @db.VarChar(16)
+  format               String    @db.VarChar(16)
+  /// offered | accepted | declined | expired | withdrawn | completed
+  status               String    @default("offered") @db.VarChar(16)
+  /// What the creator is shown and accepts, after TDS. Frozen: never recomputed from a rate card.
+  payoutPaise          Int       @map("payout_paise")
+  /// The posting window (IST calendar days) as booked; frozen with the offer.
+  windowFrom           DateTime? @map("window_from") @db.Date
+  windowTo             DateTime? @map("window_to") @db.Date
+  offeredAt            DateTime  @default(now()) @map("offered_at")
+  /// min(offered + CREATOR_OFFER_TTL_HOURS, end of the posting window in IST).
+  expiresAt            DateTime  @map("expires_at")
+  /// The offer email was sent (once).
+  notifiedAt           DateTime? @map("notified_at")
+  acceptedAt           DateTime? @map("accepted_at")
+  declinedAt           DateTime? @map("declined_at")
+  expiredAt            DateTime? @map("expired_at")
+  withdrawnAt          DateTime? @map("withdrawn_at")
+  /// Staff who withdrew it; null when the system did (expiry, missed window, take-over).
+  withdrawnById        String?   @map("withdrawn_by_id")
+  /// Why it ended: declined | expired | withdrawn | missed_window | booking_rejected | page_taken_over
+  closedReason         String?   @map("closed_reason") @db.VarChar(40)
+  /// The creator's own words on accepting or declining. Free text: safeString at the boundary.
+  creatorNote          String?   @map("creator_note") @db.Text
+  /// The post the creator says fulfils the offer, and when they submitted it.
+  linkUrl              String?   @map("link_url") @db.VarChar(500)
+  linkSubmittedAt      DateTime? @map("link_submitted_at")
+  /// canonicalKey() of the link, so one post cannot satisfy two offers. TEXT, not a width:
+  /// canonicalKey() returns the whole lowercased URL for shapes it does not recognise, and
+  /// truncating it would corrupt that match. link_url's VARCHAR(500) is what bounds it.
+  linkCanonicalKey     String?   @map("link_canonical_key") @db.Text
+  /// The post's own timestamp as Meta reported it (must fall inside the window).
+  linkPostedAt         DateTime? @map("link_posted_at")
+  /// auto_ok | auto_failed | manual_ok — read through the creator's OWN connection, or ticked by
+  /// staff when that token has lapsed (which adds a hold of at least one day).
+  ownershipCheck       String?   @map("ownership_check") @db.VarChar(16)
+  ownershipDetail      String?   @map("ownership_detail") @db.VarChar(300)
+  ownershipCheckedAt   DateTime? @map("ownership_checked_at")
+  /// Staff id for a manual tick; null for the automatic check.
+  ownershipCheckedById String?   @map("ownership_checked_by_id")
+  linkVerifiedAt       DateTime? @map("link_verified_at")
+  linkVerifiedById     String?   @map("link_verified_by_id")
+  /// The accepted offer got no link by the end of the window + 24h: set once (it is also the
+  /// "staff already alerted" marker) before the decline path runs.
+  postMissingAt        DateTime? @map("post_missing_at")
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @updatedAt @map("updated_at")
+
+  @@index([creatorId, status])
+  @@index([bookingId])
+  @@index([status, expiresAt])
+  @@index([linkCanonicalKey])
+  @@map("creator_offers")
+}
+
+/// The money owed to ONE creator for ONE booking item, and everything Razorpay has told us about
+/// moving it. Created `planned` in the same transaction that claims the capture; a Razorpay
+/// transfer into the creator's linked account is made ON HOLD, and released only after staff
+/// verify the post. Statuses (validated in code):
+///   planned | transfer_requested | held | release_requested | released | settled |
+///   settlement_failed | reversal_requested | reversed | failed | needs_attention |
+///   manual_required | paid_manual | void
+/// `pausedAt` is an overlay on top of any of them (dispute, external refund, bank change, staff).
+/// Every money state change is also appended to creator_payout_events.
+model CreatorPayout {
+  id                        String    @id @default(uuid())
+  /// campaign_bookings.id / campaign_booking_items.id / creators.id (no foreign keys).
+  bookingId                 String    @map("booking_id")
+  bookingItemId             String    @unique @map("booking_item_id")
+  creatorId                 String    @map("creator_id")
+  /// Frozen at checkout from the creator's payout account: where the transfer goes.
+  payoutAccountId           String    @map("payout_account_id")
+  razorpayAccountId         String    @map("razorpay_account_id") @db.VarChar(64)
+  /// The capture that won the claim (campaign_payments.razorpay_payment_id): the transfer's source.
+  razorpayPaymentId         String    @map("razorpay_payment_id") @db.VarChar(64)
+  status                    String    @default("planned") @db.VarChar(24)
+  /// Why it is paused: dispute | external_refund | bank_change | account_suspended | staff
+  pausedAt                  DateTime? @map("paused_at")
+  pausedReason              String?   @map("paused_reason") @db.VarChar(120)
+  /// What the brand paid for this item, the creator's share of it, the TDS withheld from the
+  /// share, and what is transferred. amount = gross - tds, and never more than the item price.
+  itemPricePaise            Int       @map("item_price_paise")
+  shareBps                  Int       @map("share_bps")
+  grossPaise                Int       @map("gross_paise")
+  tdsBps                    Int       @default(0) @map("tds_bps")
+  tdsPaise                  Int       @default(0) @map("tds_paise")
+  amountPaise               Int       @map("amount_paise")
+  /// trf_… — null while planned, or while the result of the create call is unknown.
+  razorpayTransferId        String?   @unique @map("razorpay_transfer_id") @db.VarChar(64)
+  /// Razorpay's transfer status: created | pending | processed | failed | reversed | partially_reversed
+  transferStatus            String?   @map("transfer_status") @db.VarChar(24)
+  /// The transfer's settlement_status: pending | on_hold | settled
+  settlementStatus          String?   @map("settlement_status") @db.VarChar(24)
+  /// recipient_settlement.status, what drives settled / settlement_failed: processed | failed
+  recipientSettlementStatus String?   @map("recipient_settlement_status") @db.VarChar(16)
+  /// Last time a FRESH fetch confirmed processed + on_hold:true + no on_hold_until.
+  onHoldVerifiedAt          DateTime? @map("on_hold_verified_at")
+  amountReversedPaise       Int       @default(0) @map("amount_reversed_paise")
+  /// rvrsl_… of the reversal we asked for (reconciled through GET /transfers/:id/reversals).
+  razorpayReversalId        String?   @map("razorpay_reversal_id") @db.VarChar(64)
+  recipientSettlementId     String?   @map("recipient_settlement_id") @db.VarChar(64)
+  /// The bank reference of the settlement that included this transfer, and what that settlement
+  /// carried. A settlement can batch several transfers, so its amount is NOT this payout's.
+  settlementUtr             String?   @map("settlement_utr") @db.VarChar(64)
+  settlementAmountPaise     Int?      @map("settlement_amount_paise")
+  /// Fee (incl. GST) Razorpay took from the creator's settlement: unverified, measured in the rehearsal.
+  settlementFeePaise        Int?      @map("settlement_fee_paise")
+  /// Razorpay's own charge for the transfer (paid by us, not the creator).
+  transferFeesPaise         Int?      @map("transfer_fees_paise")
+  transferTaxPaise          Int?      @map("transfer_tax_paise")
+  /// "HDFC ••••1234" as it was when the money was released; what the creator is told afterwards.
+  destinationHint           String?   @map("destination_hint") @db.VarChar(80)
+  /// Not released before this (verification + CREATOR_PAYOUT_HOLD_DAYS, and the manual-check hold).
+  releaseAfter              DateTime? @map("release_after")
+  transferRequestedAt       DateTime? @map("transfer_requested_at")
+  heldAt                    DateTime? @map("held_at")
+  releaseRequestedAt        DateTime? @map("release_requested_at")
+  releasedAt                DateTime? @map("released_at")
+  settledAt                 DateTime? @map("settled_at")
+  reversalRequestedAt       DateTime? @map("reversal_requested_at")
+  reversedAt                DateTime? @map("reversed_at")
+  /// Why it is void: declined | expired | withdrawn | missed_window | booking_rejected | page_taken_over
+  voidReason                String?   @map("void_reason") @db.VarChar(40)
+  /// Create-transfer attempts made (a transfer made from a payment has no idempotency key, so at
+  /// most one automatic retry), and the consecutive listings of the payment's transfers that
+  /// showed none carrying this payout (a retry needs two, minutes apart).
+  attempts                  Int       @default(0)
+  absentChecks              Int       @default(0) @map("absent_checks")
+  nextAttemptAt             DateTime? @map("next_attempt_at")
+  lockedUntil               DateTime? @map("locked_until")
+  lastCheckedAt             DateTime? @map("last_checked_at")
+  /// Razorpay's error code / description on the last failure; description scrubbed.
+  errorCode                 String?   @map("error_code") @db.VarChar(80)
+  lastError                 String?   @map("last_error") @db.VarChar(500)
+  /// Alert dedupe: the status staff were last emailed about, and when.
+  alertedStatus             String?   @map("alerted_status") @db.VarChar(24)
+  alertedAt                 DateTime? @map("alerted_at")
+  /// Paid by bank transfer outside Razorpay (manual_required → paid_manual).
+  manualReference           String?   @map("manual_reference") @db.VarChar(100)
+  manualPaidAt              DateTime? @map("manual_paid_at")
+  manualPaidById            String?   @map("manual_paid_by_id")
+  manualNote                String?   @map("manual_note") @db.VarChar(500)
+  createdAt                 DateTime  @default(now()) @map("created_at")
+  updatedAt                 DateTime  @updatedAt @map("updated_at")
+
+  @@index([status, nextAttemptAt])
+  @@index([creatorId])
+  @@index([bookingId])
+  @@index([razorpayPaymentId])
+  @@map("creator_payouts")
+}
+
+/// Append-only audit of every money state change on a payout (and of every Razorpay event that
+/// touched one). Never updated, never deleted. Notes are scrubbed before they are written.
+model CreatorPayoutEvent {
+  id              String   @id @default(uuid())
+  payoutId        String   @map("payout_id")
+  bookingId       String?  @map("booking_id")
+  /// status_change | transfer | release | reversal | settlement | pause | resume | manual | alert | webhook
+  kind            String   @db.VarChar(40)
+  fromStatus      String?  @map("from_status") @db.VarChar(24)
+  toStatus        String?  @map("to_status") @db.VarChar(24)
+  amountPaise     Int?     @map("amount_paise")
+  /// system | staff | creator | razorpay
+  actorType       String   @default("system") @map("actor_type") @db.VarChar(12)
+  actorId         String?  @map("actor_id")
+  /// x-razorpay-event-id when a webhook caused it.
+  razorpayEventId String?  @map("razorpay_event_id") @db.VarChar(100)
+  note            String?  @db.Text
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  @@index([payoutId, createdAt])
+  @@index([bookingId, createdAt])
+  @@map("creator_payout_events")
+}
+
+/// One row per Razorpay refund on a booking payment: the ledger the refundable amount is computed
+/// from. We write our row BEFORE calling Razorpay (a stable idempotency key per item or payment),
+/// so a refund whose answer never arrived is still on record and is reconciled through the
+/// payment's refund list instead of being sent twice. Refunds made outside our code (the Razorpay
+/// dashboard) arrive through webhooks as origin "external": they pause payouts and alert staff.
+model CampaignRefund {
+  id                String    @id @default(uuid())
+  /// rfnd_… — null until Razorpay answered.
+  razorpayRefundId  String?   @unique @map("razorpay_refund_id") @db.VarChar(64)
+  /// The X-Refund-Idempotency header we sent. Null for an external refund.
+  idempotencyKey    String?   @unique @map("idempotency_key") @db.VarChar(100)
+  /// campaign_payments.id and its razorpay_payment_id, campaign_bookings.id, and the item the
+  /// refund is for (null for a whole-payment refund). No foreign keys.
+  paymentId         String?   @map("payment_id")
+  razorpayPaymentId String    @map("razorpay_payment_id") @db.VarChar(64)
+  bookingId         String?   @map("booking_id")
+  bookingItemId     String?   @map("booking_item_id")
+  amountPaise       Int       @map("amount_paise")
+  receipt           String?   @db.VarChar(100)
+  /// requested (we called, no answer yet) | pending | processed | failed (Razorpay's own)
+  status            String    @default("requested") @db.VarChar(16)
+  /// ours | external
+  origin            String    @default("ours") @db.VarChar(8)
+  /// Why we refunded: item_withdrawn | booking_rejected | outdated_order | duplicate_payment | creator_declined …
+  reason            String?   @db.VarChar(60)
+  /// Scrubbed.
+  lastError         String?   @map("last_error") @db.VarChar(500)
+  lastCheckedAt     DateTime? @map("last_checked_at")
+  processedAt       DateTime? @map("processed_at")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  @@index([razorpayPaymentId])
+  @@index([bookingId])
+  @@index([bookingItemId])
+  @@index([status, lastCheckedAt])
+  @@map("campaign_refunds")
+}
+
+/// A brand's dispute (chargeback) on a booking payment. While one is open every payout on that
+/// payment is paused; a lost dispute is debited from our Razorpay balance.
+model CampaignDispute {
+  id                String    @id @default(uuid())
+  razorpayDisputeId String    @unique @map("razorpay_dispute_id") @db.VarChar(64)
+  razorpayPaymentId String    @map("razorpay_payment_id") @db.VarChar(64)
+  bookingId         String?   @map("booking_id")
+  amountPaise       Int       @map("amount_paise")
+  currency          String    @default("INR") @db.VarChar(3)
+  /// Razorpay's: open | under_review | action_required | won | lost | closed
+  status            String    @db.VarChar(24)
+  phase             String?   @db.VarChar(24)
+  reasonCode        String?   @map("reason_code") @db.VarChar(60)
+  /// The deadline to respond with evidence.
+  respondBy         DateTime? @map("respond_by")
+  openedAt          DateTime? @map("opened_at")
+  closedAt          DateTime? @map("closed_at")
+  lastEvent         String?   @map("last_event") @db.VarChar(64)
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  @@index([razorpayPaymentId])
+  @@index([status])
+  @@map("campaign_disputes")
 }

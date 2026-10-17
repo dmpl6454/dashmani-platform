@@ -44,10 +44,16 @@ function TileWall() {
   );
 }
 
+// ⚠️ Every ticker line is a claim: nothing here may promise a price the creator sets, a payout, or
+// who can be paid before those exist (payouts plan, section 5). Keep the count EVEN — the track is
+// doubled and every other chip is tinted, so an odd count would make the tint jump at the seam.
 const DEFAULT_TICKER = [
-  "Digital Sukoon Creators", "Brands book promotion on your page", "You approve every booking first",
-  "You set your asking price", "Facebook Pages · Instagram professional accounts", "Creators worldwide",
+  "Digital Sukoon Creators", "Paid bookings are coming soon", "You approve every booking first",
+  "Facebook Pages · Instagram professional accounts", "Anyone can join", "Paid bookings need a PAN and an Indian bank account",
 ];
+
+/** The one wording of the India requirement, shown on sign-up before Facebook is connected. */
+export const PAID_BOOKINGS_NOTE = "Anyone can join. Paid bookings are coming soon and will need a PAN and an Indian bank account.";
 
 export function AuthShell({
   kicker, title, lines, children, ticker,
@@ -106,7 +112,7 @@ export function AuthShell({
 /** Suspense fallback for the auth pages: the same shell with a loading line, never a bare spinner. */
 export function AuthFallback({ title }: { title: string }) {
   return (
-    <AuthShell kicker="Creator portal" title={<>Digital Sukoon <em>Creators.</em></>} lines={[<>Brands book promotion on your page. You approve every booking.</>]}>
+    <AuthShell kicker="Creator portal" title={<>Digital Sukoon <em>Creators.</em></>} lines={[<>Connect your Facebook Page or Instagram professional account. You approve every booking.</>]}>
       <div className="auth-form-inner">
         <div className="auth-form-head"><h2>{title}</h2><p>Loading…</p></div>
       </div>
@@ -172,9 +178,10 @@ export function AuthField({
   );
 }
 
-/** Country picker (ISO 3166-1 alpha-2 values, English names). */
-export function AuthCountry({ id, value, onChange, error, label = "Country" }: {
-  id: string; value: string; onChange: (v: string) => void; error: string | null; label?: string;
+/** Country picker (ISO 3166-1 alpha-2 values, English names). `hint` sits under the picker, where
+ *  the question "does my country matter?" is asked. */
+export function AuthCountry({ id, value, onChange, error, label = "Country", hint }: {
+  id: string; value: string; onChange: (v: string) => void; error: string | null; label?: string; hint?: string;
 }) {
   // Names come from Intl in the browser; build the list after mount so the static HTML and the
   // first client render agree.
@@ -190,12 +197,13 @@ export function AuthCountry({ id, value, onChange, error, label = "Country" }: {
         className="auth-input auth-select"
         autoComplete="country"
         aria-invalid={!!error}
-        aria-describedby={error ? `${id}-err` : undefined}
+        aria-describedby={error ? `${id}-err` : hint ? `${id}-hint` : undefined}
       >
         <option value="">Select your country</option>
         {list.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}
       </select>
       {error && <span id={`${id}-err`} role="alert" className="auth-field-err"><AlertCircle size={13} /> {error}</span>}
+      {!error && hint && <span id={`${id}-hint`} className="auth-field-hint">{hint}</span>}
     </label>
   );
 }

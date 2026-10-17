@@ -5,7 +5,7 @@ import { Providers } from "@/components/providers";
 export const metadata: Metadata = {
   title: { default: "Digital Sukoon Creators", template: "%s · Digital Sukoon Creators" },
   description:
-    "Connect your Facebook Page or Instagram professional account to Digital Sukoon. Brands book promotion on your page; you approve every booking before anything is posted.",
+    "Connect your Facebook Page or Instagram professional account to Digital Sukoon. Paid bookings are coming soon; you approve every booking before anything is posted.",
   icons: { icon: "/logo-mark.svg" },
 };
 

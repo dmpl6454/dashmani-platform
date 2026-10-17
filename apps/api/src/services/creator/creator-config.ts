@@ -18,5 +18,5 @@ export const creatorConfig = {
   /** Graph calls the daily metrics refresh may spend across every creator page. */
   metricsCallBudget: () => envNum("CREATOR_METRICS_CALL_BUDGET", 200, 1),
   /** The creator terms a sign-up accepts (bump when /terms changes materially). */
-  termsVersion: () => process.env.CREATOR_TERMS_VERSION || "2026-10-12",
+  termsVersion: () => process.env.CREATOR_TERMS_VERSION || "2026-10-17",
 };

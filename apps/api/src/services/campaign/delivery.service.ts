@@ -72,14 +72,18 @@ const dateOnly = (d: Date) => d.toLocaleDateString("en-IN", { day: "numeric", mo
 
 const isLive = (status: string) => (LIVE_ITEM_STATUSES as readonly string[]).includes(status as ItemStatus);
 
-/** paidOnline = the booking has a paidAt; without one nothing was charged, so nothing is "refunded". */
-function itemStatusText(status: string, paidOnline: boolean): string {
+/**
+ * paidOnline = the booking has a paidAt; without one nothing was charged, so nothing is "refunded".
+ * refundConfirmed = Razorpay has accepted (processed or pending) the refund of this item: a failed
+ * or unanswered one is still being returned by our team, and the email must not say it was.
+ */
+function itemStatusText(status: string, paidOnline: boolean, refundConfirmed = false): string {
   switch (status) {
     case "posted_manual":
     case "published":
       return "Live";
     case "refunded":
-      return paidOnline ? "Not posted — refunded" : "Not posted — not charged";
+      return paidOnline ? (refundConfirmed ? "Not posted — refunded" : "Not posted — being returned") : "Not posted — not charged";
     case "failed":
       return "Not posted";
     default:
@@ -99,12 +103,24 @@ export async function sendDeliveryEmail(bookingId: string, opts: { force?: boole
   const b = await bookingWithClient(bookingId);
   if (!b) return false;
 
+  // "Refunded" is said only of an item whose refund Razorpay has accepted (a ledger row that is
+  // processed or pending). Without a paidAt (offline mode) there is no refund to look up.
+  const refundedItemIds = b.paidAt ? b.items.filter((i) => i.status === "refunded").map((i) => i.id) : [];
+  const confirmedRefunds = new Set<string>();
+  if (refundedItemIds.length > 0) {
+    const ledger = await prisma.campaignRefund.findMany({
+      where: { bookingItemId: { in: refundedItemIds }, origin: "ours", status: { in: ["processed", "pending"] } },
+      select: { bookingItemId: true },
+    });
+    for (const r of ledger) if (r.bookingItemId) confirmedRefunds.add(r.bookingItemId);
+  }
+
   const rows = b.items
     .map((i) => {
       const acct = i.accountHandle ? `${esc(i.accountName)} <span style="color:#777">@${esc(i.accountHandle)}</span>` : esc(i.accountName);
       const link = i.permalink
         ? `<a href="${esc(i.permalink)}" style="color:#1a56db;font-weight:600">View post</a>`
-        : isLive(i.status) ? "Live — link to follow" : esc(itemStatusText(i.status, Boolean(b.paidAt)));
+        : isLive(i.status) ? "Live — link to follow" : esc(itemStatusText(i.status, Boolean(b.paidAt), confirmedRefunds.has(i.id)));
       return `<tr>
 <td style="padding:10px 8px;border-bottom:1px solid #eee">${esc(PLATFORM_LABEL[i.platform] ?? i.platform)}</td>
 <td style="padding:10px 8px;border-bottom:1px solid #eee">${acct}</td>
@@ -120,7 +136,9 @@ export async function sendDeliveryEmail(bookingId: string, opts: { force?: boole
     ? `<p style="color:#8a4b00">${notLive.length} post${notLive.length === 1 ? "" : "s"} could not be made. ${
         notLive.some((i) => i.status === "refunded")
           ? b.paidAt
-            ? "The amount for those has been refunded to your original payment method."
+            ? notLive.filter((i) => i.status === "refunded").every((i) => confirmedRefunds.has(i.id))
+              ? "The amount for those has been refunded to your original payment method."
+              : "Our team is returning the amount for those to you."
             : "They will not be charged — our team will confirm the final amount with you."
           : "Our team will contact you about them."
       }</p>`

@@ -131,6 +131,23 @@ case "$mode" in
       "Account Growth must import shared modules by path (e.g. \"@dashmani/shared/src/growth/combine\"), never the \"@dashmani/shared\" barrel — it pulls zod and every validator into the page's first load." \
       "(from|import\\(?|require\\()[[:space:]]*[\"']@dashmani/shared[\"']" required "" \
       apps/internal/src/app/accounts/growth
+
+    # Creator payouts send a creator's PAN and bank details to Razorpay, and Razorpay echoes them
+    # back (legal_info.pan, kyc.pan, settlements.account_number). The plan's rule is that we
+    # store, log and return NONE of them, so Razorpay's property names must not appear in the
+    # API or the creators app outside the two places built to handle them: the Razorpay client,
+    # which parses every response into an allow-list, and the bank-form validator in
+    # packages/shared (outside the scanned directories today; excluded anyway so the guard stays
+    # correct if the scan is widened). The scrubber is excluded because it names these keys to
+    # redact them. The shapes are properties only (`pan:` / "pan" / the snake_case Razorpay
+    # names): a bare word "pan" appears in unrelated code. Comments count, as in the guards above
+    # (reword a comment rather than quoting the field name). Word boundaries are spelled out
+    # with a character class because BSD grep has no portable \b.
+    check "no-raw-payout-identifiers" \
+      "Raw payout identifier property (pan, account_number, ifsc_code, beneficiary_name) outside the Razorpay client and the bank-form validator. Route every payout detail through services/campaign/razorpay.ts (allow-listed parsing) and utils/payout-scrub.ts; store only a masked hint." \
+      "(^|[^A-Za-z0-9_])pan[[:space:]]*:|[\"']pan[\"']|account_number|ifsc_code|beneficiary_name" required \
+      '^(apps/api/src/services/campaign/razorpay\.ts|apps/api/src/utils/payout-scrub\.ts|packages/shared/src/validators/creator-payout[^:]*):' \
+      apps/api/src apps/creators/src
     ;;
   bundle)
     # The source scan cannot see third-party code (dnd-kit, markdown renderers, vendored

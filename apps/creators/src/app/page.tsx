@@ -1,25 +1,31 @@
 "use client";
 import Link from "next/link";
-import { ArrowRight, BadgeCheck, CircleDollarSign, HandCoins, ShieldCheck } from "lucide-react";
+import { ArrowRight, BadgeCheck, HandCoins, ShieldCheck, Unplug } from "lucide-react";
 import { SiteShell } from "@/components/site-shell";
 
 // Landing page for creators.digitalsukoon.com: what the programme is, who can join, how it works.
 // Every claim here matches what the portal actually does today (Phase A: sign up, connect,
 // review). Bookings and payouts are not live yet, so they are described as what is coming, never
 // as something a creator can do now.
+// ⚠️ Do NOT claim, until the phase that ships it is live (payouts plan, section 5): a price the
+// creator sets, "your own currency", a payout of any kind, "direct" or "instant" payment, pay
+// "worldwide", or "guaranteed" anything. Paid bookings need a PAN and an Indian bank account.
+// That covers the headlines too: this H1, the sign-in line and the sign-up title must not read as a
+// live, creator-controlled offer ("paid promotions, on your terms", "get booked") while staff set
+// the share and no booking can exist.
 
 const PROMISES = [
-  { icon: HandCoins, title: "Brands book your page", body: "Brands and agencies will book promotion on your Facebook Page or Instagram account through Digital Sukoon. Bookings open soon — join now and we'll email you when they do." },
+  { icon: HandCoins, title: "Paid bookings are coming soon", body: "Brands and agencies will be able to book promotion on your Facebook Page or Instagram account through Digital Sukoon. Bookings aren't open yet — join now and we'll email you when they are." },
   { icon: ShieldCheck, title: "You approve every booking", body: "Nothing will be posted until you accept the booking and the exact post. You can say no to anything." },
-  { icon: CircleDollarSign, title: "You name your asking price", body: "You set an asking price for each type of post, in your own currency. Our team agrees the booking price with the brand, and you see your payout before you accept." },
-  { icon: BadgeCheck, title: "We pay you", body: "Once a post you accepted is live and we've checked it, we pay you the payout you agreed to for that booking." },
+  { icon: BadgeCheck, title: "Our team reviews every page", body: "Each creator is approved by our team, and each page is switched on individually, before it can be offered to a brand." },
+  { icon: Unplug, title: "Disconnect any time", body: "You can disconnect Facebook, or close your account, from the portal whenever you like." },
 ];
 
 const STEPS = [
   { n: "01", title: "Create your account", body: "Your name, email and country. Confirm your email from the link we send." },
   { n: "02", title: "Connect Facebook", body: "Sign in with Facebook and pick the Pages and Instagram accounts you want to bring. The Facebook window shows our app's name, “Post Automation 2”." },
   { n: "03", title: "Send for review", body: "We check that each page is yours, that it's active, and that we can publish to it. We'll email you the outcome." },
-  { n: "04", title: "Get booked", body: "Once you're approved, our team turns on each of your pages, and we'll email you when brands can book them. You'll accept or decline each booking." },
+  { n: "04", title: "Get ready for bookings", body: "Once you're approved, our team turns on each of your pages. Paid bookings are coming soon; we'll email you when brands can book them, and you'll accept or decline each one." },
 ];
 
 export default function LandingPage() {
@@ -29,12 +35,12 @@ export default function LandingPage() {
         <div className="mx-auto max-w-6xl px-4 sm:px-6 py-16 sm:py-24">
           <p className="text-[13px] uppercase tracking-[0.12em] text-white/75">Digital Sukoon Creators</p>
           <h1 className="mt-4 text-[clamp(36px,9vw,104px)] font-extrabold tracking-[-0.05em] leading-[0.92] max-w-4xl">
-            Your page.<br /><span className="text-indigo-light">Paid promotions,</span><br />on your terms.
+            Your page.<br /><span className="text-indigo-light">Paid bookings,</span><br />coming soon.
           </h1>
           <p className="mt-6 text-[17px] leading-relaxed text-white/90 max-w-2xl">
-            Join the Digital Sukoon creator network. Brands will book promotion on your Facebook Page or Instagram account, you
-            approve each booking before anything is posted, and we pay you once it&apos;s live. Open to creators worldwide — sign up
-            and connect your pages now, and we&apos;ll email you when bookings open.
+            Join the Digital Sukoon creator network. Connect your Facebook Page or Instagram professional account and our team
+            reviews it. Paid bookings are coming soon — when they open, you approve each booking before anything is posted.
+            Anyone can join; paid bookings will need a PAN and an Indian bank account.
           </p>
           <div className="mt-8 flex flex-wrap gap-3">
             <Link href="/signup" className="btn btn-light">
@@ -80,6 +86,10 @@ export default function LandingPage() {
             <li className="card p-5">
               <p className="font-bold text-white">You are 18 or older</p>
               <p className="mt-1 text-sm text-ink-3">And the pages you connect are yours to promote on.</p>
+            </li>
+            <li className="card p-5">
+              <p className="font-bold text-white">Later, for paid bookings: a PAN and an Indian bank account</p>
+              <p className="mt-1 text-sm text-ink-3">Anyone can join and connect pages without them. Paid bookings aren&apos;t open yet, and when they open they will need both.</p>
             </li>
           </ul>
         </div>

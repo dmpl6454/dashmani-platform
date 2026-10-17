@@ -5,7 +5,7 @@ import { AlertCircle, ArrowRight } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { errorSentence } from "@/lib/messages";
 import type { CreatorSession } from "@/lib/types";
-import { AuthCheck, AuthCountry } from "./shared";
+import { AuthCheck, AuthCountry, PAID_BOOKINGS_NOTE } from "./shared";
 
 /* "Continue with Google" on /login and /signup (adapted from the client portal's).
    Real wire, no mock: Google Identity Services yields an ID token, which goes to
@@ -170,7 +170,7 @@ export function GoogleSignIn({ mode, onSession, initialCountry, onProfileStep }:
         <p ref={helloRef} tabIndex={-1} className="auth-google-hello outline-none">
           Hi {profile.name.split(" ")[0] || "there"} — Google confirmed <strong>{profile.email}</strong>. Two quick things to open your creator account.
         </p>
-        <AuthCountry id="gcountry" value={country} onChange={setCountry} error={null} />
+        <AuthCountry id="gcountry" value={country} onChange={setCountry} error={null} hint={PAID_BOOKINGS_NOTE} />
         <AuthCheck id="gterms" checked={terms} onChange={(v) => { setTerms(v); setFieldErr((f) => ({ ...f, terms: undefined })); }} error={fieldErr.terms ?? null}>
           I agree to the <Link href="/terms" target="_blank">creator terms</Link> and the <Link href="/privacy" target="_blank">privacy policy</Link>.
         </AuthCheck>

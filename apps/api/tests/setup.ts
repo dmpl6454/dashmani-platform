@@ -4,6 +4,7 @@ import { beforeEach, afterAll } from "vitest";
 const TRUNCATE_SQL = `
     TRUNCATE TABLE pipeline_email_outbox, pipeline_messages, pipeline_participants, pipeline_projects, pipeline_phases, pipeline_board_state,
       meta_deletion_requests, creator_assets, creator_connections, creator_oauth_states, creator_tokens, creator_refresh_tokens, creators,
+      creator_payout_events, creator_payouts, creator_offers, creator_rate_terms, creator_payout_accounts, campaign_refunds, campaign_disputes,
       campaign_media_renders, campaign_booking_events, campaign_payments, campaign_booking_items, campaign_media, campaign_bookings, campaign_rate_cards, razorpay_webhook_events,
       content_posts, approvals, project_files, project_tasks, project_accounts, projects,
       client_refresh_tokens, client_invites, clients,

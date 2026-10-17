@@ -160,7 +160,9 @@ jobs:
       # takes its IF NOT EXISTS path here; the static test locks that statement's text.
       # The other feature DDL scripts get the same treatment: posting-watch, campaign booking,
       # campaign overrides and the creator portal (scripts/creators-ddl.sql — its seven tables
-      # are dropped children-first, then rebuilt, twice, with zero drift).
+      # are dropped children-first, then rebuilt, twice, with zero drift) and the creator
+      # payouts (scripts/creator-payouts-ddl.sql — seven tables, the last script, because its one
+      # foreign key points at campaign_rate_cards, which the campaign scripts rebuild first).
       - name: Rehearse the pipeline DDL scripts
         env:
           DDL_DB_URL: postgresql://user:password@localhost:5432/dashmani_ddl_rehearsal
@@ -170,8 +172,8 @@ jobs:
           PG="docker exec -i -e PGPASSWORD=password $PG_CONTAINER psql -U user -v ON_ERROR_STOP=1 -q"
           $PG -d dashmani -c "CREATE DATABASE dashmani_ddl_rehearsal"
           DATABASE_URL="$DDL_DB_URL" npx prisma db push --schema packages/db/prisma/schema.prisma --skip-generate
-          $PG -d dashmani_ddl_rehearsal -c "DROP TABLE pipeline_email_outbox, pipeline_messages, pipeline_participants, pipeline_projects, pipeline_phases, pipeline_board_state, meta_post_watch, campaign_media_renders, campaign_booking_events, campaign_payments, campaign_booking_items, campaign_media, campaign_bookings, campaign_rate_cards, razorpay_webhook_events, creator_assets, creator_connections, creator_oauth_states, creator_tokens, creator_refresh_tokens, creators, meta_deletion_requests"
-          for script in scripts/pipeline-ddl.sql scripts/pipeline-email-ddl.sql scripts/posting-watch-ddl.sql scripts/campaign-booking-ddl.sql scripts/campaign-overrides-ddl.sql scripts/creators-ddl.sql; do
+          $PG -d dashmani_ddl_rehearsal -c "DROP TABLE creator_payout_events, creator_payouts, creator_offers, creator_rate_terms, creator_payout_accounts, campaign_refunds, campaign_disputes, pipeline_email_outbox, pipeline_messages, pipeline_participants, pipeline_projects, pipeline_phases, pipeline_board_state, meta_post_watch, campaign_media_renders, campaign_booking_events, campaign_payments, campaign_booking_items, campaign_media, campaign_bookings, campaign_rate_cards, razorpay_webhook_events, creator_assets, creator_connections, creator_oauth_states, creator_tokens, creator_refresh_tokens, creators, meta_deletion_requests"
+          for script in scripts/pipeline-ddl.sql scripts/pipeline-email-ddl.sql scripts/posting-watch-ddl.sql scripts/campaign-booking-ddl.sql scripts/campaign-overrides-ddl.sql scripts/creators-ddl.sql scripts/creator-payouts-ddl.sql; do
             for run in 1 2; do
               echo "apply $script #$run"
               $PG -d dashmani_ddl_rehearsal -f - < "$script"

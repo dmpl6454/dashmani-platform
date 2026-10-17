@@ -1,8 +1,8 @@
 import { prisma } from "@dashmani/db";
-import { isPlatformPostUrl, type CampaignPlatform } from "@dashmani/shared";
+import { isPlatformPostUrl, LIVE_ITEM_STATUSES, type CampaignPlatform } from "@dashmani/shared";
 import { AppError } from "../../middleware/error-handler";
 import { transitionBooking, settleBooking, logBookingEvent } from "./booking.service";
-import { refundBookingInFull, refundPaymentRow, capturedPaymentFor } from "./payment.service";
+import { refundBookingInFull, refundPaymentRow, capturedPaymentFor, maybeMarkRefunded } from "./payment.service";
 import { sendDeliveryEmail, sendItemLiveEmail, sendStatusEmail } from "./delivery.service";
 import { campaignConfig } from "./config";
 import { checkEligibility, launchAt, planPublishing } from "./publish.service";
@@ -144,21 +144,98 @@ export async function requestChanges(id: string, staffId: string, note: string) 
   return getBookingForStaff(id);
 }
 
-/** Reject and refund in full. The booking moves to `refunded` once Razorpay confirms. */
+/** What staff are told when a refund was requested and Razorpay has not answered yet. */
+const REFUND_CONFIRMING = "The refund was requested and Razorpay hasn't confirmed it yet. We're checking automatically: nothing needs doing, and it can't be refunded twice.";
+
+/** Item statuses a rejection refunds: everything that was not, and now won't be, posted. */
+const NOT_POSTED_ITEM_STATUSES = ["pending", "manual_pending", "queued", "failed"];
+
+const REJECTABLE = ["paid_pending_review", "changes_requested", "approved"] as const;
+
+/**
+ * Reject. The booking moves to `refunded` once Razorpay has confirmed every refund.
+ *
+ * A booking with NO online payment (offline mode) keeps the old behaviour exactly: nothing is
+ * refunded, it stays `rejected`.
+ *
+ * A booking WITH an online payment is refused (409) if any post is already live, and otherwise
+ * refunds PER ITEM, each item's own price under its own idempotency key. It never refunds
+ * "everything that is left": once creator pages exist, part of the payment is a creator's share.
+ * ONE transaction makes the booking rejected, claims every not-posted item and marks the payment
+ * `refund_due`, so a crash or a refusal from Razorpay leaves the money recorded as owed and the
+ * refund sweep finishes it. If any item can't be claimed (it is being published right now) nothing
+ * changes and staff are asked to try again in a minute.
+ */
 export async function reject(id: string, staffId: string, note: string) {
-  await transitionBooking(id, ["paid_pending_review", "changes_requested", "approved"], "rejected", staff(staffId), {
-    note,
-    data: { reviewNote: note, reviewedById: staffId },
-  });
-  await prisma.campaignBookingItem.updateMany({ where: { bookingId: id, status: { in: ["pending", "manual_pending", "queued"] } }, data: { status: "refunded", lastError: null } });
-  let refundError: string | null = null;
-  try {
-    await refundBookingInFull(id, staff(staffId));
-  } catch (err) {
-    refundError = err instanceof Error ? err.message : String(err);
+  const online = (await prisma.campaignPayment.count({ where: { bookingId: id, razorpayPaymentId: { not: null } } })) > 0;
+
+  if (!online) {
+    await transitionBooking(id, REJECTABLE, "rejected", staff(staffId), {
+      note,
+      data: { reviewNote: note, reviewedById: staffId },
+    });
+    await prisma.campaignBookingItem.updateMany({ where: { bookingId: id, status: { in: ["pending", "manual_pending", "queued"] } }, data: { status: "refunded", lastError: null } });
+    let refundError: string | null = null;
+    try {
+      await refundBookingInFull(id, staff(staffId));
+    } catch (err) {
+      refundError = err instanceof Error ? err.message : String(err);
+    }
+    void sendStatusEmail(id, "rejected").catch((e) => console.error("[campaign] rejected email failed", e));
+    return { ...(await getBookingForStaff(id)), refundError, refundNotice: null as string | null };
   }
+
+  const owed: string[] = [];
+  const claimed: Array<{ id: string; pricePaise: number }> = [];
+  await prisma.$transaction(async (tx) => {
+    await transitionBooking(id, REJECTABLE, "rejected", staff(staffId), {
+      tx,
+      note,
+      data: { reviewNote: note, reviewedById: staffId },
+    });
+    const items = await tx.campaignBookingItem.findMany({ where: { bookingId: id }, select: { id: true, status: true, pricePaise: true } });
+    if (items.some((i) => (LIVE_ITEM_STATUSES as readonly string[]).includes(i.status))) {
+      throw new AppError(409, "POSTS_LIVE", "Some posts are already live, so this campaign can't be rejected and refunded in one step. Refund the accounts that weren't posted from their own rows instead.");
+    }
+    for (const i of items) {
+      if (!NOT_POSTED_ITEM_STATUSES.includes(i.status)) continue;
+      const claim = await tx.campaignBookingItem.updateMany({
+        where: { id: i.id, status: i.status, OR: [{ lockedUntil: null }, { lockedUntil: { lt: new Date() } }] },
+        data: { status: "refunded", lastError: null },
+      });
+      if (claim.count !== 1) throw new AppError(409, "BUSY", "An account is being published right now — try again in a minute.");
+      claimed.push({ id: i.id, pricePaise: i.pricePaise });
+    }
+    const pays = await tx.campaignPayment.findMany({
+      where: { bookingId: id, razorpayPaymentId: { not: null }, status: { in: ["captured", "refund_pending", "refund_failed"] } },
+      select: { id: true },
+    });
+    owed.push(...pays.map((p) => p.id));
+    await tx.campaignPayment.updateMany({ where: { id: { in: owed } }, data: { status: "refund_due" } });
+  });
+
+  const errors: string[] = [];
+  let confirming = false;
+  for (const item of claimed) {
+    try {
+      const pay = await capturedPaymentFor(id, item.pricePaise, { only: owed });
+      if (!pay) throw new AppError(409, "NOTHING_TO_REFUND", "There is no payment left that can cover this refund.");
+      const r = await refundPaymentRow(pay.id, item.pricePaise, `item:${item.id.slice(0, 30)}`, staff(staffId), {
+        key: `rf-item-${item.id}`,
+        reason: "booking_rejected",
+        itemId: item.id,
+      });
+      if (r.state === "confirming") confirming = true;
+    } catch (err) {
+      errors.push(err instanceof Error ? err.message : String(err));
+    }
+  }
+  await maybeMarkRefunded(id);
   void sendStatusEmail(id, "rejected").catch((e) => console.error("[campaign] rejected email failed", e));
-  return { ...(await getBookingForStaff(id)), refundError };
+  const refundError = errors.length === 0
+    ? null
+    : `${errors.length === 1 ? errors[0] : `${errors.length} refunds could not be issued (first: ${errors[0]})`} The campaign is rejected and the money is marked as owed back; we retry automatically every few minutes.`;
+  return { ...(await getBookingForStaff(id)), refundError, refundNotice: confirming ? REFUND_CONFIRMING : null };
 }
 
 async function itemOf(bookingId: string, itemId: string) {
@@ -250,16 +327,31 @@ export async function refundItem(bookingId: string, itemId: string, staffId: str
   if (!pay) {
     await logBookingEvent(bookingId, staff(staffId), `${item.accountName} removed from the booking (${item.pricePaise} paise) — no online payment on this booking; settle by hand if the client has already paid.`);
     await afterItemChange(bookingId, staffId);
-    return getBookingForStaff(bookingId);
+    return { ...(await getBookingForStaff(bookingId)), refundNotice: null as string | null };
   }
+  let result;
   try {
-    await refundPaymentRow(pay.id, item.pricePaise, `item:${itemId.slice(0, 30)}`, staff(staffId));
+    result = await refundPaymentRow(pay.id, item.pricePaise, `item:${itemId.slice(0, 30)}`, staff(staffId), {
+      key: `rf-item-${itemId}`,
+      reason: "item_refunded",
+      itemId,
+    });
   } catch (err) {
-    await prisma.campaignBookingItem.update({ where: { id: itemId }, data: { status: item.status } });
+    // Nothing was refunded (Razorpay refused, or the claim itself failed): the item is open again.
+    // The one exception: Razorpay refused but giving the claim back failed too, so the refund is
+    // still claimed and the sweep will re-send it. Re-opening the item then would let staff post it
+    // while that refund can still go through, so it stays refunded; the sweep either completes the
+    // refund or, if it is refused again, issues it afresh (see resendFailedItemRefunds).
+    const stillClaimed = await prisma.campaignRefund
+      .count({ where: { bookingItemId: itemId, origin: "ours", status: { in: ["requested", "pending"] } } })
+      .catch(() => 0);
+    if (stillClaimed === 0) await prisma.campaignBookingItem.update({ where: { id: itemId }, data: { status: item.status } });
     throw err;
   }
+  // An unanswered request is NOT a failure: the item stays refunded (claimed) and the ledger row
+  // stays pending, so a second click can neither refund it again nor undo the claim.
   await afterItemChange(bookingId, staffId);
-  return getBookingForStaff(bookingId);
+  return { ...(await getBookingForStaff(bookingId)), refundNotice: result.state === "confirming" ? REFUND_CONFIRMING : null };
 }
 
 /** Staff: publish a queued item now (skipping the launch-day wait), or move a hand-posted item

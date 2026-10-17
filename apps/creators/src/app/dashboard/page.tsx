@@ -42,8 +42,9 @@ export default function DashboardPage() {
   return (
     <div className="flex flex-col gap-8">
       <PageHead kicker="Overview" title={<>Hi {first}.</>}>
-        Brands will book promotion on your page through Digital Sukoon, and you approve every booking before anything is posted.
-        Finish the steps below and our team will review your profile.
+        Paid bookings are coming soon: brands will book promotion on your page through Digital Sukoon, and you approve every
+        booking before anything is posted. Anyone can join; paid bookings will need a PAN and an Indian bank account. Finish the
+        steps below and our team will review your profile.
       </PageHead>
       <StatusBanner me={me} />
       <Checklist me={me} onChange={(next) => (next ? mutate({ ...me, ...next }, { revalidate: true }) : mutate())} />

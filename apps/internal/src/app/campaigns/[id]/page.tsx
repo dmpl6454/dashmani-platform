@@ -50,8 +50,9 @@ export default function CampaignBookingDetail() {
     setErr("");
     setInfo("");
     try {
-      const r = await apiFetch<{ data: Booking & { refundError?: string | null } }>(path, { method: "POST", body: body ? JSON.stringify(body) : undefined });
-      if (r.data?.refundError) setErr(`Rejected, but the refund failed: ${r.data.refundError}. Retry from Razorpay.`);
+      const r = await apiFetch<{ data: Booking & { refundError?: string | null; refundNotice?: string | null } }>(path, { method: "POST", body: body ? JSON.stringify(body) : undefined });
+      if (r.data?.refundError) setErr(`Rejected, but a refund didn't go through. ${r.data.refundError}`);
+      else if (r.data?.refundNotice) setInfo(r.data.refundNotice);
       await mutate();
       return true;
     } catch (e: any) {

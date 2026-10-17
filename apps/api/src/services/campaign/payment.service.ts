@@ -1,11 +1,16 @@
 import crypto from "crypto";
-import { prisma, Prisma } from "@dashmani/db";
+import { prisma, Prisma, type CampaignRefund } from "@dashmani/db";
+import { formatPaise } from "@dashmani/shared";
 import { AppError } from "../../middleware/error-handler";
+import { notifyAdminByEmail } from "../email.service";
+import { scrubPayoutSecrets } from "../../utils/payout-scrub";
 import { razorpayConfig } from "./config";
 import * as rzp from "./razorpay";
 import { assertCreativeReady, transitionBooking, logBookingEvent, type Actor } from "./booking.service";
 import { notifyStaffPaid, sendStatusEmail } from "./delivery.service";
 import { priceFor } from "./rate-card.service";
+import { handleRouteEvent, isRouteEvent } from "./route-webhooks";
+import { pausePayoutsOfPayment } from "../creator/payout-pause";
 
 // Checkout, the Razorpay webhook, and refunds.
 //
@@ -17,6 +22,12 @@ import { priceFor } from "./rate-card.service";
 //  • A webhook event is processed once (razorpay_webhook_events.event_id is unique).
 //  • A captured payment whose amount doesn't match the booking (the client edited after
 //    checkout and then paid an old order) is refunded, never accepted.
+//  • A capture is CLAIMED first and the booking moved in the same transaction (see onCaptured);
+//    refunds are CLAIMED first on a ledger (campaign_refunds) and sent with an idempotency key
+//    (see claimRefund / sendRefund). Razorpay is only called after the claim has committed.
+//  • LOCK ORDER: a transaction that touches both locks the campaign_payments row FIRST and the
+//    campaign_refunds rows after (reconcileRefunds, releaseRefundClaim and recordRefund all do).
+//    Any new code that takes them in the other order can deadlock with a reconcile.
 
 /** Pure: the booking total from its items. */
 export function computeTotal(items: Array<{ pricePaise: number }>): number {
@@ -130,6 +141,8 @@ export async function verifyCheckout(clientId: string, bookingId: string, body: 
 // ── Webhook ─────────────────────────────────────────────────────────────────────
 
 type WebhookResult = { handled: boolean; duplicate?: boolean; note?: string };
+/** What the Route handler reports. `retry` = "an infrastructure error lost this event: ask Razorpay to redeliver it". */
+type RouteResult = { handled: boolean; note?: string; retry?: boolean };
 
 export async function handleWebhook(rawBody: Buffer, signature: string | undefined, eventIdHeader: string | undefined): Promise<WebhookResult> {
   if (!rzp.verifyWebhookSignature(rawBody, signature)) throw new AppError(400, "BAD_SIGNATURE", "Invalid signature");
@@ -166,114 +179,892 @@ export async function handleWebhook(rawBody: Buffer, signature: string | undefin
   } else if (event === "refund.processed" || event === "refund.failed") {
     const r = evt?.payload?.refund?.entity;
     if (r) result = await onRefundEvent(r, event);
+  } else {
+    // Route (transfers, settlements, linked accounts) and dispute events. ⚠️ Whatever happens in
+    // there, THIS endpoint still answers 2xx: Razorpay disables a webhook that keeps failing for
+    // 24 hours, and this same URL is what marks brand payments paid. Only the event NAME is
+    // logged, never the body (it can carry bank details).
+    // The ONE exception is `retry`: the handler sets it when an infrastructure error (a pool
+    // timeout, a deadlock) lost an event that nothing else re-reads (a dispute: it is only ever
+    // learned from this webhook). Then the event is NOT stamped processed and the answer is a
+    // retryable 5xx; the redelivery finds the unstamped row and processes it again. A brief outage
+    // cannot get the webhook disabled, and an event that can never be understood is not retried.
+    let retryRoute = false;
+    try {
+      if (isRouteEvent(event)) {
+        const { retry, ...rest }: RouteResult = await handleRouteEvent(event, evt, eventId);
+        result = rest;
+        retryRoute = retry === true;
+      }
+    } catch (err) {
+      console.error(`[razorpay-webhook] route event ${event.slice(0, 64)} failed (${(err as Error)?.name ?? "Error"})`);
+      result = { handled: false, note: "route handler error" };
+    }
+    if (retryRoute) throw new AppError(503, "TEMPORARY", "This event could not be processed right now; please redeliver it.");
   }
 
   await prisma.razorpayWebhookEvent.update({ where: { eventId }, data: { processedAt: new Date() } });
   return result;
 }
 
+// ── Capture ─────────────────────────────────────────────────────────────────────
+
+type Tx = Prisma.TransactionClient;
+type CaptureOutcome = { kind: "unknown" } | { kind: "duplicate" } | { kind: "paid"; bookingId: string } | { kind: "refund_due"; paymentId: string };
+
+const PAYABLE_BOOKING_STATUSES = ["awaiting_payment", "draft", "cancelled", "expired"] as const;
+
+/**
+ * payment.captured and order.paid both land here, and Razorpay redelivers on any non-2xx, so the
+ * same capture arrives two or three times, sometimes concurrently.
+ *
+ * ⚠️ ONE transaction, and the payment row is CLAIMED FIRST. The claim is a conditional update
+ * (`status IN ('created','failed')` → captured): exactly one delivery changes a row, every other
+ * one changes none and returns as a duplicate. Only the winner's payment id is ever used, so
+ * `payment.captured` + `order.paid` can never both move the booking or both refund it. Before
+ * this, the payment was read, then marked captured, then the booking was moved in a separate
+ * step: a crash between the two left a captured payment on a booking that never reached review,
+ * and the redelivery was then dismissed as a duplicate.
+ *
+ * Everything that talks to Razorpay or sends an email happens AFTER the commit. If anything
+ * throws before it, the claim rolls back with the rest and Razorpay's retry runs cleanly.
+ */
 async function onCaptured(p: any, event: string): Promise<WebhookResult> {
-  const pay = await prisma.campaignPayment.findUnique({ where: { razorpayOrderId: String(p.order_id ?? "") } });
-  if (!pay) return { handled: false, note: "unknown order" };
-  if (pay.status === "captured" || pay.status.startsWith("refund")) return { handled: true, duplicate: true };
-
-  const amount = Number(p.amount);
+  const orderId = String(p?.order_id ?? "");
+  const razorpayPaymentId = String(p?.id ?? "");
+  if (!orderId || !razorpayPaymentId || razorpayPaymentId.length > 64) return { handled: false, note: "unreadable payment" };
+  const reportedAmount = Number(p.amount);
   const currency = String(p.currency ?? "");
-  const booking = await prisma.campaignBooking.findUnique({ where: { id: pay.bookingId }, select: { status: true, totalPaise: true } });
 
-  await prisma.campaignPayment.update({
-    where: { id: pay.id },
-    data: { status: "captured", razorpayPaymentId: String(p.id), lastEvent: event },
+  const outcome = await prisma.$transaction(async (tx): Promise<CaptureOutcome> => {
+    const claim = await tx.campaignPayment.updateMany({
+      where: { razorpayOrderId: orderId, status: { in: ["created", "failed"] } },
+      data: { status: "captured", razorpayPaymentId, lastEvent: event },
+    });
+    if (claim.count === 0) {
+      const known = await tx.campaignPayment.findUnique({ where: { razorpayOrderId: orderId }, select: { id: true } });
+      return known ? { kind: "duplicate" } : { kind: "unknown" };
+    }
+    const pay = await tx.campaignPayment.findUniqueOrThrow({ where: { razorpayOrderId: orderId } });
+    // The booking row is locked for the comparison and the move, so a client edit or a staff
+    // action cannot slip in between "it matches" and "it is paid".
+    await tx.$queryRaw`SELECT id FROM campaign_bookings WHERE id = ${pay.bookingId} FOR UPDATE`;
+    const booking = await tx.campaignBooking.findUnique({ where: { id: pay.bookingId }, select: { status: true, totalPaise: true } });
+
+    const matches = reportedAmount === pay.amountPaise && currency === "INR" && booking?.totalPaise === pay.amountPaise;
+    const payable = !!booking && (PAYABLE_BOOKING_STATUSES as readonly string[]).includes(booking.status);
+    if (matches && payable) {
+      await transitionBooking(pay.bookingId, PAYABLE_BOOKING_STATUSES, "paid_pending_review", { type: "system" }, {
+        tx,
+        note: `Payment ${razorpayPaymentId} captured`,
+        data: { paidAt: new Date(), submittedAt: new Date() },
+      });
+      // Phase 4 (creator pages): insert one `planned` creator_payouts row per creator item HERE, in
+      // this same transaction, carrying `razorpayPaymentId` — the capture that won the claim above.
+      return { kind: "paid", bookingId: pay.bookingId };
+    }
+
+    // Paid an outdated order, or paid twice: the money is ours to return. It is recorded as
+    // refund_due INSIDE the transaction, so it can never be forgotten; the refund itself is made
+    // after the commit and, if that is interrupted, by the sweep. What Razorpay actually captured
+    // is what comes back, so a differing amount replaces the order amount on this dead row.
+    const captured = Number.isSafeInteger(reportedAmount) && reportedAmount > 0 ? reportedAmount : pay.amountPaise;
+    await tx.campaignPayment.update({ where: { id: pay.id }, data: { status: "refund_due", amountPaise: captured } });
+    await logBookingEvent(
+      pay.bookingId,
+      { type: "system" },
+      `Payment ${razorpayPaymentId} (${captured} paise) did not match the current booking and is being refunded.`,
+      tx,
+    );
+    return { kind: "refund_due", paymentId: pay.id };
   });
 
-  const matches = amount === pay.amountPaise && currency === "INR" && booking?.totalPaise === pay.amountPaise;
-  const payable = booking && ["awaiting_payment", "draft", "cancelled", "expired"].includes(booking.status);
-  if (!matches || !payable) {
-    // Paid an outdated order, or paid twice: money goes straight back.
-    await refundPaymentRow(pay.id, amount, `stale:${pay.id}`, { type: "system" });
-    await logBookingEvent(pay.bookingId, { type: "system" }, `Payment ${p.id} (${amount} paise) did not match the current booking and was refunded.`);
-    return { handled: true, note: "refunded mismatch" };
+  if (outcome.kind === "unknown") return { handled: false, note: "unknown order" };
+  if (outcome.kind === "duplicate") return { handled: true, duplicate: true };
+  if (outcome.kind === "paid") {
+    void sendStatusEmail(outcome.bookingId, "paid").catch((e) => console.error("[campaign] paid email failed", e));
+    void notifyStaffPaid(outcome.bookingId).catch((e) => console.error("[campaign] staff email failed", e));
+    return { handled: true };
   }
 
-  await transitionBooking(pay.bookingId, ["awaiting_payment", "draft", "cancelled", "expired"], "paid_pending_review", { type: "system" }, {
-    note: `Payment ${p.id} captured`,
-    data: { paidAt: new Date(), submittedAt: new Date() },
+  // refund_due: committed, now give the money back. A failure here must not fail the webhook (the
+  // claim above is final and a redelivery would only be told "duplicate"): the sweep retries it.
+  // Razorpay gives a webhook 5 seconds [R28] and one that keeps timing out gets disabled, so a slow
+  // refund call is left to finish in the background (it is claimed and keyed, so it cannot be repeated).
+  try {
+    const refunding = issueDueRefund(outcome.paymentId, { type: "system" });
+    const first = await withinDeadline(refunding, refundTuning.inlineDeadlineMs);
+    if (!first.done) return { handled: true, note: "refund in progress" };
+    return { handled: true, note: first.value?.state === "confirming" ? "refund confirming" : "refunded mismatch" };
+  } catch (err) {
+    console.error(`[campaign] refund of an unmatched payment will be retried: ${(err as Error)?.message ?? "error"}`);
+    return { handled: true, note: "refund will be retried" };
+  }
+}
+
+/** Tests shorten this; production keeps the webhook comfortably inside Razorpay's 5 seconds. */
+export const refundTuning = { inlineDeadlineMs: 3_000 };
+
+/** Resolves with the result, or `{done:false}` once `ms` have passed (the work keeps running). A rejection before then propagates. */
+async function withinDeadline<T>(work: Promise<T>, ms: number): Promise<{ done: true; value: T } | { done: false }> {
+  let timer: NodeJS.Timeout | undefined;
+  const slow = new Promise<{ done: false }>((resolve) => {
+    timer = setTimeout(() => resolve({ done: false }), ms);
   });
-  void sendStatusEmail(pay.bookingId, "paid").catch((e) => console.error("[campaign] paid email failed", e));
-  void notifyStaffPaid(pay.bookingId).catch((e) => console.error("[campaign] staff email failed", e));
-  return { handled: true };
-}
-
-async function onRefundEvent(r: any, event: string): Promise<WebhookResult> {
-  const pay = await prisma.campaignPayment.findFirst({ where: { razorpayPaymentId: String(r.payment_id ?? "") } });
-  if (!pay) return { handled: false, note: "unknown payment" };
-  if (event === "refund.processed") {
-    await prisma.campaignPayment.update({ where: { id: pay.id }, data: { status: pay.refundedPaise >= pay.amountPaise ? "refunded" : pay.status, lastEvent: event } });
-    await maybeMarkRefunded(pay.bookingId);
-  } else {
-    await prisma.campaignPayment.update({ where: { id: pay.id }, data: { status: "refund_failed", lastEvent: event } });
-    await logBookingEvent(pay.bookingId, { type: "system" }, `Refund ${r.id} failed — retry it from the booking page.`);
-  }
-  return { handled: true };
-}
-
-async function maybeMarkRefunded(bookingId: string) {
-  const b = await prisma.campaignBooking.findUnique({ where: { id: bookingId }, select: { status: true, payments: { select: { status: true } } } });
-  // A booking with no payment row at all (offline mode) has nothing to refund online, so it
-  // stays `rejected`: "refunded" would claim money went back that we never collected here.
-  if (b?.status === "rejected" && b.payments.length > 0 && b.payments.every((p) => p.status !== "captured" && p.status !== "refund_pending" && p.status !== "refund_failed")) {
-    await transitionBooking(bookingId, ["rejected"], "refunded", { type: "system" }).catch(() => undefined);
+  try {
+    return await Promise.race([work.then((value) => ({ done: true as const, value })), slow]);
+  } finally {
+    clearTimeout(timer);
   }
 }
 
 // ── Refunds ─────────────────────────────────────────────────────────────────────
 
-/**
- * Refund part or all of one captured payment. The DB row is updated FIRST (refundedPaise is
- * claimed atomically), so a double click or a retry can never refund twice; if Razorpay then
- * fails, the claim is rolled back.
- */
-export async function refundPaymentRow(paymentId: string, amountPaise: number, receipt: string, actor: Actor) {
-  const pay = await prisma.campaignPayment.findUnique({ where: { id: paymentId } });
-  if (!pay?.razorpayPaymentId) throw new AppError(409, "NOT_CAPTURED", "There is no captured payment to refund.");
-  const claim = await prisma.campaignPayment.updateMany({
-    where: { id: paymentId, refundedPaise: pay.refundedPaise, amountPaise: { gte: pay.refundedPaise + amountPaise } },
-    data: { refundedPaise: { increment: amountPaise }, status: "refund_pending" },
-  });
-  if (claim.count !== 1) throw new AppError(409, "REFUND_CONFLICT", "This refund is larger than what's left, or another refund is in progress.");
+/** Payment statuses in which the payment still holds money that may be returned. */
+const REFUNDABLE_STATUSES = ["captured", "refund_pending", "refund_failed", "refund_due"] as const;
+/** The ones an ITEM refund may draw on: refund_due money is owed in full, never spent on an item. */
+const ITEM_REFUNDABLE_STATUSES = ["captured", "refund_pending", "refund_failed"] as const;
+/** Marker on a payment whose refund list could not be read when a refund event arrived: the sweep re-reads it. */
+const RECONCILE_MARKER = "refund.reconcile_pending";
+
+/** The copy staff see when Razorpay definitely refused a refund: nothing moved, nothing was lost. */
+const REFUND_REFUSED = "Razorpay refused the refund, so no money moved. The reason is in the booking history; try again in a few minutes.";
+
+const esc = (s: string) =>
+  s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
+
+/** Staff alert. Provider text is escaped (notifyAdminByEmail does not), and it never blocks or throws. */
+function alertStaff(subject: string, details: Array<{ label: string; value: string }>, path?: string) {
+  void notifyAdminByEmail(subject, details.map((d) => ({ label: esc(d.label), value: esc(d.value) })), path).catch((e) =>
+    console.error("[campaign] staff alert failed", e),
+  );
+}
+
+const errorText = (err: unknown) => scrubPayoutSecrets(err instanceof Error ? err.message : String(err)).slice(0, 500);
+
+/** A deadlock or write conflict: Postgres killed THIS transaction so another could go on. It rolled back whole. */
+export function isContention(err: any): boolean {
+  const pg = err?.meta?.code ?? err?.code;
+  return err?.code === "P2034" || pg === "40P01" || pg === "40001" || /deadlock detected/i.test(String(err?.message ?? ""));
+}
+
+/** Run a transaction again ONCE if it lost to contention. Only for work that is safe to repeat from the start (every use below is conditional or idempotent). */
+export async function retryOnContention<T>(work: () => Promise<T>): Promise<T> {
   try {
-    const refund = await rzp.refundPayment(pay.razorpayPaymentId, amountPaise, receipt);
-    const full = pay.refundedPaise + amountPaise >= pay.amountPaise;
-    await prisma.campaignPayment.update({
-      where: { id: paymentId },
-      data: { refundId: refund.id, status: refund.status === "processed" ? (full ? "refunded" : "captured") : full ? "refund_pending" : "captured" },
-    });
-    await logBookingEvent(pay.bookingId, actor, `Refund of ${amountPaise} paise issued (${refund.id}, ${refund.status}).`);
-    return refund;
+    return await work();
   } catch (err) {
-    await prisma.campaignPayment.update({
-      where: { id: paymentId },
-      data: { refundedPaise: { decrement: amountPaise }, status: pay.status === "refund_pending" ? "captured" : pay.status },
-    });
-    await logBookingEvent(pay.bookingId, actor, `Refund of ${amountPaise} paise FAILED: ${(err as Error).message}`.slice(0, 500));
-    throw new AppError(502, "REFUND_FAILED", "The refund couldn't be issued. Try again, or refund from the Razorpay dashboard.");
+    if (!isContention(err)) throw err;
+    return work();
   }
 }
 
-/** Refund everything still refundable on a booking (used by reject). */
+/**
+ * What is still refundable on a captured payment: captured − refunded − reserved. THE one place
+ * that rule lives; refundPaymentRow, capturedPaymentFor, reject and the sweep all go through it.
+ * `reserved` is money earmarked for a creator's share (see reservedOn); it is 0 until Phase 4.
+ */
+export function refundableOn(pay: { amountPaise: number; refundedPaise: number }, reservedPaise = 0): number {
+  return Math.max(0, pay.amountPaise - pay.refundedPaise - reservedPaise);
+}
+
+/**
+ * Phase 4 fills this in: the item price of every creator item on this payment whose payout is not
+ * yet `reversed` or `void`. Such money has left our balance for the creator's linked account and
+ * comes back only after the transfer is reversed, so it must not be refunded to the brand first.
+ */
+async function reservedOn(_db: Tx | typeof prisma, _paymentId: string): Promise<number> {
+  return 0;
+}
+
+export interface RefundIntent {
+  /** campaign_payments.id */
+  paymentId: string;
+  amountPaise: number;
+  /** Goes to Razorpay as the receipt (cut to 40 characters). */
+  receipt: string;
+  /**
+   * STABLE per intent ("rf-item-<itemId>", "rf-stale-<paymentId>", "rf-rej-<bookingId>-<paymentId>"):
+   * 10 to 128 of [A-Za-z0-9_-] [R30]. The same key on a retry makes Razorpay return the original
+   * refund instead of creating a second one. After a DEFINITE refusal the intent may be tried
+   * again; that attempt gets "-r2", "-r3" … because nothing was refunded under the first key.
+   */
+  key: string;
+  /** Why, for the ledger: item_refunded | booking_rejected | outdated_order | duplicate_payment … (at most 60). */
+  reason: string;
+  itemId?: string | null;
+}
+
+export interface RefundResult {
+  /** processed / pending: Razorpay answered. confirming: we asked and have not heard — the claim is kept and the sweep settles it. */
+  state: "processed" | "pending" | "confirming";
+  refundId: string | null;
+  ledgerId: string;
+  amountPaise: number;
+}
+
+type RefundRow = CampaignRefund;
+type Claim = { kind: "claimed"; row: RefundRow } | { kind: "existing"; row: RefundRow };
+
+const isAttemptOf = (rowKey: string | null, key: string) =>
+  rowKey !== null && (rowKey === key || (rowKey.startsWith(`${key}-r`) && /^\d+$/.test(rowKey.slice(key.length + 2))));
+
+const toResult = (row: RefundRow, refundId: string | null = row.razorpayRefundId): RefundResult => ({
+  state: row.status === "processed" ? "processed" : row.status === "pending" ? "pending" : "confirming",
+  refundId,
+  ledgerId: row.id,
+  amountPaise: row.amountPaise,
+});
+
+/**
+ * Claim a refund durably BEFORE calling Razorpay: one transaction inserts the ledger row
+ * (`campaign_refunds`, status requested, idempotency key UNIQUE) and increments refundedPaise under
+ * a conditional update. A double click, a retry or a second worker finds the row and does not claim
+ * again; a loser of the race hits the unique key and re-reads it.
+ */
+async function claimRefund(intent: RefundIntent, retried = false): Promise<Claim> {
+  if (!Number.isSafeInteger(intent.amountPaise) || intent.amountPaise <= 0) throw new AppError(400, "INVALID_AMOUNT", "The refund amount must be a positive number of paise.");
+  try {
+    return await prisma.$transaction(async (tx): Promise<Claim> => {
+      const pay = await tx.campaignPayment.findUnique({ where: { id: intent.paymentId } });
+      if (!pay?.razorpayPaymentId) throw new AppError(409, "NOT_CAPTURED", "There is no captured payment to refund.");
+
+      const prior = (await tx.campaignRefund.findMany({ where: { idempotencyKey: { startsWith: intent.key } }, orderBy: { createdAt: "asc" } })).filter((r) =>
+        isAttemptOf(r.idempotencyKey, intent.key),
+      );
+      const live = prior.find((r) => r.status !== "failed");
+      if (live) {
+        // The same intent again: whatever it is doing, it is not claimed a second time.
+        if (live.amountPaise !== intent.amountPaise) throw new AppError(409, "REFUND_CONFLICT", "A different refund for this is already in progress.");
+        return { kind: "existing", row: live };
+      }
+      // Only after the existing-intent check: an intent that already finished stays answerable once the payment is fully refunded.
+      if (!(REFUNDABLE_STATUSES as readonly string[]).includes(pay.status)) throw new AppError(409, "NOT_CAPTURED", "There is no captured payment to refund.");
+
+      if (refundableOn(pay, await reservedOn(tx, pay.id)) < intent.amountPaise) {
+        throw new AppError(409, "REFUND_CONFLICT", "This refund is larger than what's left, or another refund is in progress.");
+      }
+      const key = prior.length === 0 ? intent.key : `${intent.key}-r${prior.length + 1}`;
+      const row = await tx.campaignRefund.create({
+        data: {
+          idempotencyKey: key,
+          paymentId: pay.id,
+          razorpayPaymentId: pay.razorpayPaymentId,
+          bookingId: pay.bookingId,
+          bookingItemId: intent.itemId ?? null,
+          amountPaise: intent.amountPaise,
+          receipt: intent.receipt.slice(0, 40),
+          status: "requested",
+          origin: "ours",
+          reason: intent.reason.slice(0, 60),
+        },
+      });
+      const claim = await tx.campaignPayment.updateMany({
+        where: { id: pay.id, refundedPaise: pay.refundedPaise, status: { in: [...REFUNDABLE_STATUSES] } },
+        // A payment that is owed in full stays refund_due while the refund is in flight, so the sweep keeps owning it.
+        data: { refundedPaise: { increment: intent.amountPaise }, status: pay.status === "refund_due" ? "refund_due" : "refund_pending" },
+      });
+      if (claim.count !== 1) throw new AppError(409, "REFUND_CONFLICT", "This refund is larger than what's left, or another refund is in progress.");
+      return { kind: "claimed", row };
+    });
+  } catch (err: any) {
+    // Two callers with the same intent computed the same key; the loser re-reads the winner's row.
+    if (err?.code === "P2002" && !retried) return claimRefund(intent, true);
+    throw err;
+  }
+}
+
+/**
+ * Derive a payment's status from its ledger instead of trusting whoever wrote last:
+ *   everything refunded and nothing in flight → refunded; anything in flight → refund_pending;
+ *   otherwise it goes back to captured. `refund_due` (owed in full) only ends by being refunded, and
+ *   `refund_failed` stays until a later refund replaces it.
+ */
+async function resyncPaymentStatus(tx: Tx, paymentId: string, opts: { failed?: boolean } = {}) {
+  const pay = await tx.campaignPayment.findUnique({ where: { id: paymentId }, select: { status: true, amountPaise: true, refundedPaise: true } });
+  if (!pay || !((REFUNDABLE_STATUSES as readonly string[]).includes(pay.status) || pay.status === "refunded")) return;
+  const inflight = (await tx.campaignRefund.count({ where: { paymentId, status: { in: ["requested", "pending"] } } })) > 0;
+  const full = pay.refundedPaise >= pay.amountPaise;
+  let next: string;
+  if (full) next = inflight ? (pay.status === "refund_due" ? "refund_due" : "refund_pending") : "refunded";
+  else if (pay.status === "refund_due") next = "refund_due";
+  else if (inflight) next = "refund_pending";
+  else if (opts.failed || pay.status === "refunded") next = "refund_failed";
+  else next = pay.status === "refund_pending" ? "captured" : pay.status;
+  if (next !== pay.status) await tx.campaignPayment.update({ where: { id: paymentId }, data: { status: next } });
+}
+
+/**
+ * Give back a claim after Razorpay DEFINITELY refused (nothing was refunded). The ledger row is
+ * kept as `failed` for the audit trail; a later attempt of the same intent gets a fresh key.
+ */
+async function releaseRefundClaim(row: RefundRow, reason: string, actor: Actor, refundId?: string) {
+  await retryOnContention(() =>
+    prisma.$transaction(async (tx) => {
+      // ⚠️ LOCK ORDER: the payment row FIRST, then the refund row: the order reconcileRefunds (and
+      // recordRefund) take them in. The other way round, a release and a reconcile of the same
+      // payment can each hold what the other waits for, and Postgres kills one of them.
+      if (row.paymentId) await tx.$queryRaw`SELECT id FROM campaign_payments WHERE id = ${row.paymentId} FOR UPDATE`;
+      const flipped = await tx.campaignRefund.updateMany({
+        where: { id: row.id, status: { in: ["requested", "pending"] } },
+        data: { status: "failed", lastError: reason.slice(0, 500), lastCheckedAt: new Date(), ...(refundId ? { razorpayRefundId: refundId } : {}) },
+      });
+      if (flipped.count === 1 && row.paymentId) {
+        await tx.campaignPayment.update({ where: { id: row.paymentId }, data: { refundedPaise: { decrement: row.amountPaise } } });
+        await resyncPaymentStatus(tx, row.paymentId);
+      }
+      if (row.bookingId) await logBookingEvent(row.bookingId, actor, `Refund of ${row.amountPaise} paise FAILED: ${reason}`.slice(0, 500), tx);
+    }),
+  );
+}
+
+/**
+ * releaseRefundClaim after Razorpay DEFINITELY refused. If giving the claim back fails (a pool
+ * timeout, a second lost deadlock), that is logged and swallowed: the caller must still report
+ * the refusal (a raw database error would replace it), and the row stays `requested`, which the
+ * sweep reconciles and re-sends under the same key.
+ */
+async function releaseAfterRefusal(row: RefundRow, reason: string, actor: Actor, refundId?: string) {
+  try {
+    await releaseRefundClaim(row, reason, actor, refundId);
+  } catch (err) {
+    console.error(`[campaign] refund ${row.id} was refused by Razorpay but its claim could not be released yet (the sweep settles it): ${errorText(err)}`);
+  }
+}
+
+/** Razorpay did not answer (timeout, 5xx, 409, unreadable body): the claim STAYS, and nobody is told it failed. */
+async function keepRefundClaim(row: RefundRow, err: unknown, actor: Actor): Promise<RefundResult> {
+  await prisma.campaignRefund.update({ where: { id: row.id }, data: { lastError: errorText(err) } }).catch(() => undefined);
+  if (row.bookingId) await logBookingEvent(row.bookingId, actor, `Refund of ${row.amountPaise} paise requested — confirming with Razorpay.`).catch(() => undefined);
+  return { state: "confirming", refundId: null, ledgerId: row.id, amountPaise: row.amountPaise };
+}
+
+/** Razorpay answered: record the refund id and status on the ledger row and move the payment on. */
+async function recordRefund(row: RefundRow, refund: rzp.RazorpayRefund, actor: Actor): Promise<RefundResult> {
+  const processed = refund.status === "processed";
+  await prisma.$transaction(async (tx) => {
+    // Payment row first, as everywhere (see releaseRefundClaim).
+    if (row.paymentId) await tx.$queryRaw`SELECT id FROM campaign_payments WHERE id = ${row.paymentId} FOR UPDATE`;
+    // A webhook (reconcile) may have seen this refund before our own answer arrived and, unable to
+    // tie it to this row, filed it as external: fold the two into one.
+    const holder = await tx.campaignRefund.findUnique({ where: { razorpayRefundId: refund.id } });
+    if (holder && holder.id !== row.id && holder.origin === "external") await tx.campaignRefund.delete({ where: { id: holder.id } });
+    await tx.campaignRefund.update({
+      where: { id: row.id },
+      data: { razorpayRefundId: refund.id, status: processed ? "processed" : "pending", processedAt: processed ? new Date() : null, lastCheckedAt: new Date(), lastError: null },
+    });
+    if (row.paymentId) {
+      await tx.campaignPayment.update({ where: { id: row.paymentId }, data: { refundId: refund.id } });
+      await resyncPaymentStatus(tx, row.paymentId);
+    }
+    if (row.bookingId) await logBookingEvent(row.bookingId, actor, `Refund of ${row.amountPaise} paise issued (${refund.id}, ${refund.status}).`, tx);
+  });
+  if (row.bookingId) await maybeMarkRefunded(row.bookingId);
+  return { state: processed ? "processed" : "pending", refundId: refund.id, ledgerId: row.id, amountPaise: row.amountPaise };
+}
+
+/**
+ * Call Razorpay for a claimed ledger row. ⚠️ Three outcomes, never two:
+ *   • answered      → recorded (processed / pending);
+ *   • DEFINITELY refused (a 4xx, nothing sent) → the claim is released and the caller gets a 502;
+ *   • anything else (timeout, 5xx, 409, unreadable 2xx) → the claim is KEPT and `confirming` is
+ *     returned. Rolling back here would let the same money be refunded again while the first
+ *     request may still land; the key makes a re-send safe, and reconcileRefunds settles it.
+ */
+async function sendRefund(row: RefundRow, actor: Actor): Promise<RefundResult> {
+  let refund: rzp.RazorpayRefund;
+  try {
+    refund = await rzp.refundPayment(row.razorpayPaymentId, row.amountPaise, row.receipt ?? "", row.idempotencyKey ?? undefined);
+  } catch (err) {
+    if (rzp.isDefinitelyRejected(err)) {
+      await releaseAfterRefusal(row, errorText(err), actor);
+      throw new AppError(502, "REFUND_FAILED", REFUND_REFUSED);
+    }
+    return keepRefundClaim(row, err, actor);
+  }
+  if (refund.status === "failed") {
+    await releaseAfterRefusal(row, "Razorpay reported the refund as failed.", actor, refund.id);
+    throw new AppError(502, "REFUND_FAILED", REFUND_REFUSED);
+  }
+  try {
+    return await recordRefund(row, refund, actor);
+  } catch (err) {
+    // The refund exists at Razorpay and only our bookkeeping failed: leave the claim and let reconcile link it.
+    console.error(`[campaign] refund ${refund.id} issued but not recorded: ${errorText(err)}`);
+    return { state: "confirming", refundId: refund.id, ledgerId: row.id, amountPaise: row.amountPaise };
+  }
+}
+
+/**
+ * Refund part or all of one captured payment: claim durably (see claimRefund), call Razorpay with
+ * the intent's idempotency key, record the answer. A retry of the same intent finds its row and
+ * never refunds twice. See sendRefund for the three outcomes.
+ */
+export async function refundPaymentRow(paymentId: string, amountPaise: number, receipt: string, actor: Actor, opts: { key: string; reason: string; itemId?: string | null }): Promise<RefundResult> {
+  const claim = await claimRefund({ paymentId, amountPaise, receipt, key: opts.key, reason: opts.reason, itemId: opts.itemId });
+  if (claim.kind === "existing") return toResult(claim.row);
+  return sendRefund(claim.row, actor);
+}
+
+/** Return the whole of a payment that is `refund_due`. Used right after the capture commit and by the sweep. */
+async function issueDueRefund(paymentId: string, actor: Actor): Promise<RefundResult | null> {
+  const pay = await prisma.campaignPayment.findUnique({ where: { id: paymentId }, include: { booking: { select: { status: true } } } });
+  if (!pay?.razorpayPaymentId || pay.status !== "refund_due") return null;
+  const amount = refundableOn(pay, await reservedOn(prisma, pay.id));
+  if (amount <= 0) return null;
+  // ⚠️ The key depends on the payment only, never on the booking's state: that can change between attempts.
+  return refundPaymentRow(pay.id, amount, `stale:${pay.id}`, actor, {
+    key: `rf-stale-${pay.id}`,
+    reason: (PAYABLE_BOOKING_STATUSES as readonly string[]).includes(pay.booking.status) ? "outdated_order" : pay.booking.status === "rejected" ? "booking_rejected" : "duplicate_payment",
+  });
+}
+
+/** Refund everything still refundable on a booking's online payments (offline bookings have none). */
 export async function refundBookingInFull(bookingId: string, actor: Actor) {
   const pays = await prisma.campaignPayment.findMany({ where: { bookingId, razorpayPaymentId: { not: null } } });
+  const results: RefundResult[] = [];
   for (const p of pays) {
-    const left = p.amountPaise - p.refundedPaise;
-    if (left > 0 && (p.status === "captured" || p.status === "refund_failed")) {
-      await refundPaymentRow(p.id, left, `rej:${bookingId.slice(0, 30)}`, actor);
+    const left = refundableOn(p, await reservedOn(prisma, p.id));
+    if (left > 0 && (ITEM_REFUNDABLE_STATUSES as readonly string[]).includes(p.status)) {
+      results.push(await refundPaymentRow(p.id, left, `rej:${bookingId.slice(0, 30)}`, actor, { key: `rf-rej-${bookingId}-${p.id}`, reason: "booking_rejected" }));
     }
   }
   await maybeMarkRefunded(bookingId);
+  return results;
 }
 
-/** The booking's captured payment that can still cover `amount`. */
-export async function capturedPaymentFor(bookingId: string, amount: number) {
-  const pays = await prisma.campaignPayment.findMany({ where: { bookingId, razorpayPaymentId: { not: null }, status: { in: ["captured", "refund_failed"] } } });
-  return pays.find((p) => p.amountPaise - p.refundedPaise >= amount) ?? null;
+/**
+ * The booking's online payment that can still cover `amount`. `only` limits the search to the
+ * payments named (reject uses it for the ones it has just marked refund_due); without it,
+ * refund_due payments are never returned, so an item refund cannot spend money that is owed back.
+ */
+export async function capturedPaymentFor(bookingId: string, amount: number, opts: { only?: string[] } = {}) {
+  const pays = await prisma.campaignPayment.findMany({
+    where: {
+      bookingId,
+      razorpayPaymentId: { not: null },
+      ...(opts.only ? { id: { in: opts.only }, status: { in: [...REFUNDABLE_STATUSES] } } : { status: { in: [...ITEM_REFUNDABLE_STATUSES] } }),
+    },
+    orderBy: { createdAt: "asc" },
+  });
+  for (const p of pays) if (refundableOn(p, await reservedOn(prisma, p.id)) >= amount) return p;
+  return null;
+}
+
+export async function maybeMarkRefunded(bookingId: string) {
+  const b = await prisma.campaignBooking.findUnique({ where: { id: bookingId }, select: { status: true, payments: { select: { status: true } } } });
+  // A booking with no payment row at all (offline mode) has nothing to refund online, so it
+  // stays `rejected`: "refunded" would claim money went back that we never collected here.
+  const owing = ["captured", "refund_pending", "refund_failed", "refund_due"];
+  if (b?.status === "rejected" && b.payments.length > 0 && b.payments.every((p) => !owing.includes(p.status))) {
+    await transitionBooking(bookingId, ["rejected"], "refunded", { type: "system" }).catch(() => undefined);
+  }
+}
+
+// ── Reconciling refunds with Razorpay ───────────────────────────────────────────
+
+const ledgerStatus = (s: string) => (s === "processed" ? "processed" : s === "failed" ? "failed" : "pending");
+
+/**
+ * Make our books say what Razorpay says about one payment's refunds. Reads the payment's complete
+ * refund list (exact or it throws), then in one transaction:
+ *   • updates the status of every ledger row Razorpay knows;
+ *   • ties a refund we asked for but never heard back about (`requested`, no id) to Razorpay's
+ *     entry by amount and receipt;
+ *   • files every other refund as origin `external`: a refund we did not make is a dashboard click
+ *     or a dispute outcome, and it PAUSES the creator payouts of the payment that still have
+ *     something in flight (the money may no longer be there) and alerts staff;
+ *   • sets refundedPaise to Razorpay's total, plus claims of ours Razorpay has not listed yet.
+ *     Under-counting is the dangerous direction: it would let the same money be refunded twice.
+ * The payment row is locked first so a refund being claimed at the same moment is either seen or
+ * made against the new total.
+ */
+export async function reconcileRefunds(paymentId: string): Promise<{ refundedPaise: number; external: number }> {
+  const head = await prisma.campaignPayment.findUnique({ where: { id: paymentId }, select: { id: true, razorpayPaymentId: true } });
+  const razorpayPaymentId = head?.razorpayPaymentId;
+  if (!head || !razorpayPaymentId) return { refundedPaise: 0, external: 0 };
+  const list = await rzp.fetchPaymentRefunds(razorpayPaymentId);
+  const now = new Date();
+
+  const run = () =>
+    prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM campaign_payments WHERE id = ${paymentId} FOR UPDATE`;
+      const pay = await tx.campaignPayment.findUniqueOrThrow({ where: { id: paymentId } });
+      const rows = await tx.campaignRefund.findMany({ where: { razorpayPaymentId } });
+      const byRefundId = new Map(rows.filter((r) => r.razorpayRefundId).map((r) => [r.razorpayRefundId as string, r]));
+      const unlinked = rows.filter((r) => r.status === "requested" && !r.razorpayRefundId && r.origin === "ours");
+      const external: Array<{ id: string; amount: number }> = [];
+      const failedNow: Array<{ id: string; amount: number }> = [];
+
+      for (const r of list) {
+        const status = ledgerStatus(r.status);
+        const known = byRefundId.get(r.id);
+        if (known) {
+          const regress = known.status === "processed" && status === "pending";
+          if (known.status !== status && !regress) {
+            await tx.campaignRefund.update({ where: { id: known.id }, data: { status, processedAt: status === "processed" ? known.processedAt ?? now : known.processedAt, lastCheckedAt: now } });
+            if (status === "failed" && known.origin === "ours") failedNow.push({ id: r.id, amount: r.amount });
+          } else {
+            await tx.campaignRefund.update({ where: { id: known.id }, data: { lastCheckedAt: now } });
+          }
+          continue;
+        }
+        const idx = unlinked.findIndex((u) => u.amountPaise === r.amount && (!r.receipt || u.receipt === r.receipt.slice(0, 40)));
+        if (idx >= 0) {
+          const [ours] = unlinked.splice(idx, 1);
+          await tx.campaignRefund.update({ where: { id: ours.id }, data: { razorpayRefundId: r.id, status, processedAt: status === "processed" ? now : null, lastCheckedAt: now, lastError: null } });
+          if (status === "failed") failedNow.push({ id: r.id, amount: r.amount });
+          continue;
+        }
+        await tx.campaignRefund.create({
+          data: {
+            razorpayRefundId: r.id,
+            paymentId: pay.id,
+            razorpayPaymentId,
+            bookingId: pay.bookingId,
+            amountPaise: r.amount,
+            receipt: r.receipt ? r.receipt.slice(0, 100) : null,
+            status,
+            origin: "external",
+            reason: "external",
+            processedAt: status === "processed" ? now : null,
+            lastCheckedAt: now,
+          },
+        });
+        if (status !== "failed") external.push({ id: r.id, amount: r.amount });
+      }
+
+      // Our own claims Razorpay has not listed: counted, never dropped (the list can lag), and stamped so the sweep paces itself.
+      const listed = new Set(list.map((r) => r.id));
+      let total = rzp.refundedTotalPaise(list);
+      for (const r of rows) {
+        if (r.razorpayRefundId && !listed.has(r.razorpayRefundId) && r.status !== "failed") total += r.amountPaise;
+      }
+      for (const u of unlinked) {
+        total += u.amountPaise;
+        await tx.campaignRefund.update({ where: { id: u.id }, data: { lastCheckedAt: now } });
+      }
+      await tx.campaignPayment.update({
+        where: { id: pay.id },
+        data: { refundedPaise: total, ...(pay.lastEvent === RECONCILE_MARKER ? { lastEvent: "refund.reconciled" } : {}) },
+      });
+      await resyncPaymentStatus(tx, pay.id, { failed: failedNow.length > 0 });
+
+      if (external.length > 0) {
+        // ⚠️ Same transaction as the ledger row: once the refund is on the ledger it counts as known, so the pause must not be able to be lost.
+        // The dispute handler's rule, in one shared place: only payouts with something in flight, and a
+        // payout that is already paused keeps its first reason (see services/creator/payout-pause.ts).
+        const paused = await pausePayoutsOfPayment(tx, razorpayPaymentId, {
+          reason: "external_refund",
+          actorType: "system",
+          note: "Paused: a refund we did not issue was found on the payment.",
+          at: now,
+        });
+        await logBookingEvent(
+          pay.bookingId,
+          { type: "system" },
+          `Refund of ${external.reduce((s, e) => s + e.amount, 0)} paise found on the payment that we did not issue${paused > 0 ? `; ${paused} creator payout(s) paused` : ""}.`,
+          tx,
+        );
+      }
+      for (const f of failedNow) await logBookingEvent(pay.bookingId, { type: "system" }, `Refund ${f.id} (${f.amount} paise) failed at Razorpay.`, tx);
+      return { bookingId: pay.bookingId, total, external, failedNow };
+    });
+
+  let out: Awaited<ReturnType<typeof run>>;
+  try {
+    out = await run();
+  } catch (err: any) {
+    // The same external refund filed by a concurrent reconcile (unique refund id): the second pass sees it as known.
+    // A deadlock or write conflict rolled the whole pass back: it is run again, once.
+    if (err?.code === "P2002" || isContention(err)) out = await run();
+    else throw err;
+  }
+
+  if (out.external.length > 0 || out.failedNow.length > 0) {
+    const booking = await prisma.campaignBooking.findUnique({ where: { id: out.bookingId }, select: { name: true } });
+    for (const e of out.external) {
+      alertStaff(
+        "Refund found on a campaign payment that we did not issue",
+        [
+          { label: "Campaign", value: booking?.name ?? out.bookingId },
+          { label: "Refund", value: e.id },
+          { label: "Amount", value: formatPaise(e.amount) },
+          { label: "Creator payouts", value: "Paused until someone reviews this." },
+        ],
+        `/campaigns/${out.bookingId}`,
+      );
+    }
+    for (const f of out.failedNow) {
+      alertStaff(
+        "A campaign refund failed at Razorpay",
+        [
+          { label: "Campaign", value: booking?.name ?? out.bookingId },
+          { label: "Refund", value: f.id },
+          { label: "Amount", value: formatPaise(f.amount) },
+          // Honest about what the system does and does not do: an item refund is issued again by the sweep (see resendFailedItemRefunds); nothing else is.
+          { label: "What happens next", value: "An item refund is issued again automatically (up to 5 attempts) and you are told if it keeps failing. If the brand has still not been repaid, check the payment in Razorpay." },
+        ],
+        `/campaigns/${out.bookingId}`,
+      );
+    }
+  }
+  await maybeMarkRefunded(out.bookingId);
+  return { refundedPaise: out.total, external: out.external.length };
+}
+
+async function onRefundEvent(r: any, event: string): Promise<WebhookResult> {
+  const razorpayPaymentId = String(r?.payment_id ?? "");
+  const pay = razorpayPaymentId ? await prisma.campaignPayment.findFirst({ where: { razorpayPaymentId } }) : null;
+  if (!pay) return { handled: false, note: "unknown payment" };
+  // Leave a marker: the sweep re-reads this payment until a reconcile succeeds (and a reconcile that runs clears it).
+  const defer = async (): Promise<WebhookResult> => {
+    await prisma.campaignPayment.update({ where: { id: pay.id }, data: { lastEvent: RECONCILE_MARKER } }).catch(() => undefined);
+    return { handled: true, note: "reconcile deferred" };
+  };
+  try {
+    // Razorpay's list is the truth, not the single event: a refund event can be late, out of order or about a refund we never made.
+    // ⚠️ It reads up to five pages from Razorpay, 15 s each, and Razorpay gives a webhook 5 seconds [R28]
+    // (a slow answer is a failed delivery, and a webhook that keeps failing is disabled), so it gets the
+    // same deadline as the refund call in onCaptured. A reconcile that is still running keeps going in
+    // the background (it is idempotent and takes the payment lock); the marker covers it if it fails.
+    const reconciling = reconcileRefunds(pay.id);
+    const first = await withinDeadline(reconciling, refundTuning.inlineDeadlineMs);
+    if (first.done) return { handled: true };
+    void reconciling.catch((err) => console.error(`[campaign] refund event ${event} reconcile failed after the deadline: ${errorText(err)}`));
+    return await defer();
+  } catch (err) {
+    // The list could not be read right now. Answer 2xx anyway (a failing webhook gets disabled).
+    console.error(`[campaign] refund event ${event} could not be reconciled yet: ${errorText(err)}`);
+    return defer();
+  }
+}
+
+// ── The refund sweep ────────────────────────────────────────────────────────────
+
+const DUE_MIN_AGE_MS = 60_000; // let the request that just made a payment refund_due finish its own refund first
+const REQUESTED_FIRST_LOOK_MS = 2 * 60_000;
+const REQUESTED_EVERY_MS = 3 * 60_000;
+const PENDING_EVERY_MS = 10 * 60_000;
+const RESUME_AFTER_MS = 5 * 60_000;
+const DUE_ALERT_AFTER_ATTEMPTS = 3;
+
+export interface RefundSweepStats {
+  issued: number;
+  reconciled: number;
+  resumed: number;
+  errors: number;
+}
+
+/**
+ * Finish refunds that were interrupted. Bounded and idempotent: every refund goes through the same
+ * claim, the same stable keys and the same reconcile as a request would, so running it twice, or
+ * while a request is in flight, cannot refund anything twice.
+ *   1. A payment left `refund_due` (a crash after the commit, or a refusal) is refunded in full. After
+ *      a refusal it backs off 5 minutes per failure (cap 1 hour) and staff are told at the third.
+ *   2. A refund we asked for and never heard back about, or that Razorpay has not finished, is
+ *      reconciled against Razorpay's list; one Razorpay does not list after 5 minutes is re-sent
+ *      with the SAME key (safe, and the list says it never arrived).
+ *   3. A payment marked by a refund event whose list could not be read is reconciled.
+ *   4. An ITEM refund that failed (refused on a re-send, or accepted and then failed at Razorpay) is
+ *      issued again, under the same intent, with the same backoff and alert as step 1. See
+ *      resendFailedItemRefunds for why it keys off the ledger and when it stands down.
+ */
+export async function sweepRefundDue(opts: { limit?: number; now?: Date } = {}): Promise<RefundSweepStats> {
+  const stats: RefundSweepStats = { issued: 0, reconciled: 0, resumed: 0, errors: 0 };
+  // No keys, no online payments, nothing to finish; and a missing key must not be mistaken for a refusal.
+  if (!razorpayConfig.configured()) return stats;
+  const now = opts.now ?? new Date();
+  const limit = Math.max(1, Math.min(opts.limit ?? 10, 50));
+  const ago = (ms: number) => new Date(now.getTime() - ms);
+  const system: Actor = { type: "system" };
+
+  // 1. Owed in full.
+  const due = await prisma.campaignPayment.findMany({
+    where: { status: "refund_due", razorpayPaymentId: { not: null }, updatedAt: { lt: ago(DUE_MIN_AGE_MS) } },
+    orderBy: { updatedAt: "asc" },
+    take: limit,
+  });
+  for (const p of due) {
+    if (refundableOn(p) <= 0) continue; // a refund for all of it is already in flight
+    const failed = await prisma.campaignRefund.findMany({ where: { idempotencyKey: { startsWith: `rf-stale-${p.id}` }, status: "failed" }, orderBy: { updatedAt: "desc" }, select: { updatedAt: true, idempotencyKey: true } });
+    const attempts = failed.filter((f) => isAttemptOf(f.idempotencyKey, `rf-stale-${p.id}`));
+    if (attempts.length > 0 && attempts[0].updatedAt.getTime() + Math.min(60, 5 * attempts.length) * 60_000 > now.getTime()) continue;
+    try {
+      if (await issueDueRefund(p.id, system)) stats.issued++;
+    } catch (err) {
+      stats.errors++;
+      if (attempts.length + 1 === DUE_ALERT_AFTER_ATTEMPTS) {
+        alertStaff(
+          "A campaign refund keeps failing",
+          [
+            { label: "Payment", value: p.razorpayPaymentId ?? p.id },
+            { label: "Amount", value: formatPaise(refundableOn(p)) },
+            { label: "Last error", value: errorText(err) },
+          ],
+          `/campaigns/${p.bookingId}`,
+        );
+      }
+    }
+  }
+
+  // 2 + 3. Reconcile what is in flight, or was flagged.
+  const inflight = await prisma.campaignRefund.findMany({
+    where: {
+      origin: "ours",
+      paymentId: { not: null },
+      OR: [
+        { status: "requested", createdAt: { lt: ago(REQUESTED_FIRST_LOOK_MS) }, OR: [{ lastCheckedAt: null }, { lastCheckedAt: { lt: ago(REQUESTED_EVERY_MS) } }] },
+        { status: "pending", OR: [{ lastCheckedAt: null }, { lastCheckedAt: { lt: ago(PENDING_EVERY_MS) } }] },
+      ],
+    },
+    select: { paymentId: true },
+    distinct: ["paymentId"],
+    take: limit,
+  });
+  const marked = await prisma.campaignPayment.findMany({ where: { lastEvent: RECONCILE_MARKER, updatedAt: { lt: ago(DUE_MIN_AGE_MS) } }, select: { id: true }, take: limit });
+  const ids = [...new Set([...inflight.map((r) => r.paymentId as string), ...marked.map((p) => p.id)])].slice(0, limit);
+  for (const id of ids) {
+    try {
+      await reconcileRefunds(id);
+      stats.reconciled++;
+      const stuck = await prisma.campaignRefund.findMany({ where: { paymentId: id, origin: "ours", status: "requested", razorpayRefundId: null, createdAt: { lt: ago(RESUME_AFTER_MS) } } });
+      for (const row of stuck) {
+        try {
+          await sendRefund(row, system);
+          stats.resumed++;
+        } catch (err) {
+          stats.errors++;
+          alertStaff(
+            "A campaign refund could not be completed",
+            [
+              { label: "Campaign", value: row.bookingId ?? "" },
+              { label: "Amount", value: formatPaise(row.amountPaise) },
+              { label: "Reason", value: errorText(err) },
+            ],
+            row.bookingId ? `/campaigns/${row.bookingId}` : undefined,
+          );
+        }
+      }
+    } catch (err) {
+      stats.errors++;
+      console.error(`[campaign-refunds] reconcile failed: ${errorText(err)}`);
+    }
+  }
+
+  // 4. After 2 + 3, so a refund those steps just found failed is seen in this same tick.
+  try {
+    await resendFailedItemRefunds(now, limit, stats);
+  } catch (err) {
+    stats.errors++;
+    console.error(`[campaign-refunds] item refund retry failed: ${errorText(err)}`);
+  }
+  return stats;
+}
+
+// ── Failed item refunds ─────────────────────────────────────────────────────────
+
+/** A failed item refund is retried for this long after its last failure, and then left to staff (the alert has long since gone out). */
+const ITEM_REFUND_RETRY_WINDOW_MS = 14 * 24 * 3600_000;
+/** After this many failed attempts of one item refund staff are told to refund it by hand and the sweep stops. */
+const ITEM_REFUND_MAX_AUTO_ATTEMPTS = 5;
+
+/** Alerts that skip or give up on an item refund are sent once per row per process, not once a minute. */
+const itemRefundAlerted = new Set<string>();
+function firstTime(key: string): boolean {
+  if (itemRefundAlerted.has(key)) return false;
+  if (itemRefundAlerted.size > 500) itemRefundAlerted.clear();
+  itemRefundAlerted.add(key);
+  return true;
+}
+
+/**
+ * Step 4 of the sweep. An item that staff refunded stays `refunded` for good, so if the refund then
+ * FAILS (Razorpay accepted it and failed it later, or refused a re-send of an unanswered one) nothing
+ * else would ever return that money: the item has no retry button, and the payment is not
+ * `refund_due`. The ledger is what knows, so this keys off it, never off the item's status alone.
+ *
+ * A failed, item-bound `item_refunded` row whose intent (`rf-item-<id>`, `-r2` …) has no LATER attempt
+ * that is not failed is issued again through the same claim and keys as a click would (the claim
+ * gives the new attempt its `-rN`). It stands down, and says so once, when
+ *   • the item is no longer `refunded` (staff reopened it: they retry from the portal), or
+ *   • the payment is owed in full (`refund_due`: step 1 refunds the whole remainder, this item
+ *     included, so refunding it here too would pay it twice) or nothing is left to refund, or
+ *   • a refund we did not issue was filed on the payment after the failed attempt began (staff
+ *     probably refunded it from the Razorpay dashboard: a re-send could pay the brand twice).
+ * Backoff is 5 minutes per failure (cap 1 hour); staff are alerted at the third failed attempt; it
+ * gives up after ITEM_REFUND_MAX_AUTO_ATTEMPTS, because an asynchronously failed refund is usually
+ * a destination problem that retrying will not fix.
+ */
+async function resendFailedItemRefunds(now: Date, limit: number, stats: RefundSweepStats) {
+  const system: Actor = { type: "system" };
+  const failedRecently = await prisma.campaignRefund.findMany({
+    where: {
+      origin: "ours",
+      status: "failed",
+      reason: "item_refunded",
+      bookingItemId: { not: null },
+      paymentId: { not: null },
+      updatedAt: { gt: new Date(now.getTime() - ITEM_REFUND_RETRY_WINDOW_MS) },
+    },
+    orderBy: { updatedAt: "asc" },
+    select: { bookingItemId: true },
+    distinct: ["bookingItemId"],
+    take: 200,
+  });
+  const itemIds = failedRecently.map((r) => r.bookingItemId as string);
+  if (itemIds.length === 0) return;
+
+  const all = await prisma.campaignRefund.findMany({ where: { bookingItemId: { in: itemIds }, origin: "ours" }, orderBy: { createdAt: "asc" } });
+  let handled = 0;
+  for (const itemId of itemIds) {
+    if (handled >= limit) break;
+    const key = `rf-item-${itemId}`;
+    const attempts = all.filter((r) => r.bookingItemId === itemId && isAttemptOf(r.idempotencyKey, key));
+    // A later attempt that is not failed (in flight or done) means the money is, or is being, returned.
+    if (attempts.length === 0 || attempts.some((r) => r.status !== "failed")) continue;
+    const last = attempts.reduce((a, b) => (b.updatedAt.getTime() > a.updatedAt.getTime() ? b : a));
+    if (last.updatedAt.getTime() + Math.min(60, 5 * attempts.length) * 60_000 > now.getTime()) continue;
+
+    const [item, pay] = await Promise.all([
+      prisma.campaignBookingItem.findUnique({ where: { id: itemId }, select: { status: true, accountName: true, bookingId: true } }),
+      prisma.campaignPayment.findUnique({ where: { id: last.paymentId as string } }),
+    ]);
+    if (!item || !pay || item.status !== "refunded") continue;
+    if (!(ITEM_REFUNDABLE_STATUSES as readonly string[]).includes(pay.status)) continue;
+    handled++;
+
+    const campaign = async () => (await prisma.campaignBooking.findUnique({ where: { id: item.bookingId }, select: { name: true } }))?.name ?? item.bookingId;
+    const detail = async (reason: string) => [
+      { label: "Campaign", value: await campaign() },
+      { label: "Account", value: item.accountName },
+      { label: "Amount", value: formatPaise(last.amountPaise) },
+      { label: "What to do", value: reason },
+    ];
+    const path = `/campaigns/${item.bookingId}`;
+
+    if (attempts.length >= ITEM_REFUND_MAX_AUTO_ATTEMPTS) {
+      if (firstTime(`giveup:${last.id}`)) alertStaff("A campaign item refund needs a manual refund", await detail(`It failed ${attempts.length} times and is no longer retried automatically. Refund it from the Razorpay dashboard.`), path);
+      continue;
+    }
+    const externalAfter = await prisma.campaignRefund.count({ where: { paymentId: pay.id, origin: "external", status: { not: "failed" }, createdAt: { gt: last.createdAt } } });
+    if (externalAfter > 0) {
+      if (firstTime(`external:${last.id}`)) {
+        alertStaff("A failed campaign item refund was not re-sent", await detail("A refund we did not issue was found on the payment after this one failed, so sending it again could refund the brand twice. Check the payment in Razorpay."), path);
+      }
+      continue;
+    }
+
+    try {
+      await logBookingEvent(item.bookingId, system, `Re-sending the refund for ${item.accountName} (attempt ${attempts.length + 1}) after the last one failed.`);
+      await refundPaymentRow(pay.id, last.amountPaise, `item:${itemId.slice(0, 30)}`, system, { key, reason: "item_refunded", itemId });
+      stats.issued++;
+    } catch (err) {
+      stats.errors++;
+      // A refusal is a failed attempt (it left a row); anything else (no headroom, a database error) left nothing behind.
+      const refused = err instanceof AppError && err.code === "REFUND_FAILED";
+      if (refused ? attempts.length + 1 === DUE_ALERT_AFTER_ATTEMPTS : firstTime(`blocked:${last.id}`)) {
+        alertStaff("A campaign refund keeps failing", [...(await detail("Check the payment in Razorpay and refund it by hand if needed.")), { label: "Last error", value: errorText(err) }], path);
+      }
+    }
+  }
 }

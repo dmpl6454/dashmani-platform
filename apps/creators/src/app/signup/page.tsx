@@ -11,7 +11,7 @@ import { nextQueryFor, safeNext } from "@/lib/safe-next";
 import { useHydrated } from "@/lib/use-hydrated";
 import type { CreatorSession } from "@/lib/types";
 import {
-  AuthCheck, AuthCountry, AuthFallback, AuthField, AuthShell, AuthTabs, PasswordMeter,
+  AuthCheck, AuthCountry, AuthFallback, AuthField, AuthShell, AuthTabs, PAID_BOOKINGS_NOTE, PasswordMeter,
 } from "@/components/auth/shared";
 import { GoogleSignIn } from "@/components/auth/google-signin";
 
@@ -118,9 +118,10 @@ function SignupForm() {
   return (
     <AuthShell
       kicker="Creator portal · Join"
-      title={<>Get <em>booked.</em></>}
+      title={<>Get <em>ready.</em></>}
       lines={[
-        <>Brands and agencies will book promotion on your page through Digital Sukoon. You name your asking price and see your payout before you accept.</>,
+        <>Connect your Facebook Page or Instagram professional account and our team reviews it. Paid bookings are coming soon.</>,
+        <>Anyone can join; paid bookings will need a PAN and an Indian bank account.</>,
         <>Nothing is posted without your approval, and you can disconnect at any time.</>,
         <>Already a creator? <Link href={signInHref}>Sign in</Link>.</>,
       ]}
@@ -147,7 +148,9 @@ function SignupForm() {
                 showPass={showPass} onToggleShowPass={() => setShowPass((s) => !s)} />
               <PasswordMeter password={password} />
             </div>
-            <AuthCountry id="scountry" value={country} onChange={(v) => { setCountry(v); clear("country"); }} error={errors.country ?? null} />
+            {/* The India requirement is stated here, before Facebook is ever connected, and not only in the
+                side panel — on a phone the panel sits below the form. */}
+            <AuthCountry id="scountry" value={country} onChange={(v) => { setCountry(v); clear("country"); }} error={errors.country ?? null} hint={PAID_BOOKINGS_NOTE} />
 
             <AuthCheck id="sterms" checked={terms} onChange={(v) => { setTerms(v); clear("acceptTerms"); }} error={errors.acceptTerms ?? null}>
               I agree to the <Link href="/terms" target="_blank">creator terms</Link> and the <Link href="/privacy" target="_blank">privacy policy</Link>.

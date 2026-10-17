@@ -61,8 +61,8 @@ function LoginForm() {
       kicker="Creator portal · Sign in"
       title={<>Your page,<br /><em>your call.</em></>}
       lines={[
-        <>Connect your Facebook Page or Instagram professional account; once our team approves it, brands will be able to book promotion on it.</>,
-        <>You approve every booking before anything is posted.</>,
+        <>Connect your Facebook Page or Instagram professional account and our team reviews it. Paid bookings are coming soon; they will need a PAN and an Indian bank account.</>,
+        <>When bookings open, you approve every one before anything is posted.</>,
         <>New here? <Link href={signUpHref}>Create a creator account</Link>.</>,
       ]}
     >

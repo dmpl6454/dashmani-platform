@@ -2,7 +2,8 @@ import { prisma, Prisma } from "@dashmani/db";
 import type { CampaignDispute, CreatorPayout } from "@dashmani/db";
 import { scrubPayoutObject, scrubPayoutSecrets } from "../../utils/payout-scrub";
 import { parseRazorpaySettlement } from "./razorpay";
-import { PAYOUT_STATUSES, PAUSABLE_STATUSES, mapTransferEvent, type PayoutStatus, type TransferFacts, type TransferMove } from "../creator/payout-states";
+import { PAYOUT_STATUSES, mapTransferEvent, type PayoutStatus, type TransferFacts, type TransferMove } from "../creator/payout-states";
+import { pausePayoutsOfPaymentRows, type PausedPayout } from "../creator/payout-pause";
 import { alertStaffOncePerHour } from "../creator/payout-alert";
 
 // Razorpay Route webhooks: transfers, settlements, linked-account (product) status, and
@@ -348,7 +349,7 @@ function mismatchOf(row: PayoutRow, read: TransferRead): string | null {
   return null;
 }
 
-function transferData(move: TransferMove, read: TransferRead): Prisma.CreatorPayoutUpdateManyMutationInput {
+function transferData(move: TransferMove, read: TransferRead, at: Date): Prisma.CreatorPayoutUpdateManyMutationInput {
   const f = read.facts;
   const data: Prisma.CreatorPayoutUpdateManyMutationInput = {};
   if (f.status) data.transferStatus = f.status;
@@ -365,9 +366,23 @@ function transferData(move: TransferMove, read: TransferRead): Prisma.CreatorPay
     // Razorpay's error text is scrubbed (it can quote a value we sent); the code is what staff filter on.
     data.errorCode = read.error?.reason ?? read.error?.code ?? "transfer_failed";
     data.lastError = (read.error?.description ?? "Razorpay reported the transfer failed.").slice(0, 500);
-  } else {
+  } else if (move.to === "reversed") {
+    // ⚠️ A reversal WE asked for (reversal_requested) that Razorpay now shows complete is the happy
+    // end of that path, not an error: no error fields, no alert (mapTransferEvent sets none). The
+    // columns the Phase 4 reversal executor's own confirm step would write are filled here too,
+    // because that step is a conditional update on reversal_requested and no-ops once this event
+    // has won the race. amount_reversed is written only when the event reported it, never defaulted
+    // to 0. transfer_status says what the amounts prove: the event's own label (processed or
+    // failed) is stale once the whole transfer has come back.
+    data.errorCode = null;
+    data.lastError = null;
+    data.reversedAt = at;
+    if (f.amountReversed !== null) data.amountReversedPaise = f.amountReversed;
+    data.transferStatus = "reversed";
+  } else if (move.to === "needs_attention") {
     data.errorCode = move.reason;
-    data.lastError = REASON_TEXT[move.reason] ?? "Razorpay's facts need a human look.";
+    // Never claims a human is needed for a reason it has no text for: the stable code is shown instead.
+    data.lastError = REASON_TEXT[move.reason] ?? move.reason;
   }
   return data;
 }
@@ -400,7 +415,7 @@ async function onTransferEvent(name: string, evt: any, eventId?: string): Promis
         to: "needs_attention",
         from: ["transfer_requested"],
         where: { razorpayTransferId: read.id },
-        data: transferData(move, read),
+        data: transferData(move, read, eventTime(evt)),
         kind: "transfer",
         note: `${name}: transfer_mismatch (${bad})`,
         eventId,
@@ -419,7 +434,7 @@ async function onTransferEvent(name: string, evt: any, eventId?: string): Promis
     to: move.to,
     from,
     where: { razorpayTransferId: read.id },
-    data: transferData(move, read),
+    data: transferData(move, read, eventTime(evt)),
     kind: "transfer",
     note: `${name}: ${move.reason}`,
     eventId,
@@ -606,46 +621,6 @@ function mergeDisputeStatus(existing: { status: string; closedAt: Date | null } 
   return existing.status === "closed" ? incoming : existing.status;
 }
 
-type PausedRow = { id: string; status: string };
-
-/**
- * Pauses every payout of the payment that still has something in flight, INSIDE the caller's
- * transaction (the dispute row is already written by then, so a dispute row always implies its
- * pauses). Un-pausing is NEVER automatic: a won dispute still needs a staff action. A payout
- * already paused for another reason keeps that reason: the single reason column cannot hold two.
- *
- * The rows are locked first, in id order (so two disputes on one payment cannot deadlock each
- * other, and a transfer event cannot move a row between our read and our write), and the audit
- * row names the status the pause really sat on. One statement pauses them all, one inserts the
- * audit rows: a failure anywhere rolls the whole event back.
- */
-async function pausePayouts(tx: Prisma.TransactionClient, paymentId: string, name: string, eventId?: string): Promise<PausedRow[]> {
-  const rows = await tx.$queryRaw<Array<{ id: string; booking_id: string; status: string; amount_paise: number }>>`
-    SELECT id, booking_id, status, amount_paise FROM creator_payouts
-    WHERE razorpay_payment_id = ${paymentId} AND paused_at IS NULL AND status = ANY(${[...PAUSABLE_STATUSES]})
-    ORDER BY id
-    FOR UPDATE`;
-  if (rows.length === 0) return [];
-  await tx.creatorPayout.updateMany({
-    where: { id: { in: rows.map((r) => r.id) }, pausedAt: null, status: { in: [...PAUSABLE_STATUSES] } },
-    data: { pausedAt: new Date(), pausedReason: "dispute" },
-  });
-  await tx.creatorPayoutEvent.createMany({
-    data: rows.map((r) => ({
-      payoutId: r.id,
-      bookingId: r.booking_id,
-      kind: "pause",
-      fromStatus: r.status,
-      toStatus: r.status,
-      amountPaise: r.amount_paise,
-      actorType: "razorpay",
-      razorpayEventId: eventId ? eventId.slice(0, 100) : null,
-      note: `${name}: paused while the dispute is open; staff must resume it`,
-    })),
-  });
-  return rows.map((r) => ({ id: r.id, status: r.status }));
-}
-
 type DisputeFields = Omit<Prisma.CampaignDisputeUncheckedCreateInput, "id" | "razorpayDisputeId" | "createdAt" | "updatedAt">;
 
 function disputeChanged(existing: CampaignDispute, f: DisputeFields): boolean {
@@ -723,8 +698,19 @@ async function onDisputeEvent(name: string, evt: any, eventId?: string): Promise
       changed = disputeChanged(existing, fields);
       if (changed) await tx.campaignDispute.update({ where: { razorpayDisputeId: disputeId }, data: fields });
     }
-    // 2. The pauses it implies. Only an open dispute pauses; a closed one never un-pauses.
-    const paused = DISPUTE_CLOSED.has(fields.status) ? [] : await pausePayouts(tx, paymentId, name, eventId);
+    // 2. The pauses it implies, through the shared rule (services/creator/payout-pause.ts): only
+    // payouts with something in flight, a payout already paused for another reason keeps that
+    // reason, rows locked in id order, one audit row per payout this call paused. The dispute row
+    // is already written, so a dispute row always implies its pauses. Only an open dispute
+    // pauses; a closed one never un-pauses, and un-pausing is never automatic.
+    const paused: PausedPayout[] = DISPUTE_CLOSED.has(fields.status)
+      ? []
+      : await pausePayoutsOfPaymentRows(tx, paymentId, {
+          reason: "dispute",
+          actorType: "razorpay",
+          note: `${name}: paused while the dispute is open; staff must resume it`,
+          eventId,
+        });
     return { created, existing, fields, changed, paused };
   });
 
@@ -749,7 +735,7 @@ async function onDisputeEvent(name: string, evt: any, eventId?: string): Promise
  * campaign_disputes (a tiny set) covers it; adding alerted_status / alerted_at to
  * campaign_disputes is an additive change for that phase's own DDL cycle.
  */
-function alertDispute(a: { disputeId: string; paymentId: string; bookingId: string | null; status: string; amount: number | null; paused: PausedRow[] }): void {
+function alertDispute(a: { disputeId: string; paymentId: string; bookingId: string | null; status: string; amount: number | null; paused: PausedPayout[] }): void {
   const open = !DISPUTE_CLOSED.has(a.status);
   const lifted = a.paused.filter((p) => HOLD_LIFTED.has(p.status)).length;
   alertStaffOncePerHour(

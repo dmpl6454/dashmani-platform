@@ -73,22 +73,108 @@ const dateOnly = (d: Date) => d.toLocaleDateString("en-IN", { day: "numeric", mo
 const isLive = (status: string) => (LIVE_ITEM_STATUSES as readonly string[]).includes(status as ItemStatus);
 
 /**
- * Which of these items have a refund Razorpay has ACCEPTED: a ledger row of ours that is processed
- * or pending. THE one predicate behind every "refunded" a client reads (this file's delivery email
- * and results, and the booking shape the portal renders), so an email and the portal can never
- * disagree about the same item. An item is marked `refunded` BEFORE Razorpay answers, and stays so
- * if the refund fails or is never confirmed, so its status alone proves nothing: a failed or
- * unanswered refund is not in this set, and that money is still being returned by our team.
+ * Which of these items have had their money returned, as far as Razorpay has told us: a ledger row
+ * of ours that is processed or pending. THE one predicate behind every "refunded" a client reads
+ * (this file's delivery email and results, and the booking shape the portal renders), so an email
+ * and the portal can never disagree about the same item. An item is marked `refunded` BEFORE
+ * Razorpay answers, and stays so if the refund fails or is never confirmed, so its status alone
+ * proves nothing: a failed or unanswered refund is not in this set, and that money is still being
+ * returned by our team.
+ *
+ * Two ways in, and only these:
+ *   • the item's OWN refund (a row carrying its id) is processed or pending;
+ *   • the item's own refund FAILED and the money came back in the payment's remainder instead (see
+ *     coveredByPaymentRefund): the sweep refunds what a rejected booking still owes as ONE refund
+ *     that carries no item id, so without this the item reads "being returned" for ever.
+ * A refund we did not issue (a dashboard refund) is neither: it never makes an item read refunded.
+ * Callers pass every `refunded` item of a booking, and only of a booking that was paid online (see
+ * confirmedRefundsFor): an offline booking has no ledger rows to read.
  */
 export async function confirmedRefundItemIds(itemIds: string[]): Promise<Set<string>> {
   const confirmed = new Set<string>();
   if (itemIds.length === 0) return confirmed;
-  const ledger = await prisma.campaignRefund.findMany({
-    where: { bookingItemId: { in: itemIds }, origin: "ours", status: { in: ["processed", "pending"] } },
-    select: { bookingItemId: true },
+  const own = await prisma.campaignRefund.findMany({
+    where: { bookingItemId: { in: itemIds }, origin: "ours" },
+    select: { bookingItemId: true, status: true },
   });
-  for (const r of ledger) if (r.bookingItemId) confirmed.add(r.bookingItemId);
+  // Per item: has a refund Razorpay accepted, has one still unanswered, or has only failed ones.
+  const stateOf = new Map<string, "accepted" | "unanswered" | "failed">();
+  for (const r of own) {
+    const id = r.bookingItemId as string;
+    if (r.status === "processed" || r.status === "pending") stateOf.set(id, "accepted");
+    else if (r.status === "requested") {
+      if (stateOf.get(id) !== "accepted") stateOf.set(id, "unanswered");
+    } else if (!stateOf.has(id)) stateOf.set(id, "failed");
+  }
+  for (const [id, state] of stateOf) if (state === "accepted") confirmed.add(id);
+  const failedOnly = itemIds.filter((id) => stateOf.get(id) === "failed");
+  if (failedOnly.length > 0) for (const id of await coveredByPaymentRefund(failedOnly)) confirmed.add(id);
   return confirmed;
+}
+
+/**
+ * Of items whose own refunds all failed: the ones whose money the payment's remainder refund has
+ * already returned. The sweep refunds what a REJECTED booking still owes under `rf-stale-<payment>`
+ * with no item id, so that row's amount is what it can vouch for. An item counts only when
+ *   • its booking is `rejected` or `refunded` (the only bookings whose remainder is refunded this way;
+ *     a duplicate or outdated payment's refund carries another reason and is never read here),
+ *   • the item has no live or finished row of its own (those decide for it), and
+ *   • the item-less rejection refunds of the payment its own refund was drawn on, counting only those
+ *     Razorpay accepted (processed or pending), add up to at least what ALL such items of that payment
+ *     are owed (each one's amount read from its own failed ledger row).
+ * All of a payment's items or none: when the refunds cover less than is owed there is no telling
+ * which item they paid, and "being returned" never over-claims. An item with no ledger row at all
+ * (its refund could not even be claimed) also stays "being returned".
+ */
+async function coveredByPaymentRefund(itemIds: string[]): Promise<Set<string>> {
+  const covered = new Set<string>();
+  const items = await prisma.campaignBookingItem.findMany({
+    where: { id: { in: itemIds }, status: "refunded", booking: { status: { in: ["rejected", "refunded"] } } },
+    select: { bookingId: true },
+  });
+  const bookingIds = [...new Set(items.map((i) => i.bookingId))];
+  if (bookingIds.length === 0) return covered;
+  const [siblings, rows] = await Promise.all([
+    prisma.campaignBookingItem.findMany({ where: { bookingId: { in: bookingIds }, status: "refunded" }, select: { id: true } }),
+    prisma.campaignRefund.findMany({
+      where: { bookingId: { in: bookingIds }, origin: "ours", paymentId: { not: null } },
+      select: { bookingItemId: true, paymentId: true, amountPaise: true, status: true, reason: true },
+      orderBy: { createdAt: "asc" },
+    }),
+  ]);
+  // What each payment's item-less rejection refunds hold, as Razorpay has accepted them.
+  const returned = new Map<string, number>();
+  const byItem = new Map<string, typeof rows>();
+  for (const r of rows) {
+    const paymentId = r.paymentId as string;
+    if (r.bookingItemId === null) {
+      if (r.reason === "booking_rejected" && (r.status === "processed" || r.status === "pending")) returned.set(paymentId, (returned.get(paymentId) ?? 0) + r.amountPaise);
+    } else byItem.set(r.bookingItemId, [...(byItem.get(r.bookingItemId) ?? []), r]);
+  }
+  // What each payment's refunded items are still owed: those whose own rows have ALL failed.
+  const owed = new Map<string, Array<{ id: string; amountPaise: number }>>();
+  for (const { id } of siblings) {
+    const mine = byItem.get(id) ?? [];
+    if (mine.length === 0 || mine.some((r) => r.status !== "failed")) continue;
+    const last = mine[mine.length - 1];
+    owed.set(last.paymentId as string, [...(owed.get(last.paymentId as string) ?? []), { id, amountPaise: last.amountPaise }]);
+  }
+  const wanted = new Set(itemIds);
+  for (const [paymentId, list] of owed) {
+    if (list.reduce((n, i) => n + i.amountPaise, 0) > (returned.get(paymentId) ?? 0)) continue;
+    for (const i of list) if (wanted.has(i.id)) covered.add(i.id);
+  }
+  return covered;
+}
+
+/**
+ * The refunded items of a booking whose refund is confirmed (see confirmedRefundItemIds). THE one
+ * place the paidAt rule lives: a booking with no paidAt (offline mode) was never charged, has no
+ * ledger rows, and must not read campaign_refunds at all, so its answer is always "none".
+ */
+export async function confirmedRefundsFor(b: { paidAt: Date | null; items: Array<{ id: string; status: string }> }): Promise<Set<string>> {
+  if (!b.paidAt) return new Set<string>();
+  return confirmedRefundItemIds(b.items.filter((i) => i.status === "refunded").map((i) => i.id));
 }
 
 /**
@@ -149,9 +235,8 @@ export async function sendDeliveryEmail(bookingId: string, opts: { force?: boole
   const b = await bookingWithClient(bookingId);
   if (!b) return false;
 
-  // "Refunded" is said only of an item whose refund Razorpay has accepted (a ledger row that is
-  // processed or pending). Without a paidAt (offline mode) there is no refund to look up.
-  const confirmedRefunds = await confirmedRefundItemIds(b.paidAt ? b.items.filter((i) => i.status === "refunded").map((i) => i.id) : []);
+  // "Refunded" is said only of an item whose money Razorpay has accepted back (see confirmedRefundItemIds).
+  const confirmedRefunds = await confirmedRefundsFor(b);
 
   const rows = b.items
     .map((i) => {
@@ -302,6 +387,7 @@ export async function getResults(clientId: string, bookingId: string) {
       id: true,
       status: true,
       deliveredAt: true,
+      paidAt: true,
       items: {
         orderBy: { createdAt: "asc" },
         select: { id: true, platform: true, format: true, accountName: true, accountHandle: true, status: true, permalink: true, postedAt: true, remotePostId: true, nextAttemptAt: true, attempts: true, containerId: true },
@@ -334,7 +420,7 @@ export async function getResults(clientId: string, bookingId: string) {
   }
 
   const autoOn = campaignConfig.publishEnabled();
-  const refundConfirmed = await confirmedRefundItemIds(b.items.filter((i) => i.status === "refunded").map((i) => i.id));
+  const refundConfirmed = await confirmedRefundsFor(b);
   return {
     id: b.id,
     status: b.status,

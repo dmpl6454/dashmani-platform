@@ -25,6 +25,9 @@ import { pausePayoutsOfPayment } from "../creator/payout-pause";
 //  • A capture is CLAIMED first and the booking moved in the same transaction (see onCaptured);
 //    refunds are CLAIMED first on a ledger (campaign_refunds) and sent with an idempotency key
 //    (see claimRefund / sendRefund). Razorpay is only called after the claim has committed.
+//  • A refund key is ONE amount. What a `refund_due` payment still owes is refunded under
+//    `rf-stale-<id>`, and when it is owed AGAIN (another refund failed after the first was issued)
+//    under `rf-stale-<id>-g2`, `-g3` … (see staleRefundNext); `-r<N>` marks the retries of one of them.
 //  • LOCK ORDER: a transaction that touches both locks the campaign_payments row FIRST and the
 //    campaign_refunds rows after (reconcileRefunds, releaseRefundClaim and recordRefund all do).
 //    Any new code that takes them in the other order can deadlock with a reconcile.
@@ -392,6 +395,8 @@ export interface RefundIntent {
    * 10 to 128 of [A-Za-z0-9_-] [R30]. The same key on a retry makes Razorpay return the original
    * refund instead of creating a second one. After a DEFINITE refusal the intent may be tried
    * again; that attempt gets "-r2", "-r3" … because nothing was refunded under the first key.
+   * One key is ONE amount: a payment that is owed again after part of it was refunded (see
+   * staleRefundNext) is a NEW intent and gets its own key, never the first one's.
    */
   key: string;
   /** Why, for the ledger: item_refunded | booking_rejected | outdated_order | duplicate_payment … (at most 60). */
@@ -405,11 +410,18 @@ export interface RefundResult {
   refundId: string | null;
   ledgerId: string;
   amountPaise: number;
+  /** True when nothing was claimed or sent: this intent already had a live row and that row is what `state` describes. */
+  existing?: boolean;
 }
 
 type RefundRow = CampaignRefund;
 type Claim = { kind: "claimed"; row: RefundRow } | { kind: "existing"; row: RefundRow };
 
+/**
+ * Is this ledger key an attempt of THIS intent: the key itself, or the key plus `-r<digits>`? It is
+ * deliberately ONE intent (one amount) wide. The generations of a stale refund (`…-g2`) are other
+ * intents; the sweep reads them together through staleGenerationOf.
+ */
 const isAttemptOf = (rowKey: string | null, key: string) =>
   rowKey !== null && (rowKey === key || (rowKey.startsWith(`${key}-r`) && /^\d+$/.test(rowKey.slice(key.length + 2))));
 
@@ -606,21 +618,88 @@ async function sendRefund(row: RefundRow, actor: Actor): Promise<RefundResult> {
  */
 export async function refundPaymentRow(paymentId: string, amountPaise: number, receipt: string, actor: Actor, opts: { key: string; reason: string; itemId?: string | null }): Promise<RefundResult> {
   const claim = await claimRefund({ paymentId, amountPaise, receipt, key: opts.key, reason: opts.reason, itemId: opts.itemId });
-  if (claim.kind === "existing") return toResult(claim.row);
+  if (claim.kind === "existing") return { ...toResult(claim.row), existing: true };
   return sendRefund(claim.row, actor);
 }
 
-/** Return the whole of a payment that is `refund_due`. Used right after the capture commit and by the sweep. */
+// ── The refund of what a payment still owes (`refund_due`) ──────────────────────
+
+const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * Which generation of ONE payment's stale refund a ledger key belongs to, or null when it is not
+ * one of that payment's. `rf-stale-<id>` is generation 1, `rf-stale-<id>-g<N>` generation N, and
+ * either may carry `-r<M>` (the M-th attempt of that generation after a refusal). Anchored at both
+ * ends, with the payment id escaped, so no other key (another payment's, a longer suffix) matches.
+ */
+export function staleGenerationOf(paymentId: string, key: string | null): number | null {
+  if (key === null) return null;
+  const m = new RegExp(`^rf-stale-${escapeRegExp(paymentId)}(?:-g([1-9]\\d*))?(?:-r([1-9]\\d*))?$`).exec(key);
+  return m ? (m[1] ? Number(m[1]) : 1) : null;
+}
+
+/**
+ * What the next stale refund of a payment is, from its ledger.
+ *
+ * ⚠️ A key is ONE amount, and a payment can be owed MORE THAN ONCE: a rejected booking whose item
+ * refunds fail one after the other is owed 4,000 first (and that is refunded under `rf-stale-<id>`),
+ * then 6,000 when the second item's refund fails at Razorpay. Under a single key the second
+ * remainder collided with the first row (a conflict nobody was told about, or, when the two
+ * amounts were equal, an "existing" answer that sent nothing). So a remainder is a GENERATION:
+ * the next one is numbered after the newest generation that has a live (not failed) row, and keeps
+ * that number while its own attempts are refused (claimRefund adds `-r<M>` for those). Retrying the
+ * same remainder therefore stays idempotent; a different remainder is a different refund.
+ * `attempts` are the FAILED rows of the generation about to be tried, newest first: the backoff
+ * and the "keeps failing" alert count those, never the failures of an earlier remainder.
+ */
+async function staleRefundNext(paymentId: string) {
+  const base = `rf-stale-${paymentId}`;
+  const rows = (await prisma.campaignRefund.findMany({
+    where: { idempotencyKey: { startsWith: base } },
+    select: { idempotencyKey: true, status: true, updatedAt: true },
+  })).flatMap((r) => {
+    const generation = staleGenerationOf(paymentId, r.idempotencyKey);
+    return generation === null ? [] : [{ generation, status: r.status, updatedAt: r.updatedAt }];
+  });
+  const live = rows.filter((r) => r.status !== "failed");
+  const generation = live.reduce((n, r) => Math.max(n, r.generation), 0) + 1;
+  const attempts = rows.filter((r) => r.generation === generation && r.status === "failed").sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
+  return { key: generation === 1 ? base : `${base}-g${generation}`, generation, live: live.length, attempts };
+}
+
+/**
+ * Return what a payment that is `refund_due` still owes. Used right after the capture commit and by
+ * the sweep. Returns null when there is nothing (left) to return; a result with `existing` set
+ * means the answer is a row that was already there, and the remainder is STILL owed (see staleRefundNext).
+ */
 async function issueDueRefund(paymentId: string, actor: Actor): Promise<RefundResult | null> {
   const pay = await prisma.campaignPayment.findUnique({ where: { id: paymentId }, include: { booking: { select: { status: true } } } });
   if (!pay?.razorpayPaymentId || pay.status !== "refund_due") return null;
-  const amount = refundableOn(pay, await reservedOn(prisma, pay.id));
+  const reserved = await reservedOn(prisma, pay.id);
+  const amount = refundableOn(pay, reserved);
   if (amount <= 0) return null;
-  // ⚠️ The key depends on the payment only, never on the booking's state: that can change between attempts.
-  return refundPaymentRow(pay.id, amount, `stale:${pay.id}`, actor, {
-    key: `rf-stale-${pay.id}`,
+  const next = await staleRefundNext(pay.id);
+  if (next.live > 0) {
+    // A refund of this family is live and the payment is owed again. That is only believable when
+    // the LEDGER says there is room for it: the counter on the payment can be wrong (a lost update,
+    // a hand edit), and refunding on a wrong counter is how the same money goes back twice.
+    const held = await prisma.campaignRefund.aggregate({ _sum: { amountPaise: true }, where: { paymentId: pay.id, status: { not: "failed" } } });
+    if ((held._sum.amountPaise ?? 0) + amount > pay.amountPaise) {
+      throw new AppError(409, "REFUND_LEDGER_MISMATCH", "The refunds on the ledger and the payment's refunded total disagree, so this payment is not refunded again until they do.");
+    }
+  }
+  // ⚠️ The key depends on the payment and its remainder generation only, never on the booking's state: that can change between attempts.
+  const result = await refundPaymentRow(pay.id, amount, `stale:${pay.id}`, actor, {
+    key: next.key,
     reason: (PAYABLE_BOOKING_STATUSES as readonly string[]).includes(pay.booking.status) ? "outdated_order" : pay.booking.status === "rejected" ? "booking_rejected" : "duplicate_payment",
   });
+  if (result.existing) {
+    // Someone claimed this very refund between the read above and the claim: if that settled the
+    // payment there is nothing to do. If money is STILL owed, nothing was sent for it: say so.
+    const again = await prisma.campaignPayment.findUnique({ where: { id: pay.id } });
+    if (!again || again.status !== "refund_due" || refundableOn(again, reserved) <= 0) return null;
+  }
+  return result;
 }
 
 /** Refund everything still refundable on a booking's online payments (offline bookings have none). */
@@ -865,6 +944,8 @@ const REQUESTED_EVERY_MS = 3 * 60_000;
 const PENDING_EVERY_MS = 10 * 60_000;
 const RESUME_AFTER_MS = 5 * 60_000;
 const DUE_ALERT_AFTER_ATTEMPTS = 3;
+/** Consecutive ticks on which step 1 failed for a payment WITHOUT a refusal (a refusal has its own backoff and alert) before staff are told it is stuck. */
+const DUE_STUCK_AFTER_TICKS = 3;
 
 export interface RefundSweepStats {
   issued: number;
@@ -873,12 +954,36 @@ export interface RefundSweepStats {
   errors: number;
 }
 
+/** Per payment, in this process: how many ticks in a row step 1 failed for it without a refusal. */
+const dueErrorTicks = new Map<string, number>();
+
+/** Step 1 failed for this payment and will not fix itself: sent once per payment per process (not once a minute). */
+function alertStaleStuck(p: CampaignPayment, why: string) {
+  if (!firstTime(`due-stuck:${p.id}`)) return;
+  alertStaff(
+    "A campaign refund is stuck",
+    [
+      { label: "Payment", value: p.razorpayPaymentId ?? p.id },
+      { label: "Amount still owed", value: formatPaise(refundableOn(p)) },
+      { label: "What is wrong", value: why },
+      { label: "What to do", value: "Check the payment in Razorpay. If the brand has not been repaid, refund the rest from the Razorpay dashboard. The sweep keeps trying, but it cannot settle this by itself." },
+    ],
+    `/campaigns/${p.bookingId}`,
+  );
+}
+
+/** Send a payment step 1 could not settle to the back of the queue (it is ordered by updatedAt). Never throws. */
+const touchDue = (paymentId: string) =>
+  prisma.campaignPayment.updateMany({ where: { id: paymentId, status: "refund_due" }, data: { updatedAt: new Date() } }).catch(() => undefined);
+
 /**
  * Finish refunds that were interrupted. Bounded and idempotent: every refund goes through the same
  * claim, the same stable keys and the same reconcile as a request would, so running it twice, or
  * while a request is in flight, cannot refund anything twice.
- *   1. A payment left `refund_due` (a crash after the commit, or a refusal) is refunded in full. After
- *      a refusal it backs off 5 minutes per failure (cap 1 hour) and staff are told at the third.
+ *   1. A payment left `refund_due` (a crash after the commit, or a refusal, or an item refund that
+ *      failed) is refunded for what it still owes (see staleRefundNext: each remainder is its own
+ *      refund). After a refusal it backs off 5 minutes per failure (cap 1 hour) and staff are told at
+ *      the third; any other error is reported once it has happened three ticks running.
  *   2. A refund we asked for and never heard back about, or that Razorpay has not finished, is
  *      reconciled against Razorpay's list; one Razorpay does not list after 5 minutes is re-sent
  *      with the SAME key (safe, and the list says it never arrived).
@@ -897,30 +1002,58 @@ export async function sweepRefundDue(opts: { limit?: number; now?: Date } = {}):
   const system: Actor = { type: "system" };
 
   // 1. Owed in full.
+  // ⚠️ A payment this step cannot settle must not sit at the head of this query for ever, or it uses up
+  // one of the `limit` places every tick and starves the payments behind it. Two things keep it moving:
+  // a payment whose whole remainder is already claimed is not selected at all (nothing to issue), and
+  // one that errors without a refusal gets its updatedAt bumped (below), which sends it to the back.
   const due = await prisma.campaignPayment.findMany({
-    where: { status: "refund_due", razorpayPaymentId: { not: null }, updatedAt: { lt: ago(DUE_MIN_AGE_MS) } },
+    where: { status: "refund_due", razorpayPaymentId: { not: null }, refundedPaise: { lt: prisma.campaignPayment.fields.amountPaise }, updatedAt: { lt: ago(DUE_MIN_AGE_MS) } },
     orderBy: { updatedAt: "asc" },
     take: limit,
   });
   for (const p of due) {
     if (refundableOn(p) <= 0) continue; // a refund for all of it is already in flight
-    const failed = await prisma.campaignRefund.findMany({ where: { idempotencyKey: { startsWith: `rf-stale-${p.id}` }, status: "failed" }, orderBy: { updatedAt: "desc" }, select: { updatedAt: true, idempotencyKey: true } });
-    const attempts = failed.filter((f) => isAttemptOf(f.idempotencyKey, `rf-stale-${p.id}`));
+    // The failed rows of the remainder about to be tried (see staleRefundNext): earlier remainders' failures are not this one's.
+    const { attempts } = await staleRefundNext(p.id);
     if (attempts.length > 0 && attempts[0].updatedAt.getTime() + Math.min(60, 5 * attempts.length) * 60_000 > now.getTime()) continue;
     try {
-      if (await issueDueRefund(p.id, system)) stats.issued++;
+      const done = await issueDueRefund(p.id, system);
+      if (done?.existing) {
+        // Money is owed and the answer was a refund that was already there: nothing was sent for it. Not an "issued".
+        stats.errors++;
+        alertStaleStuck(p, "A refund for this amount was already on the ledger, yet the payment still owes it.");
+        await touchDue(p.id);
+      } else {
+        // Issued, or nothing is owed any more: either way the run of failures is over.
+        if (done) stats.issued++;
+        dueErrorTicks.delete(p.id);
+      }
     } catch (err) {
       stats.errors++;
-      if (attempts.length + 1 === DUE_ALERT_AFTER_ATTEMPTS) {
-        alertStaff(
-          "A campaign refund keeps failing",
-          [
-            { label: "Payment", value: p.razorpayPaymentId ?? p.id },
-            { label: "Amount", value: formatPaise(refundableOn(p)) },
-            { label: "Last error", value: errorText(err) },
-          ],
-          `/campaigns/${p.bookingId}`,
-        );
+      await touchDue(p.id);
+      const code = err instanceof AppError ? err.code : "";
+      if (code === "REFUND_FAILED") {
+        // Refused: it left a failed row, so the backoff above paces it, and staff are told at the third refusal.
+        dueErrorTicks.delete(p.id);
+        if (attempts.length + 1 === DUE_ALERT_AFTER_ATTEMPTS) {
+          alertStaff(
+            "A campaign refund keeps failing",
+            [
+              { label: "Payment", value: p.razorpayPaymentId ?? p.id },
+              { label: "Amount", value: formatPaise(refundableOn(p)) },
+              { label: "Last error", value: errorText(err) },
+            ],
+            `/campaigns/${p.bookingId}`,
+          );
+        }
+      } else {
+        // Anything else leaves no row behind, so nothing paces it and nothing else would ever say so.
+        // A ledger that disagrees with the payment is certain; the rest (a claim that lost a race with a
+        // reconcile, a database error) can be a one-off, so those are reported once they keep happening.
+        if (dueErrorTicks.size > 500) dueErrorTicks.clear();
+        const ticks = (dueErrorTicks.get(p.id) ?? 0) + 1;
+        dueErrorTicks.set(p.id, ticks);
+        if (code === "REFUND_LEDGER_MISMATCH" || ticks >= DUE_STUCK_AFTER_TICKS) alertStaleStuck(p, errorText(err));
       }
     }
   }

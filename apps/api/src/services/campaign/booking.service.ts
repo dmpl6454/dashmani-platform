@@ -14,7 +14,7 @@ import {
 } from "@dashmani/shared";
 import { AppError } from "../../middleware/error-handler";
 import { razorpayConfig } from "./config";
-import { confirmedRefundItemIds } from "./delivery.service";
+import { confirmedRefundsFor } from "./delivery.service";
 import { durationLimitSec } from "./media.service";
 import { overlayKey } from "./render.service";
 import { priceFor, resolveCatalogueTargets } from "./rate-card.service";
@@ -267,7 +267,8 @@ export async function getClientBooking(clientId: string, id: string) {
     },
   });
   if (!b) throw new AppError(404, "NOT_FOUND", "Campaign not found");
-  const refundConfirmed = await confirmedRefundItemIds(b.items.filter((i) => i.status === "refunded").map((i) => i.id));
+  // Only a booking paid online has a ledger to read (see confirmedRefundsFor).
+  const refundConfirmed = await confirmedRefundsFor(b);
   return shapeBooking(b, await resolveItemFiles(b.id), refundConfirmed);
 }
 

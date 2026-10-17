@@ -205,9 +205,10 @@ export function isPausable(status: string): boolean {
 
 /**
  * Every status isPausable() accepts, as a list a WHERE clause can use. One definition, so the
- * dispute handler and any other writer of paused_at (an external refund) pause exactly the same
- * rows. A pause is only ever written to a row still in one of these AND not already paused: the
- * first reason wins, and a settled or void payout never shows "paused".
+ * dispute handler and the external-refund reconcile, which both pause through
+ * services/creator/payout-pause.ts, pause exactly the same rows. A pause is only ever written to a
+ * row still in one of these AND not already paused: the first reason wins, and a settled or void
+ * payout never shows "paused".
  */
 export const PAUSABLE_STATUSES: readonly PayoutStatus[] = PAYOUT_STATUSES.filter((s) => isPausable(s));
 

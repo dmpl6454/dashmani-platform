@@ -32,7 +32,7 @@ import { razorpayHttp } from "../src/services/campaign/razorpay";
 import * as bookingSvc from "../src/services/campaign/booking.service";
 import { handleRouteEvent } from "../src/services/campaign/route-webhooks";
 import { sendDeliveryEmail, getResults } from "../src/services/campaign/delivery.service";
-import { refundableOn, refundPaymentRow, capturedPaymentFor, sweepRefundDue, reconcileRefunds, refundTuning, retryOnContention, isContention } from "../src/services/campaign/payment.service";
+import { refundableOn, refundPaymentRow, capturedPaymentFor, sweepRefundDue, reconcileRefunds, refundTuning, retryOnContention, isContention, staleGenerationOf } from "../src/services/campaign/payment.service";
 import { generateToken } from "./helpers";
 
 const WEBHOOK_SECRET = "whsec_test_safety";
@@ -66,6 +66,8 @@ function gate() {
 
 const rz = {
   mode: "ok" as RefundMode,
+  /** Modes for the next refund POSTs, one each, in order; once used up `mode` applies again. Lets a test refuse ONE refund and accept the next. */
+  script: [] as RefundMode[],
   listFails: false,
   /** While set, a refund POST (mode "held") / a refund-list GET does not answer until the test opens it. */
   postGate: null as Promise<void> | null,
@@ -81,6 +83,7 @@ const allRefunds = () => [...rz.refunds.values()].flat();
 
 function stubRazorpay() {
   rz.mode = "ok";
+  rz.script = [];
   rz.listFails = false;
   rz.postGate = null;
   rz.listGate = null;
@@ -98,12 +101,13 @@ function stubRazorpay() {
     const post = /\/payments\/([^/?]+)\/refund$/.exec(u);
     if (method === "POST" && post) {
       const pid = post[1];
-      if (rz.mode === "reject400") {
+      const mode = rz.script.length > 0 ? rz.script.shift()! : rz.mode;
+      if (mode === "reject400") {
         return new Response(JSON.stringify({ error: { code: "BAD_REQUEST_ERROR", description: "Your account does not have enough balance to carry out the refund operation." } }), { status: 400 });
       }
-      if (rz.mode === "http500") return new Response("upstream error", { status: 500 });
-      if (rz.mode === "timeout_before") throw new TypeError("fetch failed");
-      if (rz.mode === "held" && rz.postGate) await rz.postGate;
+      if (mode === "http500") return new Response("upstream error", { status: 500 });
+      if (mode === "timeout_before") throw new TypeError("fetch failed");
+      if (mode === "held" && rz.postGate) await rz.postGate;
       const list = rz.refunds.get(pid) ?? [];
       // Razorpay's own idempotency: the same key returns the original refund.
       let r = key ? list.find((x) => x.key === key) : undefined;
@@ -112,7 +116,7 @@ function stubRazorpay() {
         list.push(r);
         rz.refunds.set(pid, list);
       }
-      if (rz.mode === "timeout_after") throw new TypeError("fetch failed");
+      if (mode === "timeout_after") throw new TypeError("fetch failed");
       return new Response(JSON.stringify({ id: r.id, entity: "refund", amount: r.amount, status: r.status, payment_id: pid, receipt: r.receipt }), { status: 200 });
     }
 
@@ -204,7 +208,17 @@ describe("campaign payment safety", () => {
   // ── Capture ─────────────────────────────────────────────────────────────────────
 
   describe("capture: claim the payment first", () => {
-    it("payment.captured + order.paid together move the booking once and never refund", async () => {
+    // ⚠️ What the next test does and does not prove. CI pins this suite to ONE database connection
+    // (connection_limit=1), so the two Promise.all webhooks below run one after the other: each
+    // interactive transaction finishes before the second begins. It proves the claim-first rules
+    // (exactly one delivery wins, only its payment id is used, the loser is a duplicate that moves
+    // and refunds nothing). It does NOT prove they hold under true interleaving: a claim written as
+    // read-then-update instead of the conditional updateMany would still pass here, because the
+    // second delivery would already see the committed row. A real interleaving test needs a second
+    // client holding a row open (as route-webhooks.test.ts does for disputes) and belongs in
+    // tests-concurrency with Phase 4's release-vs-reversal race, whose payout insert joins this same
+    // transaction.
+    it("payment.captured + order.paid delivered together move the booking once and never refund (serialised at one connection: the claim wins once, not an interleaving proof)", async () => {
       const s = await seed({ booking: "awaiting_payment", prices: [250_000], payment: { status: "created" } });
       // Different payment ids make "only the winner's id is used" visible; a real redelivery carries the same one.
       const [a, b] = await Promise.all([webhook("payment.captured", paid(s.n, 250_000, { id: "pay_A" })), webhook("order.paid", paid(s.n, 250_000, { id: "pay_B" }))]);
@@ -448,6 +462,246 @@ describe("campaign payment safety", () => {
         process.env.RAZORPAY_KEY_ID = keys[0];
         process.env.RAZORPAY_KEY_SECRET = keys[1];
       }
+    });
+  });
+
+  // ── A payment that is owed more than once ───────────────────────────────────────
+
+  describe("a rejected booking whose item refunds fail one after the other", () => {
+    const reject = (id: string) => post(`/v1/admin/campaigns/${id}/reject`, { note: "Brand not permitted on our network" });
+
+    /**
+     * Reject a booking of two items, one price each. Razorpay refuses the FIRST item refund and accepts
+     * the second (it stays pending), so the payment is left refund_due for what the first one owes.
+     */
+    async function rejectedWithOneRefusal(prices: [number, number]) {
+      const s = await seed({ booking: "paid_pending_review", prices, payment: { status: "captured" } });
+      rz.newStatus = "pending";
+      rz.script = ["reject400"];
+      expect((await reject(s.booking.id)).status).toBe(200);
+      const rows = await prisma.campaignRefund.findMany({ orderBy: { createdAt: "asc" } });
+      expect(rows.map((r) => r.status)).toEqual(["failed", "pending"]);
+      return { s, payId: s.payment!.id, pid: s.payment!.razorpayPaymentId!, refused: rows[0], accepted: rows[1] };
+    }
+
+    it.each([
+      ["different amounts", [4_000, 6_000]],
+      ["equal amounts", [5_000, 5_000]],
+    ] as Array<[string, [number, number]]>)("the second remainder is its own refund, under the next generation's key, and the payment ends refunded (%s)", async (_name, prices) => {
+      const { s, payId, pid, refused, accepted } = await rejectedWithOneRefusal(prices);
+      const total = prices[0] + prices[1];
+      expect(await prisma.campaignPayment.findUniqueOrThrow({ where: { id: payId } })).toMatchObject({ status: "refund_due", refundedPaise: accepted.amountPaise });
+
+      // Step 1: what the refused item left owing is refunded (generation 1).
+      const first = await sweepRefundDue({ now: later(10) });
+      expect(first).toMatchObject({ issued: 1, errors: 0 });
+      expect(refundPosts().at(-1)).toMatchObject({ key: `rf-stale-${payId}`, body: expect.objectContaining({ amount: refused.amountPaise }) });
+
+      // The accepted item's refund then FAILS at Razorpay: the payment owes ITS price too, while the first stale refund is still pending.
+      rz.refunds.get(pid)!.find((r) => r.id === accepted.razorpayRefundId)!.status = "failed";
+      expect((await webhook("refund.failed", { id: accepted.razorpayRefundId, payment_id: pid }, "refund")).status).toBe(200);
+      expect(await prisma.campaignPayment.findUniqueOrThrow({ where: { id: payId } })).toMatchObject({ status: "refund_due", refundedPaise: refused.amountPaise });
+
+      // A new remainder is a new refund: it must be sent, under its own key, and not answered with the first one's row.
+      rz.newStatus = "processed";
+      const second = await sweepRefundDue({ now: later(20) });
+      expect(second).toMatchObject({ issued: 1, errors: 0 });
+      expect(refundPosts().at(-1)).toMatchObject({ key: `rf-stale-${payId}-g2`, body: expect.objectContaining({ amount: accepted.amountPaise }) });
+      expect(refundPosts().map((c) => c.key)).toEqual([`rf-item-${refused.bookingItemId}`, `rf-item-${accepted.bookingItemId}`, `rf-stale-${payId}`, `rf-stale-${payId}-g2`]);
+      expect(await prisma.campaignPayment.findUniqueOrThrow({ where: { id: payId } })).toMatchObject({ status: "refund_due", refundedPaise: total });
+
+      // Razorpay finishes the first stale refund: everything is back, the payment and the booking settle.
+      for (const r of rz.refunds.get(pid)!) if (r.status === "pending") r.status = "processed";
+      const gen1 = rz.refunds.get(pid)!.find((r) => r.key === `rf-stale-${payId}`)!;
+      expect((await webhook("refund.processed", { id: gen1.id, payment_id: pid }, "refund")).status).toBe(200);
+      expect(await prisma.campaignPayment.findUniqueOrThrow({ where: { id: payId } })).toMatchObject({ status: "refunded", refundedPaise: total });
+      expect((await prisma.campaignBooking.findUniqueOrThrow({ where: { id: s.booking.id } })).status).toBe("refunded");
+      expect(allRefunds().filter((r) => r.status !== "failed").reduce((n, r) => n + r.amount, 0)).toBe(total);
+
+      // Nothing more is sent, and nobody is told it is stuck.
+      await sweepRefundDue({ now: later(40) });
+      expect(refundPosts()).toHaveLength(4);
+      expect(alertSubjects()).not.toContain("A campaign refund is stuck");
+    });
+
+    it("a first stale refund that fails AFTER a later one was issued: its amount is owed again under the generation after the newest live one", async () => {
+      const { s, payId, pid, refused, accepted } = await rejectedWithOneRefusal([4_000, 6_000]);
+      const total = 10_000;
+      const settle = async (refundId: string, status: string) => {
+        rz.refunds.get(pid)!.find((r) => r.id === refundId)!.status = status;
+        expect((await webhook(status === "failed" ? "refund.failed" : "refund.processed", { id: refundId, payment_id: pid }, "refund")).status).toBe(200);
+      };
+
+      await sweepRefundDue({ now: later(10) }); // generation 1: what the refused item owed
+      await settle(accepted.razorpayRefundId!, "failed"); // the other item's refund fails: its price is owed
+      await sweepRefundDue({ now: later(20) }); // generation 2
+      const gen1 = rz.refunds.get(pid)!.find((r) => r.key === `rf-stale-${payId}`)!;
+      const gen2 = rz.refunds.get(pid)!.find((r) => r.key === `rf-stale-${payId}-g2`)!;
+      expect([gen1.amount, gen2.amount]).toEqual([refused.amountPaise, accepted.amountPaise]);
+
+      // Now the FIRST stale refund fails at Razorpay. Generation 2 is still live, with a different amount: counting live rows would
+      // call this remainder generation 2 again and collide with it; numbering after the newest live generation does not.
+      await settle(gen1.id, "failed");
+      expect(await prisma.campaignPayment.findUniqueOrThrow({ where: { id: payId } })).toMatchObject({ status: "refund_due", refundedPaise: accepted.amountPaise });
+      rz.newStatus = "processed";
+      expect(await sweepRefundDue({ now: later(30) })).toMatchObject({ issued: 1, errors: 0 });
+      expect(refundPosts().at(-1)).toMatchObject({ key: `rf-stale-${payId}-g3`, body: expect.objectContaining({ amount: refused.amountPaise }) });
+
+      await settle(gen2.id, "processed");
+      expect(await prisma.campaignPayment.findUniqueOrThrow({ where: { id: payId } })).toMatchObject({ status: "refunded", refundedPaise: total });
+      expect((await prisma.campaignBooking.findUniqueOrThrow({ where: { id: s.booking.id } })).status).toBe("refunded");
+      expect(allRefunds().filter((r) => r.status !== "failed").reduce((n, r) => n + r.amount, 0)).toBe(total);
+      expect(alertSubjects()).not.toContain("A campaign refund is stuck");
+    });
+
+    it("the failures of an earlier remainder do not delay the next one: backoff counts only the remainder being tried", async () => {
+      // Generation 1 was refused once and then went through (`-r2`, pending); 4 000 of the payment is owed again.
+      const s = await seed({ booking: "rejected", prices: [10_000], items: ["refunded"], payment: { status: "refund_due", refunded: 6_000 } });
+      const pay = s.payment!;
+      const row = (key: string, status: string, razorpayRefundId: string | null) =>
+        prisma.campaignRefund.create({
+          data: { idempotencyKey: key, razorpayRefundId, paymentId: pay.id, razorpayPaymentId: pay.razorpayPaymentId!, bookingId: s.booking.id, amountPaise: 6_000, status, origin: "ours", reason: "booking_rejected", lastCheckedAt: later(5) },
+        });
+      await row(`rf-stale-${pay.id}`, "failed", null); // refused just now: a backoff of 5 minutes IF it counted
+      await row(`rf-stale-${pay.id}-r2`, "pending", "rfnd_gen1_retry");
+
+      expect(await sweepRefundDue({ now: later(2) })).toMatchObject({ issued: 1, errors: 0 });
+      expect(refundPosts().map((c) => [c.key, c.body.amount])).toEqual([[`rf-stale-${pay.id}-g2`, 4_000]]);
+    });
+
+    it("recognises the keys of one payment's stale refunds, and only those", () => {
+      const id = "11111111-2222-3333-4444-555555555555";
+      expect(staleGenerationOf(id, `rf-stale-${id}`)).toBe(1);
+      expect(staleGenerationOf(id, `rf-stale-${id}-r2`)).toBe(1);
+      expect(staleGenerationOf(id, `rf-stale-${id}-g2`)).toBe(2);
+      expect(staleGenerationOf(id, `rf-stale-${id}-g3-r4`)).toBe(3);
+      for (const other of [null, "", `rf-stale-${id}-`, `rf-stale-${id}-g`, `rf-stale-${id}-g0`, `rf-stale-${id}-r0`, `rf-stale-${id}-x2`, `rf-stale-${id}-r2-g3`, `rf-stale-${id}0`, `xrf-stale-${id}`, `rf-stale-${id}-r2x`, `rf-item-${id}`, `rf-stale-99999999-2222-3333-4444-555555555555`]) {
+        expect(staleGenerationOf(id, other)).toBeNull();
+      }
+      // The id is matched literally, never as a pattern.
+      expect(staleGenerationOf("a.c", "rf-stale-abc")).toBeNull();
+      expect(staleGenerationOf("a.c", "rf-stale-a.c")).toBe(1);
+    });
+
+    /** A payment owed in full whose ledger holds a live stale refund of ALL of it, though its refunded total never learnt of it. */
+    async function lostCounter() {
+      const s = await seed({ booking: "rejected", prices: [10_000], items: ["refunded"], payment: { status: "refund_due" } });
+      await prisma.campaignRefund.create({
+        data: {
+          idempotencyKey: `rf-stale-${s.payment!.id}`, razorpayRefundId: "rfnd_counter_lost", paymentId: s.payment!.id, razorpayPaymentId: s.payment!.razorpayPaymentId!, bookingId: s.booking.id,
+          amountPaise: 10_000, status: "pending", origin: "ours", reason: "booking_rejected",
+          // In the future, so the sweep's own reconcile (step 2) leaves it alone for the first tick.
+          lastCheckedAt: later(5),
+        },
+      });
+      return s;
+    }
+
+    it("never refunds again on a counter the ledger contradicts: staff are told once, and the books heal at the next reconcile", async () => {
+      const s = await lostCounter();
+      expect(await sweepRefundDue({ now: later(10) })).toMatchObject({ issued: 0, errors: 1 });
+      expect(refundPosts()).toHaveLength(0); // the same money is NOT sent a second time
+      expect(alertSubjects()).toEqual(["A campaign refund is stuck"]);
+      const details = vi.mocked(notifyAdminByEmail).mock.calls[0][1] as Array<{ label: string; value: string }>;
+      expect(details.find((d) => d.label === "What is wrong")?.value).toContain("disagree");
+
+      // Not once a minute.
+      await sweepRefundDue({ now: later(20) });
+      expect(refundPosts()).toHaveLength(0);
+      expect(alertSubjects()).toHaveLength(1);
+      // The next reconcile counted the row the counter had lost: nothing is owed any more.
+      expect(await prisma.campaignPayment.findUniqueOrThrow({ where: { id: s.payment!.id } })).toMatchObject({ refundedPaise: 10_000 });
+    });
+
+    it("a payment this step cannot settle does not hold the head of the queue: the one behind it is refunded on the next tick", async () => {
+      const stuck = await lostCounter();
+      const healthy = await seed({ booking: "draft", prices: [250_000], total: null, payment: { status: "refund_due" } });
+      await prisma.campaignPayment.update({ where: { id: healthy.payment!.id }, data: { amountPaise: 250_000 } });
+      // Older than the healthy one, so it is first in the queue, and a budget of ONE place per tick.
+      await prisma.campaignPayment.update({ where: { id: stuck.payment!.id }, data: { updatedAt: new Date(Date.now() - 3600_000) } });
+
+      await sweepRefundDue({ now: later(10), limit: 1 });
+      expect(refundPosts()).toHaveLength(0);
+      const second = await sweepRefundDue({ now: later(20), limit: 1 });
+      expect(second.issued).toBe(1);
+      expect(refundPosts().map((c) => c.key)).toEqual([`rf-stale-${healthy.payment!.id}`]);
+    });
+
+    it("a payment whose whole remainder is already claimed is not selected at all, so it cannot take a place either", async () => {
+      // Payments waiting on a refund already in flight (everything claimed), older than the one that still needs sending.
+      const waiting = [];
+      for (let i = 0; i < 3; i++) waiting.push(await seed({ booking: "draft", prices: [1_000], total: null, payment: { status: "refund_due", refunded: 1_000 } }));
+      for (const w of waiting) await prisma.campaignPayment.update({ where: { id: w.payment!.id }, data: { amountPaise: 1_000, updatedAt: new Date(Date.now() - 3600_000) } });
+      const todo = await seed({ booking: "draft", prices: [250_000], total: null, payment: { status: "refund_due" } });
+      await prisma.campaignPayment.update({ where: { id: todo.payment!.id }, data: { amountPaise: 250_000 } });
+
+      expect((await sweepRefundDue({ now: later(10), limit: 1 })).issued).toBe(1);
+      expect(refundPosts().map((c) => c.key)).toEqual([`rf-stale-${todo.payment!.id}`]);
+    });
+
+    it("an error that leaves no row behind is reported once it has happened three ticks running, and only once", async () => {
+      const s = await seed({ booking: "draft", prices: [250_000], total: null, payment: { status: "refund_due" } });
+      await prisma.campaignPayment.update({ where: { id: s.payment!.id }, data: { amountPaise: 250_000 } });
+      const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const spy = vi.spyOn(prisma, "$transaction").mockRejectedValue(new Error("connection reset"));
+      try {
+        expect((await sweepRefundDue({ now: later(10) })).errors).toBe(1);
+        expect((await sweepRefundDue({ now: later(20) })).errors).toBe(1);
+        expect(alertSubjects()).toEqual([]); // a one-off blip is not an alarm
+        expect((await sweepRefundDue({ now: later(30) })).errors).toBe(1);
+        expect(alertSubjects()).toEqual(["A campaign refund is stuck"]);
+        await sweepRefundDue({ now: later(40) });
+        expect(alertSubjects()).toHaveLength(1);
+      } finally {
+        spy.mockRestore();
+        consoleSpy.mockRestore();
+      }
+      expect(refundPosts()).toHaveLength(0);
+      // It was never given up on: once the database answers, the refund goes out.
+      expect((await sweepRefundDue({ now: later(50) })).issued).toBe(1);
+    });
+
+    /** Make the claim of the next refund meet a row of the SAME key and amount that "someone else" claimed a moment before it. */
+    function racedClaim(payId: string, o: { counts: boolean }) {
+      const real = prisma.$transaction.bind(prisma) as (...args: unknown[]) => Promise<unknown>;
+      let done = false;
+      return vi.spyOn(prisma, "$transaction").mockImplementation((async (...args: unknown[]) => {
+        if (!done) {
+          done = true;
+          const pay = await prisma.campaignPayment.findUniqueOrThrow({ where: { id: payId } });
+          const amount = pay.amountPaise - pay.refundedPaise;
+          await prisma.campaignRefund.create({
+            data: { idempotencyKey: `rf-stale-${payId}`, paymentId: payId, razorpayPaymentId: pay.razorpayPaymentId!, bookingId: pay.bookingId, amountPaise: amount, status: "pending", origin: "ours", reason: "booking_rejected", razorpayRefundId: "rfnd_raced", lastCheckedAt: later(5) },
+          });
+          if (o.counts) await prisma.campaignPayment.update({ where: { id: payId }, data: { refundedPaise: { increment: amount } } });
+        }
+        return real(...args);
+      }) as typeof prisma.$transaction);
+    }
+
+    it("an answer that is only a refund already on the ledger, while money is STILL owed, is not an 'issued': it is reported", async () => {
+      const s = await seed({ booking: "rejected", prices: [10_000], items: ["refunded"], payment: { status: "refund_due", refunded: 4_000 } });
+      const spy = racedClaim(s.payment!.id, { counts: false });
+      try {
+        const swept = await sweepRefundDue({ now: later(10) });
+        expect(swept.issued).toBe(0);
+        expect(swept.errors).toBe(1);
+      } finally {
+        spy.mockRestore();
+      }
+      expect(refundPosts()).toHaveLength(0);
+      expect(alertSubjects()).toEqual(["A campaign refund is stuck"]);
+    });
+
+    it("the same answer after a claim that settled the payment is nothing to report", async () => {
+      const s = await seed({ booking: "rejected", prices: [10_000], items: ["refunded"], payment: { status: "refund_due", refunded: 4_000 } });
+      const spy = racedClaim(s.payment!.id, { counts: true });
+      try {
+        expect(await sweepRefundDue({ now: later(10) })).toMatchObject({ issued: 0, errors: 0 });
+      } finally {
+        spy.mockRestore();
+      }
+      expect(alertSubjects()).toEqual([]);
     });
   });
 
@@ -1403,6 +1657,123 @@ describe("campaign payment safety", () => {
 
     it("an offline booking has no ledger rows, so nothing is confirmed (the portal says 'not charged' there)", async () => {
       const s = await seed({ booking: "partially_published", prices: [100_000, 100_000], items: ["posted_manual", "refunded"], payment: null });
+      expect((await bookingSvc.getClientBooking(clientId, s.booking.id)).items.map((i: any) => i.refundConfirmed)).toEqual([false, false]);
+    });
+
+    it("an offline booking never reads the refund ledger at all: with campaign_refunds missing (code deployed before its DDL) its views still load", async () => {
+      // Offline is the only mode in production today. The booking view and the results must not depend on a table that mode never writes.
+      const s = await seed({ booking: "partially_published", prices: [100_000, 100_000], items: ["posted_manual", "refunded"], payment: null });
+      await prisma.$executeRawUnsafe("ALTER TABLE campaign_refunds RENAME TO campaign_refunds_hidden");
+      try {
+        // The control: the table really is out of reach, so a read of it would throw.
+        await expect(prisma.campaignRefund.count()).rejects.toThrow();
+        const byId = (items: Array<{ id: string; refundConfirmed?: boolean }>) => Object.fromEntries(items.map((i) => [i.id, i.refundConfirmed]));
+        const want = Object.fromEntries(s.items.map((it) => [it.id, false]));
+        expect(byId((await bookingSvc.getClientBooking(clientId, s.booking.id)).items as any)).toEqual(want);
+        expect(byId((await getResults(clientId, s.booking.id))!.items)).toEqual(want);
+      } finally {
+        await prisma.$executeRawUnsafe("ALTER TABLE campaign_refunds_hidden RENAME TO campaign_refunds");
+      }
+    });
+
+    // ── The money came back in the payment's remainder, not under the item's own refund ──────
+
+    const rejectBooking = (id: string) => post(`/v1/admin/campaigns/${id}/reject`, { note: "Brand not permitted on our network" });
+    const confirmedById = (items: Array<{ id: string; refundConfirmed?: boolean }>) => Object.fromEntries(items.map((i) => [i.id, i.refundConfirmed]));
+    const clientView = async (bookingId: string) => confirmedById((await bookingSvc.getClientBooking(clientId, bookingId)).items as any);
+
+    it("an item whose own refund was refused reads refunded once the sweep returns its money, on the portal, the results and the email alike", async () => {
+      const s = await seed({ booking: "paid_pending_review", prices: [100_000, 150_000], payment: { status: "captured" } });
+      rz.mode = "reject400"; // no balance: every item refund is refused, and the payment is left owed
+      expect((await rejectBooking(s.booking.id)).status).toBe(200);
+      const none = Object.fromEntries(s.items.map((it) => [it.id, false]));
+      expect(await clientView(s.booking.id)).toEqual(none); // being returned, and truly so
+
+      rz.mode = "ok";
+      expect((await sweepRefundDue({ now: later(10) })).issued).toBe(1);
+      expect(refundPosts().at(-1)).toMatchObject({ key: `rf-stale-${s.payment!.id}`, body: expect.objectContaining({ amount: 250_000 }) });
+      expect((await prisma.campaignBooking.findUniqueOrThrow({ where: { id: s.booking.id } })).status).toBe("refunded");
+
+      const all = Object.fromEntries(s.items.map((it) => [it.id, true]));
+      expect(await clientView(s.booking.id)).toEqual(all);
+      expect(confirmedById((await getResults(clientId, s.booking.id))!.items)).toEqual(all);
+      vi.mocked(sendEmail).mockClear();
+      expect(await sendDeliveryEmail(s.booking.id, { force: true })).toBe(true);
+      const html = String(vi.mocked(sendEmail).mock.calls.find(([o]) => o.to === "a@brand.test")![0].html);
+      expect(html).toContain("Not posted — refunded");
+      expect(html).toContain("The amount for those has been refunded to your original payment method.");
+      expect(html).not.toContain("being returned");
+    });
+
+    /** A rejected booking's ledger row; `item` null = a refund of the payment's remainder, which carries no item. */
+    const ledgerOn = (s: Awaited<ReturnType<typeof seed>>, paymentId: string, razorpayPaymentId: string, item: { id: string } | null, status: string, amountPaise: number, reason = "booking_rejected") =>
+      prisma.campaignRefund.create({
+        data: {
+          idempotencyKey: item ? `rf-item-${item.id}` : `rf-stale-${paymentId}`, paymentId, razorpayPaymentId, bookingId: s.booking.id, bookingItemId: item?.id ?? null,
+          amountPaise, status, origin: "ours", reason,
+        },
+      });
+
+    it("mixed: one item confirmed by its own refund, one by its payment's remainder refund, the rest not: each payment answers only for its own items", async () => {
+      // A and B were drawn on the first payment, C and D on a second one.
+      const s = await seed({ booking: "rejected", prices: [100_000, 150_000, 200_000, 80_000], items: ["refunded", "refunded", "refunded", "refunded"], payment: { status: "refund_due" } });
+      const [A, B, C, D] = s.items;
+      const p1 = s.payment!;
+      await prisma.campaignPayment.update({ where: { id: p1.id }, data: { amountPaise: 250_000 } });
+      const p2 = await prisma.campaignPayment.create({ data: { bookingId: s.booking.id, razorpayOrderId: "order_second", razorpayPaymentId: "pay_second", amountPaise: 280_000, status: "refund_due" } });
+
+      await ledgerOn(s, p1.id, p1.razorpayPaymentId!, A, "processed", 100_000); // A: its own refund went through
+      await ledgerOn(s, p1.id, p1.razorpayPaymentId!, B, "failed", 150_000); //    B: refused, then ...
+      await ledgerOn(s, p1.id, p1.razorpayPaymentId!, null, "processed", 150_000); //   ... returned in the remainder of its payment
+      await ledgerOn(s, p2.id, "pay_second", C, "failed", 200_000); //   C: refused, and its payment's remainder refund ...
+      const staleP2 = await ledgerOn(s, p2.id, "pay_second", null, "failed", 200_000); // ... failed too
+      await ledgerOn(s, p2.id, "pay_second", D, "requested", 80_000); //   D: asked for, no answer yet
+      expect(await clientView(s.booking.id)).toEqual({ [A.id]: true, [B.id]: true, [C.id]: false, [D.id]: false });
+
+      // The second payment's remainder refund is accepted: C is covered. D has its own refund pending an answer, so it still decides for itself.
+      await prisma.campaignRefund.update({ where: { id: staleP2.id }, data: { status: "pending" } });
+      expect(await clientView(s.booking.id)).toEqual({ [A.id]: true, [B.id]: true, [C.id]: true, [D.id]: false });
+      expect(confirmedById((await getResults(clientId, s.booking.id))!.items)).toEqual({ [A.id]: true, [B.id]: true, [C.id]: true, [D.id]: false });
+    });
+
+    it("when a payment's remainder refunds cover less than its failed items are owed, none of them reads refunded", async () => {
+      const s = await seed({ booking: "rejected", prices: [150_000, 100_000], items: ["refunded", "refunded"], payment: { status: "refund_due" } });
+      const [B, B2] = s.items;
+      const pay = s.payment!;
+      await ledgerOn(s, pay.id, pay.razorpayPaymentId!, B, "failed", 150_000);
+      await ledgerOn(s, pay.id, pay.razorpayPaymentId!, B2, "failed", 100_000);
+      // The first remainder refund (150 000) is in; what the second failure owes (100 000) has not been refunded yet. Which item the money paid is not knowable.
+      await ledgerOn(s, pay.id, pay.razorpayPaymentId!, null, "processed", 150_000);
+      expect(await clientView(s.booking.id)).toEqual({ [B.id]: false, [B2.id]: false });
+      // Once the rest is accepted too, both are.
+      await prisma.campaignRefund.create({
+        data: { idempotencyKey: `rf-stale-${pay.id}-g2`, paymentId: pay.id, razorpayPaymentId: pay.razorpayPaymentId!, bookingId: s.booking.id, amountPaise: 100_000, status: "pending", origin: "ours", reason: "booking_rejected" },
+      });
+      expect(await clientView(s.booking.id)).toEqual({ [B.id]: true, [B2.id]: true });
+    });
+
+    it.each(["outdated_order", "duplicate_payment", "external"])("a refund of the payment with the reason '%s' never vouches for an item", async (reason) => {
+      const s = await seed({ booking: "rejected", prices: [150_000], items: ["refunded"], payment: { status: "refund_due" } });
+      const pay = s.payment!;
+      await ledgerOn(s, pay.id, pay.razorpayPaymentId!, s.items[0], "failed", 150_000);
+      await ledgerOn(s, pay.id, pay.razorpayPaymentId!, null, "processed", 150_000, reason);
+      expect(await clientView(s.booking.id)).toEqual({ [s.items[0].id]: false });
+    });
+
+    it("a remainder refund of ANOTHER payment of the booking never vouches for an item drawn on this one", async () => {
+      const s = await seed({ booking: "rejected", prices: [150_000], items: ["refunded"], payment: { status: "refund_due" } });
+      const pay = s.payment!;
+      const other = await prisma.campaignPayment.create({ data: { bookingId: s.booking.id, razorpayOrderId: "order_dup", razorpayPaymentId: "pay_dup", amountPaise: 150_000, status: "refund_due" } });
+      await ledgerOn(s, pay.id, pay.razorpayPaymentId!, s.items[0], "failed", 150_000);
+      await ledgerOn(s, other.id, "pay_dup", null, "processed", 150_000); // the duplicate payment, refunded under the booking's rejection
+      expect(await clientView(s.booking.id)).toEqual({ [s.items[0].id]: false });
+    });
+
+    it("a booking that was not rejected is never read this way: a remainder refund there is not an item's", async () => {
+      const s = await seed({ booking: "partially_published", prices: [100_000, 150_000], items: ["posted_manual", "refunded"], payment: { status: "captured" } });
+      const pay = s.payment!;
+      await ledgerOn(s, pay.id, pay.razorpayPaymentId!, s.items[1], "failed", 150_000);
+      await ledgerOn(s, pay.id, pay.razorpayPaymentId!, null, "processed", 150_000);
       expect((await bookingSvc.getClientBooking(clientId, s.booking.id)).items.map((i: any) => i.refundConfirmed)).toEqual([false, false]);
     });
   });

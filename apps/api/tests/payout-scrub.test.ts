@@ -114,18 +114,50 @@ describe("scrubPayoutSecrets: linear time", () => {
     expect(typeof out).toBe("string");
     expect(ms).toBeLessThan(500);
   });
+});
 
-  it("costs about ten times more for ten times the input, not a hundred", () => {
-    const time = (s: string) => {
-      const t0 = performance.now();
-      scrubPayoutSecrets(s);
-      return performance.now() - t0;
+describe("scrubPayoutSecrets: the digit scanner reads each character a bounded number of times", () => {
+  // A deterministic linearity guard: it COUNTS the scanner's reads (charCodeAt) instead of timing
+  // it, so a loaded CI box, a GC pause or a cold JIT cannot change the answer. A linear scan reads
+  // each character at most about three times (the outer test, the inner loop, and one look-ahead
+  // at a separator); a scan that restarts at every digit reads them O(n^2) times, which at these
+  // sizes is thousands of times over the bound. The 500 ms tests above stay as the backstop for the
+  // two fixed-width regex passes, which this count does not see.
+  const reads = (input: string): number => {
+    const original = String.prototype.charCodeAt;
+    let n = 0;
+    String.prototype.charCodeAt = function (this: string, index: number): number {
+      n++;
+      return original.call(this, index);
     };
-    const unit = "1 2 3 ABCDE12 HDFC0 x ".repeat(100);
-    time(unit.repeat(50)); // warm up
-    const small = Math.max(time(unit.repeat(10)), 0.05);
-    const large = time(unit.repeat(100));
-    expect(large / small).toBeLessThan(60);
+    try {
+      scrubPayoutSecrets(input);
+    } finally {
+      String.prototype.charCodeAt = original; // never leaves the prototype patched, whatever happens
+    }
+    return n;
+  };
+
+  const SMALL = 20_000;
+  const shapes: Array<[string, (n: number) => string]> = [
+    ["digits only", (n) => "1".repeat(n)],
+    ["digit groups joined by single spaces (one endless run)", (n) => "1 ".repeat(n / 2)],
+    ["digit groups joined by single hyphens", (n) => "1-".repeat(n / 2)],
+    ["short digit groups split by commas, never five in a row", (n) => "12,34,".repeat(n / 6)],
+    ["letters and digits alternating", (n) => "a1".repeat(n / 2)],
+    ["a separator after every character", (n) => "- ".repeat(n / 2)],
+    ["four digits, a space, repeated (each group too short to mask alone)", (n) => "1234 ".repeat(n / 5)],
+  ];
+
+  it.each(shapes)("%s: a few reads per character, and ten times the input costs ten times the reads", (_name, make) => {
+    const small = reads(make(SMALL));
+    // The count is only meaningful while the scanner reads through charCodeAt at all.
+    expect(small, "the scanner no longer reads through charCodeAt: update this guard").toBeGreaterThan(SMALL / 2);
+    // Checked before the big input is built, so a regression fails fast instead of grinding through it.
+    expect(small).toBeLessThanOrEqual(SMALL * 3 + 16);
+    const large = reads(make(SMALL * 10));
+    expect(large).toBeLessThanOrEqual(SMALL * 10 * 3 + 16);
+    expect(large / small).toBeLessThan(12); // exactly linear is 10; quadratic is 100
   });
 });
 

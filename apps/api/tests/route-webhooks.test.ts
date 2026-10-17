@@ -24,6 +24,7 @@ import { notifyAdminByEmail } from "../src/services/email.service";
 import * as routeWebhooks from "../src/services/campaign/route-webhooks";
 import { isRouteEvent, handleRouteEvent } from "../src/services/campaign/route-webhooks";
 import { alertStaffOncePerHour, flushPayoutAlertsForTests, resetPayoutAlertsForTests } from "../src/services/creator/payout-alert";
+import { pausePayoutsOfPayment, pausePayoutsOfPaymentRows } from "../src/services/creator/payout-pause";
 
 const notify = vi.mocked(notifyAdminByEmail);
 
@@ -406,6 +407,55 @@ describe("transfer events", () => {
     expect([ra.status, rb.status]).toEqual(["failed", "failed"]);
     expect(ra.alertedStatus).toBe("failed");
     expect(rb.alertedStatus).toBeNull(); // not emailed, so the reconciliation digest still owes it
+  });
+
+  // A reversal WE asked for, confirmed by an event, is the happy end of that path. It must not be
+  // stored the way a "needs a human" outcome is (an error code and the "needs a look" text), and it
+  // must fill the columns the executor's own confirm step would: that step is a conditional update
+  // on reversal_requested, so once the event has won the race it would never backfill them.
+  it("a clean reversal confirmed by an event lands in reversed with no error, no alert, and the reversal columns filled", async () => {
+    for (const event of ["transfer.processed", "transfer.failed"] as const) {
+      await prisma.creatorPayout.deleteMany({});
+      resetPayoutAlertsForTests();
+      notify.mockClear();
+      const row = await mkPayout({ status: "reversal_requested", errorCode: "stale_code", lastError: "a stale message" });
+      const at = nowSec() - 30;
+      const evt = transferEvt(event, row, { amount_reversed: 50000 }, { created_at: at });
+      const r = await handleRouteEvent(event, evt, "evt_rev_1");
+      expect(r, event).toEqual({ handled: true, note: "reversed" });
+      await flushPayoutAlertsForTests();
+      const after = await reload(row.id);
+      expect(after.status, event).toBe("reversed");
+      expect(after.errorCode, event).toBeNull();
+      expect(after.lastError, event).toBeNull();
+      expect(after.reversedAt, event).toEqual(new Date(at * 1000));
+      expect(after.amountReversedPaise, event).toBe(50000);
+      expect(after.transferStatus, event).toBe("reversed");
+      expect(after.alertedStatus, event).toBeNull();
+      expect(notify, event).not.toHaveBeenCalled();
+      const ev = await eventsOf(row.id);
+      expect(ev, event).toHaveLength(1);
+      expect(ev[0], event).toMatchObject({ kind: "transfer", fromStatus: "reversal_requested", toStatus: "reversed", actorType: "razorpay", razorpayEventId: "evt_rev_1" });
+
+      // A replay changes nothing: no second audit row, the same reversal time.
+      expect(await handleRouteEvent(event, evt, "evt_rev_1"), event).toEqual({ handled: true, note: "unchanged" });
+      expect(await eventsOf(row.id), event).toHaveLength(1);
+      expect((await reload(row.id)).reversedAt, event).toEqual(after.reversedAt);
+    }
+  });
+
+  it("a full reversal we did not ask for still parks the payout for a human, with its own wording, and leaves the reversal columns alone", async () => {
+    const row = await mkPayout({ status: "held" });
+    const r = await handleRouteEvent("transfer.processed", transferEvt("transfer.processed", row, { amount_reversed: 50000 }));
+    expect(r).toEqual({ handled: true, note: "reversed_outside_flow" });
+    await flushPayoutAlertsForTests();
+    const after = await reload(row.id);
+    expect(after.status).toBe("needs_attention");
+    expect(after.errorCode).toBe("reversed_outside_flow");
+    expect(after.lastError).toMatch(/reversed outside our release flow/);
+    expect(after.reversedAt).toBeNull();
+    expect(after.amountReversedPaise).toBe(0);
+    expect(notify).toHaveBeenCalledTimes(1);
   });
 
   it("transfer events other than processed and failed are not handled", async () => {
@@ -1098,6 +1148,7 @@ describe("dispute events are durable, ordered and retried on infrastructure erro
     await mkPayout({ status: "held" });
     await mkPayout({ status: "planned", razorpayTransferId: null });
     const calls: string[] = [];
+    const rawSql: string[] = [];
     const spy = wrapTransactions(
       (tx) =>
         new Proxy(tx, {
@@ -1107,7 +1158,7 @@ describe("dispute events are durable, ordered and retried on infrastructure erro
                 get: (m, op) => (typeof m[op as string] === "function" ? (...a: unknown[]) => (calls.push(`${String(k)}.${String(op)}`), m[op as string](...a)) : m[op as string]),
               });
             }
-            if (k === "$queryRaw") return (...a: unknown[]) => (calls.push("$queryRaw"), t.$queryRaw(...a));
+            if (k === "$queryRaw") return (...a: unknown[]) => (calls.push("$queryRaw"), rawSql.push(Array.from(a[0] as ArrayLike<string>).join("?")), t.$queryRaw(...a));
             return bindAll(t, k);
           },
         }),
@@ -1120,6 +1171,9 @@ describe("dispute events are durable, ordered and retried on infrastructure erro
     }
     // dispute row, (row lock on the dispute is not needed for a new one), lock the payouts, pause them, write the audit rows
     expect(calls).toEqual(["campaignDispute.createMany", "$queryRaw", "creatorPayout.updateMany", "creatorPayoutEvent.createMany"]);
+    // The payouts are locked in id order: the same statement the external-refund reconcile runs (payout-pause.ts).
+    expect(rawSql).toHaveLength(1);
+    expect(rawSql[0]).toMatch(/FROM creator_payouts[\s\S]*ORDER BY id\s+FOR UPDATE/);
   });
 
   it("a failure in the pause step records NOTHING (no dispute row, no pause on ANY of three payouts, no audit rows); the event is flagged for redelivery and the redelivery applies all of it", async () => {
@@ -1127,12 +1181,15 @@ describe("dispute events are durable, ordered and retried on infrastructure erro
     const planned = await mkPayout({ status: "planned", razorpayTransferId: null });
     const released = await mkPayout({ status: "released", razorpayTransferId: "trf_DUR000000003" });
     const all = [held, planned, released];
+    // ONE payload for every delivery: Razorpay redelivers the same bytes, and disputeEvt stamps respond_by
+    // from the clock, so building it again would differ whenever a second boundary falls in between.
+    const evt = disputeEvt("payment.dispute.created");
     const err = vi.spyOn(console, "error").mockImplementation(() => {});
     // The audit insert is the LAST write of the pause: by then the dispute row and the payout update are already inside the transaction.
     const spy = wrapTransactions((tx) => new Proxy(tx, { get: (t, k) => (k === "creatorPayoutEvent" ? { createMany: async () => { throw infra("P2034"); } } : bindAll(t, k)) }));
     let first;
     try {
-      first = await handleRouteEvent("payment.dispute.created", disputeEvt("payment.dispute.created"), "evt_dur");
+      first = await handleRouteEvent("payment.dispute.created", evt, "evt_dur");
     } finally {
       spy.mockRestore();
       err.mockRestore();
@@ -1155,13 +1212,13 @@ describe("dispute events are durable, ordered and retried on infrastructure erro
     expect(text).not.toMatch(/reconciliation|Nothing was changed/);
 
     // The redelivery applies the whole event, and a further copy changes nothing.
-    expect(await handleRouteEvent("payment.dispute.created", disputeEvt("payment.dispute.created"), "evt_dur")).toEqual({ handled: true, note: "dispute recorded" });
+    expect(await handleRouteEvent("payment.dispute.created", evt, "evt_dur")).toEqual({ handled: true, note: "dispute recorded" });
     expect(await prisma.campaignDispute.count()).toBe(1);
     for (const p of all) {
       expect((await reload(p.id)).pausedReason, p.status).toBe("dispute");
       expect(await eventsOf(p.id), p.status).toHaveLength(1);
     }
-    expect(await handleRouteEvent("payment.dispute.created", disputeEvt("payment.dispute.created"), "evt_dur")).toEqual({ handled: true, note: "unchanged" });
+    expect(await handleRouteEvent("payment.dispute.created", evt, "evt_dur")).toEqual({ handled: true, note: "unchanged" });
     for (const p of all) expect(await eventsOf(p.id), p.status).toHaveLength(1);
   });
 
@@ -1435,5 +1492,97 @@ describe("every state change leaves exactly one audit row", () => {
     const src = readFileSync(join(__dirname, "../src/services/campaign/route-webhooks.ts"), "utf8");
     expect(src).not.toMatch(/\b(?:prisma|tx)\.campaign(?:Booking|BookingItem|BookingEvent|Payment|Refund)\.(?:update|updateMany|create|createMany|upsert|delete|deleteMany)\b/);
     expect(src).not.toMatch(/paidAt|transitionBooking/);
+  });
+});
+
+// ── The shared pause rule (services/creator/payout-pause.ts) ────────────────────
+
+// The dispute handler and the external-refund reconcile both pause through this one function, so
+// the rule (what is paused, which reason wins, the lock order) has exactly one implementation.
+describe("pausePayoutsOfPayment: the one pause rule behind the dispute handler and the refund reconcile", () => {
+  const SPEC = { reason: "external_refund", actorType: "system", note: "Paused: a refund we did not issue was found on the payment." };
+
+  const seedMixed = async () => {
+    const earlier = new Date(Date.now() - 3 * 3_600_000);
+    const inFlight = [
+      await mkPayout({ status: "held", razorpayTransferId: "trf_PAUSE0000001" }),
+      await mkPayout({ status: "planned", razorpayTransferId: null }),
+      await mkPayout({ status: "released", razorpayTransferId: "trf_PAUSE0000003" }),
+      await mkPayout({ status: "transfer_requested", razorpayTransferId: "trf_PAUSE0000004" }),
+    ];
+    const settled = await mkPayout({ status: "settled", razorpayTransferId: "trf_PAUSE0000005" });
+    const reversed = await mkPayout({ status: "reversed", razorpayTransferId: "trf_PAUSE0000006" });
+    const alreadyPaused = await mkPayout({ status: "held", razorpayTransferId: "trf_PAUSE0000007", pausedAt: earlier, pausedReason: "bank_change" });
+    const elsewhere = await mkPayout({ status: "held", razorpayTransferId: "trf_PAUSE0000008", razorpayPaymentId: "pay_ANOTHERPAYMENT1" });
+    return { earlier, inFlight, settled, reversed, alreadyPaused, elsewhere };
+  };
+
+  it("pauses exactly the in-flight payouts of the payment, keeps an earlier reason, and writes one audit row per payout it paused", async () => {
+    const s = await seedMixed();
+    const at = new Date(Date.now() - 60_000);
+    const paused = await prisma.$transaction((tx) => pausePayoutsOfPaymentRows(tx, PAY, { ...SPEC, at, eventId: "evt_pause_1" }));
+
+    expect(paused.map((p) => p.id)).toEqual(s.inFlight.map((p) => p.id).sort());
+    for (const p of s.inFlight) {
+      const after = await reload(p.id);
+      expect(after.pausedAt, p.status).toEqual(at);
+      expect(after.pausedReason, p.status).toBe("external_refund");
+      expect(after.status, p.status).toBe(p.status); // an overlay: the status does not move
+      const ev = await eventsOf(p.id);
+      expect(ev, p.status).toHaveLength(1);
+      expect(ev[0], p.status).toMatchObject({ kind: "pause", fromStatus: p.status, toStatus: p.status, amountPaise: 50000, actorType: "system", razorpayEventId: "evt_pause_1", note: SPEC.note });
+    }
+    expect(paused.find((p) => p.id === s.inFlight[0].id)?.status).toBe("held");
+    // Nothing in flight, already paused for another reason, or another payment: untouched, no audit row.
+    for (const untouched of [s.settled, s.reversed, s.elsewhere]) {
+      expect((await reload(untouched.id)).pausedAt, untouched.status).toBeNull();
+      expect(await eventsOf(untouched.id), untouched.status).toHaveLength(0);
+    }
+    expect(await reload(s.alreadyPaused.id)).toMatchObject({ pausedAt: s.earlier, pausedReason: "bank_change" });
+    expect(await eventsOf(s.alreadyPaused.id)).toHaveLength(0);
+
+    // A second call finds nothing left to pause: the count form reports 0 and nothing is rewritten.
+    expect(await prisma.$transaction((tx) => pausePayoutsOfPayment(tx, PAY, SPEC))).toBe(0);
+    expect(await reload(s.inFlight[0].id)).toMatchObject({ pausedAt: at, pausedReason: "external_refund" });
+    expect(await eventsOf(s.inFlight[0].id)).toHaveLength(1);
+  });
+
+  it("the count form reports how many payouts this call paused", async () => {
+    const s = await seedMixed();
+    expect(await prisma.$transaction((tx) => pausePayoutsOfPayment(tx, PAY, SPEC))).toBe(s.inFlight.length);
+  });
+
+  it("takes its row locks in ascending id order, in one locking statement, then one update and one insert", async () => {
+    await seedMixed();
+    const calls: string[] = [];
+    const rawSql: string[] = [];
+    await prisma.$transaction(async (tx) => {
+      const spied = new Proxy(tx as unknown as AnyTx, {
+        get: (t, k) => {
+          if (k === "$queryRaw") return (...a: unknown[]) => (calls.push("$queryRaw"), rawSql.push(Array.from(a[0] as ArrayLike<string>).join("?")), t.$queryRaw(...a));
+          if (k === "creatorPayout" || k === "creatorPayoutEvent") {
+            return new Proxy(t[k as string], {
+              get: (m, op) => (typeof m[op as string] === "function" ? (...a: unknown[]) => (calls.push(`${String(k)}.${String(op)}`), m[op as string](...a)) : m[op as string]),
+            });
+          }
+          return bindAll(t, k);
+        },
+      });
+      await pausePayoutsOfPaymentRows(spied as never, PAY, SPEC);
+    });
+    expect(calls).toEqual(["$queryRaw", "creatorPayout.updateMany", "creatorPayoutEvent.createMany"]);
+    expect(rawSql[0]).toMatch(/FROM creator_payouts[\s\S]*ORDER BY id\s+FOR UPDATE/);
+  });
+
+  it("is the only code that pauses a payment's payouts: neither caller keeps a private copy", () => {
+    const dispute = readFileSync(join(__dirname, "../src/services/campaign/route-webhooks.ts"), "utf8");
+    const reconcile = readFileSync(join(__dirname, "../src/services/campaign/payment.service.ts"), "utf8");
+    expect(dispute).toMatch(/pausePayoutsOfPaymentRows\(/);
+    expect(reconcile).toMatch(/pausePayoutsOfPayment\(/);
+    // paused_at is written by the shared helper alone.
+    for (const [name, src] of [["route-webhooks.ts", dispute], ["payment.service.ts", reconcile]] as const) {
+      expect(src, name).not.toMatch(/pausedReason\s*:/);
+      expect(src, name).not.toMatch(/pausedAt\s*:\s*(?!null)/);
+    }
   });
 });

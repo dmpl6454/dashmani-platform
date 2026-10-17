@@ -172,12 +172,17 @@ describe("transport", () => {
     ]);
   });
 
-  it("sends basic auth built from the configured keys, and extra headers cannot replace it", async () => {
+  // The only extra header any caller passes is X-Refund-Idempotency, so this checks that it
+  // arrives alongside the credentials without disturbing them. Whether a header named
+  // Authorization or Content-Type would win over the credentials is not reachable from here (no
+  // caller can pass one), so it is not claimed: it rests on the order of the spread in call().
+  it("sends basic auth built from the configured keys and a JSON content type, next to the idempotency header", async () => {
     stub(() => json({ id: "rfnd_1", amount: 100, status: "processed" }));
     await refundPayment("pay_1", 100, "r", "rf-item-0000001");
     const expected = `Basic ${Buffer.from("rzp_test_key:rzp_test_secret").toString("base64")}`;
     expect(calls[0].headers.Authorization).toBe(expected);
     expect(calls[0].headers["Content-Type"]).toBe("application/json");
+    expect(calls[0].headers["X-Refund-Idempotency"]).toBe("rf-item-0000001");
   });
 
   it("builds query strings with URLSearchParams and keeps the documented literal expand[] key", async () => {

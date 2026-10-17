@@ -8,6 +8,13 @@ function envNum(name: string, fallback: number, min = 0): number {
   return Number.isFinite(n) && n >= min ? n : fallback;
 }
 
+/**
+ * The creator terms as they were when the portal had no payments at all ("we do not pay creators today").
+ * A creator who connects a bank account is entering a payment relationship that THOSE terms disclaim, so
+ * bank connect stays closed ("terms_pending") until CREATOR_TERMS_VERSION names a rewritten version.
+ */
+export const PRE_PAYOUT_TERMS_VERSION = "2026-10-17";
+
 export const creatorConfig = {
   /** The whole creator portal is dark unless this is exactly "1" (every /v1/creator/* answers 503). */
   enabled: () => process.env.CREATORS_ENABLED === "1",
@@ -18,7 +25,9 @@ export const creatorConfig = {
   /** Graph calls the daily metrics refresh may spend across every creator page. */
   metricsCallBudget: () => envNum("CREATOR_METRICS_CALL_BUDGET", 200, 1),
   /** The creator terms a sign-up accepts (bump when /terms changes materially). */
-  termsVersion: () => process.env.CREATOR_TERMS_VERSION || "2026-10-17",
+  termsVersion: () => process.env.CREATOR_TERMS_VERSION || PRE_PAYOUT_TERMS_VERSION,
+  /** True while the terms in force are still the pre-payout ones: bank connect must not open on them. */
+  payoutTermsPending: () => (process.env.CREATOR_TERMS_VERSION || PRE_PAYOUT_TERMS_VERSION) === PRE_PAYOUT_TERMS_VERSION,
 
   // ── Payouts (Razorpay Route): see docs/superpowers/plans/2026-10-12-creator-payouts-razorpay-route.md ──
   /**

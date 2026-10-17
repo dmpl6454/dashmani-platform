@@ -81,6 +81,20 @@ const STATUS_NOTE: Record<PayoutAccountStatus, string> = {
   failed: "Razorpay rejected what the creator entered. They need to correct it and submit again.",
 };
 
+/**
+ * `failed` means two different things to staff, and the API says which (`attention`): the creator can correct
+ * named details and resend (the default note), or only our team can resolve it, so the creator has been told to
+ * write to us and the note must not say "they need to correct it". A response without `attention` (an older API)
+ * gets the default note unless it names no field.
+ */
+function failedNote(account: AdminPayoutAccount): string {
+  const needsUs = account.attention ? account.attention === "contact_us" : account.requirements.length === 0;
+  if (!needsUs) return STATUS_NOTE.failed;
+  return account.lastErrorCode === "ACCOUNT_CONFLICT"
+    ? "Razorpay already has an account under this creator's email that we could not safely link. The creator cannot fix this by resubmitting: resolve it in Razorpay, then tell them to try again from their payouts page."
+    : "Razorpay refused the setup without naming a detail the creator can correct on the form. The creator is told to write to us: look at the account in Razorpay, then tell them to try again.";
+}
+
 const STEP_TEXT: Record<PayoutSetupStep, string> = {
   account: "Next: create the Razorpay account (step 1 of 4)",
   stakeholder: "Next: add the stakeholder (step 2 of 4)",
@@ -254,7 +268,7 @@ export function PayoutAccountCard({
 
       {account && (
         <>
-          <p className="text-[13px] text-ds-t2 mb-2">{STATUS_NOTE[account.status]}</p>
+          <p className="text-[13px] text-ds-t2 mb-2">{account.status === "failed" ? failedNote(account) : STATUS_NOTE[account.status]}</p>
 
           <Line label="Setup">{STEP_TEXT[account.setupStep]}</Line>
           <Line label="Bank account">

@@ -18,6 +18,22 @@ export interface AdminCreatorRow {
   publishablePages: number;
   followers: number;
   connectionStatus: string | null;
+  /**
+   * The creator asked to change their bank account and staff have not marked it processed. False also
+   * when the API could not read it (see `bankChangesWaiting`: null says so); absent from an older API.
+   */
+  bankChangePending?: boolean;
+}
+
+export interface AdminCreatorList {
+  creators: AdminCreatorRow[];
+  counts: Record<CreatorStatus, number>;
+  /**
+   * Bank change requests waiting for staff across ALL tabs (a creator waiting on one is an approved
+   * creator, so the default "In review" tab would never show it). null = it could not be read, which
+   * must not be drawn as "none". Absent from an older API.
+   */
+  bankChangesWaiting?: number | null;
 }
 
 export interface AdminCreator {
@@ -94,7 +110,7 @@ export function useCreators(status: string, q: string) {
   if (term) params.set("q", term);
   const qs = params.toString();
   const key = qs ? `/admin/creators?${qs}` : "/admin/creators";
-  return useSWR<{ creators: AdminCreatorRow[]; counts: Record<CreatorStatus, number> }>(key, unwrap, {
+  return useSWR<AdminCreatorList>(key, unwrap, {
     keepPreviousData: true,
     refreshInterval: 60_000,
     revalidateOnFocus: false,

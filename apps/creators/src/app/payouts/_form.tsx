@@ -176,10 +176,12 @@ interface TextProps {
   className?: string;
   /** Masked with a reveal toggle, and kept away from password managers. */
   secret?: boolean;
+  /** What the reveal toggle's name calls the field ("Show PAN"); the visible label may read badly in a sentence. */
+  revealName?: string;
   attrs?: React.InputHTMLAttributes<HTMLInputElement>;
 }
 
-function TextField({ fkey, id, label, value, onChange, register, error, optional, hint, className, secret, attrs }: TextProps) {
+function TextField({ fkey, id, label, value, onChange, register, error, optional, hint, className, secret, revealName, attrs }: TextProps) {
   const textSecurity = useTextSecurity();
   const [shown, setShown] = useState(false);
   const masked = !!secret && !shown;
@@ -206,8 +208,10 @@ function TextField({ fkey, id, label, value, onChange, register, error, optional
             <button
               type="button"
               onClick={() => setShown((s) => !s)}
+              // A toggle keeps ONE name and says its state with aria-pressed ("Show PAN, toggle button, pressed").
+              // A name that flips to "Hide" as well would read "Hide PAN, pressed": two answers to one question.
               aria-pressed={shown}
-              aria-label={`${shown ? "Hide" : "Show"} ${label.toLowerCase()}`}
+              aria-label={`Show ${revealName ?? label}`}
               className="absolute inset-y-0 right-0 w-11 grid place-items-center text-ink-3 hover:text-white"
             >
               {shown ? <EyeOff size={16} aria-hidden /> : <Eye size={16} aria-hidden />}
@@ -384,6 +388,7 @@ export function PayoutForm({ termsVersion, email, rejected, onDone, onChanged }:
           id="payout-pan"
           label="PAN"
           secret
+          revealName="PAN"
           value={values.pan}
           onChange={(v) => set("pan", v.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 10))}
           register={register}
@@ -485,6 +490,7 @@ export function PayoutForm({ termsVersion, email, rejected, onDone, onChanged }:
           id="payout-account"
           label="Bank account number"
           secret
+          revealName="bank account number"
           value={values.accountNumber}
           onChange={(v) => set("accountNumber", v.replace(/[^A-Za-z0-9]/g, "").toUpperCase().slice(0, 20))}
           register={register}
@@ -496,6 +502,7 @@ export function PayoutForm({ termsVersion, email, rejected, onDone, onChanged }:
           id="payout-account-confirm"
           label="Confirm account number"
           secret
+          revealName="account number confirmation"
           value={confirm}
           onChange={(v) => {
             setConfirm(v.replace(/[^A-Za-z0-9]/g, "").toUpperCase().slice(0, 20));
@@ -569,7 +576,9 @@ export function PayoutForm({ termsVersion, email, rejected, onDone, onChanged }:
         <button type="submit" className="btn" disabled={!hydrated || busy} aria-live="polite">
           {busy ? <><span className="spinner" aria-hidden /> Sending to Razorpay…</> : "Add bank account"}
         </button>
-        <span className="text-xs text-ink-4 max-w-md">We don&apos;t save what you type here, on this device or on our servers.</span>
+        <span className="text-xs text-ink-4 max-w-md leading-relaxed">
+          We pass these to Razorpay. We don&apos;t save your PAN, address or full account number, and we keep only a masked reference to the account (the bank and the last four digits). Nothing is kept on this device.
+        </span>
       </div>
     </form>
   );

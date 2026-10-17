@@ -35,6 +35,7 @@ import { FakeRazorpay } from "./fake-razorpay-route";
 import { creatorConfig } from "../src/services/creator/creator-config";
 import { flushPayoutAlertsForTests, resetPayoutAlertsForTests } from "../src/services/creator/payout-alert";
 import { BANK_CHANGE_HOLD_MS } from "../src/services/creator/payout-account-view";
+import { captureConsole, scanDatabase as scanTables, type ConsoleCapture } from "./payout-privacy";
 
 const sendMock = vi.mocked(sendEmail);
 const notifyMock = vi.mocked(notifyAdminByEmail);
@@ -56,6 +57,7 @@ const NEEDLES = [SECRET.pan, SECRET.account, SECRET.ifsc, SECRET.name, SECRET.st
 const ADMIN_PAYOUT_KEYS = [
   "accountCreatedAt",
   "activatedAt",
+  "attention",
   "bankChange",
   "bankChangePending",
   "bookableAfter",
@@ -117,40 +119,16 @@ const clear = (auth: string, id: string) => request(app).post(`/v1/admin/creator
 const eventsOf = (accountId: string) => prisma.creatorPayoutEvent.findMany({ where: { payoutId: accountId }, orderBy: { createdAt: "asc" } });
 const rowOf = (creatorId: string) => prisma.creatorPayoutAccount.findUnique({ where: { creatorId } });
 
-/** Every table, every column (as the row's text): which tables hold any needle. */
-async function scanDatabase(needles: string[] = NEEDLES): Promise<string[]> {
-  const tables = await prisma.$queryRaw<Array<{ table_name: string }>>`
-    SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE'`;
-  const patterns = needles.map((x) => `%${x}%`);
-  const hits: string[] = [];
-  for (const { table_name } of tables) {
-    const marks = patterns.map((_, i) => `$${i + 1}`).join(",");
-    const rows = await prisma.$queryRawUnsafe<Array<{ c: number }>>(`SELECT count(*)::int AS c FROM "${table_name}" t WHERE t::text ILIKE ANY (ARRAY[${marks}])`, ...patterns);
-    if (rows[0].c > 0) hits.push(table_name);
-  }
-  return hits;
-}
+/** Which tables hold any needle (the shared scan, which has its own positive control in payout-privacy.test.ts). */
+const scanDatabase = (needles: string[] = NEEDLES) => scanTables(needles);
 
-let logged: string[] = [];
-const consoleSpies: Array<{ mockRestore: () => void }> = [];
+// The shared capture renders an Error's message and stack too, so a leak through console.error(e) is seen.
+let cap: ConsoleCapture | null = null;
 function spyConsole() {
-  logged = [];
-  const text = (a: unknown) => {
-    if (typeof a === "string") return a;
-    try {
-      return JSON.stringify(a, Object.getOwnPropertyNames(a as object));
-    } catch {
-      return String(a);
-    }
-  };
-  for (const m of ["log", "info", "warn", "error", "debug"] as const) {
-    consoleSpies.push(
-      vi.spyOn(console, m).mockImplementation((...args: unknown[]) => {
-        logged.push(args.map(text).join(" "));
-      }),
-    );
-  }
+  cap?.restore();
+  cap = captureConsole();
 }
+const logText = () => (cap ? cap.lines.join("\n") : "");
 
 function expectNoSecrets(where: string, haystack: unknown) {
   const s = typeof haystack === "string" ? haystack : JSON.stringify(haystack);
@@ -164,6 +142,8 @@ describe("Creator admin: payout account", () => {
   beforeEach(async () => {
     vi.stubEnv("CREATORS_ENABLED", "1");
     vi.stubEnv("CREATOR_ROUTE_ENABLED", "1");
+    // Bank connect stays closed on the pre-payout terms ("terms_pending"): these tests need it open.
+    vi.stubEnv("CREATOR_TERMS_VERSION", "2026-11-01");
     vi.stubEnv("RAZORPAY_KEY_ID", "rzp_test_key");
     vi.stubEnv("RAZORPAY_KEY_SECRET", "rzp_test_secret");
     vi.stubEnv("RATE_LIMIT_CREATOR_PAYOUT_MAX", "1000");
@@ -179,7 +159,8 @@ describe("Creator admin: payout account", () => {
     await flushPayoutAlertsForTests();
     fake.restore();
     vi.restoreAllMocks();
-    while (consoleSpies.length) consoleSpies.pop()!.mockRestore();
+    cap?.restore();
+    cap = null;
     vi.unstubAllEnvs();
   });
   afterAll(() => {
@@ -335,15 +316,30 @@ describe("Creator admin: payout account", () => {
       expect(Object.keys(res.body.data.payoutAccount).sort()).toEqual(ADMIN_PAYOUT_KEYS);
     });
 
-    it("the list view is unchanged: no payout field on a row", async () => {
+    it("the list row carries ONE payout fact, whether a bank change is waiting, and nothing else about payouts", async () => {
       const { c } = await seedCreator();
       await seedAccount(c.id);
       const res = await request(app).get("/v1/admin/creators").set("Authorization", admin);
       expect(res.status).toBe(200);
       expect(Object.keys(res.body.data.creators[0]).sort()).toEqual(
-        ["connectionStatus", "country", "createdAt", "email", "followers", "id", "name", "pages", "publishablePages", "status", "submittedAt"],
+        ["bankChangePending", "connectionStatus", "country", "createdAt", "email", "followers", "id", "name", "pages", "publishablePages", "status", "submittedAt"],
       );
-      expect(JSON.stringify(res.body)).not.toMatch(/payoutAccount|razorpay|bankChange/i);
+      expect(Object.keys(res.body.data).sort()).toEqual(["bankChangesWaiting", "counts", "creators"]);
+      expect(res.body.data.creators[0].bankChangePending).toBe(false);
+      expect(JSON.stringify(res.body)).not.toMatch(/payoutAccount|razorpay|destinationHint|lastError|requirements/i);
+    });
+
+    it("the failing-account view says whether the creator can fix it: attention is on the staff view too", async () => {
+      const { c: fix } = await seedCreator();
+      await seedAccount(fix.id, { setupStep: "product", lastError: "BANK_DETAILS_REJECTED|settlements.ifsc_code" });
+      const { c: conflict } = await seedCreator();
+      await seedAccount(conflict.id, { setupStep: "none", razorpayAccountId: null, razorpayStakeholderId: null, razorpayProductId: null, lastError: "ACCOUNT_CONFLICT" });
+      const { c: fine } = await seedCreator();
+      await seedAccount(fine.id);
+      const attentionOf = async (id: string) => (await getDetail(admin, id)).body.data.payoutAccount;
+      expect(await attentionOf(fix.id)).toMatchObject({ status: "failed", attention: "fix_details", lastErrorCode: "BANK_DETAILS_REJECTED" });
+      expect(await attentionOf(conflict.id)).toMatchObject({ status: "failed", attention: "contact_us", lastErrorCode: "ACCOUNT_CONFLICT" });
+      expect(await attentionOf(fine.id)).toMatchObject({ status: "under_review", attention: null });
     });
 
     it("a failed payout read says so, and does not read as 'no payout account' or take the review page down", async () => {
@@ -359,7 +355,7 @@ describe("Creator admin: payout account", () => {
         expect(res.body.data).toMatchObject({ payoutAccount: null, payoutAccountError: true });
         expectNoSecrets("the response", res.body);
         expect(JSON.stringify(res.body)).not.toMatch(/relation|creator_payout_accounts/i);
-        expect(logged.join("\n")).toContain("could not read the payout account");
+        expect(logText()).toContain("could not read the payout account");
       } finally {
         await prisma.$executeRawUnsafe(`ALTER TABLE creator_payout_accounts_gone RENAME TO creator_payout_accounts`);
       }
@@ -387,6 +383,93 @@ describe("Creator admin: payout account", () => {
       expect(fake.calls).toHaveLength(0);
       expect((await rowOf(c.id))!.updatedAt.getTime()).toBe(before.updatedAt.getTime());
       expect(await eventsOf(acc.id)).toHaveLength(0);
+    });
+  });
+
+  // ── List: bank changes waiting ─────────────────────────────────────────────────────────────
+
+  describe("list: bank changes waiting", () => {
+    const list = (qs = "") => request(app).get(`/v1/admin/creators${qs}`).set("Authorization", admin);
+    type Row = { name: string; bankChangePending: boolean };
+
+    it("flags each creator with an unprocessed request, floats them to the top with the review queue, and counts them", async () => {
+      // oldest first, so the default newest-first order would put them last
+      const { c: pending } = await seedCreator({ name: "Pending Bank", status: "approved" });
+      await seedAccount(pending.id, { bankChangeRequestedAt: new Date(Date.now() - 2 * H) });
+      const { c: cleared } = await seedCreator({ name: "Cleared Bank", status: "approved" });
+      await seedAccount(cleared.id, { bankChangeRequestedAt: new Date(Date.now() - 20 * H), bankChangeClearedAt: new Date(Date.now() - 10 * H) });
+      const { c: again } = await seedCreator({ name: "Asked Again", status: "approved" });
+      await seedAccount(again.id, { bankChangeRequestedAt: new Date(Date.now() - H), bankChangeClearedAt: new Date(Date.now() - 5 * H) });
+      const { c: plain } = await seedCreator({ name: "No Request", status: "approved" });
+      await seedAccount(plain.id);
+      await seedCreator({ name: "No Account", status: "approved" });
+      await seedCreator({ name: "Queue Member", status: "in_review" });
+
+      const res = await list();
+      expect(res.status).toBe(200);
+      const rows: Row[] = res.body.data.creators;
+      expect(Object.fromEntries(rows.map((r) => [r.name, r.bankChangePending]))).toEqual({
+        "Pending Bank": true,
+        "Cleared Bank": false, // staff processed it
+        "Asked Again": true, // a request AFTER the clearing is open again (the same rule as the staff card)
+        "No Request": false,
+        "No Account": false,
+        "Queue Member": false,
+      });
+      expect(res.body.data.bankChangesWaiting).toBe(2);
+      // the work queue (in review + bank change waiting) comes first, the rest follow
+      const firstFour = rows.slice(0, 3).map((r) => r.name).sort();
+      expect(firstFour).toEqual(["Asked Again", "Pending Bank", "Queue Member"]);
+      expect(rows.slice(3).every((r) => !r.bankChangePending)).toBe(true);
+      expect(JSON.stringify(res.body)).not.toMatch(/razorpay|destinationHint|lastError/i);
+
+      // marking one processed takes it out of both the flag and the count
+      expect((await clear(admin, pending.id)).status).toBe(200);
+      const after = await list();
+      expect(after.body.data.bankChangesWaiting).toBe(1);
+      expect((after.body.data.creators as Row[]).find((r) => r.name === "Pending Bank")!.bankChangePending).toBe(false);
+    });
+
+    it("counts waiting requests across every tab, so the default 'In review' view still says one is waiting", async () => {
+      const { c } = await seedCreator({ name: "Approved Waiting", status: "approved" });
+      await seedAccount(c.id, { bankChangeRequestedAt: new Date(Date.now() - H) });
+      await seedCreator({ name: "In Review", status: "in_review" });
+
+      const tab = await list("?status=in_review");
+      expect((tab.body.data.creators as Row[]).map((r) => r.name)).toEqual(["In Review"]);
+      expect(tab.body.data.bankChangesWaiting).toBe(1);
+      // a search narrows the rows, not the number of requests waiting
+      const searched = await list("?q=zzz-no-such-creator");
+      expect(searched.body.data.creators).toHaveLength(0);
+      expect(searched.body.data.bankChangesWaiting).toBe(1);
+    });
+
+    it("works the same while payouts are dark: a request made before the switch went off is still listed", async () => {
+      const { c } = await seedCreator({ status: "approved" });
+      await seedAccount(c.id, { bankChangeRequestedAt: new Date(Date.now() - H) });
+      vi.stubEnv("CREATOR_ROUTE_ENABLED", "");
+      const res = await list();
+      expect(res.body.data.bankChangesWaiting).toBe(1);
+      expect(res.body.data.creators[0].bankChangePending).toBe(true);
+    });
+
+    it("a failed read says 'could not check' (null), never 'none', and does not take the queue down", async () => {
+      const { c } = await seedCreator({ name: "Waiting But Unreadable", status: "approved" });
+      await seedAccount(c.id, { bankChangeRequestedAt: new Date(Date.now() - H) });
+      spyConsole();
+      await prisma.$executeRawUnsafe(`ALTER TABLE creator_payout_accounts RENAME TO creator_payout_accounts_gone`);
+      try {
+        const res = await list();
+        expect(res.status).toBe(200);
+        expect(res.body.data.bankChangesWaiting).toBeNull();
+        expect((res.body.data.creators as Row[]).map((r) => r.name)).toEqual(["Waiting But Unreadable"]);
+        expect(JSON.stringify(res.body)).not.toMatch(/relation|creator_payout_accounts/i);
+        expect(logText()).toContain("could not read pending bank changes");
+      } finally {
+        await prisma.$executeRawUnsafe(`ALTER TABLE creator_payout_accounts_gone RENAME TO creator_payout_accounts`);
+      }
+      const again = await list();
+      expect(again.body.data.bankChangesWaiting).toBe(1);
     });
   });
 
@@ -457,7 +540,10 @@ describe("Creator admin: payout account", () => {
       const creatorRow = await prisma.creator.findUnique({ where: { id: c.id } });
       expect(mail.to).toBe(creatorRow!.email);
       expect(mail.subject).toBe("Your bank account change was processed");
-      expect(mail.html).toContain("72 hours");
+      // ⚠️ It says what is true now (the Razorpay record was updated) and nothing about when payments happen:
+      // no payment exists in this phase, and the hold rule belongs to the release gate, not to an email.
+      expect(mail.html).toContain("has been updated");
+      expect(mail.html).not.toMatch(/72|hours|paused|pause|hold|as normal|payments? (to you|will|go)/i);
       expect(mail.html).toContain("We never ask for bank details by email");
       expect(mail.html).not.toContain("<b>Iyer</b>"); // the name is escaped
       expect(mail.html).toContain("/payouts");
@@ -529,7 +615,7 @@ describe("Creator admin: payout account", () => {
       expect(res2.status).toBe(200);
       expect(res2.body.data.emailSent).toBe(false);
       expect((await rowOf(c2.id))!.bankChangeClearedAt).not.toBeNull();
-      expectNoSecrets("the log", logged.join("\n"));
+      expectNoSecrets("the log", logText());
     });
 
     it("works while payouts are dark: a request made before the switch went off is still clearable", async () => {
@@ -581,7 +667,7 @@ describe("Creator admin: payout account", () => {
       await flushPayoutAlertsForTests();
 
       expect(await scanDatabase([...NEEDLES, "ECHOEDPAN1", "Echoed Legal Name"])).toEqual([]);
-      expectNoSecrets("console output", logged.join("\n"));
+      expectNoSecrets("console output", logText());
       expectNoSecrets("emails to creators", sendMock.mock.calls);
       expectNoSecrets("emails to staff", notifyMock.mock.calls);
       expect(await prisma.auditLog.count()).toBe(auditBefore);

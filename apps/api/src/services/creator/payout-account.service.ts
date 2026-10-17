@@ -5,6 +5,7 @@ import {
   PAYOUT_FIELD_REJECTED,
   formFieldForReference,
   referencesForRejection,
+  splitBankRejection,
   type CreatorPayoutAccountInput,
   type PayoutAccountResponse,
   type PayoutBlockedReason,
@@ -29,9 +30,9 @@ import { alertStaffOncePerHour } from "./payout-alert";
 import {
   bankChangePending,
   canSetUp,
-  decodeSetupError,
   encodeSetupError,
   payoutAccountStatus,
+  razorpayHoldsAccount,
   setupIsDone,
   toPayoutAccountView,
 } from "./payout-account-view";
@@ -64,9 +65,20 @@ import {
 
 // ── Availability ────────────────────────────────────────────────────────────────────────────────
 
-/** The feature is available only with the switch ON and Razorpay's keys present; otherwise it is dark. */
+/**
+ * Why bank connect is closed, or null when it is open. The ONE place availability is decided: the switch
+ * and Razorpay's keys (`route_disabled`: dark), then the terms (`terms_pending`: the switch is on, but the
+ * creator terms in force are still the pre-payout ones, which say we pay creators nothing).
+ */
+export function payoutUnavailableReason(): "route_disabled" | "terms_pending" | null {
+  if (!creatorConfig.routeEnabled() || !razorpayConfig.configured()) return "route_disabled";
+  if (creatorConfig.payoutTermsPending()) return "terms_pending";
+  return null;
+}
+
+/** Bank connect is available only with the switch ON, Razorpay's keys present and the payout terms in force; otherwise it is closed. */
 export function routeAvailable(): boolean {
-  return creatorConfig.routeEnabled() && razorpayConfig.configured();
+  return payoutUnavailableReason() === null;
 }
 
 const LEASE_MS = 3 * 60_000;
@@ -100,14 +112,16 @@ function staffAlert(key: string, subject: string, creator: Pick<CreatorRow, "id"
 // ── Reading ─────────────────────────────────────────────────────────────────────────────────────
 
 async function buildResponse(creator: CreatorRow, row: CreatorPayoutAccount | null, now: Date = new Date()): Promise<PayoutAccountResponse> {
-  const available = routeAvailable();
+  const unavailable = payoutUnavailableReason();
+  const available = unavailable === null;
   const gate = canSetUp(creator);
-  const blockedReason: PayoutBlockedReason | null = !available ? "route_disabled" : gate.blockedReason;
+  const blockedReason: PayoutBlockedReason | null = unavailable ?? gate.blockedReason;
   return {
     termsVersion: creatorConfig.termsVersion(),
     routeEnabled: available,
-    // Nothing to set up once all four calls have succeeded: a change goes through requestBankChange.
-    canSetUp: available && gate.canSetUp && !setupIsDone(row),
+    // Nothing to set up once all four calls have succeeded, or once Razorpay holds the account past
+    // setup (activated or suspended, whatever our step says): a change goes through requestBankChange.
+    canSetUp: available && gate.canSetUp && !setupIsDone(row) && !razorpayHoldsAccount(row),
     blockedReason,
     account: toPayoutAccountView(row, now),
   };
@@ -143,7 +157,7 @@ export interface ProductFacts {
   settlementHint?: string | null;
 }
 
-type ProductRow = Pick<CreatorPayoutAccount, "id" | "activationStatus" | "requirements" | "activatedAt" | "bookableAfter" | "lastCheckedAt" | "destinationHint">;
+type ProductRow = Pick<CreatorPayoutAccount, "id" | "setupStep" | "activationStatus" | "requirements" | "activatedAt" | "bookableAfter" | "lastCheckedAt" | "destinationHint">;
 
 export type ProductApplyResult = {
   applied: boolean;
@@ -169,7 +183,10 @@ const word = (v: unknown, max: number): string | null => (typeof v === "string" 
  * What a Razorpay product status changes on our row. Pure, so the mapping is table-tested:
  *   • activation_status and requirements (references and reason codes only, scrubbed as an object);
  *   • activated: activated_at (KEPT on a re-activation), bookable_after = activated_at + 24h (the
- *     conservative reading of Razorpay's cooling-period docs; also kept), last_error cleared;
+ *     conservative reading of Razorpay's cooling-period docs; also kept), last_error cleared, and a setup
+ *     still waiting at the bank call (setup_step "product") is settled to "done": Razorpay cannot activate
+ *     an account without settlement details, so its answer to the bank call must have been applied even
+ *     if OURS was lost. That is how a retry after a lost answer can never overwrite accepted details;
  *   • last_checked_at = the time of the facts, which is also the freshness mark;
  *   • destination_hint when a poll read one from Razorpay's echo.
  * Null when the status is not one of Razorpay's five (a value we do not know is never written).
@@ -193,11 +210,13 @@ export function mapProductFacts(
   const bookableAfter = target === "activated" ? (row.bookableAfter ?? new Date((row.activatedAt ?? at).getTime() + DAY_MS)) : undefined;
   const hint = facts.settlementHint ?? null;
   const hintChanges = hint !== null && hint !== row.destinationHint;
+  const settlesSetup = target === "activated" && row.setupStep === "product";
 
   const unchanged =
     row.activationStatus === target &&
     stableJson(row.requirements) === stableJson(requirements) &&
     (target !== "activated" || (row.activatedAt !== null && row.bookableAfter !== null)) &&
+    !settlesSetup &&
     !hintChanges;
 
   return {
@@ -208,6 +227,7 @@ export function mapProductFacts(
       requirements,
       lastCheckedAt: at,
       ...(target === "activated" ? { activatedAt, bookableAfter, lastError: null } : {}),
+      ...(settlesSetup ? { setupStep: "done" } : {}),
       ...(hintChanges ? { destinationHint: hint } : {}),
     },
   };
@@ -241,6 +261,10 @@ const STEP_ORDER = ["none", "account", "stakeholder", "product", "bank", "done"]
 const stepIndex = (s: string): number => Math.max(0, STEP_ORDER.indexOf(s));
 
 /** What the creator is told for each definite rejection: OUR wording, never Razorpay's. */
+/** Bank (settlement) details must never go to an account Razorpay already holds past setup. */
+const alreadyWithRazorpay = () =>
+  new AppError(409, "ALREADY_SET_UP", "Your payout account is already set up with Razorpay, so these details cannot be sent again. To change your bank account, use “Change bank account”.");
+
 const REJECTION_MESSAGE: Record<string, string> = {
   BANK_DETAILS_REJECTED: "Razorpay could not accept your bank details. Check the account number, IFSC and name, then try again.",
   PAN_REJECTED: "Razorpay could not accept your PAN. Check that it matches your card exactly, then try again.",
@@ -259,7 +283,10 @@ function isConfigurationFailure(e: RazorpayError): boolean {
 
 /** The whole setup, one creator. `body` carries the sensitive fields: it is passed to Razorpay and to nothing else. */
 export async function setUpPayoutAccount(creatorId: string, body: CreatorPayoutAccountInput): Promise<PayoutAccountResponse> {
-  if (!routeAvailable()) throw new AppError(503, "ROUTE_DISABLED", "Adding a bank account is not open yet.");
+  const unavailable = payoutUnavailableReason();
+  if (unavailable === "route_disabled") throw new AppError(503, "ROUTE_DISABLED", "Adding a bank account is not open yet.");
+  // The creator would be accepting terms that say we pay creators nothing, to open a payment account.
+  if (unavailable === "terms_pending") throw new AppError(503, "TERMS_PENDING", "Adding a bank account is not open yet.");
   const creator = await loadCreator(creatorId);
   const gate = canSetUp(creator);
   if (!gate.canSetUp) {
@@ -325,6 +352,11 @@ async function runSetup(creator: CreatorRow, body: CreatorPayoutAccountInput, ge
   const renew = async () => setLease(await renewLease(creatorId, getLease()));
   let row = await prisma.creatorPayoutAccount.findUniqueOrThrow({ where: { creatorId } });
   if (setupIsDone(row)) return; // a double submit after success: nothing to do, nothing sent
+  // ⚠️ Our setup_step can sit behind Razorpay's truth: the bank call may have been APPLIED while its answer was
+  // lost, and the account has since moved on to activated. Sending bank details now would overwrite accepted
+  // ones and skip the staff-mediated bank change (and its release hold), so nothing is sent: the poll or a
+  // webhook settles the step, and a change goes through requestBankChange.
+  if (razorpayHoldsAccount(row)) throw alreadyWithRazorpay();
 
   // The creator accepted the terms by submitting; Razorpay requires a contract with every seller.
   await prisma.creatorPayoutAccount.updateMany({ where: { creatorId }, data: { termsVersion: body.termsVersion, termsAcceptedAt: new Date() } });
@@ -387,15 +419,11 @@ async function runSetup(creator: CreatorRow, body: CreatorPayoutAccountInput, ge
   let productId = row.razorpayProductId;
   if (!productId) {
     await renew();
-    // A retry after an UNKNOWN answer to this very call: if Razorpay now refuses it outright, the product
-    // most likely exists and we never got its id (there is no way to look one up by account), so that is
-    // a manual step for staff, never "your details are wrong".
-    const afterUnknown = decodeSetupError(row.lastError)?.code === "PRODUCT_UNKNOWN";
     let product: RazorpayRouteProduct;
     try {
       product = await requestRouteProduct(accountId, { tncAccepted: true });
     } catch (e) {
-      return failStep(creator, "product", e, { afterUnknown, accountId });
+      return failStep(creator, "product", e, { accountId });
     }
     productId = product.id;
     const mapped = mapProductFacts(row, { activationStatus: product.activation_status, requirements: product.requirements, at: new Date() });
@@ -412,6 +440,11 @@ async function runSetup(creator: CreatorRow, body: CreatorPayoutAccountInput, ge
 
   // ── 4. The settlement bank account ──────────────────────────────────────────────────────────
   await renew();
+  // The last look before the one call that must never reach an activated account: a webhook or the poll may
+  // have settled or activated it since this request read the row.
+  const latest = await prisma.creatorPayoutAccount.findUniqueOrThrow({ where: { creatorId }, select: { setupStep: true, activationStatus: true } });
+  if (setupIsDone(latest)) return;
+  if (razorpayHoldsAccount(latest)) throw alreadyWithRazorpay();
   let settled: RazorpayRouteProduct;
   try {
     settled = await updateRouteProductSettlement(accountId, productId!, {
@@ -533,19 +566,11 @@ async function adoptExistingAccount(creator: CreatorRow, e: unknown): Promise<st
  * ⚠️ Razorpay's text is NEVER passed on: it is read only to pick which field REFERENCES it was about
  * (referencesForRejection), and the creator gets our fixed wording plus the form fields to look at.
  */
-async function failStep(creator: CreatorRow, step: StepName, e: unknown, ctx: { afterUnknown?: boolean; accountId?: string } = {}): Promise<never> {
+async function failStep(creator: CreatorRow, step: StepName, e: unknown, ctx: { accountId?: string } = {}): Promise<never> {
   if (!(e instanceof RazorpayError)) throw e;
   if (e.code === "NOT_CONFIGURED") throw new AppError(503, "ROUTE_DISABLED", "Adding a bank account is not open yet.");
 
   if (isDefinitelyRejected(e)) {
-    if (step === "product" && ctx.afterUnknown) {
-      staffAlert(`payout-product-duplicate:${creator.id}`, "Creator payout setup needs a manual step", creator, [
-        { label: "What happened", value: "Razorpay refused to create the Route product a second time. It most likely exists already, but we never received its id." },
-        { label: "What to do", value: "Find the Route product on the linked account in the Razorpay dashboard and set it on the creator's payout account row; the creator's next attempt then finishes the setup." },
-        ...(ctx.accountId ? [{ label: "Razorpay account", value: ctx.accountId }] : []),
-      ]);
-      throw new AppError(409, "SETUP_UNCERTAIN", "We could not confirm whether Razorpay finished setting up your payout account. Our team has been told and will finish it. Nothing has been lost.");
-    }
     if (step === "account") await releaseReservation(creator.id);
     if (isConfigurationFailure(e)) {
       await recordError(creator.id, encodeSetupError("RAZORPAY_UNAVAILABLE"));
@@ -556,7 +581,41 @@ async function failStep(creator: CreatorRow, step: StepName, e: unknown, ctx: { 
       ]);
       throw new AppError(503, "PAYOUT_UNAVAILABLE", "Adding a bank account is temporarily unavailable. Our team has been told.");
     }
-    const refs = referencesForRejection(step, `${e.message} ${e.reason ?? ""}`);
+    if (step === "product") {
+      // ⚠️ The product request carries NONE of the creator's details (only the product name and the terms
+      // flag), so a definite refusal of it is never "your details are wrong". Most often the product exists
+      // already (an earlier request whose answer or whose save was lost, or an account made in Razorpay's
+      // dashboard that we adopted) and we hold no id for it; there is no way to look a product up by account.
+      // That, and any other refusal, is a step for staff: the creator is not asked to retype anything.
+      await recordError(creator.id, encodeSetupError("PRODUCT_UNKNOWN"));
+      staffAlert(`payout-product-manual:${creator.id}`, "Creator payout setup needs a manual step", creator, [
+        { label: "What happened", value: `Razorpay refused to create the Route product (HTTP ${e.status}). Usually that means it already exists and we never received its id; it can also be another refusal.` },
+        {
+          label: "What to do",
+          value:
+            "Open the linked account in the Razorpay dashboard. If it has a Route product, set that product's id on the creator's payout account row and the creator's next attempt finishes the setup. If it has none, the HTTP status above is the lead.",
+        },
+        ...(ctx.accountId ? [{ label: "Razorpay account", value: ctx.accountId }] : []),
+      ]);
+      throw new AppError(409, "SETUP_UNCERTAIN", "We could not confirm whether Razorpay finished setting up your payout account. Our team has been told and will finish it. Nothing has been lost.");
+    }
+    const text = `${e.message} ${e.reason ?? ""}`;
+    let refs: string[];
+    if (step === "bank") {
+      // The bank call re-sends only the bank fields, so a rejection naming the PAN, phone or address cannot be
+      // corrected from this form: those references are not offered back, and staff are told instead.
+      const split = splitBankRejection(text);
+      refs = split.references;
+      if (split.ignored.length > 0) {
+        staffAlert(`payout-bank-other:${creator.id}`, "Creator payout: Razorpay refused the bank step over another detail", creator, [
+          { label: "Fields Razorpay named", value: split.ignored.join(", ") },
+          { label: "Why you are told", value: "The creator cannot correct these from the bank form: it re-sends only the account number, IFSC and name." },
+          { label: "What to do", value: "Look at the linked account in the Razorpay dashboard; the creator may need to write to us." },
+        ]);
+      }
+    } else {
+      refs = referencesForRejection(step, text);
+    }
     const code = step === "bank" ? "BANK_DETAILS_REJECTED" : refs.includes("kyc.pan") ? "PAN_REJECTED" : "DETAILS_REJECTED";
     await recordError(creator.id, encodeSetupError(code, refs));
     const fields: PayoutFormField[] = [];
@@ -593,6 +652,8 @@ async function failStep(creator: CreatorRow, step: StepName, e: unknown, ctx: { 
  * Razorpay says a bank change needs a support request [R2 FAQ Q7], so this only RECORDS the request and
  * tells people; no Razorpay call is made. From the request until staff clear it (plus 72 hours), releases
  * for this creator are held back (bankChangeBlocksRelease). Idempotent: one pending request at a time.
+ * Staff clear it with markBankChangeProcessed (creator-admin.service.ts), the ONLY clearing path: it has the
+ * compare-and-swap, the audit row and the email. The cron digests requests still waiting after 24 hours.
  */
 export async function requestBankChange(creatorId: string): Promise<PayoutAccountResponse> {
   if (!creatorConfig.routeEnabled()) throw new AppError(503, "ROUTE_DISABLED", "Adding a bank account is not open yet.");
@@ -628,18 +689,4 @@ export async function requestBankChange(creatorId: string): Promise<PayoutAccoun
   }
   const after = await prisma.creatorPayoutAccount.findUnique({ where: { creatorId } });
   return buildResponse(creator, after);
-}
-
-/**
- * Staff action (called by the admin screen): the bank change Razorpay support carried out is done.
- * Releases stay paused for 72 hours more (bankChangeBlocksRelease). Returns false when nothing was pending.
- */
-export async function markBankChangeCleared(creatorId: string, now: Date = new Date()): Promise<boolean> {
-  const row = await prisma.creatorPayoutAccount.findUnique({ where: { creatorId } });
-  if (!row || !bankChangePending(row)) return false;
-  const r = await prisma.creatorPayoutAccount.updateMany({
-    where: { id: row.id, bankChangeRequestedAt: row.bankChangeRequestedAt },
-    data: { bankChangeClearedAt: now },
-  });
-  return r.count === 1;
 }

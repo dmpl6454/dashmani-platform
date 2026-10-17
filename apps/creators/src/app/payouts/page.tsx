@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import useSWR from "swr";
 import { fetcher, PAYOUT_ACCOUNT_PATH } from "@/lib/api";
@@ -8,7 +8,7 @@ import { errorSentence } from "@/lib/messages";
 import type { PayoutAccountResponse } from "@/lib/types";
 import { Banner, Loading, PageHead } from "@/components/ui";
 import { PayoutForm, fieldsForReferences } from "./_form";
-import { StatusCard } from "./_status";
+import { StatusCard, failureOf } from "./_status";
 
 // Payouts: add a bank account so a creator is ready when paid bookings open (bank connect, Phase 2 of
 // the payouts plan). Everything this page claims comes from GET /v1/creator/payout-account, and ONLY a
@@ -16,11 +16,19 @@ import { StatusCard } from "./_status";
 // retry; it never shows "not started" or an empty page for a request that did not succeed.
 //
 // States (see PayoutAccountResponse):
-//   routeEnabled false, no account  → a calm "isn't open yet" card, no form (the dark state).
+//   routeEnabled false, no account  → a calm "isn't open yet" card, no form (the dark state). The server also
+//                                     answers routeEnabled:false with blockedReason "terms_pending" while the
+//                                     creator terms are still the ones written before any payment existed:
+//                                     the same card, because for the creator it is the same thing.
 //   blockedReason                   → why, and where to go next; no form.
 //   no account, canSetUp            → the form.
 //   an account                      → the status card; plus the form while setup is unfinished or refused
-//                                     (the details are never kept, so a resume asks for them again).
+//                                     (the details are never kept, so a resume asks for them again). A refusal
+//                                     only our team can resolve (attention "contact_us") offers the form again
+//                                     only when the creator asks for it.
+//
+// ⚠️ The status card's wording follows whether the form is REALLY on the page (formShown): "send your
+// details below" is never said next to a missing form.
 //
 // ⚠️ PRIVACY. No query string, no storage, no draft: see _form.tsx. This page reads no URL state at all.
 
@@ -31,6 +39,14 @@ export default function PayoutsPage() {
     dedupingInterval: 5_000,
   });
   const [sent, setSent] = useState(false);
+  // A refusal only our team can resolve: the form comes back when the creator says we have been in touch.
+  const [retryOpen, setRetryOpen] = useState(false);
+  // After a successful send the form (and the button that was focused) is gone, so focus goes to the status heading.
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const hasAccount = !!data?.account && data.account.status !== "not_started";
+  useEffect(() => {
+    if (sent && hasAccount) headingRef.current?.focus();
+  }, [sent, hasAccount]);
 
   if (!data && !error) {
     return (
@@ -57,15 +73,18 @@ export default function PayoutsPage() {
   const account = data.account && data.account.status !== "not_started" ? data.account : null;
   const email = creator?.email ?? null;
   const open = routeEnabled && blockedReason === null;
-  const showForm = routeEnabled && canSetUp && (!account || account.status === "failed" || account.status === "setting_up");
+  const needsContact = account?.status === "failed" && failureOf(account) === "contact_us";
+  const formOpen = routeEnabled && canSetUp && (!account || account.status === "failed" || account.status === "setting_up");
+  const showForm = formOpen && (!needsContact || retryOpen);
   const dark = !routeEnabled && !account;
+  // Whose turn it is for a creator who cannot add an account yet, from their own profile status (the API's
+  // blockedReason "not_approved" covers draft, in review, rejected and suspended alike).
+  const profile = creator?.status;
 
   return (
     <div className="flex flex-col gap-6 max-w-3xl">
       <PageHead kicker="Payouts" title="Your payout account.">
-        {dark ? (
-          <p>Paid bookings will need a PAN and an Indian bank account (INR).</p>
-        ) : (
+        {routeEnabled && canSetUp && (showForm || !account) ? (
           <>
             <p>
               Add your bank account now so you&apos;re ready when paid bookings open. We send your PAN and bank details to Razorpay, our
@@ -73,6 +92,11 @@ export default function PayoutsPage() {
             </p>
             <p className="mt-2">Paid bookings need a PAN and an Indian bank account (INR).</p>
           </>
+        ) : account ? (
+          // Paused, not able to add one, or a refusal waiting on our team (no form shown): never "add your bank account now".
+          <p>Here&apos;s where your payout account stands.</p>
+        ) : (
+          <p>Paid bookings will need a PAN and an Indian bank account (INR).</p>
         )}
       </PageHead>
 
@@ -98,7 +122,22 @@ export default function PayoutsPage() {
         </Banner>
       )}
 
-      {routeEnabled && blockedReason === "not_approved" && (
+      {routeEnabled && blockedReason === "not_approved" && profile === "suspended" && (
+        <Banner tone="danger" title="Your account is suspended.">
+          A bank account can&apos;t be added right now. Email creators@digitalsukoon.com and we&apos;ll look into it with you.
+        </Banner>
+      )}
+      {routeEnabled && blockedReason === "not_approved" && profile === "in_review" && (
+        <Banner
+          tone="info"
+          title="Your profile is in review."
+          action={<Link href="/dashboard" className="btn btn-ghost btn-sm">Go to Overview</Link>}
+        >
+          We&apos;ll open this once our team has approved your profile. We&apos;ll email you when we&apos;ve decided.
+        </Banner>
+      )}
+      {/* Draft, rejected, or a status we don't know here: the original next step. */}
+      {routeEnabled && blockedReason === "not_approved" && profile !== "suspended" && profile !== "in_review" && (
         <Banner
           tone="info"
           title="You can add your bank account once your profile is approved."
@@ -123,12 +162,6 @@ export default function PayoutsPage() {
         </Banner>
       )}
 
-      {sent && account && (
-        <Banner tone="success" role="status" title="Sent to Razorpay.">
-          Your details went to Razorpay and weren&apos;t kept by us. Its review of your payout account is shown below.
-        </Banner>
-      )}
-
       {account && (
         <StatusCard
           account={account}
@@ -137,6 +170,10 @@ export default function PayoutsPage() {
           checking={isValidating}
           onCheck={() => void mutate()}
           onChanged={(r) => void mutate(r, { revalidate: false })}
+          formShown={showForm}
+          justSent={sent}
+          headingRef={headingRef}
+          onTryAgain={formOpen ? () => setRetryOpen(true) : undefined}
         />
       )}
 

@@ -54,11 +54,38 @@ function searchWhere(q: string | undefined) {
   };
 }
 
+/**
+ * Creators whose bank change request staff have not processed yet, or null when the read failed. The queue's
+ * second source of truth beside the alert email (which is one-shot and can be dropped): a request must show
+ * up on the next visit whatever happened to the email. Deliberately NOT limited to the creators on the page:
+ * the default tab is "In review", and a creator waiting on a bank change is an APPROVED one, so a count that
+ * only saw the listed rows would read zero exactly where staff look first. One row per creator in a table
+ * that only holds creators who have started bank connect; `take` is a backstop, not a working limit.
+ *
+ * ⚠️ A failed read is `null`, never an empty set: the payout tables are applied by hand before a deploy, and
+ * the review queue must keep working without them (it says it could not check instead of claiming "none").
+ */
+const BANK_CHANGE_SCAN_LIMIT = 5000;
+async function pendingBankChangeCreatorIds(): Promise<Set<string> | null> {
+  try {
+    const rows = await prisma.creatorPayoutAccount.findMany({
+      where: { bankChangeRequestedAt: { not: null } },
+      select: { creatorId: true, bankChangeRequestedAt: true, bankChangeClearedAt: true },
+      orderBy: { bankChangeRequestedAt: "desc" },
+      take: BANK_CHANGE_SCAN_LIMIT,
+    });
+    return new Set(rows.filter(bankChangePending).map((r) => r.creatorId));
+  } catch (e) {
+    console.warn(`[creator-admin] could not read pending bank changes: ${scrubPayoutSecrets(e instanceof Error ? e.message : String(e)).slice(0, 200)}`);
+    return null;
+  }
+}
+
 export async function listCreators(opts: { status?: string; q?: string }) {
   const status = opts.status && (CREATOR_STATUSES as readonly string[]).includes(opts.status) ? opts.status : undefined;
   const search = searchWhere(opts.q);
 
-  const [rows, grouped] = await Promise.all([
+  const [rows, grouped, pendingBank] = await Promise.all([
     prisma.creator.findMany({
       where: { ...search, ...(status ? { status } : {}) },
       orderBy: { createdAt: "desc" },
@@ -77,6 +104,7 @@ export async function listCreators(opts: { status?: string; q?: string }) {
     }),
     // Tab counts follow the search box but not the selected tab.
     prisma.creator.groupBy({ by: ["status"], where: search, _count: { _all: true } }),
+    pendingBankChangeCreatorIds(),
   ]);
 
   const counts = Object.fromEntries(CREATOR_STATUSES.map((s) => [s, 0])) as Record<CreatorStatus, number>;
@@ -98,12 +126,17 @@ export async function listCreators(opts: { status?: string; q?: string }) {
       publishablePages: live.filter(isPublishable).length,
       followers: live.reduce((sum, a) => sum + (a.followerCount ?? 0), 0),
       connectionStatus: currentConnection(c.connections)?.status ?? null,
+      // false also when the read failed: `bankChangesWaiting: null` says so (a row cannot).
+      bankChangePending: pendingBank?.has(c.id) ?? false,
     };
   });
-  // The review queue first; otherwise newest first (Array.sort is stable, so createdAt order holds).
-  creators.sort((a, b) => Number(b.status === "in_review") - Number(a.status === "in_review"));
+  // The work queue first (creators in review, and creators with a bank change waiting); otherwise newest
+  // first (Array.sort is stable, so createdAt order holds).
+  const needsStaff = (c: { status: string; bankChangePending: boolean }) => Number(c.status === "in_review" || c.bankChangePending);
+  creators.sort((a, b) => needsStaff(b) - needsStaff(a));
 
-  return { creators, counts };
+  // Every waiting request, not just those on this tab; null = could not be read (not "none").
+  return { creators, counts, bankChangesWaiting: pendingBank ? pendingBank.size : null };
 }
 
 function toAdminCreator(c: Creator, reviewedByName: string | null) {
@@ -257,8 +290,7 @@ function bankChangeProcessedEmail(name: string) {
     title: "Bank change processed",
     body:
       `<p style="margin:0 0 12px">Hi ${esc(name)},</p>` +
-      `<p style="margin:0 0 12px">Our team has completed the bank account change you asked for.</p>` +
-      `<p style="margin:0 0 12px">For your protection, payments to you stay paused until 72 hours after this change. After that they go to the new account as normal.</p>` +
+      `<p style="margin:0 0 12px">Our team has completed the bank account change you asked for: your payout account with Razorpay has been updated.</p>` +
       `<p style="margin:0 0 12px">We never ask for bank details by email. If you did not ask for this change, reply to this email right away.</p>` +
       `<p style="margin:18px 0">${button(creatorLink("/payouts"), "Open your payouts page")}</p>`,
   };

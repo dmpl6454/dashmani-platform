@@ -1,14 +1,16 @@
 import type { CreatorPayoutAccount } from "@dashmani/db";
+import { formFieldForReference } from "@dashmani/shared/src/validators/creator-payout";
 import type {
   PayoutAccountStatus,
   PayoutAccountView,
+  PayoutAttention,
   PayoutBlockedReason,
   PayoutRequirement,
   PayoutSetupStep,
 } from "@dashmani/shared/src/validators/creator-payout";
 import { scrubPayoutSecrets } from "../../utils/payout-scrub";
 
-export type { PayoutAccountStatus, PayoutAccountView, PayoutBlockedReason, PayoutRequirement, PayoutSetupStep };
+export type { PayoutAccountStatus, PayoutAccountView, PayoutAttention, PayoutBlockedReason, PayoutRequirement, PayoutSetupStep };
 
 // Pure: how a creator_payout_accounts row becomes JSON for the creator (and the staff screen), who
 // may set an account up, and when a bank change holds back releases. No I/O, so every mapping is
@@ -44,6 +46,8 @@ type Row = Pick<
  * The codes bank connect writes to `last_error`. A DEFINITE rejection means Razorpay refused what was
  * submitted and the creator must correct something (the view then reads "failed"); the others mean the
  * outcome is unknown or Razorpay was unreachable, and the same submission may simply be sent again.
+ * PRODUCT_UNKNOWN is also what a DEFINITE refusal of the product call is recorded as: that call carries none
+ * of the creator's details, so it is a step for staff (an alert has gone out), never "correct your details".
  */
 export const SETUP_REJECTION_CODES = ["DETAILS_REJECTED", "PAN_REJECTED", "BANK_DETAILS_REJECTED", "ACCOUNT_CONFLICT"] as const;
 export const SETUP_RETRYABLE_CODES = ["ACCOUNT_UNKNOWN", "PRODUCT_UNKNOWN", "RAZORPAY_UNAVAILABLE"] as const;
@@ -76,6 +80,16 @@ const NEXT_STEP: Record<string, PayoutSetupStep> = {
 /** Whether all four Razorpay calls have succeeded ("bank" is read as done: the last call is the bank one). */
 export function setupIsDone(row: Pick<Row, "setupStep"> | null): boolean {
   return row !== null && (row.setupStep === "done" || row.setupStep === "bank");
+}
+
+/**
+ * Razorpay already holds this account past setup (activated, or suspended). Nothing may ever send bank
+ * (settlement) details to such an account again: that call is for first-time setup only, and a bank
+ * change goes through the staff-mediated request. This is judged from what RAZORPAY says, not only from
+ * our own setup_step, because an answer we lost leaves the step behind while the account moves on.
+ */
+export function razorpayHoldsAccount(row: Pick<Row, "activationStatus"> | null): boolean {
+  return row !== null && (row.activationStatus === "activated" || row.activationStatus === "suspended");
 }
 
 const iso = (d: Date | null | undefined) => (d ? d.toISOString() : null);
@@ -120,6 +134,18 @@ export function payoutAccountStatus(row: Row | null, now: Date = new Date()): Pa
   return row.activationStatus === "needs_clarification" ? "needs_clarification" : "under_review";
 }
 
+/**
+ * What a failed setup asks of the creator: correct the marked details, or write to us. An account Razorpay
+ * holds under their email (ACCOUNT_CONFLICT) and a refusal that named no field the form has are things the
+ * creator cannot fix by retyping, and the screen must not say "correct the marked details" with none marked.
+ */
+function attentionOf(status: PayoutAccountStatus, lastError: string | null): PayoutAttention | null {
+  if (status !== "failed") return null;
+  const err = decodeSetupError(lastError);
+  if (!err || err.code === "ACCOUNT_CONFLICT") return "contact_us";
+  return err.references.some((r) => formFieldForReference(r) !== null) ? "fix_details" : "contact_us";
+}
+
 /** The ONE shape that leaves the server for a payout account (GET/PUT /v1/creator/payout-account, the staff panel). */
 export function toPayoutAccountView(row: Row | null, now: Date = new Date()): PayoutAccountView | null {
   if (!row) return null;
@@ -134,6 +160,7 @@ export function toPayoutAccountView(row: Row | null, now: Date = new Date()): Pa
   return {
     status,
     setupStep: NEXT_STEP[row.setupStep] ?? "account",
+    attention: attentionOf(status, row.lastError),
     requirements,
     destinationHint: row.destinationHint && HINT_RE.test(row.destinationHint) ? row.destinationHint : null,
     activatedAt: iso(row.activatedAt),
@@ -146,7 +173,8 @@ export function toPayoutAccountView(row: Row | null, now: Date = new Date()): Pa
 
 // ── Who may set an account up ───────────────────────────────────────────────────────────────────
 
-export type SetUpBlock = Exclude<PayoutBlockedReason, "route_disabled">;
+/** What canSetUp can say from the creator alone: the switch and the terms are decided elsewhere (payoutUnavailableReason). */
+export type SetUpBlock = Exclude<PayoutBlockedReason, "route_disabled" | "terms_pending">;
 
 /**
  * Bank connect needs an APPROVED creator with a VERIFIED email: staff have vetted the pages, and the

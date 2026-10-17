@@ -4,8 +4,10 @@
  * Razorpay sends no notification when an account activates or fails verification, so a 5-minute poll keeps
  * the status true. What these pin: who is polled and how often, the 20-call budget, the skip while a setup
  * holds the lease, the failure brakes (cooldown, three-in-a-row stop, overlap guard), staff being told ONCE
- * per episode (field references only), and the privacy rule: the product answer echoes the full account
- * number and Razorpay's free-text descriptions, and neither reaches a column, a log line or an email.
+ * per episode (field references only), the hourly digest of bank-change requests that staff have left
+ * waiting over 24 hours, and the privacy rule: the product answer echoes the full account number and
+ * Razorpay's free-text descriptions, and neither reaches a column, a log line or an email. The log spy
+ * (tests/payout-privacy.ts) renders an Error's message and stack, so "never logs a body" cannot pass blind.
  */
 import { describe, it, expect, beforeEach, afterEach, afterAll, vi } from "vitest";
 import { randomUUID } from "crypto";
@@ -19,8 +21,10 @@ vi.mock("../src/services/email.service", async (orig) => {
 
 import { notifyAdminByEmail } from "../src/services/email.service";
 import { FakeRazorpay, is } from "./fake-razorpay-route";
+import { captureConsole, renderLogArgs, scanDatabase as scan } from "./payout-privacy";
 import { flushPayoutAlertsForTests, resetPayoutAlertsForTests } from "../src/services/creator/payout-alert";
-import { TICK_CALL_BUDGET, resetCreatorPayoutCronForTests, runCreatorPayoutTick } from "../src/cron/creator-payout.cron";
+import { PRE_PAYOUT_TERMS_VERSION } from "../src/services/creator/creator-config";
+import { TICK_CALL_BUDGET, resetCreatorPayoutCronForTests, runCreatorPayoutTick, warnIfPayoutTermsPending } from "../src/cron/creator-payout.cron";
 
 const notifyMock = vi.mocked(notifyAdminByEmail);
 const fake = new FakeRazorpay();
@@ -74,25 +78,12 @@ const ago = (ms: number, base = Date.now()) => new Date(base - ms);
 const MIN = 60_000;
 const HOUR = 60 * MIN;
 
-async function scan(needles: string[]): Promise<string[]> {
-  const tables = await prisma.$queryRaw<Array<{ table_name: string }>>`SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE'`;
-  const patterns = needles.map((x) => `%${x}%`);
-  const hits: string[] = [];
-  for (const { table_name } of tables) {
-    const marks = patterns.map((_, i) => `$${i + 1}`).join(",");
-    const rows = await prisma.$queryRawUnsafe<Array<{ c: number }>>(`SELECT count(*)::int AS c FROM "${table_name}" t WHERE t::text ILIKE ANY (ARRAY[${marks}])`, ...patterns);
-    if (rows[0].c > 0) hits.push(table_name);
-  }
-  return hits;
-}
-
 let logged: string[] = [];
 const consoleSpies: Array<{ mockRestore: () => void }> = [];
 function spyConsole() {
-  logged = [];
-  for (const m of ["log", "info", "warn", "error", "debug"] as const) {
-    consoleSpies.push(vi.spyOn(console, m).mockImplementation((...args: unknown[]) => void logged.push(args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" "))));
-  }
+  const c = captureConsole();
+  logged = c.lines;
+  consoleSpies.push({ mockRestore: c.restore });
 }
 
 beforeEach(() => {
@@ -272,6 +263,160 @@ describe("telling staff", () => {
   });
 });
 
+describe("the instruments (controls)", () => {
+  it("the console spy SEES an Error's message and stack, so 'never logs a body' is not vacuous", () => {
+    spyConsole();
+    const planted = "PLANTED-CRON-NEEDLE-5c1e";
+    console.error("[creator-payout] poll failed", new Error(planted));
+    expect(logged.join("\n")).toContain(planted);
+    // what the old spy did: a plain stringify drops the message entirely
+    expect(JSON.stringify(new Error(planted))).not.toContain(planted);
+    expect(renderLogArgs([new Error(planted)])).toContain(planted);
+  });
+});
+
+describe("the bank change digest", () => {
+  const stamp = (row: { id: string }, requestedHoursAgo: number, now: Date, clearedHoursAgo?: number) =>
+    prisma.creatorPayoutAccount.update({
+      where: { id: row.id },
+      data: {
+        bankChangeRequestedAt: new Date(now.getTime() - requestedHoursAgo * HOUR),
+        bankChangeClearedAt: clearedHoursAgo === undefined ? null : new Date(now.getTime() - clearedHoursAgo * HOUR),
+      },
+    });
+  const emailOf = async (creatorId: string) => (await prisma.creator.findUniqueOrThrow({ where: { id: creatorId } })).email;
+  const digestMails = () => notifyMock.mock.calls.filter((c) => String(c[0]).includes("bank change request"));
+
+  async function seedScene(now: Date) {
+    const waiting30 = await seed({ creator: true });
+    const waiting50 = await seed({ creator: true });
+    const recent = await seed({ creator: true });
+    const cleared = await seed({ creator: true });
+    const askedAgain = await seed({ creator: true });
+    const never = await seed({ creator: true });
+    await stamp(waiting30.row, 30, now);
+    await stamp(waiting50.row, 50, now);
+    await stamp(recent.row, 23, now);
+    await stamp(cleared.row, 60, now, 40);
+    await stamp(askedAgain.row, 25, now, 50); // cleared long ago, asked again: pending again
+    return { waiting30, waiting50, recent, cleared, askedAgain, never };
+  }
+
+  it("emails ONE digest of the requests waiting over 24 hours, then stays quiet for the hour, repeats after it, and stops once they are cleared", async () => {
+    spyConsole();
+    const now = new Date();
+    const sc = await seedScene(now);
+    const out = await runCreatorPayoutTick({ now, budget: 50 });
+    expect(out.bankChangesWaiting).toBe(3);
+    expect(out.alerted).toBe(1);
+    await flushPayoutAlertsForTests();
+    expect(digestMails()).toHaveLength(1);
+    const [subject, details, path] = digestMails()[0] as any;
+    expect(subject).toBe("3 bank change requests waiting for staff");
+    expect(path).toBe("/creators");
+    const text = JSON.stringify(details);
+    for (const k of ["waiting30", "waiting50", "askedAgain"] as const) expect(text, k).toContain(await emailOf((sc as any)[k].creatorId));
+    for (const k of ["recent", "cleared", "never"] as const) expect(text, k).not.toContain(await emailOf((sc as any)[k].creatorId));
+    expect(text).toContain("waiting 50h"); // the oldest is named first
+    expect(text.indexOf("waiting 50h")).toBeLessThan(text.indexOf("waiting 30h"));
+    expect(text).not.toContain(ACCOUNT_NUMBER);
+
+    // ten minutes later: nothing more, and the check is not even run
+    const t10 = new Date(now.getTime() + 10 * MIN);
+    expect(await runCreatorPayoutTick({ now: t10, budget: 50 })).toMatchObject({ bankChangesWaiting: 0, alerted: 0 });
+    await flushPayoutAlertsForTests();
+    expect(digestMails()).toHaveLength(1);
+
+    // an hour on, still uncleared: the digest repeats, and the request that was 23 hours old has now waited a day too
+    const t61 = new Date(now.getTime() + 61 * MIN);
+    expect(await runCreatorPayoutTick({ now: t61, budget: 50 })).toMatchObject({ bankChangesWaiting: 4, alerted: 1 });
+    await flushPayoutAlertsForTests();
+    expect(digestMails()).toHaveLength(2);
+    expect(JSON.stringify((digestMails()[1] as any)[1])).toContain(await emailOf(sc.recent.creatorId));
+
+    // staff clear them all: later there is nothing to say
+    for (const k of ["waiting30", "waiting50", "askedAgain", "recent"] as const) {
+      await prisma.creatorPayoutAccount.update({ where: { id: (sc as any)[k].row.id }, data: { bankChangeClearedAt: new Date(t61.getTime() + 5 * MIN) } });
+    }
+    const t130 = new Date(now.getTime() + 130 * MIN);
+    expect(await runCreatorPayoutTick({ now: t130, budget: 50 })).toMatchObject({ bankChangesWaiting: 0, alerted: 0 });
+    await flushPayoutAlertsForTests();
+    expect(digestMails()).toHaveLength(2);
+    expect(logged.join("\n")).not.toContain("digest failed");
+  });
+
+  it("a digest whose email failed is tried again at the next hourly pass", async () => {
+    const now = new Date();
+    await stamp((await seed({ creator: true })).row, 40, now);
+    notifyMock.mockResolvedValueOnce(null as any); // the mailer's "not configured / send failed"
+    expect(await runCreatorPayoutTick({ now })).toMatchObject({ bankChangesWaiting: 1, alerted: 1 });
+    await flushPayoutAlertsForTests();
+    expect(digestMails()).toHaveLength(1);
+    const later = new Date(now.getTime() + 61 * MIN);
+    expect(await runCreatorPayoutTick({ now: later })).toMatchObject({ bankChangesWaiting: 1, alerted: 1 });
+    await flushPayoutAlertsForTests();
+    expect(digestMails()).toHaveLength(2);
+  });
+
+  it("names at most 15 creators and says how many more wait", async () => {
+    const now = new Date();
+    for (let i = 0; i < 17; i++) await stamp((await seed({ creator: true })).row, 30 + i, now);
+    expect(await runCreatorPayoutTick({ now, budget: 1 })).toMatchObject({ bankChangesWaiting: 17 });
+    await flushPayoutAlertsForTests();
+    const text = JSON.stringify((digestMails()[0] as any)[1]);
+    expect(digestMails()[0][0]).toBe("17 bank change requests waiting for staff");
+    expect(text).toContain("and 2 more");
+    expect(text.match(/Asha Iyer/g)).toHaveLength(15);
+  });
+
+  it("says nothing when no request is waiting, and nothing at all without the Razorpay keys", async () => {
+    const now = new Date();
+    await stamp((await seed({ creator: true })).row, 5, now); // asked, but not for a day yet
+    expect(await runCreatorPayoutTick({ now })).toMatchObject({ bankChangesWaiting: 0, alerted: 0 });
+    await flushPayoutAlertsForTests();
+    expect(digestMails()).toHaveLength(0);
+    resetCreatorPayoutCronForTests();
+    vi.stubEnv("RAZORPAY_KEY_ID", "");
+    await stamp((await seed({ creator: true })).row, 40, now);
+    expect(await runCreatorPayoutTick({ now })).toMatchObject({ ran: false, bankChangesWaiting: 0 });
+    await flushPayoutAlertsForTests();
+    expect(digestMails()).toHaveLength(0);
+  });
+});
+
+describe("a setup stopped at the bank call", () => {
+  it("is settled to done by the poll once Razorpay activates the account (a lost answer can never lead to a second bank call)", async () => {
+    const a = await seed({ setupStep: "product", status: "needs_clarification", fakeStatus: "activated", lastCheckedAt: ago(2 * HOUR) });
+    expect(await runCreatorPayoutTick()).toMatchObject({ polled: 1, changed: 1 });
+    expect(await reload(a.row.id)).toMatchObject({ setupStep: "done", activationStatus: "activated", lastError: null });
+    // and it is now an ordinary activated account: checked daily
+    fake.calls = [];
+    expect(await runCreatorPayoutTick()).toMatchObject({ polled: 0 });
+    // an account still under review is NOT settled: only an activation proves the bank details were applied
+    const b = await seed({ setupStep: "product", status: "needs_clarification", fakeStatus: "under_review", lastCheckedAt: ago(2 * HOUR) });
+    await runCreatorPayoutTick();
+    expect(await reload(b.row.id)).toMatchObject({ setupStep: "product", activationStatus: "under_review" });
+  });
+});
+
+describe("the boot check", () => {
+  it("warns once at start-up when the switch is on but the terms are still the pre-payout ones, and says nothing otherwise", () => {
+    spyConsole();
+    vi.stubEnv("CREATOR_ROUTE_ENABLED", "1");
+    vi.stubEnv("CREATOR_TERMS_VERSION", "");
+    expect(warnIfPayoutTermsPending()).toBe(true);
+    expect(logged.join("\n")).toContain("terms_pending");
+    expect(logged.join("\n")).toContain(PRE_PAYOUT_TERMS_VERSION);
+    logged.length = 0;
+    vi.stubEnv("CREATOR_TERMS_VERSION", "2026-11-01");
+    expect(warnIfPayoutTermsPending()).toBe(false);
+    vi.stubEnv("CREATOR_TERMS_VERSION", "");
+    vi.stubEnv("CREATOR_ROUTE_ENABLED", "0");
+    expect(warnIfPayoutTermsPending()).toBe(false);
+    expect(logged).toEqual([]);
+  });
+});
+
 describe("when Razorpay misbehaves", () => {
   it("counts a failure, leaves that account alone for a while, logs a code and never a body", async () => {
     spyConsole();
@@ -288,9 +433,13 @@ describe("when Razorpay misbehaves", () => {
     expect(new Set(polled())).toEqual(new Set([a.accountId, b.accountId])); // both were asked (their order is not defined)
     const text = logged.join("\n");
     expect(text).toContain(`poll failed for ${a.row.id}`);
+    expect(text).toContain("SERVER_ERROR 500"); // a code and a status
     expect(text).not.toContain(ACCOUNT_NUMBER);
     expect(text).not.toContain(PAN);
-    expect(text).not.toContain("internal error");
+    expect(text).not.toContain("internal error"); // Razorpay's description (it reaches RazorpayError.message)
+    // and not an Error object either: its name and a stack frame are what logging `e` would add
+    expect(text).not.toContain("RazorpayError");
+    expect(text).not.toMatch(/\n\s+at \S+/);
 
     // the failed account is skipped for 30 minutes (in memory); the other is simply not due yet
     fake.calls = [];

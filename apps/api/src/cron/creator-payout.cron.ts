@@ -22,6 +22,12 @@
  * the email went out, and is cleared when the account leaves that status, so a later relapse alerts again.
  * Alerts go through alertStaffOncePerHour (rate-limited: the Gmail account is shared with password resets).
  *
+ * Bank-change requests are different: the creator's request is a to-do for a person (raise it with
+ * Razorpay support, then mark it processed), and its one email at request time can be lost (SMTP down, the
+ * hourly ceiling). So once an hour, while any request has waited over 24 hours, ONE digest names them all,
+ * until staff clear them. Releases for those creators are paused meanwhile. No column: the request itself is
+ * the record, and the digest stops when it is cleared.
+ *
  * Nothing here ever logs a Razorpay body. Overlap guard claimed before the first await. Kill switch
  * CREATOR_PAYOUT_CRON_ENABLED=0; a no-op while the Razorpay keys are absent. It does NOT depend on
  * CREATOR_ROUTE_ENABLED: switching the feature off must never stop reconciling an existing account.
@@ -49,6 +55,11 @@ const NON_FINAL = ["not_started", "requested", "under_review", "needs_clarificat
 const FINAL = ["activated", "suspended"];
 const SETUP_DONE_STEPS = ["bank", "done"];
 
+/** A bank-change request waits this long before the digest names it (staff normally act within a day). */
+export const BANK_CHANGE_DIGEST_AFTER_MS = DAY_MS;
+const BANK_CHANGE_DIGEST_EVERY_MS = HOUR_MS;
+const BANK_CHANGE_DIGEST_MAX_NAMED = 15;
+
 export interface PayoutTickSummary {
   /** False when the tick did nothing at all (switched off, no keys, or another tick still running). */
   ran: boolean;
@@ -56,16 +67,20 @@ export interface PayoutTickSummary {
   changed: number;
   failed: number;
   alerted: number;
+  /** Bank-change requests older than 24 hours still waiting for staff, as found by this tick's digest (0 on a tick that did not run it). */
+  bankChangesWaiting: number;
 }
 
-const idle = (): PayoutTickSummary => ({ ran: false, polled: 0, changed: 0, failed: 0, alerted: 0 });
+const idle = (): PayoutTickSummary => ({ ran: false, polled: 0, changed: 0, failed: 0, alerted: 0, bankChangesWaiting: 0 });
 
 let running = false;
+let lastBankDigestAt = 0;
 const failedAt = new Map<string, number>();
 
 /** Tests only. */
 export function resetCreatorPayoutCronForTests(): void {
   running = false;
+  lastBankDigestAt = 0;
   failedAt.clear();
 }
 
@@ -138,6 +153,14 @@ export async function runCreatorPayoutTick(opts: { now?: Date; budget?: number }
         if (++consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) break; // Razorpay is down: the next tick tries again
       }
     }
+    // A failure here must not take the poll's summary with it (it has already done its work).
+    try {
+      const digest = await digestWaitingBankChanges(now);
+      out.bankChangesWaiting = digest.waiting;
+      if (digest.alerted) out.alerted++;
+    } catch (e) {
+      console.error("[creator-payout] bank change digest failed:", scrubPayoutSecrets(String((e as Error)?.message ?? e)).slice(0, 200));
+    }
     return out;
   } catch (e) {
     console.error("[creator-payout] tick failed:", scrubPayoutSecrets(String((e as Error)?.message ?? e)).slice(0, 200));
@@ -145,6 +168,52 @@ export async function runCreatorPayoutTick(opts: { now?: Date; budget?: number }
   } finally {
     running = false;
   }
+}
+
+/**
+ * At most once an hour: find bank-change requests that staff have not cleared for over 24 hours and email ONE
+ * digest naming them. A request is waiting while cleared_at is empty or older than requested_at (the same rule
+ * as bankChangePending, in SQL because Prisma cannot compare two columns). Only names, emails, hours and the
+ * count go into the mail: the payout row holds nothing else about a bank account.
+ */
+async function digestWaitingBankChanges(now: Date): Promise<{ waiting: number; alerted: boolean }> {
+  if (now.getTime() - lastBankDigestAt < BANK_CHANGE_DIGEST_EVERY_MS) return { waiting: 0, alerted: false };
+  lastBankDigestAt = now.getTime();
+  const cutoff = new Date(now.getTime() - BANK_CHANGE_DIGEST_AFTER_MS);
+  const rows = await prisma.$queryRaw<Array<{ creator_id: string; requested: Date }>>`
+    SELECT creator_id, bank_change_requested_at AS requested
+      FROM creator_payout_accounts
+     WHERE bank_change_requested_at IS NOT NULL
+       AND bank_change_requested_at < ${cutoff}::timestamptz AT TIME ZONE 'UTC'
+       AND (bank_change_cleared_at IS NULL OR bank_change_cleared_at < bank_change_requested_at)
+     ORDER BY bank_change_requested_at ASC
+     LIMIT 200`;
+  if (rows.length === 0) return { waiting: 0, alerted: false };
+
+  const named = rows.slice(0, BANK_CHANGE_DIGEST_MAX_NAMED);
+  const creators = await prisma.creator.findMany({ where: { id: { in: named.map((r) => r.creator_id) } }, select: { id: true, name: true, email: true } });
+  const byId = new Map(creators.map((c) => [c.id, c]));
+  const lines = named.map((r) => {
+    const c = byId.get(r.creator_id);
+    const hours = Math.floor((now.getTime() - new Date(r.requested).getTime()) / HOUR_MS);
+    return `${c ? `${c.name} (${c.email})` : r.creator_id}, waiting ${hours}h`;
+  });
+  if (rows.length > named.length) lines.push(`and ${rows.length - named.length} more`);
+  const alerted = alertStaffOncePerHour(
+    "payout-bank-change-pending",
+    `${rows.length} bank change request${rows.length === 1 ? "" : "s"} waiting for staff`,
+    [
+      { label: "Waiting over 24 hours", value: String(rows.length) },
+      { label: "Creators", value: lines.join("; ") },
+      {
+        label: "What to do",
+        value: "Raise each change with Razorpay support (the API cannot change a bank account), then mark it processed on the creator's page. Releases for these creators stay paused until you do, plus 72 hours.",
+      },
+    ],
+    "/creators",
+    { now: now.getTime() },
+  );
+  return { waiting: rows.length, alerted };
 }
 
 /**
@@ -193,7 +262,21 @@ async function alertIfNeeded(rowId: string, now: Date): Promise<boolean> {
   );
 }
 
+/**
+ * Boot check: the switch is on but the creator terms are still the ones written before any payment existed,
+ * so bank connect stays closed (blockedReason "terms_pending") until CREATOR_TERMS_VERSION names the rewritten
+ * terms. Said once at start-up, so a flipped switch that "does nothing" has a line in the log that explains it.
+ */
+export function warnIfPayoutTermsPending(): boolean {
+  if (!creatorConfig.routeEnabled() || !creatorConfig.payoutTermsPending()) return false;
+  console.warn(
+    `[creator-payout] CREATOR_ROUTE_ENABLED=1 but CREATOR_TERMS_VERSION is still the pre-payout terms (${creatorConfig.termsVersion()}): bank connect stays closed (terms_pending) until the terms are rewritten and CREATOR_TERMS_VERSION is bumped.`,
+  );
+  return true;
+}
+
 export function startCreatorPayoutCron(): void {
+  warnIfPayoutTermsPending();
   if (!creatorConfig.payoutCronEnabled()) {
     console.warn("[creator-payout] CREATOR_PAYOUT_CRON_ENABLED=0: the payout account poll is NOT running.");
     return;

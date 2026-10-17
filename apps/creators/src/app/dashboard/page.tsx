@@ -3,11 +3,11 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import useSWR from "swr";
 import { ArrowRight, Check, Circle } from "lucide-react";
-import { apiFetch, fetcher } from "@/lib/api";
+import { apiFetch, fetcher, PAYOUT_ACCOUNT_PATH } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { errorSentence } from "@/lib/messages";
 import { fmtDate } from "@/lib/format";
-import type { CreatorMe, CreatorMeWithChecklist, PayoutAccountStatus } from "@/lib/types";
+import type { CreatorMe, CreatorMeWithChecklist, PayoutAccountResponse, PayoutAccountStatus } from "@/lib/types";
 import { Banner, Loading, PageHead } from "@/components/ui";
 
 // Overview: the onboarding checklist from GET /v1/creator/me (verify email → connect Facebook →
@@ -266,12 +266,8 @@ function PayoutStepBody({ status, ready }: { status: PayoutAccountStatus; ready:
         <p>You can add your bank account once your email is confirmed and our team has approved your profile.</p>
       );
     case "setting_up":
-      return (
-        <>
-          <p>Your bank account setup was started but isn&apos;t finished. Send your details again to finish it.</p>
-          {open("Finish setup")}
-        </>
-      );
+    case "failed":
+      return <PayoutUnfinishedBody status={status} ready={ready} open={open} />;
     case "under_review":
       return (
         <>
@@ -286,13 +282,6 @@ function PayoutStepBody({ status, ready }: { status: PayoutAccountStatus; ready:
           {open("See what it asked")}
         </>
       );
-    case "failed":
-      return (
-        <>
-          <p>Razorpay didn&apos;t accept some of the details. Correct them and send them again.</p>
-          {open("Correct details", false)}
-        </>
-      );
     case "suspended":
       return (
         <>
@@ -305,4 +294,58 @@ function PayoutStepBody({ status, ready }: { status: PayoutAccountStatus; ready:
     default:
       return null;
   }
+}
+
+/**
+ * An account that is unfinished or refused. Two things decide what the row may promise, and the checklist
+ * item carries neither: whether the creator can act at all (`ready`: approved with a confirmed email, else the
+ * Payouts page has no form), and whether the refusal is theirs to correct (`attention`, from the same payout
+ * answer the Payouts page and the nav already share, so this costs no extra request). Until that answer is in,
+ * the row says nothing about WHAT to do and only points at the page.
+ */
+function PayoutUnfinishedBody({ status, ready, open }: { status: "setting_up" | "failed"; ready: boolean; open: (label: string, ghost?: boolean) => React.ReactNode }) {
+  const { data } = useSWR<PayoutAccountResponse>(PAYOUT_ACCOUNT_PATH, fetcher, { revalidateOnFocus: false, shouldRetryOnError: false });
+  if (!ready) {
+    return (
+      <>
+        <p>
+          {status === "failed" ? "Razorpay didn't accept some of the details." : "Your bank account setup was started but isn't finished."}{" "}
+          Adding a bank account is on hold until your profile is approved and your email is confirmed.
+        </p>
+        {open("See status")}
+      </>
+    );
+  }
+  if (status === "setting_up") {
+    return (
+      <>
+        <p>Your bank account setup was started but isn&apos;t finished. Send your details again to finish it.</p>
+        {open("Finish setup")}
+      </>
+    );
+  }
+  const account = data?.account;
+  const attention = account?.status === "failed" ? account.attention ?? (account.requirements.length > 0 ? "fix_details" : "contact_us") : null;
+  if (attention === "fix_details") {
+    return (
+      <>
+        <p>Razorpay didn&apos;t accept some of the details. Correct them and send them again.</p>
+        {open("Correct details", false)}
+      </>
+    );
+  }
+  if (attention === "contact_us") {
+    return (
+      <>
+        <p>Razorpay couldn&apos;t finish setting up your payout account. Our team needs to look at it: email creators@digitalsukoon.com.</p>
+        {open("See status")}
+      </>
+    );
+  }
+  return (
+    <>
+      <p>Razorpay didn&apos;t accept your bank account setup. The Payouts page says what to do next.</p>
+      {open("See status")}
+    </>
+  );
 }

@@ -34,9 +34,20 @@ export interface PayoutRequirement {
   reason: string;
 }
 
+/**
+ * What a FAILED setup asks of the creator, so a screen never tells them to "correct the marked details"
+ * when nothing is marked:
+ *   fix_details  Razorpay refused specific details and `requirements` names them: correct those and send again;
+ *   contact_us   nothing the creator can fix here (an account Razorpay already holds under their email, or a
+ *                refusal that named no field): staff have been told and the creator should write to us.
+ */
+export type PayoutAttention = "fix_details" | "contact_us";
+
 export interface PayoutAccountView {
   status: PayoutAccountStatus;
   setupStep: PayoutSetupStep;
+  /** Set only while status is "failed"; null otherwise. */
+  attention: PayoutAttention | null;
   requirements: PayoutRequirement[];
   /** Masked, e.g. "HDFC ••••1234". The only trace of the bank account we keep. */
   destinationHint: string | null;
@@ -48,7 +59,12 @@ export interface PayoutAccountView {
   updatedAt: string | null;
 }
 
-export type PayoutBlockedReason = "route_disabled" | "not_approved" | "email_not_verified" | "closed";
+/**
+ * Why a creator cannot set up bank connect right now. `terms_pending`: the feature is switched on, but the
+ * creator terms in force are still the ones written before any payment existed, so it stays closed (the
+ * portal shows it as not open yet) until the terms are rewritten and their version bumped.
+ */
+export type PayoutBlockedReason = "route_disabled" | "terms_pending" | "not_approved" | "email_not_verified" | "closed";
 
 /** GET / PUT /v1/creator/payout-account answer with this. */
 export interface PayoutAccountResponse {
@@ -302,4 +318,21 @@ export function referencesForRejection(step: "account" | "stakeholder" | "produc
     default:
       return [];
   }
+}
+
+/**
+ * A bank-step rejection, split into what the next attempt can actually change and what it cannot. The bank
+ * call re-sends ONLY the account number, IFSC and name, never the PAN, phone or address (those went with
+ * the earlier calls and are not repeated on a resume), so a correction to them would be asked for and then
+ * silently ignored. `references` are the bank references (the three bank fields when the text named none);
+ * `ignored` are the other references the text named, which the creator cannot fix from this form: staff
+ * are told about them instead. Pure.
+ */
+export function splitBankRejection(text: string): { references: string[]; ignored: string[] } {
+  const all = referencesForRejection("bank", text);
+  const bank = all.filter((r) => r.startsWith("settlements."));
+  return {
+    references: bank.length > 0 ? bank : referencesForRejection("bank", ""),
+    ignored: all.filter((r) => !r.startsWith("settlements.")),
+  };
 }

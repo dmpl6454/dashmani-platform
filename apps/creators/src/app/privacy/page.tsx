@@ -6,7 +6,9 @@ import { LegalPage } from "@/components/site-shell";
 // privacy policy URL for the creator connect flow, so it names exactly what we read from Meta.
 // ⚠️ It must say only what is true today: no payment, bank or tax details are collected yet (there
 // are no paid bookings). The payout phases rewrite this page, and the creator terms, when bank
-// details start to be collected (payouts plan, section 5).
+// details start to be collected (payouts plan, section 5): the "Payment details" paragraph below turns
+// false the moment bank connect opens, so it is rewritten BEFORE CREATOR_ROUTE_ENABLED does anything, in
+// the same release as the terms and the CREATOR_TERMS_VERSION bump that lets bank connect open at all.
 
 export default function PrivacyPage() {
   return (

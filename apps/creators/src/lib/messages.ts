@@ -86,6 +86,11 @@ const PAYOUT_SENTENCES: Record<string, string> = {
   PAYOUT_BUSY: "We're setting up a lot of payout accounts right now. Please try again tomorrow.",
   PAYOUT_UNAVAILABLE: "Adding a bank account is temporarily unavailable. Our team has been told. Please try again later.",
   ROUTE_DISABLED: "Adding a bank account isn't open right now.",
+  // The same answer as ROUTE_DISABLED for the creator: bank connect is not open yet. (The page never offers the form then.)
+  TERMS_PENDING: "Adding a bank account isn't open yet.",
+  // Razorpay already holds this payout account past setup: nothing is sent again, and a bank change goes through our team.
+  ALREADY_SET_UP:
+    "Your payout account is already set up, so there's nothing to send again. To use a different bank account, choose Change bank account on this page.",
   TERMS_CHANGED: "The creator terms have changed. Reload this page, read them and accept again.",
   NOT_APPROVED: "Your profile needs to be approved before you can add a bank account.",
   ACCOUNT_SUSPENDED: "Your account is suspended, so a bank account can't be added right now. Email creators@digitalsukoon.com.",
@@ -124,6 +129,8 @@ const PAYOUT_DEFINITE_CODES: ReadonlySet<string> = new Set([
   "ACCOUNT_SUSPENDED",
   "EMAIL_NOT_VERIFIED",
   "ROUTE_DISABLED",
+  "TERMS_PENDING",
+  "ALREADY_SET_UP",
   "NO_PAYOUT_ACCOUNT",
 ]);
 

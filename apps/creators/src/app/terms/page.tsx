@@ -5,7 +5,11 @@ import { LegalPage } from "@/components/site-shell";
 // The creator agreement. Plain English on purpose; it describes what the portal actually does.
 // ⚠️ Today that is: sign up, connect pages, get reviewed. There are no bookings, prices or payments
 // yet, so §1, §5 and §8 say so and promise no price, payout, fee, amount or timeline (payouts plan,
-// section 5). The payment terms are written and the version bumped before any paid booking opens.
+// section 5). The payment terms are written and the version bumped before bank connect opens, not only
+// before a paid booking: a creator who adds a bank account is entering a payment relationship that THESE
+// terms disclaim. The API enforces the order: while CREATOR_TERMS_VERSION is still the version of this
+// text, bank connect answers "terms_pending" and the Payouts page reads "isn't open yet". So the rewrite
+// of §1, §5, §7, §8 and §11 and the version bump ship together, before CREATOR_ROUTE_ENABLED does anything.
 
 export default function TermsPage() {
   return (

@@ -4,7 +4,7 @@ import Link from "next/link";
 import { Search } from "lucide-react";
 import { usePageTitle } from "@/lib/hooks/use-page-title";
 import { useCreators, CREATOR_STATUS_ORDER } from "@/lib/hooks/use-creators";
-import { CARD, INPUT, ErrorBar, PageHead, compact, fmtWhen } from "../campaigns/_ds";
+import { CARD, INPUT, ErrorBar, PageHead, Pill, compact, fmtWhen } from "../campaigns/_ds";
 import { CREATOR_STATUS, CreatorStatusPill } from "./_status";
 
 // Creator portal review queue: creators who connected their pages and asked to be approved.
@@ -28,13 +28,36 @@ export default function CreatorsPage() {
   const rows = data?.creators ?? [];
   const counts = data?.counts;
   const total = counts ? Object.values(counts).reduce((s, v) => s + v, 0) : 0;
+  // undefined = an older API that does not send it; null = it could not be read. Neither is "none".
+  const bankWaiting = data?.bankChangesWaiting;
 
   return (
     <div className="pb-8">
       <PageHead
         title="Creators"
-        sub={!counts ? "Loading…" : `${counts.in_review} waiting for review · ${counts.approved} approved`}
+        sub={
+          !counts
+            ? "Loading…"
+            : `${counts.in_review} waiting for review${bankWaiting ? ` · ${bankWaiting} bank ${bankWaiting === 1 ? "change" : "changes"} waiting` : ""} · ${counts.approved} approved`
+        }
       />
+
+      {/* A creator waiting on a bank change is an APPROVED one, so the default tab never lists them: say so here, with a way to them. */}
+      {!!bankWaiting && tab !== "" && (
+        <div role="status" className="mb-4 px-3.5 py-2.5 rounded-[8px] bg-[rgba(233,189,98,.08)] border border-[rgba(233,189,98,.35)] text-ds-gold text-[12.5px] flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+          <span>
+            {bankWaiting} {bankWaiting === 1 ? "creator has" : "creators have"} asked to change their bank account and {bankWaiting === 1 ? "is" : "are"} waiting for us.
+          </span>
+          <button type="button" onClick={() => setTab("")} className="font-semibold underline underline-offset-2 hover:text-ds-text">
+            Show them
+          </button>
+        </div>
+      )}
+      {bankWaiting === null && (
+        <div role="status" className="mb-4 px-3.5 py-2.5 rounded-[8px] bg-[rgba(233,189,98,.08)] border border-[rgba(233,189,98,.35)] text-ds-gold text-[12.5px]">
+          Couldn&apos;t check for bank change requests just now. This does not mean there are none.
+        </div>
+      )}
 
       <div className="flex flex-col md:flex-row md:items-center gap-3 mb-4">
         <div className="flex gap-1.5 flex-wrap flex-1" role="tablist" aria-label="Creator status">
@@ -103,7 +126,12 @@ export default function CreatorsPage() {
                     <td className="px-3 py-3 text-right tabular-nums text-ds-t2">{r.pages}</td>
                     <td className="px-3 py-3 text-right tabular-nums" style={{ color: r.publishablePages > 0 ? "#00D7A0" : undefined }}>{r.publishablePages}</td>
                     <td className="px-3 py-3 text-right tabular-nums text-ds-text">{compact(r.followers)}</td>
-                    <td className="px-3 py-3"><CreatorStatusPill status={r.status} /></td>
+                    <td className="px-3 py-3">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <CreatorStatusPill status={r.status} />
+                        {r.bankChangePending && <Pill label="Bank change pending" color="#E9BD62" />}
+                      </div>
+                    </td>
                     <td className="px-5 py-3 text-ds-t3 whitespace-nowrap">{r.submittedAt ? fmtWhen(r.submittedAt) : "—"}</td>
                   </tr>
                 ))}

@@ -12,6 +12,10 @@
  *   - a returning creator's account is adopted ONLY on an equal verified email and when no other creator
  *     holds it;
  *   - the daily creation cap holds and counts new creations only;
+ *   - a refusal of the product step is a staff step, never "your details" (the call carries none of them);
+ *   - ⚠️ nothing ever sends bank details to an account Razorpay already holds past setup (a lost answer cannot
+ *     lead to an overwrite), and a bank rejection never invites a correction the retry would ignore;
+ *   - bank connect stays closed on the pre-payout terms (terms_pending) and behind CREATORS_ENABLED;
  *   - ⚠️ PRIVACY: after a full setup (and after rejections) NO column of ANY table holds the PAN, account
  *     number, IFSC, name, street or phone that was submitted, nothing is logged or emailed, and no
  *     response or validation error quotes them.
@@ -30,16 +34,17 @@ vi.mock("../src/services/email.service", async (orig) => {
 
 import app from "../src/app";
 import { sendEmail, notifyAdminByEmail } from "../src/services/email.service";
-import { generateCreatorToken } from "./helpers";
+import { createTestUser, generateCreatorToken, generateToken } from "./helpers";
 import { FakeRazorpay, is } from "./fake-razorpay-route";
-import { creatorConfig } from "../src/services/creator/creator-config";
+import { captureConsole, scanDatabase as scanTables } from "./payout-privacy";
+import { PRE_PAYOUT_TERMS_VERSION, creatorConfig } from "../src/services/creator/creator-config";
 import { flushPayoutAlertsForTests, resetPayoutAlertsForTests } from "../src/services/creator/payout-alert";
 import {
   applyProductStatus,
   istDayStartUtc,
   mapProductFacts,
-  markBankChangeCleared,
   PAYOUT_CAP_LOCK_KEY,
+  payoutUnavailableReason,
   requestBankChange,
   routeAvailable,
 } from "../src/services/creator/payout-account.service";
@@ -51,6 +56,7 @@ import {
   decodeSetupError,
   encodeSetupError,
   payoutAccountStatus,
+  razorpayHoldsAccount,
   toPayoutAccountView,
 } from "../src/services/creator/payout-account-view";
 import {
@@ -60,6 +66,7 @@ import {
   formFieldForReference,
   normalisePayoutPhone,
   referencesForRejection,
+  splitBankRejection,
 } from "@dashmani/shared/src/validators/creator-payout";
 
 const sendEmailMock = vi.mocked(sendEmail);
@@ -76,6 +83,8 @@ const SECRET = {
   phone: "9123456780",
 };
 const NEEDLES = [SECRET.pan, SECRET.account, SECRET.ifsc, SECRET.name, SECRET.street, SECRET.street2, SECRET.phone];
+/** Which tables hold any submitted value (the shared scan; its positive control is tests/payout-privacy.test.ts). */
+const scanDatabase = (needles: string[] = NEEDLES) => scanTables(needles);
 
 const fake = new FakeRazorpay();
 let n = 0;
@@ -116,39 +125,13 @@ const get = (auth: string) => request(app).get("/v1/creator/payout-account").set
 const postChange = (auth: string) => request(app).post("/v1/creator/payout-account/bank-change").set("Authorization", auth);
 const rowOf = (creatorId: string) => prisma.creatorPayoutAccount.findUnique({ where: { creatorId } });
 
-/** Every table, every column (as the row's text): which tables hold any needle. */
-async function scanDatabase(needles: string[] = NEEDLES): Promise<string[]> {
-  const tables = await prisma.$queryRaw<Array<{ table_name: string }>>`
-    SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE'`;
-  const patterns = needles.map((x) => `%${x}%`);
-  const hits: string[] = [];
-  for (const { table_name } of tables) {
-    const marks = patterns.map((_, i) => `$${i + 1}`).join(",");
-    const rows = await prisma.$queryRawUnsafe<Array<{ c: number }>>(`SELECT count(*)::int AS c FROM "${table_name}" t WHERE t::text ILIKE ANY (ARRAY[${marks}])`, ...patterns);
-    if (rows[0].c > 0) hits.push(table_name);
-  }
-  return hits;
-}
-
 let logged: string[] = [];
 const consoleSpies: Array<{ mockRestore: () => void }> = [];
 function spyConsole() {
-  logged = [];
-  const text = (a: unknown) => {
-    if (typeof a === "string") return a;
-    try {
-      return JSON.stringify(a, Object.getOwnPropertyNames(a as object));
-    } catch {
-      return String(a);
-    }
-  };
-  for (const m of ["log", "info", "warn", "error", "debug"] as const) {
-    consoleSpies.push(
-      vi.spyOn(console, m).mockImplementation((...args: unknown[]) => {
-        logged.push(args.map(text).join(" "));
-      }),
-    );
-  }
+  // Renders an Error's message and stack too (tests/payout-privacy.ts), so "nothing was logged" cannot pass blind.
+  const c = captureConsole();
+  logged = c.lines;
+  consoleSpies.push({ mockRestore: c.restore });
 }
 
 function expectNoSecrets(where: string, haystack: unknown) {
@@ -170,9 +153,14 @@ async function waitFor(cond: () => boolean, ms = 3000) {
   }
 }
 
+// Bank connect opens only on payout terms: the shipped default is the pre-payout version, so every test that
+// needs the feature ON names a later one (the terms_pending tests below put the default back).
+const PAYOUT_TERMS = "2026-11-01";
+
 beforeEach(() => {
   vi.stubEnv("CREATORS_ENABLED", "1");
   vi.stubEnv("CREATOR_ROUTE_ENABLED", "1");
+  vi.stubEnv("CREATOR_TERMS_VERSION", PAYOUT_TERMS);
   vi.stubEnv("RAZORPAY_KEY_ID", "rzp_test_key");
   vi.stubEnv("RAZORPAY_KEY_SECRET", "rzp_test_secret");
   vi.stubEnv("RATE_LIMIT_CREATOR_PAYOUT_MAX", "1000");
@@ -261,6 +249,34 @@ describe("payout account view (pure)", () => {
     expect(active.requirements).toEqual([]);
   });
 
+  it("says what a FAILED setup asks of the creator: correct the marked details, or write to us", () => {
+    const failed = (lastError: string) => toPayoutAccountView({ ...base, lastError }, T)!;
+    expect(failed(encodeSetupError("BANK_DETAILS_REJECTED", ["settlements.ifsc_code"]))).toMatchObject({ status: "failed", attention: "fix_details" });
+    expect(failed(encodeSetupError("PAN_REJECTED", ["kyc.pan"])).attention).toBe("fix_details");
+    expect(failed(encodeSetupError("DETAILS_REJECTED", ["phone", "address.city"])).attention).toBe("fix_details");
+    // nothing the creator can retype: an account Razorpay holds under their email, a refusal naming no field, one naming a field the form lacks
+    expect(failed("ACCOUNT_CONFLICT")).toMatchObject({ status: "failed", attention: "contact_us", requirements: [] });
+    expect(failed(encodeSetupError("ACCOUNT_CONFLICT", ["kyc.pan"])).attention).toBe("contact_us"); // the conflict outranks any reference
+    expect(failed("DETAILS_REJECTED")).toMatchObject({ status: "failed", attention: "contact_us", requirements: [] });
+    expect(failed(encodeSetupError("DETAILS_REJECTED", ["email"])).attention).toBe("contact_us");
+    // only a failed setup has one
+    const quiet: any[] = [
+      { ...base },
+      { ...base, setupStep: "account", razorpayAccountId: "acc_1", lastError: "PRODUCT_UNKNOWN" },
+      { ...base, setupStep: "done", razorpayAccountId: "acc_1", activationStatus: "needs_clarification", requirements: reqs },
+      { ...base, setupStep: "done", razorpayAccountId: "acc_1", activationStatus: "activated" },
+      { ...base, setupStep: "done", razorpayAccountId: "acc_1", activationStatus: "suspended" },
+    ];
+    for (const row of quiet) expect(toPayoutAccountView(row, T)!.attention).toBeNull();
+  });
+
+  it("knows when Razorpay holds an account past setup, whatever our own step says", () => {
+    expect(razorpayHoldsAccount(null)).toBe(false);
+    for (const [status, held] of [["not_started", false], ["requested", false], ["under_review", false], ["needs_clarification", false], ["activated", true], ["suspended", true]] as const) {
+      expect(razorpayHoldsAccount({ activationStatus: status }), status).toBe(held);
+    }
+  });
+
   it("lets only whitelisted shapes out: a hint, a field reference, a reason code", () => {
     const hostile = [
       { field_reference: "settlements.ifsc_code", reason_code: "Account 60987654321012 is wrong", status: "required" },
@@ -284,7 +300,7 @@ describe("payout account view (pure)", () => {
       { ...base, setupStep: "done", razorpayAccountId: "acc_1", activationStatus: "activated", activatedAt: T, bookableAfter: new Date(T.getTime() + 86_400_000), termsVersion: "2026-10-17", bankChangeRequestedAt: T },
       T,
     )!;
-    expect(Object.keys(v).sort()).toEqual(["activatedAt", "bankChange", "bookableAfter", "destinationHint", "requirements", "setupStep", "status", "termsVersion", "updatedAt"]);
+    expect(Object.keys(v).sort()).toEqual(["activatedAt", "attention", "bankChange", "bookableAfter", "destinationHint", "requirements", "setupStep", "status", "termsVersion", "updatedAt"]);
     expect(v.activatedAt).toBe("2026-10-17T10:00:00.000Z");
     expect(v.bookableAfter).toBe("2026-10-18T10:00:00.000Z");
     expect(v.bankChange).toEqual({ requestedAt: "2026-10-17T10:00:00.000Z", clearedAt: null });
@@ -377,6 +393,21 @@ describe("bank-connect schema", () => {
     }
   });
 
+  it("splits a bank rejection into the references a retry can change and the ones it cannot", () => {
+    expect(splitBankRejection("Invalid IFSC Code")).toEqual({ references: ["settlements.ifsc_code"], ignored: [] });
+    expect(splitBankRejection("Invalid IFSC; the phone is also wrong")).toEqual({ references: ["settlements.ifsc_code"], ignored: ["phone"] });
+    // naming only fields the bank call never sends falls back to the three bank fields, and says what was set aside
+    const panOnly = splitBankRejection("The PAN does not match");
+    expect(panOnly.references).toEqual(referencesForRejection("bank", ""));
+    expect(panOnly.references).toHaveLength(3);
+    expect(panOnly.ignored).toEqual(["kyc.pan"]);
+    expect(splitBankRejection("The postal code and the city are wrong").ignored).toEqual(["address.postal_code", "address.city"]);
+    // nothing recognised: the bank fields, nothing set aside
+    expect(splitBankRejection("something unexpected")).toEqual({ references: referencesForRejection("bank", ""), ignored: [] });
+    // a bare "name" is the beneficiary on the bank call
+    expect(splitBankRejection("The name is wrong")).toEqual({ references: ["settlements.beneficiary_name"], ignored: [] });
+  });
+
   it("exports Razorpay's state list for the form, and maps a reference to the field it is about", () => {
     expect(PAYOUT_STATES).toHaveLength(40);
     expect(PAYOUT_STATES).toContain("KARNATAKA");
@@ -428,6 +459,53 @@ describe("availability and gates", () => {
     expect(p.status).toBe(503);
     expect(p.body.error.code).toBe("ROUTE_DISABLED");
     expect(fake.calls).toHaveLength(0);
+  });
+
+  it("stays closed on the pre-payout terms even with the switch and the keys on (terms_pending), and opens on later terms", async () => {
+    vi.stubEnv("CREATOR_TERMS_VERSION", PRE_PAYOUT_TERMS_VERSION);
+    expect(payoutUnavailableReason()).toBe("terms_pending");
+    expect(routeAvailable()).toBe(false);
+    const { auth } = await seedCreator();
+    const g = await get(auth);
+    expect(g.body.data).toEqual({ termsVersion: PRE_PAYOUT_TERMS_VERSION, routeEnabled: false, canSetUp: false, blockedReason: "terms_pending", account: null });
+    const p = await put(auth, bodyOf());
+    expect([p.status, p.body.error.code]).toEqual([503, "TERMS_PENDING"]);
+    expect(fake.calls).toHaveLength(0);
+    expect(await prisma.creatorPayoutAccount.count()).toBe(0);
+    // nothing about payouts shows on the checklist either: the feature is invisible until the terms are ready
+    const me = await request(app).get("/v1/creator/me").set("Authorization", auth);
+    expect(me.body.data.checklist).not.toHaveProperty("payoutAccount");
+
+    // an unset version IS the pre-payout default; a dark switch outranks the terms
+    vi.stubEnv("CREATOR_TERMS_VERSION", "");
+    expect(payoutUnavailableReason()).toBe("terms_pending");
+    vi.stubEnv("CREATOR_ROUTE_ENABLED", "0");
+    expect(payoutUnavailableReason()).toBe("route_disabled");
+    expect((await get(auth)).body.data.blockedReason).toBe("route_disabled");
+
+    vi.stubEnv("CREATOR_ROUTE_ENABLED", "1");
+    vi.stubEnv("CREATOR_TERMS_VERSION", PAYOUT_TERMS);
+    expect(payoutUnavailableReason()).toBeNull();
+    expect((await get(auth)).body.data).toMatchObject({ routeEnabled: true, canSetUp: true, blockedReason: null });
+    expect((await put(auth, bodyOf())).status).toBe(200);
+  });
+
+  it("answers 503 CREATORS_DISABLED on every payout route while the master switch is off, even with the route switch, the keys and the terms all ready", async () => {
+    const { auth } = await seedCreator();
+    vi.stubEnv("CREATORS_ENABLED", "0");
+    expect(routeAvailable()).toBe(true); // so only the master gate can be what answers
+    for (const [label, r] of [
+      ["GET", await get(auth)],
+      ["PUT", await put(auth, bodyOf())],
+      ["POST bank-change", await postChange(auth)],
+    ] as const) {
+      expect([label, r.status, r.body.error.code]).toEqual([label, 503, "CREATORS_DISABLED"]);
+    }
+    // the gate runs before authentication, so a visitor learns nothing either
+    const anon = await request(app).get("/v1/creator/payout-account");
+    expect([anon.status, anon.body.error.code]).toEqual([503, "CREATORS_DISABLED"]);
+    expect(fake.calls).toHaveLength(0);
+    expect(await prisma.creatorPayoutAccount.count()).toBe(0);
   });
 
   it("GET answers 200 for any signed-in creator (even suspended) and 401 without a session", async () => {
@@ -672,9 +750,9 @@ describe("setting up", () => {
     expect(notifyMock).toHaveBeenCalledTimes(1);
     expect(String(notifyMock.mock.calls[0][0])).toContain("outcome unknown");
 
-    // The product WAS created at Razorpay. The retry's create is refused as a duplicate: a definite 400, but after an
-    // unknown answer it can only mean "it exists and we lack its id" (there is no lookup of a product by account), so
-    // it is a manual step for staff, never "your details are wrong".
+    // The product WAS created at Razorpay. The retry's create is refused as a duplicate: a definite 400 for a call that
+    // carries none of the creator's details, so it is a manual step for staff (we lack the product's id and there is no
+    // lookup of a product by account), never "your details are wrong".
     fake.calls = [];
     const r2 = await put(auth, bodyOf());
     expect([r2.status, r2.body.error.code]).toEqual([409, "SETUP_UNCERTAIN"]);
@@ -696,6 +774,83 @@ describe("setting up", () => {
     expect(await rowOf(c.id)).toMatchObject({ setupStep: "done", lastError: null });
   });
 
+  it("a refusal of the product step is a STAFF step whenever it happens: Razorpay holds a product we never recorded, with no unknown-outcome marker stored (a restart or a failed save)", async () => {
+    const { c, auth } = await seedCreator();
+    // The state a crash between Razorpay's answer and our save leaves: account and stakeholder done, nothing stored
+    // about the product, and last_error empty because no call ever reported an unknown outcome.
+    const acc = fake.seedAccount({ id: "acc_Crash01x", email: c.email, productId: "acc_prd_Crash01x" });
+    acc.stakeholder = { id: "sth_Crash01x", pan: "X" };
+    await prisma.creatorPayoutAccount.create({ data: { creatorId: c.id, razorpayAccountId: "acc_Crash01x", setupStep: "stakeholder", accountCreatedAt: new Date() } });
+    spyConsole();
+
+    const r = await put(auth, bodyOf());
+    expect([r.status, r.body.error.code]).toEqual([409, "SETUP_UNCERTAIN"]);
+    expect(r.body.error.details).toBeUndefined();
+    expect(fake.calls.map((x) => x.method + " " + x.path.split("/").slice(-1)[0])).toEqual(["POST products"]); // nothing else was repeated
+    expect(await rowOf(c.id)).toMatchObject({ setupStep: "stakeholder", razorpayProductId: null, lastError: "PRODUCT_UNKNOWN" });
+    // not "failed / correct your details": nothing marked, nothing to retype
+    expect((await get(auth)).body.data.account).toMatchObject({ status: "setting_up", attention: null, requirements: [] });
+    await flushPayoutAlertsForTests();
+    expect(notifyMock).toHaveBeenCalledTimes(1);
+    expect(String(notifyMock.mock.calls[0][0])).toContain("manual step");
+    const alert = JSON.stringify(notifyMock.mock.calls[0][1]);
+    expect(alert).toContain("acc_Crash01x");
+    expect(alert).toContain("HTTP 400");
+    expect(alert).not.toContain("already requested"); // Razorpay's words are not copied
+    expectNoSecretsAnywhere();
+
+    // staff set the product id they found in the dashboard; the creator's next attempt finishes with only the bank call
+    await prisma.creatorPayoutAccount.update({ where: { creatorId: c.id }, data: { razorpayProductId: "acc_prd_Crash01x" } });
+    fake.calls = [];
+    expect((await put(auth, bodyOf())).status).toBe(200);
+    expect(fake.calls.map((x) => x.method)).toEqual(["PATCH"]);
+    expect(await rowOf(c.id)).toMatchObject({ setupStep: "done", lastError: null });
+  });
+
+  it("an ADOPTED account that already has a Route product ends as a staff step too, not as 'your details'", async () => {
+    const { c, auth } = await seedCreator({ email: "Adopted.Product@creators.test" });
+    const acc = fake.seedAccount({ id: "acc_AdoptProd01x", email: "adopted.product@creators.test", productId: "acc_prd_AdoptProd01x" });
+    acc.stakeholder = { id: "sth_AdoptProd01x", pan: "X" };
+
+    const r = await put(auth, bodyOf());
+    expect([r.status, r.body.error.code]).toEqual([409, "SETUP_UNCERTAIN"]);
+    expect(r.body.error.details).toBeUndefined();
+    expect(await rowOf(c.id)).toMatchObject({ razorpayAccountId: "acc_AdoptProd01x", setupStep: "stakeholder", razorpayProductId: null, lastError: "PRODUCT_UNKNOWN" });
+    expect((await get(auth)).body.data.account).toMatchObject({ status: "setting_up", attention: null });
+    await flushPayoutAlertsForTests();
+    expect(notifyMock).toHaveBeenCalledTimes(1);
+    expect(String(notifyMock.mock.calls[0][0])).toContain("manual step");
+    expect(fake.accounts.size).toBe(1);
+
+    await prisma.creatorPayoutAccount.update({ where: { creatorId: c.id }, data: { razorpayProductId: "acc_prd_AdoptProd01x" } });
+    fake.calls = [];
+    expect((await put(auth, bodyOf())).status).toBe(200);
+    expect(fake.calls.map((x) => x.method)).toEqual(["PATCH"]);
+    expect(await rowOf(c.id)).toMatchObject({ setupStep: "done", lastError: null });
+  });
+
+  it("a definite refusal of the product call that talks about the PAN or the IFSC is still not 'your details': the call carries none of them", async () => {
+    const { c, auth } = await seedCreator();
+    fake.intercept({ match: is.createProduct, mode: "reject", status: 400, body: { error: { code: "BAD_REQUEST_ERROR", description: "Your PAN and IFSC and phone are not valid", reason: "input_validation_failed" } } });
+    const r = await put(auth, bodyOf());
+    expect([r.status, r.body.error.code]).toEqual([409, "SETUP_UNCERTAIN"]);
+    expect(r.body.error.details).toBeUndefined();
+    expect(await rowOf(c.id)).toMatchObject({ lastError: "PRODUCT_UNKNOWN" }); // a code and no field references
+    expect((await get(auth)).body.data.account).toMatchObject({ status: "setting_up", attention: null, requirements: [] });
+    await flushPayoutAlertsForTests();
+    expect(notifyMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("a refusal of the product step over OUR setup (keys, a feature not enabled) is still reported as ours: 503 and a different alert", async () => {
+    const { c, auth } = await seedCreator();
+    fake.intercept({ match: is.createProduct, mode: "reject", status: 403, body: { error: { code: "BAD_REQUEST_ERROR", description: "Not allowed" } } });
+    const r = await put(auth, bodyOf());
+    expect([r.status, r.body.error.code]).toEqual([503, "PAYOUT_UNAVAILABLE"]);
+    expect(await rowOf(c.id)).toMatchObject({ lastError: "RAZORPAY_UNAVAILABLE", setupStep: "stakeholder" });
+    await flushPayoutAlertsForTests();
+    expect(String(notifyMock.mock.calls[0][0])).toContain("refused by Razorpay");
+  });
+
   it("treats 'cannot be more than one stakeholder' as the stakeholder already being there", async () => {
     const { c, auth } = await seedCreator();
     fake.intercept({ match: is.createStakeholder, mode: "lose" }); // created, answer lost
@@ -708,6 +863,125 @@ describe("setting up", () => {
     expect(await rowOf(c.id)).toMatchObject({ setupStep: "done", razorpayStakeholderId: null });
     expect(fake.count(is.createAccount)).toBe(0);
     expect(fake.accounts.size).toBe(1);
+  });
+
+  describe("an account Razorpay already holds is never sent bank details again", () => {
+    it("a lost answer to the bank call, then the account is activated: the status update settles setup to done, and a later PUT sends nothing", async () => {
+      const { c, auth } = await seedCreator();
+      fake.intercept({ match: is.patchSettlement, mode: "lose" }); // applied at Razorpay, the answer never arrives
+      expect((await put(auth, bodyOf())).status).toBe(503);
+      let row = (await rowOf(c.id))!;
+      expect(row).toMatchObject({ setupStep: "product", lastError: "RAZORPAY_UNAVAILABLE" });
+
+      // the poll or a webhook reports the activation: Razorpay cannot activate without settlement details, so setup IS done
+      const applied = await applyProductStatus(row, { activationStatus: "activated", requirements: [], at: new Date() }, { touch: true });
+      expect(applied).toMatchObject({ applied: true, status: "activated" });
+      row = (await rowOf(c.id))!;
+      expect(row).toMatchObject({ setupStep: "done", activationStatus: "activated", lastError: null });
+      const hint = row.destinationHint;
+
+      fake.calls = [];
+      const again = await put(auth, bodyOf({ ifsc: "ICIC0000001", accountNumber: "11112222333344" }));
+      expect(again.status).toBe(200);
+      expect(again.body.data).toMatchObject({ canSetUp: false, account: { status: "activated", setupStep: "done" } });
+      expect(fake.calls).toHaveLength(0);
+      expect((await rowOf(c.id))!.destinationHint).toBe(hint);
+      // and the change path the creator is pointed at works
+      expect((await postChange(auth)).status).toBe(200);
+      expect((await rowOf(c.id))!.bankChangeRequestedAt).not.toBeNull();
+    });
+
+    it("refuses bank details for an account that reads activated or suspended while our step is still 'product': 409, nothing sent, nothing stored", async () => {
+      for (const status of ["activated", "suspended"]) {
+        const { c, auth } = await seedCreator();
+        await prisma.creatorPayoutAccount.create({
+          data: {
+            creatorId: c.id,
+            razorpayAccountId: `acc_Held${status}x`,
+            razorpayStakeholderId: "sth_Held01x",
+            razorpayProductId: `acc_prd_Held${status}x`,
+            setupStep: "product",
+            activationStatus: status,
+            destinationHint: "HDFC ••••1012",
+            accountCreatedAt: new Date(),
+          },
+        });
+        expect((await get(auth)).body.data.canSetUp, status).toBe(false);
+        fake.calls = [];
+        const r = await put(auth, bodyOf());
+        expect([r.status, r.body.error.code], status).toEqual([409, "ALREADY_SET_UP"]);
+        expectNoSecrets(status, r.body);
+        expect(fake.calls, status).toHaveLength(0);
+        // nothing was touched: not the step, not the hint, not the terms stamp, and no lease is left behind
+        expect(await rowOf(c.id), status).toMatchObject({ setupStep: "product", destinationHint: "HDFC ••••1012", termsAcceptedAt: null, termsVersion: null, lastError: null, setupLockedUntil: null });
+      }
+    });
+
+    it("looks again right before the bank call: an activation that lands while the request is running stops it", async () => {
+      const { c, auth } = await seedCreator();
+      // account and product exist; the request will run the stakeholder step first, and that call is held open
+      const acc = fake.seedAccount({ id: "acc_Race01x", email: c.email, productId: "acc_prd_Race01x" });
+      acc.stakeholder = null;
+      await prisma.creatorPayoutAccount.create({ data: { creatorId: c.id, razorpayAccountId: "acc_Race01x", razorpayProductId: "acc_prd_Race01x", setupStep: "account", activationStatus: "needs_clarification", accountCreatedAt: new Date() } });
+      let release!: () => void;
+      const gate = new Promise<void>((r) => (release = r));
+      fake.intercept({ match: is.createStakeholder, mode: "hold", gate });
+      const first = put(auth, bodyOf()).then((r) => r);
+      await waitFor(() => fake.count(is.createStakeholder) === 1);
+      // Razorpay activates the account (a webhook) while this request is still between steps
+      await prisma.creatorPayoutAccount.update({ where: { creatorId: c.id }, data: { activationStatus: "activated" } });
+      release();
+      const r = await first;
+      expect([r.status, r.body.error.code]).toEqual([409, "ALREADY_SET_UP"]);
+      expect(fake.count(is.patchSettlement)).toBe(0);
+      expect((await rowOf(c.id))!.setupLockedUntil).toBeNull();
+    });
+
+    it("an honest retry after a lost answer still finishes with only the bank call while nothing has proved the account moved on (needs_clarification, or under_review)", async () => {
+      for (const seen of ["needs_clarification", "under_review"]) {
+        const { c, auth } = await seedCreator();
+        fake.intercept({ match: is.patchSettlement, mode: "lose" });
+        expect((await put(auth, bodyOf())).status, seen).toBe(503);
+        // under_review shows the details were accepted, but only an ACTIVATION settles the step, so the retry is allowed
+        await applyProductStatus((await rowOf(c.id))!, { activationStatus: seen, requirements: [], at: new Date() }, { touch: true });
+        expect(await rowOf(c.id), seen).toMatchObject({ setupStep: "product", activationStatus: seen });
+        fake.calls = [];
+        const ok = await put(auth, bodyOf());
+        expect(ok.status, seen).toBe(200);
+        expect(fake.calls.map((x) => x.method), seen).toEqual(["PATCH"]);
+        expect(await rowOf(c.id), seen).toMatchObject({ setupStep: "done", lastError: null });
+      }
+    });
+  });
+
+  it("a bank-step rejection that names only the PAN offers no PAN field to retype, points at the bank fields, and tells staff", async () => {
+    const { c, auth } = await seedCreator();
+    fake.intercept({ match: is.patchSettlement, mode: "reject", status: 400, body: { error: { code: "BAD_REQUEST_ERROR", description: "The PAN does not match the account holder", reason: "input_validation_failed" } } });
+    const r = await put(auth, bodyOf());
+    expect([r.status, r.body.error.code]).toEqual([400, "BANK_DETAILS_REJECTED"]);
+    // the bank retry re-sends only these three: a PAN field here would be asked for and then ignored
+    expect(r.body.error.details.map((d: { field: string }) => d.field).sort()).toEqual(["accountNumber", "fullName", "ifsc"]);
+    expect(await rowOf(c.id)).toMatchObject({ lastError: "BANK_DETAILS_REJECTED|settlements.account_number,settlements.ifsc_code,settlements.beneficiary_name" });
+    expect((await get(auth)).body.data.account).toMatchObject({ status: "failed", attention: "fix_details" });
+    await flushPayoutAlertsForTests();
+    expect(notifyMock).toHaveBeenCalledTimes(1);
+    expect(String(notifyMock.mock.calls[0][0])).toContain("another detail");
+    expect(JSON.stringify(notifyMock.mock.calls[0][1])).toContain("kyc.pan");
+    expectNoSecretsAnywhere();
+
+    // a correction of the bank fields, as the form can send it, then finishes
+    fake.calls = [];
+    expect((await put(auth, bodyOf())).status).toBe(200);
+    expect(fake.calls.map((x) => x.method)).toEqual(["PATCH"]);
+  });
+
+  it("a bank-step rejection that names a bank field AND the phone offers only the bank field", async () => {
+    const { auth } = await seedCreator();
+    fake.intercept({ match: is.patchSettlement, mode: "reject", status: 400, body: { error: { code: "BAD_REQUEST_ERROR", description: "Invalid IFSC; the phone is also wrong" } } });
+    const r = await put(auth, bodyOf());
+    expect(r.body.error.details).toEqual([{ field: "ifsc", message: "Razorpay did not accept this IFSC code" }]);
+    await flushPayoutAlertsForTests();
+    expect(JSON.stringify(notifyMock.mock.calls[0][1])).toContain("phone");
   });
 
   it("never creates two accounts when two requests overlap: the second is refused while the first holds the lease", async () => {
@@ -792,7 +1066,7 @@ describe("setting up", () => {
     expect(r.body.error.details).toEqual([{ field: "phone", message: "Razorpay did not accept this phone number" }]);
     const row = (await rowOf(c.id))!;
     expect(row).toMatchObject({ razorpayAccountId: null, accountCreatedAt: null, lastError: "DETAILS_REJECTED|phone" });
-    expect((await get(auth)).body.data.account).toMatchObject({ status: "failed", requirements: [{ field: "phone", reason: "rejected" }] });
+    expect((await get(auth)).body.data.account).toMatchObject({ status: "failed", attention: "fix_details", requirements: [{ field: "phone", reason: "rejected" }] });
   });
 
   it("tells staff, not the creator, when Razorpay refuses OUR setup (keys or a feature not enabled)", async () => {
@@ -922,7 +1196,8 @@ describe("adopting an account Razorpay already has", () => {
     expect([r.status, r.body.error.code]).toEqual([409, "ACCOUNT_CONFLICT"]);
     const row = (await rowOf(c.id))!;
     expect(row).toMatchObject({ razorpayAccountId: null, accountCreatedAt: null, lastError: "ACCOUNT_CONFLICT" });
-    expect((await get(auth)).body.data.account.status).toBe("failed");
+    // "failed", but nothing for the creator to retype: the screen is told to say so (contact us), not "correct the marked details"
+    expect((await get(auth)).body.data.account).toMatchObject({ status: "failed", attention: "contact_us", requirements: [] });
     expect(fake.count(is.createStakeholder)).toBe(0);
     await flushPayoutAlertsForTests();
     expect(notifyMock).toHaveBeenCalledTimes(1);
@@ -977,8 +1252,9 @@ describe("what is kept (privacy)", () => {
     expect(r.status).toBe(400);
     expect(r.body.error.code).toBe("BANK_DETAILS_REJECTED");
     expectNoSecrets("the response", r.body);
-    // only the references its keywords point at (IFSC and PAN are both named in that text), never the text
-    expect(await rowOf(c.id)).toMatchObject({ lastError: "BANK_DETAILS_REJECTED|settlements.ifsc_code,kyc.pan" });
+    // only the references its keywords point at, never the text. The text names the IFSC and the PAN; the bank
+    // retry re-sends only bank fields, so only the IFSC is kept and the PAN is a note to staff instead.
+    expect(await rowOf(c.id)).toMatchObject({ lastError: "BANK_DETAILS_REJECTED|settlements.ifsc_code" });
     // an unknown outcome and a staff alert that carry Razorpay's words likewise
     fake.intercept({ match: is.patchSettlement, mode: "badgateway" });
     expect((await put(auth, bodyOf())).status).toBe(503);
@@ -1036,18 +1312,25 @@ describe("changing the bank account", () => {
     expect(bankChangeBlocksRelease(await rowOf(c.id))).toBe(true);
   });
 
-  it("staff clearing it starts the 72-hour pause, and a new request after that is pending again", async () => {
+  // Staff clear a request through the real route (creator-admin.service.ts markBankChangeProcessed: compare-and-swap,
+  // audit row, email), the ONLY clearing path. This keeps the one assertion no admin test makes: a request made AFTER a
+  // clearing goes through requestBankChange's own SQL and is pending again.
+  it("staff marking it processed starts the 72-hour pause, and a new request after that is pending again", async () => {
     const { c, auth } = await seedCreator();
     expect((await put(auth, bodyOf())).status).toBe(200);
-    expect(await markBankChangeCleared(c.id)).toBe(false); // nothing pending
+    const staff = await createTestUser({ name: "Review Staff" });
+    const admin = `Bearer ${generateToken(staff.id, staff.email, ["Admin"])}`;
+    const clear = () => request(app).post(`/v1/admin/creators/${c.id}/payout-account/bank-change/cleared`).set("Authorization", admin);
+
+    expect((await clear()).status).toBe(409); // nothing pending
     expect((await postChange(auth)).status).toBe(200);
-    const now = new Date();
-    expect(await markBankChangeCleared(c.id, now)).toBe(true);
-    expect(await markBankChangeCleared(c.id, now)).toBe(false); // already cleared
+    expect((await clear()).status).toBe(200);
+    expect((await clear()).status).toBe(409); // already cleared
     let row = (await rowOf(c.id))!;
+    const cleared = row.bankChangeClearedAt!;
     expect(bankChangePending(row)).toBe(false);
-    expect(bankChangeBlocksRelease(row, new Date(now.getTime() + 71 * 3_600_000))).toBe(true);
-    expect(bankChangeBlocksRelease(row, new Date(now.getTime() + 72 * 3_600_000))).toBe(false);
+    expect(bankChangeBlocksRelease(row, new Date(cleared.getTime() + 71 * 3_600_000))).toBe(true);
+    expect(bankChangeBlocksRelease(row, new Date(cleared.getTime() + 72 * 3_600_000))).toBe(false);
 
     await new Promise((r) => setTimeout(r, 15));
     const second = await requestBankChange(c.id);
@@ -1118,6 +1401,29 @@ describe("applyProductStatus (the one mapping)", () => {
     const replay = await applyProductStatus(fresh, { activationStatus: "needs_clarification", requirements: R, at: at(30) });
     expect(replay).toMatchObject({ applied: false, note: "unchanged" });
     expect((await prisma.creatorPayoutAccount.findUnique({ where: { id: row.id } }))!.activationStatus).toBe("needs_clarification");
+  });
+
+  it("an activation settles a setup still waiting at the bank call to done, and nothing else does", async () => {
+    // [our setup_step, what Razorpay says, the step afterwards]: only an ACTIVATION proves the bank details were applied
+    const cases: Array<[string, string, string]> = [
+      ["product", "activated", "done"],
+      ["product", "under_review", "product"],
+      ["product", "needs_clarification", "product"],
+      ["product", "suspended", "product"],
+      ["stakeholder", "activated", "stakeholder"],
+      ["done", "activated", "done"],
+    ];
+    for (const [step, status, expected] of cases) {
+      const row = await seedRow({ setupStep: step, activationStatus: "requested" });
+      const r = await applyProductStatus(row, { activationStatus: status, requirements: [], at: at(1) });
+      expect(r.applied, `${step} + ${status}`).toBe(true);
+      expect((await prisma.creatorPayoutAccount.findUnique({ where: { id: row.id } }))!.setupStep, `${step} + ${status}`).toBe(expected);
+    }
+    // an already-activated row that still reads "product" is NOT 'unchanged': the settling write must happen
+    const stuck = await seedRow({ setupStep: "product", activationStatus: "activated", activatedAt: at(0), bookableAfter: at(1440) });
+    expect(mapProductFacts(stuck, { activationStatus: "activated", requirements: [], at: at(2) })!.unchanged).toBe(false);
+    const done = await seedRow({ setupStep: "done", activationStatus: "activated", requirements: [], activatedAt: at(0), bookableAfter: at(1440) });
+    expect(mapProductFacts(done, { activationStatus: "activated", requirements: [], at: at(2) })!.unchanged).toBe(true);
   });
 
   it("an unchanged status stamps last_checked_at only when asked to (the poll), never for a webhook event", async () => {

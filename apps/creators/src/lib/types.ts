@@ -5,13 +5,14 @@ import type {
   PayoutAccountResponse,
   PayoutAccountStatus,
   PayoutAccountView,
+  PayoutAttention,
   PayoutBlockedReason,
   PayoutRequirement,
 } from "@dashmani/shared/src/validators/creator-payout";
 
 export type { CreatorStatus, CreatorAssetKind };
 // Payout account (bank connect): the API's own shapes, type-only so nothing is added to a bundle.
-export type { PayoutAccountResponse, PayoutAccountStatus, PayoutAccountView, PayoutBlockedReason, PayoutRequirement };
+export type { PayoutAccountResponse, PayoutAccountStatus, PayoutAccountView, PayoutAttention, PayoutBlockedReason, PayoutRequirement };
 
 export interface CreatorMe {
   id: string;

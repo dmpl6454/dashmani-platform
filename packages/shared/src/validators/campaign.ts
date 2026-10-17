@@ -70,11 +70,17 @@ export const ITEM_STATUSES = [
   "published", // auto-published by the API
   "failed",
   "refunded",
+  "awaiting_creator", // approved, a creator's page: the creator has been offered it and has not accepted yet
+  "refund_due", // paid, will not be posted, and the money is owed back (staff refund it): NOT yet refunded
 ] as const;
 export type ItemStatus = (typeof ITEM_STATUSES)[number];
 /** An item that is live on the platform with a link. */
 export const LIVE_ITEM_STATUSES: readonly ItemStatus[] = ["posted_manual", "published"];
-/** An item that will not change again (live, failed or refunded). */
+/**
+ * An item that will not change again (live, failed or refunded).
+ * ⚠️ `awaiting_creator` and `refund_due` are deliberately in NEITHER list: both are still open (a creator
+ * may yet accept; a refund is yet to be made), so a booking holding one must not complete or settle.
+ */
 export const SETTLED_ITEM_STATUSES: readonly ItemStatus[] = ["posted_manual", "published", "failed", "refunded"];
 
 export const BOOKING_STATUS_LABELS: Record<BookingStatus, string> = {
@@ -327,22 +333,53 @@ export const campaignMarkPostedSchema = z.object({
   url: z.string().trim().url("Paste the full link to the post").max(500),
 });
 
+/** The target_type of a rate card, a booked item and an offer that belong to a creator's page (creator_assets.id). */
+export const CREATOR_TARGET_TYPE = "creator_asset";
+
+/** What a creator is paid for one post can never exceed this share of the price (basis points; 9000 = 90%). */
+export const CREATOR_SHARE_MAX_BPS = 9000;
+/** The least a creator payout may be, in paise (₹100): Razorpay's own floor is unclear (plan question f), so this is the working one. */
+export const CREATOR_MIN_PAYOUT_PAISE = 10_000;
+
+/** Who provides a post: our own network, or a named creator (payer-payee transparency: the client is always told). */
+export interface CampaignProvider {
+  type: "network" | "creator";
+  /** The creator's display name; null for our network. */
+  name: string | null;
+}
+
 export const campaignRateCardUpsertSchema = z.object({
   cards: z
     .array(
-      z.object({
-        targetType: z.enum(["meta_asset", "social_account"]),
-        targetId: z.string().uuid(),
-        format: z.enum(CAMPAIGN_FORMATS),
-        /** Brand price. null deletes the card (stops offering that format on that account). */
-        pricePaise: z.number().int().min(100, "Minimum ₹1").max(100_000_000).nullable(),
-        /** Entertainment price; null = not offered for entertainment campaigns. */
-        entertainmentPricePaise: z.number().int().min(100, "Minimum ₹1").max(100_000_000).nullable().optional(),
-        /** Song audio integration add-on (reels only); null = not offered. */
-        audioAddonPaise: z.number().int().min(100, "Minimum ₹1").max(100_000_000).nullable().optional(),
-        active: z.boolean().optional().default(true),
-        category: safeString.pipe(z.string().max(60)).optional().nullable(),
-      }),
+      z
+        .object({
+          targetType: z.enum(["meta_asset", "social_account", "creator_asset"]),
+          targetId: z.string().uuid(),
+          format: z.enum(CAMPAIGN_FORMATS),
+          /** Brand price. null deletes the card (stops offering that format on that account). */
+          pricePaise: z.number().int().min(100, "Minimum ₹1").max(100_000_000).nullable(),
+          /** Entertainment price; null = not offered for entertainment campaigns. */
+          entertainmentPricePaise: z.number().int().min(100, "Minimum ₹1").max(100_000_000).nullable().optional(),
+          /** Song audio integration add-on (reels only); null = not offered. */
+          audioAddonPaise: z.number().int().min(100, "Minimum ₹1").max(100_000_000).nullable().optional(),
+          active: z.boolean().optional().default(true),
+          category: safeString.pipe(z.string().max(60)).optional().nullable(),
+          /**
+           * A creator page's share of every price on this card, in basis points. REQUIRED when a creator card
+           * is saved and FORBIDDEN on every other card. The cap (CREATOR_SHARE_MAX_BPS) and the payout floor are
+           * enforced by the service, which answers SHARE_TOO_HIGH / PAYOUT_TOO_LOW; here only 1..10000 is a number.
+           */
+          shareBps: z.number().int().min(1, "A share is at least 0.01%").max(10_000).optional(),
+        })
+        .superRefine((c, ctx) => {
+          if (c.targetType === "creator_asset") {
+            if (c.pricePaise !== null && c.shareBps === undefined) {
+              ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["shareBps"], message: "Set the creator's share" });
+            }
+          } else if (c.shareBps !== undefined) {
+            ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["shareBps"], message: "A share applies to creator pages only" });
+          }
+        }),
     )
     .min(1)
     .max(500),

@@ -6,18 +6,23 @@ import { LogOut } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { fetcher, PAYOUT_ACCOUNT_PATH } from "@/lib/api";
 import type { PayoutAccountResponse } from "@/lib/types";
+import { useAwaitingAnswerCount } from "@/lib/use-offers";
 import { CREATOR_STATUS_LABELS } from "@dashmani/shared/src/validators/creator";
 
-// The signed-in frame: brand, the channels (Overview / Pages / Payouts / Settings) and sign-out, in the
+// The signed-in frame: brand, the channels (Overview / Pages / Bookings / Payouts / Settings) and sign-out, in the
 // site's header style. Nav wraps rather than scrolls so nothing overflows at 390px.
 // "Payouts" is shown only when bank connect exists for this creator: the server says it is open
 // (routeEnabled) or the creator already has a payout account. While it is dark the nav is exactly what
 // it always was; a failed or pending answer shows nothing.
-const NAV = [
-  { href: "/dashboard", label: "Overview", payouts: false },
-  { href: "/connect", label: "Pages", payouts: false },
+// "Bookings" follows the same rule with its own switch: GET /creator/marketplace-status must have answered
+// `marketplaceEnabled: true`. Dark, loading or failed, there is no such entry at all. Its badge counts the offers
+// waiting for an answer, and appears only once that count is known (never as a guess of zero).
+const NAV: Array<{ href: string; label: string; payouts?: boolean; bookings?: boolean; also?: string[] }> = [
+  { href: "/dashboard", label: "Overview" },
+  { href: "/connect", label: "Pages" },
+  { href: "/offers", label: "Bookings", bookings: true, also: ["/offer"] },
   { href: "/payouts", label: "Payouts", payouts: true },
-  { href: "/settings", label: "Settings", payouts: false },
+  { href: "/settings", label: "Settings" },
 ];
 
 export function AppShell({ children }: { children: React.ReactNode }) {
@@ -30,7 +35,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     shouldRetryOnError: false,
   });
   const showPayouts = !!payout && (payout.routeEnabled || (payout.account !== null && payout.account.status !== "not_started"));
-  const nav = NAV.filter((n) => !n.payouts || showPayouts);
+  const { open: bookingsOpen, count: awaiting } = useAwaitingAnswerCount();
+  const nav = NAV.filter((n) => (!n.payouts || showPayouts) && (!n.bookings || bookingsOpen));
   return (
     <div className="min-h-screen flex flex-col">
       <header className="border-b-2 border-border">
@@ -41,7 +47,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </Link>
           <nav aria-label="Creator portal" className="order-3 w-full sm:order-none sm:w-auto flex flex-wrap gap-1">
             {nav.map((n) => {
-              const active = pathname === n.href;
+              const active = pathname === n.href || !!n.also?.includes(pathname);
+              const badge = n.bookings && awaiting ? awaiting : 0;
               return (
                 <Link
                   key={n.href}
@@ -50,6 +57,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   className={`px-3 py-2 text-[13px] uppercase tracking-[0.08em] border-2 ${active ? "bg-indigo border-indigo text-white font-bold" : "border-transparent text-ink-3 hover:text-white hover:border-border"}`}
                 >
                   {n.label}
+                  {badge > 0 && (
+                    <>
+                      <span className="ml-2 inline-grid min-w-[1.25rem] h-5 px-1 place-items-center bg-attention text-black text-[11px] font-extrabold tracking-normal" aria-hidden>{badge}</span>
+                      <span className="sr-only"> ({badge} {badge === 1 ? "offer needs" : "offers need"} your answer)</span>
+                    </>
+                  )}
                 </Link>
               );
             })}

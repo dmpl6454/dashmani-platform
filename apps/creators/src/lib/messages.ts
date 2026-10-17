@@ -165,3 +165,59 @@ export function payoutErrorFields(err: unknown): Array<{ field: PayoutFormField;
   }
   return out;
 }
+
+// ── Booking offers ──────────────────────────────────────────────────────────────────────────────
+// Plain sentences for the offer routes' error codes, picked by code. Like the payout sentences above, an unknown
+// code reads as a generic line rather than the API's own text; the only API text passed on is what apiFetch itself
+// writes for "no connection" and "not JSON".
+
+const OFFER_SENTENCES: Record<string, string> = {
+  MARKETPLACE_DISABLED: "Bookings aren't open right now. Check back later.",
+  NOT_APPROVED: "Bookings open once our team has approved your profile.",
+  ACCOUNT_SUSPENDED: "Your account is suspended, so bookings aren't available. Email creators@digitalsukoon.com and we'll look into it with you.",
+  NOT_FOUND: "We couldn't find that offer. The link may be wrong, or the offer may not be yours.",
+  OFFER_CLOSED: "This offer is no longer open. We've refreshed the page so it shows where things stand.",
+  OFFER_EXPIRED: "This offer has expired, so it can't be accepted any more.",
+  OFFER_UNAVAILABLE: "This booking can't go ahead any more. If you think that's a mistake, email creators@digitalsukoon.com.",
+  PAYOUT_NOT_REVERSIBLE_YET: "We couldn't decline this right now. Please email creators@digitalsukoon.com and we'll sort it out with you.",
+  OFFER_NOT_ACCEPTED: "Accept the offer before you send the link.",
+  ALREADY_VERIFIED: "Our team has already verified your post, so the link can't be changed.",
+  POSTING_CLOSED: "The time to send a link for this booking has ended. If you did post, email creators@digitalsukoon.com.",
+  LINK_ALREADY_USED: "That post has already been sent in for another booking. Send the link of the post you made for this one.",
+  VALIDATION_ERROR: "Paste the link of your post.",
+  RATE_LIMIT: "Too many attempts. Please try again in an hour.",
+};
+
+/** The sentence for a failed offer call. `platform` names the platform in "that isn't a … link". */
+export function offerErrorSentence(err: unknown, platform?: string): string {
+  if (err instanceof ApiError) {
+    if (err.code === "NETWORK" || err.code === "BAD_RESPONSE") return err.message; // fixed client-side strings
+    if (err.code === "WRONG_PLATFORM") {
+      const p = platform || "social media";
+      return `That doesn't look like a link to a ${p} post. Paste the link of the post itself, from your ${p} page.`;
+    }
+    if (err.code && OFFER_SENTENCES[err.code]) return OFFER_SENTENCES[err.code];
+    if (err.status === 429) return OFFER_SENTENCES.RATE_LIMIT;
+  }
+  return "Something went wrong. Please try again.";
+}
+
+/** Codes meaning the offer is not in the state the page showed: the page re-reads it after one of these. */
+const OFFER_STATE_CODES: ReadonlySet<string> = new Set([
+  "OFFER_CLOSED",
+  "OFFER_EXPIRED",
+  "OFFER_UNAVAILABLE",
+  "OFFER_NOT_ACCEPTED",
+  "ALREADY_VERIFIED",
+  "POSTING_CLOSED",
+  "NOT_FOUND",
+]);
+
+export function offerErrorChangesState(err: unknown): boolean {
+  return err instanceof ApiError && !!err.code && OFFER_STATE_CODES.has(err.code);
+}
+
+/** Codes that belong on the link field (the creator can fix them by sending a different link). */
+export function offerErrorIsAboutTheLink(err: unknown): boolean {
+  return err instanceof ApiError && (err.code === "WRONG_PLATFORM" || err.code === "LINK_ALREADY_USED" || err.code === "VALIDATION_ERROR");
+}

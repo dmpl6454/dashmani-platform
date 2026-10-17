@@ -1,6 +1,6 @@
 import crypto from "crypto";
 import { prisma, Prisma, type CampaignPayment, type CampaignRefund } from "@dashmani/db";
-import { formatPaise } from "@dashmani/shared";
+import { CREATOR_MIN_PAYOUT_PAISE, CREATOR_SHARE_MAX_BPS, CREATOR_TARGET_TYPE, formatPaise } from "@dashmani/shared";
 import { AppError } from "../../middleware/error-handler";
 import { notifyAdminByEmail } from "../email.service";
 import { scrubPayoutSecrets } from "../../utils/payout-scrub";
@@ -8,9 +8,11 @@ import { razorpayConfig } from "./config";
 import * as rzp from "./razorpay";
 import { assertCreativeReady, transitionBooking, logBookingEvent, type Actor } from "./booking.service";
 import { notifyStaffPaid, sendStatusEmail } from "./delivery.service";
-import { priceFor } from "./rate-card.service";
+import { priceFor, listBookableCreatorTargets } from "./rate-card.service";
 import { handleRouteEvent, isRouteEvent } from "./route-webhooks";
 import { pausePayoutsOfPayment } from "../creator/payout-pause";
+import { alertCreatorItemProblems, buildCreatorSnapshotFields, planCreatorPayouts, type CreatorItemProblem } from "../creator/payout-ledger";
+import { computePayout } from "../creator/payout-math";
 
 // Checkout, the Razorpay webhook, and refunds.
 //
@@ -47,7 +49,7 @@ export async function checkout(clientId: string, bookingId: string) {
   const mode = razorpayConfig.paymentMode();
   const b = await prisma.campaignBooking.findFirst({
     where: { id: bookingId, clientId },
-    select: { id: true, status: true, name: true, launchFrom: true, format: true, campaignType: true, audioIntegration: true, audioTrack: true, items: { select: { id: true, rateCardId: true, pricePaise: true, platform: true, format: true, accountName: true } } },
+    select: { id: true, status: true, name: true, launchFrom: true, format: true, campaignType: true, audioIntegration: true, audioTrack: true, items: { select: { id: true, rateCardId: true, pricePaise: true, platform: true, format: true, accountName: true, accountHandle: true, targetType: true, targetId: true } } },
   });
   if (!b) throw new AppError(404, "NOT_FOUND", "Campaign not found");
   if (!["draft", "awaiting_payment"].includes(b.status)) {
@@ -60,11 +62,21 @@ export async function checkout(clientId: string, bookingId: string) {
   }
   if (!b.launchFrom) throw new AppError(400, "NO_INFO", "Add the campaign details first.");
   if (b.items.length === 0) throw new AppError(400, "NO_ITEMS", "Pick at least one account.");
+  // A booking that pays a creator is ONLINE PAYMENT ONLY: the creator's share is moved out of the brand's captured
+  // payment, and an offline submission has no payment to move it from. Never a silent fallback to offline.
+  const creatorItems = b.items.filter((i) => i.targetType === CREATOR_TARGET_TYPE);
+  if (creatorItems.length > 0 && mode !== "razorpay") {
+    throw new AppError(409, "CREATOR_ONLINE_ONLY", "A creator's page can only be booked with online payment, which isn't available right now. Remove the creator's page to continue, or contact us.");
+  }
   await assertCreativeReady(bookingId);
 
   // Re-price from the CURRENT rate cards: a price that changed since the client picked it is
   // what they pay now, and an account withdrawn since then blocks checkout.
-  const cards = await prisma.campaignRateCard.findMany({ where: { id: { in: b.items.map((i) => i.rateCardId) }, active: true } });
+  const cards = await prisma.campaignRateCard.findMany({
+    where: { id: { in: b.items.map((i) => i.rateCardId) }, active: true },
+    // The shares are read only for a booking that has creator pages (a network-only booking runs the old query).
+    ...(creatorItems.length > 0 ? { include: { creatorTerm: true } } : {}),
+  });
   // The campaign type picks the Brand or Entertainment price; reel audio integration adds the
   // account's audio add-on (see priceFor).
   const cardById = new Map(cards.map((c) => [c.id, c]));
@@ -76,6 +88,39 @@ export async function checkout(clientId: string, bookingId: string) {
   });
   const total = computeTotal(priced);
   if (total < 100) throw new AppError(400, "AMOUNT_TOO_LOW", "The total is below the minimum payment.");
+
+  // Creator pages: every one must STILL be bookable (the owner approved, the page on, the payout account activated
+  // and past its wait, no bank change, both switches on), and its terms are FROZEN here: what the creator is paid
+  // is decided at checkout from the share and tax in force now, and nothing read later changes it.
+  const frozenCreatorTerms = new Map<string, ReturnType<typeof buildCreatorSnapshotFields>>();
+  if (creatorItems.length > 0) {
+    const bookable = new Map((await listBookableCreatorTargets({ onlyIds: creatorItems.map((i) => i.targetId) })).map((t) => [t.targetId, t]));
+    for (const i of priced) {
+      if (i.targetType !== CREATOR_TARGET_TYPE) continue;
+      const t = bookable.get(i.targetId);
+      const term = (cardById.get(i.rateCardId) as { creatorTerm?: { shareBps: number } | null } | undefined)?.creatorTerm;
+      const unavailable = () => new AppError(409, "CREATOR_UNAVAILABLE", `${i.accountName} can't be booked right now. Remove it and try again.`);
+      if (!t?.creator?.payoutAccountId || !t.creator.razorpayAccountId || !term) throw unavailable();
+      if (term.shareBps < 1 || term.shareBps > CREATOR_SHARE_MAX_BPS) throw unavailable();
+      // Nothing below the minimum transfer is ever frozen: the rate-card editor refuses such a share, and a TDS
+      // change since could have pushed the lowest price under it.
+      if (computePayout(i.pricePaise, term.shareBps, t.creator.tdsBps).amountPaise < CREATOR_MIN_PAYOUT_PAISE) throw unavailable();
+      frozenCreatorTerms.set(
+        i.id,
+        buildCreatorSnapshotFields({
+          creatorId: t.creator.creatorId,
+          creatorName: t.creator.creatorName,
+          payoutAccountId: t.creator.payoutAccountId,
+          razorpayAccountId: t.creator.razorpayAccountId,
+          shareBps: term.shareBps,
+          tdsBps: t.creator.tdsBps,
+          itemPricePaise: i.pricePaise,
+          assetName: i.accountName,
+          handle: i.accountHandle,
+        }),
+      );
+    }
+  }
 
   const snapshot = {
     campaignType: b.campaignType,
@@ -90,6 +135,8 @@ export async function checkout(clientId: string, bookingId: string) {
       basePaise: i.basePaise,
       audioAddonPaise: i.audioAddonPaise,
       pricePaise: i.pricePaise,
+      // A creator's page also freezes who is paid and how much. Network entries never carry these keys.
+      ...(frozenCreatorTerms.get(i.id) ?? {}),
     })),
   };
 
@@ -218,7 +265,7 @@ export async function handleWebhook(rawBody: Buffer, signature: string | undefin
 // ── Capture ─────────────────────────────────────────────────────────────────────
 
 type Tx = Prisma.TransactionClient;
-type CaptureOutcome = { kind: "unknown" } | { kind: "duplicate" } | { kind: "paid"; bookingId: string } | { kind: "refund_due"; paymentId: string };
+type CaptureOutcome = { kind: "unknown" } | { kind: "duplicate" } | { kind: "paid"; bookingId: string; creatorProblems: CreatorItemProblem[] } | { kind: "refund_due"; paymentId: string };
 
 const PAYABLE_BOOKING_STATUSES = ["awaiting_payment", "draft", "cancelled", "expired"] as const;
 
@@ -267,9 +314,11 @@ async function onCaptured(p: any, event: string): Promise<WebhookResult> {
         note: `Payment ${razorpayPaymentId} captured`,
         data: { paidAt: new Date(), submittedAt: new Date() },
       });
-      // Phase 4 (creator pages): insert one `planned` creator_payouts row per creator item HERE, in
-      // this same transaction, carrying `razorpayPaymentId` — the capture that won the claim above.
-      return { kind: "paid", bookingId: pay.bookingId };
+      // One `planned` creator_payouts row per creator item, written HERE in this same transaction with the
+      // payment id that won the claim above, from the terms frozen at checkout. A page that changed hands since
+      // checkout gets a void row and its item goes refund_due. A failure rolls these back with everything else.
+      const creator = await planCreatorPayouts(tx, pay.bookingId, razorpayPaymentId);
+      return { kind: "paid", bookingId: pay.bookingId, creatorProblems: creator.problems };
     }
 
     // Paid an outdated order, or paid twice: the money is ours to return. It is recorded as
@@ -290,6 +339,7 @@ async function onCaptured(p: any, event: string): Promise<WebhookResult> {
   if (outcome.kind === "unknown") return { handled: false, note: "unknown order" };
   if (outcome.kind === "duplicate") return { handled: true, duplicate: true };
   if (outcome.kind === "paid") {
+    alertCreatorItemProblems(outcome.bookingId, outcome.creatorProblems);
     void sendStatusEmail(outcome.bookingId, "paid").catch((e) => console.error("[campaign] paid email failed", e));
     void notifyStaffPaid(outcome.bookingId).catch((e) => console.error("[campaign] staff email failed", e));
     return { handled: true };

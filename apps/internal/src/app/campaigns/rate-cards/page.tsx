@@ -6,11 +6,13 @@ import { ChevronLeft, Search } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { usePageTitle } from "@/lib/hooks/use-page-title";
 import { BTN_GOLD, CARD, INPUT, ErrorBar, PageHead, PlatformDot, compact } from "../_ds";
+import { CreatorPages } from "./_creators";
 
 // Rate card: our price per account per format. Each format has a Brand price (required to
 // offer the format at all), an Entertainment price (film / OTT / music campaigns; empty = not
 // offered for those) and, on reels, a song-audio add-on (empty = not offered). Only accounts
-// with at least one active price appear in the client catalogue.
+// with at least one active price appear in the client catalogue. Creator pages (accounts that
+// belong to an approved creator, who is paid a share) are priced in the section below the table.
 
 type Target = {
   targetType: "meta_asset" | "social_account";
@@ -47,6 +49,8 @@ export default function RateCardsPage() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [ok, setOk] = useState("");
+  // The creator section has its own save bar; when both are showing, ours rides above it instead of covering it.
+  const [creatorPending, setCreatorPending] = useState(0);
 
   const rows = useMemo(() => {
     const term = q.trim().toLowerCase().replace(/^@/, "");
@@ -134,7 +138,7 @@ export default function RateCardsPage() {
       <Link href="/campaigns" className="mt-6 inline-flex items-center gap-1 text-[12.5px] text-ds-t3 hover:text-ds-text"><ChevronLeft className="h-4 w-4" />Campaign bookings</Link>
       <PageHead
         title="Rate card"
-        sub="Rupees per account and format. Brand = brand campaigns (empty = format not offered). Ent. = film / OTT / music campaigns (empty = not offered for those). Audio = song integration add-on on reels. Clients see accounts with at least one price."
+        sub="Rupees per account and format. Brand = brand campaigns (empty = format not offered). Ent. = film / OTT / music campaigns (empty = not offered for those). Audio = song integration add-on on reels. Clients see accounts with at least one price. Creator pages are priced further down."
       />
 
       <div className="flex flex-wrap gap-2 items-center mb-4">
@@ -220,8 +224,10 @@ export default function RateCardsPage() {
         </div>
       </section>
 
+      <CreatorPages onPendingChange={setCreatorPending} />
+
       {changed > 0 && (
-        <div className="fixed bottom-5 right-5 z-30 rounded-[14px] border border-ds-line3 bg-ds-card px-4 py-3 flex items-center gap-3 shadow-[0_12px_32px_rgba(0,0,0,.5)]">
+        <div className={`fixed ${creatorPending > 0 ? "bottom-[156px] sm:bottom-[92px]" : "bottom-5"} right-5 z-30 rounded-[14px] border border-ds-line3 bg-ds-card px-4 py-3 flex items-center gap-3 shadow-[0_12px_32px_rgba(0,0,0,.5)]`}>
           <span className="text-[13px] text-ds-t2">{changed} account{changed === 1 ? "" : "s"} changed</span>
           <button type="button" className="text-[12.5px] text-ds-t3 hover:text-ds-text" onClick={() => setEdits({})}>Discard</button>
           <button type="button" className={BTN_GOLD} disabled={busy} onClick={save}>{busy ? "Saving…" : "Save prices"}</button>

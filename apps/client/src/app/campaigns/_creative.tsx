@@ -13,14 +13,14 @@ import {
   type CampaignFormat,
 } from "@dashmani/shared/src/validators/campaign";
 import { ApiError, apiFetch } from "@/lib/api";
-import { deleteCampaignUpload, mutateJson, previewUrl, uploadChunked, type Campaign, type CampaignMedia } from "@/lib/campaign";
+import { campaignErrorMessage, deleteCampaignUpload, mutateJson, previewUrl, uploadChunked, type Campaign, type CampaignMedia } from "@/lib/campaign";
 import { Card, ErrorBanner, Field, inputCls, textareaCls } from "./_ui";
 
 // Step 2 of a campaign: format, upload, song, printed text, caption, and the optional extras
 // (hashtags, tagged accounts, collaborators, thumbnail).
 // Its own module (re-exported from _steps.tsx) so the step can grow without crowding the others.
 
-const errMsg = (e: unknown) => (e instanceof Error ? e.message : "Something went wrong. Please try again.");
+const errMsg = (e: unknown) => campaignErrorMessage(e);
 
 // ── Step 2: content ─────────────────────────────────────────────────────────────
 

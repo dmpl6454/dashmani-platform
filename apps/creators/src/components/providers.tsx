@@ -9,7 +9,7 @@ import type { CreatorMe, CreatorSession } from "@/lib/types";
 import { AppShell } from "./app-shell";
 
 // Client-side auth guard. The app is a static export, so there is no server to check a session:
-// the signed-in pages (PRIVATE_ROUTES: /dashboard, /connect, /payouts, /settings and anything under them)
+// the signed-in pages (PRIVATE_ROUTES: /dashboard, /connect, /payouts, /settings, /offers, /offer, /booking and anything under them)
 // render a placeholder until we have read localStorage, and a visitor without a session is sent
 // to /login?next=<where they were going>. Every other path — the public pages and unknown URLs,
 // so the 404 page can show — renders as is. The API is the real gate — every signed-in request

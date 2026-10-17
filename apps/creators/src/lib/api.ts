@@ -5,6 +5,12 @@ import type { CreatorSession } from "./types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/v1";
 
+/**
+ * The API's origin, without "/v1". The signed media paths an offer carries ("/v1/campaign-media/…") are relative to it:
+ * a <video>, <img> or download link cannot send an Authorization header, so the path itself is the credential.
+ */
+export const API_ORIGIN = API_URL.replace(/\/v1\/?$/, "");
+
 export const TOKEN_KEYS = {
   access: "creatorAccessToken",
   refresh: "creatorRefreshToken",
@@ -15,8 +21,9 @@ export const TOKEN_KEYS = {
  * The signed-in pages (and anything under them). Only these are guarded: a signed-out visitor is
  * sent to /login?next=. Every other path renders publicly — including unknown ones, so a
  * mistyped URL shows the 404 page instead of the sign-in form.
+ * /offers and /offer are the booking offers; /booking is the address the offer email links to (it hands on to /offer).
  */
-export const PRIVATE_ROUTES = ["/dashboard", "/connect", "/payouts", "/settings"];
+export const PRIVATE_ROUTES = ["/dashboard", "/connect", "/payouts", "/settings", "/offers", "/offer", "/booking"];
 
 export function isPrivatePath(path: string): boolean {
   const p = path.length > 1 ? path.replace(/\/+$/, "") : path;

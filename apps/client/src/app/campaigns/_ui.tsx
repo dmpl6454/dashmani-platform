@@ -102,6 +102,20 @@ const ITEM: Record<string, { label: string; cls: string }> = {
   published: { label: "Live", cls: "bg-success-bg text-success" },
   failed: { label: "Not posted", cls: "bg-danger-bg text-danger" },
   refunded: { label: "Not posted — refunded", cls: "bg-muted text-ink-2" },
+  // A creator's post. awaiting_creator: asked, not yet confirmed. refund_due: paid, will not be posted, the
+  // money is owed back and not yet returned (the refunded ledger wording below applies once it is).
+  awaiting_creator: { label: "Waiting for the creator to confirm", cls: "bg-indigo/10 text-indigo-light" },
+  refund_due: { label: "Being returned", cls: "bg-muted text-ink-2" },
+};
+
+/**
+ * A creator's post reads differently in two states. After the creator confirms, the item sits as
+ * `manual_pending` — "Scheduled" would promise a time nobody set, because the creator posts it by hand.
+ * ⚠️ "Live" is shown only for `posted_manual`/`published`, which the API sets after OUR team has checked the
+ * creator's link, so no label here may say a creator's post is live before that.
+ */
+const CREATOR_ITEM: Record<string, { label: string; cls: string }> = {
+  manual_pending: { label: "Confirmed by the creator", cls: "bg-indigo/10 text-indigo-light" },
 };
 
 /**
@@ -111,14 +125,44 @@ const ITEM: Record<string, { label: string; cls: string }> = {
  * Razorpay answers, and stays so if the refund fails, so a paid post reads "refunded" only on
  * that fact and "being returned" otherwise.
  */
-export function ItemStatus({ status, paidOnline, refundConfirmed = false }: { status: string; paidOnline: boolean; refundConfirmed?: boolean }) {
+export function ItemStatus({ status, paidOnline, refundConfirmed = false, creator = false }: { status: string; paidOnline: boolean; refundConfirmed?: boolean; creator?: boolean }) {
   const s =
-    status === "refunded" && !paidOnline
+    (status === "refunded" || status === "refund_due") && !paidOnline
       ? { label: "Not posted — not charged", cls: "bg-muted text-ink-2" }
       : status === "refunded" && !refundConfirmed
         ? { label: "Not posted — being returned", cls: "bg-muted text-ink-2" }
-        : ITEM[status] ?? { label: status, cls: "bg-muted text-ink-2" };
+        : (creator && CREATOR_ITEM[status]) || ITEM[status] || { label: status, cls: "bg-muted text-ink-2" };
   return <span className={`inline-flex items-center h-6 px-2.5 text-[11px] tracking-[0.02em] font-bold whitespace-nowrap border border-current/30 ${s.cls}`}>{s.label}</span>;
+}
+
+/** The "Creator" tag on an account that a creator, not our network, provides. */
+export function CreatorBadge({ display = "inline-flex" }: { display?: string }) {
+  return (
+    <span className={`${display} items-center h-[18px] px-1.5 text-[10px] font-bold uppercase tracking-wider text-indigo-light border border-indigo-light/50 whitespace-nowrap shrink-0`}>
+      Creator
+    </span>
+  );
+}
+
+/**
+ * What a client should know about one creator post right now, in words. ⚠️ Never claims the post is live
+ * before our team has checked the creator's link (that is `posted_manual`, which needs no note), and never
+ * promises a time: the creator posts by hand within the go-live window.
+ */
+export function creatorItemNote(status: string, paidOnline: boolean, window: string | null): string | null {
+  // `window` is the two dates joined with "and" ("19 Oct 2026 and 26 Oct 2026"), read after "between".
+  switch (status) {
+    case "pending":
+      return "Once we approve your campaign, the creator is asked to confirm this post.";
+    case "awaiting_creator":
+      return "The creator has been asked to confirm this post. If they don't confirm in time, the amount for it is returned to you.";
+    case "manual_pending":
+      return `The creator posts it by hand${window ? ` between ${window}` : " within your go-live window"}. The link appears here once our team has checked it.`;
+    case "refund_due":
+      return paidOnline ? "This post won't go ahead. The amount for it is being returned to you." : "This post won't go ahead. You weren't charged for it.";
+    default:
+      return null;
+  }
 }
 
 export function PlatformDot({ platform }: { platform: string }) {

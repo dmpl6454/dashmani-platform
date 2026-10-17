@@ -14,6 +14,7 @@ import { startPostingWatchCron } from "./cron/posting-watch.cron";
 import { startCampaignCrons } from "./cron/campaign.cron";
 import { startCreatorCrons } from "./cron/creator.cron";
 import { startCreatorPayoutCron } from "./cron/creator-payout.cron";
+import { startCreatorOffersCron } from "./cron/creator-offers.cron";
 import { startPipelineSelfCheck, startPipelineStatsLog } from "./services/pipeline";
 import { startPipelineDueCron } from "./cron/pipeline-due.cron";
 import { startPipelineEmailCron } from "./cron/pipeline-email.cron";
@@ -252,4 +253,10 @@ app.listen(PORT, () => {
   // CREATOR_PAYOUT_CRON_ENABLED=0. Independent of CREATOR_ROUTE_ENABLED: switching the feature off never
   // strands an account that is already being reconciled.
   startCreatorPayoutCron();
+
+  // Creator booking offers: every 5 min, first run +6 min. Expires offers nobody answered, withdraws accepted offers whose
+  // creator never posted (window end + 24 h), and sends the launch-day reminder. Nothing is refunded here: staff do that.
+  // Does nothing unless the marketplace is on (CREATORS_MARKETPLACE_ENABLED + CREATOR_ROUTE_ENABLED + the Razorpay keys);
+  // kill switch CREATOR_OFFERS_CRON_ENABLED=0.
+  startCreatorOffersCron();
 });

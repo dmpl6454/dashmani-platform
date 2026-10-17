@@ -7,11 +7,13 @@ import { ChevronLeft, Download, ExternalLink, Mail } from "lucide-react";
 import { apiFetch, API_BASE } from "@/lib/api";
 import { usePageTitle } from "@/lib/hooks/use-page-title";
 import {
-  BTN_GHOST, BTN_GOLD, BTN_RED, CARD, INPUT, ITEM_STATUS, ErrorBar, PageHead, PlatformDot, StatusPill, fmtDate, fmtWhen, rupees,
+  BTN_GHOST, BTN_GOLD, BTN_RED, CARD, INPUT, ITEM_STATUS, ErrorBar, PageHead, Pill, PlatformDot, StatusPill, fmtDate, fmtWhen, rupees,
 } from "../_ds";
+import { CREATOR_TARGET_TYPE, creatorItemStatus, frozenCreatorItems, isOpenOffer, safeHref, type StaffOffer } from "../_creator";
+import { OfferPanel } from "./_offer";
 
 type Item = {
-  id: string; platform: string; format: string; accountName: string; accountHandle: string | null; pricePaise: number;
+  id: string; targetType: string; platform: string; format: string; accountName: string; accountHandle: string | null; pricePaise: number;
   audioAddonPaise: number; status: string; nextAttemptAt: string | null; attempts: number; permalink: string | null; postedAt: string | null; lastError: string | null;
   /** Per-account text: null = the booking's. superTextOverride "" = no overlay on this account. */
   captionOverride: string | null; hashtagsOverride: string[]; superTextOverride: string | null; superTextStyleOverride: string | null;
@@ -28,7 +30,16 @@ type Booking = {
   media: Array<{ id: string; kind: string; role: string; originalName: string; bytes: number; durationMs: number | null; width: number | null; height: number | null; renderStatus: string; renderError: string | null }>;
   items: Item[];
   payments: Array<{ id: string; razorpayOrderId: string; razorpayPaymentId: string | null; amountPaise: number; refundedPaise: number; status: string; createdAt: string }>;
+  /** Frozen at checkout; for a creator's post it carries the creator's name and payout (see frozenCreatorItems). */
+  pricingSnapshot?: unknown;
+  /** Present only when the booking has a creator's post. undefined on a network-only booking. */
+  creatorOffers?: StaffOffer[];
   events: Array<{ id: string; actorType: string; fromStatus: string | null; toStatus: string | null; note: string | null; createdAt: string }>;
+};
+/** What an action answered besides the booking itself. */
+type ActExtras = {
+  refundError?: string | null; refundNotice?: string | null; withdrawNotice?: string | null;
+  offerSummary?: { offered: number; refundDue: number; warnings: string[] };
 };
 type MediaUrls = { media: Array<{ id: string; kind: string; role: string; renderStatus: string; preview: string; original: string }>; items: ItemFiles[] };
 
@@ -36,7 +47,10 @@ const unwrap = <T,>(u: string) => apiFetch<{ data: T }>(u).then((r) => r.data);
 
 export default function CampaignBookingDetail() {
   const { id } = useParams<{ id: string }>();
-  const { data: b, error, mutate } = useSWR<Booking>(`/admin/campaigns/${id}`, unwrap);
+  // A creator accepts, declines and sends links on their own time, so while an offer is open the page re-reads itself.
+  const { data: b, error, mutate } = useSWR<Booking>(`/admin/campaigns/${id}`, unwrap, {
+    refreshInterval: (d) => (d?.creatorOffers?.some((o) => isOpenOffer(o)) ? 30_000 : 0),
+  });
   const { data: urls } = useSWR<MediaUrls>(b ? `/admin/campaigns/${id}/media-urls` : null, unwrap, { revalidateOnFocus: false });
   usePageTitle(b?.name ?? "Campaign");
   const [note, setNote] = useState("");
@@ -50,9 +64,11 @@ export default function CampaignBookingDetail() {
     setErr("");
     setInfo("");
     try {
-      const r = await apiFetch<{ data: Booking & { refundError?: string | null; refundNotice?: string | null } }>(path, { method: "POST", body: body ? JSON.stringify(body) : undefined });
+      const r = await apiFetch<{ data: Booking & ActExtras }>(path, { method: "POST", body: body ? JSON.stringify(body) : undefined });
       if (r.data?.refundError) setErr(`Rejected, but a refund didn't go through. ${r.data.refundError}`);
       else if (r.data?.refundNotice) setInfo(r.data.refundNotice);
+      else if (r.data?.withdrawNotice) setInfo(r.data.withdrawNotice);
+      else if (r.data?.offerSummary) setInfo(offerSummaryText(r.data.offerSummary));
       await mutate();
       return true;
     } catch (e: any) {
@@ -61,6 +77,15 @@ export default function CampaignBookingDetail() {
     } finally {
       setBusy(null);
     }
+  };
+
+  // "Verify link & release": the dialog shows the API's refusal itself, so this throws instead of using act().
+  const verifyCreatorLink = async (itemId: string, ownershipCheckedByHand: boolean) => {
+    setErr("");
+    setInfo("");
+    await apiFetch(`/admin/campaigns/${id}/items/${itemId}/verify-creator-link`, { method: "POST", body: JSON.stringify({ ownershipCheckedByHand }) });
+    await mutate();
+    setInfo("Verified. The creator's link is now the live post, and the client is emailed that it is live.");
   };
 
   if (error && !b) return <div className="pt-8"><ErrorBar message={error.message || "Couldn't load this booking."} /></div>;
@@ -75,7 +100,15 @@ export default function CampaignBookingDetail() {
   const offline = b.payments.length === 0 && !["draft", "awaiting_payment"].includes(b.status);
   const autoOn = !!b.autoPublish?.enabled;
   const queuedItems = b.items.filter((i) => i.status === "queued");
-  const toPostItems = b.items.filter((i) => i.status === "manual_pending");
+  // A creator's post is never posted by us, so it is not in "to post": the creator posts it and staff verify the link.
+  const isCreatorItem = (i: Item) => i.targetType === CREATOR_TARGET_TYPE;
+  const creatorItems = b.items.filter(isCreatorItem);
+  const toPostItems = b.items.filter((i) => i.status === "manual_pending" && !isCreatorItem(i));
+  const offerOf = (itemId: string) => b.creatorOffers?.find((o) => o.itemId === itemId);
+  const waitingOnCreator = creatorItems.filter((i) => i.status === "awaiting_creator").length;
+  const linksToVerify = creatorItems.filter((i) => i.status === "manual_pending" && offerOf(i.id)?.status === "accepted" && !!offerOf(i.id)?.linkSubmittedAt).length;
+  const creatorsPosting = creatorItems.filter((i) => i.status === "manual_pending" && offerOf(i.id)?.status === "accepted" && !offerOf(i.id)?.linkSubmittedAt).length;
+  const beingReturned = creatorItems.filter((i) => i.status === "refund_due" || (i.status === "manual_pending" && !isOpenOffer(offerOf(i.id)))).length;
   const nextAuto = queuedItems.map((i) => i.nextAttemptAt).filter((x): x is string => Boolean(x)).sort()[0] ?? null;
   // launchAt() returns "now" once the window start has passed — then approving posts straight away.
   const dueLater = !!b.autoPublish?.dueAt && new Date(b.autoPublish.dueAt).getTime() > Date.now() + 60_000;
@@ -109,6 +142,18 @@ export default function CampaignBookingDetail() {
           </div>
         )}
       </div>
+
+      {creatorItems.length > 0 && (waitingOnCreator + linksToVerify + creatorsPosting + beingReturned > 0) && (
+        <div className="mb-4 px-3.5 py-2.5 rounded-[8px] bg-[rgba(167,139,250,.08)] border border-[rgba(167,139,250,.3)] text-ds-t5 text-[12.5px]">
+          <strong className="text-ds-purple">Creator posts.</strong> The creator posts these by hand; we never post on a creator&apos;s page.
+          <ul className="mt-1 grid gap-0.5 list-disc pl-5">
+            {waitingOnCreator > 0 && <li>{waitingOnCreator === 1 ? "1 post is" : `${waitingOnCreator} posts are`} waiting for the creator to accept.</li>}
+            {creatorsPosting > 0 && <li>{creatorsPosting === 1 ? "1 creator has" : `${creatorsPosting} creators have`} accepted and {creatorsPosting === 1 ? "is" : "are"} posting.</li>}
+            {linksToVerify > 0 && <li><strong>{linksToVerify === 1 ? "1 link needs" : `${linksToVerify} links need`} you to verify {linksToVerify === 1 ? "it" : "them"}</strong>: open the link, then press Verify link &amp; release on that account.</li>}
+            {beingReturned > 0 && <li>{beingReturned === 1 ? "1 post is" : `${beingReturned} posts are`} being returned: press <strong>Refund this account</strong> on {beingReturned === 1 ? "it" : "each"} to give the client the money back.</li>}
+          </ul>
+        </div>
+      )}
 
       <div className="grid gap-4 lg:grid-cols-[1.35fr_1fr]">
         <div className="grid gap-4 content-start">
@@ -182,7 +227,20 @@ export default function CampaignBookingDetail() {
               )}
             </div>
             {b.items.map((i) => (
-              <ItemRow key={i.id} item={i} booking={b} files={urls?.items.find((f) => f.itemId === i.id)} bookingId={b.id} postable={postable} autoPublish={!!b.autoPublish?.enabled} offline={offline} busy={busy} act={act} />
+              <ItemRow
+                key={i.id}
+                item={i}
+                booking={b}
+                files={urls?.items.find((f) => f.itemId === i.id)}
+                bookingId={b.id}
+                postable={postable}
+                autoPublish={!!b.autoPublish?.enabled}
+                offline={offline}
+                busy={busy}
+                act={act}
+                offer={offerOf(i.id)}
+                onVerify={(hand) => verifyCreatorLink(i.id, hand)}
+              />
             ))}
           </section>
         </div>
@@ -195,6 +253,7 @@ export default function CampaignBookingDetail() {
                 {autoOn
                   ? `${dueLater ? `Approving queues each account to post automatically on ${fmtWhen(b.autoPublish?.dueAt ?? null)}, the start of the posting window.` : "The posting window has already opened, so approving starts posting through the Meta API straight away."} Accounts the API can't post — song audio, stories, some Facebook videos — go to "To post" for someone to post by hand.`
                   : "Auto-publishing is switched off: approving sends every account to \"To post\" — someone posts each one by hand and pastes the link."}
+                {creatorItems.length > 0 && " Posts on creator pages are not posted by us: approving sends each creator an offer showing their exact payout. They accept and post it by hand, and you verify the link they send. If a creator declines, lets the offer lapse or doesn't post in time, that post goes to \"refund due\" and you refund it."}
                 {" "}
                 {offline
                   ? `No online payment was taken — collect ${rupees(b.totalPaise)} from the client by hand. Rejecting charges nothing.`
@@ -277,6 +336,13 @@ export default function CampaignBookingDetail() {
   );
 }
 
+/** What staff are told after approving a booking that had creator posts. */
+function offerSummaryText(x: { offered: number; refundDue: number; warnings: string[] }) {
+  const parts = [`Approved. ${x.offered === 1 ? "1 offer was" : `${x.offered} offers were`} sent to creators.`];
+  if (x.refundDue > 0) parts.push(`${x.refundDue === 1 ? "1 creator post can't" : `${x.refundDue} creator posts can't`} go ahead and ${x.refundDue === 1 ? "is" : "are"} marked "being returned": press Refund on ${x.refundDue === 1 ? "it" : "each"}.`);
+  return [...parts, ...x.warnings].join(" ");
+}
+
 function Kv({ k, v }: { k: string; v: React.ReactNode }) {
   return (
     <div className="grid grid-cols-[96px_1fr] gap-3">
@@ -286,13 +352,24 @@ function Kv({ k, v }: { k: string; v: React.ReactNode }) {
   );
 }
 
-function ItemRow({ item: i, booking: b, files, bookingId, postable, autoPublish, offline, busy, act }: {
+function ItemRow({ item: i, booking: b, files, bookingId, postable, autoPublish, offline, busy, act, offer, onVerify }: {
   item: Item; booking: Booking; files: ItemFiles | undefined; bookingId: string; postable: boolean; autoPublish: boolean; offline: boolean; busy: string | null;
   act: (key: string, path: string, body?: unknown, confirmText?: string) => Promise<boolean | undefined>;
+  /** This post's creator offer (creator pages only). */
+  offer: StaffOffer | undefined;
+  onVerify: (ownershipCheckedByHand: boolean) => Promise<void>;
 }) {
   const [url, setUrl] = useState(i.permalink ?? "");
   const [editing, setEditing] = useState(false);
-  const open = ["manual_pending", "queued", "failed"].includes(i.status);
+  // A creator's page: the creator posts it by hand and staff verify THEIR link. None of the hand/auto posting controls
+  // below apply (no "Mark posted" field, no Publish now, no Mark failed): the offer panel carries the actions instead.
+  const isCreator = i.targetType === CREATOR_TARGET_TYPE;
+  const frozen = isCreator ? frozenCreatorItems(b.pricingSnapshot).get(i.id) : undefined;
+  const creatorName = frozen?.creatorName ?? null;
+  const creatorStatus = isCreator ? creatorItemStatus(i.status, offer) : null;
+  // Refund: a creator's post whose offer is open is withdrawn first; one that is being returned (or has no open offer) is refunded.
+  const creatorRefundable = isCreator && (i.status === "refund_due" || (["manual_pending", "awaiting_creator"].includes(i.status) && !isOpenOffer(offer)));
+  const open = !isCreator && ["manual_pending", "queued", "failed"].includes(i.status);
   const queued = i.status === "queued";
   const live = i.status === "posted_manual" || i.status === "published";
   const ownCaption = i.captionOverride != null;
@@ -303,13 +380,18 @@ function ItemRow({ item: i, booking: b, files, bookingId, postable, autoPublish,
     <div className="px-5 py-3.5 border-t border-[#132430]">
       <div className="flex flex-wrap items-center gap-2.5">
         <PlatformDot platform={i.platform} />
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 flex-1 basis-[200px]">
           <div className="text-[13.5px] font-semibold text-ds-text truncate">{i.accountName}{i.accountHandle && <span className="text-ds-t3 font-normal"> @{i.accountHandle}</span>}</div>
           <div className="text-[12px] text-ds-t3">{i.platform} · {i.format} · {rupees(i.pricePaise)}{i.audioAddonPaise > 0 ? ` (incl. ${rupees(i.audioAddonPaise)} audio)` : ""}{i.postedAt ? ` · posted ${fmtWhen(i.postedAt)}` : ""}</div>
+          {isCreator && (
+            <div className="mt-1 inline-flex max-w-full items-center h-5 px-2 rounded-full text-[11px] font-semibold text-ds-purple bg-ds-purple/10" title="A creator's page: the creator is paid a share and posts it by hand">
+              <span className="truncate">Creator: {creatorName ?? "name not on record"}</span>
+            </div>
+          )}
         </div>
-        <StatusPill status={i.status} map={ITEM_STATUS} />
-        {i.permalink && (
-          <a href={i.permalink} target="_blank" rel="noopener noreferrer" className="text-ds-gold hover:text-ds-gold2" aria-label="Open post"><ExternalLink className="h-4 w-4" /></a>
+        {creatorStatus ? <Pill label={creatorStatus.label} color={creatorStatus.color} /> : <StatusPill status={i.status} map={ITEM_STATUS} />}
+        {safeHref(i.permalink) && (
+          <a href={safeHref(i.permalink)!} target="_blank" rel="noopener noreferrer" className="text-ds-gold hover:text-ds-gold2" aria-label="Open post"><ExternalLink className="h-4 w-4" /></a>
         )}
       </div>
       {(ownCaption || ownOverlay) && (
@@ -322,7 +404,23 @@ function ItemRow({ item: i, booking: b, files, bookingId, postable, autoPublish,
           )}
         </dl>
       )}
-      {postable && !live && files && files.files.length > 0 && (
+      {isCreator && (
+        <OfferPanel
+          itemStatus={i.status}
+          accountName={i.accountName}
+          platform={i.platform}
+          creatorName={creatorName}
+          frozenPayoutPaise={frozen?.amountPaise ?? null}
+          offer={offer}
+          postable={postable}
+          clientName={b.client.companyName}
+          busy={busy}
+          offersUnavailable={b.creatorOffers === undefined}
+          onWithdraw={(discard) => act(`withdraw-${i.id}`, `/admin/campaigns/${bookingId}/items/${i.id}/withdraw-offer`, { discardSubmittedLink: discard })}
+          onVerify={onVerify}
+        />
+      )}
+      {!isCreator && postable && !live && files && files.files.length > 0 && (
         <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px]">
           <span className="text-ds-t3">{files.custom ? "This account's files:" : "Files:"}</span>
           {files.files.map((f, n) =>
@@ -347,11 +445,11 @@ function ItemRow({ item: i, booking: b, files, bookingId, postable, autoPublish,
         </div>
       )}
       {i.lastError && i.status !== "refunded" && i.status !== "posted_manual" && (
-        <div className={`mt-1.5 text-[12px] ${queued ? "text-ds-t3" : i.status === "manual_pending" ? "text-ds-gold" : "text-[#FB7185]"}`}>
-          {queued ? `Last try: ${i.lastError}` : i.status === "manual_pending" ? `Post by hand — ${i.lastError}` : i.lastError}
+        <div className={`mt-1.5 text-[12px] ${isCreator ? (i.status === "refund_due" ? "text-[#F59E66]" : "text-ds-t2") : queued ? "text-ds-t3" : i.status === "manual_pending" ? "text-ds-gold" : "text-[#FB7185]"}`}>
+          {isCreator ? i.lastError : queued ? `Last try: ${i.lastError}` : i.status === "manual_pending" ? `Post by hand — ${i.lastError}` : i.lastError}
         </div>
       )}
-      {postable && !queued && (open || editing) && (
+      {!isCreator && postable && !queued && (open || editing) && (
         <form
           className="mt-2.5 flex flex-col sm:flex-row gap-2"
           onSubmit={async (e) => {
@@ -363,7 +461,26 @@ function ItemRow({ item: i, booking: b, files, bookingId, postable, autoPublish,
           <button type="submit" className={`${BTN_GOLD} shrink-0`} disabled={!!busy || !url.trim()}>{live ? "Save link" : "Mark posted"}</button>
         </form>
       )}
-      {postable && (
+      {isCreator && creatorRefundable && (
+        <div className="mt-2 flex flex-wrap gap-3 text-[12px]">
+          <button
+            type="button"
+            className="text-ds-redsoft hover:underline"
+            disabled={!!busy}
+            onClick={() =>
+              act(
+                `refund-${i.id}`,
+                `/admin/campaigns/${bookingId}/items/${i.id}/refund`,
+                undefined,
+                `Refund ${rupees(i.pricePaise)} for ${i.accountName} to ${b.client.companyName}? The post won't happen and the creator's payout is cancelled.`,
+              )
+            }
+          >
+            Refund this account
+          </button>
+        </div>
+      )}
+      {!isCreator && postable && (
         <div className="mt-2 flex flex-wrap gap-3 text-[12px]">
           {live && !editing && <button type="button" className="text-ds-t2 hover:text-ds-text" onClick={() => setEditing(true)}>Edit link</button>}
           {queued && (

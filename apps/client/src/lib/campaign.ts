@@ -1,5 +1,6 @@
 import useSWR from "swr";
-import { apiFetch } from "@/lib/api";
+import type { CampaignProvider } from "@dashmani/shared/src/validators/campaign";
+import { ApiError, apiFetch } from "@/lib/api";
 
 // Campaign booking — types, SWR hooks and the resumable chunked uploader for the client portal.
 
@@ -32,6 +33,11 @@ export interface CampaignItem {
   format: string;
   accountName: string;
   accountHandle: string | null;
+  /**
+   * Who provides this post: our network, or a creator, NAMED (payer-payee transparency — the client
+   * always knows who is paid for a post). Absent on an older API response, which reads as our network.
+   */
+  provider?: CampaignProvider;
   pricePaise: number;
   audioAddonPaise: number;
   /** Per-account text — null means "same as the campaign". superTextOverride "" = no overlay. */
@@ -117,8 +123,10 @@ export interface CatalogueEntry {
   views28d: number | null;
   category: string | null;
   profileUrl: string | null;
-  /** About how long after posting the link is ready. */
+  /** About how long after posting the link is ready (our network's own posts only — a creator posts by hand). */
   linkDeliveryMinutes: { min: number; max: number };
+  /** Our network, or a named creator. Absent on an older API response, which reads as our network. */
+  provider?: CampaignProvider;
   offers: Array<{ rateCardId: string; format: string; pricePaise: number; entertainmentPricePaise: number | null; audioAddonPaise: number | null }>;
 }
 
@@ -132,6 +140,8 @@ export interface CampaignResults {
     format: string;
     accountName: string;
     accountHandle: string | null;
+    /** See CampaignItem.provider. */
+    provider?: CampaignProvider;
     status: string;
     /** See CampaignItem.refundConfirmed. */
     refundConfirmed?: boolean;
@@ -162,6 +172,51 @@ export function useCatalogue(enabled: boolean) {
 
 export function useResults(id: string | null, enabled: boolean) {
   return useSWR<CampaignResults>(id && enabled ? `/client/campaigns/${id}/results` : null, unwrap, { revalidateOnFocus: true, refreshInterval: 120_000 });
+}
+
+// ── Creator posts ───────────────────────────────────────────────────────────────
+
+/** True when a creator, not our own network, provides this post (a catalogue entry, a booked item or a result row). */
+export function isCreator(x: { provider?: CampaignProvider } | null | undefined): boolean {
+  return x?.provider?.type === "creator";
+}
+
+/** "Posted by Asha Verma" — the creator is always named. A creator without a stored name reads "a creator", never blank. */
+export function postedBy(x: { provider?: CampaignProvider } | null | undefined): string | null {
+  if (!isCreator(x)) return null;
+  const name = x?.provider?.name?.trim();
+  return `Posted by ${name || "a creator"}`;
+}
+
+export function creatorItems<T extends { provider?: CampaignProvider }>(items: readonly T[]): T[] {
+  return items.filter(isCreator);
+}
+
+/**
+ * Creator pages can only be booked with online payment (the creator's share is paid out of the brand's
+ * captured payment). With the gateway deferred (paymentMode "offline") such a campaign cannot be submitted.
+ */
+export function creatorNeedsOnline(c: Pick<Campaign, "paymentMode" | "items">): boolean {
+  return c.paymentMode === "offline" && c.items.some(isCreator);
+}
+
+/** The words for the errors a creator post can raise, one place for the banner, the checkout error and the cancel error. */
+export const CREATOR_ONLINE_ONLY_TEXT =
+  "Creator accounts can only be booked with online payment, which isn't available right now. Remove the creator accounts to submit this campaign, or write to hello@digitalsukoon.com.";
+
+/**
+ * A message the client can act on. The API's own sentence is already plain for most errors (PAID_TERMS_FROZEN
+ * included: it has two different sentences, one per cause, and each is right); three creator errors get a
+ * sentence that also says what to do next. Anything else keeps the API's message.
+ */
+export function campaignErrorMessage(e: unknown, fallback = "Something went wrong. Please try again."): string {
+  if (e instanceof ApiError) {
+    if (e.code === "CREATOR_ONLINE_ONLY") return CREATOR_ONLINE_ONLY_TEXT;
+    // The API names the account (“X can't be booked right now”); keep that and say how to carry on.
+    if (e.code === "CREATOR_UNAVAILABLE") return `${e.message.replace(/\s*Remove it and try again\.?$/, "").replace(/\.$/, "")}. Choose your accounts again to carry on — the rest of your campaign is kept.`;
+    if (e.code === "CREATOR_BOOKING_LOCKED") return "This campaign includes a creator's post that has already been paid for, so it can't be cancelled here. Write to hello@digitalsukoon.com and we'll sort it out.";
+  }
+  return e instanceof Error && e.message ? e.message : fallback;
 }
 
 /** Any file (creative, thumbnail or a per-account variant) still being prepared. */

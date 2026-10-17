@@ -1,4 +1,5 @@
 import { Router, Request } from "express";
+import { z } from "zod";
 import { prisma } from "@dashmani/db";
 import {
   campaignRateCardUpsertSchema,
@@ -14,7 +15,7 @@ import { AppError } from "../middleware/error-handler";
 import { asyncHandler } from "../utils/async-handler";
 import { success } from "../utils/response";
 import * as review from "../services/campaign/review.service";
-import { listRateCardGrid, upsertRateCards } from "../services/campaign/rate-card.service";
+import { listCreatorRateCardGrid, listRateCardGrid, upsertRateCards } from "../services/campaign/rate-card.service";
 import { signedMediaPath } from "../services/campaign/media-url";
 import { resolveItemFiles } from "../services/campaign/booking.service";
 
@@ -34,6 +35,16 @@ router.get("/admin/campaign-rate-cards", ...gate, asyncHandler(async (_req, res)
 
 router.put("/admin/campaign-rate-cards", ...gate, validate(campaignRateCardUpsertSchema), asyncHandler(async (req, res) => {
   return success(res, await upsertRateCards(req.body, staffId(req)));
+}));
+
+/**
+ * The creator pages staff can price (approved creator, page switched on, publishable, connection live), each
+ * with its cards and their shares. Priced through PUT /admin/campaign-rate-cards (targetType "creator_asset",
+ * with a shareBps on every card). Declared BEFORE every /admin/campaigns/:id route.
+ */
+router.get("/admin/campaigns/rate-cards/creator-targets", ...gate, asyncHandler(async (_req, res) => {
+  res.set("Cache-Control", "no-store");
+  return success(res, await listCreatorRateCardGrid());
 }));
 
 // ── Review queue ────────────────────────────────────────────────────────────────
@@ -65,6 +76,26 @@ router.post("/admin/campaigns/:id/resend-delivery", ...gate, asyncHandler(async 
 
 router.post("/admin/campaigns/:id/items/:itemId/posted", ...gate, validate(campaignMarkPostedSchema), asyncHandler(async (req, res) => {
   return success(res, await review.markPosted(req.params.id, req.params.itemId, staffId(req), req.body.url));
+}));
+
+/**
+ * "Verify link & release": the creator's link for a creator item is what goes live. Refused (409) unless the creator
+ * accepted, submitted a link, and the page-ownership check passed; for a check that did not, `ownershipCheckedByHand`
+ * says staff opened the link and checked it themselves. Nothing is paid here (that is the later payout phase).
+ */
+const verifyCreatorLinkSchema = z.object({ ownershipCheckedByHand: z.boolean().optional() });
+router.post("/admin/campaigns/:id/items/:itemId/verify-creator-link", ...gate, validate(verifyCreatorLinkSchema), asyncHandler(async (req, res) => {
+  return success(res, await review.verifyCreatorLink(req.params.id, req.params.itemId, staffId(req), { ownershipCheckedByHand: req.body.ownershipCheckedByHand === true }));
+}));
+
+/**
+ * Withdraw a creator's open offer (offered, or accepted with no link yet): the post goes to "refund due" and staff then
+ * Refund it. `discardSubmittedLink` also closes an accepted offer whose submitted link was NOT verified (staff looked and
+ * it is not the creator's post). Nothing is refunded here.
+ */
+const withdrawOfferSchema = z.object({ discardSubmittedLink: z.boolean().optional() });
+router.post("/admin/campaigns/:id/items/:itemId/withdraw-offer", ...gate, validate(withdrawOfferSchema), asyncHandler(async (req, res) => {
+  return success(res, await review.withdrawOffer(req.params.id, req.params.itemId, staffId(req), { discardSubmittedLink: req.body.discardSubmittedLink === true }));
 }));
 
 router.post("/admin/campaigns/:id/items/:itemId/failed", ...gate, validate(campaignReviewNoteSchema), asyncHandler(async (req, res) => {

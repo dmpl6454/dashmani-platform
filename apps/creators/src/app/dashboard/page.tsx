@@ -8,12 +8,15 @@ import { useAuth } from "@/lib/auth";
 import { errorSentence } from "@/lib/messages";
 import { fmtDate } from "@/lib/format";
 import type { CreatorMe, CreatorMeWithChecklist, PayoutAccountResponse, PayoutAccountStatus } from "@/lib/types";
+import { useAwaitingAnswerCount } from "@/lib/use-offers";
 import { Banner, Loading, PageHead } from "@/components/ui";
 
 // Overview: the onboarding checklist from GET /v1/creator/me (verify email → connect Facebook →
 // at least one page that can publish → send for review) and a banner for every review outcome.
 // A fifth row, "Add your bank account", is drawn ONLY when the API sends checklist.payoutAccount (it
 // does so only while bank connect is open); it is never assumed, so while that is dark nothing changes.
+// A "Bookings" card sits above the checklist ONLY when GET /creator/marketplace-status said bookings are open and the
+// creator is approved (an unapproved creator has no offers to count); dark, it is not drawn at all.
 
 export default function DashboardPage() {
   const { updateCreator } = useAuth();
@@ -49,8 +52,30 @@ export default function DashboardPage() {
         steps below and our team will review your profile.
       </PageHead>
       <StatusBanner me={me} />
+      <BookingsCard approved={me.status === "approved"} />
       <Checklist me={me} onChange={(next) => (next ? mutate({ ...me, ...next }, { revalidate: true }) : mutate())} />
     </div>
+  );
+}
+
+/** The offers waiting for an answer. The count is shown only once it is known: until then (or if it failed) the card just points at Bookings. */
+function BookingsCard({ approved }: { approved: boolean }) {
+  const { open, count } = useAwaitingAnswerCount();
+  if (!open || !approved) return null;
+  return (
+    <section className="card p-5 sm:p-6 flex flex-wrap items-center justify-between gap-x-6 gap-y-4" aria-labelledby="bookings-title">
+      <div className="min-w-0 flex-1 basis-56">
+        <h2 id="bookings-title" className="font-extrabold text-lg tracking-[-0.02em]">Bookings</h2>
+        <p className="mt-1 text-sm text-ink-3 leading-relaxed">
+          {count == null
+            ? "See the booking offers made for your pages."
+            : count === 0
+              ? "No offers are waiting for your answer."
+              : `${count} ${count === 1 ? "offer is" : "offers are"} waiting for your answer.`}
+        </p>
+      </div>
+      <Link href="/offers" className={`btn btn-sm ${count ? "" : "btn-ghost"}`}>See bookings <ArrowRight size={14} aria-hidden /></Link>
+    </section>
   );
 }
 

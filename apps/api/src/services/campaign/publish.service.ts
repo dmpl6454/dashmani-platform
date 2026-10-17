@@ -1,4 +1,5 @@
 import { prisma } from "@dashmani/db";
+import { CREATOR_TARGET_TYPE } from "@dashmani/shared";
 import { decryptToken } from "../../utils/token-crypto";
 import { oauthGraphFetch, oauthGraphPost, type OauthGraphResult } from "../meta-oauth/oauth-graph";
 import { metaGraphVersion } from "../meta-oauth/meta-config";
@@ -60,6 +61,9 @@ interface BookingLike {
 
 /** Can this item be published by the API right now? Reason is shown to staff when not. */
 export async function checkEligibility(item: ItemLike, booking: BookingLike): Promise<Eligibility> {
+  // A creator's page is never auto-published: the creator posts it by hand from their own account and pastes the
+  // link, and we hold no publishing token for it in meta_assets. Answered first so no switch can make it "eligible".
+  if (item.targetType === CREATOR_TARGET_TYPE) return { ok: false, reason: "The creator posts this one themselves on their own page." };
   if (!campaignConfig.publishEnabled()) return { ok: false, reason: "Auto-publishing is switched off." };
   if (item.targetType !== "meta_asset" || (item.platform !== "instagram" && item.platform !== "facebook")) {
     return { ok: false, reason: "This platform is posted by hand." };
@@ -447,6 +451,8 @@ export async function publishItem(itemId: string): Promise<Outcome | null> {
       },
     },
   });
+  // Only `queued` is ever published. awaiting_creator and refund_due (and a creator's page at all, see checkEligibility)
+  // are never picked up by this worker.
   if (!item || item.status !== "queued") return null;
   if (!["approved", "publishing"].includes(item.booking.status)) return null;
 

@@ -17,7 +17,7 @@ vi.mock("../src/services/email.service", async (orig) => {
 });
 
 import app from "../src/app";
-import { createTestRole, createTestUser, generateCreatorToken, generateToken } from "./helpers";
+import { createTestRole, createTestUser, generateClientToken, generateCreatorToken, generateHrToken, generateToken } from "./helpers";
 import { CREATOR_META_SCOPES } from "../src/services/creator/creator-meta-config";
 import { invalidateRangeCache } from "../src/services/meta-oauth/meta-range.service";
 
@@ -167,5 +167,156 @@ describe("creator portal ↔ our Meta network isolation", () => {
     const ct = generateCreatorToken(creator.id, creator.email);
     expect((await request(app).get("/v1/admin/meta/channels").set("Authorization", `Bearer ${ct}`)).status).toBe(401);
     expect((await request(app).get("/v1/creator/meta/connection").set("Authorization", `Bearer ${adminToken}`)).status).toBe(401);
+  });
+});
+
+// ── Creator bookings (payout plan Phase 3): the four portals' tokens never cross ─────────────────────────────
+
+describe("creator-portal tokens against the campaign, rate-card and payout routes", () => {
+  const saved3: Record<string, string | undefined> = {};
+  beforeEach(() => {
+    for (const k of ["CREATORS_ENABLED", "CREATORS_MARKETPLACE_ENABLED", "CREATOR_ROUTE_ENABLED"]) saved3[k] = process.env[k];
+    process.env.CREATORS_ENABLED = "1";
+    process.env.CREATORS_MARKETPLACE_ENABLED = "1";
+    process.env.CREATOR_ROUTE_ENABLED = "1";
+  });
+  afterEach(() => {
+    for (const k of Object.keys(saved3)) {
+      if (saved3[k] === undefined) delete process.env[k];
+      else process.env[k] = saved3[k];
+    }
+  });
+
+  /** Every route a creator booking touches on the staff and client sides. */
+  const STAFF_ROUTES: Array<[string, string]> = [
+    ["get", "/v1/admin/campaigns/rate-cards/creator-targets"],
+    ["get", "/v1/admin/campaign-rate-cards"],
+    ["put", "/v1/admin/campaign-rate-cards"],
+    ["get", "/v1/admin/campaigns"],
+    ["post", "/v1/admin/campaigns/00000000-0000-0000-0000-000000000000/approve"],
+    ["post", "/v1/admin/campaigns/00000000-0000-0000-0000-000000000000/items/00000000-0000-0000-0000-000000000001/refund"],
+    ["post", "/v1/admin/campaigns/00000000-0000-0000-0000-000000000000/reject"],
+    // Creator offers, the staff side: verify the creator's link, withdraw an offer.
+    ["post", "/v1/admin/campaigns/00000000-0000-0000-0000-000000000000/items/00000000-0000-0000-0000-000000000001/verify-creator-link"],
+    ["post", "/v1/admin/campaigns/00000000-0000-0000-0000-000000000000/items/00000000-0000-0000-0000-000000000001/withdraw-offer"],
+    ["post", "/v1/admin/campaigns/00000000-0000-0000-0000-000000000000/items/00000000-0000-0000-0000-000000000001/posted"],
+    ["post", "/v1/admin/campaigns/00000000-0000-0000-0000-000000000000/items/00000000-0000-0000-0000-000000000001/failed"],
+  ];
+  const CLIENT_ROUTES: Array<[string, string]> = [
+    ["get", "/v1/client/campaigns/catalogue"],
+    ["get", "/v1/client/campaigns"],
+    ["put", "/v1/client/campaigns/00000000-0000-0000-0000-000000000000/items"],
+    ["post", "/v1/client/campaigns/00000000-0000-0000-0000-000000000000/checkout"],
+    ["post", "/v1/client/campaigns/00000000-0000-0000-0000-000000000000/cancel"],
+  ];
+  const CREATOR_ROUTES: Array<[string, string]> = [
+    ["get", "/v1/creator/me"],
+    ["get", "/v1/creator/payout-account"],
+    ["put", "/v1/creator/payout-account"],
+    // Creator offers: the creator's own bookings.
+    ["get", "/v1/creator/marketplace-status"],
+    ["get", "/v1/creator/offers"],
+    ["get", "/v1/creator/offers/00000000-0000-0000-0000-000000000000"],
+    ["post", "/v1/creator/offers/00000000-0000-0000-0000-000000000000/accept"],
+    ["post", "/v1/creator/offers/00000000-0000-0000-0000-000000000000/decline"],
+    ["post", "/v1/creator/offers/00000000-0000-0000-0000-000000000000/posted"],
+  ];
+  const call = (method: string, path: string, token?: string) => {
+    const r = (request(app) as any)[method](path);
+    return (token ? r.set("Authorization", `Bearer ${token}`) : r).send({});
+  };
+
+  it("a creator token is refused by every staff and client campaign route, with no data and no side effect", async () => {
+    const creator = await prisma.creator.create({ data: { email: "iso-bookings@example.com", passwordHash: "x", name: "Iso", status: "approved", emailVerifiedAt: new Date() } });
+    const token = generateCreatorToken(creator.id, creator.email);
+    for (const [method, path] of [...STAFF_ROUTES, ...CLIENT_ROUTES]) {
+      const res = await call(method, path, token);
+      expect([401, 403], `${method} ${path}`).toContain(res.status);
+      expect(JSON.stringify(res.body), `${method} ${path}`).not.toContain("creatorTerm");
+    }
+    expect(await prisma.campaignBooking.count()).toBe(0);
+    expect(await prisma.campaignRateCard.count()).toBe(0);
+    expect(await prisma.creatorPayout.count()).toBe(0);
+    expect(await prisma.creatorOffer.count()).toBe(0);
+  });
+
+  it("staff, client and HR tokens are refused by the creator routes, and no token at all gets 401", async () => {
+    const staff = await createTestUser({ roleNames: [] });
+    const tokens = [
+      generateToken(staff.id, staff.email, ["Admin"]),
+      generateClientToken("client-1", "c@brand.test"),
+      generateHrToken(staff.id, staff.email, ["Admin"]),
+    ];
+    for (const [method, path] of CREATOR_ROUTES) {
+      for (const t of tokens) {
+        const res = await call(method, path, t);
+        expect([401, 403], `${method} ${path}`).toContain(res.status);
+      }
+      expect((await call(method, path)).status, `${method} ${path} (no token)`).toBe(401);
+    }
+  });
+
+  it("a client token is refused by every staff route, and an HR token by the staff and client ones", async () => {
+    const staff = await createTestUser({ roleNames: [] });
+    for (const [method, path] of STAFF_ROUTES) {
+      expect([401, 403], `${method} ${path}`).toContain((await call(method, path, generateClientToken("client-1", "c@brand.test"))).status);
+      expect([401, 403], `${method} ${path}`).toContain((await call(method, path, generateHrToken(staff.id, staff.email, ["Admin"]))).status);
+    }
+    for (const [method, path] of CLIENT_ROUTES) {
+      expect([401, 403], `${method} ${path}`).toContain((await call(method, path, generateHrToken(staff.id, staff.email, ["Admin"]))).status);
+      expect([401, 403], `${method} ${path}`).toContain((await call(method, path, generateToken(staff.id, staff.email, ["Admin"]))).status);
+    }
+  });
+
+  it("a creator token is refused by the HR portal's routes and by the shared notification and account routes, and an HR token by the creator offers", async () => {
+    const creator = await prisma.creator.create({ data: { email: "iso-hr@example.com", passwordHash: "x", name: "Iso", status: "approved", emailVerifiedAt: new Date() } });
+    const token = generateCreatorToken(creator.id, creator.email);
+    for (const [method, path] of [
+      ["get", "/v1/hr/profile"],
+      ["get", "/v1/hr/reports/today"],
+      ["post", "/v1/hr/reports"],
+      ["get", "/v1/hr/notifications"],
+      ["get", "/v1/admin/notifications"],
+      ["get", "/v1/accounts"],
+    ] as Array<[string, string]>) {
+      expect([401, 403], `${method} ${path}`).toContain((await call(method, path, token)).status);
+    }
+    const hr = await createTestUser({ roleNames: [] });
+    for (const path of ["/v1/creator/offers", "/v1/creator/marketplace-status", "/v1/creator/offers/00000000-0000-0000-0000-000000000000"]) {
+      expect([401, 403], path).toContain((await call("get", path, generateHrToken(hr.id, hr.email, ["Employee"]))).status);
+    }
+  });
+
+  it("an employee token without the admin role is refused by the staff creator-offer routes, and the creator routes refuse it too", async () => {
+    const employee = await createTestUser({ roleNames: [] });
+    const token = generateToken(employee.id, employee.email, ["Employee"]);
+    for (const [method, path] of STAFF_ROUTES.filter(([, p]) => /verify-creator-link|withdraw-offer|\/failed|\/posted/.test(p))) {
+      expect([401, 403], `${method} ${path}`).toContain((await call(method, path, token)).status);
+    }
+    for (const [method, path] of CREATOR_ROUTES.filter(([, p]) => p.includes("/creator/offers") || p.includes("marketplace-status"))) {
+      expect([401, 403], `${method} ${path}`).toContain((await call(method, path, token)).status);
+    }
+    expect(await prisma.creatorOffer.count()).toBe(0);
+  });
+
+  it("a creator token is refused by the new staff routes against a REAL offer: nothing about it changes and nothing about it is returned", async () => {
+    const creator = await prisma.creator.create({ data: { email: "iso-offers@example.com", passwordHash: "x", name: "Iso", status: "approved", emailVerifiedAt: new Date() } });
+    const client = await prisma.client.create({ data: { companyName: "Iso Brand", contactName: "Iso", email: "iso@brand.test", passwordHash: "x" } });
+    const booking = await prisma.campaignBooking.create({ data: { clientId: client.id, name: "Iso", brand: "B", status: "approved", format: "post", totalPaise: 250_000, paidAt: new Date() } });
+    const card = await prisma.campaignRateCard.create({ data: { targetType: "creator_asset", targetId: "00000000-0000-0000-0000-0000000000aa", platform: "instagram", format: "post", pricePaise: 250_000 } });
+    const item = await prisma.campaignBookingItem.create({ data: { bookingId: booking.id, rateCardId: card.id, targetType: "creator_asset", targetId: card.targetId, platform: "instagram", format: "post", accountName: "Page", pricePaise: 250_000, status: "manual_pending" } });
+    await prisma.creatorPayout.create({ data: { bookingId: booking.id, bookingItemId: item.id, creatorId: creator.id, payoutAccountId: "pa", razorpayAccountId: "acc_x", razorpayPaymentId: "pay_x", itemPricePaise: 250_000, shareBps: 4000, grossPaise: 100_000, amountPaise: 100_000 } });
+    const offer = await prisma.creatorOffer.create({
+      data: { bookingId: booking.id, bookingItemId: item.id, creatorId: creator.id, creatorAssetId: card.targetId, pageName: "Page", platform: "instagram", format: "post", status: "accepted", payoutPaise: 100_000, expiresAt: new Date(Date.now() + 86_400_000), linkUrl: "https://www.instagram.com/p/ABC/", linkSubmittedAt: new Date(), ownershipCheck: "auto_ok" },
+    });
+    const before = await prisma.creatorOffer.findUniqueOrThrow({ where: { id: offer.id } });
+    const token = generateCreatorToken(creator.id, creator.email);
+    for (const action of ["verify-creator-link", "withdraw-offer", "posted", "failed", "refund"]) {
+      const res = await call("post", `/v1/admin/campaigns/${booking.id}/items/${item.id}/${action}`, token);
+      expect([401, 403], action).toContain(res.status);
+      expect(JSON.stringify(res.body), action).not.toContain("Iso Brand");
+    }
+    expect(await prisma.creatorOffer.findUniqueOrThrow({ where: { id: offer.id } })).toEqual(before);
+    expect((await prisma.campaignBookingItem.findUniqueOrThrow({ where: { id: item.id } })).status).toBe("manual_pending");
   });
 });

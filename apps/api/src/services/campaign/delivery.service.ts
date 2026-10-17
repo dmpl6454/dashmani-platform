@@ -2,6 +2,7 @@ import { prisma } from "@dashmani/db";
 import { canonicalKey, CAMPAIGN_TYPE_LABELS, FORMAT_LABELS, formatPaise, LIVE_ITEM_STATUSES, SETTLED_ITEM_STATUSES, type CampaignFormat, type CampaignType, type ItemStatus } from "@dashmani/shared";
 import { sendEmail, notifyAdminByEmail } from "../email.service";
 import { campaignConfig } from "./config";
+import { providersOfItems } from "../creator/payout-ledger";
 
 // Client emails for the campaign lifecycle, and the results the client sees in the portal.
 //
@@ -189,6 +190,11 @@ function itemStatusText(status: string, paidOnline: boolean, refundConfirmed = f
       return "Live";
     case "refunded":
       return paidOnline ? (refundConfirmed ? "Not posted — refunded" : "Not posted — being returned") : "Not posted — not charged";
+    case "refund_due":
+      // Paid, will not be posted, the refund is still to be made.
+      return paidOnline ? "Not posted — being returned" : "Not posted — not charged";
+    case "awaiting_creator":
+      return "Waiting for the creator";
     case "failed":
       return "Not posted";
     default:
@@ -388,13 +394,16 @@ export async function getResults(clientId: string, bookingId: string) {
       status: true,
       deliveredAt: true,
       paidAt: true,
+      pricingSnapshot: true,
       items: {
         orderBy: { createdAt: "asc" },
-        select: { id: true, platform: true, format: true, accountName: true, accountHandle: true, status: true, permalink: true, postedAt: true, remotePostId: true, nextAttemptAt: true, attempts: true, containerId: true },
+        select: { id: true, targetType: true, targetId: true, platform: true, format: true, accountName: true, accountHandle: true, status: true, permalink: true, postedAt: true, remotePostId: true, nextAttemptAt: true, attempts: true, containerId: true },
       },
     },
   });
   if (!b) return null;
+  // A creator's post names its provider, here as everywhere the client sees it.
+  const providers = await providersOfItems(b);
 
   const matchIds = new Map<string, string>(); // itemId → matchId
   for (const i of b.items) {
@@ -434,6 +443,7 @@ export async function getResults(clientId: string, bookingId: string) {
         format: i.format,
         accountName: i.accountName,
         accountHandle: i.accountHandle,
+        provider: providers.get(i.id) ?? { type: "network" as const, name: null },
         status: i.status,
         // True only for a `refunded` item whose refund Razorpay has accepted: the portal says "refunded" on that and nothing else.
         refundConfirmed: refundConfirmed.has(i.id),

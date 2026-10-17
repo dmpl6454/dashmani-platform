@@ -9,11 +9,12 @@ import { Icon } from "@/components/portal-icons";
 import { CAMPAIGN_TYPE_LABELS, FORMAT_LABELS, type CampaignFormat } from "@dashmani/shared/src/validators/campaign";
 import { todayIST } from "@dashmani/shared/src/utils/date";
 import { useAuth } from "@/lib/auth";
-import { compact, mutateJson, previewUrl, renderFailed, renderPending, renderPendingCounts, rupees, useCampaign, useResults, PLATFORM_LABEL, type Campaign, type CampaignListRow } from "@/lib/campaign";
+import { ApiError } from "@/lib/api";
+import { campaignErrorMessage, compact, creatorItems, creatorNeedsOnline, CREATOR_ONLINE_ONLY_TEXT, isCreator, mutateJson, postedBy, previewUrl, renderFailed, renderPending, renderPendingCounts, rupees, useCampaign, useResults, PLATFORM_LABEL, type Campaign, type CampaignListRow } from "@/lib/campaign";
 import { AccountsStep, CreativeStep, InfoForm } from "../_steps";
 import { ItemTextRow } from "../_item-text";
 import { StepNav, STEPS, type Step } from "../_step-nav";
-import { Card, CampaignStatus, ErrorBanner, ItemStatus, PlatformDot, fmtDate, fmtDateTime } from "../_ui";
+import { Card, CampaignStatus, CreatorBadge, ErrorBanner, ItemStatus, PlatformDot, creatorItemNote, fmtDate, fmtDateTime } from "../_ui";
 
 const PRE_PAY = ["draft", "awaiting_payment"];
 /** Statuses where an offline campaign's amount is still to be settled with our team. */
@@ -122,7 +123,7 @@ export default function CampaignPage() {
       await revalidate<CampaignListRow[]>("/client/campaigns", (rows) => rows?.map((r) => (r.id === c.id ? { ...r, status: "cancelled" } : r)), { revalidate: false }).catch(() => undefined);
       router.push("/campaigns");
     } catch (e) {
-      setCancelError(e instanceof Error && e.message ? e.message : "Couldn't cancel this campaign — please try again.");
+      setCancelError(campaignErrorMessage(e, "Couldn't cancel this campaign — please try again."));
       mutate();
     } finally {
       setCancelBusy(false);
@@ -269,6 +270,9 @@ function PayStep({ campaign: c, onChanged, onEdit, busy, setBusy, confirming, se
   setConfirming: (b: boolean) => void;
 }) {
   const [error, setError] = useState<string | null>(null);
+  // The error is one only a different choice of accounts fixes (a creator who can no longer be booked, a
+  // creator account with no online payment): the banner then carries a way back to Accounts.
+  const [errorFix, setErrorFix] = useState(false);
   const [userOpen, setUserOpen] = useState<boolean | null>(null);
   const rendering = renderPending(c);
   const failed = renderFailed(c);
@@ -277,6 +281,10 @@ function PayStep({ campaign: c, onChanged, onEdit, busy, setBusy, confirming, se
   const fileFailed = failedFile(c);
   const total = c.items.reduce((s, i) => s + i.pricePaise, 0);
   const offline = c.paymentMode === "offline";
+  // Creator accounts are paid up front and can only be booked with online payment: with the gateway off such a
+  // campaign cannot be submitted, and the page says why before the client presses anything.
+  const nCreators = creatorItems(c.items).length;
+  const needsOnline = creatorNeedsOnline(c);
   // Only the campaign's own files (not per-account variants) are shown in the strip below.
   const defaultPending = (c.thumbnail ? [...c.media, c.thumbnail] : c.media).some((m) => m.renderStatus === "queued" || m.renderStatus === "rendering");
   // The window opened before the client got here (dates are IST day keys, so a string compare is exact).
@@ -290,6 +298,7 @@ function PayStep({ campaign: c, onChanged, onEdit, busy, setBusy, confirming, se
   const pay = async () => {
     setBusy(true);
     setError(null);
+    setErrorFix(false);
     try {
       const order = await mutateJson<{ offline?: boolean; orderId: string; amount: number; currency: string; keyId: string; name: string }>(`/client/campaigns/${c.id}/checkout`, "POST");
       if (order.offline) {
@@ -333,7 +342,8 @@ function PayStep({ campaign: c, onChanged, onEdit, busy, setBusy, confirming, se
       rz.open();
       onChanged();
     } catch (e) {
-      setError(e instanceof Error ? e.message : offline ? "The campaign couldn't be submitted." : "Payment couldn't start.");
+      setError(campaignErrorMessage(e, offline ? "The campaign couldn't be submitted." : "Payment couldn't start."));
+      setErrorFix(e instanceof ApiError && ["CREATOR_UNAVAILABLE", "CREATOR_ONLINE_ONLY", "RATE_CARD_UNAVAILABLE"].includes(e.code ?? ""));
       setBusy(false);
       // A stale tab (already submitted, cancelled, expired) re-fetches and lands on the right view.
       onChanged();
@@ -388,7 +398,18 @@ function PayStep({ campaign: c, onChanged, onEdit, busy, setBusy, confirming, se
           {c.items.map((i) => (
             <li key={i.id} className="py-2.5 flex items-center gap-3 text-[13px]">
               <PlatformDot platform={i.platform} />
-              <span className="min-w-0 flex-1 truncate"><span className="font-semibold text-ink">{i.accountName}</span>{i.accountHandle && <span className="text-ink-3"> @{i.accountHandle}</span>}</span>
+              {isCreator(i) ? (
+                // A creator's post names who provides it (payer-payee transparency).
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-center gap-1.5 min-w-0">
+                    <span className="truncate"><span className="font-semibold text-ink">{i.accountName}</span>{i.accountHandle && <span className="text-ink-3"> @{i.accountHandle}</span>}</span>
+                    <CreatorBadge />
+                  </span>
+                  <span className="block truncate text-[12px] text-ink-3">{postedBy(i)}</span>
+                </span>
+              ) : (
+                <span className="min-w-0 flex-1 truncate"><span className="font-semibold text-ink">{i.accountName}</span>{i.accountHandle && <span className="text-ink-3"> @{i.accountHandle}</span>}</span>
+              )}
               <span className="text-ink-3 hidden sm:inline">{PLATFORM_LABEL[i.platform]}</span>
               <span className="text-right">
                 <span className="block font-semibold tabular-nums">{rupees(i.pricePaise)}</span>
@@ -418,12 +439,24 @@ function PayStep({ campaign: c, onChanged, onEdit, busy, setBusy, confirming, se
           <span className="text-[13px] font-semibold text-ink-2">Total</span>
           <span className="text-[19px] font-bold text-ink tabular-nums">{rupees(total)}</span>
         </div>
-        <p className="text-[13px] text-ink-2 mt-2">
+        {!needsOnline && <p className="text-[13px] text-ink-2 mt-2">
           {offline
             ? "No online payment is needed now. Submit the campaign and our team will review it (usually within a working day) and confirm the amount and payment details with you. You'll get an email with the link to every post once it's live."
             : "After payment our team reviews your campaign (usually within a working day). If we can't run it, you get a full refund. You'll get an email with the link to every post once it's live."}
-        </p>
+        </p>}
+        {nCreators > 0 && !needsOnline && (
+          <p className="text-[13px] text-ink-2 mt-2">
+            {nCreators === 1 ? "1 of these accounts is a creator account" : `${nCreators} of these accounts are creator accounts`}: you pay for {nCreators === 1 ? "it" : "them"} up front. Each creator confirms their booking and posts it themselves; if a creator doesn&apos;t confirm, that account is refunded. We show the link once our team has checked the post.
+          </p>
+        )}
       </Card>
+
+      {needsOnline && (
+        <ErrorBanner>
+          {CREATOR_ONLINE_ONLY_TEXT}{" "}
+          <button type="button" className="underline font-semibold" onClick={() => onEdit("accounts")}>Change accounts</button>
+        </ErrorBanner>
+      )}
 
       {datePassed && (
         <ErrorBanner>
@@ -431,9 +464,19 @@ function PayStep({ campaign: c, onChanged, onEdit, busy, setBusy, confirming, se
           <button type="button" className="underline font-semibold" onClick={() => onEdit("info")}>Update dates</button>
         </ErrorBanner>
       )}
-      {error && <ErrorBanner>{error}</ErrorBanner>}
+      {error && (
+        <ErrorBanner>
+          {error}
+          {errorFix && (
+            <>
+              {" "}
+              <button type="button" className="underline font-semibold" onClick={() => onEdit("accounts")}>Change accounts</button>
+            </>
+          )}
+        </ErrorBanner>
+      )}
       <div className="flex justify-end">
-        <Button variant="ink" onClick={pay} disabled={busy || rendering || failed || datePassed} aria-live="polite">
+        <Button variant="ink" onClick={pay} disabled={busy || rendering || failed || datePassed || needsOnline} aria-live="polite">
           {busy ? (offline ? "Submitting…" : "Opening payment…") : rendering ? "Preparing preview…" : offline ? `Submit for review · ${rupees(total)}` : `Pay ${rupees(total)}`}
         </Button>
       </div>
@@ -503,6 +546,34 @@ function PreviewStrip({ campaign: c }: { campaign: Campaign }) {
 
 // ── After payment: status, changes, results ─────────────────────────────────────
 
+const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+
+/**
+ * Where the creators' posts stand, in one short paragraph under the campaign status. ⚠️ It never says a
+ * creator's post is live (that is the post's own "Live" pill, set only after our team has checked the
+ * creator's link) and promises no time: the creator posts by hand inside the go-live window.
+ */
+function CreatorSummary({ items, status, windowAnd }: { items: Array<{ status: string; provider?: Campaign["items"][number]["provider"] }>; status: string; windowAnd: string | null }) {
+  const mine = items.filter(isCreator);
+  const n = (st: string) => mine.filter((i) => i.status === st).length;
+  const lines: string[] = [];
+  if (status === "paid_pending_review") {
+    lines.push(`${plural(mine.length, "post is", "posts are")} with creators. Once we approve your campaign, each creator is asked to confirm their post; a post a creator doesn't confirm is refunded.`);
+  } else if (["approved", "publishing"].includes(status)) {
+    if (n("awaiting_creator") > 0) lines.push(`${plural(n("awaiting_creator"), "creator post is", "creator posts are")} waiting for the creator to confirm. If a creator doesn't confirm in time, the amount for that post is returned to you.`);
+    if (n("manual_pending") > 0) lines.push(`${plural(n("manual_pending"), "creator has", "creators have")} confirmed. The creator posts by hand${windowAnd ? ` between ${windowAnd}` : ""}, and each link appears below once our team has checked it.`);
+    if (n("refund_due") > 0) lines.push(`${plural(n("refund_due"), "creator post won't", "creator posts won't")} go ahead. The amount for ${n("refund_due") === 1 ? "it is" : "them is"} being returned to you.`);
+  }
+  if (lines.length === 0) return null;
+  return (
+    <div className="mt-3 pt-3 grid gap-1.5" style={{ borderTop: "1px solid rgba(255,255,255,0.18)" }}>
+      {lines.map((l) => (
+        <p key={l} className="text-[13px] text-ink-2">{l}</p>
+      ))}
+    </div>
+  );
+}
+
 function AfterPayment({ campaign: c, onChanged }: { campaign: Campaign; onChanged: (saved?: Campaign) => void }) {
   const live = ["approved", "publishing", "completed", "partially_published"].includes(c.status);
   const { data: results } = useResults(c.id, live);
@@ -525,13 +596,22 @@ function AfterPayment({ campaign: c, onChanged }: { campaign: Campaign; onChange
     : "what happens with each one is shown below.";
   const hasWindow = Boolean(c.launchFrom && c.launchTo);
   const windowText = hasWindow ? `${fmtDate(c.launchFrom)} – ${fmtDate(c.launchTo)}` : null;
+  // The same two dates for a sentence that reads "between … and …".
+  const windowAnd = hasWindow ? `${fmtDate(c.launchFrom)} and ${fmtDate(c.launchTo)}` : null;
+  // Creator posts: the creator confirms and posts by hand, so "your posts will go live" must not be said of them.
+  const nCreators = creatorItems(c.items).length;
+  const nNetwork = c.items.length - nCreators;
   const message: Record<string, string> = {
     paid_pending_review: paidOnline
       ? "Payment received. Our team is reviewing your campaign — usually within one working day."
       : "Submitted. Our team is reviewing your campaign — usually within one working day — and will confirm the amount and payment details with you.",
-    approved: hasWindow
-      ? `Approved. Your posts will go live between ${fmtDate(c.launchFrom)} and ${fmtDate(c.launchTo)}; you'll get an email with each link as it goes live.`
-      : "Approved. Your posts are scheduled; you'll get an email with each link as it goes live.",
+    approved: nCreators > 0
+      ? nNetwork > 0
+        ? `Approved. Posts on our own accounts will go live${hasWindow ? ` between ${fmtDate(c.launchFrom)} and ${fmtDate(c.launchTo)}` : ""}. Posts by creators go live once the creator has confirmed and posted. You'll get an email with each link as it goes live.`
+        : `Approved. Each creator confirms their post and posts it${hasWindow ? ` between ${fmtDate(c.launchFrom)} and ${fmtDate(c.launchTo)}` : ""}. You'll get an email with each link once our team has checked the post.`
+      : hasWindow
+        ? `Approved. Your posts will go live between ${fmtDate(c.launchFrom)} and ${fmtDate(c.launchTo)}; you'll get an email with each link as it goes live.`
+        : "Approved. Your posts are scheduled; you'll get an email with each link as it goes live.",
     publishing: "Your posts are going live. Links appear below as each one is posted.",
     completed: "Every post is live. The links are below and in your email.",
     partially_published: paidOnline
@@ -571,6 +651,13 @@ function AfterPayment({ campaign: c, onChanged }: { campaign: Campaign; onChange
             </p>
           )}
           {showWindow && <p className="text-[12.5px] text-ink-3 mt-2">Go-live window: {windowText}</p>}
+          {nCreators > 0 && (
+            <CreatorSummary
+              items={(results?.items ?? c.items) as Array<{ status: string; provider?: Campaign["items"][number]["provider"] }>}
+              status={c.status}
+              windowAnd={windowAnd}
+            />
+          )}
           {c.reviewNote && ["rejected", "refunded"].includes(c.status) && (
             <blockquote className="mt-3 rounded-xl bg-muted px-4 py-3 text-[13px] whitespace-pre-line">{c.reviewNote}</blockquote>
           )}
@@ -639,15 +726,27 @@ function AfterPayment({ campaign: c, onChanged }: { campaign: Campaign; onChange
         <ul className="divide-y divide-ink/5">
           {(results?.items ?? c.items.map((i) => ({ ...i, metrics: null }))).map((i) => (
             <li key={i.id} className="py-3 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
-              <div className="min-w-0 flex-1 flex items-center gap-2">
-                <PlatformDot platform={i.platform} />
+              <div className={isCreator(i) ? "min-w-0 flex-1 flex items-start gap-2" : "min-w-0 flex-1 flex items-center gap-2"}>
+                {/* A creator row has several lines (name, who posts it, a note): the dot sits on the first. */}
+                {isCreator(i) ? <span className="mt-[5px]"><PlatformDot platform={i.platform} /></span> : <PlatformDot platform={i.platform} />}
                 <div className="min-w-0">
-                  <div className="text-[13.5px] font-semibold text-ink truncate">{i.accountName}{i.accountHandle && <span className="text-ink-3 font-normal"> @{i.accountHandle}</span>}</div>
+                  {isCreator(i) ? (
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <span className="text-[13.5px] font-semibold text-ink truncate">{i.accountName}{i.accountHandle && <span className="text-ink-3 font-normal"> @{i.accountHandle}</span>}</span>
+                      <CreatorBadge />
+                    </div>
+                  ) : (
+                    <div className="text-[13.5px] font-semibold text-ink truncate">{i.accountName}{i.accountHandle && <span className="text-ink-3 font-normal"> @{i.accountHandle}</span>}</div>
+                  )}
                   <div className="text-[12px] text-ink-3">
                     {PLATFORM_LABEL[i.platform]} · {FORMAT_LABELS[i.format as CampaignFormat] ?? i.format}
                     {i.postedAt ? ` · posted ${fmtDateTime(i.postedAt)}` : ""}
                     {!i.postedAt && "scheduledFor" in i && i.scheduledFor && new Date(i.scheduledFor) > new Date() ? ` · posts ${fmtDateTime(i.scheduledFor)}` : ""}
+                    {isCreator(i) && <span className="text-ink-2"> · {postedBy(i)}</span>}
                   </div>
+                  {isCreator(i) && creatorItemNote(i.status, paidOnline, windowAnd) && (
+                    <div className="mt-0.5 text-[12px] text-ink-3">{creatorItemNote(i.status, paidOnline, windowAnd)}</div>
+                  )}
                 </div>
               </div>
               {i.permalink && (
@@ -664,7 +763,7 @@ function AfterPayment({ campaign: c, onChanged }: { campaign: Campaign; onChange
                 </div>
               )}
               <div className="flex items-center gap-2 shrink-0">
-                <ItemStatus status={i.status} paidOnline={paidOnline} refundConfirmed={i.refundConfirmed === true} />
+                <ItemStatus status={i.status} paidOnline={paidOnline} refundConfirmed={i.refundConfirmed === true} creator={isCreator(i)} />
                 {i.permalink && (
                   <a href={i.permalink} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 h-8 px-3 rounded-xl border-2 border-ink text-[12.5px] font-semibold text-ink btn-3d bg-surface">
                     View post <Icon.External size={12} />

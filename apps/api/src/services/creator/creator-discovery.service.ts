@@ -24,6 +24,7 @@ import { oauthGraphFetch, makeBudget, type CallBudget, type OauthGraphResult } f
 import { decryptToken, encryptToken, scrubSecrets } from "../../utils/token-crypto";
 import { creatorMetaAppSecret } from "./creator-meta-config";
 import { CREATOR_REQUIRED_SCOPES, LIVE_CONNECTION_STATUSES } from "./creator-view";
+import { clearPageRateCards, pageHasOpenWork } from "./payout-ledger";
 
 /** Creators have a handful of pages; this is a runaway backstop, not a tuning knob. */
 const DISCOVERY_CALL_BUDGET = 300;
@@ -115,11 +116,16 @@ const YIELDING_CREATOR_STATUSES = ["rejected", "suspended"];
  *    is rejected or suspended;
  *  • otherwise taken.
  * Mirrored by the WHERE in upsertAsset's take-over step; keep the two in step.
+ *
+ * ⚠️ A page with work still open (an offer that is offered or accepted, or a payout that has not settled) is NEVER
+ * released, whatever the holder's state: a brand's money and a creator's post depend on who owns it. The new
+ * claimant is told it is claimed elsewhere, exactly as for a live holder.
  */
 async function claimOf(kind: string, metaId: string, creatorId: string, iCanPublish: boolean): Promise<Claim> {
   const row = await prisma.creatorAsset.findUnique({
     where: { kind_metaId: { kind, metaId } },
     select: {
+      id: true,
       creatorId: true,
       disconnectedAt: true,
       canPublish: true,
@@ -131,8 +137,9 @@ async function claimOf(kind: string, metaId: string, creatorId: string, iCanPubl
   if (row.creatorId === creatorId) return "ours";
   const holderLive =
     !row.disconnectedAt && !row.connection.revokedAt && LIVE.includes(row.connection.status) && row.creator.status !== "closed";
-  if (!holderLive) return "free";
-  if (iCanPublish && (!row.canPublish || YIELDING_CREATOR_STATUSES.includes(row.creator.status))) return "free";
+  const releasable = async (): Promise<Claim> => ((await pageHasOpenWork(row.id)) ? "taken" : "free");
+  if (!holderLive) return releasable();
+  if (iCanPublish && (!row.canPublish || YIELDING_CREATOR_STATUSES.includes(row.creator.status))) return releasable();
   return "taken";
 }
 
@@ -158,6 +165,12 @@ async function upsertAsset(
     const own = await prisma.creatorAsset.updateMany({ where: { kind, metaId, creatorId }, data: { ...data, ...offIfDuplicate } as never });
     if (own.count > 0) return true;
 
+    // A take-over of a page with open offers or unsettled payouts is refused, and a successful one clears the page's
+    // rate cards (below). The check and the write are two statements, so a booking that is captured in between can
+    // still slip through: its payout then keeps the page's id on its booking item, and the cron's purge and the next
+    // take-over both still see it. Narrow, and covered by the card being inactive from here on.
+    const held = await prisma.creatorAsset.findUnique({ where: { kind_metaId: { kind, metaId } }, select: { id: true, creatorId: true } });
+    if (held && held.creatorId !== creatorId && (await pageHasOpenWork(held.id))) return false;
     const took = await prisma.creatorAsset.updateMany({
       where: {
         kind,
@@ -175,6 +188,9 @@ async function upsertAsset(
     });
     if (took.count > 0) {
       console.log(`[creator-discovery] ${kind} ${metaId} taken over by creator=${creatorId} (the previous claim could no longer be used)`);
+      // The previous owner's price and share must not carry over to the new owner: the page's cards go inactive and
+      // lose their share, so staff price it afresh.
+      if (held) await clearPageRateCards(held.id);
       return true;
     }
 

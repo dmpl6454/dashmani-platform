@@ -20,6 +20,7 @@ import { creatorMetaConfigured } from "../services/creator/creator-meta-config";
 import { button, creatorLink, esc, sendCreatorEmail } from "../services/creator/creator-email";
 import { refreshCreatorMetrics } from "../services/creator/creator-metrics.service";
 import { syncNetworkDuplicates } from "../services/creator/creator-discovery.service";
+import { pagesWithOpenWork } from "../services/creator/payout-ledger";
 import { pruneCreatorOauthStates } from "../services/creator/creator-oauth.service";
 import { scrubSecrets } from "../utils/token-crypto";
 
@@ -114,12 +115,26 @@ export async function runCreatorTokenHealth(now = new Date()) {
  * Delete page details we no longer need: creator_assets rows disconnected, and connections
  * revoked (cascading their remaining assets), more than PURGE_AFTER_DAYS ago. Tokens were
  * nulled at the disconnect itself. The creators row is kept (see the privacy page).
- * ⚠️ Phase B: when bookings/offers reference creator_assets, keep assets with offers.
+ * ⚠️ A page with work still open is KEPT: an offer that is offered or accepted, or a payout that has not settled,
+ * depends on the page's row (there is no foreign key from offers or payouts to creator_assets on purpose, and the page's
+ * name is snapshotted on them), so neither the page nor the connection it hangs from is deleted until that work is
+ * done. It is simply picked up on a later day's pass.
  */
 export async function purgeCreatorPageData(now = new Date()) {
   const cutoff = new Date(now.getTime() - PURGE_AFTER_DAYS * DAY_MS);
-  const assets = await prisma.creatorAsset.deleteMany({ where: { disconnectedAt: { lt: cutoff } } });
-  const connections = await prisma.creatorConnection.deleteMany({ where: { revokedAt: { lt: cutoff } } });
+
+  const staleAssets = await prisma.creatorAsset.findMany({ where: { disconnectedAt: { lt: cutoff } }, select: { id: true } });
+  const busyAssets = await pagesWithOpenWork(staleAssets.map((a) => a.id));
+  const assets = await prisma.creatorAsset.deleteMany({ where: { id: { in: staleAssets.map((a) => a.id).filter((id) => !busyAssets.has(id)) } } });
+
+  // A connection's delete cascades to EVERY page under it, so one busy page keeps the whole connection.
+  const staleConnections = await prisma.creatorConnection.findMany({
+    where: { revokedAt: { lt: cutoff } },
+    select: { id: true, assets: { select: { id: true } } },
+  });
+  const busyOnConnections = await pagesWithOpenWork(staleConnections.flatMap((c) => c.assets.map((a) => a.id)));
+  const purgeable = staleConnections.filter((c) => !c.assets.some((a) => busyOnConnections.has(a.id))).map((c) => c.id);
+  const connections = await prisma.creatorConnection.deleteMany({ where: { id: { in: purgeable } } });
   return { assets: assets.count, connections: connections.count };
 }
 

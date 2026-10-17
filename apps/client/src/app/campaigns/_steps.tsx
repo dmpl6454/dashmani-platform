@@ -15,16 +15,19 @@ import { addDaysIST, todayIST } from "@dashmani/shared/src/utils/date";
 import { categoryKey, categoryTabs, inCategory } from "@dashmani/shared/src/campaign/categories";
 import { ApiError } from "@/lib/api";
 import {
+  campaignErrorMessage,
   compact,
+  isCreator,
   mutateJson,
   offerPrice,
+  postedBy,
   renderPending,
   rupees,
   useCatalogue,
   PLATFORM_LABEL,
   type Campaign,
 } from "@/lib/campaign";
-import { Card, ErrorBanner, Field, PlatformDot, inputCls, textareaCls } from "./_ui";
+import { Card, CreatorBadge, ErrorBanner, Field, PlatformDot, inputCls, textareaCls } from "./_ui";
 import { useHydrated } from "@/lib/hooks/use-hydrated";
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : "Something went wrong. Please try again.");
@@ -233,7 +236,7 @@ export function AccountsStep({ campaign, onSaved, onEdit }: {
   const visible = useMemo(() => {
     const term = q.trim().toLowerCase().replace(/^@/, "");
     return inCategory(onPlatform, activeCat)
-      .filter((a) => !term || a.name.toLowerCase().includes(term) || (a.username ?? "").toLowerCase().includes(term) || matchesCategory(a.category, term))
+      .filter((a) => !term || a.name.toLowerCase().includes(term) || (a.username ?? "").toLowerCase().includes(term) || matchesCategory(a.category, term) || (isCreator(a) && (a.provider?.name ?? "").toLowerCase().includes(term)))
       .sort((a, b) =>
         sort === "price" ? a.price.total - b.price.total :
         sort === "engagement" ? (b.engagementRatePct ?? -1) - (a.engagementRatePct ?? -1) :
@@ -243,6 +246,10 @@ export function AccountsStep({ campaign, onSaved, onEdit }: {
 
   const selected = offers.filter((a) => picked.has(a.offer.rateCardId));
   const total = selected.reduce((s, a) => s + a.price.total, 0);
+  // Creator accounts are paid up front and need online payment; the note sits in the bar below (not in the
+  // list, so ticking one never moves the rows under the pointer) and says so for the payment mode in force.
+  const nCreators = selected.filter(isCreator).length;
+  const creatorsOffline = nCreators > 0 && campaign.paymentMode === "offline";
   const withAudio = campaign.audioIntegration && format === "reel";
   const reach = selected.reduce((s, a) => s + (a.followers ?? 0), 0);
   const counts = { all: offers.length, instagram: 0, facebook: 0, youtube: 0 } as Record<string, number>;
@@ -265,7 +272,7 @@ export function AccountsStep({ campaign, onSaved, onEdit }: {
     try {
       onSaved(await mutateJson<Campaign>(`/client/campaigns/${campaign.id}/items`, "PUT", { rateCardIds: ids }));
     } catch (e) {
-      setError(errMsg(e));
+      setError(campaignErrorMessage(e));
     } finally {
       setBusy(false);
     }
@@ -285,7 +292,7 @@ export function AccountsStep({ campaign, onSaved, onEdit }: {
     try {
       onEdit(s, await mutateJson<Campaign>(`/client/campaigns/${campaign.id}/items`, "PUT", { rateCardIds: ids }));
     } catch (e) {
-      setError(errMsg(e));
+      setError(campaignErrorMessage(e));
     } finally {
       setBusy(false);
     }
@@ -311,7 +318,7 @@ export function AccountsStep({ campaign, onSaved, onEdit }: {
   return (
     // grid-cols-1 = minmax(0, 1fr): a bare `grid` sizes its one column to the widest content, so a
     // long account name (truncate = nowrap) pushed the card — and the price — off a phone screen.
-    <div className="grid grid-cols-1 gap-4 pb-24">
+    <div className={`grid grid-cols-1 gap-4 ${nCreators > 0 ? "pb-36 lg:pb-32" : "pb-24"}`}>
       <Card
         title="Choose accounts"
         sub={`Accounts on our network that carry a ${fmt}. Prices are per account, for ${CAMPAIGN_TYPE_LABELS[campaign.campaignType].toLowerCase()}${withAudio ? ", including the song" : ""}.`}
@@ -427,17 +434,23 @@ export function AccountsStep({ campaign, onSaved, onEdit }: {
                     <div className="flex items-center gap-1.5 min-w-0">
                       <PlatformDot platform={a.platform} />
                       <span className="text-[13.5px] font-semibold text-ink truncate">{a.name}</span>
+                      {/* From sm up the tag sits beside the name; on a phone the name column is too narrow to share, so it moves to the line below. */}
+                      {isCreator(a) && <CreatorBadge display="hidden sm:inline-flex" />}
                       {a.profileUrl && (
                         <a href={a.profileUrl} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} className="p-2 -m-2 text-ink-3 hover:text-ink shrink-0" aria-label={`Open ${a.name}`}>
                           <Icon.External size={12} />
                         </a>
                       )}
                     </div>
-                    <div className="text-[12px] text-ink-3 flex flex-wrap gap-x-3 gap-y-0.5">
+                    <div className={`text-[12px] text-ink-3 flex flex-wrap ${isCreator(a) ? "items-center " : ""}gap-x-3 gap-y-0.5`}>
+                      {isCreator(a) && <CreatorBadge display="inline-flex sm:hidden" />}
                       {a.username && <span className="truncate max-w-[160px]">@{a.username}</span>}
                       <span>{PLATFORM_LABEL[a.platform]}</span>
                       {a.category && <span>{a.category}</span>}
-                      {a.linkDeliveryMinutes && <span title="About how long after posting the link is ready.">Link in ~{a.linkDeliveryMinutes.min}–{a.linkDeliveryMinutes.max} min after posting</span>}
+                      {/* Payer-payee transparency: a creator's page names who posts it. */}
+                      {isCreator(a) && <span className="truncate max-w-[220px] text-ink-2" title={postedBy(a) ?? undefined}>{postedBy(a)}</span>}
+                      {/* The ~5–10 min link time is our own team's; a creator posts by hand, so no time is promised for theirs. */}
+                      {a.linkDeliveryMinutes && !isCreator(a) && <span title="About how long after posting the link is ready.">Link in ~{a.linkDeliveryMinutes.min}–{a.linkDeliveryMinutes.max} min after posting</span>}
                     </div>
                     <div className="sm:hidden text-[11px] text-ink-3 tabular-nums">
                       {compact(a.followers)} followers · {a.engagementRatePct != null ? `${a.engagementRatePct}%` : "—"} engagement
@@ -463,6 +476,13 @@ export function AccountsStep({ campaign, onSaved, onEdit }: {
 
       <div className="fixed bottom-0 left-0 right-0 lg:left-auto lg:right-6 lg:bottom-6 z-20 bg-surface border-t-2 lg:border-2 border-ink lg:rounded-2xl shadow-hard-ink px-4 py-3 flex flex-wrap items-center gap-x-4 gap-y-2">
         {error && <div role="alert" className="basis-full order-first text-[12px] text-danger font-medium">{error}</div>}
+        {nCreators > 0 && (
+          <p role="status" className={`basis-full order-first max-w-[420px] text-[12px] ${creatorsOffline ? "text-attention font-medium" : "text-ink-2"}`}>
+            {creatorsOffline
+              ? "Creator accounts need online payment, which isn't available right now — remove them to submit this campaign."
+              : "Creator accounts are paid up front. The creator confirms each booking; if they don't confirm, that account is refunded."}
+          </p>
+        )}
         <div className="min-w-0 flex-1">
           <div className="text-[12px] text-ink-3">{selected.length} account{selected.length === 1 ? "" : "s"} · {compact(reach)} followers</div>
           <div className="text-[17px] font-bold text-ink tabular-nums">{rupees(total)}</div>

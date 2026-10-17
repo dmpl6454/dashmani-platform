@@ -31,6 +31,7 @@ import campaignAdminRoutes from "./campaign-admin.routes";
 import creatorAuthRoutes from "./creator-auth.routes";
 import creatorRoutes from "./creator.routes";
 import creatorPayoutRoutes from "./creator-payouts.routes";
+import creatorOffersRoutes from "./creator-offers.routes";
 import creatorMetaRoutes from "./creator-meta.routes";
 import creatorAdminRoutes from "./creator-admin.routes";
 import metaPlatformRoutes from "./meta-platform.routes";
@@ -75,6 +76,8 @@ router.use(creatorAuthRoutes);
 router.use(creatorRoutes);
 // Creator payouts, bank connect (/creator/payout-account*): dark unless CREATOR_ROUTE_ENABLED=1 and the Razorpay keys exist.
 router.use(creatorPayoutRoutes);
+// Creator bookings (/creator/offers*, /creator/marketplace-status): dark unless CREATORS_MARKETPLACE_ENABLED=1 and CREATOR_ROUTE_ENABLED=1 and the Razorpay keys exist.
+router.use(creatorOffersRoutes);
 router.use(creatorMetaRoutes);
 router.use(creatorAdminRoutes);
 router.use(metaPlatformRoutes);

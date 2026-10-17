@@ -3,9 +3,9 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/portal-shared";
 import { Icon } from "@/components/portal-icons";
 import { CAMPAIGN_LIMITS, HASHTAG_RE, countHashtags, countMentions } from "@dashmani/shared/src/validators/campaign";
-import { API_ORIGIN, mutateJson, type Campaign, type CampaignItem, type ItemPreviewFile } from "@/lib/campaign";
+import { API_ORIGIN, isCreator, mutateJson, type Campaign, type CampaignItem, type ItemPreviewFile } from "@/lib/campaign";
 import { apiFetch } from "@/lib/api";
-import { ErrorBanner, Field, PlatformDot, inputCls, textareaCls } from "./_ui";
+import { CreatorBadge, ErrorBanner, Field, PlatformDot, inputCls, textareaCls } from "./_ui";
 
 // Per-account text: a different caption / hashtags / printed text for ONE booked account.
 // Everything defaults to the campaign's; the client opts a single account out of it here. Its own
@@ -180,6 +180,7 @@ export function ItemTextRow({ campaign: c, item, onSaved, editable }: { campaign
           <span className="font-semibold text-ink">{item.accountName}</span>
           {item.accountHandle && <span className="text-ink-3"> @{item.accountHandle}</span>}
         </span>
+        {isCreator(item) && <CreatorBadge />}
         {custom && <span className="text-[11px] font-bold uppercase tracking-wider text-indigo">Own text</span>}
         {item.renderStatus === "queued" && <span className="text-[11px] text-ink-3">Preparing…</span>}
         {item.renderStatus === "failed" && <span className="text-[11px] text-danger">Couldn&apos;t prepare</span>}

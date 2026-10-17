@@ -49,6 +49,8 @@ export const ITEM_STATUS: Record<string, { label: string; color: string }> = {
   published: { label: "Published", color: "#00D7A0" },
   failed: { label: "Failed", color: "#FB7185" },
   refunded: { label: "Refunded", color: "#A7B3C2" },
+  awaiting_creator: { label: "Waiting for the creator", color: "#238BFF" },
+  refund_due: { label: "Being returned", color: "#F59E66" },
 };
 
 export function Pill({ label, color }: { label: string; color: string }) {

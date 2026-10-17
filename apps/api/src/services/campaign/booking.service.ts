@@ -1,6 +1,7 @@
 import { prisma, Prisma } from "@dashmani/db";
 import {
   CAMPAIGN_LIMITS,
+  CREATOR_TARGET_TYPE,
   EDITABLE_BOOKING_STATUSES,
   PLATFORM_FORMATS,
   SETTLED_ITEM_STATUSES,
@@ -10,6 +11,7 @@ import {
   type CampaignInfoInput,
   type CampaignItemOverridesInput,
   type CampaignPlatform,
+  type CampaignProvider,
   type CampaignFormat,
 } from "@dashmani/shared";
 import { AppError } from "../../middleware/error-handler";
@@ -17,7 +19,8 @@ import { razorpayConfig } from "./config";
 import { confirmedRefundsFor } from "./delivery.service";
 import { durationLimitSec } from "./media.service";
 import { overlayKey } from "./render.service";
-import { priceFor, resolveCatalogueTargets } from "./rate-card.service";
+import { creatorCardOfferable, priceFor, resolveCatalogueTargets } from "./rate-card.service";
+import { providersOfItems } from "../creator/payout-ledger";
 
 // Campaign bookings — the client's side of the lifecycle and the one state-transition helper
 // every other module goes through.
@@ -42,6 +45,19 @@ type Tx = Prisma.TransactionClient;
  */
 async function lockBooking(tx: Tx, bookingId: string) {
   await tx.$queryRaw`SELECT id FROM campaign_bookings WHERE id = ${bookingId} FOR UPDATE`;
+}
+
+/**
+ * A booking whose creator payouts are on file has been paid for: those prices and terms are what the brand
+ * paid and what each creator was promised, and no edit may change them. ⚠️ The edit paths below already refuse a
+ * booking that is no longer draft / awaiting_payment, but they read that status BEFORE taking the row lock, and a
+ * capture can commit in that gap. This runs UNDER the lock, where the payout rows are final.
+ */
+async function assertCreatorTermsNotFrozen(tx: Tx, bookingId: string) {
+  const payouts = await tx.creatorPayout.count({ where: { bookingId } });
+  if (payouts > 0) {
+    throw new AppError(409, "PAID_TERMS_FROZEN", "This campaign includes a creator's post that has already been paid for, so its price and terms can't change. Contact us if you need a change.");
+  }
 }
 
 export async function transitionBooking(
@@ -98,6 +114,9 @@ const mediaSelect = {
 const itemSelect = {
   id: true,
   rateCardId: true,
+  // Read to say WHO provides the post (shapeBooking turns them into `provider` and drops them).
+  targetType: true,
+  targetId: true,
   platform: true,
   format: true,
   accountName: true,
@@ -181,7 +200,7 @@ function summariseRenders(files: Array<{ custom: boolean; status: string }>): st
   return "done";
 }
 
-function shapeBooking(b: any, files?: Awaited<ReturnType<typeof resolveItemFiles>>, refundConfirmed?: Set<string>) {
+function shapeBooking(b: any, files?: Awaited<ReturnType<typeof resolveItemFiles>>, refundConfirmed?: Set<string>, providers?: Map<string, CampaignProvider>) {
   const media = (b.media ?? []).map((m: any) => ({ ...m, bytes: Number(m.bytes) }));
   return {
     id: b.id,
@@ -216,7 +235,15 @@ function shapeBooking(b: any, files?: Awaited<ReturnType<typeof resolveItemFiles
     thumbnail: media.find((m: any) => m.role === "thumbnail") ?? null,
     // refundConfirmed: true only for a `refunded` item whose refund Razorpay has accepted. The item
     // is marked refunded BEFORE Razorpay answers, so the portal may say "refunded" on this and nothing else.
-    items: (b.items ?? []).map((i: any) => ({ ...i, renderStatus: files ? summariseRenders(files.get(i.id) ?? []) : null, refundConfirmed: refundConfirmed?.has(i.id) ?? false })),
+    items: (b.items ?? []).map((raw: any) => {
+      const { targetType: _targetType, targetId: _targetId, ...i } = raw;
+      return {
+        ...i,
+        provider: providers?.get(i.id) ?? ({ type: "network", name: null } satisfies CampaignProvider),
+        renderStatus: files ? summariseRenders(files.get(i.id) ?? []) : null,
+        refundConfirmed: refundConfirmed?.has(i.id) ?? false,
+      };
+    }),
   };
 }
 
@@ -269,7 +296,7 @@ export async function getClientBooking(clientId: string, id: string) {
   if (!b) throw new AppError(404, "NOT_FOUND", "Campaign not found");
   // Only a booking paid online has a ledger to read (see confirmedRefundsFor).
   const refundConfirmed = await confirmedRefundsFor(b);
-  return shapeBooking(b, await resolveItemFiles(b.id), refundConfirmed);
+  return shapeBooking(b, await resolveItemFiles(b.id), refundConfirmed, await providersOfItems(b));
 }
 
 async function requireEditable(clientId: string, id: string, allowed: readonly BookingStatus[] = EDITABLE_BOOKING_STATUSES) {
@@ -325,6 +352,7 @@ export async function updateInfo(clientId: string, id: string, info: CampaignInf
   const b = await requireEditable(clientId, id, ["draft", "awaiting_payment"]);
   await prisma.$transaction(async (tx) => {
     await lockBooking(tx, id);
+    await assertCreatorTermsNotFrozen(tx, id);
     await tx.campaignBooking.update({
       where: { id },
       data: {
@@ -394,7 +422,12 @@ export async function updateCreative(clientId: string, id: string, c: CampaignCr
     await lockBooking(tx, id);
     // Read what is saved now, under the lock: a render's inputs are the file, the format and
     // the printed text + style. Anything else (caption, tags, audio) never needs a re-render.
-    const prev = await tx.campaignBooking.findUnique({ where: { id }, select: { format: true, superText: true, superTextStyle: true } });
+    const prev = await tx.campaignBooking.findUnique({ where: { id }, select: { format: true, superText: true, superTextStyle: true, audioIntegration: true } });
+    // The format and the song option decide which accounts were booked and what they cost, so once creator payouts
+    // exist neither may change (the changes_requested check above reads before the lock; this one is final).
+    if (prev && (prev.format !== c.format || prev.audioIntegration !== (c.format === "reel" && !!c.audioIntegration))) {
+      await assertCreatorTermsNotFrozen(tx, id);
+    }
     const cur = await tx.campaignMedia.findMany({
       where: { id: { in: wantedIds } },
       select: { id: true, bookingId: true, renderStatus: true, role: true },
@@ -544,7 +577,7 @@ export async function updateItems(clientId: string, id: string, rateCardIds: str
   });
   if (!booking?.format) throw new AppError(400, "NO_FORMAT", "Add your video or image before choosing accounts.");
 
-  const cards = await prisma.campaignRateCard.findMany({ where: { id: { in: rateCardIds }, active: true } });
+  const cards = await prisma.campaignRateCard.findMany({ where: { id: { in: rateCardIds }, active: true }, include: { creatorTerm: true } });
   if (cards.length !== new Set(rateCardIds).size) {
     throw new AppError(400, "RATE_CARD_UNAVAILABLE", "One of the accounts is no longer available. Refresh the list.");
   }
@@ -563,15 +596,23 @@ export async function updateItems(clientId: string, id: string, rateCardIds: str
     }
     prices.set(c.id, p);
   }
+  // A creator's page is resolved only while it can really be booked today (the marketplace is on and its owner
+  // can be paid); see resolveCatalogueTargets.
   const targets = await resolveCatalogueTargets(cards.map((c) => ({ targetType: c.targetType, targetId: c.targetId })));
   for (const c of cards) {
-    if (!targets.has(`${c.targetType}:${c.targetId}`)) {
+    const t = targets.get(`${c.targetType}:${c.targetId}`);
+    if (!t) {
+      throw new AppError(400, "RATE_CARD_UNAVAILABLE", "One of the accounts is no longer available. Refresh the list.");
+    }
+    // A creator page's card needs its share, and must still pay the creator the minimum at its lowest price.
+    if (c.targetType === CREATOR_TARGET_TYPE && !creatorCardOfferable(c, c.creatorTerm, t.creator?.tdsBps ?? 0)) {
       throw new AppError(400, "RATE_CARD_UNAVAILABLE", "One of the accounts is no longer available. Refresh the list.");
     }
   }
 
   await prisma.$transaction(async (tx) => {
     await lockBooking(tx, id);
+    await assertCreatorTermsNotFrozen(tx, id);
     // Accounts kept across the edit keep their own caption / overlay.
     const previous = await tx.campaignBookingItem.findMany({
       where: { bookingId: id },
@@ -615,22 +656,37 @@ export async function updateItems(clientId: string, id: string, rateCardIds: str
 async function repriceItems(tx: Tx, bookingId: string) {
   const booking = await tx.campaignBooking.findUnique({
     where: { id: bookingId },
-    select: { format: true, campaignType: true, audioIntegration: true, items: { select: { id: true, rateCardId: true } } },
+    select: { format: true, campaignType: true, audioIntegration: true, items: { select: { id: true, rateCardId: true, targetType: true } } },
   });
   if (!booking || booking.items.length === 0) return;
+  const hasCreatorItems = booking.items.some((i) => i.targetType === CREATOR_TARGET_TYPE);
+  // Prices and terms of a booking with creator payouts are what was paid: never re-priced.
+  if (hasCreatorItems) await assertCreatorTermsNotFrozen(tx, bookingId);
   const cards = await tx.campaignRateCard.findMany({
     where: { id: { in: booking.items.map((i) => i.rateCardId) }, active: true },
   });
+  // A creator page's card without a share is not on offer any more: its item drops out like any other
+  // account that no longer offers what the booking asks for. (Bookability itself is re-checked at checkout.)
+  const termed = hasCreatorItems
+    ? new Set((await tx.creatorRateTerm.findMany({ where: { rateCardId: { in: cards.map((c) => c.id) } }, select: { rateCardId: true } })).map((t) => t.rateCardId))
+    : new Set<string>();
   const byId = new Map(cards.map((c) => [c.id, c]));
   for (const item of booking.items) {
     const card = byId.get(item.rateCardId);
-    const p = card ? priceFor(card, booking) : null;
+    const p = card && (item.targetType !== CREATOR_TARGET_TYPE || termed.has(card.id)) ? priceFor(card, booking) : null;
     if (!p) await tx.campaignBookingItem.delete({ where: { id: item.id } });
     else await tx.campaignBookingItem.update({ where: { id: item.id }, data: { pricePaise: p.total, audioAddonPaise: p.addon } });
   }
 }
 
 export async function cancelBooking(clientId: string, id: string) {
+  const own = await prisma.campaignBooking.findFirst({ where: { id, clientId }, select: { id: true } });
+  if (!own) throw new AppError(404, "NOT_FOUND", "Campaign not found");
+  // A creator's share has been set aside for this campaign: cancelling it is a refund (the creator's payout has to be
+  // dealt with first), which our team does, not a click.
+  if ((await prisma.creatorPayout.count({ where: { bookingId: id } })) > 0) {
+    throw new AppError(409, "CREATOR_BOOKING_LOCKED", "This campaign includes a creator's post that has already been paid for, so it can't be cancelled here. Contact us and we'll sort it out.");
+  }
   await requireEditable(clientId, id, ["draft", "awaiting_payment"]);
   await transitionBooking(id, ["draft", "awaiting_payment"], "cancelled", { type: "client", id: clientId });
   return getClientBooking(clientId, id);
@@ -683,6 +739,8 @@ export function platformCarriesFormat(platform: string, format: string): boolean
  * After an item changes state, move the booking on: approved → publishing on the first live
  * post; publishing → completed / partially_published once every item has settled. Returns
  * true when the booking has just finished (the caller sends the delivery email).
+ * ⚠️ `awaiting_creator` and `refund_due` are in neither LIVE nor SETTLED, so a booking holding one never
+ * completes: a creator may still accept it, or a refund is still to be made.
  */
 export async function settleBooking(bookingId: string, actor: Actor): Promise<boolean> {
   const b = await prisma.campaignBooking.findUnique({

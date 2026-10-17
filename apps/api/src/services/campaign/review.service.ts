@@ -1,11 +1,13 @@
 import { prisma } from "@dashmani/db";
-import { isPlatformPostUrl, LIVE_ITEM_STATUSES, type CampaignPlatform } from "@dashmani/shared";
+import { CREATOR_TARGET_TYPE, isPlatformPostUrl, LIVE_ITEM_STATUSES, type CampaignPlatform } from "@dashmani/shared";
 import { AppError } from "../../middleware/error-handler";
 import { transitionBooking, settleBooking, logBookingEvent } from "./booking.service";
 import { refundBookingInFull, refundPaymentRow, capturedPaymentFor, maybeMarkRefunded, refundSweepEnabled } from "./payment.service";
 import { sendDeliveryEmail, sendItemLiveEmail, sendStatusEmail } from "./delivery.service";
 import { campaignConfig } from "./config";
 import { checkEligibility, launchAt, planPublishing } from "./publish.service";
+import { onCreatorLinkVerified, prepareCreatorItemRefund, reconcileCreatorOwnership } from "../creator/payout-ledger";
+import { alertOfferProblems, createOffersForBooking, listOffersForBooking, sendOfferEmails, verifyCreatorItem, withdrawOffer as withdrawCreatorOffer, type CreatedOffers } from "../creator/creator-offer.service";
 
 // Staff side: the review queue, booking detail, approve / reject / request changes, and the
 // per-item actions (mark posted with its link, mark failed, refund one item).
@@ -74,8 +76,12 @@ export async function getBookingForStaff(id: string) {
     },
   });
   if (!b) throw new AppError(404, "NOT_FOUND", "Campaign not found");
+  // A booking with a creator's post carries its offers (status, link, what the ownership check said) so staff can act on
+  // them. Only then: a network-only booking costs no extra query and its response has no extra key.
+  const creatorOffers = b.items.some((i) => i.targetType === CREATOR_TARGET_TYPE) ? await listOffersForBooking(id) : null;
   return {
     ...b,
+    ...(creatorOffers ? { creatorOffers } : {}),
     autoPublish: { enabled: campaignConfig.publishEnabled(), dueAt: launchAt(b.launchFrom) },
     launchFrom: ymd(b.launchFrom),
     launchTo: ymd(b.launchTo),
@@ -107,14 +113,25 @@ export async function getBookingForStaff(id: string) {
 }
 
 export async function approve(id: string, staffId: string) {
+  // A creator's page that changed hands since the capture can't be posted: its payout is voided and the item goes
+  // refund_due BEFORE the plan below is made, so it is never planned. (Only for a booking awaiting approval.)
+  await reconcileCreatorOwnership(id);
   // Phase 2: items the API can publish are queued for the launch day; everything else (and
   // everything while CAMPAIGN_PUBLISH_ENABLED is off) is posted by our team, as in Phase 1.
-  const plan = await planPublishing(id);
+  // ⚠️ A creator's page is neither: it is OFFERED to the creator (createOffersForBooking below), who posts it by hand
+  // only if they accept. The plan never touches those items, and nothing below may turn one into manual_pending.
+  const creatorItemIds = new Set(
+    (await prisma.campaignBookingItem.findMany({ where: { bookingId: id, targetType: CREATOR_TARGET_TYPE }, select: { id: true } })).map((i) => i.id),
+  );
+  const plan = (await planPublishing(id)).filter((p) => !creatorItemIds.has(p.itemId));
+  const offered: { value: CreatedOffers | null } = { value: null };
   await prisma.$transaction(async (tx) => {
     await transitionBooking(id, ["paid_pending_review"], "approved", staff(staffId), {
       tx,
       data: { approvedAt: new Date(), reviewedById: staffId, reviewNote: null },
     });
+    // One offer per creator item, or a 409 that rolls the approval back (not paid, window over, switch off, payout not ready).
+    offered.value = await createOffersForBooking(tx, id, staff(staffId));
     for (const p of plan) {
       await tx.campaignBookingItem.updateMany({
         where: { id: p.itemId, status: "pending" },
@@ -125,14 +142,21 @@ export async function approve(id: string, staffId: string) {
           : { status: "manual_pending", lastError: p.reason ? p.reason.slice(0, 500) : null },
       });
     }
-    // Anything the plan didn't see (it can't miss any, but never leave an item pending).
-    await tx.campaignBookingItem.updateMany({ where: { bookingId: id, status: "pending" }, data: { status: "manual_pending" } });
+    // Anything the plan didn't see (it can't miss any, but never leave an item pending). Never a creator's page.
+    await tx.campaignBookingItem.updateMany({ where: { bookingId: id, status: "pending", targetType: { not: CREATOR_TARGET_TYPE } }, data: { status: "manual_pending" } });
   });
   for (const p of plan.filter((x) => !x.auto)) {
     await logBookingEvent(id, staff(staffId), `Post by hand on ${p.accountName}: ${p.reason}`);
   }
   void sendStatusEmail(id, "approved").catch((e) => console.error("[campaign] approved email failed", e));
-  return getBookingForStaff(id);
+  const made = offered.value;
+  if (made) {
+    alertOfferProblems(id, made.problems);
+    void sendOfferEmails(made.offers.map((o) => o.id)).catch((e) => console.error("[campaign] creator offer emails failed", e));
+  }
+  const detail = await getBookingForStaff(id);
+  // Only a booking that had creator posts gains the extra key: the response for a network-only one is exactly what it was.
+  return made && made.creatorItems > 0 ? { ...detail, offerSummary: { offered: made.offers.length, refundDue: made.problems.length, warnings: made.warnings } } : detail;
 }
 
 export async function requestChanges(id: string, staffId: string, note: string) {
@@ -165,8 +189,8 @@ function refundRetryClause(): string {
     : "the automatic refund check is switched off, so it will not be retried: refund it from the Razorpay dashboard, or ask whoever runs the server to switch the refund check back on.";
 }
 
-/** Item statuses a rejection refunds: everything that was not, and now won't be, posted. */
-const NOT_POSTED_ITEM_STATUSES = ["pending", "manual_pending", "queued", "failed"];
+/** Item statuses a rejection refunds: everything that was not, and now won't be, posted (a creator's open offer and an already-owed refund included). */
+const NOT_POSTED_ITEM_STATUSES = ["pending", "manual_pending", "queued", "failed", "awaiting_creator", "refund_due"];
 
 const REJECTABLE = ["paid_pending_review", "changes_requested", "approved"] as const;
 
@@ -211,7 +235,7 @@ export async function reject(id: string, staffId: string, note: string) {
       note,
       data: { reviewNote: note, reviewedById: staffId },
     });
-    const items = await tx.campaignBookingItem.findMany({ where: { bookingId: id }, select: { id: true, status: true, pricePaise: true } });
+    const items = await tx.campaignBookingItem.findMany({ where: { bookingId: id }, select: { id: true, status: true, pricePaise: true, targetType: true } });
     if (items.some((i) => (LIVE_ITEM_STATUSES as readonly string[]).includes(i.status))) {
       throw new AppError(409, "POSTS_LIVE", "Some posts are already live, so this campaign can't be rejected and refunded in one step. Refund the accounts that weren't posted from their own rows instead.");
     }
@@ -222,6 +246,11 @@ export async function reject(id: string, staffId: string, note: string) {
         data: { status: "refunded", lastError: null },
       });
       if (claim.count !== 1) throw new AppError(409, "BUSY", "An account is being published right now — try again in a minute.");
+      // A creator's post: void its payout (or refuse), and withdraw the creator's offer, in THIS transaction. A throw
+      // (the share is already on its way to the creator, or they have posted) undoes the whole rejection.
+      if (i.targetType === CREATOR_TARGET_TYPE) {
+        await prepareCreatorItemRefund(tx, i.id, { actor: staff(staffId), reason: "booking_rejected", closedReason: "booking_rejected" });
+      }
       claimed.push({ id: i.id, pricePaise: i.pricePaise });
     }
     const pays = await tx.campaignPayment.findMany({
@@ -267,9 +296,57 @@ async function afterItemChange(bookingId: string, staffId: string) {
   if (finished) void sendDeliveryEmail(bookingId).catch((e) => console.error("[campaign] delivery email failed", e));
 }
 
+/**
+ * A creator's post goes live ONLY from the link the creator sent, and only once the creator accepted and the check that the
+ * post is on THEIR page passed (automatically, or by a member of staff who ticked "checked by hand"): verifyCreatorItem
+ * refuses, with nothing changed, otherwise. Both the generic "posted" route and "Verify link & release" end here, so there
+ * is one way a creator's post becomes live and one place its rules live.
+ */
+async function markCreatorPosted(
+  bookingId: string,
+  item: { id: string; accountName: string },
+  staffId: string,
+  o: { url?: string | null; ownershipCheckedByHand?: boolean },
+) {
+  const b = await prisma.campaignBooking.findUnique({ where: { id: bookingId }, select: { status: true } });
+  if (!b || !["approved", "publishing", "completed", "partially_published"].includes(b.status)) {
+    throw new AppError(409, "INVALID_STATE", "Approve the campaign before recording posts.");
+  }
+  await verifyCreatorItem(bookingId, item.id, { staffId, url: o.url ?? null, ownershipCheckedByHand: o.ownershipCheckedByHand === true });
+  void sendItemLiveEmail(item.id).catch((e) => console.error("[campaign] live email failed", e));
+  await afterItemChange(bookingId, staffId);
+  // Nothing is paid in this phase (the seam does nothing); it must never undo a verification that already committed.
+  await onCreatorLinkVerified(item.id).catch((e) => console.error("[campaign] creator link follow-up failed", e));
+  return getBookingForStaff(bookingId);
+}
+
+/** "Verify link & release": make the creator's submitted link the live post (see markCreatorPosted). */
+export async function verifyCreatorLink(bookingId: string, itemId: string, staffId: string, o: { ownershipCheckedByHand?: boolean } = {}) {
+  const item = await itemOf(bookingId, itemId);
+  if (item.targetType !== CREATOR_TARGET_TYPE) throw new AppError(409, "NOT_CREATOR_ITEM", "This isn't a creator's post: record its link with “Mark posted”.");
+  return markCreatorPosted(bookingId, item, staffId, { ownershipCheckedByHand: o.ownershipCheckedByHand === true });
+}
+
+/**
+ * Withdraw a creator's open offer: the post goes to refund_due, its planned payout is voided, and staff Refund it from the
+ * row. NOTHING IS REFUNDED HERE. Refused (409) once the creator has submitted a link, unless staff say to discard it, and
+ * always once the link has been verified.
+ */
+export async function withdrawOffer(bookingId: string, itemId: string, staffId: string, o: { discardSubmittedLink?: boolean } = {}) {
+  await itemOf(bookingId, itemId);
+  const offer = await prisma.creatorOffer.findFirst({ where: { bookingItemId: itemId, bookingId }, select: { id: true } });
+  if (!offer) throw new AppError(404, "NOT_FOUND", "There is no creator offer for this post.");
+  await withdrawCreatorOffer(offer.id, { staffId, closedReason: "withdrawn", discardSubmittedLink: o.discardSubmittedLink === true, alert: false });
+  return {
+    ...(await getBookingForStaff(bookingId)),
+    withdrawNotice: "The offer is withdrawn and the post is marked refund due. Nothing has been refunded yet: press Refund on the post to return the client's money.",
+  };
+}
+
 /** Staff posted it by hand: record the link. The link must point at the item's platform. */
 export async function markPosted(bookingId: string, itemId: string, staffId: string, url: string) {
   const item = await itemOf(bookingId, itemId);
+  if (item.targetType === CREATOR_TARGET_TYPE) return markCreatorPosted(bookingId, item, staffId, { url });
   if (!isPlatformPostUrl(item.platform as CampaignPlatform, url)) {
     throw new AppError(400, "WRONG_PLATFORM", `That link isn't a ${item.platform} link.`);
   }
@@ -309,6 +386,16 @@ export async function markPosted(bookingId: string, itemId: string, staffId: str
 
 export async function markFailed(bookingId: string, itemId: string, staffId: string, note: string) {
   const item = await itemOf(bookingId, itemId);
+  // Marking failed refunds nothing and leaves the creator's offer and payout standing. A creator's post that won't
+  // happen is refunded (which voids the payout and withdraws the offer), never parked as "failed".
+  if (item.targetType === CREATOR_TARGET_TYPE) {
+    // While the creator's offer is open the way out is Withdraw (it ends the offer and the planned payout, then Refund returns the money).
+    const open = await prisma.creatorOffer.count({ where: { bookingItemId: itemId, status: { in: ["offered", "accepted"] } } });
+    if (open > 0) {
+      throw new AppError(409, "USE_WITHDRAW", "A creator's post can't be marked failed while the creator's offer is open. Withdraw the offer instead, then refund the post: marking it failed would leave the offer and the creator's payout standing.");
+    }
+    throw new AppError(409, "CREATOR_ITEM", "A creator's post can't be marked failed. Refund it instead: that withdraws the offer and returns the money to the client.");
+  }
   const res = await prisma.campaignBookingItem.updateMany({
     // A queued item mid-publish (locked) can't be failed under the worker's feet.
     where: { id: itemId, status: { in: ["manual_pending", "queued"] }, OR: [{ lockedUntil: null }, { lockedUntil: { lt: new Date() } }] },
@@ -323,9 +410,11 @@ export async function markFailed(bookingId: string, itemId: string, staffId: str
 /** Refund one item that wasn't (and won't be) posted. */
 export async function refundItem(bookingId: string, itemId: string, staffId: string) {
   const item = await itemOf(bookingId, itemId);
-  if (!["manual_pending", "failed", "queued", "pending"].includes(item.status)) {
+  // awaiting_creator: withdraw the creator's offer and refund; refund_due: the refund that is owed (a page that changed hands).
+  if (!["manual_pending", "failed", "queued", "pending", "awaiting_creator", "refund_due"].includes(item.status)) {
     throw new AppError(409, "INVALID_STATE", "Only an item that wasn't posted can be refunded.");
   }
+  const isCreator = item.targetType === CREATOR_TARGET_TYPE;
   const pay = await capturedPaymentFor(bookingId, item.pricePaise);
   if (!pay) {
     // A booking submitted without online payment has no payment row at all: the item is
@@ -336,11 +425,21 @@ export async function refundItem(bookingId: string, itemId: string, staffId: str
     if (online > 0) throw new AppError(409, "NOTHING_TO_REFUND", "There is no captured payment that can cover this refund.");
   }
   // Claim the item first so two clicks cannot refund it twice.
-  const claim = await prisma.campaignBookingItem.updateMany({
-    where: { id: itemId, status: item.status, OR: [{ lockedUntil: null }, { lockedUntil: { lt: new Date() } }] },
-    // The hand-post reason no longer applies to an item that will not be posted.
-    data: { status: "refunded", lastError: null },
-  });
+  const claimItem = (db: Pick<typeof prisma, "campaignBookingItem">) =>
+    db.campaignBookingItem.updateMany({
+      where: { id: itemId, status: item.status, OR: [{ lockedUntil: null }, { lockedUntil: { lt: new Date() } }] },
+      // The hand-post reason no longer applies to an item that will not be posted.
+      data: { status: "refunded", lastError: null },
+    });
+  // A creator's post is claimed together with the end of its payout and its offer: ONE transaction, so a payout that
+  // can't be voided (the share is already on its way to the creator) refuses the refund and leaves everything as it was.
+  const claim = isCreator
+    ? await prisma.$transaction(async (tx) => {
+        const c = await claimItem(tx);
+        if (c.count === 1) await prepareCreatorItemRefund(tx, itemId, { actor: staff(staffId), reason: "item_refunded", closedReason: "withdrawn" });
+        return c;
+      })
+    : await claimItem(prisma);
   if (claim.count !== 1) throw new AppError(409, "INVALID_STATE", "This item changed — refresh and try again.");
   if (!pay) {
     await logBookingEvent(bookingId, staff(staffId), `${item.accountName} removed from the booking (${item.pricePaise} paise) — no online payment on this booking; settle by hand if the client has already paid.`);
@@ -363,7 +462,9 @@ export async function refundItem(bookingId: string, itemId: string, staffId: str
     const stillClaimed = await prisma.campaignRefund
       .count({ where: { bookingItemId: itemId, origin: "ours", status: { in: ["requested", "pending"] } } })
       .catch(() => 0);
-    if (stillClaimed === 0) await prisma.campaignBookingItem.update({ where: { id: itemId }, data: { status: item.status } });
+    // A creator's item cannot go back to waiting for a creator (its offer is withdrawn and its payout void): the
+    // refund is simply still owed, so it is refund_due and staff press Refund again.
+    if (stillClaimed === 0) await prisma.campaignBookingItem.update({ where: { id: itemId }, data: { status: isCreator ? "refund_due" : item.status } });
     throw err;
   }
   // An unanswered request is NOT a failure: the item stays refunded (claimed) and the ledger row

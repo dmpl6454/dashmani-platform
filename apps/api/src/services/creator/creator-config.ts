@@ -1,6 +1,8 @@
 // Creator portal (creators.digitalsukoon.com) — runtime configuration. Every knob is env-driven
 // and read at CALL time (tests flip them per case). NaN-guarded like services/campaign/config.ts.
 
+import { razorpayConfig } from "../campaign/config";
+
 function envNum(name: string, fallback: number, min = 0): number {
   const raw = process.env[name];
   if (raw == null || raw === "") return fallback;
@@ -36,6 +38,28 @@ export const creatorConfig = {
    * feature to count as available (see payout-account.service routeAvailable()).
    */
   routeEnabled: () => process.env.CREATOR_ROUTE_ENABLED === "1",
+  /**
+   * Creator pages in the client catalogue, and bookings that pay a creator. Dark unless exactly "1". Alone it
+   * does nothing: marketplaceAvailable() below also needs the Route switch and Razorpay's keys.
+   */
+  marketplaceEnabled: () => process.env.CREATORS_MARKETPLACE_ENABLED === "1",
+  /**
+   * Whether a creator's page can be BOOKED today: the marketplace switch AND the Route switch AND Razorpay
+   * configured. The one gate every client-facing creator path asks (the catalogue, picking an account,
+   * checkout), and the creator's own offers (/v1/creator/offers*) and the offers worker. Staff pricing a page, and a
+   * creator's profile and payout screens, do not depend on it.
+   */
+  marketplaceAvailable: (): boolean => creatorConfig.marketplaceEnabled() && creatorConfig.routeEnabled() && razorpayConfig.configured(),
+  /**
+   * How long a creator has to accept a booking offer, in hours. The offer's real expiry is the EARLIER of this
+   * and the end of the posting window (IST), so an offer never outlives the time the post can still be made.
+   */
+  offerTtlHours: () => envNum("CREATOR_OFFER_TTL_HOURS", 48, 1),
+  /**
+   * The offers worker (offer expiry, the missed posting window, the launch-day reminder). Kill switch:
+   * CREATOR_OFFERS_CRON_ENABLED=0. It also does nothing while the marketplace is switched off.
+   */
+  offersCronEnabled: () => process.env.CREATOR_OFFERS_CRON_ENABLED !== "0",
   /** Most NEW Razorpay linked accounts we create per IST day, across every creator (a flood brake, not a quota). */
   payoutAccountDailyCap: () => envNum("CREATOR_PAYOUT_ACCOUNT_DAILY_CAP", 50, 1),
   /** The reconciliation worker (account activation poll today; transfers, releases and expiry in later phases). */

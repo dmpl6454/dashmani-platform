@@ -49,6 +49,23 @@ const ACTIONS: Record<Action, { label: string; title: string; text: string; note
 
 const DONE: Record<Action, string> = { approve: "Approved", reject: "Rejected", suspend: "Suspended", reinstate: "Reinstated" };
 
+/**
+ * The note after a bank change request was closed. "Processed" is the only one that says the payout account was
+ * updated and that payouts stay paused for 72 hours; "closed without a change" says neither.
+ */
+function bankChangeInfo(kind: "processed" | "declined", emailSkipped: boolean, emailSent: boolean | undefined): string {
+  if (kind === "declined") {
+    if (emailSkipped) return "Request closed without a change. The creator's account is closed, so no email was sent. Nothing about their payout account changed, and no payout pause applies.";
+    return emailSent === false
+      ? "Request closed without a change — but the email to the creator could not be sent, so tell them another way. Nothing about their payout account changed, and no payout pause applies."
+      : "Request closed without a change — the creator has been emailed that nothing changed. No payout pause applies.";
+  }
+  if (emailSkipped) return "Bank change marked processed. The creator's account is closed, so no email was sent. Their payouts stay paused for 72 hours.";
+  return emailSent === false
+    ? "Bank change marked processed — but the email to the creator could not be sent, so tell them another way. Their payouts stay paused for 72 hours."
+    : "Bank change marked processed — the creator has been emailed. Their payouts stay paused for 72 hours.";
+}
+
 const ACTIONS_FOR: Record<string, Action[]> = {
   in_review: ["approve", "reject"],
   approved: ["suspend"],
@@ -339,15 +356,13 @@ export default function CreatorDetailPage() {
         refreshing={isValidating}
         refreshFailed={!!error}
         onRefresh={() => { void mutate(); }}
-        onProcessed={(next, emailSent) => {
+        onProcessed={(next, result) => {
           void mutate(next, { revalidate: false });
-          // An older API sends no flag: say only what is known rather than claim a failure.
-          setInfoWarn(emailSent === false);
-          setInfo(
-            emailSent === false
-              ? "Bank change marked processed — but the email to the creator could not be sent, so tell them another way. Their payouts stay paused for 72 hours."
-              : "Bank change marked processed — the creator has been emailed. Their payouts stay paused for 72 hours.",
-          );
+          // An older API sends no flag: say only what is known rather than claim a failure. A mail left out on purpose
+          // (the creator's account is closed) is not a failure to send, so it is not drawn in the warning tone.
+          const skipped = result.emailSkipped === "creator_closed";
+          setInfoWarn(!skipped && result.emailSent === false);
+          setInfo(bankChangeInfo(result.kind, skipped, result.emailSent));
         }}
       />
 

@@ -112,12 +112,18 @@ function requirementRows(requirements: PayoutRequirement[]): Array<{ label: stri
   return rows;
 }
 
-/** A request is pending until staff clear it; a later request after a clearing is pending again. */
-function bankChangeState(view: PayoutAccountView): "none" | "pending" | "cleared" {
-  const { requestedAt, clearedAt } = view.bankChange;
+/**
+ * A request is pending until staff close it; a later request after a closing is pending again. A closed request
+ * ended one of two ways, and the API says which (`outcome`): staff carried the change out, or closed the request
+ * WITHOUT a change. Only the first may be described as the payout account having been updated; a response that
+ * does not say (an older server) gets the neutral "closed" sentence, never "updated".
+ */
+function bankChangeState(view: PayoutAccountView): "none" | "pending" | "processed" | "declined" | "closed" {
+  const { requestedAt, clearedAt, outcome } = view.bankChange;
   if (!requestedAt) return "none";
   if (!clearedAt || new Date(clearedAt).getTime() < new Date(requestedAt).getTime()) return "pending";
-  return "cleared";
+  if (outcome === "processed" || outcome === "declined") return outcome;
+  return "closed";
 }
 
 export interface StatusCardProps {
@@ -210,9 +216,19 @@ export function StatusCard({ account, actions, email, checking, onCheck, onChang
       )}
       {/* Only what is true and stays true: when it was recorded and what we did. No hold or timing is stated here,
           because the card is read long after the request and this view carries no end date for one. */}
-      {change === "cleared" && (
+      {change === "processed" && (
         <p className="text-sm text-ink-3 leading-relaxed max-w-2xl">
           Bank change recorded as done on <span className="text-white">{fmtDate(account.bankChange.clearedAt)}</span>. Our team updated your payout account with Razorpay.
+        </p>
+      )}
+      {change === "declined" && (
+        <p className="text-sm text-ink-3 leading-relaxed max-w-2xl">
+          Your bank change request was closed on <span className="text-white">{fmtDate(account.bankChange.clearedAt)}</span> without a change. Your payout account with Razorpay is as it was. You can ask again whenever you like.
+        </p>
+      )}
+      {change === "closed" && (
+        <p className="text-sm text-ink-3 leading-relaxed max-w-2xl">
+          Your bank change request was closed on <span className="text-white">{fmtDate(account.bankChange.clearedAt)}</span>.
         </p>
       )}
 

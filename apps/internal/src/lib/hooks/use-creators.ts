@@ -98,6 +98,11 @@ export interface AdminCreatorDetail {
    * handed to SMTP. Absent on GET /admin/creators/:id (and on responses from an older API).
    */
   emailSent?: boolean;
+  /**
+   * Only on the bank-change actions: why no email was sent when that is not a failure ("creator_closed": their
+   * account is closed, so nothing is sent). Absent from an older API.
+   */
+  emailSkipped?: "creator_closed" | null;
 }
 
 const unwrap = <T,>(u: string) => apiFetch<{ data: T }>(u).then((r) => r.data);

@@ -43,6 +43,13 @@ export interface PayoutRequirement {
  */
 export type PayoutAttention = "fix_details" | "contact_us";
 
+/**
+ * How a bank change request that is no longer waiting ended: staff carried the change out ("processed"), or
+ * closed the request WITHOUT a change ("declined": made by mistake, withdrawn, or no longer possible). Only the
+ * first may ever be described as the payout account having been updated.
+ */
+export type BankChangeOutcome = "processed" | "declined";
+
 export interface PayoutAccountView {
   status: PayoutAccountStatus;
   setupStep: PayoutSetupStep;
@@ -54,7 +61,8 @@ export interface PayoutAccountView {
   activatedAt: string | null;
   /** Not offered for bookings before this (activated + 24h). */
   bookableAfter: string | null;
-  bankChange: { requestedAt: string | null; clearedAt: string | null };
+  /** `outcome` is null while a request is waiting (and when none was ever made). */
+  bankChange: { requestedAt: string | null; clearedAt: string | null; outcome: BankChangeOutcome | null };
   termsVersion: string | null;
   updatedAt: string | null;
 }

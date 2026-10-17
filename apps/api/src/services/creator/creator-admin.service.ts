@@ -230,11 +230,12 @@ export interface AdminPayoutAccountView extends PayoutAccountView {
   lastErrorCode: string | null;
   lastCheckedAt: string | null;
   accountCreatedAt: string | null;
-  /** A bank change the creator asked for that staff have not marked processed yet. */
+  /** A bank change the creator asked for that staff have not closed yet (marked processed, or closed without a change). */
   bankChangePending: boolean;
   /**
    * Releases for this creator are paused by a bank change: from the request until staff mark it
-   * processed, plus 72 hours. `resumesAt` is set only once it has been marked processed.
+   * processed, plus 72 hours. `resumesAt` is set only once it has been marked processed; a request closed
+   * without a change holds nothing (it is not active at all).
    */
   releaseHold: { active: boolean; resumesAt: string | null };
 }
@@ -296,20 +297,46 @@ function bankChangeProcessedEmail(name: string) {
   };
 }
 
+/** ⚠️ Says only that the request was closed and nothing changed: never "updated", never anything about payments or holds. */
+function bankChangeDeclinedEmail(name: string) {
+  return {
+    subject: "Your bank account change request was closed",
+    title: "Bank change request closed",
+    body:
+      `<p style="margin:0 0 12px">Hi ${esc(name)},</p>` +
+      `<p style="margin:0 0 12px">Our team closed your request to change your bank account without making a change. Nothing about your payout account with Razorpay was changed.</p>` +
+      `<p style="margin:0 0 12px">If you do want to change your bank account, you can ask again from your payouts page. We never ask for bank details by email. If you did not make this request or have a question, reply to this email.</p>` +
+      `<p style="margin:18px 0">${button(creatorLink("/payouts"), "Open your payouts page")}</p>`,
+  };
+}
+
+type BankChangeClosing = "processed" | "declined";
+
+/** Why the email to the creator was left out on purpose (so the screen does not call it a failure). */
+type EmailSkipped = "creator_closed" | null;
+
 /**
- * Staff action: the bank change Razorpay support carried out is done (POST …/payout-account/bank-change/cleared).
- * Releases for this creator stay paused for 72 hours more (bankChangeBlocksRelease reads the timestamp).
+ * The ONE place a waiting bank change request is closed, for both staff actions. They differ in three things
+ * only, and each is decided here so the two can never drift:
+ *   • the clearing stamp. PROCESSED is stamped strictly AFTER the request (never earlier, so a clock that
+ *     disagrees by a few milliseconds cannot leave the request looking pending after a click that reported
+ *     success; and never EQUAL, because equal is how "declined" reads). DECLINED is stamped EXACTLY AT the
+ *     request: pending becomes false, a new request can still be made (requestBankChange accepts
+ *     cleared >= requested), and bankChangeBlocksRelease / bankChangeOutcome read the equality as "nothing
+ *     changed", so no 72-hour release pause is applied to a change that never happened;
+ *   • the audit kind: bank_change_cleared / bank_change_declined;
+ *   • the email (the caller sends it).
  *
- * ⚠️ ONE WINNER. The write matches both timestamps as they were READ, so two clicks (two staff, two
- * tabs) cannot both clear one request, and a request the creator made again in between is not cleared
- * by a click that was about the earlier one: the loser gets 409 and the creator is emailed once. The
- * audit row is written in the same transaction, so it never disagrees with the column.
+ * ⚠️ ONE WINNER. The write matches both timestamps as they were READ, so two clicks (two staff, two tabs, or
+ * "processed" against "declined") cannot both close one request, and a request the creator made again in
+ * between is not closed by a click that was about the earlier one: the loser gets 409. The audit row is
+ * written in the same transaction, so it never disagrees with the columns.
  */
-export async function markBankChangeProcessed(creatorId: string, staffId: string) {
-  const creator = await prisma.creator.findUnique({ where: { id: creatorId }, select: { id: true, name: true, email: true } });
+async function closeBankChangeRequest(creatorId: string, staffId: string, how: BankChangeClosing) {
+  const creator = await prisma.creator.findUnique({ where: { id: creatorId }, select: { id: true, name: true, email: true, status: true } });
   if (!creator) throw new AppError(404, "NOT_FOUND", "Creator not found");
   const none = () =>
-    new AppError(409, "NO_BANK_CHANGE_REQUEST", "This creator has no bank change request waiting. It may already have been marked processed.");
+    new AppError(409, "NO_BANK_CHANGE_REQUEST", "This creator has no bank change request waiting. It may already have been closed.");
 
   const row = await prisma.creatorPayoutAccount.findUnique({
     where: { creatorId },
@@ -317,12 +344,11 @@ export async function markBankChangeProcessed(creatorId: string, staffId: string
   });
   if (!row || !row.bankChangeRequestedAt || !bankChangePending(row)) throw none();
 
-  // Never earlier than the request itself, so a clock that disagrees by a few milliseconds cannot
-  // leave the request looking pending after a click that reported success.
-  const at = new Date(Math.max(Date.now(), row.bankChangeRequestedAt.getTime()));
+  const requestedAt = row.bankChangeRequestedAt;
+  const at = how === "declined" ? requestedAt : new Date(Math.max(Date.now(), requestedAt.getTime() + 1));
   const won = await prisma.$transaction(async (tx) => {
     const res = await tx.creatorPayoutAccount.updateMany({
-      where: { id: row.id, bankChangeRequestedAt: row.bankChangeRequestedAt, bankChangeClearedAt: row.bankChangeClearedAt },
+      where: { id: row.id, bankChangeRequestedAt: requestedAt, bankChangeClearedAt: row.bankChangeClearedAt },
       data: { bankChangeClearedAt: at },
     });
     if (res.count !== 1) return false;
@@ -332,27 +358,69 @@ export async function markBankChangeProcessed(creatorId: string, staffId: string
     await tx.creatorPayoutEvent.create({
       data: {
         payoutId: row.id,
-        kind: "bank_change_cleared",
+        kind: how === "declined" ? "bank_change_declined" : "bank_change_cleared",
         actorType: "staff",
         actorId: staffId,
-        note: scrubPayoutSecrets("Staff marked the bank change request processed. Releases for this creator stay paused for 72 hours."),
+        note: scrubPayoutSecrets(
+          how === "declined"
+            ? "Staff closed the bank change request without a change. Nothing about the payout account changed and no release pause applies."
+            : "Staff marked the bank change request processed. Releases for this creator stay paused for 72 hours.",
+        ),
       },
     });
     return true;
   });
   if (!won) throw none();
+  return creator;
+}
 
-  // The change stands even when the email cannot be sent; the screen says so instead of claiming delivery.
+/**
+ * Tell the creator how their request ended, unless their account is closed: they cannot sign in, the link in the
+ * mail is dead, and a closed creator is told nothing new. The request still closes; only the mail is left out.
+ * The change stands even when the email cannot be sent; the screen says so instead of claiming delivery.
+ */
+async function emailAboutBankChange(
+  creator: { id: string; name: string; email: string; status: string },
+  mail: { subject: string; title: string; body: string },
+): Promise<{ emailSent: boolean; emailSkipped: EmailSkipped }> {
+  if (creator.status === "closed") return { emailSent: false, emailSkipped: "creator_closed" };
   let emailSent = false;
   try {
-    const mail = bankChangeProcessedEmail(creator.name);
     emailSent = (await sendCreatorEmail(creator.email, mail.subject, mail.title, mail.body)) != null;
   } catch (e) {
-    console.warn(`[creator-admin] bank change email failed for ${creatorId}: ${scrubPayoutSecrets(e instanceof Error ? e.message : String(e)).slice(0, 200)}`);
+    console.warn(`[creator-admin] bank change email failed for ${creator.id}: ${scrubPayoutSecrets(e instanceof Error ? e.message : String(e)).slice(0, 200)}`);
   }
-  if (!emailSent) console.warn(`[creator-admin] bank change email for ${creatorId} was not sent`);
+  if (!emailSent) console.warn(`[creator-admin] bank change email for ${creator.id} was not sent`);
+  return { emailSent, emailSkipped: null };
+}
 
-  return { ...(await getCreatorDetail(creatorId)), emailSent };
+/**
+ * Staff action: the bank change Razorpay support carried out is done (POST …/payout-account/bank-change/cleared).
+ * Releases for this creator stay paused for 72 hours more (bankChangeBlocksRelease reads the timestamp).
+ * ONLY this action tells the creator their payout account was updated; a request that did not lead to a change
+ * is closed with declineBankChange instead.
+ */
+export async function markBankChangeProcessed(creatorId: string, staffId: string) {
+  const creator = await closeBankChangeRequest(creatorId, staffId, "processed");
+  const mailed = await emailAboutBankChange(creator, bankChangeProcessedEmail(creator.name));
+  return { ...(await getCreatorDetail(creatorId)), ...mailed };
+}
+
+/**
+ * Staff action: close a bank change request WITHOUT a change (POST …/payout-account/bank-change/declined):
+ * the creator asked by mistake or withdrew it, or it can no longer be carried out (their account is closed).
+ * This is the honest way to stop the waiting-request digest, because "processed" tells the creator their payout
+ * account was updated and starts a 72-hour release pause. Nothing is sent to Razorpay (the request never was),
+ * the creator is told only that it was closed and nothing changed, and they can ask again at any time.
+ *
+ * ⚠️ Closing a request never happens by itself, not even when the creator closes their account: a change may
+ * really be in flight at Razorpay, and clearing it automatically would lift the release pause on it. A person
+ * decides, here.
+ */
+export async function declineBankChange(creatorId: string, staffId: string) {
+  const creator = await closeBankChangeRequest(creatorId, staffId, "declined");
+  const mailed = await emailAboutBankChange(creator, bankChangeDeclinedEmail(creator.name));
+  return { ...(await getCreatorDetail(creatorId)), ...mailed };
 }
 
 // ── Review transitions ────────────────────────────────────────────────────────

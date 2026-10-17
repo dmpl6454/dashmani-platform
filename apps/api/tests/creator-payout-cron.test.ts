@@ -249,6 +249,15 @@ describe("telling staff", () => {
     expect((await reload(a.row.id)).lastError).toBe("alerted:suspended");
   });
 
+  it("alerts when an account is found suspended while our own setup step is still short of done (a suspension is never settled into done, so it must still reach staff)", async () => {
+    // e.g. an adopted account whose product id staff just filled in: the bank call may never have been applied
+    const a = await seed({ creator: true, setupStep: "stakeholder", status: "under_review", fakeStatus: "suspended", lastCheckedAt: ago(2 * HOUR) });
+    expect(await runCreatorPayoutTick()).toMatchObject({ polled: 1, changed: 1, alerted: 1 });
+    await flushPayoutAlertsForTests();
+    expect(String(notifyMock.mock.calls[0][0])).toBe("Creator payout account suspended by Razorpay");
+    expect(await reload(a.row.id)).toMatchObject({ activationStatus: "suspended", setupStep: "stakeholder", lastError: "alerted:suspended" });
+  });
+
   it("a failed send is not stamped, so the next tick tries again", async () => {
     const a = await seed({ creator: true, fakeStatus: "needs_clarification", requirements: reqs });
     notifyMock.mockResolvedValueOnce(null as any); // the mailer's "not configured / send failed"
@@ -358,6 +367,73 @@ describe("the bank change digest", () => {
     expect(digestMails()).toHaveLength(2);
   });
 
+  it("leaves out a creator whose account is closed, and a request closed WITHOUT a change (cleared exactly at the request) is not waiting at all", async () => {
+    const now = new Date();
+    const open = await seed({ creator: true });
+    const closed = await seed({ creator: true });
+    const declined = await seed({ creator: true });
+    await stamp(open.row, 30, now);
+    await stamp(closed.row, 40, now);
+    await stamp(declined.row, 35, now, 35); // cleared == requested
+    await prisma.creator.update({ where: { id: closed.creatorId }, data: { status: "closed" } });
+
+    expect(await runCreatorPayoutTick({ now, budget: 50 })).toMatchObject({ bankChangesWaiting: 1, alerted: 1 });
+    await flushPayoutAlertsForTests();
+    expect(digestMails()).toHaveLength(1);
+    expect(digestMails()[0][0]).toBe("1 bank change request waiting for staff");
+    const text = JSON.stringify((digestMails()[0] as any)[1]);
+    expect(text).toContain(await emailOf(open.creatorId));
+    expect(text).not.toContain(await emailOf(closed.creatorId));
+    expect(text).not.toContain(await emailOf(declined.creatorId));
+    expect(text).toContain("Close request without a change"); // the way out that stops it
+
+    // once the only open one is gone, nothing is left to say: a closed creator's request never nags
+    await prisma.creatorPayoutAccount.update({ where: { id: open.row.id }, data: { bankChangeClearedAt: new Date(now.getTime() + 5 * MIN) } });
+    expect(await runCreatorPayoutTick({ now: new Date(now.getTime() + 2 * HOUR), budget: 50 })).toMatchObject({ bankChangesWaiting: 0, alerted: 0 });
+    await flushPayoutAlertsForTests();
+    expect(digestMails()).toHaveLength(1);
+  });
+
+  it("repeats hourly while a request is young (24 to 48 hours past the request), then once a day, counted from the last digest that really went out", async () => {
+    const now = new Date();
+    const at = (min: number) => new Date(now.getTime() + min * MIN);
+    await stamp((await seed({ creator: true })).row, 30, now); // young until it has waited 48h: 18 hours from now
+    const run = async (t: Date) => {
+      const out = await runCreatorPayoutTick({ now: t, budget: 50 });
+      await flushPayoutAlertsForTests();
+      return out;
+    };
+    expect(await run(at(0))).toMatchObject({ bankChangesWaiting: 1, alerted: 1 });
+    expect(await run(at(61))).toMatchObject({ bankChangesWaiting: 1, alerted: 1 }); // 31h: young, hourly
+    expect(await run(at(17 * 60))).toMatchObject({ bankChangesWaiting: 1, alerted: 1 }); // 47h: still young
+    expect(digestMails()).toHaveLength(3);
+
+    // 49h: no longer young. The hourly pass still counts it, but no email goes out for 24 hours after the last one
+    for (const h of [19, 20, 30, 40]) expect(await run(at(h * 60)), `+${h}h`).toMatchObject({ bankChangesWaiting: 1, alerted: 0 });
+    expect(digestMails()).toHaveLength(3);
+    // a day after the last digest (+17h): one more
+    expect(await run(at(17 * 60 + 24 * 60 + 1))).toMatchObject({ bankChangesWaiting: 1, alerted: 1 });
+    expect(digestMails()).toHaveLength(4);
+    expect(await run(at(17 * 60 + 24 * 60 + 70))).toMatchObject({ bankChangesWaiting: 1, alerted: 0 });
+    expect(digestMails()).toHaveLength(4);
+  });
+
+  it("a daily digest whose email failed does not use up the day: it is tried again at the next hourly pass", async () => {
+    const now = new Date();
+    await stamp((await seed({ creator: true })).row, 60, now); // already old: the daily cadence applies from the start
+    notifyMock.mockResolvedValueOnce(null as any); // the mailer's "not configured / send failed"
+    expect(await runCreatorPayoutTick({ now })).toMatchObject({ bankChangesWaiting: 1, alerted: 1 });
+    await flushPayoutAlertsForTests();
+    expect(digestMails()).toHaveLength(1);
+    const later = new Date(now.getTime() + 61 * MIN);
+    expect(await runCreatorPayoutTick({ now: later })).toMatchObject({ bankChangesWaiting: 1, alerted: 1 });
+    await flushPayoutAlertsForTests();
+    expect(digestMails()).toHaveLength(2);
+    // and now that one went out, the next is a day away
+    expect(await runCreatorPayoutTick({ now: new Date(now.getTime() + 3 * HOUR) })).toMatchObject({ bankChangesWaiting: 1, alerted: 0 });
+    expect(digestMails()).toHaveLength(2);
+  });
+
   it("names at most 15 creators and says how many more wait", async () => {
     const now = new Date();
     for (let i = 0; i < 17; i++) await stamp((await seed({ creator: true })).row, 30 + i, now);
@@ -396,6 +472,24 @@ describe("a setup stopped at the bank call", () => {
     const b = await seed({ setupStep: "product", status: "needs_clarification", fakeStatus: "under_review", lastCheckedAt: ago(2 * HOUR) });
     await runCreatorPayoutTick();
     expect(await reload(b.row.id)).toMatchObject({ setupStep: "product", activationStatus: "under_review" });
+  });
+
+  it("settles an ADOPTED account (our step is 'stakeholder', its product already activated) to done, and heals a row stuck there with its status already activated", async () => {
+    // staff just filled in the product id: never polled, activated at Razorpay
+    const a = await seed({ setupStep: "stakeholder", status: "not_started", fakeStatus: "activated" });
+    expect(await runCreatorPayoutTick()).toMatchObject({ polled: 1, changed: 1 });
+    expect(await reload(a.row.id)).toMatchObject({ setupStep: "done", activationStatus: "activated", lastError: null });
+
+    // a row the earlier rule left stuck (activated, step still 'stakeholder'): the daily poll heals it
+    const stuck = await seed({ setupStep: "stakeholder", status: "activated", fakeStatus: "activated", lastCheckedAt: ago(25 * HOUR) });
+    await prisma.creatorPayoutAccount.update({ where: { id: stuck.row.id }, data: { activatedAt: ago(30 * HOUR), bookableAfter: ago(6 * HOUR) } });
+    expect(await runCreatorPayoutTick()).toMatchObject({ polled: 1, changed: 1 });
+    expect(await reload(stuck.row.id)).toMatchObject({ setupStep: "done", activationStatus: "activated" });
+
+    // suspended is not settled
+    const s2 = await seed({ setupStep: "stakeholder", status: "under_review", fakeStatus: "suspended", lastCheckedAt: ago(2 * HOUR) });
+    await runCreatorPayoutTick();
+    expect(await reload(s2.row.id)).toMatchObject({ setupStep: "stakeholder", activationStatus: "suspended" });
   });
 });
 

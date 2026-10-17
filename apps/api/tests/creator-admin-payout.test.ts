@@ -13,6 +13,9 @@
  *   - "mark processed" works only while a request is open (409 otherwise), has exactly ONE winner when two
  *     clicks race, writes a scrubbed creator_payout_events row, emails the creator without bank details, and
  *     starts the 72-hour release pause;
+ *   - "close without a change" (the honest way out of a request that will not be carried out): pending ends, NO
+ *     pause applies, the audit kind is bank_change_declined, the creator is never told their account was
+ *     updated (and a closed creator is told nothing), and it races "processed" with exactly one winner;
  *   - ⚠️ PRIVACY: after a REAL setup (fake Razorpay echoing PAN, number and name back), a bank change request
  *     and the staff clearing it, no column of any table, no response, no log line and no email holds a
  *     submitted value, and no audit_logs row was written.
@@ -34,7 +37,7 @@ import { createTestUser, generateToken, generateClientToken, generateHrToken, ge
 import { FakeRazorpay } from "./fake-razorpay-route";
 import { creatorConfig } from "../src/services/creator/creator-config";
 import { flushPayoutAlertsForTests, resetPayoutAlertsForTests } from "../src/services/creator/payout-alert";
-import { BANK_CHANGE_HOLD_MS } from "../src/services/creator/payout-account-view";
+import { BANK_CHANGE_HOLD_MS, bankChangeBlocksRelease, bankChangePending } from "../src/services/creator/payout-account-view";
 import { captureConsole, scanDatabase as scanTables, type ConsoleCapture } from "./payout-privacy";
 
 const sendMock = vi.mocked(sendEmail);
@@ -116,6 +119,7 @@ function seedAccount(creatorId: string, over: Record<string, unknown> = {}) {
 
 const getDetail = (auth: string, id: string) => request(app).get(`/v1/admin/creators/${id}`).set("Authorization", auth);
 const clear = (auth: string, id: string) => request(app).post(`/v1/admin/creators/${id}/payout-account/bank-change/cleared`).set("Authorization", auth);
+const decline = (auth: string, id: string) => request(app).post(`/v1/admin/creators/${id}/payout-account/bank-change/declined`).set("Authorization", auth);
 const eventsOf = (accountId: string) => prisma.creatorPayoutEvent.findMany({ where: { payoutId: accountId }, orderBy: { createdAt: "asc" } });
 const rowOf = (creatorId: string) => prisma.creatorPayoutAccount.findUnique({ where: { creatorId } });
 
@@ -190,6 +194,10 @@ describe("Creator admin: payout account", () => {
           ? await clear(token, c.id)
           : await request(app).post(`/v1/admin/creators/${c.id}/payout-account/bank-change/cleared`);
         expect(allowed, `write with ${label}: ${write.status}`).toContain(write.status);
+        const close = token
+          ? await decline(token, c.id)
+          : await request(app).post(`/v1/admin/creators/${c.id}/payout-account/bank-change/declined`);
+        expect(allowed, `close without a change with ${label}: ${close.status}`).toContain(close.status);
       }
 
       const row = (await rowOf(c.id))!;
@@ -236,7 +244,7 @@ describe("Creator admin: payout account", () => {
       expect(res.status).toBe(200);
       const view = res.body.data.payoutAccount;
       expect(Object.keys(view).sort()).toEqual(ADMIN_PAYOUT_KEYS);
-      expect(Object.keys(view.bankChange).sort()).toEqual(["clearedAt", "requestedAt"]);
+      expect(Object.keys(view.bankChange).sort()).toEqual(["clearedAt", "outcome", "requestedAt"]);
       expect(Object.keys(view.releaseHold).sort()).toEqual(["active", "resumesAt"]);
       for (const r of view.requirements) expect(Object.keys(r).sort()).toEqual(["field", "reason"]);
       expect(view).toMatchObject({
@@ -248,7 +256,7 @@ describe("Creator admin: payout account", () => {
         razorpayProductId: acc.razorpayProductId,
         lastErrorCode: "ACCOUNT_UNKNOWN",
         termsVersion: creatorConfig.termsVersion(),
-        bankChange: { requestedAt: requestedAt.toISOString(), clearedAt: null },
+        bankChange: { requestedAt: requestedAt.toISOString(), clearedAt: null, outcome: null },
         bankChangePending: true,
         releaseHold: { active: true, resumesAt: null },
         activatedAt: null,
@@ -517,7 +525,7 @@ describe("Creator admin: payout account", () => {
       expect(Object.keys(view).sort()).toEqual(ADMIN_PAYOUT_KEYS);
       expect(view).toMatchObject({
         bankChangePending: false,
-        bankChange: { requestedAt: requestedAt.toISOString(), clearedAt: row.bankChangeClearedAt!.toISOString() },
+        bankChange: { requestedAt: requestedAt.toISOString(), clearedAt: row.bankChangeClearedAt!.toISOString(), outcome: "processed" },
         releaseHold: { active: true, resumesAt: new Date(row.bankChangeClearedAt!.getTime() + BANK_CHANGE_HOLD_MS).toISOString() },
       });
 
@@ -628,6 +636,205 @@ describe("Creator admin: payout account", () => {
       expect(res.status).toBe(200);
       expect(res.body.data.payoutRouteEnabled).toBe(false);
       expect((await rowOf(c.id))!.bankChangeClearedAt).not.toBeNull();
+    });
+  });
+
+  // ── Close a bank change request WITHOUT a change ────────────────────────────────────────────
+
+  describe("close a bank change request without a change", () => {
+    it("404s an unknown creator; 409s a creator with no account and an account with no open request", async () => {
+      expect((await decline(admin, "00000000-0000-0000-0000-000000000000")).status).toBe(404);
+      const { c: bare } = await seedCreator();
+      const noAccount = await decline(admin, bare.id);
+      expect([noAccount.status, noAccount.body.error.code]).toEqual([409, "NO_BANK_CHANGE_REQUEST"]);
+
+      const { c } = await seedCreator();
+      const acc = await seedAccount(c.id);
+      const none = await decline(admin, c.id);
+      expect([none.status, none.body.error.code]).toEqual([409, "NO_BANK_CHANGE_REQUEST"]);
+      expect((await rowOf(c.id))!.bankChangeClearedAt).toBeNull();
+      expect(await eventsOf(acc.id)).toHaveLength(0);
+      expect(sendMock).not.toHaveBeenCalled();
+    });
+
+    it("ends the request with nothing changed: not pending, NO release pause even right after the request, an audit row of its own, and a note that says nothing was updated", async () => {
+      const { c, auth: creatorAuth } = await seedCreator({ name: "Asha <b>Iyer</b>" });
+      const requestedAt = new Date(Date.now() - H); // asked an hour ago: a PROCESSED clearing would pause releases for 72 hours from now
+      const acc = await seedAccount(c.id, { bankChangeRequestedAt: requestedAt });
+
+      const res = await decline(admin, c.id);
+      expect(res.status).toBe(200);
+      expect(res.headers["cache-control"]).toBe("no-store");
+      expect(res.body.data).toMatchObject({ emailSent: true, emailSkipped: null });
+      expect(res.body.data.creator.id).toBe(c.id);
+
+      // cleared exactly AT the request: pending is false, and the equality is what reads "declined"
+      const row = (await rowOf(c.id))!;
+      expect(row.bankChangeRequestedAt!.getTime()).toBe(requestedAt.getTime());
+      expect(row.bankChangeClearedAt!.getTime()).toBe(requestedAt.getTime());
+      expect(bankChangePending(row)).toBe(false);
+      expect(bankChangeBlocksRelease(row)).toBe(false); // ⚠️ the 72-hour pause is not applied to a change that never happened
+
+      const view = res.body.data.payoutAccount;
+      expect(Object.keys(view).sort()).toEqual(ADMIN_PAYOUT_KEYS);
+      expect(view).toMatchObject({
+        bankChangePending: false,
+        bankChange: { requestedAt: requestedAt.toISOString(), clearedAt: requestedAt.toISOString(), outcome: "declined" },
+        releaseHold: { active: false, resumesAt: null },
+      });
+
+      // one audit row, of the declined kind, and NO processed row
+      const events = await eventsOf(acc.id);
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({ payoutId: acc.id, bookingId: null, kind: "bank_change_declined", actorType: "staff", actorId: staff.id, amountPaise: null, razorpayEventId: null });
+      expect(events[0].note).toContain("without a change");
+      expect(events[0].note).not.toMatch(/\d{5}/);
+      expect(events.some((e) => e.kind === "bank_change_cleared")).toBe(false);
+
+      // the creator hears that it was closed and that nothing changed: never "updated", and nothing about holds or payments
+      expect(sendMock).toHaveBeenCalledTimes(1);
+      const mail = sendMock.mock.calls[0][0] as { to: string; subject: string; html: string };
+      expect(mail.to).toBe((await prisma.creator.findUnique({ where: { id: c.id } }))!.email);
+      expect(mail.subject).toBe("Your bank account change request was closed");
+      expect(mail.html).toContain("Nothing about your payout account with Razorpay was changed");
+      expect(mail.html).not.toMatch(/has been updated|was processed|completed the bank/i);
+      expect(mail.html).not.toMatch(/72|hours|paused|pause|hold|payments? (to you|will|go)/i);
+      expect(mail.html).toContain("We never ask for bank details by email");
+      expect(mail.html).not.toContain("<b>Iyer</b>"); // escaped
+      expect(fake.calls).toHaveLength(0); // nothing reaches Razorpay
+
+      // and the creator's own view says the same (their card words "closed without a change", never "updated")
+      const mine = await request(app).get("/v1/creator/payout-account").set("Authorization", creatorAuth);
+      expect(mine.body.data.account.bankChange).toEqual({ requestedAt: requestedAt.toISOString(), clearedAt: requestedAt.toISOString(), outcome: "declined" });
+    });
+
+    it("a second click, a click on 'processed' afterwards, and a second staff member all get 409 and change nothing", async () => {
+      const { c } = await seedCreator();
+      const acc = await seedAccount(c.id, { bankChangeRequestedAt: new Date(Date.now() - H) });
+      expect((await decline(admin, c.id)).status).toBe(200);
+      const first = (await rowOf(c.id))!.bankChangeClearedAt!;
+
+      const other = await createTestUser({ name: "Other Staff" });
+      const otherAuth = `Bearer ${generateToken(other.id, other.email, ["Super Admin"])}`;
+      for (const r of [await decline(admin, c.id), await decline(otherAuth, c.id), await clear(admin, c.id)]) {
+        expect([r.status, r.body.error.code]).toEqual([409, "NO_BANK_CHANGE_REQUEST"]);
+      }
+      expect((await rowOf(c.id))!.bankChangeClearedAt!.getTime()).toBe(first.getTime());
+      expect(await eventsOf(acc.id)).toHaveLength(1);
+      expect(sendMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("'processed' and 'close without a change' at the same moment have exactly one winner: one 200, one audit row, one email", async () => {
+      const { c } = await seedCreator();
+      const acc = await seedAccount(c.id, { bankChangeRequestedAt: new Date(Date.now() - H) });
+      const other = await createTestUser({ name: "Other Staff" });
+      const second = `Bearer ${generateToken(other.id, other.email, ["Admin"])}`;
+      const rs = await Promise.all([clear(admin, c.id), decline(second, c.id), decline(admin, c.id), clear(second, c.id)]);
+      expect(rs.map((r) => r.status).sort()).toEqual([200, 409, 409, 409]);
+      expect(await eventsOf(acc.id)).toHaveLength(1);
+      expect(sendMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("the creator can ask again after it was closed: pending again, releases paused again, and it can be closed or processed again", async () => {
+      const { c, auth: creatorAuth } = await seedCreator();
+      const acc = await seedAccount(c.id, { bankChangeRequestedAt: new Date(Date.now() - 2 * H) });
+      expect((await decline(admin, c.id)).status).toBe(200);
+
+      await new Promise((r) => setTimeout(r, 15));
+      const asked = await request(app).post("/v1/creator/payout-account/bank-change").set("Authorization", creatorAuth);
+      expect(asked.status).toBe(200);
+      expect(asked.body.data.account.bankChange.outcome).toBeNull(); // waiting again
+      let row = (await rowOf(c.id))!;
+      expect(bankChangePending(row)).toBe(true);
+      expect(bankChangeBlocksRelease(row)).toBe(true);
+      expect((await getDetail(admin, c.id)).body.data.payoutAccount).toMatchObject({ bankChangePending: true, releaseHold: { active: true, resumesAt: null } });
+
+      // this time the change is carried out: the normal pause applies, and the answer reads "processed"
+      await new Promise((r) => setTimeout(r, 15));
+      const done = await clear(admin, c.id);
+      expect(done.status).toBe(200);
+      row = (await rowOf(c.id))!;
+      expect(row.bankChangeClearedAt!.getTime()).toBeGreaterThan(row.bankChangeRequestedAt!.getTime());
+      expect(done.body.data.payoutAccount).toMatchObject({ bankChange: { outcome: "processed" }, releaseHold: { active: true } });
+      expect((await eventsOf(acc.id)).map((e) => e.kind)).toEqual(["bank_change_declined", "bank_change_cleared"]);
+    });
+
+    it("'processed' is always stamped strictly after the request (equal means declined), even when the click lands in the request's own millisecond", async () => {
+      const { c } = await seedCreator();
+      const future = new Date(Date.now() + 60_000); // a request stamped ahead of this clock: the clamp must still leave it strictly later
+      await seedAccount(c.id, { bankChangeRequestedAt: future });
+      const res = await clear(admin, c.id);
+      expect(res.status).toBe(200);
+      const row = (await rowOf(c.id))!;
+      expect(row.bankChangeClearedAt!.getTime()).toBe(future.getTime() + 1);
+      expect(res.body.data.payoutAccount.bankChange.outcome).toBe("processed");
+      expect(bankChangeBlocksRelease(row, new Date(future.getTime() + H))).toBe(true);
+    });
+
+    it("a CLOSED creator: the request still closes, but no email is sent (they cannot sign in), whichever way it is closed, and the answer says why", async () => {
+      const { c: a } = await seedCreator({ status: "closed" });
+      const accA = await seedAccount(a.id, { bankChangeRequestedAt: new Date(Date.now() - 40 * H) });
+      const declined = await decline(admin, a.id);
+      expect(declined.status).toBe(200);
+      expect(declined.body.data).toMatchObject({ emailSent: false, emailSkipped: "creator_closed" });
+      expect(declined.body.data.payoutAccount).toMatchObject({ bankChangePending: false, bankChange: { outcome: "declined" }, releaseHold: { active: false } });
+      expect((await eventsOf(accA.id)).map((e) => e.kind)).toEqual(["bank_change_declined"]);
+
+      // "processed" on a closed creator is allowed too (a change really was done), but never mails the false "updated" notice to a dead account
+      const { c: b } = await seedCreator({ status: "closed" });
+      await seedAccount(b.id, { bankChangeRequestedAt: new Date(Date.now() - 40 * H) });
+      const processed = await clear(admin, b.id);
+      expect(processed.status).toBe(200);
+      expect(processed.body.data).toMatchObject({ emailSent: false, emailSkipped: "creator_closed" });
+      expect(sendMock).not.toHaveBeenCalled();
+    });
+
+    it("an email that cannot be sent does not undo the closing, and the answer says so", async () => {
+      const { c } = await seedCreator();
+      await seedAccount(c.id, { bankChangeRequestedAt: new Date(Date.now() - H) });
+      spyConsole();
+      sendMock.mockResolvedValueOnce(null as never);
+      const res = await decline(admin, c.id);
+      expect(res.status).toBe(200);
+      expect(res.body.data).toMatchObject({ emailSent: false, emailSkipped: null }); // a failure to send, not a deliberate skip
+      expect((await rowOf(c.id))!.bankChangeClearedAt).not.toBeNull();
+
+      const { c: c2 } = await seedCreator();
+      await seedAccount(c2.id, { bankChangeRequestedAt: new Date(Date.now() - H) });
+      sendMock.mockRejectedValueOnce(new Error(`SMTP down for ${SECRET.account}`));
+      const res2 = await decline(admin, c2.id);
+      expect(res2.status).toBe(200);
+      expect(res2.body.data.emailSent).toBe(false);
+      expectNoSecrets("the log", logText());
+    });
+
+    it("takes the creator out of the waiting list and its count, like processing does", async () => {
+      const { c } = await seedCreator({ name: "Mistaken Request", status: "approved" });
+      await seedAccount(c.id, { bankChangeRequestedAt: new Date(Date.now() - H) });
+      const before = await request(app).get("/v1/admin/creators").set("Authorization", admin);
+      expect(before.body.data.bankChangesWaiting).toBe(1);
+      expect((await decline(admin, c.id)).status).toBe(200);
+      const after = await request(app).get("/v1/admin/creators").set("Authorization", admin);
+      expect(after.body.data.bankChangesWaiting).toBe(0);
+      expect((after.body.data.creators as Array<{ name: string; bankChangePending: boolean }>).find((r) => r.name === "Mistaken Request")!.bankChangePending).toBe(false);
+    });
+
+    it("works while payouts are dark, writes no audit_logs row, and nothing it answers or mails holds a submitted value", async () => {
+      const { c } = await seedCreator();
+      await seedAccount(c.id, { bankChangeRequestedAt: new Date(Date.now() - H) });
+      vi.stubEnv("CREATOR_ROUTE_ENABLED", "");
+      vi.stubEnv("RAZORPAY_KEY_ID", "");
+      vi.stubEnv("RAZORPAY_KEY_SECRET", "");
+      spyConsole();
+      const auditBefore = await prisma.auditLog.count();
+      const res = await decline(admin, c.id);
+      expect(res.status).toBe(200);
+      expect(res.body.data.payoutRouteEnabled).toBe(false);
+      expectNoSecrets("the response", res.body);
+      expectNoSecrets("the email", sendMock.mock.calls);
+      expectNoSecrets("the log", logText());
+      expect(await prisma.auditLog.count()).toBe(auditBefore);
+      expect(await scanDatabase()).toEqual([]);
     });
   });
 

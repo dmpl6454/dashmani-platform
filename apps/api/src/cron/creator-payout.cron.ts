@@ -18,15 +18,19 @@
  * for 30 minutes (in memory) so one broken row cannot eat the budget forever at the head of the queue.
  *
  * Staff are told ONCE per episode when an account that finished setup becomes needs_clarification
- * (with the field references only) or suspended: the stamp `alerted:<status>` in last_error records that
+ * (with the field references only), or when an account is suspended (whatever our setup step says): the stamp `alerted:<status>` in last_error records that
  * the email went out, and is cleared when the account leaves that status, so a later relapse alerts again.
  * Alerts go through alertStaffOncePerHour (rate-limited: the Gmail account is shared with password resets).
  *
  * Bank-change requests are different: the creator's request is a to-do for a person (raise it with
  * Razorpay support, then mark it processed), and its one email at request time can be lost (SMTP down, the
- * hourly ceiling). So once an hour, while any request has waited over 24 hours, ONE digest names them all,
- * until staff clear them. Releases for those creators are paused meanwhile. No column: the request itself is
- * the record, and the digest stops when it is cleared.
+ * hourly ceiling). So, while any request has waited over 24 hours, ONE digest names them all, until staff
+ * close them (processed, or closed without a change). Releases for those creators are paused meanwhile. No
+ * column: the request itself is the record, and the digest stops when it is closed. The digest is not a nag
+ * that never ends: it repeats HOURLY only while a request is in its first 24 hours past the 24-hour mark, then
+ * ONCE A DAY (a slow Razorpay support ticket is normal, not an emergency), and it never names a creator whose
+ * account is closed (they cannot be told anything and the request may need a person's decision, which the
+ * Creators list still shows).
  *
  * Nothing here ever logs a Razorpay body. Overlap guard claimed before the first await. Kill switch
  * CREATOR_PAYOUT_CRON_ENABLED=0; a no-op while the Razorpay keys are absent. It does NOT depend on
@@ -38,7 +42,7 @@ import { creatorConfig } from "../services/creator/creator-config";
 import { razorpayConfig } from "../services/campaign/config";
 import { RazorpayError, fetchRouteProduct } from "../services/campaign/razorpay";
 import { applyProductStatus } from "../services/creator/payout-account.service";
-import { setupIsDone, toPayoutAccountView } from "../services/creator/payout-account-view";
+import { razorpayHoldsAccount, setupIsDone, toPayoutAccountView } from "../services/creator/payout-account-view";
 import { alertStaffOncePerHour } from "../services/creator/payout-alert";
 import { scrubPayoutSecrets } from "../utils/payout-scrub";
 
@@ -57,7 +61,10 @@ const SETUP_DONE_STEPS = ["bank", "done"];
 
 /** A bank-change request waits this long before the digest names it (staff normally act within a day). */
 export const BANK_CHANGE_DIGEST_AFTER_MS = DAY_MS;
+/** How often the digest is looked at, and how often it repeats while a request is still young (see below). */
 const BANK_CHANGE_DIGEST_EVERY_MS = HOUR_MS;
+/** A request is "young" until it has waited this long (24 hours past the first mention); from then on the digest repeats daily. */
+export const BANK_CHANGE_DIGEST_HOURLY_UNTIL_MS = 2 * DAY_MS;
 const BANK_CHANGE_DIGEST_MAX_NAMED = 15;
 
 export interface PayoutTickSummary {
@@ -75,12 +82,15 @@ const idle = (): PayoutTickSummary => ({ ran: false, polled: 0, changed: 0, fail
 
 let running = false;
 let lastBankDigestAt = 0;
+/** When a digest email last actually went out (set only once the mailer said so). */
+let lastBankDigestSentAt = 0;
 const failedAt = new Map<string, number>();
 
 /** Tests only. */
 export function resetCreatorPayoutCronForTests(): void {
   running = false;
   lastBankDigestAt = 0;
+  lastBankDigestSentAt = 0;
   failedAt.clear();
 }
 
@@ -171,24 +181,39 @@ export async function runCreatorPayoutTick(opts: { now?: Date; budget?: number }
 }
 
 /**
- * At most once an hour: find bank-change requests that staff have not cleared for over 24 hours and email ONE
- * digest naming them. A request is waiting while cleared_at is empty or older than requested_at (the same rule
- * as bankChangePending, in SQL because Prisma cannot compare two columns). Only names, emails, hours and the
- * count go into the mail: the payout row holds nothing else about a bank account.
+ * Find bank-change requests that staff have not closed for over 24 hours and email ONE digest naming them. A
+ * request is waiting while cleared_at is empty or older than requested_at (the same rule as bankChangePending,
+ * in SQL because Prisma cannot compare two columns); one closed WITHOUT a change has cleared_at equal to
+ * requested_at, so it is not waiting. Only names, emails, hours and the count go into the mail: the payout row
+ * holds nothing else about a bank account.
+ *
+ * Cadence: the check runs at most hourly. A digest goes out on that hour only while some waiting request is
+ * still YOUNG (waiting 24 to 48 hours); once every waiting request is older, it goes out once a day, counted
+ * from the last digest that really went out (`onSent`, so a failed send is tried again the next hour). The
+ * count it returns is every waiting request, whether or not this pass emailed.
+ *
+ * Creators whose account is closed are left out (LEFT JOIN: a row with no creator row still counts, as before).
  */
 async function digestWaitingBankChanges(now: Date): Promise<{ waiting: number; alerted: boolean }> {
   if (now.getTime() - lastBankDigestAt < BANK_CHANGE_DIGEST_EVERY_MS) return { waiting: 0, alerted: false };
   lastBankDigestAt = now.getTime();
   const cutoff = new Date(now.getTime() - BANK_CHANGE_DIGEST_AFTER_MS);
   const rows = await prisma.$queryRaw<Array<{ creator_id: string; requested: Date }>>`
-    SELECT creator_id, bank_change_requested_at AS requested
-      FROM creator_payout_accounts
-     WHERE bank_change_requested_at IS NOT NULL
-       AND bank_change_requested_at < ${cutoff}::timestamptz AT TIME ZONE 'UTC'
-       AND (bank_change_cleared_at IS NULL OR bank_change_cleared_at < bank_change_requested_at)
-     ORDER BY bank_change_requested_at ASC
+    SELECT a.creator_id AS creator_id, a.bank_change_requested_at AS requested
+      FROM creator_payout_accounts a
+      LEFT JOIN creators c ON c.id = a.creator_id
+     WHERE a.bank_change_requested_at IS NOT NULL
+       AND a.bank_change_requested_at < ${cutoff}::timestamptz AT TIME ZONE 'UTC'
+       AND (a.bank_change_cleared_at IS NULL OR a.bank_change_cleared_at < a.bank_change_requested_at)
+       AND c.status IS DISTINCT FROM 'closed'
+     ORDER BY a.bank_change_requested_at ASC
      LIMIT 200`;
   if (rows.length === 0) return { waiting: 0, alerted: false };
+
+  const youngSince = now.getTime() - BANK_CHANGE_DIGEST_HOURLY_UNTIL_MS;
+  const anyYoung = rows.some((r) => new Date(r.requested).getTime() > youngSince);
+  const dayPassed = now.getTime() - lastBankDigestSentAt >= DAY_MS;
+  if (!anyYoung && !dayPassed) return { waiting: rows.length, alerted: false };
 
   const named = rows.slice(0, BANK_CHANGE_DIGEST_MAX_NAMED);
   const creators = await prisma.creator.findMany({ where: { id: { in: named.map((r) => r.creator_id) } }, select: { id: true, name: true, email: true } });
@@ -207,11 +232,19 @@ async function digestWaitingBankChanges(now: Date): Promise<{ waiting: number; a
       { label: "Creators", value: lines.join("; ") },
       {
         label: "What to do",
-        value: "Raise each change with Razorpay support (the API cannot change a bank account), then mark it processed on the creator's page. Releases for these creators stay paused until you do, plus 72 hours.",
+        value:
+          "Raise each change with Razorpay support (the API cannot change a bank account), then mark it processed on the creator's page. Releases for these creators stay paused until you do, plus 72 hours. " +
+          "If a request was made by mistake, was withdrawn, or cannot be carried out, use \"Close request without a change\" on the creator's page instead: it stops these emails and tells the creator nothing was updated.",
       },
     ],
     "/creators",
-    { now: now.getTime() },
+    {
+      now: now.getTime(),
+      // Counted only once the mail really went out: a failed send leaves the day's slot open for the next hour.
+      onSent: () => {
+        lastBankDigestSentAt = now.getTime();
+      },
+    },
   );
   return { waiting: rows.length, alerted };
 }
@@ -225,7 +258,11 @@ async function alertIfNeeded(rowId: string, now: Date): Promise<boolean> {
   const fresh = await prisma.creatorPayoutAccount.findUnique({ where: { id: rowId } });
   if (!fresh) return false;
   const status = fresh.activationStatus;
-  const flagged = setupIsDone(fresh) && (status === "needs_clarification" || status === "suspended");
+  // ⚠️ A SUSPENSION is flagged whatever our own setup_step says. It is deliberately not settled into "done" (the
+  // bank details may never have been applied), so an account suspended while our step is still short of done
+  // would otherwise never reach staff at all. Needs-clarification stays after setup: before it, the creator's
+  // own form is the way to carry on.
+  const flagged = (status === "needs_clarification" && setupIsDone(fresh)) || (status === "suspended" && razorpayHoldsAccount(fresh));
   if (!flagged) {
     if (fresh.lastError?.startsWith("alerted:")) {
       await prisma.creatorPayoutAccount.updateMany({ where: { id: rowId, lastError: { startsWith: "alerted:" } }, data: { lastError: null } });

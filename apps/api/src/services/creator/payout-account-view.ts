@@ -1,6 +1,7 @@
 import type { CreatorPayoutAccount } from "@dashmani/db";
 import { formFieldForReference } from "@dashmani/shared/src/validators/creator-payout";
 import type {
+  BankChangeOutcome,
   PayoutAccountStatus,
   PayoutAccountView,
   PayoutAttention,
@@ -10,7 +11,7 @@ import type {
 } from "@dashmani/shared/src/validators/creator-payout";
 import { scrubPayoutSecrets } from "../../utils/payout-scrub";
 
-export type { PayoutAccountStatus, PayoutAccountView, PayoutAttention, PayoutBlockedReason, PayoutRequirement, PayoutSetupStep };
+export type { BankChangeOutcome, PayoutAccountStatus, PayoutAccountView, PayoutAttention, PayoutBlockedReason, PayoutRequirement, PayoutSetupStep };
 
 // Pure: how a creator_payout_accounts row becomes JSON for the creator (and the staff screen), who
 // may set an account up, and when a bank change holds back releases. No I/O, so every mapping is
@@ -44,12 +45,13 @@ type Row = Pick<
 
 /**
  * The codes bank connect writes to `last_error`. A DEFINITE rejection means Razorpay refused what was
- * submitted and the creator must correct something (the view then reads "failed"); the others mean the
- * outcome is unknown or Razorpay was unreachable, and the same submission may simply be sent again.
- * PRODUCT_UNKNOWN is also what a DEFINITE refusal of the product call is recorded as: that call carries none
- * of the creator's details, so it is a step for staff (an alert has gone out), never "correct your details".
+ * submitted (the view then reads "failed"): either the creator must correct something (the three
+ * *_REJECTED codes, which name form fields), or only our team can resolve it (ACCOUNT_CONFLICT, and
+ * PRODUCT_REFUSED: the Route product call carries none of the creator's details, so the creator cannot fix it
+ * and a retry meets the same answer; the view carries no field, so `attention` is "contact_us"). The others
+ * mean the outcome is UNKNOWN or Razorpay was unreachable, and the same submission may simply be sent again.
  */
-export const SETUP_REJECTION_CODES = ["DETAILS_REJECTED", "PAN_REJECTED", "BANK_DETAILS_REJECTED", "ACCOUNT_CONFLICT"] as const;
+export const SETUP_REJECTION_CODES = ["DETAILS_REJECTED", "PAN_REJECTED", "BANK_DETAILS_REJECTED", "ACCOUNT_CONFLICT", "PRODUCT_REFUSED"] as const;
 export const SETUP_RETRYABLE_CODES = ["ACCOUNT_UNKNOWN", "PRODUCT_UNKNOWN", "RAZORPAY_UNAVAILABLE"] as const;
 const REJECTIONS: ReadonlySet<string> = new Set(SETUP_REJECTION_CODES);
 
@@ -136,13 +138,14 @@ export function payoutAccountStatus(row: Row | null, now: Date = new Date()): Pa
 
 /**
  * What a failed setup asks of the creator: correct the marked details, or write to us. An account Razorpay
- * holds under their email (ACCOUNT_CONFLICT) and a refusal that named no field the form has are things the
- * creator cannot fix by retyping, and the screen must not say "correct the marked details" with none marked.
+ * holds under their email (ACCOUNT_CONFLICT), a refused Route product (PRODUCT_REFUSED: the call carries none
+ * of their details) and a refusal that named no form-mappable field are things the creator cannot fix by
+ * retyping, and the screen must not say "correct the marked details" with none marked.
  */
 function attentionOf(status: PayoutAccountStatus, lastError: string | null): PayoutAttention | null {
   if (status !== "failed") return null;
   const err = decodeSetupError(lastError);
-  if (!err || err.code === "ACCOUNT_CONFLICT") return "contact_us";
+  if (!err || err.code === "ACCOUNT_CONFLICT" || err.code === "PRODUCT_REFUSED") return "contact_us";
   return err.references.some((r) => formFieldForReference(r) !== null) ? "fix_details" : "contact_us";
 }
 
@@ -165,7 +168,7 @@ export function toPayoutAccountView(row: Row | null, now: Date = new Date()): Pa
     destinationHint: row.destinationHint && HINT_RE.test(row.destinationHint) ? row.destinationHint : null,
     activatedAt: iso(row.activatedAt),
     bookableAfter: iso(row.bookableAfter),
-    bankChange: { requestedAt: iso(row.bankChangeRequestedAt), clearedAt: iso(row.bankChangeClearedAt) },
+    bankChange: { requestedAt: iso(row.bankChangeRequestedAt), clearedAt: iso(row.bankChangeClearedAt), outcome: bankChangeOutcome(row) },
     termsVersion: row.termsVersion ?? null,
     updatedAt: iso(row.updatedAt),
   };
@@ -204,12 +207,28 @@ export function bankChangePending(account: BankChangeRow | null): boolean {
 }
 
 /**
+ * How a request that is no longer waiting ended. The two columns alone say it, so the answer can never
+ * disagree with the release hold that reads the same two columns (and needs no query of its own):
+ *   • cleared LATER than requested → "processed": staff did the change (the clearing is stamped strictly after
+ *     the request, see markBankChangeProcessed);
+ *   • cleared EXACTLY AT the request → "declined": staff closed it without a change (declineBankChange), the one
+ *     way the two stamps can be equal.
+ * Null while a request is waiting, and when none was made.
+ */
+export function bankChangeOutcome(account: BankChangeRow | null): BankChangeOutcome | null {
+  if (!account?.bankChangeRequestedAt || !account.bankChangeClearedAt || bankChangePending(account)) return null;
+  return account.bankChangeClearedAt.getTime() === account.bankChangeRequestedAt.getTime() ? "declined" : "processed";
+}
+
+/**
  * Whether releases for this creator are paused by a bank change (the Phase 4 release gate reads this):
- * from the request until staff clear it, plus BANK_CHANGE_HOLD_MS after the clearing. A creator who
- * never asked is never blocked.
+ * from the request until staff clear it, plus BANK_CHANGE_HOLD_MS after the clearing. A creator who never
+ * asked is never blocked, and neither is one whose request was closed WITHOUT a change: nothing about their
+ * payout account changed, so there is nothing to wait out (the request itself paused releases until then).
  */
 export function bankChangeBlocksRelease(account: BankChangeRow | null, now: Date = new Date()): boolean {
   if (!account?.bankChangeRequestedAt) return false;
   if (bankChangePending(account)) return true;
+  if (bankChangeOutcome(account) === "declined") return false;
   return now.getTime() < account.bankChangeClearedAt!.getTime() + BANK_CHANGE_HOLD_MS;
 }

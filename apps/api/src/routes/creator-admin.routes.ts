@@ -58,6 +58,14 @@ router.post("/admin/creators/:id/payout-account/bank-change/cleared", ...gate, a
   return success(res, await admin.markBankChangeProcessed(req.params.id, staffId(req)));
 }));
 
+// The other way out of a waiting request: staff close it WITHOUT a change (made by mistake, withdrawn, or no longer
+// possible, e.g. the creator's account is closed). Same rules as above; it never says the account was updated and
+// applies no release pause. Nothing is sent to Razorpay by either route.
+router.post("/admin/creators/:id/payout-account/bank-change/declined", ...gate, asyncHandler(async (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  return success(res, await admin.declineBankChange(req.params.id, staffId(req)));
+}));
+
 router.put("/admin/creators/:id/assets/:assetId", ...gate, validate(creatorAssetToggleSchema), asyncHandler(async (req, res) => {
   return success(res, await admin.setAssetEnabled(req.params.id, req.params.assetId, req.body.enabled, staffId(req)));
 }));

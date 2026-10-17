@@ -90,9 +90,13 @@ const STATUS_NOTE: Record<PayoutAccountStatus, string> = {
 function failedNote(account: AdminPayoutAccount): string {
   const needsUs = account.attention ? account.attention === "contact_us" : account.requirements.length === 0;
   if (!needsUs) return STATUS_NOTE.failed;
-  return account.lastErrorCode === "ACCOUNT_CONFLICT"
-    ? "Razorpay already has an account under this creator's email that we could not safely link. The creator cannot fix this by resubmitting: resolve it in Razorpay, then tell them to try again from their payouts page."
-    : "Razorpay refused the setup without naming a detail the creator can correct on the form. The creator is told to write to us: look at the account in Razorpay, then tell them to try again.";
+  if (account.lastErrorCode === "ACCOUNT_CONFLICT") {
+    return "Razorpay already has an account under this creator's email that we could not safely link. The creator cannot fix this by resubmitting: resolve it in Razorpay, then tell them to try again from their payouts page.";
+  }
+  if (account.lastErrorCode === "PRODUCT_REFUSED") {
+    return "Razorpay refused to create the Route product, so this needs a manual step from us (below, under Last problem). The creator has been told it is with our team and not to retry.";
+  }
+  return "Razorpay refused the setup without naming a detail the creator can correct on the form. The creator is told to write to us: look at the account in Razorpay, then tell them to try again.";
 }
 
 const STEP_TEXT: Record<PayoutSetupStep, string> = {
@@ -110,7 +114,10 @@ const ERROR_TEXT: Record<string, string> = {
   BANK_DETAILS_REJECTED: "Razorpay rejected the bank details the creator entered.",
   ACCOUNT_CONFLICT: "Razorpay already has an account under this email that we could not safely link. A person needs to check it.",
   ACCOUNT_UNKNOWN: "We did not hear back about creating the account. The creator can submit again; check Razorpay if it repeats.",
-  PRODUCT_UNKNOWN: "We did not hear back about the settlement request. Check the account in Razorpay before the creator retries.",
+  // The unknown outcome only: no readable answer to the Route product request. A refusal Razorpay DID give is PRODUCT_REFUSED.
+  PRODUCT_UNKNOWN: "We did not hear back about the Route product request, so we do not know whether Razorpay made it. The creator can try again; check the account in Razorpay if it repeats.",
+  PRODUCT_REFUSED:
+    "Razorpay refused to create the Route product, usually because one already exists that we never received. In the Razorpay dashboard open this creator's linked account; if it has a Route product, set its id as razorpay_product_id on this creator's payout account row. If that product is already activated the next status check settles the setup by itself; otherwise tell the creator to try again. If the creator still cannot request a bank change afterwards, set setup_step to done.",
   RAZORPAY_UNAVAILABLE: "Razorpay did not answer on the last attempt.",
 };
 
@@ -155,31 +162,55 @@ function Line({ label, children }: { label: string; children: React.ReactNode })
 
 const MONO = "font-mono text-[12px] text-ds-t2 break-all";
 
+type Closing = "processed" | "declined";
+
+const DIALOG: Record<Closing, { title: string; lead: string; note: string; confirm: string }> = {
+  processed: {
+    title: "Mark the bank change processed?",
+    lead: "Do this only once Razorpay support has confirmed the new bank details. The creator is emailed that it is done, unless their account is closed (no bank details are in the email). If the request was a mistake or cannot be carried out, close it without a change instead.",
+    note: "Payouts for this creator stay paused until 72 hours after you mark it processed.",
+    confirm: "Mark processed",
+  },
+  declined: {
+    title: "Close this request without a change?",
+    lead: "Use this when the request was made by mistake, was withdrawn, or cannot be carried out (for example the creator's account is closed). Nothing is changed at Razorpay, and the creator is not told their bank account was updated: if their account is open they get a short note that the request was closed and nothing changed.",
+    note: "Payouts for this creator are no longer paused by this request. If Razorpay support has already changed the bank account, do not use this: mark it processed so the 72-hour pause applies.",
+    confirm: "Close request",
+  },
+};
+
 function BankChangeDialog({
-  busy, error, onCancel, onConfirm,
-}: { busy: boolean; error: string; onCancel: () => void; onConfirm: () => void }) {
+  kind, busy, error, onCancel, onConfirm,
+}: { kind: Closing; busy: boolean; error: string; onCancel: () => void; onConfirm: () => void }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape" && !busy) onCancel(); };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [busy, onCancel]);
+  const t = DIALOG[kind];
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4" onMouseDown={(e) => { if (e.target === e.currentTarget && !busy) onCancel(); }}>
       <div role="dialog" aria-modal="true" aria-labelledby="bank-change-title" className={`${CARD} w-full max-w-[480px] p-5`}>
-        <h2 id="bank-change-title" className="text-[16px] font-semibold text-ds-text">Mark the bank change processed?</h2>
-        <p className="mt-1.5 text-[13px] text-ds-t2">
-          Do this only once Razorpay support has confirmed the new bank details. The creator is emailed that it is done (no bank details are in the email).
-        </p>
-        <p className="mt-2 text-[13px] text-ds-gold">Payouts for this creator stay paused until 72 hours after you mark it processed.</p>
+        <h2 id="bank-change-title" className="text-[16px] font-semibold text-ds-text">{t.title}</h2>
+        <p className="mt-1.5 text-[13px] text-ds-t2">{t.lead}</p>
+        <p className="mt-2 text-[13px] text-ds-gold">{t.note}</p>
         {error && <div className="mt-3"><ErrorBar message={error} /></div>}
         <div className="mt-4 flex justify-end gap-2">
           <button type="button" className={BTN_GHOST} onClick={onCancel} disabled={busy} autoFocus>Cancel</button>
-          <button type="button" className={BTN_GOLD} onClick={onConfirm} disabled={busy}>{busy ? "Working…" : "Mark processed"}</button>
+          <button type="button" className={BTN_GOLD} onClick={onConfirm} disabled={busy}>{busy ? "Working…" : t.confirm}</button>
         </div>
       </div>
     </div>
   );
+}
+
+/** What a closing action answered, so the page can say whether (and why not) the creator was emailed. */
+export interface BankChangeResult {
+  kind: Closing;
+  emailSent: boolean | undefined;
+  /** The mail was left out on purpose: their account is closed, so it is not a failure to send. */
+  emailSkipped: "creator_closed" | null | undefined;
 }
 
 // ── The card ────────────────────────────────────────────────────────────────────────────────────
@@ -194,25 +225,25 @@ export function PayoutAccountCard({
   /** The last re-read failed, so what is shown is the last answer we did get. */
   refreshFailed: boolean;
   onRefresh: () => void;
-  /** The action worked: the page swaps its data for the answer and says whether the creator was emailed. */
-  onProcessed: (next: AdminCreatorDetail, emailSent: boolean | undefined) => void;
+  /** An action worked (processed, or closed without a change): the page swaps its data for the answer and says whether the creator was emailed. */
+  onProcessed: (next: AdminCreatorDetail, result: BankChangeResult) => void;
 }) {
   const state = payoutPanelState(detail);
-  const [confirming, setConfirming] = useState(false);
+  const [confirming, setConfirming] = useState<Closing | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
-  const markProcessed = async () => {
+  const closeRequest = async (kind: Closing) => {
     setBusy(true);
     setErr("");
     try {
-      const r = await apiFetch<{ data: AdminCreatorDetail }>(`/admin/creators/${creatorId}/payout-account/bank-change/cleared`, {
-        method: "POST",
-        body: JSON.stringify({}),
-      });
-      const { emailSent, ...next } = r.data;
-      setConfirming(false);
-      onProcessed(next, emailSent);
+      const r = await apiFetch<{ data: AdminCreatorDetail }>(
+        `/admin/creators/${creatorId}/payout-account/bank-change/${kind === "processed" ? "cleared" : "declined"}`,
+        { method: "POST", body: JSON.stringify({}) },
+      );
+      const { emailSent, emailSkipped, ...next } = r.data;
+      setConfirming(null);
+      onProcessed(next, { kind, emailSent, emailSkipped });
     } catch (e) {
       setErr(e instanceof Error && e.message ? e.message : "That didn't work.");
       // Most likely another staff member got there first: show what is true now.
@@ -323,16 +354,23 @@ export function PayoutAccountCard({
                 <p className="text-[13px] text-ds-gold font-semibold">Bank change requested {fmtWhen(account.bankChange.requestedAt)}</p>
                 <p className="mt-1 text-[12.5px] text-ds-t2">
                   Razorpay&apos;s API cannot change a bank account: raise it with Razorpay support, then mark it processed here once they confirm.
-                  Payouts for this creator are paused from the request until then.
+                  Payouts for this creator are paused from the request until you close it here.
                 </p>
                 <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
-                  <button type="button" className={BTN_GOLD} onClick={() => { setErr(""); setConfirming(true); }}>Mark bank change processed</button>
+                  <button type="button" className={BTN_GOLD} onClick={() => { setErr(""); setConfirming("processed"); }}>Mark bank change processed</button>
+                  <button type="button" className={BTN_GHOST} onClick={() => { setErr(""); setConfirming("declined"); }}>Close request without a change</button>
                 </div>
-                <p className="mt-2 text-[12px] text-ds-t3">Payouts for this creator stay paused until 72 hours after you mark it processed.</p>
+                <p className="mt-2 text-[12px] text-ds-t3">
+                  Payouts for this creator stay paused until 72 hours after you mark it processed. If the request was a mistake, was withdrawn or cannot be carried out, close it without a change: that tells the creator nothing was updated and stops the reminder emails.
+                </p>
               </div>
+            ) : account.bankChange.outcome === "declined" ? (
+              <p className="mt-1 text-[13px] text-ds-t2">
+                Requested {fmtWhen(account.bankChange.requestedAt)}, closed without a change {fmtWhen(account.bankChange.clearedAt)}. Nothing about the payout account changed, and payouts are not paused by it.
+              </p>
             ) : (
               <p className="mt-1 text-[13px] text-ds-t2">
-                Requested {fmtWhen(account.bankChange.requestedAt)}, marked processed {fmtWhen(account.bankChange.clearedAt)}.{" "}
+                Requested {fmtWhen(account.bankChange.requestedAt)}, {account.bankChange.outcome === "processed" ? "marked processed" : "closed"} {fmtWhen(account.bankChange.clearedAt)}.{" "}
                 {account.releaseHold.active && account.releaseHold.resumesAt
                   ? <span className="text-ds-gold">Payouts stay paused until {fmtWhen(account.releaseHold.resumesAt)}.</span>
                   : "Payouts are not paused by it any more."}
@@ -343,7 +381,7 @@ export function PayoutAccountCard({
       )}
 
       {confirming && (
-        <BankChangeDialog busy={busy} error={err} onCancel={() => setConfirming(false)} onConfirm={markProcessed} />
+        <BankChangeDialog kind={confirming} busy={busy} error={err} onCancel={() => setConfirming(null)} onConfirm={() => void closeRequest(confirming)} />
       )}
     </section>
   );

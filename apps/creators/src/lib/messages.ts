@@ -81,6 +81,9 @@ const PAYOUT_SENTENCES: Record<string, string> = {
     "We couldn't link a payout account to your profile. Our team has been told; if you don't hear from us, email creators@digitalsukoon.com.",
   SETUP_UNCERTAIN:
     "We couldn't confirm whether Razorpay finished setting up your payout account. Nothing has been lost. Please try again in a minute; if it keeps happening, email creators@digitalsukoon.com.",
+  // A refusal only our team can resolve (Razorpay turned down the Route product request, which carries none of the
+  // creator's details): retyping cannot help and would only spend attempts, so the sentence says so.
+  SETUP_NEEDS_TEAM: "Our team has been told and will finish this. There is no need to try again; we will email you.",
   SETUP_IN_PROGRESS: "Your bank account is already being set up, perhaps in another tab. Give it a minute, then check this page.",
   RAZORPAY_UNAVAILABLE: "Razorpay didn't answer. Nothing has been lost. Please try again in a minute.",
   PAYOUT_BUSY: "We're setting up a lot of payout accounts right now. Please try again tomorrow.",
@@ -88,9 +91,11 @@ const PAYOUT_SENTENCES: Record<string, string> = {
   ROUTE_DISABLED: "Adding a bank account isn't open right now.",
   // The same answer as ROUTE_DISABLED for the creator: bank connect is not open yet. (The page never offers the form then.)
   TERMS_PENDING: "Adding a bank account isn't open yet.",
-  // Razorpay already holds this payout account past setup: nothing is sent again, and a bank change goes through our team.
+  // Razorpay already holds this payout account past setup, so nothing is sent again. ⚠️ No "Change bank account": this
+  // answer comes while our own record of the setup is still short of finished, and the page offers that button only once
+  // it is finished. The one way out that always exists is the email address.
   ALREADY_SET_UP:
-    "Your payout account is already set up, so there's nothing to send again. To use a different bank account, choose Change bank account on this page.",
+    "Your payout account is already set up with Razorpay, so nothing needs to be sent again. If you need to change your bank account, email creators@digitalsukoon.com.",
   TERMS_CHANGED: "The creator terms have changed. Reload this page, read them and accept again.",
   NOT_APPROVED: "Your profile needs to be approved before you can add a bank account.",
   ACCOUNT_SUSPENDED: "Your account is suspended, so a bank account can't be added right now. Email creators@digitalsukoon.com.",
@@ -124,6 +129,7 @@ const PAYOUT_DEFINITE_CODES: ReadonlySet<string> = new Set([
   "BANK_DETAILS_REJECTED",
   "DETAILS_REJECTED",
   "ACCOUNT_CONFLICT",
+  "SETUP_NEEDS_TEAM",
   "TERMS_CHANGED",
   "NOT_APPROVED",
   "ACCOUNT_SUSPENDED",

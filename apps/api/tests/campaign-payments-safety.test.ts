@@ -13,6 +13,7 @@ import { describe, it, expect, beforeEach, beforeAll, afterAll, afterEach, vi } 
 import request from "supertest";
 import crypto from "crypto";
 import { prisma } from "@dashmani/db";
+import { formatPaise } from "@dashmani/shared";
 import "./setup";
 
 vi.mock("../src/services/email.service", async (orig) => {
@@ -702,6 +703,237 @@ describe("campaign payment safety", () => {
         spy.mockRestore();
       }
       expect(alertSubjects()).toEqual([]);
+    });
+  });
+
+  // ── A stale refund that Razorpay accepts and the bank keeps returning ───────────
+
+  describe("a refund_due payment whose refund Razorpay accepts and then fails, again and again", () => {
+    const reject = (id: string) => post(`/v1/admin/campaigns/${id}/reject`, { note: "Brand not permitted on our network" });
+    const GIVE_UP = "A campaign refund needs a manual refund";
+    const FAILED = "A campaign refund failed at Razorpay";
+    /** One field of the nth staff email with this subject (the alert details arrive HTML-escaped; the texts under test hold nothing to escape). */
+    const detail = (subject: string, label: string, nth = 0) => {
+      const call = vi.mocked(notifyAdminByEmail).mock.calls.filter((c) => c[0] === subject)[nth];
+      return (call?.[1] as Array<{ label: string; value: string }> | undefined)?.find((d) => d.label === label)?.value;
+    };
+
+    /**
+     * A rejected online booking whose item refund Razorpay refused, so its payment is refund_due. Then `times` rounds of: the sweep
+     * issues the stale refund, Razorpay accepts it (pending), and the bank returns it (refund.failed). Razorpay keeps accepting.
+     */
+    async function staleRefundFailing(times: number) {
+      const s = await seed({ booking: "paid_pending_review", prices: [10_000], payment: { status: "captured" } });
+      rz.mode = "reject400";
+      expect((await reject(s.booking.id)).status).toBe(200);
+      rz.mode = "ok";
+      rz.newStatus = "pending";
+      const payId = s.payment!.id;
+      const pid = s.payment!.razorpayPaymentId!;
+      for (let i = 0; i < times; i++) {
+        // 61 minutes on: past the longest backoff (an hour), whatever the number of failures so far.
+        expect(await sweepRefundDue({ now: later(61) })).toMatchObject({ issued: 1, errors: 0 });
+        const sent = rz.refunds.get(pid)!.filter((r) => r.status === "pending");
+        expect(sent).toHaveLength(1);
+        sent[0].status = "failed";
+        expect((await webhook("refund.failed", { id: sent[0].id, payment_id: pid }, "refund")).status).toBe(200);
+      }
+      return { s, payId, pid };
+    }
+
+    it("stops after five failed attempts: no sixth refund, one 'needs a manual refund' alert, and the payment stays owed", async () => {
+      const { s, payId } = await staleRefundFailing(5);
+      expect(refundPosts().map((c) => c.key)).toEqual([
+        `rf-item-${s.items[0].id}`, // the item refund the rejection tried first, and Razorpay refused
+        `rf-stale-${payId}`,
+        `rf-stale-${payId}-r2`,
+        `rf-stale-${payId}-r3`,
+        `rf-stale-${payId}-r4`,
+        `rf-stale-${payId}-r5`,
+      ]);
+      expect(await prisma.campaignRefund.count({ where: { paymentId: payId, status: "failed", idempotencyKey: { startsWith: `rf-stale-${payId}` } } })).toBe(5);
+      expect(alertSubjects().filter((x) => x === FAILED)).toHaveLength(5);
+      expect(alertSubjects()).not.toContain(GIVE_UP); // told by the sweep, not by the webhook
+
+      // Every later tick: nothing is sent, nothing errors, and staff are told ONCE.
+      for (const minutes of [61, 120, 500]) expect(await sweepRefundDue({ now: later(minutes) })).toMatchObject({ issued: 0, errors: 0 });
+      expect(refundPosts()).toHaveLength(6);
+      expect(alertSubjects().filter((x) => x === GIVE_UP)).toHaveLength(1);
+      expect(alertSubjects()).not.toContain("A campaign refund is stuck");
+      expect(detail(GIVE_UP, "Failed attempts")).toBe("5");
+      expect(detail(GIVE_UP, "Amount still owed")).toBe(formatPaise(10_000));
+      const todo = detail(GIVE_UP, "What to do")!;
+      expect(todo).toContain("Razorpay dashboard");
+      // A transfer outside Razorpay is on no ledger: staff must be told not to do both.
+      expect(todo).toContain("bank transfer");
+      expect(todo).toContain("never both");
+
+      // Still owed, and the booking is not pretended to be refunded.
+      expect(await prisma.campaignPayment.findUniqueOrThrow({ where: { id: payId } })).toMatchObject({ status: "refund_due", refundedPaise: 0 });
+      expect((await prisma.campaignBooking.findUniqueOrThrow({ where: { id: s.booking.id } })).status).toBe("rejected");
+    });
+
+    it("a given-up payment does not hold the head of the queue: the live refund behind it is issued on the next tick", async () => {
+      const { payId } = await staleRefundFailing(5);
+      const live = await seed({ booking: "draft", prices: [250_000], total: null, payment: { status: "refund_due" } });
+      // The given-up payment is the OLDEST in the queue, and a tick has ONE place.
+      await prisma.campaignPayment.update({ where: { id: payId }, data: { updatedAt: new Date(Date.now() - 3600_000) } });
+      await prisma.campaignPayment.update({ where: { id: live.payment!.id }, data: { amountPaise: 250_000, updatedAt: new Date(Date.now() - 1800_000) } });
+      const before = refundPosts().length;
+
+      expect(await sweepRefundDue({ now: later(61), limit: 1 })).toMatchObject({ issued: 0, errors: 0 });
+      expect(refundPosts()).toHaveLength(before); // its place went on giving up
+      expect(await sweepRefundDue({ now: later(62), limit: 1 })).toMatchObject({ issued: 1, errors: 0 });
+      expect(refundPosts()).toHaveLength(before + 1);
+      expect(refundPosts().at(-1)).toMatchObject({ key: `rf-stale-${live.payment!.id}`, body: expect.objectContaining({ amount: 250_000 }) });
+      expect(alertSubjects().filter((x) => x === GIVE_UP)).toHaveLength(1);
+    });
+
+    it("once the brand is refunded from the Razorpay dashboard, the given-up payment settles and nothing more is sent", async () => {
+      const { s, payId, pid } = await staleRefundFailing(5);
+      await sweepRefundDue({ now: later(61) }); // gives up
+      rz.refunds.get(pid)!.push({ id: "rfnd_dashboard", amount: 10_000, status: "processed", receipt: null, key: null });
+      expect((await webhook("refund.created", { id: "rfnd_dashboard", payment_id: pid }, "refund")).status).toBe(200);
+
+      expect(await prisma.campaignRefund.findFirstOrThrow({ where: { origin: "external" } })).toMatchObject({ razorpayRefundId: "rfnd_dashboard", status: "processed", amountPaise: 10_000 });
+      expect(await prisma.campaignPayment.findUniqueOrThrow({ where: { id: payId } })).toMatchObject({ status: "refunded", refundedPaise: 10_000 });
+      expect((await prisma.campaignBooking.findUniqueOrThrow({ where: { id: s.booking.id } })).status).toBe("refunded");
+      const sent = refundPosts().length;
+      await sweepRefundDue({ now: later(120) });
+      expect(refundPosts()).toHaveLength(sent);
+    });
+
+    it("another remainder is another refund: it gets a fresh cap and a fresh alert", async () => {
+      // Generation 1 is live (4 000 pending at Razorpay). Generation 2, the 6 000 another refund left owing, was refused five times.
+      const s = await seed({ booking: "rejected", prices: [10_000], items: ["refunded"], payment: { status: "refund_due", refunded: 4_000 } });
+      const payId = s.payment!.id;
+      const pid = s.payment!.razorpayPaymentId!;
+      const row = (key: string, status: string, amountPaise: number, razorpayRefundId: string | null) =>
+        prisma.campaignRefund.create({
+          data: { idempotencyKey: key, razorpayRefundId, paymentId: payId, razorpayPaymentId: pid, bookingId: s.booking.id, amountPaise, status, origin: "ours", reason: "booking_rejected", lastCheckedAt: later(10_000) },
+        });
+      await row(`rf-stale-${payId}`, "pending", 4_000, "rfnd_g1_live");
+      await row(`rf-stale-${payId}-g2`, "failed", 6_000, null);
+      for (let i = 2; i <= 5; i++) await row(`rf-stale-${payId}-g2-r${i}`, "failed", 6_000, null);
+      rz.refunds.set(pid, [{ id: "rfnd_g1_live", amount: 4_000, status: "pending", receipt: null, key: null }]);
+
+      // Generation 2 is out of attempts: staff are told, nothing is sent.
+      expect(await sweepRefundDue({ now: later(61) })).toMatchObject({ issued: 0, errors: 0 });
+      expect(refundPosts()).toHaveLength(0);
+      expect(alertSubjects().filter((x) => x === GIVE_UP)).toHaveLength(1);
+      expect(detail(GIVE_UP, "Amount still owed", 0)).toBe(formatPaise(6_000));
+
+      // Then generation 1's refund fails too: all 10 000 is owed again, as generation 1 with ONE failed attempt. Generation 2's five
+      // failures are not its attempts, so it is tried again (and refused, Razorpay has no balance) four more times ...
+      rz.refunds.get(pid)![0].status = "failed";
+      expect((await webhook("refund.failed", { id: "rfnd_g1_live", payment_id: pid }, "refund")).status).toBe(200);
+      expect(await prisma.campaignPayment.findUniqueOrThrow({ where: { id: payId } })).toMatchObject({ status: "refund_due", refundedPaise: 0 });
+      rz.mode = "reject400";
+      for (let i = 0; i < 4; i++) await sweepRefundDue({ now: later(61) });
+      expect(refundPosts().map((c) => [c.key, c.body.amount])).toEqual([2, 3, 4, 5].map((n) => [`rf-stale-${payId}-r${n}`, 10_000]));
+      expect(alertSubjects().filter((x) => x === GIVE_UP)).toHaveLength(1);
+
+      // ... and only then is it given up on, with an alert of its own (the first one was about generation 2).
+      await sweepRefundDue({ now: later(61) });
+      expect(refundPosts()).toHaveLength(4);
+      expect(alertSubjects().filter((x) => x === GIVE_UP)).toHaveLength(2);
+      expect(detail(GIVE_UP, "Amount still owed", 1)).toBe(formatPaise(10_000));
+      expect(detail(GIVE_UP, "Failed attempts", 1)).toBe("5");
+    });
+
+    // ── The failure email ───────────────────────────────────────────────────────
+
+    describe("the failure email says what the sweep will really do about that refund", () => {
+      const ITEM_RETRY = "An item refund is issued again automatically (up to 5 attempts)";
+      const OWED_RETRY = "what is still owed is issued again automatically (up to 5 attempts of the same refund)";
+
+      /**
+       * Refund `rfnd_fail` of a payment, which Razorpay now reports as failed, after `earlierFailed` failed attempts of the same intent;
+       * reconciles it and returns the email's "What happens next". `key` says which family the refund belongs to: an item refund
+       * (`rf-item-`, item-bound), a stale refund (`rf-stale-`) or a whole-booking one (`rf-rej-`).
+       */
+      async function nextStepAfterFailure(o: { payment: "refund_pending" | "refund_due"; key: "item" | "stale" | "rej"; reason: string; earlierFailed?: number }) {
+        const s = await seed({ booking: o.payment === "refund_due" ? "rejected" : "approved", prices: [100_000, 150_000], items: ["refunded", "manual_pending"], payment: { status: o.payment, refunded: 100_000 } });
+        const payId = s.payment!.id;
+        const pid = s.payment!.razorpayPaymentId!;
+        const itemId = s.items[0].id;
+        const base = o.key === "item" ? `rf-item-${itemId}` : o.key === "stale" ? `rf-stale-${payId}` : `rf-rej-${s.booking.id}-${payId}`;
+        const row = (key: string, status: string, razorpayRefundId: string | null) =>
+          prisma.campaignRefund.create({
+            data: { idempotencyKey: key, razorpayRefundId, paymentId: payId, razorpayPaymentId: pid, bookingId: s.booking.id, bookingItemId: o.key === "item" ? itemId : null, amountPaise: 100_000, status, origin: "ours", reason: o.reason },
+          });
+        const earlier = o.earlierFailed ?? 0;
+        for (let i = 0; i < earlier; i++) await row(i === 0 ? base : `${base}-r${i + 1}`, "failed", null);
+        await row(earlier === 0 ? base : `${base}-r${earlier + 1}`, "pending", "rfnd_fail");
+        rz.refunds.set(pid, [{ id: "rfnd_fail", amount: 100_000, status: "failed", receipt: null, key: null }]);
+
+        await reconcileRefunds(payId);
+        expect(alertSubjects().filter((x) => x === FAILED)).toHaveLength(1);
+        return detail(FAILED, "What happens next")!;
+      }
+
+      it("an item refund on a payment that is not owed back: the sweep retries it (step 4), up to five attempts", async () => {
+        const text = await nextStepAfterFailure({ payment: "refund_pending", key: "item", reason: "item_refunded" });
+        expect(text).toContain(ITEM_RETRY);
+        expect(text).not.toContain("what is still owed");
+      });
+
+      it("the fifth failed attempt of an item refund is the last: no retry is promised, and staff are told to refund it by hand, not by both ways", async () => {
+        const text = await nextStepAfterFailure({ payment: "refund_pending", key: "item", reason: "item_refunded", earlierFailed: 4 });
+        expect(text).toContain("no longer issued again");
+        expect(text).toContain("Razorpay dashboard");
+        expect(text).toContain("bank transfer");
+        expect(text).not.toContain("issued again automatically");
+      });
+
+      it("a stale refund of a payment that is owed back: the sweep issues what is still owed again (step 1), up to five attempts", async () => {
+        const text = await nextStepAfterFailure({ payment: "refund_due", key: "stale", reason: "booking_rejected" });
+        expect(text).toContain(OWED_RETRY);
+        expect(text).not.toContain("An item refund");
+      });
+
+      it("an item-bound refund of a REJECTED booking belongs to step 1, which does not retry item refunds: it is not promised step 4's retry", async () => {
+        const text = await nextStepAfterFailure({ payment: "refund_due", key: "item", reason: "booking_rejected" });
+        expect(text).toContain(OWED_RETRY);
+        expect(text).not.toContain("An item refund");
+      });
+
+      it("the fifth failed attempt of a stale refund is the last one", async () => {
+        const text = await nextStepAfterFailure({ payment: "refund_due", key: "stale", reason: "booking_rejected", earlierFailed: 4 });
+        expect(text).toContain("no longer issued again");
+        expect(text).toContain("bank transfer");
+        expect(text).not.toContain("issued again automatically");
+        expect(text).not.toContain("up to 5 attempts");
+      });
+
+      it("a refund no step of the sweep retries is not promised one", async () => {
+        const text = await nextStepAfterFailure({ payment: "refund_pending", key: "rej", reason: "booking_rejected" });
+        expect(text).toContain("not issued again automatically");
+        expect(text).not.toContain("up to 5 attempts");
+      });
+
+      describe("with the refund sweep switched off (CAMPAIGN_REFUND_SWEEP_ENABLED=0)", () => {
+        let saved: string | undefined;
+        beforeEach(() => {
+          saved = process.env.CAMPAIGN_REFUND_SWEEP_ENABLED;
+          process.env.CAMPAIGN_REFUND_SWEEP_ENABLED = "0";
+        });
+        afterEach(() => {
+          if (saved === undefined) delete process.env.CAMPAIGN_REFUND_SWEEP_ENABLED;
+          else process.env.CAMPAIGN_REFUND_SWEEP_ENABLED = saved;
+        });
+
+        it.each([
+          ["an item refund", { payment: "refund_pending", key: "item", reason: "item_refunded" }],
+          ["a stale refund", { payment: "refund_due", key: "stale", reason: "booking_rejected" }],
+        ] as Array<[string, Parameters<typeof nextStepAfterFailure>[0]]>)("%s is not promised a retry: nothing is running", async (_name, o) => {
+          const text = await nextStepAfterFailure(o);
+          expect(text).toContain("switched off");
+          expect(text).toContain("Razorpay dashboard");
+          expect(text).not.toContain("issued again automatically");
+          expect(text).not.toContain("up to 5 attempts");
+        });
+      });
     });
   });
 

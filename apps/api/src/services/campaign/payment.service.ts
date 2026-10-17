@@ -748,6 +748,55 @@ export async function maybeMarkRefunded(bookingId: string) {
 
 const ledgerStatus = (s: string) => (s === "processed" ? "processed" : s === "failed" ? "failed" : "pending");
 
+/** One of our refunds that Razorpay has just reported as failed (see reconcileRefunds). */
+type FailedRefund = { id: string; amount: number; bookingItemId: string | null; reason: string | null };
+
+// What staff are told about a failed refund. No apostrophes or quotes: the text is HTML-escaped on its way out.
+const NEXT_STEP_SWEEP_OFF =
+  "The automatic refund check is switched off, so nothing will issue this refund again. Look at the payment in Razorpay: if the brand has not been repaid, refund it from the Razorpay dashboard, or ask whoever runs the server to switch the refund check back on.";
+const NEXT_STEP_ITEM =
+  "An item refund is issued again automatically (up to 5 attempts) and you are told if it keeps failing. If the brand has still not been repaid, check the payment in Razorpay.";
+const NEXT_STEP_OWED =
+  "This payment is owed back, and what is still owed is issued again automatically (up to 5 attempts of the same refund). You are told if it keeps failing or if the sweep gives up on it. If the brand has still not been repaid, check the payment in Razorpay.";
+const NEXT_STEP_GIVEN_UP =
+  "That was the last automatic attempt: this refund is no longer issued again, and a separate alert says so once. Refund the brand from the Razorpay dashboard; the payment settles by itself once Razorpay lists that refund. Do not also pay the brand by bank transfer: a transfer made outside Razorpay is not recorded here.";
+const NEXT_STEP_NONE =
+  "This refund is not issued again automatically. Check the payment in Razorpay and, if the brand has not been repaid, refund it from the Razorpay dashboard.";
+
+/**
+ * What the sweep will REALLY do about a refund that Razorpay accepted and then failed, so staff are
+ * never promised a retry that will not happen. Two steps of the sweep re-issue failed refunds, and
+ * which one owns this refund depends on the payment's status AFTER the failure was applied:
+ *   • `refund_due` (a rejected booking, an outdated or duplicate payment): step 1 issues what is still
+ *     owed again, whichever row failed, up to ITEM_REFUND_MAX_AUTO_ATTEMPTS failed attempts of one
+ *     remainder (see staleRefundNext);
+ *   • an item refund (reason item_refunded) on any other payment that can still refund: step 4
+ *     (resendFailedItemRefunds), up to the same number of failed attempts of that item's refund;
+ *   • anything else is not issued again by anything.
+ * And once that many attempts have failed, the answer is "no more", not "again". With the refund
+ * sweep switched off (CAMPAIGN_REFUND_SWEEP_ENABLED=0, read through refundSweepEnabled like the
+ * cron does) nothing retries, whatever the row is.
+ * It never throws: this runs after the reconcile has committed, and a failed read here must not
+ * turn a settled reconcile into an error (the alert for this failure would be lost).
+ */
+async function failedRefundNextStep(paymentId: string, paymentStatus: string, f: FailedRefund): Promise<string> {
+  if (!refundSweepEnabled()) return NEXT_STEP_SWEEP_OFF;
+  try {
+    if (paymentStatus === "refund_due") {
+      const { attempts } = await staleRefundNext(paymentId);
+      return attempts.length >= ITEM_REFUND_MAX_AUTO_ATTEMPTS ? NEXT_STEP_GIVEN_UP : NEXT_STEP_OWED;
+    }
+    if (f.bookingItemId && f.reason === "item_refunded" && (ITEM_REFUNDABLE_STATUSES as readonly string[]).includes(paymentStatus)) {
+      const key = `rf-item-${f.bookingItemId}`;
+      const rows = await prisma.campaignRefund.findMany({ where: { bookingItemId: f.bookingItemId, origin: "ours", status: "failed" }, select: { idempotencyKey: true } });
+      return rows.filter((r) => isAttemptOf(r.idempotencyKey, key)).length >= ITEM_REFUND_MAX_AUTO_ATTEMPTS ? NEXT_STEP_GIVEN_UP : NEXT_STEP_ITEM;
+    }
+  } catch (err) {
+    console.error(`[campaign-refunds] could not work out whether refund ${f.id} is retried: ${errorText(err)}`);
+  }
+  return NEXT_STEP_NONE;
+}
+
 /**
  * Make our books say what Razorpay says about one payment's refunds. Reads the payment's complete
  * refund list (exact or it throws), then in one transaction:
@@ -777,7 +826,7 @@ export async function reconcileRefunds(paymentId: string): Promise<{ refundedPai
       const byRefundId = new Map(rows.filter((r) => r.razorpayRefundId).map((r) => [r.razorpayRefundId as string, r]));
       const unlinked = rows.filter((r) => r.status === "requested" && !r.razorpayRefundId && r.origin === "ours");
       const external: Array<{ id: string; amount: number }> = [];
-      const failedNow: Array<{ id: string; amount: number }> = [];
+      const failedNow: FailedRefund[] = [];
 
       for (const r of list) {
         const status = ledgerStatus(r.status);
@@ -786,7 +835,7 @@ export async function reconcileRefunds(paymentId: string): Promise<{ refundedPai
           const regress = known.status === "processed" && status === "pending";
           if (known.status !== status && !regress) {
             await tx.campaignRefund.update({ where: { id: known.id }, data: { status, processedAt: status === "processed" ? known.processedAt ?? now : known.processedAt, lastCheckedAt: now } });
-            if (status === "failed" && known.origin === "ours") failedNow.push({ id: r.id, amount: r.amount });
+            if (status === "failed" && known.origin === "ours") failedNow.push({ id: r.id, amount: r.amount, bookingItemId: known.bookingItemId, reason: known.reason });
           } else if (known.status !== "failed") {
             // ⚠️ Never on a FAILED row: its updatedAt is "when it failed", which the sweep's retry
             // backoff (steps 1 and 4) measures from. A failed row is not something the sweep polls
@@ -801,7 +850,7 @@ export async function reconcileRefunds(paymentId: string): Promise<{ refundedPai
         if (idx >= 0) {
           const [ours] = unlinked.splice(idx, 1);
           await tx.campaignRefund.update({ where: { id: ours.id }, data: { razorpayRefundId: r.id, status, processedAt: status === "processed" ? now : null, lastCheckedAt: now, lastError: null } });
-          if (status === "failed") failedNow.push({ id: r.id, amount: r.amount });
+          if (status === "failed") failedNow.push({ id: r.id, amount: r.amount, bookingItemId: ours.bookingItemId, reason: ours.reason });
           continue;
         }
         await tx.campaignRefund.create({
@@ -856,7 +905,9 @@ export async function reconcileRefunds(paymentId: string): Promise<{ refundedPai
         );
       }
       for (const f of failedNow) await logBookingEvent(pay.bookingId, { type: "system" }, `Refund ${f.id} (${f.amount} paise) failed at Razorpay.`, tx);
-      return { bookingId: pay.bookingId, total, external, failedNow };
+      // The status AFTER the resync: it decides which step of the sweep owns a failed refund (see failedRefundNextStep).
+      const paymentStatus = failedNow.length > 0 ? (await tx.campaignPayment.findUnique({ where: { id: pay.id }, select: { status: true } }))?.status ?? pay.status : pay.status;
+      return { bookingId: pay.bookingId, total, external, failedNow, paymentStatus };
     });
 
   let out: Awaited<ReturnType<typeof run>>;
@@ -890,8 +941,8 @@ export async function reconcileRefunds(paymentId: string): Promise<{ refundedPai
           { label: "Campaign", value: booking?.name ?? out.bookingId },
           { label: "Refund", value: f.id },
           { label: "Amount", value: formatPaise(f.amount) },
-          // Honest about what the system does and does not do: an item refund is issued again by the sweep (see resendFailedItemRefunds); nothing else is.
-          { label: "What happens next", value: "An item refund is issued again automatically (up to 5 attempts) and you are told if it keeps failing. If the brand has still not been repaid, check the payment in Razorpay." },
+          // Honest about what the sweep will really do about THIS refund (see failedRefundNextStep).
+          { label: "What happens next", value: await failedRefundNextStep(paymentId, out.paymentStatus, f) },
         ],
         `/campaigns/${out.bookingId}`,
       );
@@ -983,7 +1034,9 @@ const touchDue = (paymentId: string) =>
  *   1. A payment left `refund_due` (a crash after the commit, or a refusal, or an item refund that
  *      failed) is refunded for what it still owes (see staleRefundNext: each remainder is its own
  *      refund). After a refusal it backs off 5 minutes per failure (cap 1 hour) and staff are told at
- *      the third; any other error is reported once it has happened three ticks running.
+ *      the third; any other error is reported once it has happened three ticks running. It gives up
+ *      on a remainder after ITEM_REFUND_MAX_AUTO_ATTEMPTS failed attempts (refused, or accepted and
+ *      then failed at Razorpay), tells staff once, and moves the payment to the back of the queue.
  *   2. A refund we asked for and never heard back about, or that Razorpay has not finished, is
  *      reconciled against Razorpay's list; one Razorpay does not list after 5 minutes is re-sent
  *      with the SAME key (safe, and the list says it never arrived).
@@ -1014,7 +1067,38 @@ export async function sweepRefundDue(opts: { limit?: number; now?: Date } = {}):
   for (const p of due) {
     if (refundableOn(p) <= 0) continue; // a refund for all of it is already in flight
     // The failed rows of the remainder about to be tried (see staleRefundNext): earlier remainders' failures are not this one's.
-    const { attempts } = await staleRefundNext(p.id);
+    const { attempts, generation } = await staleRefundNext(p.id);
+    // ⚠️ Give up, like step 4 does for an item refund. A refund Razorpay accepted and the bank then returned
+    // is almost always a problem with the destination (a closed card or account), which asking again does not
+    // fix, and every new attempt is a NEW Razorpay refund of the same money: if staff have paid the brand by
+    // bank transfer meanwhile (nothing on our ledger records that) and the destination starts working, one of
+    // the retries goes through and the brand is repaid twice. So this remainder stops after the same number of
+    // attempts, and staff are told once. The cap is per GENERATION: another remainder is another refund, with
+    // its own attempts and its own alert.
+    if (attempts.length >= ITEM_REFUND_MAX_AUTO_ATTEMPTS) {
+      // The payment stays refund_due, so it is still selected above. Sent to the back of the queue (it is
+      // ordered by updatedAt) it cannot sit at the head and use up one of the `limit` places every tick.
+      // Before the backoff check below, so a given-up payment is moved on every time it is looked at.
+      await touchDue(p.id);
+      if (firstTime(`stale-giveup:${p.id}:g${generation}`)) {
+        alertStaff(
+          "A campaign refund needs a manual refund",
+          [
+            { label: "Payment", value: p.razorpayPaymentId ?? p.id },
+            { label: "Amount still owed", value: formatPaise(refundableOn(p)) },
+            { label: "Failed attempts", value: String(attempts.length) },
+            {
+              label: "What to do",
+              value:
+                "It failed " + attempts.length + " times and is no longer retried automatically. Refund the amount still owed from the Razorpay dashboard; the payment settles by itself once Razorpay lists that refund. " +
+                "If you pay the brand by bank transfer instead, nothing here records it: do one or the other, never both, or the brand is repaid twice.",
+            },
+          ],
+          `/campaigns/${p.bookingId}`,
+        );
+      }
+      continue;
+    }
     if (attempts.length > 0 && attempts[0].updatedAt.getTime() + Math.min(60, 5 * attempts.length) * 60_000 > now.getTime()) continue;
     try {
       const done = await issueDueRefund(p.id, system);
@@ -1116,7 +1200,11 @@ export async function sweepRefundDue(opts: { limit?: number; now?: Date } = {}):
 
 /** A failed item refund is retried for this long after its last failure, and then left to staff (the alert has long since gone out). */
 const ITEM_REFUND_RETRY_WINDOW_MS = 14 * 24 * 3600_000;
-/** After this many failed attempts of one item refund staff are told to refund it by hand and the sweep stops. */
+/**
+ * After this many failed attempts of one refund staff are told to refund it by hand and the sweep stops.
+ * Both families use it: an item refund (step 4) and one remainder of a `refund_due` payment (step 1).
+ * An asynchronously failed refund is usually a problem with the destination, which retrying does not fix.
+ */
 const ITEM_REFUND_MAX_AUTO_ATTEMPTS = 5;
 
 /** Alerts that skip or give up on an item refund are sent once per row per process, not once a minute. */

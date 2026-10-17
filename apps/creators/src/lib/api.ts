@@ -16,12 +16,15 @@ export const TOKEN_KEYS = {
  * sent to /login?next=. Every other path renders publicly — including unknown ones, so a
  * mistyped URL shows the 404 page instead of the sign-in form.
  */
-export const PRIVATE_ROUTES = ["/dashboard", "/connect", "/settings"];
+export const PRIVATE_ROUTES = ["/dashboard", "/connect", "/payouts", "/settings"];
 
 export function isPrivatePath(path: string): boolean {
   const p = path.length > 1 ? path.replace(/\/+$/, "") : path;
   return PRIVATE_ROUTES.some((r) => p === r || p.startsWith(`${r}/`));
 }
+
+/** GET /creator/payout-account: shared by the nav, the Payouts page and its SWR cache entry. */
+export const PAYOUT_ACCOUNT_PATH = "/creator/payout-account";
 
 export interface ApiEnvelope<T> {
   success: true;

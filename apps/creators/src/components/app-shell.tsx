@@ -1,22 +1,36 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import useSWR from "swr";
 import { LogOut } from "lucide-react";
 import { useAuth } from "@/lib/auth";
+import { fetcher, PAYOUT_ACCOUNT_PATH } from "@/lib/api";
+import type { PayoutAccountResponse } from "@/lib/types";
 import { CREATOR_STATUS_LABELS } from "@dashmani/shared/src/validators/creator";
 
-// The signed-in frame: brand, three channels (Overview / Pages / Settings) and sign-out, in the
+// The signed-in frame: brand, the channels (Overview / Pages / Payouts / Settings) and sign-out, in the
 // site's header style. Nav wraps rather than scrolls so nothing overflows at 390px.
+// "Payouts" is shown only when bank connect exists for this creator: the server says it is open
+// (routeEnabled) or the creator already has a payout account. While it is dark the nav is exactly what
+// it always was; a failed or pending answer shows nothing.
 const NAV = [
-  { href: "/dashboard", label: "Overview" },
-  { href: "/connect", label: "Pages" },
-  { href: "/settings", label: "Settings" },
+  { href: "/dashboard", label: "Overview", payouts: false },
+  { href: "/connect", label: "Pages", payouts: false },
+  { href: "/payouts", label: "Payouts", payouts: true },
+  { href: "/settings", label: "Settings", payouts: false },
 ];
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()?.replace(/\/+$/, "") || "/";
   const { creator, logout } = useAuth();
   const status = creator?.status;
+  // Same cache entry as the Payouts page: one request serves both.
+  const { data: payout } = useSWR<PayoutAccountResponse>(PAYOUT_ACCOUNT_PATH, fetcher, {
+    revalidateOnFocus: false,
+    shouldRetryOnError: false,
+  });
+  const showPayouts = !!payout && (payout.routeEnabled || (payout.account !== null && payout.account.status !== "not_started"));
+  const nav = NAV.filter((n) => !n.payouts || showPayouts);
   return (
     <div className="min-h-screen flex flex-col">
       <header className="border-b-2 border-border">
@@ -26,7 +40,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <span className="truncate">Digital Sukoon <span className="text-indigo-light">Creators</span></span>
           </Link>
           <nav aria-label="Creator portal" className="order-3 w-full sm:order-none sm:w-auto flex flex-wrap gap-1">
-            {NAV.map((n) => {
+            {nav.map((n) => {
               const active = pathname === n.href;
               return (
                 <Link

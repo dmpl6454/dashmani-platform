@@ -28,6 +28,8 @@ router.get("/admin/creators", ...gate, asyncHandler(async (req, res) => {
 }));
 
 router.get("/admin/creators/:id", ...gate, asyncHandler(async (req, res) => {
+  // The detail now carries the creator's payout status: never from a cache or a shared proxy.
+  res.setHeader("Cache-Control", "no-store");
   return success(res, await admin.getCreatorDetail(req.params.id));
 }));
 
@@ -45,6 +47,15 @@ router.post("/admin/creators/:id/suspend", ...gate, validate(creatorReviewNoteRe
 
 router.post("/admin/creators/:id/reinstate", ...gate, validate(creatorReviewSchema), asyncHandler(async (req, res) => {
   return success(res, await admin.reviewCreator(req.params.id, "reinstate", staffId(req), req.body.note));
+}));
+
+// Creator payouts: staff mark the bank change Razorpay support carried out as processed. ⚠️ No
+// auditLog and no body on this route: payout details never pass through here, and the action is
+// recorded by the service in creator_payout_events (scrubbed, in the same transaction). Deliberately
+// not behind CREATOR_ROUTE_ENABLED: a request made before the switch went off must still be clearable.
+router.post("/admin/creators/:id/payout-account/bank-change/cleared", ...gate, asyncHandler(async (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  return success(res, await admin.markBankChangeProcessed(req.params.id, staffId(req)));
 }));
 
 router.put("/admin/creators/:id/assets/:assetId", ...gate, validate(creatorAssetToggleSchema), asyncHandler(async (req, res) => {

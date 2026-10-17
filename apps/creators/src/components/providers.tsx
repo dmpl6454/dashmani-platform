@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
+import { SWRConfig } from "swr";
 import { AuthContext } from "@/lib/auth";
 import { apiFetch, clearSession, isPrivatePath, PENDING_CONNECT_KEY, storeSession, TOKEN_KEYS } from "@/lib/api";
 import { safeNext } from "@/lib/safe-next";
@@ -8,7 +9,7 @@ import type { CreatorMe, CreatorSession } from "@/lib/types";
 import { AppShell } from "./app-shell";
 
 // Client-side auth guard. The app is a static export, so there is no server to check a session:
-// the signed-in pages (PRIVATE_ROUTES: /dashboard, /connect, /settings and anything under them)
+// the signed-in pages (PRIVATE_ROUTES: /dashboard, /connect, /payouts, /settings and anything under them)
 // render a placeholder until we have read localStorage, and a visitor without a session is sent
 // to /login?next=<where they were going>. Every other path — the public pages and unknown URLs,
 // so the 404 page can show — renders as is. The API is the real gate — every signed-in request
@@ -16,6 +17,17 @@ import { AppShell } from "./app-shell";
 //
 // /connect can open with a URL fragment after Facebook (`#state=…&code=…`); `next` carries only
 // the path and query, so a signed-out visitor's fragment is dropped on the way to /login.
+
+/**
+ * ⚠️ SWR's cache lives in memory for the life of the tab, and a router push does not reload the page, so
+ * without a reset the next person to sign in on a shared computer could see the previous creator's
+ * account for a moment (including their payout status and masked bank account) before the fresh answer
+ * arrives. Signing out therefore swaps in a brand-new cache: <SWRConfig key={cacheEpoch}> remounts with a
+ * fresh Map as its provider. (A global mutate-everything is NOT enough: it left a fetch the previous
+ * session had just started in SWR's dedupe window, and the next sign-in then waited on a result that was
+ * thrown away. A new cache carries its own request bookkeeping.)
+ */
+const freshCache = () => new Map();
 
 const normalise = (p: string | null) => (p && p.length > 1 ? p.replace(/\/+$/, "") : p || "/");
 
@@ -35,6 +47,8 @@ export function Providers({ children }: { children: React.ReactNode }) {
   const isPublic = !isPrivatePath(pathname);
   const [creator, setCreator] = useState<CreatorMe | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  // Bumped on sign-out: a new epoch is a new SWR cache (see freshCache).
+  const [cacheEpoch, setCacheEpoch] = useState(0);
 
   useEffect(() => {
     const stored = readStoredCreator();
@@ -84,6 +98,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
       apiFetch("/creator/auth/logout", { method: "POST", body: JSON.stringify({ refreshToken }) }).catch(() => {});
     }
     clearSession();
+    setCacheEpoch((n) => n + 1);
     setCreator(null);
     router.push("/login");
   }
@@ -95,7 +110,9 @@ export function Providers({ children }: { children: React.ReactNode }) {
 
   return (
     <AuthContext.Provider value={{ creator, login, adoptSession, updateCreator, logout, isLoading }}>
-      {content}
+      <SWRConfig key={cacheEpoch} value={{ provider: freshCache }}>
+        {content}
+      </SWRConfig>
     </AuthContext.Provider>
   );
 }

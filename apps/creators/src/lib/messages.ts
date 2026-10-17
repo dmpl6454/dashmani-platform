@@ -1,5 +1,6 @@
 // Plain sentences for the API's error codes, so a creator never reads "INVALID_STATE".
 import { ApiError } from "./api";
+import { PAYOUT_FIELD_REJECTED, PAYOUT_FORM_FIELDS, type PayoutFormField } from "@dashmani/shared/src/validators/creator-payout";
 
 const CONNECT_DENIED = "Facebook didn't grant the permissions, so nothing was connected. You can try again whenever you like.";
 const CONNECT_EXPIRED = "That connection attempt took too long and expired. Please start it again.";
@@ -61,4 +62,93 @@ export function errorSentence(err: unknown, fallback = "Something went wrong. Pl
     return err.message || fallback;
   }
   return err instanceof Error && err.message ? err.message : fallback;
+}
+
+// ── Bank connect (payouts) ──────────────────────────────────────────────────────────────────────
+// ⚠️ PRIVACY. A bank-connect request carries a PAN, a bank account number, an IFSC, a name and an
+// address. None of the sentences below is ever the API's own message, because an API error could in
+// principle quote a value; each is OURS, picked by error code. The only API text that is passed on is
+// the two fixed strings apiFetch itself writes for "no connection" and "not JSON" (they carry no input).
+
+const PAYOUT_SENTENCES: Record<string, string> = {
+  VALIDATION_ERROR: "Some details didn't pass our check. Please look at the fields marked below.",
+  PAN_REJECTED:
+    "Razorpay didn't accept the PAN. Check that it is your personal PAN, exactly as printed on the card, and that your name matches it.",
+  BANK_DETAILS_REJECTED:
+    "Razorpay didn't accept the bank details. Check the account number and the IFSC code, and that the account is in the same name as your PAN.",
+  DETAILS_REJECTED: "Razorpay didn't accept some of the details. Check the fields marked below and send them again.",
+  ACCOUNT_CONFLICT:
+    "We couldn't link a payout account to your profile. Our team has been told; if you don't hear from us, email creators@digitalsukoon.com.",
+  SETUP_UNCERTAIN:
+    "We couldn't confirm whether Razorpay finished setting up your payout account. Nothing has been lost. Please try again in a minute; if it keeps happening, email creators@digitalsukoon.com.",
+  SETUP_IN_PROGRESS: "Your bank account is already being set up, perhaps in another tab. Give it a minute, then check this page.",
+  RAZORPAY_UNAVAILABLE: "Razorpay didn't answer. Nothing has been lost. Please try again in a minute.",
+  PAYOUT_BUSY: "We're setting up a lot of payout accounts right now. Please try again tomorrow.",
+  PAYOUT_UNAVAILABLE: "Adding a bank account is temporarily unavailable. Our team has been told. Please try again later.",
+  ROUTE_DISABLED: "Adding a bank account isn't open right now.",
+  TERMS_CHANGED: "The creator terms have changed. Reload this page, read them and accept again.",
+  NOT_APPROVED: "Your profile needs to be approved before you can add a bank account.",
+  ACCOUNT_SUSPENDED: "Your account is suspended, so a bank account can't be added right now. Email creators@digitalsukoon.com.",
+  EMAIL_NOT_VERIFIED: CODE_SENTENCES.EMAIL_NOT_VERIFIED,
+  NO_PAYOUT_ACCOUNT: "Add your bank account first.",
+  RATE_LIMIT: "Too many attempts. Please try again in an hour.",
+};
+
+/**
+ * The sentence for a failed payout call. Never `err.message` from the API; unknown codes get a plain
+ * generic line. (errorSentence above falls back to the API's text, which is right for most pages and
+ * wrong for this one.)
+ */
+export function payoutErrorSentence(err: unknown): string {
+  if (err instanceof ApiError) {
+    if (err.code === "NETWORK" || err.code === "BAD_RESPONSE") return err.message; // fixed client-side strings
+    if (err.code && PAYOUT_SENTENCES[err.code]) return PAYOUT_SENTENCES[err.code];
+    if (err.status === 429) return PAYOUT_SENTENCES.RATE_LIMIT;
+  }
+  return "Something went wrong. Please try again.";
+}
+
+/**
+ * Codes after which the server gave a DEFINITE answer to what was sent: the form's PAN and bank fields
+ * are cleared and typed again. After an uncertain outcome (no connection, a 5xx, a busy or in-progress
+ * answer, an unknown setup result) they are KEPT so the same press of the button can be repeated.
+ */
+const PAYOUT_DEFINITE_CODES: ReadonlySet<string> = new Set([
+  "VALIDATION_ERROR",
+  "PAN_REJECTED",
+  "BANK_DETAILS_REJECTED",
+  "DETAILS_REJECTED",
+  "ACCOUNT_CONFLICT",
+  "TERMS_CHANGED",
+  "NOT_APPROVED",
+  "ACCOUNT_SUSPENDED",
+  "EMAIL_NOT_VERIFIED",
+  "ROUTE_DISABLED",
+  "NO_PAYOUT_ACCOUNT",
+]);
+
+export function payoutFailureIsDefinite(err: unknown): boolean {
+  return err instanceof ApiError && !!err.code && PAYOUT_DEFINITE_CODES.has(err.code);
+}
+
+/** Codes whose `details` name the form fields Razorpay refused (our wording for each comes from the shared list). */
+const PAYOUT_REJECTION_CODES: ReadonlySet<string> = new Set(["PAN_REJECTED", "BANK_DETAILS_REJECTED", "DETAILS_REJECTED"]);
+
+/**
+ * The form fields an error names, each with a sentence of ours: for a rejection the shared "Razorpay
+ * did not accept this ..." line, for a failed server check a plain "Check this detail". Only names in the
+ * form's own field list are accepted, and the API's per-field message is never read.
+ */
+export function payoutErrorFields(err: unknown): Array<{ field: PayoutFormField; message: string }> {
+  if (!(err instanceof ApiError) || !err.code || !Array.isArray(err.details)) return [];
+  const rejection = PAYOUT_REJECTION_CODES.has(err.code);
+  if (!rejection && err.code !== "VALIDATION_ERROR") return [];
+  const known: ReadonlyArray<string> = PAYOUT_FORM_FIELDS;
+  const out: Array<{ field: PayoutFormField; message: string }> = [];
+  for (const d of err.details) {
+    const f = typeof d?.field === "string" ? d.field : "";
+    if (!known.includes(f) || out.some((o) => o.field === f)) continue;
+    out.push({ field: f as PayoutFormField, message: rejection ? PAYOUT_FIELD_REJECTED[f as PayoutFormField] : "Check this detail" });
+  }
+  return out;
 }

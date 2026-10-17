@@ -1,12 +1,22 @@
 import { prisma } from "@dashmani/db";
-import type { Creator, CreatorAsset, CreatorConnection } from "@dashmani/db";
+import type { Creator, CreatorAsset, CreatorConnection, Prisma } from "@dashmani/db";
 import { CREATOR_STATUSES, type CreatorStatus } from "@dashmani/shared/src/validators/creator";
 import { AppError } from "../../middleware/error-handler";
 import { likeLiteral } from "../../utils/like-literal";
 import { scrubSecrets } from "../../utils/token-crypto";
+import { scrubPayoutSecrets } from "../../utils/payout-scrub";
 import { toAssetView, toConnectionView, toCreatorMe, isPublishable, liveConnectionWhere, LIVE_CONNECTION_STATUSES } from "./creator-view";
 import { syncNetworkDuplicates } from "./creator-discovery.service";
 import { sendCreatorEmail, esc, button, creatorLink } from "./creator-email";
+import {
+  BANK_CHANGE_HOLD_MS,
+  bankChangeBlocksRelease,
+  bankChangePending,
+  decodeSetupError,
+  toPayoutAccountView,
+  type PayoutAccountView,
+} from "./payout-account-view";
+import { routeAvailable } from "./payout-account.service";
 
 // Staff review queue for the creator portal (internal portal → /creators).
 // ⚠️ Every response goes through creator-view.ts builders plus the admin extras below — never a
@@ -133,18 +143,185 @@ export async function getCreatorDetail(id: string) {
     },
   });
   if (!c) throw new AppError(404, "NOT_FOUND", "Creator not found");
-  const reviewer = c.reviewedById
-    ? await prisma.user.findUnique({ where: { id: c.reviewedById }, select: { name: true } })
-    : null;
+  const [reviewer, payout] = await Promise.all([
+    c.reviewedById ? prisma.user.findUnique({ where: { id: c.reviewedById }, select: { name: true } }) : null,
+    readPayoutAccount(c.id),
+  ]);
   const { connections, assets, ...creator } = c;
   const conn = currentConnection(connections);
   return {
     creator: toAdminCreator(creator, reviewer?.name ?? null),
     connection: conn ? toConnectionView(conn) : null,
     assets: await toAdminAssetViews(assets),
+    ...payout,
   };
 }
 export type AdminCreatorDetail = Awaited<ReturnType<typeof getCreatorDetail>>;
+
+// ── Payout account (Razorpay Route bank connect) ─────────────────────────────
+
+// What staff see of a creator's payout account. ⚠️ PRIVACY: the creator's PAN, bank account number,
+// IFSC, name and address are never stored by us, so none of them can be here. The view is built from an
+// explicit allow-list of columns (PAYOUT_ROW_SELECT) and an explicit list of output keys: Razorpay ids,
+// status, requirement references and reason CODES, a masked hint and timestamps. Never `last_error`
+// itself (only the short code decoded from it), never the raw `requirements` JSON.
+
+const PAYOUT_ROW_SELECT = {
+  razorpayAccountId: true,
+  razorpayStakeholderId: true,
+  razorpayProductId: true,
+  setupStep: true,
+  activationStatus: true,
+  requirements: true,
+  destinationHint: true,
+  termsVersion: true,
+  activatedAt: true,
+  bookableAfter: true,
+  bankChangeRequestedAt: true,
+  bankChangeClearedAt: true,
+  accountCreatedAt: true,
+  setupLockedUntil: true,
+  lastError: true,
+  lastCheckedAt: true,
+  updatedAt: true,
+} as const;
+
+type PayoutRow = Prisma.CreatorPayoutAccountGetPayload<{ select: typeof PAYOUT_ROW_SELECT }>;
+
+/** The view the creator gets, plus what only staff need to chase a stuck account in Razorpay. */
+export interface AdminPayoutAccountView extends PayoutAccountView {
+  razorpayAccountId: string | null;
+  razorpayStakeholderId: string | null;
+  razorpayProductId: string | null;
+  /** A short code such as DETAILS_REJECTED; never Razorpay's text. */
+  lastErrorCode: string | null;
+  lastCheckedAt: string | null;
+  accountCreatedAt: string | null;
+  /** A bank change the creator asked for that staff have not marked processed yet. */
+  bankChangePending: boolean;
+  /**
+   * Releases for this creator are paused by a bank change: from the request until staff mark it
+   * processed, plus 72 hours. `resumesAt` is set only once it has been marked processed.
+   */
+  releaseHold: { active: boolean; resumesAt: string | null };
+}
+
+/**
+ * Razorpay ids look like acc_xxx / sth_xxx / acc_prd_xxx: a lower-case prefix, then a short random token.
+ * Anything else is not an id, so it is not shown. The prefix is what keeps a bare number (an account
+ * number written into the wrong column by mistake) from passing as one.
+ */
+const RAZORPAY_ID_RE = /^[a-z]{2,5}(?:_[a-z]{2,5})?_[A-Za-z0-9]{4,40}$/;
+const razorpayIdOrNull = (v: string | null) => (v && RAZORPAY_ID_RE.test(v) ? v : null);
+const isoOrNull = (d: Date | null) => (d ? d.toISOString() : null);
+
+export function toAdminPayoutAccountView(row: PayoutRow, now: Date = new Date()): AdminPayoutAccountView {
+  const pending = bankChangePending(row);
+  const holding = bankChangeBlocksRelease(row, now);
+  return {
+    ...toPayoutAccountView(row, now)!,
+    razorpayAccountId: razorpayIdOrNull(row.razorpayAccountId),
+    razorpayStakeholderId: razorpayIdOrNull(row.razorpayStakeholderId),
+    razorpayProductId: razorpayIdOrNull(row.razorpayProductId),
+    lastErrorCode: decodeSetupError(row.lastError)?.code ?? null,
+    lastCheckedAt: isoOrNull(row.lastCheckedAt),
+    accountCreatedAt: isoOrNull(row.accountCreatedAt),
+    bankChangePending: pending,
+    releaseHold: {
+      active: holding,
+      resumesAt: holding && !pending ? new Date(row.bankChangeClearedAt!.getTime() + BANK_CHANGE_HOLD_MS).toISOString() : null,
+    },
+  };
+}
+
+/**
+ * The payout part of GET /admin/creators/:id. ⚠️ A failed read must NOT look like "no payout account":
+ * it answers `payoutAccountError: true` (and a null account), and the screen says it could not load.
+ * It also must not take the review page down with it, which is why it is caught here at all: the
+ * review queue works while payouts are dark, and the payout tables are applied by hand before a deploy.
+ */
+async function readPayoutAccount(creatorId: string) {
+  const payoutRouteEnabled = routeAvailable();
+  try {
+    const row = await prisma.creatorPayoutAccount.findUnique({ where: { creatorId }, select: PAYOUT_ROW_SELECT });
+    return { payoutAccount: row ? toAdminPayoutAccountView(row) : null, payoutRouteEnabled, payoutAccountError: false };
+  } catch (e) {
+    console.warn(`[creator-admin] could not read the payout account of ${creatorId}: ${scrubPayoutSecrets(e instanceof Error ? e.message : String(e)).slice(0, 200)}`);
+    return { payoutAccount: null, payoutRouteEnabled, payoutAccountError: true };
+  }
+}
+
+function bankChangeProcessedEmail(name: string) {
+  return {
+    subject: "Your bank account change was processed",
+    title: "Bank change processed",
+    body:
+      `<p style="margin:0 0 12px">Hi ${esc(name)},</p>` +
+      `<p style="margin:0 0 12px">Our team has completed the bank account change you asked for.</p>` +
+      `<p style="margin:0 0 12px">For your protection, payments to you stay paused until 72 hours after this change. After that they go to the new account as normal.</p>` +
+      `<p style="margin:0 0 12px">We never ask for bank details by email. If you did not ask for this change, reply to this email right away.</p>` +
+      `<p style="margin:18px 0">${button(creatorLink("/payouts"), "Open your payouts page")}</p>`,
+  };
+}
+
+/**
+ * Staff action: the bank change Razorpay support carried out is done (POST …/payout-account/bank-change/cleared).
+ * Releases for this creator stay paused for 72 hours more (bankChangeBlocksRelease reads the timestamp).
+ *
+ * ⚠️ ONE WINNER. The write matches both timestamps as they were READ, so two clicks (two staff, two
+ * tabs) cannot both clear one request, and a request the creator made again in between is not cleared
+ * by a click that was about the earlier one: the loser gets 409 and the creator is emailed once. The
+ * audit row is written in the same transaction, so it never disagrees with the column.
+ */
+export async function markBankChangeProcessed(creatorId: string, staffId: string) {
+  const creator = await prisma.creator.findUnique({ where: { id: creatorId }, select: { id: true, name: true, email: true } });
+  if (!creator) throw new AppError(404, "NOT_FOUND", "Creator not found");
+  const none = () =>
+    new AppError(409, "NO_BANK_CHANGE_REQUEST", "This creator has no bank change request waiting. It may already have been marked processed.");
+
+  const row = await prisma.creatorPayoutAccount.findUnique({
+    where: { creatorId },
+    select: { id: true, bankChangeRequestedAt: true, bankChangeClearedAt: true },
+  });
+  if (!row || !row.bankChangeRequestedAt || !bankChangePending(row)) throw none();
+
+  // Never earlier than the request itself, so a clock that disagrees by a few milliseconds cannot
+  // leave the request looking pending after a click that reported success.
+  const at = new Date(Math.max(Date.now(), row.bankChangeRequestedAt.getTime()));
+  const won = await prisma.$transaction(async (tx) => {
+    const res = await tx.creatorPayoutAccount.updateMany({
+      where: { id: row.id, bankChangeRequestedAt: row.bankChangeRequestedAt, bankChangeClearedAt: row.bankChangeClearedAt },
+      data: { bankChangeClearedAt: at },
+    });
+    if (res.count !== 1) return false;
+    // creator_payout_events is keyed by payout; a bank change belongs to the ACCOUNT, so the account's
+    // id goes in payout_id (a plain id, no foreign key). The note carries no figures on purpose:
+    // the payout scrubber would mask any run of five digits, dates included.
+    await tx.creatorPayoutEvent.create({
+      data: {
+        payoutId: row.id,
+        kind: "bank_change_cleared",
+        actorType: "staff",
+        actorId: staffId,
+        note: scrubPayoutSecrets("Staff marked the bank change request processed. Releases for this creator stay paused for 72 hours."),
+      },
+    });
+    return true;
+  });
+  if (!won) throw none();
+
+  // The change stands even when the email cannot be sent; the screen says so instead of claiming delivery.
+  let emailSent = false;
+  try {
+    const mail = bankChangeProcessedEmail(creator.name);
+    emailSent = (await sendCreatorEmail(creator.email, mail.subject, mail.title, mail.body)) != null;
+  } catch (e) {
+    console.warn(`[creator-admin] bank change email failed for ${creatorId}: ${scrubPayoutSecrets(e instanceof Error ? e.message : String(e)).slice(0, 200)}`);
+  }
+  if (!emailSent) console.warn(`[creator-admin] bank change email for ${creatorId} was not sent`);
+
+  return { ...(await getCreatorDetail(creatorId)), emailSent };
+}
 
 // ── Review transitions ────────────────────────────────────────────────────────
 

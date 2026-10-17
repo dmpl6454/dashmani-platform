@@ -1,10 +1,11 @@
 import { prisma, Prisma } from "@dashmani/db";
 import type { CampaignDispute, CreatorPayout } from "@dashmani/db";
-import { scrubPayoutObject, scrubPayoutSecrets } from "../../utils/payout-scrub";
+import { scrubPayoutSecrets } from "../../utils/payout-scrub";
 import { parseRazorpaySettlement } from "./razorpay";
 import { PAYOUT_STATUSES, mapTransferEvent, type PayoutStatus, type TransferFacts, type TransferMove } from "../creator/payout-states";
 import { pausePayoutsOfPaymentRows, type PausedPayout } from "../creator/payout-pause";
 import { alertStaffOncePerHour } from "../creator/payout-alert";
+import { applyProductStatus } from "../creator/payout-account.service";
 
 // Razorpay Route webhooks: transfers, settlements, linked-account (product) status, and
 // payment disputes. Phase 1 of docs/superpowers/plans/2026-10-12-creator-payouts-razorpay-route.md.
@@ -67,13 +68,6 @@ const boolOf = (v: unknown): boolean | null => (typeof v === "boolean" ? v : nul
 const wordOf = (v: unknown, max: number): string | null => (typeof v === "string" && v.trim() ? scrubPayoutSecrets(v.trim()).slice(0, max) : null);
 /** A bank reference (UTR). Whitelisted by shape, not scrubbed: scrubbing would mask its digits. */
 const utrOf = (v: unknown): string | null => (typeof v === "string" && /^[A-Za-z0-9_/-]{4,64}$/.test(v.trim()) ? v.trim() : null);
-
-/** JSON with sorted keys: jsonb does not keep key order, so two equal values must compare equal. */
-function stableJson(v: unknown): string {
-  if (Array.isArray(v)) return `[${v.map(stableJson).join(",")}]`;
-  if (isObj(v)) return `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${stableJson(v[k])}`).join(",")}}`;
-  return JSON.stringify(v ?? null);
-}
 
 const safeName = (name: string): string => (/^[a-z0-9_.]{1,64}$/.test(name) ? name : "(unrecognised event)");
 const inr = (paise: number): string => `₹${(paise / 100).toFixed(2)}`;
@@ -518,7 +512,6 @@ const PRODUCT_TARGET: Record<string, string> = {
   "product.route.needs_clarification": "needs_clarification",
   "product.route.activated": "activated",
 };
-const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** requirements[] reduced to references and reason codes. `description` and `resolution_url` are dropped. */
 function readRequirements(data: unknown): Array<{ field_reference: string; reason_code: string | null; status: string | null }> {
@@ -551,31 +544,18 @@ async function onProductEvent(name: string, evt: any): Promise<Result> {
   const productId = idOf(entity.id);
   if (row.razorpayProductId && productId && row.razorpayProductId !== productId) return { handled: false, note: "foreign product" };
 
-  // References and reason codes only, scrubbed as an object as well, so even a hostile or
-  // surprising value cannot put a PAN- or account-number-shaped string into this column.
-  const requirements = scrubPayoutObject(readRequirements(isObj(mp) ? mp.data : null)) as Prisma.InputJsonValue;
-  const at = eventTime(evt);
-  const activatedAt = target === "activated" ? (row.activatedAt ?? at) : undefined;
-  const bookableAfter = target === "activated" ? (row.bookableAfter ?? new Date((row.activatedAt ?? at).getTime() + DAY_MS)) : undefined;
-
-  const unchanged =
-    row.activationStatus === target &&
-    stableJson(row.requirements) === stableJson(requirements) &&
-    (target !== "activated" || (row.activatedAt !== null && row.bookableAfter !== null));
-  if (unchanged) return { handled: true, note: "unchanged" };
-
-  // last_checked_at doubles as the freshness mark: the activation poll writes it, and an event
-  // older than the poll that already ran must not undo what the poll saw.
-  const r = await prisma.creatorPayoutAccount.updateMany({
-    where: { id: row.id, OR: [{ lastCheckedAt: null }, { lastCheckedAt: { lte: at } }] },
-    data: {
-      activationStatus: target,
-      requirements,
-      lastCheckedAt: at,
-      ...(target === "activated" ? { activatedAt, bookableAfter, lastError: null } : {}),
-    },
+  // The mapping from a Razorpay product status to our columns lives in ONE place, applyProductStatus
+  // (services/creator/payout-account.service.ts), which the activation poll uses too: references and
+  // reason codes only, scrubbed as an object; activated_at kept on a re-activation; bookable_after =
+  // activated_at + 24h; last_checked_at doubles as the freshness mark, so an event older than the poll
+  // that already ran must not undo what the poll saw. The event's own time is the freshness mark here.
+  const res = await applyProductStatus(row, {
+    activationStatus: target,
+    requirements: readRequirements(isObj(mp) ? mp.data : null),
+    at: eventTime(evt),
   });
-  return { handled: true, note: r.count === 1 ? `account ${target}` : "stale" };
+  if (res.note === "unchanged") return { handled: true, note: "unchanged" };
+  return { handled: true, note: res.applied ? `account ${target}` : "stale" };
 }
 
 // ── payment.dispute.* ───────────────────────────────────────────────────────────

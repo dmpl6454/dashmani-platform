@@ -19,4 +19,35 @@ export const creatorConfig = {
   metricsCallBudget: () => envNum("CREATOR_METRICS_CALL_BUDGET", 200, 1),
   /** The creator terms a sign-up accepts (bump when /terms changes materially). */
   termsVersion: () => process.env.CREATOR_TERMS_VERSION || "2026-10-17",
+
+  // ── Payouts (Razorpay Route): see docs/superpowers/plans/2026-10-12-creator-payouts-razorpay-route.md ──
+  /**
+   * Bank connect (and, in later phases, new transfers) is dark unless this is exactly "1". Off never
+   * strands money: existing payouts keep reconciling. The Razorpay keys must ALSO be present for the
+   * feature to count as available (see payout-account.service routeAvailable()).
+   */
+  routeEnabled: () => process.env.CREATOR_ROUTE_ENABLED === "1",
+  /** Most NEW Razorpay linked accounts we create per IST day, across every creator (a flood brake, not a quota). */
+  payoutAccountDailyCap: () => envNum("CREATOR_PAYOUT_ACCOUNT_DAILY_CAP", 50, 1),
+  /** The reconciliation worker (account activation poll today; transfers, releases and expiry in later phases). */
+  payoutCronEnabled: () => process.env.CREATOR_PAYOUT_CRON_ENABLED !== "0",
+  /**
+   * Whether our creator id is sent to Razorpay as the linked account's `reference_id`. Razorpay refuses
+   * the whole create call unless its `route_code_support` feature is enabled on our account (plan
+   * prerequisite 3), so it stays off until Razorpay confirms. Its allowed length is also UNVERIFIED
+   * (the request doc says 512, the entity doc 20, and an id of ours is 36).
+   */
+  routeReferenceId: () => process.env.CREATOR_ROUTE_REFERENCE_ID === "1",
+  /**
+   * The category pair every creator's linked account is registered under. Plan question (i) is open
+   * (candidates: media_and_entertainment, or services → ad_and_marketing), so it is an env switch, not a
+   * deploy. Values must be lower-case words from Razorpay's lists; anything else falls back to the default.
+   */
+  routeCategory: (): { category: string; subcategory: string } => {
+    const word = (v: string | undefined, d: string) => (v && /^[a-z_]{2,64}$/.test(v) ? v : d);
+    return {
+      category: word(process.env.CREATOR_ROUTE_CATEGORY, "media_and_entertainment"),
+      subcategory: word(process.env.CREATOR_ROUTE_SUBCATEGORY, "content_and_publishing"),
+    };
+  },
 };

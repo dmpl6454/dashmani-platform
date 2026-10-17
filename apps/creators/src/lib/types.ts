@@ -1,8 +1,17 @@
 // Shapes of the creator API (see the Phase A contract). Kept here, not in @dashmani/shared,
 // because only this app reads them.
 import type { CreatorStatus, CreatorAssetKind } from "@dashmani/shared/src/validators/creator";
+import type {
+  PayoutAccountResponse,
+  PayoutAccountStatus,
+  PayoutAccountView,
+  PayoutBlockedReason,
+  PayoutRequirement,
+} from "@dashmani/shared/src/validators/creator-payout";
 
 export type { CreatorStatus, CreatorAssetKind };
+// Payout account (bank connect): the API's own shapes, type-only so nothing is added to a bundle.
+export type { PayoutAccountResponse, PayoutAccountStatus, PayoutAccountView, PayoutBlockedReason, PayoutRequirement };
 
 export interface CreatorMe {
   id: string;
@@ -24,6 +33,12 @@ export interface CreatorChecklist {
   connected: boolean;
   publishablePages: number;
   submitted: boolean;
+  /**
+   * Bank connect's own row. Present ONLY while bank connect is available on the server, so it is
+   * rendered when the API sends it and never assumed: while the feature is dark the field is absent
+   * and the checklist is exactly the four steps it always was.
+   */
+  payoutAccount?: { status: PayoutAccountStatus; done: boolean };
 }
 
 export type CreatorMeWithChecklist = CreatorMe & { checklist: CreatorChecklist };

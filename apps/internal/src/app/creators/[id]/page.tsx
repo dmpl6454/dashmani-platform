@@ -7,6 +7,7 @@ import { apiFetch } from "@/lib/api";
 import { usePageTitle } from "@/lib/hooks/use-page-title";
 import { useCreatorDetail, type AdminAssetView, type AdminCreatorDetail } from "@/lib/hooks/use-creators";
 import { BTN_GHOST, BTN_GOLD, BTN_RED, CARD, INPUT, ErrorBar, PageHead, Pill, compact, fmtWhen } from "../../campaigns/_ds";
+import { PayoutAccountCard } from "../_payout";
 import { ConnectionPill, CreatorStatusPill } from "../_status";
 
 type Action = "approve" | "reject" | "suspend" | "reinstate";
@@ -208,7 +209,7 @@ function AssetRow({
 
 export default function CreatorDetailPage() {
   const { id } = useParams<{ id: string }>();
-  const { data, error, mutate } = useCreatorDetail(id);
+  const { data, error, mutate, isValidating } = useCreatorDetail(id);
   usePageTitle(data?.creator.name ?? "Creator");
   const [pending, setPending] = useState<Action | null>(null);
   const [busy, setBusy] = useState(false);
@@ -331,6 +332,24 @@ export default function CreatorDetailPage() {
           )}
         </section>
       </div>
+
+      <PayoutAccountCard
+        creatorId={c.id}
+        detail={data}
+        refreshing={isValidating}
+        refreshFailed={!!error}
+        onRefresh={() => { void mutate(); }}
+        onProcessed={(next, emailSent) => {
+          void mutate(next, { revalidate: false });
+          // An older API sends no flag: say only what is known rather than claim a failure.
+          setInfoWarn(emailSent === false);
+          setInfo(
+            emailSent === false
+              ? "Bank change marked processed — but the email to the creator could not be sent, so tell them another way. Their payouts stay paused for 72 hours."
+              : "Bank change marked processed — the creator has been emailed. Their payouts stay paused for 72 hours.",
+          );
+        }}
+      />
 
       <section className={`${CARD} overflow-hidden`}>
         <div className="px-5 pt-5 pb-3">

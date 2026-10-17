@@ -2772,6 +2772,11 @@ model CreatorPayoutAccount {
   lastCheckedAt         DateTime? @map("last_checked_at")
   /// Scrubbed (utils scrubPayoutSecrets) before it is stored.
   lastError             String?   @map("last_error") @db.VarChar(500)
+  /// Lease on the bank-connect setup: while in the future, one request is making the Razorpay
+  /// calls for this creator and any other setup is refused. It is what guarantees two overlapping
+  /// requests (two tabs, a double click) can never create two linked accounts. Cleared when the
+  /// request ends; an expired value (a crashed request) simply lets the next one in.
+  setupLockedUntil      DateTime? @map("setup_locked_until")
   createdAt             DateTime  @default(now()) @map("created_at")
   updatedAt             DateTime  @updatedAt @map("updated_at")
 

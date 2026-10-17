@@ -13,6 +13,7 @@ import { runMetaTokenHealth } from "./cron/meta-token-health.cron";
 import { startPostingWatchCron } from "./cron/posting-watch.cron";
 import { startCampaignCrons } from "./cron/campaign.cron";
 import { startCreatorCrons } from "./cron/creator.cron";
+import { startCreatorPayoutCron } from "./cron/creator-payout.cron";
 import { startPipelineSelfCheck, startPipelineStatsLog } from "./services/pipeline";
 import { startPipelineDueCron } from "./cron/pipeline-due.cron";
 import { startPipelineEmailCron } from "./cron/pipeline-email.cron";
@@ -244,4 +245,11 @@ app.listen(PORT, () => {
   // CREATOR_METRICS_CALL_BUDGET, and oauth-state pruning. First run +25 min. Dark unless
   // CREATORS_ENABLED=1; kill switch CREATOR_CRONS_ENABLED=0.
   startCreatorCrons();
+
+  // Creator payouts (Razorpay Route): the linked-account activation poll, every 5 min, first run +4 min,
+  // ≤20 Razorpay calls a tick. Razorpay sends no notice when an account activates or fails review, so
+  // this is what keeps the status true. A no-op without the Razorpay keys; kill switch
+  // CREATOR_PAYOUT_CRON_ENABLED=0. Independent of CREATOR_ROUTE_ENABLED: switching the feature off never
+  // strands an account that is already being reconciled.
+  startCreatorPayoutCron();
 });

@@ -143,10 +143,14 @@ case "$mode" in
     # names): a bare word "pan" appears in unrelated code. Comments count, as in the guards above
     # (reword a comment rather than quoting the field name). Word boundaries are spelled out
     # with a character class because BSD grep has no portable \b.
+    # The creators app's bank form (apps/creators/src/app/payouts/_form.tsx) is the ONE other file
+    # allowed: it has to name the fields it sends (the PAN input and the request body). It holds
+    # values only in React state (never storage, URL or console); every other file in the app reads
+    # the fields through the helpers it exports (FIELD_LABELS, requirementLabel).
     check "no-raw-payout-identifiers" \
       "Raw payout identifier property (pan, account_number, ifsc_code, beneficiary_name) outside the Razorpay client and the bank-form validator. Route every payout detail through services/campaign/razorpay.ts (allow-listed parsing) and utils/payout-scrub.ts; store only a masked hint." \
       "(^|[^A-Za-z0-9_])pan[[:space:]]*:|[\"']pan[\"']|account_number|ifsc_code|beneficiary_name" required \
-      '^(apps/api/src/services/campaign/razorpay\.ts|apps/api/src/utils/payout-scrub\.ts|packages/shared/src/validators/creator-payout[^:]*):' \
+      '^(apps/api/src/services/campaign/razorpay\.ts|apps/api/src/utils/payout-scrub\.ts|packages/shared/src/validators/creator-payout[^:]*|apps/creators/src/app/payouts/_form\.tsx):' \
       apps/api/src apps/creators/src
     ;;
   bundle)

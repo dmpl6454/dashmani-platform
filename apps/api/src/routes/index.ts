@@ -30,6 +30,7 @@ import campaignClientRoutes from "./campaign-client.routes";
 import campaignAdminRoutes from "./campaign-admin.routes";
 import creatorAuthRoutes from "./creator-auth.routes";
 import creatorRoutes from "./creator.routes";
+import creatorPayoutRoutes from "./creator-payouts.routes";
 import creatorMetaRoutes from "./creator-meta.routes";
 import creatorAdminRoutes from "./creator-admin.routes";
 import metaPlatformRoutes from "./meta-platform.routes";
@@ -72,6 +73,8 @@ router.use(campaignAdminRoutes);
 // app-wide deauthorize / data-deletion callbacks.
 router.use(creatorAuthRoutes);
 router.use(creatorRoutes);
+// Creator payouts, bank connect (/creator/payout-account*): dark unless CREATOR_ROUTE_ENABLED=1 and the Razorpay keys exist.
+router.use(creatorPayoutRoutes);
 router.use(creatorMetaRoutes);
 router.use(creatorAdminRoutes);
 router.use(metaPlatformRoutes);

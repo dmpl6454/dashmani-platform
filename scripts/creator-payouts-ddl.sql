@@ -83,6 +83,7 @@ CREATE TABLE IF NOT EXISTS "creator_payout_accounts" (
     "bank_change_cleared_at" TIMESTAMP(3),
     "last_checked_at" TIMESTAMP(3),
     "last_error" VARCHAR(500),
+    "setup_locked_until" TIMESTAMP(3),
     "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMP(3) NOT NULL,
 

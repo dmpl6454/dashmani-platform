@@ -7,11 +7,13 @@ import { apiFetch, fetcher } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { errorSentence } from "@/lib/messages";
 import { fmtDate } from "@/lib/format";
-import type { CreatorMe, CreatorMeWithChecklist } from "@/lib/types";
+import type { CreatorMe, CreatorMeWithChecklist, PayoutAccountStatus } from "@/lib/types";
 import { Banner, Loading, PageHead } from "@/components/ui";
 
 // Overview: the onboarding checklist from GET /v1/creator/me (verify email → connect Facebook →
 // at least one page that can publish → send for review) and a banner for every review outcome.
+// A fifth row, "Add your bank account", is drawn ONLY when the API sends checklist.payoutAccount (it
+// does so only while bank connect is open); it is never assumed, so while that is dark nothing changes.
 
 export default function DashboardPage() {
   const { updateCreator } = useAuth();
@@ -237,7 +239,70 @@ function Checklist({ me, onChange }: { me: CreatorMeWithChecklist; onChange: (ne
             </>
           )}
         </Step>
+
+        {c.payoutAccount && (
+          <Step n={5} done={c.payoutAccount.done} title="Add your bank account">
+            <PayoutStepBody status={c.payoutAccount.status} ready={me.status === "approved" && me.emailVerified} />
+          </Step>
+        )}
       </ol>
     </section>
   );
+}
+
+/** What the bank-connect row says for the status the API reported. Wording only: nothing here decides the status. */
+function PayoutStepBody({ status, ready }: { status: PayoutAccountStatus; ready: boolean }) {
+  const open = (label: string, ghost = true) => (
+    <Link href="/payouts" className={`btn ${ghost ? "btn-ghost " : ""}btn-sm mt-3`}>{label} <ArrowRight size={14} aria-hidden /></Link>
+  );
+  switch (status) {
+    case "not_started":
+      return ready ? (
+        <>
+          <p>Add your bank account now so you&apos;re ready when paid bookings open. Paid bookings need a PAN and an Indian bank account. You can do this any time; it isn&apos;t needed to send your profile for review.</p>
+          {open("Add bank account", false)}
+        </>
+      ) : (
+        <p>You can add your bank account once your email is confirmed and our team has approved your profile.</p>
+      );
+    case "setting_up":
+      return (
+        <>
+          <p>Your bank account setup was started but isn&apos;t finished. Send your details again to finish it.</p>
+          {open("Finish setup")}
+        </>
+      );
+    case "under_review":
+      return (
+        <>
+          <p>Your details are with Razorpay, which is checking your payout account.</p>
+          {open("See status")}
+        </>
+      );
+    case "needs_clarification":
+      return (
+        <>
+          <p>Razorpay asked for more information about your payout account.</p>
+          {open("See what it asked")}
+        </>
+      );
+    case "failed":
+      return (
+        <>
+          <p>Razorpay didn&apos;t accept some of the details. Correct them and send them again.</p>
+          {open("Correct details", false)}
+        </>
+      );
+    case "suspended":
+      return (
+        <>
+          <p>Razorpay has suspended your payout account.</p>
+          {open("See status")}
+        </>
+      );
+    case "activated":
+      return <p>Your payout account is active, so you&apos;re ready when paid bookings open.</p>;
+    default:
+      return null;
+  }
 }

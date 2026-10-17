@@ -5,6 +5,7 @@ import { scrubSecrets } from "../../utils/token-crypto";
 import { liveConnectionWhere, toCreatorMe } from "./creator-view";
 import { adminAlert } from "./creator-email";
 import { issueCreatorSession } from "./creator-auth.service";
+import { payoutChecklistItem } from "./payout-account.service";
 
 // A signed-in creator's own account: profile, password, "submit for review", close account.
 // Every response goes through toCreatorMe (creator-view.ts) — never a raw row.
@@ -33,9 +34,11 @@ async function loadCreator(id: string) {
 /** CreatorMe plus the onboarding checklist the creators app renders. */
 export async function getCreatorMe(creatorId: string) {
   const c = await loadCreator(creatorId);
-  const [connections, publishablePages] = await Promise.all([
+  const [connections, publishablePages, payoutAccount] = await Promise.all([
     prisma.creatorConnection.count({ where: { creatorId, revokedAt: null, status: { not: "REVOKED" } } }),
     prisma.creatorAsset.count({ where: publishableWhere(creatorId) }),
+    // undefined while bank connect is dark, so the checklist is exactly what it was.
+    payoutChecklistItem(creatorId),
   ]);
   return {
     ...toCreatorMe(c),
@@ -45,6 +48,10 @@ export async function getCreatorMe(creatorId: string) {
       publishablePages,
       // "Submitted" means waiting on, or past, our review — a rejected creator must resubmit.
       submitted: c.status === "in_review" || c.status === "approved" || c.status === "suspended",
+      // Present ONLY while bank connect is available (CREATOR_ROUTE_ENABLED=1 and the Razorpay keys):
+      // `status` is the PayoutAccountView status, `done` is true once the bank details are with Razorpay
+      // and under review or activated.
+      ...(payoutAccount ? { payoutAccount } : {}),
     },
   };
 }
@@ -141,6 +148,14 @@ export async function submitCreatorForReview(creatorId: string) {
  */
 export async function closeCreatorAccount(creatorId: string) {
   await loadCreator(creatorId);
+  // A creator cannot leave while someone is waiting on them: an offer that is open (offered, or accepted
+  // and not yet posted) has a brand's money behind it. Offers come with the bookings phase, so the table
+  // is empty until then; the guard is here now so it can never be forgotten. Payouts already held or
+  // released keep reconciling after the account closes; they do not depend on the creator's session.
+  const openOffers = await prisma.creatorOffer.count({ where: { creatorId, status: { in: ["offered", "accepted"] } } });
+  if (openOffers > 0) {
+    throw new AppError(409, "OPEN_OFFERS", "You have a booking that is not finished yet. Please finish or decline it before you close your account.");
+  }
   const now = new Date();
   await prisma.$transaction([
     prisma.creator.update({ where: { id: creatorId }, data: { status: "closed", closedAt: now, sessionVersion: { increment: 1 } } }),
